@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Normalize pinned K and FEX x86-64 cases, and the repository's own cases,
 into the checked-in unit corpus."""
 
@@ -24,10 +25,10 @@ from typing import NoReturn
 sys.path.insert(
     0, str(pathlib.Path(__file__).resolve().parents[1] / "fex-tests"))
 import fex_config  # noqa: E402
+from pinned_source import manifest_identity, sha256_file, verify_checkout  # noqa: E402
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
-DEPENDENCY_MANIFEST = REPOSITORY / "dependencies" / "manifest.tsv"
 CORPUS = REPOSITORY / "tests" / "unit" / "x86_64" / "corpus"
 REPOSITORY_CASES = CORPUS / "cases"
 CODE_ADDRESS = 0x1_0000
@@ -202,46 +203,6 @@ def fail(message: str) -> NoReturn:
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def manifest_identity(name: str) -> tuple[str, str]:
-    for line in DEPENDENCY_MANIFEST.read_text().splitlines():
-        if not line or line.startswith("#") or line.startswith("name\t"):
-            continue
-        fields = line.split("\t")
-        if len(fields) == 7 and fields[0] == name:
-            if "x86-conformance" not in fields[2].split(","):
-                fail(f"{name} is not scoped to x86-conformance")
-            return fields[1], fields[4]
-    fail(f"dependency manifest has no {name} input")
-
-
-def git_output(source: pathlib.Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(source), *arguments],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def verify_checkout(source: pathlib.Path, expected_commit: str, name: str) -> None:
-    if not (source / ".git").exists():
-        fail(f"{name} source is not a Git checkout: {source}")
-    if git_output(source, "rev-parse", "HEAD") != expected_commit:
-        fail(f"{name} source is not at the dependency-manifest commit")
-    if git_output(source, "status", "--porcelain", "--untracked-files=all"):
-        fail(f"{name} source checkout is dirty")
 
 
 def resolve_tool(environment: str, fallback: str) -> str:
@@ -1074,9 +1035,9 @@ def full_precision_config(config: bytes, source: str) -> bytes:
 def collect_fex_records(
     corpus: pathlib.Path,
     llvm_mc: str,
+    expected_commit: str,
 ) -> tuple[list[Record], list[Exclusion]]:
     metadata = json.loads((corpus / "corpus.json").read_text())
-    _, expected_commit = manifest_identity("fex")
     if (
         metadata.get("schema") != 1
         or metadata.get("mode") != "x86-64"
@@ -1521,8 +1482,12 @@ def main() -> int:
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
 
-    _, k_commit = manifest_identity("x86-k-semantics")
-    verify_checkout(arguments.k_source.resolve(), k_commit, "K x86 semantics")
+    try:
+        _, k_commit = manifest_identity("x86-k-semantics")
+        _, fex_commit = manifest_identity("fex")
+        verify_checkout(arguments.k_source.resolve(), k_commit, "K x86 semantics")
+    except ValueError as error:
+        fail(str(error))
     tools = {
         "clang": resolve_tool("UML_X86_CORPUS_CLANG", "/opt/homebrew/opt/llvm/bin/clang"),
         "linker": resolve_tool("UML_X86_CORPUS_LINKER", "ld.lld"),
@@ -1569,7 +1534,7 @@ def main() -> int:
         )
         k_records = collect_k_records(programs, native)
         fex_records, fex_exclusions = collect_fex_records(
-            arguments.fex_corpus.resolve(), tools["llvm_mc"]
+            arguments.fex_corpus.resolve(), tools["llvm_mc"], fex_commit
         )
         exclusions.extend(fex_exclusions)
         repository_identity = verify_repository_cases(
@@ -1584,7 +1549,7 @@ def main() -> int:
             records,
             exclusions,
             {
-                "fex_commit": manifest_identity("fex")[1],
+                "fex_commit": fex_commit,
                 "fex_corpus_sha256": sha256_file(arguments.fex_corpus / "corpus.json"),
                 "k_commit": k_commit,
                 "native_oracle": native_identity,

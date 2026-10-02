@@ -6,11 +6,8 @@ SCRIPT=${1:?XCFramework build script is required}
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-xcframework-destination.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test_xcframework_destination.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test_xcframework_destination.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 INVALID_OUTPUT="$TEST_ROOT/not-a-package"
 if UML_XCFRAMEWORK_BUILD_DIR="$TEST_ROOT/build" \

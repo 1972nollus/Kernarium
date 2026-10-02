@@ -566,12 +566,12 @@ class VulkanGuestRootfsTests(unittest.TestCase):
                 sealer.verify_mesa_build_stage(source, build, stage, build.parent / "venus-protocol")
 
     def test_gl_sealer_derives_only_xml_referenced_scope_and_checks_runner(self) -> None:
-        import test_opengl_cts_plan as fixtures
+        import test_run_vk_gl_cts as fixtures
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             stage, source = root / "stage", root / "source"
-            files = fixtures.fixture()
+            files = fixtures.opengl_mustpass_files()
             for name, payload in files.items():
                 path = stage / name.lstrip("/")
                 path.parent.mkdir(parents=True, exist_ok=True)

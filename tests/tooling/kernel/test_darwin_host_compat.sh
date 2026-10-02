@@ -9,11 +9,8 @@ COMPAT_INCLUDE="$COMPAT_ROOT/include"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-darwin-host-compat.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test_darwin_host_compat.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test_darwin_host_compat.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 HOST_CC=$(command -v cc) || fail "cc is unavailable"
 

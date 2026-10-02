@@ -4,8 +4,7 @@ This producer builds a Debian 13 amd64 Steam appliance with Gamescope,
 Xwayland, and Valve's own native x86-64 Linux Steam client started with
 `-gamepadui`. It installs no desktop environment and no compatibility tool:
 the guest runs the client Valve ships for this architecture, and Steam manages
-Proton itself. Its storage, session, splash and launch contract live in
-[`../steam-common`](../steam-common).
+Proton itself.
 
 The image has no i386 multiarch and no 32-bit system loader. Valve's current
 Linux client publishes a native 64-bit `steamrt64/steam`, so the image launcher
@@ -70,6 +69,12 @@ never enters the image. A builder prepared before the backend existed lacks
 
 ## Image and startup contract
 
+`overlay/` holds what the producer adds to the Debian root: the image-owned
+init and its storage preparation, the Gamescope session and its supervisor, the
+`steam` launcher, the splash hand-off unit and service, and the V4L2 decoder
+discovery rule. `splash/` is the C++20 Kernarium boot and installation
+renderer; its build refuses to run outside the verified builder root.
+
 The output carries SHA-256, package and binary inventories, and input
 provenance sidecars. The audit requires the native x86-64 Steam client and web
 helper, Gamescope, the splash renderer, the GTK/OpenAL/libnm aliases the native
@@ -99,12 +104,17 @@ when the X window `Steam Big Picture Mode` becomes viewable.
 
 ## Video decode boundary
 
-Big Picture's startup movie is decoded in software; the
-[shared assets](../steam-common/README.md#the-startup-movie-is-decoded-in-software)
-record why. Valve's x86-64 CEF has no stateful V4L2 decoder, so
-`/dev/video-dec0` is never a candidate for it and its only hardware path is
-VA-API. Neither Debian nor upstream has a VA driver for this device, so the
-image builds and installs its own,
+Big Picture plays `steamui/movies/bigpicture_startup.webm`, a VP9 Profile 0
+movie, on every start of this device profile, and decodes it in software.
+Valve's x86-64 CEF has no stateful V4L2 decoder, so `/dev/video-dec0` is never
+a candidate for it and its only hardware path is VA-API. Chromium's VA-API
+decode pipeline needs dma-buf-backed NV12 frames, and the guest's
+Zink-on-Venus GBM does not export dma-bufs, so it advertises no decode
+configuration; the decoder node, its udev rule and the device's VP9
+advertisement are not the blocker.
+
+Neither Debian nor upstream has a VA driver for this device, so the image
+builds and installs its own,
 [`tools/video/va-v4l2`](../../video/va-v4l2/README.md#in-the-steam-x86-64-image),
 which also records how the session selects it.
 

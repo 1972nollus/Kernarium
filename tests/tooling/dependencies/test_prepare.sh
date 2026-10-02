@@ -8,11 +8,8 @@ PATCH_SERIES="$DEPENDENCY_DIR/../scripts/patch_series.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-prepare.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test-prepare.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test-prepare.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 sha256_file()
 {
@@ -40,19 +37,6 @@ verify()
 	UML_DEPENDENCY_MANIFEST="$MANIFEST" \
 	UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
 		"$PREPARE" --product fixture --root "$1" --cache "$CACHE" --verify
-}
-
-expect_failure()
-{
-	description=$1
-	shift
-	FAILURE_NUMBER=$((FAILURE_NUMBER + 1))
-	if "$@" >"$TEST_ROOT/rejected-$FAILURE_NUMBER.out" \
-		2>"$TEST_ROOT/rejected-$FAILURE_NUMBER.err"; then
-		fail "$description was incorrectly accepted"
-	fi
-	[ -s "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ] ||
-		fail "$description was rejected without a diagnostic"
 }
 
 # Hash-pinned archive acquisition publishes only authenticated bytes and
@@ -85,7 +69,6 @@ cmp "$TEST_ROOT/archive-payload" \
 	"$TEST_ROOT/archive-cache/archives/$ARCHIVE_SHA-fixture.deb" >/dev/null ||
 	fail "archive publication changed authenticated bytes"
 printf corrupt >"$TEST_ROOT/archive-cache/archives/$ARCHIVE_SHA-fixture.deb"
-FAILURE_NUMBER=0
 expect_failure 'corrupt cached archive' "$PREPARE" \
 	--archive-manifest "$ARCHIVE_MANIFEST" --cache "$TEST_ROOT/archive-cache" --verify
 expect_failure 'absent offline archive' "$PREPARE" \
