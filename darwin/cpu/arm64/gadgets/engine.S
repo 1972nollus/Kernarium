@@ -124,9 +124,6 @@ _uml_arm64_gadget_region_\part:
 	gadget_bank_bounds begin
 #include "engine/core_integer.inc"
 #include "engine/afp_twin.inc"
-/* Keep the FP/SIMD bank on its established 64-byte cache-line phase after
- * factoring the native-environment cold path into one shared routine. */
-.space 16
 #include "engine/floating_simd.inc"
 #include "engine/system_atomic.inc"
 #include "engine/load_store.inc"

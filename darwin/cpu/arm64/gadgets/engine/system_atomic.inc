@@ -1,8 +1,3 @@
-/* Unreachable padding where the FEAT_GCS GCSPUSHM/GCSPOPM/GCSSS1/GCSSS2 and
- * GCSSTR/GCSSTTR entries were: the virtual CPU does not implement FEAT_GCS,
- * so those words are UNDEFINED. */
-removed_gadget 768
-
 /* DC ZVA is fixed at 64 bytes by the virtual DCZID_EL0. Translation selects
  * the real-register and XZR forms, and the 64-byte alignment guarantees that
  * one successful guest-page TLB lookup covers every store. Stream:
@@ -119,11 +114,6 @@ gadget sysreg_cntvctss_read
 	mrs x9, s3_3_c14_c0_6	/* CNTVCTSS_EL0 */
 	str x9, [_cpu, x8]
 	next_gadget
-
-/* Unreachable padding where the FEAT_MOPS+FEAT_MTE SETG* entries and the
- * FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP entries were, less the 32 bytes of
- * sysreg_cntvctss_read above. */
-removed_gadget 2656
 
 gadget pc_relative
 	ldr x8, [_stream], #8
@@ -338,8 +328,6 @@ gadget pstate_\name\()_\value
 .endm
 
 pstate_store_field dit, UML_GADGET_CPU_PSTATE_DIT
-/* Unreachable padding where the FEAT_MTE PSTATE.TCO entries were. */
-removed_gadget 32
 
 .purgem pstate_store_field
 .purgem pstate_store
@@ -734,9 +722,6 @@ gadget simd_structure_\name
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
 	ubfx x7, x20, #0, #56
 	b .Lsimd_structure_translate\@
-	/* Unreachable padding where the FEAT_MTE tag-check branch and the slow
-	 * path's tag-check flag were, so later entries keep their addresses. */
-	.space 8
 	.endif
 
 .Lsimd_structure_slow\@:
@@ -787,8 +772,6 @@ gadget simd_structure_\name
 .Lsimd_structure_fault\@:
 	add sp, sp, #80
 	b uml_arm64_gadget_memory_fault
-	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
-	.space 8
 
 	.if \base_sp
 .Lsimd_structure_alignment\@:
@@ -943,8 +926,6 @@ gadget simd_replicate_\name
 	.endif
 	ubfx x7, x21, #0, #56
 	b .Lsimd_replicate_translate\@
-	/* Unreachable padding where the FEAT_MTE tag-check branch was. */
-	.space 4
 	.endif
 
 .Lsimd_replicate_slow\@:
@@ -994,8 +975,6 @@ gadget simd_replicate_\name
 .Lsimd_replicate_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
-	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
-	.space 4
 
 	.if \base_sp
 .Lsimd_replicate_alignment\@:
@@ -1138,8 +1117,6 @@ gadget simd_lane_\name
 	.endif
 	ubfx x7, x21, #0, #56
 	b .Lsimd_lane_translate\@
-	/* Unreachable padding where the FEAT_MTE tag-check branch was. */
-	.space 4
 	.endif
 
 .Lsimd_lane_slow\@:
@@ -1188,8 +1165,6 @@ gadget simd_lane_\name
 .Lsimd_lane_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
-	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
-	.space 4
 
 	.if \base_sp
 .Lsimd_lane_alignment\@:

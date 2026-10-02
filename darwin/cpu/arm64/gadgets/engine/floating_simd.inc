@@ -2151,17 +2151,6 @@ afp_twins_end
 
 .purgem floating_fused
 
-/* Unreachable padding where the ordinary vector FMLA/FMLS entries (4h, 8h,
- * 2s, 4s and 2d of each) and their seven forwarding variants each were:
- * FMLA/FMLS accumulate into Vd, so every one takes the in-place family,
- * which bakes Vd. */
-.rept 10
-removed_gadget 64
-.endr
-.rept 70
-removed_vector_forward_gadget 64
-.endr
-
 /* Translation-specialized vector FABS/FNEG. Valid guest programs execute with
  * no opcode, precision, or Q decode branches. */
 /* Only FPCR.AH changes these, so the base entries need no guest FP

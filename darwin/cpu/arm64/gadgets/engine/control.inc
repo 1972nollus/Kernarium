@@ -23,9 +23,6 @@ gadget breakpoint
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
 	b uml_arm64_gadget_leave
 
-/* Unreachable padding where the FEAT_GCS fault exit was. */
-removed_gadget 32
-
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
  * target points at the one-word {link_exit} stream in front of it, so the hot
  * path needs no linked/unlinked test. Resolved edges defer the architectural PC store
@@ -54,11 +51,6 @@ gadget link_exit
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
-
-/* Unreachable padding where the inlined-call entries were, so every later
- * entry keeps the address it was measured at. */
-	.p2align 4
-	.space 64
 
 /*
  * A block that accesses FP/SIMD state keeps this entry word in front of its
@@ -189,15 +181,10 @@ gadget return
 	b 98f
 97:
 	.endif
-	/* The target table is consulted out of line; the unreachable padding
-	 * keeps every later entry at the address it was measured at. */
+	/* The target table is consulted out of line. */
 	b .Ltarget_tier\@
-	.space 12
 98:
 	follow_block_link x12
-	/* Unreachable padding that keeps every later entry at the address
-	 * it was measured at. */
-	.space 24
 	/* Every site of the address space shares one direct-mapped table of
 	 * {target, BlockLink}, filled by the cold helper at each miss, so a
 	 * target any site has missed on before is followed without a round
@@ -248,10 +235,6 @@ gadget return_cached
 .purgem follow_indirect_link
 .purgem train_indirect_cell
 .purgem push_return_record
-
-/* Unreachable padding where the FEAT_PAuth authenticated branches and the
- * FEAT_GCS guarded authenticated calls and returns were. */
-removed_gadget 2432
 
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop

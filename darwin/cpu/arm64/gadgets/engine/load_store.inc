@@ -1,68 +1,6 @@
 gadget nop
 	next_gadget
 
-/* Unreachable padding in place of the FEAT_MTE allocation-tag-checked paths
- * that the vector and pair transfer entries carried, so every later entry
- * keeps the address and 64-byte phase it was measured at. Each size is the
- * removed path's instruction count. */
-.macro removed_tag_checked_vector load, writeback
-	.set .Lrtc\@, 22
-	.if \load
-	.set .Lrtc\@, .Lrtc\@ + 2
-	.endif
-	.if \writeback
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.space 4 * .Lrtc\@
-.endm
-
-.macro removed_tag_checked_vector_pair load, bytes, mode
-	.set .Lrtc\@, 23
-	.if \load
-	.set .Lrtc\@, .Lrtc\@ + 3
-	.if \bytes == 4 || \bytes == 8
-	.set .Lrtc\@, .Lrtc\@ + 5
-	.endif
-	.elseif \bytes == 4 || \bytes == 8
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.if \mode == 1 || \mode == 2
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.space 4 * .Lrtc\@
-.endm
-
-/* The pair entries also lose their hot-path MTE branches: one for a GPR
- * base, two for an SP base with writeback. */
-.macro removed_tag_checked_pair load, bytes, sign_extend, mode, first_zero, second_zero, sp_base
-	.if !\sp_base || \mode != 0
-	.set .Lrtc\@, 18
-	.if \sp_base
-	.set .Lrtc\@, .Lrtc\@ + 2
-	.else
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.if \load
-	.set .Lrtc\@, .Lrtc\@ + 2
-	.if !\first_zero
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.if !\second_zero
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.if \bytes == 4 && \sign_extend
-	.set .Lrtc\@, .Lrtc\@ + 2
-	.endif
-	.else
-	.set .Lrtc\@, .Lrtc\@ + 3
-	.endif
-	.if \mode == 1 || \mode == 2
-	.set .Lrtc\@, .Lrtc\@ + 1
-	.endif
-	.space 4 * .Lrtc\@
-	.endif
-.endm
-
 /* Literal form invariants are resolved while translating. Operand bits 15:0
  * are the CpuState destination byte offset; bits 63:16 are the signed PC
  * displacement. The following word is the guest PC used for address formation
@@ -326,36 +264,16 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 .endm
 
 /* A word or doubleword transfer of a register takes the in-place family,
- * which bakes the register, so only XZR still selects these shared entries.
- * Unreachable padding stands where the register (_r, _r_sp) entries and
- * their forwarding variants were; the 16 KiB transfer tail is one granule
- * longer. A store's register entry had three forwarding variants. */
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-.set .Lunsigned_removed_tail, 16
-#else
-.set .Lunsigned_removed_tail, 0
-#endif
-.macro scalar_unsigned_modes load, bits64, name, r_bytes, r_sp_bytes, forward_bytes
-removed_gadget \r_bytes + .Lunsigned_removed_tail
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-	.if !\load
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-	.endif
+ * which bakes the register, so only XZR still selects these shared entries. */
+.macro scalar_unsigned_modes load, bits64, name
 scalar_unsigned_fast \load, \bits64, 1, 0, \name\()_z
-removed_gadget \r_sp_bytes + .Lunsigned_removed_tail
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-	.if !\load
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
-	.endif
 scalar_unsigned_fast \load, \bits64, 1, 1, \name\()_z_sp
 .endm
 
-scalar_unsigned_modes 1, 0, load32_unsigned_fast, 224, 224, 240
-scalar_unsigned_modes 1, 1, load64_unsigned_fast, 224, 224, 240
-scalar_unsigned_modes 0, 0, store32_unsigned_fast, 224, 208, 224
-scalar_unsigned_modes 0, 1, store64_unsigned_fast, 224, 208, 224
+scalar_unsigned_modes 1, 0, load32_unsigned_fast
+scalar_unsigned_modes 1, 1, load64_unsigned_fast
+scalar_unsigned_modes 0, 0, store32_unsigned_fast
+scalar_unsigned_modes 0, 1, store64_unsigned_fast
 
 .purgem scalar_unsigned_modes
 
@@ -558,20 +476,20 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 .Lvector_unsigned_translate\@:
 	.endif
 	.if \load
-	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
 	.if \load
-	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward
 	.else
-	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward, 1
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_unsigned_cross\@, \forward
 	.endif
 
 .Lvector_unsigned_cross\@:
@@ -590,9 +508,6 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x7, x7, #0, #56
 	b .Lvector_unsigned_translate\@
-	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
-	 * path was, so every later entry keeps its address. */
-	removed_tag_checked_vector \load, 0
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_read\@:
@@ -1054,11 +969,11 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 .Lvector_other_immediate_translate\@:
 	mov x7, x26
 	.if \load
-	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
@@ -1068,9 +983,9 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	add _stream, _stream, #8
 	next_gadget
 	.if \load
-	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward
 	.else
-	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward, 1
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_immediate_cross\@, \forward
 	.endif
 
 .Lvector_other_immediate_cross\@:
@@ -1092,9 +1007,6 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x26, x26, #0, #56
 	b .Lvector_other_immediate_translate\@
-	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
-	 * path was, so every later entry keeps its address. */
-	removed_tag_checked_vector \load, (\mode == 1 || \mode == 2)
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_read\@:
@@ -1164,20 +1076,20 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 .Lvector_other_register_translate\@:
 	mov x7, x26
 	.if \load
-	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward
 	\instruction \host_register\()0, [x7]
 	str q0, [_cpu, x19]
 	.else
-	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward
 	ldr q0, [_cpu, x19]
 	\instruction \host_register\()0, [x7]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
 	.if \load
-	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	transfer_translate_cold 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward
 	.else
-	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward, 1
+	transfer_translate_cold 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lvector_other_register_cross\@, \forward
 	.endif
 
 .Lvector_other_register_cross\@:
@@ -1195,9 +1107,6 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x26, x26, #0, #56
 	b .Lvector_other_register_translate\@
-	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
-	 * path was, so every later entry keeps its address. */
-	removed_tag_checked_vector \load, 0
 	.if \forward
 .Lscalar_forward_alignment_read\@:
 	b .Lscalar_alignment_fault_read
@@ -1369,10 +1278,6 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	next_gadget
 
-	/* Unreachable padding where the FEAT_MTE tag-check branches and the
-	 * allocation-tag-checked path were, so every later entry keeps its
-	 * address. */
-	removed_tag_checked_pair \load, \bytes, \sign_extend, \mode, \first_zero, \second_zero, \sp_base
 	.if \forward
 .Lscalar_forward_alignment_pair_read\@:
 	b uml_arm64_gadget_pair_alignment_fault_read_indexed
@@ -1521,9 +1426,6 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x19, x19, #0, #56
 	b .Lvector_pair_translate\@
-	/* Unreachable padding where the FEAT_MTE allocation-tag-checked path
-	 * was, so every later entry keeps its address. */
-	removed_tag_checked_vector_pair \load, \bytes, \mode
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_pair_read\@:
@@ -1597,14 +1499,6 @@ uml_arm64_gadget_pair_alignment_fault_write_indexed:
 	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
-
-/* Unreachable padding where the FEAT_PAuth LDRAA and LDRAB entries were; the
- * 16 KiB translation made them longer. */
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-removed_gadget 4192
-#else
-removed_gadget 3988
-#endif
 
 uml_arm64_gadget_memory_fault:
 	ldr x8, [_stream]
