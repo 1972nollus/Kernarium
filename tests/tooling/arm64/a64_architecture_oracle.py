@@ -32,6 +32,20 @@ FEATURE_EXPRESSION = re.compile(
 UNDEF_GUARD = re.compile(r"if (.+) then EndOfDecode\(Decode_UNDEF\); end;\Z")
 GUARD_FEATURE = re.compile(r"!IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)\Z")
 GUARD_FIELD = re.compile(r"([A-Za-z][A-Za-z0-9_]*) (==|!=) '([01x]+)'\Z")
+# Decode statements the pinned XML transcribes wrongly, as (wrong, right).
+# FCMLA (by element) guards FEAT_FP16 on size == '10', the single-precision
+# arrangement by the file's own <Ts> table. DDI 0487G.a C7.2.62 decodes it
+# as "esize = 8 << UInt(size); if !HaveFP16Ext() && esize == 16 then
+# UNDEFINED;", which is size == '01', the half-precision arrangement, as in
+# FCMLA (vector) and FCADD.
+DECODE_ERRATA = {
+    "fcmla_advsimd_elt.xml": (
+        "if !IsFeatureImplemented(FEAT_FP16) && size == '10' then "
+        "EndOfDecode(Decode_UNDEF); end;",
+        "if !IsFeatureImplemented(FEAT_FP16) && size == '01' then "
+        "EndOfDecode(Decode_UNDEF); end;",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -309,7 +323,9 @@ def _matching_table_features(
 
 
 def _decode_feature_guards(
-    instruction_class: ET.Element, fields: dict[str, tuple[int, int]]
+    filename: str,
+    instruction_class: ET.Element,
+    fields: dict[str, tuple[int, int]],
 ) -> tuple[tuple[str, tuple[FieldConstraint, ...]], ...]:
     """Return field-conditional feature requirements from the decode ASL.
 
@@ -322,7 +338,7 @@ def _decode_feature_guards(
     feature and its field conditions.  Top-level unconditional guards only
     repeat the declared features.  Statements nested in a case arm, which
     also depend on their selector, and other shapes (IN sets, disjunctions)
-    are not read.
+    are not read.  DECODE_ERRATA corrects statements the XML gets wrong.
     """
     text = "\n".join(
         "".join(element.itertext())
@@ -330,6 +346,11 @@ def _decode_feature_guards(
             ".//pstext[@section='Decode']"
         )
     )
+    if filename in DECODE_ERRATA:
+        wrong, right = DECODE_ERRATA[filename]
+        if text.count(wrong) != 1:
+            raise ValueError(f"{filename}: decode erratum no longer applies")
+        text = text.replace(wrong, right)
     result: list[tuple[str, tuple[FieldConstraint, ...]]] = []
     for line in text.splitlines():
         statement = UNDEF_GUARD.fullmatch(line)
@@ -482,7 +503,7 @@ class ArchitectureCatalog:
                         )
                     ),
                     feature_guards=_decode_feature_guards(
-                        instruction_class, all_fields
+                        filename, instruction_class, all_fields
                     ),
                 )
                 if not variant.encoding:
