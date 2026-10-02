@@ -522,3 +522,18 @@ on the Mac, and landed only when every probe and workload was neutral or faster.
 | --- | --- |
 | Select native FHM, BF16, FP8, and half-precision dot and matrix gadgets on hosts without FEAT_AFP | Accepted. The gates ran these families through software helpers so that a guest's FPCR.AH, FIZ, or NEP would behave as on a CPU with FEAT_AFP. The guest can no longer set those bits, so the native instructions are exact. On the gadget engine FMLAL fell from 110 to 1.3 ns per instruction on the M1 and from 115 to 1.1 ns on the A15. BFMLALB fell from 15.4 to 1.2 ns and BFCVTN from 14.3 to 1.0 ns on the A15. A half-precision dot kernel that dispatches on the FHM hwcap ran 31 times faster, and over 16 counterbalanced A15 launches gcc stayed level and llc ran 2 percent faster. A software fallback that exists only to model a RES0 control should go with that control. |
 | Select native BFDOT and BFMMLA gadgets on hosts without FEAT_EBF16 | Accepted. With FPCR.EBF RES0 these instructions ignore FPCR: they round to odd, flush subnormals, and return the default NaN, as the A15 does. On the A15 BFDOT fell from 180 to 1.2 ns and BFMMLA from 234 to 1.5 ns, and BF16 GEMV and GEMM kernels ran 38 and 24 times faster. Every rounding mode and DN, FZ, and FZ16 state, with corpus and random operands, matched the software model bit for bit, which then lost its extended-behavior path. |
+
+## Advertised arm64 extensions
+
+An extension that both engines could execute was kept only if a workload that
+uses it ran faster with it advertised and no other workload ran slower, over
+16 or more counterbalanced launches: gadgets on the iPad's A15 and the JIT on
+the M1, or both engines on the M1 for JSCVT, which the A15 already advertised.
+A private build withheld the hwcap and ID-register fields, so both arms ran
+identical code.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Advertise FEAT_JSCVT wherever the host has it | Accepted. V8 lowers ECMAScript ToInt32 to FJCVTZS when the hwcap is set. Withholding it on the M1 made a ToInt32 loop 30 percent slower on the JIT and twice as slow on gadgets, and an image kernel 6 percent slower on the JIT. The M1's flushed-subnormal Z flag, the reason it had been withheld, was already corrected by both engines. |
+| Advertise FEAT_MOPS on every host | Accepted. glibc 2.41 selects its MOPS memcpy, memmove and memset from the hwcap. On A15 gadgets, withholding it made copies of 256 bytes and more 1.8 to 12 times slower and a tar, git and copy workload 11 percent slower, with gcc, llc and shell level. On the M1 JIT the first version ended the block at every prologue, main and epilogue sequence, which made a 16-byte memcpy five times slower. Running page-contained transfers inline made every size faster; withholding the feature then made gcc and llc 4 and 5 percent slower, with 95 percent intervals reaching zero. A JIT helper that ends the block costs as much as a small copy, so an operation that a C library calls for every string needs an inline path before it is advertised. Under heavy host load the Mac's wall times varied by a third between repetitions; the minimum of seven repetitions per launch resolved a few percent where the median of three did not. |
+| Advertise FEAT_CSSC on every host | Accepted. A kernel of popcounts, trailing-zero counts, absolute values and integer minima and maxima built with `-march=armv8.9-a` ran 33 percent faster than its `armv8.5-a` build on A15 gadgets and 5 percent faster on the M1 JIT, which runs CSSC as short base sequences. Advertising it only tells software that checks the hwcap, such as FEX, that the instructions exist. |

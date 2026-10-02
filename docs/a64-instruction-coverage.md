@@ -31,6 +31,11 @@ Linux gives EL0 no physical count. A counter value cannot be pinned in the
 corpus, so `arm64-base-system-registers` and the guest HWCAP sanity payload
 check it on each host.
 
+FEAT_JSCVT is advertised exactly where the host implements it. Both engines
+run FJCVTZS with the host's instruction and correct the Z flag that some
+cores, such as the M1, set for a positive subnormal that FPCR.FZ flushes. The
+guest HWCAP sanity payload checks FJCVTZS on its special inputs.
+
 FEAT_CSSC is implemented on every host. Both engines execute ABS, CNT, CTZ,
 and the integer minimum and maximum natively where the host has the extension
 and otherwise as short sequences of base instructions, so HWCAP2_CSSC and
