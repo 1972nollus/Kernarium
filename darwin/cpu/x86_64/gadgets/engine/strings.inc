@@ -3,117 +3,117 @@
 
 .macro string_source_address
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
-	tbnz x23, #3, .Lx86_string_source_16\@
-	tbz x23, #0, .Lx86_string_source_64\@
+	tbnz x23, #3, Lx86_string_source_16\@
+	tbz x23, #0, Lx86_string_source_64\@
 	mov w25, w25
-	b .Lx86_string_source_64\@
-.Lx86_string_source_16\@:
+	b Lx86_string_source_64\@
+Lx86_string_source_16\@:
 	uxth w25, w25
-.Lx86_string_source_64\@:
+Lx86_string_source_64\@:
 	ubfx w8, w23, #1, #2
 	cmp w8, #1
-	b.ne .Lx86_string_source_not_fs\@
+	b.ne Lx86_string_source_not_fs\@
 	ldr x9, [_cpu, #UML_X86_64_CPU_FS_BASE]
 	add x25, x25, x9
-	b .Lx86_string_source_done\@
-.Lx86_string_source_not_fs\@:
+	b Lx86_string_source_done\@
+Lx86_string_source_not_fs\@:
 	cmp w8, #2
-	b.ne .Lx86_string_source_done\@
+	b.ne Lx86_string_source_done\@
 	ldr x9, [_cpu, #UML_X86_64_CPU_GS_BASE]
 	add x25, x25, x9
-.Lx86_string_source_done\@:
+Lx86_string_source_done\@:
 .endm
 
 .macro string_destination_address
 	ldr x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
-	tbnz x23, #3, .Lx86_string_destination_16\@
-	tbz x23, #0, .Lx86_string_destination_64\@
+	tbnz x23, #3, Lx86_string_destination_16\@
+	tbz x23, #0, Lx86_string_destination_64\@
 	mov w26, w26
-	b .Lx86_string_destination_64\@
-.Lx86_string_destination_16\@:
+	b Lx86_string_destination_64\@
+Lx86_string_destination_16\@:
 	uxth w26, w26
-.Lx86_string_destination_64\@:
+Lx86_string_destination_64\@:
 .endm
 
 .macro string_load width, load, host_register, address, destination
 	mov x7, x\address
-	page_cross_check (\width / 8), .Lx86_string_load_cross\@
+	page_cross_check (\width / 8), Lx86_string_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()\destination, [x7]
-	b .Lx86_string_load_done\@
-.Lx86_string_load_cross\@:
+	b Lx86_string_load_done\@
+Lx86_string_load_cross\@:
 	mov x0, _context
 	mov x1, x\address
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
-.Lx86_string_load_done\@:
+Lx86_string_load_done\@:
 .endm
 
 .macro string_store width, store, host_register
 	mov x7, x26
-	page_cross_check (\width / 8), .Lx86_string_store_cross\@
+	page_cross_check (\width / 8), Lx86_string_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_string_store_done\@
-.Lx86_string_store_cross\@:
+	b Lx86_string_store_done\@
+Lx86_string_store_cross\@:
 	mov x0, _context
 	mov x1, x26
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_string_store_done\@:
+	cbz w0, Lx86_memory_fault
+Lx86_string_store_done\@:
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbz w8, .Lx86_string_store_check_overlap\@
+	cbz w8, Lx86_string_store_check_overlap\@
 	publish_pending_code x26, (\width / 8)
 	orr x23, x23, #0x100000000
-	b .Lx86_string_store_ready\@
-.Lx86_string_store_check_overlap\@:
+	b Lx86_string_store_ready\@
+Lx86_string_store_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x26, x8
-	b.hs .Lx86_string_store_ready\@
+	b.hs Lx86_string_store_ready\@
 	add x9, x26, #(\width / 8)
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
-	b.ls .Lx86_string_store_ready\@
+	b.ls Lx86_string_store_ready\@
 	mov x0, _context
 	mov x1, x26
 	bl NAME(uml_x86_64_gadget_invalidate_code)
 	orr x23, x23, #0x100000000
-.Lx86_string_store_ready\@:
+Lx86_string_store_ready\@:
 .endm
 
 .macro string_update_pointer width, offset
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	tbnz x9, #10, .Lx86_string_pointer_decrement\@
-	tbnz x23, #3, .Lx86_string_pointer_increment_16\@
-	tbz x23, #0, .Lx86_string_pointer_increment_64\@
+	tbnz x9, #10, Lx86_string_pointer_decrement\@
+	tbnz x23, #3, Lx86_string_pointer_increment_16\@
+	tbz x23, #0, Lx86_string_pointer_increment_64\@
 	add w8, w8, #(\width / 8)
 	mov w8, w8
-	b .Lx86_string_pointer_store\@
-.Lx86_string_pointer_increment_16\@:
+	b Lx86_string_pointer_store\@
+Lx86_string_pointer_increment_16\@:
 	add w10, w8, #(\width / 8)
 	bfi x8, x10, #0, #16
-	b .Lx86_string_pointer_store\@
-.Lx86_string_pointer_increment_64\@:
+	b Lx86_string_pointer_store\@
+Lx86_string_pointer_increment_64\@:
 	add x8, x8, #(\width / 8)
-	b .Lx86_string_pointer_store\@
-.Lx86_string_pointer_decrement\@:
-	tbnz x23, #3, .Lx86_string_pointer_decrement_16\@
-	tbz x23, #0, .Lx86_string_pointer_decrement_64\@
+	b Lx86_string_pointer_store\@
+Lx86_string_pointer_decrement\@:
+	tbnz x23, #3, Lx86_string_pointer_decrement_16\@
+	tbz x23, #0, Lx86_string_pointer_decrement_64\@
 	sub w8, w8, #(\width / 8)
 	mov w8, w8
-	b .Lx86_string_pointer_store\@
-.Lx86_string_pointer_decrement_16\@:
+	b Lx86_string_pointer_store\@
+Lx86_string_pointer_decrement_16\@:
 	sub w10, w8, #(\width / 8)
 	bfi x8, x10, #0, #16
-	b .Lx86_string_pointer_store\@
-.Lx86_string_pointer_decrement_64\@:
+	b Lx86_string_pointer_store\@
+Lx86_string_pointer_decrement_64\@:
 	sub x8, x8, #(\width / 8)
-.Lx86_string_pointer_store\@:
+Lx86_string_pointer_store\@:
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + \offset)]
 .endm
 
@@ -125,49 +125,49 @@
  */
 .macro string_forward_copy shift
 	cmp x11, #64
-	b.lo .Lx86_copy_tail32\@
-.Lx86_copy_block\@:
+	b.lo Lx86_copy_tail32\@
+Lx86_copy_block\@:
 	ldp q0, q1, [x0], #32
 	ldp q2, q3, [x0], #32
 	stp q0, q1, [x1], #32
 	stp q2, q3, [x1], #32
 	sub x11, x11, #64
 	cmp x11, #64
-	b.hs .Lx86_copy_block\@
-.Lx86_copy_tail32\@:
+	b.hs Lx86_copy_block\@
+Lx86_copy_tail32\@:
 	/* What the block loop left is under 64 bytes, so the low bits of the
 	 * count select the remaining transfers directly. An element wider than a
 	 * tail cannot leave that tail behind, so those fold away here.
 	 */
-	tbz x11, #5, .Lx86_copy_tail16\@
+	tbz x11, #5, Lx86_copy_tail16\@
 	ldp q0, q1, [x0], #32
 	stp q0, q1, [x1], #32
-.Lx86_copy_tail16\@:
-	tbz x11, #4, .Lx86_copy_tail8\@
+Lx86_copy_tail16\@:
+	tbz x11, #4, Lx86_copy_tail8\@
 	ldr q0, [x0], #16
 	str q0, [x1], #16
-.Lx86_copy_tail8\@:
-	tbz x11, #3, .Lx86_copy_tail4\@
+Lx86_copy_tail8\@:
+	tbz x11, #3, Lx86_copy_tail4\@
 	ldr x8, [x0], #8
 	str x8, [x1], #8
-.Lx86_copy_tail4\@:
+Lx86_copy_tail4\@:
 	.if \shift <= 2
-	tbz x11, #2, .Lx86_copy_tail2\@
+	tbz x11, #2, Lx86_copy_tail2\@
 	ldr w8, [x0], #4
 	str w8, [x1], #4
-.Lx86_copy_tail2\@:
+Lx86_copy_tail2\@:
 	.endif
 	.if \shift <= 1
-	tbz x11, #1, .Lx86_copy_tail1\@
+	tbz x11, #1, Lx86_copy_tail1\@
 	ldrh w8, [x0], #2
 	strh w8, [x1], #2
-.Lx86_copy_tail1\@:
+Lx86_copy_tail1\@:
 	.endif
 	.if \shift == 0
-	tbz x11, #0, .Lx86_copy_done\@
+	tbz x11, #0, Lx86_copy_done\@
 	ldrb w8, [x0]
 	strb w8, [x1]
-.Lx86_copy_done\@:
+Lx86_copy_done\@:
 	.endif
 .endm
 
@@ -188,37 +188,37 @@
 	.endif
 	umov x8, v0.d[0]
 	cmp x11, #64
-	b.lo .Lx86_fill_tail32\@
-.Lx86_fill_block\@:
+	b.lo Lx86_fill_tail32\@
+Lx86_fill_block\@:
 	stp q0, q0, [x1], #32
 	stp q0, q0, [x1], #32
 	sub x11, x11, #64
 	cmp x11, #64
-	b.hs .Lx86_fill_block\@
-.Lx86_fill_tail32\@:
-	tbz x11, #5, .Lx86_fill_tail16\@
+	b.hs Lx86_fill_block\@
+Lx86_fill_tail32\@:
+	tbz x11, #5, Lx86_fill_tail16\@
 	stp q0, q0, [x1], #32
-.Lx86_fill_tail16\@:
-	tbz x11, #4, .Lx86_fill_tail8\@
+Lx86_fill_tail16\@:
+	tbz x11, #4, Lx86_fill_tail8\@
 	str q0, [x1], #16
-.Lx86_fill_tail8\@:
-	tbz x11, #3, .Lx86_fill_tail4\@
+Lx86_fill_tail8\@:
+	tbz x11, #3, Lx86_fill_tail4\@
 	str x8, [x1], #8
-.Lx86_fill_tail4\@:
+Lx86_fill_tail4\@:
 	.if \shift <= 2
-	tbz x11, #2, .Lx86_fill_tail2\@
+	tbz x11, #2, Lx86_fill_tail2\@
 	str w8, [x1], #4
-.Lx86_fill_tail2\@:
+Lx86_fill_tail2\@:
 	.endif
 	.if \shift <= 1
-	tbz x11, #1, .Lx86_fill_tail1\@
+	tbz x11, #1, Lx86_fill_tail1\@
 	strh w8, [x1], #2
-.Lx86_fill_tail1\@:
+Lx86_fill_tail1\@:
 	.endif
 	.if \shift == 0
-	tbz x11, #0, .Lx86_fill_done\@
+	tbz x11, #0, Lx86_fill_done\@
 	strb w8, [x1]
-.Lx86_fill_done\@:
+Lx86_fill_done\@:
 	.endif
 .endm
 
@@ -236,35 +236,35 @@
 gadget string_\operation\()_\width
 	ldp x23, x22, [_stream], #16
 	ubfx w8, w23, #8, #8
-	cbz w8, .Lx86_string_nonrepeating\@
+	cbz w8, Lx86_string_nonrepeating\@
 	/* Long REP operations must periodically return to the executor so an
 	 * MMU mapping-change interrupt can release its execution read gate, and
 	 * so the dispatch can charge the work to its instruction budget. */
 	mov w9, #UML_X86_64_STRING_REPEAT_BUDGET
 	str w9, [sp, #0x68]
-	tbnz x23, #3, .Lx86_string_count_16\@
-	tbz x23, #0, .Lx86_string_count_64\@
+	tbnz x23, #3, Lx86_string_count_16\@
+	tbz x23, #0, Lx86_string_count_64\@
 	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	b .Lx86_string_count_ready\@
-.Lx86_string_count_16\@:
+	b Lx86_string_count_ready\@
+Lx86_string_count_16\@:
 	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	b .Lx86_string_count_ready\@
-.Lx86_string_count_64\@:
+	b Lx86_string_count_ready\@
+Lx86_string_count_64\@:
 	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-.Lx86_string_count_ready\@:
-	cbz x24, .Lx86_string_finish\@
+Lx86_string_count_ready\@:
+	cbz x24, Lx86_string_finish\@
 	.ifc \operation,move
-	b .Lx86_string_bulk_run\@
+	b Lx86_string_bulk_run\@
 	.else
 	.ifc \operation,store
-	b .Lx86_string_bulk_run\@
+	b Lx86_string_bulk_run\@
 	.else
-	b .Lx86_string_iteration\@
+	b Lx86_string_iteration\@
 	.endif
 	.endif
-.Lx86_string_nonrepeating\@:
+Lx86_string_nonrepeating\@:
 	mov x24, #1
-.Lx86_string_iteration\@:
+Lx86_string_iteration\@:
 	.ifc \operation,move
 	string_source_address
 	string_load \width, \load, \host_register, 25, 27
@@ -302,60 +302,60 @@ gadget string_\operation\()_\width
 	string_update_pointer \width, (7 * 8)
 	.endif
 	ubfx w8, w23, #8, #8
-	cbz w8, .Lx86_string_finish\@
+	cbz w8, Lx86_string_finish\@
 	sub x24, x24, #1
-	tbnz x23, #3, .Lx86_string_store_count_16\@
-	tbz x23, #0, .Lx86_string_store_count_64\@
+	tbnz x23, #3, Lx86_string_store_count_16\@
+	tbz x23, #0, Lx86_string_store_count_64\@
 	mov w24, w24
-.Lx86_string_store_count_64\@:
+Lx86_string_store_count_64\@:
 	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	b .Lx86_string_count_stored\@
-.Lx86_string_store_count_16\@:
+	b Lx86_string_count_stored\@
+Lx86_string_store_count_16\@:
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	bfi x8, x24, #0, #16
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-.Lx86_string_count_stored\@:
-	cbz x24, .Lx86_string_finish\@
+Lx86_string_count_stored\@:
+	cbz x24, Lx86_string_finish\@
 	.ifc \operation,compare
 	cmp w8, #0xf3
-	b.eq .Lx86_string_repeat_equal\@
-	cbnz w19, .Lx86_string_finish\@
-	b .Lx86_string_repeat_continue\@
-.Lx86_string_repeat_equal\@:
-	cbz w19, .Lx86_string_finish\@
+	b.eq Lx86_string_repeat_equal\@
+	cbnz w19, Lx86_string_finish\@
+	b Lx86_string_repeat_continue\@
+Lx86_string_repeat_equal\@:
+	cbz w19, Lx86_string_finish\@
 	.endif
 	.ifc \operation,scan
 	cmp w8, #0xf3
-	b.eq .Lx86_string_repeat_equal\@
-	cbnz w19, .Lx86_string_finish\@
-	b .Lx86_string_repeat_continue\@
-.Lx86_string_repeat_equal\@:
-	cbz w19, .Lx86_string_finish\@
+	b.eq Lx86_string_repeat_equal\@
+	cbnz w19, Lx86_string_finish\@
+	b Lx86_string_repeat_continue\@
+Lx86_string_repeat_equal\@:
+	cbz w19, Lx86_string_finish\@
 	.endif
-	.Lx86_string_repeat_continue\@:
+	Lx86_string_repeat_continue\@:
 	ldr w9, [sp, #0x68]
 	subs w9, w9, #1
 	str w9, [sp, #0x68]
-	b.eq .Lx86_string_budget_spent\@
+	b.eq Lx86_string_budget_spent\@
 	/* Whatever sent this element to the element loop -- a short tail, an
 	 * element straddling a page, a destination that can publish code -- need
 	 * not hold for the elements after it, so offer the run loop every one.
 	 */
 	.ifc \operation,move
-	b .Lx86_string_bulk_run\@
+	b Lx86_string_bulk_run\@
 	.else
 	.ifc \operation,store
-	b .Lx86_string_bulk_run\@
+	b Lx86_string_bulk_run\@
 	.else
-	b .Lx86_string_iteration\@
+	b Lx86_string_iteration\@
 	.endif
 	.endif
 /* The instruction stops between elements; see the run loop's exit. This
  * block keeps the size it had, so the run loop's code does not move. */
-.Lx86_string_budget_spent\@:
+Lx86_string_budget_spent\@:
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	orr x9, x9, #0x10000
-	b .Lx86_string_between_elements\@
+	b Lx86_string_between_elements\@
 
 /* One page-bounded forward run of a repeated MOVS or STOS.
  *
@@ -371,10 +371,10 @@ gadget string_\operation\()_\width
  * publishes code, a lead too short to copy in blocks -- falls to the element
  * loop, which remains the definition of the instruction.
  */
-.Lx86_string_bulk_run\@:
+Lx86_string_bulk_run\@:
 	/* Below this a run cannot repay the translations it needs. */
 	cmp x24, #(32 >> \shift)
-	b.lo .Lx86_string_iteration\@
+	b.lo Lx86_string_iteration\@
 	/* A descending direction is not a forward block, and 16-bit address
 	 * arithmetic wraps inside a run. 32-bit arithmetic wraps at 4 GiB, which
 	 * is itself a page boundary, so a run's page limit already stops short of
@@ -382,13 +382,13 @@ gadget string_\operation\()_\width
 	 * segment base need not leave true. All three are fixed for the whole
 	 * instruction; the element loop rejoins here, so read them per run.
 	 */
-	tbnz x23, #3, .Lx86_string_iteration\@
-	tbz x23, #0, .Lx86_string_bulk_forward\@
+	tbnz x23, #3, Lx86_string_iteration\@
+	tbz x23, #0, Lx86_string_bulk_forward\@
 	tst x23, #0x6
-	b.ne .Lx86_string_iteration\@
-.Lx86_string_bulk_forward\@:
+	b.ne Lx86_string_iteration\@
+Lx86_string_bulk_forward\@:
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	tbnz x9, #10, .Lx86_string_iteration\@
+	tbnz x9, #10, Lx86_string_iteration\@
 	.ifc \operation,move
 	string_source_address
 	.endif
@@ -419,7 +419,7 @@ gadget string_\operation\()_\width
 	 * one, and the element after it opens a page.
 	 */
 	and x19, x19, #~((1 << \shift) - 1)
-	cbz x19, .Lx86_string_iteration\@
+	cbz x19, Lx86_string_iteration\@
 	.endif
 	.ifc \operation,move
 	mov x7, x25
@@ -428,7 +428,7 @@ gadget string_\operation\()_\width
 	.endif
 	mov x7, x26
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
-.Lx86_string_bulk_ready\@:
+Lx86_string_bulk_ready\@:
 	.ifc \operation,move
 	/* Ascending element order replicates when the destination leads its
 	 * source, so hold the run inside that lead. A destination below its
@@ -436,7 +436,7 @@ gadget string_\operation\()_\width
 	 * a run never reads a byte it has already written.
 	 */
 	sub x12, x7, x27
-	cbz x12, .Lx86_string_bulk_copy\@
+	cbz x12, Lx86_string_bulk_copy\@
 	cmp x19, x12
 	csel x19, x19, x12, ls
 	.if \shift != 0
@@ -445,8 +445,8 @@ gadget string_\operation\()_\width
 	and x19, x19, #~((1 << \shift) - 1)
 	.endif
 	cmp x19, #16
-	b.lo .Lx86_string_iteration\@
-.Lx86_string_bulk_copy\@:
+	b.lo Lx86_string_iteration\@
+Lx86_string_bulk_copy\@:
 	mov x0, x27
 	mov x1, x7
 	mov x11, x19
@@ -466,44 +466,44 @@ gadget string_\operation\()_\width
 	 * executable destination is worth running rather than stepping.
 	 */
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbz w8, .Lx86_string_bulk_overlap\@
-	tbnz x23, #60, .Lx86_string_bulk_exits\@
+	cbz w8, Lx86_string_bulk_overlap\@
+	tbnz x23, #60, Lx86_string_bulk_exits\@
 	mov x0, _context
 	mov x1, x26
 	mov w2, w19
 	bl NAME(uml_x86_64_gadget_publish_code_write)
-.Lx86_string_bulk_exits\@:
+Lx86_string_bulk_exits\@:
 	orr x23, x23, #0x100000000
-	b .Lx86_string_bulk_retire\@
-.Lx86_string_bulk_overlap\@:
+	b Lx86_string_bulk_retire\@
+Lx86_string_bulk_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x26, x8
-	b.hs .Lx86_string_bulk_retire\@
+	b.hs Lx86_string_bulk_retire\@
 	add x9, x26, x19
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
-	b.ls .Lx86_string_bulk_retire\@
+	b.ls Lx86_string_bulk_retire\@
 	mov x0, _context
 	mov x1, x26
 	bl NAME(uml_x86_64_gadget_invalidate_code)
 	orr x23, x23, #0x100000000
-.Lx86_string_bulk_retire\@:
+Lx86_string_bulk_retire\@:
 	/* Retire the run into architectural state before starting another, so a
 	 * fault in the next translation resumes the instruction exactly here.
 	 */
 	.ifc \operation,move
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
 	add x8, x8, x19
-	tbz x23, #0, .Lx86_string_bulk_source_wide\@
+	tbz x23, #0, Lx86_string_bulk_source_wide\@
 	mov w8, w8
-.Lx86_string_bulk_source_wide\@:
+Lx86_string_bulk_source_wide\@:
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 6 * 8)]
 	.endif
 	ldr x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
 	add x8, x8, x19
-	tbz x23, #0, .Lx86_string_bulk_destination_wide\@
+	tbz x23, #0, Lx86_string_bulk_destination_wide\@
 	mov w8, w8
-.Lx86_string_bulk_destination_wide\@:
+Lx86_string_bulk_destination_wide\@:
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
 	/* The count needs no narrowing: it was loaded at its address size and a
 	 * run never consumes more elements than it holds.
@@ -515,7 +515,7 @@ gadget string_\operation\()_\width
 	sub x24, x24, x9
 	.endif
 	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	cbz x24, .Lx86_string_finish\@
+	cbz x24, Lx86_string_finish\@
 	/* Charge the shared repeat budget by bytes moved rather than by run, so a
 	 * long copy still returns to the executor often enough to release its
 	 * execution read gate for a mapping change.
@@ -525,7 +525,7 @@ gadget string_\operation\()_\width
 	add w10, w10, #1
 	subs w9, w9, w10
 	str w9, [sp, #0x68]
-	b.gt .Lx86_string_bulk_run\@
+	b.gt Lx86_string_bulk_run\@
 	/* The instruction stops between elements with RIP still naming it, which
 	 * is where an interrupt finds it. Hardware then saves RF, so that the
 	 * resumed instruction does not break again, and the runtime leaves it set
@@ -534,13 +534,13 @@ gadget string_\operation\()_\width
 	 * tells the dispatch what its repeat budget covered. */
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	orr x9, x9, #0x10000
-.Lx86_string_between_elements\@:
+Lx86_string_between_elements\@:
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
 	b uml_x86_64_gadget_leave
-.Lx86_string_finish\@:
-	tbz x23, #32, .Lx86_string_continue\@
+Lx86_string_finish\@:
+	tbz x23, #32, Lx86_string_continue\@
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
@@ -548,7 +548,7 @@ gadget string_\operation\()_\width
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_string_continue\@:
+Lx86_string_continue\@:
 	retire_and_next
 
 /* A single-stepped repeated instruction, which raises #DB after each
@@ -561,18 +561,18 @@ gadget string_\operation\()_\width\()_step
 	ldp x23, x22, [_stream], #16
 	mov w9, #1
 	str w9, [sp, #0x68]
-	tbnz x23, #3, .Lx86_string_step_count_16\@
-	tbz x23, #0, .Lx86_string_step_count_64\@
+	tbnz x23, #3, Lx86_string_step_count_16\@
+	tbz x23, #0, Lx86_string_step_count_64\@
 	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	b .Lx86_string_step_count_ready\@
-.Lx86_string_step_count_16\@:
+	b Lx86_string_step_count_ready\@
+Lx86_string_step_count_16\@:
 	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	b .Lx86_string_step_count_ready\@
-.Lx86_string_step_count_64\@:
+	b Lx86_string_step_count_ready\@
+Lx86_string_step_count_64\@:
 	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-.Lx86_string_step_count_ready\@:
-	cbz x24, .Lx86_string_finish\@
-	b .Lx86_string_iteration\@
+Lx86_string_step_count_ready\@:
+	cbz x24, Lx86_string_finish\@
+	b Lx86_string_iteration\@
 .endm
 
 .macro string_width operation, width, load, store, host_register, store_register, shift

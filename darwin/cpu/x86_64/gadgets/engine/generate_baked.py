@@ -62,7 +62,7 @@ class Out:
 
     def label(self, stem):
         self.serial += 1
-        return f'.Lx86_bk_{stem}_{self.serial}'
+        return f'Lx86_bk_{stem}_{self.serial}'
 
     def gadget(self, name):
         self.count += 1
@@ -143,7 +143,7 @@ def translate(o, write, size, record_stack=False):
         o.emit('\teor x14, x9, x12')
     o.emit(f'\tcbz x14, {hit}')
     o.emit(f'\tadr x19, {done}')
-    o.emit(f'\tb .Lx86_baked_miss_{1 if write else 0}_{size}')
+    o.emit(f'\tb Lx86_baked_miss_{1 if write else 0}_{size}')
     o.emit(f'{hit}:')
     if write:
         ready, publishes = o.label('wcready'), o.label('publishes')
@@ -201,7 +201,7 @@ def finish_store(o, size, check=None):
     o.emit('\tldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
     o.emit(f'\tcbz w8, {check}')
     o.emit(f'\tadr x19, {check}')
-    o.emit(f'\tb .Lx86_baked_publish_{size}')
+    o.emit(f'\tb Lx86_baked_publish_{size}')
     o.emit(f'{check}:')
     # Guest addresses and block bounds lie below 2^63, so the sign of a
     # difference is their unsigned order and NZCV stays untouched.
@@ -217,7 +217,7 @@ def finish_store(o, size, check=None):
     o.emit(f'{done}:')
     o.emit('\tretire_and_next')
     o.emit(f'{overlap}:')
-    o.emit(f'\tb .Lx86_baked_store_overlap_{size}')
+    o.emit(f'\tb Lx86_baked_store_overlap_{size}')
 
 
 def page_cross(o, size, label):
@@ -254,13 +254,13 @@ def shared_tails(o):
     # The ordinary fault exit reports the RIP from x22, which a baked access
     # keeps in the low bits of its access word instead.
     o.emit('\t.p2align 2')
-    o.emit('.Lx86_baked_memory_fault:')
+    o.emit('Lx86_baked_memory_fault:')
     o.emit('\tand x22, x23, #0xffffffffffff')
-    o.emit('\tb .Lx86_memory_fault')
+    o.emit('\tb Lx86_memory_fault')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
             o.emit('\t.p2align 2')
-            o.emit(f'.Lx86_baked_miss_{write}_{size}:')
+            o.emit(f'Lx86_baked_miss_{write}_{size}:')
             o.emit('\tmrs x9, nzcv')
             o.emit('\tstr x9, [sp, #-16]!')
             o.emit('\tmov x0, _context')
@@ -270,7 +270,7 @@ def shared_tails(o):
             o.emit('\tbl NAME(uml_x86_64_gadget_tlb_miss)')
             o.emit('\tldr x9, [sp], #16')
             o.emit('\tmsr nzcv, x9')
-            o.emit('\tcbz x0, .Lx86_baked_memory_fault')
+            o.emit('\tcbz x0, Lx86_baked_memory_fault')
             o.emit('\tmov x7, x0')
             o.emit('\tbr x19')
     # A crossing load returns the raw bytes zero-extended; the widening forms
@@ -280,7 +280,7 @@ def shared_tails(o):
                                ('sxth_w', 2, 'sxth w11, w11'), ('sxth_x', 2, 'sxth x11, w11'),
                                ('sxtw_x', 4, 'sxtw x11, w11')):
         o.emit('\t.p2align 2')
-        o.emit(f'.Lx86_baked_cross_load_{name}:')
+        o.emit(f'Lx86_baked_cross_load_{name}:')
         o.emit('\tmrs x9, nzcv')
         o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
@@ -289,14 +289,14 @@ def shared_tails(o):
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_load)')
         o.emit('\tldr x9, [sp], #16')
         o.emit('\tmsr nzcv, x9')
-        o.emit('\tcbz x1, .Lx86_baked_memory_fault')
+        o.emit('\tcbz x1, Lx86_baked_memory_fault')
         o.emit('\tmov x11, x0')
         if extend:
             o.emit('\t' + extend)
         o.emit('\tbr x19')
     for size in (1, 2, 4, 8):
         o.emit('\t.p2align 2')
-        o.emit(f'.Lx86_baked_cross_store_{size}:')
+        o.emit(f'Lx86_baked_cross_store_{size}:')
         o.emit('\tmrs x9, nzcv')
         o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
@@ -306,10 +306,10 @@ def shared_tails(o):
         o.emit('\tbl NAME(uml_x86_64_gadget_cross_page_store)')
         o.emit('\tldr x9, [sp], #16')
         o.emit('\tmsr nzcv, x9')
-        o.emit('\tcbz w0, .Lx86_baked_memory_fault')
+        o.emit('\tcbz w0, Lx86_baked_memory_fault')
         o.emit('\tbr x19')
         o.emit('\t.p2align 2')
-        o.emit(f'.Lx86_baked_publish_{size}:')
+        o.emit(f'Lx86_baked_publish_{size}:')
         o.emit('\tmrs x9, nzcv')
         o.emit('\tstr x9, [sp, #-16]!')
         o.emit('\tmov x0, _context')
@@ -322,13 +322,13 @@ def shared_tails(o):
         # The store landed inside the running block: leave through the store's
         # own exit as the ordinary epilogue does.
         o.emit('\t.p2align 2')
-        o.emit(f'.Lx86_baked_store_overlap_{size}:')
+        o.emit(f'Lx86_baked_store_overlap_{size}:')
         o.emit('\tldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]')
-        o.emit(f'\tcbnz w8, .Lx86_baked_store_overlap_exit_{size}')
+        o.emit(f'\tcbnz w8, Lx86_baked_store_overlap_exit_{size}')
         o.emit('\tmov x0, _context')
         o.emit('\tmov x1, x25')
         o.emit('\tbl NAME(uml_x86_64_gadget_invalidate_code)')
-        o.emit(f'.Lx86_baked_store_overlap_exit_{size}:')
+        o.emit(f'Lx86_baked_store_overlap_exit_{size}:')
         o.emit('\tubfx x8, x23, #56, #4')
         o.emit('\tand x9, x23, #0xffffffffffff')
         o.emit('\tadd x8, x9, x8')
@@ -559,7 +559,7 @@ def load_body(o, size, ld, lr, cross, st, sr, v):
     o.emit('\tretire_and_next')
     o.emit(f'{crossed}:')
     o.emit(f'\tadr x19, {write}')
-    o.emit(f'\tb .Lx86_baked_cross_load_{cross}')
+    o.emit(f'\tb Lx86_baked_cross_load_{cross}')
 
 
 def loads(o):
@@ -601,7 +601,7 @@ def store_body(o, size, st, hr):
     finish_store(o, size)
     o.emit(f'{crossed}:')
     o.emit(f'\tadr x19, {finish}')
-    o.emit(f'\tb .Lx86_baked_cross_store_{size}')
+    o.emit(f'\tb Lx86_baked_cross_store_{size}')
 
 
 def stores(o):
@@ -665,7 +665,7 @@ def arith_source_body(o, op, width, v):
     o.emit('\tretire_and_next')
     o.emit(f'{crossed}:')
     o.emit(f'\tadr x19, {from_cross}')
-    o.emit(f'\tb .Lx86_baked_cross_load_{width}')
+    o.emit(f'\tb Lx86_baked_cross_load_{width}')
     o.emit(f'{from_cross}:')
     o.emit('\tmov x12, x11')
     o.emit(f'\tb {loaded}')
@@ -701,7 +701,7 @@ def arith_destination_body(o, op, width):
     o.emit(f'{crossed}:')
     loaded = o.label('mrloaded')
     o.emit(f'\tadr x19, {loaded}')
-    o.emit(f'\tb .Lx86_baked_cross_load_{width}')
+    o.emit(f'\tb Lx86_baked_cross_load_{width}')
     o.emit(f'{loaded}:')
     o.emit('\tmov x24, x11')
     o.emit(f'\t{host} {hr}27, {hr}24, {hr}26')
@@ -717,7 +717,7 @@ def arith_destination_body(o, op, width):
     record(o, flagop, width)
     o.emit('\tmov x24, x27')
     o.emit(f'\tadr x19, {stored}')
-    o.emit(f'\tb .Lx86_baked_cross_store_{size}')
+    o.emit(f'\tb Lx86_baked_cross_store_{size}')
     o.emit(f'{stored}:')
     finish_store(o, size)
 
@@ -838,7 +838,7 @@ def push_pop(o):
         finish_store(o, 8, check)
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')
-        o.emit('\tb .Lx86_baked_cross_store_8')
+        o.emit('\tb Lx86_baked_cross_store_8')
         entries.append(entry)
     o.table('push_64_r', entries)
     entries = []
@@ -863,7 +863,7 @@ def push_pop(o):
         o.emit('\tretire_and_next')
         o.emit(f'{crossed}:')
         o.emit(f'\tadr x19, {done}')
-        o.emit('\tb .Lx86_baked_cross_load_64')
+        o.emit('\tb Lx86_baked_cross_load_64')
         entries.append(entry)
     o.table('pop_64_r', entries)
 

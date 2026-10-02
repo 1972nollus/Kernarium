@@ -314,18 +314,18 @@
 .endm
 
 .macro vector_map2_input_size opcode, width
-	.set .Lx86_vector_map2_input_size, (\width / 8)
+	.set Lx86_vector_map2_input_size, (\width / 8)
 	.if \opcode == 0x20 || \opcode == 0x30 || \opcode == 0x23 || \opcode == 0x33
-	.set .Lx86_vector_map2_input_size, (\width / 16)
+	.set Lx86_vector_map2_input_size, (\width / 16)
 	.elseif \opcode == 0x21 || \opcode == 0x31 || \opcode == 0x24 || \
 		\opcode == 0x34
-	.set .Lx86_vector_map2_input_size, (\width / 32)
+	.set Lx86_vector_map2_input_size, (\width / 32)
 	.elseif \opcode == 0x22 || \opcode == 0x32
-	.set .Lx86_vector_map2_input_size, (\width / 64)
+	.set Lx86_vector_map2_input_size, (\width / 64)
 	.elseif \opcode == 0x25 || \opcode == 0x35
-	.set .Lx86_vector_map2_input_size, (\width / 16)
+	.set Lx86_vector_map2_input_size, (\width / 16)
 	.elseif \opcode == 0x41
-	.set .Lx86_vector_map2_input_size, 16
+	.set Lx86_vector_map2_input_size, 16
 	.endif
 .endm
 
@@ -343,20 +343,20 @@ gadget vector_integer_map2_\symbol\()_\width\()_rr
 	add x11, _cpu, x11
 	ldr q0, [x10]
 	vector_map2_input_size \opcode, \width
-	.if .Lx86_vector_map2_input_size == 1
+	.if Lx86_vector_map2_input_size == 1
 	ldr b1, [x11]
-	.elseif .Lx86_vector_map2_input_size == 2
+	.elseif Lx86_vector_map2_input_size == 2
 	ldr h1, [x11]
-	.elseif .Lx86_vector_map2_input_size == 4
+	.elseif Lx86_vector_map2_input_size == 4
 	ldr s1, [x11]
-	.elseif .Lx86_vector_map2_input_size == 8
+	.elseif Lx86_vector_map2_input_size == 8
 	ldr d1, [x11]
 	.else
 	ldr q1, [x11]
 	.endif
 	.if \width == 256
 	ldr q2, [x10, #16]
-	.if .Lx86_vector_map2_input_size == 32
+	.if Lx86_vector_map2_input_size == 32
 	ldr q3, [x11, #16]
 	.endif
 	.endif
@@ -376,46 +376,46 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 	ldr x26, [_stream], #8
 	mov x25, x7
 	vector_map2_input_size \opcode, \width
-	page_cross_check (.Lx86_vector_map2_input_size), .Lx86_vector_map2_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_map2_input_size
-	.if .Lx86_vector_map2_input_size == 1
+	page_cross_check (Lx86_vector_map2_input_size), Lx86_vector_map2_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_map2_input_size
+	.if Lx86_vector_map2_input_size == 1
 	ldr b1, [x7]
-	.elseif .Lx86_vector_map2_input_size == 2
+	.elseif Lx86_vector_map2_input_size == 2
 	ldr h1, [x7]
-	.elseif .Lx86_vector_map2_input_size == 4
+	.elseif Lx86_vector_map2_input_size == 4
 	ldr s1, [x7]
-	.elseif .Lx86_vector_map2_input_size == 8
+	.elseif Lx86_vector_map2_input_size == 8
 	ldr d1, [x7]
 	.else
 	ldr q1, [x7]
 	.endif
-	.if .Lx86_vector_map2_input_size == 32
+	.if Lx86_vector_map2_input_size == 32
 	ldr q3, [x7, #16]
 	.endif
-	b .Lx86_vector_map2_loaded\@
-.Lx86_vector_map2_cross\@:
-	.if .Lx86_vector_map2_input_size <= 8
+	b Lx86_vector_map2_loaded\@
+Lx86_vector_map2_cross\@:
+	.if Lx86_vector_map2_input_size <= 8
 	mov x0, _context
 	mov x1, x25
-	mov w2, #.Lx86_vector_map2_input_size
+	mov w2, #Lx86_vector_map2_input_size
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	fmov d1, x0
 	.else
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
-	mov w3, #.Lx86_vector_map2_input_size
+	mov w3, #Lx86_vector_map2_input_size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map2_cross_fault\@
+	cbz w0, Lx86_vector_map2_cross_fault\@
 	ldr q1, [sp]
-	.if .Lx86_vector_map2_input_size == 32
+	.if Lx86_vector_map2_input_size == 32
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
 	.endif
-.Lx86_vector_map2_loaded\@:
+Lx86_vector_map2_loaded\@:
 	and x10, x26, #0xffff
 	.if \width == 64
 	ldr d0, [_cpu, x10]
@@ -433,9 +433,9 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 	.endif
 	vector_write \width, 23
 	retire_and_next
-.Lx86_vector_map2_cross_fault\@:
+Lx86_vector_map2_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 .macro vector_map2_family opcode

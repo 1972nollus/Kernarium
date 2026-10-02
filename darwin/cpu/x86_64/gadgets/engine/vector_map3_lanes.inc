@@ -42,7 +42,7 @@ gadget vector_map3_extract_\size\()_m
 	.else
 	ldr x24, [x10, x13, lsl #3]
 	.endif
-	page_cross_check (\size), .Lx86_vector_map3_extract_cross\@
+	page_cross_check (\size), Lx86_vector_map3_extract_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	.if \size == 1
 	strb w24, [x7]
@@ -54,13 +54,13 @@ gadget vector_map3_extract_\size\()_m
 	str x24, [x7]
 	.endif
 	finish_store \size
-.Lx86_vector_map3_extract_cross\@:
+Lx86_vector_map3_extract_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #\size
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	finish_store \size
 .endm
 
@@ -104,18 +104,18 @@ gadget vector_map3_extract_128_m
 	ubfx x13, x26, #16, #1
 	add x24, _cpu, x10
 	add x24, x24, x13, lsl #4
-	page_cross_check 16, .Lx86_vector_map3_extract_128_cross
+	page_cross_check 16, Lx86_vector_map3_extract_128_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	ldr q0, [x24]
 	str q0, [x7]
 	finish_store 16
-.Lx86_vector_map3_extract_128_cross:
+Lx86_vector_map3_extract_128_cross:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	finish_store 16
 
 .macro vector_map3_insert_register size
@@ -139,10 +139,10 @@ gadget vector_map3_insert_\size\()_rr
 	ldr x24, [_cpu, x11]
 	str x24, [x9, x13, lsl #3]
 	.endif
-	tbz x8, #63, .Lx86_vector_map3_insert_register_done\@
+	tbz x8, #63, Lx86_vector_map3_insert_register_done\@
 	movi v1.16b, #0
 	str q1, [x9, #16]
-.Lx86_vector_map3_insert_register_done\@:
+Lx86_vector_map3_insert_register_done\@:
 	retire_and_next
 .endm
 
@@ -151,7 +151,7 @@ gadget vector_map3_insert_\size\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\size), .Lx86_vector_map3_insert_cross\@
+	page_cross_check (\size), Lx86_vector_map3_insert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	.if \size == 1
 	ldrb w24, [x7]
@@ -160,19 +160,19 @@ gadget vector_map3_insert_\size\()_rm
 	.else
 	ldr x24, [x7]
 	.endif
-	b .Lx86_vector_map3_insert_loaded\@
-.Lx86_vector_map3_insert_cross\@:
+	b Lx86_vector_map3_insert_loaded\@
+Lx86_vector_map3_insert_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #\size
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \size == 8
 	mov x24, x0
 	.else
 	mov w24, w0
 	.endif
-.Lx86_vector_map3_insert_loaded\@:
+Lx86_vector_map3_insert_loaded\@:
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
 	ubfx x13, x26, #16, #8
@@ -188,10 +188,10 @@ gadget vector_map3_insert_\size\()_rm
 	.else
 	str x24, [x9, x13, lsl #3]
 	.endif
-	tbz x23, #63, .Lx86_vector_map3_insert_memory_done\@
+	tbz x23, #63, Lx86_vector_map3_insert_memory_done\@
 	movi v1.16b, #0
 	str q1, [x9, #16]
-.Lx86_vector_map3_insert_memory_done\@:
+Lx86_vector_map3_insert_memory_done\@:
 	retire_and_next
 .endm
 
@@ -216,10 +216,10 @@ vector_map3_insert_memory 8
 	and x9, x\descriptor, #0xffff
 	add x9, _cpu, x9
 	str q4, [x9]
-	tbz x\descriptor, #63, .Lx86_vector_map3_insertps_done\@
+	tbz x\descriptor, #63, Lx86_vector_map3_insertps_done\@
 	movi v6.16b, #0
 	str q6, [x9, #16]
-.Lx86_vector_map3_insertps_done\@:
+Lx86_vector_map3_insertps_done\@:
 	retire_and_next
 .endm
 
@@ -234,78 +234,78 @@ gadget vector_map3_insertps_rr
 	ubfx w14, w13, #6, #2
 	umov w24, v1.s[0]
 	cmp w14, #1
-	b.eq .Lx86_vector_map3_insertps_source_1
+	b.eq Lx86_vector_map3_insertps_source_1
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_insertps_source_2
+	b.eq Lx86_vector_map3_insertps_source_2
 	cmp w14, #3
-	b.eq .Lx86_vector_map3_insertps_source_3
-	b .Lx86_vector_map3_insertps_source_done
-.Lx86_vector_map3_insertps_source_1:
+	b.eq Lx86_vector_map3_insertps_source_3
+	b Lx86_vector_map3_insertps_source_done
+Lx86_vector_map3_insertps_source_1:
 	umov w24, v1.s[1]
-	b .Lx86_vector_map3_insertps_source_done
-.Lx86_vector_map3_insertps_source_2:
+	b Lx86_vector_map3_insertps_source_done
+Lx86_vector_map3_insertps_source_2:
 	umov w24, v1.s[2]
-	b .Lx86_vector_map3_insertps_source_done
-.Lx86_vector_map3_insertps_source_3:
+	b Lx86_vector_map3_insertps_source_done
+Lx86_vector_map3_insertps_source_3:
 	umov w24, v1.s[3]
-.Lx86_vector_map3_insertps_source_done:
+Lx86_vector_map3_insertps_source_done:
 	ubfx w14, w13, #4, #2
 	cmp w14, #1
-	b.eq .Lx86_vector_map3_insertps_destination_1
+	b.eq Lx86_vector_map3_insertps_destination_1
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_insertps_destination_2
+	b.eq Lx86_vector_map3_insertps_destination_2
 	cmp w14, #3
-	b.eq .Lx86_vector_map3_insertps_destination_3
+	b.eq Lx86_vector_map3_insertps_destination_3
 	mov v4.s[0], w24
-	b .Lx86_vector_map3_insertps_destination_done
-.Lx86_vector_map3_insertps_destination_1:
+	b Lx86_vector_map3_insertps_destination_done
+Lx86_vector_map3_insertps_destination_1:
 	mov v4.s[1], w24
-	b .Lx86_vector_map3_insertps_destination_done
-.Lx86_vector_map3_insertps_destination_2:
+	b Lx86_vector_map3_insertps_destination_done
+Lx86_vector_map3_insertps_destination_2:
 	mov v4.s[2], w24
-	b .Lx86_vector_map3_insertps_destination_done
-.Lx86_vector_map3_insertps_destination_3:
+	b Lx86_vector_map3_insertps_destination_done
+Lx86_vector_map3_insertps_destination_3:
 	mov v4.s[3], w24
-.Lx86_vector_map3_insertps_destination_done:
+Lx86_vector_map3_insertps_destination_done:
 	vector_map3_insertps_finish 8, 13
 
 gadget vector_map3_insertps_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 4, .Lx86_vector_map3_insertps_cross
+	page_cross_check 4, Lx86_vector_map3_insertps_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
-	b .Lx86_vector_map3_insertps_loaded
-.Lx86_vector_map3_insertps_cross:
+	b Lx86_vector_map3_insertps_loaded
+Lx86_vector_map3_insertps_cross:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #4
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov w24, w0
-.Lx86_vector_map3_insertps_loaded:
+Lx86_vector_map3_insertps_loaded:
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q4, [x10]
 	ubfx w14, w26, #20, #2
 	cmp w14, #1
-	b.eq .Lx86_vector_map3_insertps_memory_destination_1
+	b.eq Lx86_vector_map3_insertps_memory_destination_1
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_insertps_memory_destination_2
+	b.eq Lx86_vector_map3_insertps_memory_destination_2
 	cmp w14, #3
-	b.eq .Lx86_vector_map3_insertps_memory_destination_3
+	b.eq Lx86_vector_map3_insertps_memory_destination_3
 	mov v4.s[0], w24
-	b .Lx86_vector_map3_insertps_memory_destination_done
-.Lx86_vector_map3_insertps_memory_destination_1:
+	b Lx86_vector_map3_insertps_memory_destination_done
+Lx86_vector_map3_insertps_memory_destination_1:
 	mov v4.s[1], w24
-	b .Lx86_vector_map3_insertps_memory_destination_done
-.Lx86_vector_map3_insertps_memory_destination_2:
+	b Lx86_vector_map3_insertps_memory_destination_done
+Lx86_vector_map3_insertps_memory_destination_2:
 	mov v4.s[2], w24
-	b .Lx86_vector_map3_insertps_memory_destination_done
-.Lx86_vector_map3_insertps_memory_destination_3:
+	b Lx86_vector_map3_insertps_memory_destination_done
+Lx86_vector_map3_insertps_memory_destination_3:
 	mov v4.s[3], w24
-.Lx86_vector_map3_insertps_memory_destination_done:
+Lx86_vector_map3_insertps_memory_destination_done:
 	lsr w13, w26, #16
 	vector_map3_insertps_finish 23, 13
 
