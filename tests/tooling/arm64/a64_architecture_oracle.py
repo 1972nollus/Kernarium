@@ -416,6 +416,11 @@ class ArchitectureCatalog:
                     heading,
                     filename,
                 )
+        self._forms_by_file = {
+            filename: key for key, filename in self._files.items()
+        }
+        if len(self._forms_by_file) != len(self._files):
+            raise ValueError("Arm XML indexes name a form file twice")
 
     @property
     def stable_forms(self) -> dict[str, tuple[str, str, str]]:
@@ -511,17 +516,52 @@ class ArchitectureCatalog:
                 result.append(variant)
         return result
 
+    def _alias_operation_features(
+        self, root: ET.Element, word: int
+    ) -> list[str]:
+        """Return the features an alias's operation table gives this word.
+
+        SYS and SYSP pass their operation to an implementation-defined
+        dispatcher, and the XML records which operations exist, and under
+        which features, only in the operation tables of their aliases (AT,
+        BRB, DC, TLBI and TLBIP).  A word that names such an operation needs
+        those features: SYSP with TLBIP RVAE1OSNXS's operands needs
+        FEAT_D128 || FEAT_TLBID as well as FEAT_SYSINSTR128.  An alias's own
+        declared features are not inherited, because a base form can give
+        them an architected NOP fallback, as HINT does for BTI.
+        """
+        result: list[str] = []
+        for reference in root.findall("./alias_list/aliasref"):
+            alias_file = reference.get("aliasfile", "")
+            alias_form = self._forms_by_file.get(alias_file)
+            if alias_form is None:
+                raise ValueError(f"alias file {alias_file!r} is not indexed")
+            alias_root = self._tree(alias_file)
+            for alias in self.all_variants(*alias_form):
+                if alias.matches(word):
+                    result += _matching_table_features(
+                        alias_root,
+                        {name: (low, width) for name, low, width in alias.fields},
+                        word,
+                    )
+        return result
+
     def variants(self, section: str, form: str, word: int) -> list[ArchitectureVariant]:
         result: list[ArchitectureVariant] = []
         root = self._tree(self._files[(section, form)])
+        operation_features = self._alias_operation_features(root, word)
         for variant in self.all_variants(section, form):
             if not variant.matches(word):
                 continue
-            dynamic = _matching_table_features(
-                root,
-                {name: (low, width) for name, low, width in variant.fields},
-                word,
-            ) + variant.guarded_features(word)
+            dynamic = (
+                _matching_table_features(
+                    root,
+                    {name: (low, width) for name, low, width in variant.fields},
+                    word,
+                )
+                + variant.guarded_features(word)
+                + operation_features
+            )
             result.append(
                 replace(
                     variant,
