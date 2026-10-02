@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -81,5 +82,14 @@ private:
     std::exception_ptr failure_;
     std::thread thread_;
 };
+
+/* The guest kernel argument that hands the virtio_uml transport the endpoint
+ * named `connection` as a device of type `deviceId`. */
+[[nodiscard]] inline std::string virtioDeviceArgument(
+    const std::string& connection,
+    std::uint32_t deviceId)
+{
+    return "virtio_uml.device=" + connection + ":" + std::to_string(deviceId);
+}
 
 } // namespace uml::gpu

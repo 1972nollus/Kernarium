@@ -370,8 +370,8 @@ std::string AutomationBoot::relayDeviceArgument()
 {
     if (!relay_)
         return {};
-    return "virtio_uml.device=" + relay_->takeConnectionName() + ":" +
-        std::to_string(uml::console::protocol::deviceId);
+    return uml::gpu::virtioDeviceArgument(
+        relay_->takeConnectionName(), uml::console::protocol::deviceId);
 }
 
 } // namespace kernarium::harness

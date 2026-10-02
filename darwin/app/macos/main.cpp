@@ -545,9 +545,8 @@ int uml::app::runEmbeddedKernel(
 							device_memory_limit,
 					});
 			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				gpu_service->takeConnectionName() + ":" +
-				std::to_string(
+				uml::gpu::virtioDeviceArgument(
+					gpu_service->takeConnectionName(),
 					uml::gpu::protocol::virtioGpuDeviceId));
 			prepared.kernel.emplace_back(
 				"uml_vnc_input." + gpu_service->takeInputConnectionName());
@@ -575,9 +574,9 @@ int uml::app::runEmbeddedKernel(
 			 * Straight after the GPU it is always virtio-uml.1/virtio1,
 			 * whatever optional devices follow. */
 			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				battery_service->takeConnectionName() + ":" +
-				std::to_string(uml::battery::protocol::deviceId));
+				uml::gpu::virtioDeviceArgument(
+					battery_service->takeConnectionName(),
+					uml::battery::protocol::deviceId));
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio battery: %s\n",
@@ -599,9 +598,9 @@ int uml::app::runEmbeddedKernel(
 						getpagesize()),
 				});
 			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				balloon_service->takeConnectionName() + ":" +
-				std::to_string(uml::balloon::protocol::deviceId));
+				uml::gpu::virtioDeviceArgument(
+					balloon_service->takeConnectionName(),
+					uml::balloon::protocol::deviceId));
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio balloon: %s\n",
@@ -618,8 +617,10 @@ int uml::app::runEmbeddedKernel(
 		try {
 			video_service = uml::video::makeInProcessService(
 				gpu_service ? shared_memory_regions : nullptr);
-			prepared.kernel.emplace_back("virtio_uml.device=" +
-				video_service->takeConnectionName() + ":" + std::to_string(uml::video::deviceId));
+			prepared.kernel.emplace_back(
+				uml::gpu::virtioDeviceArgument(
+					video_service->takeConnectionName(),
+					uml::video::deviceId));
 		} catch (const std::exception& error) {
 			std::fprintf(stderr, "Unable to start in-process Virtio video: %s\n", error.what());
 			return 1;
@@ -637,9 +638,9 @@ int uml::app::runEmbeddedKernel(
 		try {
 			audio_service = uml::audio::makeInProcessService();
 			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				audio_service->takeConnectionName() + ":" +
-				std::to_string(uml::audio::protocol::deviceId));
+				uml::gpu::virtioDeviceArgument(
+					audio_service->takeConnectionName(),
+					uml::audio::protocol::deviceId));
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio Sound: %s\n",
@@ -668,9 +669,9 @@ int uml::app::runEmbeddedKernel(
 						uml::console::protocol::hostSerialPortName) :
 					std::string {});
 			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				console_service->takeConnectionName() + ":" +
-				std::to_string(uml::console::protocol::deviceId));
+				uml::gpu::virtioDeviceArgument(
+					console_service->takeConnectionName(),
+					uml::console::protocol::deviceId));
 		} catch (const std::exception &error) {
 			std::fprintf(
 				stderr, "Unable to start in-process Virtio %s: %s\n",

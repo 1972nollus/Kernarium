@@ -860,35 +860,34 @@ int runtimeRun(
         arguments.emplace_back(consoleBridge.kernelArgument());
         arguments.emplace_back("ubd1=" + std::string(overlayPath));
 #endif
-        arguments.emplace_back(
-            "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
-            std::to_string(uml::gpu::protocol::virtioGpuDeviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            gpuService.takeConnectionName(),
+            uml::gpu::protocol::virtioGpuDeviceId));
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* Android's vendor policy labels the battery's sysfs path by its
          * position among the Virtio devices
          * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts). Straight
          * after the GPU it is always virtio-uml.1/virtio1, whatever optional
          * devices follow. */
-        arguments.emplace_back(
-            "virtio_uml.device=" + batteryService->takeConnectionName() + ":" +
-            std::to_string(uml::battery::protocol::deviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            batteryService->takeConnectionName(),
+            uml::battery::protocol::deviceId));
 #endif
-        arguments.emplace_back(
-            "virtio_uml.device=" + balloonService->takeConnectionName() + ":" +
-            std::to_string(uml::balloon::protocol::deviceId));
-        arguments.emplace_back(
-            "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +
-            std::to_string(uml::input::virtio::protocol::deviceId));
-        arguments.emplace_back(
-            "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
-            std::to_string(uml::input::virtio::protocol::deviceId));
-        arguments.emplace_back(
-            "virtio_uml.device=" + audioService->takeConnectionName() + ":" +
-            std::to_string(uml::audio::protocol::deviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            balloonService->takeConnectionName(),
+            uml::balloon::protocol::deviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            touchscreen.takeConnectionName(),
+            uml::input::virtio::protocol::deviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            keyboard.takeConnectionName(),
+            uml::input::virtio::protocol::deviceId));
+        arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+            audioService->takeConnectionName(),
+            uml::audio::protocol::deviceId));
         if (videoService) {
-            arguments.emplace_back(
-                "virtio_uml.device=" + videoService->takeConnectionName() + ":" +
-                std::to_string(uml::video::deviceId));
+            arguments.emplace_back(uml::gpu::virtioDeviceArgument(
+                videoService->takeConnectionName(), uml::video::deviceId));
         }
 #if KERNARIUM_AUTOMATION_HARNESS && !KERNARIUM_RUNTIME_ANDROID_GUEST
         if (automation) {
