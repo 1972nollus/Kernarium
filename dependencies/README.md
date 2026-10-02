@@ -42,11 +42,11 @@ The Apple GPU prefixes contain static renderer libraries plus authenticated
 flat framework payloads for exactly one host GL provider. The prefix carries
 `MesaEGL.framework` and `MesaGallium.framework`, whose Zink Gallium driver
 renders desktop OpenGL 4.6 core on the packaged `KosmicKrisp.framework`. Each
-prefix's `gl_provider` contract field names the one it carries. Mesa's GLSL grammars declare two Bison 3 directives that
-Apple's Bison 2 does not accept, so the macOS OpenGL build drives the host
-generator through `dependencies/bison2-grammar-shim.sh` rather than forking
-the grammars. Platform-specific patches remain scoped by the checked contracts
-and series rather than being described as general hardware capability.
+prefix's `gl_provider` contract field names the one it carries. Under Apple's
+Bison 2, the OpenGL build generates Mesa's GLSL parsers through
+[`bison2-grammar-shim.sh`](bison2-grammar-shim.sh). Platform-specific patches
+remain scoped by the checked contracts and series rather than being described
+as general hardware capability.
 
 The kernel host tools are patch-managed ports of elfutils, musl-obstack,
 libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
@@ -200,36 +200,19 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `-Db_ndebug=false` and selected with
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
-
-Apple has no pthread barriers, so Mesa's `util_barrier` there is its own mutex
-and condition variable. Its serial thread is the last thread to leave, so
-`util_queue_finish`, which lets the serial worker destroy the barrier, never
-destroys it under a worker that is still waking; that keeps Zink's screen
-teardown from hanging in the disk cache's queue. Its regression is
-`util_tests --gtest_filter='util_barrier.*'`, which
-`meson test -C BUILD --suite util` runs in any `-Dbuild-tests=true` tree.
+Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
+in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
 
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
-`kosmickrisp_invalid_view_type` checks invalid image views through
-`vkCreateImageView` only in a build without assertions, because they trip the
-common runtime's assertions, and checks the texture bridge directly in the
-regression suite. Metal bridge constructors return one owned, initialized
-object. Callers release that object once; constructors must not initialize it
-again after `new`.
+Metal bridge constructors return one owned, initialized object. Callers
+release that object once; constructors must not initialize it again after
+`new`.
 
-Apple builds compile KosmicKrisp's device library offline: `kk_clc` writes
-each program's MSL into one bundle, and the build compiles it with the target
-platform's Metal toolchain into a metallib that `KosmicKrisp.framework`
-carries as data. Creating a device loads its pipelines from that library and
-compiles a program's MSL only when the build made no metallib or Metal
-refuses one of its functions. What remains on a cold start is Metal's
-back-end compile to GPU code, which only its shader cache can skip.
-
-That library starts as SPIR-V the build does not compile: the Apple product
-keeps LLVM out of its closure, so Mesa's "embed LLVM-free build shaders" topic
-carries `libkk.spv` and `libpoly.spv` as `mesa_clc` output for the OpenCL
-sources at the head of the Mesa series.
+KosmicKrisp's device library starts as SPIR-V the build does not compile: the
+Apple product keeps LLVM out of its closure, so Mesa's "embed LLVM-free build
+shaders" topic carries `libkk.spv` and `libpoly.spv` as `mesa_clc` output for
+the OpenCL sources at the head of the Mesa series.
 [`kosmickrisp-spirv/generate.py`](kosmickrisp-spirv/generate.py) produces
 them on an arm64 Debian host that already has exactly the packages
 [`kosmickrisp-spirv/toolchain.tsv`](kosmickrisp-spirv/toolchain.tsv) pins: it

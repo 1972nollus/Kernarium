@@ -7,28 +7,13 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import stat
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+
+import android_image
 
 
-NEWC_HEADER_SIZE = 110
 MAX_INITRAMFS_SIZE = 256 * 1024 * 1024
-MAX_ENTRY_SIZE = 128 * 1024 * 1024
 UML_FSTAB_PATH = "first_stage_ramdisk/system/etc/fstab.uml"
-UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,formattable,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,first_stage_mount
-# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check
-/dev/block/by-name/misc /misc emmc defaults defaults
-"""
 FORBIDDEN_PATHS = {
     "system/bin/modprobe",
     "system/bin/snapuserd",
@@ -53,134 +38,25 @@ MODULE_METADATA = {
 }
 
 
-@dataclass(frozen=True)
-class Entry:
-    mode: int
-    size: int
-    payload: bytes | None
-
-
-class RangeReader:
-    def __init__(self, source: BinaryIO, offset: int, size: int) -> None:
-        self.source = source
-        self.offset = offset
-        self.size = size
-        self.position = 0
-        source.seek(offset)
-
-    def tell(self) -> int:
-        return self.position
-
-    def read(self, count: int = -1) -> bytes:
-        remaining = self.size - self.position
-        amount = remaining if count < 0 else min(count, remaining)
-        payload = self.source.read(amount)
-        self.position += len(payload)
-        return payload
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        if whence == 0:
-            position = offset
-        elif whence == 1:
-            position = self.position + offset
-        elif whence == 2:
-            position = self.size + offset
-        else:
-            fail("archive reader received an invalid seek origin")
-        if position < 0 or position > self.size:
-            fail("archive entry exceeds the selected initramfs range")
-        self.source.seek(self.offset + position)
-        self.position = position
-        return position
+def error(message: str) -> SystemExit:
+    return SystemExit(f"Android initramfs verifier: {message}")
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"Android initramfs verifier: {message}")
+    raise error(message)
 
 
-def align4(value: int) -> int:
-    return (value + 3) & ~3
-
-
-def safe_name(raw: bytes) -> str:
-    try:
-        name = raw.decode("utf-8", errors="strict")
-    except UnicodeError as error:
-        fail(f"archive path is not UTF-8: {error}")
-    if not name or "\\" in name or "\0" in name:
-        fail(f"unsafe archive path: {name!r}")
-    path = PurePosixPath(name)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
-        fail(f"unsafe archive path: {name!r}")
-    if str(path) != name:
-        fail(f"non-normalized archive path: {name!r}")
-    return name
-
-
-def read_exact(source, count: int, label: str) -> bytes:
-    payload = source.read(count)
-    if len(payload) != count:
-        fail(f"truncated {label}")
-    return payload
-
-
-def parse_newc(path: Path, offset: int, size: int) -> dict[str, Entry]:
+def parse_newc(path: Path, offset: int, size: int) -> dict[str, android_image.NewcEntry]:
     if size == 0 or size > MAX_INITRAMFS_SIZE:
         fail(f"archive size is invalid: {size}")
     if offset < 0 or offset + size > path.stat().st_size:
         fail("archive range exceeds the input file")
-
-    entries: dict[str, Entry] = {}
-    with path.open("rb") as raw_source:
-        source = RangeReader(raw_source, offset, size)
-        while True:
-            header = read_exact(source, NEWC_HEADER_SIZE, "newc header")
-            if header[:6] not in (b"070701", b"070702"):
-                fail("archive is not an uncompressed newc initramfs")
-            try:
-                fields = [
-                    int(header[offset : offset + 8], 16)
-                    for offset in range(6, NEWC_HEADER_SIZE, 8)
-                ]
-            except ValueError as error:
-                fail(f"malformed newc header: {error}")
-            mode = fields[1]
-            file_size = fields[6]
-            name_size = fields[11]
-            if file_size > MAX_ENTRY_SIZE or name_size < 2 or name_size > 4096:
-                fail("newc entry has an invalid size")
-            raw_name = read_exact(source, name_size, "newc path")
-            if raw_name[-1:] != b"\0":
-                fail("newc path is not NUL terminated")
-            source.seek(align4(source.tell()))
-
-            if raw_name[:-1] == b"TRAILER!!!":
-                if file_size != 0:
-                    fail("newc trailer has data")
-                remainder = source.read()
-                if any(remainder):
-                    fail("newc archive has nonzero data after its trailer")
-                break
-
-            name = safe_name(raw_name[:-1])
-            retain = name == UML_FSTAB_PATH or stat.S_ISLNK(mode)
-            payload = read_exact(source, file_size, f"payload for {name}") if retain else None
-            if not retain:
-                source.seek(file_size, 1)
-            source.seek(align4(source.tell()))
-            entry = Entry(mode, file_size, payload)
-            previous = entries.get(name)
-            if previous is not None:
-                duplicate_directory = (
-                    stat.S_ISDIR(previous.mode)
-                    and stat.S_ISDIR(entry.mode)
-                    and stat.S_IMODE(previous.mode) == stat.S_IMODE(entry.mode)
-                    and previous.size == entry.size == 0
-                )
-                if not duplicate_directory:
-                    fail(f"ambiguous duplicate archive entry: {name}")
-            entries[name] = entry
-    return entries
+    with path.open("rb") as source:
+        return android_image.parse_newc(
+            android_image.RangeReader(source, offset, size, error),
+            lambda name, mode: name == UML_FSTAB_PATH or stat.S_ISLNK(mode),
+            error,
+        )
 
 
 def main() -> None:
@@ -208,7 +84,7 @@ def main() -> None:
     fstab = entries.get(UML_FSTAB_PATH)
     if fstab is None or not stat.S_ISREG(fstab.mode):
         fail("archive does not contain a regular UML first-stage fstab")
-    if not args.structural and fstab.payload != UML_FSTAB:
+    if not args.structural and fstab.payload != android_image.tracked_fstab(error):
         fail("archive does not contain the exact current UML first-stage fstab")
 
     for name, entry in entries.items():

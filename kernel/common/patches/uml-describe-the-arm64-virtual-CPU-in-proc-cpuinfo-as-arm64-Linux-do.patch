@@ -12,28 +12,34 @@ Linux/AArch64 and found none, so it reported no host features, and
 llvmpipe, -mcpu=native and every other client of that query generated
 code for a lesser CPU than the one the guest runs on.
 
-Print each processor's block the way arch/arm64/kernel/cpuinfo.c does.
+Print the file arch/arm64/kernel/cpuinfo.c prints for a 64-bit task.
 "Features" names exactly the AT_HWCAP and AT_HWCAP2 bits every task
 receives, in arm64 Linux's order and spelling: the names are arm64
 Linux's own hwcap_str table, which the build extracts from cpuinfo.c, so
 there is no copy to drift. The identification lines decode the MIDR_EL1
 value the emulator returns to MRS; the kernel runs natively and cannot
 read the emulated register, so it mirrors the value, and "CPU
-architecture" is 8, as arm64 Linux always prints it. The model name stays,
-in the place arm64 Linux prints it for a 32-bit task.
+architecture" is 8, as arm64 Linux always prints it. There is no model
+name: arm64 Linux prints one only to a 32-bit task.
+
+BogoMIPS is the value arm64 Linux derives from the architected timer,
+DIV_ROUND_CLOSEST(CNTFRQ_EL0, HZ) as loops_per_jiffy, read from the
+counter register a task reads. UML's busy-loop calibration still times
+udelay(), but its result varied from boot to boot and between the
+emulator's engines, and it no longer reaches the file.
 
 The Darwin host no longer synthesizes a feature line for the kernel to
 match by substring, and the hand-written table of ten names goes.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/um/kernel/Makefile         | 19 ++++++++-
- arch/um/kernel/capflags_arm64.c | 17 --------
- arch/um/kernel/hwcaps_arm64.c   | 19 +++++++++
- arch/um/kernel/um_arch.c        | 70 +++++++++++++++++++++++++++++++++
- arch/um/kernel/um_arch.h        |  7 ++++
- arch/um/os-Darwin/start_up.c    | 30 ++------------
- 6 files changed, 116 insertions(+), 46 deletions(-)
+ arch/um/kernel/Makefile         | 19 ++++++-
+ arch/um/kernel/capflags_arm64.c | 17 ------
+ arch/um/kernel/hwcaps_arm64.c   | 19 +++++++
+ arch/um/kernel/um_arch.c        | 93 ++++++++++++++++++++++++++++++++-
+ arch/um/kernel/um_arch.h        |  7 +++
+ arch/um/os-Darwin/start_up.c    | 30 ++---------
+ 6 files changed, 137 insertions(+), 48 deletions(-)
  delete mode 100644 arch/um/kernel/capflags_arm64.c
  create mode 100644 arch/um/kernel/hwcaps_arm64.c
 
@@ -130,10 +136,24 @@ index 0000000000000000000000000000000000000000..ae6b892773f3d92d13b839acb0a08ff3
 +	return feature < ARRAY_SIZE(hwcap_str) ? hwcap_str[feature] : NULL;
 +}
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946a8b47851 100644
+index d652bc357fc73b734fea7f25ebda7b316f385312..4103b571fa6e1795b8117faa58cac7462c5f994a 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -85,6 +85,64 @@ static const char *uml_cpu_model_name(void)
+@@ -74,9 +74,11 @@ static char host_info[(__NEW_UTS_LEN + 1) * 5];
+  * What this virtual CPU calls itself.  The emulator decides that, because it
+  * is the component that decides what the CPU is; the kernel reports the
+  * decision rather than making one of its own.  A UML kernel on a host with no
+- * emulator behind it keeps upstream's name.
++ * emulator behind it keeps upstream's name.  arm64 Linux prints a model name
++ * only to a 32-bit task, which UML never runs, so the arm64 printer has no use
++ * for it.
+  */
+-static const char *uml_cpu_model_name(void)
++static const char * __maybe_unused uml_cpu_model_name(void)
+ {
+ #ifdef UML_HOST_DARWIN
+ 	return os_guest_cpu_model_name();
+@@ -85,6 +87,81 @@ static const char *uml_cpu_model_name(void)
  #endif
  }
  
@@ -145,9 +165,8 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
 + * "Features" line, and so does every JIT that asks LLVM, such as Mesa's
 + * llvmpipe.  Each block therefore names exactly the AT_HWCAP and AT_HWCAP2
 + * bits every task receives, in arm64 Linux's order and spelling, and
-+ * identifies the CPU by the MIDR_EL1 value a task reads with MRS.  The model
-+ * name is the one addition; arm64 Linux prints that line, in the same place,
-+ * to a 32-bit task.
++ * identifies the CPU by the MIDR_EL1 value a task reads with MRS.  The file is
++ * the one c_show() prints for a 64-bit task, byte for byte.
 + *
 + * The emulator answers MRS MIDR_EL1 with emulated_midr_el1 in
 + * darwin/cpu/arm64/id_registers.hpp: no JEP106 implementer, variant, part or
@@ -159,18 +178,36 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
 + */
 +#define UML_ARM64_MIDR 0x000f0000U
 +
++/*
++ * arm64 Linux takes loops_per_jiffy from the architected timer:
++ * arm_arch_timer.c sets lpj_fine to DIV_ROUND_CLOSEST(arch_timer_rate, HZ), so
++ * calibrate_delay() skips its loop and BogoMIPS is twice the counter frequency
++ * in MHz.  UML keeps its calibrated loop for udelay(), and that loop's speed
++ * varies between boots, so the file prints what arm64 Linux would from the
++ * counter a task sees.  The engines answer MRS CNTFRQ_EL0 with the host's
++ * register, and this kernel runs natively on that host, so it reads the same
++ * register itself.
++ */
++static unsigned long uml_arm64_timer_lpj(void)
++{
++	unsigned long rate;
++
++	asm volatile("mrs %0, cntfrq_el0" : "=r" (rate));
++	return DIV_ROUND_CLOSEST(rate, HZ);
++}
++
 +static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
 +{
 +	/* UML provides no AT_HWCAP3, so no feature beyond these two words is
 +	 * ever named. */
 +	const unsigned long hwcaps[] = { ELF_HWCAP, ELF_HWCAP2 };
++	const unsigned long lpj = uml_arm64_timer_lpj();
 +	unsigned int feature;
 +
 +	seq_printf(m, "processor\t: %d\n", cpu);
-+	seq_printf(m, "model name\t: %s\n", uml_cpu_model_name());
 +	seq_printf(m, "BogoMIPS\t: %lu.%02lu\n",
-+		   loops_per_jiffy / (500000UL / HZ),
-+		   loops_per_jiffy / (5000UL / HZ) % 100);
++		   lpj / (500000UL / HZ),
++		   lpj / (5000UL / HZ) % 100);
 +	seq_puts(m, "Features\t:");
 +	for (feature = 0; feature < ARRAY_SIZE(hwcaps) * BITS_PER_LONG;
 +	     feature++) {
@@ -198,7 +235,7 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
  static int show_cpuinfo(struct seq_file *m, void *v)
  {
  	int i = 0;
-@@ -95,6 +153,9 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -95,6 +172,9 @@ static int show_cpuinfo(struct seq_file *m, void *v)
  		return 0;
  #endif
  
@@ -208,7 +245,7 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
  	seq_printf(m, "processor\t: %d\n", i);
  	seq_printf(m, "vendor_id\t: User Mode Linux\n");
  	seq_printf(m, "model name\t: %s\n", uml_cpu_model_name());
-@@ -110,6 +171,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -110,6 +190,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
  	seq_printf(m, "bogomips\t: %lu.%02lu\n",
  		   loops_per_jiffy/(500000/HZ),
  		   (loops_per_jiffy/(5000/HZ)) % 100);
@@ -216,7 +253,7 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
  
  	return 0;
  }
-@@ -292,6 +354,13 @@ EXPORT_SYMBOL(end_iomem);
+@@ -292,6 +373,13 @@ EXPORT_SYMBOL(end_iomem);
  
  #define MIN_VMALLOC (32 * 1024 * 1024)
  
@@ -230,7 +267,7 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..2f0047ce9139729dda2dbe6b351be946
  static void __init parse_host_cpu_flags(char *line)
  {
  	int i;
-@@ -300,6 +369,7 @@ static void __init parse_host_cpu_flags(char *line)
+@@ -300,6 +388,7 @@ static void __init parse_host_cpu_flags(char *line)
  			set_cpu_cap(&boot_cpu_data, i);
  	}
  }
