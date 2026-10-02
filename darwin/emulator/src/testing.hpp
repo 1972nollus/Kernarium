@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
+#include <cstddef>
+#include <vector>
+
 namespace uml::emulator::testing {
+
+using KernelEntry = int (*)(int argc, char *const argv[], char *const envp[]);
+
+/* A kernel image that only the test variant runs. A handle created from it
+ * takes every step of an embedded-kernel run, then calls `entry` with the
+ * run's arguments and environment where the ELF loader would enter the
+ * kernel, and returns its status. Any other image reaches the loader. */
+[[nodiscard]] std::vector<std::byte> kernel_image(KernelEntry entry);
 
 using AddressSpaceAdmissionHook = void (*)(void *) noexcept;
 

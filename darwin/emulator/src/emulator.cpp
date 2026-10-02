@@ -29,6 +29,10 @@ extern "C" {
 }
 #endif
 
+#if UML_EMULATOR_TESTING
+#include <cstring>
+#endif
+
 namespace uml::emulator {
 
 namespace {
@@ -122,7 +126,22 @@ private:
 	bool pending_{};
 };
 
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
+constexpr char test_kernel_magic[] = "uml-test-kernel";
+
+[[nodiscard]] testing::KernelEntry test_kernel_entry(
+	std::span<const std::byte> image) noexcept
+{
+	testing::KernelEntry entry{};
+	if (image.size() != sizeof(test_kernel_magic) + sizeof(entry) ||
+	    std::memcmp(image.data(), test_kernel_magic,
+		    sizeof(test_kernel_magic)) != 0)
+		return nullptr;
+	std::memcpy(&entry, image.data() + sizeof(test_kernel_magic),
+		sizeof(entry));
+	return entry;
+}
+
 std::atomic<testing::AddressSpaceAdmissionHook> after_handle_admission_hook;
 std::atomic<testing::AddressSpaceAdmissionHook> admission_wait_boundary_hook;
 std::atomic<testing::AddressSpaceAdmissionHook> before_gate_release_hook;
@@ -172,7 +191,7 @@ public:
 				 process_address_space_waiting_exclusive_runs != 0);
 		};
 		while (blocked() && !context.stop_requested()) {
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
 			invoke_admission_hook(admission_wait_boundary_hook);
 			admission_wait_checkpoint();
 #endif
@@ -198,7 +217,7 @@ public:
 	{
 		if (!entered_)
 			return;
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
 		invoke_admission_hook(before_gate_release_hook);
 #endif
 		{
@@ -221,8 +240,17 @@ private:
 };
 }
 
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
 namespace testing {
+
+std::vector<std::byte> kernel_image(KernelEntry entry)
+{
+	std::vector<std::byte> image(sizeof(test_kernel_magic) + sizeof(entry));
+	std::memcpy(image.data(), test_kernel_magic, sizeof(test_kernel_magic));
+	std::memcpy(image.data() + sizeof(test_kernel_magic), &entry,
+		sizeof(entry));
+	return image;
+}
 
 void set_address_space_admission_hooks(
 		AddressSpaceAdmissionHook after_handle_admission,
@@ -286,7 +314,7 @@ public:
 		 * guest RAM left to claim. */
 		if (::uml::runtime::process_guest_spent())
 			return -UML_EMULATOR_UNSUPPORTED;
-#if UML_EMULATOR_ADMISSION_TESTING
+#if UML_EMULATOR_TESTING
 		if (address_space_admission_mode() !=
 		    AddressSpaceAdmissionMode::none)
 			invoke_admission_hook(after_handle_admission_hook);
@@ -368,6 +396,11 @@ public:
 			return native_kernel_entry_(
 				static_cast<int>(arguments.size()),
 				argument_pointers.data(), environment_pointers.data());
+#if UML_EMULATOR_TESTING
+		if (const auto entry = test_kernel_entry(kernel_); entry != nullptr)
+			return entry(static_cast<int>(arguments.size()),
+				argument_pointers.data(), environment_pointers.data());
+#endif
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
 		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
 			native_layout.load_bias,
