@@ -20,8 +20,6 @@
 namespace mops_test {
 
 namespace arm64 = uml::cpu::arm64;
-namespace gadgets = uml::cpu::arm64::gadgets;
-namespace engine = uml::emulator::tests;
 
 enum class Stage : unsigned {
 	prologue,

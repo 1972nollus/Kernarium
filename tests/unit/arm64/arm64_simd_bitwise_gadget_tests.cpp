@@ -14,9 +14,6 @@
 
 namespace arm64_simd_bitwise_test {
 
-namespace arm64 = uml::cpu::arm64;
-namespace engine_tests = uml::emulator::tests;
-
 enum class Operation : unsigned {
   bit_and,
   bit_clear,
