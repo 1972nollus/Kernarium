@@ -8,13 +8,9 @@ BUILDER="$ROOT_DIR/dependencies/build-apple-gpu.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-apple-gpu-vulkan-prefix.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 BASE_PREFIX="$TEST_ROOT/prefix"
-FAILURE_NUMBER=0
 
-fail()
-{
-	printf '%s\n' "test-verify-apple-gpu-vulkan-prefix.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test-verify-apple-gpu-vulkan-prefix.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 verify()
 {
@@ -26,21 +22,6 @@ verify()
 copy_fixture()
 {
 	cp -R "$BASE_PREFIX" "$1"
-}
-
-expect_failure()
-{
-	description=$1
-	prefix=$2
-	platform=${3:-macos}
-	FAILURE_NUMBER=$((FAILURE_NUMBER + 1))
-	if verify "$prefix" "$platform" \
-		>"$TEST_ROOT/rejected-$FAILURE_NUMBER.out" \
-		2>"$TEST_ROOT/rejected-$FAILURE_NUMBER.err"; then
-		fail "$description was incorrectly accepted"
-	fi
-	[ -s "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ] ||
-		fail "$description was rejected without a diagnostic"
 }
 
 make_framework()
@@ -181,7 +162,7 @@ EOF
 
 verify "$BASE_PREFIX" >/dev/null
 
-expect_failure "wrong platform" "$BASE_PREFIX" ios-simulator
+expect_failure "wrong platform" verify "$BASE_PREFIX" ios-simulator
 
 # A prefix is current exactly while each source tree matches its series.
 for component in virglrenderer mesa venus-protocol; do
@@ -191,34 +172,34 @@ for component in virglrenderer mesa venus-protocol; do
 		'$1 == component { $2 = "0000000000000000000000000000000000000000" }
 		{ print }' "$BASE_PREFIX/share/uml-dependencies/source-trees.tsv" \
 		>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-	expect_failure "stale $component source tree" "$CASE_PREFIX"
+	expect_failure "stale $component source tree" verify "$CASE_PREFIX"
 done
 
 CASE_PREFIX="$TEST_ROOT/missing-source-tree"
 copy_fixture "$CASE_PREFIX"
 grep -v '^libepoxy' "$BASE_PREFIX/share/uml-dependencies/source-trees.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-expect_failure "missing source tree" "$CASE_PREFIX"
+expect_failure "missing source tree" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/extra-source-tree"
 copy_fixture "$CASE_PREFIX"
 printf 'vulkan-headers\t%s\n' 0000000000000000000000000000000000000000 \
 	>>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-expect_failure "unexpected source tree" "$CASE_PREFIX"
+expect_failure "unexpected source tree" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/installed-patches"
 copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/share/uml-dependencies/patches"
 cp -R "$ROOT_DIR/dependencies/patches/mesa" \
 	"$CASE_PREFIX/share/uml-dependencies/patches/"
-expect_failure "installed patch files" "$CASE_PREFIX"
+expect_failure "installed patch files" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/invalid-protocol-identity"
 copy_fixture "$CASE_PREFIX"
 sed 's/^venus_protocol_generated_sha256.*/venus_protocol_generated_sha256\tunknown/' \
 	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "invalid protocol build identity" "$CASE_PREFIX"
+expect_failure "invalid protocol build identity" verify "$CASE_PREFIX"
 
 # The installed platform contract must be the checked-in one.
 CASE_PREFIX="$TEST_ROOT/edited-contract"
@@ -226,7 +207,7 @@ copy_fixture "$CASE_PREFIX"
 sed 's/^helper_process\t.*/helper_process\tenabled/' \
 	"$BASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv"
-expect_failure "edited platform contract" "$CASE_PREFIX"
+expect_failure "edited platform contract" verify "$CASE_PREFIX"
 grep -q 'provenance does not match' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ||
 	fail "an edited platform contract was not reported as a provenance mismatch"
 
@@ -235,26 +216,26 @@ copy_fixture "$CASE_PREFIX"
 sed 's/^sdk_name\t.*/sdk_name\t/' \
 	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "empty receipt SDK name" "$CASE_PREFIX"
+expect_failure "empty receipt SDK name" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/wrong-receipt-product"
 copy_fixture "$CASE_PREFIX"
 sed 's/^product\t.*/product\tother/' \
 	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "receipt for another product" "$CASE_PREFIX"
+expect_failure "receipt for another product" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/hidden-network-input"
 copy_fixture "$CASE_PREFIX"
 printf 'network_input\thttps://invalid.example/source\n' \
 	>>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
-expect_failure "hidden network input" "$CASE_PREFIX"
+expect_failure "hidden network input" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/duplicate-provider"
 copy_fixture "$CASE_PREFIX"
 cp -R "$CASE_PREFIX/Frameworks/KosmicKrisp.framework" \
 	"$CASE_PREFIX/Frameworks/Vulkan.framework"
-expect_failure "duplicate Vulkan provider" "$CASE_PREFIX"
+expect_failure "duplicate Vulkan provider" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/invalid-existing-prefix"
 copy_fixture "$CASE_PREFIX"

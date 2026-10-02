@@ -4,6 +4,10 @@
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/host_capabilities.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+
 namespace uml::cpu::arm64::jit {
 
 using arm64::detail::sign_extend;
@@ -384,18 +388,121 @@ void JitCompilerFamilies::emit_integer_min_max(std::uint32_t instruction,
     return;
   }
 
-  if (!immediate) {
-    emit_native_binary(instruction, false, false);
+  if (host_capabilities().cssc) {
+    if (!immediate) {
+      emit_native_binary(instruction, false, false);
+      return;
+    }
+    const auto native_source = read_native_gpr(left, false, 8);
+    const auto native_destination =
+        write_native_gpr(destination, false, false, 10);
+    const auto native = (instruction & ~0x3ffU) |
+                        (native_source.host << 5) |
+                        native_destination.host;
+    emit(native);
+    commit_native_gpr(native_destination, destination, false);
     return;
   }
 
-  const auto native_source = read_native_gpr(left, false, 8);
+  /*
+   * Without host FEAT_CSSC, CMP and CSEL. The comparison is internal, so
+   * publish any guest NZCV the host flags hold first. SMAX, UMAX, SMIN and
+   * UMIN keep the first operand when it is greater, higher, less or lower.
+   */
+  static constexpr std::array<unsigned, 4> keep_first{0xcU, 0x8U, 0xbU,
+                                                      0x3U};
+  const std::uint32_t sf = wide ? 0x8000'0000U : 0U;
+  const unsigned condition = keep_first[operation];
+  if (immediate) {
+    const unsigned encoded = (instruction >> 10) & 0xffU;
+    const bool signed_operation = (operation & 1U) == 0U;
+    const std::int64_t value =
+        signed_operation ? sign_extend(encoded, 8)
+                         : static_cast<std::int64_t>(encoded);
+    if (left == 31U) {
+      /* CMP's immediate form reads SP as register 31, and the operation of
+       * a constant pair is itself a constant. */
+      const std::int64_t zero = 0;
+      std::int64_t result = value;
+      switch (operation) {
+      case 0: result = std::max(zero, value); break;
+      case 1: result = std::max<std::uint64_t>(0U, encoded); break;
+      case 2: result = std::min(zero, value); break;
+      default: result = 0; break;
+      }
+      const auto native_destination =
+          write_native_gpr(destination, false, false, 10);
+      load_constant(native_destination.host,
+                    wide ? static_cast<std::uint64_t>(result)
+                         : static_cast<std::uint32_t>(result));
+      commit_native_gpr(native_destination, destination, false);
+      return;
+    }
+    spill_flags_for_internal_clobber();
+    const auto native_left = read_native_gpr(left, false, 8);
+    const auto native_destination =
+        write_native_gpr(destination, false, false, 10);
+    /* CMP #imm, or CMN #-imm for a negative immediate. */
+    emit((value < 0 ? 0x3100'001fU : 0x7100'001fU) | sf |
+         (static_cast<std::uint32_t>(value < 0 ? -value : value) << 10) |
+         (native_left.host << 5));
+    load_constant(11U, wide ? static_cast<std::uint64_t>(value)
+                            : static_cast<std::uint32_t>(value));
+    emit(0x1a80'0000U | sf | (11U << 16) | (condition << 12) |
+         (native_left.host << 5) | native_destination.host); // csel
+    commit_native_gpr(native_destination, destination, false);
+    return;
+  }
+
+  const unsigned right = (instruction >> 16) & 31U;
+  spill_flags_for_internal_clobber();
+  const auto native_left = read_native_gpr(left, false, 8);
+  const auto native_right = read_native_gpr(right, false, 9);
   const auto native_destination =
       write_native_gpr(destination, false, false, 10);
-  const auto native = (instruction & ~0x3ffU) |
-                      (native_source.host << 5) |
-                      native_destination.host;
-  emit(native);
+  emit(0x6b00'001fU | sf | (native_right.host << 16) |
+       (native_left.host << 5)); // cmp
+  emit(0x1a80'0000U | sf | (native_right.host << 16) | (condition << 12) |
+       (native_left.host << 5) | native_destination.host); // csel
+  commit_native_gpr(native_destination, destination, false);
+}
+
+void JitCompilerFamilies::emit_bit_reverse_count(std::uint32_t instruction) {
+  const unsigned operation = (instruction >> 10) & 31U;
+  if (operation < 6U || host_capabilities().cssc) {
+    emit_native_unary(instruction);
+    return;
+  }
+  /* CTZ, CNT and ABS without host FEAT_CSSC, in sequences that leave NZCV
+   * alone. None has an effect beyond its destination. */
+  const unsigned destination = instruction & 31U;
+  if (destination == 31U)
+    return;
+  const bool wide = (instruction & 0x8000'0000U) != 0;
+  const std::uint32_t sf = wide ? 0x8000'0000U : 0U;
+  const auto native_source =
+      read_native_gpr((instruction >> 5) & 31U, false, 8);
+  const auto native_destination =
+      write_native_gpr(destination, false, false, 9);
+  const unsigned source = native_source.host;
+  const unsigned result = native_destination.host;
+  switch (operation) {
+  case 6: // CTZ
+    emit(0x5ac0'0000U | sf | (source << 5) | result); // rbit
+    emit(0x5ac0'1000U | sf | (result << 5) | result); // clz
+    break;
+  case 7: // CNT: count the bytes' bits in scratch v0, then sum them.
+    emit((wide ? 0x9e67'0000U : 0x1e27'0000U) | (source << 5)); // fmov
+    emit(0x0e20'5800U);                                        // cnt v0.8b
+    emit(0x0e31'b800U);                                        // addv b0
+    emit(0x1e26'0000U | result); // fmov w<result>, s0
+    break;
+  default: // ABS: (x ^ s) - s with s the sign replicated.
+    emit((wide ? 0x937f'fc00U : 0x131f'7c00U) | (source << 5) | 11U); // asr
+    emit(0x4a00'0000U | sf | (11U << 16) | (source << 5) | result); // eor
+    emit(0x4b00'0000U | sf | (11U << 16) | (result << 5) | result); // sub
+    break;
+  }
   commit_native_gpr(native_destination, destination, false);
 }
 
@@ -525,9 +632,7 @@ JitCompilerFamilies::valid_multiply_add(std::uint32_t instruction) noexcept {
   const unsigned operation = (instruction >> 10) & 31U;
   if (operation == 3U && !wide)
     return false;
-  if (operation <= 5U)
-    return true;
-  return operation <= 8U && host_capabilities().cssc;
+  return operation <= 8U;
 }
 
 } // namespace uml::cpu::arm64::jit

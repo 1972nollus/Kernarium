@@ -350,6 +350,40 @@ void virtual_counter_is_monotonic(test::Harness &harness)
 	});
 }
 
+/* FEAT_ECV's CNTVCTSS_EL0 reads the virtual count without waiting for an
+ * ISB. The virtual CPU implements FEAT_ECV exactly where the host does, and
+ * a host counter read cannot be pinned in the instruction corpus, so both
+ * outcomes live here. CNTPCTSS_EL0, like CNTPCT_EL0, is UNDEFINED on every
+ * host: Linux gives EL0 no physical count. */
+void self_synchronized_counter(test::Harness &harness)
+{
+	const auto ecv = engine_tests::NativeRequirements::features(
+		engine_tests::ArmFeature::ecv);
+	if (engine_tests::host_supports(ecv)) {
+		const auto initial = test::state();
+		harness.engines().check({
+			.name = "ecv-read-self-synchronized-virtual-counter",
+			.instruction = 0xd53b'e0c6U, // MRS X6, CNTVCTSS_EL0
+			.initial = initial,
+			.expected = initial,
+			.native = ecv,
+			.validator = validate_host_counter,
+			.execution_context = &counter_bounds,
+			.before_engine = sample_counter_before,
+			.after_engine = sample_counter_after,
+		});
+		harness.check_unchanged(
+			"ecv-discard-self-synchronized-virtual-counter",
+			0xd53b'e0dfU, ecv);
+	} else {
+		harness.require_illegal(0xd53b'e0c6U);
+		harness.require_illegal(0xd53b'e0dfU);
+	}
+	harness.require_illegal(0xd53b'e026U); // MRS X6, CNTPCT_EL0
+	harness.require_illegal(0xd53b'e0a6U); // MRS X6, CNTPCTSS_EL0
+	harness.require_illegal(0xd53b'e0bfU); // MRS XZR, CNTPCTSS_EL0
+}
+
 void inaccessible_and_reserved(test::Harness &harness)
 {
 	for (const auto instruction : {
@@ -387,6 +421,7 @@ int main()
 	virtual_counter(harness);
 	virtual_counter_is_monotonic(harness);
 	inaccessible_and_reserved(harness);
+	self_synchronized_counter(harness);
 	harness.print_summary("arm64-base-system-registers");
 	return 0;
 }

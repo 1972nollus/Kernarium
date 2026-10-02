@@ -295,6 +295,7 @@ unsigned long expected_guest_hwcap()
 		{"hw.optional.arm.FEAT_FP16", 9},
 		{"hw.optional.arm.FEAT_FP16", 10},
 		{"hw.optional.arm.FEAT_RDM", 12},
+		{"hw.optional.arm.FEAT_JSCVT", 13},
 		{"hw.optional.arm.FEAT_FCMA", 14},
 		{"hw.optional.arm.FEAT_LRCPC", 15},
 		{"hw.optional.arm.FEAT_SHA3", 17},
@@ -315,15 +316,10 @@ unsigned long expected_guest_hwcap()
 	return result;
 }
 
-/* HWCAP_JSCVT additionally depends on a runtime probe of this core's subnormal
- * flag behaviour, which a sysctl cannot answer. Compare every other bit exactly
- * and leave that one to arm64-jit-capability, which checks the real predicate.
- */
-constexpr unsigned long hwcap_probe_dependent = 1UL << 13;
-
 unsigned long expected_guest_hwcap2()
 {
-	unsigned long result = 0;
+	/* FEAT_CSSC and FEAT_MOPS run on every host. */
+	unsigned long result = (1UL << 34) | (1UL << 43);
 	const struct {
 		const char *sysctl;
 		unsigned bit;
@@ -332,6 +328,7 @@ unsigned long expected_guest_hwcap2()
 		{"hw.optional.arm.FEAT_FRINTTS", 8},
 		{"hw.optional.arm.FEAT_I8MM", 13},
 		{"hw.optional.arm.FEAT_BF16", 14},
+		{"hw.optional.arm.FEAT_ECV", 19},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))
@@ -524,8 +521,7 @@ int native_network_kernel(int argc, char *const argv[], char *const[])
 void test_native_entry()
 {
 	const auto expected_hwcap = expected_guest_hwcap();
-	require((darwin_uml_guest_hwcap() & ~hwcap_probe_dependent) ==
-			(expected_hwcap & ~hwcap_probe_dependent),
+	require(darwin_uml_guest_hwcap() == expected_hwcap,
 		"guest HWCAP does not match the host-safe virtual CPU");
 	require(darwin_uml_guest_hwcap2() == expected_guest_hwcap2(),
 		"guest HWCAP2 does not match the host-safe virtual CPU");
@@ -593,8 +589,7 @@ void test_native_entry()
 		UML_EMULATOR_OK &&
 		capabilities.userspace_execution == UML_EMULATOR_STATIC_GADGETS,
 		"handle-local gadget selection was not retained");
-	require((darwin_uml_guest_hwcap() & ~hwcap_probe_dependent) ==
-			(expected_hwcap & ~hwcap_probe_dependent),
+	require(darwin_uml_guest_hwcap() == expected_hwcap,
 		"gadget selection changed the virtual CPU contract");
 	require(execution_option_was_stripped,
 		"host execution option leaked into kernel arguments");

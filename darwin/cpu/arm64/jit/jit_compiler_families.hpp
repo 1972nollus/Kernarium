@@ -162,6 +162,7 @@ protected:
   void emit_add_sub_carry(std::uint32_t instruction);
   void emit_conditional_select(std::uint32_t instruction);
   void emit_integer_min_max(std::uint32_t instruction, bool immediate);
+  void emit_bit_reverse_count(std::uint32_t instruction);
   void emit_multiply_add(std::uint32_t instruction);
   [[nodiscard]] bool emit_flag_manipulation(std::uint32_t instruction);
   [[nodiscard]] static bool valid_move_wide(std::uint32_t instruction) noexcept;

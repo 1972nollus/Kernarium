@@ -6,6 +6,7 @@
 #include "jit_semantic_reservation.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/single_copy_alignment.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/memory_transfer.hpp"
@@ -14,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <mutex>
 #include <span>
 
 namespace uml::cpu::arm64 {
@@ -342,6 +344,91 @@ uml_arm64_jit_execute_memory(CpuState *cpu, Tlb *tlb,
     return pack_jit_result(Event::fatal, 0);
   return execute_semantic_instruction(
       *cpu, *tlb, instruction, jit::semantic::memory_handler(instruction));
+}
+
+/*
+ * A MOPS chunk is stored as an ordinary semantic store is: serialized with
+ * the exclusive operations by exclusive_memory_mutex. It invalidates the
+ * reservation granules it writes only while a software reservation exists,
+ * as a native store block is tracked only then. A reservation established
+ * later takes its snapshot under the same mutex, after this store.
+ */
+struct JitMopsStore final {
+  template <typename Transfer>
+  [[nodiscard]] bool operator()(Tlb &tlb, std::uint64_t address,
+                                Transfer &&transfer) const noexcept {
+    std::scoped_lock lock{jit::semantic::exclusive_memory_mutex};
+    auto *pointer = tlb.translate(address, Access::write);
+    if (pointer == nullptr)
+      return false;
+    const arm64::detail::MopsStoredRange stored = transfer(pointer);
+    if (active_jit_reservations.load(std::memory_order_seq_cst) != 0U) {
+      const JitStoreRange range{
+          reinterpret_cast<std::uintptr_t>(stored.pointer), stored.size};
+      jit::semantic::invalidate_store_ranges(std::span{&range, 1});
+    }
+    return true;
+  }
+};
+
+template <arm64::detail::MopsFamily family>
+[[nodiscard]] std::uint64_t
+execute_mops(CpuState &cpu, Tlb &tlb,
+             const arm64::detail::MopsInstruction &mops,
+             std::uint32_t stages) noexcept {
+  std::uint64_t zero{};
+  auto &destination = cpu.registers[mops.destination];
+  auto &count = cpu.registers[mops.count];
+  auto &source = mops.source == 31U ? zero : cpu.registers[mops.source];
+  if (mops.stage == 0U) {
+    arm64::detail::mops_prologue<family>(cpu, destination, count, source);
+    if (stages == 1U) {
+      cpu.pc += 4;
+      return pack_jit_result(Event::continued, 1);
+    }
+  } else if (mops.stage == 1U) {
+    cpu.pc += 4;
+    return pack_jit_result(Event::continued, 1);
+  }
+  /* A fused sequence has retired its prologue and main stage before the
+   * epilogue, which restarts alone after a fault. */
+  const std::size_t retired = stages == 3U ? 2U : 0U;
+  cpu.pc += retired * 4U;
+  switch (arm64::detail::mops_epilogue<family>(cpu, tlb, destination, count,
+                                               source, JitMopsStore{})) {
+  case arm64::detail::MopsOutcome::complete:
+    cpu.pc += 4;
+    return pack_jit_result(Event::continued, retired + 1U);
+  case arm64::detail::MopsOutcome::fault:
+    tlb.fault_alignment = 0;
+    return pack_jit_result(Event::memory_fault, retired);
+  case arm64::detail::MopsOutcome::illegal:
+    break;
+  }
+  return pack_jit_result(Event::illegal_instruction, retired);
+}
+
+extern "C" std::uint64_t
+uml_arm64_jit_execute_mops(CpuState *cpu, Tlb *tlb, std::uint32_t instruction,
+                           std::uint32_t stages) noexcept {
+  const auto mops = arm64::detail::decode_mops(instruction);
+  /* Translation routes only valid words, and fuses only from a prologue. */
+  if (cpu == nullptr || tlb == nullptr || !mops.valid ||
+      (stages != 1U && (stages != 3U || mops.stage != 0U)))
+    return pack_jit_result(Event::fatal, 0);
+  materialize_semantic_cpu_state(*cpu);
+  switch (mops.family) {
+  case arm64::detail::MopsFamily::copy_forward:
+    return execute_mops<arm64::detail::MopsFamily::copy_forward>(
+        *cpu, *tlb, mops, stages);
+  case arm64::detail::MopsFamily::copy_general:
+    return execute_mops<arm64::detail::MopsFamily::copy_general>(
+        *cpu, *tlb, mops, stages);
+  case arm64::detail::MopsFamily::set:
+    break;
+  }
+  return execute_mops<arm64::detail::MopsFamily::set>(*cpu, *tlb, mops,
+                                                      stages);
 }
 
 extern "C" std::uint64_t

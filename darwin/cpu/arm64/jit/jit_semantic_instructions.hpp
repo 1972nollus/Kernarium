@@ -64,8 +64,8 @@ struct RunResult final {
 
 using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
 
-/* uml_arm64_jit_execute_memory: ordered and exact-fault memory forms, and
- * MOPS. */
+/* uml_arm64_jit_execute_memory: ordered and exact-fault memory forms.
+ * FEAT_MOPS has its own helper, uml_arm64_jit_execute_mops. */
 [[nodiscard]] Handler memory_handler(std::uint32_t instruction) noexcept;
 /* uml_arm64_jit_execute_exclusive: exclusives, compare-and-swap, and LSE
  * atomics. */
@@ -74,8 +74,6 @@ using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
  * load/store family, STLR. */
 [[nodiscard]] Handler ordered_store_handler(std::uint32_t instruction) noexcept;
 
-[[nodiscard]] RunResult memory_copy_set(CpuState &, GuestMemory &,
-                                        std::uint32_t);
 [[nodiscard]] RunResult load_store_unsigned(CpuState &, GuestMemory &,
                                             std::uint32_t);
 [[nodiscard]] RunResult load_literal(CpuState &, GuestMemory &,

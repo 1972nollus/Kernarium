@@ -28,8 +28,6 @@ Handler memory_handler(std::uint32_t instruction) noexcept {
   if (matches(instruction, 0x3fff'fc00U, 0x38bf'c000U) ||
       matches(instruction, 0x3f20'0c00U, 0x1900'0000U))
     return load_store_rcpc;
-  if (matches(instruction, 0x3b20'0c00U, 0x1900'0400U)) // CPY*, SET*
-    return memory_copy_set;
 
   /* Literal loads, except the non-faulting literal PRFM hint. */
   if (matches(instruction, 0x3b00'0000U, 0x1800'0000U) &&

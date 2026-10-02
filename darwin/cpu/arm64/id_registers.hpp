@@ -115,8 +115,7 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		 * DC CVAP, and the pointer-authentication fields stay zero
 		 * because AT_HWCAP does not advertise PACA/PACG either. */
 		std::uint64_t value = 0;
-		if (host.has(ArmFeature::jscvt) &&
-		    host.jscvt_subnormal_flags_correct)
+		if (host.has(ArmFeature::jscvt))
 			value |= field(1, 12);
 		if (host.has(ArmFeature::fcma))
 			value |= field(1, 16);
@@ -133,6 +132,14 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 			value |= field(1, 52);
 		return value;
 	}
+	if (group == 6U && selector == 2U)
+		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_MOPS and
+		 * FEAT_CSSC on every host. */
+		return field(1, 16) | field(1, 52);
+	if (group == 7U && selector == 0U)
+		/* ID_AA64MMFR0_EL1. ECV is the one field Linux shows EL0, and
+		 * where it derives HWCAP2_ECV. */
+		return host.has(ArmFeature::ecv) ? field(1, 60) : 0;
 	if (group == 7U && selector == 2U)
 		/* ID_AA64MMFR2_EL1.AT is where Linux derives HWCAP_USCAT, the
 		 * single-copy atomicity guarantee for an unaligned LSE atomic. */

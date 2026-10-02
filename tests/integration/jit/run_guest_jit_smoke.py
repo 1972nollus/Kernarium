@@ -50,6 +50,9 @@ HWCAP2_FLAGM2 = 1 << 7
 HWCAP2_FRINT = 1 << 8
 HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
+HWCAP2_ECV = 1 << 19
+HWCAP2_CSSC = 1 << 34
+HWCAP2_MOPS = 1 << 43
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
     ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
@@ -60,6 +63,7 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FP16", HWCAP_FPHP, "fphp"),
     ("hw.optional.arm.FEAT_FP16", HWCAP_ASIMDHP, "asimdhp"),
     ("hw.optional.arm.FEAT_RDM", HWCAP_ASIMDRDM, "asimdrdm"),
+    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
     ("hw.optional.arm.FEAT_FCMA", HWCAP_FCMA, "fcma"),
     ("hw.optional.arm.FEAT_LRCPC", HWCAP_LRCPC, "lrcpc"),
     ("hw.optional.arm.FEAT_SHA3", HWCAP_SHA3, "sha3"),
@@ -72,14 +76,12 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FlagM", HWCAP_FLAGM, "flagm"),
     ("hw.optional.arm.FEAT_SB", HWCAP_SB, "sb"),
 )
-PROBE_DEPENDENT_HWCAPS = (
-    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
-)
 OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_FlagM2", HWCAP2_FLAGM2, "flagm2"),
     ("hw.optional.arm.FEAT_FRINTTS", HWCAP2_FRINT, "frint"),
     ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
+    ("hw.optional.arm.FEAT_ECV", HWCAP2_ECV, "ecv"),
 )
 # Every AT_HWCAP and AT_HWCAP2 bit an engine may advertise, by the name arm64
 # Linux gives it in /proc/cpuinfo. A set bit missing here fails the smoke,
@@ -88,9 +90,15 @@ HWCAP_NAMES = {
     HWCAP_FP: "fp",
     HWCAP_ASIMD: "asimd",
     HWCAP_CPUID: "cpuid",
-    **{bit: name for _, bit, name in OPTIONAL_HWCAPS + PROBE_DEPENDENT_HWCAPS},
+    **{bit: name for _, bit, name in OPTIONAL_HWCAPS},
 }
-HWCAP2_NAMES = {bit: name for _, bit, name in OPTIONAL_HWCAPS2}
+# Advertised on every host.
+REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
+HWCAP2_NAMES = {
+    HWCAP2_CSSC: "cssc",
+    HWCAP2_MOPS: "mops",
+    **{bit: name for _, bit, name in OPTIONAL_HWCAPS2},
+}
 # The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)
 # up to each value, plus the model name that it prints in the same place for a
 # 32-bit task. A blank line ends every block.
@@ -303,18 +311,12 @@ def main() -> int:
         expected = expected_hwcap(
             OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD | HWCAP_CPUID
         )
-        probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
-        if (
-            actual_hwcap is None
-            or (actual_hwcap & ~HWCAP_JSCVT) != expected
-            or (actual_hwcap & HWCAP_JSCVT & ~probe_permitted) != 0
-        ):
+        if actual_hwcap != expected:
             raise RuntimeError(
                 "AT_HWCAP mismatch: "
-                f"expected 0x{expected:x} with probe-dependent mask "
-                f"0x{probe_permitted:x}, got {actual_hwcap!r}"
+                f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
-        expected2 = expected_hwcap(OPTIONAL_HWCAPS2)
+        expected2 = expected_hwcap(OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2)
         if actual_hwcap2 != expected2:
             raise RuntimeError(
                 "AT_HWCAP2 mismatch: "

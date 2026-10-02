@@ -7,11 +7,8 @@ PUBLISHER="$ROOT_DIR/dependencies/publish-prefix.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-publish-prefix.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test-publish-prefix.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test-publish-prefix.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 publish_status()
 {

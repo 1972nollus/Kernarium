@@ -8,11 +8,8 @@ BUILD_SCRIPT="$LINE_ROOT/build/build-kernel.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-source-config.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test_source_location_config.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test_source_location_config.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 MISSING_CONFIG="$TEST_ROOT/missing.conf"
 if UML_KERNEL_SOURCE_CONFIG="$MISSING_CONFIG" \

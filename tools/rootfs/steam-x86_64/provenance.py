@@ -26,10 +26,8 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     repository = here.parents[2]
     recorded = json.loads((args.inputs / "inputs.json").read_text())
-    sources = []
-    for directory in (here, here.parent / "steam-common"):
-        sources += sorted(path for path in directory.rglob("*")
-                          if path.is_file() and path.name != "README.md")
+    sources = sorted(path for path in here.rglob("*")
+                     if path.is_file() and path.name != "README.md")
     # build.sh and seal-image.sh source the helpers every rootfs producer shares.
     sources.append(here.parent / "producer.sh")
     recorded["producer_sources"] = {path.relative_to(repository).as_posix(): digest(path)

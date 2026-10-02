@@ -87,6 +87,7 @@ private:
       deferred_exclusive_slow,
       exclusive_compare_mismatch,
       memory_slow,
+      memory_copy_set_slow,
     };
 
     Arm64Emitter::Label label;
@@ -105,6 +106,9 @@ private:
     Arm64Emitter::Label fault;
     unsigned address;
     Access access;
+    /* A miss in both TLB ways takes the preserving miss bridge, or, when
+     * false, branches to fault with every scratch register intact. */
+    bool bridge{true};
   };
 
   class ColdPaths final {
@@ -151,6 +155,10 @@ private:
   void track_direct_store(unsigned address, std::size_t size,
                           std::size_t instruction_index);
 
+  /* As above, with the stored size in a register. */
+  void track_direct_store_register(unsigned address, unsigned size,
+                                   std::size_t instruction_index);
+
   [[nodiscard]] bool emit_primary_hint(std::uint32_t instruction);
 
   void mask_register(unsigned reg, std::uint64_t mask, bool wide);
@@ -183,6 +191,21 @@ private:
   void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
                         std::size_t count);
 
+  /* Moves 1 to 63 bytes between host pointers, from the given start and
+   * end registers, then branches to done. A fill uses v0's low byte. */
+  void emit_small_copy_set(bool set, unsigned source_start,
+                           unsigned source_end, unsigned destination_start,
+                           unsigned destination_end, unsigned remaining,
+                           Arm64Emitter::Label done);
+  /* A terminal FEAT_MOPS helper call for one stage, or for a whole
+   * prologue/main/epilogue sequence when stages is 3. */
+  void emit_memory_copy_set(std::uint32_t instruction, std::uint64_t pc,
+                            std::size_t count, unsigned stages);
+
+  [[nodiscard]] std::size_t
+  try_emit_memory_copy_set_sequence(
+      std::span<const std::uint32_t> instructions, std::uint64_t pc);
+
 
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);
@@ -209,7 +232,7 @@ private:
 
   void emit_translate(unsigned address, Access access,
                       Arm64Emitter::Label fallback, Arm64Emitter::Label fault,
-                      std::size_t bytes);
+                      std::size_t bytes, bool bridge = true);
 
   void emit_translation_cold(const TranslationColdPath &path);
 
