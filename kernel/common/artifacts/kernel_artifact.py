@@ -257,20 +257,21 @@ def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
         fail(f"kernel artifact contains loadable-module values: {modular[:8]}")
 
 
-def verify_elf(
-    path: Path, page_size: int, common_root: Path, kernel_slice: str
-) -> bytes:
-    """Check the kernel's ELF geometry and bridge imports; return its bytes."""
-    payload = path.read_bytes()
+def verify_elf_geometry(
+    payload: bytes,
+    page_size: int,
+    error: Callable[[str], BaseException] = _CHECKS.error,
+) -> None:
+    """Check a kernel image's AArch64 ET_DYN layout and separated W^X loads."""
     if len(payload) < 64 or payload[:7] != b"\x7fELF\x02\x01\x01":
-        fail("kernel is not a little-endian ELF64 image")
+        raise error("kernel is not a little-endian ELF64 image")
     elf_type, machine = struct.unpack_from("<HH", payload, 16)
     if elf_type != ET_DYN or machine != EM_AARCH64:
-        fail("kernel is not an AArch64 ET_DYN image")
+        raise error("kernel is not an AArch64 ET_DYN image")
     program_offset = struct.unpack_from("<Q", payload, 32)[0]
     program_entry_size, program_count = struct.unpack_from("<HH", payload, 54)
     if program_entry_size < 56:
-        fail("ELF program-header entry size is malformed")
+        raise error("ELF program-header entry size is malformed")
     bounded_slice(
         payload,
         program_offset,
@@ -289,23 +290,31 @@ def verify_elf(
             "<QQQ", payload, offset + 32
         )
         if file_size > memory_size:
-            fail(f"ELF program header {index} has file size above memory size")
+            raise error(f"ELF program header {index} has file size above memory size")
         bounded_slice(payload, file_offset, file_size, f"segment {index}", error)
         if kind == PT_GNU_STACK and flags & PF_X:
-            fail("kernel GNU stack is executable")
+            raise error("kernel GNU stack is executable")
         if kind != PT_LOAD:
             continue
         load_count += 1
         if flags & PF_W and flags & PF_X:
-            fail(f"ELF load segment {index} is writable and executable")
+            raise error(f"ELF load segment {index} is writable and executable")
         if alignment < page_size or alignment & (alignment - 1):
-            fail(f"ELF load segment {index} has invalid alignment {alignment:#x}")
+            raise error(f"ELF load segment {index} has invalid alignment {alignment:#x}")
         if virtual_address % alignment != file_offset % alignment:
-            fail(f"ELF load segment {index} violates alignment congruence")
+            raise error(f"ELF load segment {index} violates alignment congruence")
         executable |= bool(flags & PF_X)
         writable |= bool(flags & PF_W)
     if load_count < 2 or not executable or not writable:
-        fail("kernel lacks separated executable and writable load segments")
+        raise error("kernel lacks separated executable and writable load segments")
+
+
+def verify_elf(
+    path: Path, page_size: int, common_root: Path, kernel_slice: str
+) -> bytes:
+    """Check the kernel's ELF geometry and bridge imports; return its bytes."""
+    payload = path.read_bytes()
+    verify_elf_geometry(payload, page_size)
     verify_imports(
         undefined_symbols(payload, error),
         page_size,

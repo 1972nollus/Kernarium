@@ -184,11 +184,13 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
         for layout, offset, value, diagnostic in (
             ("<B", 4, 1, "little-endian ELF64 image"),
             ("<B", 5, 2, "little-endian ELF64 image"),
+            ("<B", 6, 0, "little-endian ELF64 image"),
             ("<H", 16, 2, "ET_DYN"),
             ("<H", 18, 62, "AArch64"),
             ("<H", 54, 32, "program-header"),
             ("<H", 56, 1000, "program-header"),
             ("<Q", load + 40, 1, "program header 0 has file size above memory size"),
+            ("<Q", data + 8, 0x40000, "segment 1 is outside the file"),
             ("<I", stack + 4, 7, "GNU stack is executable"),
             ("<I", data + 4, 7, "load segment 1 is writable and executable"),
             ("<Q", load + 48, 0x1000, "load segment 0 has invalid alignment 0x1000"),
@@ -200,7 +202,10 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
             payload = synthetic_kernel_elf()
             struct.pack_into(layout, payload, offset, value)
             rejected = verify(payload)
-            if rejected.returncode == 0 or diagnostic not in rejected.stderr:
+            if rejected.returncode == 0 or (
+                "Android kernel ELF verifier: " not in rejected.stderr
+                or diagnostic not in rejected.stderr
+            ):
                 fail(
                     f"kernel ELF verifier did not reject with {diagnostic!r}: "
                     f"{rejected.stderr}"
