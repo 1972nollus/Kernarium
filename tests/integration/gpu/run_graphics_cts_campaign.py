@@ -1207,67 +1207,6 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return options
 
 
-def legacy_launcher(record: dict[str, Any], attempted: Sequence[str]
-                    ) -> tuple[str, dict[str, str]]:
-    """Recover the interpreter and runners a schema-1 campaign launched with.
-
-    Neither was ever written down: each attempt simply recorded the command it
-    ran, so the command is where they come from. A pool resuming that campaign
-    runs from a different checkout, and often a different interpreter, than the
-    one that produced those attempts.
-    """
-    interpreter = None
-    runners: dict[str, str] = {}
-    campaign = record.get("campaign_directory")
-    for name in attempted:
-        suite = next(item for item in SUITE_ORDER if name.startswith(item))
-        if suite in runners or campaign is None:
-            continue
-        try:
-            command = load_json(
-                Path(campaign) / "shards" / name / "attempt.json")["command"]
-        except (common.CampaignError, OSError, ValueError, KeyError):
-            continue
-        if isinstance(command, list) and len(command) > 2:
-            interpreter = interpreter or str(command[0])
-            runners[suite] = str(command[2])
-    for suite, path in RUNNERS.items():
-        runners.setdefault(suite, str(path))
-    return interpreter or sys.executable, runners
-
-
-def migrate_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Read a campaign written before shards could be retried.
-
-    A schema-1 campaign holds one immutable attempt per shard and one
-    specification for all of them, which is exactly a schema-2 campaign with a
-    single generation and a single attempt per shard. Converting it in place
-    keeps everything such a campaign already proved.
-    """
-    version = record.get("schema_version")
-    if version == SCHEMA_VERSION:
-        return record
-    if version != 1:
-        raise common.CampaignError("unsupported campaign schema")
-    spec = record.get("spec")
-    attempted = record.get("attempted_shards")
-    if not isinstance(spec, dict) or not isinstance(attempted, list):
-        raise common.CampaignError("invalid schema-1 campaign record")
-    spec = dict(spec)
-    interpreter, runners = legacy_launcher(record, attempted)
-    spec.setdefault("interpreter", interpreter)
-    spec.setdefault("runners", runners)
-    return {
-        "schema_version": SCHEMA_VERSION, "kind": record.get("kind"),
-        "plan": plan_identity(spec), "generations": [spec],
-        "attempts": {name: [{"path": f"shards/{name}", "generation": 0}]
-                     for name in attempted},
-        "created_at": record.get("created_at", utc_now()),
-        "state": record.get("state", "pending"),
-        "migrated_from_schema": 1,
-    }
-
-
 def classify_attempts(campaign: Path, spec: dict[str, Any],
                       record: dict[str, Any]
                       ) -> tuple[dict[str, dict[str, Any]],
@@ -1344,10 +1283,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         path = campaign / "campaign.json"
         attempt_roots = {"shards", "retries"}
         if path.exists():
-            stored = load_json(path)
-            stored.setdefault("campaign_directory", str(campaign))
-            record = migrate_record(stored)
-            record.pop("campaign_directory", None)
+            record = load_json(path)
+            if record.get("schema_version") != SCHEMA_VERSION:
+                raise common.CampaignError("unsupported campaign schema")
             require(record, {"kind": KIND})
             plan = plan_identity(spec)
             if record.get("plan") != plan:
@@ -1390,8 +1328,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             # the generation that ran it.
             if not generations or generations[-1] != spec:
                 generations.append(spec)
-            record.update({"schema_version": SCHEMA_VERSION,
-                           "updated_at": utc_now()})
+            record["updated_at"] = utc_now()
             write_json(path, record)
         generation = len(generations) - 1
         passed, adoptions, failures, pending = classify_attempts(campaign, spec, record)

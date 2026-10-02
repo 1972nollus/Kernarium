@@ -333,6 +333,19 @@ def make_resumed_gl_attempt(root: Path, definition: dict, shard: campaign.Shard)
     return run
 
 
+def campaign_record(definition: dict, attempted: tuple[str, ...] = (),
+                    **fields: object) -> dict:
+    """The campaign.json of one generation that launched each named shard once."""
+    return {
+        "schema_version": campaign.SCHEMA_VERSION, "kind": campaign.KIND,
+        "plan": campaign.plan_identity(definition),
+        "generations": [copy.deepcopy(definition)],
+        "attempts": {name: [{"path": f"shards/{name}", "generation": 0}]
+                     for name in attempted},
+        **fields,
+    }
+
+
 def every_shard_passed(definition, root=Path("/nonexistent")):
     """Resolve every shard to a passing attempt of the current generation."""
     return {shard.name(): {"path": root, "spec": definition, "result": {}}
@@ -439,14 +452,9 @@ class GraphicsCampaignTests(unittest.TestCase):
             extended = with_gles32(root, definition)
             location = root / "campaign"
             location.mkdir()
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 2, "kind": campaign.KIND,
-                "plan": campaign.plan_identity(definition),
-                "generations": [copy.deepcopy(definition)],
-                "attempts": {"gl46-run0000-00of08": [
-                    {"path": "shards/gl46-run0000-00of08", "generation": 0}]},
-                "created_at": "2026-01-01T00:00:00+00:00", "state": "pending",
-            }))
+            (location / "campaign.json").write_text(json.dumps(campaign_record(
+                definition, ("gl46-run0000-00of08",),
+                created_at="2026-01-01T00:00:00+00:00", state="pending")))
             passed = every_shard_passed(definition)
             with mock.patch.object(campaign, "build_spec", return_value=extended), \
                     mock.patch.object(campaign, "classify_attempts",
@@ -893,10 +901,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             location.mkdir()
             (location / "campaign.lock").touch()
             failed = campaign.Shard("vulkan", 0)
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
-                "attempted_shards": [failed.name()],
-            }))
+            (location / "campaign.json").write_text(json.dumps(
+                campaign_record(definition, (failed.name(),))))
             first = campaign.attempt_path(location, failed)
             first.mkdir(parents=True)
             retried = []
@@ -940,11 +946,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             location.mkdir()
             done = campaign.Shard("vulkan", 0)
             campaign.attempt_path(location, done).mkdir(parents=True)
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND,
-                "spec": copy.deepcopy(definition),
-                "attempted_shards": [done.name()], "state": "running",
-            }))
+            (location / "campaign.json").write_text(json.dumps(
+                campaign_record(definition, (done.name(),), state="running")))
             replaced = copy.deepcopy(definition)
             replaced["emulator_sha256"] = "f" * 64
             judged = []
@@ -1001,10 +1004,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             definition["suites"] = ["vulkan"]
             location = root / "campaign"
             location.mkdir()
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND,
-                "spec": copy.deepcopy(definition), "attempted_shards": [],
-            }))
+            (location / "campaign.json").write_text(json.dumps(campaign_record(definition)))
             replaced = copy.deepcopy(definition)
             replaced["page_profile"] = "4k"
             with mock.patch.object(campaign, "build_spec", return_value=replaced), \
@@ -1012,6 +1012,25 @@ class GraphicsCampaignTests(unittest.TestCase):
                     self.assertRaises(gl.CampaignError):
                 campaign.main(self.arguments(root))
             launch.assert_not_called()
+
+    def test_a_campaign_of_another_schema_is_refused_before_launch(self) -> None:
+        """A schema-1 record predates retries and generations; nothing reads it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            definition = spec(root)
+            location = root / "campaign"
+            location.mkdir()
+            (location / "campaign.json").write_text(json.dumps({
+                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
+                "attempted_shards": [],
+            }))
+            before = (location / "campaign.json").read_bytes()
+            with mock.patch.object(campaign, "build_spec", return_value=definition), \
+                    mock.patch.object(campaign, "run_pending") as launch, \
+                    self.assertRaisesRegex(gl.CampaignError, "unsupported campaign schema"):
+                campaign.main(self.arguments(root))
+            launch.assert_not_called()
+            self.assertEqual((location / "campaign.json").read_bytes(), before)
 
     def test_a_shard_left_running_is_adopted_rather_than_relaunched(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1028,12 +1047,7 @@ class GraphicsCampaignTests(unittest.TestCase):
                 "pid": os.getpid(), "pgid": os.getpgid(0),
                 "guest_ownership_token": "t" * 32,
             }))
-            record = {"schema_version": campaign.SCHEMA_VERSION, "kind": campaign.KIND,
-                      "plan": campaign.plan_identity(definition),
-                      "generations": [copy.deepcopy(definition)],
-                      "attempts": {live.name(): [
-                          {"path": f"shards/{live.name()}", "generation": 0}]},
-                      "state": "running"}
+            record = campaign_record(definition, (live.name(),), state="running")
             passed, adoptions, failures, pending = campaign.classify_attempts(
                 location, definition, record)
             self.assertFalse(passed)
@@ -1107,10 +1121,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             location = root / "campaign"
             location.mkdir()
             failed = campaign.Shard("vulkan", 0)
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
-                "attempted_shards": [failed.name()],
-            }))
+            (location / "campaign.json").write_text(json.dumps(
+                campaign_record(definition, (failed.name(),))))
             campaign.attempt_path(location, failed).mkdir(parents=True)
             with mock.patch.object(campaign, "build_spec", return_value=definition), \
                     mock.patch.object(campaign, "run_pending") as launch, \
@@ -1126,10 +1138,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             definition = spec(root)
             location = root / "campaign"
             location.mkdir()
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
-                "attempted_shards": ["vulkan-00of08"], "state": "running",
-            }))
+            (location / "campaign.json").write_text(json.dumps(
+                campaign_record(definition, ("vulkan-00of08",), state="running")))
             with mock.patch.object(campaign, "build_spec", return_value=definition), mock.patch.object(
                 campaign, "run_pending"
             ) as launch, self.assertRaisesRegex(gl.CampaignError, "launch catalog disagree"):
@@ -1145,10 +1155,8 @@ class GraphicsCampaignTests(unittest.TestCase):
             location.mkdir()
             first = campaign.Shard("vulkan", 0)
             campaign.attempt_path(location, first).mkdir(parents=True)
-            (location / "campaign.json").write_text(json.dumps({
-                "schema_version": 1, "kind": campaign.KIND, "spec": definition,
-                "attempted_shards": [first.name()], "state": "running",
-            }))
+            (location / "campaign.json").write_text(json.dumps(
+                campaign_record(definition, (first.name(),), state="running")))
             seen = []
 
             def worker(_root, _spec, key, _cancelled, *_rest):
@@ -1208,9 +1216,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             location = root / "campaign"
             location.mkdir()
             (location / "campaign.lock").touch()
-            record = {"schema_version": 1, "kind": campaign.KIND, "spec": copy.deepcopy(definition),
-                      "attempted_shards": []}
-            (location / "campaign.json").write_text(json.dumps(record))
+            (location / "campaign.json").write_text(json.dumps(campaign_record(definition)))
             before = (location / "campaign.json").read_bytes()
             for changed in (False, True):
                 if changed:
