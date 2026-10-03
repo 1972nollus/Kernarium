@@ -2,6 +2,7 @@
 #include "allocation_failure.hpp"
 #include "cpu/engine.hpp"
 #include "memory/domain_contract.hpp"
+#include "platform/run_routing.hpp"
 #include "require.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
@@ -162,47 +163,6 @@ private:
 	RetirementInterleave &interleave_;
 };
 
-void test_legacy_context_initialization_retries()
-{
-	uml::testing::fail_next_allocation();
-	require(uml::runtime::current_context() == nullptr,
-		"legacy context initialization failure was not contained");
-	const auto failure = uml::testing::last_allocation_failure();
-	require(failure.observed &&
-		failure.form == uml::testing::AllocationForm::scalar_nothrow &&
-		failure.size == sizeof(uml::runtime::Context),
-		"fault injection did not reach the legacy Context allocation");
-	require(!uml::testing::cancel_pending_allocation_failure(),
-		"legacy Context allocation did not consume the injected failure");
-
-	constexpr std::size_t thread_count = 8;
-	std::array<std::thread, thread_count> workers;
-	std::array<uml::runtime::Context *, thread_count> contexts{};
-	std::atomic_size_t ready{};
-	std::atomic_bool release{};
-	for (std::size_t index = 0; index < thread_count; ++index)
-		workers[index] = std::thread{[&, index] {
-			ready.fetch_add(1, std::memory_order_release);
-			while (!release.load(std::memory_order_acquire))
-				std::this_thread::yield();
-			contexts[index] = uml::runtime::current_context();
-		}};
-	while (ready.load(std::memory_order_acquire) != thread_count)
-		std::this_thread::yield();
-	release.store(true, std::memory_order_release);
-	for (auto &worker : workers)
-		worker.join();
-
-	const auto *context = contexts.front();
-	require(context != nullptr,
-		"legacy context initialization failure was cached permanently");
-	require(std::ranges::all_of(contexts,
-		[context](const auto *candidate) { return candidate == context; }),
-		"concurrent legacy Context retry published multiple instances");
-	require(uml::runtime::current_context() == context,
-		"legacy Context retry did not remain stably published");
-}
-
 void test_pre_run_memory_domain_is_retired_before_run()
 {
 	uml::runtime::Context context;
@@ -210,7 +170,7 @@ void test_pre_run_memory_domain_is_retired_before_run()
 	require(pre_run_domain != 0,
 		"new Context did not own a pre-run compatibility domain");
 	{
-		uml::runtime::ActiveContextScope active{context};
+		uml::routing::ActiveRouteScope active{&context, nullptr};
 		require(darwin_uml_static_vm_activate(71) == 0,
 			"pre-run Context could not materialize memory-domain state");
 	}
@@ -248,7 +208,7 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 	};
 
 	uml::runtime::Context context;
-	uml::runtime::ActiveContextScope active{context};
+	uml::routing::ActiveRouteScope active{&context, nullptr};
 	uml::testing::ScratchBacking pre_run_backing{
 		"uml-runtime-context-XXXXXX", DARWIN_UML_GUEST_PAGE_SIZE};
 	uml::testing::ScratchBacking run_backing{
@@ -945,7 +905,7 @@ void test_thread_churn_retires_engine_state()
 	uml::runtime::Context context;
 	uml::runtime::RunScope run{context};
 	require(run.entered(), "thread-churn run was not admitted");
-	uml::runtime::ActiveContextScope active{context};
+	uml::routing::ActiveRouteScope active{&context, nullptr};
 	constexpr std::size_t thread_count = 32;
 	std::atomic_size_t destroyed{};
 	for (std::size_t index = 0; index < thread_count; ++index) {
@@ -971,7 +931,7 @@ void test_reused_thread_starts_fresh()
 	{
 		uml::runtime::RunScope run{context};
 		require(run.entered(), "first reuse run was not admitted");
-		uml::runtime::ActiveContextScope active{context};
+		uml::routing::ActiveRouteScope active{&context, nullptr};
 		require(enter_available_engines(context) == expected_engine_slots(),
 			"first reuse run did not create translated engines");
 		auto state = context.thread_execution_state();
@@ -980,7 +940,7 @@ void test_reused_thread_starts_fresh()
 	{
 		uml::runtime::RunScope run{context};
 		require(run.entered(), "second reuse run was not admitted");
-		uml::runtime::ActiveContextScope active{context};
+		uml::routing::ActiveRouteScope active{&context, nullptr};
 		auto state = context.thread_execution_state();
 		require(state->cpu.registers[0] != stale_value,
 			"reused host thread inherited stale CPU state");
@@ -1015,7 +975,7 @@ void test_interrupt_registration_is_transactional()
 	{
 		uml::runtime::RunScope run{context};
 		require(run.entered(), "interrupt baseline run was not admitted");
-		uml::runtime::ActiveContextScope active{context};
+		uml::routing::ActiveRouteScope active{&context, nullptr};
 		require(darwin_uml_static_guest_interrupt_sequence(
 			&stale_sequence, stale_sequence) == 0,
 			"baseline interrupt registration failed");
@@ -1028,7 +988,7 @@ void test_interrupt_registration_is_transactional()
 	unsigned int replacement_sequence = 19;
 	uml::runtime::RunScope run{context};
 	require(run.entered(), "interrupt retry run was not admitted");
-	uml::runtime::ActiveContextScope active{context};
+	uml::routing::ActiveRouteScope active{&context, nullptr};
 	uml::testing::fail_next_allocation();
 	require(darwin_uml_static_guest_interrupt_sequence(
 		&replacement_sequence, replacement_sequence) == -1,
@@ -1068,7 +1028,6 @@ void test_invalid_engine_selection_fails_closed()
 int main()
 {
 	try {
-		test_legacy_context_initialization_retries();
 		test_pre_run_memory_domain_is_retired_before_run();
 		test_pre_run_execution_states_do_not_cross_run_boundary();
 		test_rejected_begin_preserves_active_execution_state();

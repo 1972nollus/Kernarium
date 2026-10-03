@@ -16,6 +16,7 @@
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#include "platform/run_routing.hpp"
 #include "runtime/context.hpp"
 
 #include <atomic>
@@ -177,7 +178,7 @@ public:
 		uml::runtime::RunScope scope{context_};
 		if (!scope.entered())
 			return 122;
-		uml::runtime::ActiveContextScope route{context_};
+		uml::routing::ActiveRouteScope route{&context_, nullptr};
 		return entry_();
 	}
 

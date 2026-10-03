@@ -56,6 +56,11 @@ if(UML_BUILD_UNIT_TESTS)
     target_link_libraries(uml_static_mmu_test_support PRIVATE UML::BridgeAbi)
     target_include_directories(uml_static_mmu_test_support PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu)
+    # The route a run would give, for white-box tests that call the runtime's
+    # guest-kernel callbacks without one.
+    add_library(uml_runtime_test_route INTERFACE)
+    target_include_directories(uml_runtime_test_route INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/runtime)
     # Unit binaries are independent consumers of the same scoped build
     # configuration as production targets; no directory-global definitions
     # are needed.

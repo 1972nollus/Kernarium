@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "runtime/context.hpp"
 
 #include <array>
@@ -74,6 +75,7 @@ void public_boundary_reports_precise_metadata_for_every_engine()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	public_boundary_reports_precise_metadata_for_every_engine();
 	return 0;
 }

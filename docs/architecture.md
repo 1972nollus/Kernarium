@@ -44,8 +44,9 @@ without entering a kernel; see
 
 Runs on different handles serialize through a process address-space gate,
 because an embedded kernel's fixed host mappings cannot be shared. A stop
-request cancels a run queued there. Ambiguous unbound callbacks fail closed
-rather than borrowing another handle's context.
+request cancels a run queued there. A callback that resolves no single run,
+because runs overlap or none is active, fails closed rather than borrowing
+another handle's context.
 
 The caller owns provider lifetimes. The macOS app therefore creates and
 destroys SLiRP around emulator use; the library has no process-global network

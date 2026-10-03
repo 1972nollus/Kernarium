@@ -5,6 +5,7 @@
 #include "memory/static_guest_memory.hpp"
 #include "mach_vm_region_test_support.hpp"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "uml_darwin_guest.h"
 #include "require.hpp"
 
@@ -829,14 +830,15 @@ void test_translated_cleanup_is_exception_safe()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	try {
 		test_factory_contract();
 		test_all_engines_scope_unsupported_instruction_to_guest();
 		test_all_engines_preserve_fault_direction_and_retry();
 		test_production_translated_exception_contract();
 		test_gadget_post_execution_failure_preserves_prefix_and_reuse();
-		/* C-bridge engines are retained by the compatibility context. Exercise
-		 * standalone JIT admission above before that process-lifetime cache
+		/* C-bridge engines are retained by the routed test Context. Exercise
+		 * standalone JIT admission above before that test-lifetime cache
 		 * intentionally occupies the configured executor slot. */
 		test_c_bridge_preserves_fault_direction_and_retry();
 		test_translated_internal_interrupt_obeys_fairness_budget();
