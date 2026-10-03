@@ -937,9 +937,17 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         const std::string_view debugName(
             create->debugName.data(), create->nameLength);
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        contexts_.insert(create->header.contextId);
-        if (requestedCapset == protocol::venusCapsetId) {
-            venusContexts_.insert(create->header.contextId);
+        /* A Venus context is named by both sets, so it enters both or
+         * neither: a create that runs out of memory leaves no trace, and the
+         * guest's retry of the same ID succeeds. */
+        try {
+            contexts_.insert(create->header.contextId);
+            if (requestedCapset == protocol::venusCapsetId)
+                venusContexts_.insert(create->header.contextId);
+        } catch (const std::bad_alloc&) {
+            contexts_.erase(create->header.contextId);
+            return response(
+                *header, protocol::GpuResponse::errorOutOfMemory);
         }
         if (UML_GPU_RENDERER.createContext(
                 create->header.contextId,
@@ -1198,6 +1206,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
 
         try {
+            auto success = response(*header, protocol::GpuResponse::okNoData);
             auto [iterator, inserted] = blobResources_.emplace(
                 create->resourceId,
                 BlobResource {
@@ -1225,7 +1234,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 return response(
                     *header, protocol::GpuResponse::errorInvalidParameter);
             }
-            return response(*header, protocol::GpuResponse::okNoData);
+            return success;
         } catch (const std::bad_alloc&) {
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
@@ -1293,6 +1302,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
+        protocol::GpuMapInfo information {};
+        information.header = *header;
+        information.header.type =
+            static_cast<std::uint32_t>(protocol::GpuResponse::okMapInfo);
+        information.header.flags &=
+            protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+        information.mapInfo = mapInfo;
+        std::vector<std::uint8_t> bytes(sizeof(information));
+        std::memcpy(bytes.data(), &information, sizeof(information));
         const auto actionId = nextSharedMemoryActionId_++;
         try {
             sharedMemoryActions_.push_back(SharedMemoryAction {
@@ -1314,16 +1332,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         resource.regionOffset = map->offset;
         resource.pendingActionId = actionId;
         std::fill(pages.begin(), pages.end(), map->resourceId);
-
-        protocol::GpuMapInfo information {};
-        information.header = *header;
-        information.header.type =
-            static_cast<std::uint32_t>(protocol::GpuResponse::okMapInfo);
-        information.header.flags &=
-            protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
-        information.mapInfo = mapInfo;
-        std::vector<std::uint8_t> bytes(sizeof(information));
-        std::memcpy(bytes.data(), &information, sizeof(information));
         return bytes;
     }
 
@@ -1355,6 +1363,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
+        auto success = response(*header, protocol::GpuResponse::okNoData);
         const auto actionId = nextSharedMemoryActionId_++;
         try {
             sharedMemoryActions_.push_back(SharedMemoryAction {
@@ -1371,7 +1380,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
         resource.mappingState = BlobResource::MappingState::unmapping;
         resource.pendingActionId = actionId;
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::transferToHost3d:

@@ -1038,6 +1038,109 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
 }
 
+/* A context create that runs out of memory leaves no trace, so the guest's
+ * retry of the same ID succeeds and makes the kind of context it asked for.
+ * A Venus context is named by two sets, and a create that entered only the
+ * first refused every retry. */
+void contextCreateIsRetryableAfterEachAllocationFailure()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    for (const auto capset :
+         {protocol::venusCapsetId, protocol::virgl2CapsetId}) {
+        const bool venus = capset == protocol::venusCapsetId;
+        const auto context = createContext(901, capset);
+        protocol::GpuControlHeader destroy = context.header;
+        destroy.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
+        /* A ring without a fence: Venus rejects the header, Virgl takes it,
+         * and an unknown context is reported as one. */
+        protocol::GpuSubmit3d probe {};
+        probe.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        probe.header.contextId = context.header.contextId;
+        probe.header.flags = protocol::gpuFlagInfoRingIndex;
+        const auto createdKind = venus
+            ? protocol::GpuResponse::errorInvalidParameter
+            : protocol::GpuResponse::okNoData;
+
+        std::size_t retries = 0;
+        const auto sweep = failEachAllocationBeforeCommit(
+            device, requestBytes(context), [&] {
+                if (dependencies.createContextCount !=
+                        dependencies.destroyContextCount ||
+                    responseType(device.process(requestBytes(probe), false)) !=
+                        protocol::GpuResponse::errorInvalidContext) {
+                    return false;
+                }
+                requireOk(device, requestBytes(context));
+                requireResponse(device, requestBytes(probe), createdKind);
+                requireOk(device, requestBytes(destroy));
+                ++retries;
+                return true;
+            });
+        require(responseType(sweep.response) ==
+            protocol::GpuResponse::okNoData);
+        require(retries == sweep.failures.size());
+        require(sweep.failures.size() >= (venus ? 3U : 2U));
+        requireResponse(device, requestBytes(probe), createdKind);
+        requireOk(device, requestBytes(destroy));
+    }
+}
+
+void blobCommandsAllocateBeforeCommitAndRetry()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0x901, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    protocol::GpuResourceCreateBlob create {};
+    create.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0x902;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+    const auto created = failEachAllocationBeforeCommit(
+        device, requestBytes(create), [&] {
+            return dependencies.createResourceCount == 0 &&
+                !dependencies.resources.contains(create.resourceId);
+        });
+    require(responseType(created.response) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.createResourceCount == 1);
+
+    /* A map or unmap that committed queues its shared-memory action. */
+    const auto noAction = [&] {
+        return !device.takeSharedMemoryAction().has_value();
+    };
+    protocol::GpuResourceMapBlob map {};
+    map.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceMapBlob);
+    map.resourceId = create.resourceId;
+    const auto mapped =
+        failEachAllocationBeforeCommit(device, requestBytes(map), noAction);
+    require(responseType(mapped.response) ==
+        protocol::GpuResponse::okMapInfo);
+    auto action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    device.completeSharedMemoryAction(action->actionId, true);
+
+    protocol::GpuResourceUnmapBlob unmap {};
+    unmap.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceUnmapBlob);
+    unmap.resourceId = create.resourceId;
+    const auto unmapped =
+        failEachAllocationBeforeCommit(device, requestBytes(unmap), noAction);
+    require(responseType(unmapped.response) ==
+        protocol::GpuResponse::okNoData);
+    action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    device.completeSharedMemoryAction(action->actionId, true);
+}
+
 void edidReportsDisplayPixelsAndEffectiveDensity()
 {
     FakeGpuDependencies dependencies;
@@ -2999,6 +3102,8 @@ int main()
     displayChangeEventsPreserveAResizeThatRacesGuestClear();
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
+    contextCreateIsRetryableAfterEachAllocationFailure();
+    blobCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
