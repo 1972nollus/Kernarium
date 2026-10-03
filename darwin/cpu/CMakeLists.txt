@@ -104,6 +104,14 @@ target_compile_definitions(uml_gadget_histogram_configuration INTERFACE
 target_link_libraries(uml_cpu_contract INTERFACE
     UML::GadgetHistogramConfiguration)
 
+# Gadget-engine SME sources, owned by SME lane S5 and empty until it lands:
+# the streaming parts' selection and executor sources. The streaming gadget
+# bodies it generates at build time from the shared SVE/SME encoding table
+# (cpu/arm64/detail/sme_encodings.inc) are declared in this block too, with
+# their custom command and the OBJECT_DEPENDS of engine.S. The JIT's block
+# below is disjoint, so the two lanes never edit the same lines.
+set(_uml_arm64_gadget_sme_sources)
+
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -125,7 +133,8 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/software_floating_helpers.cpp
     arm64/gadgets/software_crypto_helpers.cpp
     arm64/gadgets/complex_memory_helpers.cpp
-    arm64/gadgets/engine.S)
+    arm64/gadgets/engine.S
+    ${_uml_arm64_gadget_sme_sources})
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
@@ -180,6 +189,13 @@ else()
         "gadget translation IPO unavailable: ${_uml_gadget_ipo_error}")
 endif()
 
+# JIT SME sources, owned by SME lane S4 and empty until it lands: the
+# compiler's jit_compiler_sme*.cpp and the streaming TLB bridge in the first
+# list (absolute paths, like the compiler's), executor-side sources in the
+# second. The gadget engine's block above is disjoint.
+set(_uml_cpu_jit_sme_sources)
+set(_uml_cpu_jit_executor_sme_sources)
+
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler.cpp
@@ -192,7 +208,8 @@ set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_simd_arithmetic.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_simd_permute.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_emitter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_tlb_translate.S)
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_tlb_translate.S
+    ${_uml_cpu_jit_sme_sources})
 
 add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
 uml_declare_architecture_target(uml_arm64_jit cpu native)
@@ -217,7 +234,8 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_semantic_load_store.cpp
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_semantic_reservation.cpp
-    arm64/jit/jit_shared_translations.cpp)
+    arm64/jit/jit_shared_translations.cpp
+    ${_uml_cpu_jit_executor_sme_sources})
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})
