@@ -3,11 +3,7 @@
 
 .arch armv8.2-a
 
-#if __APPLE__
 #define NAME(value) _##value
-#else
-#define NAME(value) value
-#endif
 
 _cpu .req x20
 _context .req x21
@@ -19,11 +15,7 @@ _executed .req x29
 /* Name the start of the cold section, whose own labels are temporary, so a
  * host sample of a cold path names this section rather than whatever precedes
  * it in the image. It emits no bytes. */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 NAME(uml_x86_64_gadget_cold_section_begin):
 	.popsection
 
@@ -456,11 +448,7 @@ Lx86_lazy_ready\@:
 	 * instructions in the entry and its whole body in the cold section, so a
 	 * bank this size keeps only the plain form in the hot stream.
 	 */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
@@ -593,11 +581,7 @@ Lx86_tlb_done\@:
 	 * program's publications, which is exactly when `write_code` says nothing
 	 * is owed.
 	 */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 Lx86_tlb_write_code_owed\@:
 	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 	eor x14, x9, x14
