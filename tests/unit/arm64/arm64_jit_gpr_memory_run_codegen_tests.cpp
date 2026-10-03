@@ -1,140 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/cpu_state.hpp"
+#include "arm64_jit_memory_run_codegen_test_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
-#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <source_location>
 #include <span>
 #include <vector>
 
-namespace arm64 = uml::cpu::arm64;
 namespace jit_test = uml::cpu::arm64::jit::testing;
 
 namespace {
 
+using namespace arm64_jit_memory_run_codegen_test;
+
 constexpr std::uint64_t code_base = 0x5040'0000ULL;
-constexpr std::uint32_t memory_register_mask = (31U << 5U) | 31U;
-// One flag-neutral first-way tag comparison is emitted per TLB translation.
-constexpr std::uint32_t translation_probe = 0xca01'0042U;
-constexpr std::uint32_t page_span_eor = 0xca08'0000U; // eor x0, x0, x8
-constexpr unsigned page_shift =
-    DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
-constexpr std::uint32_t page_span_tbnz =
-    0x3700'0000U | ((page_shift & 31U) << 19U);
-// The SP run's alignment check extracts the low four address bits.
-constexpr std::uint32_t sp_alignment_extract =
-    0xd340'0000U | (3U << 10U) | (8U << 5U);
-constexpr std::uint32_t monitor_clear =
-    0x3900'0000U |
-    (static_cast<std::uint32_t>(
-         offsetof(arm64::CpuState, exclusive_size))
-     << 10U) |
-    (15U << 5U) | 31U;
-constexpr std::uint32_t nop = 0xd503'201fU;
 
-struct Variant final {
-  unsigned size_shift;
-  unsigned opc;
-  bool load;
-};
-
-constexpr std::array variants{
-    Variant{0, 0, false}, Variant{0, 1, true},
-    Variant{0, 2, true},  Variant{0, 3, true},
-    Variant{1, 0, false}, Variant{1, 1, true},
-    Variant{1, 2, true},  Variant{1, 3, true},
-    Variant{2, 0, false}, Variant{2, 1, true},
-    Variant{2, 2, true},  Variant{3, 0, false},
-    Variant{3, 1, true},
-};
-
-using uml::testing::require;
-
-void require_count(std::size_t actual, std::size_t expected,
-                   const char *message,
-                   const std::source_location location =
-                       std::source_location::current()) {
-  if (actual == expected)
-    return;
-  std::fprintf(stderr, "%s: expected=%zu actual=%zu at %s:%u\n", message,
-               expected, actual, location.file_name(), location.line());
-  std::abort();
-}
-
-[[nodiscard]] constexpr std::uint32_t
-unsigned_memory(const Variant &variant, unsigned immediate, unsigned base,
-                unsigned transfer) noexcept {
-  return 0x3900'0000U | (variant.size_shift << 30U) |
-         (variant.opc << 22U) | ((immediate & 0xfffU) << 10U) |
-         ((base & 31U) << 5U) | (transfer & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-unsigned_x(bool load, unsigned immediate, unsigned base,
-           unsigned transfer) noexcept {
-  return unsigned_memory(Variant{3, load ? 1U : 0U, load}, immediate, base,
-                         transfer);
-}
-
-[[nodiscard]] std::vector<std::uint32_t>
-hot_code(const jit_test::CompiledCode &compiled, std::size_t expected_guest) {
-  require(compiled.guest_instructions == expected_guest,
-          "JIT did not compile the complete GPR-memory program");
-  require(compiled.hot_words <= compiled.words.size(),
-          "JIT hot-word boundary exceeds generated code");
-  return {compiled.words.begin(),
-          compiled.words.begin() +
-              static_cast<std::ptrdiff_t>(compiled.hot_words)};
-}
-
-[[nodiscard]] std::size_t count_word(std::span<const std::uint32_t> words,
-                                     std::uint32_t word) {
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += current == word;
-  return count;
-}
-
-[[nodiscard]] std::size_t
-count_page_span_tbnz(std::span<const std::uint32_t> words) {
-  constexpr std::uint32_t branch_displacement_mask = 0x0007'ffe0U;
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += (current & ~branch_displacement_mask) == page_span_tbnz;
-  return count;
-}
-
+/* TLB scaffolding can contain an unrelated load with the same size, opcode,
+ * and immediate; the translated guest form fixes Rn to x8. */
 [[nodiscard]] std::size_t count_memory_form(
-    std::span<const std::uint32_t> words, std::uint32_t guest) {
-  std::size_t count = 0;
-  for (const auto current : words) {
-    if ((current & ~memory_register_mask) !=
-        (guest & ~memory_register_mask))
-      continue;
-    /*
-     * TLB scaffolding can contain an unrelated load with the same size,
-     * opcode, and immediate. Count only the translated guest form, whose
-     * construction fixes Rn to the checked host address in x8.
-     */
-    if (((current >> 5U) & 31U) != 8U)
-      continue;
-    const auto transfer = current & 31U;
-    const bool zero_register = (guest & 31U) == 31U;
-    const bool safe_transfer =
-        transfer == 3U || transfer == 4U || transfer == 5U ||
-        transfer == 6U || transfer == 7U || transfer == 9U ||
-        transfer == 12U || transfer == 13U || transfer == 17U ||
-        (zero_register && transfer == 31U);
-    require(safe_transfer,
-            "coalesced GPR memory operation used an executor-owned register");
-    ++count;
-  }
-  return count;
+    std::span<const std::uint32_t> words, std::uint32_t guest,
+    const std::source_location location = std::source_location::current()) {
+  return arm64_jit_memory_run_codegen_test::count_memory_form(
+      words, guest, OtherBase::skip, true, location);
 }
 
 void every_scalar_variant_coalesces() {
