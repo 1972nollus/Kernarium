@@ -101,11 +101,11 @@ class Fixture:
 
 class KosmicKrispSpirvGuardTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.scratch = Path(tempfile.mkdtemp(prefix="uml-kosmickrisp-spirv-test."))
-        self.fixture = Fixture(self.scratch)
-
-    def tearDown(self) -> None:
-        shutil.rmtree(self.scratch)
+        # A timeout's KeyboardInterrupt skips cleanups, but the object's
+        # finalizer still removes the directory when the interpreter exits.
+        scratch = tempfile.TemporaryDirectory(prefix="uml-kosmickrisp-spirv-test.")
+        self.addCleanup(scratch.cleanup)
+        self.fixture = Fixture(Path(scratch.name))
 
     def assert_rejected(self, fragment: str) -> None:
         result = self.fixture.check()
