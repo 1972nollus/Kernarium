@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
 
@@ -281,6 +282,7 @@ void a_fault_past_the_branch_counts_from_its_address()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	the_fall_through_retires_the_whole_block();
 	taking_the_branch_retires_only_what_ran();
 	ordinary_inline_suffix_packing_preserves_branch_behavior();

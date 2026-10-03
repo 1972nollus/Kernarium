@@ -3,6 +3,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "scratch_backing.hpp"
 #include "require.hpp"
 
@@ -65,6 +66,7 @@ void translation_window_preserves_a_second_page_fault()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	translation_window_crosses_a_page();
 	translation_window_preserves_a_second_page_fault();
 }

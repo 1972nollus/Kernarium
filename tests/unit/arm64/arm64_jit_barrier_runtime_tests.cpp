@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <array>
@@ -54,6 +55,7 @@ void current_host_barriers_execute() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   current_host_barriers_execute();
   return 0;

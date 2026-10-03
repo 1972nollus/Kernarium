@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "static_mmu_test_support.hpp"
@@ -464,6 +465,7 @@ void a_replaced_slot_drops_the_previous_owner_link()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
 	a_kernel_text_write_republishes_through_the_bridge();

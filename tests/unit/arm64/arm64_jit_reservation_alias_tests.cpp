@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
@@ -776,6 +777,7 @@ void helper_misaligned_compare_swap_keeps_native_updates() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(uml::cpu::arm64::set_jit_cache_budget(
       256U * 1024U * 1024U, 10));
   native_single_block_case();

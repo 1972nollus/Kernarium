@@ -3,6 +3,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "scratch_backing.hpp"
 #include "require.hpp"
 
@@ -176,6 +177,7 @@ void deferred_fp_source_is_materialized_on_linked_target()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	fpmr_is_not_guest_state();
 	pstate_survives_boundary();
 	exclusive_monitor_is_cleared_at_boundary();

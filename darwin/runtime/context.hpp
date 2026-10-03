@@ -102,25 +102,6 @@ private:
 	std::shared_ptr<ThreadStateStore> state_store_;
 };
 
-class ActiveContextScope final {
-public:
-	explicit ActiveContextScope(Context &context);
-	struct DeferredPublication final {};
-	explicit ActiveContextScope(Context &context, DeferredPublication);
-	~ActiveContextScope();
-
-	ActiveContextScope(const ActiveContextScope &) = delete;
-	ActiveContextScope &operator=(const ActiveContextScope &) = delete;
-
-	/* A deferred scope is invisible until commit.  commit() cannot allocate,
-	 * which lets callers prepare every participating registry before any
-	 * previous fallback is invalidated. */
-	void commit() noexcept;
-
-private:
-	::uml::routing::ActiveRouteScope route_;
-};
-
 /* Composition-facing run route. The provider endpoint is opaque here so the
  * runtime and device modules continue to depend only on the neutral routing
  * foundation, never on each other. */
@@ -160,8 +141,8 @@ private:
  * genuinely sole active context as a fallback. While runs overlap, unbound
  * callers receive nullptr and fail closed rather than borrowing either
  * handle's state. Ambiguity remains sticky for the surviving route until the
- * complete overlapping cohort retires. With no public run, legacy C callers
- * retain the process-local compatibility context. */
+ * complete overlapping cohort retires. With no active route, every caller
+ * receives nullptr. */
 [[nodiscard]] Context *current_context() noexcept;
 
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed

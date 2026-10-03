@@ -22,3 +22,8 @@ Outcome, 2026-10-03: the caller-supplied native kernel entry, and with it
 concurrent native-callback handles, is removed. No product set it, and a
 process runs one guest, so every run enters the embedded kernel image. Tests
 reach a run through the emulator's test-only kernel image instead.
+
+Outcome, 2026-10-04: the process-lifetime compatibility context that answered
+callbacks outside any run is removed. A run routes its context before its
+kernel can call back, so only white-box tests reached it; they now route a
+context of their own, and a callback outside any run fails closed.

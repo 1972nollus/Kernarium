@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
@@ -201,6 +202,7 @@ void unrouted_semantic_word_is_fatal() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   valid_host_unavailable_is_guest_illegal();
   valid_contract_unavailable_is_guest_illegal();
