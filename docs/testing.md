@@ -543,20 +543,11 @@ whole QPA, stopped with a clean Virtio-GPU takedown, and reported only
 statuses the receipt's runner oracle accepts. Accepted `NotSupported`,
 warning, and `Waiver` results stay distinct from `Pass` and prove nothing
 about an optional feature. A campaign is complete when every shard has one
-attempt that passes, whichever generation of inputs ran it. Its plan -- the
-suites, page profile, images, receipts, and EGL configuration set -- never
-changes, except that a relaunch may add a suite, and a catalogued attempt
-whose evidence was removed fails the campaign closed. A complete campaign is
-not an all-`Pass`, all-features-supported, or Khronos conformance claim.
-
-A campaign directory holds `campaign.json`, which records the plan, every
-generation of inputs, the attempt catalogue, the state and, once the campaign
-is complete, its aggregate status counts. A shard's first attempt lives in
-`shards/<shard>/` and later ones in `retries/<shard>/<NNNN>/`. Each attempt
-keeps its `attempt.json`, `runner.log`, and guest ownership journal, and under
-`driver-output/` the leaf run's `run.json`, console log, and transported
-`artifacts/`, including `results.qpa` and `summary.txt`. `--verify-only`
-reparses that evidence without launching a guest.
+attempt that passes, whichever generation of inputs ran it. A complete
+campaign is not an all-`Pass`, all-features-supported, or Khronos conformance
+claim. The campaign runner's `--help` gives the fixed plan, the input
+generations, and the evidence layout that `--verify-only` reparses without
+launching a guest.
 
 ### OpenGL ES3 FBO state-query waiver
 

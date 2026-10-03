@@ -367,13 +367,10 @@ decisions. Functionality Metal or KosmicKrisp cannot run reliably is reported
 unsupported instead, as `shaderFloat16` is below.
 
 That route makes no conformance claim. Support is asserted only by the
-receipt-bound guest CTS campaigns described in
-[`testing.md`](testing.md#graphics-conformance-campaigns), which bind a run to
-its sealed image receipt, its CTS and Mesa source locks, and the staged
-provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
-passes. The last complete Vulkan CTS 1.4.6.2 campaign ran all 16 fractions of
-the mandatory list with no disallowed result; its receipt records the Mesa it
-ran.
+receipt-bound guest CTS campaigns in
+[`testing.md`](testing.md#graphics-conformance-campaigns). The last complete
+Vulkan CTS 1.4.6.2 campaign ran all 16 fractions of the mandatory list with no
+disallowed result; its receipt records the Mesa it ran.
 
 ### Guest memory boundary
 
@@ -1051,14 +1048,8 @@ survive only as the result frames already on the console. The device lane ends a
 run within three minutes of the reaper's own line rather than waiting out its
 stall guard, and writes whatever the console carried.
 
-A baked device campaign therefore leaves the groups it cannot hold out of the
-fraction, which is why the campaign names carry a generation suffix. The guest
-drops them from the list it enumerated and transports exactly which cases and
-under which reason, so an excluded case is a case not run, never a pass and
-never a failure, and the same selection can be run on a device with more memory.
-Each baked profile also fixes guest memory and any planned CTS process
-boundary. The contract is in [`testing.md`](testing.md); the reasoned exclusion
-list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
+A baked device campaign therefore leaves out the groups its guest memory cannot
+hold, under the exclusion contract in [`testing.md`](testing.md).
 
 ### Experimental host memory
 
