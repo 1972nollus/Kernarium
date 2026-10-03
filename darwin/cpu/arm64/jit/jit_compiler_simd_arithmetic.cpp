@@ -41,18 +41,7 @@ JitCompilerFamilies::emit_simd_fmulx(std::uint32_t instruction) {
       !host_capabilities().advanced_simd ||
       (half && !host_capabilities().fp16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, false, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, false);
   mark_native_fp();
   return true;
 }
@@ -66,42 +55,12 @@ JitCompilerFamilies::emit_simd_floating_complex(
       !host_capabilities().has(ArmFeature::fcma) ||
       (decoded.width == 16U && !host_capabilities().fp16))
     return false;
-
-  const unsigned destination = instruction & 31U;
-  const unsigned first = (instruction >> 5) & 31U;
-  const unsigned second = decoded.second_register;
-
+  /* The decoded second register is Rm, bits 16-20, in every form. */
   if (decoded.operation ==
-      arm64::detail::FloatingComplexOperation::add) {
-    const auto native_first = read_native_vector(first, 0U);
-    const auto native_second =
-        second == first ? native_first : read_native_vector(second, 1U);
-    const auto native_destination =
-        write_native_vector(destination, false, 2U);
-    auto native =
-        instruction & ~((31U << 16) | (31U << 5) | 31U);
-    native |= (native_second.host << 16) | (native_first.host << 5) |
-              native_destination.host;
-    emit(native);
-    commit_native_vector(native_destination, destination);
-  } else {
-    const auto native_destination =
-        write_native_vector(destination, true, 0U);
-    const auto native_first =
-        first == destination ? native_destination
-                             : read_native_vector(first, 1U);
-    const auto native_second =
-        second == destination
-            ? native_destination
-            : second == first ? native_first
-                              : read_native_vector(second, 2U);
-    auto native =
-        instruction & ~((31U << 16) | (31U << 5) | 31U);
-    native |= (native_second.host << 16) | (native_first.host << 5) |
-              native_destination.host;
-    emit(native);
-    commit_native_vector(native_destination, destination);
-  }
+      arm64::detail::FloatingComplexOperation::add)
+    emit_native_vector_binary(instruction, false);
+  else
+    emit_native_vector_accumulate(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -112,19 +71,7 @@ JitCompilerFamilies::emit_bfloat_dot(std::uint32_t instruction) {
   if (!decoded.recognized ||
       !host_capabilities().has(ArmFeature::bf16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native = instruction & ~((31U << 16) | (31U << 5) | 31U);
-  native |= (native_right.host << 16) | (native_left.host << 5) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -140,34 +87,10 @@ JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
    * FHM. */
   if (!decoded.recognized || !host.has(ArmFeature::fhm))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5U) & 31U;
-  const unsigned right =
-      (instruction >> 16U) & (decoded.by_element ? 15U : 31U);
-  NativeVector native_left;
-  NativeVector native_right;
-  unsigned destination_fallback;
-  if (decoded.by_element) {
-    native_right = read_constrained_native_vector(right, 2U);
-    native_left =
-        left == right ? native_right : read_native_vector(left, 1U);
-    destination_fallback = 0U;
-  } else {
-    native_left = read_native_vector(left, 0U);
-    native_right =
-        right == left ? native_left : read_native_vector(right, 1U);
-    destination_fallback = 2U;
-  }
-  const auto native_destination =
-      write_native_vector(destination, true, destination_fallback);
-  auto native =
-      instruction & ~((31U << 5U) | 31U);
-  native &= decoded.by_element ?
-      ~(15U << 16U) : ~(31U << 16U);
-  native |= (native_right.host << 16U) | (native_left.host << 5U) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  if (decoded.by_element)
+    emit_native_vector_by_element(instruction);
+  else
+    emit_native_vector_binary(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -180,32 +103,10 @@ JitCompilerFamilies::emit_bfloat_multiply_long(
   if (!decoded.recognized ||
       !host_capabilities().has(ArmFeature::bf16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right =
-      (instruction >> 16) & (decoded.by_element ? 15U : 31U);
-  NativeVector native_left;
-  NativeVector native_right;
-  unsigned destination_fallback;
-  if (decoded.by_element) {
-    native_right = read_constrained_native_vector(right, 2U);
-    native_left =
-        left == right ? native_right : read_native_vector(left, 1U);
-    destination_fallback = 0U;
-  } else {
-    native_left = read_native_vector(left, 0U);
-    native_right =
-        right == left ? native_left : read_native_vector(right, 1U);
-    destination_fallback = 2U;
-  }
-  const auto native_destination =
-      write_native_vector(destination, true, destination_fallback);
-  auto native = instruction & ~((31U << 5) | 31U);
-  native &= decoded.by_element ? ~(15U << 16) : ~(31U << 16);
-  native |= (native_right.host << 16) | (native_left.host << 5) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  if (decoded.by_element)
+    emit_native_vector_by_element(instruction);
+  else
+    emit_native_vector_binary(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -215,20 +116,7 @@ JitCompilerFamilies::emit_bfloat_matrix(std::uint32_t instruction) {
   if (!arm64::detail::decode_bfloat_matrix_multiply(instruction) ||
       !host_capabilities().has(ArmFeature::bf16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native =
-      instruction & ~((31U << 16) | (31U << 5) | 31U);
-  native |= (native_right.host << 16) | (native_left.host << 5) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -288,25 +176,8 @@ JitCompilerFamilies::emit_simd_dot(std::uint32_t instruction) {
   const auto feature = mixed ? ArmFeature::i8mm : ArmFeature::dotprod;
   if (!host_capabilities().has(feature))
     return false;
-
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  unsigned right = (instruction >> 16) & 31U;
-  if (indexed)
-    right = ((instruction >> 16) & 15U) |
-            (((instruction >> 20) & 1U) << 4);
-
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native =
-      instruction & ~(0x001f'0000U | (31U << 5) | 31U);
-  native |= (native_right.host << 16) | (native_left.host << 5) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  /* The indexed forms' M:Rm is bits 16-20 as well. */
+  emit_native_vector_binary(instruction, true);
   return true;
 }
 
@@ -332,21 +203,7 @@ JitCompilerFamilies::emit_simd_matrix(std::uint32_t instruction) {
       !host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::i8mm))
     return false;
-
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native =
-      instruction & ~((31U << 16) | (31U << 5) | 31U);
-  native |= (native_right.host << 16) | (native_left.host << 5) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, true);
   return true;
 }
 
@@ -498,22 +355,7 @@ JitCompilerFamilies::emit_simd_rdm(std::uint32_t instruction) {
       !host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::rdm))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_destination =
-      write_native_vector(destination, true, 0U);
-  const auto native_left =
-      left == destination ? native_destination
-                          : read_native_vector(left, 1U);
-  const auto native_right =
-      right == destination
-          ? native_destination
-          : right == left ? native_left : read_native_vector(right, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_accumulate(instruction, true);
   mark_native_fp();
   return true;
 }
@@ -600,15 +442,7 @@ JitCompilerFamilies::emit_simd_bitwise_register(std::uint32_t instruction) {
   const bool q = (instruction & 0x4000'0000U) != 0;
   if (operation == 2U && left == right && q && destination == left)
     return true;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, operation >= 5U, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, operation >= 5U);
   return true;
 }
 
@@ -618,22 +452,10 @@ JitCompilerFamilies::emit_simd_three_same_integer(std::uint32_t instruction) {
       !valid_simd_three_same_integer(instruction))
     return false;
   const unsigned opcode = (instruction >> 11) & 31U;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
   /* Only ABA and MLA/MLS read the old destination. This decision is made
    * while translating so ordinary arithmetic does not pay an unnecessary
    * live-in load and the emitted instruction remains one-for-one. */
-  const bool reads_destination = opcode == 15U || opcode == 18U;
-  const auto native_destination =
-      write_native_vector(destination, reads_destination, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, opcode == 15U || opcode == 18U);
   if (opcode == 1U || opcode == 5U || opcode == 9U || opcode == 11U ||
       opcode == 22U)
     mark_native_fp();
@@ -648,19 +470,8 @@ JitCompilerFamilies::emit_simd_arithmetic_narrow(std::uint32_t instruction) {
   if ((operation != 0x0e20'4000U && operation != 0x0e20'6000U) ||
       ((instruction >> 22) & 3U) == 3U)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
   const bool upper = (instruction & 0x4000'0000U) != 0;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, upper, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, upper);
   return true;
 }
 
@@ -705,20 +516,9 @@ JitCompilerFamilies::emit_simd_widening(std::uint32_t instruction) {
   }
   if (!valid)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
   const bool accumulates = operation == 5U ||
                            (operation >= 8U && operation <= 11U);
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, accumulates, 2U);
-  emit((instruction & ~0x001f'03ffU) |
-       (native_right.host << 16) | (native_left.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_binary(instruction, accumulates);
   if (operation == 9U || operation == 11U || operation == 13U)
     mark_native_fp();
   return true;

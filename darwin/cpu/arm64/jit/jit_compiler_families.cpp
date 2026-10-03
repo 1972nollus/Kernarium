@@ -482,6 +482,62 @@ void JitCompilerFamilies::commit_native_vector(NativeVector value,
                     guest * sizeof(arm64::VectorRegister));
 }
 
+void JitCompilerFamilies::emit_native_vector_binary(
+    std::uint32_t instruction, bool reads_destination) {
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 31U;
+  const auto native_left = read_native_vector(left, 0U);
+  const auto native_right =
+      right == left ? native_left : read_native_vector(right, 1U);
+  const auto native_destination =
+      write_native_vector(destination, reads_destination, 2U);
+  emit((instruction & ~0x001f'03ffU) |
+       (native_right.host << 16) | (native_left.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+}
+
+void JitCompilerFamilies::emit_native_vector_by_element(
+    std::uint32_t instruction) {
+  const unsigned destination = instruction & 31U;
+  const unsigned left = (instruction >> 5) & 31U;
+  const unsigned right = (instruction >> 16) & 15U;
+  const auto native_right = read_constrained_native_vector(right, 2U);
+  const auto native_left =
+      left == right ? native_right : read_native_vector(left, 1U);
+  const auto native_destination =
+      write_native_vector(destination, true, 0U);
+  emit((instruction & ~0x000f'03ffU) |
+       (native_right.host << 16) | (native_left.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+}
+
+void JitCompilerFamilies::emit_native_vector_accumulate(
+    std::uint32_t instruction, bool has_second) {
+  const unsigned destination = instruction & 31U;
+  const unsigned first = (instruction >> 5) & 31U;
+  const auto native_destination =
+      write_native_vector(destination, true, 0U);
+  const auto native_first =
+      first == destination ? native_destination
+                           : read_native_vector(first, 1U);
+  auto native = (instruction & ~0x3ffU) | (native_first.host << 5) |
+                native_destination.host;
+  if (has_second) {
+    const unsigned second = (instruction >> 16) & 31U;
+    const auto native_second =
+        second == destination
+            ? native_destination
+            : second == first ? native_first
+                              : read_native_vector(second, 2U);
+    native = (native & ~(31U << 16)) | (native_second.host << 16);
+  }
+  emit(native);
+  commit_native_vector(native_destination, destination);
+}
+
 void JitCompilerFamilies::load_gpr(unsigned host, unsigned guest,
                                    bool stack_pointer) {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
