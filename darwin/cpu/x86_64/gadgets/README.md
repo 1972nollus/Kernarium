@@ -125,7 +125,8 @@ INC and DEC preserve the carry flag. When the builder cannot see the producer
 that defined it, the gadget copies that producer's record into the carry slot
 (`CpuState::carry_slot`) and records its own with the pending bit set, rather
 than settling the carry through the materializer; a second INC or DEC inherits
-the bit, and a carry override riding on such a record settles it the old way.
+the bit, and a carry override riding on such a record is settled through the
+materializer.
 Only a reader of the carry through an INC or DEC record pays for the slot: the
 materializers compute that one flag from the slot record through the same
 operation-and-width table, and the C++ materializer does the same. Every
@@ -150,8 +151,8 @@ ZF alone, so they keep the record and write their carry into its override.
 
 A block ends at an unconditional transfer or at the 64-instruction fetch
 window, not at its first conditional branch. The fall-through is translated
-into the same stream, so not taking the branch costs one dispatch where it
-used to cost a link follow, and the taken edge keeps its link. A build with no
+into the same stream, so not taking the branch costs one dispatch rather than
+a link follow, and the taken edge keeps its link. A build with no
 link resolver -- the budget-limited replay of a cached block -- keeps the
 terminal form instead and leaves the translated tail unreachable.
 
@@ -437,66 +438,48 @@ pending is work, so its low bit answers for it and joins the TLB entry's
 cached-code bit in a single test, while the arm that takes a record for a page
 some executor holds a translation of sits in the cold section.
 
-The writer's order is the contract, and it is the order
-[Keeping a cached translation](#keeping-a-cached-translation) reads in reverse:
-the bytes are stored, then the page stamp moves, then the code-change sequence
-moves. `finish_store` performs the guest store before its publication call, and
+A writer stores the bytes, then moves the page stamp, then moves the
+code-change sequence, which is the order
+[Keeping a cached translation](#keeping-a-cached-translation) relies on:
+`finish_store` performs the guest store before its publication call, and
 `GuestAddressSpace::invalidate_code` moves the page stamp before publishing the
-range. A stamp taken after the bytes it stands for would certify a write the
-recorded source predates.
+range.
 
 ## Keeping a cached translation
 
-A cached program is reused when the guest bytes it was translated from are
+A cached program is reused while the guest bytes it was translated from are
 still there. Two things answer that: the stamp of each page it covers, which
-any code-change publication on that page moves, and the program's own saved
-source bytes, compared whenever a stamp has moved.
+any code-change publication on that page moves, and the program's saved source
+bytes, compared whenever a stamp has moved.
 
-Their order is the contract. A page stamp certifies only the bytes read after
-it was taken, so a stamp is always taken before the source it stands for --
-before the bytes a fresh translation saves, and before the comparison a
-revalidation makes -- and a successful validation records that same stamp. A
-stamp taken afterwards would already cover a write that the recorded source
-predates, and the next validation would accept the stale program on it.
-
-A new translation reads its block once. The saved source is the bytes the
-decoder consumed, so a cached program and the source that stands for it are one
-observation of guest memory, not two that a write could fall between. Reading
-the block a second time to fill the source left the two free to disagree, and
-nothing downstream could tell: the comparison a moved stamp forces would put
-the newer source against the newer memory and accept a program decoded from
-bytes that were already gone. Re-reading the stamp around the second read only
-narrowed that window, because a writer stores its bytes well before it reaches
-the stamp.
-
-What the stamp then has to be is older than the bytes the program was built
-from. The registry holds every page the block can span before the decoder
-starts and each of those pages is stamped there, which is the whole ordering a
-new translation needs. A write landing during the decode resolves through the
-ordinary validation: it moves the page's stamp, after its bytes and before the
-sequence that brings this vCPU back, and the comparison that follows puts the
-decoder's own bytes against guest memory. A page the block could have spanned
-but did not is never consulted, so a hot data page next to a text page costs
-its neighbour nothing, and a block longer than the cache's own length limit is
-used once and not cached.
+A page stamp certifies only the bytes read after it was taken, so a stamp is
+always taken before the source it stands for, and a successful validation
+records that same stamp. A new translation reads its block once: the registry
+holds and stamps every page the block can span before the decoder starts, and
+the saved source is the bytes the decoder consumed, so the program and its
+source are one observation of guest memory. A write landing during the decode
+moves the page's stamp, and the next validation compares the decoder's own
+bytes against guest memory. A page the block could have spanned but did not is
+never consulted, and a block longer than the cache's own length limit is used
+once and not cached. A revalidation likewise takes the stamps before it
+compares the source.
 
 The address space's code-change sequence says when to revalidate, not whether
-a program survives the revalidation. A publication that touched a program moved
-the stamp of the page carrying it; one that did not is no business of that
-program. So a vCPU publishing at speed -- a JIT heap, or a trampoline sharing a
-page with hot data -- costs the other vCPUs of its address space a
-revalidation per block, not a translation per block.
+a program survives the revalidation: a publication that touched a program moved
+the stamp of its page, and one that did not leaves the program alone. A vCPU
+publishing at speed -- a JIT heap, or a trampoline sharing a page with hot data
+-- costs the other vCPUs of its address space a revalidation per block, not a
+translation per block.
 
-A reader that keeps a program guarantees that the program matched guest memory
-at an instant inside the validation, and that every change published up to the
-sequence the cache was prepared with had landed before that instant, because a
-writer stores the bytes, then moves the page stamp, then moves the sequence,
-and the reader observed that sequence before it looked. A store still in
-flight reaches the vCPU at its next code-change checkpoint, which is where the
-x86 cross-modifying-code protocol requires an executing processor to look. A
-moved mapping sequence or a raised execution interrupt still abandons the
-validation: those say the memory being read through is being replaced, or that
-this vCPU has been asked to leave, and no page stamp describes either.
+A kept program matched guest memory at an instant inside the validation, and
+every change published up to the sequence the cache was prepared with had
+landed before that instant, because the reader observed that sequence before
+it looked. A store still in flight reaches the vCPU at its next code-change
+checkpoint, which is where the x86 cross-modifying-code protocol requires an
+executing processor to look. A moved mapping sequence or a raised execution
+interrupt still abandons the validation: those say the memory being read
+through is being replaced, or that this vCPU has been asked to leave, and no
+page stamp describes either.
 
 ## Measuring what the cache costs
 
