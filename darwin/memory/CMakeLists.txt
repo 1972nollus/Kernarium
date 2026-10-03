@@ -47,18 +47,17 @@ target_link_libraries(uml_memory_vm_bridge PRIVATE
 target_include_directories(uml_memory_vm_bridge PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-set(_uml_memory_has_native_vm ${UML_TARGET_MACOS})
-if(UML_APPLE_PLATFORM MATCHES "^ios" AND
-   UML_BUILD_KERNEL_RUNNER)
-    # The opt-in Kernarium prototype runs the same native UML kernel mapping
-    # contract as macOS. Ordinary iOS libraries keep the software-MMU-only
-    # boundary because they do not enable the embedded ELF runner.
+# Only an embedded ELF kernel maps native memory through this bridge: the
+# macOS CLI and the opt-in Kernarium runtime. A build without the runner,
+# such as every XCFramework slice, keeps the software-MMU-only boundary;
+# the macOS unit presets keep the native bridge because their tests
+# exercise native mappings through it.
+set(_uml_memory_has_native_vm OFF)
+if(UML_BUILD_KERNEL_RUNNER OR (UML_TARGET_MACOS AND UML_BUILD_UNIT_TESTS))
     set(_uml_memory_has_native_vm ON)
 endif()
 
 target_compile_definitions(uml_memory_vm_bridge PRIVATE
-    # macOS keeps this bridge without the embedded ELF runner too: the unit
-    # presets exercise native mappings through it.
     UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>)
 
 if(_uml_memory_has_native_vm)
