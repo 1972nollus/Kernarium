@@ -11,60 +11,60 @@
 	cmp w11, w5
 	cset w16, lo
 	cmp w8, #1
-	b.hi .Lx86_vector_map3_string_compare_special\@
+	b.hi Lx86_vector_map3_string_compare_special\@
 	and w17, w15, w16
-	cbz w17, .Lx86_vector_map3_string_compare_false\@
-	b .Lx86_vector_map3_string_compare_load\@
-.Lx86_vector_map3_string_compare_special\@:
+	cbz w17, Lx86_vector_map3_string_compare_false\@
+	b Lx86_vector_map3_string_compare_load\@
+Lx86_vector_map3_string_compare_special\@:
 	cmp w8, #2
-	b.ne .Lx86_vector_map3_string_compare_substring\@
+	b.ne Lx86_vector_map3_string_compare_substring\@
 	eor w17, w15, w16
-	cbnz w17, .Lx86_vector_map3_string_compare_false\@
-	cbz w15, .Lx86_vector_map3_string_compare_true\@
-	b .Lx86_vector_map3_string_compare_load\@
-.Lx86_vector_map3_string_compare_substring\@:
-	cbz w15, .Lx86_vector_map3_string_compare_true\@
-	cbz w16, .Lx86_vector_map3_string_compare_false\@
-.Lx86_vector_map3_string_compare_load\@:
+	cbnz w17, Lx86_vector_map3_string_compare_false\@
+	cbz w15, Lx86_vector_map3_string_compare_true\@
+	b Lx86_vector_map3_string_compare_load\@
+Lx86_vector_map3_string_compare_substring\@:
+	cbz w15, Lx86_vector_map3_string_compare_true\@
+	cbz w16, Lx86_vector_map3_string_compare_false\@
+Lx86_vector_map3_string_compare_load\@:
 	cmp w6, #1
-	b.ne .Lx86_vector_map3_string_compare_words\@
+	b.ne Lx86_vector_map3_string_compare_words\@
 	ldrb w15, [x9, w12, uxtw]
 	ldrb w16, [x10, w11, uxtw]
-	cbz w7, .Lx86_vector_map3_string_compare_values_ready\@
+	cbz w7, Lx86_vector_map3_string_compare_values_ready\@
 	sxtb w15, w15
 	sxtb w16, w16
-	b .Lx86_vector_map3_string_compare_values_ready\@
-.Lx86_vector_map3_string_compare_words\@:
+	b Lx86_vector_map3_string_compare_values_ready\@
+Lx86_vector_map3_string_compare_words\@:
 	ldrh w15, [x9, w12, uxtw #1]
 	ldrh w16, [x10, w11, uxtw #1]
-	cbz w7, .Lx86_vector_map3_string_compare_values_ready\@
+	cbz w7, Lx86_vector_map3_string_compare_values_ready\@
 	sxth w15, w15
 	sxth w16, w16
-.Lx86_vector_map3_string_compare_values_ready\@:
+Lx86_vector_map3_string_compare_values_ready\@:
 	cmp w8, #1
-	b.ne .Lx86_vector_map3_string_compare_equal\@
-	tbz w12, #0, .Lx86_vector_map3_string_compare_lower\@
+	b.ne Lx86_vector_map3_string_compare_equal\@
+	tbz w12, #0, Lx86_vector_map3_string_compare_lower\@
 	cmp w16, w15
 	cset w14, le
-	cbnz w7, .Lx86_vector_map3_string_compare_done\@
+	cbnz w7, Lx86_vector_map3_string_compare_done\@
 	cset w14, ls
-	b .Lx86_vector_map3_string_compare_done\@
-.Lx86_vector_map3_string_compare_lower\@:
+	b Lx86_vector_map3_string_compare_done\@
+Lx86_vector_map3_string_compare_lower\@:
 	cmp w16, w15
 	cset w14, ge
-	cbnz w7, .Lx86_vector_map3_string_compare_done\@
+	cbnz w7, Lx86_vector_map3_string_compare_done\@
 	cset w14, hs
-	b .Lx86_vector_map3_string_compare_done\@
-.Lx86_vector_map3_string_compare_equal\@:
+	b Lx86_vector_map3_string_compare_done\@
+Lx86_vector_map3_string_compare_equal\@:
 	cmp w15, w16
 	cset w14, eq
-	b .Lx86_vector_map3_string_compare_done\@
-.Lx86_vector_map3_string_compare_true\@:
+	b Lx86_vector_map3_string_compare_done\@
+Lx86_vector_map3_string_compare_true\@:
 	mov w14, #1
-	b .Lx86_vector_map3_string_compare_done\@
-.Lx86_vector_map3_string_compare_false\@:
+	b Lx86_vector_map3_string_compare_done\@
+Lx86_vector_map3_string_compare_false\@:
 	mov w14, #0
-.Lx86_vector_map3_string_compare_done\@:
+Lx86_vector_map3_string_compare_done\@:
 .endm
 
 /* q0/q1 are the left/right XMM values. w13 is the immediate, w12 selects
@@ -72,7 +72,7 @@
  * polarity-adjusted bit result in w0, lengths in w1/w2, and count in w3.
  */
 .p2align 4
-.Lx86_vector_map3_string_compute:
+Lx86_vector_map3_string_compute:
 	sub sp, sp, #32
 	str q0, [sp]
 	str q1, [sp, #16]
@@ -82,8 +82,8 @@
 	mov w3, #16
 	lsrv w3, w3, w6
 	add w6, w6, #1
-	cbz w12, .Lx86_vector_map3_string_implicit_lengths
-	cbz w11, .Lx86_vector_map3_string_explicit_32
+	cbz w12, Lx86_vector_map3_string_implicit_lengths
+	cbz w11, Lx86_vector_map3_string_explicit_32
 	ldr x14, [_cpu, #0]
 	cmp x14, #0
 	cneg x14, x14, mi
@@ -94,8 +94,8 @@
 	cneg x14, x14, mi
 	cmp x14, x3
 	csel x5, x14, x3, lo
-	b .Lx86_vector_map3_string_lengths_ready
-.Lx86_vector_map3_string_explicit_32:
+	b Lx86_vector_map3_string_lengths_ready
+Lx86_vector_map3_string_explicit_32:
 	ldr w14, [_cpu, #0]
 	sxtw x14, w14
 	cmp x14, #0
@@ -108,156 +108,156 @@
 	cneg x14, x14, mi
 	cmp x14, x3
 	csel x5, x14, x3, lo
-	b .Lx86_vector_map3_string_lengths_ready
-.Lx86_vector_map3_string_implicit_lengths:
+	b Lx86_vector_map3_string_lengths_ready
+Lx86_vector_map3_string_implicit_lengths:
 	mov w4, w3
 	mov w5, w3
 	mov w14, #0
-.Lx86_vector_map3_string_length_loop:
+Lx86_vector_map3_string_length_loop:
 	cmp w14, w3
-	b.hs .Lx86_vector_map3_string_lengths_ready
+	b.hs Lx86_vector_map3_string_lengths_ready
 	cmp w6, #1
-	b.ne .Lx86_vector_map3_string_length_words
+	b.ne Lx86_vector_map3_string_length_words
 	ldrb w15, [x9, w14, uxtw]
 	ldrb w16, [x10, w14, uxtw]
-	b .Lx86_vector_map3_string_length_values
-.Lx86_vector_map3_string_length_words:
+	b Lx86_vector_map3_string_length_values
+Lx86_vector_map3_string_length_words:
 	ldrh w15, [x9, w14, uxtw #1]
 	ldrh w16, [x10, w14, uxtw #1]
-.Lx86_vector_map3_string_length_values:
+Lx86_vector_map3_string_length_values:
 	cmp w4, w3
-	b.ne .Lx86_vector_map3_string_right_length
-	cbnz w15, .Lx86_vector_map3_string_right_length
+	b.ne Lx86_vector_map3_string_right_length
+	cbnz w15, Lx86_vector_map3_string_right_length
 	mov w4, w14
-.Lx86_vector_map3_string_right_length:
+Lx86_vector_map3_string_right_length:
 	cmp w5, w3
-	b.ne .Lx86_vector_map3_string_length_next
-	cbnz w16, .Lx86_vector_map3_string_length_next
+	b.ne Lx86_vector_map3_string_length_next
+	cbnz w16, Lx86_vector_map3_string_length_next
 	mov w5, w14
-.Lx86_vector_map3_string_length_next:
+Lx86_vector_map3_string_length_next:
 	add w14, w14, #1
-	b .Lx86_vector_map3_string_length_loop
-.Lx86_vector_map3_string_lengths_ready:
+	b Lx86_vector_map3_string_length_loop
+Lx86_vector_map3_string_lengths_ready:
 	ubfx w8, w13, #2, #2
 	ubfx w7, w13, #1, #1
 	mov w0, #0
 	cmp w8, #0
-	b.eq .Lx86_vector_map3_string_equal_any
+	b.eq Lx86_vector_map3_string_equal_any
 	cmp w8, #1
-	b.eq .Lx86_vector_map3_string_ranges
+	b.eq Lx86_vector_map3_string_ranges
 	cmp w8, #2
-	b.eq .Lx86_vector_map3_string_equal_each
-	b .Lx86_vector_map3_string_equal_ordered
+	b.eq Lx86_vector_map3_string_equal_each
+	b Lx86_vector_map3_string_equal_ordered
 
-.Lx86_vector_map3_string_equal_any:
+Lx86_vector_map3_string_equal_any:
 	mov w11, #0
-.Lx86_vector_map3_string_equal_any_right:
+Lx86_vector_map3_string_equal_any_right:
 	cmp w11, w3
-	b.hs .Lx86_vector_map3_string_aggregation_done
+	b.hs Lx86_vector_map3_string_aggregation_done
 	mov w12, #0
-.Lx86_vector_map3_string_equal_any_left:
+Lx86_vector_map3_string_equal_any_left:
 	cmp w12, w3
-	b.hs .Lx86_vector_map3_string_equal_any_next
+	b.hs Lx86_vector_map3_string_equal_any_next
 	vector_map3_string_compare_pair
-	cbnz w14, .Lx86_vector_map3_string_set_right
+	cbnz w14, Lx86_vector_map3_string_set_right
 	add w12, w12, #1
-	b .Lx86_vector_map3_string_equal_any_left
-.Lx86_vector_map3_string_equal_any_next:
+	b Lx86_vector_map3_string_equal_any_left
+Lx86_vector_map3_string_equal_any_next:
 	add w11, w11, #1
-	b .Lx86_vector_map3_string_equal_any_right
+	b Lx86_vector_map3_string_equal_any_right
 
-.Lx86_vector_map3_string_ranges:
+Lx86_vector_map3_string_ranges:
 	mov w11, #0
-.Lx86_vector_map3_string_ranges_right:
+Lx86_vector_map3_string_ranges_right:
 	cmp w11, w3
-	b.hs .Lx86_vector_map3_string_aggregation_done
+	b.hs Lx86_vector_map3_string_aggregation_done
 	mov w12, #0
-.Lx86_vector_map3_string_ranges_left:
+Lx86_vector_map3_string_ranges_left:
 	cmp w12, w3
-	b.hs .Lx86_vector_map3_string_ranges_next
+	b.hs Lx86_vector_map3_string_ranges_next
 	vector_map3_string_compare_pair
-	cbz w14, .Lx86_vector_map3_string_ranges_pair_next
+	cbz w14, Lx86_vector_map3_string_ranges_pair_next
 	add w12, w12, #1
 	vector_map3_string_compare_pair
-	cbnz w14, .Lx86_vector_map3_string_set_right
+	cbnz w14, Lx86_vector_map3_string_set_right
 	add w12, w12, #1
-	b .Lx86_vector_map3_string_ranges_left
-.Lx86_vector_map3_string_ranges_pair_next:
+	b Lx86_vector_map3_string_ranges_left
+Lx86_vector_map3_string_ranges_pair_next:
 	add w12, w12, #2
-	b .Lx86_vector_map3_string_ranges_left
-.Lx86_vector_map3_string_ranges_next:
+	b Lx86_vector_map3_string_ranges_left
+Lx86_vector_map3_string_ranges_next:
 	add w11, w11, #1
-	b .Lx86_vector_map3_string_ranges_right
+	b Lx86_vector_map3_string_ranges_right
 
-.Lx86_vector_map3_string_equal_each:
+Lx86_vector_map3_string_equal_each:
 	mov w11, #0
-.Lx86_vector_map3_string_equal_each_loop:
+Lx86_vector_map3_string_equal_each_loop:
 	cmp w11, w3
-	b.hs .Lx86_vector_map3_string_aggregation_done
+	b.hs Lx86_vector_map3_string_aggregation_done
 	mov w12, w11
 	vector_map3_string_compare_pair
-	cbz w14, .Lx86_vector_map3_string_equal_each_next
+	cbz w14, Lx86_vector_map3_string_equal_each_next
 	mov w15, #1
 	lsl w15, w15, w11
 	orr w0, w0, w15
-.Lx86_vector_map3_string_equal_each_next:
+Lx86_vector_map3_string_equal_each_next:
 	add w11, w11, #1
-	b .Lx86_vector_map3_string_equal_each_loop
+	b Lx86_vector_map3_string_equal_each_loop
 
-.Lx86_vector_map3_string_equal_ordered:
+Lx86_vector_map3_string_equal_ordered:
 	mov w2, #0
-.Lx86_vector_map3_string_ordered_start:
+Lx86_vector_map3_string_ordered_start:
 	cmp w2, w3
-	b.hs .Lx86_vector_map3_string_aggregation_done
+	b.hs Lx86_vector_map3_string_aggregation_done
 	mov w12, #0
-.Lx86_vector_map3_string_ordered_left:
+Lx86_vector_map3_string_ordered_left:
 	add w11, w2, w12
 	cmp w11, w3
-	b.hs .Lx86_vector_map3_string_ordered_set
+	b.hs Lx86_vector_map3_string_ordered_set
 	vector_map3_string_compare_pair
-	cbz w14, .Lx86_vector_map3_string_ordered_next
+	cbz w14, Lx86_vector_map3_string_ordered_next
 	add w12, w12, #1
-	b .Lx86_vector_map3_string_ordered_left
-.Lx86_vector_map3_string_ordered_set:
+	b Lx86_vector_map3_string_ordered_left
+Lx86_vector_map3_string_ordered_set:
 	mov w15, #1
 	lsl w15, w15, w2
 	orr w0, w0, w15
-.Lx86_vector_map3_string_ordered_next:
+Lx86_vector_map3_string_ordered_next:
 	add w2, w2, #1
-	b .Lx86_vector_map3_string_ordered_start
+	b Lx86_vector_map3_string_ordered_start
 
-.Lx86_vector_map3_string_set_right:
+Lx86_vector_map3_string_set_right:
 	mov w15, #1
 	lsl w15, w15, w11
 	orr w0, w0, w15
 	cmp w8, #2
-	b.eq .Lx86_vector_map3_string_equal_each_next
+	b.eq Lx86_vector_map3_string_equal_each_next
 	cmp w8, #1
-	b.eq .Lx86_vector_map3_string_ranges_next
-	b .Lx86_vector_map3_string_equal_any_next
+	b.eq Lx86_vector_map3_string_ranges_next
+	b Lx86_vector_map3_string_equal_any_next
 
-.Lx86_vector_map3_string_aggregation_done:
+Lx86_vector_map3_string_aggregation_done:
 	mov w14, #1
 	lsl w14, w14, w3
 	sub w14, w14, #1
 	and w0, w0, w14
-	tbz w13, #4, .Lx86_vector_map3_string_polarity_done
-	tbnz w13, #5, .Lx86_vector_map3_string_masked_negative
+	tbz w13, #4, Lx86_vector_map3_string_polarity_done
+	tbnz w13, #5, Lx86_vector_map3_string_masked_negative
 	mvn w0, w0
 	and w0, w0, w14
-	b .Lx86_vector_map3_string_polarity_done
-.Lx86_vector_map3_string_masked_negative:
+	b Lx86_vector_map3_string_polarity_done
+Lx86_vector_map3_string_masked_negative:
 	cmp w5, w3
-	b.eq .Lx86_vector_map3_string_valid_mask_ready
+	b.eq Lx86_vector_map3_string_valid_mask_ready
 	mov w15, #1
 	lsl w15, w15, w5
 	sub w15, w15, #1
-	b .Lx86_vector_map3_string_apply_valid_mask
-.Lx86_vector_map3_string_valid_mask_ready:
+	b Lx86_vector_map3_string_apply_valid_mask
+Lx86_vector_map3_string_valid_mask_ready:
 	mov w15, w14
-.Lx86_vector_map3_string_apply_valid_mask:
+Lx86_vector_map3_string_apply_valid_mask:
 	eor w0, w0, w15
-.Lx86_vector_map3_string_polarity_done:
+Lx86_vector_map3_string_polarity_done:
 	mov w1, w4
 	mov w2, w5
 	add sp, sp, #32
@@ -290,49 +290,49 @@
 	.if (\opcode & 1) == 0
 	add x9, _cpu, #UML_X86_64_CPU_VECTORS
 	movi v4.16b, #0
-	tbnz w27, #6, .Lx86_vector_map3_string_expanded_mask\@
+	tbnz w27, #6, Lx86_vector_map3_string_expanded_mask\@
 	mov v4.h[0], w24
 	str q4, [x9]
-	b .Lx86_vector_map3_string_mask_written\@
-.Lx86_vector_map3_string_expanded_mask\@:
+	b Lx86_vector_map3_string_mask_written\@
+Lx86_vector_map3_string_expanded_mask\@:
 	str q4, [x9]
 	mov w11, #0
 	mov w14, #-1
-.Lx86_vector_map3_string_expand_loop\@:
+Lx86_vector_map3_string_expand_loop\@:
 	cmp w11, w16
-	b.hs .Lx86_vector_map3_string_mask_written\@
+	b.hs Lx86_vector_map3_string_mask_written\@
 	lsrv w12, w24, w11
-	tbz w12, #0, .Lx86_vector_map3_string_expand_next\@
-	tbnz w27, #0, .Lx86_vector_map3_string_expand_word\@
+	tbz w12, #0, Lx86_vector_map3_string_expand_next\@
+	tbnz w27, #0, Lx86_vector_map3_string_expand_word\@
 	strb w14, [x9, w11, uxtw]
-	b .Lx86_vector_map3_string_expand_next\@
-.Lx86_vector_map3_string_expand_word\@:
+	b Lx86_vector_map3_string_expand_next\@
+Lx86_vector_map3_string_expand_word\@:
 	strh w14, [x9, w11, uxtw #1]
-.Lx86_vector_map3_string_expand_next\@:
+Lx86_vector_map3_string_expand_next\@:
 	add w11, w11, #1
-	b .Lx86_vector_map3_string_expand_loop\@
-.Lx86_vector_map3_string_mask_written\@:
-	tbz x19, #63, .Lx86_vector_map3_string_result_done\@
+	b Lx86_vector_map3_string_expand_loop\@
+Lx86_vector_map3_string_mask_written\@:
+	tbz x19, #63, Lx86_vector_map3_string_result_done\@
 	movi v4.16b, #0
 	str q4, [x9, #16]
-	b .Lx86_vector_map3_string_result_done\@
+	b Lx86_vector_map3_string_result_done\@
 	.else
-	cbz w24, .Lx86_vector_map3_string_index_default\@
-	tbnz w27, #6, .Lx86_vector_map3_string_index_high\@
+	cbz w24, Lx86_vector_map3_string_index_default\@
+	tbnz w27, #6, Lx86_vector_map3_string_index_high\@
 	rbit w11, w24
 	clz w11, w11
-	b .Lx86_vector_map3_string_index_ready\@
-.Lx86_vector_map3_string_index_high\@:
+	b Lx86_vector_map3_string_index_ready\@
+Lx86_vector_map3_string_index_high\@:
 	clz w11, w24
 	mov w12, #31
 	sub w11, w12, w11
-	b .Lx86_vector_map3_string_index_ready\@
-.Lx86_vector_map3_string_index_default\@:
+	b Lx86_vector_map3_string_index_ready\@
+Lx86_vector_map3_string_index_default\@:
 	mov w11, w16
-.Lx86_vector_map3_string_index_ready\@:
+Lx86_vector_map3_string_index_ready\@:
 	str x11, [_cpu, #8]
 	.endif
-.Lx86_vector_map3_string_result_done\@:
+Lx86_vector_map3_string_result_done\@:
 	retire_and_next
 .endm
 
@@ -346,7 +346,7 @@
 	and w13, w27, #0xff
 	mov w12, #(\opcode <= 0x61)
 	ubfx w11, w27, #8, #1
-	bl .Lx86_vector_map3_string_compute
+	bl Lx86_vector_map3_string_compute
 	vector_map3_string_finish \opcode
 .endm
 
@@ -366,27 +366,27 @@ gadget vector_map3_string_\symbol\()_rm
 	effective_address
 	ldr x27, [_stream], #8
 	mov x25, x7
-	page_cross_check 16, .Lx86_vector_map3_string_cross\@
+	page_cross_check 16, Lx86_vector_map3_string_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldr q1, [x7]
-	b .Lx86_vector_map3_string_loaded\@
-.Lx86_vector_map3_string_cross\@:
+	b Lx86_vector_map3_string_loaded\@
+Lx86_vector_map3_string_cross\@:
 	sub sp, sp, #16
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_string_cross_fault\@
+	cbz w0, Lx86_vector_map3_string_cross_fault\@
 	ldr q1, [sp]
 	add sp, sp, #16
-.Lx86_vector_map3_string_loaded\@:
+Lx86_vector_map3_string_loaded\@:
 	and x10, x23, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_map3_string_execute \opcode, 23
-.Lx86_vector_map3_string_cross_fault\@:
+Lx86_vector_map3_string_cross_fault\@:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 .macro vector_map3_string_family symbol, opcode

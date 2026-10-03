@@ -9,11 +9,7 @@
  * assembler aware of them so extension-backed gadgets can use native ops. */
 .arch armv8.6-a+crc+crypto+sha3+rcpc+i8mm+fp16
 
-#if __APPLE__
 #define NAME(value) _##value
-#else
-#define NAME(value) value
-#endif
 
 _cpu .req x1
 _tlb .req x2
@@ -56,9 +52,9 @@ NAME(uml_arm64_gadget_\name):
  * and reinstall it after. The host register holds only the writable FPSR
  * fields, so storing it commits what the execution boundary would. The guest
  * sees exactly the prior FPSR plus the modelled exceptions, and any status
- * the host raises while running the helper is discarded. A helper whose
- * exceptions come from host instructions run under the guest FPCR instead
- * merges the host register after the call. x1/x2 survive in x19/x20.
+ * the host raises while running the helper is discarded. x1/x2 survive in
+ * x19/x20. A helper whose exceptions come from host instructions run under
+ * the guest FPCR uses fpsr_merge_helper instead.
  */
 .macro fpsr_model_helper helper
 	mrs x16, fpsr
@@ -72,6 +68,28 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, x20
 	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
+.endm
+
+/* Call uml_arm64_\helper(CpuState, x8), keeping x1/x2 on the stack. */
+.macro software_helper helper
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	helper_call uml_arm64_\helper
+	ldp x1, x2, [sp], #16
+.endm
+
+/* software_helper for a helper whose exceptions come from host instructions
+ * run under the guest FPCR: the live FPSR, which holds the block's cumulative
+ * status and what those instructions raised, is ORed into CpuState.fpsr, and
+ * the result becomes the live FPSR. */
+.macro fpsr_merge_helper helper
+	software_helper \helper
+	mrs x17, fpsr
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	orr w16, w16, w17
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
 .endm
 
 /* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
@@ -333,18 +351,18 @@ scalar_entry move_wide_constant, 0, 0, scalar_offset0, scalar_none, scalar_none,
  * compact operand is Rd[4:0], Rn[12:8], immediate[39:16].  These variants
  * deliberately contain no opcode tests or conditional branches. */
 .macro add_sub_immediate_fast bits64, subtract, flags, source_sp, destination_special, suffix, forward=0
-	.set .Lsd\@, scalar_register0
+	.set Lsd\@, scalar_register0
 	.if \destination_special && !\flags
-	.set .Lsd\@, scalar_sp
+	.set Lsd\@, scalar_sp
 	.endif
 	.if \destination_special && \flags
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_register8
+	.set Lsn\@, scalar_register8
 	.if \source_sp
-	.set .Lsn\@, scalar_sp
+	.set Lsn\@, scalar_sp
 	.endif
-scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
+scalar_entry add_sub_immediate_\suffix, \forward, 1, Lsd\@, Lsn\@, scalar_none, scalar_none, 1
 	/* This family is non-faulting and leaves x14 free. Builder always emits a
 	 * terminal after a translated fallthrough, so the successor word exists
 	 * even when this is the final guest instruction in the block. */
@@ -396,7 +414,7 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none
 	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
 	br x14
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
+	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
 .endm
 
 .macro add_sub_immediate_modes bits64, subtract, flags, prefix
@@ -463,19 +481,19 @@ add_sub_immediate_modes 1, 1, 1, x_sub_s
 .endm
 
 .macro add_sub_register_shifted_fast bits64, subtract, flags, shift_kind, left_zero, right_zero, destination_discard, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
+	.set Lsd\@, scalar_offset0
 	.if \destination_discard
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_offset16
+	.set Lsn\@, scalar_offset16
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset32
+	.set Lsm\@, scalar_offset32
 	.if \right_zero
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry add_sub_register_\suffix, \forward, 2, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry add_sub_register_\suffix, \forward, 2, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
@@ -508,20 +526,20 @@ scalar_entry add_sub_register_\suffix, \forward, 2, .Lsd\@, .Lsn\@, .Lsm\@, scal
 		.endif
 	.endif
 	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_register_shifted_fast, \bits64, \subtract, \flags, \shift_kind, \left_zero, \right_zero, \destination_discard, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, add_sub_register_shifted_fast, \bits64, \subtract, \flags, \shift_kind, \left_zero, \right_zero, \destination_discard, \suffix
 .endm
 
 .macro add_sub_register_extended_fast bits64, subtract, flags, extension, shift_nonzero, right_zero, destination_discard, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
+	.set Lsd\@, scalar_offset0
 	.if \destination_discard
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_offset16
-	.set .Lsm\@, scalar_offset32
+	.set Lsn\@, scalar_offset16
+	.set Lsm\@, scalar_offset32
 	.if \right_zero
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry add_sub_register_\suffix, \forward, 3, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry add_sub_register_\suffix, \forward, 3, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.if \right_zero
@@ -547,7 +565,7 @@ scalar_entry add_sub_register_\suffix, \forward, 3, .Lsd\@, .Lsn\@, .Lsm\@, scal
 	lsl x16, x16, x6
 	.endif
 	add_sub_register_finish \bits64, \subtract, \flags, \destination_discard
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_register_extended_fast, \bits64, \subtract, \flags, \extension, \shift_nonzero, \right_zero, \destination_discard, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, add_sub_register_extended_fast, \bits64, \subtract, \flags, \extension, \shift_nonzero, \right_zero, \destination_discard, \suffix
 .endm
 
 .macro add_sub_shifted_destinations bits64, subtract, flags, shift_kind, left_zero, right_zero, prefix
@@ -624,19 +642,19 @@ add_sub_register_all 1, 1, 1, x_sub_s
  * Stream operand: destination byte offset[15:0], left byte offset[31:16],
  * right byte offset[47:32]. */
 .macro add_sub_carry_fast bits64, subtract, flags, left_zero, right_zero, same_source, destination_zero, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
+	.set Lsd\@, scalar_offset0
 	.if \destination_zero
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_offset16
+	.set Lsn\@, scalar_offset16
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset32
+	.set Lsm\@, scalar_offset32
 	.if \right_zero || \same_source
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry add_sub_carry_\suffix, \forward, 4, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry add_sub_carry_\suffix, \forward, 4, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
@@ -688,7 +706,7 @@ scalar_entry add_sub_carry_\suffix, \forward, 4, .Lsd\@, .Lsn\@, .Lsm\@, scalar_
 	str _scalar_x7, [_cpu, x9]
 	.endif
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, add_sub_carry_fast, \bits64, \subtract, \flags, \left_zero, \right_zero, \same_source, \destination_zero, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, add_sub_carry_fast, \bits64, \subtract, \flags, \left_zero, \right_zero, \same_source, \destination_zero, \suffix
 .endm
 
 .macro add_sub_carry_destinations bits64, subtract, flags, left_zero, right_zero, same_source, prefix
@@ -723,20 +741,20 @@ add_sub_carry_source_modes 1, 1, 1, x_sbc_s
  * are translation-selected; discarded results are removed by Builder. Stream:
  * destination, left, right, addend CpuState byte offsets in 16-bit fields. */
 .macro multiply_add_fast operation, left_zero, right_zero, addend_zero, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
 	.if \left_zero || \right_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset32
+	.set Lsm\@, scalar_offset32
 	.if \left_zero || \right_zero
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-	.set .Lsa\@, scalar_offset48
+	.set Lsa\@, scalar_offset48
 	.if \operation >= 8 || \addend_zero
-	.set .Lsa\@, scalar_none
+	.set Lsa\@, scalar_none
 	.endif
-scalar_entry multiply_add_\suffix, \forward, 5, .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 1
+scalar_entry multiply_add_\suffix, \forward, 5, Lsd\@, Lsn\@, Lsm\@, Lsa\@, 1
 	ldr x8, [_stream], #8
 	.if \left_zero || \right_zero
 		/* A zero multiplicand makes the product zero. */
@@ -812,7 +830,7 @@ scalar_entry multiply_add_\suffix, \forward, 5, .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 
 	and x9, x8, #0xffff
 	str _scalar_x7, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, .Lsa\@, multiply_add_fast, \operation, \left_zero, \right_zero, \addend_zero, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, Lsa\@, multiply_add_fast, \operation, \left_zero, \right_zero, \addend_zero, \suffix
 .endm
 .macro multiply_result operation, left_zero, right_zero, addend_zero, prefix
 multiply_add_fast \operation, \left_zero, \right_zero, \addend_zero, \prefix\()_r
@@ -850,16 +868,16 @@ multiply_high_sources 9, umulh
 /* Translation-selected LSLV/LSRV/ASRV/RORV. Discarded destinations are
  * folded to NOP, so every remaining entry stores a result. */
 .macro variable_shift_fast operation, bits64, left_zero, right_zero, same_source, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset32
+	.set Lsm\@, scalar_offset32
 	.if \right_zero || \same_source
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry variable_shift_\suffix, \forward, 6, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry variable_shift_\suffix, \forward, 6, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
@@ -897,7 +915,7 @@ scalar_entry variable_shift_\suffix, \forward, 6, .Lsd\@, .Lsn\@, .Lsm\@, scalar
 	uxth w9, w8
 	str _scalar_x7, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, variable_shift_fast, \operation, \bits64, \left_zero, \right_zero, \same_source, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, variable_shift_fast, \operation, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
 
 .macro variable_shift_sources operation, bits64, prefix
@@ -924,16 +942,16 @@ variable_shift_sources 3, 1, x_ror
  * zero-divisor and signed-overflow results without a conditional branch.
  * Discarded destinations are folded to NOP. */
 .macro divide_fast signed, bits64, left_zero, right_zero, same_source, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset32
+	.set Lsm\@, scalar_offset32
 	.if \right_zero || \same_source
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry divide_\suffix, \forward, 7, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry divide_\suffix, \forward, 7, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 	mov x15, xzr
@@ -963,7 +981,7 @@ scalar_entry divide_\suffix, \forward, 7, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	uxth w9, w8
 	str _scalar_x7, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, divide_fast, \signed, \bits64, \left_zero, \right_zero, \same_source, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, divide_fast, \signed, \bits64, \left_zero, \right_zero, \same_source, \suffix
 .endm
 .macro divide_sources signed, bits64, prefix
 divide_fast \signed, \bits64, 0, 0, 0, \prefix\()_rr_r
@@ -1119,19 +1137,19 @@ crc32_sources 7, cx, 8, 0x3b78, 0x82f6
 /* Translation-selected EXTR/ROR. Width, zero shift, and all XZR choices are
  * fixed. Stream operand: Rd, Rn, Rm, shift in successive bytes. */
 .macro extract_register_fast bits64, shift_nonzero, left_zero, right_zero, destination_zero, suffix, forward=0
-	.set .Lsd\@, scalar_register0
+	.set Lsd\@, scalar_register0
 	.if \destination_zero
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_register8
+	.set Lsn\@, scalar_register8
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_register16
+	.set Lsm\@, scalar_register16
 	.if \right_zero
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry extract_register_\suffix, \forward, 8, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry extract_register_\suffix, \forward, 8, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	add x13, _cpu, #UML_GADGET_CPU_X0
 	.if \left_zero
@@ -1174,7 +1192,7 @@ scalar_entry extract_register_\suffix, \forward, 8, .Lsd\@, .Lsn\@, .Lsm\@, scal
 	str _scalar_x16, [x13, x9, lsl #3]
 	.endif
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, extract_register_fast, \bits64, \shift_nonzero, \left_zero, \right_zero, \destination_zero, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, extract_register_fast, \bits64, \shift_nonzero, \left_zero, \right_zero, \destination_zero, \suffix
 .endm
 .macro extract_destinations bits64, shift_nonzero, left_zero, right_zero, prefix
 extract_register_fast \bits64, \shift_nonzero, \left_zero, \right_zero, 0, \prefix\()_r
@@ -1200,10 +1218,10 @@ extract_sources 1, 1, x_s
  * directly. Builder maps XZR sources to CpuState::gadget_zero and discards an
  * XZR destination as NOP, so no opcode/register-mode branches remain. */
 .macro conditional_select_fast name, condition, operation, bits64, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
-	.set .Lsm\@, scalar_offset32
-scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
+	.set Lsm\@, scalar_offset32
+scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
 	scalar_load \forward, 1, x15, 10, 8, 16
@@ -1232,7 +1250,7 @@ scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, .Lsd\@, .Lsn
 	.endif
 	str _scalar_x7, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, conditional_select_fast, \name, \condition, \operation, \bits64, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, conditional_select_fast, \name, \condition, \operation, \bits64, \suffix
 .endm
 .macro conditional_select_fast_modes name, condition
 conditional_select_fast \name, \condition, 0, 0, w_sel
@@ -1264,9 +1282,9 @@ conditional_select_fast_modes le, le
  * shares these two compact copy gadgets across all four opcodes, avoiding an
  * NZCV restore, a second source load, and a conditional-select instruction. */
 .macro conditional_select_always bits64, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
-scalar_entry conditional_select_fast_always_\suffix, \forward, 9, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
+scalar_entry conditional_select_fast_always_\suffix, \forward, 9, Lsd\@, Lsn\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
 	scalar_load \forward, 1, _scalar_x15, 10, 8, 16, 16, 0, _cpu
@@ -1277,7 +1295,7 @@ scalar_entry conditional_select_fast_always_\suffix, \forward, 9, .Lsd\@, .Lsn\@
 	str _scalar_x7, [_cpu, x9]
 	.endif
 	next_gadget
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, conditional_select_always, \bits64, \suffix
+	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, conditional_select_always, \bits64, \suffix
 .endm
 conditional_select_always 0, w
 conditional_select_always 1, x
@@ -1291,19 +1309,19 @@ conditional_select_always 1, x
  * are fixed at translation. Stream: left offset, right offset/immediate, and
  * the already-positioned alternative NZCV value. */
 .macro conditional_compare_fast name, condition, subtract, bits64, immediate, always_true, suffix, forward=0
-	.set .Lsn\@, scalar_offset0
-	.set .Lsm\@, scalar_offset16
+	.set Lsn\@, scalar_offset0
+	.set Lsm\@, scalar_offset16
 	.if \immediate
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry conditional_compare_fast_\name\()_\suffix, \forward, 10, scalar_none, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry conditional_compare_fast_\name\()_\suffix, \forward, 10, scalar_none, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \always_true == 0
 	msr nzcv, x27
-	b.\condition .Lconditional_compare_true\@
+	b.\condition Lconditional_compare_true\@
 	lsr x27, x8, #32
 	next_gadget
-.Lconditional_compare_true\@:
+Lconditional_compare_true\@:
 	.endif
 	scalar_load \forward, 1, x12, 10, 8, 0, 16, 0, _cpu
 	.if \immediate
@@ -1326,7 +1344,7 @@ scalar_entry conditional_compare_fast_\name\()_\suffix, \forward, 10, scalar_non
 	.endif
 	mrs x27, nzcv
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, conditional_compare_fast, \name, \condition, \subtract, \bits64, \immediate, \always_true, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, conditional_compare_fast, \name, \condition, \subtract, \bits64, \immediate, \always_true, \suffix
 .endm
 .macro conditional_compare_fast_modes name, condition, always_true
 conditional_compare_fast \name, \condition, 0, 0, 0, \always_true, w_cmn_r
@@ -1362,19 +1380,19 @@ conditional_compare_fast_modes always, al, 1
  * operation, inversion, shift kind (including the common no-shift form), and
  * every XZR choice. Stream: Rd, Rn, Rm, shift in successive bytes. */
 .macro logical_shifted_fast operation, bits64, invert, shift_kind, left_zero, right_zero, destination_zero, suffix, forward=0
-	.set .Lsd\@, scalar_register0
+	.set Lsd\@, scalar_register0
 	.if \destination_zero
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_register8
+	.set Lsn\@, scalar_register8
 	.if \left_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_register16
+	.set Lsm\@, scalar_register16
 	.if \right_zero
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry logical_shifted_\suffix, \forward, 11, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry logical_shifted_\suffix, \forward, 11, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \left_zero
 		.if \operation != 1 || \invert || \shift_kind != 0 || \destination_zero
@@ -1472,7 +1490,7 @@ scalar_entry logical_shifted_\suffix, \forward, 11, .Lsd\@, .Lsn\@, .Lsm\@, scal
 	nop
 	nop
 	.endif
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, logical_shifted_fast, \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, \destination_zero, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, logical_shifted_fast, \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, \destination_zero, \suffix
 .endm
 .macro logical_shifted_destinations operation, bits64, invert, shift_kind, left_zero, right_zero, prefix
 logical_shifted_fast \operation, \bits64, \invert, \shift_kind, \left_zero, \right_zero, 0, \prefix\()_r
@@ -1520,18 +1538,18 @@ logical_shifted_shifts 3, 1, 1, x_ands_n
  * Builder; width, operation, XZR/SP meanings and flag update are entry-point
  * constants. Stream: [Rd[4:0], Rn[12:8]][decoded immediate]. */
 .macro logical_immediate_fast operation, bits64, source_zero, destination_special, suffix, forward=0
-	.set .Lsd\@, scalar_register0
+	.set Lsd\@, scalar_register0
 	.if \destination_special && \operation != 3
-	.set .Lsd\@, scalar_sp
+	.set Lsd\@, scalar_sp
 	.endif
 	.if \destination_special && \operation == 3
-	.set .Lsd\@, scalar_none
+	.set Lsd\@, scalar_none
 	.endif
-	.set .Lsn\@, scalar_register8
+	.set Lsn\@, scalar_register8
 	.if \source_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-scalar_entry logical_immediate_\suffix, \forward, 12, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 2
+scalar_entry logical_immediate_\suffix, \forward, 12, Lsd\@, Lsn\@, scalar_none, scalar_none, 2
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
 	.if \source_zero
@@ -1579,7 +1597,7 @@ scalar_entry logical_immediate_\suffix, \forward, 12, .Lsd\@, .Lsn\@, scalar_non
 	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
 	next_gadget
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, logical_immediate_fast, \operation, \bits64, \source_zero, \destination_special, \suffix
+	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, logical_immediate_fast, \operation, \bits64, \source_zero, \destination_special, \suffix
 .endm
 .macro logical_immediate_modes operation, bits64, prefix
 logical_immediate_fast \operation, \bits64, 0, 0, \prefix\()_rr
@@ -1604,16 +1622,16 @@ logical_immediate_modes 3, 1, x_ands
  * discarded Rd to NOP, and selects width/operation/XZR/zero-rotate. Stream:
  * [destination/source CpuState offsets, rotate, imms][write mask][test mask]. */
 .macro bitfield_fast operation, bits64, rotate_nonzero, source_zero, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
 	.if \source_zero
-	.set .Lsn\@, scalar_none
+	.set Lsn\@, scalar_none
 	.endif
-	.set .Lsm\@, scalar_offset0
+	.set Lsm\@, scalar_offset0
 	.if \operation != 1
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 3
+scalar_entry bitfield_\suffix, \forward, 13, Lsd\@, Lsn\@, Lsm\@, scalar_none, 3
 	ldr x8, [_stream], #8
 	ldr x14, [_stream], #8
 	ldr x17, [_stream], #8
@@ -1660,7 +1678,7 @@ scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none
 	and x9, x8, #0xffff
 	str _scalar_x16, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, bitfield_fast, \operation, \bits64, \rotate_nonzero, \source_zero, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, bitfield_fast, \operation, \bits64, \rotate_nonzero, \source_zero, \suffix
 .endm
 .macro bitfield_sources operation, bits64, prefix
 bitfield_fast \operation, \bits64, 0, 0, \prefix\()_n_r
@@ -1683,9 +1701,9 @@ bitfield_sources 2, 1, x_u
  * destination are direct CpuState byte offsets. The optional native forms are
  * selected only when the running host advertises the matching extension. */
 .macro bit_reverse_count_fast operation, bits64, native, suffix, forward=0
-	.set .Lsd\@, scalar_offset16
-	.set .Lsn\@, scalar_offset0
-scalar_entry bit_reverse_count_\suffix, \forward, 14, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
+	.set Lsd\@, scalar_offset16
+	.set Lsn\@, scalar_offset0
+scalar_entry bit_reverse_count_\suffix, \forward, 14, Lsd\@, Lsn\@, scalar_none, scalar_none, 1
 	ldr x9, [_stream], #8
 	lsr x11, x9, #16
 	scalar_load \forward, 1, x12, 10, 9, 0
@@ -1759,7 +1777,7 @@ scalar_entry bit_reverse_count_\suffix, \forward, 14, .Lsd\@, .Lsn\@, scalar_non
 	.endif
 	str _scalar_x13, [_cpu, x11]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, bit_reverse_count_fast, \operation, \bits64, \native, \suffix
+	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, bit_reverse_count_fast, \operation, \bits64, \native, \suffix
 .endm
 
 bit_reverse_count_fast 0, 0, 0, w_rbit
@@ -1792,13 +1810,13 @@ bit_reverse_count_fast 8, 1, 1, x_abs_native
  * source fields are translation-resolved CpuState offsets. For immediates the
  * upper stream word already contains the correctly extended comparison value. */
 .macro integer_min_max_fast name, condition, is_signed, bits64, immediate, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
-	.set .Lsm\@, scalar_offset32
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
+	.set Lsm\@, scalar_offset32
 	.if \immediate
-	.set .Lsm\@, scalar_none
+	.set Lsm\@, scalar_none
 	.endif
-scalar_entry integer_\name\()_fast_\suffix, \forward, 15, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
+scalar_entry integer_\name\()_fast_\suffix, \forward, 15, Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
 	scalar_load \forward, 1, x12, 10, 8, 16, 16, 0, _cpu
@@ -1820,7 +1838,7 @@ scalar_entry integer_\name\()_fast_\suffix, \forward, 15, .Lsd\@, .Lsn\@, .Lsm\@
 	.endif
 	str _scalar_x14, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, integer_min_max_fast, \name, \condition, \is_signed, \bits64, \immediate, \suffix
+	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, integer_min_max_fast, \name, \condition, \is_signed, \bits64, \immediate, \suffix
 .endm
 .macro integer_min_max_fast_modes name, condition, is_signed
 integer_min_max_fast \name, \condition, \is_signed, 0, 0, w_r
@@ -1840,9 +1858,9 @@ integer_min_max_fast_modes umin, ls, 0
 /* Equal inputs and unsigned zero identities are recognized by the builder.
  * These shared copy entries remove the second load, compare and select. */
 .macro integer_min_max_copy bits64, suffix, forward=0
-	.set .Lsd\@, scalar_offset0
-	.set .Lsn\@, scalar_offset16
-scalar_entry integer_min_max_copy_\suffix, \forward, 15, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
+	.set Lsd\@, scalar_offset0
+	.set Lsn\@, scalar_offset16
+scalar_entry integer_min_max_copy_\suffix, \forward, 15, Lsd\@, Lsn\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
 	scalar_load \forward, 1, _scalar_x12, 10, 8, 16, 16, 0, _cpu
@@ -1851,7 +1869,7 @@ scalar_entry integer_min_max_copy_\suffix, \forward, 15, .Lsd\@, .Lsn\@, scalar_
 	.endif
 	str _scalar_x12, [_cpu, x9]
 	next_gadget
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, integer_min_max_copy, \bits64, \suffix
+	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, integer_min_max_copy, \bits64, \suffix
 .endm
 
 integer_min_max_copy 0, w

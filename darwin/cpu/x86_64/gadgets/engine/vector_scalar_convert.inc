@@ -27,7 +27,7 @@
 	vector_scalar_round \input, 6, \element, \truncate
 	.if \element == 32
 	fcmp s6, s6
-	b.vs .Lx86_vector_scalar_invalid\@
+	b.vs Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	mov w14, #0xcf000000
 	.else
@@ -35,7 +35,7 @@
 	.endif
 	fmov s7, w14
 	fcmp s6, s7
-	b.lt .Lx86_vector_scalar_invalid\@
+	b.lt Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	mov w14, #0x4f000000
 	.else
@@ -43,7 +43,7 @@
 	.endif
 	fmov s7, w14
 	fcmp s6, s7
-	b.ge .Lx86_vector_scalar_invalid\@
+	b.ge Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	fcvtzs w24, s6
 	.else
@@ -51,7 +51,7 @@
 	.endif
 	.else
 	fcmp d6, d6
-	b.vs .Lx86_vector_scalar_invalid\@
+	b.vs Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	mov x14, #0xc1e0000000000000
 	.else
@@ -59,7 +59,7 @@
 	.endif
 	fmov d7, x14
 	fcmp d6, d7
-	b.lt .Lx86_vector_scalar_invalid\@
+	b.lt Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	mov x14, #0x41e0000000000000
 	.else
@@ -67,15 +67,15 @@
 	.endif
 	fmov d7, x14
 	fcmp d6, d7
-	b.ge .Lx86_vector_scalar_invalid\@
+	b.ge Lx86_vector_scalar_invalid\@
 	.if \width == 32
 	fcvtzs w24, d6
 	.else
 	fcvtzs x24, d6
 	.endif
 	.endif
-	b .Lx86_vector_scalar_integer_ready\@
-.Lx86_vector_scalar_invalid\@:
+	b Lx86_vector_scalar_integer_ready\@
+Lx86_vector_scalar_invalid\@:
 	simd_leave_if_checking
 	.if \element == 32
 	.if \width == 32
@@ -92,17 +92,17 @@
 	.endif
 	mov x24, #1
 	lsl x24, x24, #(\width - 1)
-.Lx86_vector_scalar_integer_ready\@:
+Lx86_vector_scalar_integer_ready\@:
 .endm
 
 .macro vector_scalar_write_xmm descriptor
 	and x9, x\descriptor, #0xffff
 	add x9, _cpu, x9
 	str q4, [x9]
-	tbz x\descriptor, #63, .Lx86_vector_scalar_write_xmm_done\@
+	tbz x\descriptor, #63, Lx86_vector_scalar_write_xmm_done\@
 	movi v6.16b, #0
 	str q6, [x9, #16]
-.Lx86_vector_scalar_write_xmm_done\@:
+Lx86_vector_scalar_write_xmm_done\@:
 .endm
 
 .macro vector_integer_to_scalar_body integer_width, element
@@ -145,26 +145,26 @@ gadget vector_scalar_i\integer_width\()_f\element\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\integer_width / 8), .Lx86_vector_integer_to_scalar_cross\@
+	page_cross_check (\integer_width / 8), Lx86_vector_integer_to_scalar_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\integer_width / 8)
 	.if \integer_width == 32
 	ldr w24, [x7]
 	.else
 	ldr x24, [x7]
 	.endif
-	b .Lx86_vector_integer_to_scalar_loaded\@
-.Lx86_vector_integer_to_scalar_cross\@:
+	b Lx86_vector_integer_to_scalar_loaded\@
+Lx86_vector_integer_to_scalar_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\integer_width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \integer_width == 32
 	mov w24, w0
 	.else
 	mov x24, x0
 	.endif
-.Lx86_vector_integer_to_scalar_loaded\@:
+Lx86_vector_integer_to_scalar_loaded\@:
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_integer_to_scalar_body \integer_width, \element
@@ -217,18 +217,18 @@ gadget vector_pi_f\element\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 8, .Lx86_vector_pi_cross\@
+	page_cross_check 8, Lx86_vector_pi_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr d1, [x7]
-	b .Lx86_vector_pi_loaded\@
-.Lx86_vector_pi_cross\@:
+	b Lx86_vector_pi_loaded\@
+Lx86_vector_pi_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #8
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	fmov d1, x0
-.Lx86_vector_pi_loaded\@:
+Lx86_vector_pi_loaded\@:
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_pi_body \element
@@ -267,26 +267,26 @@ gadget vector_scalar_f\element\()_i\width\()_\truncate\()_rr
 gadget vector_scalar_f\element\()_i\width\()_\truncate\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\element / 8), .Lx86_vector_fp_to_gpr_cross\@
+	page_cross_check (\element / 8), Lx86_vector_fp_to_gpr_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 8)
 	.if \element == 32
 	ldr s1, [x7]
 	.else
 	ldr d1, [x7]
 	.endif
-	b .Lx86_vector_fp_to_gpr_loaded\@
-.Lx86_vector_fp_to_gpr_cross\@:
+	b Lx86_vector_fp_to_gpr_loaded\@
+Lx86_vector_fp_to_gpr_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\element / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \element == 32
 	fmov s1, w0
 	.else
 	fmov d1, x0
 	.endif
-.Lx86_vector_fp_to_gpr_loaded\@:
+Lx86_vector_fp_to_gpr_loaded\@:
 	vector_scalar_fp_to_int 1, \element, \width, \truncate
 	and x9, x23, #0xffff
 	.if \width == 32
@@ -351,21 +351,21 @@ gadget vector_f\element\()_pi_\truncate\()_rr
 gadget vector_f\element\()_pi_\truncate\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\element / 4), .Lx86_vector_fp_to_pi_cross\@
+	page_cross_check (\element / 4), Lx86_vector_fp_to_pi_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 4)
 	.if \element == 32
 	ldr d1, [x7]
 	.else
 	ldr q1, [x7]
 	.endif
-	b .Lx86_vector_fp_to_pi_loaded\@
-.Lx86_vector_fp_to_pi_cross\@:
+	b Lx86_vector_fp_to_pi_loaded\@
+Lx86_vector_fp_to_pi_cross\@:
 	.if \element == 32
 	mov x0, _context
 	mov x1, x25
 	mov w2, #8
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	fmov d1, x0
 	.else
 	sub sp, sp, #16
@@ -374,11 +374,11 @@ gadget vector_f\element\()_pi_\truncate\()_rm
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_fp_to_pi_cross_fault\@
+	cbz w0, Lx86_vector_fp_to_pi_cross_fault\@
 	ldr q1, [sp]
 	add sp, sp, #16
 	.endif
-.Lx86_vector_fp_to_pi_loaded\@:
+Lx86_vector_fp_to_pi_loaded\@:
 	vector_fp_to_pi_body \element, \truncate
 	and x9, x23, #0xffff
 	str d4, [_cpu, x9]
@@ -393,9 +393,9 @@ gadget vector_f\element\()_pi_\truncate\()_rm
 	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	retire_and_next
 	.if \element == 64
-.Lx86_vector_fp_to_pi_cross_fault\@:
+Lx86_vector_fp_to_pi_cross_fault\@:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 	.endif
 .endm
 

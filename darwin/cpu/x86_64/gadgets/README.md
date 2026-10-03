@@ -6,6 +6,14 @@ turns decoded instructions into those streams, `executor.cpp` owns the
 translation cache, and `native_memory.cpp` is the C++ side of the software
 TLB. This file records the contracts that are not obvious from the code.
 
+Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
+them out of the symbol table. A branch to one from another section encodes its
+distance past the nearest named symbol before it as a signed 24-bit addend, so
+such a target must lie within 8 MiB of one; the cold section names only its
+start and is 0.3 MB. The assembler rejects a larger addend, and a named local
+symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
+a `.L` symbol in the engine object.
+
 ## Gadget banks
 
 Two banks implement the scalar integer instructions.

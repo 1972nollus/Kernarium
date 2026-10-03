@@ -49,28 +49,28 @@ gadget cpuid
 	mov w7, wzr
 	mov w8, wzr
 	mov w9, wzr
-	cbz w5, .Lx86_cpuid_zero
+	cbz w5, Lx86_cpuid_zero
 	cmp w5, #1
-	b.eq .Lx86_cpuid_one
+	b.eq Lx86_cpuid_one
 	cmp w5, #7
-	b.eq .Lx86_cpuid_seven
+	b.eq Lx86_cpuid_seven
 	cmp w5, #13
-	b.eq .Lx86_cpuid_extended_state
+	b.eq Lx86_cpuid_extended_state
 	mov w11, #0x8000
 	lsl w11, w11, #16
 	cmp w5, w11
-	b.eq .Lx86_cpuid_extended_zero
+	b.eq Lx86_cpuid_extended_zero
 	add w12, w11, #1
 	cmp w5, w12
-	b.eq .Lx86_cpuid_extended_one
+	b.eq Lx86_cpuid_extended_one
 	add w12, w11, #2
 	cmp w5, w12
-	b.eq .Lx86_cpuid_brand_two
+	b.eq Lx86_cpuid_brand_two
 	add w12, w11, #3
 	cmp w5, w12
-	b.eq .Lx86_cpuid_brand_three
-	b .Lx86_cpuid_done
-.Lx86_cpuid_zero:
+	b.eq Lx86_cpuid_brand_three
+	b Lx86_cpuid_done
+Lx86_cpuid_zero:
 	mov w6, #13
 	mov w7, #0x6547
 	movk w7, #0x756e, lsl #16
@@ -78,8 +78,8 @@ gadget cpuid
 	movk w9, #0x4965, lsl #16
 	mov w8, #0x746e
 	movk w8, #0x6c65, lsl #16
-	b .Lx86_cpuid_done
-.Lx86_cpuid_one:
+	b Lx86_cpuid_done
+Lx86_cpuid_one:
 	mov w6, #0x06c3
 	movk w6, #0x0003, lsl #16
 	mov w7, #0x0800
@@ -91,9 +91,9 @@ gadget cpuid
 	mov w9, #0x8111
 	/* x87, TSC, CMPXCHG8B, CMOV, CLFLUSH, MMX, FXSR, SSE, SSE2. */
 	movk w9, #0x0788, lsl #16
-	b .Lx86_cpuid_done
-.Lx86_cpuid_seven:
-	cbnz w10, .Lx86_cpuid_done
+	b Lx86_cpuid_done
+Lx86_cpuid_seven:
+	cbnz w10, Lx86_cpuid_done
 	/* FSGSBASE, BMI1, AVX2, BMI2, ERMS, RDSEED, ADX, CLFLUSHOPT,
 	 * CLWB, and SHA. RTM/HLE and MPX remain deliberately absent.
 	 * ERMS claims REP MOVSB is the fastest way to copy, which holds here:
@@ -111,34 +111,34 @@ gadget cpuid
 	 * and SSE2 routines a resolver would pick instead.
 	 */
 	mov w9, #0x0010
-	b .Lx86_cpuid_done
-.Lx86_cpuid_extended_state:
-	cbz w10, .Lx86_cpuid_extended_state_zero
+	b Lx86_cpuid_done
+Lx86_cpuid_extended_state:
+	cbz w10, Lx86_cpuid_extended_state_zero
 	cmp w10, #2
-	b.ne .Lx86_cpuid_done
+	b.ne Lx86_cpuid_done
 	/* AVX contributes 256 bytes of YMM_Hi128 state at offset 576. */
 	mov w6, #256
 	mov w7, #576
-	b .Lx86_cpuid_done
-.Lx86_cpuid_extended_state_zero:
+	b Lx86_cpuid_done
+Lx86_cpuid_extended_state_zero:
 	/* XCR0 enables x87, SSE, and AVX.  The standard XSAVE image is 832
 	 * bytes for both the enabled and complete supported feature sets.
 	 */
 	mov w6, #7
 	mov w7, #832
 	mov w8, #832
-	b .Lx86_cpuid_done
-.Lx86_cpuid_extended_zero:
+	b Lx86_cpuid_done
+Lx86_cpuid_extended_zero:
 	mov w6, #0x8000
 	lsl w6, w6, #16
 	add w6, w6, #8
-	b .Lx86_cpuid_done
-.Lx86_cpuid_extended_one:
+	b Lx86_cpuid_done
+Lx86_cpuid_extended_one:
 	mov w8, #0x20
 	mov w9, #0x0800
 	movk w9, #0x2010, lsl #16
-	b .Lx86_cpuid_done
-.Lx86_cpuid_brand_two:
+	b Lx86_cpuid_done
+Lx86_cpuid_brand_two:
 	/* The brand string is plain little-endian bytes, so the first
 	 * word is 'K','e','r','n' from the low byte up. Registers
 	 * were zeroed at entry, so a word that is entirely brand
@@ -155,14 +155,14 @@ gadget cpuid
 	/* "rtua" */
 	mov w9, #0x7472
 	movk w9, #0x6175, lsl #16
-	b .Lx86_cpuid_done
-.Lx86_cpuid_brand_three:
+	b Lx86_cpuid_done
+Lx86_cpuid_brand_three:
 	/* "l CP" */
 	mov w6, #0x206c
 	movk w6, #0x5043, lsl #16
 	/* "U\0\0\0" */
 	mov w7, #0x0055
-.Lx86_cpuid_done:
+Lx86_cpuid_done:
 	str x6, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -182,7 +182,7 @@ gadget xgetbv
 gadget \rdtscp
 	ldr x22, [_stream], #8
 	ldrb w8, [_cpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
-	cbnz w8, .Lx86_general_protection
+	cbnz w8, Lx86_general_protection
 	isb
 	mrs x8, cntvct_el0
 	mov w9, w8
@@ -202,7 +202,7 @@ timestamp rdtscp
 gadget privileged
 	ldr x22, [_stream]
 /* A faulting instruction does not retire; RIP names the instruction. */
-.Lx86_general_protection:
+Lx86_general_protection:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
 	b uml_x86_64_gadget_leave
@@ -241,7 +241,7 @@ gadget write_\name\()_base_\width\()_r
 	.if \width == 64
 	sbfx x10, x9, #0, #48
 	cmp x10, x9
-	b.ne .Lx86_general_protection
+	b.ne Lx86_general_protection
 	.endif
 	str x9, [_cpu, #\base]
 	retire_and_next
@@ -287,59 +287,59 @@ gadget store_machine_status_16_m
 	mov x25, x7
 	mov w24, #0x0033
 	movk w24, #0x8005, lsl #16
-	page_cross_check 2, .Lx86_store_machine_status_cross
+	page_cross_check 2, Lx86_store_machine_status_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 2
 	strh w24, [x7]
-.Lx86_store_machine_status_done:
+Lx86_store_machine_status_done:
 	finish_store 2
-.Lx86_store_machine_status_cross:
+Lx86_store_machine_status_cross:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #2
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_store_machine_status_done
+	cbz w0, Lx86_memory_fault
+	b Lx86_store_machine_status_done
 
 gadget mxcsr_load
 	effective_address
 	mov x25, x7
-	page_cross_check 4, .Lx86_mxcsr_load_cross
+	page_cross_check 4, Lx86_mxcsr_load_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
-.Lx86_mxcsr_load_done:
+Lx86_mxcsr_load_done:
 	/* MXCSR holds what the guest loads, masks and flags included, as
 	 * STMXCSR shows; its reserved high half reads as zero. */
 	and w24, w24, #0xffff
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
 	publish_guest_rounding 9, 10, 11
 	retire_unless_simd_unchecked w24
-.Lx86_mxcsr_load_cross:
+Lx86_mxcsr_load_cross:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #4
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov w24, w0
-	b .Lx86_mxcsr_load_done
+	b Lx86_mxcsr_load_done
 
 gadget mxcsr_store
 	effective_address
 	mov x25, x7
 	ldr w24, [_cpu, #UML_X86_64_CPU_MXCSR]
-	page_cross_check 4, .Lx86_mxcsr_store_cross
+	page_cross_check 4, Lx86_mxcsr_store_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 4
 	str w24, [x7]
-.Lx86_mxcsr_store_done:
+Lx86_mxcsr_store_done:
 	finish_store 4
-.Lx86_mxcsr_store_cross:
+Lx86_mxcsr_store_cross:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #4
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_mxcsr_store_done
+	cbz w0, Lx86_memory_fault
+	b Lx86_mxcsr_store_done
 
 gadget cache_zero
 	ldp x23, x22, [_stream], #16
@@ -360,11 +360,11 @@ gadget cache_zero
 	b uml_x86_64_gadget_leave
 
 .p2align 4
-.Lx86_memory_fault:
+Lx86_memory_fault:
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]
-	cbz w8, .Lx86_memory_fault_unlocked
+	cbz w8, Lx86_memory_fault_unlocked
 	split_lock_leave
-.Lx86_memory_fault_unlocked:
+Lx86_memory_fault_unlocked:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
 	b uml_x86_64_gadget_leave

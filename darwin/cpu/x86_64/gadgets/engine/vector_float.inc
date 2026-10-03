@@ -244,34 +244,34 @@
 	 */
 	.if \scalar
 	.if \check
-	simd_special_scalar \element, \output, .Lx86_vector_fp_no_generated_nan\@, lo
+	simd_special_scalar \element, \output, Lx86_vector_fp_no_generated_nan\@, lo
 	simd_leave_if_checking
 	.endif
 	.if \element == 32
 	fcmeq s17, s\output, s\output
 	fmov w14, s17
-	cbnz w14, .Lx86_vector_fp_no_generated_nan\@
+	cbnz w14, Lx86_vector_fp_no_generated_nan\@
 	fcmeq s17, s\right, s\right
 	fmov w14, s17
-	cbz w14, .Lx86_vector_fp_no_generated_nan\@
+	cbz w14, Lx86_vector_fp_no_generated_nan\@
 	.if \binary
 	fcmeq s17, s\left, s\left
 	fmov w14, s17
-	cbz w14, .Lx86_vector_fp_no_generated_nan\@
+	cbz w14, Lx86_vector_fp_no_generated_nan\@
 	.endif
 	mov w14, #0xffc00000
 	fmov s\output, w14
 	.else
 	fcmeq d17, d\output, d\output
 	fmov x14, d17
-	cbnz x14, .Lx86_vector_fp_no_generated_nan\@
+	cbnz x14, Lx86_vector_fp_no_generated_nan\@
 	fcmeq d17, d\right, d\right
 	fmov x14, d17
-	cbz x14, .Lx86_vector_fp_no_generated_nan\@
+	cbz x14, Lx86_vector_fp_no_generated_nan\@
 	.if \binary
 	fcmeq d17, d\left, d\left
 	fmov x14, d17
-	cbz x14, .Lx86_vector_fp_no_generated_nan\@
+	cbz x14, Lx86_vector_fp_no_generated_nan\@
 	.endif
 	mov x14, #0xfff8000000000000
 	fmov d\output, x14
@@ -279,14 +279,14 @@
 	.else
 	.if \check
 	simd_special_lanes \element, \output
-	cbz w14, .Lx86_vector_fp_no_generated_nan\@
+	cbz w14, Lx86_vector_fp_no_generated_nan\@
 	simd_leave_if_checking
 	.endif
 	.if \element == 32
 	fcmeq v17.4s, v\output\().4s, v\output\().4s
 	uminv s18, v17.4s
 	fmov w14, s18
-	cbnz w14, .Lx86_vector_fp_no_generated_nan\@
+	cbnz w14, Lx86_vector_fp_no_generated_nan\@
 	mvn v17.16b, v17.16b
 	fcmeq v18.4s, v\right\().4s, v\right\().4s
 	and v17.16b, v17.16b, v18.16b
@@ -301,7 +301,7 @@
 	umov x14, v17.d[0]
 	umov x15, v17.d[1]
 	and x14, x14, x15
-	cbnz x14, .Lx86_vector_fp_no_generated_nan\@
+	cbnz x14, Lx86_vector_fp_no_generated_nan\@
 	mvn v17.16b, v17.16b
 	fcmeq v18.2d, v\right\().2d, v\right\().2d
 	and v17.16b, v17.16b, v18.16b
@@ -315,7 +315,7 @@
 	bsl v17.16b, v16.16b, v\output\().16b
 	mov v\output\().16b, v17.16b
 	.endif
-.Lx86_vector_fp_no_generated_nan\@:
+Lx86_vector_fp_no_generated_nan\@:
 .endm
 
 /* RSQRT raises no exception, so only it goes unchecked. */
@@ -369,14 +369,14 @@
 	.if \scalar
 	mov v4.16b, v0.16b
 	.endif
-	tbz w12, #6, .Lx86_vector_fp_inputs_ready\@
+	tbz w12, #6, Lx86_vector_fp_inputs_ready\@
 	vector_fp_flush_subnormals 0, \element
 	vector_fp_flush_subnormals 1, \element
 	.if \width == 256
 	vector_fp_flush_subnormals 2, \element
 	vector_fp_flush_subnormals 3, \element
 	.endif
-.Lx86_vector_fp_inputs_ready\@:
+Lx86_vector_fp_inputs_ready\@:
 	vector_fp_check_inputs \operation, \element, \width, \scalar
 	.ifc \operation,compare
 	vector_fp_compare_mask \predicate, \element, \scalar, 6, 0, 1, 7
@@ -397,9 +397,9 @@
 	.if \scalar
 	vector_fp_regular_value \operation, \element, 6, 0, 1
 	vector_fp_fix_generated_nan \operation, \element, 6, 0, 1, 1
-	tbz w12, #15, .Lx86_vector_fp_scalar_ftz_ready\@
+	tbz w12, #15, Lx86_vector_fp_scalar_ftz_ready\@
 	vector_fp_flush_subnormals 6, \element
-.Lx86_vector_fp_scalar_ftz_ready\@:
+Lx86_vector_fp_scalar_ftz_ready\@:
 	.if \element == 32
 	mov v4.s[0], v6.s[0]
 	.else
@@ -412,12 +412,12 @@
 	vector_fp_packed_value \operation, \element, 5, 2, 3
 	vector_fp_fix_generated_nan \operation, \element, 5, 2, 3, 0
 	.endif
-	tbz w12, #15, .Lx86_vector_fp_packed_ftz_ready\@
+	tbz w12, #15, Lx86_vector_fp_packed_ftz_ready\@
 	vector_fp_flush_subnormals 4, \element
 	.if \width == 256
 	vector_fp_flush_subnormals 5, \element
 	.endif
-.Lx86_vector_fp_packed_ftz_ready\@:
+Lx86_vector_fp_packed_ftz_ready\@:
 	.endif
 	.endif
 .endm
@@ -446,12 +446,12 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	ldr x26, [_stream], #8
 	mov x25, x7
 	.if \scalar
-	.set .Lx86_vector_fp_input_size\@, (\element / 8)
+	.set Lx86_vector_fp_input_size\@, (\element / 8)
 	.else
-	.set .Lx86_vector_fp_input_size\@, (\width / 8)
+	.set Lx86_vector_fp_input_size\@, (\width / 8)
 	.endif
-	page_cross_check (.Lx86_vector_fp_input_size\@), .Lx86_vector_fp_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_fp_input_size\@
+	page_cross_check (Lx86_vector_fp_input_size\@), Lx86_vector_fp_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_fp_input_size\@
 	.if \scalar
 	.if \element == 32
 	ldr s1, [x7]
@@ -464,14 +464,14 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	ldr q3, [x7, #16]
 	.endif
 	.endif
-	b .Lx86_vector_fp_loaded\@
-.Lx86_vector_fp_cross\@:
+	b Lx86_vector_fp_loaded\@
+Lx86_vector_fp_cross\@:
 	.if \scalar
 	mov x0, _context
 	mov x1, x25
-	mov w2, #.Lx86_vector_fp_input_size\@
+	mov w2, #Lx86_vector_fp_input_size\@
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \element == 32
 	fmov s1, w0
 	.else
@@ -482,16 +482,16 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
-	mov w3, #.Lx86_vector_fp_input_size\@
+	mov w3, #Lx86_vector_fp_input_size\@
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_fp_cross_fault\@
+	cbz w0, Lx86_vector_fp_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
 	.endif
-.Lx86_vector_fp_loaded\@:
+Lx86_vector_fp_loaded\@:
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q0, [x10]
@@ -502,9 +502,9 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	vector_write_xmm \width, 23
 	retire_and_next
 	.if !\scalar
-.Lx86_vector_fp_cross_fault\@:
+Lx86_vector_fp_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 	.endif
 .endm
 

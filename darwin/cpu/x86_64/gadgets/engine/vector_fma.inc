@@ -191,12 +191,12 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	ldr x26, [_stream], #8
 	mov x25, x7
 	.if \scalar
-	.set .Lx86_vector_fma_input_size\@, (\element / 8)
+	.set Lx86_vector_fma_input_size\@, (\element / 8)
 	.else
-	.set .Lx86_vector_fma_input_size\@, (\width / 8)
+	.set Lx86_vector_fma_input_size\@, (\width / 8)
 	.endif
-	page_cross_check (.Lx86_vector_fma_input_size\@), .Lx86_vector_fma_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_fma_input_size\@
+	page_cross_check (Lx86_vector_fma_input_size\@), Lx86_vector_fma_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_fma_input_size\@
 	.if \scalar
 	.if \element == 32
 	ldr s2, [x7]
@@ -209,14 +209,14 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	ldr q5, [x7, #16]
 	.endif
 	.endif
-	b .Lx86_vector_fma_loaded\@
-.Lx86_vector_fma_cross\@:
+	b Lx86_vector_fma_loaded\@
+Lx86_vector_fma_cross\@:
 	.if \scalar
 	mov x0, _context
 	mov x1, x25
-	mov w2, #.Lx86_vector_fma_input_size\@
+	mov w2, #Lx86_vector_fma_input_size\@
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \element == 32
 	fmov s2, w0
 	.else
@@ -227,16 +227,16 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
-	mov w3, #.Lx86_vector_fma_input_size\@
+	mov w3, #Lx86_vector_fma_input_size\@
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_fma_cross_fault\@
+	cbz w0, Lx86_vector_fma_cross_fault\@
 	ldr q2, [sp]
 	.if \width == 256
 	ldr q5, [sp, #16]
 	.endif
 	add sp, sp, #32
 	.endif
-.Lx86_vector_fma_loaded\@:
+Lx86_vector_fma_loaded\@:
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
 	add x9, _cpu, x9
@@ -251,9 +251,9 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	vector_fma_write \width, 23
 	retire_and_next
 	.if !\scalar
-.Lx86_vector_fma_cross_fault\@:
+Lx86_vector_fma_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 	.endif
 .endm
 

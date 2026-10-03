@@ -35,12 +35,12 @@ gadget vector_mask_store_\width
 	lsr x9, x9, #56
 	orr x19, x19, x9, lsl #8
 	.endif
-	cbz x19, .Lx86_vector_mask_store_done\@
+	cbz x19, Lx86_vector_mask_store_done\@
 	and x27, x23, #0xffff
 	add x27, _cpu, x27
 	/* No page is page-aligned plus one. */
 	mov x24, #1
-.Lx86_vector_mask_store_loop\@:
+Lx86_vector_mask_store_loop\@:
 	rbit x9, x19
 	clz x9, x9
 	mov x10, #1
@@ -49,21 +49,21 @@ gadget vector_mask_store_\width
 	add x7, x25, x9
 	and x10, x7, #0xfffffffffffff000
 	cmp x10, x24
-	b.ne .Lx86_vector_mask_store_translate\@
+	b.ne Lx86_vector_mask_store_translate\@
 	add x7, x7, x26
-.Lx86_vector_mask_store_byte\@:
+Lx86_vector_mask_store_byte\@:
 	ldrb w14, [x27, x9]
 	strb w14, [x7]
-	cbnz x19, .Lx86_vector_mask_store_loop\@
-.Lx86_vector_mask_store_done\@:
+	cbnz x19, Lx86_vector_mask_store_loop\@
+Lx86_vector_mask_store_done\@:
 	finish_store (\width / 8)
-.Lx86_vector_mask_store_translate\@:
+Lx86_vector_mask_store_translate\@:
 	mov x24, x7
-	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, .Lx86_memory_fault
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
 	sub x26, x7, x24
 	sub x9, x24, x25
 	and x24, x24, #0xfffffffffffff000
-	b .Lx86_vector_mask_store_byte\@
+	b Lx86_vector_mask_store_byte\@
 .endm
 
 vector_mask_store 64

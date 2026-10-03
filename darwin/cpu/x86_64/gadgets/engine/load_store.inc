@@ -4,35 +4,35 @@
 .macro refresh_compat_tls_segment selector_offset, selector_value
 	ldrb w12, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
 	cmp w12, #1
-	b.ne .Lx86_tls_done\@
+	b.ne Lx86_tls_done\@
 	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 8)
-	b.ne .Lx86_tls_check_gs\@
+	b.ne Lx86_tls_check_gs\@
 	mov x14, #UML_X86_64_CPU_FS_BASE
-	b .Lx86_tls_selected\@
-.Lx86_tls_check_gs\@:
+	b Lx86_tls_selected\@
+Lx86_tls_check_gs\@:
 	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 10)
-	b.ne .Lx86_tls_done\@
+	b.ne Lx86_tls_done\@
 	mov x14, #UML_X86_64_CPU_GS_BASE
-.Lx86_tls_selected\@:
+Lx86_tls_selected\@:
 	and w12, \selector_value, #7
 	cmp w12, #3
-	b.ne .Lx86_tls_clear\@
+	b.ne Lx86_tls_clear\@
 	/* w13 holds the present mask and, in its second byte, the first TLS
 	 * entry the kernel numbered. */
 	ldrh w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
 	lsr w12, \selector_value, #3
 	sub w12, w12, w13, lsr #8
 	cmp w12, #4
-	b.hi .Lx86_tls_clear\@
+	b.hi Lx86_tls_clear\@
 	lsr w13, w13, w12
-	tbz w13, #0, .Lx86_tls_clear\@
+	tbz w13, #0, Lx86_tls_clear\@
 	add x13, _cpu, #UML_X86_64_CPU_COMPAT_TLS_BASES
 	ldr w12, [x13, w12, uxtw #2]
 	str x12, [_cpu, x14]
-	b .Lx86_tls_done\@
-.Lx86_tls_clear\@:
+	b Lx86_tls_done\@
+Lx86_tls_clear\@:
 	str xzr, [_cpu, x14]
-.Lx86_tls_done\@:
+Lx86_tls_done\@:
 .endm
 
 .macro scalar_move_rr name, load, store, load_register, store_register
@@ -72,24 +72,24 @@ scalar_move_ri move_64_ri, str, x
 gadget move_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_load_cross\@
+	page_cross_check (\width / 8), Lx86_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()11, [x7]
-.Lx86_load_write\@:
+Lx86_load_write\@:
 	and x8, x23, #0xffff
 	\store \store_register\()11, [_cpu, x8]
 	.if \width == 16
 	refresh_compat_tls_segment w8, w11
 	.endif
 	retire_and_next
-.Lx86_load_cross\@:
+Lx86_load_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x11, x0
-	b .Lx86_load_write\@
+	b Lx86_load_write\@
 .endm
 
 .macro memory_move_store form, width, load, host_register, store
@@ -103,17 +103,17 @@ gadget move_\width\()_m\form
 	.ifc \form,i
 	ldr x24, [_stream], #8
 	.endif
-	page_cross_check (\width / 8), .Lx86_store_cross\@
+	page_cross_check (\width / 8), Lx86_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
 	finish_store (\width / 8)
-.Lx86_store_cross\@:
+Lx86_store_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	finish_store (\width / 8)
 .endm
 
@@ -164,20 +164,20 @@ gadget push_\width\()_r
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_push_cross\@
+	page_cross_check (\width / 8), Lx86_push_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
-.Lx86_push_done\@:
+Lx86_push_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store (\width / 8)
-.Lx86_push_cross\@:
+Lx86_push_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_push_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_push_done\@
 .endm
 
 .macro push_immediate width, host_register, store
@@ -190,20 +190,20 @@ gadget push_\width\()_i
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_push_immediate_cross\@
+	page_cross_check (\width / 8), Lx86_push_immediate_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
-.Lx86_push_immediate_done\@:
+Lx86_push_immediate_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store (\width / 8)
-.Lx86_push_immediate_cross\@:
+Lx86_push_immediate_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_push_immediate_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_push_immediate_done\@
 .endm
 
 .macro pop_register width, load, host_register, store, store_register
@@ -214,10 +214,10 @@ gadget pop_\width\()_r
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_pop_cross\@
+	page_cross_check (\width / 8), Lx86_pop_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-.Lx86_pop_done\@:
+Lx86_pop_done\@:
 	add x9, x25, #(\width / 8)
 	.if \width == 32
 	mov w9, w9
@@ -226,14 +226,14 @@ gadget pop_\width\()_r
 	and x8, x23, #0xffff
 	\store \store_register\()24, [_cpu, x8]
 	retire_and_next
-.Lx86_pop_cross\@:
+Lx86_pop_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-	b .Lx86_pop_done\@
+	b Lx86_pop_done\@
 .endm
 
 push_register 16, ldrh, w, strh
@@ -264,20 +264,20 @@ gadget push_flags_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_push_flags_cross\@
+	page_cross_check (\width / 8), Lx86_push_flags_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()24, [x7]
-.Lx86_push_flags_done\@:
+Lx86_push_flags_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store (\width / 8)
-.Lx86_push_flags_cross\@:
+Lx86_push_flags_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_push_flags_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_push_flags_done\@
 .endm
 
 push_flags 16, strh, w
@@ -294,10 +294,10 @@ gadget pop_flags_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_pop_flags_cross\@
+	page_cross_check (\width / 8), Lx86_pop_flags_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-.Lx86_pop_flags_done\@:
+Lx86_pop_flags_done\@:
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x12, x9
@@ -320,29 +320,29 @@ gadget pop_flags_\width
 	 * runtime can run exactly that one. Setting AC leaves too, for the
 	 * runtime checks alignment while it is set. */
 	ldr x8, [_stream], #8
-	tbnz x12, #8, .Lx86_pop_flags_trap\@
-	tbnz x12, #18, .Lx86_pop_flags_alignment\@
+	tbnz x12, #8, Lx86_pop_flags_trap\@
+	tbnz x12, #18, Lx86_pop_flags_alignment\@
 	retire_and_next
-.Lx86_pop_flags_alignment\@:
+Lx86_pop_flags_alignment\@:
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_pop_flags_trap\@:
+Lx86_pop_flags_trap\@:
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
 	b uml_x86_64_gadget_leave
-.Lx86_pop_flags_cross\@:
+Lx86_pop_flags_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-	b .Lx86_pop_flags_done\@
+	b Lx86_pop_flags_done\@
 .endm
 
 pop_flags 16, ldrh, w
@@ -359,10 +359,10 @@ gadget leave_\width
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_leave_cross\@
+	page_cross_check (\width / 8), Lx86_leave_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-.Lx86_leave_done\@:
+Lx86_leave_done\@:
 	add x9, x25, #(\width / 8)
 	.if \width == 32
 	mov w9, w9
@@ -370,14 +370,14 @@ gadget leave_\width
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	\store \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	retire_and_next
-.Lx86_leave_cross\@:
+Lx86_leave_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-	b .Lx86_leave_done\@
+	b Lx86_leave_done\@
 .endm
 
 leave 16, ldrh, strh, w
@@ -390,38 +390,38 @@ leave 64, ldr, str, x
 gadget push_\width\()_m
 	effective_address
 	mov x26, x7
-	page_cross_check (\width / 8), .Lx86_push_memory_source_cross\@
+	page_cross_check (\width / 8), Lx86_push_memory_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()24, [x7]
-	b .Lx86_push_memory_source_done\@
-.Lx86_push_memory_source_cross\@:
+	b Lx86_push_memory_source_done\@
+Lx86_push_memory_source_cross\@:
 	mov x0, _context
 	mov x1, x26
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_push_memory_source_done\@:
+Lx86_push_memory_source_done\@:
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_push_memory_stack_cross\@
+	page_cross_check (\width / 8), Lx86_push_memory_stack_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \store_register\()24, [x7]
-.Lx86_push_memory_done\@:
+Lx86_push_memory_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store (\width / 8)
-.Lx86_push_memory_stack_cross\@:
+Lx86_push_memory_stack_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_push_memory_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_push_memory_done\@
 .endm
 
 push_memory 16, ldrh, w, strh, w
@@ -438,18 +438,18 @@ gadget pop_\width\()_m
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_pop_memory_stack_cross\@
+	page_cross_check (\width / 8), Lx86_pop_memory_stack_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()24, [x7]
-	b .Lx86_pop_memory_stack_done\@
-.Lx86_pop_memory_stack_cross\@:
+	b Lx86_pop_memory_stack_done\@
+Lx86_pop_memory_stack_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_pop_memory_stack_done\@:
+Lx86_pop_memory_stack_done\@:
 	add x26, x25, #(\width / 8)
 	.if \width == 32
 	mov w26, w26
@@ -458,21 +458,21 @@ gadget pop_\width\()_m
 	effective_address
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x27, x7
-	page_cross_check (\width / 8), .Lx86_pop_memory_destination_cross\@
+	page_cross_check (\width / 8), Lx86_pop_memory_destination_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \store_register\()24, [x7]
-.Lx86_pop_memory_done\@:
+Lx86_pop_memory_done\@:
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	mov x25, x27
 	finish_store (\width / 8)
-.Lx86_pop_memory_destination_cross\@:
+Lx86_pop_memory_destination_cross\@:
 	mov x0, _context
 	mov x1, x27
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_pop_memory_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_pop_memory_done\@
 .endm
 
 pop_memory 16, ldrh, w, strh, w
@@ -499,19 +499,19 @@ pop_memory 64, ldr, x, str, x
 	.endif
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
-	b.hs .Lx86_stack_write_ready\@
+	b.hs Lx86_stack_write_ready\@
 	add x9, x25, #\size
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
-	b.ls .Lx86_stack_write_ready\@
+	b.ls Lx86_stack_write_ready\@
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbnz w8, .Lx86_stack_write_overlap\@
+	cbnz w8, Lx86_stack_write_overlap\@
 	mov x0, _context
 	mov x1, x25
 	bl NAME(uml_x86_64_gadget_invalidate_code)
-.Lx86_stack_write_overlap\@:
+Lx86_stack_write_overlap\@:
 	mov w23, #1
-.Lx86_stack_write_ready\@:
+Lx86_stack_write_ready\@:
 .endm
 
 .macro call_push_and_exit width, store, host_register, linked=0, indirect=0
@@ -521,44 +521,44 @@ pop_memory 64, ldr, x, str, x
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_call_cross\@
-	stack_fast 1, .Lx86_call_slow\@
+	page_cross_check (\width / 8), Lx86_call_cross\@
+	stack_fast 1, Lx86_call_slow\@
 	\store \host_register\()24, [x7]
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	/* A plain page owes no publication; the write may still land in the
 	 * block that is running, which is what the rest of the test decides. */
 	invalidate_stack_write (\width / 8), 0
-	b .Lx86_call_settled\@
-.Lx86_call_slow\@:
+	b Lx86_call_settled\@
+Lx86_call_slow\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8), 1
 	\store \host_register\()24, [x7]
-.Lx86_call_done\@:
+Lx86_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	invalidate_stack_write (\width / 8)
-.Lx86_call_settled\@:
+Lx86_call_settled\@:
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	.if \indirect
-	cbnz w23, .Lx86_call_exit\@
+	cbnz w23, Lx86_call_exit\@
 	follow_indirect_link x26, x27
 	.else
 	.if \linked
-	cbnz w23, .Lx86_call_exit\@
+	cbnz w23, Lx86_call_exit\@
 	follow_block_link x27
 	.endif
 	.endif
-.Lx86_call_exit\@:
+Lx86_call_exit\@:
 	str x26, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_call_cross\@:
+Lx86_call_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-	b .Lx86_call_done\@
+	cbz w0, Lx86_memory_fault
+	b Lx86_call_done\@
 .endm
 
 gadget call
@@ -587,18 +587,18 @@ gadget \name
 gadget \name
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_call_indirect_source_cross\@
+	page_cross_check (\width / 8), Lx86_call_indirect_source_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \load_register\()26, [x7]
-	b .Lx86_call_indirect_source_done\@
-.Lx86_call_indirect_source_cross\@:
+	b Lx86_call_indirect_source_done\@
+Lx86_call_indirect_source_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x26, x0
-.Lx86_call_indirect_source_done\@:
+Lx86_call_indirect_source_done\@:
 	ldr x24, [_stream], #8
 	.if \cached
 	ldr x27, [_stream], #8
@@ -645,14 +645,14 @@ gadget \name
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_return_cross\@
-	stack_fast 0, .Lx86_return_slow\@
+	page_cross_check (\width / 8), Lx86_return_cross\@
+	stack_fast 0, Lx86_return_slow\@
 	\load \host_register\()24, [x7]
-	b .Lx86_return_done\@
-.Lx86_return_slow\@:
+	b Lx86_return_done\@
+Lx86_return_slow\@:
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8), 1
 	\load \host_register\()24, [x7]
-.Lx86_return_done\@:
+Lx86_return_done\@:
 	add x9, x25, #(\width / 8)
 	add x9, x9, x23
 	.if \width == 32
@@ -662,20 +662,20 @@ gadget \name
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	.if \cached
-	follow_target_link x24, .Lx86_return_miss\@
-.Lx86_return_miss\@:
+	follow_target_link x24, Lx86_return_miss\@
+Lx86_return_miss\@:
 	.endif
 	str x24, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_return_cross\@:
+Lx86_return_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-	b .Lx86_return_done\@
+	b Lx86_return_done\@
 .endm
 
 .macro jump_indirect_register name, load, host_register, cached=0
@@ -701,18 +701,18 @@ gadget \name
 gadget \name
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_jump_indirect_cross\@
+	page_cross_check (\width / 8), Lx86_jump_indirect_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_jump_indirect_done\@
-.Lx86_jump_indirect_cross\@:
+	b Lx86_jump_indirect_done\@
+Lx86_jump_indirect_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_jump_indirect_done\@:
+Lx86_jump_indirect_done\@:
 	.if \cached
 	ldr x27, [_stream]
 	.endif
@@ -793,19 +793,19 @@ scalar_extend sext_32_64_rr, ldrsw, x, str, x
 gadget \name
 	effective_address
 	mov x25, x7
-	page_cross_check (\source_width / 8), .Lx86_extend_cross\@
+	page_cross_check (\source_width / 8), Lx86_extend_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\source_width / 8)
 	\load \load_register\()11, [x7]
-	b .Lx86_extend_write\@
-.Lx86_extend_cross\@:
+	b Lx86_extend_write\@
+Lx86_extend_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\source_width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x11, x0
 	\cross_extend
-.Lx86_extend_write\@:
+Lx86_extend_write\@:
 	and x8, x23, #0xffff
 	\destination_store \destination_register\()11, [_cpu, x8]
 	retire_and_next

@@ -74,9 +74,9 @@
 	mov w10, #0x801
 	orr w8, w8, w10
 	bic w9, w9, w10
-	cbz w19, .Lx86_multiply_flags_done\@
+	cbz w19, Lx86_multiply_flags_done\@
 	orr w9, w9, w10
-.Lx86_multiply_flags_done\@:
+Lx86_multiply_flags_done\@:
 	strh w8, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	strh w9, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 .endm
@@ -113,18 +113,18 @@ gadget \name\()_\width\()_r
 gadget \name\()_\width\()_m
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_multiply_read_cross\@
+	page_cross_check (\width / 8), Lx86_multiply_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()15, [x7]
-	b .Lx86_multiply_loaded\@
-.Lx86_multiply_read_cross\@:
+	b Lx86_multiply_loaded\@
+Lx86_multiply_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x15, x0
-.Lx86_multiply_loaded\@:
+Lx86_multiply_loaded\@:
 	\load \host_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	multiply_compute \signed, \width
 	multiply_write_pair \width
@@ -180,18 +180,18 @@ gadget imul_\width\()_rri
 gadget imul_\width\()_rm\form
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_imul_read_cross\@
+	page_cross_check (\width / 8), Lx86_imul_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_imul_loaded\@
-.Lx86_imul_read_cross\@:
+	b Lx86_imul_loaded\@
+Lx86_imul_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_imul_loaded\@:
+Lx86_imul_loaded\@:
 	and x8, x23, #0xffff
 	mov x25, x8
 	.ifc \form,r

@@ -14,24 +14,21 @@
  *   fused multiply-add  "fmla Vd, Vn, Vm"                Vd is the accumulator
  *
  * A second source that stays register-indexed does not spoil the baked pair:
- * measured on a threaded-code model of the two-source entry, three interleaved
- * chains cost 4.43 host cycles per gadget with every access indexed and 1.58
- * with only the in-place operand baked.
+ * baking only the in-place operand keeps most of the gain.
  *
  * FMLA is the vector family worth baking: its destination is also its third
- * source, so it is in place by construction, and three interleaved 128-bit
- * chains cost 7.98 cycles per gadget indexed against 3.91 baked. The wider
- * SIMD families are not here on purpose -- 343 three-same entries at one copy
- * per vector register is about 1.7 MB of bank, which is the cost G194 found
- * is charged to every workload whether or not it forwards.
+ * source, so it is in place by construction. The wider SIMD families are not
+ * here on purpose -- 343 three-same entries at one copy per vector register is
+ * about 1.7 MB of bank, which is the cost G194 found is charged to every
+ * workload whether or not it forwards.
  */
 
 /* ---- logical immediate, Rd == Rn, both ordinary registers ---------------- */
 /* Two operand words: the register fields the baked entry no longer reads, and
  * the immediate Builder already decoded. One LDP replaces the two LDRs. */
 .macro logical_inplace_entry operation, bits64, reg, suffix, forward
-	.set .Lipl\@, 0x8000 | (\reg * 8)
-scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, .Lipl\@, .Lipl\@, scalar_none, scalar_none, 2
+	.set Lipl\@, 0x8000 | (\reg * 8)
+scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Lipl\@, scalar_none, scalar_none, 2
 	ldp x8, x14, [_stream], #16
 	.if \forward & 1
 	mov x15, x0
@@ -88,8 +85,8 @@ logical_inplace_modes 3, 1, x_ands
 
 /* ---- move-wide keep (MOVK), always in place ----------------------------- */
 .macro move_keep_inplace_entry bits64, shift, reg, suffix, forward
-	.set .Lipm\@, 0x8000 | (\reg * 8)
-scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, .Lipm\@, .Lipm\@, scalar_none, scalar_none, 1
+	.set Lipm\@, 0x8000 | (\reg * 8)
+scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, Lipm\@, Lipm\@, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x11, x8, #8, #16
 	.if \forward & 1
@@ -129,8 +126,8 @@ move_keep_inplace_modes 1, 48, x3
  * destination in bits 15:0, the left source in 31:16 and the right in 47:32.
  * Only the left pair is baked; the right source keeps its indexed load. */
 .macro add_sub_reg_inplace_entry bits64, subtract, flags, reg, suffix, forward
-	.set .Lipr\@, 0x8000 | (\reg * 8)
-scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, .Lipr\@, .Lipr\@, scalar_offset32, scalar_none, 1
+	.set Lipr\@, 0x8000 | (\reg * 8)
+scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr\@, scalar_offset32, scalar_none, 1
 	ldr x8, [_stream], #8
 	.if \forward & 1
 	mov x15, x0
@@ -206,8 +203,8 @@ add_sub_reg_inplace_modes 1, 1, 1, x_sub_s
  * serves the read and the write; Vn and Vm keep their indexed loads. Vector
  * slots are UML_GADGET_CPU_V0 + 16 * n for all 32 registers. */
 .macro simd_fused_inplace_entry name, operation, arrangement, vec, forward
-	.set .Lipv\@, 0x8000 | (UML_GADGET_CPU_V0 + \vec * 16)
-vector_entry simd_fused_inplace_\name\()_\vec, \forward, .Lipv\@, scalar_offset16, scalar_offset32, .Lipv\@, 1
+	.set Lipv\@, 0x8000 | (UML_GADGET_CPU_V0 + \vec * 16)
+vector_entry simd_fused_inplace_\name\()_\vec, \forward, Lipv\@, scalar_offset16, scalar_offset32, Lipv\@, 1
 	ensure_fp_environment
 	ldr x11, [_stream], #8
 	ubfx x9, x11, #16, #16
@@ -265,11 +262,7 @@ simd_fused_inplace_shapes fmls, fmls
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 
 /* index = ((bits64 * 2 + operation) ... ) see the C++ selectors. */

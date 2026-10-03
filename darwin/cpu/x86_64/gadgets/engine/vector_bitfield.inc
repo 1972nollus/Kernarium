@@ -14,40 +14,40 @@ gadget vector_bitfield
 	add x10, _cpu, x10
 	ldr x11, [x9]
 	ldr x12, [x10]
-	tbz x13, #1, .Lx86_vector_bitfield_register_control
+	tbz x13, #1, Lx86_vector_bitfield_register_control
 	ubfx x14, x13, #8, #8
 	ubfx x15, x13, #16, #8
-	b .Lx86_vector_bitfield_control_ready
-.Lx86_vector_bitfield_register_control:
-	tbz x13, #0, .Lx86_vector_bitfield_insert_control
+	b Lx86_vector_bitfield_control_ready
+Lx86_vector_bitfield_register_control:
+	tbz x13, #0, Lx86_vector_bitfield_insert_control
 	ldrb w14, [x10]
 	ldrb w15, [x10, #1]
-	b .Lx86_vector_bitfield_control_ready
-.Lx86_vector_bitfield_insert_control:
+	b Lx86_vector_bitfield_control_ready
+Lx86_vector_bitfield_insert_control:
 	ldrb w14, [x10, #8]
 	ldrb w15, [x10, #9]
-.Lx86_vector_bitfield_control_ready:
+Lx86_vector_bitfield_control_ready:
 	and x14, x14, #0x3f
 	and x15, x15, #0x3f
-	cbz x14, .Lx86_vector_bitfield_full_mask
+	cbz x14, Lx86_vector_bitfield_full_mask
 	mov x16, #1
 	lsl x16, x16, x14
 	sub x16, x16, #1
-	b .Lx86_vector_bitfield_mask_ready
-.Lx86_vector_bitfield_full_mask:
+	b Lx86_vector_bitfield_mask_ready
+Lx86_vector_bitfield_full_mask:
 	mov x16, #-1
-.Lx86_vector_bitfield_mask_ready:
-	tbz x13, #0, .Lx86_vector_bitfield_insert
+Lx86_vector_bitfield_mask_ready:
+	tbz x13, #0, Lx86_vector_bitfield_insert
 	lsr x11, x11, x15
 	and x11, x11, x16
-	b .Lx86_vector_bitfield_store
-.Lx86_vector_bitfield_insert:
+	b Lx86_vector_bitfield_store
+Lx86_vector_bitfield_insert:
 	lsl x16, x16, x15
 	lsl x12, x12, x15
 	bic x11, x11, x16
 	and x12, x12, x16
 	orr x11, x11, x12
-.Lx86_vector_bitfield_store:
+Lx86_vector_bitfield_store:
 	str x11, [x9]
 	str xzr, [x9, #8]
 	retire_and_next

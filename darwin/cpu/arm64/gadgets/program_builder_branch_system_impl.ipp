@@ -237,9 +237,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			 * pair collapses into this one entry carrying the final
 			 * address - no extra gadget and no bank growth.
 			 *
-			 * G113 measured this as the third most frequent adjacent pair
-			 * in translated code at 1.5%, behind only ADRP+LDR and a
-			 * load-pair repeat.
+			 * G113 found it among the most frequent adjacent pairs in
+			 * translated code.
 			 *
 			 * Restricted to the exact idiom: 64-bit, no flags, no shifted
 			 * immediate, and Rd == Rn == the ADRP destination. Anything
