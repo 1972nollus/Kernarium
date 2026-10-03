@@ -4,6 +4,7 @@
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 #include "platform/apple/host_features.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,7 +13,6 @@
 #include <map>
 #include <memory>
 #include <set>
-#include <source_location>
 #include <span>
 
 extern "C" void uml_arm64_gadget_interrupt();
@@ -24,14 +24,7 @@ namespace reference = arm64_gadget_dependency_reference;
 constexpr std::uint64_t pc = 0x4000;
 constexpr std::uint32_t svc = 0xd400'0001U;
 
-void require(bool condition,
-	const std::source_location where = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "vector forwarding requirement %s:%u\n", where.file_name(), where.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 std::uint32_t move(unsigned destination, unsigned source)
 {

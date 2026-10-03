@@ -28,10 +28,7 @@ DecodeResult decode_exception(DecodeContext &context)
 		   instruction == 0xd69f'03e0U ||
 		   instruction == 0xd69f'0bffU ||
 		   instruction == 0xd69f'0fffU) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffe0'001fU) == 0xd400'0001U) {
 		emit(words, uml_arm64_gadget_svc);
 		emit(words, address + sizeof(instruction));

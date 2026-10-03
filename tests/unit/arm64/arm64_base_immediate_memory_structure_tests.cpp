@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_base_immediate_memory_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -76,7 +77,7 @@ DECLARE_OTHER_LOAD(load64u)
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 using RegisterChoices = std::array<Gadget, 2>;
 using BaseChoices = std::array<RegisterChoices, 2>;
 using AddressChoices = std::array<BaseChoices, 3>;
@@ -146,11 +147,7 @@ const std::array<GadgetRow, test::variants.size()> rows{
 #undef BASE_CHOICES
 #undef REGISTER_CHOICES
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] constexpr std::uintptr_t transfer_offset(unsigned rt)
 {

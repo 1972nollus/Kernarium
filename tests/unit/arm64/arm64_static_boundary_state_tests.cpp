@@ -4,14 +4,12 @@
 #include "uml_darwin_static_mmu.h"
 #include "jit_test_support.hpp"
 #include "scratch_backing.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <source_location>
 #include <string_view>
 
 namespace {
@@ -21,15 +19,7 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-static-boundary.XXXXXX";
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t pstate(
 	unsigned immediate, unsigned op2)

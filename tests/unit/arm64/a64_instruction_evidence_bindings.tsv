@@ -141,8 +141,8 @@ BASE-0135	Base	CRC32B, CRC32H, CRC32W, CRC32X	arm64-base-crc-behavior	checksum o
 BASE-0136	Base	CRC32CB, CRC32CH, CRC32CW, CRC32CX	arm64-base-crc-behavior	checksum operation=7 accumulator=0 value=0	9acb5cf7	-	crc32
 BASE-0137	Base	CSDB	arm64-base-hint-behavior	BASE-0137 CSDB full-state pattern=0	d503229f	-	baseline
 BASE-0138	Base	CSEL	arm64-base-condition-select	BASE-0138 CSEL width=32 cond=0 nzcv=0	1a850067	-	baseline
-BASE-0139	Base	CSET	arm64-base-condition-select	BASE-0139 CSET width=32 cond=1 nzcv=0	1a9f07e7	-	baseline
-BASE-0140	Base	CSETM	arm64-base-condition-select	BASE-0140 CSETM width=32 cond=1 nzcv=0	5a9f03e7	-	baseline
+BASE-0139	Base	CSET	arm64-base-condition-select	BASE-0139 CSET width=32 cond=1 nzcv=5	1a9f07e7	-	baseline
+BASE-0140	Base	CSETM	arm64-base-condition-select	BASE-0140 CSETM width=32 cond=1 nzcv=15	5a9f03e7	-	baseline
 BASE-0141	Base	CSINC	arm64-base-condition-select	BASE-0141 CSINC width=32 cond=0 nzcv=0	1a850467	-	baseline
 BASE-0142	Base	CSINV	arm64-base-condition-select	BASE-0142 CSINV width=32 cond=0 nzcv=0	5a850067	-	baseline
 BASE-0143	Base	CSNEG	arm64-base-condition-select	BASE-0143 CSNEG width=32 cond=0 nzcv=0	5a850467	-	baseline

@@ -2,9 +2,9 @@
 #pragma once
 
 #include "arm64_engine_test_support.hpp"
-#include "arm64_simd_test_support.hpp"
 #include "cpu/arm64/detail/floating_arithmetic.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <bit>
@@ -15,7 +15,7 @@
 
 namespace arm64_basic_floating_test {
 
-namespace common = arm64_simd_test;
+namespace common = uml::testing;
 namespace arm64 = uml::cpu::arm64;
 namespace detail = uml::cpu::arm64::detail;
 namespace engine_tests = uml::emulator::tests;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -7,17 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <set>
 
 namespace uml::emulator::tests::base_arithmetic {
-
-enum class ShiftOperation : unsigned {
-	left = 0,
-	right = 1,
-	arithmetic_right = 2,
-	rotate_right = 3,
-};
 
 [[nodiscard]] constexpr std::uint32_t encode_carry(
 	bool wide, bool subtract, bool set_flags, unsigned destination,
@@ -40,12 +33,13 @@ enum class ShiftOperation : unsigned {
 		(destination & 31U);
 }
 
+/* operation is op2: LSLV, LSRV, ASRV or RORV. */
 [[nodiscard]] constexpr std::uint32_t encode_variable_shift(
-	bool wide, ShiftOperation operation, unsigned destination,
+	bool wide, unsigned operation, unsigned destination,
 	unsigned value, unsigned shift) noexcept
 {
 	return 0x1ac0'2000U | (wide ? 0x8000'0000U : 0U) |
-		(static_cast<unsigned>(operation) << 10) |
+		((operation & 3U) << 10) |
 		((shift & 31U) << 16) | ((value & 31U) << 5) |
 		(destination & 31U);
 }
@@ -59,17 +53,8 @@ namespace arm64 = uml::cpu::arm64;
 
 namespace {
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uintptr_t register_offset(unsigned index)
 {
@@ -184,9 +169,7 @@ void production_specialization()
 						return family == 0U ?
 							test::encode_variable_shift(
 								wide,
-								static_cast<
-									test::ShiftOperation>(
-									operation),
+								operation,
 								destination,
 								left, right) :
 							test::encode_divide(

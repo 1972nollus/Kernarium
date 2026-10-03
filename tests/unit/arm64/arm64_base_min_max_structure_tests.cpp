@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
-#include <string_view>
 
 namespace uml::emulator::tests::base_min_max {
 
@@ -21,21 +20,11 @@ enum class Operation : unsigned {
 	unsigned_minimum,
 };
 
-struct Description final {
-	Operation operation;
-	std::string_view immediate_id;
-	std::string_view register_id;
-};
-
-inline constexpr std::array descriptions{
-	Description{Operation::signed_maximum, "BASE-0376 SMAX (immediate)",
-		"BASE-0377 SMAX (register)"},
-	Description{Operation::unsigned_maximum, "BASE-0500 UMAX (immediate)",
-		"BASE-0501 UMAX (register)"},
-	Description{Operation::signed_minimum, "BASE-0379 SMIN (immediate)",
-		"BASE-0380 SMIN (register)"},
-	Description{Operation::unsigned_minimum, "BASE-0502 UMIN (immediate)",
-		"BASE-0503 UMIN (register)"},
+inline constexpr std::array operations{
+	Operation::signed_maximum,
+	Operation::unsigned_maximum,
+	Operation::signed_minimum,
+	Operation::unsigned_minimum,
 };
 
 [[nodiscard]] constexpr std::uint32_t encode_immediate(
@@ -57,13 +46,7 @@ inline constexpr std::array descriptions{
 		((rn & 31U) << 5U) | (rd & 31U);
 }
 
-inline void require(bool condition, const char *message)
-{
-	if (!condition) {
-		std::fprintf(stderr, "%s\n", message);
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 } // namespace uml::emulator::tests::base_min_max
 
@@ -91,11 +74,7 @@ void uml_arm64_gadget_integer_min_max_copy_x();
 
 namespace {
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] constexpr std::uintptr_t register_offset(unsigned index)
 {
@@ -164,16 +143,13 @@ void translation_specialization()
 
 	std::set<std::uintptr_t> selected;
 	for (const bool wide : {false, true})
-		for (const auto description : test::descriptions) {
+		for (const auto operation : test::operations) {
 			const unsigned encoded = 0x81U;
 			const auto immediate = gadgets::Builder{}.build(
 				base, std::array{test::encode_immediate(
-					wide, description.operation, encoded,
-					7, 3)});
+					wide, operation, encoded, 7, 3)});
 			std::uint32_t translated = encoded;
-			if ((static_cast<unsigned>(
-				     description.operation) &
-			     1U) == 0U)
+			if ((static_cast<unsigned>(operation) & 1U) == 0U)
 				translated |= 0xffff'ff00U;
 			require_one_operand_stream(immediate,
 				std::uintptr_t{7U * 8U} |
@@ -185,8 +161,7 @@ void translation_specialization()
 
 			const auto registers = gadgets::Builder{}.build(
 				base, std::array{test::encode_register(
-					wide, description.operation, 7, 3,
-					5)});
+					wide, operation, 7, 3, 5)});
 			require_one_operand_stream(registers,
 				std::uintptr_t{7U * 8U} |
 					(register_offset(3U) << 16U) |

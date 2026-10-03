@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
@@ -9,8 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
 #include <set>
 #include <span>
@@ -47,17 +47,8 @@ inline constexpr std::array alias_register_cases{
 	Registers{31, 31, 31},
 };
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 /*
  * Direct transcription of the PMULL/PMULL2 encoding diagram. This is test
@@ -92,19 +83,9 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(
-	unsigned index) noexcept
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		index * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::Gadget;
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t operand(
 	test::Registers registers) noexcept

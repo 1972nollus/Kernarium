@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_symbols.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -8,10 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
-#include <source_location>
 #include <span>
 
 namespace arm64_simd_three_same_test {
@@ -448,22 +447,9 @@ namespace selection = gadgets::selection;
 
 namespace {
 
-using Gadget = void (*)();
-
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::Gadget;
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 [[nodiscard]] constexpr std::uint32_t mla(
 	unsigned destination, unsigned left = 8U, unsigned right = 9U,

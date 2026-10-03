@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -8,10 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
-#include <source_location>
 #include <string_view>
 
 namespace arm64_simd_widening_test {
@@ -53,20 +52,8 @@ struct Registers final {
 	unsigned right;
 };
 
-[[noreturn]] inline void fail(const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	std::fprintf(stderr, "%s at %s:%u\n", message,
-		location.file_name(), location.line());
-	std::abort();
-}
-
-inline void require(bool condition, const char *message = "require failed",
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition)
-		fail(message, location);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr unsigned encoding(Operation operation)
 {
@@ -135,7 +122,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 using GadgetSet = std::array<Gadget, 6>;
 
 #define UML_WIDENING_SET(name) GadgetSet{ \
@@ -157,16 +144,8 @@ constexpr std::array expected_gadgets{
 
 #undef UML_WIDENING_SET
 
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		index * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] unsigned instructions_to_dispatch(Gadget gadget)
 {
@@ -188,7 +167,7 @@ void every_form_uses_one_direct_offset_gadget()
 	for (const auto &operation : expected_gadgets)
 		for (const auto &signedness : operation)
 			for (const auto gadget : signedness)
-				expected.insert(address_of(gadget));
+				expected.insert(address(gadget));
 
 	for (unsigned operation = 0; operation < test::operations.size();
 	     ++operation)
@@ -208,7 +187,7 @@ void every_form_uses_one_direct_offset_gadget()
 					"widening gadget stream has an unexpected shape");
 				const auto selected_gadget =
 					expected_gadgets[operation][unsigned_values][shape];
-				test::require(words[0] == address_of(selected_gadget),
+				test::require(words[0] == address(selected_gadget),
 					"operation or arrangement was not selected in translation");
 				test::require(words[1] ==
 						gadgets::selection::packed_u16_operands(
@@ -232,7 +211,7 @@ void reserved_forms_never_select_a_widening_gadget()
 	for (const auto &operation : expected_gadgets)
 		for (const auto &signedness : operation)
 			for (const auto gadget : signedness)
-				expected.insert(address_of(gadget));
+				expected.insert(address(gadget));
 	for (const auto operation : test::operations)
 		for (const bool unsigned_values : {false, true}) {
 			for (const bool upper : {false, true}) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_ordered_memory_test_support.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <atomic>
@@ -13,11 +14,7 @@ namespace engine = uml::emulator::tests;
 
 namespace {
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
+using uml::testing::fail;
 
 struct ConcurrentScalarReader final {
 	std::thread worker;

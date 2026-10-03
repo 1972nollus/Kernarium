@@ -2,14 +2,13 @@
 #pragma once
 
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "uml_darwin_guest.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -173,12 +172,6 @@ inline void encode_little_endian(std::span<std::byte> image, std::size_t offset,
     image[offset + index] = static_cast<std::byte>(value >> (index * 8U));
 }
 
-inline void require(bool condition, std::string_view message) {
-  if (condition)
-    return;
-  std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()),
-               message.data());
-  std::abort();
-}
+using uml::testing::require;
 
 } // namespace arm64_load_store_register_test

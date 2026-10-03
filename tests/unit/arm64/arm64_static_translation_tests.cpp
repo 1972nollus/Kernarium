@@ -4,27 +4,17 @@
 #include "uml_darwin_static_mmu.h"
 #include "jit_test_support.hpp"
 #include "scratch_backing.hpp"
+#include "require.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 
 namespace {
 
 using uml::emulator::tests::JitMapping;
 using uml::testing::ScratchBacking;
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 int enter(darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp, unsigned long generation)

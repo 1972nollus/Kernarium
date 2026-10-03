@@ -2,12 +2,12 @@
 
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor_pool.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
-#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <thread>
@@ -20,15 +20,8 @@ constexpr unsigned pool_capacity = 4;
 constexpr unsigned stress_thread_count = 8;
 constexpr unsigned stress_iterations = 512;
 
-[[noreturn]] void fail(const char *message) {
-  std::fprintf(stderr, "arm64-jit-executor-pool-multislot: %s\n", message);
-  std::abort();
-}
-
-void require(bool condition, const char *message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 template <typename Predicate>
 void wait_until(Predicate predicate, const char *message) {

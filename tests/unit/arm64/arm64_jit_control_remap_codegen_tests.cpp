@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <span>
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
@@ -21,20 +19,8 @@ constexpr std::uint64_t code_base = 0x4f30'0000ULL;
   return static_cast<std::int32_t>(value << shift) >> shift;
 }
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t
 add_register(unsigned destination, unsigned left, unsigned right) noexcept {

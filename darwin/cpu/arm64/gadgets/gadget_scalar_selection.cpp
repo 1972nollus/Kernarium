@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "gadget_selection_dependencies.hpp"
+#include "gadget_selection_api.hpp"
 
 namespace uml::cpu::arm64::gadgets::selection {
 
@@ -13,20 +13,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 		 (instruction & 31U) != 31U);
 }
 
-template<typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words, Gadget gadget)
-{
-	words.push_back(reinterpret_cast<std::uintptr_t>(gadget));
-}
-
-template<typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words,
-	  std::uintptr_t operand)
-{
-	words.push_back(operand);
-}
-
-/* Fused CMP of two registers + B.cond, the shape G116 ranks fourth. */
+/* Fused CMP of two registers + B.cond (G116); the builder says why. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
@@ -392,17 +379,6 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 			uml_arm64_gadget_mops_epilogue_set_r;
 	return epilogue[family];
 }
-
-struct SystemRegisterGadget final {
-	Gadget gadget;
-	bool operand;
-};
-
-struct PstateImmediateGadget final {
-	Gadget gadget;
-	bool valid;
-	bool fault_address;
-};
 
 [[nodiscard]] PstateImmediateGadget pstate_boolean_gadget(
 	Gadget zero, Gadget one, unsigned immediate) noexcept

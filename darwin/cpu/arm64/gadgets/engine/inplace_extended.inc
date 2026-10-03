@@ -28,7 +28,7 @@
  * the immediate Builder already decoded. One LDP replaces the two LDRs. */
 .macro logical_inplace_entry operation, bits64, reg, suffix, forward
 	.set Lipl\@, 0x8000 | (\reg * 8)
-scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Lipl\@, scalar_none, scalar_none, 2
+scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, Lipl\@, Lipl\@, Lscalar_none, Lscalar_none, 2
 	ldp x8, x14, [_stream], #16
 	.if \forward & 1
 	mov x15, x0
@@ -86,7 +86,7 @@ logical_inplace_modes 3, 1, x_ands
 /* ---- move-wide keep (MOVK), always in place ----------------------------- */
 .macro move_keep_inplace_entry bits64, shift, reg, suffix, forward
 	.set Lipm\@, 0x8000 | (\reg * 8)
-scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, Lipm\@, Lipm\@, scalar_none, scalar_none, 1
+scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, Lipm\@, Lipm\@, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x11, x8, #8, #16
 	.if \forward & 1
@@ -127,7 +127,7 @@ move_keep_inplace_modes 1, 48, x3
  * Only the left pair is baked; the right source keeps its indexed load. */
 .macro add_sub_reg_inplace_entry bits64, subtract, flags, reg, suffix, forward
 	.set Lipr\@, 0x8000 | (\reg * 8)
-scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr\@, scalar_offset32, scalar_none, 1
+scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, Lipr\@, Lipr\@, Lscalar_offset32, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	.if \forward & 1
 	mov x15, x0
@@ -204,7 +204,7 @@ add_sub_reg_inplace_modes 1, 1, 1, x_sub_s
  * slots are UML_GADGET_CPU_V0 + 16 * n for all 32 registers. */
 .macro simd_fused_inplace_entry name, operation, arrangement, vec, forward
 	.set Lipv\@, 0x8000 | (UML_GADGET_CPU_V0 + \vec * 16)
-vector_entry simd_fused_inplace_\name\()_\vec, \forward, Lipv\@, scalar_offset16, scalar_offset32, Lipv\@, 1
+vector_entry simd_fused_inplace_\name\()_\vec, \forward, Lipv\@, Lscalar_offset16, Lscalar_offset32, Lipv\@, 1
 	ensure_fp_environment
 	ldr x11, [_stream], #8
 	ubfx x9, x11, #16, #16

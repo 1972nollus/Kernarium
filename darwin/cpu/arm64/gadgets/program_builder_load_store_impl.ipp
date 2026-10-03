@@ -10,16 +10,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 {
 	const auto address = context.address;
 	const auto instruction = context.instruction;
-	auto &compiled = context.compiled;
 	auto &words = context.words;
 
 	if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
 		/* FEAT_GCS GCSSTR/GCSSTTR: the virtual CPU does not implement
 		 * FEAT_GCS. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	}
 	if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
 		/* PRFM (literal) is an implementation-defined performance hint. */
@@ -27,18 +23,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 	} else if ((instruction & 0x3b00'0000U) == 0x1800'0000U) {
 		const bool vector = (instruction & 0x0400'0000U) != 0;
 		const unsigned operation = instruction >> 30;
-		if (vector && operation == 3U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (vector && operation == 3U)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		emit(words, literal_load_gadget(
 			vector, operation, !vector && destination == 31U));
 		const auto destination_offset = vector ?
 			vector_operand_offset(destination) :
-			destination < 31U ? destination * sizeof(std::uint64_t) : 0U;
+			transfer_register_offset(destination);
 		const auto displacement =
 			sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
 		emit(words, destination_offset |
@@ -48,10 +40,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
 		/* FEAT_LRCPC3 LDAP1 and STL1, and LDAPUR and STLUR to SIMD&FP
 		 * registers: the virtual CPU does not implement FEAT_LRCPC3. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xbf20'0000U) == 0x0c00'0000U) {
 		const unsigned opcode = (instruction >> 12) & 15U;
 		const bool interleaved = opcode == 8U || opcode == 4U ||
@@ -75,10 +64,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 				offset_register == 31U ? 1U : 2U;
 			const auto *gadgets =
 				simd_structure_gadgets(opcode, q, size);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, (load ? gadgets->load : gadgets->store)
 				[base == 31U][address_mode]);
 			emit(words, (instruction & 31U) |
@@ -87,10 +75,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 					<< 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbf80'0000U) == 0x0d00'0000U ||
 		   (instruction & 0xbf80'0000U) == 0x0d80'0000U) {
@@ -118,10 +103,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned address_mode = !post_index ? 0U :
 				offset_register == 31U ? 1U : 2U;
 			const auto &gadgets = simd_replicate_gadgets(size, q);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, gadgets[count - 1U][base == 31U]
 				[address_mode]);
 			emit(words, (instruction & 31U) |
@@ -151,10 +135,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned address_mode = !post_index ? 0U :
 				offset_register == 31U ? 1U : 2U;
 			const auto &gadgets = simd_lane_gadgets(width_index);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, (load ? gadgets[count - 1U].load :
 				gadgets[count - 1U].store)[base == 31U]
 				[address_mode]);
@@ -165,18 +148,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(lane_offset) << 48));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
 		/* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffc0'0000U) == 0xb940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xf940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xb900'0000U ||
@@ -197,10 +174,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			scalar_unsigned_memory_inplace_gadget(
 				scale, operation, base == 31U, reg));
 		const auto offset = ((instruction >> 10) & 0xfffU) << scale;
-		const auto reg_offset = reg < 31U ?
-			reg * sizeof(std::uint64_t) : 0U;
-		const auto base_offset = base < 31U ?
-			base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+		const auto reg_offset = transfer_register_offset(reg);
+		const auto base_offset = base_register_offset(base);
 		emit(words, reg_offset |
 			(static_cast<std::uintptr_t>(base_offset) << 16) |
 			(static_cast<std::uintptr_t>(offset) << 32) |
@@ -209,10 +184,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		/* FEAT_LRCPC3 LDIAPP, STILP, and LDAPR and STLR with writeback,
 		 * and the FEAT_LSCP LDAP, LDAPP, and STLP pairs: the virtual CPU
 		 * implements neither feature. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U ||
 		   (instruction & 0x3f20'0c00U) == 0x1900'0000U) {
 		const bool no_offset =
@@ -223,12 +195,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const bool valid = no_offset ||
 			!((operation == 2U && size == 3U) ||
 			  (operation == 3U && size >= 2U));
-		if (!valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!valid)
+			return illegal_instruction(context);
 		const auto offset = no_offset ? std::int64_t{0} :
 			sign_extend((instruction >> 12) & 0x1ffU, 9);
 		const unsigned transfer = instruction & 31U;
@@ -261,18 +229,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, load ?
 				ordered_load_gadgets[size][transfer == 31U] :
 				ordered_store_gadgets[size][transfer == 31U]);
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			emit(words, transfer_offset |
 				(static_cast<std::uintptr_t>(base_offset) << 16));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbf20'0c00U) == 0x1920'0000U ||
 		   (instruction & 0xbf20'0800U) == 0x1920'0800U) {
@@ -281,10 +245,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		 * implements none of FEAT_LSE128, FEAT_THE, and FEAT_D128. The
 		 * scalar read-check-write modifies fall in atomic-memory cells
 		 * that the atomic decoder below rejects. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0400U ||
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0400U ||
 		   (instruction & 0x3fe0'0c00U) == 0x19c0'0400U ||
@@ -309,12 +270,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			stage != 3 && destination != 31U && count != 31U &&
 			destination != count && source != destination &&
 			source != count && (set || source != 31U);
-		if (!valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!valid)
+			return illegal_instruction(context);
 		emit(words, mops_gadget(family, stage, source == 31U));
 		if (stage != 1) {
 			emit(words, mops_operand(instruction));
@@ -327,10 +284,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0xffc0'0000U) == 0x6980'0000U) {
 		/* FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP, and the EL1 LDGM/STGM/
 		 * STZGM: the virtual CPU does not implement FEAT_MTE. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x3c20'0000U ||
 		   (instruction & 0xffff'fc00U) == 0xf83f'd000U ||
 		   (instruction & 0xffff'fc00U) == 0xf83f'9000U ||
@@ -339,18 +293,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 		/* The FEAT_LSFE floating-point atomics, and FEAT_LS64 LD64B,
 		 * ST64B, ST64BV, and ST64BV0: the virtual CPU implements neither
 		 * feature. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x1920'0400U ||
 		   (instruction & 0x3f00'0000U) == 0x0900'0000U) {
 		/* The FEAT_LSUI atomics, compare-and-swaps, and exclusives: the
 		 * virtual CPU does not implement FEAT_LSUI. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x3820'0000U) {
 		const unsigned o3 = (instruction >> 15) & 1U;
 		const unsigned opcode = (instruction >> 12) & 7U;
@@ -375,21 +323,17 @@ DecodeResult decode_load_store(DecodeContext &context)
 					uml_arm64_gadget_atomic_sp_alignment_write);
 			emit(words, atomic_rmw_gadgets[operation][ordering]
 				[size][registers]);
-			const auto source_offset = source < 31U ?
-				source * sizeof(std::uint64_t) : 0U;
-			const auto destination_offset = destination < 31U ?
-				destination * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto source_offset =
+				transfer_register_offset(source);
+			const auto destination_offset =
+				transfer_register_offset(destination);
+			const auto base_offset = base_register_offset(base);
 			emit(words, destination_offset |
 				(static_cast<std::uintptr_t>(source_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbfa0'0000U) == 0x0820'0000U) {
 		const unsigned compare = (instruction >> 16) & 31U;
@@ -417,17 +361,13 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const auto compare_offset = compare * sizeof(std::uint64_t);
 			const auto replacement_offset =
 				replacement * sizeof(std::uint64_t);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3fa0'0000U) == 0x08a0'0000U) {
 		if (((instruction >> 10) & 31U) == 31U) {
@@ -449,21 +389,17 @@ DecodeResult decode_load_store(DecodeContext &context)
 					uml_arm64_gadget_atomic_sp_alignment_write);
 			emit(words, compare_swap_gadgets[ordering]
 				[instruction >> 30][registers]);
-			const auto compare_offset = compare < 31U ?
-				compare * sizeof(std::uint64_t) : 0U;
-			const auto replacement_offset = replacement < 31U ?
-				replacement * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto compare_offset =
+				transfer_register_offset(compare);
+			const auto replacement_offset =
+				transfer_register_offset(replacement);
+			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbfa0'0000U) == 0x8820'0000U) {
 		const bool load = (instruction & 0x0040'0000U) != 0;
@@ -487,12 +423,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(second == 31U ? 1U : 0U);
 				emit(words, exclusive_pair_load_gadgets
 					[ordering][size][registers]);
-				const auto first_offset = first < 31U ?
-					first * sizeof(std::uint64_t) : 0U;
-				const auto second_offset = second < 31U ?
-					second * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto first_offset =
+					transfer_register_offset(first);
+				const auto second_offset =
+					transfer_register_offset(second);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -503,14 +439,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(status == 31U ? 1U : 0U);
 				emit(words, exclusive_pair_store_gadgets
 					[ordering][size][registers]);
-				const auto first_offset = first < 31U ?
-					first * sizeof(std::uint64_t) : 0U;
-				const auto second_offset = second < 31U ?
-					second * sizeof(std::uint64_t) : 0U;
-				const auto status_offset = status < 31U ?
-					status * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto first_offset =
+					transfer_register_offset(first);
+				const auto second_offset =
+					transfer_register_offset(second);
+				const auto status_offset =
+					transfer_register_offset(status);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(status_offset) << 32) |
@@ -518,10 +454,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3fa0'0000U) == 0x0800'0000U) {
 		const bool load = (instruction & 0x0040'0000U) != 0;
@@ -541,10 +474,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 			if (load) {
 				emit(words, exclusive_load_gadgets[ordering]
 					[size][transfer == 31U]);
-				const auto transfer_offset = transfer < 31U ?
-					transfer * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto transfer_offset =
+					transfer_register_offset(transfer);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16));
 			} else {
@@ -553,22 +486,19 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(status == 31U ? 1U : 0U);
 				emit(words, exclusive_store_gadgets[ordering]
 					[size][registers]);
-				const auto transfer_offset = transfer < 31U ?
-					transfer * sizeof(std::uint64_t) : 0U;
-				const auto status_offset = status < 31U ?
-					status * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto transfer_offset =
+					transfer_register_offset(transfer);
+				const auto status_offset =
+					transfer_register_offset(status);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(status_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32));
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3900'0000U &&
 		   (instruction & 0x0400'0000U) == 0) {
@@ -579,19 +509,15 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, uml_arm64_gadget_nop);
 		} else if ((size_code >= 2 && operation == 3) ||
 			   (size_code == 3 && operation > 1)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else {
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
 			emit(words, scalar_unsigned_memory_gadget(size_code,
 				operation, base == 31U, transfer == 31U));
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			const auto offset =
 				((instruction >> 10) & 0xfffU) << size_code;
 			emit(words, transfer_offset |
@@ -603,10 +529,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const auto size_code = instruction >> 30;
 		const auto operation = (instruction >> 22) & 3U;
 		if (operation >= 2 && size_code != 0) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else {
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
@@ -614,8 +537,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				size_code, operation, base == 31U));
 			const auto transfer_offset =
 				vector_operand_offset(transfer);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			const unsigned scale = operation >= 2U ? 4U : size_code;
 			const auto offset =
 				((instruction >> 10) & 0xfffU) << scale;
@@ -643,25 +565,20 @@ DecodeResult decode_load_store(DecodeContext &context)
 		if (valid_prefetch) {
 			emit(words, uml_arm64_gadget_nop);
 		} else if (prefetch) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else if (valid_transfer && valid_offset) {
 			const auto *gadgets =
 				scalar_other_gadgets(size_code, operation);
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			if (register_offset) {
 				const unsigned offset_register =
 					(instruction >> 16) & 31U;
-				const auto offset_register_offset = offset_register < 31U ?
-					offset_register * sizeof(std::uint64_t) :
-					offsetof(CpuState, gadget_zero);
+				const auto offset_register_offset =
+					arithmetic_register_offset(offset_register);
 				const unsigned extension = option == 2U ? 0U :
 					option == 6U ? 2U : 1U;
 				const unsigned address_mode = extension +
@@ -688,10 +605,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3800'0000U) {
 		const auto size_code = instruction >> 30;
@@ -710,15 +624,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned base = (instruction >> 5) & 31U;
 			const auto transfer_offset =
 				vector_operand_offset(transfer);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			if (register_offset) {
 				const unsigned offset_register =
 					(instruction >> 16) & 31U;
 				const auto offset_register_offset =
-					offset_register < 31U ?
-					offset_register * sizeof(std::uint64_t) :
-					offsetof(CpuState, gadget_zero);
+					arithmetic_register_offset(offset_register);
 				const unsigned extension = option == 2U ? 0U :
 					option == 6U ? 2U : 1U;
 				const unsigned address_mode = extension +
@@ -742,10 +653,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3a00'0000U) == 0x2800'0000U &&
 		   (instruction & 0x0400'0000U) == 0) {
@@ -771,12 +679,11 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(second == 31U ? 1U : 0U);
 			const auto *gadgets =
 				integer_pair_gadgets(operation, load);
-			const auto first_offset = first < 31U ?
-				first * sizeof(std::uint64_t) : 0U;
-			const auto second_offset = second < 31U ?
-				second * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto first_offset =
+				transfer_register_offset(first);
+			const auto second_offset =
+				transfer_register_offset(second);
+			const auto base_offset = base_register_offset(base);
 			const auto displacement = sign_extend(
 				(instruction >> 15) & 0x7fU, 7) <<
 				(operation >= 2U ? 3U : 2U);
@@ -789,10 +696,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 32) |
 				fault_position(context));
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3a00'0000U) == 0x2800'0000U &&
 		   (instruction & 0x0400'0000U) != 0) {
@@ -810,8 +714,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				vector_pair_gadgets(operation, load);
 			const auto first_offset = vector_operand_offset(first);
 			const auto second_offset = vector_operand_offset(second);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			const auto displacement = sign_extend(
 				(instruction >> 15) & 0x7fU, 7) <<
 				(operation < 2U ? operation + 2U : 4U);
@@ -823,10 +726,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 					<< 48));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else {
 		return implementation_gap(context);
