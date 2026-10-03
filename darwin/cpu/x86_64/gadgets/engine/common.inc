@@ -665,18 +665,17 @@ Lx86_read_loaded\@:
  * A locked gadget must be atomic against the other vCPU threads that execute
  * guest code concurrently, so it performs its update with an ARM64 exclusive
  * loop instead of a plain load and store.  x86 permits a locked operand at any
- * address.  An exclusive access needs natural alignment, which also keeps the
- * operand inside one page, so the exclusive path needs no page-crossing check
- * and a naturally aligned operand goes straight to it.
+ * address.  A naturally aligned operand stays inside one page, so it goes
+ * straight to the exclusive path, which needs no page-crossing check.
  *
- * Anything else reaches `split_operand`.  A host with FEAT_LSE2, which the
- * context reports, takes an exclusive access at any alignment inside one
- * 16-byte granule, so an operand that fits in one rejoins the exclusive path.
- * The rest -- an operand across a granule or a page, and every unaligned one
- * on a host without the feature -- takes the gadget's ordinary load and store
- * under the process-wide split lock.  That keeps it atomic against every other
- * operand on that path, which covers the same instruction running on the other
- * vCPUs, but not against an exclusive loop or a plain store that overlaps it.
+ * Anything else reaches `split_operand`.  The host implements FEAT_LSE2, which
+ * the runtime requires before it runs x86 code, so it takes an exclusive
+ * access at any alignment inside one 16-byte granule, and an operand that fits
+ * in one rejoins the exclusive path.  The rest -- an operand across a granule
+ * or a page -- takes the gadget's ordinary load and store under the
+ * process-wide split lock.  That keeps it atomic against every other operand
+ * on that path, which covers the same instruction running on the other vCPUs,
+ * but not against an exclusive loop or a plain store that overlaps it.
  *
  * Nothing may touch memory between the exclusive load and store or the monitor
  * clears and the loop cannot make progress, so operands are read into
@@ -709,13 +708,10 @@ Lx86_read_loaded\@:
  * and \exclusive is the gadget's exclusive path.  x9 is clobbered.
  */
 .macro split_operand size, exclusive
-	ldrb w9, [_context, #UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES]
-	cbz w9, Lx86_split_operand_locked\@
 	add x9, x7, #((\size) - 1)
 	eor x9, x9, x7
 	tst x9, #0xfffffffffffffff0
 	b.eq \exclusive
-Lx86_split_operand_locked\@:
 	split_lock_enter
 .endm
 
