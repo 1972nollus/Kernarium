@@ -297,7 +297,10 @@ FEATURES = {
 # Illegal-word records: one case per encoding class and operand extreme.
 # Each word was checked against llvm-mc with the feature enabled (22.1.8 for
 # MTE, GCS, and CPA; 23.1.1 for PAuth and the memory, FP/SIMD, branch, and
-# system extensions).
+# system extensions). Every inventory entry of a feature needs a word that
+# build-unit-corpus.py attributes to it, and an alias is credited only through
+# its own allocation: CBLE and CBLS through the W forms of CBLT and CBLO
+# (immediate) and of CBGE and CBHS (register), STTCLR through STTCLR w.
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -451,6 +454,7 @@ UNDEFINED = {
         ("LDTCLR w", 0x1920_1441), ("LDTCLRA x", 0x59A0_1441),
         ("LDTSET w", 0x1920_3441), ("LDTSETL x", 0x5960_3441),
         ("STTADD w", 0x1920_045F), ("STTCLRL x SP", 0x597E_17FF),
+        ("STTCLR w", 0x1920_145F),
         ("STTSET w", 0x1920_345F), ("SWPT w", 0x1920_8441),
         ("SWPTAL x SP", 0x59FD_87FE), ("CAST", 0xC980_7C41),
         ("CASALT SP", 0xC9DD_FFFE), ("CASPT", 0x4980_7C82),
@@ -537,7 +541,9 @@ UNDEFINED = {
     ),
     "cmpbr": (
         ("CBGT W", 0x7401_0040), ("CBGE X", 0xF423_3FE2),
+        ("CBGE W", 0x742B_3FEA),
         ("CBHI W", 0x7445_1FE4), ("CBHS X", 0xF467_2006),
+        ("CBHS W WZR", 0x746D_003F),
         ("CBEQ W", 0x74C9_0028), ("CBNE X XZR", 0xF4FE_003F),
         ("CBBGT", 0x7401_8040), ("CBBGE", 0x7423_8042), ("CBBHI", 0x7445_8044),
         ("CBBHS", 0x7467_8046), ("CBBEQ", 0x74C9_8048),
@@ -545,7 +551,9 @@ UNDEFINED = {
         ("CBHGE", 0x7423_C042), ("CBHHI", 0x7445_C044), ("CBHHS", 0x7467_C046),
         ("CBHEQ", 0x74C9_C048), ("CBHNE", 0x74FD_C05E),
         ("CBGT W imm", 0x7500_0040), ("CBLT X imm", 0xF53F_8041),
+        ("CBLT W imm", 0x7520_BFE5),
         ("CBHI W imm", 0x7542_8042), ("CBLO X imm", 0xF560_8043),
+        ("CBLO W imm", 0x757F_A007),
         ("CBEQ W imm", 0x75C0_2004), ("CBNE X imm", 0xF5FF_9FFE),
     ),
     "hbc": (
