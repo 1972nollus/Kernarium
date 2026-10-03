@@ -10,16 +10,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 {
 	const auto address = context.address;
 	const auto instruction = context.instruction;
-	auto &compiled = context.compiled;
 	auto &words = context.words;
 
 	if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
 		/* FEAT_GCS GCSSTR/GCSSTTR: the virtual CPU does not implement
 		 * FEAT_GCS. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	}
 	if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
 		/* PRFM (literal) is an implementation-defined performance hint. */
@@ -27,12 +23,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 	} else if ((instruction & 0x3b00'0000U) == 0x1800'0000U) {
 		const bool vector = (instruction & 0x0400'0000U) != 0;
 		const unsigned operation = instruction >> 30;
-		if (vector && operation == 3U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (vector && operation == 3U)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		emit(words, literal_load_gadget(
 			vector, operation, !vector && destination == 31U));
@@ -48,10 +40,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
 		/* FEAT_LRCPC3 LDAP1 and STL1, and LDAPUR and STLUR to SIMD&FP
 		 * registers: the virtual CPU does not implement FEAT_LRCPC3. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xbf20'0000U) == 0x0c00'0000U) {
 		const unsigned opcode = (instruction >> 12) & 15U;
 		const bool interleaved = opcode == 8U || opcode == 4U ||
@@ -86,10 +75,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 					<< 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbf80'0000U) == 0x0d00'0000U ||
 		   (instruction & 0xbf80'0000U) == 0x0d80'0000U) {
@@ -162,18 +148,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(lane_offset) << 48));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
 		/* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffc0'0000U) == 0xb940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xf940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xb900'0000U ||
@@ -204,10 +184,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		/* FEAT_LRCPC3 LDIAPP, STILP, and LDAPR and STLR with writeback,
 		 * and the FEAT_LSCP LDAP, LDAPP, and STLP pairs: the virtual CPU
 		 * implements neither feature. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U ||
 		   (instruction & 0x3f20'0c00U) == 0x1900'0000U) {
 		const bool no_offset =
@@ -218,12 +195,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const bool valid = no_offset ||
 			!((operation == 2U && size == 3U) ||
 			  (operation == 3U && size >= 2U));
-		if (!valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!valid)
+			return illegal_instruction(context);
 		const auto offset = no_offset ? std::int64_t{0} :
 			sign_extend((instruction >> 12) & 0x1ffU, 9);
 		const unsigned transfer = instruction & 31U;
@@ -263,10 +236,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 16));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbf20'0c00U) == 0x1920'0000U ||
 		   (instruction & 0xbf20'0800U) == 0x1920'0800U) {
@@ -275,10 +245,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		 * implements none of FEAT_LSE128, FEAT_THE, and FEAT_D128. The
 		 * scalar read-check-write modifies fall in atomic-memory cells
 		 * that the atomic decoder below rejects. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0400U ||
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0400U ||
 		   (instruction & 0x3fe0'0c00U) == 0x19c0'0400U ||
@@ -303,12 +270,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			stage != 3 && destination != 31U && count != 31U &&
 			destination != count && source != destination &&
 			source != count && (set || source != 31U);
-		if (!valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!valid)
+			return illegal_instruction(context);
 		emit(words, mops_gadget(family, stage, source == 31U));
 		if (stage != 1) {
 			emit(words, mops_operand(instruction));
@@ -321,10 +284,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0xffc0'0000U) == 0x6980'0000U) {
 		/* FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP, and the EL1 LDGM/STGM/
 		 * STZGM: the virtual CPU does not implement FEAT_MTE. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x3c20'0000U ||
 		   (instruction & 0xffff'fc00U) == 0xf83f'd000U ||
 		   (instruction & 0xffff'fc00U) == 0xf83f'9000U ||
@@ -333,18 +293,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 		/* The FEAT_LSFE floating-point atomics, and FEAT_LS64 LD64B,
 		 * ST64B, ST64BV, and ST64BV0: the virtual CPU implements neither
 		 * feature. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x1920'0400U ||
 		   (instruction & 0x3f00'0000U) == 0x0900'0000U) {
 		/* The FEAT_LSUI atomics, compare-and-swaps, and exclusives: the
 		 * virtual CPU does not implement FEAT_LSUI. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x3f20'0c00U) == 0x3820'0000U) {
 		const unsigned o3 = (instruction >> 15) & 1U;
 		const unsigned opcode = (instruction >> 12) & 7U;
@@ -379,10 +333,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbfa0'0000U) == 0x0820'0000U) {
 		const unsigned compare = (instruction >> 16) & 31U;
@@ -416,10 +367,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3fa0'0000U) == 0x08a0'0000U) {
 		if (((instruction >> 10) & 31U) == 31U) {
@@ -451,10 +399,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 32));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xbfa0'0000U) == 0x8820'0000U) {
 		const bool load = (instruction & 0x0040'0000U) != 0;
@@ -509,10 +454,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3fa0'0000U) == 0x0800'0000U) {
 		const bool load = (instruction & 0x0040'0000U) != 0;
@@ -556,10 +498,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3900'0000U &&
 		   (instruction & 0x0400'0000U) == 0) {
@@ -570,10 +509,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, uml_arm64_gadget_nop);
 		} else if ((size_code >= 2 && operation == 3) ||
 			   (size_code == 3 && operation > 1)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else {
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
@@ -593,10 +529,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const auto size_code = instruction >> 30;
 		const auto operation = (instruction >> 22) & 3U;
 		if (operation >= 2 && size_code != 0) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else {
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
@@ -632,10 +565,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		if (valid_prefetch) {
 			emit(words, uml_arm64_gadget_nop);
 		} else if (prefetch) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		} else if (valid_transfer && valid_offset) {
 			const auto *gadgets =
 				scalar_other_gadgets(size_code, operation);
@@ -675,10 +605,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3b00'0000U) == 0x3800'0000U) {
 		const auto size_code = instruction >> 30;
@@ -726,10 +653,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			}
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3a00'0000U) == 0x2800'0000U &&
 		   (instruction & 0x0400'0000U) == 0) {
@@ -772,10 +696,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(static_cast<std::uintptr_t>(base_offset) << 32) |
 				fault_position(context));
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x3a00'0000U) == 0x2800'0000U &&
 		   (instruction & 0x0400'0000U) != 0) {
@@ -805,10 +726,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 					<< 48));
 			emit(words, address);
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else {
 		return implementation_gap(context);

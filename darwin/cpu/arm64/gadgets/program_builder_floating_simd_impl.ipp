@@ -82,19 +82,14 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 {
 	const auto address = context.address;
 	const auto instruction = context.instruction;
-	auto &compiled = context.compiled;
 	auto &words = context.words;
 	const auto &options = context.options;
 
 	/* The class decoders below match only the bits that separate their own
 	 * allocations, so a word in an unallocated region of the class table
 	 * must stop here rather than reach the nearest of them. */
-	if (detail::unallocated_simd_floating_class(instruction)) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
-	}
+	if (detail::unallocated_simd_floating_class(instruction))
+		return illegal_instruction(context);
 	if ((instruction & 0xffff'fc00U) == 0x1e7e'0000U) {
 		if (!host_capabilities().has(ArmFeature::jscvt)) {
 			emit(words,
@@ -110,12 +105,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 	} else if (const auto integer_to_floating =
 			detail::decode_integer_to_floating(instruction);
 		   integer_to_floating.recognized) {
-		if (!integer_to_floating.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!integer_to_floating.valid)
+			return illegal_instruction(context);
 		emit(words, integer_to_floating_gadget(integer_to_floating,
 			integer_to_floating.source_gpr &&
 			((instruction >> 5) & 31U) == 31U));
@@ -124,12 +115,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 	} else if (const auto floating_to_integer =
 			detail::decode_floating_to_integer(instruction);
 		   floating_to_integer.recognized) {
-		if (!floating_to_integer.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!floating_to_integer.valid)
+			return illegal_instruction(context);
 		emit(words, floating_to_integer_gadget(floating_to_integer,
 			floating_to_integer.destination_gpr &&
 			(instruction & 31U) == 31U));
@@ -139,12 +126,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		const auto type = (instruction >> 22) & 3U;
 		const bool zero = (instruction & 8U) != 0U;
 		if (type == 2U || (instruction & 7U) != 0U ||
-		    (zero && ((instruction >> 16) & 31U) != 0U)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		    (zero && ((instruction >> 16) & 31U) != 0U))
+			return illegal_instruction(context);
 		emit(words, floating_compare_gadget(
 			type, (instruction & 16U) != 0U, zero));
 		emit(words,
@@ -152,12 +135,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
 	} else if ((instruction & 0xff20'0c00U) == 0x1e20'0400U) {
 		const auto type = (instruction >> 22) & 3U;
-		if (type == 2U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (type == 2U)
+			return illegal_instruction(context);
 		emit(words, floating_conditional_compare_gadget(
 			(instruction >> 12) & 15U, type, (instruction & 16U) != 0U));
 		emit(words, (instruction & 15U) |
@@ -174,10 +153,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   (instruction & 0xff60'fc00U) == 0x6e00'ec00U) {
 		/* The FEAT_FP8 conversions, dot products, multiply-adds, and
 		 * matrix multiplies: the virtual CPU does not implement FEAT_FP8. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if (const auto bfloat =
 			detail::decode_bfloat_conversion(instruction);
 		   bfloat.recognized) {
@@ -225,10 +201,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		      (((instruction >> 22) & 3U) == 1U)) ||
 		     (((instruction & 0x4000'0000U) != 0U) &&
 		      (((instruction >> 22) & 3U) == 3U))))) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if (const auto half_fused =
 			detail::decode_half_fused_long(instruction);
 		   half_fused.recognized) {
@@ -246,10 +219,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 					<< 3U) |
 				(half_fused.index << 4U)));
 	} else if (detail::reserved_half_fused_long(instruction)) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x9fe0'fc00U) == 0x0ec0'ec00U ||
 		   (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U ||
 		   (((instruction & 0xafe0'fc00U) == 0x0e80'fc00U ||
@@ -261,34 +231,23 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		 * FDOT: the virtual CPU implements none of them. Bit 28 set moves
 		 * the FDOT fields into the scalar classes; the fused decoder below
 		 * owns the words it recognizes there, and the rest are reserved. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xff20'7c00U) == 0x1e20'4000U &&
 		   ((instruction >> 15) & 0x3fU) >= 4U &&
 		   ((instruction >> 15) & 0x3fU) <= 7U) {
 		const auto source_type = (instruction >> 22) & 3U;
 		const auto destination_type = (instruction >> 15) & 3U;
 		if (source_type == 2U || destination_type == 2U ||
-		    source_type == destination_type) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		    source_type == destination_type)
+			return illegal_instruction(context);
 		emit(words, floating_convert_precision_gadget(
 			source_type, destination_type));
 		emit(words, simd_unary_operand(instruction & 31U,
 			(instruction >> 5) & 31U));
 	} else if ((instruction & 0xff20'1fe0U) == 0x1e20'1000U) {
 		const auto type = (instruction >> 22) & 3U;
-		if (type == 2U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (type == 2U)
+			return illegal_instruction(context);
 		const auto immediate = static_cast<std::uint8_t>(
 			(instruction >> 13) & 0xffU);
 		const unsigned bitsize = type == 3U ? 16U : type == 0U ? 32U : 64U;
@@ -301,12 +260,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   floating_complex.recognized) {
 		const auto gadget = floating_complex.valid ?
 			floating_complex_gadget(floating_complex) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		emit(words, floating_complex_operand(
 			instruction, floating_complex));
@@ -314,21 +269,14 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U) {
 		/* FSCALE belongs to FEAT_FP8, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if (const auto floating_reciprocal =
 			detail::decode_floating_reciprocal(instruction);
 		   floating_reciprocal.recognized) {
 		const auto gadget = floating_reciprocal.valid ?
 			floating_reciprocal_gadget(floating_reciprocal) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		emit(words, detail::floating_reciprocal_operand(
 			instruction, floating_reciprocal));
@@ -337,12 +285,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   floating_horizontal.recognized) {
 		const auto gadget = floating_horizontal.valid ?
 			floating_horizontal_gadget(floating_horizontal) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		const bool uses_second =
 			floating_horizontal.form ==
@@ -361,12 +305,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 	} else if (const auto floating_round =
 			detail::decode_floating_round(instruction);
 		   floating_round.recognized) {
-		if (!floating_round.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!floating_round.valid)
+			return illegal_instruction(context);
 		emit(words, floating_round_gadget(floating_round));
 		emit(words, detail::is_sized_round(floating_round.operation) ?
 			detail::sized_floating_round_operand(
@@ -378,12 +318,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		const auto gadget = fused_floating.valid ?
 			fused_floating_arithmetic_gadget(fused_floating,
 				instruction & 31U) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		if (fused_floating.scalar)
 			emit(words, simd_quaternary_operand(
@@ -399,12 +335,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   basic_floating.recognized) {
 		const auto gadget = basic_floating.valid ?
 			basic_floating_arithmetic_gadget(basic_floating) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		if (basic_floating.scalar) {
 			emit(words, detail::basic_floating_operand(instruction));
@@ -424,12 +356,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		const auto operation = one_source ?
 			(instruction >> 15) & 0x3fU :
 			(instruction >> 12) & 0xfU;
-		if (type == 2U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (type == 2U)
+			return illegal_instruction(context);
 		const bool native =
 			(type <= 1U && (one_source ? operation <= 3U :
 				operation <= 3U || operation == 8U)) ||
@@ -459,12 +387,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			(instruction & 0x4000'0000U) != 0,
 			(instruction >> 22) & 3U,
 			options.force_software_pmull);
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		const auto destination = vector_operand_offset(instruction & 31U);
 		const auto left = vector_operand_offset((instruction >> 5) & 31U);
@@ -506,10 +430,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			(instruction >> 12) & 7U,
 			options.force_software_aes);
 		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-                                return DecodeResult::terminal;
+			return illegal_instruction(context);
                         }
                         emit(words, gadget);
                         emit(words, simd_unary_operand(
@@ -520,10 +441,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction >> 12) & 7U,
                       options.force_software_fixed_transforms);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_ternary_operand(
@@ -535,10 +453,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction >> 12) & 3U,
                       options.force_software_fixed_transforms);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_unary_operand(
@@ -572,10 +487,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   /* SM3PARTW1, SM3PARTW2, SM4EKEY, SM3SS1, SM3TT*, and
                    * SM4E need FEAT_SM3 and FEAT_SM4, which the virtual CPU
                    * does not implement; the other cells are reserved. */
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
                 } else if ((instruction & 0xbfe0'fc00U) == 0x0e40'1c00U ||
                            (instruction & 0xffe0'fc00U) == 0x5e40'1c00U ||
                            (instruction & 0xbfa0'fc00U) == 0x0e20'dc00U ||
@@ -588,10 +500,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       scalar, q, half,
                       !half && (instruction & 0x0040'0000U) != 0);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -622,10 +531,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                          : options.force_software_i8mm)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_ternary_operand(
@@ -638,10 +544,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   const unsigned size = (instruction >> 22) & 3U;
                   const bool alternate = (instruction & 0x800U) != 0;
                   if (!q || size != 2U || (unsigned_group && alternate)) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   const bool mixed = alternate;
                   const auto signedness =
@@ -662,10 +565,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   if (!host_has_rdm()) {
                     emit(words, uml_arm64_gadget_simd_rdm_software);
@@ -683,10 +583,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                    instruction);
                            floating_conversion.recognized) {
                   if (!floating_conversion.valid) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, simd_floating_precision_vector_gadget(
                                   floating_conversion));
@@ -697,10 +594,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                    instruction);
                            floating_compare.recognized) {
                   if (!floating_compare.valid) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, simd_floating_compare_gadget(floating_compare));
                   emit(words, detail::simd_floating_compare_operand(
@@ -719,10 +613,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   if (!emit_resident_mla_run(context)) {
                     emit(words, gadget);
@@ -745,10 +636,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                           (instruction & 0x4000'0000U) != 0,
                                           (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, vector_operand_offset(instruction & 31U) |
@@ -762,10 +650,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                            (instruction & 0x00c0'0000U) != 0U) {
                   /* LUTI2 and LUTI4 need FEAT_LUT, which the virtual CPU
                    * does not implement. */
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
                 } else if ((instruction & 0xbfe0'8c00U) == 0x0e00'0000U) {
                   const unsigned count = ((instruction >> 13) & 3U) + 1U;
                   emit(words, simd_table_lookup_gadget(
@@ -810,10 +695,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x2000'0000U) != 0);
                   if (gadget == nullptr ||
                       encoded - source_bits >= source_bits) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -834,10 +716,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       !scalar && (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_ternary_operand(
@@ -864,10 +743,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 (instruction & 0x4000'0000U) != 0U)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -886,10 +762,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                  lane->element_shift)
                            : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -925,10 +798,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                     : options.force_software_i8mm)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_ternary_operand(
@@ -956,10 +826,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 (instruction >> 22) & 3U, element->lane_index)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, vector_operand_offset(instruction & 31U) |
@@ -992,10 +859,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 (instruction >> 22) & 3U, element->lane_index)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   if (rdm && !host_has_rdm()) {
                     emit(words, uml_arm64_gadget_simd_rdm_software);
@@ -1015,10 +879,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                (instruction >> 22) & 3U)) {
                   /* Reject scalar indexed holes at translation time, before any
                    * architectural register or FP state is observed. */
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
                 } else if ((((instruction & 0x9f00'0400U) == 0x0f00'0400U) ||
                             ((instruction & 0xdf00'0400U) == 0x5f00'0400U)) &&
                            ((((instruction >> 11) & 31U) <= 8U) &&
@@ -1032,10 +893,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                     decoded->shape)
                               : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1057,10 +915,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                                                  decoded->shape)
                               : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1094,10 +949,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 operation, decoded->shape, decoded->shift)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1133,10 +985,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 !scalar && (instruction & 0x4000'0000U) != 0)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1176,10 +1025,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                          (instruction >> 16) & 31U)
                                      << 16));
                   } else {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                 } else if ((instruction & 0x9f3e'0c00U) == 0x0e30'0800U &&
                            (((instruction >> 12) & 31U) == 3U ||
@@ -1192,10 +1038,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1209,10 +1052,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction & 0x0040'0000U) != 0);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
@@ -1235,10 +1075,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
@@ -1257,10 +1094,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 block_bits, (instruction & 0x4000'0000U) != 0,
                                 (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
@@ -1273,10 +1107,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                              : alternate && size == 1U ? 2U
                                                                        : 3U;
                   if (operation == 3U) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words,
                        simd_byte_unary_gadget(
@@ -1288,10 +1119,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                             ((instruction >> 12) & 31U) == 1U ||
                             ((instruction >> 12) & 31U) == 5U)) {
                   /* The reverse and byte-unary opcode slots are vector-only. */
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
                 } else if ((instruction & 0xffff'fc00U) == 0x5ef1'b800U) {
                   emit(words, uml_arm64_gadget_simd_addp_scalar);
                   emit(
@@ -1315,10 +1143,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 (instruction & 0x800U) != 0)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1341,10 +1166,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                    * immediate-shift class was selected above. Resolve its
                    * reserved holes once during translation and report the
                    * guest-scoped illegal-instruction event directly. */
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
                 } else if ((instruction & 0x9f20'fc00U) == 0x0e20'4000U ||
                            (instruction & 0x9f20'fc00U) == 0x0e20'6000U) {
                   const auto gadget = simd_high_narrow_gadget(
@@ -1353,10 +1175,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_ternary_operand(
@@ -1376,10 +1195,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       (instruction & 0x4000'0000U) != 0,
                       (instruction >> 22) & 3U);
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(words, simd_unary_operand(instruction & 31U,
@@ -1396,10 +1212,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                 lane->element_shift, (instruction & 31U) == 31U)
                           : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1417,10 +1230,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                  ((instruction >> 5) & 31U) == 31U)
                            : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   emit(words, gadget);
                   emit(
@@ -1436,10 +1246,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                       lane ? simd_insert_element_gadget(lane->element_shift)
                            : nullptr;
                   if (gadget == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
+                    return illegal_instruction(context);
                   }
                   const auto source_offset =
                       ((instruction >> 11) & 15U) & ~(lane->element_size - 1U);
@@ -1514,10 +1321,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                                        31U)
                            << 16));
                 } else if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U) {
-                  emit(words, uml_arm64_gadget_illegal);
-                  emit(words, address);
-                  ++compiled;
-                  return DecodeResult::terminal;
+                  return illegal_instruction(context);
 	} else if ((instruction & 0xbfe0'fc00U) == 0x0e00'0c00U) {
 		const auto lane = detail::decode_simd_lane_index(
 			(instruction >> 16) & 31U);
@@ -1525,12 +1329,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		const auto gadget = lane ? simd_duplicate_general_gadget(q,
 			lane->element_shift,
 			((instruction >> 5) & 31U) == 31U) : nullptr;
-		if (gadget == nullptr) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (gadget == nullptr)
+			return illegal_instruction(context);
 		emit(words, gadget);
 		emit(words, (instruction & 31U) |
 			(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8));
