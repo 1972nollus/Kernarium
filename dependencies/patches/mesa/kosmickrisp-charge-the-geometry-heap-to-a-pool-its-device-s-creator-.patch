@@ -43,9 +43,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/kosmickrisp/vulkan/kk_device.c            |   8 +
  src/kosmickrisp/vulkan/kk_device.h            |  22 +-
  .../vulkan/kk_device_memory_pool.h            |  54 +++
- src/kosmickrisp/vulkan/meson.build            |   1 +
- .../vulkan/tests/test_heap_growth.c           | 397 +++++++++++++++++-
- 6 files changed, 644 insertions(+), 58 deletions(-)
+ src/kosmickrisp/vulkan/meson.build            |   2 +-
+ .../vulkan/tests/test_heap_growth.c           | 392 +++++++++++++++++-
+ 6 files changed, 641 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_memory_pool.h
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
@@ -515,19 +515,20 @@ index 0000000000000000000000000000000000000000..d53a32784c40172e8d95777ef3e033f8
 +}
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e1724e78d62d2b1502972366a40d5000f27bbd10..0f1d54cb0a807dc6e74f8c47c19fba51f9672cf3 100644
+index f5763f16931a1c03257acf0dd528584b61b685e7..f3ac85948251dc2cda1b19afbf69dc2958ddb1a8 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -754,6 +754,7 @@ if with_tests
-           idep_vulkan_util_headers,
-           idep_vulkan_wsi_headers,
-           idep_libkk_shaders_h,
-+          dep_thread,
-         ],
-         link_whole : libkk,
-         link_args : ['-Wl,-undefined,dynamic_lookup'],
+@@ -362,7 +362,7 @@ if with_tests
+       ['pipeline_statistics_gpu', 120, []],
+       ['owed_signal_bound', 60, []],
+       ['heap_size_override', 60, []],
+-      ['heap_growth', 120, []],
++      ['heap_growth', 120, [dep_thread]],
+       ['command_resubmit', 60, [dep_thread]],
+     ]
+       test(
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445995c4add 100644
+index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230dc28bcf7 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 @@ -10,15 +10,27 @@
@@ -557,9 +558,9 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
  #include <string.h>
 +#include <time.h>
  
- extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
  #include "kk_test.h"
-@@ -70,6 +82,167 @@ static const char *const kind_names[] = {
+ 
+@@ -69,6 +81,167 @@ static const char *const kind_names[] = {
     "list", "fan", "tess", "tess level 1", "tess dynamic 64", "tess dynamic 1",
  };
  
@@ -727,7 +728,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
  struct draw_case {
     enum draw_kind kind;
     /* Draws count vertices, draws times, and then second more when it is not
-@@ -79,12 +252,18 @@ struct draw_case {
+@@ -78,12 +251,18 @@ struct draw_case {
     bool indirect, multi;
     /* How many times the command buffer is submitted. */
     unsigned submissions;
@@ -746,10 +747,11 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
  };
  
  static struct outcome
-@@ -118,9 +297,18 @@ run(VkInstance instance, VkPhysicalDevice physical, const struct draw_case *c)
+@@ -107,8 +286,19 @@ run(struct kk_test_device *t, const struct draw_case *c)
        .tessellationShader = tess,
     };
     const char *const extensions[] = {VK_EXT_MULTI_DRAW_EXTENSION_NAME};
+-   kk_test_create_device(t, &features13,
 +   struct test_pool *pool = c->pool;
 +   VkDeviceMemoryPoolCreateInfoKK pool_info = {
 +      .sType = VK_STRUCTURE_TYPE_DEVICE_MEMORY_POOL_CREATE_INFO_KK,
@@ -759,44 +761,23 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +      .pfnRelease = pool_release,
 +      .pfnHeadroom = pool_headroom,
 +   };
-    VkDeviceCreateInfo device_info = {
-       .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
--      .pNext = &features13,
-+      .pNext = pool ? (const void *)&pool_info : &features13,
-       .queueCreateInfoCount = 1,
-       .pQueueCreateInfos = &queue_info,
-       .enabledExtensionCount = c->multi ? 1 : 0,
-@@ -129,6 +317,8 @@ run(VkInstance instance, VkPhysicalDevice physical, const struct draw_case *c)
-    };
-    VkDevice device = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateDevice(physical, &device_info, NULL, &device));
++   kk_test_create_device(t, pool ? (const void *)&pool_info : &features13,
+                          &features, c->multi ? 1 : 0, extensions);
 +   if (pool != NULL)
-+      pool->mtl = kk_device_from_handle(device)->mtl_handle;
-    LOAD_D(vkDestroyDevice);
-    LOAD_D(vkGetDeviceQueue);
-    LOAD_D(vkCreateShaderModule);
-@@ -370,15 +560,16 @@ run(VkInstance instance, VkPhysicalDevice physical, const struct draw_case *c)
++      pool->mtl = kk_device_from_handle(t->device)->mtl_handle;
+    KK_LOAD_DEVICE_FUNCTIONS(*t);
+    LOAD_D(vkCmdDrawIndirect);
+    PFN_vkCmdDrawMultiEXT vkCmdDrawMultiEXT =
+@@ -301,13 +491,37 @@ run(struct kk_test_device *t, const struct draw_case *c)
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                        &pipeline_info, NULL, &pipeline));
  
--   VkCommandPoolCreateInfo pool_info = {
-+   VkCommandPoolCreateInfo command_pool_info = {
-       .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-       .queueFamilyIndex = 0,
-    };
 -   VkCommandPool pool = VK_NULL_HANDLE;
--   VK_CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool));
 +   VkCommandPool command_pool = VK_NULL_HANDLE;
-+   VK_CHECK(
-+      vkCreateCommandPool(device, &command_pool_info, NULL, &command_pool));
-    VkCommandBufferAllocateInfo command_info = {
-       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
--      .commandPool = pool,
-+      .commandPool = command_pool,
-       .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-       .commandBufferCount = 1,
-    };
-@@ -388,6 +579,30 @@ run(VkInstance instance, VkPhysicalDevice physical, const struct draw_case *c)
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+-   kk_test_command_buffer(t, 0, &pool, &commands);
++   kk_test_command_buffer(t, 0, &command_pool, &commands);
+    /* Not one-time: a second submission records the commands again. */
     VkCommandBufferBeginInfo begin = {
        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
@@ -827,7 +808,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
     VK_CHECK(vkBeginCommandBuffer(commands, &begin));
     VkRenderingAttachmentInfo color_attachment = {
        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-@@ -462,12 +677,58 @@ run(VkInstance instance, VkPhysicalDevice physical, const struct draw_case *c)
+@@ -382,12 +596,58 @@ run(struct kk_test_device *t, const struct draw_case *c)
        }
     }
  
@@ -888,7 +869,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
  
     vkDestroyPipeline(device, pipeline, NULL);
     vkDestroyPipelineLayout(device, layout, NULL);
-@@ -498,13 +759,51 @@ report(VkInstance instance, VkPhysicalDevice physical,
+@@ -417,13 +677,51 @@ report(struct kk_test_device *t, const struct draw_case *c)
     printf(":");
     for (unsigned s = 0u; s < c->submissions; s++)
        printf(" submission %u %u red,", s + 1u, outcome.red[s]);
@@ -943,7 +924,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
  #define MIB(n) ((uint64_t)(n) << 20)
  
  int
-@@ -618,6 +917,82 @@ main(void)
+@@ -523,6 +821,82 @@ main(void)
     CHECK(o.red[0] == 64u * TILE_TEXELS && o.heap_B == MIB(128) &&
           o.peak_B == MIB(16 + 32 + 64 + 128) && !o.loss_reported);
  
@@ -954,7 +935,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +   const uint32_t tiles256 = 256u * TILE_TEXELS;
 +   struct test_pool *pool = new_pool(MIB(48), NO_GUEST, 0u);
 +   pool->fill = true;
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 256u, 1, 0, false, false, 2, pool});
 +   CHECK(o.red[0] < tiles256 && o.red[1] < tiles256 && o.loss_reported &&
 +         o.heap_B <= MIB(24) && o.over_B == 0u && pool->heap_reservations &&
@@ -968,13 +949,13 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +    * takes the pool past its limit, and the heap stays, since the pool has
 +    * more room left than half the heap. */
 +   pool = new_pool(MIB(96), GUEST_FIRST, MIB(64));
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 256u, 1, 0, false, false, 1, pool});
 +   CHECK(pool->guest_allocated && o.heap_B <= MIB(16) && o.over_B == 0u &&
 +         o.red[0] < tiles256 && o.loss_reported && pool->heap_reservations);
 +   free_pool(pool);
 +   pool = new_pool(MIB(96), HEAP_FIRST, MIB(64));
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 256u, 1, 0, false, false, 1, pool});
 +   CHECK(!pool->guest_admitted && o.heap_B > MIB(40) &&
 +         o.heap_B <= MIB(48) && o.over_B == 0u && o.red[0] == tiles256 &&
@@ -989,7 +970,7 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +   const uint64_t rooms[2] = {MIB(64), MIB(256)};
 +   for (unsigned i = 0u; i < 2u; i++) {
 +      pool = new_pool(rooms[i], NO_GUEST, 0u);
-+      o = report(instance, physical,
++      o = report(&t,
 +                 &(struct draw_case){TESS_DYNAMIC1, 64u, 500, 0, false, false,
 +                                     1, pool});
 +      CHECK(o.red[0] == 64u * TILE_TEXELS && o.over_B == 0u &&
@@ -1003,11 +984,11 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +    * bound may grow the heap to. Without a pool the heap stops there and the
 +    * draw keeps losing its output; with a pool that has room, what the GPU
 +    * counted grows it past, and the second submission renders whole. */
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 1200u, 1, 0, true, false, 2});
 +   CHECK(o.red[1] < full && o.heap_B == MIB(128) && o.loss_reported);
 +   pool = new_pool(MIB(1024), NO_GUEST, 0u);
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 1200u, 1, 0, true, false, 2, pool});
 +   CHECK(o.red[0] < full && o.red[1] == full && o.heap_B == MIB(256) &&
 +         o.loss_reported && o.over_B == 0u);
@@ -1017,12 +998,12 @@ index 4a9108e8b80b48b37a2c92e0fd8361ef809c7b23..d4a93e3dc0b8fa525b9483dd3c6c0445
 +    * that held it once the pool has less room left than half of it. */
 +   pool = new_pool(MIB(256), NO_GUEST, 0u);
 +   pool->shrink_room_B = MIB(16);
-+   o = report(instance, physical,
++   o = report(&t,
 +              &(struct draw_case){TESS, 256u, 1, 0, false, false, 1, pool});
 +   CHECK(o.red[0] == tiles256 && o.peak_B == MIB(64) && o.heap_B == 0u &&
 +         o.live_after_B == 0u && o.over_B == 0u);
 +   free_pool(pool);
 +
-    vkDestroyInstance(instance, NULL);
+    kk_test_destroy(&t);
     printf("the geometry heap grows for the draws that need it\n");
     return 0;
