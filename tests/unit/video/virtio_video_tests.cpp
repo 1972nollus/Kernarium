@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
 #include "require.hpp"
+#include "scratch_backing.hpp"
 #include "shared_memory_regions.hpp"
 #include "video_capabilities.hpp"
 
@@ -14,7 +15,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <fcntl.h>
 #include <memory>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -438,12 +438,8 @@ void sharedMemoryCapture()
     constexpr std::uint8_t regionId = 1;
     constexpr std::uint64_t regionOffset = 64 * 1024;
     constexpr std::size_t regionLength = 64 * 1024;
-    const auto path = std::filesystem::temp_directory_path() /
-        ("uml-video-shm-" + std::to_string(::getpid()));
-    const int descriptor = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
-    require(descriptor >= 0, "shared-memory fixture could not be created");
-    std::filesystem::remove(path);
-    require(::ftruncate(descriptor, regionLength) == 0, "shared-memory fixture could not be sized");
+    const uml::testing::ScratchBacking backing {"uml-video-shm-XXXXXX", regionLength};
+    const int descriptor = backing.descriptor();
 
     auto regions = std::make_shared<SharedMemoryRegions>();
     require(regions->publish(regionId, regionOffset, regionLength, descriptor, 0),
@@ -550,7 +546,6 @@ void sharedMemoryCapture()
     video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 3}});
     video.device.reset();
     regions->revokeAll();
-    ::close(descriptor);
 }
 
 /* A client that only draws through a 32-bit RGB surface negotiates packed
