@@ -198,8 +198,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				uml_arm64_gadget_branch_link_register) :
 			(cached ? uml_arm64_gadget_return_cached :
 				uml_arm64_gadget_return));
-		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
-			static_cast<std::uintptr_t>(source * 8U));
+		emit(words, arithmetic_register_offset(source));
 		if (cached)
 			emit_indirect_link(context, address,
 				opcode == 0xd65f'0000U);

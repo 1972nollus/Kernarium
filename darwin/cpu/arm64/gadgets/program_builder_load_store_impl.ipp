@@ -38,7 +38,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			vector, operation, !vector && destination == 31U));
 		const auto destination_offset = vector ?
 			vector_operand_offset(destination) :
-			destination < 31U ? destination * sizeof(std::uint64_t) : 0U;
+			transfer_register_offset(destination);
 		const auto displacement =
 			sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
 		emit(words, destination_offset |
@@ -75,10 +75,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 				offset_register == 31U ? 1U : 2U;
 			const auto *gadgets =
 				simd_structure_gadgets(opcode, q, size);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, (load ? gadgets->load : gadgets->store)
 				[base == 31U][address_mode]);
 			emit(words, (instruction & 31U) |
@@ -118,10 +117,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned address_mode = !post_index ? 0U :
 				offset_register == 31U ? 1U : 2U;
 			const auto &gadgets = simd_replicate_gadgets(size, q);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, gadgets[count - 1U][base == 31U]
 				[address_mode]);
 			emit(words, (instruction & 31U) |
@@ -151,10 +149,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned address_mode = !post_index ? 0U :
 				offset_register == 31U ? 1U : 2U;
 			const auto &gadgets = simd_lane_gadgets(width_index);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			const auto offset_register_offset = offset_register < 31U ?
-				offset_register * sizeof(std::uint64_t) : 0U;
+			const auto base_offset = base_register_offset(base);
+			const auto offset_register_offset =
+				transfer_register_offset(offset_register);
 			emit(words, (load ? gadgets[count - 1U].load :
 				gadgets[count - 1U].store)[base == 31U]
 				[address_mode]);
@@ -197,10 +194,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			scalar_unsigned_memory_inplace_gadget(
 				scale, operation, base == 31U, reg));
 		const auto offset = ((instruction >> 10) & 0xfffU) << scale;
-		const auto reg_offset = reg < 31U ?
-			reg * sizeof(std::uint64_t) : 0U;
-		const auto base_offset = base < 31U ?
-			base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+		const auto reg_offset = transfer_register_offset(reg);
+		const auto base_offset = base_register_offset(base);
 		emit(words, reg_offset |
 			(static_cast<std::uintptr_t>(base_offset) << 16) |
 			(static_cast<std::uintptr_t>(offset) << 32) |
@@ -261,10 +256,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, load ?
 				ordered_load_gadgets[size][transfer == 31U] :
 				ordered_store_gadgets[size][transfer == 31U]);
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			emit(words, transfer_offset |
 				(static_cast<std::uintptr_t>(base_offset) << 16));
 			emit(words, address);
@@ -375,12 +369,11 @@ DecodeResult decode_load_store(DecodeContext &context)
 					uml_arm64_gadget_atomic_sp_alignment_write);
 			emit(words, atomic_rmw_gadgets[operation][ordering]
 				[size][registers]);
-			const auto source_offset = source < 31U ?
-				source * sizeof(std::uint64_t) : 0U;
-			const auto destination_offset = destination < 31U ?
-				destination * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto source_offset =
+				transfer_register_offset(source);
+			const auto destination_offset =
+				transfer_register_offset(destination);
+			const auto base_offset = base_register_offset(base);
 			emit(words, destination_offset |
 				(static_cast<std::uintptr_t>(source_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -417,8 +410,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const auto compare_offset = compare * sizeof(std::uint64_t);
 			const auto replacement_offset =
 				replacement * sizeof(std::uint64_t);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -449,12 +441,11 @@ DecodeResult decode_load_store(DecodeContext &context)
 					uml_arm64_gadget_atomic_sp_alignment_write);
 			emit(words, compare_swap_gadgets[ordering]
 				[instruction >> 30][registers]);
-			const auto compare_offset = compare < 31U ?
-				compare * sizeof(std::uint64_t) : 0U;
-			const auto replacement_offset = replacement < 31U ?
-				replacement * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto compare_offset =
+				transfer_register_offset(compare);
+			const auto replacement_offset =
+				transfer_register_offset(replacement);
+			const auto base_offset = base_register_offset(base);
 			emit(words, compare_offset |
 				(static_cast<std::uintptr_t>(replacement_offset) << 16) |
 				(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -487,12 +478,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(second == 31U ? 1U : 0U);
 				emit(words, exclusive_pair_load_gadgets
 					[ordering][size][registers]);
-				const auto first_offset = first < 31U ?
-					first * sizeof(std::uint64_t) : 0U;
-				const auto second_offset = second < 31U ?
-					second * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto first_offset =
+					transfer_register_offset(first);
+				const auto second_offset =
+					transfer_register_offset(second);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -503,14 +494,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(status == 31U ? 1U : 0U);
 				emit(words, exclusive_pair_store_gadgets
 					[ordering][size][registers]);
-				const auto first_offset = first < 31U ?
-					first * sizeof(std::uint64_t) : 0U;
-				const auto second_offset = second < 31U ?
-					second * sizeof(std::uint64_t) : 0U;
-				const auto status_offset = status < 31U ?
-					status * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto first_offset =
+					transfer_register_offset(first);
+				const auto second_offset =
+					transfer_register_offset(second);
+				const auto status_offset =
+					transfer_register_offset(status);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, first_offset |
 					(static_cast<std::uintptr_t>(second_offset) << 16) |
 					(static_cast<std::uintptr_t>(status_offset) << 32) |
@@ -541,10 +532,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 			if (load) {
 				emit(words, exclusive_load_gadgets[ordering]
 					[size][transfer == 31U]);
-				const auto transfer_offset = transfer < 31U ?
-					transfer * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto transfer_offset =
+					transfer_register_offset(transfer);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(base_offset) << 16));
 			} else {
@@ -553,12 +544,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 					(status == 31U ? 1U : 0U);
 				emit(words, exclusive_store_gadgets[ordering]
 					[size][registers]);
-				const auto transfer_offset = transfer < 31U ?
-					transfer * sizeof(std::uint64_t) : 0U;
-				const auto status_offset = status < 31U ?
-					status * sizeof(std::uint64_t) : 0U;
-				const auto base_offset = base < 31U ?
-					base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+				const auto transfer_offset =
+					transfer_register_offset(transfer);
+				const auto status_offset =
+					transfer_register_offset(status);
+				const auto base_offset =
+					base_register_offset(base);
 				emit(words, transfer_offset |
 					(static_cast<std::uintptr_t>(status_offset) << 16) |
 					(static_cast<std::uintptr_t>(base_offset) << 32));
@@ -588,10 +579,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned base = (instruction >> 5) & 31U;
 			emit(words, scalar_unsigned_memory_gadget(size_code,
 				operation, base == 31U, transfer == 31U));
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			const auto offset =
 				((instruction >> 10) & 0xfffU) << size_code;
 			emit(words, transfer_offset |
@@ -614,8 +604,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				size_code, operation, base == 31U));
 			const auto transfer_offset =
 				vector_operand_offset(transfer);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			const unsigned scale = operation >= 2U ? 4U : size_code;
 			const auto offset =
 				((instruction >> 10) & 0xfffU) << scale;
@@ -652,16 +641,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 				scalar_other_gadgets(size_code, operation);
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto transfer_offset =
+				transfer_register_offset(transfer);
+			const auto base_offset = base_register_offset(base);
 			if (register_offset) {
 				const unsigned offset_register =
 					(instruction >> 16) & 31U;
-				const auto offset_register_offset = offset_register < 31U ?
-					offset_register * sizeof(std::uint64_t) :
-					offsetof(CpuState, gadget_zero);
+				const auto offset_register_offset =
+					arithmetic_register_offset(offset_register);
 				const unsigned extension = option == 2U ? 0U :
 					option == 6U ? 2U : 1U;
 				const unsigned address_mode = extension +
@@ -710,15 +697,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned base = (instruction >> 5) & 31U;
 			const auto transfer_offset =
 				vector_operand_offset(transfer);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			if (register_offset) {
 				const unsigned offset_register =
 					(instruction >> 16) & 31U;
 				const auto offset_register_offset =
-					offset_register < 31U ?
-					offset_register * sizeof(std::uint64_t) :
-					offsetof(CpuState, gadget_zero);
+					arithmetic_register_offset(offset_register);
 				const unsigned extension = option == 2U ? 0U :
 					option == 6U ? 2U : 1U;
 				const unsigned address_mode = extension +
@@ -771,12 +755,11 @@ DecodeResult decode_load_store(DecodeContext &context)
 				(second == 31U ? 1U : 0U);
 			const auto *gadgets =
 				integer_pair_gadgets(operation, load);
-			const auto first_offset = first < 31U ?
-				first * sizeof(std::uint64_t) : 0U;
-			const auto second_offset = second < 31U ?
-				second * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto first_offset =
+				transfer_register_offset(first);
+			const auto second_offset =
+				transfer_register_offset(second);
+			const auto base_offset = base_register_offset(base);
 			const auto displacement = sign_extend(
 				(instruction >> 15) & 0x7fU, 7) <<
 				(operation >= 2U ? 3U : 2U);
@@ -810,8 +793,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 				vector_pair_gadgets(operation, load);
 			const auto first_offset = vector_operand_offset(first);
 			const auto second_offset = vector_operand_offset(second);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
+			const auto base_offset = base_register_offset(base);
 			const auto displacement = sign_extend(
 				(instruction >> 15) & 0x7fU, 7) <<
 				(operation < 2U ? operation + 2U : 4U);

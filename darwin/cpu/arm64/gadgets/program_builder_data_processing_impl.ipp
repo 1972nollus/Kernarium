@@ -60,8 +60,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				(instruction >> 10) & 0xffU;
 			const bool is_64_bit =
 				(instruction & 0x8000'0000U) != 0;
-			const auto zero = offsetof(CpuState, gadget_zero);
-			const auto source_offset = source == 31U ? zero : source * 8U;
+			const auto source_offset =
+				arithmetic_register_offset(source);
 			/* UMAX #0 is an unconditional copy. */
 			if (operation == 1U && encoded == 0U) {
 				if (is_64_bit && destination == source) {
@@ -340,8 +340,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		}
 	} else if ((instruction & 0xffff'bc1fU) == 0x3a00'080dU) {
 		const unsigned source = (instruction >> 5) & 31U;
-		const auto source_offset = source == 31U ?
-			offsetof(CpuState, gadget_zero) : source * 8U;
+		const auto source_offset = arithmetic_register_offset(source);
 		const bool native = !options.force_software_flags &&
 			host_capabilities().has(ArmFeature::flag_m);
 		if ((instruction & 0x4000U) != 0)
@@ -632,10 +631,9 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		const bool immediate = (instruction & 0x800U) != 0;
 		const unsigned left = (instruction >> 5) & 31U;
 		const unsigned right = (instruction >> 16) & 31U;
-		const auto zero = offsetof(CpuState, gadget_zero);
-		const auto left_operand = left == 31U ? zero : left * 8U;
+		const auto left_operand = arithmetic_register_offset(left);
 		const auto right_operand = immediate ? right :
-			right == 31U ? zero : right * 8U;
+			arithmetic_register_offset(right);
 		emit(words, conditional_compare_gadget(
 			(instruction >> 12) & 15U,
 			(instruction & 0x4000'0000U) != 0,
@@ -723,9 +721,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			emit(words, bit_reverse_count_gadget(
 				is_64_bit, operation));
 			emit(words, packed_u16_operands(
-				source == 31U ? offsetof(CpuState, gadget_zero) :
-					offsetof(CpuState, registers) +
-						source * sizeof(std::uint64_t),
+				arithmetic_register_offset(source),
 				offsetof(CpuState, registers) +
 					destination * sizeof(std::uint64_t)));
 		}
