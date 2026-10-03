@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "require.hpp"
 #include "scratch_directory.hpp"
 #include "socket_paths.hpp"
 
@@ -18,22 +19,8 @@
 
 namespace {
 
-void require(bool condition)
-{
-	if (!condition)
-		std::abort();
-}
-
-template<typename Operation>
-void requireThrows(Operation &&operation)
-{
-	try {
-		operation();
-	} catch (const std::exception &) {
-		return;
-	}
-	std::abort();
-}
+using uml::testing::require;
+using uml::testing::requireThrows;
 
 /* Socket paths must fit sun_path, so they live in a fresh directory under the
  * host temporary directory rather than the build-tree scratch directory. */

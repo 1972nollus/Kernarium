@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "require.hpp"
 #include "scratch_directory.hpp"
 
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -10,13 +10,7 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "test scratch directory: %s\n", message);
-	std::exit(EXIT_FAILURE);
-}
+using uml::testing::require;
 
 /* The caller has not resolved its own scratch directory yet, so the child
  * resolves it afresh from the environment it sets up. */

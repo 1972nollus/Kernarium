@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "KernariumConsoleInput.hpp"
+#include "require.hpp"
 
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -20,13 +21,7 @@ namespace {
 
 using namespace std::chrono_literals;
 
-void require(bool condition, const char* message)
-{
-    if (condition)
-        return;
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    std::abort();
-}
+using uml::testing::require;
 
 /* A wedged call is the defect under test, and a hung test binary would hide
  * it, so every wait for one ends the process instead. */

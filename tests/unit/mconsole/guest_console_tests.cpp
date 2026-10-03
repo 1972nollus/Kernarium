@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "guest_console.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -37,11 +38,7 @@ struct Reply final {
 	std::array<char, maximumConsoleData> data;
 };
 
-void require(bool condition)
-{
-	if (!condition)
-		std::abort();
-}
+using uml::testing::require;
 
 std::string consolePath()
 {

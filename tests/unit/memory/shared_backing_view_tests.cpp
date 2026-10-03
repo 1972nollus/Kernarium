@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "mach_vm_region_test_support.hpp"
 #include "memory/shared_backing.hpp"
+#include "require.hpp"
 #include "scratch_directory.hpp"
 
 #include <cerrno>
@@ -10,7 +11,6 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <csignal>
-#include <source_location>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -19,15 +19,7 @@
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 class TemporaryFile final {
 public:

@@ -5,6 +5,7 @@
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 
 #include <algorithm>
@@ -17,7 +18,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <source_location>
 #include <string_view>
 #include <sys/mman.h>
 #include <thread>
@@ -32,15 +32,7 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-static-mmu-batch-XXXXXX";
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 class HeldExecution final {
 public:

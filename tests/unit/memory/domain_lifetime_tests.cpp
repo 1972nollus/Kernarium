@@ -3,6 +3,7 @@
 #include "domain_registry_testing.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
+#include "require.hpp"
 #include "uml_darwin_host.h"
 #include "uml_darwin_static_mmu.h"
 
@@ -17,7 +18,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include <source_location>
 #include <thread>
 #include <unistd.h>
 
@@ -31,15 +31,7 @@ std::atomic_bool capture_next_software_acquisition{};
 std::atomic_bool software_acquisition_captured{};
 std::atomic_bool release_software_acquisition{};
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 bool provide_test_domain(std::uint64_t &domain) noexcept
 {

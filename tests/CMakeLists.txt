@@ -41,6 +41,10 @@ if(UML_BUILD_UNIT_TESTS)
         unit/scratch/scratch_directory.cpp)
     target_include_directories(uml_test_scratch_directory PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/scratch)
+    # The require, fail and requireThrows assertions every unit test uses.
+    add_library(uml_test_require INTERFACE)
+    target_include_directories(uml_test_require INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/require)
     # One Mach VM region query for every test that inspects this task's map.
     add_library(uml_test_mach_vm_region INTERFACE)
     target_include_directories(uml_test_mach_vm_region INTERFACE
@@ -58,6 +62,7 @@ if(UML_BUILD_UNIT_TESTS)
     link_libraries(
         uml_host_capabilities_test_support
         uml_test_scratch_directory
+        uml_test_require
         uml_test_mach_vm_region
         uml_static_mmu_test_support
         UML::GadgetHistogramConfiguration
