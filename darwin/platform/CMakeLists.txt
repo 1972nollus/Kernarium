@@ -11,6 +11,13 @@ uml_declare_architecture_target(uml_guest_timer_mask platform)
 target_include_directories(uml_guest_timer_mask INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin)
 
+# Header-only: host file-descriptor ownership.
+add_library(uml_descriptor INTERFACE)
+add_library(UML::Descriptor ALIAS uml_descriptor)
+uml_declare_architecture_target(uml_descriptor platform)
+target_include_directories(uml_descriptor INTERFACE
+    ${PROJECT_SOURCE_DIR}/darwin)
+
 add_library(uml_video_decoder STATIC apple/video_decoder.mm)
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)
