@@ -76,7 +76,6 @@ constexpr std::uint32_t svc_0 = 0xd400'0001U;
 		     uml::cpu::ArmFeature::bf16, uml::cpu::ArmFeature::frintts,
 		     uml::cpu::ArmFeature::fcma, uml::cpu::ArmFeature::jscvt})
 		host.supported.set(static_cast<std::size_t>(feature));
-	host.fp16 = true;
 	return host;
 }
 

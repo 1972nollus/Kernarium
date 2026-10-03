@@ -37,8 +37,8 @@ JitCompilerFamilies::emit_basic_floating(std::uint32_t instruction) {
   if (!decoded.recognized || !decoded.valid)
     return false;
   const auto &host = host_capabilities();
-  if (!host.floating_point || (!decoded.scalar && !host.advanced_simd) ||
-      (decoded.width == 16U && !host.fp16))
+  if (!host.floating_point() || (!decoded.scalar && !host.advanced_simd()) ||
+      (decoded.width == 16U && !host.fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;
@@ -74,9 +74,9 @@ JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_fused_floating_arithmetic(instruction);
   if (!decoded.recognized || !decoded.valid ||
-      !host_capabilities().floating_point ||
-      (!decoded.scalar && !host_capabilities().advanced_simd) ||
-      (decoded.width == 16U && !host_capabilities().fp16))
+      !host_capabilities().floating_point() ||
+      (!decoded.scalar && !host_capabilities().advanced_simd()) ||
+      (decoded.width == 16U && !host_capabilities().fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;
@@ -128,8 +128,8 @@ JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
     return false;
   const bool is_double = (instruction & 0x0040'0000U) != 0;
   const bool q = (instruction & 0x4000'0000U) != 0;
-  if ((is_double && !q && !scalar) || !host_capabilities().floating_point ||
-      !host_capabilities().advanced_simd)
+  if ((is_double && !q && !scalar) || !host_capabilities().floating_point() ||
+      !host_capabilities().advanced_simd())
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -149,9 +149,9 @@ JitCompilerFamilies::emit_integer_to_floating(std::uint32_t instruction) {
   if (!decoded.recognized || !decoded.valid)
     return false;
   const auto &host = host_capabilities();
-  if ((decoded.source_gpr && !host.floating_point) ||
-      (!decoded.source_gpr && !host.advanced_simd) ||
-      (decoded.destination_width == 16U && !host.fp16))
+  if ((decoded.source_gpr && !host.floating_point()) ||
+      (!decoded.source_gpr && !host.advanced_simd()) ||
+      (decoded.destination_width == 16U && !host.fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -186,9 +186,9 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
   if (!decoded.recognized || !decoded.valid)
     return false;
   const auto &host = host_capabilities();
-  if ((decoded.destination_gpr && !host.floating_point) ||
-      (!decoded.destination_gpr && !host.advanced_simd) ||
-      (decoded.source_width == 16U && !host.fp16))
+  if ((decoded.destination_gpr && !host.floating_point()) ||
+      (!decoded.destination_gpr && !host.advanced_simd()) ||
+      (decoded.source_width == 16U && !host.fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -268,7 +268,7 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
       arm64::detail::decode_simd_floating_precision_vector(instruction);
   if (vector.recognized) {
     const auto &host = host_capabilities();
-    if (!vector.valid || !host.advanced_simd)
+    if (!vector.valid || !host.advanced_simd())
       return false;
     const unsigned destination = instruction & 31U;
     const unsigned source = (instruction >> 5) & 31U;
@@ -297,9 +297,10 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
   const unsigned source_type = (instruction >> 22) & 3U;
   const unsigned destination_type = (instruction >> 15) & 3U;
   if (source_type == 2U || destination_type == 2U ||
-      source_type == destination_type || !host_capabilities().floating_point ||
+      source_type == destination_type ||
+      !host_capabilities().floating_point() ||
       ((source_type == 3U || destination_type == 3U) &&
-       !host_capabilities().fp16))
+       !host_capabilities().fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -317,9 +318,9 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
 JitCompilerFamilies::emit_floating_round(std::uint32_t instruction) {
   const auto decoded = arm64::detail::decode_floating_round(instruction);
   const auto &host = host_capabilities();
-  if (!decoded.recognized || !decoded.valid || !host.floating_point ||
-      (!decoded.scalar && !host.advanced_simd) ||
-      (decoded.width == 16U && !host.fp16) ||
+  if (!decoded.recognized || !decoded.valid || !host.floating_point() ||
+      (!decoded.scalar && !host.advanced_simd()) ||
+      (decoded.width == 16U && !host.fp16()) ||
       (arm64::detail::is_sized_round(decoded.operation) &&
        !host.has(ArmFeature::frintts)))
     return false;
@@ -338,7 +339,7 @@ JitCompilerFamilies::emit_floating_round(std::uint32_t instruction) {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_floating_unary(std::uint32_t instruction) {
   const auto &host = host_capabilities();
-  if (!host.floating_point)
+  if (!host.floating_point())
     return false;
   bool valid = false;
   bool vector = false;
@@ -365,7 +366,7 @@ JitCompilerFamilies::emit_floating_unary(std::uint32_t instruction) {
       valid = (instruction & 0x0080'0000U) != 0 && (!is_double || q);
     }
   }
-  if (!valid || (vector && !host.advanced_simd) || (fp16 && !host.fp16))
+  if (!valid || (vector && !host.advanced_simd()) || (fp16 && !host.fp16()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
@@ -390,8 +391,8 @@ JitCompilerFamilies::emit_floating_horizontal(std::uint32_t instruction) {
       decoded.operation !=
           arm64::detail::FloatingHorizontalOperation::absolute_difference;
   if (!decoded.recognized || !decoded.valid ||
-      (scalar_fp ? !host.floating_point : !host.advanced_simd) ||
-      (decoded.width == 16U && !host.fp16))
+      (scalar_fp ? !host.floating_point() : !host.advanced_simd()) ||
+      (decoded.width == 16U && !host.fp16()))
     return false;
 
   const unsigned destination = instruction & 31U;
@@ -422,8 +423,8 @@ JitCompilerFamilies::emit_floating_reciprocal(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_floating_reciprocal(instruction);
   const auto &host = host_capabilities();
-  if (!decoded.recognized || !decoded.valid || !host.advanced_simd ||
-      (decoded.width == 16U && !host.fp16))
+  if (!decoded.recognized || !decoded.valid || !host.advanced_simd() ||
+      (decoded.width == 16U && !host.fp16()))
     return false;
 
   const unsigned destination = instruction & 31U;
@@ -459,8 +460,8 @@ JitCompilerFamilies::emit_floating_reciprocal(std::uint32_t instruction) {
 [[nodiscard]] bool JitCompilerFamilies::host_supports_floating_type(
     std::uint32_t instruction) const {
   const unsigned type = (instruction >> 22) & 3U;
-  return type != 2U && host_capabilities().floating_point &&
-         (type != 3U || host_capabilities().fp16);
+  return type != 2U && host_capabilities().floating_point() &&
+         (type != 3U || host_capabilities().fp16());
 }
 
 void JitCompilerFamilies::emit_floating_compare(std::uint32_t instruction,

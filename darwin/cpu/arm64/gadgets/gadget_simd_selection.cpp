@@ -656,7 +656,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget floating_to_integer_gadget(
 	const detail::FloatingToIntegerDecode &decoded, bool discard) noexcept
 {
-	if (decoded.source_width == 16U && !host_capabilities().fp16)
+	if (decoded.source_width == 16U && !host_capabilities().fp16())
 		return uml_arm64_gadget_floating_to_integer_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
@@ -788,7 +788,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget integer_to_floating_gadget(
 	const detail::IntegerToFloatingDecode &decoded, bool zero_source) noexcept
 {
-	if (decoded.destination_width == 16U && !host_capabilities().fp16)
+	if (decoded.destination_width == 16U && !host_capabilities().fp16())
 		return uml_arm64_gadget_integer_to_floating_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {

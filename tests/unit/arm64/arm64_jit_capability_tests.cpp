@@ -74,22 +74,22 @@ void guest_capabilities_match_host()
 	/* WFE completes at once in every engine, so it always wakes within the
 	 * event-stream period this bit promises. */
 	require_propagated(capabilities, hwcap_evtstrm, true);
-	require_propagated(capabilities, hwcap_aes, host.aes);
-	require_propagated(capabilities, hwcap_pmull, host.pmull);
-	require_propagated(capabilities, hwcap_sha1, host.sha1);
-	require_propagated(capabilities, hwcap_sha2, host.sha2);
-	require_propagated(capabilities, hwcap_crc32, host.crc32);
+	require_propagated(capabilities, hwcap_aes, host.aes());
+	require_propagated(capabilities, hwcap_pmull, host.pmull());
+	require_propagated(capabilities, hwcap_sha1, host.sha1());
+	require_propagated(capabilities, hwcap_sha2, host.sha2());
+	require_propagated(capabilities, hwcap_crc32, host.crc32());
 	require_propagated(capabilities, hwcap_atomics,
 			   host.has(::uml::cpu::ArmFeature::lse));
-	require_propagated(capabilities, hwcap_sha3, host.sha3);
-	require_propagated(capabilities, hwcap_sha512, host.sha512);
+	require_propagated(capabilities, hwcap_sha3, host.sha3());
+	require_propagated(capabilities, hwcap_sha512, host.sha512());
 	/* The dot family is advertised on exactly the predicate the gadget bank
 	 * and the JIT use to select their native dot paths, so the guest can only
 	 * be handed these opcodes where an engine executes them. */
 	require_propagated(capabilities, hwcap_asimddp,
 			   host.has(::uml::cpu::ArmFeature::dotprod));
-	require_propagated(capabilities, hwcap_fphp, host.fp16);
-	require_propagated(capabilities, hwcap_asimdhp, host.fp16);
+	require_propagated(capabilities, hwcap_fphp, host.fp16());
+	require_propagated(capabilities, hwcap_asimdhp, host.fp16());
 	require_propagated(capabilities, hwcap_asimdrdm,
 			   host.has(::uml::cpu::ArmFeature::rdm));
 	require_propagated(capabilities, hwcap_asimdfhm,

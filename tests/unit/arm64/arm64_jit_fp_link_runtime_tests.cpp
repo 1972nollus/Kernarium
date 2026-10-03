@@ -423,7 +423,7 @@ void stateful_store_links_require_publication() {
 }
 
 void linked_successor_observes_dirty_constrained_binding() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
     return;
 
   constexpr unsigned long generation = 8414;

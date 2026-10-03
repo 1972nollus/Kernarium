@@ -8,7 +8,7 @@
 namespace uml::cpu::arm64::jit {
 
 [[nodiscard]] bool JitCompilerFamilies::emit_crc32(std::uint32_t instruction) {
-  if (!host_capabilities().crc32 ||
+  if (!host_capabilities().crc32() ||
       (instruction & 0x7fe0'e000U) != 0x1ac0'4000U)
     return false;
   const unsigned operation = (instruction >> 10) & 7U;
@@ -36,7 +36,7 @@ namespace uml::cpu::arm64::jit {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_aes(std::uint32_t instruction) {
   const auto &features = host_capabilities();
-  if (!features.advanced_simd || !features.aes ||
+  if (!features.advanced_simd() || !features.aes() ||
       (instruction & 0xffff'8c00U) != 0x4e28'0800U)
     return false;
   const unsigned operation = (instruction >> 12) & 7U;
@@ -63,7 +63,7 @@ JitCompilerFamilies::emit_simd_pmull(std::uint32_t instruction) {
   if (size != 0U && size != 3U)
     return false;
   const auto &features = host_capabilities();
-  if (!features.advanced_simd || (size == 3U && !features.pmull))
+  if (!features.advanced_simd() || (size == 3U && !features.pmull()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;
@@ -89,8 +89,8 @@ JitCompilerFamilies::emit_simd_sha1_sha2(std::uint32_t instruction) {
   const bool sha1 = three ? operation <= 3U : operation <= 1U;
   const bool sha2 =
       three ? operation >= 4U && operation <= 6U : operation == 2U;
-  if ((!sha1 && !sha2) || (sha1 && !host_capabilities().sha1) ||
-      (sha2 && !host_capabilities().sha2))
+  if ((!sha1 && !sha2) || (sha1 && !host_capabilities().sha1()) ||
+      (sha2 && !host_capabilities().sha2()))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned first = (instruction >> 5) & 31U;
@@ -118,7 +118,7 @@ JitCompilerFamilies::emit_simd_sha1_sha2(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_sha512(std::uint32_t instruction) {
-  if (!host_capabilities().sha512)
+  if (!host_capabilities().sha512())
     return false;
   const auto operation = instruction & 0xffe0'fc00U;
   const bool three = operation == 0xce60'8000U || operation == 0xce60'8400U ||
@@ -152,7 +152,7 @@ JitCompilerFamilies::emit_simd_sha512(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_sha3(std::uint32_t instruction) {
-  if (!host_capabilities().sha3)
+  if (!host_capabilities().sha3())
     return false;
   const auto three_operation = instruction & 0xffe0'fc00U;
   const bool four = (instruction & 0xffe0'8000U) == 0xce00'0000U ||
