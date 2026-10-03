@@ -1650,6 +1650,11 @@ def check(options: argparse.Namespace) -> int:
         if failing is None or sha256(
                 (REPOSITORY / failing["file"]).read_bytes()) != failing["sha256"]:
             stale.append("absent-feature failing list")
+        # Its SVE and SME words are the encoding table's witnesses.
+        table = step.get("sme_table")
+        if table is None or sha256(
+                (REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
+            stale.append("SVE/SME encoding table (changed since the rewrite)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.

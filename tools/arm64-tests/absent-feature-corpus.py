@@ -15,12 +15,12 @@ forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
 with its dot-product, multiply-add, and matrix forms and FPMR,
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, nor FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_SME with its SVCR and PSTATE.SM and ZA, FEAT_XS, and FEAT_WFxT: their
-non-hint instructions are UNDEFINED, their hint-space instructions are NOPs,
-FPCR.EBF is RES0, and the ID registers report them absent. The producer checks
-predate that choice, and their harness enabled these features in most cases'
-state or ran their instructions, so this script rewrites a dump after export.
-For each named feature it
+FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
+profile: their non-hint instructions are UNDEFINED, their hint-space
+instructions are NOPs, FPCR.EBF is RES0, and the ID registers report them
+absent. The producer checks predate that choice, and their harness enabled
+these features in most cases' state or ran their instructions, so this script
+rewrites a dump after export. For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
@@ -36,6 +36,18 @@ For each named feature it
   class of the feature to be undefined and its hints to be NOPs; and
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
+
+FEAT_SME is two-sided, like FEAT_AFP below: the virtual CPU implements the
+SME profile only where the host does, and sme-native-corpus.py appends the
+cases observed on such a host.
+The producer's SME model is retired, so its SME cases and its one-byte
+PSTATE.SM and ZA state are dropped and stripped as for an absent feature, but
+the arm64-absent-sme record carries the without_sme option: it pins SMSTART,
+SMSTOP, MRS and MSR SVCR, and one word of every encoding of the SME profile in
+the generated encoding table (darwin/cpu/arm64/detail/sme_encodings.hpp)
+UNDEFINED where the virtual CPU lacks SME, which the runner translates for on
+every host. The arm64-absent-sve record expects one word of every table
+encoding outside the profile to be undefined, with or without SME.
 
 A native FEAT_EBF16 requirement without FPCR.EBF set came from the engines'
 old host gates, not from the case, so such a case stays and loses the
@@ -82,6 +94,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import collections
 import csv
+import functools
 import hashlib
 import importlib.util
 import json
@@ -95,13 +108,21 @@ _spec = importlib.util.spec_from_file_location(
 corpus = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
+_spec = importlib.util.spec_from_file_location(
+    "sme_encoding_table", HERE / "sme_encoding_table.py")
+sme_table = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = sme_table
+_spec.loader.exec_module(sme_table)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
 DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "ebf16", "lse128",
                     "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor",
                     "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
                     "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
-                    "wfxt")
+                    "wfxt", "sve")
+# Features the virtual CPU implements on some hosts: their records pin their
+# encodings UNDEFINED under the without_<feature> option instead.
+TWO_SIDED = frozenset({"sme"})
 SVC = 0xD400_0001
 # Native requirements that were only the producer JIT's host gates: both
 # engines implement these features on every host.
@@ -291,6 +312,12 @@ FEATURES = {
     "wfxt": Feature(
         tokens=("wfxt",),
         conditions=("FEAT_WFxT",),
+        fields=()),
+    # The producer never ran an SVE instruction, and the encoding table
+    # supplies the words: one per encoding outside the profile.
+    "sve": Feature(
+        tokens=("sve",),
+        conditions=(),
         fields=()),
 }
 
@@ -579,6 +606,10 @@ UNDEFINED = {
         ("WFIT", 0xD503_1023), ("WFIT XZR", 0xD503_103F),
     ),
 }
+# Features whose words also come from the encoding table: one witness word,
+# checked against LLVM MC by its generator, per encoding in the profile for
+# FEAT_SME and per encoding outside it for FEAT_SVE.
+TABLE_WORDS = {"sme": True, "sve": False}
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
     "pauth": (
@@ -780,10 +811,21 @@ def without_afp_record(item: dict, cases: list[dict]) -> dict:
     return sibling
 
 
+@functools.cache
+def table_words(in_profile: bool) -> tuple[tuple[str, int], ...]:
+    return tuple((f"{row.stable_id} {row.encoding} {row.witness:08x}",
+                  row.witness)
+                 for row in sme_table.load().rows
+                 if row.in_profile == in_profile)
+
+
 def undefined_record(feature: str) -> dict | None:
     programs: list[list] = []
     cases = []
-    for name, word in UNDEFINED.get(feature, ()):
+    words = UNDEFINED.get(feature, ())
+    if feature in TABLE_WORDS:
+        words = (*words, *table_words(TABLE_WORDS[feature]))
+    for name, word in words:
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
         cases.append({
@@ -805,9 +847,14 @@ def undefined_record(feature: str) -> dict | None:
         })
     if not cases:
         return None
+    name = f"arm64-absent-{feature}"
+    options = []
+    if feature in TWO_SIDED:
+        options = [f"without_{feature}"]
+        name += f"/options={1 << corpus.OPTION_NAMES.index(options[0]):x}"
     return {
-        "record": f"arm64-absent-{feature}", "producer": f"arm64-absent-{feature}",
-        "site": SITE, "profiles": ["16k", "4k"], "options": [],
+        "record": name, "producer": f"arm64-absent-{feature}",
+        "site": SITE, "profiles": ["16k", "4k"], "options": options,
         "programs": programs, "cases": cases,
     }
 
@@ -1105,6 +1152,8 @@ def main() -> int:
         "afp": {"controls": afp["controls"], "added_requirement": afp["added"],
                 "removed_requirement": afp["gate"],
                 "without_afp_cases": afp["pin"]},
+        "sme_table": {"file": sme_table.TABLE_PATH,
+                      "sha256": sme_table.load().sha256},
         "added_cases": added,
         "tbi_replacement_cases": replacement_cases,
     }

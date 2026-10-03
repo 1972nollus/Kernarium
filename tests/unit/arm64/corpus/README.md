@@ -273,8 +273,8 @@ ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, or the SIMD&FP extensions
 FEAT_FP8 (with FP8DOT2, FP8DOT4, FP8FMA, F8F16MM, F8F32MM, and its FPMR state),
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_SME with its PSTATE.SM and ZA state, FEAT_XS, and FEAT_WFxT; every
-encoding they add is UNDEFINED. The producer harness
+FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
+profile; every encoding they add is UNDEFINED. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a
@@ -287,6 +287,19 @@ state. It then appends the `arm64-absent-<feature>` records, which expect at
 least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
+
+FEAT_SME is two-sided, like FEAT_AFP: the virtual CPU implements the SME
+profile only where the host does. The producer's SME model is retired, so the
+rewrite drops its SME cases and strips its one-byte PSTATE.SM and ZA fields as
+for an absent feature, but its `arm64-absent-sme` record carries the
+`without_sme` option, which the runner translates for on every host. That
+record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
+every profile encoding in the generated SVE/SME encoding table
+([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
+to be undefined. The `arm64-absent-sve` record expects the witness of every
+table encoding outside the profile to be undefined with or without SME. Each
+witness is checked against LLVM MC by the table's generator, and its case
+name gives the encoding's stable id, form, and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
@@ -305,8 +318,9 @@ load/store allocation that completes through a general-register base with a
 zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
 is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
-file's hash, and the drop, strip, host-gate, FEAT_AFP, and addition counts
-under `absent_features`, and `build-unit-corpus.py --check` verifies them. The
+file's and encoding table's hashes, and the drop, strip, host-gate, FEAT_AFP,
+and addition counts under `absent_features`, and `build-unit-corpus.py
+--check` verifies them. The
 `arm64-instruction-corpus-absent-features` tooling test checks the pack
 against the rewrite's rules: no kept case exercises a removed feature, holds
 one of its encodings without expecting the undefined-instruction trap, or
