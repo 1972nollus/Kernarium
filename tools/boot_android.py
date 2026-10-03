@@ -26,6 +26,10 @@ _ARTIFACTS = str(REPO_ROOT / "kernel/common/artifacts")
 if _ARTIFACTS not in sys.path:
     sys.path.insert(0, _ARTIFACTS)
 from contract_checks import accepted_directory_name  # noqa: E402
+_GUEST_SUPPORT = str(REPO_ROOT / "tests/integration/support")
+if _GUEST_SUPPORT not in sys.path:
+    sys.path.insert(0, _GUEST_SUPPORT)
+from guest import remove_emulator_run_directories  # noqa: E402
 
 ACCEPTED_RELEASE = (
     REPO_ROOT / "android/aosp-17/metadata/accepted-release.env"
@@ -52,6 +56,9 @@ DEFAULT_DISPLAY_WIDTH = 720
 DEFAULT_DISPLAY_HEIGHT = 1280
 DEFAULT_VNC_PORT = 5900
 DEFAULT_DISK_SIZE_GIB = 8
+# The signals that ask the emulator to stop, each with its grace period,
+# before it is killed.
+GUEST_STOP_STAGES = ((signal.SIGINT, 10), (signal.SIGTERM, 5))
 
 
 class LauncherError(RuntimeError):
@@ -550,21 +557,24 @@ def signal_guest(guest: subprocess.Popen[bytes], signum: int) -> None:
 
 
 def stop_guest(guest: subprocess.Popen[bytes]) -> None:
-    """Return only after the emulator has been reaped."""
-    stages = ((signal.SIGINT, 10), (signal.SIGTERM, 5))
-    for signum, timeout in stages:
+    """Return only after the emulator has been reaped, and remove the run
+    directories that one ended with SIGKILL could not."""
+    try:
+        for signum, timeout in GUEST_STOP_STAGES:
+            if guest.poll() is not None:
+                return
+            signal_guest(guest, signum)
+            try:
+                guest.wait(timeout=timeout)
+                return
+            except subprocess.TimeoutExpired:
+                continue
         if guest.poll() is not None:
             return
-        signal_guest(guest, signum)
-        try:
-            guest.wait(timeout=timeout)
-            return
-        except subprocess.TimeoutExpired:
-            continue
-    if guest.poll() is not None:
-        return
-    signal_guest(guest, signal.SIGKILL)
-    guest.wait()
+        signal_guest(guest, signal.SIGKILL)
+        guest.wait()
+    finally:
+        remove_emulator_run_directories(guest.pid)
 
 
 def install_shutdown_handlers() -> None:

@@ -7,9 +7,12 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import importlib.util
+import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -319,6 +322,49 @@ class BootAndroidTests(unittest.TestCase):
             ],
         )
         self.assertEqual(guest.wait.call_count, 3)
+
+    def test_a_killed_emulator_leaves_no_run_directories(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary)
+            scratch = root / "tmp"
+            scratch.mkdir()
+            marker = root / "emulator.pid"
+            # An emulator that ignores the stop requests, as a wedged one
+            # does, so it is killed and no handler of its own runs.
+            emulator = (
+                "trap '' INT TERM; "
+                'mkdir "$TMPDIR/uml-kern$$" "$TMPDIR/uml-guest-initrd-$$-x"; '
+                'echo $$ > "$1"; exec sleep 30'
+            )
+            # Another run's directory is that run's.
+            other = scratch / f"uml-kern{os.getpid()}"
+            other.mkdir()
+            stages = ((signal.SIGINT, 0.3), (signal.SIGTERM, 0.3))
+            with (
+                mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}),
+                mock.patch.object(tempfile, "tempdir", str(scratch)),
+                mock.patch.object(boot_android, "GUEST_STOP_STAGES", stages),
+            ):
+                guest = subprocess.Popen(
+                    ["/bin/sh", "-c", emulator, "emulator", str(marker)],
+                    start_new_session=True,
+                )
+                try:
+                    deadline = time.monotonic() + 5
+                    while not marker.exists() or not marker.read_text():
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.01)
+                    pid = int(marker.read_text())
+                    self.assertTrue((scratch / f"uml-kern{pid}").is_dir())
+                    boot_android.stop_guest(guest)
+                finally:
+                    if guest.poll() is None:
+                        guest.kill()
+                    guest.wait(timeout=5)
+            self.assertEqual(guest.returncode, -signal.SIGKILL)
+            self.assertEqual(
+                sorted(path.name for path in scratch.iterdir()), [other.name]
+            )
 
 
 if __name__ == "__main__":
