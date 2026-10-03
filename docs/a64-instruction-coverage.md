@@ -90,6 +90,24 @@ same 64-byte blocks and direction, and any other takes the shared code from
 its prologue; `arm64-jit-mops-run-runtime` checks both arms against a byte
 model. The corpus runs its MOPS cases through both engines on every host.
 
+One generated table decides the SVE and SME encodings for both engines:
+[`darwin/cpu/arm64/detail/sme_encodings.hpp`](../darwin/cpu/arm64/detail/sme_encodings.hpp),
+which `generate_sme_encoding_table.py` derives from the pinned Arm release and
+LLVM MC. Its 2,923 rows cover every non-alias SVE and SME encoding. For each it
+records the SME profile features the encoding needs (2,084 rows) or that the
+profile, which lacks FEAT_SVE and FEAT_SME_FA64, never implements it (839),
+the smallest streaming vector length at which it is allocated, the PSTATE.SM
+and PSTATE.ZA state its access checks demand, its register operands and
+groups, and its memory shape. Nothing in it assumes a vector length. A
+companion table classifies each FP&SIMD encoding as AdvSIMD, which traps in
+streaming mode, or FP, as the 2026-06 pseudocode does on a CPU without
+FEAT_FPRCVT; the pseudocode makes UMOV and SMOV of element 0 and the scalar
+FRECPE, FRECPS, FRSQRTE, FRSQRTS, and FMULX FP. `sme_decode.hpp` decodes
+against both. No engine uses them yet, so every SVE and SME word is still
+UNDEFINED. `arm64-sme-encoding-table` checks the decoder against the table,
+and every row's LLVM MC witness against its row. The table is a header, not an
+`.inc` contract, because C++ sources may not include `.inc` files.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and
@@ -106,6 +124,10 @@ operand combinations. The variant-complete count is therefore 0/983.
   Base, FP&SIMD, SVE (`SVE-`) and SME (`SME-`), 2,291 in all, in index order,
   so the decode partitions relate SVE and SME encodings to their forms; the
   inventory holds the Base and FP&SIMD forms.
+- `darwin/cpu/arm64/detail/sme_encodings.hpp` maps the same release and LLVM
+  MC to the SVE and SME decode both engines share. Its generator requires each
+  row's witness to fall in its own encoding's decode partition, and the opt-in
+  `arm64-sme-encoding-table-freshness` tooling test regenerates it.
 - `a64_instruction_evidence_bindings.tsv` supplies one witness encoding for
   each allocation, and `a64_instruction_variant_contracts.tsv` supplies
   independently reviewed encoding contracts that override the decoder's
