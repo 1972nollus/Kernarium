@@ -29,7 +29,6 @@ struct RouteRegistry final {
 	std::atomic<std::uint64_t> sequence{};
 	std::atomic<void *> published_runtime{};
 	std::atomic<void *> published_network{};
-	std::atomic<bool> published_active{};
 };
 
 /* Public routes can outlive ordinary static destruction during process exit.
@@ -105,9 +104,6 @@ public:
 		route_registry->published_network.store(
 			has_fallback ? fallback.network : nullptr,
 			std::memory_order_relaxed);
-		route_registry->published_active.store(
-			route_registry->active_count != 0,
-			std::memory_order_relaxed);
 	}
 };
 
@@ -121,7 +117,7 @@ ActiveRouteScope::ActiveRouteScope(void *runtime, void *network) noexcept
 
 ActiveRouteScope::ActiveRouteScope(void *runtime, void *network,
 	DeferredPublication) noexcept
-	: route_{runtime, network, true}
+	: route_{runtime, network}
 {
 }
 
@@ -177,8 +173,6 @@ Route current_route() noexcept
 				route_registry->published_runtime.load(
 					std::memory_order_relaxed),
 				route_registry->published_network.load(
-					std::memory_order_relaxed),
-				route_registry->published_active.load(
 					std::memory_order_relaxed),
 			};
 			/* An acquire load orders only what follows it, so the

@@ -5,6 +5,7 @@
 #include "static_mmu_test_support.hpp"
 #include "scratch_backing.hpp"
 #include "require.hpp"
+#include "runtime_test_route.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -178,6 +179,7 @@ void narrow_unmap_invalidates_its_pages()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	generation_switch_clears_every_filled_set();
 	wide_unmap_invalidates_only_its_range();
 	narrow_unmap_invalidates_its_pages();

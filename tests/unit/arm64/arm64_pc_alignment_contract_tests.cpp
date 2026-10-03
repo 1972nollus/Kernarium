@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "require.hpp"
 
 #include "cpu/engine.hpp"
@@ -347,6 +348,7 @@ void run_subprocess(const char *executable, EngineKind kind)
 
 int main(int argc, char **argv)
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	if (argc == 3 && std::string_view{argv[1]} == "--child")
 		return run_child(parse_engine(argv[2]));
 	require(argc >= 1 && argv[0] != nullptr,

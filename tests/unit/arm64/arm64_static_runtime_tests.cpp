@@ -7,6 +7,7 @@
 #include "static_mmu_test_support.hpp"
 #include "scratch_backing.hpp"
 #include "require.hpp"
+#include "runtime_test_route.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1124,6 +1125,7 @@ static void uml_static_walker_binding_is_per_thread()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	uml_static_entry_bridge();
 #if DARWIN_UML_X86_64_GUEST
 	uml_static_x86_64_entry_bridge();

@@ -4,6 +4,7 @@
 #include "cpu/arm64/jit/jit_executor_pool.hpp"
 #include "cpu/engine_factory.hpp"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "memory/static_guest_memory.hpp"
 #include "require.hpp"
 
@@ -384,6 +385,7 @@ void misordered_drain_is_safe_stale_and_recoverable() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   if (!::uml::cpu::cpu_engine_available(EngineKind::jit))
     return EXIT_SUCCESS;
 

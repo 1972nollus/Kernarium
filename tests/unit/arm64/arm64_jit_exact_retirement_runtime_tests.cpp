@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <array>
@@ -190,6 +191,7 @@ void dynamic_fault_with_odd_prefix_is_exact() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   direct_and_pic_constant_terminals_are_exact();
   dynamic_success_with_odd_prefix_is_exact();
