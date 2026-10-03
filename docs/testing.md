@@ -466,7 +466,9 @@ and requires the checked-in bytes; without the archive or that LLVM MC it skips.
 A gadget that runs an instruction as the host's own, such as FEAT_ECV,
 FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
 host with the feature, and the M1 has none of the first three. FEAT_AFP and
-FEAT_RPRES need an A17 Pro or newer, such as the iPhone 15 Pro Max. Elsewhere
+FEAT_RPRES need an A17 Pro or newer, such as the iPhone 15 Pro Max or an M4
+Mac. An M4 Mac has all of these features and a 1 GHz system counter, and the
+unit suite, the corpus included, holds there in both engines. Elsewhere
 `arm64-instruction-corpus-afp-twins` runs the FEAT_AFP twins only on the cases
 whose FPCR leaves the controls clear. Check a change
 to such a path on the iPad by hand: launch Kernarium on the device with the
@@ -474,7 +476,7 @@ to such a path on the iPad by hand: launch Kernarium on the device with the
 advertises, and with the corpus cases of the touched families built into one
 static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
-that needs one of these features has no available host.
+that needs one of these features runs only on an M4 or newer Mac.
 
 ## x86 instruction conformance
 
