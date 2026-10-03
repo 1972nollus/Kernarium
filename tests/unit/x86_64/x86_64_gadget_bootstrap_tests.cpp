@@ -10,6 +10,7 @@
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/gadgets/x87_math.hpp"
 #include "memory/guest_address_space.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,7 +22,9 @@
 #include <cstring>
 #include <initializer_list>
 #include <malloc/malloc.h>
+#include <source_location>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -357,6 +360,60 @@ read_moving_code_sequences(void *opaque) noexcept
 	if (!condition)
 		std::fprintf(stderr, "x86-64 gadget bootstrap: %s\n", message);
 	return condition;
+}
+
+/* What a build made, required to be a block: a failure names the caller's
+ * line and `message`. */
+[[nodiscard]] uml::cpu::x86_64::gadgets::BuildResult require_built(
+	uml::cpu::x86_64::gadgets::BuildResult result, std::string_view message,
+	const std::source_location location = std::source_location::current())
+{
+	uml::testing::require(
+		result.status == uml::cpu::x86_64::gadgets::BuildStatus::built,
+		message, location);
+	return result;
+}
+
+/* Selects and runs blocks from RIP until one ends in SYSCALL, at most eight;
+ * `what` names the long-mode program in a failure. */
+void run_to_system_call(uml::cpu::x86_64::gadgets::Executor &executor,
+	TestMemory &memory, uml::cpu::x86_64::CpuState &cpu, std::string_view what,
+	const std::source_location location = std::source_location::current())
+{
+	using namespace uml::cpu::x86_64;
+	for (unsigned step = 0; step < 8U; ++step) {
+		const auto selected = executor.select_program(
+			memory, cpu.rip, ExecutionMode::long64);
+		if (selected.status != gadgets::BuildStatus::built ||
+			selected.program == nullptr)
+			uml::testing::fail(std::string{what} + " did not build",
+				location);
+		const auto result = gadgets::execute(
+			*selected.program, cpu, memory, executor, 64);
+		if (result.event == uml::cpu::EngineEvent::system_call)
+			return;
+		if (result.event != uml::cpu::EngineEvent::continued)
+			uml::testing::fail(std::string{what} + " left unexpectedly",
+				location);
+	}
+	uml::testing::fail(std::string{what} + " did not reach SYSCALL",
+		location);
+}
+
+/* Runs `body` on `count` host threads at once, standing for that many vCPUs.
+ * Each is handed one shared flag to clear when its vCPU goes wrong; returns
+ * whether none did. */
+template<typename Body>
+[[nodiscard]] bool on_vcpus(unsigned count, Body body)
+{
+	std::atomic<bool> healthy{true};
+	std::vector<std::thread> threads;
+	threads.reserve(count);
+	for (unsigned index = 0; index < count; ++index)
+		threads.emplace_back([&] { body(healthy); });
+	for (auto &thread : threads)
+		thread.join();
+	return healthy.load(std::memory_order_relaxed);
 }
 
 [[nodiscard]] bool cache_reuses_and_revalidates_programs()
@@ -2119,10 +2176,8 @@ read_test_sequences(void *context) noexcept
 	 */
 	memory.load(0, {0xc6, 0x00, 0x90, 0x0f, 0x05});
 	memory.set_executable_page(0);
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"overlapping executable-store block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"overlapping executable-store block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 3;
 	gadgets::Executor executor;
@@ -2356,10 +2411,8 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x05,
 	});
 	CpuState cpu{};
-	const auto first = gadgets::build(memory, 0);
-	if (!expect(first.status == gadgets::BuildStatus::built,
-		"scalar block did not build"))
-		return false;
+	const auto first = require_built(gadgets::build(memory, 0),
+		"scalar block did not build");
 	const auto first_run = gadgets::execute(first.program, cpu, memory, 64);
 	if (!expect(first_run.event == uml::cpu::EngineEvent::continued,
 		"conditional block returned the wrong event") ||
@@ -2372,10 +2425,8 @@ read_test_sequences(void *context) noexcept
 			"equal branch eagerly materialized the deferred flags"))
 		return false;
 
-	const auto second = gadgets::build(memory, cpu.rip);
-	if (!expect(second.status == gadgets::BuildStatus::built,
-		"syscall block did not build"))
-		return false;
+	const auto second = require_built(gadgets::build(memory, cpu.rip),
+		"syscall block did not build");
 	const auto second_run = gadgets::execute(second.program, cpu, memory, 64);
 	return expect(second_run.event == uml::cpu::EngineEvent::system_call,
 		"SYSCALL did not exit the gadget stream") &&
@@ -2404,10 +2455,8 @@ read_test_sequences(void *context) noexcept
 		0xb8, 0x2a, 0x00, 0x00, 0x00,
 		0x0f, 0x05,
 	});
-	const auto block = gadgets::build(memory, code);
-	if (!expect(block.status == gadgets::BuildStatus::built,
-		"absolute TEST/JNE block did not build"))
-		return false;
+	const auto block = require_built(gadgets::build(memory, code),
+		"absolute TEST/JNE block did not build");
 
 	CpuState cpu{};
 	cpu.rip = code;
@@ -2525,10 +2574,9 @@ read_test_sequences(void *context) noexcept
 					memory.load(0, {0x48, 0x0f, opcode, 0xc3});
 				else
 					memory.load(0, {0x0f, opcode, 0xc3});
-				const auto block = gadgets::build(memory, 0, mode, 1);
-				if (!expect(block.status == gadgets::BuildStatus::built,
-					"zero conditional move did not build"))
-					return false;
+				const auto block = require_built(
+					gadgets::build(memory, 0, mode, 1),
+					"zero conditional move did not build");
 				for (unsigned state = 0; state != 6; ++state) {
 					CpuState cpu{};
 					cpu.execution_mode = mode;
@@ -2589,10 +2637,8 @@ read_test_sequences(void *context) noexcept
 	 */
 	TestMemory memory;
 	memory.load(0, {0x9c});
-	const auto block = gadgets::build(memory, 0);
-	if (!expect(block.status == gadgets::BuildStatus::built,
-		"PUSHFQ block did not build"))
-		return false;
+	const auto block = require_built(gadgets::build(memory, 0),
+		"PUSHFQ block did not build");
 
 	constexpr std::uint64_t stack = 0x800;
 	constexpr std::array<DeferredFlagOperation, 7> operations{
@@ -2694,10 +2740,9 @@ read_test_sequences(void *context) noexcept
 
 	for (const auto branch : branches) {
 		memory.load(branch.address, {branch.opcode, 0x05});
-		const auto built = gadgets::build(memory, branch.address);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"carry-condition branch did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build(memory, branch.address),
+			"carry-condition branch did not build");
 
 		for (const auto operation : operations)
 			for (const auto width : widths)
@@ -2744,10 +2789,9 @@ read_test_sequences(void *context) noexcept
 		0x85, 0xc0, // test eax, eax
 		0x7f, 0x05, // jg 9
 	});
-	const auto block = gadgets::build(memory, 0, ExecutionMode::compat32, 2);
-	if (!expect(block.status == gadgets::BuildStatus::built,
-		"compat32 TEST/JG block did not build"))
-		return false;
+	const auto block = require_built(
+		gadgets::build(memory, 0, ExecutionMode::compat32, 2),
+		"compat32 TEST/JG block did not build");
 
 	const auto run = [&](std::uint64_t value, std::uint64_t expected_rip,
 		const char *message) {
@@ -2845,10 +2889,8 @@ read_test_sequences(void *context) noexcept
 		0x01, 0xd8, // add eax, ebx
 		0xd1, 0xc8, // ror eax, 1
 	});
-	const auto rotate = gadgets::build(rotate_memory, 0, 2);
-	if (!expect(rotate.status == gadgets::BuildStatus::built,
-		"lazy ROR block did not build"))
-		return false;
+	const auto rotate = require_built(gadgets::build(rotate_memory, 0, 2),
+		"lazy ROR block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rbx) = 1;
 	const auto rotate_result = gadgets::execute(
@@ -2878,10 +2920,8 @@ read_test_sequences(void *context) noexcept
 		0xc1, 0xe8, 0x1f, // shr eax, 31
 		0x74, 0x05,       // je +5
 	});
-	const auto branch = gadgets::build(branch_memory, 0);
-	if (!expect(branch.status == gadgets::BuildStatus::built,
-		"lazy shift/branch block did not build"))
-		return false;
+	const auto branch = require_built(gadgets::build(branch_memory, 0),
+		"lazy shift/branch block did not build");
 	cpu = CpuState{};
 	cpu.gpr(Register::rax) = 1;
 	cpu.gpr(Register::rbx) = 1;
@@ -2943,10 +2983,10 @@ read_test_sequences(void *context) noexcept
 						push(0x05);
 						TestMemory memory;
 						memory.fill(0, code);
-						const auto built = gadgets::build(memory, 0);
-						if (!expect(built.status == gadgets::BuildStatus::built,
-							"shift flag program did not build"))
-							return false;
+						const auto built = require_built(
+							gadgets::build(memory,
+								0),
+							"shift flag program did not build");
 						CpuState cpu{};
 						cpu.gpr(Register::rax) = value;
 						const auto result = gadgets::execute(
@@ -3040,10 +3080,8 @@ read_test_sequences(void *context) noexcept
 	cpu.fs_base = 64;
 	cpu.gpr(Register::rbx) = 16;
 	cpu.gpr(Register::rax) = 0x1122'3344'5566'7788ULL;
-	const auto built = gadgets::build(memory, 0, 2);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"FS memory block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0, 2),
+		"FS memory block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 2);
 	return expect(result.event == uml::cpu::EngineEvent::continued,
 		"FS memory block returned the wrong event") &&
@@ -3231,20 +3269,16 @@ read_test_sequences(void *context) noexcept
 	memory.load(10, {0xc3});
 	CpuState cpu{};
 	cpu.gpr(Register::rsp) = 400;
-	const auto caller = gadgets::build(memory, 0);
-	if (!expect(caller.status == gadgets::BuildStatus::built,
-		"CALL did not build"))
-		return false;
+	const auto caller = require_built(gadgets::build(memory, 0),
+		"CALL did not build");
 	const auto call_result = gadgets::execute(caller.program, cpu, memory, 1);
 	if (!expect(call_result.event == uml::cpu::EngineEvent::continued &&
 		cpu.rip == 10 && cpu.gpr(Register::rsp) == 392 &&
 		memory.qword(392) == 5,
 		"CALL did not push its return address"))
 		return false;
-	const auto callee = gadgets::build(memory, cpu.rip);
-	if (!expect(callee.status == gadgets::BuildStatus::built,
-		"RET did not build"))
-		return false;
+	const auto callee = require_built(gadgets::build(memory, cpu.rip),
+		"RET did not build");
 	const auto return_result = gadgets::execute(
 		callee.program, cpu, memory, 1);
 	return expect(return_result.event == uml::cpu::EngineEvent::continued &&
@@ -3344,10 +3378,9 @@ read_test_sequences(void *context) noexcept
 		wide.instruction.source.reg.index == 9,
 		"64-bit VEX.B-bar no longer selects XMM8-15"))
 		return false;
-	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"compat32 VEX block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::compat32),
+		"compat32 VEX block did not build");
 	CpuState cpu{};
 	cpu.execution_mode = ExecutionMode::compat32;
 	const auto fill = [&](std::size_t index, float value) {
@@ -3420,10 +3453,9 @@ read_test_sequences(void *context) noexcept
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
 	cpu.gpr(Register::rbp) = 0xffff'ffff'1234'5678ULL;
-	const auto flat = gadgets::build(memory, 0, ExecutionMode::compat32, 1);
-	if (!expect(flat.status == gadgets::BuildStatus::built,
-		"compat32 ENTER did not build"))
-		return false;
+	const auto flat = require_built(
+		gadgets::build(memory, 0, ExecutionMode::compat32, 1),
+		"compat32 ENTER did not build");
 	const auto flat_result = gadgets::execute(flat.program, cpu, memory, 1);
 	if (!expect(flat_result.event == uml::cpu::EngineEvent::continued &&
 			flat_result.retired_instructions == 1 && cpu.rip == 4,
@@ -3436,10 +3468,9 @@ read_test_sequences(void *context) noexcept
 
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
 	cpu.gpr(Register::rbp) = 0xffff'ffff'0000'0180ULL;
-	const auto nested = gadgets::build(memory, 4, ExecutionMode::compat32, 1);
-	if (!expect(nested.status == gadgets::BuildStatus::built,
-		"compat32 nested ENTER did not build"))
-		return false;
+	const auto nested = require_built(
+		gadgets::build(memory, 4, ExecutionMode::compat32, 1),
+		"compat32 nested ENTER did not build");
 	const auto nested_result =
 		gadgets::execute(nested.program, cpu, memory, 1);
 	return expect(nested_result.event ==
@@ -3472,10 +3503,9 @@ read_test_sequences(void *context) noexcept
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.gpr(Register::rsp) = 0x200;
 	cpu.rflags = 0x2;
-	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"compat32 pushfd/popfd block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::compat32),
+		"compat32 pushfd/popfd block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 7);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 7,
@@ -3500,11 +3530,9 @@ read_test_sequences(void *context) noexcept
 	CpuState cpu{};
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
-	const auto pop_ds = gadgets::build(
-		memory, 0, ExecutionMode::compat32, 1);
-	if (!expect(pop_ds.status == gadgets::BuildStatus::built,
-		"compat32 POP DS did not build"))
-		return false;
+	const auto pop_ds = require_built(
+		gadgets::build( memory, 0, ExecutionMode::compat32, 1),
+		"compat32 POP DS did not build");
 	const auto popped = gadgets::execute(pop_ds.program, cpu, memory, 1);
 	if (!expect(popped.event == uml::cpu::EngineEvent::continued &&
 			popped.retired_instructions == 1 && cpu.rip == 1,
@@ -3513,11 +3541,9 @@ read_test_sequences(void *context) noexcept
 			cpu.gpr(Register::rsp) == 0x204,
 			"compat32 POP DS did not load a 32-bit stack slot"))
 		return false;
-	const auto iret = gadgets::build(
-		memory, cpu.rip, ExecutionMode::compat32, 1);
-	if (!expect(iret.status == gadgets::BuildStatus::built,
-		"compat32 IRET after POP DS did not build"))
-		return false;
+	const auto iret = require_built(
+		gadgets::build( memory, cpu.rip, ExecutionMode::compat32, 1),
+		"compat32 IRET after POP DS did not build");
 
 	TestMemory round_trip_memory;
 	round_trip_memory.load(0, {
@@ -3528,11 +3554,10 @@ read_test_sequences(void *context) noexcept
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.gpr(Register::rsp) = 0x204;
 	cpu.segment_selectors[3] = 0x33;
-	const auto round_trip = gadgets::build(
-		round_trip_memory, 0, ExecutionMode::compat32, 2);
-	if (!expect(round_trip.status == gadgets::BuildStatus::built,
-		"compat32 segment PUSH/POP pair did not build"))
-		return false;
+	const auto round_trip = require_built(
+		gadgets::build(round_trip_memory, 0, ExecutionMode::compat32,
+			2),
+		"compat32 segment PUSH/POP pair did not build");
 	const auto transferred = gadgets::execute(
 		round_trip.program, cpu, round_trip_memory, 2);
 	if (!expect(transferred.event == uml::cpu::EngineEvent::continued &&
@@ -3580,11 +3605,9 @@ read_test_sequences(void *context) noexcept
 	};
 	if (!memory.write(stack, std::as_bytes(std::span{frame})))
 		return expect(false, "long64 IRETQ frame setup failed");
-	const auto built = gadgets::build(
-		memory, 0, ExecutionMode::long64, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"long64 IRETQ did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build( memory, 0, ExecutionMode::long64, 1),
+		"long64 IRETQ did not build");
 	CpuState cpu{};
 	cpu.rip = 0;
 	cpu.gpr(Register::rsp) = stack;
@@ -3642,11 +3665,9 @@ read_test_sequences(void *context) noexcept
 				std::span{word.data(), shape.slot}))
 				return expect(false, "64-bit IRET frame setup failed");
 		}
-		const auto built = gadgets::build(
-			memory, base, ExecutionMode::long64, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"64-bit IRET did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build( memory, base, ExecutionMode::long64, 1),
+			"64-bit IRET did not build");
 		CpuState cpu{};
 		cpu.rip = base;
 		cpu.gpr(Register::rsp) = stack;
@@ -3716,10 +3737,9 @@ read_test_sequences(void *context) noexcept
 				std::span{word.data(), shape.slot}))
 				return expect(false, "IRET frame setup failed");
 		}
-		const auto built = gadgets::build(memory, 0, shape.mode, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"IRET did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build(memory, 0, shape.mode, 1),
+			"IRET did not build");
 		CpuState cpu{};
 		cpu.execution_mode = shape.mode;
 		cpu.gpr(Register::rsp) = stack;
@@ -3825,11 +3845,9 @@ read_test_sequences(void *context) noexcept
 	CpuState cpu{};
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.rip = address;
-	const auto built = gadgets::build(
-		memory, address, ExecutionMode::compat32, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"compat32 wrapping JMP did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build( memory, address, ExecutionMode::compat32, 1),
+		"compat32 wrapping JMP did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 1 && cpu.rip == 0x25,
@@ -3855,11 +3873,9 @@ read_test_sequences(void *context) noexcept
 	cpu.compat_tls_present = 2;
 	cpu.compat_tls_first = 12;
 	cpu.gpr(Register::rbp) = 0x1080;
-	const auto built = gadgets::build(
-		memory, 0, ExecutionMode::compat32, 3);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"compat32 TLS segment block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build( memory, 0, ExecutionMode::compat32, 3),
+		"compat32 TLS segment block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
 	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 3,
@@ -3870,11 +3886,9 @@ read_test_sequences(void *context) noexcept
 		!expect(memory.dword(0x84) == 0xffff'ffff,
 			"compat32 segmented linear address did not wrap at 32 bits"))
 		return false;
-	const auto stale = gadgets::build(
-		memory, cpu.rip, ExecutionMode::compat32, 2);
-	if (!expect(stale.status == gadgets::BuildStatus::built,
-		"compat32 non-TLS selector block did not build"))
-		return false;
+	const auto stale = require_built(
+		gadgets::build( memory, cpu.rip, ExecutionMode::compat32, 2),
+		"compat32 non-TLS selector block did not build");
 	const auto cleared = gadgets::execute(stale.program, cpu, memory, 2);
 	return expect(cleared.event == uml::cpu::EngineEvent::continued &&
 		cleared.retired_instructions == 2 &&
@@ -3887,11 +3901,9 @@ read_test_sequences(void *context) noexcept
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0x40});
-	const auto built = gadgets::build(
-		memory, 0, ExecutionMode::compat32, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"compat32 identity block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build( memory, 0, ExecutionMode::compat32, 1),
+		"compat32 identity block did not build");
 	CpuState cpu{};
 	const auto mismatch = gadgets::execute(built.program, cpu, memory, 1);
 	if (!expect(mismatch.event == uml::cpu::EngineEvent::fatal &&
@@ -3931,10 +3943,9 @@ read_test_sequences(void *context) noexcept
 	down.gpr(Register::rcx) = 4097;
 	down.gpr(Register::rdi) = 8192;
 	down.rflags |= rflags_direction;
-	const auto element_built = gadgets::build(descending, 0, 1);
-	if (!expect(element_built.status == gadgets::BuildStatus::built,
-		"descending REP STOSB did not build"))
-		return false;
+	const auto element_built = require_built(
+		gadgets::build(descending, 0, 1),
+		"descending REP STOSB did not build");
 	const auto element = gadgets::execute(
 		element_built.program, down, descending, 1);
 	if (!expect(element.event == uml::cpu::EngineEvent::continued &&
@@ -3955,10 +3966,8 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rax) = 0x5a;
 	cpu.gpr(Register::rcx) = 262145;
 	cpu.gpr(Register::rdi) = 4096;
-	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"REP STOSB did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0, 1),
+		"REP STOSB did not build");
 	const auto first = gadgets::execute(built.program, cpu, memory, 1);
 	if (!expect(first.event == uml::cpu::EngineEvent::continued &&
 		first.retired_instructions == 0 && cpu.rip == 0,
@@ -3982,10 +3991,8 @@ read_test_sequences(void *context) noexcept
 	small.gpr(Register::rax) = 0x5a;
 	small.gpr(Register::rcx) = 262145;
 	small.gpr(Register::rdi) = 4096;
-	const auto narrow_built = gadgets::build(narrow, 0, 1);
-	if (!expect(narrow_built.status == gadgets::BuildStatus::built,
-		"32-bit REP STOSB did not build"))
-		return false;
+	const auto narrow_built = require_built(gadgets::build(narrow, 0, 1),
+		"32-bit REP STOSB did not build");
 	const auto narrow_first = gadgets::execute(
 		narrow_built.program, small, narrow, 1);
 	if (!expect(narrow_first.event == uml::cpu::EngineEvent::continued &&
@@ -4083,10 +4090,8 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rcx) = 8192;
 	cpu.gpr(Register::rsi) = 4096;
 	cpu.gpr(Register::rdi) = 12288;
-	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"faulting REP MOVSB did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0, 1),
+		"faulting REP MOVSB did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	/* The first run fills the last mapped page; the second cannot translate
 	 * its destination at all. */
@@ -4556,26 +4561,8 @@ read_test_sequences(void *context) noexcept
 			cpu.gpr(Register::rdi) = 0x2000;
 			gadgets::Executor executor;
 			executor.prepare(memory, 1, 1, 1);
-			bool reached = false;
-			for (unsigned step = 0; step < 8U; ++step) {
-				const auto selected = executor.select_program(
-					memory, cpu.rip, ExecutionMode::long64);
-				if (!expect(selected.status == gadgets::BuildStatus::built &&
-					selected.program != nullptr,
-					"lazy carry program did not build"))
-					return false;
-				const auto result = gadgets::execute(
-					*selected.program, cpu, memory, executor, 64);
-				if (result.event == uml::cpu::EngineEvent::system_call) {
-					reached = true;
-					break;
-				}
-				if (!expect(result.event == uml::cpu::EngineEvent::continued,
-					"lazy carry program left unexpectedly"))
-					return false;
-			}
-			if (!expect(reached, "lazy carry program did not reach SYSCALL"))
-				return false;
+			run_to_system_call(executor, memory, cpu,
+				"lazy carry program");
 			const auto l = left & mask;
 			const auto r = right & mask;
 			const std::uint64_t carry = subtract ? (l < r ? 1U : 0U) :
@@ -4727,26 +4714,8 @@ read_test_sequences(void *context) noexcept
 		cpu.gpr(Register::rdi) = 0x2000;
 		gadgets::Executor executor;
 		executor.prepare(memory, 1, 1, 1);
-		bool reached = false;
-		for (unsigned step = 0; step < 8U; ++step) {
-			const auto selected = executor.select_program(
-				memory, cpu.rip, ExecutionMode::long64);
-			if (!expect(selected.status == gadgets::BuildStatus::built &&
-				selected.program != nullptr,
-				"settled carry program did not build"))
-				return false;
-			const auto result = gadgets::execute(
-				*selected.program, cpu, memory, executor, 64);
-			if (result.event == uml::cpu::EngineEvent::system_call) {
-				reached = true;
-				break;
-			}
-			if (!expect(result.event == uml::cpu::EngineEvent::continued,
-				"settled carry program left unexpectedly"))
-				return false;
-		}
-		if (!expect(reached, "settled carry program did not reach SYSCALL"))
-			return false;
+		run_to_system_call(executor, memory, cpu,
+			"settled carry program");
 		std::uint64_t expected = carry;
 		std::uint64_t observed = 0;
 		switch (reader) {
@@ -4827,10 +4796,9 @@ read_test_sequences(void *context) noexcept
 		cpu.gpr(Register::rax) = destination;
 		cpu.gpr(Register::rbx) = source;
 		cpu.gpr(Register::rdi) = 0x2000;
-		const auto block = gadgets::build(memory, 0, ExecutionMode::long64, 4);
-		if (!expect(block.status == gadgets::BuildStatus::built,
-			"conditional move program did not build"))
-			return false;
+		const auto block = require_built(
+			gadgets::build(memory, 0, ExecutionMode::long64, 4),
+			"conditional move program did not build");
 		const auto result = gadgets::execute(block.program, cpu, memory, 4);
 		if (!expect(result.event == uml::cpu::EngineEvent::system_call,
 			"conditional move program did not reach SYSCALL"))
@@ -5053,31 +5021,8 @@ read_test_sequences(void *context) noexcept
 							cpu.gpr(Register::rbx) = right;
 							gadgets::Executor executor;
 							executor.prepare(memory, 1, 1, 1);
-							bool reached = false;
-							for (unsigned step = 0; step < 8U; ++step) {
-								const auto selected = executor.select_program(
-									memory, cpu.rip, ExecutionMode::long64);
-								if (!expect(selected.status ==
-									gadgets::BuildStatus::built &&
-									selected.program != nullptr,
-									"fused jump program did not build"))
-									return false;
-								const auto result = gadgets::execute(
-									*selected.program, cpu, memory, executor,
-									64);
-								if (result.event ==
-									uml::cpu::EngineEvent::system_call) {
-									reached = true;
-									break;
-								}
-								if (!expect(result.event ==
-									uml::cpu::EngineEvent::continued,
-									"fused jump program left unexpectedly"))
-									return false;
-							}
-							if (!expect(reached,
-								"fused jump program did not reach SYSCALL"))
-								return false;
+							run_to_system_call(executor, memory, cpu,
+								"fused jump program");
 							taken[barrier] = cpu.gpr(Register::rdx) & 0xffU;
 						}
 						if (!expect(taken[0] == taken[1],
@@ -5161,10 +5106,9 @@ read_test_sequences(void *context) noexcept
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0x0f, 0xa2}); // cpuid
-	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"CPUID did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::long64, 1),
+		"CPUID did not build");
 
 	/* Every leaf the table answers, the leaf above each maximum, and a
 	 * subleaf of each enumerating leaf that must read as zero. */
@@ -5224,10 +5168,8 @@ read_test_sequences(void *context) noexcept
 	memory.load(0, {0x48, 0x8b, 0x03});
 	CpuState cpu{};
 	cpu.gpr(Register::rbx) = 16383;
-	const auto built = gadgets::build(memory, 0, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"faulting load did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0, 1),
+		"faulting load did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(result.event == uml::cpu::EngineEvent::memory_fault,
 		"faulting load did not exit as a memory fault") &&
@@ -5247,10 +5189,8 @@ read_test_sequences(void *context) noexcept
 		0x0f, 0x0b,
 	});
 	CpuState cpu{};
-	const auto prefix = gadgets::build(memory, 0);
-	if (!expect(prefix.status == gadgets::BuildStatus::built,
-		"valid prefix before UD2 did not build"))
-		return false;
+	const auto prefix = require_built(gadgets::build(memory, 0),
+		"valid prefix before UD2 did not build");
 	const auto prefix_result = gadgets::execute(
 		prefix.program, cpu, memory, 64);
 	if (!expect(prefix_result.event == uml::cpu::EngineEvent::continued &&
@@ -5328,10 +5268,8 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rax) = 42;
 	cpu.gpr(Register::rdx) = 0;
 	cpu.gpr(Register::rcx) = 0;
-	const auto built = gadgets::build(memory, 100, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"native DIV trap block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 100, 1),
+		"native DIV trap block did not build");
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(result.event == uml::cpu::EngineEvent::floating_point_trap,
 		"divide by zero did not return the x86 divide trap") &&
@@ -5347,11 +5285,9 @@ read_test_sequences(void *context) noexcept
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(100, {0xce});
-	const auto built = gadgets::build(
-		memory, 100, ExecutionMode::compat32, 1);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"native INTO block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build( memory, 100, ExecutionMode::compat32, 1),
+		"native INTO block did not build");
 	CpuState taken{};
 	taken.execution_mode = ExecutionMode::compat32;
 	taken.rip = 100;
@@ -5382,10 +5318,9 @@ read_test_sequences(void *context) noexcept
 	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
 		TestMemory memory;
 		memory.load(100, {0xf1});
-		const auto built = gadgets::build(memory, 100, mode, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"ICEBP did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build(memory, 100, mode, 1),
+			"ICEBP did not build");
 		CpuState cpu{};
 		cpu.execution_mode = mode;
 		cpu.rip = 100;
@@ -5435,11 +5370,10 @@ read_test_sequences(void *context) noexcept
 	memory.load(0xffc, {0xf6, 0xff, 0xff, 0xff, 20, 0, 0, 0});
 	memory.load(0x300, {0xfb, 0xff, 5, 0});
 	for (const auto &shape : cases) {
-		const auto built = gadgets::build(
-			memory, shape.address, ExecutionMode::compat32, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"BOUND did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build(memory, shape.address,
+				ExecutionMode::compat32, 1),
+			"BOUND did not build");
 		CpuState cpu{};
 		cpu.execution_mode = ExecutionMode::compat32;
 		cpu.rip = shape.address;
@@ -5461,11 +5395,9 @@ read_test_sequences(void *context) noexcept
 
 	TestMemory unmapped;
 	unmapped.load(0x100, {0x62, 0x1d, 0x00, 0x00, 0x01, 0x00});
-	const auto faulting = gadgets::build(
-		unmapped, 0x100, ExecutionMode::compat32, 1);
-	if (!expect(faulting.status == gadgets::BuildStatus::built,
-		"BOUND with unmapped bounds did not build"))
-		return false;
+	const auto faulting = require_built(
+		gadgets::build( unmapped, 0x100, ExecutionMode::compat32, 1),
+		"BOUND with unmapped bounds did not build");
 	CpuState cpu{};
 	cpu.execution_mode = ExecutionMode::compat32;
 	cpu.rip = 0x100;
@@ -5503,10 +5435,8 @@ read_test_sequences(void *context) noexcept
 		TestMemory memory;
 		for (std::size_t index = 0; index < encoding.size(); ++index)
 			memory.load(100 + index, {encoding[index]});
-		const auto built = gadgets::build(memory, 100, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"privileged instruction did not build"))
-			return false;
+		const auto built = require_built(gadgets::build(memory, 100, 1),
+			"privileged instruction did not build");
 		CpuState cpu{};
 		cpu.rip = 100;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1);
@@ -5520,10 +5450,9 @@ read_test_sequences(void *context) noexcept
 
 	TestMemory timestamp_memory;
 	timestamp_memory.load(100, {0x0f, 0x31});
-	const auto timestamp = gadgets::build(timestamp_memory, 100, 1);
-	if (!expect(timestamp.status == gadgets::BuildStatus::built,
-		"RDTSC did not build"))
-		return false;
+	const auto timestamp = require_built(
+		gadgets::build(timestamp_memory, 100, 1),
+		"RDTSC did not build");
 	CpuState enabled{};
 	enabled.rip = 100;
 	const auto enabled_result = gadgets::execute(
@@ -5562,10 +5491,8 @@ read_test_sequences(void *context) noexcept
 	for (std::size_t index = 0; index < 14; ++index)
 		memory.load(span - 14 + index, {0x66});
 
-	const auto legal = gadgets::build(memory, 0x201, 1);
-	if (!expect(legal.status == gadgets::BuildStatus::built,
-		"a fifteen-byte instruction did not build"))
-		return false;
+	const auto legal = require_built(gadgets::build(memory, 0x201, 1),
+		"a fifteen-byte instruction did not build");
 	CpuState fits{};
 	fits.rip = 0x201;
 	const auto fitted = gadgets::execute(legal.program, fits, memory, 1);
@@ -5614,10 +5541,8 @@ read_test_sequences(void *context) noexcept
 		0x48, 0x0f, 0xc7, 0xfb, // rdseed rbx
 		0x0f, 0x05,             // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"RDRAND/RDSEED block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"RDRAND/RDSEED block did not build");
 	/* The inverse of x ^= x << 13; x ^= x >> 7; x ^= x << 17. */
 	const auto invert = [](std::uint64_t value) {
 		value ^= value << 17;
@@ -5689,10 +5614,8 @@ read_test_sequences(void *context) noexcept
 			memory.load(100, {0xf3, 0x48, 0x0f, 0xae, shape.modrm});
 		else
 			memory.load(100, {0xf3, 0x0f, 0xae, shape.modrm});
-		const auto built = gadgets::build(memory, 100, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"WRFSBASE/WRGSBASE did not build"))
-			return false;
+		const auto built = require_built(gadgets::build(memory, 100, 1),
+			"WRFSBASE/WRGSBASE did not build");
 		const bool fs = shape.modrm == 0xd0;
 		CpuState cpu{};
 		cpu.rip = 100;
@@ -5793,10 +5716,9 @@ read_test_sequences(void *context) noexcept
 		0x48, 0xff, 0xc0,             // inc rax
 		0x0f, 0x05,                   // syscall
 	});
-	const auto built = gadgets::build(memory, 0, ExecutionMode::long64);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"POPF block did not build"))
-		return false;
+	const auto built = require_built(
+		gadgets::build(memory, 0, ExecutionMode::long64),
+		"POPF block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rsp) = 0x200;
 	cpu.rflags = 0x2;
@@ -5876,10 +5798,9 @@ read_test_sequences(void *context) noexcept
 				std::span{word.data(), shape.slot}))
 				return expect(false, "IRET frame setup failed");
 		}
-		const auto built = gadgets::build(memory, 0, shape.mode, 1);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"IRET did not build"))
-			return false;
+		const auto built = require_built(
+			gadgets::build(memory, 0, shape.mode, 1),
+			"IRET did not build");
 		CpuState cpu{};
 		cpu.execution_mode = shape.mode;
 		cpu.gpr(Register::rsp) = stack;
@@ -5986,10 +5907,8 @@ read_test_sequences(void *context) noexcept
 	});
 	memory.load(0x800, {1, 2, 3, 4, 5});
 	memory.load(0x900, {1, 2, 9, 4, 5});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"REPE CMPSB block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"REPE CMPSB block did not build");
 	gadgets::Executor executor;
 	executor.prepare(memory);
 	CpuState cpu{};
@@ -6028,10 +5947,8 @@ read_test_sequences(void *context) noexcept
 		0x48, 0xff, 0xc0, // inc rax
 		0x0f, 0x05,       // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"LDMXCSR/FLDCW block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"LDMXCSR/FLDCW block did not build");
 	const auto run = [&](std::initializer_list<std::uint8_t> mxcsr,
 		std::initializer_list<std::uint8_t> control, CpuState &cpu) {
 		memory.load(0x800, mxcsr);
@@ -6378,10 +6295,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0xdd, 0x1b, // fstp qword [rbx]
 		0x0f, 0x05, // syscall
 	});
-	const auto arithmetic = gadgets::build(memory, 0);
-	if (!expect(arithmetic.status == gadgets::BuildStatus::built,
-		"x87 arithmetic did not build"))
-		return false;
+	const auto arithmetic = require_built(gadgets::build(memory, 0),
+		"x87 arithmetic did not build");
 	CpuState cpu{};
 	cpu.x87_control = 0x1332;
 	cpu.gpr(Register::rbx) = 0x800;
@@ -6399,10 +6314,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0x0f, 0x05,       // syscall
 	});
 	memory.load(0x810, {0x32, 0x13});
-	const auto load = gadgets::build(memory, 0x100);
-	if (!expect(load.status == gadgets::BuildStatus::built,
-		"FLDCW block did not build"))
-		return false;
+	const auto load = require_built(gadgets::build(memory, 0x100),
+		"FLDCW block did not build");
 	const auto run = [&](std::uint16_t control, std::uint16_t status) {
 		cpu = CpuState{};
 		cpu.rip = 0x100;
@@ -6721,10 +6634,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0x48, 0xff, 0xc0, // inc rax
 		0x0f, 0x05,       // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"LDMXCSR block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"LDMXCSR block did not build");
 	CpuState cpu{};
 	const auto run = [&](std::uint32_t before, std::uint32_t loaded) {
 		std::array<std::byte, 4> bytes{};
@@ -6818,10 +6729,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0x48, 0xff, 0xc0,             // inc rax
 		0x0f, 0x05,                   // syscall
 	});
-	const auto built = gadgets::build(flags, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"POPF block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(flags, 0),
+		"POPF block did not build");
 	cpu = CpuState{};
 	cpu.gpr(Register::rsp) = 0x200;
 	const auto set = gadgets::execute(built.program, cpu, flags, 64);
@@ -6883,10 +6792,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0xc4, 0x63, 0x7d, 0x0f, 0xc1, 0x05, // vpalignr $0x05,ymm1,ymm0,ymm8
 		0x0f, 0x05,                         // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"oversized byte-shift block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"oversized byte-shift block did not build");
 	CpuState cpu{};
 	for (std::size_t lane = 0; lane < 32; ++lane) {
 		cpu.vectors[0][lane] = static_cast<std::byte>(0x10U + lane);
@@ -6957,10 +6864,8 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		0xc5, 0xe8, 0x16, 0xc9, // vmovlhps xmm1,xmm2,xmm1
 		0x0f, 0x05,             // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"aliased VMOVLHPS sequence did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"aliased VMOVLHPS sequence did not build");
 	CpuState cpu{};
 	constexpr std::uint64_t original_destination_low = 0x1122'3344'5566'7788;
 	constexpr std::uint64_t merge_low = 0x0102'0304'0506'0708;
@@ -7102,10 +7007,8 @@ private:
 		0xc5, 0xfd, 0xfc, 0xdc, // vpaddb ymm3,ymm0,ymm4
 		0x0f, 0x05,             // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"the calling-out vector sequence did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"the calling-out vector sequence did not build");
 	CpuState cpu{};
 	cpu.registers[7] = 0x0ffc; // rdi, four bytes short of the next page
 	cpu.vectors[1].fill(std::byte{0x11});
@@ -7130,10 +7033,8 @@ private:
 		0xc4, 0xe3, 0x7d, 0x39, 0x07, 0x01, // vextracti128 $1,ymm0,[rdi]
 		0x0f, 0x05,                         // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"the lane-extract store did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"the lane-extract store did not build");
 	CpuState cpu{};
 	cpu.registers[7] = 0x2000; // rdi, a page no translation covers yet
 	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
@@ -7159,10 +7060,8 @@ private:
 		0xc4, 0xe3, 0x7d, 0x39, 0x07, 0x01, // vextracti128 $1,ymm0,[rdi]
 		0x0f, 0x05,                         // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"the crossing lane-extract store did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"the crossing lane-extract store did not build");
 	CpuState cpu{};
 	cpu.registers[7] = 0x1ff8; // rdi, eight bytes short of the next page
 	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
@@ -7190,10 +7089,8 @@ private:
 	});
 	for (unsigned index = 0; index < 16; ++index)
 		memory.load(0x2000 + index, {0x5a});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"the masked store did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"the masked store did not build");
 	CpuState cpu{};
 	cpu.registers[7] = 0x2000; // rdi, a page no translation covers yet
 	std::fill(cpu.vectors[0].begin(), cpu.vectors[0].begin() + 16,
@@ -7223,10 +7120,8 @@ private:
 		0xf3, 0x0f, 0x52, 0xe5, // rsqrtss xmm4,xmm5: 1 / sqrt(-4)
 		0x0f, 0x05,             // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"invalid vector floating-point sequence did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"invalid vector floating-point sequence did not build");
 	CpuState cpu{};
 	constexpr std::uint32_t negative_one = 0xbf80'0000;
 	constexpr std::uint32_t negative_four = 0xc080'0000;
@@ -7440,10 +7335,8 @@ private:
 		0x85, 0xc0,                   // test eax,eax
 		0x0f, 0x05,                   // syscall
 	});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"glibc rwlock XADD sequence did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"glibc rwlock XADD sequence did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rbx) = lock;
 	const auto result = gadgets::execute(built.program, cpu, memory, 64);
@@ -7497,10 +7390,8 @@ private:
 			std::as_bytes(std::span{closure_word})),
 		"GObject closure state did not fit test memory"))
 		return false;
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"GObject closure CMPXCHG sequence did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"GObject closure CMPXCHG sequence did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rbx) = closure;
 	cpu.gpr(Register::rsp) = stack;
@@ -7544,32 +7435,23 @@ private:
 	constexpr std::uint64_t counter = 0x800;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0x0f, 0xc1, 0x03, 0x0f, 0x05});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"contended XADD block did not build"))
-		return false;
-	std::atomic<bool> healthy{true};
-	std::vector<std::thread> threads;
-	threads.reserve(thread_count);
-	for (unsigned index = 0; index < thread_count; ++index) {
-		threads.emplace_back([&] {
-			CpuState cpu{};
-			cpu.gpr(Register::rbx) = counter;
-			for (unsigned step = 0; step < iterations; ++step) {
-				cpu.rip = 0;
-				cpu.gpr(Register::rax) = 8;
-				const auto result = gadgets::execute(
-					built.program, cpu, memory, 64);
-				if (result.event != uml::cpu::EngineEvent::system_call) {
-					healthy.store(false, std::memory_order_relaxed);
-					return;
-				}
+	const auto built = require_built(gadgets::build(memory, 0),
+		"contended XADD block did not build");
+	const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
+		CpuState cpu{};
+		cpu.gpr(Register::rbx) = counter;
+		for (unsigned step = 0; step < iterations; ++step) {
+			cpu.rip = 0;
+			cpu.gpr(Register::rax) = 8;
+			const auto result = gadgets::execute(
+				built.program, cpu, memory, 64);
+			if (result.event != uml::cpu::EngineEvent::system_call) {
+				healthy.store(false, std::memory_order_relaxed);
+				return;
 			}
-		});
-	}
-	for (auto &thread : threads)
-		thread.join();
-	return expect(healthy.load(std::memory_order_relaxed),
+		}
+	});
+	return expect(all_healthy,
 		"a contended XADD thread left the gadget stream early") &&
 		expect(memory.dword(counter) ==
 			thread_count * iterations * 8,
@@ -7589,52 +7471,43 @@ private:
 	constexpr std::uint64_t counter = 0x800;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0x0f, 0xb1, 0x0b, 0x0f, 0x05});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"contended CMPXCHG block did not build"))
-		return false;
-	std::atomic<bool> healthy{true};
-	std::vector<std::thread> threads;
-	threads.reserve(thread_count);
-	for (unsigned index = 0; index < thread_count; ++index) {
-		threads.emplace_back([&] {
-			CpuState cpu{};
-			cpu.gpr(Register::rbx) = counter;
-			std::uint32_t expected = 0;
-			for (unsigned step = 0; step < iterations; ++step) {
-				bool exchanged = false;
-				for (unsigned retry = 0;
-				     retry < retry_limit &&
-					 healthy.load(std::memory_order_relaxed); ++retry) {
-					const auto desired = expected + 1;
-					cpu.rip = 0;
-					cpu.gpr(Register::rax) = expected;
-					cpu.gpr(Register::rcx) = desired;
-					const auto result = gadgets::execute(
-						built.program, cpu, memory, 64);
-					if (result.event != uml::cpu::EngineEvent::system_call) {
-						healthy.store(false, std::memory_order_relaxed);
-						return;
-					}
-					materialize_flags(cpu);
-					if ((cpu.rflags & rflags_zero) != 0) {
-						expected = desired;
-						exchanged = true;
-						break;
-					}
-					expected = static_cast<std::uint32_t>(
-						cpu.gpr(Register::rax));
-				}
-				if (!exchanged) {
+	const auto built = require_built(gadgets::build(memory, 0),
+		"contended CMPXCHG block did not build");
+	const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
+		CpuState cpu{};
+		cpu.gpr(Register::rbx) = counter;
+		std::uint32_t expected = 0;
+		for (unsigned step = 0; step < iterations; ++step) {
+			bool exchanged = false;
+			for (unsigned retry = 0;
+			     retry < retry_limit &&
+				 healthy.load(std::memory_order_relaxed); ++retry) {
+				const auto desired = expected + 1;
+				cpu.rip = 0;
+				cpu.gpr(Register::rax) = expected;
+				cpu.gpr(Register::rcx) = desired;
+				const auto result = gadgets::execute(
+					built.program, cpu, memory, 64);
+				if (result.event != uml::cpu::EngineEvent::system_call) {
 					healthy.store(false, std::memory_order_relaxed);
 					return;
 				}
+				materialize_flags(cpu);
+				if ((cpu.rflags & rflags_zero) != 0) {
+					expected = desired;
+					exchanged = true;
+					break;
+				}
+				expected = static_cast<std::uint32_t>(
+					cpu.gpr(Register::rax));
 			}
-		});
-	}
-	for (auto &thread : threads)
-		thread.join();
-	return expect(healthy.load(std::memory_order_relaxed),
+			if (!exchanged) {
+				healthy.store(false, std::memory_order_relaxed);
+				return;
+			}
+		}
+	});
+	return expect(all_healthy,
 		"a contended CMPXCHG retry did not make progress") &&
 		expect(memory.dword(counter) == thread_count * iterations,
 			"concurrent CMPXCHG lost successful updates");
@@ -7651,30 +7524,21 @@ private:
 	constexpr std::uint64_t counter = 0x800;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0xff, 0x00, 0x0f, 0x05});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"locked increment block did not build"))
-		return false;
-	std::atomic<bool> healthy{true};
-	std::vector<std::thread> threads;
-	threads.reserve(thread_count);
-	for (unsigned index = 0; index < thread_count; ++index) {
-		threads.emplace_back([&] {
-			for (unsigned step = 0; step < iterations; ++step) {
-				CpuState cpu{};
-				cpu.gpr(Register::rax) = counter;
-				const auto result = gadgets::execute(
-					built.program, cpu, memory, 64);
-				if (result.event != uml::cpu::EngineEvent::system_call) {
-					healthy.store(false);
-					return;
-				}
+	const auto built = require_built(gadgets::build(memory, 0),
+		"locked increment block did not build");
+	const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
+		for (unsigned step = 0; step < iterations; ++step) {
+			CpuState cpu{};
+			cpu.gpr(Register::rax) = counter;
+			const auto result = gadgets::execute(
+				built.program, cpu, memory, 64);
+			if (result.event != uml::cpu::EngineEvent::system_call) {
+				healthy.store(false);
+				return;
 			}
-		});
-	}
-	for (auto &thread : threads)
-		thread.join();
-	return expect(healthy.load(),
+		}
+	});
+	return expect(all_healthy,
 		"a locked increment thread left the gadget stream early") &&
 		expect(memory.dword(counter) == thread_count * iterations,
 			"concurrent LOCK INC lost updates");
@@ -7811,33 +7675,24 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		TestMemory memory;
 		/* lock inc qword [rax]; syscall */
 		memory.load(0, {0xf0, 0x48, 0xff, 0x00, 0x0f, 0x05});
-		const auto built = gadgets::build(memory, 0);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"unaligned locked increment block did not build"))
-			return false;
-		std::atomic<bool> healthy{true};
-		std::vector<std::thread> threads;
-		threads.reserve(thread_count);
-		for (unsigned index = 0; index < thread_count; ++index) {
-			threads.emplace_back([&] {
-				gadgets::Executor executor;
-				executor.prepare(memory);
-				for (unsigned step = 0; step < iterations; ++step) {
-					CpuState cpu{};
-					cpu.gpr(Register::rax) = counter;
-					const auto result = gadgets::execute(
-						built.program, cpu, memory, executor, 64);
-					if (result.event !=
-						uml::cpu::EngineEvent::system_call) {
-						healthy.store(false);
-						return;
-					}
+		const auto built = require_built(gadgets::build(memory, 0),
+			"unaligned locked increment block did not build");
+		const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
+			gadgets::Executor executor;
+			executor.prepare(memory);
+			for (unsigned step = 0; step < iterations; ++step) {
+				CpuState cpu{};
+				cpu.gpr(Register::rax) = counter;
+				const auto result = gadgets::execute(
+					built.program, cpu, memory, executor, 64);
+				if (result.event !=
+					uml::cpu::EngineEvent::system_call) {
+					healthy.store(false);
+					return;
 				}
-			});
-		}
-		for (auto &thread : threads)
-			thread.join();
-		if (!expect(healthy.load(),
+			}
+		});
+		if (!expect(all_healthy,
 			"an unaligned locked increment left the stream early") ||
 			!expect(memory.qword(counter) == thread_count * iterations,
 				"concurrent unaligned LOCK INC lost updates"))
@@ -7860,10 +7715,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		0x0f, 0x05});
 	/* 0x40: lock inc byte [rdi+1]; syscall */
 	memory.load(0x40, {0xf0, 0xfe, 0x47, 0x01, 0x0f, 0x05});
-	const auto increment = gadgets::build(memory, 0x40);
-	if (!expect(increment.status == gadgets::BuildStatus::built,
-		"concurrent LOCK INC block did not build"))
-		return false;
+	const auto increment = require_built(gadgets::build(memory, 0x40),
+		"concurrent LOCK INC block did not build");
 	std::atomic<bool> done{false};
 	std::atomic<bool> healthy{true};
 	std::thread writer{[&] {
@@ -7955,10 +7808,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 			if (shape.rdi < 0x4000 && shape.rdi != shape.target)
 				memory.load(shape.rdi + index, {0xdd});
 		}
-		const auto built = gadgets::build(memory, 0);
-		if (!expect(built.status == gadgets::BuildStatus::built,
-			"MASKMOV block did not build"))
-			return false;
+		const auto built = require_built(gadgets::build(memory, 0),
+			"MASKMOV block did not build");
 		CpuState cpu{};
 		cpu.gpr(Register::rdi) = shape.rdi;
 		cpu.fs_base = shape.fs_base;
@@ -8006,10 +7857,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0xff, 0x00, 0x0f, 0x05});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"faulting locked increment block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"faulting locked increment block did not build");
 	CpuState cpu{};
 	cpu.gpr(Register::rax) = 16384 - 2;
 	const auto faulted = gadgets::execute(built.program, cpu, memory, 64);
@@ -8063,10 +7912,8 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	/* mov dword [rbx], 1; mov dword [rdx], 1; syscall */
 	memory.load(0, {0xc7, 0x03, 0x01, 0x00, 0x00, 0x00,
 		0xc7, 0x02, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
-	const auto built = gadgets::build(memory, 0);
-	if (!expect(built.status == gadgets::BuildStatus::built,
-		"ordered store block did not build"))
-		return false;
+	const auto built = require_built(gadgets::build(memory, 0),
+		"ordered store block did not build");
 	const auto word = [&](std::uint64_t address) {
 		return reinterpret_cast<volatile std::uint32_t *>(
 			memory.atomic_pointer(address, 8,
