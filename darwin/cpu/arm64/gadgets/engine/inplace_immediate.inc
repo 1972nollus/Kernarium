@@ -34,7 +34,7 @@
  * bits 39:16. */
 .macro add_sub_immediate_inplace_entry bits64, subtract, flags, reg, suffix, forward
 	.set Lipd\@, 0x8000 | (\reg * 8)
-scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lipd\@, scalar_none, scalar_none, 1
+scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lipd\@, Lscalar_none, Lscalar_none, 1
 	/* Non-faulting, and x14 is free: the same bounded hoist the ordinary
 	 * family uses. Builder always emits a terminal after a translated
 	 * fallthrough, so the successor word exists. */

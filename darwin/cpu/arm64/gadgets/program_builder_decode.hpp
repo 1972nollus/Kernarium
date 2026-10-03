@@ -149,6 +149,16 @@ enum class DecodeResult : std::uint8_t {
 	implementation_gap,
 };
 
+/* End the block at an encoding the virtual CPU does not implement: the
+ * illegal terminal reports it at this instruction, which retires. */
+[[nodiscard]] inline DecodeResult illegal_instruction(DecodeContext &context)
+{
+	selection::emit(context.words, selection::uml_arm64_gadget_illegal);
+	selection::emit(context.words, context.address);
+	++context.compiled;
+	return DecodeResult::terminal;
+}
+
 [[nodiscard]] DecodeResult implementation_gap(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_branch_system(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_data_processing(DecodeContext &context);
