@@ -51,8 +51,11 @@ scanout back at once, and a CPU-path scanout shown scaled as well, since it is
 kept in a host texture of the whole mode; a CPU-path scanout shown pixel for
 pixel refreshes in full on the guest's next flush. The client waits at most
 2 s for that flush, so a static one then arrives as last published.
-The VNC display converts native Metal scanouts with an asynchronous Metal
-readback. A readback requested before the framebuffer was cleared, re-placed
+The VNC display converts native Metal scanouts with a damage-bounded
+asynchronous Metal blit into one shared staging buffer, keeps at most one
+newer frame pending behind the readback in flight, and publishes to
+LibVNCServer only after GPU completion, so neither readback, scaling, nor
+encoding blocks the guest's flush timeline. A readback requested before the framebuffer was cleared, re-placed
 for a new mode, or written by a CPU-path copy is discarded when it completes,
 so it never repaints newer contents or counts as a complete frame, and the
 next readback reads its whole scanout.

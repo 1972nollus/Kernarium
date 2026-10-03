@@ -310,8 +310,7 @@ against native x86 Linux's values.
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
 readiness, and persistence of its separate GPT/ext4 data disk are exercised by
-`tests/perf/run_steam_boot_bench.py`. Interactive Steam launches retain that
-disk across boots and rootfs replacements. The
+`tests/perf/run_steam_boot_bench.py`. The
 [Steam producer](../tools/rootfs/steam-x86_64/README.md) owns its inputs,
 binary audit, startup contract, and continuing graphics limitation.
 
