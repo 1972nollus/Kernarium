@@ -68,7 +68,7 @@ floating_move_register floating_move_double, 8
 .if \afp
 afp_gadget \name
 .else
-vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 .endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -90,7 +90,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	str q2, [x13]
 	next_gadget
 	.if !\afp
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_unary, \name, \source, \destination, \element, \operation
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, floating_unary, \name, \source, \destination, \element, \operation
 	.endif
 .endm
 
@@ -102,7 +102,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 afp_gadget \name
 	ensure_fp_environment
 .else
-vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 .endif
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -118,7 +118,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	str q2, [x13]
 	next_gadget
 	.if !\afp
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_sign_scalar, \name, \source, \destination, \element, \arrangement, \shift, \operation
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, floating_sign_scalar, \name, \source, \destination, \element, \arrangement, \shift, \operation
 	.endif
 .endm
 
@@ -691,11 +691,11 @@ afp_twins_end
 /* FCADD/FCMLA rotation, shape, and indexed complex source are all selected
  * during translation. The valid hot path is the exact host complex opcode. */
 .macro floating_complex_vector name, operation, arrangement, rotation, accumulate, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry floating_complex_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -711,7 +711,7 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement, #\rotation
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, floating_complex_vector, \name, \operation, \arrangement, \rotation, \accumulate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, floating_complex_vector, \name, \operation, \arrangement, \rotation, \accumulate
 .endm
 
 .macro floating_complex_vector_rotations name, operation, arrangement, accumulate
@@ -722,8 +722,8 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 .endm
 
 .macro floating_complex_element name, arrangement, element, index, rotation, forward=0
-.set Lvector_old\@, scalar_offset0
-vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+.set Lvector_old\@, Lscalar_offset0
+vector_entry floating_complex_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -735,7 +735,7 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 	fcmla v2.\arrangement, v0.\arrangement, v1.\element[\index], #\rotation
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, floating_complex_element, \name, \arrangement, \element, \index, \rotation
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, floating_complex_element, \name, \arrangement, \element, \index, \rotation
 .endm
 
 .macro floating_complex_element_rotations name, arrangement, element, index
@@ -783,7 +783,7 @@ floating_complex_element_rotations fcmla_element, 4s, s, 1
 .if \afp
 afp_gadget \name
 .else
-vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_register16, Lscalar_none, 1
 .endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -810,7 +810,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	str q2, [x15]
 	next_gadget
 	.if !\afp
-	vector_variants \forward, vector_register8, vector_register16, scalar_none, floating_binary, \name, \left, \right, \destination, \element, \operation
+	vector_variants \forward, Lvector_register8, Lvector_register16, Lscalar_none, floating_binary, \name, \left, \right, \destination, \element, \operation
 	.endif
 .endm
 
@@ -855,7 +855,7 @@ afp_twins_end
  * gadget path contains one exact host FP instruction and no opcode, width,
  * or arrangement branch. */
 .macro simd_basic_floating_binary name, operation, arrangement, forward=0
-vector_entry simd_basic_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, scalar_none, 1
+vector_entry simd_basic_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lscalar_none, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
@@ -867,11 +867,11 @@ vector_entry simd_basic_\name, \forward, scalar_offset0, scalar_offset16, scalar
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, scalar_none, simd_basic_floating_binary, \name, \operation, \arrangement
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lscalar_none, simd_basic_floating_binary, \name, \operation, \arrangement
 .endm
 
 .macro simd_basic_floating_unary name, operation, arrangement, forward=0
-vector_entry simd_basic_\name, \forward, scalar_offset0, scalar_offset16, scalar_none, scalar_none, 1
+vector_entry simd_basic_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
@@ -881,7 +881,7 @@ vector_entry simd_basic_\name, \forward, scalar_offset0, scalar_offset16, scalar
 	\operation v2.\arrangement, v0.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_none, scalar_none, simd_basic_floating_unary, \name, \operation, \arrangement
+	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_basic_floating_unary, \name, \operation, \arrangement
 .endm
 
 .macro simd_basic_floating_binary_shapes name, operation
@@ -1047,7 +1047,7 @@ floating_conditional_compare_variants le, le
 .if \afp
 afp_gadget \name
 .else
-vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_register16, Lscalar_none, 1
 .endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1074,12 +1074,12 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	str q2, [x12]
 	next_gadget
 	.if !\afp
-	vector_variants \forward, vector_register8, vector_register16, scalar_none, simd_floating_compare_register_scalar, \name, \operation, \element
+	vector_variants \forward, Lvector_register8, Lvector_register16, Lscalar_none, simd_floating_compare_register_scalar, \name, \operation, \element
 	.endif
 .endm
 
 .macro simd_floating_compare_register_vector name, operation, arrangement, forward=0
-vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lvector_register16, Lscalar_none, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
@@ -1094,11 +1094,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-	vector_variants \forward, vector_register8, vector_register16, scalar_none, simd_floating_compare_register_vector, \name, \operation, \arrangement
+	vector_variants \forward, Lvector_register8, Lvector_register16, Lscalar_none, simd_floating_compare_register_vector, \name, \operation, \arrangement
 .endm
 
 .macro simd_floating_compare_zero_scalar name, operation, element, forward=0
-vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
@@ -1116,11 +1116,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_compare_zero_scalar, \name, \operation, \element
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, simd_floating_compare_zero_scalar, \name, \operation, \element
 .endm
 
 .macro simd_floating_compare_zero_vector name, operation, arrangement, forward=0
-vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry \name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
@@ -1132,7 +1132,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_compare_zero_vector, \name, \operation, \arrangement
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, simd_floating_compare_zero_vector, \name, \operation, \arrangement
 .endm
 
 .macro simd_floating_compare_register_variants name, operation
@@ -2044,7 +2044,7 @@ afp_twins_end
 afp_gadget simd_floating_\name
 	ensure_fp_environment
 .else
-vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry simd_floating_\name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 .endif
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -2057,7 +2057,7 @@ vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, 
 	str q2, [x12]
 	next_gadget
 	.if !\afp
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_sign, \name, \operation, \arrangement, \shift
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, simd_floating_sign, \name, \operation, \arrangement, \shift
 	.endif
 .endm
 
@@ -2093,11 +2093,11 @@ afp_twins_end
  * destination[4:0], left[12:8], right[20:16]. Native A64 writes also perform
  * the architecturally required zeroing above short-vector/scalar results. */
 .macro simd_three_same_vector name, operation, arrangement, accumulate=0, fpstate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_three_same_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2113,15 +2113,15 @@ vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, s
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_three_same_vector, \name, \operation, \arrangement, \accumulate, \fpstate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_three_same_vector, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
 
 .macro simd_three_same_scalar name, operation, arrangement, accumulate=0, fpstate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_three_same_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2137,7 +2137,7 @@ vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, s
 	\operation \arrangement\()2, \arrangement\()0, \arrangement\()1
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_three_same_scalar, \name, \operation, \arrangement, \accumulate, \fpstate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_three_same_scalar, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
 
 .macro simd_three_same_v6 name, operation, accumulate=0, fpstate=0
@@ -2554,11 +2554,11 @@ simd_matrix_software usmmla, 0, 1, 0
  * above, the builder resolves operation, signedness, element size, and
  * lower/upper-half form once. */
 .macro simd_widening_vector name, operation, destination, left, right, accumulate=0, fpstate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2572,15 +2572,15 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation v2.\destination, v0.\left, v1.\right
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_widening_vector, \name, \operation, \destination, \left, \right, \accumulate, \fpstate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_widening_vector, \name, \operation, \destination, \left, \right, \accumulate, \fpstate
 .endm
 
 .macro simd_widening_scalar name, operation, destination, source, accumulate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
@@ -2592,7 +2592,7 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation \destination\()2, \source\()0, \source\()1
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_widening_scalar, \name, \operation, \destination, \source, \accumulate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_widening_scalar, \name, \operation, \destination, \source, \accumulate
 .endm
 
 .macro simd_widening_long3 name, operation, operation2, accumulate=0, fpstate=0
@@ -2616,11 +2616,11 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 /* High-narrow streams carry three packed CpuState offsets. The upper-half
  * forms alone load the old destination because lower-half forms clear it. */
 .macro simd_high_narrow_vector name, operation, destination, left, right, preserve=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \preserve
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
 	vector_read \forward, 1, q0, [_cpu, x10]
@@ -2631,7 +2631,7 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation v2.\destination, v0.\left, v1.\right
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_high_narrow_vector, \name, \operation, \destination, \left, \right, \preserve
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_high_narrow_vector, \name, \operation, \destination, \left, \right, \preserve
 .endm
 
 .macro simd_high_narrow3 name, operation, operation2
@@ -2699,11 +2699,11 @@ simd_widening_scalar sqdmull_s, sqdmull, d, s
  * direct CpuState vector byte offsets; runtime performs no guest-register
  * decoding or vector-base address formation. */
 .macro simd_unary_vector name, operation, destination, source, accumulate=0, fpstate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvector_old\@, scalar_none, 1
+vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lvector_old\@, Lscalar_none, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2717,15 +2717,15 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvecto
 	\operation v2.\destination, v0.\source
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, Lvector_old\@, scalar_none, simd_unary_vector, \name, \operation, \destination, \source, \accumulate, \fpstate
+	vector_variants \forward, Lscalar_offset16, Lvector_old\@, Lscalar_none, simd_unary_vector, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
 
 .macro simd_unary_scalar name, operation, destination, source, accumulate=0, fpstate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvector_old\@, scalar_none, 1
+vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lvector_old\@, Lscalar_none, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2739,7 +2739,7 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvecto
 	\operation \destination\()2, \source\()0
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, Lvector_old\@, scalar_none, simd_unary_scalar, \name, \operation, \destination, \source, \accumulate, \fpstate
+	vector_variants \forward, Lscalar_offset16, Lvector_old\@, Lscalar_none, simd_unary_scalar, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
 
 .macro simd_unary_v6 name, operation, fpstate=0
@@ -2835,7 +2835,7 @@ simd_unary_vector rev16_16b, rev16, 16b, 16b
 
 /* Integer compare against zero. */
 .macro simd_compare_zero_vector name, operation, arrangement, forward=0
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar_none, scalar_none, 1
+vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
@@ -2843,11 +2843,11 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar
 	\operation v2.\arrangement, v0.\arrangement, #0
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_none, scalar_none, simd_compare_zero_vector, \name, \operation, \arrangement
+	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_compare_zero_vector, \name, \operation, \arrangement
 .endm
 
 .macro simd_compare_zero_scalar name, operation, forward=0
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar_none, scalar_none, 1
+vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
@@ -2855,7 +2855,7 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar
 	\operation d2, d0, #0
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_none, scalar_none, simd_compare_zero_scalar, \name, \operation
+	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_compare_zero_scalar, \name, \operation
 .endm
 
 .macro simd_compare_zero_v7 name, operation
@@ -2901,7 +2901,7 @@ simd_unary_scalar sqxtun_s, sqxtun, s, d, 0, 1
 
 /* SHLL shifts by the source element width. */
 .macro simd_shll name, operation, destination, source, shift, forward=0
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar_none, scalar_none, 1
+vector_entry simd_unary_\name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	lsr w10, w8, #16
@@ -2909,7 +2909,7 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, scalar
 	\operation v2.\destination, v0.\source, #\shift
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_none, scalar_none, simd_shll, \name, \operation, \destination, \source, \shift
+	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_shll, \name, \operation, \destination, \source, \shift
 .endm
 
 simd_shll shll_8b, shll, 8h, 8b, 8
@@ -2921,7 +2921,7 @@ simd_shll shll_4s, shll2, 2d, 4s, 32
 
 /* Translation-specialized across-lane integer reductions. */
 .macro simd_reduce name, operation, destination, source, forward=0
-vector_entry simd_reduce_\name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+vector_entry simd_reduce_\name, \forward, Lvector_register0, Lvector_register8, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
@@ -2932,7 +2932,7 @@ vector_entry simd_reduce_\name, \forward, vector_register0, vector_register8, sc
 	\operation \destination\()2, v0.\source
 	str q2, [x13]
 	next_gadget
-	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_reduce, \name, \operation, \destination, \source
+	vector_variants \forward, Lvector_register8, Lscalar_none, Lscalar_none, simd_reduce, \name, \operation, \destination, \source
 .endm
 
 .macro simd_reduce_long5 name, operation
@@ -2986,11 +2986,11 @@ simd_unary_vector ursqrte_4s, ursqrte, 4s, 4s
  * become packed CpuState byte offsets in the stream, so the runtime only
  * unpacks offsets rather than decoding guest registers or forming addresses. */
 .macro simd_bitwise_shape name, operation, arrangement, wide, accumulate=0, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry \name\()_\arrangement, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry \name\()_\arrangement, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
 	.if \wide
@@ -3009,7 +3009,7 @@ vector_entry \name\()_\arrangement, \forward, scalar_offset0, scalar_offset16, s
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_bitwise_shape, \name, \operation, \arrangement, \wide, \accumulate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_bitwise_shape, \name, \operation, \arrangement, \wide, \accumulate
 .endm
 
 .macro simd_bitwise name, operation, accumulate=0
@@ -3030,13 +3030,13 @@ simd_bitwise simd_bif, bif, 1
  * source load and native operation; the 64-bit load also clears the upper
  * half required by the 8-byte arrangement. */
 .macro simd_move_shape name, register, forward=0
-vector_entry \name, \forward, scalar_offset0, scalar_offset16, scalar_none, scalar_none, 1
+vector_entry \name, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	unpack_u16_2 x8, x9, x10
 	vector_read \forward, 1, \register\()2, [_cpu, x10]
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_none, scalar_none, simd_move_shape, \name, \register
+	vector_variants \forward, Lscalar_offset16, Lscalar_none, Lscalar_none, simd_move_shape, \name, \register
 .endm
 
 simd_move_shape simd_mov_8b, d
@@ -4235,11 +4235,11 @@ simd_indexed_saturating_accumulate_high_family sqrdmlsh, sqrdmlsh
  * arrangement, scalar/vector form, and element index. The hot path has no
  * decode or control branches. */
 .macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, accumulate, forward=0
-.set Lvector_old\@, scalar_none
+.set Lvector_old\@, Lscalar_none
 .if \accumulate
-.set Lvector_old\@, scalar_offset0
+.set Lvector_old\@, Lscalar_offset0
 .endif
-vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
+vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, Lscalar_offset0, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
@@ -4253,7 +4253,7 @@ vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, s
 	\operation \destination, \source, v1.\element[\index]
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
+	vector_variants \forward, Lscalar_offset16, Lscalar_offset32, Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
 .endm
 
 .macro simd_indexed_floating_family name, operation, accumulate

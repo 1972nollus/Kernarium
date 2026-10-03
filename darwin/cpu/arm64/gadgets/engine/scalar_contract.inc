@@ -18,15 +18,15 @@ _scalar_w16 .req w0
 
 /* First stream operand: shift[5:0], width[11:6], byte scaling[13:12].
  * Bit 15 denotes a constant CpuState offset; 0xffff denotes no operand. */
-.set scalar_none, 0xffff
-.set scalar_offset0, (16 << 6)
-.set scalar_offset16, (16 << 6) | 16
-.set scalar_offset32, (16 << 6) | 32
-.set scalar_offset48, (16 << 6) | 48
-.set scalar_register0, (3 << 12) | (5 << 6)
-.set scalar_register8, (3 << 12) | (5 << 6) | 8
-.set scalar_register16, (3 << 12) | (5 << 6) | 16
-.set scalar_sp, 0x8000 | UML_GADGET_CPU_SP
+.set Lscalar_none, 0xffff
+.set Lscalar_offset0, (16 << 6)
+.set Lscalar_offset16, (16 << 6) | 16
+.set Lscalar_offset32, (16 << 6) | 32
+.set Lscalar_offset48, (16 << 6) | 48
+.set Lscalar_register0, (3 << 12) | (5 << 6)
+.set Lscalar_register8, (3 << 12) | (5 << 6) | 8
+.set Lscalar_register16, (3 << 12) | (5 << 6) | 16
+.set Lscalar_sp, 0x8000 | UML_GADGET_CPU_SP
 
 .pushsection __DATA_CONST,__gadget_scalar
 .p2align 3
@@ -77,10 +77,10 @@ NAME(uml_arm64_scalar_contract_begin):
 .endm
 
 /* ScalarContract is 80 bytes. Catalog lookups occur only in Builder. */
-.macro scalar_entry name, forward, family, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
+.macro scalar_entry name, forward, family, destination, first=Lscalar_none, second=Lscalar_none, third=Lscalar_none, words=1
  .if \forward == 0
  gadget \name
- .set Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .set Lscalar_sources\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .pushsection __DATA_CONST,__gadget_scalar
  .quad NAME(uml_arm64_gadget_\name)
  scalar_pointer \name, 1, Lscalar_sources\@
@@ -103,7 +103,7 @@ NAME(uml_arm64_scalar_contract_begin):
  * section preserves the original bank's entry sizes and cache-line phase.
  * Each participating template's last parameter is its forwarding mask. */
 .macro scalar_variants forward, first, second, third, generator, arguments:vararg
- .set Lvariant_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .set Lvariant_sources\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .if \forward == 0 && Lvariant_sources\@ != 0
  .pushsection GADGET_SECTION_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7

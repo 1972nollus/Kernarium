@@ -6,11 +6,11 @@ gadget nop
  * displacement. The following word is the guest PC used for address formation
  * and precise memory faults. */
 .macro literal_integer_fast name, instruction, host_register, bytes, extension, discard, forward=0
-	.set Lsd\@, scalar_offset0
+	.set Lsd\@, Lscalar_offset0
 	.if \discard
-	.set Lsd\@, scalar_none
+	.set Lsd\@, Lscalar_none
 	.endif
-scalar_entry \name, \forward, (17 - 1), Lsd\@, scalar_none, scalar_none, scalar_none, 2
+scalar_entry \name, \forward, (17 - 1), Lsd\@, Lscalar_none, Lscalar_none, Lscalar_none, 2
 	ldr x8, [_stream]
 	ldr x9, [_stream, #8]
 	and x19, x8, #0xffff
@@ -42,7 +42,7 @@ Lliteral_integer_fast_cross\@:
 	.endif
 	add _stream, _stream, #8
 	next_gadget
-	scalar_variants \forward, scalar_none, scalar_none, scalar_none, literal_integer_fast, \name, \instruction, \host_register, \bytes, \extension, \discard
+	scalar_variants \forward, Lscalar_none, Lscalar_none, Lscalar_none, literal_integer_fast, \name, \instruction, \host_register, \bytes, \extension, \discard
 .endm
 
 .macro literal_integer_modes name, instruction, host_register, bytes, extension
@@ -95,20 +95,20 @@ literal_vector_fast literal_load_vector128_fast, ldr, q, 16
  * TLB/fault decisions; valid same-page hits execute no opcode or register-mode
  * tests. */
 .macro scalar_unsigned_fast load, bits64, transfer_zero, base_sp, suffix, baked=0, forward=0
-	.set Lsd\@, scalar_offset0
-	.set Lsm\@, scalar_offset0
+	.set Lsd\@, Lscalar_offset0
+	.set Lsm\@, Lscalar_offset0
 	.if \baked
 	.set Lsd\@, \baked
 	.set Lsm\@, \baked
 	.endif
 	.if !\load || \transfer_zero
-	.set Lsd\@, scalar_none
+	.set Lsd\@, Lscalar_none
 	.endif
-	.set Lsn\@, scalar_offset16
+	.set Lsn\@, Lscalar_offset16
 	.if \load || \transfer_zero
-	.set Lsm\@, scalar_none
+	.set Lsm\@, Lscalar_none
 	.endif
-scalar_entry \suffix, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, scalar_none, 1
+scalar_entry \suffix, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 1
 	.if !\load && (\forward & 2)
 	mov x22, x0
 	.endif
@@ -260,7 +260,7 @@ Lscalar_forward_alignment_read\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write_indexed
 	.endif
-	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix, \baked
+	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix, \baked
 .endm
 
 /* A word or doubleword transfer of a register takes the in-place family,
@@ -282,12 +282,12 @@ scalar_unsigned_modes 0, 1, store64_unsigned_fast
  * the already-scaled displacement and the position, laid out as above, so the
  * runtime does not inspect an opcode or branch on register 31. */
 .macro scalar_unsigned_load_narrow_fast name, instruction, host_register, bytes, extension, transfer_zero, base_sp, forward=0
-	.set Lsd\@, scalar_offset0
+	.set Lsd\@, Lscalar_offset0
 	.if \transfer_zero
-	.set Lsd\@, scalar_none
+	.set Lsd\@, Lscalar_none
 	.endif
-	.set Lsn\@, scalar_offset16
-scalar_entry \name, \forward, (17 - 1), Lsd\@, Lsn\@, scalar_none, scalar_none, 1
+	.set Lsn\@, Lscalar_offset16
+scalar_entry \name, \forward, (17 - 1), Lsd\@, Lsn\@, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
@@ -345,7 +345,7 @@ Lscalar_unsigned_narrow_load_cross\@:
 Lscalar_forward_alignment_read\@:
 	b Lscalar_alignment_fault_read_indexed
 	.endif
-	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, scalar_unsigned_load_narrow_fast, \name, \instruction, \host_register, \bytes, \extension, \transfer_zero, \base_sp
+	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, scalar_unsigned_load_narrow_fast, \name, \instruction, \host_register, \bytes, \extension, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_unsigned_load_narrow_modes name, instruction, host_register, bytes, extension
@@ -367,12 +367,12 @@ scalar_unsigned_load_narrow_modes load32_signed_x_fast, ldrsw, x, 4, 5
 .purgem scalar_unsigned_load_narrow_fast
 
 .macro scalar_unsigned_store_narrow_fast name, instruction, bytes, transfer_zero, base_sp, forward=0
-	.set Lsn\@, scalar_offset16
-	.set Lsm\@, scalar_offset0
+	.set Lsn\@, Lscalar_offset16
+	.set Lsm\@, Lscalar_offset0
 	.if \transfer_zero
-	.set Lsm\@, scalar_none
+	.set Lsm\@, Lscalar_none
 	.endif
-scalar_entry \name, \forward, (17 - 0), scalar_none, Lsn\@, Lsm\@, scalar_none, 1
+scalar_entry \name, \forward, (17 - 0), Lscalar_none, Lsn\@, Lsm\@, Lscalar_none, 1
 	.if !0 && (\forward & 2)
 	mov x22, x0
 	.endif
@@ -426,7 +426,7 @@ Lscalar_unsigned_narrow_store_cross\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write_indexed
 	.endif
-	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, scalar_unsigned_store_narrow_fast, \name, \instruction, \bytes, \transfer_zero, \base_sp
+	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, scalar_unsigned_store_narrow_fast, \name, \instruction, \bytes, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_unsigned_store_narrow_modes name, instruction, bytes
@@ -446,8 +446,8 @@ scalar_unsigned_store_narrow_modes store16_unsigned_fast, strh, 2
  * translated base offset, and scaled displacement. Width and direction are
  * fixed by the selected symbol. */
 .macro vector_unsigned_fast name, load, instruction, host_register, bytes, base_sp, forward=0
-	.set Lsn\@, scalar_offset16
-scalar_entry \name, \forward, (17 - \load), scalar_none, Lsn\@, scalar_none, scalar_none, 2
+	.set Lsn\@, Lscalar_offset16
+scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, Lscalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
@@ -517,7 +517,7 @@ Lscalar_forward_alignment_read\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write
 	.endif
-	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, vector_unsigned_fast, \name, \load, \instruction, \host_register, \bytes, \base_sp
+	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, vector_unsigned_fast, \name, \load, \instruction, \host_register, \bytes, \base_sp
 .endm
 
 .macro vector_unsigned_modes name, load, instruction, host_register, bytes
@@ -544,16 +544,16 @@ vector_unsigned_modes store128, 0, str, q, 16
  * address without writeback, mode 1 pre-index, mode 2 post-index, and mode 3
  * post-index with architecturally suppressed overlapping-load writeback. */
 .macro scalar_other_immediate_fast name, load, instruction, host_register, bytes, extension, mode, transfer_zero, base_sp, forward=0
-	.set Lsd\@, scalar_offset0
+	.set Lsd\@, Lscalar_offset0
 	.if !\load || \transfer_zero || \mode == 1 || \mode == 2
-	.set Lsd\@, scalar_none
+	.set Lsd\@, Lscalar_none
 	.endif
-	.set Lsn\@, scalar_offset16
-	.set Lsm\@, scalar_offset0
+	.set Lsn\@, Lscalar_offset16
+	.set Lsm\@, Lscalar_offset0
 	.if \load || \transfer_zero
-	.set Lsm\@, scalar_none
+	.set Lsm\@, Lscalar_none
 	.endif
-scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, scalar_none, 2
+scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lscalar_none, 2
 	.if !\load && (\forward & 2)
 	mov x22, x0
 	.endif
@@ -670,7 +670,7 @@ Lscalar_forward_alignment_read\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write
 	.endif
-	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, scalar_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \mode, \transfer_zero, \base_sp
+	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, scalar_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \mode, \transfer_zero, \base_sp
 .endm
 
 .macro scalar_other_immediate_operation name, load, instruction, host_register, bytes, extension
@@ -759,15 +759,15 @@ Lscalar_alignment_fault_write_indexed:
  * CpuState byte offset. Extension (UXTW/X/SXTW) and optional scaling are fixed
  * in the gadget symbol. */
 .macro scalar_other_register_fast name, load, instruction, host_register, bytes, address_extension, shifted, result_extension, transfer_zero, base_sp, forward=0
-	.set Lsd\@, scalar_offset0
+	.set Lsd\@, Lscalar_offset0
 	.if !\load || \transfer_zero
-	.set Lsd\@, scalar_none
+	.set Lsd\@, Lscalar_none
 	.endif
-	.set Lsn\@, scalar_offset16
-	.set Lsm\@, scalar_offset32
-	.set Lsa\@, scalar_offset0
+	.set Lsn\@, Lscalar_offset16
+	.set Lsm\@, Lscalar_offset32
+	.set Lsa\@, Lscalar_offset0
 	.if \load || \transfer_zero
-	.set Lsa\@, scalar_none
+	.set Lsa\@, Lscalar_none
 	.endif
 scalar_entry \name, \forward, (17 - \load), Lsd\@, Lsn\@, Lsm\@, Lsa\@, 2
 	.if !\load && (\forward & 4)
@@ -933,8 +933,8 @@ scalar_other_register_all load64u, 1, ldr, x, 8, 0
  * translated address descriptors as scalar memory, with the V-register byte
  * offset in bits 15:0. */
 .macro vector_other_immediate_fast name, load, instruction, host_register, bytes, mode, base_sp, forward=0
-	.set Lsn\@, scalar_offset16
-scalar_entry \name, \forward, (17 - \load), scalar_none, Lsn\@, scalar_none, scalar_none, 2
+	.set Lsn\@, Lscalar_offset16
+scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, Lscalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
@@ -1016,7 +1016,7 @@ Lscalar_forward_alignment_read\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write
 	.endif
-	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, vector_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \base_sp
+	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, vector_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \base_sp
 .endm
 
 .macro vector_other_immediate_operation name, load, instruction, host_register, bytes
@@ -1029,9 +1029,9 @@ Lscalar_forward_alignment_write\@:
 .endm
 
 .macro vector_other_register_fast name, load, instruction, host_register, bytes, extension, shifted, base_sp, forward=0
-	.set Lsn\@, scalar_offset16
-	.set Lsm\@, scalar_offset32
-scalar_entry \name, \forward, (17 - \load), scalar_none, Lsn\@, Lsm\@, scalar_none, 2
+	.set Lsn\@, Lscalar_offset16
+	.set Lsm\@, Lscalar_offset32
+scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lsm\@, Lscalar_none, 2
 	ldr x8, [_stream], #8
 	and x19, x8, #0xffff
 	ubfx x20, x8, #16, #16
@@ -1115,7 +1115,7 @@ Lscalar_forward_alignment_read\@:
 Lscalar_forward_alignment_write\@:
 	b Lscalar_alignment_fault_write
 	.endif
-	scalar_variants \forward, Lsn\@, Lsm\@, scalar_none, vector_other_register_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \shifted, \base_sp
+	scalar_variants \forward, Lsn\@, Lsm\@, Lscalar_none, vector_other_register_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \shifted, \base_sp
 .endm
 
 .macro vector_other_register_extension name, load, instruction, host_register, bytes, extension, extension_name, shifted
@@ -1160,8 +1160,8 @@ vector_other_operation load128, 1, ldr, q, 16
  * pre-index, mode 2 post-index, and mode 3 post-index with suppressed load
  * writeback. */
 .macro integer_pair_fast name, load, instruction, host_register, bytes, sign_extend, mode, first_zero, second_zero, sp_base, forward=0
-	.set Lsn\@, scalar_offset32
-scalar_entry \name, \forward, (17 - \load), scalar_none, Lsn\@, scalar_none, scalar_none, 1
+	.set Lsn\@, Lscalar_offset32
+scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, Lscalar_none, 1
 	ldr x8, [_stream], #8
 	and x22, x8, #0x1ff
 	ubfx x23, x8, #9, #9
@@ -1286,7 +1286,7 @@ Lscalar_forward_alignment_pair_read\@:
 Lscalar_forward_alignment_pair_write\@:
 	b uml_arm64_gadget_pair_alignment_fault_write_indexed
 	.endif
-	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, integer_pair_fast, \name, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, \first_zero, \second_zero, \sp_base
+	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, integer_pair_fast, \name, \load, \instruction, \host_register, \bytes, \sign_extend, \mode, \first_zero, \second_zero, \sp_base
 .endm
 
 .macro integer_pair_mode name, load, instruction, host_register, bytes, sign_extend, mode
@@ -1330,8 +1330,8 @@ integer_pair_load_operation load64, ldp, x, 8, 0
  * Width, direction, address mode, and SP versus GPR base are fixed by the
  * selected symbol. */
 .macro vector_pair_fast name, load, instruction, host_register, bytes, mode, sp_base, forward=0
-	.set Lsn\@, scalar_offset32
-scalar_entry \name, \forward, (17 - \load), scalar_none, Lsn\@, scalar_none, scalar_none, 2
+	.set Lsn\@, Lscalar_offset32
+scalar_entry \name, \forward, (17 - \load), Lscalar_none, Lsn\@, Lscalar_none, Lscalar_none, 2
 	ldr x8, [_stream], #8
 	and x22, x8, #0xffff
 	ubfx x23, x8, #16, #16
@@ -1435,7 +1435,7 @@ Lscalar_forward_alignment_pair_read\@:
 Lscalar_forward_alignment_pair_write\@:
 	b uml_arm64_gadget_pair_alignment_fault_write
 	.endif
-	scalar_variants \forward, Lsn\@, scalar_none, scalar_none, vector_pair_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \sp_base
+	scalar_variants \forward, Lsn\@, Lscalar_none, Lscalar_none, vector_pair_fast, \name, \load, \instruction, \host_register, \bytes, \mode, \sp_base
 .endm
 
 .macro vector_pair_operation name, load, instruction, host_register, bytes

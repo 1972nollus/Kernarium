@@ -2,9 +2,9 @@
 /* Complete write-through SIMD results in v2. Ordinary hot paths are unchanged;
  * only consumers with a proved adjacent dependency select static variants.
  * All forwarded inputs must be captured before v2 is overwritten. */
-.set vector_register0, 0x4000
-.set vector_register8, 0x4000 | 8
-.set vector_register16, 0x4000 | 16
+.set Lvector_register0, 0x4000
+.set Lvector_register8, 0x4000 | 8
+.set Lvector_register16, 0x4000 | 16
 
 .pushsection __DATA_CONST,__gadget_vector
 .p2align 3
@@ -20,10 +20,10 @@ NAME(uml_arm64_vector_contract_begin):
  .endif
 .endm
 
-.macro vector_entry name, forward, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
+.macro vector_entry name, forward, destination, first=Lscalar_none, second=Lscalar_none, third=Lscalar_none, words=1
  .if \forward == 0
  gadget \name
- .set Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .set Lvector_sources\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .pushsection __DATA_CONST,__gadget_vector
  .quad NAME(uml_arm64_gadget_\name)
  .irp mask, 1, 2, 3, 4, 5, 6, 7
@@ -40,7 +40,7 @@ NAME(uml_arm64_vector_contract_begin):
 .endm
 
 .macro vector_variants forward, first, second, third, generator, arguments:vararg
- .set Lvector_masks\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .set Lvector_masks\@, ((\first != Lscalar_none) & 1) | (((\second != Lscalar_none) & 1) << 1) | (((\third != Lscalar_none) & 1) << 2)
  .if \forward == 0 && Lvector_masks\@ != 0
  .pushsection GADGET_SECTION_VECTOR_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7
