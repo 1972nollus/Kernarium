@@ -1038,6 +1038,56 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
 }
 
+/* A context create that runs out of memory leaves no trace, so the guest's
+ * retry of the same ID succeeds and makes the kind of context it asked for.
+ * A Venus context is named by two sets, and a create that entered only the
+ * first refused every retry. */
+void contextCreateIsRetryableAfterEachAllocationFailure()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    for (const auto capset :
+         {protocol::venusCapsetId, protocol::virgl2CapsetId}) {
+        const bool venus = capset == protocol::venusCapsetId;
+        const auto context = createContext(901, capset);
+        protocol::GpuControlHeader destroy = context.header;
+        destroy.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
+        /* A ring without a fence: Venus rejects the header, Virgl takes it,
+         * and an unknown context is reported as one. */
+        protocol::GpuSubmit3d probe {};
+        probe.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        probe.header.contextId = context.header.contextId;
+        probe.header.flags = protocol::gpuFlagInfoRingIndex;
+        const auto createdKind = venus
+            ? protocol::GpuResponse::errorInvalidParameter
+            : protocol::GpuResponse::okNoData;
+
+        std::size_t retries = 0;
+        const auto sweep = failEachAllocationBeforeCommit(
+            device, requestBytes(context), [&] {
+                if (dependencies.createContextCount !=
+                        dependencies.destroyContextCount ||
+                    responseType(device.process(requestBytes(probe), false)) !=
+                        protocol::GpuResponse::errorInvalidContext) {
+                    return false;
+                }
+                requireOk(device, requestBytes(context));
+                requireResponse(device, requestBytes(probe), createdKind);
+                requireOk(device, requestBytes(destroy));
+                ++retries;
+                return true;
+            });
+        require(responseType(sweep.response) ==
+            protocol::GpuResponse::okNoData);
+        require(retries == sweep.failures.size());
+        require(sweep.failures.size() >= (venus ? 3U : 2U));
+        requireResponse(device, requestBytes(probe), createdKind);
+        requireOk(device, requestBytes(destroy));
+    }
+}
+
 void edidReportsDisplayPixelsAndEffectiveDensity()
 {
     FakeGpuDependencies dependencies;
@@ -2999,6 +3049,7 @@ int main()
     displayChangeEventsPreserveAResizeThatRacesGuestClear();
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
+    contextCreateIsRetryableAfterEachAllocationFailure();
     rendererExecutionFailuresPreserveDeviceState();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
