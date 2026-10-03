@@ -10,7 +10,7 @@ _context .req x21
 _stream .req x28
 _executed .req x29
 
-	.set x86_guest_memory_gadget, 0
+	.set Lx86_guest_memory_gadget, 0
 
 /* Name the start of the cold section, whose own labels are temporary, so a
  * host sample of a cold path names this section rather than whatever precedes
@@ -23,7 +23,7 @@ NAME(uml_x86_64_gadget_cold_section_begin):
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
 NAME(uml_x86_64_gadget_\name):
-	.set x86_guest_memory_gadget, 0
+	.set Lx86_guest_memory_gadget, 0
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -77,11 +77,11 @@ Lx86_rounding_ready\@:
 .endm
 
 .macro x86_marks_guest_memory
-	.set x86_guest_memory_gadget, 1
+	.set Lx86_guest_memory_gadget, 1
 .endm
 
 .macro x86_memory_order_boundary
-	.if x86_guest_memory_gadget
+	.if Lx86_guest_memory_gadget
 	x86_memory_order_barrier
 	.endif
 .endm
