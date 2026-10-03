@@ -686,12 +686,19 @@ Linked graphics pipelines share native programs and dynamic vertex-input
 variants only while a live Vulkan pipeline owns them. The lookup cache drops
 its entry and releases those resources when the last pipeline owner is
 destroyed, so obsolete programs do not accumulate until device teardown.
-Pipeline statistics use draw-time guards in the same executable, including
-its bounded raster variants; query begin and end never compile or retain a
-second shader tree. A discard variant preserves application shader effects and
-transform feedback without raster-only materialization or provoking-vertex
-conversion. Dynamic discard changes select the corresponding precompiled
-variant, including after pipeline-cache reload.
+Pipeline statistics use draw-time guards in the same executable, including its
+bounded raster variants; query begin and end never compile or retain a second
+shader tree. Every active statistics query counts into one shared block; a
+statistics query begin or end that follows counted work adds the block into
+the report of every query active through it and starts a fresh one, so
+overlapping queries each count what they would alone. Vulkan forbids that
+overlap (VUID-vkCmdBeginQuery-queryPool-01922), but Zink begins one statistics
+query per GL target. A statistics query becomes available only once the
+encoder that adds its counts has ended, because Zink keeps the first result
+that a poll without waiting finds available. A discard variant preserves
+application shader effects and transform feedback without raster-only
+materialization or provoking-vertex conversion. Dynamic discard changes select
+the corresponding precompiled variant, including after pipeline-cache reload.
 
 Sequential encoders of one recording share a Metal command buffer. Only
 compute that must run before or after a whole render pass, and each encoder of
