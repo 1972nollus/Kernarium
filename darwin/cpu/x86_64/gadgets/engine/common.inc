@@ -1663,22 +1663,27 @@ Lx86_vector_write_done\@:
 	.endif
 .endm
 
-/* vector_write_xmm, or for a 64-bit width an MMX write, which as on x86
- * also stores into the aliased x87 register with an all-ones exponent and
- * clears the x87 tag word and top. */
+/* An MMX write, as on x86, also stores `value` into the x87 register the MMX
+ * register at state offset `offset` aliases, with an all-ones exponent, and
+ * clears the x87 tag word and top. `index`, `entry` and `tag` are scratch. */
+.macro synchronize_mmx offset, value, index=x10, entry=x11, tag=w12
+	sub \index, \offset, #UML_X86_64_CPU_MMX
+	lsr \index, \index, #3
+	add \entry, _cpu, #UML_X86_64_CPU_X87
+	add \entry, \entry, \index, lsl #4
+	str \value, [\entry]
+	mov \tag, #0xffff
+	strh \tag, [\entry, #8]
+	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+.endm
+
+/* vector_write_xmm, or for a 64-bit width an MMX write of d4. */
 .macro vector_write width, descriptor
 	.if \width == 64
 	and x9, x\descriptor, #0xffff
 	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, d4
 	.else
 	vector_write_xmm \width, \descriptor
 	.endif

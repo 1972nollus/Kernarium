@@ -59,25 +59,13 @@ Lx86_vector_move_64_128_vex_write:
 	str q1, [x8, #16]
 	retire_and_next
 
-.macro synchronize_mmx offset, value
-	sub x12, x\offset, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x\value, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-.endm
-
 gadget vector_move_64_mmx_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ldr x11, [_cpu, x10]
 	str x11, [_cpu, x9]
-	synchronize_mmx 9, 11
+	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 
 gadget vector_move_64_mmx_rm
@@ -86,10 +74,8 @@ gadget vector_move_64_mmx_rm
 	read_operand 8, ldr, x, 24
 	and x9, x23, #0xffff
 	str x24, [_cpu, x9]
-	synchronize_mmx 9, 24
+	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
-
-.purgem synchronize_mmx
 
 .macro vector_gpr_to_xmm width, load, host_register, vex
 gadget vector_gpr_to_xmm_\width\()\vex
@@ -128,15 +114,7 @@ gadget vector_gpr_to_mmx_\width
 	mov w11, w11
 	.endif
 	str x11, [_cpu, x9]
-	sub x12, x9, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x11, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 .endm
 
@@ -151,15 +129,7 @@ gadget vector_memory_32_to_mmx
 	read_operand 4, ldr, w, 24, w
 	and x9, x23, #0xffff
 	str x24, [_cpu, x9]
-	sub x12, x9, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x24, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
 
 .macro vector_scalar_register width, load, store, host_register, vex

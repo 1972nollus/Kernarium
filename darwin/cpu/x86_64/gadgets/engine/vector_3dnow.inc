@@ -102,20 +102,6 @@
 	.endif
 .endm
 
-.macro vector_3dnow_write descriptor
-	and x9, x\descriptor, #0xffff
-	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-.endm
-
 .macro vector_3dnow_register opcode
 gadget vector_3dnow_\opcode\()_rr
 	ldr x8, [_stream], #8
@@ -124,7 +110,7 @@ gadget vector_3dnow_\opcode\()_rr
 	ldr d0, [_cpu, x10]
 	ldr d1, [_cpu, x11]
 	vector_3dnow_body 0x\opcode
-	vector_3dnow_write 8
+	vector_write 64, 8
 	retire_and_next
 .endm
 
@@ -144,7 +130,7 @@ Lx86_vector_3dnow_loaded\@:
 	and x10, x26, #0xffff
 	ldr d0, [_cpu, x10]
 	vector_3dnow_body 0x\opcode
-	vector_3dnow_write 23
+	vector_write 64, 23
 	retire_and_next
 .endm
 
@@ -183,6 +169,5 @@ vector_3dnow_family bf
 .purgem vector_3dnow_family
 .purgem vector_3dnow_memory
 .purgem vector_3dnow_register
-.purgem vector_3dnow_write
 .purgem vector_3dnow_body
 .purgem vector_3dnow_float_to_i32

@@ -125,15 +125,7 @@ gadget vector_insert_\width\()_rr\vex
 	.if \width == 64
 	ldr x14, [x9]
 	sub x12, x9, _cpu
-	sub x12, x12, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x15, _cpu, #UML_X86_64_CPU_X87
-	add x15, x15, x12, lsl #4
-	str x14, [x15]
-	mov w13, #0xffff
-	strh w13, [x15, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x12, x14, x12, x15, w13
 	.endif
 	retire_and_next
 .endm
@@ -171,15 +163,7 @@ gadget vector_insert_\width\()_rm\vex
 	.if \width == 64
 	ldr x14, [x9]
 	sub x12, x9, _cpu
-	sub x12, x12, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x15, _cpu, #UML_X86_64_CPU_X87
-	add x15, x15, x12, lsl #4
-	str x14, [x15]
-	mov w13, #0xffff
-	strh w13, [x15, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x12, x14, x12, x15, w13
 	.endif
 	retire_and_next
 .endm

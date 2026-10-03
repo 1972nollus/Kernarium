@@ -323,15 +323,7 @@ gadget vector_f\element\()_pi_\truncate\()_rr
 	ldr q1, [_cpu, x10]
 	vector_fp_to_pi_body \element, \truncate
 	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, d4
 	retire_and_next
 .endm
 
@@ -364,17 +356,7 @@ Lx86_vector_fp_to_pi_cross\@:
 	.endif
 Lx86_vector_fp_to_pi_loaded\@:
 	vector_fp_to_pi_body \element, \truncate
-	and x9, x23, #0xffff
-	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	vector_write 64, 23
 	retire_and_next
 	.if \element == 64
 Lx86_vector_fp_to_pi_cross_fault\@:
