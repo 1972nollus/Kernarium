@@ -23,9 +23,8 @@ constexpr std::uint64_t write_cached_code_tag =
 constexpr std::uint8_t write_code_published = UML_X86_64_WRITE_CODE_PUBLISHED;
 
 /* Serializes every locked operand that no exclusive access can cover: one
- * that crosses a 16-byte granule, or any unaligned one on a host without
- * FEAT_LSE2. Such operands are rare enough that one lock for the process does
- * not contend. */
+ * that crosses a 16-byte granule. Such operands are rare enough that one lock
+ * for the process does not contend. */
 std::mutex split_operand_lock;
 
 

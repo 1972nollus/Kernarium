@@ -10,7 +10,6 @@
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/gadgets/x87_math.hpp"
 #include "memory/guest_address_space.hpp"
-#include "platform/apple/host_features.hpp"
 
 #include <algorithm>
 #include <array>
@@ -7683,20 +7682,14 @@ private:
 
 /* Where a locked operand can sit: naturally aligned, unaligned inside one
  * 16-byte granule, across a granule boundary, and across a page boundary. The
- * first keeps the exclusive path everywhere, the second keeps it on a host
- * that reports FEAT_LSE2, and the rest take the split lock.
+ * first two keep the exclusive path, which FEAT_LSE2 allows at any alignment
+ * inside a granule, and the rest take the split lock.
  */
 constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	0x800, 0x801, 0x80c, 0xffc};
 
-[[nodiscard]] bool host_takes_unaligned_exclusives() noexcept
-{
-	return uml::platform::apple::probed_host_capabilities().has(
-		uml::platform::ArmFeature::lse2);
-}
-
 /* Every locked form computes the same result wherever its operand sits and
- * whichever path the host lets it take, and writes nothing outside it.
+ * whichever path that sends it down, and writes nothing outside it.
  */
 [[nodiscard]] bool locked_forms_agree_at_every_operand_address()
 {
@@ -7755,7 +7748,7 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		bool operator==(const Outcome &) const = default;
 	};
 	const auto run = [&](const Form &form, std::uint64_t address,
-		bool permit, Outcome &outcome) {
+		Outcome &outcome) {
 		TestMemory memory;
 		memory.fill(0, std::as_bytes(std::span{form.code}));
 		std::array<std::byte, 32> image;
@@ -7765,7 +7758,6 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 		memory.fill(address - 8, image);
 		gadgets::Executor executor;
 		executor.prepare(memory);
-		executor.permit_unaligned_exclusives(permit);
 		const auto built = gadgets::build(memory, 0);
 		if (built.status != gadgets::BuildStatus::built)
 			return false;
@@ -7794,25 +7786,21 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	};
 	for (const auto &form : forms) {
 		Outcome reference{};
-		if (!expect(run(form, locked_operand_addresses.front(), false,
-			reference), form.name))
+		if (!expect(run(form, locked_operand_addresses.front(), reference),
+			form.name))
 			return false;
 		for (const auto address : locked_operand_addresses) {
-			for (const bool permit : {false, true}) {
-				if (permit && !host_takes_unaligned_exclusives())
-					continue;
-				Outcome outcome{};
-				if (!expect(run(form, address, permit, outcome) &&
-					outcome == reference, form.name))
-					return false;
-			}
+			Outcome outcome{};
+			if (!expect(run(form, address, outcome) &&
+				outcome == reference, form.name))
+				return false;
 		}
 	}
 	return true;
 }
 
 /* An unaligned LOCK INC stays atomic against the other vCPUs on the exclusive
- * path a FEAT_LSE2 host allows and on the split lock everywhere else.
+ * path FEAT_LSE2 allows inside a granule and on the split lock across one.
  */
 [[nodiscard]] bool unaligned_locked_increment_survives_concurrent_vcpus()
 {
@@ -7820,45 +7808,40 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	constexpr unsigned thread_count = 4;
 	constexpr unsigned iterations = 20000;
 	for (const auto counter : locked_operand_addresses) {
-		for (const bool permit : {false, true}) {
-			if (permit && !host_takes_unaligned_exclusives())
-				continue;
-			TestMemory memory;
-			/* lock inc qword [rax]; syscall */
-			memory.load(0, {0xf0, 0x48, 0xff, 0x00, 0x0f, 0x05});
-			const auto built = gadgets::build(memory, 0);
-			if (!expect(built.status == gadgets::BuildStatus::built,
-				"unaligned locked increment block did not build"))
-				return false;
-			std::atomic<bool> healthy{true};
-			std::vector<std::thread> threads;
-			threads.reserve(thread_count);
-			for (unsigned index = 0; index < thread_count; ++index) {
-				threads.emplace_back([&] {
-					gadgets::Executor executor;
-					executor.prepare(memory);
-					executor.permit_unaligned_exclusives(permit);
-					for (unsigned step = 0; step < iterations; ++step) {
-						CpuState cpu{};
-						cpu.gpr(Register::rax) = counter;
-						const auto result = gadgets::execute(
-							built.program, cpu, memory, executor, 64);
-						if (result.event !=
-							uml::cpu::EngineEvent::system_call) {
-							healthy.store(false);
-							return;
-						}
+		TestMemory memory;
+		/* lock inc qword [rax]; syscall */
+		memory.load(0, {0xf0, 0x48, 0xff, 0x00, 0x0f, 0x05});
+		const auto built = gadgets::build(memory, 0);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"unaligned locked increment block did not build"))
+			return false;
+		std::atomic<bool> healthy{true};
+		std::vector<std::thread> threads;
+		threads.reserve(thread_count);
+		for (unsigned index = 0; index < thread_count; ++index) {
+			threads.emplace_back([&] {
+				gadgets::Executor executor;
+				executor.prepare(memory);
+				for (unsigned step = 0; step < iterations; ++step) {
+					CpuState cpu{};
+					cpu.gpr(Register::rax) = counter;
+					const auto result = gadgets::execute(
+						built.program, cpu, memory, executor, 64);
+					if (result.event !=
+						uml::cpu::EngineEvent::system_call) {
+						healthy.store(false);
+						return;
 					}
-				});
-			}
-			for (auto &thread : threads)
-				thread.join();
-			if (!expect(healthy.load(),
-				"an unaligned locked increment left the stream early") ||
-				!expect(memory.qword(counter) == thread_count * iterations,
-					"concurrent unaligned LOCK INC lost updates"))
-				return false;
+				}
+			});
 		}
+		for (auto &thread : threads)
+			thread.join();
+		if (!expect(healthy.load(),
+			"an unaligned locked increment left the stream early") ||
+			!expect(memory.qword(counter) == thread_count * iterations,
+				"concurrent unaligned LOCK INC lost updates"))
+			return false;
 	}
 	return true;
 }
