@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <optional>
 #include <set>
-#include <string_view>
 
 namespace uml::emulator::tests::base_multiply {
 
@@ -19,20 +18,19 @@ struct FormCase final {
 	bool wide;
 	unsigned operation;
 	bool subtract;
-	std::string_view name;
 };
 
 inline constexpr std::array legal_forms{
-	FormCase{false, 0, false, "MADD W"},
-	FormCase{false, 0, true, "MSUB W"},
-	FormCase{true, 0, false, "MADD X"},
-	FormCase{true, 0, true, "MSUB X"},
-	FormCase{true, 1, false, "SMADDL"},
-	FormCase{true, 1, true, "SMSUBL"},
-	FormCase{true, 5, false, "UMADDL"},
-	FormCase{true, 5, true, "UMSUBL"},
-	FormCase{true, 2, false, "SMULH"},
-	FormCase{true, 6, false, "UMULH"},
+	FormCase{false, 0, false}, // MADD W
+	FormCase{false, 0, true}, // MSUB W
+	FormCase{true, 0, false}, // MADD X
+	FormCase{true, 0, true}, // MSUB X
+	FormCase{true, 1, false}, // SMADDL
+	FormCase{true, 1, true}, // SMSUBL
+	FormCase{true, 5, false}, // UMADDL
+	FormCase{true, 5, true}, // UMSUBL
+	FormCase{true, 2, false}, // SMULH
+	FormCase{true, 6, false}, // UMULH
 };
 
 [[nodiscard]] constexpr bool is_high(const FormCase &form) noexcept

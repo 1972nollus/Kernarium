@@ -10,7 +10,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <set>
-#include <string_view>
 
 namespace uml::emulator::tests::base_condition {
 
@@ -21,16 +20,11 @@ enum class SelectOperation : unsigned {
 	negate,
 };
 
-struct SelectDescription final {
-	SelectOperation operation;
-	std::string_view id;
-};
-
-inline constexpr std::array select_descriptions{
-	SelectDescription{SelectOperation::select, "BASE-0138 CSEL"},
-	SelectDescription{SelectOperation::increment, "BASE-0141 CSINC"},
-	SelectDescription{SelectOperation::invert, "BASE-0142 CSINV"},
-	SelectDescription{SelectOperation::negate, "BASE-0143 CSNEG"},
+inline constexpr std::array select_operations{
+	SelectOperation::select,
+	SelectOperation::increment,
+	SelectOperation::invert,
+	SelectOperation::negate,
 };
 
 [[nodiscard]] constexpr std::uint32_t encode_select(
@@ -212,12 +206,11 @@ void select_translation_and_dead_gadgets()
 
 	std::set<std::uintptr_t> selected;
 	for (const bool wide : {false, true})
-		for (const auto description : test::select_descriptions)
+		for (const auto operation : test::select_operations)
 			for (unsigned condition = 0; condition < 16U;
 			     ++condition) {
 				const auto instruction = test::encode_select(
-					wide, description.operation, condition,
-					7, 3, 5);
+					wide, operation, condition, 7, 3, 5);
 				const auto built = gadgets::Builder{}.build(
 					base, std::array{instruction});
 				const bool unconditional = condition >= 14U;
