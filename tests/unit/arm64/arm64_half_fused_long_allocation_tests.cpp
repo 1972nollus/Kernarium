@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_bfloat_arithmetic_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/detail/half_fused_long.hpp"
 
@@ -7,8 +8,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <string_view>
 
 namespace arm64_half_fused_long_test {
@@ -69,13 +68,7 @@ inline constexpr std::array vector_forms{
 		(registers.destination & 31U);
 }
 
-inline void require(bool condition, const char *message)
-{
-	if (!condition) {
-		std::fprintf(stderr, "%s\n", message);
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 } // namespace arm64_half_fused_long_test
 

@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/gadget_symbols.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory_resource>
-#include <source_location>
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
@@ -19,15 +17,7 @@ namespace {
 
 using Gadget = void (*)();
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 [[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
 {

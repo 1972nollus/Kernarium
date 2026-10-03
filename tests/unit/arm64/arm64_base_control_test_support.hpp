@@ -2,14 +2,13 @@
 #pragma once
 
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "uml_darwin_guest.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <string_view>
@@ -20,17 +19,7 @@ namespace arm64 = uml::cpu::arm64;
 
 inline constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t encode_pc_relative(
 	bool page, std::int64_t immediate, unsigned destination) noexcept

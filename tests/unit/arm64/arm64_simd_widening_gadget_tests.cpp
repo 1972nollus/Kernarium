@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -8,10 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
-#include <source_location>
 #include <string_view>
 
 namespace arm64_simd_widening_test {
@@ -53,20 +51,8 @@ struct Registers final {
 	unsigned right;
 };
 
-[[noreturn]] inline void fail(const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	std::fprintf(stderr, "%s at %s:%u\n", message,
-		location.file_name(), location.line());
-	std::abort();
-}
-
-inline void require(bool condition, const char *message = "require failed",
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition)
-		fail(message, location);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr unsigned encoding(Operation operation)
 {

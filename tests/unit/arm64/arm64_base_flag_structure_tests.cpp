@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -10,8 +11,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
 #include <string_view>
 
@@ -23,17 +22,8 @@ inline constexpr std::uint32_t cfinv_encoding = 0xd500'401fU;
 inline constexpr std::uint32_t xaflag_encoding = 0xd500'403fU;
 inline constexpr std::uint32_t axflag_encoding = 0xd500'405fU;
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t encode_rmif(
 	unsigned source, unsigned rotation, unsigned mask) noexcept

@@ -3,15 +3,13 @@
 
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "platform/apple/host_features.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
-#include <source_location>
 #include <span>
 #include <string_view>
 
@@ -28,20 +26,7 @@ constexpr unsigned first_cached_vector = 16U;
 constexpr unsigned last_cached_vector = 31U;
 constexpr std::uint64_t code_base = 0x4f10'0000ULL;
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t
 bitwise(unsigned operation, unsigned destination, unsigned left,

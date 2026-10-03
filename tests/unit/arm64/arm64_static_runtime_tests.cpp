@@ -6,6 +6,7 @@
 #include "uml_darwin_static_mmu.h"
 #include "static_mmu_test_support.hpp"
 #include "scratch_backing.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +20,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <source_location>
 #include <string_view>
 #include <sys/mman.h>
 #include <thread>
@@ -29,15 +29,7 @@
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 using uml::testing::ScratchBacking;
 

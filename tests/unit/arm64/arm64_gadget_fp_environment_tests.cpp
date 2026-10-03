@@ -1,29 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory_resource>
-#include <source_location>
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 void set_single(arm64::CpuState &cpu, unsigned index, std::uint32_t bits)
 {

@@ -3,27 +3,16 @@
 
 #include "arm64_engine_test_support.hpp"
 #include "arm64_system_test_support.hpp"
+#include "require.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <span>
 #include <string_view>
 
 namespace arm64_hint_test {
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t primary_instruction(
 	unsigned immediate)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_simd_ordinary_memory_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -9,7 +10,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <map>
 #include <numeric>
 #include <set>
@@ -81,18 +81,8 @@ using Gadget = void (*)();
 using Bases = std::array<Gadget, 2>;
 using Widths = std::array<Bases, 5>;
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fputs(message, stderr);
-	std::fputc('\n', stderr);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] std::uintptr_t address_of(Gadget gadget)
 {

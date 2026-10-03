@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
@@ -7,8 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
 #include <string_view>
 
@@ -57,17 +56,7 @@ constexpr std::array<Gadget, 3> native_gadgets{
 	uml_arm64_gadget_bfloat_convert_upper_native,
 };
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] std::uintptr_t address(Gadget gadget)
 {

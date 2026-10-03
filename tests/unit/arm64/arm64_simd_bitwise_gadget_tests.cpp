@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
 #include "arm64_simd_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -8,8 +9,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <string_view>
 
 namespace arm64_simd_bitwise_test {
@@ -83,15 +82,7 @@ constexpr std::array<std::array<Gadget, 2>, 8> expected_gadgets{{
     {uml_arm64_gadget_simd_bif_8b, uml_arm64_gadget_simd_bif_16b},
 }};
 
-[[noreturn]] void fail(const char *message) {
-  std::fprintf(stderr, "%s\n", message);
-  std::abort();
-}
-
-void require(bool condition, const char *message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] std::uintptr_t address_of(Gadget gadget) noexcept {
   return reinterpret_cast<std::uintptr_t>(gadget);

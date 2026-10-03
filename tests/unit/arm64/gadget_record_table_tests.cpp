@@ -1,27 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/gadget_record_table.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <vector>
 
 namespace cache = uml::cpu::gadget_cache;
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 /* A table's chunks double from 32 records until they would reach the 128 KiB
  * that bounds them. At 24 bytes that bound is 5461 records, which no doubling

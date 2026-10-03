@@ -11,13 +11,12 @@
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "platform/apple/host_features.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <vector>
 
 namespace arm64 = uml::cpu::arm64;
@@ -44,15 +43,7 @@ void uml_arm64_gadget_illegal();
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 template<typename Entry>
 [[nodiscard]] std::uintptr_t address(Entry entry) noexcept

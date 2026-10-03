@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -10,8 +11,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
 #include <set>
 #include <span>
@@ -33,16 +32,8 @@ struct Registers3 final {
   unsigned second;
 };
 
-[[noreturn]] inline void fail(std::string_view message) {
-  std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()),
-               message.data());
-  std::abort();
-}
-
-inline void require(bool condition, std::string_view message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] inline engine::NativeRequirements feature1() {
   return engine::NativeRequirements::features(::uml::cpu::ArmFeature::sha1);

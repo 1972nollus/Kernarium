@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <span>
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
@@ -24,21 +22,7 @@ constexpr std::uint64_t code_base = 0x4fe0'0000ULL;
 constexpr std::uint32_t cntfrq = 0xd53b'e000U;
 constexpr std::uint32_t cntvct = 0xd53b'e040U;
 
-[[noreturn]] void
-fail(const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-		location.line());
-	std::abort();
-}
-
-void require(bool condition, const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition)
-		fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr bool is_counter_read(
 	std::uint32_t word, std::uint32_t system) noexcept

@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <span>
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
@@ -17,20 +15,7 @@ namespace {
 
 constexpr std::uint64_t code_base = 0x4fc0'0000ULL;
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] std::span<const std::uint32_t>
 hot_code(const jit_test::CompiledCode &compiled, std::size_t expected_guest) {

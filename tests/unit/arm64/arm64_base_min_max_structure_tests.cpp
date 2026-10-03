@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
 #include <string_view>
 
@@ -57,13 +56,7 @@ inline constexpr std::array descriptions{
 		((rn & 31U) << 5U) | (rd & 31U);
 }
 
-inline void require(bool condition, const char *message)
-{
-	if (!condition) {
-		std::fprintf(stderr, "%s\n", message);
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 } // namespace uml::emulator::tests::base_min_max
 

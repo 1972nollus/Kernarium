@@ -2,14 +2,13 @@
 #pragma once
 
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "uml_darwin_guest.h"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -224,14 +223,7 @@ inline void encode_little_endian(
 	return variant.operation == 3U ? value & 0xffff'ffffU : value;
 }
 
-inline void require(bool condition, std::string_view message)
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()),
-		message.data());
-	std::abort();
-}
+using uml::testing::require;
 
 inline void check_program(
 	EngineHarness &harness, std::string_view name,

@@ -2,6 +2,7 @@
 #include "arm64_gadget_dependency_reference.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdint>
@@ -21,14 +22,7 @@ void run_gadget_dependency_memory_tests();
 void run_gadget_vector_dependency_tests();
 
 namespace {
-void require(bool condition,
-	const std::source_location where = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n", where.file_name(), where.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 constexpr bool is_immediate(std::uint32_t word)
 {
