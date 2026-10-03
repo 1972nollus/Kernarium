@@ -9,7 +9,6 @@ namespace uml::routing {
 struct Route final {
 	void *runtime{};
 	void *network{};
-	bool public_run_active{};
 };
 
 class ActiveRouteScope final {

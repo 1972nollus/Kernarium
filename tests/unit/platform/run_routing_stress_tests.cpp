@@ -35,11 +35,9 @@ int main()
 				++local_reads;
 				const bool coherent =
 					(route.runtime == &runtime_a &&
-					 route.network == &network_a &&
-					 route.public_run_active) ||
+					 route.network == &network_a) ||
 					(route.runtime == &runtime_b &&
-					 route.network == &network_b &&
-					 route.public_run_active) ||
+					 route.network == &network_b) ||
 					(route.runtime == nullptr &&
 					 route.network == nullptr);
 				if (!coherent)
