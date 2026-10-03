@@ -731,10 +731,10 @@ index ec5b69b396ba441e0df0228e1ee7ea8462041ded..8a32ee5240bb943452af8f73313900cf
      * payload from, once the submit worker reaches it; see
      * kk_sync_binary_move(). Null everywhere else. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 12dbfca789156608253467093347dfc8715d49e2..28d57ac57cdb8c1f3914e6a32099e313d1e55ed8 100644
+index 565f62abad8758d17572f3f5dc6e33a8c7cf4ffb..16a0c9b216d46cba324880074119eeaafb901755 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -890,6 +890,43 @@ if with_tests
+@@ -871,6 +871,43 @@ if with_tests
        ],
        timeout : 90,
      )

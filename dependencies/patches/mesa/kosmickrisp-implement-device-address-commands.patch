@@ -9,7 +9,7 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/bridge/stubs/mtl_encoder.c    |   6 +
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        |  13 ++
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   5 +
- src/kosmickrisp/vulkan/kk_cmd_copy.c          | 186 ++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_cmd_copy.c          | 168 ++++++++++++++++++
  src/kosmickrisp/vulkan/kk_device.c            |   6 +
  src/kosmickrisp/vulkan/kk_device.h            |  11 ++
  src/kosmickrisp/vulkan/kk_device_address.h    |  28 +++
@@ -17,10 +17,10 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/vulkan/kk_device_memory.h     |  11 ++
  src/kosmickrisp/vulkan/kk_event.c             |  10 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   4 +
- src/kosmickrisp/vulkan/kk_query_pool.c        |  53 ++++-
+ src/kosmickrisp/vulkan/kk_query_pool.c        |  53 ++++--
  src/kosmickrisp/vulkan/meson.build            |  12 ++
  .../vulkan/tests/test_device_address.c        |  48 +++++
- 16 files changed, 430 insertions(+), 12 deletions(-)
+ 16 files changed, 412 insertions(+), 12 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_address.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
@@ -132,7 +132,7 @@ index f9879e5770e21b5d6837e650b7b744fd77fd0768..fcef60698ec9162be7f09be7ae398212
                                     VkPipelineBindPoint bind_point);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_copy.c b/src/kosmickrisp/vulkan/kk_cmd_copy.c
-index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f7d4b7f7a 100644
+index a5fcf3768d00cbc93e1896f002379687519a52e1..8636a37742d03b93db2000f29bd4c362fd91857f 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_copy.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_copy.c
 @@ -10,6 +10,7 @@
@@ -177,7 +177,7 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
  struct kk_buffer_image_copy_info {
     struct mtl_buffer_image_copy mtl_data;
     size_t buffer_slice_size_B;
-@@ -145,6 +173,164 @@ kk_CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
+@@ -145,6 +173,146 @@ kk_CmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
     }
  }
  
@@ -194,10 +194,13 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
 +   };
 +}
 +
-+VKAPI_ATTR void VKAPI_CALL
-+kk_CmdCopyMemoryToImageKHR(
-+   VkCommandBuffer commandBuffer,
-+   const VkCopyDeviceMemoryImageInfoKHR *pCopyMemoryInfo)
++/* A copy between device memory and an image, in the direction to_image
++ * names.  Inlined so that each entry point keeps its own loop with the
++ * direction folded away. */
++static ALWAYS_INLINE void
++kk_cmd_copy_memory_image(VkCommandBuffer commandBuffer,
++                         const VkCopyDeviceMemoryImageInfoKHR *pCopyMemoryInfo,
++                         bool to_image)
 +{
 +   if (!pCopyMemoryInfo)
 +      return;
@@ -228,10 +231,21 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
 +      {
 +         info.mtl_data.image_slice = slice;
 +         info.mtl_data.buffer_offset_B = buffer_offset;
-+         mtl_copy_from_buffer_to_texture(encoder, &info.mtl_data);
++         if (to_image)
++            mtl_copy_from_buffer_to_texture(encoder, &info.mtl_data);
++         else
++            mtl_copy_from_texture_to_buffer(encoder, &info.mtl_data);
 +         buffer_offset += info.buffer_slice_size_B;
 +      }
 +   }
++}
++
++VKAPI_ATTR void VKAPI_CALL
++kk_CmdCopyMemoryToImageKHR(
++   VkCommandBuffer commandBuffer,
++   const VkCopyDeviceMemoryImageInfoKHR *pCopyMemoryInfo)
++{
++   kk_cmd_copy_memory_image(commandBuffer, pCopyMemoryInfo, true);
 +}
 +
 +VKAPI_ATTR void VKAPI_CALL
@@ -239,39 +253,7 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
 +   VkCommandBuffer commandBuffer,
 +   const VkCopyDeviceMemoryImageInfoKHR *pCopyMemoryInfo)
 +{
-+   if (!pCopyMemoryInfo)
-+      return;
-+
-+   VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
-+   VK_FROM_HANDLE(kk_image, image, pCopyMemoryInfo->image);
-+   mtl_compute_encoder *encoder = cs_get_compute(cmd, true);
-+
-+   for (uint32_t r = 0; r < pCopyMemoryInfo->regionCount; r++) {
-+      const VkDeviceMemoryImageCopyKHR *region =
-+         &pCopyMemoryInfo->pRegions[r];
-+      struct kk_device_address address;
-+      if (!kk_cmd_resolve_address(cmd, region->addressRange, &address))
-+         return;
-+
-+      const VkBufferImageCopy2 buffer_region =
-+         kk_memory_image_copy_region(region);
-+      const uint8_t plane_index = kk_image_memory_aspects_to_plane(
-+         image, region->imageSubresource.aspectMask);
-+      struct kk_image_plane *plane = &image->planes[plane_index];
-+      struct kk_buffer_image_copy_info info =
-+         vk_buffer_image_copy_to_mtl_buffer_image_copy(&buffer_region, plane);
-+      info.mtl_data.buffer = address.buffer;
-+      info.mtl_data.image = plane->mtl_handle;
-+      size_t buffer_offset = address.offset;
-+
-+      kk_foreach_slice(slice, image, imageSubresource)
-+      {
-+         info.mtl_data.image_slice = slice;
-+         info.mtl_data.buffer_offset_B = buffer_offset;
-+         mtl_copy_from_texture_to_buffer(encoder, &info.mtl_data);
-+         buffer_offset += info.buffer_slice_size_B;
-+      }
-+   }
++   kk_cmd_copy_memory_image(commandBuffer, pCopyMemoryInfo, false);
 +}
 +
 +VKAPI_ATTR void VKAPI_CALL

@@ -100,6 +100,25 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
     return reinterpret_cast<const Structure*>(bytes.data());
 }
 
+/* The size of a control command's successful reply. GET_CAPSET's reply also
+ * carries the capability set after its header. */
+[[nodiscard]] constexpr std::size_t replySize(
+    protocol::GpuCommand command) noexcept
+{
+    switch (command) {
+    case protocol::GpuCommand::getDisplayInfo:
+        return sizeof(protocol::GpuDisplayInfo);
+    case protocol::GpuCommand::getEdid:
+        return sizeof(protocol::GpuEdid);
+    case protocol::GpuCommand::getCapsetInfo:
+        return sizeof(protocol::GpuCapsetInfo);
+    case protocol::GpuCommand::resourceMapBlob:
+        return sizeof(protocol::GpuMapInfo);
+    default:
+        return sizeof(protocol::GpuControlHeader);
+    }
+}
+
 /* Two formats that differ only in whether the fourth byte is alpha or
  * padding store their colour channels identically. */
 [[nodiscard]] std::uint32_t formatLayout(std::uint32_t format) noexcept
@@ -778,18 +797,41 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
 VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
-    std::uint64_t fenceCookie)
+    std::uint64_t fenceCookie,
+    std::size_t responseCapacity)
 {
+    /* A reply the guest left no room for is refused before the command runs,
+     * so the command changes nothing. The refusal is a bare header, which the
+     * caller has checked fits. */
+    const auto* header = readStructure<protocol::GpuControlHeader>(request);
+    const bool control = !cursorQueue && header != nullptr;
+    const auto command = control
+        ? static_cast<protocol::GpuCommand>(header->type)
+        : protocol::GpuCommand {};
+    if (control && responseCapacity < replySize(command)) {
+        return {
+            .response = response(
+                *header, protocol::GpuResponse::errorInvalidParameter),
+        };
+    }
+
     std::optional<DeferredFence> deferredFence;
     std::optional<std::uint32_t> destroyedContextId;
-    auto response = processInternal(
+    auto reply = processInternal(
         request,
         cursorQueue,
         fenceCookie,
         &deferredFence,
         &destroyedContextId);
+    /* GET_CAPSET's reply also carries the capability set, whose size only
+     * the renderer knows. The query changes nothing, so it is refused once
+     * its reply is built. */
+    if (command == protocol::GpuCommand::getCapset &&
+        reply.size() > responseCapacity) {
+        reply = response(*header, protocol::GpuResponse::errorInvalidParameter);
+    }
     return {
-        .response = std::move(response),
+        .response = std::move(reply),
         .fence = deferredFence,
         .destroyedContextId = destroyedContextId,
     };

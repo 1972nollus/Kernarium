@@ -7,9 +7,33 @@
 #include <cerrno>
 #include <cstdio>
 #include <stdexcept>
+#include <sys/event.h>
 #include <utility>
 
 namespace uml::gpu {
+namespace {
+
+constexpr std::intptr_t fencePollMicroseconds = 100;
+
+[[nodiscard]] bool changeFenceTimer(int queue, std::uint16_t flags)
+{
+    struct kevent change {};
+    EV_SET(
+        &change,
+        fenceTimerIdentifier,
+        EVFILT_TIMER,
+        flags,
+        NOTE_USECONDS,
+        fencePollMicroseconds,
+        nullptr);
+    int result;
+    do {
+        result = ::kevent(queue, &change, 1, nullptr, 0, nullptr);
+    } while (result < 0 && errno == EINTR);
+    return result == 0;
+}
+
+} // namespace
 
 DeferredFences::DeferredFences()
 {
@@ -21,6 +45,13 @@ bool DeferredFences::full() const noexcept
 {
     return pending_.size() + completions_.size() >=
         protocol::maximumVirtqueueSize;
+}
+
+void DeferredFences::reserveDefer()
+{
+    /* The constructor made room for every command a queue can hold, so a
+     * deferral can only add its ring. */
+    ringEscapes_.reserve(ringEscapes_.size() + 1);
 }
 
 void DeferredFences::defer(
@@ -198,6 +229,24 @@ void DeferredFences::reportRingStoppedRetiring(
         fence.contextId,
         fence.ringIndex,
         maximumRingEscapes);
+}
+
+void addFenceTimer(int queue)
+{
+    if (!changeFenceTimer(queue, EV_ADD | EV_DISABLE | EV_DISPATCH))
+        throw std::runtime_error("adding GPU fence timer failed");
+}
+
+void armFenceTimer(int queue)
+{
+    /* Adding an existing knote modifies it and restarts its interval. */
+    if (!changeFenceTimer(queue, EV_ADD | EV_ENABLE | EV_DISPATCH))
+        throw std::runtime_error("arming GPU fence timer failed");
+}
+
+void cancelFenceTimer(int queue) noexcept
+{
+    (void)changeFenceTimer(queue, EV_DISABLE);
 }
 
 } // namespace uml::gpu

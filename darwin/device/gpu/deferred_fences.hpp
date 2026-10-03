@@ -65,6 +65,13 @@ public:
         return orderingRelaxed_;
     }
 
+    /* Makes room for one more defer(), so that it allocates nothing. The
+     * transport holds a command only after the device has run it, and a
+     * failure then would leave the command committed with nothing held to
+     * answer the guest. So it calls this before the device runs a command
+     * that may defer; it throws bad_alloc with nothing changed. */
+    void reserveDefer();
+
     void defer(
         std::uint64_t requestId,
         const protocol::GpuControlHeader& requestHeader,
@@ -149,5 +156,19 @@ private:
      * every held command has completed. */
     bool orderingRelaxed_ {};
 };
+
+/* The device's poll for held fences and renderer work: a timer on the
+ * device's kqueue that fires once, shortly after it is armed.
+ *
+ * The server arms it after the device has run a command, when a failure
+ * would leave the command committed and fail the connection. So the timer's
+ * knote is added once, disabled, with the queue, and arming, firing and
+ * cancelling only modify it, which allocates nothing in the kernel: a
+ * dispatched timer is disabled rather than deleted when it fires. Once the
+ * knote is added, only a broken queue fails to arm it. */
+inline constexpr std::uintptr_t fenceTimerIdentifier = 1;
+void addFenceTimer(int queue);
+void armFenceTimer(int queue);
+void cancelFenceTimer(int queue) noexcept;
 
 } // namespace uml::gpu

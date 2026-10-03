@@ -1088,7 +1088,7 @@ index 0000000000000000000000000000000000000000..65ad692a99d258a32b9bcb17037d6dc2
 +   }
 +}
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 43160fdacdd5a3922f886a5cb834cfcdd5dea854..12dbfca789156608253467093347dfc8715d49e2 100644
+index 3fe246188e3a1d09da94e6d89fbd37bd3b8389c1..565f62abad8758d17572f3f5dc6e33a8c7cf4ffb 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -95,6 +95,7 @@ kk_files = files(
@@ -1126,7 +1126,7 @@ index 43160fdacdd5a3922f886a5cb834cfcdd5dea854..12dbfca789156608253467093347dfc8
      test(
        'kosmickrisp_tess_setup_gpu',
        executable(
-@@ -926,6 +947,46 @@ if with_tests
+@@ -907,6 +928,46 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
