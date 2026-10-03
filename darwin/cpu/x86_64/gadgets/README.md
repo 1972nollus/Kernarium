@@ -303,10 +303,11 @@ SSE and AVX arithmetic and FMA return x86's values where the host's differ.
 A NaN result is the first source quieted when that is a NaN, else the second,
 else the negative indefinite; for an FMA the first of a, b and c in x86's
 a * b + c, with its own sign whatever the form negates. MXCSR.DAZ flushes
-denormal inputs, and MXCSR.FTZ flushes a result that is tiny after rounding:
-below the smallest normal when rounded as if the exponent were unbounded,
-which a product, quotient or fused result the host rounds up to the smallest
-normal may be, so that one is run again scaled into the normal range. MIN and
+denormal inputs, conversions' included, and MXCSR.FTZ flushes a result that
+is tiny after rounding: below the smallest normal when rounded as if the
+exponent were unbounded, which a product, quotient, fused result or narrowed
+double the host rounds up to the smallest normal may be, so that one is run
+again scaled into the normal range. MIN and
 MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a denormal
 input as zero and return zero for RCP's tiny results; elsewhere the host's
 exact quotient lies within x86's estimate error. These repairs live in the

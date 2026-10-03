@@ -75,11 +75,92 @@ Lx86_vector_convert_in_range\@:
 	.endif
 .endm
 
+/* MXCSR.DAZ flushes a conversion's denormal inputs, v1 and for a 32-byte
+ * input v3, `element` bits wide. A truncating conversion to integers, which
+ * gives a denormal input zero in any case, has no need of it. */
+.macro vector_convert_inputs element, input_size
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_convert_inputs_ready\@
+	simd_flush_denormals 1, \element
+	.if \input_size == 32
+	simd_flush_denormals 3, \element
+	.endif
+Lx86_vector_convert_inputs_ready\@:
+.endm
+
+/* MXCSR.FTZ flushes a narrowed single that is tiny after rounding (see
+ * vector_float.inc): every denormal one, and one the host rounded up to the
+ * smallest normal when its double, scaled up, narrows below the scaled
+ * threshold. The scalar result is in lane 0 of v6 from d1; the packed one in
+ * v4 from v1, and v3 for a 32-byte input. */
+.macro vector_convert_flush_narrowed scalar, input_size
+	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
+	.if \scalar
+	fmov w14, s6
+	lsl w14, w14, #1
+	sub w14, w14, #1
+	tst w14, #0xff000000
+	b.ne Lx86_vector_convert_ftz_ready\@
+	.else
+	simd_small_lanes 32, 4, 17, 18
+	umaxv s17, v17.4s
+	fmov w14, s17
+	cbz w14, Lx86_vector_convert_ftz_ready\@
+	.endif
+	b Lx86_vector_convert_tiny\@
+Lx86_vector_convert_ftz_ready\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_convert_tiny\@:
+	mrs x15, fpsr
+	mov x14, #0x43f0000000000000
+	.if \scalar
+	fmov d16, x14
+	fmul d16, d1, d16
+	fcvt s16, d16
+	msr fpsr, x15
+	fmov w14, s6
+	and w14, w14, #0x7fffffff
+	cmp w14, #0x800, lsl #12
+	b.ne Lx86_vector_convert_flush\@
+	fmov w14, s16
+	and w14, w14, #0x7fffffff
+	mov w15, #0x20800000
+	cmp w14, w15
+	b.hs Lx86_vector_convert_tiny_done\@
+Lx86_vector_convert_flush\@:
+	fmov w14, s6
+	and w14, w14, #0x80000000
+	fmov s6, w14
+Lx86_vector_convert_tiny_done\@:
+	.else
+	dup v16.2d, x14
+	fmul v18.2d, v1.2d, v16.2d
+	fcvtn v18.2s, v18.2d
+	.if \input_size == 32
+	fmul v19.2d, v3.2d, v16.2d
+	fcvtn2 v18.4s, v19.2d
+	.endif
+	msr fpsr, x15
+	simd_small_lanes 32, 4, 17, 16
+	shl v18.4s, v18.4s, #1
+	movi v16.4s, #0x41, lsl #24
+	cmhi v18.4s, v16.4s, v18.4s
+	and v17.16b, v17.16b, v18.16b
+	movi v16.4s, #0x80, lsl #24
+	and v16.16b, v4.16b, v16.16b
+	bsl v17.16b, v16.16b, v4.16b
+	mov v4.16b, v17.16b
+	.endif
+	b Lx86_vector_convert_ftz_ready\@
+	.popsection
+.endm
+
 /* A conversion from integers raises at most precision, which the gadgets
  * never check. One to a wider format raises invalid operation only for a
  * signalling NaN, which its result shows as a NaN. */
 .macro vector_convert_body operation, output_width, input_size, scalar, truncate
 	.ifc \operation,ps_pd
+	vector_convert_inputs 32, \input_size
 	fcvtl v4.2d, v1.2s
 	.if \output_width == 256
 	fcvtl2 v5.2d, v1.4s
@@ -89,23 +170,28 @@ Lx86_vector_convert_in_range\@:
 	.endif
 	.endif
 	.ifc \operation,pd_ps
+	vector_convert_inputs 64, \input_size
 	movi v4.16b, #0
 	fcvtn v4.2s, v1.2d
 	.if \input_size == 32
 	fcvtn2 v4.4s, v3.2d
 	.endif
 	simd_check_packed 32, 4
+	vector_convert_flush_narrowed 0, \input_size
 	.endif
 	.ifc \operation,ss_sd
+	vector_convert_inputs 32, \input_size
 	mov v4.16b, v0.16b
 	fcvt d6, s1
 	simd_check_scalar 64, 6
 	mov v4.d[0], v6.d[0]
 	.endif
 	.ifc \operation,sd_ss
+	vector_convert_inputs 64, \input_size
 	mov v4.16b, v0.16b
 	fcvt s6, d1
 	simd_check_scalar 32, 6
+	vector_convert_flush_narrowed 1, \input_size
 	mov v4.s[0], v6.s[0]
 	.endif
 	.ifc \operation,dq_ps
@@ -115,6 +201,9 @@ Lx86_vector_convert_in_range\@:
 	.endif
 	.endif
 	.ifc \operation,ps_dq
+	.if !\truncate
+	vector_convert_inputs 32, \input_size
+	.endif
 	vector_convert_fp_i32 1, 4, 32, \truncate
 	.if \output_width == 256
 	vector_convert_fp_i32 3, 5, 32, \truncate
@@ -129,6 +218,9 @@ Lx86_vector_convert_in_range\@:
 	.endif
 	.endif
 	.ifc \operation,pd_dq
+	.if !\truncate
+	vector_convert_inputs 64, \input_size
+	.endif
 	vector_convert_fp_i32 1, 4, 64, \truncate
 	.if \input_size == 32
 	vector_convert_fp_i32 3, 5, 64, \truncate
@@ -240,6 +332,8 @@ vector_convert_family ttpd_dq_256, pd_dq, 128, 32, 0, 1
 .purgem vector_convert_memory
 .purgem vector_convert_register
 .purgem vector_convert_body
+.purgem vector_convert_flush_narrowed
+.purgem vector_convert_inputs
 .purgem vector_convert_fp_i32
 .purgem vector_convert_check_range
 .purgem vector_convert_round

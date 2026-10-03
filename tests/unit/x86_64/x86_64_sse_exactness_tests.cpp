@@ -133,7 +133,7 @@ private:
 };
 
 enum class Op : std::uint8_t {
-	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma,
+	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma, convert,
 };
 
 [[nodiscard]] std::uint64_t host32(Op op, std::uint32_t a, std::uint32_t b)
@@ -233,6 +233,42 @@ enum class Op : std::uint8_t {
 			  "r"(static_cast<std::uint32_t>(c)) : "v0", "v1", "v2", "v3");
 		r = narrow;
 	}
+	return r;
+}
+
+[[nodiscard]] std::uint64_t host_widen(std::uint32_t single)
+{
+	std::uint64_t r{};
+	__asm__ volatile("fmov s0, %w1\n fcvt d1, s0\n fmov %0, d1" : "=r"(r)
+		: "r"(single) : "v0", "v1");
+	return r;
+}
+
+[[nodiscard]] std::uint32_t host_narrow(std::uint64_t value)
+{
+	std::uint32_t r{};
+	__asm__ volatile("fmov d0, %1\n fcvt s1, d0\n fmov %w0, s1" : "=r"(r)
+		: "r"(value) : "v0", "v1");
+	return r;
+}
+
+/* Rounded to an integral value in the live rounding mode, or toward zero. */
+[[nodiscard]] std::uint64_t host_integral(bool dbl, std::uint64_t value,
+	bool truncate)
+{
+	std::uint64_t r{};
+	if (dbl && truncate)
+		__asm__ volatile("fmov d0, %1\n frintz d1, d0\n fmov %0, d1"
+			: "=r"(r) : "r"(value) : "v0", "v1");
+	else if (dbl)
+		__asm__ volatile("fmov d0, %1\n frinti d1, d0\n fmov %0, d1"
+			: "=r"(r) : "r"(value) : "v0", "v1");
+	else if (truncate)
+		__asm__ volatile("fmov s0, %w1\n frintz s1, s0\n fmov %w0, s1"
+			: "=r"(r) : "r"(static_cast<std::uint32_t>(value)) : "v0", "v1");
+	else
+		__asm__ volatile("fmov s0, %w1\n frinti s1, s0\n fmov %w0, s1"
+			: "=r"(r) : "r"(static_cast<std::uint32_t>(value)) : "v0", "v1");
 	return r;
 }
 
@@ -406,6 +442,68 @@ struct Format final {
 	return result;
 }
 
+/* CVTSS2SD and CVTPS2PD: DAZ flushes the input; every single is a normal
+ * double, and the host widens a NaN as x86 does. */
+[[nodiscard]] std::uint64_t x86_widen(std::uint32_t value, bool daz)
+{
+	const Format single{false};
+	if (daz)
+		value = static_cast<std::uint32_t>(single.flush(value));
+	return host_widen(value);
+}
+
+/* CVTSD2SS and CVTPD2PS: DAZ flushes the input and FTZ a result tiny after
+ * rounding, which a value the host rounds up to the smallest normal is when
+ * the same value scaled up rounds below the scaled threshold. */
+[[nodiscard]] std::uint32_t x86_narrow(std::uint64_t value, bool daz,
+	bool ftz)
+{
+	const Format single{false};
+	const Format dbl{true};
+	if (daz)
+		value = dbl.flush(value);
+	const std::uint32_t result = host_narrow(value);
+	if (!ftz || single.nan(result))
+		return result;
+	const auto magnitude = result & single.magnitude();
+	bool tiny = single.denormal(result);
+	if (magnitude == single.minimum_normal()) {
+		const auto scaled = host_narrow(host(true, Op::mul, value,
+			static_cast<std::uint64_t>(1023 + 64) << 52U));
+		tiny = (scaled & single.magnitude()) < (65U << 23U);
+	}
+	return tiny ? (result & 0x8000'0000U) : result;
+}
+
+/* CVT{,T}{SS,SD,PS,PD}2{SI,DQ}: DAZ flushes the input; a NaN or a value
+ * out of range gives the integer indefinite. */
+[[nodiscard]] std::uint64_t x86_to_integer(bool dbl, std::uint64_t value,
+	unsigned bits, bool truncate, bool daz)
+{
+	const Format f{dbl};
+	if (daz)
+		value = f.flush(value);
+	const std::uint64_t indefinite = 1ULL << (bits - 1U);
+	if (f.nan(value))
+		return indefinite;
+	const auto integral = host_integral(dbl, value, truncate);
+	double number{};
+	if (dbl) {
+		std::memcpy(&number, &integral, 8);
+	} else {
+		float narrow{};
+		const auto bits32 = static_cast<std::uint32_t>(integral);
+		std::memcpy(&narrow, &bits32, 4);
+		number = narrow;
+	}
+	const double limit = bits == 32 ? 2147483648.0 : 9223372036854775808.0;
+	if (!(number >= -limit && number < limit))
+		return indefinite;
+	const auto result = static_cast<std::int64_t>(number);
+	return bits == 32 ? static_cast<std::uint32_t>(result) :
+		static_cast<std::uint64_t>(result);
+}
+
 /* ---- operand stream (X-AFP's oracle generator) ---- */
 
 class Operands final {
@@ -525,6 +623,10 @@ enum class Shape : std::uint8_t {
  * two alternations, whose even lanes subtract (maddsub) or add (msubadd). */
 enum class Fused : std::uint8_t { madd, msub, nmadd, nmsub, maddsub, msubadd };
 
+enum class Conversion : std::uint8_t {
+	ss_sd, sd_ss, ps_pd, pd_ps, ps_dq, pd_dq, ss_si, sd_si,
+};
+
 struct Instruction final {
 	std::string name;
 	Op op;
@@ -534,6 +636,11 @@ struct Instruction final {
 	/* FMA: the form (132, 213 or 231) and the signs. */
 	unsigned form{};
 	Fused fused{};
+	/* Conversions: which, whether it truncates, and a GPR result's
+	 * width. `dbl` names a double input. */
+	Conversion conversion{};
+	bool truncate{};
+	unsigned bits{};
 };
 
 void add_arithmetic(std::vector<Instruction> &list)
@@ -626,11 +733,69 @@ void add_fused(std::vector<Instruction> &list)
 	}
 }
 
+/* Conversions from xmm1/ymm1 to xmm0/ymm0, or to EAX or RAX. */
+void add_conversions(std::vector<Instruction> &list)
+{
+	const auto add = [&](std::string name, bool dbl, Shape shape,
+		std::vector<std::uint8_t> bytes, Conversion conversion,
+		bool truncate = false, unsigned bits = 0) {
+		Instruction instruction{std::move(name), Op::convert, dbl, shape,
+			std::move(bytes)};
+		instruction.conversion = conversion;
+		instruction.truncate = truncate;
+		instruction.bits = bits;
+		list.push_back(std::move(instruction));
+	};
+	add("cvtss2sd", false, Shape::sse_scalar, {0xf3, 0x0f, 0x5a, 0xc1},
+		Conversion::ss_sd);
+	add("cvtsd2ss", true, Shape::sse_scalar, {0xf2, 0x0f, 0x5a, 0xc1},
+		Conversion::sd_ss);
+	add("cvtps2pd", false, Shape::sse_packed, {0x0f, 0x5a, 0xc1},
+		Conversion::ps_pd);
+	add("cvtps2pd", false, Shape::vex256, {0xc5, 0xfc, 0x5a, 0xc1},
+		Conversion::ps_pd);
+	add("cvtpd2ps", true, Shape::sse_packed, {0x66, 0x0f, 0x5a, 0xc1},
+		Conversion::pd_ps);
+	add("cvtpd2ps", true, Shape::vex256, {0xc5, 0xfd, 0x5a, 0xc1},
+		Conversion::pd_ps);
+	add("cvtps2dq", false, Shape::sse_packed, {0x66, 0x0f, 0x5b, 0xc1},
+		Conversion::ps_dq);
+	add("cvtps2dq", false, Shape::vex256, {0xc5, 0xfd, 0x5b, 0xc1},
+		Conversion::ps_dq);
+	add("cvttps2dq", false, Shape::sse_packed, {0xf3, 0x0f, 0x5b, 0xc1},
+		Conversion::ps_dq, true);
+	add("cvttps2dq", false, Shape::vex256, {0xc5, 0xfe, 0x5b, 0xc1},
+		Conversion::ps_dq, true);
+	add("cvtpd2dq", true, Shape::sse_packed, {0xf2, 0x0f, 0xe6, 0xc1},
+		Conversion::pd_dq);
+	add("cvtpd2dq", true, Shape::vex256, {0xc5, 0xff, 0xe6, 0xc1},
+		Conversion::pd_dq);
+	add("cvttpd2dq", true, Shape::sse_packed, {0x66, 0x0f, 0xe6, 0xc1},
+		Conversion::pd_dq, true);
+	add("cvttpd2dq", true, Shape::vex256, {0xc5, 0xfd, 0xe6, 0xc1},
+		Conversion::pd_dq, true);
+	for (const bool dbl : {false, true})
+	for (const bool truncate : {false, true})
+	for (const unsigned bits : {32U, 64U}) {
+		std::vector<std::uint8_t> bytes{
+			static_cast<std::uint8_t>(dbl ? 0xf2 : 0xf3)};
+		if (bits == 64)
+			bytes.push_back(0x48);
+		bytes.insert(bytes.end(), {0x0f,
+			static_cast<std::uint8_t>(truncate ? 0x2c : 0x2d), 0xc1});
+		add(std::string{truncate ? "cvtt" : "cvt"} + (dbl ? "sd" : "ss") +
+			"2si" + std::to_string(bits), dbl, Shape::sse_scalar,
+			std::move(bytes), dbl ? Conversion::sd_si : Conversion::ss_si,
+			truncate, bits);
+	}
+}
+
 [[nodiscard]] std::vector<Instruction> instructions()
 {
 	std::vector<Instruction> list;
 	add_arithmetic(list);
 	add_fused(list);
+	add_conversions(list);
 	return list;
 }
 
@@ -780,10 +945,66 @@ void set_lane(std::byte *bytes, bool dbl, std::size_t index,
 	}
 }
 
+/* The model's ymm0 and RAX for a conversion. */
+void model_conversion(const Instruction &instruction, const std::byte *input,
+	bool daz, bool ftz, std::byte *output, std::uint64_t &rax)
+{
+	const bool vex = instruction.shape == Shape::vex256;
+	if (vex)
+		std::memset(output, 0, 32);
+	else
+		std::memcpy(output, input, 32);
+	const auto *source = input + 32;
+	const auto single = [&](std::size_t index) {
+		return static_cast<std::uint32_t>(lane(source, false, index));
+	};
+	const auto dbl = [&](std::size_t index) {
+		return lane(source, true, index);
+	};
+	switch (instruction.conversion) {
+	case Conversion::ss_sd:
+		set_lane(output, true, 0, x86_widen(single(0), daz));
+		break;
+	case Conversion::sd_ss:
+		set_lane(output, false, 0, x86_narrow(dbl(0), daz, ftz));
+		break;
+	case Conversion::ps_pd:
+		for (std::size_t index = 0; index < (vex ? 4U : 2U); ++index)
+			set_lane(output, true, index, x86_widen(single(index), daz));
+		break;
+	case Conversion::pd_ps:
+		for (std::size_t index = 0; index < 4U; ++index)
+			set_lane(output, false, index, index < (vex ? 4U : 2U) ?
+				x86_narrow(dbl(index), daz, ftz) : 0U);
+		break;
+	case Conversion::ps_dq:
+		for (std::size_t index = 0; index < (vex ? 8U : 4U); ++index)
+			set_lane(output, false, index, x86_to_integer(false,
+				single(index), 32, instruction.truncate, daz));
+		break;
+	case Conversion::pd_dq:
+		for (std::size_t index = 0; index < 4U; ++index)
+			set_lane(output, false, index, index < (vex ? 4U : 2U) ?
+				x86_to_integer(true, dbl(index), 32, instruction.truncate,
+					daz) : 0U);
+		break;
+	case Conversion::ss_si:
+	case Conversion::sd_si:
+		rax = x86_to_integer(instruction.dbl, instruction.dbl ? dbl(0) :
+			single(0), instruction.bits, instruction.truncate, daz);
+		break;
+	}
+}
+
 /* The model's ymm0 for one iteration. */
 void model_result(const Instruction &instruction, const std::byte *input,
 	bool daz, bool ftz, std::byte *output)
 {
+	if (instruction.op == Op::convert) {
+		std::uint64_t rax{};
+		model_conversion(instruction, input, daz, ftz, output, rax);
+		return;
+	}
 	const Format f{instruction.dbl};
 	const std::size_t lanes = lane_count(instruction);
 	const std::size_t computed = computed_lanes(instruction);
@@ -840,6 +1061,22 @@ void fill_input(const Instruction &instruction, Operands &operands,
 		for (std::size_t index = 0; index < lanes; ++index)
 			set_lane(input + reg * 32U, instruction.dbl, index,
 				operands.pick(instruction.dbl));
+	if (instruction.op == Op::convert) {
+		/* A conversion's source is ymm1; a quarter of a narrowing's lanes
+		 * lie just below the smallest normal single. */
+		const bool narrowing = instruction.conversion == Conversion::sd_ss ||
+			instruction.conversion == Conversion::pd_ps;
+		for (std::size_t index = 0; narrowing && index < lanes; ++index) {
+			const auto r = operands.next();
+			if ((r & 3U) != 0)
+				continue;
+			const std::uint64_t mantissa = ((1ULL << 52U) - 1U) -
+				((r >> 8U) & 0x7fff'ffffU);
+			set_lane(input + 32, true, index, ((r & 4U) != 0 ? f.sign() : 0U) |
+				(0x380ULL << 52U) | mantissa);
+		}
+		return;
+	}
 	if (instruction.op != Op::mul && instruction.op != Op::div &&
 		instruction.op != Op::fma)
 		return;
@@ -879,6 +1116,44 @@ struct Shown final {
 	unsigned count{};
 };
 
+/* A conversion's ymm0, compared dword by dword, and a GPR result. */
+void compare_conversion(const Instruction &instruction, const std::byte *input,
+	const std::byte *expected, std::uint64_t rax, const std::byte *actual,
+	bool daz, bool ftz, unsigned rounding, Totals &totals, Shown &shown)
+{
+	const bool gpr = instruction.conversion == Conversion::ss_si ||
+		instruction.conversion == Conversion::sd_si;
+	for (std::size_t index = 0; index < 9U; ++index) {
+		if (index == 8U && !gpr)
+			break;
+		std::uint64_t want{};
+		std::uint64_t got{};
+		if (index == 8U) {
+			want = rax;
+			std::memcpy(&got, actual + 32, 8);
+		} else {
+			want = lane(expected, false, index);
+			got = lane(actual, false, index);
+		}
+		++totals.lanes;
+		if (want == got)
+			continue;
+		++totals.differing;
+		if (shown.count < 12U) {
+			++shown.count;
+			std::fprintf(stderr, "  %s %s daz=%d ftz=%d rc=%u %s %zu "
+				"source=%#llx engine=%#llx x86=%#llx\n",
+				instruction.name.c_str(), shape_name(instruction.shape),
+				daz ? 1 : 0, ftz ? 1 : 0, rounding,
+				index == 8U ? "rax" : "dword", index,
+				static_cast<unsigned long long>(lane(input + 32,
+					instruction.dbl, 0)),
+				static_cast<unsigned long long>(got),
+				static_cast<unsigned long long>(want));
+		}
+	}
+}
+
 Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 	unsigned rounding, std::size_t iterations, Shown &shown)
 {
@@ -908,6 +1183,14 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 			const auto *input = memory.at(input_address + row * input_stride);
 			const auto *actual = memory.at(output_address +
 				row * output_stride);
+			if (instruction.op == Op::convert) {
+				std::uint64_t rax{};
+				model_conversion(instruction, input, daz, ftz,
+					expected.data(), rax);
+				compare_conversion(instruction, input, expected.data(), rax,
+					actual, daz, ftz, rounding, totals, shown);
+				continue;
+			}
 			model_result(instruction, input, daz, ftz, expected.data());
 			for (std::size_t index = 0; index < lanes; ++index) {
 				const auto want = lane(expected.data(), instruction.dbl, index);
