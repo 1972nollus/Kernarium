@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "allocation_failure.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_cache.hpp"
@@ -1672,6 +1673,7 @@ void exclusive_and_system_blocks_are_translated()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
 	native_translation_preserves_fault_prefixes();

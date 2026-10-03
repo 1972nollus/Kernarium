@@ -3,6 +3,7 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/engine_factory.hpp"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "memory/static_guest_memory.hpp"
 
 #include <cstddef>
@@ -105,6 +106,7 @@ void steps_one_instruction(EngineKind kind, const char *name) {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   JitBacking backing{1};
   backing.put32(0x00, add_x5_one);
   backing.put32(0x04, add_x5_one);

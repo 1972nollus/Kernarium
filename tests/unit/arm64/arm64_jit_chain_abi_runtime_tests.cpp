@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "platform/apple/host_features.hpp"
@@ -775,6 +776,7 @@ uml_arm64_jit_chain_abi_callback(void *opaque) {
 }
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   host_callee_saved_registers_are_restored();
   zero_one_two_three_and_many_links();

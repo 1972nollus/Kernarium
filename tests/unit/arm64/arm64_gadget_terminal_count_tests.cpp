@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
@@ -568,6 +569,7 @@ void indirect_link_learning_still_uses_and_clears_scratch()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	illegal_at_block_start_does_not_retire();
 	valid_prefix_before_illegal_is_counted();
 	memory_fault_excludes_fault_and_later_decoded_words();

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_host_counter_test_support.hpp"
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <cstddef>
@@ -48,6 +49,7 @@ void direct_counter_block_executes()
 
 int main()
 {
+	const uml::testing::RuntimeTestRoute runtime_route;
 	require(jit_available() == 1);
 	direct_counter_block_executes();
 	return 0;

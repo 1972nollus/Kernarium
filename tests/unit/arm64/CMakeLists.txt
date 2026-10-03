@@ -4,6 +4,9 @@
 # shared-backing archive that MappedBacking references so those raw
 # compositions retain the production memory component's link contract.
 link_libraries(UML::MemorySharedBacking)
+# Tests that enter the runtime without an emulator run route a Context of
+# their own.
+link_libraries(uml_runtime_test_route)
 
 # The root's warning policy covers C++; these hand-written assembly sources
 # opt in to it.

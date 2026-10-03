@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "runtime_test_route.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
@@ -556,6 +557,7 @@ void trap_mode_runs_a_deferred_atomic() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   deferred_vector_self_loop_obeys_fairness();
   direct_capability_requirements_are_exact();

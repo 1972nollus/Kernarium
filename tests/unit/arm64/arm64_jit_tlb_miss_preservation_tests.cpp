@@ -2,6 +2,7 @@
 #include "arm64_engine_test_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "require.hpp"
+#include "runtime_test_route.hpp"
 
 #include <array>
 #include <cstddef>
@@ -513,6 +514,7 @@ void pinned_vectors_commit_on_a_direct_cold_fault() {
 } // namespace
 
 int main() {
+  const uml::testing::RuntimeTestRoute runtime_route;
   miss_call_is_cold_and_has_no_resident_spills();
   second_way_hit_rejoins_the_hot_memory_continuation();
   every_resident_register_survives_a_forced_miss();
