@@ -34,6 +34,9 @@ namespace uml::cpu::arm64::gadgets::selection {
 		(static_cast<std::uintptr_t>(static_cast<std::uint64_t>(offset)) << 10);
 }
 
+/* The CpuState offset of a general register operand. Register 31 reads the
+ * immutable zero slot here and is SP as a memory base. As a transfer or offset
+ * register it selects a gadget entry of its own, which ignores the offset. */
 [[nodiscard]] constexpr std::uintptr_t arithmetic_register_offset(
 	unsigned index) noexcept
 {
@@ -41,6 +44,19 @@ namespace uml::cpu::arm64::gadgets::selection {
 	static_assert(offsetof(CpuState, gadget_zero) <= 0xffffU);
 	return index == 31U ? offsetof(CpuState, gadget_zero) :
 		index * sizeof(std::uint64_t);
+}
+
+[[nodiscard]] constexpr std::uintptr_t base_register_offset(
+	unsigned index) noexcept
+{
+	return index == 31U ? offsetof(CpuState, sp) :
+		index * sizeof(std::uint64_t);
+}
+
+[[nodiscard]] constexpr std::uintptr_t transfer_register_offset(
+	unsigned index) noexcept
+{
+	return index == 31U ? 0U : index * sizeof(std::uint64_t);
 }
 
 [[nodiscard]] constexpr std::uintptr_t arithmetic_binary_operand(

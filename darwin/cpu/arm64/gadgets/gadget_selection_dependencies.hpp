@@ -41,17 +41,4 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 using Gadget = void (*)();
 
-[[nodiscard]] bool host_has_sha1() noexcept;
-[[nodiscard]] bool host_has_sha256() noexcept;
-[[nodiscard]] bool host_has_sha512() noexcept;
-[[nodiscard]] bool host_has_sha3() noexcept;
-[[nodiscard]] bool host_has_aes() noexcept;
-[[nodiscard]] bool host_has_pmull() noexcept;
-[[nodiscard]] bool host_has_rdm() noexcept;
-[[nodiscard]] bool host_has_dotprod() noexcept;
-[[nodiscard]] bool host_has_i8mm() noexcept;
-[[nodiscard]] bool host_has_frintts() noexcept;
-[[nodiscard]] bool host_has_bf16() noexcept;
-[[nodiscard]] bool host_has_fhm() noexcept;
-
 } // namespace uml::cpu::arm64::gadgets::selection
