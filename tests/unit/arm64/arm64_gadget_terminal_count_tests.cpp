@@ -210,6 +210,24 @@ void add_immediate_at_block_tail_reaches_synthetic_terminal()
 	require(executed == 1U);
 }
 
+void unallocated_modified_immediate_ends_its_block()
+{
+	/* With o2 set, the Advanced SIMD modified-immediate allocation holds only
+	 * the FP16 FMOV, cmode 0b1111. Any other cmode is unallocated, and like
+	 * every other unallocated word it ends the block where it stands, so the
+	 * words after it are never decoded. */
+	constexpr std::array instructions{
+		0x0f05'0cbfU, // op=0, o2=1, cmode=0b0000
+		0xd503'201fU, // nop
+	};
+	const auto built = gadgets::Builder{}.build(code_base, instructions);
+	require(built.complete);
+	require(built.program.instruction_count() == 1U);
+	require(built.stop_address == code_base);
+	require(built.stop_instruction == instructions[0]);
+	require(built.program.words().size() == 2U);
+}
+
 void linked_successor_terminal_subtracts_only_its_suffix()
 {
 	constexpr unsigned long generation = 760;
@@ -557,6 +575,7 @@ int main()
 	valid_prefix_before_implementation_gap_is_counted();
 	retiring_terminals_keep_their_instruction_count();
 	add_immediate_at_block_tail_reaches_synthetic_terminal();
+	unallocated_modified_immediate_ends_its_block();
 	linked_successor_terminal_subtracts_only_its_suffix();
 	linked_successor_pair_fault_reports_its_pc(false);
 	linked_successor_pair_fault_reports_its_pc(true);

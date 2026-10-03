@@ -167,8 +167,9 @@ Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
 publish RW pages as RX, control JIT write protection, or publish the instruction
 cache.
 
-Ordinary iOS libraries exclude native-VM and embedded-ELF execution. Kernarium
-uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
+A library built without the embedded ELF runner, such as every XCFramework
+slice, excludes native-VM and embedded-ELF execution; only the macOS unit
+presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
 `__TEXT`. Its loader aliases immutable executable pages from that mapping,
 copies only data and BSS into anonymous storage, and rejects a carrier
 mismatch, writable executable segments, or relocations into signed text. The app
