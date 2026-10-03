@@ -26,19 +26,23 @@ C++ tests that looped over every physical device take the one an Apple host
 exposes.  Tests about the life of a command pool, fence or timeline keep
 their own pool and submission code, which is what they test.
 
-The Meson stanzas of the four uniform families - Vulkan-level C++ tests,
-whole-library internal tests, header-only helper tests and NIR-to-MSL
-compiler tests - become loops over their names and timeouts.  Near-copies
-become cases of one executable, each case run in its own process: the
-dynamically uniform TES sampler test of the uniform one, the geometry and
-tessellation draw-size tests of test_draw_size, and the layered draw
-sequence test of the layered draw routes test.  The point-clip test reads
-the polygon-point fragment shader it had duplicated byte for byte.  Test
-names and timeouts are unchanged.
+The Meson stanzas become loops over tables that give each test its name,
+timeout and whatever else sets it apart - sources, dependencies, arguments
+or environment: the Vulkan-level C++ tests, the whole-library internal and
+GPU tests, the public-API and Metal-bridge tests, the header-only helper and
+NIR-to-MSL compiler tests, and the tests that build driver sources, NIR
+lowering passes or the vertex-buffer lowering into themselves.  Every
+environment a test sets starts from one kk_test_env.  Near-copies become
+cases of one executable, each case run in its own process: the dynamically
+uniform TES sampler test of the uniform one, the geometry and tessellation
+draw-size tests of test_draw_size, and the layered draw sequence test of the
+layered draw routes test.  The point-clip test reads the polygon-point
+fragment shader it had duplicated byte for byte.  Test names, timeouts and
+environments are unchanged.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/meson.build            |  701 ++------
+ src/kosmickrisp/vulkan/meson.build            | 1467 ++++------------
  .../vulkan/tests/bench_blend_path.cpp         |   20 +-
  .../vulkan/tests/bench_vertex_fetch_path.cpp  |   20 +-
  src/kosmickrisp/vulkan/tests/kk_test.h        |  374 ++++
@@ -113,7 +117,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   69 +-
  .../test_transform_feedback_builtins.cpp      |  480 ++----
  .../tests/test_unused_attachment_gaps.cpp     |  786 ++++-----
- 75 files changed, 8456 insertions(+), 14384 deletions(-)
+ 75 files changed, 8615 insertions(+), 14991 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
@@ -123,12 +127,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d52a2a08ff 100644
+index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..665cdbf8e27dad48df6ea26b1997d012a96b9738 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -228,20 +228,77 @@ if with_tests
+@@ -227,488 +227,229 @@ if with_tests
+     include_directories('../../vulkan/runtime'),
    ]
  
++  kk_test_env = ['MESA_SHADER_CACHE_DISABLE=true']
++
    if host_machine.system() == 'darwin'
 -    test(
 -      'kosmickrisp_unused_attachment_gaps',
@@ -143,84 +150,113 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      suite : ['kosmickrisp'],
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
-+    # Vulkan-level tests: each tests/test_<name>.cpp drives the driver through
-+    # its entry points.
-+    foreach kk_vulkan_test : [
-+      ['unused_attachment_gaps', 120],
-+      ['polygon_point_raster', 120],
-+      ['multiview_clear_attachments', 120],
-+      ['alpha_to_coverage_no_attachment', 120],
-+      ['point_clip_volume', 120],
-+      ['tess_passthrough_geometry', 180],
-+      ['transform_feedback_builtins', 120],
-+      ['post_depth_coverage_sample_mask', 120],
-+      ['pipeline_library_link_time', 120],
-+      ['metal_blend', 120],
-+      ['metal_vertex_fetch', 120],
-+      ['early_sample_mask_count', 120],
-+      ['helper_invocation_demote', 120],
-+      ['terminate_full_quads', 120],
-+      ['geometry_primitive_id_link', 120],
-+      ['max_varyings', 120],
-+    ]
-+      test(
-+        'kosmickrisp_' + kk_vulkan_test[0],
-+        executable(
-+          'test_kosmickrisp_' + kk_vulkan_test[0],
-+          files('tests/test_' + kk_vulkan_test[0] + '.cpp'),
-+          include_directories : kk_test_include_directories,
-+          dependencies : [idep_vulkan_runtime_headers],
-+          link_with : libvulkan_kosmickrisp,
-+          override_options : ['cpp_std=c++20'],
-+        ),
-+        suite : ['kosmickrisp'],
-+        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+        timeout : kk_vulkan_test[1],
-+      )
-+    endforeach
-+    layered_draw_routes_test = executable(
-+      'test_kosmickrisp_layered_draw_routes',
-+      files('tests/test_layered_draw_routes.cpp'),
-+      include_directories : kk_test_include_directories,
-+      dependencies : [idep_vulkan_runtime_headers],
-+      link_with : libvulkan_kosmickrisp,
-+      override_options : ['cpp_std=c++20'],
-+    )
-+    foreach route : ['sequence', 'multi_draw', 'geometry']
-+      test(
-+        'kosmickrisp_layered_draw_' + route,
-+        layered_draw_routes_test,
-+        args : [route],
-+        suite : ['kosmickrisp'],
-+        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+        timeout : 120,
-+      )
-+    endforeach
-+    draw_size_test = executable(
-+      'test_kosmickrisp_draw_size',
-+      files('tests/test_draw_size.cpp'),
-+      include_directories : kk_test_include_directories,
-+      dependencies : [idep_vulkan_runtime_headers],
-+      link_with : libvulkan_kosmickrisp,
-+      override_options : ['cpp_std=c++20'],
-     )
-+    foreach stage : ['geometry', 'tess']
-+      test(
-+        'kosmickrisp_' + stage + '_draw_size',
-+        draw_size_test,
-+        args : [stage],
-+        suite : ['kosmickrisp'],
-+        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+        timeout : 120,
-+      )
-+    endforeach
-     test(
-       'kosmickrisp_geometry_setup_gpu',
-       executable(
-@@ -348,256 +405,37 @@ if with_tests
-       env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 60,
-     )
+-    )
+-    test(
+-      'kosmickrisp_geometry_setup_gpu',
+-      executable(
+-        'test_kosmickrisp_geometry_setup_gpu',
+-        files('tests/test_geometry_setup_gpu.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_heap_overflow_gpu',
+-      executable(
+-        'test_kosmickrisp_heap_overflow_gpu',
+-        files('tests/test_heap_overflow_gpu.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_tess_bound_gpu',
+-      executable(
+-        'test_kosmickrisp_tess_bound_gpu',
+-        files('tests/test_tess_bound_gpu.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_tess_setup_gpu',
+-      executable(
+-        'test_kosmickrisp_tess_setup_gpu',
+-        files('tests/test_tess_setup_gpu.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_metal_objects_export',
+-      executable(
+-        'test_kosmickrisp_metal_objects_export',
+-        files('tests/test_metal_objects_export.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_texel_buffer_bounds',
+-      executable(
+-        'test_kosmickrisp_texel_buffer_bounds',
+-        files('tests/test_texel_buffer_bounds.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
 -    test(
 -      'kosmickrisp_polygon_point_raster',
 -      executable(
@@ -300,39 +336,64 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      override_options : ['cpp_std=c++20'],
 -    )
 -    foreach route : ['multi_draw', 'geometry']
-+    # Tests that link the driver library whole to reach its internals:
-+    # tests/test_<name>.c.
-+    foreach kk_internal_test : [
-+      ['blend_pipeline_key', 120],
-+      ['3d_array_alias', 120],
-+      ['invalid_view_type', 120],
-+      ['maintenance10_resolve', 120],
-+      ['image_compression_chain', 60],
-+      ['integer_point_target', 120],
++    # What the tests that link the driver library whole and reach its
++    # internals through the NIR headers depend on, and what the tests that
++    # also reach its Metal bridge depend on.
++    kk_whole_library_test_deps = [
++      idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
++      idep_vulkan_runtime_headers,
++      idep_vulkan_util_headers,
++      idep_vulkan_wsi_headers,
++      idep_libkk_shaders_h,
++    ]
++    kk_metal_test_deps = [
++      idep_mtl_bridge,
++      idep_nir,
++      idep_vulkan_runtime_headers,
++      idep_vulkan_util_headers,
++      idep_vulkan_wsi_headers,
++      idep_libkk_shaders_h,
++    ]
++    kk_metal_frameworks = dependency('appleframeworks', modules : ['Foundation', 'Metal'])
++
++    # Vulkan-level tests: each tests/test_<name>.cpp drives the driver through
++    # its entry points.
++    foreach kk_vulkan_test : [
++      ['unused_attachment_gaps', 120],
++      ['polygon_point_raster', 120],
++      ['multiview_clear_attachments', 120],
++      ['alpha_to_coverage_no_attachment', 120],
++      ['point_clip_volume', 120],
++      ['tess_passthrough_geometry', 180],
++      ['transform_feedback_builtins', 120],
++      ['post_depth_coverage_sample_mask', 120],
++      ['pipeline_library_link_time', 120],
++      ['metal_blend', 120],
++      ['metal_vertex_fetch', 120],
++      ['early_sample_mask_count', 120],
++      ['helper_invocation_demote', 120],
++      ['terminate_full_quads', 120],
++      ['geometry_primitive_id_link', 120],
++      ['max_varyings', 120],
 +    ]
        test(
 -        'kosmickrisp_layered_draw_' + route,
 -        layered_draw_routes_test,
 -        args : [route],
-+        'kosmickrisp_' + kk_internal_test[0],
++        'kosmickrisp_' + kk_vulkan_test[0],
 +        executable(
-+          'test_kosmickrisp_' + kk_internal_test[0],
-+          files('tests/test_' + kk_internal_test[0] + '.c'),
++          'test_kosmickrisp_' + kk_vulkan_test[0],
++          files('tests/test_' + kk_vulkan_test[0] + '.cpp'),
 +          include_directories : kk_test_include_directories,
-+          dependencies : [
-+            idep_nir,
-+            idep_vulkan_runtime_headers,
-+            idep_vulkan_util_headers,
-+            idep_vulkan_wsi_headers,
-+            idep_libkk_shaders_h,
-+          ],
-+          link_whole : libkk,
-+          link_args : ['-Wl,-undefined,dynamic_lookup'],
++          dependencies : [idep_vulkan_runtime_headers],
++          link_with : libvulkan_kosmickrisp,
++          override_options : ['cpp_std=c++20'],
 +        ),
          suite : ['kosmickrisp'],
-         env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-        env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -        timeout : 120,
-+        timeout : kk_internal_test[1],
++        env : kk_test_env,
++        timeout : kk_vulkan_test[1],
        )
      endforeach
 -    test(
@@ -497,13 +558,27 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
 -    )
-     test(
-       'kosmickrisp_raster_discard',
-       executable(
-@@ -619,48 +457,24 @@ if with_tests
-       env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
-     )
+-    test(
+-      'kosmickrisp_raster_discard',
+-      executable(
+-        'test_kosmickrisp_raster_discard',
+-        files('tests/test_raster_discard.cpp', 'tests/raster_discard_state.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-        override_options : ['cpp_std=c++20'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
 -    test(
 -      'kosmickrisp_transform_feedback_builtins',
 -      executable(
@@ -523,10 +598,30 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      executable(
 -        'test_kosmickrisp_tes_sampler_indexing',
 -        files('tests/test_tes_sampler_indexing.cpp'),
--        include_directories : kk_test_include_directories,
--        dependencies : [idep_vulkan_runtime_headers],
--        link_with : libvulkan_kosmickrisp,
--        override_options : ['cpp_std=c++20'],
++    # Vulkan-level tests run once per case, each case in a fresh process:
++    # tests/test_<name>.cpp takes the case as its arguments.
++    foreach kk_case_test : [
++      ['layered_draw_routes', [
++        ['layered_draw_sequence', ['sequence']],
++        ['layered_draw_multi_draw', ['multi_draw']],
++        ['layered_draw_geometry', ['geometry']],
++      ]],
++      ['draw_size', [
++        ['geometry_draw_size', ['geometry']],
++        ['tess_draw_size', ['tess']],
++      ]],
++      ['tes_sampler_indexing', [
++        ['tes_sampler_indexing', []],
++        ['tes_sampler_dynamic_indexing', ['dynamic']],
++      ]],
++    ]
++      kk_case_test_executable = executable(
++        'test_kosmickrisp_' + kk_case_test[0],
++        files('tests/test_' + kk_case_test[0] + '.cpp'),
+         include_directories : kk_test_include_directories,
+         dependencies : [idep_vulkan_runtime_headers],
+         link_with : libvulkan_kosmickrisp,
+         override_options : ['cpp_std=c++20'],
 -      ),
 -      suite : ['kosmickrisp'],
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
@@ -545,31 +640,27 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      suite : ['kosmickrisp'],
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
-+    tes_sampler_indexing_test = executable(
-+      'test_kosmickrisp_tes_sampler_indexing',
-+      files('tests/test_tes_sampler_indexing.cpp'),
-+      include_directories : kk_test_include_directories,
-+      dependencies : [idep_vulkan_runtime_headers],
-+      link_with : libvulkan_kosmickrisp,
-+      override_options : ['cpp_std=c++20'],
-     )
-+    foreach variant : [['', []], ['dynamic_', ['dynamic']]]
-+      test(
-+        'kosmickrisp_tes_sampler_' + variant[0] + 'indexing',
-+        tes_sampler_indexing_test,
-+        args : variant[1],
-+        suite : ['kosmickrisp'],
-+        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+        timeout : 120,
-+      )
-+    endforeach
-     test(
-       'kosmickrisp_pipeline_statistics_gpu',
-       executable(
-@@ -681,34 +495,6 @@ if with_tests
-       env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
-     )
+-    )
+-    test(
+-      'kosmickrisp_pipeline_statistics_gpu',
+-      executable(
+-        'test_kosmickrisp_pipeline_statistics_gpu',
+-        files('tests/test_pipeline_statistics_gpu.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
 -    test(
 -      'kosmickrisp_post_depth_coverage_sample_mask',
 -      executable(
@@ -598,10 +689,151 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
 -    )
++      )
++      foreach kk_case : kk_case_test[1]
++        test(
++          'kosmickrisp_' + kk_case[0],
++          kk_case_test_executable,
++          args : kk_case[1],
++          suite : ['kosmickrisp'],
++          env : kk_test_env,
++          timeout : 120,
++        )
++      endforeach
++    endforeach
++    # Tests that link the driver library whole to reach its internals:
++    # tests/test_<name>.c.
++    foreach kk_internal_test : [
++      ['blend_pipeline_key', 120],
++      ['3d_array_alias', 120],
++      ['invalid_view_type', 120],
++      ['maintenance10_resolve', 120],
++      ['image_compression_chain', 60],
++      ['integer_point_target', 120],
++    ]
++      test(
++        'kosmickrisp_' + kk_internal_test[0],
++        executable(
++          'test_kosmickrisp_' + kk_internal_test[0],
++          files('tests/test_' + kk_internal_test[0] + '.c'),
++          include_directories : kk_test_include_directories,
++          dependencies : [
++            idep_nir,
++            idep_vulkan_runtime_headers,
++            idep_vulkan_util_headers,
++            idep_vulkan_wsi_headers,
++            idep_libkk_shaders_h,
++          ],
++          link_whole : libkk,
++          link_args : ['-Wl,-undefined,dynamic_lookup'],
++        ),
++        suite : ['kosmickrisp'],
++        env : kk_test_env,
++        timeout : kk_internal_test[1],
++      )
++    endforeach
++    # The same, reaching the internals through the NIR headers alone:
++    # [name, timeout, further dependencies].
++    foreach kk_whole_library_test : [
++      ['geometry_setup_gpu', 120, []],
++      ['heap_overflow_gpu', 120, []],
++      ['tess_bound_gpu', 120, []],
++      ['tess_setup_gpu', 120, []],
++      ['pipeline_statistics_gpu', 120, []],
++      ['owed_signal_bound', 60, []],
++      ['heap_size_override', 60, []],
++      ['heap_growth', 120, []],
++      ['command_resubmit', 60, [dep_thread]],
++    ]
++      test(
++        'kosmickrisp_' + kk_whole_library_test[0],
++        executable(
++          'test_kosmickrisp_' + kk_whole_library_test[0],
++          files('tests/test_' + kk_whole_library_test[0] + '.c'),
++          include_directories : kk_test_include_directories,
++          dependencies : kk_whole_library_test_deps + kk_whole_library_test[2],
++          link_whole : libkk,
++          link_args : ['-Wl,-undefined,dynamic_lookup'],
++        ),
++        suite : ['kosmickrisp'],
++        env : kk_test_env,
++        timeout : kk_whole_library_test[1],
++      )
++    endforeach
++    # Tests that drive the driver through its entry points from C:
++    # [name, further environment].
++    foreach kk_public_test : [
++      ['metal_objects_export', []],
++      ['texel_buffer_bounds', []],
++      ['address_binding_planes', []],
++      ['drm_plane_offset', []],
++      ['query_pool_lifetime', ['NSZombieEnabled=YES']],
++    ]
++      test(
++        'kosmickrisp_' + kk_public_test[0],
++        executable(
++          'test_kosmickrisp_' + kk_public_test[0],
++          files('tests/test_' + kk_public_test[0] + '.c'),
++          include_directories : kk_test_include_directories,
++          dependencies : [idep_vulkan_runtime_headers],
++          link_with : libvulkan_kosmickrisp,
++        ),
++        suite : ['kosmickrisp'],
++        env : kk_test_env + kk_public_test[1],
++        timeout : 60,
++      )
++    endforeach
++    # Tests that also reach the Metal bridge and the driver's internal
++    # headers: [name, sources in tests/, timeout, further dependencies,
++    # Objective-C arguments].
++    foreach kk_metal_test : [
++      ['linear_input_attachment', ['test_linear_input_attachment.m'], 60,
++       [kk_metal_frameworks], []],
++      ['residency_release', ['test_residency_release.m'], 60,
++       [kk_metal_frameworks], []],
++      ['offline_device_library', ['test_offline_device_library.c'], 60,
++       [kk_metal_frameworks], []],
++      ['command_completion', ['test_command_completion.m'], 120,
++       [kk_metal_frameworks], ['-Wno-unused-function']],
++      ['command_pool_release', ['test_command_pool_release.m'], 120,
++       [kk_metal_frameworks], ['-Wno-unused-function']],
++      ['command_allocator_budget', ['test_command_allocator_budget.c'], 60,
++       [], []],
++      ['command_buffer_consolidation', ['test_command_buffer_consolidation.c'],
++       60, [], []],
++      ['raster_discard', ['test_raster_discard.cpp', 'raster_discard_state.c'],
++       120, [], []],
++      ['dynamic_vertex_input_cache', ['test_dynamic_vertex_input_cache.cpp',
++                                      'dynamic_vertex_input_cache_state.c'],
++       120, [], []],
++      ['line_raster_cache', ['test_line_raster_cache.cpp',
++                             'line_raster_cache_state.m'],
++       120, [kk_metal_frameworks], ['-Wno-unused-function']],
++    ]
++      kk_metal_test_sources = []
++      foreach source : kk_metal_test[1]
++        kk_metal_test_sources += 'tests/' + source
++      endforeach
++      test(
++        'kosmickrisp_' + kk_metal_test[0],
++        executable(
++          'test_kosmickrisp_' + kk_metal_test[0],
++          files(kk_metal_test_sources),
++          include_directories : kk_test_include_directories,
++          dependencies : kk_metal_test_deps + kk_metal_test[3],
++          link_with : libvulkan_kosmickrisp,
++          objc_args : kk_metal_test[4],
++          override_options : ['cpp_std=c++20'],
++        ),
++        suite : ['kosmickrisp'],
++        env : kk_test_env,
++        timeout : kk_metal_test[2],
++      )
++    endforeach
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -728,104 +514,6 @@ if with_tests
+@@ -728,116 +469,11 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -706,10 +938,493 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1266,16 +954,25 @@ if with_tests
+       include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-        idep_vulkan_wsi_headers,
+-        idep_libkk_shaders_h,
+-        dep_thread,
+-      ],
++      dependencies : kk_whole_library_test_deps + [dep_thread],
+       link_whole : libkk,
+       link_args : ['-Wl,-undefined,dynamic_lookup'],
      )
-   endif
- 
+@@ -847,7 +483,7 @@ if with_tests
+         timeline_wait_loss_test,
+         args : [wait_mode],
+         suite : ['kosmickrisp'],
+-        env : ['MESA_SHADER_CACHE_DISABLE=true'],
++        env : kk_test_env,
+         timeout : 15,
+       )
+     endforeach
+@@ -857,7 +493,7 @@ if with_tests
+         timeline_wait_loss_test,
+         args : [wait_mode],
+         suite : ['kosmickrisp'],
+-        env : ['MESA_SHADER_CACHE_DISABLE=true'],
++        env : kk_test_env,
+         timeout : 90,
+       )
+     endforeach
+@@ -880,7 +516,7 @@ if with_tests
+           timeline_host_wait_test,
+           args : [submit_api],
+           suite : ['kosmickrisp'],
+-          env : ['MESA_SHADER_CACHE_DISABLE=true'] + thread_environment,
++          env : kk_test_env + thread_environment,
+           timeout : 90,
+         )
+         test(
+@@ -888,7 +524,7 @@ if with_tests
+           timeline_host_wait_test,
+           args : [submit_api, 'mixed'],
+           suite : ['kosmickrisp'],
+-          env : ['MESA_SHADER_CACHE_DISABLE=true'] + thread_environment,
++          env : kk_test_env + thread_environment,
+           timeout : 30,
+         )
+       endforeach
+@@ -904,457 +540,133 @@ if with_tests
+     foreach pending_mode : ['deadlock', 'throughput']
+       test(
+         'kosmickrisp_timeline_pending_wait_' + pending_mode,
+-        timeline_pending_wait_test,
+-        args : [pending_mode],
+-        suite : ['kosmickrisp'],
+-        env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-        timeout : 60,
+-      )
+-    endforeach
+-    test(
+-      'kosmickrisp_command_pool_threads',
+-      executable(
+-        'test_kosmickrisp_command_pool_threads',
+-        files('tests/test_command_pool_threads.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : [
+-        'MESA_SHADER_CACHE_DISABLE=true',
+-        'MESA_VK_ENABLE_SUBMIT_THREAD=true',
+-      ],
+-      timeout : 90,
+-    )
+-    test(
+-      'kosmickrisp_signal_lifetime',
+-      executable(
+-        'test_kosmickrisp_signal_lifetime',
+-        files('tests/test_signal_lifetime.m'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_owed_signal_bound',
+-      executable(
+-        'test_kosmickrisp_owed_signal_bound',
+-        files('tests/test_owed_signal_bound.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_command_completion',
+-      executable(
+-        'test_kosmickrisp_command_completion',
+-        files('tests/test_command_completion.m'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-        objc_args : ['-Wno-unused-function'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_linear_input_attachment',
+-      executable(
+-        'test_kosmickrisp_linear_input_attachment',
+-        files('tests/test_linear_input_attachment.m'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_command_pool_release',
+-      executable(
+-        'test_kosmickrisp_command_pool_release',
+-        files('tests/test_command_pool_release.m'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-        objc_args : ['-Wno-unused-function'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_address_binding_planes',
+-      executable(
+-        'test_kosmickrisp_address_binding_planes',
+-        files('tests/test_address_binding_planes.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_heap_size_override',
+-      executable(
+-        'test_kosmickrisp_heap_size_override',
+-        files('tests/test_heap_size_override.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_heap_growth',
+-      executable(
+-        'test_kosmickrisp_heap_growth',
+-        files('tests/test_heap_growth.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_whole : libkk,
+-        link_args : ['-Wl,-undefined,dynamic_lookup'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_drm_plane_offset',
+-      executable(
+-        'test_kosmickrisp_drm_plane_offset',
+-        files('tests/test_drm_plane_offset.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_residency_release',
+-      executable(
+-        'test_kosmickrisp_residency_release',
+-        files('tests/test_residency_release.m'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
+-    test(
+-      'kosmickrisp_command_allocator_budget',
+-      executable(
+-        'test_kosmickrisp_command_allocator_budget',
+-        files('tests/test_command_allocator_budget.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_with : libvulkan_kosmickrisp,
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+-    )
++        timeline_pending_wait_test,
++        args : [pending_mode],
++        suite : ['kosmickrisp'],
++        env : kk_test_env,
++        timeout : 60,
++      )
++    endforeach
+     test(
+-      'kosmickrisp_command_resubmit',
++      'kosmickrisp_command_pool_threads',
+       executable(
+-        'test_kosmickrisp_command_resubmit',
+-        files('tests/test_command_resubmit.c'),
++        'test_kosmickrisp_command_pool_threads',
++        files('tests/test_command_pool_threads.c'),
+         include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dep_thread,
+-        ],
++        dependencies : kk_whole_library_test_deps,
+         link_whole : libkk,
+         link_args : ['-Wl,-undefined,dynamic_lookup'],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
++      env : kk_test_env + ['MESA_VK_ENABLE_SUBMIT_THREAD=true'],
++      timeout : 90,
+     )
+     test(
+-      'kosmickrisp_offline_device_library',
++      'kosmickrisp_signal_lifetime',
+       executable(
+-        'test_kosmickrisp_offline_device_library',
+-        files('tests/test_offline_device_library.c'),
++        'test_kosmickrisp_signal_lifetime',
++        files('tests/test_signal_lifetime.m'),
+         include_directories : kk_test_include_directories,
+         dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+           idep_vulkan_runtime_headers,
+           idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
++          kk_metal_frameworks,
+         ],
+         link_with : libvulkan_kosmickrisp,
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      env : kk_test_env,
+       timeout : 60,
+     )
++  endif
++
++  # Tests of header-only driver helpers: tests/test_<name>.c.
++  foreach kk_header_test : [
++    'device_address',
++    'depth_clip',
++    'line_raster',
++    'raster_variant',
++    'gpl_state',
++  ]
+     test(
+-      'kosmickrisp_command_buffer_consolidation',
++      'kosmickrisp_' + kk_header_test,
+       executable(
+-        'test_kosmickrisp_command_buffer_consolidation',
+-        files('tests/test_command_buffer_consolidation.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [
+-          idep_mtl_bridge,
+-          idep_nir,
+-          idep_vulkan_runtime_headers,
+-          idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+-        ],
+-        link_with : libvulkan_kosmickrisp,
++        'test_kosmickrisp_' + kk_header_test,
++        files('tests/test_' + kk_header_test + '.c'),
++        include_directories : [inc_include, inc_src],
++        dependencies : [idep_vulkan_runtime_headers],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 60,
+     )
++  endforeach
++
++  # Tests of driver sources built into the test itself: [name, driver
++  # sources].
++  foreach kk_source_test : [
++    ['queue_error', ['kk_queue_error.c']],
++    ['image_extent', ['kk_image_extent.c']],
++    ['linear_layout', []],
++  ]
+     test(
+-      'kosmickrisp_query_pool_lifetime',
++      'kosmickrisp_' + kk_source_test[0],
+       executable(
+-        'test_kosmickrisp_query_pool_lifetime',
+-        files('tests/test_query_pool_lifetime.c'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
++        'test_kosmickrisp_' + kk_source_test[0],
++        files(['tests/test_' + kk_source_test[0] + '.c'] + kk_source_test[1]),
++        include_directories : [inc_include, inc_src],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true', 'NSZombieEnabled=YES'],
+-      timeout : 60,
+     )
++  endforeach
++
++  # Tests of NIR lowering passes built into the test: [name, driver sources].
++  foreach kk_lowering_test : [
++    ['non_seamless_cube_lowering',
++     ['kk_nir_lower_textures.c', 'kk_nir_lower_descriptors.c']],
++    ['custom_border_lowering',
++     ['kk_nir_lower_custom_border.c', 'kk_nir_lower_descriptors.c']],
++    ['rgb32_texel_lowering', ['kk_nir_lower_descriptors.c']],
++  ]
+     test(
+-      'kosmickrisp_line_raster_cache',
++      'kosmickrisp_' + kk_lowering_test[0],
+       executable(
+-        'test_kosmickrisp_line_raster_cache',
+-        files('tests/test_line_raster_cache.cpp',
+-              'tests/line_raster_cache_state.m'),
++        'test_kosmickrisp_' + kk_lowering_test[0],
++        files(['tests/test_' + kk_lowering_test[0] + '.c'] + kk_lowering_test[1]),
+         include_directories : kk_test_include_directories,
+         dependencies : [
+-          idep_mtl_bridge,
+           idep_nir,
+           idep_vulkan_runtime_headers,
+           idep_vulkan_util_headers,
+           idep_vulkan_wsi_headers,
++          idep_msl_to_nir,
+           idep_libkk_shaders_h,
+-          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
+         ],
+-        link_with : libvulkan_kosmickrisp,
+-        objc_args : ['-Wno-unused-function'],
+-        override_options : ['cpp_std=c++20'],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+     )
++  endforeach
++
++  # Tests of the vertex-buffer lowering: [name, driver sources].
++  foreach kk_vbo_test : [
++    ['legacy_vertex_attributes', ['kk_nir_lower_vbo.c', 'kk_shader_info.c']],
++    ['unbound_vertex_attribute', ['kk_nir_lower_vbo.c']],
++  ]
+     test(
+-      'kosmickrisp_dynamic_vertex_input_cache',
++      'kosmickrisp_' + kk_vbo_test[0],
+       executable(
+-        'test_kosmickrisp_dynamic_vertex_input_cache',
+-        files('tests/test_dynamic_vertex_input_cache.cpp',
+-              'tests/dynamic_vertex_input_cache_state.c'),
++        'test_kosmickrisp_' + kk_vbo_test[0],
++        files(['tests/test_' + kk_vbo_test[0] + '.c'] + kk_vbo_test[1]),
+         include_directories : kk_test_include_directories,
+         dependencies : [
+-          idep_mtl_bridge,
+           idep_nir,
++          idep_msl_to_nir,
++          idep_libkk_shaders_h,
+           idep_vulkan_runtime_headers,
+           idep_vulkan_util_headers,
+-          idep_vulkan_wsi_headers,
+-          idep_libkk_shaders_h,
+         ],
+-        link_with : libvulkan_kosmickrisp,
+-        override_options : ['cpp_std=c++20'],
+       ),
+       suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+     )
+-  endif
+-
 -  test(
 -    'kosmickrisp_device_address',
 -    executable(
@@ -720,32 +1435,43 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -    ),
 -    suite : ['kosmickrisp'],
 -  )
-+  # Tests of header-only driver helpers: tests/test_<name>.c.
-+  foreach kk_header_test : [
-+    'device_address',
-+    'depth_clip',
-+    'line_raster',
-+    'raster_variant',
-+    'gpl_state',
-+  ]
-+    test(
-+      'kosmickrisp_' + kk_header_test,
-+      executable(
-+        'test_kosmickrisp_' + kk_header_test,
-+        files('tests/test_' + kk_header_test + '.c'),
-+        include_directories : [inc_include, inc_src],
-+        dependencies : [idep_vulkan_runtime_headers],
-+      ),
-+      suite : ['kosmickrisp'],
-+    )
-+  endforeach
- 
-   test(
-     'kosmickrisp_queue_error',
-@@ -1313,49 +1010,6 @@ if with_tests
-     suite : ['kosmickrisp'],
-   )
- 
+-
+-  test(
+-    'kosmickrisp_queue_error',
+-    executable(
+-      'test_kosmickrisp_queue_error',
+-      files(
+-        'tests/test_queue_error.c',
+-        'kk_queue_error.c',
+-      ),
+-      include_directories : [inc_include, inc_src],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+-  test(
+-    'kosmickrisp_image_extent',
+-    executable(
+-      'test_kosmickrisp_image_extent',
+-      files(
+-        'tests/test_image_extent.c',
+-        'kk_image_extent.c',
+-      ),
+-      include_directories : [inc_include, inc_src],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+-  test(
+-    'kosmickrisp_linear_layout',
+-    executable(
+-      'test_kosmickrisp_linear_layout',
+-      files('tests/test_linear_layout.c'),
+-      include_directories : [inc_include, inc_src],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
 -  test(
 -    'kosmickrisp_depth_clip',
 -    executable(
@@ -788,14 +1514,145 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -    ),
 -    suite : ['kosmickrisp'],
 -  )
--
++  endforeach
+ 
    test(
      'kosmickrisp_logic_op',
-     executable(
-@@ -1513,75 +1167,28 @@ if with_tests
+@@ -1387,50 +699,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
+-  test(
+-    'kosmickrisp_non_seamless_cube_lowering',
+-    executable(
+-      'test_kosmickrisp_non_seamless_cube_lowering',
+-      files(
+-        'tests/test_non_seamless_cube_lowering.c',
+-        'kk_nir_lower_textures.c',
+-        'kk_nir_lower_descriptors.c',
+-      ),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir,
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-        idep_vulkan_wsi_headers,
+-        idep_msl_to_nir,
+-        idep_libkk_shaders_h,
+-      ],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+-  test(
+-    'kosmickrisp_custom_border_lowering',
+-    executable(
+-      'test_kosmickrisp_custom_border_lowering',
+-      files(
+-        'tests/test_custom_border_lowering.c',
+-        'kk_nir_lower_custom_border.c',
+-        'kk_nir_lower_descriptors.c',
+-      ),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir,
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-        idep_vulkan_wsi_headers,
+-        idep_msl_to_nir,
+-        idep_libkk_shaders_h,
+-      ],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+   test(
+     'kosmickrisp_fragment_output_swizzle',
+     executable(
+@@ -1451,137 +719,28 @@ if with_tests
+     suite : ['kosmickrisp'],
+   )
+ 
+-  test(
+-    'kosmickrisp_rgb32_texel_lowering',
+-    executable(
+-      'test_kosmickrisp_rgb32_texel_lowering',
+-      files(
+-        'tests/test_rgb32_texel_lowering.c',
+-        'kk_nir_lower_descriptors.c',
+-      ),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir,
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-        idep_vulkan_wsi_headers,
+-        idep_msl_to_nir,
+-        idep_libkk_shaders_h,
+-      ],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+-  test(
+-    'kosmickrisp_legacy_vertex_attributes',
+-    executable(
+-      'test_kosmickrisp_legacy_vertex_attributes',
+-      files(
+-        'tests/test_legacy_vertex_attributes.c',
+-        'kk_nir_lower_vbo.c',
+-        'kk_shader_info.c',
+-      ),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir,
+-        idep_msl_to_nir,
+-        idep_libkk_shaders_h,
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-      ],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
+-  test(
+-    'kosmickrisp_unbound_vertex_attribute',
+-    executable(
+-      'test_kosmickrisp_unbound_vertex_attribute',
+-      files(
+-        'tests/test_unbound_vertex_attribute.c',
+-        'kk_nir_lower_vbo.c',
++  # Tests of the NIR-to-MSL compiler: tests/test_<name>.c.
++  foreach kk_msl_test : [
++    'clip_cull_distance_io',
++    '16bit_varying_io',
++    'msl_temporaries',
++    'msl_coherent_access',
++    'subgroup_stages',
++  ]
++    test(
++      'kosmickrisp_' + kk_msl_test,
++      executable(
++        'test_kosmickrisp_' + kk_msl_test,
++        files('tests/test_' + kk_msl_test + '.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir,
++          idep_msl_to_nir,
++        ],
+       ),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [
+-        idep_nir,
+-        idep_msl_to_nir,
+-        idep_libkk_shaders_h,
+-        idep_vulkan_runtime_headers,
+-        idep_vulkan_util_headers,
+-      ],
+-    ),
+-    suite : ['kosmickrisp'],
+-  )
+-
 -  test(
 -    'kosmickrisp_clip_cull_distance_io',
 -    executable(
@@ -865,25 +1722,6 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d5
 -    ),
 -    suite : ['kosmickrisp'],
 -  )
-+  # Tests of the NIR-to-MSL compiler: tests/test_<name>.c.
-+  foreach kk_msl_test : [
-+    'clip_cull_distance_io',
-+    '16bit_varying_io',
-+    'msl_temporaries',
-+    'msl_coherent_access',
-+    'subgroup_stages',
-+  ]
-+    test(
-+      'kosmickrisp_' + kk_msl_test,
-+      executable(
-+        'test_kosmickrisp_' + kk_msl_test,
-+        files('tests/test_' + kk_msl_test + '.c'),
-+        include_directories : kk_test_include_directories,
-+        dependencies : [
-+          idep_nir,
-+          idep_msl_to_nir,
-+        ],
-+      ),
 +      suite : ['kosmickrisp'],
 +    )
 +  endforeach

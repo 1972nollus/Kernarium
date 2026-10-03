@@ -43,9 +43,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/kosmickrisp/vulkan/kk_device.c            |   8 +
  src/kosmickrisp/vulkan/kk_device.h            |  22 +-
  .../vulkan/kk_device_memory_pool.h            |  54 +++
- src/kosmickrisp/vulkan/meson.build            |   1 +
+ src/kosmickrisp/vulkan/meson.build            |   2 +-
  .../vulkan/tests/test_heap_growth.c           | 392 +++++++++++++++++-
- 6 files changed, 641 insertions(+), 56 deletions(-)
+ 6 files changed, 641 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_memory_pool.h
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
@@ -515,17 +515,18 @@ index 0000000000000000000000000000000000000000..d53a32784c40172e8d95777ef3e033f8
 +}
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 0fed71b3e2b0ac5b33f2df15ee4a691f8b8f3a36..c209da4ab7ba611588e2ff9c06e3b1b85d523d20 100644
+index 40d6a5c7d5c2756eed160ddf073b310ffe610693..b1c397bab185d7f792bfba3f4a023cd63258463d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -769,6 +769,7 @@ if with_tests
-           idep_vulkan_util_headers,
-           idep_vulkan_wsi_headers,
-           idep_libkk_shaders_h,
-+          dep_thread,
-         ],
-         link_whole : libkk,
-         link_args : ['-Wl,-undefined,dynamic_lookup'],
+@@ -362,7 +362,7 @@ if with_tests
+       ['pipeline_statistics_gpu', 120, []],
+       ['owed_signal_bound', 60, []],
+       ['heap_size_override', 60, []],
+-      ['heap_growth', 120, []],
++      ['heap_growth', 120, [dep_thread]],
+       ['command_resubmit', 60, [dep_thread]],
+     ]
+       test(
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 index d0c37c02524fd0922a455e8d524fc074f3da9843..8f5f0433bf69f2ec58d1659bef351230dc28bcf7 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
