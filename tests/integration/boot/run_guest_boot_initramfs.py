@@ -10,11 +10,13 @@ into the payload's entry program as PID 1. The same payload must boot over an
 ext4 writable layer formatted on a second block device, with the container
 state bound from that filesystem, when a second segment appended after the
 first replaces its /boot.env, and the harness session must run a workload
-entry and power the guest off after it. The remaining cases require every broken boot
-to stop with a named reason and a nonzero exit instead of reaching the image's
-own init: the base archive alone, a segment appended without the base's
-padding, an initrd the kernel never loads, and an invalid /boot.env. The
-contract is tools/rootfs/boot-ramdisk/README.md.
+entry and power the guest off after it. The same payload must also boot from
+an initrd that uml-initramfs writes. The remaining cases require every broken
+boot to stop with a named reason and a nonzero exit instead of reaching the
+image's own init: the base archive alone, a segment appended without the
+base's padding, an initrd the kernel never loads, and an invalid /boot.env.
+The launcher must remove its scratch initrd, including one an aborted run left
+behind. The contract is tools/rootfs/boot-ramdisk/README.md.
 """
 
 from __future__ import annotations

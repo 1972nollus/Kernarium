@@ -99,8 +99,7 @@ in Designed for iPad mode; [`graphics.md`](graphics.md#current-path) says why
 the iOS Simulator has no GPU build. Kernarium's own suite carries the narrowest
 check of that provider: it creates a surfaceless OpenGL 4.6 core context in the
 application process and requires Zink on the packaged KosmicKrisp driver, so a
-broken iOS graphics closure fails in seconds rather than inside a guest. The retired Simulator and device GLES
-lanes verified the removed ANGLE provider and have no replacement.
+broken iOS graphics closure fails in seconds rather than inside a guest.
 
 A whole CTS campaign runs in that application through the opt-in
 `apple-ios-mac-vk-gl-cts` lane. It needs Xcode's local install service and a
@@ -249,71 +248,11 @@ their output, never files. The harness sends commands through a nonblocking
 pipe and keeps PTY output. This keeps host input pollable when every guest CPU
 is busy while preserving terminal output behavior and bounded writes under
 backpressure.
-`guest-console-input-burst` writes an 11 KiB burst to `ttyS0` in one host write,
-enough to throttle the tty, and then requires later typed input to reach the
-shell. `guest-console-concurrent-input` streams 1 MiB of numbered lines to a
-reader on one of four vCPUs. The reader is slower than the stream, so the line
-throttles repeatedly, and each unthrottle drains the host channel while new
-input raises the line's interrupt on another CPU. Every line must arrive whole
-and in order.
 
-`guest-balloon-config-churn` gives a one-vCPU guest an external balloon backend
-that raises a config change every 2 ms, so config-change requests cross the
-driver's config reads constantly; the guest must keep running commands and read
-the config thousands of times. The backend runs in its own process and so cannot
-serve virtqueues: guest RAM is resolvable only inside the emulator.
-
-`guest-bpf-callbacks` runs hand-assembled BPF programs through `bpf()` from the
-rootfs Python: `bpf_loop`, inlined and through the helper,
-`bpf_for_each_map_elem`, a self-rearming BPF timer, nested callbacks, and tail
-calls into callback programs. It checks that the verifier's frame, stack, and
-tail-call limits still reject, and exhausts and refills the interpreter's
-callback entry-point pool.
-
-`guest-boot-initramfs` boots the launcher's base and per-run initramfs. The
-generic `/init` must mount the image beneath a tmpfs overlay, install the
-payload and switch root into the payload's entry as PID 1; the same payload
-must boot from an initrd written by `uml-initramfs`. The base alone, a segment
-appended without padding, an initrd the kernel never loads and an unknown
-`/boot.env` key must each stop the guest with their named reason and a nonzero
-exit, and the launcher must remove its scratch initrd, including one an
-aborted run left behind.
-
-`guest-kernel-nofault` boots the rootfs and checks, through a sysrq t dump,
-that a faulting nofault read recovers silently and that every trace entry is
-reliable, as [`../kernel/common/README.md`](../kernel/common/README.md) specifies.
-
-`guest-user-strings` boots the rootfs and checks the strings system calls copy
-from user memory against the copy contract in
-[`../kernel/common/README.md`](../kernel/common/README.md).
-
-`guest-native-window-unmap` maps a page just below and just above the Darwin
-kernel's native window, which it finds from the addresses `mmap()` refuses,
-and unmaps each alone and both with one `munmap()` across the window. The
-page tables freed with them widen the kernel's TLB flush over the window, and
-the guest must survive each unmap and run another command.
-
-`guest-ptrace-pstate` writes a stopped child's PSTATE through
-`PTRACE_SETREGSET` and `PTRACE_POKEUSER`. SS and the RES0 bits must read back
-cleared and TCO, DIT and SSBS kept, a mode or DAIF bit must fail with
-`EINVAL`, and the child continued after an SS write must exit rather than
-stop on a single-step trap.
-
-`guest-signal-unwind` compiles a probe in the guest and unwinds through a
-signal frame as native arm64 allows: `backtrace()` in a handler must reach the
-code that raised the signal and `main()`, the handler's caller frame record
-must hold the interrupted x29 and x30, cancelling a thread blocked in
-`read()` must run its cleanup handler, and a tracer must be able to write
-back the word at the handler's return address.
-
-`guest-signal-restart` spins in machine code with x0 holding each -ERESTART*
-code while a 1 ms interval timer's `SIGALRM` interrupts it, with and without
-`SA_RESTART`, and requires x0 back unchanged, as
-[`../kernel/common/README.md`](../kernel/common/README.md) specifies.
-
-`guest-run-end-stop` needs only the kernel image: it stops embedded guests
-throughout their boot and checks the run-end and SIGALRM contracts in
-[`../kernel/common/README.md`](../kernel/common/README.md).
+`ctest -N -L integration` lists the registered guest tests. Each runner or
+guest probe states in its header what it checks, and a contract's owner, such
+as [`../kernel/common/README.md`](../kernel/common/README.md), names the tests
+that check it.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
@@ -351,38 +290,22 @@ accounts, and optional Plasma session. See the
 grow entry points; these images do not replace the unified immutable product
 rootfs.
 
-`tools/rootfs/x86_64-smoke` owns the separate, pure x86-64 EROFS image used to
-qualify the dedicated 4 KiB x86_64-userspace kernel slice. Kernel-mode
-execution remains native arm64, but that slice cannot load arm64 userspace.
-Build it on an x86-64 Linux host and run the bounded
-`tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check; it is not a
-replacement for the accepted general-purpose rootfs. The slice's own
-`uml-darwin` embeds the x86-64 boot base, so check it with
-`tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets`, the
-`macos-x86_64` `uml-darwin`, any x86-64 EROFS image such as the
-[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), the x86-64 base
-and a `uml-initramfs`. With the same emulator and any x86-64 image,
-`tests/integration/x86_64/run_guest_x86_64_rflags.py` cross-builds a
-freestanding x86-64 and i386 probe with `clang++` and `ld.lld` and checks the
-slice's user-RFLAGS contract from the
-[mainline README](../kernel/mainline-6.18/README.md): the value `execve()`
-starts a task with, the bits a tracer and a signal return may change, that
-RF from IRET or a signal return is gone by the next instruction's system call,
-that fault frames, a tracer's view at a fault's stop, and a REP string that a
-signal from another CPU interrupts show RF while trap frames do not, and that
-TF set by IRET traps after one instruction.
-`tests/integration/x86_64/run_guest_x86_64_exceptions.py` builds and runs its
-exception probe the same way and checks, for both ABIs, that a 1 ms interval
-timer keeps firing through long REP STOSB and REPE CMPSB loops and that ICEBP,
-INT 4, INT n, UD2, page faults, non-canonical addresses, i386 BOUND and INTO, a
-misaligned access under RFLAGS.AC, and unmasked SSE and x87 exceptions deliver
-Linux's signals, codes, trap numbers and error codes without a kernel relay
-complaint, that a value on the x87 stack survives a signal, that a signal taken
-between two instructions leaves RAX alone even when it holds an -ERESTART*
-code, and that a tracer of the same ABI reads and writes registers, FP state,
-the debug registers and i386 TLS, steps a repeated string instruction one
-iteration at a time, and changes or skips a system call through orig_ax. Its
-expected values are native x86 Linux's.
+The [x86-64 smoke image](../tools/rootfs/x86_64-smoke/README.md) qualifies the
+dedicated 4 KiB x86_64-userspace kernel slice, whose kernel mode stays native
+arm64 but which cannot load arm64 userspace; its README gives the build on an
+x86-64 Linux host and the bounded
+`tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check. The slice
+registers no CTest suites, so its other runners also run directly, each with
+the `macos-x86_64` `uml-darwin` and an x86-64 EROFS image such as the
+[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md). That `uml-darwin`
+embeds the x86-64 boot base, so
+`tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets` checks it
+with the x86-64 base and a `uml-initramfs`.
+`tests/integration/x86_64/run_guest_x86_64_rflags.py` and
+`run_guest_x86_64_exceptions.py` cross-build freestanding x86-64 and i386
+probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
+exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
+against native x86 Linux's values.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
