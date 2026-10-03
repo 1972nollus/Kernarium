@@ -42,9 +42,6 @@ struct NativeExecutionContext final {
 	std::uint64_t program_end{};
 	::uml::cpu::FaultInfo fault{};
 	std::uint8_t write_code{};
-	/* The host takes an exclusive access at any alignment inside one 16-byte
-	 * granule (FEAT_LSE2); without it an unaligned one is an alignment fault. */
-	std::uint8_t unaligned_exclusives{};
 	/* This run holds the lock that serializes locked operands no exclusive
 	 * access can cover; the fault tail releases it. */
 	std::uint8_t split_lock{};
@@ -102,8 +99,6 @@ static_assert(offsetof(NativeExecutionContext, write_code) ==
  * field's low bit, so only the pending state may carry it. */
 static_assert((UML_X86_64_WRITE_CODE_PENDING & 1U) == 1U &&
 	(UML_X86_64_WRITE_CODE_PUBLISHED & 1U) == 0U);
-static_assert(offsetof(NativeExecutionContext, unaligned_exclusives) ==
-	UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES);
 static_assert(offsetof(NativeExecutionContext, split_lock) ==
 	UML_X86_64_CONTEXT_SPLIT_LOCK);
 static_assert(offsetof(NativeExecutionContext, instruction_limit) ==

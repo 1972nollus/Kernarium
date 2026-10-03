@@ -133,6 +133,23 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	std::fflush(stderr);
 }
 
+/* The engine keeps an unaligned locked operand inside one 16-byte granule on
+ * its exclusive path, which needs FEAT_LSE2. Every Apple-silicon Mac has it;
+ * on a host without it no x86 code runs. Decided, and reported, once. */
+[[nodiscard]] bool host_runs_x86_engine() noexcept
+{
+	static const bool supported = [] {
+		const bool lse2 =
+			::uml::platform::apple::probed_host_capabilities().has(
+				::uml::platform::ArmFeature::lse2);
+		if (!lse2)
+			std::fputs("Darwin x86 runtime: the host lacks FEAT_LSE2, "
+				"which the x86-64 engine requires\n", stderr);
+		return lse2;
+	}();
+	return supported;
+}
+
 /* x86 exception vectors the runtime reports as a breakpoint's syndrome. */
 constexpr std::uint32_t stack_segment_fault = 12;
 constexpr std::uint32_t general_protection = 13;
@@ -225,17 +242,13 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	X86GadgetRunResult run{};
 	auto &result = run.execution;
 	result.reason = ::uml::cpu::ExitReason::fatal;
+	if (!host_runs_x86_engine())
+		return run;
 	X86StaticExecutionScope execution{generation, cpu.rip};
 	if (!execution.entered()) {
 		trace_fatal("execution-scope", cpu, generation, errno);
 		return run;
 	}
-	/* A reset executor starts without the permission, so every run restates
-	 * what the host reported. */
-	const bool unaligned_exclusives =
-		::uml::platform::apple::probed_host_capabilities().has(
-			::uml::platform::ArmFeature::lse2);
-	executor.permit_unaligned_exclusives(unaligned_exclusives);
 	auto guarded_interrupt = interrupt;
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;
@@ -297,8 +310,6 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 				}
 				checked_executor->check_exceptions(checked);
 			}
-			checked_executor->permit_unaligned_exclusives(
-				unaligned_exclusives);
 			active = checked_executor.get();
 			state = &prepared[checked];
 		}

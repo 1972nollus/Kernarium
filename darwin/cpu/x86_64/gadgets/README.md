@@ -272,20 +272,18 @@ always carries the barrier.
 ## Locked operands
 
 A LOCK-prefixed read-modify-write, XCHG against memory, CMPXCHG and XADD update
-their operand in an exclusive loop, which the host accepts only at natural
-alignment. x86 accepts a locked operand anywhere, and guests do use unaligned
-ones, in packed structures above all.
+their operand in an exclusive loop, which the host accepts only inside one
+16-byte granule. x86 accepts a locked operand anywhere, and guests do use
+unaligned ones, in packed structures above all.
 
-- A host with FEAT_LSE2 takes an exclusive access at any alignment inside one
-  16-byte granule. The runtime reports the feature on every run
-  (`Executor::permit_unaligned_exclusives`), and an unaligned operand that fits
-  in a granule then keeps the exclusive path. A naturally aligned operand never
-  reads the permission.
-- Every other operand -- one across a granule or a page, a 16-byte CMPXCHG16B
-  operand off its alignment, and every unaligned operand on a host without the
-  feature, which includes the A12 -- runs the gadget's ordinary load and store
-  under one process-wide lock (`split_operand`, `split_lock_leave`). A fault in
-  between releases the lock in the fault tail.
+- The engine runs only on hosts with FEAT_LSE2, which take an exclusive access
+  at any alignment inside one 16-byte granule, so an unaligned operand that
+  fits in a granule keeps the exclusive path. Every Apple-silicon Mac has the
+  feature; the runtime checks it once and refuses to run x86 code without it.
+- Every other operand -- one across a granule or a page, and a 16-byte
+  CMPXCHG16B operand off its alignment -- runs the gadget's ordinary load and
+  store under one process-wide lock (`split_operand`, `split_lock_leave`). A
+  fault in between releases the lock in the fault tail.
 
 The lock makes such an operand atomic against every other operand on that
 path, which covers the same instruction running on the other vCPUs. It is not

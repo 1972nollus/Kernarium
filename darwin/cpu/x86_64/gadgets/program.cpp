@@ -341,7 +341,6 @@ template<bool WatchFloating, bool Checked = false>
 		.tlb_entries = executor.tlb_entries(),
 		.program_begin = program.address(),
 		.program_end = program.address() + program.byte_count(),
-		.unaligned_exclusives = executor.unaligned_exclusives(),
 		.instruction_limit = std::min<std::size_t>(limit, 4096),
 		.target_links = executor.target_links(program.execution_mode()),
 		.execution_context = executor.execution_context(),
