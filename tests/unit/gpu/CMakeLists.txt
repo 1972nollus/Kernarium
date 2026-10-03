@@ -206,6 +206,17 @@ if(TARGET uml_gpu_service)
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)
 
+    # Zink keeps the first result it reads when a poll finds a statistics
+    # query available, so the host driver must not publish availability
+    # before the counts.
+    uml_add_gpu_unit_test(gpu-statistics-availability
+        uml_gpu_statistics_availability_tests
+        host_gl_statistics_availability_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY
+        TIMEOUT 120)
+
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
     # contract, and losing it faults the GPU thread.
