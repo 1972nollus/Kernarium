@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "require.hpp"
+
 #include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace uml::gpu::test {
+
+/* Fails the test unless a Vulkan call succeeded. */
+inline void check(VkResult result, const char *operation,
+                  const std::source_location location = std::source_location::current())
+{
+    if (result != VK_SUCCESS)
+        uml::testing::fail(std::string(operation) + ": " + std::to_string(result), location);
+}
 
 struct DrawCapabilities {
     std::string device_name;

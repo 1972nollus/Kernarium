@@ -3,6 +3,7 @@
 #include "shaders/geometry_side_effects_spirv.hpp"
 #include "shaders/legacy_vertex_input_spirv.hpp"
 #include "shaders/line_multiview_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,17 +16,12 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawExtensions;
 using uml::gpu::test::DrawResult;
 using uml::gpu::test::VertexInputDraw;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 void verify(const DrawConfig &config, const DrawResult &result,
             const std::string &name)

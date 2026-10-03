@@ -27,10 +27,8 @@ inline constexpr std::size_t maximum_shared_translation_relocations = 2;
 /*
  * Translations shared between executors.
  *
- * Every executor owns a private block cache, so ten guest CPUs running the
- * same guest code each decoded and emitted it. Measured over multi-core Clang
- * and Object Detection, the summed per-thread distinct blocks were 7.4x their
- * union: the same block translated by ten threads 70% of the time.
+ * Every executor owns a private block cache, so without this tier guest CPUs
+ * running the same guest code would each decode and emit it (G134).
  *
  * An entry is keyed by the guest PC and the exact guest instruction words it
  * was translated from, so it is a pure function of its input and can never go

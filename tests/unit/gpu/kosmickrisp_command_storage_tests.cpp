@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
+#include "require.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -11,15 +12,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::SubmitStormConfig;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 /* A virtualized GL or Vulkan stack ends every guest command buffer in a
  * submission, so the cost of one submission is the cost of its frames. On a

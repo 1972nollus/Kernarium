@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "vulkan_draw_test.hpp"
+
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_metal.h>
 
@@ -10,11 +12,7 @@
 #include <vector>
 
 namespace {
-void check(VkResult result, const char *operation)
-{
-    if (result != VK_SUCCESS)
-        throw std::runtime_error(std::string(operation) + ": " + std::to_string(result));
-}
+using uml::gpu::test::check;
 template <typename T> T structure(VkStructureType type)
 {
     T value{};

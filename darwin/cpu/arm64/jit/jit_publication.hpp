@@ -20,25 +20,17 @@ enum class JitStoreState : unsigned {
 
 /*
  * A participant's observable store state lives in a slot rather than in the
- * participant, so that scanning it needs no lock.
+ * participant, so that scanning it needs no lock (G132). The wait loop in
+ * JitExclusiveOperationScope runs the scan on every iteration.
  *
- * G131 counted 5,113,608 iterations of the wait loop in
- * JitExclusiveOperationScope over four multi-core workloads, each one taking
- * jit_store_participants_mutex and running any_of over a vector of participant
- * pointers - 5.1 million lock acquire/release pairs and linear scans inside a
- * protocol that is otherwise deliberately lock-free.
- *
- * The mutex was not ordering the states, which are seq_cst on both sides; it
- * was keeping the scan from dereferencing a participant that had been
- * destroyed. Slots remove that hazard rather than guard it: the scan reads
- * stable storage that outlives every participant, a released slot reads idle -
- * which is exactly "no published store" - and no participant is ever
- * dereferenced. G102 rejected the obvious alternative, an atomic count of
- * non-idle participants, because it would put a contended read-modify-write on
- * the lock-free direct-store path to speed up a waiter. Nothing here touches
- * that path: a participant still only stores its own state, at a different
- * address. Match the Apple arm64 cache line so adjacent vCPUs do not
- * invalidate each other's publication state on every native chain.
+ * The states are seq_cst on both sides, so no mutex is needed to order them;
+ * the hazard is a scan dereferencing a destroyed participant. Slots remove it:
+ * the scan reads stable storage that outlives every participant, a released
+ * slot reads idle - which is exactly "no published store" - and no
+ * participant is ever dereferenced. A participant stores only its own state,
+ * so the lock-free direct-store path performs no shared read-modify-write.
+ * Match the Apple arm64 cache line so adjacent vCPUs do not invalidate each
+ * other's publication state on every native chain.
  */
 struct alignas(128) JitStoreSlot final {
   std::atomic<JitStoreState> state{JitStoreState::idle};
@@ -78,7 +70,7 @@ struct JitStoreParticipant final {
 
   /* Declared before published_ so it is constructed before its address is
    * taken. An unregistered participant publishes here and is invisible to the
-   * scan, which is what an unregistered participant meant before as well. */
+   * scan. */
   JitStoreSlot local_{};
   /* Written only by the owning thread, in register/unregister, under
    * jit_store_participants_mutex. The owner reads it without the mutex on its
@@ -94,9 +86,9 @@ extern std::vector<JitStoreParticipant *> jit_store_participants;
 /*
  * Only the current reservation helper closes the store phase. Queued helpers
  * wait outside that phase, and stores parked by the current helper are allowed
- * to publish and drain before the next helper can enter. This avoids both the
- * old spinning-store cost and the reader/writer-lock convoy in which queued
- * writers kept ordinary stores asleep across several helper turns.
+ * to publish and drain before the next helper can enter. A parked store
+ * therefore waits out only the current helper, never the helpers queued
+ * behind it, and sleeps on the phase after a bounded spin.
  *
  * The uncontended direct-store path remains lock-free: it publishes its
  * participant state, reads the phase once, and proceeds. Stores already in

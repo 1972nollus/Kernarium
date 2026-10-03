@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "require.hpp"
 #include "scanout_framebuffer.hpp"
 #include "vnc_display.hpp"
 #include "vnc_display_testing.hpp"
@@ -13,7 +14,6 @@
 #include <limits>
 #include <mutex>
 #include <netinet/in.h>
-#include <source_location>
 #include <stdexcept>
 #include <sys/socket.h>
 #include <thread>
@@ -22,19 +22,7 @@
 
 namespace {
 
-void require(
-    const bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "require failed at %s:%u\n",
-        location.file_name(),
-        location.line());
-    std::abort();
-}
+using uml::testing::require;
 
 [[nodiscard]] std::size_t descriptorCount()
 {

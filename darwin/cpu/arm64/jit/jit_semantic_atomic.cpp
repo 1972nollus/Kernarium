@@ -48,8 +48,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 		 */
 		if (size_code < 2U || (load && status != 0x1fU) ||
 		    (load && transfer == second_transfer))
-			return {StopReason::illegal_instruction, pc, instruction, 0,
-				false};
+			return illegal(pc, instruction);
 		const std::size_t element_size = std::size_t{1} << size_code;
 		const auto total_size = element_size * 2;
 		if ((base_register == 31U && (address & 15U) != 0) ||
@@ -64,8 +63,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 					ordered ? std::memory_order_acquire :
 						std::memory_order_relaxed,
 					first, second, key))
-				return {StopReason::memory_fault, address, instruction, 0,
-					false};
+				return memory_fault(address, instruction, false);
 			cpu.write_register(transfer, first, false);
 			cpu.write_register(second_transfer, second, false);
 			cpu.exclusive_address = address;
@@ -90,8 +88,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 			if (!atomic_load_pair_value(memory, address, element_size,
 					std::memory_order_relaxed, current_first,
 					current_second, key))
-				return {StopReason::memory_fault, address, instruction, 0,
-					true};
+				return memory_fault(address, instruction, true);
 			const auto monitored_first = element_size == 4 ?
 				current_first | (current_second << 32) : current_first;
 			const auto monitored_second = element_size == 8 ?
@@ -116,8 +113,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 						std::memory_order_relaxed,
 					&key, stored_key);
 				if (store_result == AtomicStoreResult::fault)
-					return {StopReason::memory_fault, address,
-						instruction, 0, true};
+					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
 					reservation_store(stored_key);
 				else
@@ -131,7 +127,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 	if (((instruction >> 10) & 0x1fU) != 0x1fU ||
 	    (!exclusive && status != 0x1fU) ||
 	    (exclusive && load && status != 0x1fU))
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const std::size_t size = std::size_t{1} << size_code;
 	if ((base_register == 31U && (address & 15U) != 0) ||
 	    single_copy_alignment_faults(address, size))
@@ -145,8 +141,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 					       ordered ? std::memory_order_acquire :
 						std::memory_order_relaxed,
 					       value, key))
-				return {StopReason::memory_fault, address, instruction, 0,
-					false};
+				return memory_fault(address, instruction, false);
 			cpu.write_register(transfer, value, false);
 			cpu.exclusive_address = address;
 			cpu.exclusive_key = key;
@@ -165,8 +160,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 			std::uintptr_t key = 0;
 			if (!atomic_load_value(memory, address, size,
 					       std::memory_order_acquire, value, key))
-				return {StopReason::memory_fault, address, instruction, 0,
-					false};
+				return memory_fault(address, instruction, false);
 			cpu.write_register(transfer, value, false);
 		}
 	} else {
@@ -177,8 +171,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 			std::uintptr_t key = 0;
 			if (!atomic_load_value(memory, address, size,
 					       std::memory_order_relaxed, current, key))
-				return {StopReason::memory_fault, address, instruction, 0,
-					true};
+				return memory_fault(address, instruction, true);
 			bool success = cpu.exclusive_address == address &&
 				cpu.exclusive_size == size &&
 				cpu.exclusive_key == key &&
@@ -198,8 +191,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 						std::memory_order_relaxed,
 					&key, stored_key);
 				if (store_result == AtomicStoreResult::fault)
-					return {StopReason::memory_fault, address,
-						instruction, 0, true};
+					return memory_fault(address, instruction, true);
 				if (store_result == AtomicStoreResult::stored)
 					reservation_store(stored_key);
 				else {
@@ -212,8 +204,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 			if (atomic_store_value(memory, address, size, value,
 					std::memory_order_release,
 					nullptr, key) != AtomicStoreResult::stored)
-				return {StopReason::memory_fault, address, instruction, 0,
-					true};
+				return memory_fault(address, instruction, true);
 			/* ARM reservations are invalidated by a write even when the
 			 * stored bits equal the old value.  The sequence is keyed by the
 			 * translated host reservation granule, so shared aliases observe
@@ -231,7 +222,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 {
 	const auto pc = cpu.pc;
 	if (((instruction >> 10) & 31U) != 31U)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const std::size_t size = std::size_t{1} << (instruction >> 30);
 	const unsigned compare_register = (instruction >> 16) & 31U;
 	const unsigned replacement_register = instruction & 31U;
@@ -252,7 +243,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 	std::uintptr_t key = 0;
 	if (!atomic_compare_swap_value(memory, address, size, compare, replacement,
 			acquire, release, observed, key))
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return memory_fault(address, instruction, true);
 	/* The architecture permits a CAS read to clear reservations even when its
 	 * comparison fails. This implementation consistently chooses that behavior.
 	 */
@@ -270,10 +261,10 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 	const unsigned replacement_register = instruction & 31U;
 	if (((instruction >> 10) & 31U) != 31U ||
 	    (compare_register & 1U) != 0 || (replacement_register & 1U) != 0)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const unsigned size_code = instruction >> 30;
 	if (size_code > 1U)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const std::size_t element_size = std::size_t{4} << size_code;
 	const auto total_size = element_size * 2;
 	const unsigned base_register = (instruction >> 5) & 31U;
@@ -299,7 +290,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 			compare_first, compare_second, replacement_first,
 			replacement_second, acquire, release, observed_first,
 			observed_second, key))
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return memory_fault(address, instruction, true);
 	reservation_store(key);
 	cpu.write_register(compare_register, observed_first, false);
 	cpu.write_register(compare_register + 1, observed_second, false);
@@ -314,7 +305,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	const unsigned o3 = (instruction >> 15) & 1U;
 	const unsigned opcode = (instruction >> 12) & 7U;
 	if (o3 && opcode != 0U)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const std::size_t size = std::size_t{1} << (instruction >> 30);
 	const unsigned operation = o3 ? 8U : opcode;
 	const unsigned source = (instruction >> 16) & 31U;
@@ -335,7 +326,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	std::uintptr_t key = 0;
 	if (!atomic_rmw_value(memory, address, size, operation, operand, acquire,
 			release, observed, key))
-		return {StopReason::memory_fault, address, instruction, 0, true};
+		return memory_fault(address, instruction, true);
 	reservation_store(key);
 	cpu.write_register(destination, observed, false);
 	cpu.pc += 4;
@@ -354,7 +345,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 	 * remaining allocated combinations are the signed LDAPUR forms. */
 	if (!no_offset && ((operation == 2U && size_code == 3U) ||
 	    (operation == 3U && size_code >= 2U)))
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const bool load = operation != 0U;
 	const bool signed_load = operation >= 2U;
 	const bool result_64 = size_code == 3U || operation == 2U;
@@ -375,7 +366,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 		std::uintptr_t key = 0;
 		if (!atomic_load_value(memory, address, size,
 				std::memory_order_acquire, value, key))
-			return {StopReason::memory_fault, address, instruction, 0, false};
+			return memory_fault(address, instruction, false);
 		if (signed_load)
 			value = static_cast<std::uint64_t>(sign_extend(value,
 				static_cast<unsigned>(size * 8)));
@@ -389,7 +380,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 		if (atomic_store_value(memory, address, size, value,
 				std::memory_order_release, nullptr, key) !=
 		    AtomicStoreResult::stored)
-			return {StopReason::memory_fault, address, instruction, 0, true};
+			return memory_fault(address, instruction, true);
 		reservation_store(key);
 	}
 	cpu.pc += 4;

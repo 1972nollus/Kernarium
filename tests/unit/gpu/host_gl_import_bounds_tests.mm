@@ -14,6 +14,8 @@
 // buffer and sent it to the guest. The accepted cases keep the legitimate
 // imports and transfers working.
 
+#include "gpu_metal_test_support.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "virgl_renderer.hpp"
 
@@ -46,7 +48,6 @@ void virgl_resource_native_release(std::uint64_t id);
 #include <cstring>
 #include <exception>
 #include <memory>
-#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -54,6 +55,7 @@ void virgl_resource_native_release(std::uint64_t id);
 
 namespace {
 
+using uml::testing::require;
 using uml::testing::ScratchBacking;
 
 // Stable Virtio-GPU ABI identifier for the virgl2 capability set.
@@ -76,21 +78,6 @@ constexpr std::uint64_t segmentSize = 64 * 1024;
 // An unlinked scratch file stands in for the exporter's segment: its vnode is
 // what the native registry keys on, and its pages are what a plain import maps.
 constexpr std::string_view segmentName = "uml-import-bounds.XXXXXX";
-
-void require(
-    bool condition,
-    const char* description,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "Import bounds: %s (line %u)\n",
-        description,
-        location.line());
-    std::exit(1);
-}
 
 [[nodiscard]] std::uint8_t patternByte(
     std::uint32_t x,
@@ -229,30 +216,9 @@ void requirePresentedPattern(
     require(bgra || texture.pixelFormat == MTLPixelFormatRGBA8Unorm,
         "an imported texture does not store 8-bit channels");
 
-    const std::size_t bytes = static_cast<std::size_t>(importStride) * height;
-    id<MTLCommandQueue> queue = [device newCommandQueue];
-    id<MTLBuffer> copy =
-        [device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
-    require(queue != nil && copy != nil, "the copy could not be prepared");
-    id<MTLCommandBuffer> commands = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-    [blit copyFromTexture:texture
-                sourceSlice:0
-                sourceLevel:0
-               sourceOrigin:MTLOriginMake(0, 0, 0)
-                 sourceSize:MTLSizeMake(importWidth, height, 1)
-                   toBuffer:copy
-          destinationOffset:0
-     destinationBytesPerRow:importStride
-   destinationBytesPerImage:bytes];
-    [blit endEncoding];
-    [commands commit];
-    [commands waitUntilCompleted];
-    require(commands.status == MTLCommandBufferStatusCompleted,
-        "the texture copy failed");
-    require(showsPattern(
-                static_cast<const std::uint8_t*>(copy.contents), height, !bgra),
-        description);
+    const auto copy = uml::gpu::testing::readTexture(
+        [device newCommandQueue], texture, importWidth, height, importStride);
+    require(showsPattern(copy.data(), height, !bgra), description);
 }
 
 // A shared-memory segment: every row the texture spans has to lie inside it.

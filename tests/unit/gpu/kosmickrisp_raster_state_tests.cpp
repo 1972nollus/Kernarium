@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/raster_polygon_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,13 +13,8 @@
 #include <string_view>
 
 namespace {
+using uml::testing::require;
 using namespace uml::gpu::test;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 void equal(const DrawResult &a, const DrawResult &b)
 {

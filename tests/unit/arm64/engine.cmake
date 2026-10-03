@@ -200,6 +200,10 @@
         uml_test_allocation_failure)
     set_property(TEST arm64-jit-publication_gate APPEND PROPERTY LABELS tsan)
 
+    # The C entry points the guest kernel calls live in the guest selector.
+    uml_add_arm64_unit_test(advertised_features WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
     uml_add_arm64_unit_test(jit_lazy_flags_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_lazy_flags_codegen WITHOUT_HARNESS

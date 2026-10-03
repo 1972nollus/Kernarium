@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "device_memory_pool.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -16,18 +17,11 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::DeviceMemoryPool;
 using namespace std::chrono_literals;
 
 constexpr std::uint64_t page = 16384;
-
-void require(bool condition, const char* message)
-{
-    if (!condition) {
-        std::fprintf(stderr, "device memory pool: %s\n", message);
-        std::exit(1);
-    }
-}
 
 /* What Metal's allocation counter would report: an allocation appears in it
  * only once its owner has made it. */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/tessellation_feedback_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,14 +14,9 @@
 #include <vector>
 
 namespace {
+using uml::testing::require;
 using namespace uml::gpu::test;
 constexpr unsigned stride = 16;
-
-void require(bool value, const std::string &message)
-{
-    if (!value)
-        throw std::runtime_error(message);
-}
 
 struct Case {
     std::string name;
