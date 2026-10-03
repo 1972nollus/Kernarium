@@ -287,13 +287,8 @@ gadget branch_\name\()_inline
 	follow_block_link x19
 .endm
 
-/* G-2 superinstruction: guest CMP of two registers followed by B.cond.
- *
- * G116's histogram over a full Geekbench run ranks this pair fourth and ninth
- * of 47,494 - `branch_eq_linked` after it at 2.65% and `branch_ne_linked` at
- * 0.84%, 3.49% together - while the immediate form fused in G111 does not reach
- * the table at all. Same mechanism, the half of the instruction class that
- * actually occurs.
+/* G-2 superinstruction: guest CMP of two registers followed by B.cond. The
+ * builder's selection (program_builder_data_processing_impl.ipp) says why.
  *
  * Stream operand is the compare's own encoding, whose left and right register
  * byte offsets sit at bits 16 and 32, followed by the taken and fall-through

@@ -6,11 +6,7 @@
 .set vector_register8, 0x4000 | 8
 .set vector_register16, 0x4000 | 16
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_vector
-#else
-.pushsection .data.rel.ro.gadget_vector,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_vector_contract_begin)
 NAME(uml_arm64_vector_contract_begin):
@@ -28,11 +24,7 @@ NAME(uml_arm64_vector_contract_begin):
  .if \forward == 0
  gadget \name
  .set Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
-#if __APPLE__
  .pushsection __DATA_CONST,__gadget_vector
-#else
- .pushsection .data.rel.ro.gadget_vector,"aw"
-#endif
  .quad NAME(uml_arm64_gadget_\name)
  .irp mask, 1, 2, 3, 4, 5, 6, 7
  vector_pointer \name, \mask, Lvector_sources\@

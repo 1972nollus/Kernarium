@@ -215,11 +215,10 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			(static_cast<std::uintptr_t>(left_offset) << 16) |
 			(static_cast<std::uintptr_t>(right_offset) << 32) |
 			(static_cast<std::uintptr_t>(shift) << 48);
-		/* Guest CMP of two registers followed by B.cond. G116 ranks this
-		 * fourth and ninth of 47,494 pairs over a full Geekbench run, 3.49%
-		 * together, where the immediate form G111 fused does not reach the
-		 * table. Same mechanism: the dispatch between the two entries goes,
-		 * and with it the msr that reloads the flags the compare just wrote.
+		/* Guest CMP of two registers followed by B.cond, which G116's pair
+		 * profile ranks far above the immediate form G111 fused. Same
+		 * mechanism: the dispatch between the two entries goes, and with it
+		 * the msr that reloads the flags the compare just wrote.
 		 *
 		 * Only the plain unshifted register-register form with an XZR
 		 * destination: an extension, a shift, or a real destination leaves

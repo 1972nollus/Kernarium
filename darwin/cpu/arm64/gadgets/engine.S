@@ -16,21 +16,12 @@
  * because its words alone encode distances to code outside the region. The
  * names are the arm64 engine's own, so the x86-64 engine's sections never
  * interleave with them in an image that carries both. */
-#if __APPLE__
 #define GADGET_SECTION_BANK __TEXT,__a64_bank,regular,pure_instructions
 #define GADGET_SECTION_FORWARD __TEXT,__a64_forward,regular,pure_instructions
 #define GADGET_SECTION_VECTOR_FORWARD __TEXT,__a64_vforward,regular,pure_instructions
 #define GADGET_SECTION_COLD __TEXT,__a64_cold,regular,pure_instructions
 #define GADGET_SECTION_AFP __TEXT,__a64_afp,regular,pure_instructions
 #define GADGET_SECTION_VENEER __TEXT,__a64_veneer,regular,pure_instructions
-#else
-#define GADGET_SECTION_BANK .text.a64_bank,"ax"
-#define GADGET_SECTION_FORWARD .text.a64_forward,"ax"
-#define GADGET_SECTION_VECTOR_FORWARD .text.a64_vforward,"ax"
-#define GADGET_SECTION_COLD .text.a64_cold,"ax"
-#define GADGET_SECTION_AFP .text.a64_afp,"ax"
-#define GADGET_SECTION_VENEER .text.a64_veneer,"ax"
-#endif
 
 /* Unreachable bytes ahead of each part's first entry, which set the part's
  * 64-byte phase. The bank's phase is the one the iPad measured fastest with
@@ -47,23 +38,16 @@
 /* Zero-size bounds of each part, for the guest sampler's PC test. NAME() is
  * not defined until core_integer.inc. */
 .macro gadget_bank_bound name
-#if __APPLE__
 	.globl _\name
 _\name:
-#else
-	.globl \name
-\name:
-#endif
 .endm
 
 /* The start of one part: its boundary, a private label at offset 0 that the
  * order file names, and the phase pad. */
 .macro gadget_region_start part, alignment, phase
 	.p2align \alignment
-#if __APPLE__
 	.private_extern _uml_arm64_gadget_region_\part
 _uml_arm64_gadget_region_\part:
-#endif
 	.space \phase
 .endm
 
@@ -113,11 +97,7 @@ _uml_arm64_gadget_region_\part:
 	.ifndef Lveneer_\symbol
 	.pushsection GADGET_SECTION_VENEER
 Lveneer_\symbol:
-#if __APPLE__
 	b _\symbol
-#else
-	b \symbol
-#endif
 	.popsection
 	.endif
 	bl Lveneer_\symbol

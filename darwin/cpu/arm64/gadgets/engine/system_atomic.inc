@@ -465,68 +465,44 @@ gadget clrbhb
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
 	ldr q0, [x8, x9, lsl #4]
-	.if \count > 1
+	.irp reg, 1, 2, 3
+	.if \count > \reg
 	add w9, w9, #1
 	and w9, w9, #31
-	ldr q1, [x8, x9, lsl #4]
+	ldr q\reg, [x8, x9, lsl #4]
 	.endif
-	.if \count > 2
-	add w9, w9, #1
-	and w9, w9, #31
-	ldr q2, [x8, x9, lsl #4]
-	.endif
-	.if \count > 3
-	add w9, w9, #1
-	and w9, w9, #31
-	ldr q3, [x8, x9, lsl #4]
-	.endif
+	.endr
 .endm
 
 .macro simd_structure_cpu_store count
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	and w9, w19, #31
 	str q0, [x8, x9, lsl #4]
-	.if \count > 1
+	.irp reg, 1, 2, 3
+	.if \count > \reg
 	add w9, w9, #1
 	and w9, w9, #31
-	str q1, [x8, x9, lsl #4]
+	str q\reg, [x8, x9, lsl #4]
 	.endif
-	.if \count > 2
-	add w9, w9, #1
-	and w9, w9, #31
-	str q2, [x8, x9, lsl #4]
-	.endif
-	.if \count > 3
-	add w9, w9, #1
-	and w9, w9, #31
-	str q3, [x8, x9, lsl #4]
-	.endif
+	.endr
 .endm
 
 .macro simd_structure_memory_load count, elements, q, size
 	.if \elements == 1
 		.if \q
 	ldr q0, [x7]
-			.if \count > 1
-	ldr q1, [x7, #16]
+			.irp reg, 1, 2, 3
+			.if \count > \reg
+	ldr q\reg, [x7, #(\reg * 16)]
 			.endif
-			.if \count > 2
-	ldr q2, [x7, #32]
-			.endif
-			.if \count > 3
-	ldr q3, [x7, #48]
-			.endif
+			.endr
 		.else
 	ldr d0, [x7]
-			.if \count > 1
-	ldr d1, [x7, #8]
+			.irp reg, 1, 2, 3
+			.if \count > \reg
+	ldr d\reg, [x7, #(\reg * 8)]
 			.endif
-			.if \count > 2
-	ldr d2, [x7, #16]
-			.endif
-			.if \count > 3
-	ldr d3, [x7, #24]
-			.endif
+			.endr
 		.endif
 	.elseif \elements == 2
 		.if \q
@@ -595,26 +571,18 @@ gadget clrbhb
 	.if \elements == 1
 		.if \q
 	str q0, [x7]
-			.if \count > 1
-	str q1, [x7, #16]
+			.irp reg, 1, 2, 3
+			.if \count > \reg
+	str q\reg, [x7, #(\reg * 16)]
 			.endif
-			.if \count > 2
-	str q2, [x7, #32]
-			.endif
-			.if \count > 3
-	str q3, [x7, #48]
-			.endif
+			.endr
 		.else
 	str d0, [x7]
-			.if \count > 1
-	str d1, [x7, #8]
+			.irp reg, 1, 2, 3
+			.if \count > \reg
+	str d\reg, [x7, #(\reg * 8)]
 			.endif
-			.if \count > 2
-	str d2, [x7, #16]
-			.endif
-			.if \count > 3
-	str d3, [x7, #24]
-			.endif
+			.endr
 		.endif
 	.elseif \elements == 2
 		.if \q
@@ -870,6 +838,19 @@ simd_structure_interleaved 4
 	str q0, [x10]
 .endm
 
+/* Fill count consecutive registers from Rt, one element each from x7 on. */
+.macro simd_replicate_transfer count, width, q
+	and w26, w19, #31
+	simd_replicate_one \width, \q
+	.irp reg, 1, 2, 3
+	.if \count > \reg
+	add x7, x7, #\width
+	add w26, w26, #1
+	simd_replicate_one \width, \q
+	.endif
+	.endr
+.endm
+
 .macro simd_replicate_fast name, count, width, q, mode, base_sp
 gadget simd_replicate_\name
 	ldr x19, [_stream], #8
@@ -889,23 +870,7 @@ gadget simd_replicate_\name
 	mov x7, x21
 Lsimd_replicate_translate\@:
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	and w26, w19, #31
-	simd_replicate_one \width, \q
-	.if \count > 1
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
-	.if \count > 2
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
-	.if \count > 3
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
+	simd_replicate_transfer \count, \width, \q
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
 	str x21, [_cpu, x20]
@@ -942,23 +907,7 @@ Lsimd_replicate_slow\@:
 	ldp x1, x2, [sp, #32]
 	cbz w0, Lsimd_replicate_fault\@
 	mov x7, sp
-	and w26, w19, #31
-	simd_replicate_one \width, \q
-	.if \count > 1
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
-	.if \count > 2
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
-	.if \count > 3
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_replicate_one \width, \q
-	.endif
+	simd_replicate_transfer \count, \width, \q
 	add sp, sp, #48
 	.if \mode == 1
 	add x21, x21, #(\count * \width)
@@ -1011,6 +960,7 @@ simd_replicate_counts d_q, 8, 1
 .purgem simd_replicate_counts
 .purgem simd_replicate_modes
 .purgem simd_replicate_fast
+.purgem simd_replicate_transfer
 .purgem simd_replicate_one
 
 /* Translation-specialized single-structure lane transfers. The lane byte
@@ -1055,21 +1005,13 @@ simd_replicate_counts d_q, 8, 1
 .macro simd_lane_transfer load, count, width
 	and w26, w19, #31
 	simd_lane_one \load, \width
-	.if \count > 1
+	.irp reg, 1, 2, 3
+	.if \count > \reg
 	add x7, x7, #\width
 	add w26, w26, #1
 	simd_lane_one \load, \width
 	.endif
-	.if \count > 2
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_lane_one \load, \width
-	.endif
-	.if \count > 3
-	add x7, x7, #\width
-	add w26, w26, #1
-	simd_lane_one \load, \width
-	.endif
+	.endr
 .endm
 
 .macro simd_lane_fast name, load, count, width, mode, base_sp

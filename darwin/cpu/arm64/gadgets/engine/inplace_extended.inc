@@ -14,16 +14,13 @@
  *   fused multiply-add  "fmla Vd, Vn, Vm"                Vd is the accumulator
  *
  * A second source that stays register-indexed does not spoil the baked pair:
- * measured on a threaded-code model of the two-source entry, three interleaved
- * chains cost 4.43 host cycles per gadget with every access indexed and 1.58
- * with only the in-place operand baked.
+ * baking only the in-place operand keeps most of the gain.
  *
  * FMLA is the vector family worth baking: its destination is also its third
- * source, so it is in place by construction, and three interleaved 128-bit
- * chains cost 7.98 cycles per gadget indexed against 3.91 baked. The wider
- * SIMD families are not here on purpose -- 343 three-same entries at one copy
- * per vector register is about 1.7 MB of bank, which is the cost G194 found
- * is charged to every workload whether or not it forwards.
+ * source, so it is in place by construction. The wider SIMD families are not
+ * here on purpose -- 343 three-same entries at one copy per vector register is
+ * about 1.7 MB of bank, which is the cost G194 found is charged to every
+ * workload whether or not it forwards.
  */
 
 /* ---- logical immediate, Rd == Rn, both ordinary registers ---------------- */
@@ -265,11 +262,7 @@ simd_fused_inplace_shapes fmls, fmls
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 
 /* index = ((bits64 * 2 + operation) ... ) see the C++ selectors. */
