@@ -6034,6 +6034,85 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"a masked division by zero did not only set its flag");
 }
 
+/* Run singly and checked, an SSE instruction raises a denormal operand
+ * before it computes, where x86 does: #XM while MXCSR unmasks it, keeping
+ * the destination, and otherwise its flag beside the others -- but not
+ * under DAZ, for a lane with a NaN or for a division by zero, while a DPPS
+ * raises it for a denormal product of normal sources too. */
+[[nodiscard]] bool checked_simd_denormal_operands_follow_x86()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::string_view name;
+		std::vector<std::uint8_t> bytes;
+		std::uint32_t mxcsr;
+		std::uint32_t left;
+		std::uint32_t right;
+		bool trap;
+		std::uint32_t after;
+		std::uint32_t result;
+	};
+	constexpr std::uint32_t one = 0x3f800000;
+	constexpr std::uint32_t least = 0x00000001;
+	constexpr std::uint32_t quiet = 0x7fc00000;
+	const std::vector<Case> cases{
+		{"ADDSS of a denormal", {0xf3, 0x0f, 0x58, 0xc1}, 0x1e80, one, least,
+		 true, 0x1e82, one},
+		{"ADDSS of a denormal, its exception masked",
+		 {0xf3, 0x0f, 0x58, 0xc1}, 0x1780, one, least, false, 0x17a2, one},
+		{"ADDSS of a denormal under DAZ", {0xf3, 0x0f, 0x58, 0xc1}, 0x1ec0,
+		 one, least, false, 0x1ec0, one},
+		{"ADDSS of a NaN and a denormal", {0xf3, 0x0f, 0x58, 0xc1}, 0x1e80,
+		 quiet, least, false, 0x1e80, quiet},
+		{"DIVSS of a denormal by zero", {0xf3, 0x0f, 0x5e, 0xc1}, 0x1e80,
+		 least, 0, false, 0x1e84, 0x7f800000},
+		{"COMISS of a denormal", {0x0f, 0x2f, 0xc1}, 0x1e80, least, 0,
+		 true, 0x1e82, least},
+		{"DPPS of a denormal product", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x11},
+		 0x1e80, 0x1c800000, 0x21800000, true, 0x1e82, 0x1c800000},
+	};
+	for (const auto &test : cases) {
+		TestMemory memory;
+		std::vector<std::byte> code(test.bytes.size() + 2U);
+		std::memcpy(code.data(), test.bytes.data(), test.bytes.size());
+		code[test.bytes.size()] = std::byte{0x0f};
+		code[test.bytes.size() + 1U] = std::byte{0x05};
+		memory.fill(0, code);
+		const auto built = gadgets::build(memory, 0, ExecutionMode::long64,
+			64, {}, gadgets::check_simd);
+		CpuState cpu{};
+		cpu.mxcsr = test.mxcsr;
+		set_xmm_low(cpu, 0, test.left);
+		set_xmm_low(cpu, 1, test.right);
+		if (!expect(built.status == gadgets::BuildStatus::built &&
+				built.program.check_head() &&
+				gadgets::checked_exceptions(cpu) == gadgets::check_simd,
+			"a SIMD instruction did not build as a check head"))
+			return false;
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		const auto result = gadgets::execute_checked(built.program, cpu,
+			memory, executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+		const bool right = test.trap ?
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+				result.vector == 19 && result.error == test.after &&
+				result.retired_instructions == 0 && cpu.rip == 0 :
+			result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1 &&
+				cpu.rip == test.bytes.size();
+		if (right && cpu.mxcsr == test.after &&
+			xmm_low(cpu, 0) == test.result)
+			continue;
+		std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d "
+			"mxcsr %#x xmm0 %#x\n", static_cast<int>(test.name.size()),
+			test.name.data(), static_cast<int>(result.event), cpu.mxcsr,
+			xmm_low(cpu, 0));
+		return expect(false,
+			"a denormal operand did not raise what x86 raises");
+	}
+	return true;
+}
+
 /* Run singly and checked, an SSE instruction raises invalid operation where
  * x86 does: COMISD for a quiet NaN but UCOMISD only for a signalling one, a
  * conversion to an integer for a value out of that integer's range, and a
@@ -6661,6 +6740,11 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 	if (!expect(precision.event == uml::cpu::EngineEvent::continued &&
 			precision.retired_instructions == 1 && cpu.rip == 3,
 		"LDMXCSR unmasking precision did not leave"))
+		return false;
+	const auto denormal = run(0x1900, 0x1800);
+	if (!expect(denormal.event == uml::cpu::EngineEvent::continued &&
+			denormal.retired_instructions == 1 && cpu.rip == 3,
+		"LDMXCSR unmasking a denormal operand did not leave"))
 		return false;
 	const auto masked = run(0x0900, 0x1f80);
 	return expect(masked.event == uml::cpu::EngineEvent::system_call &&
@@ -8132,6 +8216,7 @@ int main()
 		a_single_step_runs_one_repeat_iteration() &&
 		loads_that_unmask_exceptions_leave() &&
 		checked_simd_exceptions_fault_before_the_result() &&
+		checked_simd_denormal_operands_follow_x86() &&
 		checked_simd_invalid_operations_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&

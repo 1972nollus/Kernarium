@@ -93,15 +93,15 @@ Lx86_rounding_ready\@:
 .endm
 
 /* The engine leaves #MF for an x87 exception already pending, and #XM while
- * MXCSR unmasks underflow or precision, to the runtime, which runs the
- * instructions that could raise them one at a time, checked; the gadgets check
- * other unmasked x87 and SIMD exceptions themselves while the run's
- * `exception_checks` says so. An instruction that loads MXCSR or the x87
- * control word therefore retires and leaves when it could change what a run
- * checks, so the runtime sees the change before the next instruction runs:
- * when it unmasks an exception in a run that does not check that kind, when it
- * unmasks SIMD underflow or precision, or when it unmasks an x87 exception
- * whose flag is set, which is then pending. For a gadget that computed its
+ * MXCSR unmasks underflow, precision or a denormal operand, to the runtime,
+ * which runs the instructions that could raise them one at a time, checked;
+ * the gadgets check other unmasked x87 and SIMD exceptions themselves while
+ * the run's `exception_checks` says so. An instruction that loads MXCSR or
+ * the x87 control word therefore retires and leaves when it could change what
+ * a run checks, so the runtime sees the change before the next instruction
+ * runs: when it unmasks an exception in a run that does not check that kind,
+ * when it unmasks SIMD underflow, precision or a denormal operand, or when it
+ * unmasks an x87 exception whose flag is set, which is then pending. For a gadget that computed its
  * effective address: x22 and the descriptor's length name the next
  * instruction. */
 .macro retire_and_leave
@@ -121,7 +121,8 @@ Lx86_rounding_ready\@:
 	b.ne Lx86_simd_unmasked\@
 	retire_and_next
 Lx86_simd_unmasked\@:
-	tst w8, #0x1800
+	mov w9, #0x1900
+	tst w8, w9
 	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w8, #1, Lx86_simd_unchecked\@
@@ -155,7 +156,8 @@ Lx86_x87_unchecked\@:
 	mvn w8, w8
 	tst w8, #0x1f80
 	b.eq Lx86_simd_masked\@
-	tst w8, #0x1800
+	mov w9, #0x1900
+	tst w8, w9
 	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w8, #1, Lx86_simd_unchecked\@
@@ -166,8 +168,8 @@ Lx86_simd_unchecked\@:
 	retire_and_leave
 .endm
 
-/* While MXCSR unmasks invalid operation, division by zero, overflow or a
- * denormal operand, and masks underflow and precision, the runtime sets
+/* While MXCSR unmasks invalid operation, division by zero or overflow, and
+ * masks underflow, precision and a denormal operand, the runtime sets
  * `exception_check_simd` in `exception_checks`. The SIMD floating-point
  * gadgets then test their values for anything that could have raised an
  * unmasked exception, before they store anything: a result whose exponent is

@@ -6,12 +6,17 @@
  * host arithmetic and the x86 rules the host does not share: first-source
  * NaN priority, the negative indefinite NaN, DAZ input and FTZ output
  * flushes with underflow detected after rounding, MIN and MAX returning the
- * second source, RCP and RSQRT treating denormal inputs as zero, and FMA's
- * operand order. The model's rules were checked against an Intel host. The
+ * second source, RCP and RSQRT treating denormal inputs as zero, FMA's
+ * operand order, and comparisons under DAZ, COMIS's flags included. The
+ * model's rules, and its MXCSR.DE, were checked against an Intel host. The
  * stream mixes uniform values, special values and exponents near the
- * underflow threshold. `--iterations N` sets the loop count per cell; the
- * default keeps the test short. */
+ * underflow threshold. A second pass runs every cell with MXCSR unmasking a
+ * denormal operand, so that each instruction runs checked: one x86 raises
+ * MXCSR.DE for must fault with #XM and keep its destination, and every other
+ * must match the model. `--iterations N` and `--checked-iterations N` set
+ * the loop counts per cell; the defaults keep the test short. */
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "memory/guest_address_space.hpp"
@@ -134,7 +139,7 @@ private:
 
 enum class Op : std::uint8_t {
 	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma, convert,
-	hadd, hsub, addsub, dot,
+	hadd, hsub, addsub, dot, cmp, comis,
 };
 
 [[nodiscard]] std::uint64_t host32(Op op, std::uint32_t a, std::uint32_t b)
@@ -609,6 +614,63 @@ private:
 	std::uint64_t state_{0x9e3779b97f4a7c15ULL};
 };
 
+/* How x86 orders a and b once DAZ has applied. */
+struct Relation final {
+	bool unordered{};
+	bool equal{};
+	bool less{};
+};
+
+[[nodiscard]] Relation compare_values(Format f, std::uint64_t a,
+	std::uint64_t b, bool daz)
+{
+	if (daz) {
+		a = f.flush(a);
+		b = f.flush(b);
+	}
+	if (f.nan(a) || f.nan(b))
+		return {true, false, false};
+	if (f.dbl) {
+		double x{};
+		double y{};
+		std::memcpy(&x, &a, 8);
+		std::memcpy(&y, &b, 8);
+		return {false, x == y, x < y};
+	}
+	const auto narrow_a = static_cast<std::uint32_t>(a);
+	const auto narrow_b = static_cast<std::uint32_t>(b);
+	float x{};
+	float y{};
+	std::memcpy(&x, &narrow_a, 4);
+	std::memcpy(&y, &narrow_b, 4);
+	return {false, x == y, x < y};
+}
+
+/* CMP's predicate, whose low four bits name the relation; bit 4 changes
+ * only which raise invalid operation for a quiet NaN. */
+[[nodiscard]] bool predicate_holds(unsigned predicate, Relation r) noexcept
+{
+	const bool greater = !r.unordered && !r.equal && !r.less;
+	switch (predicate & 15U) {
+	case 0: return r.equal;
+	case 1: return r.less;
+	case 2: return r.less || r.equal;
+	case 3: return r.unordered;
+	case 4: return !r.equal;
+	case 5: return !r.less;
+	case 6: return !(r.less || r.equal);
+	case 7: return !r.unordered;
+	case 8: return r.equal || r.unordered;
+	case 9: return r.less || r.unordered;
+	case 10: return !greater;
+	case 11: return false;
+	case 12: return !r.equal && !r.unordered;
+	case 13: return greater || r.equal;
+	case 14: return greater;
+	default: return true;
+	}
+}
+
 /* ---- instructions ---- */
 
 enum class Shape : std::uint8_t {
@@ -642,7 +704,8 @@ struct Instruction final {
 	Conversion conversion{};
 	bool truncate{};
 	unsigned bits{};
-	/* DPPS and DPPD: the immediate. */
+	/* DPPS and DPPD: the immediate; CMP: the predicate; COMIS: 1, and
+	 * UCOMIS 0. */
 	std::uint8_t control{};
 };
 
@@ -845,6 +908,54 @@ void add_dot_products(std::vector<Instruction> &list)
 	}
 }
 
+/* CMPSS to CMPPD with every SSE predicate, VCMPPS and VCMPPD with a few
+ * of AVX's, and COMIS and UCOMIS, which compare xmm0 with xmm1. */
+void add_compares(std::vector<Instruction> &list)
+{
+	for (const bool dbl : {false, true}) {
+		for (std::uint8_t predicate = 0; predicate < 8; ++predicate) {
+			const std::string name = std::string{"cmp"} +
+				(dbl ? "d" : "s") + std::to_string(predicate);
+			Instruction scalar{name, Op::cmp, dbl, Shape::sse_scalar,
+				{static_cast<std::uint8_t>(dbl ? 0xf2 : 0xf3), 0x0f, 0xc2,
+					0xc1, predicate}};
+			scalar.control = predicate;
+			list.push_back(scalar);
+			Instruction packed{name, Op::cmp, dbl, Shape::sse_packed, {}};
+			if (dbl)
+				packed.bytes.push_back(0x66);
+			packed.bytes.insert(packed.bytes.end(),
+				{0x0f, 0xc2, 0xc1, predicate});
+			packed.control = predicate;
+			list.push_back(packed);
+		}
+		for (const std::uint8_t predicate : {0x09, 0x0d, 0x12, 0x1c}) {
+			const auto vex = static_cast<std::uint8_t>(0x80U |
+				(0x0eU << 3U) | 0x04U | (dbl ? 1U : 0U));
+			Instruction wide{std::string{"cmp"} + (dbl ? "d" : "s") +
+				std::to_string(predicate), Op::cmp, dbl, Shape::vex256,
+				{0xc5, vex, 0xc2, 0xc2, predicate}};
+			wide.control = predicate;
+			list.push_back(wide);
+		}
+		for (const std::uint8_t opcode : {0x2e, 0x2f}) {
+			const std::string name = std::string{opcode == 0x2f ?
+				"comis" : "ucomis"} + (dbl ? "d" : "s");
+			Instruction legacy{name, Op::comis, dbl, Shape::sse_scalar, {}};
+			if (dbl)
+				legacy.bytes.push_back(0x66);
+			legacy.bytes.insert(legacy.bytes.end(), {0x0f, opcode, 0xc1});
+			legacy.control = opcode == 0x2f ? 1U : 0U;
+			list.push_back(legacy);
+			Instruction vex{name, Op::comis, dbl, Shape::vex_scalar,
+				{0xc5, static_cast<std::uint8_t>(dbl ? 0xf9 : 0xf8), opcode,
+					0xc1}};
+			vex.control = legacy.control;
+			list.push_back(vex);
+		}
+	}
+}
+
 [[nodiscard]] std::vector<Instruction> instructions()
 {
 	std::vector<Instruction> list;
@@ -853,6 +964,7 @@ void add_dot_products(std::vector<Instruction> &list)
 	add_conversions(list);
 	add_horizontal(list);
 	add_dot_products(list);
+	add_compares(list);
 	return list;
 }
 
@@ -896,7 +1008,11 @@ constexpr std::uint64_t code_address = 0x1000;
 constexpr std::uint64_t stack_top = 0x8000;
 constexpr std::uint64_t input_address = 0x10000;
 constexpr std::size_t input_stride = 96;
-constexpr std::size_t output_stride = 48;
+constexpr std::size_t output_stride = 56;
+/* MXCSR for the cell, which the loop loads before each instruction. */
+constexpr std::uint64_t control_address = 0x9000;
+/* The instruction's offset in the loop. */
+constexpr std::uint64_t instruction_offset = 17;
 constexpr std::size_t chunk = 16384;
 constexpr std::uint64_t output_address = input_address + chunk * input_stride;
 constexpr std::size_t memory_size = output_address + chunk * output_stride;
@@ -910,6 +1026,7 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 		0xc5, 0xfe, 0x6f, 0x06,             /* vmovdqu ymm0, [rsi] */
 		0xc5, 0xfe, 0x6f, 0x4e, 0x20,       /* vmovdqu ymm1, [rsi+32] */
 		0xc5, 0xfe, 0x6f, 0x56, 0x40,       /* vmovdqu ymm2, [rsi+64] */
+		0x0f, 0xae, 0x13,                   /* ldmxcsr [rbx] */
 	};
 	code.insert(code.end(), instruction.begin(), instruction.end());
 	code.insert(code.end(), {
@@ -917,8 +1034,9 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 		0xc5, 0xfe, 0x7f, 0x07,             /* vmovdqu [rdi], ymm0 */
 		0x48, 0x89, 0x47, 0x20,             /* mov [rdi+32], rax */
 		0x48, 0x89, 0x57, 0x28,             /* mov [rdi+40], rdx */
+		0x0f, 0xae, 0x5f, 0x30,             /* stmxcsr [rdi+48] */
 		0x48, 0x83, 0xc6, 0x60,             /* add rsi, 96 */
-		0x48, 0x83, 0xc7, 0x30,             /* add rdi, 48 */
+		0x48, 0x83, 0xc7, 0x38,             /* add rdi, 56 */
 		0xff, 0xc9,                         /* dec ecx */
 	});
 	const auto back = -static_cast<int>(code.size() + 2U);
@@ -930,9 +1048,14 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	return bytes;
 }
 
+/* Runs the loop over `count` rows. A checked run's executor builds for
+ * #XM, and an instruction that faults with it is marked in `trapped` and
+ * skipped, so that the loop stores the destination it kept. */
 [[nodiscard]] bool run_engine(FlatMemory &memory,
 	uml::cpu::x86_64::gadgets::Executor &executor, std::uint32_t mxcsr,
-	std::size_t count)
+	std::size_t count, bool checked = false,
+	std::size_t instruction_length = 0,
+	std::vector<std::uint8_t> *trapped = nullptr)
 {
 	using namespace uml::cpu::x86_64;
 	CpuState cpu{};
@@ -942,6 +1065,7 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	cpu.gpr(Register::rsi) = input_address;
 	cpu.gpr(Register::rdi) = output_address;
 	cpu.gpr(Register::rcx) = count;
+	cpu.gpr(Register::rbx) = control_address;
 	for (std::size_t dispatch = 0; dispatch < count * 16U + 64U;
 		++dispatch) {
 		const auto selected = executor.select_program(memory, cpu.rip,
@@ -949,12 +1073,28 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 		if (selected.status != gadgets::BuildStatus::built ||
 			selected.program == nullptr)
 			return false;
-		const auto result = gadgets::execute(*selected.program, cpu,
-			memory, executor, 1U << 20U);
+		const auto result = checked ?
+			gadgets::execute_checked(*selected.program, cpu, memory,
+				executor, 1U << 20U, {}, false,
+				gadgets::checked_exceptions(cpu)) :
+			gadgets::execute(*selected.program, cpu, memory, executor,
+				1U << 20U);
 		/* SYSCALL leaves its return address in RCX. */
 		if (result.event == uml::cpu::EngineEvent::system_call)
 			return cpu.gpr(Register::rsi) ==
 				input_address + count * input_stride;
+		if (checked && trapped != nullptr &&
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+			result.vector == 19 && result.error == cpu.mxcsr &&
+			cpu.rip == code_address + instruction_offset) {
+			const auto row = (cpu.gpr(Register::rsi) - input_address) /
+				input_stride;
+			if (row >= trapped->size())
+				return false;
+			(*trapped)[row] = 1;
+			cpu.rip += instruction_length;
+			continue;
+		}
 		if (result.event != uml::cpu::EngineEvent::continued)
 			return false;
 	}
@@ -1119,6 +1259,10 @@ void model_result(const Instruction &instruction, const std::byte *input,
 	/* Lanes the instruction does not compute: an SSE form keeps ymm0's, a
 	 * VEX form zeroes the upper half and a VEX scalar one takes lanes 1 and
 	 * up of the low half from its first source. */
+	if (instruction.op == Op::comis) {
+		std::memcpy(output, input, 32);
+		return;
+	}
 	if (vex)
 		std::memset(output, 0, 32);
 	else
@@ -1173,6 +1317,12 @@ void model_result(const Instruction &instruction, const std::byte *input,
 				op = instruction.op == Op::hadd ? Op::add : Op::sub;
 			}
 			value = x86_lane(f, op, a, b, daz, ftz);
+		} else if (instruction.op == Op::cmp) {
+			const auto *first = vex ? input + 32 : input;
+			const auto *second = vex ? input + 64 : input + 32;
+			value = predicate_holds(instruction.control, compare_values(f,
+				lane(first, f.dbl, index), lane(second, f.dbl, index),
+				daz)) ? (f.sign() | f.magnitude()) : 0U;
 		} else {
 			const auto *first = vex ? input + 32 : input;
 			const auto *second = vex ? input + 64 : input + 32;
@@ -1182,6 +1332,166 @@ void model_result(const Instruction &instruction, const std::byte *input,
 		set_lane(output, instruction.dbl, index, value);
 	}
 	(void)lanes;
+}
+
+/* COMIS's ZF, PF and CF; it clears OF, SF and AF. */
+[[nodiscard]] std::uint64_t model_rflags(const Instruction &instruction,
+	const std::byte *input, bool daz)
+{
+	const Format f{instruction.dbl};
+	const auto relation = compare_values(f, lane(input, f.dbl, 0),
+		lane(input + 32, f.dbl, 0), daz);
+	return relation.unordered ? 0x45U : relation.equal ? 0x40U :
+		relation.less ? 0x01U : 0U;
+}
+
+/* The flags COMIS defines. */
+constexpr std::uint64_t comis_flags = 0x8d5U;
+
+/* Whether x86 raises MXCSR.DE: for a denormal source in a lane it computes,
+ * unless DAZ makes it zero or that lane holds a NaN, or raises invalid
+ * operation or division by zero, which take precedence. A DPPS or DPPD
+ * also raises it for a denormal product or sum it adds, which FTZ leaves
+ * none of. RCP, RSQRT and conversions to integers raise none. */
+[[nodiscard]] bool model_denormal(const Instruction &instruction,
+	const std::byte *input, bool daz, bool ftz)
+{
+	if (daz)
+		return false;
+	const Format f{instruction.dbl};
+	const bool vex = instruction.shape == Shape::vex_scalar ||
+		instruction.shape == Shape::vex128 ||
+		instruction.shape == Shape::vex256;
+	const auto *first = vex ? input + 32 : input;
+	const auto *second = vex ? input + 64 : input + 32;
+	const std::size_t computed = computed_lanes(instruction);
+	const auto binary = [&](std::uint64_t a, std::uint64_t b) {
+		return (f.denormal(a) || f.denormal(b)) && !f.nan(a) && !f.nan(b);
+	};
+	switch (instruction.op) {
+	case Op::rcp:
+	case Op::rsqrt:
+		return false;
+	case Op::comis:
+		return binary(lane(input, f.dbl, 0), lane(input + 32, f.dbl, 0));
+	case Op::sqrt:
+		for (std::size_t index = 0; index < computed; ++index) {
+			const auto b = lane(second, f.dbl, index);
+			if (f.denormal(b) && (b & f.sign()) == 0)
+				return true;
+		}
+		return false;
+	case Op::div:
+		for (std::size_t index = 0; index < computed; ++index) {
+			const auto b = lane(second, f.dbl, index);
+			if (binary(lane(first, f.dbl, index), b) &&
+				(b & f.magnitude()) != 0)
+				return true;
+		}
+		return false;
+	case Op::hadd:
+	case Op::hsub: {
+		const std::size_t half = lane_count(instruction) / 2U;
+		for (std::size_t index = 0; index < computed; ++index) {
+			const std::size_t base = index / half * half;
+			const std::size_t position = index % half;
+			const auto *source = position < half / 2U ? first : second;
+			const std::size_t pair = base + 2U * (position % (half / 2U));
+			if (binary(lane(source, f.dbl, pair),
+				lane(source, f.dbl, pair + 1U)))
+				return true;
+		}
+		return false;
+	}
+	case Op::fma: {
+		const auto roles = fused_operands(instruction.form);
+		for (std::size_t index = 0; index < computed; ++index) {
+			const auto a = lane(input + roles[0] * 32U, f.dbl, index);
+			const auto b = lane(input + roles[1] * 32U, f.dbl, index);
+			const auto c = lane(input + roles[2] * 32U, f.dbl, index);
+			if (f.nan(a) || f.nan(b) || f.nan(c) ||
+				!(f.denormal(a) || f.denormal(b) || f.denormal(c)))
+				continue;
+			const auto zero = [&](std::uint64_t x) {
+				return (x & f.magnitude()) == 0;
+			};
+			const auto infinite = [&](std::uint64_t x) {
+				return (x & f.magnitude()) == f.exponent();
+			};
+			if ((zero(a) && infinite(b)) || (infinite(a) && zero(b)))
+				continue;
+			bool negate_product = instruction.fused == Fused::nmadd ||
+				instruction.fused == Fused::nmsub;
+			bool negate_addend = instruction.fused == Fused::msub ||
+				instruction.fused == Fused::nmsub;
+			if (instruction.fused == Fused::maddsub)
+				negate_addend = (index & 1U) == 0;
+			else if (instruction.fused == Fused::msubadd)
+				negate_addend = (index & 1U) != 0;
+			const bool product_sign = (((a ^ b) & f.sign()) != 0) !=
+				negate_product;
+			const bool addend_sign = ((c & f.sign()) != 0) != negate_addend;
+			if ((infinite(a) || infinite(b)) && infinite(c) &&
+				product_sign != addend_sign)
+				continue;
+			return true;
+		}
+		return false;
+	}
+	case Op::convert: {
+		const auto *source = input + 32;
+		const bool wide = instruction.shape == Shape::vex256;
+		switch (instruction.conversion) {
+		case Conversion::ss_sd:
+			return Format{false}.denormal(lane(source, false, 0));
+		case Conversion::sd_ss:
+			return Format{true}.denormal(lane(source, true, 0));
+		case Conversion::ps_pd:
+		case Conversion::pd_ps: {
+			const bool dbl = instruction.conversion == Conversion::pd_ps;
+			for (std::size_t index = 0; index < (wide ? 4U : 2U); ++index)
+				if (Format{dbl}.denormal(lane(source, dbl, index)))
+					return true;
+			return false;
+		}
+		default:
+			return false;
+		}
+	}
+	case Op::dot: {
+		const std::size_t per_half = instruction.dbl ? 2U : 4U;
+		const std::size_t halves =
+			instruction.shape == Shape::vex256 ? 2U : 1U;
+		for (std::size_t half = 0; half < halves; ++half) {
+			std::array<std::uint64_t, 4> products{};
+			for (std::size_t index = 0; index < per_half; ++index) {
+				if (((instruction.control >> (4U + index)) & 1U) == 0)
+					continue;
+				const auto a = lane(first, f.dbl, half * per_half + index);
+				const auto b = lane(second, f.dbl, half * per_half + index);
+				if (binary(a, b))
+					return true;
+				products[index] = x86_lane(f, Op::mul, a, b, false, ftz);
+			}
+			if (binary(products[0], products[1]))
+				return true;
+			if (instruction.dbl)
+				continue;
+			if (binary(products[2], products[3]))
+				return true;
+			if (binary(x86_lane(f, Op::add, products[1], products[0], false,
+				ftz), x86_lane(f, Op::add, products[3], products[2], false,
+				ftz)))
+				return true;
+		}
+		return false;
+	}
+	default:
+		for (std::size_t index = 0; index < computed; ++index)
+			if (binary(lane(first, f.dbl, index), lane(second, f.dbl, index)))
+				return true;
+		return false;
+	}
 }
 
 /* One iteration's ymm0, ymm1 and ymm2: the operand stream, with a quarter
@@ -1289,15 +1599,24 @@ void compare_conversion(const Instruction &instruction, const std::byte *input,
 }
 
 Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
-	unsigned rounding, std::size_t iterations, Shown &shown)
+	unsigned rounding, std::size_t iterations, Shown &shown,
+	bool checked = false)
 {
 	FlatMemory memory{memory_size};
 	const auto code = loop_code(instruction.bytes);
 	(void)memory.write(code_address, code);
 	uml::cpu::x86_64::gadgets::Executor executor;
+	/* Checked: MXCSR unmasks a denormal operand alone. */
+	const std::uint32_t mxcsr = (checked ? 0x1e80U : 0x1f80U) |
+		(daz ? 0x40U : 0U) | (ftz ? 0x8000U : 0U) | (rounding << 13U);
+	{
+		std::array<std::byte, 4> control{};
+		std::memcpy(control.data(), &mxcsr, 4);
+		(void)memory.write(control_address, control);
+	}
+	if (checked)
+		executor.check_exceptions(uml::cpu::x86_64::gadgets::check_simd);
 	executor.prepare(memory);
-	const std::uint32_t mxcsr = 0x1f80U | (daz ? 0x40U : 0U) |
-		(ftz ? 0x8000U : 0U) | (rounding << 13U);
 	Operands operands;
 	Totals totals;
 	const std::size_t lanes = lane_count(instruction);
@@ -1308,7 +1627,9 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 		for (std::size_t row = 0; row < count; ++row)
 			fill_input(instruction, operands,
 				memory.at(input_address + row * input_stride));
-		if (!run_engine(memory, executor, mxcsr, count)) {
+		std::vector<std::uint8_t> trapped(count);
+		if (!run_engine(memory, executor, mxcsr, count, checked,
+			instruction.bytes.size(), &trapped)) {
 			totals.engine_failed = true;
 			return totals;
 		}
@@ -1317,6 +1638,40 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 			const auto *input = memory.at(input_address + row * input_stride);
 			const auto *actual = memory.at(output_address +
 				row * output_stride);
+			if (checked) {
+				/* #XM for exactly the rows x86 raises DE for, with
+				 * MXCSR.DE set and the destination kept. */
+				const bool denormal = model_denormal(instruction, input,
+					daz, ftz);
+				std::uint32_t stored{};
+				std::memcpy(&stored, actual + 48, 4);
+				++totals.lanes;
+				const bool kept = std::memcmp(actual, input, 32) == 0;
+				const bool right = trapped[row] != 0 ?
+					denormal && (stored & 0x02U) != 0 && kept :
+					!denormal && (stored & 0x02U) == 0;
+				if (!right) {
+					++totals.differing;
+					if (shown.count < 12U) {
+						++shown.count;
+						std::fprintf(stderr, "  %s %s daz=%d ftz=%d rc=%u "
+							"checked: trapped %d x86 DE %d mxcsr %#x "
+							"ymm0=%#llx ymm1=%#llx ymm2=%#llx\n",
+							instruction.name.c_str(),
+							shape_name(instruction.shape), daz ? 1 : 0,
+							ftz ? 1 : 0, rounding, trapped[row],
+							denormal ? 1 : 0, stored,
+							static_cast<unsigned long long>(
+								lane(input, instruction.dbl, 0)),
+							static_cast<unsigned long long>(
+								lane(input + 32, instruction.dbl, 0)),
+							static_cast<unsigned long long>(
+								lane(input + 64, instruction.dbl, 0)));
+					}
+				}
+				if (trapped[row] != 0)
+					continue;
+			}
 			if (instruction.op == Op::convert) {
 				std::uint64_t rax{};
 				model_conversion(instruction, input, daz, ftz,
@@ -1326,6 +1681,29 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 				continue;
 			}
 			model_result(instruction, input, daz, ftz, expected.data());
+			if (instruction.op == Op::comis) {
+				std::uint64_t flags{};
+				std::memcpy(&flags, actual + 40, 8);
+				const auto want = model_rflags(instruction, input, daz);
+				++totals.lanes;
+				if ((flags & comis_flags) != want) {
+					++totals.differing;
+					if (shown.count < 12U) {
+						++shown.count;
+						std::fprintf(stderr, "  %s %s daz=%d xmm0=%#llx "
+							"xmm1=%#llx engine rflags=%#llx x86=%#llx\n",
+							instruction.name.c_str(),
+							shape_name(instruction.shape), daz ? 1 : 0,
+							static_cast<unsigned long long>(
+								lane(input, instruction.dbl, 0)),
+							static_cast<unsigned long long>(
+								lane(input + 32, instruction.dbl, 0)),
+							static_cast<unsigned long long>(
+								flags & comis_flags),
+							static_cast<unsigned long long>(want));
+					}
+				}
+			}
 			for (std::size_t index = 0; index < lanes; ++index) {
 				const auto want = lane(expected.data(), instruction.dbl, index);
 				const auto got = lane(actual, instruction.dbl, index);
@@ -1366,16 +1744,19 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 int main(int argc, char **argv)
 {
 	std::size_t iterations = 2000;
+	std::size_t checked_iterations = 200;
 	std::string_view only;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument{argv[index]};
 		if (argument == "--iterations" && index + 1 < argc)
 			iterations = std::strtoull(argv[++index], nullptr, 10);
+		else if (argument == "--checked-iterations" && index + 1 < argc)
+			checked_iterations = std::strtoull(argv[++index], nullptr, 10);
 		else if (argument == "--only" && index + 1 < argc)
 			only = argv[++index];
 		else {
-			std::fprintf(stderr, "usage: %s [--iterations N] [--only TEXT]\n",
-				argv[0]);
+			std::fprintf(stderr, "usage: %s [--iterations N] "
+				"[--checked-iterations N] [--only TEXT]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -1385,6 +1766,7 @@ int main(int argc, char **argv)
 	bool failed = false;
 	Shown shown;
 	std::printf("instruction\tshape\tdaz\tftz\trc\tlanes\tdiffering\n");
+	for (const bool checked : {false, true})
 	for (const auto &instruction : instructions()) {
 		if (!only.empty() &&
 			instruction.name.find(only) == std::string::npos)
@@ -1393,7 +1775,7 @@ int main(int argc, char **argv)
 		for (const bool ftz : {false, true})
 		for (unsigned rounding = 0; rounding < 4; ++rounding) {
 			const auto totals = run_cell(instruction, daz, ftz, rounding,
-				iterations, shown);
+				checked ? checked_iterations : iterations, shown, checked);
 			if (totals.engine_failed) {
 				std::fprintf(stderr, "x86-64 SSE exactness: %s did not run "
 					"to its end\n", instruction.name.c_str());
@@ -1403,8 +1785,8 @@ int main(int argc, char **argv)
 			lanes += totals.lanes;
 			differing += totals.differing;
 			kept += totals.kept_differing;
-			std::printf("%s\t%s\t%d\t%d\t%u\t%llu\t%llu\n",
-				instruction.name.c_str(),
+			std::printf("%s%s\t%s\t%d\t%d\t%u\t%llu\t%llu\n",
+				instruction.name.c_str(), checked ? "/checked" : "",
 				shape_name(instruction.shape), daz ? 1 : 0, ftz ? 1 : 0,
 				rounding, static_cast<unsigned long long>(totals.lanes),
 				static_cast<unsigned long long>(totals.differing));

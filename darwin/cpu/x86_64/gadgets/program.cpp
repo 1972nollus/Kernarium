@@ -606,6 +606,9 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 
 	const CpuState before = cpu;
 	const auto saved = save_store(cpu, first, memory, checked);
+	/* x86 raises a denormal operand before it computes, which no host
+	 * flag shows. */
+	const auto denormal = simd ? denormal_operand(cpu, first, memory) : 0U;
 	std::uint32_t raised{};
 	const auto result = simd ?
 		run_stream<true, true>(program, cpu, memory, executor, stream, 1,
@@ -621,7 +624,7 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 		 * One raised before the computation reports only those, and an
 		 * unmasked underflow reports no precision exception, as x86
 		 * does. */
-		auto flags = raised;
+		auto flags = raised | denormal;
 		const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
 		if (unmasked == 0) {
 			cpu.mxcsr |= flags;
