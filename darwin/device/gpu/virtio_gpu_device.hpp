@@ -91,8 +91,10 @@ public:
         std::span<const std::uint8_t> request,
         bool cursorQueue);
     /* A control command whose reply would not fit in `responseCapacity`, the
-     * bytes the guest left for it, is refused with errorInvalidParameter
-     * before it runs. The caller has checked that a response header fits. */
+     * bytes the guest left for it, is refused with errorInvalidParameter and
+     * changes nothing: before it runs, or for GET_CAPSET, which changes
+     * nothing anyway, once its reply is built. The caller has checked that a
+     * response header fits. */
     [[nodiscard]] ProcessResult processWithDeferredFence(
         std::span<const std::uint8_t> request,
         bool cursorQueue,
@@ -179,12 +181,10 @@ private:
     [[nodiscard]] std::vector<std::uint8_t> capsetInfo(
         const protocol::GpuGetCapsetInfo& request) const;
     [[nodiscard]] std::vector<std::uint8_t> capset(
-        const protocol::GpuGetCapset& request,
-        std::size_t responseCapacity) const;
+        const protocol::GpuGetCapset& request) const;
     [[nodiscard]] std::vector<std::uint8_t> processInternal(
         std::span<const std::uint8_t> request,
         bool cursorQueue,
-        std::size_t responseCapacity,
         std::uint64_t fenceCookie,
         std::optional<DeferredFence>* deferredFence,
         std::optional<std::uint32_t>* destroyedContextId);
