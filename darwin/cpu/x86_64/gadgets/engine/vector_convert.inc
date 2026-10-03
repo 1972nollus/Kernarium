@@ -176,11 +176,7 @@ gadget vector_convert_\name\()_rm
 	b Lx86_vector_convert_loaded\@
 Lx86_vector_convert_cross\@:
 	.if \input_size <= 8
-	mov x0, _context
-	mov x1, x25
-	mov w2, #\input_size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load \input_size
 	.if \input_size == 4
 	fmov s1, w0
 	.else

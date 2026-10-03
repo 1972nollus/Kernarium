@@ -69,11 +69,7 @@ class Out:
         self.emit(f'gadget b_{name}')
 
     def table(self, name, entries):
-        self.emit('#if __APPLE__')
         self.emit('\t.section __DATA,__const')
-        self.emit('#else')
-        self.emit('\t.section .rodata')
-        self.emit('#endif')
         self.emit('\t.p2align 3')
         self.emit(f'\t.globl NAME(uml_x86_64_baked_{name})')
         self.emit(f'NAME(uml_x86_64_baked_{name}):')
@@ -172,11 +168,7 @@ def translate(o, write, size, record_stack=False):
         # and again once a followed link settles them. It is also the rare
         # case, and a bank this size fetches whatever sits in the hot stream
         # on every store, so the arm goes to the cold section.
-        o.emit('#if __APPLE__')
         o.emit('\t.pushsection __TEXT,__gadget_cold,regular,pure_instructions')
-        o.emit('#else')
-        o.emit('\t.pushsection .text.gadget_cold,"ax"')
-        o.emit('#endif')
         o.emit(f'{owed}:')
         o.emit('\tldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]')
         o.emit('\teor x14, x9, x14')

@@ -55,12 +55,7 @@ gadget vector_map3_extract_\size\()_m
 	.endif
 	finish_store \size
 Lx86_vector_map3_extract_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, \size
 	finish_store \size
 .endm
 
@@ -162,11 +157,7 @@ gadget vector_map3_insert_\size\()_rm
 	.endif
 	b Lx86_vector_map3_insert_loaded\@
 Lx86_vector_map3_insert_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load \size
 	.if \size == 8
 	mov x24, x0
 	.else
@@ -273,18 +264,7 @@ gadget vector_map3_insertps_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 4, Lx86_vector_map3_insertps_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 4
-	ldr w24, [x7]
-	b Lx86_vector_map3_insertps_loaded
-Lx86_vector_map3_insertps_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #4
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov w24, w0
-Lx86_vector_map3_insertps_loaded:
+	read_operand 4, ldr, w, 24, w
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q4, [x10]

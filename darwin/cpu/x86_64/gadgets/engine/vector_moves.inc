@@ -16,12 +16,7 @@ gadget vector_move_\width\()_mr
 	.endif
 	finish_store (\width / 8)
 Lx86_vector_scalar_store_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, (\width / 8)
 	finish_store (\width / 8)
 .endm
 
@@ -38,11 +33,7 @@ gadget vector_move_64_128_rm
 	ldr d0, [x7]
 	b Lx86_vector_move_64_128_write
 Lx86_vector_move_64_128_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d0, x0
 Lx86_vector_move_64_128_write:
 	and x8, x23, #0xffff
@@ -58,11 +49,7 @@ gadget vector_move_64_128_rm_vex
 	ldr d0, [x7]
 	b Lx86_vector_move_64_128_vex_write
 Lx86_vector_move_64_128_vex_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d0, x0
 Lx86_vector_move_64_128_vex_write:
 	and x8, x23, #0xffff
@@ -72,48 +59,23 @@ Lx86_vector_move_64_128_vex_write:
 	str q1, [x8, #16]
 	retire_and_next
 
-.macro synchronize_mmx offset, value
-	sub x12, x\offset, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x\value, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-.endm
-
 gadget vector_move_64_mmx_rr
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ldr x11, [_cpu, x10]
 	str x11, [_cpu, x9]
-	synchronize_mmx 9, 11
+	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 
 gadget vector_move_64_mmx_rm
 	effective_address
 	mov x25, x7
-	page_cross_check 8, Lx86_vector_move_64_mmx_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-	b Lx86_vector_move_64_mmx_write
-Lx86_vector_move_64_mmx_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_vector_move_64_mmx_write:
+	read_operand 8, ldr, x, 24
 	and x9, x23, #0xffff
 	str x24, [_cpu, x9]
-	synchronize_mmx 9, 24
+	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
-
-.purgem synchronize_mmx
 
 .macro vector_gpr_to_xmm width, load, host_register, vex
 gadget vector_gpr_to_xmm_\width\()\vex
@@ -152,15 +114,7 @@ gadget vector_gpr_to_mmx_\width
 	mov w11, w11
 	.endif
 	str x11, [_cpu, x9]
-	sub x12, x9, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x11, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, x11, x12, x13, w14
 	retire_and_next
 .endm
 
@@ -172,29 +126,10 @@ vector_gpr_to_mmx 64, ldr, x
 gadget vector_memory_32_to_mmx
 	effective_address
 	mov x25, x7
-	page_cross_check 4, Lx86_vector_memory_32_to_mmx_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 4
-	ldr w24, [x7]
-	b Lx86_vector_memory_32_to_mmx_write
-Lx86_vector_memory_32_to_mmx_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #4
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov w24, w0
-Lx86_vector_memory_32_to_mmx_write:
+	read_operand 4, ldr, w, 24, w
 	and x9, x23, #0xffff
 	str x24, [_cpu, x9]
-	sub x12, x9, #UML_X86_64_CPU_MMX
-	lsr x12, x12, #3
-	add x13, _cpu, #UML_X86_64_CPU_X87
-	add x13, x13, x12, lsl #4
-	str x24, [x13]
-	mov w14, #0xffff
-	strh w14, [x13, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, x24, x12, x13, w14
 	retire_and_next
 
 .macro vector_scalar_register width, load, store, host_register, vex
@@ -229,18 +164,7 @@ vector_scalar_register 64, ldr, str, x, _vex
 gadget vector_scalar_move_\width\()_rm\vex
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_vector_scalar_load_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_vector_scalar_load_write\@
-Lx86_vector_scalar_load_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_vector_scalar_load_write\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	and x8, x23, #0xffff
 	add x8, _cpu, x8
 	movi v0.16b, #0

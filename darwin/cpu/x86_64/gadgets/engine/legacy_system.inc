@@ -215,11 +215,7 @@ gadget bound_\width
 	.endif
 	b Lx86_bound_loaded\@
 Lx86_bound_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 4)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 4)
 	mov x26, x0
 Lx86_bound_loaded\@:
 	.if \width == 32
@@ -278,18 +274,7 @@ gadget arpl_16_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	ldrh w24, [_cpu, x8]
-	page_cross_check 2, Lx86_arpl_read_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 2
-	ldrh w26, [x7]
-	b Lx86_arpl_memory_loaded
-Lx86_arpl_read_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #2
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov w26, w0
-Lx86_arpl_memory_loaded:
+	read_operand 2, ldrh, w, 26, w
 	and w11, w26, #3
 	and w12, w24, #3
 	cmp w11, w12
@@ -301,12 +286,7 @@ Lx86_arpl_memory_loaded:
 	strh w26, [x7]
 	b Lx86_arpl_memory_written
 Lx86_arpl_write_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x26
-	mov w3, #2
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x26, 2
 Lx86_arpl_memory_written:
 	arpl_flags 1
 	finish_store 2
@@ -540,12 +520,7 @@ Lx86_push_segment_32_done:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store 4
 Lx86_push_segment_32_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #4
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, 4
 	b Lx86_push_segment_32_done
 .endm
 
@@ -566,12 +541,7 @@ Lx86_push_segment_64_done:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	finish_store 8
 Lx86_push_segment_64_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, 8
 	b Lx86_push_segment_64_done
 
 gadget pop_segment_32
@@ -589,11 +559,7 @@ Lx86_pop_segment_32_done:
 	strh w24, [_cpu, x8]
 	retire_and_next
 Lx86_pop_segment_32_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #4
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 4
 	mov x24, x0
 	b Lx86_pop_segment_32_done
 
@@ -611,11 +577,7 @@ Lx86_pop_segment_64_done:
 	strh w24, [_cpu, x8]
 	retire_and_next
 Lx86_pop_segment_64_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	mov x24, x0
 	b Lx86_pop_segment_64_done
 

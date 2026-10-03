@@ -364,18 +364,7 @@ gadget \operation\()_\width\()_m\form
 	.else
 	ldr x26, [_stream], #8
 	.endif
-	page_cross_check (\width / 8), Lx86_shift_memory_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_shift_memory_loaded\@
-Lx86_shift_memory_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_shift_memory_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
@@ -414,12 +403,7 @@ Lx86_shift_memory_write\@:
 	\store \host_register\()27, [x7]
 	b Lx86_shift_memory_written\@
 Lx86_shift_memory_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_shift_memory_written\@:
 	cbz w26, Lx86_shift_memory_done\@
 	.ifc \operation,rcl
@@ -528,18 +512,7 @@ gadget \operation\()_\width\()_mr\form
 	effective_address
 	mov x25, x7
 	ldr x26, [_stream], #8
-	page_cross_check (\width / 8), Lx86_double_shift_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_double_shift_loaded\@
-Lx86_double_shift_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_double_shift_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	and x8, x23, #0xffff
 	\load \host_register\()15, [_cpu, x8]
 	.ifc \form,r
@@ -558,12 +531,7 @@ Lx86_double_shift_loaded\@:
 	\store \host_register\()27, [x7]
 	b Lx86_double_shift_written\@
 Lx86_double_shift_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_double_shift_written\@:
 	shift_record_flags \operation, \width, \host_register
 	finish_store (\width / 8)

@@ -3,27 +3,19 @@
 
 .arch armv8.2-a
 
-#if __APPLE__
 #define NAME(value) _##value
-#else
-#define NAME(value) value
-#endif
 
 _cpu .req x20
 _context .req x21
 _stream .req x28
 _executed .req x29
 
-	.set x86_guest_memory_gadget, 0
+	.set Lx86_guest_memory_gadget, 0
 
 /* Name the start of the cold section, whose own labels are temporary, so a
  * host sample of a cold path names this section rather than whatever precedes
  * it in the image. It emits no bytes. */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 NAME(uml_x86_64_gadget_cold_section_begin):
 	.popsection
 
@@ -31,7 +23,7 @@ NAME(uml_x86_64_gadget_cold_section_begin):
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
 NAME(uml_x86_64_gadget_\name):
-	.set x86_guest_memory_gadget, 0
+	.set Lx86_guest_memory_gadget, 0
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -85,11 +77,11 @@ Lx86_rounding_ready\@:
 .endm
 
 .macro x86_marks_guest_memory
-	.set x86_guest_memory_gadget, 1
+	.set Lx86_guest_memory_gadget, 1
 .endm
 
 .macro x86_memory_order_boundary
-	.if x86_guest_memory_gadget
+	.if Lx86_guest_memory_gadget
 	x86_memory_order_barrier
 	.endif
 .endm
@@ -456,11 +448,7 @@ Lx86_lazy_ready\@:
 	 * instructions in the entry and its whole body in the cold section, so a
 	 * bank this size keeps only the plain form in the hot stream.
 	 */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
@@ -593,11 +581,7 @@ Lx86_tlb_done\@:
 	 * program's publications, which is exactly when `write_code` says nothing
 	 * is owed.
 	 */
-#if __APPLE__
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
 Lx86_tlb_write_code_owed\@:
 	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 	eor x14, x9, x14
@@ -639,6 +623,41 @@ Lx86_tlb_write_code_kept\@:
 Lx86_plain_tlb_hit\@:
 	add x7, x13, x7
 Lx86_plain_tlb_done\@:
+.endm
+
+/* An access whose `size` bytes at guest address x25 cross a page goes
+ * through the helpers, and a fault the MMU raises leaves through the shared
+ * exit. A load returns the value zero-extended in x0. */
+.macro cross_page_load size
+	mov x0, _context
+	mov x1, x25
+	mov w2, #\size
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, Lx86_memory_fault
+.endm
+
+.macro cross_page_store value, size
+	mov x0, _context
+	mov x1, x25
+	mov x2, \value
+	mov w3, #\size
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, Lx86_memory_fault
+.endm
+
+/* Read a `size`-byte memory operand into register `number`: x7 holds its
+ * address and x25 the copy the cross-page helper reads from. `load` and
+ * `register` give the in-page load and its register width, and `move` the
+ * width at which the helper's result is copied. */
+.macro read_operand size, load, register, number, move=x
+	page_cross_check \size, Lx86_read_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \size
+	\load \register\()\number, [x7]
+	b Lx86_read_loaded\@
+Lx86_read_cross\@:
+	cross_page_load \size
+	mov \move\()\number, \move\()0
+Lx86_read_loaded\@:
 .endm
 
 /* x86 LOCK-prefixed read-modify-write.
@@ -1627,6 +1646,36 @@ gadget block_exit_linked
 gadget nop
 	retire_and_next
 
+/* Read the vector register at state offset x10 into d0 for 64 bits, or into
+ * q0, and q2 for the upper half of 256 bits. */
+.macro vector_read width
+	.if \width == 64
+	ldr d0, [_cpu, x10]
+	.else
+	add x10, _cpu, x10
+	ldr q0, [x10]
+	.if \width == 256
+	ldr q2, [x10, #16]
+	.endif
+	.endif
+.endm
+
+/* Read the two source registers that bits 31:16 and 47:32 of descriptor x8
+ * address into q0 and q1, and their upper halves into q2 and q3 for 256
+ * bits; x10 and x11 are left holding their addresses. */
+.macro vector_read_pair width
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x10, _cpu, x10
+	add x11, _cpu, x11
+	ldr q0, [x10]
+	ldr q1, [x11]
+	.if \width == 256
+	ldr q2, [x10, #16]
+	ldr q3, [x11, #16]
+	.endif
+.endm
+
 /* Write the vector result in q4 (and q5 for 256 bits) to the register the
  * descriptor's low half addresses. A 128-bit VEX write, which bit 63 marks,
  * zeroes the upper half; a legacy SSE write leaves it. */
@@ -1644,22 +1693,27 @@ Lx86_vector_write_done\@:
 	.endif
 .endm
 
-/* vector_write_xmm, or for a 64-bit width an MMX write, which as on x86
- * also stores into the aliased x87 register with an all-ones exponent and
- * clears the x87 tag word and top. */
+/* An MMX write, as on x86, also stores `value` into the x87 register the MMX
+ * register at state offset `offset` aliases, with an all-ones exponent, and
+ * clears the x87 tag word and top. `index`, `entry` and `tag` are scratch. */
+.macro synchronize_mmx offset, value, index=x10, entry=x11, tag=w12
+	sub \index, \offset, #UML_X86_64_CPU_MMX
+	lsr \index, \index, #3
+	add \entry, _cpu, #UML_X86_64_CPU_X87
+	add \entry, \entry, \index, lsl #4
+	str \value, [\entry]
+	mov \tag, #0xffff
+	strh \tag, [\entry, #8]
+	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+.endm
+
+/* vector_write_xmm, or for a 64-bit width an MMX write of d4. */
 .macro vector_write width, descriptor
 	.if \width == 64
 	and x9, x\descriptor, #0xffff
 	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	synchronize_mmx x9, d4
 	.else
 	vector_write_xmm \width, \descriptor
 	.endif

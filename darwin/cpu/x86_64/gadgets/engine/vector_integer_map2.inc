@@ -395,11 +395,7 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 	b Lx86_vector_map2_loaded\@
 Lx86_vector_map2_cross\@:
 	.if Lx86_vector_map2_input_size <= 8
-	mov x0, _context
-	mov x1, x25
-	mov w2, #Lx86_vector_map2_input_size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load Lx86_vector_map2_input_size
 	fmov d1, x0
 	.else
 	sub sp, sp, #32
@@ -417,15 +413,7 @@ Lx86_vector_map2_cross\@:
 	.endif
 Lx86_vector_map2_loaded\@:
 	and x10, x26, #0xffff
-	.if \width == 64
-	ldr d0, [_cpu, x10]
-	.else
-	add x10, _cpu, x10
-	ldr q0, [x10]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	.endif
-	.endif
+	vector_read \width
 	vector_map2_lane \opcode, \width, 4, 0, 1
 	.if \width == 256 && !((\opcode >= 0x20 && \opcode <= 0x25) || \
 		(\opcode >= 0x30 && \opcode <= 0x35))

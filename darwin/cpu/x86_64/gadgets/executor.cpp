@@ -380,26 +380,10 @@ struct HeldCodeStamps final {
 }
 
 /* The stamps a fresh translation records, taken from the read made before the
- * decoder ran, for the pages the program turned out to cover.
- *
- * That read is a lower bound on the program only because the program and the
- * source the slot saves are one observation of guest memory: the decoder's
- * bytes are what the slot keeps. Fetching the block a second time to fill the
- * source instead left the two reads free to disagree, and nothing downstream
- * could tell -- a write between them made the source newer than the program,
- * so a later comparison of that source against memory matched and accepted a
- * program decoded from bytes that were already gone. Re-reading the page stamp
- * after the second read only narrowed that window, because a writer stores its
- * bytes well before it moves the stamp.
- *
- * With one read the ordinary validation decides everything. A publication that
- * touched the block moved the page's stamp -- after storing the bytes, and
- * before moving the sequence that makes this vCPU revalidate -- so the
- * comparison that follows sees the decoder's own bytes against guest memory
- * and says exactly whether the translation is stale. A store that has landed
- * but not yet published is missed here as it always was, and reaches this vCPU
- * at its next code-change checkpoint, which is where the x86
- * cross-modifying-code protocol requires an executing processor to look.
+ * decoder ran, for the pages the program turned out to cover. They certify the
+ * program because the source the slot saves is the decoder's own bytes, read
+ * after them: one observation of guest memory ("Keeping a cached translation"
+ * in README.md).
  *
  * `nullopt` means a page this program covers was not held while its bytes were
  * read, which the block's byte bound makes impossible and which no later check
@@ -1567,41 +1551,14 @@ private:
 			discard(slot);
 			return false;
 		}
-		/* Two things say a cached program still matches the guest: the stamp
-		 * of every page it covers, which any publication of a code change on
-		 * that page moves, and the saved source bytes themselves. Their order
-		 * is what makes either of them mean anything. The stamp is taken once,
-		 * before a byte of source is read, and that same value is what a
-		 * successful validation records; taking it afterwards recorded a stamp
-		 * newer than the source it stands for, so the next validation could
-		 * accept that source on a stamp which already covered a write to it.
-		 *
-		 * With that order the code-change sequence has nothing left to guard.
-		 * It used to be re-read after the comparison and the whole program
-		 * thrown away when it had moved, which is what made one vCPU
-		 * publishing at speed -- a JIT heap, or a trampoline sharing a page
-		 * with hot data -- cost every other vCPU of the address space a fresh
-		 * translation of nearly every block it ran. A publication this reader
-		 * has not seen is not a program it must rebuild: a publication that
-		 * touched this program moved the stamp of the page carrying it, and
-		 * one that did not is no business of this program.
-		 *
-		 * What accepting here guarantees is what it guaranteed before: the
-		 * program matched guest memory at an instant inside this call, and
-		 * every change published up to the sequence this cache was prepared
-		 * with had landed before that instant, because the writer stores the
-		 * bytes, then moves the page stamp, then moves the sequence, and this
-		 * vCPU read that sequence before it looked. A store still in flight --
-		 * landed but not yet stamped, or not yet issued -- was outside that
-		 * instant under the old test exactly as it is under this one, and
-		 * reaches this vCPU at its next code-change checkpoint, which is where
-		 * the x86 cross-modifying-code protocol requires an executing
-		 * processor to look.
-		 *
-		 * The mapping sequence and an execution interrupt still abandon the
-		 * validation. Those say the memory this call reads through is being
-		 * replaced, or that this vCPU has been asked to leave, and no page
-		 * stamp describes either.
+		/* The program still matches the guest when every page stamp it
+		 * recorded is unchanged, or else when its saved source still matches
+		 * guest memory. The stamps are taken once, before a byte of source is
+		 * read, and a successful comparison records those same values. A moved
+		 * code-change sequence only brings this vCPU here and discards nothing
+		 * by itself. The mapping sequence and an execution interrupt still
+		 * abandon the validation, because no page stamp describes either
+		 * ("Keeping a cached translation" in README.md).
 		 */
 		const auto memory_settled = [&]() noexcept {
 			if (execution_context == nullptr || sequence_reader == nullptr)

@@ -97,16 +97,7 @@
 .macro vector_map2_permute_register symbol, opcode, width
 gadget vector_map2_permute_\symbol\()_\width\()_rr
 	ldr x8, [_stream], #8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_map2_permute_body \opcode, \width
 	vector_map2_misc_write \width, 8
 	retire_and_next
@@ -212,16 +203,7 @@ vector_map2_permute_family 36, 0x36, 256
 .macro vector_map2_shift_register symbol, opcode, element, width
 gadget vector_map2_shift_\symbol\()_\element\()_\width\()_rr
 	ldr x8, [_stream], #8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_map2_shift_body \opcode, \element, \width
 	vector_map2_misc_write \width, 8
 	retire_and_next
@@ -332,11 +314,7 @@ gadget vector_map2_broadcast_\element\()_\width\()_m
 	b Lx86_vector_map2_broadcast_loaded\@
 Lx86_vector_map2_broadcast_cross\@:
 	.if \element <= 64
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\element / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\element / 8)
 	fmov d1, x0
 	.else
 	sub sp, sp, #16
@@ -410,11 +388,7 @@ gadget vector_map2_half_\width\()_m
 	b Lx86_vector_map2_half_loaded\@
 Lx86_vector_map2_half_cross\@:
 	.if \input_size == 8
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d1, x0
 	.else
 	sub sp, sp, #16
