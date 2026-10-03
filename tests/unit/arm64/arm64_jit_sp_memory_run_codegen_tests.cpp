@@ -1,150 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "cpu/arm64/cpu_state.hpp"
+#include "arm64_jit_memory_run_codegen_test_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <source_location>
 #include <span>
 #include <vector>
 
-namespace arm64 = uml::cpu::arm64;
 namespace jit_test = uml::cpu::arm64::jit::testing;
 
 namespace {
 
+using namespace arm64_jit_memory_run_codegen_test;
+
 constexpr std::uint64_t code_base = 0x4f40'0000ULL;
-constexpr std::uint32_t memory_register_mask = (31U << 5U) | 31U;
-// One flag-neutral first-way tag comparison is emitted per TLB translation.
-constexpr std::uint32_t translation_probe = 0xca01'0042U;
-constexpr std::uint32_t compare_branch_displacement_mask = 0x00ff'ffe0U;
-constexpr std::uint32_t test_branch_displacement_mask = 0x0007'ffe0U;
-constexpr std::uint32_t sp_alignment_extract =
-    0xd340'0000U | (3U << 10U) | (8U << 5U);
-constexpr std::uint32_t cbnz_x0 = 0xb500'0000U;
-constexpr unsigned page_shift =
-    DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
-constexpr std::uint32_t span_offset_extract =
-    0xd340'0000U | (4U << 16U) | ((page_shift - 1U) << 10U) |
-    (8U << 5U);
 constexpr std::uint32_t span_page_tbnz =
     0x3700'0000U | ((page_shift - 4U) << 19U);
-constexpr auto monitor_clear =
-    0x3900'0000U |
-    (static_cast<std::uint32_t>(
-         offsetof(arm64::CpuState, exclusive_size))
-     << 10U) |
-    (15U << 5U) | 31U;
-
-struct Variant final {
-  unsigned size_shift;
-  unsigned opc;
-  bool load;
-};
-
-constexpr std::array variants{
-    Variant{0, 0, false}, Variant{0, 1, true},
-    Variant{0, 2, true},  Variant{0, 3, true},
-    Variant{1, 0, false}, Variant{1, 1, true},
-    Variant{1, 2, true},  Variant{1, 3, true},
-    Variant{2, 0, false}, Variant{2, 1, true},
-    Variant{2, 2, true},  Variant{3, 0, false},
-    Variant{3, 1, true},
-};
-
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
-
-void require_count(std::size_t actual, std::size_t expected,
-                   const char *message,
-                   const std::source_location location =
-                       std::source_location::current()) {
-  if (actual == expected)
-    return;
-  std::fprintf(stderr, "%s: expected=%zu actual=%zu at %s:%u\n", message,
-               expected, actual, location.file_name(), location.line());
-  std::abort();
-}
-
-[[nodiscard]] constexpr std::uint32_t
-unsigned_memory(const Variant &variant, unsigned immediate, unsigned base,
-                unsigned transfer) noexcept {
-  return 0x3900'0000U | (variant.size_shift << 30U) |
-         (variant.opc << 22U) | ((immediate & 0xfffU) << 10U) |
-         ((base & 31U) << 5U) | (transfer & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-unsigned_x(bool load, unsigned immediate, unsigned base,
-           unsigned transfer) noexcept {
-  return unsigned_memory(Variant{3, load ? 1U : 0U, load}, immediate, base,
-                         transfer);
-}
-
-[[nodiscard]] std::vector<std::uint32_t>
-hot_code(const jit_test::CompiledCode &compiled, std::size_t expected_guest) {
-  require(compiled.guest_instructions == expected_guest,
-          "JIT did not compile the complete SP-memory program");
-  require(compiled.hot_words <= compiled.words.size(),
-          "JIT hot-word boundary exceeds generated code");
-  return {compiled.words.begin(),
-          compiled.words.begin() +
-              static_cast<std::ptrdiff_t>(compiled.hot_words)};
-}
-
-[[nodiscard]] std::size_t count_word(std::span<const std::uint32_t> words,
-                                     std::uint32_t word) {
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += current == word;
-  return count;
-}
-
-[[nodiscard]] std::size_t count_branch_shape(
-    std::span<const std::uint32_t> words, std::uint32_t shape,
-    std::uint32_t displacement_mask) {
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += (current & ~displacement_mask) == shape;
-  return count;
-}
 
 [[nodiscard]] std::size_t count_memory_form(
-    std::span<const std::uint32_t> words, std::uint32_t guest) {
-  std::size_t count = 0;
-  for (const auto current : words) {
-    if ((current & ~memory_register_mask) !=
-        (guest & ~memory_register_mask))
-      continue;
-    require(((current >> 5U) & 31U) == 8U,
-            "coalesced memory operation bypassed checked host base x8");
-    const auto transfer = current & 31U;
-    const bool zero_register = (guest & 31U) == 31U;
-    const bool safe_transfer =
-        transfer == 3U || transfer == 4U || transfer == 5U ||
-        transfer == 6U || transfer == 7U || transfer == 9U ||
-        transfer == 12U || transfer == 13U || transfer == 17U ||
-        (zero_register && transfer == 31U);
-    require(safe_transfer,
-            "coalesced memory operation used an executor-owned host register");
-    ++count;
-  }
-  return count;
+    std::span<const std::uint32_t> words, std::uint32_t guest,
+    const std::source_location location = std::source_location::current()) {
+  return arm64_jit_memory_run_codegen_test::count_memory_form(
+      words, guest, OtherBase::fail, true, location);
 }
 
 void every_scalar_variant_coalesces() {
@@ -213,7 +92,7 @@ void page_limits_select_only_safe_prefixes() {
   const auto exact_hot = hot_code(exact_compiled, exact_guest.size());
   require(count_word(exact_hot, translation_probe) == 1,
           "exact-page-end SP pair was not coalesced");
-  require(count_word(exact_hot, span_offset_extract) == 1,
+  require(count_word(exact_hot, sp_span_offset_extract) == 1,
           "exact-page-end SP pair omitted its offset proof");
   constexpr auto exact_last_unit =
       static_cast<unsigned>((DARWIN_UML_GUEST_PAGE_SIZE - 1U) >> 4U);
@@ -252,7 +131,7 @@ void span_proof_matches_each_guest_page_size() {
               count_branch_shape(small_hot, cbnz_x0,
                                  compare_branch_displacement_mask) == 1,
           "small SP run did not check alignment once");
-  require(count_word(small_hot, span_offset_extract) == 0,
+  require(count_word(small_hot, sp_span_offset_extract) == 0,
           "16-byte-contained SP run emitted an unnecessary span guard");
 
   const std::array guarded{
@@ -270,7 +149,7 @@ void span_proof_matches_each_guest_page_size() {
               count_branch_shape(guarded_hot, cbnz_x0,
                                  compare_branch_displacement_mask) == 1,
           "guarded SP run repeated its alignment check");
-  require(count_word(guarded_hot, span_offset_extract) == 1,
+  require(count_word(guarded_hot, sp_span_offset_extract) == 1,
           "guarded SP run has the wrong 4K/16K offset extraction");
   require(count_word(guarded_hot, add_last_unit) == 1,
           "guarded SP run has the wrong translation-time unit limit");

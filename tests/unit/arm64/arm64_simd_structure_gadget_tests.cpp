@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <set>
 #include <span>
-#include <string_view>
 #include <vector>
 
 namespace arm64_simd_structure_test {
@@ -28,7 +27,6 @@ struct MultipleForm final {
 	unsigned opcode;
 	unsigned register_count;
 	unsigned structure_elements;
-	std::string_view mnemonic;
 };
 
 /*
@@ -38,13 +36,13 @@ struct MultipleForm final {
  * structures.
  */
 inline constexpr std::array multiple_forms{
-	MultipleForm{7, 1, 1, "LD1/ST1 one-register"},
-	MultipleForm{10, 2, 1, "LD1/ST1 two-register"},
-	MultipleForm{6, 3, 1, "LD1/ST1 three-register"},
-	MultipleForm{2, 4, 1, "LD1/ST1 four-register"},
-	MultipleForm{8, 2, 2, "LD2/ST2"},
-	MultipleForm{4, 3, 3, "LD3/ST3"},
-	MultipleForm{0, 4, 4, "LD4/ST4"},
+	MultipleForm{7, 1, 1}, // LD1/ST1 one-register
+	MultipleForm{10, 2, 1}, // LD1/ST1 two-register
+	MultipleForm{6, 3, 1}, // LD1/ST1 three-register
+	MultipleForm{2, 4, 1}, // LD1/ST1 four-register
+	MultipleForm{8, 2, 2}, // LD2/ST2
+	MultipleForm{4, 3, 3}, // LD3/ST3
+	MultipleForm{0, 4, 4}, // LD4/ST4
 };
 
 struct SingleForm final {

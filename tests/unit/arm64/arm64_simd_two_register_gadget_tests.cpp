@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -8,8 +10,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
 #include <string_view>
 
@@ -123,23 +123,8 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		index * sizeof(test::arm64::VectorRegister);
-}
+using uml::testing::require;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t packed_operand(
 	test::Registers registers)

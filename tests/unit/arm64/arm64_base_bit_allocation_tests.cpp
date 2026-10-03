@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -7,8 +8,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
 
 namespace base_bit_test {
@@ -38,17 +37,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::require;
 
 void encoding_examples()
 {

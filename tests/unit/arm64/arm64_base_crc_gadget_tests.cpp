@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -9,8 +11,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
 #include <set>
 #include <string_view>
@@ -19,17 +19,8 @@ namespace uml::emulator::tests::base_crc {
 
 namespace arm64 = uml::cpu::arm64;
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t encode(
 	unsigned operation, unsigned accumulator, unsigned source,
@@ -72,7 +63,7 @@ namespace uml::emulator::tests::base_crc {
 namespace {
 
 namespace gadgets = arm64::gadgets;
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 #define UML_NATIVE_CHECKSUM_SOURCES(prefix) std::array<Gadget, 5>{ \
 	uml_arm64_gadget_crc32_##prefix##_rr, \
@@ -111,10 +102,7 @@ constexpr std::array software_gadgets{
 #undef UML_SOFTWARE_CHECKSUM_SOURCES
 #undef UML_NATIVE_CHECKSUM_SOURCES
 
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] gadgets::BuildResult build(
 	std::uint32_t instruction, bool force_software)
@@ -155,7 +143,7 @@ void exact_translation_selection_and_stream_shape(bool force_software)
 			require(built.complete,
 				"checksum production program did not build");
 			const auto words = built.program.words();
-			require(words[0] == address_of(expected[operation][pattern]),
+			require(words[0] == address(expected[operation][pattern]),
 				"checksum implementation was not selected in translation");
 			const auto destination_offset =
 				offsetof(arm64::CpuState, registers) + 23U * 8U;
@@ -231,7 +219,7 @@ void native_hot_paths_and_software_fallbacks_are_distinct()
 					audit.native_instruction ==
 						encode(operation, 14U, 15U, 16U),
 				"native checksum hot path was not direct and branch-free");
-			native_entries.insert(address_of(gadget));
+			native_entries.insert(address(gadget));
 		}
 	for (const auto &operation : software_gadgets)
 		for (const auto gadget : operation) {
@@ -239,7 +227,7 @@ void native_hot_paths_and_software_fallbacks_are_distinct()
 			require(audit.native_operations == 0U &&
 					audit.direct_branches == 1U,
 				"software checksum fallback retained a native operation");
-			software_entries.insert(address_of(gadget));
+			software_entries.insert(address(gadget));
 		}
 	require(native_entries.size() == 40U &&
 			software_entries.size() == 40U,

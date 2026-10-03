@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <utility>
 #include <vector>
 
@@ -49,31 +49,18 @@ void uml_arm64_gadget_simd_three_same_cmeq_8h();
 void uml_arm64_gadget_simd_unary_xtn_8h2();
 }
 
-static void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
-
-template<typename Function>
-static std::uintptr_t address_of(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 template<typename Function>
 static void require_gadget(const gadgets::Program &program, Function expected)
 {
-	const auto address = address_of(expected);
-	if (program.words()[0] != address)
+	const auto entry = address(expected);
+	if (program.words()[0] != entry)
 		std::fprintf(stderr, "unexpected gadget: actual=%#lx expected=%#lx\n",
 			static_cast<unsigned long>(program.words()[0]),
-			static_cast<unsigned long>(address));
-	require(program.words()[0] == address);
+			static_cast<unsigned long>(entry));
+	require(program.words()[0] == entry);
 }
 static gadgets::Program build_one(std::uint32_t instruction)
 {
@@ -276,12 +263,12 @@ int main()
 		const auto program = build_one(0x1000'001fU); // adr xzr, pc
 		require_gadget(program, uml_arm64_gadget_nop);
 		/* No discarded destination operand/value is left in the stream. */
-		require(program.words()[1] == address_of(uml_arm64_gadget_svc));
+		require(program.words()[1] == address(uml_arm64_gadget_svc));
 	}
 	{
 		const auto program = build_one(0xd280'00a0U); // movz x0, #5
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_move_wide_constant));
+			address(uml_arm64_gadget_move_wide_constant));
 		require(program.words()[1] == 0U);
 		require(program.words()[2] == 5U);
 	}
@@ -290,40 +277,40 @@ int main()
 		/* MOVK is in place by construction, so the baked entry for the
 		 * destination register is what the translator selects. Rows are
 		 * w0 w1 x0 x1 x2 x3; this is x1, destination x0. */
-		require(program.words()[0] == address_of(
+		require(program.words()[0] == address(
 			uml_arm64_gadget_move_wide_keep_inplace_table[3U * 31U + 0U]));
 	}
 	{
 		const auto program = build_one(0x9100'1c01U); // add x1,x0,#7
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_add_sub_immediate_x_add_n_rr));
+			address(uml_arm64_gadget_add_sub_immediate_x_add_n_rr));
 	}
 	{
 		const auto program = build_one(0xb100'07ffU); // adds xzr,sp,#1
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_add_sub_immediate_x_add_s_ss));
+			address(uml_arm64_gadget_add_sub_immediate_x_add_s_ss));
 	}
 	{
 		const auto program = build_one(0x9a04'0062U); // adc x2,x3,x4
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_add_sub_carry_x_adc_n_rr_r));
+			address(uml_arm64_gadget_add_sub_carry_x_adc_n_rr_r));
 	}
 	{
 		const auto program = build_one(0x9ac4'2062U); // lslv x2,x3,x4
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_variable_shift_x_lsl_rr_r));
+			address(uml_arm64_gadget_variable_shift_x_lsl_rr_r));
 	}
 	{
 		const auto program = build_one(0x1ac4'0c62U); // sdiv w2,w3,w4
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_divide_w_s_rr_r));
+			address(uml_arm64_gadget_divide_w_s_rr_r));
 	}
 	{
 		const auto program = build_one(0xf940'0462U); // ldr x2,[x3,#8]
 		/* The transferred register is baked, so the translator selects the
 		 * entry for x2. Index is ((operation * 2 + bits64) * 2 + base_sp)
 		 * * 31 + register, with operation 1 for a load. */
-		require(program.words()[0] == address_of(
+		require(program.words()[0] == address(
 			uml_arm64_gadget_scalar_unsigned_inplace_table[
 				((1U * 2U + 1U) * 2U + 0U) * 31U + 2U]));
 		/* The opcode is not carried into the runtime stream, and neither is
@@ -421,32 +408,32 @@ int main()
 	{
 		const auto program = build_one(three_same(false, true, true, 3, 10));
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_three_same_urshl_2d));
+			address(uml_arm64_gadget_simd_three_same_urshl_2d));
 	}
 	{
 		const auto program = build_one(three_same(false, true, false, 0, 20));
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_three_same_smaxp_16b));
+			address(uml_arm64_gadget_simd_three_same_smaxp_16b));
 	}
 	{
 		const auto program = build_one(three_same(true, false, false, 3, 16));
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_three_same_add_d));
+			address(uml_arm64_gadget_simd_three_same_add_d));
 	}
 	{
 		const auto program = build_one(three_same(false, true, false, 2, 19));
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_three_same_mul_4s));
+			address(uml_arm64_gadget_simd_three_same_mul_4s));
 	}
 	{
 		const auto program = build_one(three_same(false, true, true, 1, 17));
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_three_same_cmeq_8h));
+			address(uml_arm64_gadget_simd_three_same_cmeq_8h));
 	}
 	{
 		const auto program = build_one(two_register(true, 0, 18)); // XTN2
 		require(program.words()[0] ==
-			address_of(uml_arm64_gadget_simd_unary_xtn_8h2));
+			address(uml_arm64_gadget_simd_unary_xtn_8h2));
 	}
 	return 0;
 }

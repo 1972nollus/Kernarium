@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -9,10 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
-#include <source_location>
 #include <string_view>
 
 namespace arm64_simd_high_narrow_test {
@@ -50,20 +49,7 @@ struct Registers final {
 	unsigned right;
 };
 
-[[noreturn]] inline void fail(const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	std::fprintf(stderr, "%s at %s:%u\n", message,
-		location.file_name(), location.line());
-	std::abort();
-}
-
-inline void require(bool condition, const char *message = "require failed",
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition)
-		fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr bool rounding(Operation operation)
 {
@@ -113,7 +99,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 #define UML_HIGH_NARROW_SET(name) std::array<Gadget, 6>{ \
 	uml_arm64_gadget_simd_widening_##name##_8h, \
@@ -132,16 +118,8 @@ constexpr std::array expected_gadgets{
 
 #undef UML_HIGH_NARROW_SET
 
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		index * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 void require_branch_free(Gadget gadget)
 {
@@ -162,7 +140,7 @@ void every_form_uses_one_direct_offset_gadget()
 	std::set<std::uintptr_t> expected;
 	for (const auto &operation : expected_gadgets)
 		for (const auto gadget : operation)
-			expected.insert(address_of(gadget));
+			expected.insert(address(gadget));
 
 	for (unsigned operation = 0; operation < test::operations.size();
 	     ++operation)
@@ -177,7 +155,7 @@ void every_form_uses_one_direct_offset_gadget()
 			test::require(words.size() == 4U,
 				"high-narrow gadget stream has an unexpected shape");
 			test::require(words[0] ==
-					address_of(expected_gadgets[operation][shape]),
+					address(expected_gadgets[operation][shape]),
 				"operation or arrangement was not selected in translation");
 			test::require(words[1] ==
 					gadgets::selection::packed_u16_operands(

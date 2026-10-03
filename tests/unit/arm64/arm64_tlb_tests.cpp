@@ -4,14 +4,12 @@
 #include "uml_darwin_static_mmu.h"
 #include "static_mmu_test_support.hpp"
 #include "scratch_backing.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
-#include <source_location>
 #include <sys/mman.h>
 
 namespace {
@@ -22,15 +20,7 @@ using uml::memory::tlb_empty_key;
 
 constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 class Mapping final {
 public:

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <source_location>
 
 namespace gadgets = uml::cpu::arm64::gadgets;
 
@@ -17,15 +16,7 @@ namespace {
 
 constexpr std::uint64_t pc = 0x7a0'0000;
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 void complete_baseline_inventory()
 {

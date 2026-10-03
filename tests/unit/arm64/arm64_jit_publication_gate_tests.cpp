@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <cstdio>
-#include <cstdlib>
 
 namespace {
 
-void require(bool condition, const char *message) {
-  if (condition)
-    return;
-  std::fprintf(stderr, "arm64-jit-publication-gate: %s\n", message);
-  std::abort();
-}
+using uml::testing::require;
 
 } // namespace
 

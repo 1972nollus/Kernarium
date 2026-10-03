@@ -2,6 +2,8 @@
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
 #include "arm64_basic_floating_test_support.hpp"
+#include "require.hpp"
+#include "arm64_gadget_test_support.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -17,7 +19,7 @@
 namespace arm64_fused_floating_test {
 
 namespace basic = arm64_basic_floating_test;
-namespace common = arm64_simd_test;
+namespace common = uml::testing;
 namespace engine_tests = uml::emulator::tests;
 
 struct Form final {
@@ -100,11 +102,7 @@ DECLARE_SCALAR(nmsub)
 #undef DECLARE_SCALAR
 }
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] std::uintptr_t scalar_entry(const test::Form &form)
 {
@@ -138,11 +136,7 @@ template<typename Function>
 			row * 32U + destination]);
 }
 
-[[nodiscard]] std::uintptr_t vector_offset(unsigned reg)
-{
-	return offsetof(arm64::CpuState, vectors) +
-		reg * sizeof(arm64::VectorRegister);
-}
+using uml::emulator::tests::vector_offset;
 
 void direct_operands_and_live_bank()
 {

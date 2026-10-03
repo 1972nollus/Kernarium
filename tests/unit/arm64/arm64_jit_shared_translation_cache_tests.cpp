@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/jit/jit_shared_translations.hpp"
 #include "allocation_failure.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -8,12 +9,9 @@
 #include <barrier>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <new>
-#include <source_location>
 #include <span>
 #include <thread>
 
@@ -21,15 +19,7 @@ namespace {
 
 namespace arm64 = uml::cpu::arm64;
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 [[nodiscard]] std::shared_ptr<arm64::SharedTranslation>
 make_translation(std::span<const std::uint32_t> guest_words,

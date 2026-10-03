@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
@@ -35,17 +36,8 @@ constexpr std::uint64_t predecessor_source = code_base + 0x40;
 constexpr std::uint32_t indirect_branch_x0 = 0xd61f'0000U;
 constexpr std::uint32_t system_call = 0xd400'0001U;
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "arm64-pc-alignment-contract: %s\n", message);
-	std::_Exit(EXIT_FAILURE);
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] EngineKind parse_engine(std::string_view name)
 {

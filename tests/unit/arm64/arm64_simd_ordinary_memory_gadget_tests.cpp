@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "arm64_simd_ordinary_memory_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -9,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <map>
 #include <numeric>
 #include <set>
@@ -77,27 +78,13 @@ UML_DECLARE_PAIR(load128)
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 using Bases = std::array<Gadget, 2>;
 using Widths = std::array<Bases, 5>;
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fputs(message, stderr);
-	std::fputc('\n', stderr);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
-
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::testing::fail;
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 #define UML_BASES(name) Bases{ \
 	uml_arm64_gadget_vector_##name##_unsigned_fast, \
@@ -187,11 +174,7 @@ constexpr std::array pair_paths{
 		bytes == 8U ? 3U : 4U;
 }
 
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned rt)
-{
-	return offsetof(arm64::CpuState, vectors) +
-		rt * sizeof(arm64::VectorRegister);
-}
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t base_offset(unsigned rn)
 {
@@ -227,7 +210,7 @@ void account(std::map<std::uintptr_t, unsigned> &references,
 	std::uintptr_t operand)
 {
 	const auto words = stream(built);
-	const auto selected = address_of(expected);
+	const auto selected = address(expected);
 	require(words[0] == selected,
 		"ordinary-memory translation selected the wrong fixed gadget");
 	require(words[1] == operand,
@@ -244,21 +227,21 @@ void account(std::map<std::uintptr_t, unsigned> &references,
 	for (const auto &directions : unsigned_paths)
 		for (const auto &width : directions)
 			for (const auto gadget : width)
-				result.insert(address_of(gadget));
+				result.insert(address(gadget));
 	for (const auto &directions : other_paths)
 		for (const auto &width : directions) {
 			for (const auto &mode : width.immediate)
 				for (const auto gadget : mode)
-					result.insert(address_of(gadget));
+					result.insert(address(gadget));
 			for (const auto &mode : width.register_offset)
 				for (const auto gadget : mode)
-					result.insert(address_of(gadget));
+					result.insert(address(gadget));
 		}
 	for (const auto &directions : pair_paths)
 		for (const auto &width : directions)
 			for (const auto &mode : width)
 				for (const auto gadget : mode)
-					result.insert(address_of(gadget));
+					result.insert(address(gadget));
 	require(result.size() == 236U,
 		"ordinary-memory gadget definition inventory is not exactly 236");
 	return result;
@@ -406,18 +389,18 @@ void exact_translation_references(
 	for (const auto &directions : unsigned_paths)
 		for (const auto &width : directions)
 			for (const auto gadget : width)
-				require(references.at(address_of(gadget)) == 1U,
+				require(references.at(address(gadget)) == 1U,
 					"unsigned gadget reference count is not exact");
 	for (const auto &directions : other_paths)
 		for (const auto &width : directions) {
 			for (const auto &mode : width.immediate)
 				for (const auto gadget : mode)
-					require(references.at(address_of(gadget)) == 1U,
+					require(references.at(address(gadget)) == 1U,
 						"immediate gadget reference count is not exact");
 			for (unsigned mode = 0; mode < width.register_offset.size();
 			     ++mode)
 				for (const auto gadget : width.register_offset[mode])
-					require(references.at(address_of(gadget)) ==
+					require(references.at(address(gadget)) ==
 							(mode == 1U || mode == 4U ?
 								2U : 1U),
 						"register gadget reference count is not exact");
@@ -428,7 +411,7 @@ void exact_translation_references(
 			     ++mode)
 				for (const auto gadget : directions[width][mode]) {
 					const unsigned expected = mode == 0U ? 2U : 1U;
-					require(references.at(address_of(gadget)) == expected,
+					require(references.at(address(gadget)) == expected,
 						"pair gadget reference count is not exact");
 				}
 	const auto total = std::accumulate(

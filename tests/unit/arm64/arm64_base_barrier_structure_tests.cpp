@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
@@ -8,8 +10,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory_resource>
 #include <string_view>
 
@@ -24,17 +24,8 @@ inline constexpr std::uint32_t dsb_nxs_base = 0xd503'323fU;
 inline constexpr std::uint32_t sb_base = 0xd503'30ffU;
 inline constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t encode_standard(
 	std::uint32_t base, unsigned option) noexcept
@@ -86,11 +77,7 @@ void uml_arm64_gadget_speculation_barrier_fallback();
 void uml_arm64_gadget_illegal();
 }
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 #define BARRIER_ADDRESS(kind, option) \
 	address(uml_arm64_gadget_##kind##_##option)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 
 #include "uml_darwin_guest.h"
@@ -7,11 +8,9 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
-#include <source_location>
 #include <sys/mman.h>
 
 namespace arm64 = uml::cpu::arm64;
@@ -19,15 +18,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 class Mapping final {
 public:

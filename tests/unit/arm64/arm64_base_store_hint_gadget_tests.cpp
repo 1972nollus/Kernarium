@@ -7,25 +7,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <string_view>
 
 namespace arm64_base_store_hint_test {
 
-struct Variant final {
-	std::string_view row;
-	std::string_view name;
-	unsigned immediate;
-	::uml::cpu::ArmFeature feature;
-};
-
-inline constexpr std::array variants{
-	Variant{"BASE-0432", "STSHH KEEP", 48,
-		::uml::cpu::ArmFeature::pcdphint},
-	Variant{"BASE-0432", "STSHH STRM", 49,
-		::uml::cpu::ArmFeature::pcdphint},
-	Variant{"BASE-0398", "STCPH", 52,
-		::uml::cpu::ArmFeature::cmh},
-};
+/* The hint immediates of STSHH KEEP and STSHH STRM (FEAT_PCDPHINT) and of
+ * STCPH (FEAT_CMH). */
+inline constexpr std::array immediates{48U, 49U, 52U};
 
 } // namespace arm64_base_store_hint_test
 
@@ -48,12 +35,11 @@ void all_forms_fold_to_nop()
 		std::array{arm64_hint_test::primary_instruction(0)});
 	arm64_hint_test::require(nop_program.complete,
 		"common NOP did not translate completely");
-	for (const auto &variant : store_hint::variants) {
+	for (const auto immediate : store_hint::immediates) {
 		const auto built = gadgets::Builder{}.build(
 			engine::engine_test_code_base,
 			std::array{
-				arm64_hint_test::primary_instruction(
-					variant.immediate)});
+				arm64_hint_test::primary_instruction(immediate)});
 		arm64_hint_test::require(
 			built.complete && built.program.instruction_count() == 1U,
 			"store hint did not translate completely");

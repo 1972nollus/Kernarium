@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
-#include <source_location>
 #include <span>
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
@@ -19,20 +17,7 @@ constexpr std::uint32_t register_mask =
     (31U << 16U) | (31U << 5U) | 31U;
 constexpr std::uint64_t code_base = 0x4f70'0000ULL;
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t
 bitwise_xor(unsigned destination, unsigned left, unsigned right) noexcept {

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_jit_memory_run_codegen_test_support.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <source_location>
 #include <span>
 #include <vector>
@@ -16,34 +16,26 @@ namespace jit_test = uml::cpu::arm64::jit::testing;
 
 namespace {
 
+using arm64_jit_memory_run_codegen_test::cbnz_x0;
+using arm64_jit_memory_run_codegen_test::count_branch_shape;
+using arm64_jit_memory_run_codegen_test::count_page_span_tbnz;
+using arm64_jit_memory_run_codegen_test::count_word;
+using arm64_jit_memory_run_codegen_test::hot_code;
+using arm64_jit_memory_run_codegen_test::monitor_clear;
+using arm64_jit_memory_run_codegen_test::nop;
+using arm64_jit_memory_run_codegen_test::page_span_eor;
+using arm64_jit_memory_run_codegen_test::require_count;
+using arm64_jit_memory_run_codegen_test::sp_alignment_extract;
+using arm64_jit_memory_run_codegen_test::sp_span_offset_extract;
+using arm64_jit_memory_run_codegen_test::translation_probe;
+using uml::testing::require;
+
 constexpr std::uint64_t code_base = 0x50c0'0000ULL;
-constexpr std::uint32_t memory_register_mask = (31U << 5U) | 31U;
-// One flag-neutral first-way tag comparison is emitted per TLB translation.
-constexpr std::uint32_t translation_probe = 0xca01'0042U;
-constexpr std::uint32_t page_span_eor = 0xca08'0000U;
-constexpr unsigned page_shift =
-    DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
-constexpr std::uint32_t page_span_tbnz =
-    0x3700'0000U | ((page_shift & 31U) << 19U);
-constexpr std::uint32_t branch_displacement_mask = 0x00ff'ffe0U;
-constexpr std::uint32_t sp_alignment_extract =
-    0xd340'0000U | (3U << 10U) | (8U << 5U);
-constexpr std::uint32_t cbnz_x0 = 0xb500'0000U;
-constexpr std::uint32_t sp_span_offset_extract =
-    0xd340'0000U | (4U << 16U) | ((page_shift - 1U) << 10U) |
-    (8U << 5U);
 constexpr std::uint32_t tagged_state_load =
     0x3940'0000U |
     (static_cast<std::uint32_t>(offsetof(arm64::CpuState, tbi_enabled))
      << 10U) |
     (15U << 5U);
-constexpr std::uint32_t monitor_clear =
-    0x3900'0000U |
-    (static_cast<std::uint32_t>(
-         offsetof(arm64::CpuState, exclusive_size))
-     << 10U) |
-    (15U << 5U) | 31U;
-constexpr std::uint32_t nop = 0xd503'201fU;
 
 struct Variant final {
   unsigned size;
@@ -60,32 +52,6 @@ constexpr std::array variants{
     Variant{0, 2, 16, false}, Variant{0, 3, 16, true},
 };
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
-
-void require_count(std::size_t actual, std::size_t expected,
-                   const char *message,
-                   const std::source_location location =
-                       std::source_location::current()) {
-  if (actual == expected)
-    return;
-  std::fprintf(stderr, "%s: expected=%zu actual=%zu at %s:%u\n", message,
-               expected, actual, location.file_name(), location.line());
-  std::abort();
-}
-
 [[nodiscard]] constexpr std::uint32_t
 unsigned_memory(const Variant &variant, unsigned immediate, unsigned base,
                 unsigned transfer) noexcept {
@@ -94,54 +60,12 @@ unsigned_memory(const Variant &variant, unsigned immediate, unsigned base,
          ((base & 31U) << 5U) | (transfer & 31U);
 }
 
-[[nodiscard]] std::vector<std::uint32_t>
-hot_code(const jit_test::CompiledCode &compiled, std::size_t expected_guest) {
-  require(compiled.guest_instructions == expected_guest,
-          "JIT did not compile the complete SIMD-memory program");
-  require(compiled.hot_words <= compiled.words.size(),
-          "JIT hot-word boundary exceeds generated code");
-  return {compiled.words.begin(),
-          compiled.words.begin() +
-              static_cast<std::ptrdiff_t>(compiled.hot_words)};
-}
-
-[[nodiscard]] std::size_t count_word(std::span<const std::uint32_t> words,
-                                     std::uint32_t word) {
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += current == word;
-  return count;
-}
-
-[[nodiscard]] std::size_t count_branch_shape(
-    std::span<const std::uint32_t> words, std::uint32_t shape) {
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += (current & ~branch_displacement_mask) == shape;
-  return count;
-}
-
-[[nodiscard]] std::size_t
-count_page_span_tbnz(std::span<const std::uint32_t> words) {
-  constexpr std::uint32_t branch_displacement_mask = 0x0007'ffe0U;
-  std::size_t count = 0;
-  for (const auto current : words)
-    count += (current & ~branch_displacement_mask) == page_span_tbnz;
-  return count;
-}
-
 [[nodiscard]] std::size_t count_memory_form(
-    std::span<const std::uint32_t> words, std::uint32_t guest) {
-  std::size_t count = 0;
-  for (const auto current : words) {
-    if ((current & ~memory_register_mask) !=
-        (guest & ~memory_register_mask))
-      continue;
-    require(((current >> 5U) & 31U) == 8U,
-            "coalesced SIMD memory operation bypassed checked host base x8");
-    ++count;
-  }
-  return count;
+    std::span<const std::uint32_t> words, std::uint32_t guest,
+    const std::source_location location = std::source_location::current()) {
+  return arm64_jit_memory_run_codegen_test::count_memory_form(
+      words, guest, arm64_jit_memory_run_codegen_test::OtherBase::fail,
+      false, location);
 }
 
 void every_valid_variant_coalesces_for_both_base_kinds() {

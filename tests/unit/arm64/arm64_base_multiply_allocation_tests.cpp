@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
 #include <set>
-#include <string_view>
 
 namespace uml::emulator::tests::base_multiply {
 
@@ -20,20 +18,19 @@ struct FormCase final {
 	bool wide;
 	unsigned operation;
 	bool subtract;
-	std::string_view name;
 };
 
 inline constexpr std::array legal_forms{
-	FormCase{false, 0, false, "MADD W"},
-	FormCase{false, 0, true, "MSUB W"},
-	FormCase{true, 0, false, "MADD X"},
-	FormCase{true, 0, true, "MSUB X"},
-	FormCase{true, 1, false, "SMADDL"},
-	FormCase{true, 1, true, "SMSUBL"},
-	FormCase{true, 5, false, "UMADDL"},
-	FormCase{true, 5, true, "UMSUBL"},
-	FormCase{true, 2, false, "SMULH"},
-	FormCase{true, 6, false, "UMULH"},
+	FormCase{false, 0, false}, // MADD W
+	FormCase{false, 0, true}, // MSUB W
+	FormCase{true, 0, false}, // MADD X
+	FormCase{true, 0, true}, // MSUB X
+	FormCase{true, 1, false}, // SMADDL
+	FormCase{true, 1, true}, // SMSUBL
+	FormCase{true, 5, false}, // UMADDL
+	FormCase{true, 5, true}, // UMSUBL
+	FormCase{true, 2, false}, // SMULH
+	FormCase{true, 6, false}, // UMULH
 };
 
 [[nodiscard]] constexpr bool is_high(const FormCase &form) noexcept
@@ -68,17 +65,7 @@ namespace {
 
 namespace gadgets = arm64::gadgets;
 
-[[noreturn]] void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::require;
 
 void production_specialization()
 {
