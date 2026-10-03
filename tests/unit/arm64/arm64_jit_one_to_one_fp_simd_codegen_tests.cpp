@@ -55,7 +55,7 @@ integer_indexed(bool q, bool unsigned_group, unsigned size,
 
 void scalar_floating_families_are_one_to_one()
 {
-	if (!::uml::platform::apple::probed_host_capabilities().floating_point())
+	if (!::uml::platform::apple::probed_host_capabilities().floating_point)
 		return;
 	constexpr std::array cases{
 		contract::Case{"basic floating arithmetic",
@@ -140,7 +140,7 @@ void scalar_floating_families_are_one_to_one()
 
 void baseline_vector_families_are_one_to_one()
 {
-	if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+	if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
 		return;
 	constexpr std::array cases{
 		contract::Case{"vector integer/floating conversion",
@@ -264,7 +264,7 @@ void baseline_vector_families_are_one_to_one()
 
 void vector_lane_and_transform_families_are_one_to_one()
 {
-	if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+	if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
 		return;
 	constexpr std::array cases{
 		contract::Case{"vector modified immediate",
@@ -330,7 +330,7 @@ void previously_uncovered_lowering_paths_are_one_to_one()
 		pc += 0x1000U;
 	};
 
-	if (host.floating_point()) {
+	if (host.floating_point) {
 		check({"floating register move",
 		       0x1e20'4000U | unary_fields,
 		       contract::rn_rd_mask, true,
@@ -349,7 +349,7 @@ void previously_uncovered_lowering_paths_are_one_to_one()
 					  contract::vector(5U, first))});
 	}
 
-	if (!host.advanced_simd())
+	if (!host.advanced_simd)
 		return;
 
 	check({"integer vector indexed unrestricted",
@@ -483,34 +483,34 @@ void supported_vector_transform_extensions_are_one_to_one()
 		pc += 0x1000U;
 	};
 
-	if (host.aes())
+	if (host.aes)
 		check({"optional vector transform 1", 0x4e28'4800U |
 			unary_fields, contract::rn_rd_mask, true,
 			contract::vector_state_metadata,
 			contract::operands(contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.sha1())
+	if (host.sha1)
 		check({"optional vector transform 2", 0x5e00'0000U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::vector_state_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.sha2())
+	if (host.sha2)
 		check({"optional vector transform 3", 0x5e00'4000U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::vector_state_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.sha512())
+	if (host.sha512)
 		check({"optional vector transform 4", 0xce60'8000U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::vector_state_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.sha3())
+	if (host.sha3)
 		check({"optional vector transform 5", 0xce60'8c00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::vector_state_metadata,

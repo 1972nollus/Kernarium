@@ -341,7 +341,7 @@ void supported_extension_families_are_one_to_one()
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
 	std::uint64_t pc = code_base + 0x10000U;
 
-	if (host.cssc()) {
+	if (host.cssc) {
 		constexpr std::array cases{
 			contract::Case{"register min/max", 0x9ac2'6025U,
 				contract::rm_rn_rd_mask, true,
@@ -358,7 +358,7 @@ void supported_extension_families_are_one_to_one()
 		contract::require_all(cases, pc);
 		pc += 0x2000U;
 	}
-	if (host.crc32()) {
+	if (host.crc32) {
 		constexpr contract::Case test{
 			"checksum", 0x9ac2'4c25U,
 			contract::rm_rn_rd_mask, true,

@@ -204,7 +204,7 @@ void integer_dependency_chain_is_direct_and_resident() {
 }
 
 void checksum_dependency_chain_is_direct_and_resident() {
-  if (!::uml::platform::apple::probed_host_capabilities().crc32())
+  if (!::uml::platform::apple::probed_host_capabilities().crc32)
     return;
   constexpr std::array guest{
       three_register(0x8b00'0000U, 18, 1, 2),

@@ -38,8 +38,8 @@ namespace uml::cpu::arm64::jit {
 JitCompilerFamilies::emit_simd_fmulx(std::uint32_t instruction) {
   const bool half = (instruction & 0x00e0'0000U) == 0x0040'0000U;
   if (!valid_simd_fmulx(instruction) ||
-      !host_capabilities().advanced_simd() ||
-      (half && !host_capabilities().fp16()))
+      !host_capabilities().advanced_simd ||
+      (half && !host_capabilities().fp16))
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;
@@ -62,9 +62,9 @@ JitCompilerFamilies::emit_simd_floating_complex(
     std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_floating_complex(instruction);
-  if (!decoded.valid || !host_capabilities().advanced_simd() ||
+  if (!decoded.valid || !host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::fcma) ||
-      (decoded.width == 16U && !host_capabilities().fp16()))
+      (decoded.width == 16U && !host_capabilities().fp16))
     return false;
 
   const unsigned destination = instruction & 31U;
@@ -278,7 +278,7 @@ JitCompilerFamilies::emit_bfloat_matrix(std::uint32_t instruction) {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_dot(std::uint32_t instruction) {
   if (!valid_simd_dot(instruction) ||
-      !host_capabilities().advanced_simd())
+      !host_capabilities().advanced_simd)
     return false;
   const bool indexed =
       (instruction & 0x9f00'0400U) == 0x0f00'0000U;
@@ -329,7 +329,7 @@ JitCompilerFamilies::emit_simd_dot(std::uint32_t instruction) {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_matrix(std::uint32_t instruction) {
   if (!valid_simd_matrix(instruction) ||
-      !host_capabilities().advanced_simd() ||
+      !host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::i8mm))
     return false;
 
@@ -418,7 +418,7 @@ JitCompilerFamilies::emit_simd_matrix(std::uint32_t instruction) {
 JitCompilerFamilies::emit_simd_integer_indexed(
     std::uint32_t instruction) {
   if (!valid_simd_integer_indexed(instruction) ||
-      !host_capabilities().advanced_simd())
+      !host_capabilities().advanced_simd)
     return false;
   const bool unsigned_group = (instruction & 0x2000'0000U) != 0;
   const unsigned operation = (instruction >> 12) & 15U;
@@ -495,7 +495,7 @@ JitCompilerFamilies::emit_simd_integer_indexed(
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_rdm(std::uint32_t instruction) {
   if (!valid_simd_rdm(instruction) ||
-      !host_capabilities().advanced_simd() ||
+      !host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::rdm))
     return false;
   const unsigned destination = instruction & 31U;
@@ -522,8 +522,8 @@ JitCompilerFamilies::emit_simd_rdm(std::uint32_t instruction) {
     std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_simd_floating_compare(instruction);
-  if (!decoded.valid || !host_capabilities().advanced_simd() ||
-      (decoded.width == 16U && !host_capabilities().fp16()))
+  if (!decoded.valid || !host_capabilities().advanced_simd ||
+      (decoded.width == 16U && !host_capabilities().fp16))
     return false;
 
   const unsigned destination = instruction & 31U;
@@ -588,7 +588,7 @@ JitCompilerFamilies::emit_simd_rdm(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_bitwise_register(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       (instruction & 0x9f20'fc00U) != 0x0e20'1c00U)
     return false;
 
@@ -614,7 +614,7 @@ JitCompilerFamilies::emit_simd_bitwise_register(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_three_same_integer(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       !valid_simd_three_same_integer(instruction))
     return false;
   const unsigned opcode = (instruction >> 11) & 31U;
@@ -642,7 +642,7 @@ JitCompilerFamilies::emit_simd_three_same_integer(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_arithmetic_narrow(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd())
+  if (!host_capabilities().advanced_simd)
     return false;
   const auto operation = instruction & 0x9f20'fc00U;
   if ((operation != 0x0e20'4000U && operation != 0x0e20'6000U) ||
@@ -666,7 +666,7 @@ JitCompilerFamilies::emit_simd_arithmetic_narrow(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_widening(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd())
+  if (!host_capabilities().advanced_simd)
     return false;
   const bool vector = (instruction & 0x9f20'0c00U) == 0x0e20'0000U;
   const bool scalar = (instruction & 0xdf20'0c00U) == 0x5e20'0000U;
@@ -726,7 +726,7 @@ JitCompilerFamilies::emit_simd_widening(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       (instruction & 0xbf3f'fc00U) != 0x0e21'2800U ||
       ((instruction >> 22) & 3U) == 3U)
     return false;
@@ -749,7 +749,7 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
 
 [[nodiscard]] bool JitCompilerFamilies::emit_simd_two_register_integer(
     std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd())
+  if (!host_capabilities().advanced_simd)
     return false;
   const bool vector = (instruction & 0x9f3e'0c00U) == 0x0e20'0800U;
   const bool scalar = (instruction & 0xdf3e'0c00U) == 0x5e20'0800U;
@@ -816,7 +816,7 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
 
 [[nodiscard]] bool JitCompilerFamilies::emit_simd_unsigned_estimate(
     std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       (instruction & 0x9fbf'fc00U) != 0x0ea1'c800U ||
       (instruction & 0x0040'0000U) != 0)
     return false;
@@ -834,11 +834,10 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_floating_indexed(std::uint32_t instruction) {
   if (!valid_simd_floating_indexed(instruction) ||
-      !host_capabilities().floating_point() ||
-      !host_capabilities().advanced_simd())
+      !host_capabilities().floating_point || !host_capabilities().advanced_simd)
     return false;
   const unsigned size = (instruction >> 22) & 3U;
-  if (size == 0U && !host_capabilities().fp16())
+  if (size == 0U && !host_capabilities().fp16)
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;

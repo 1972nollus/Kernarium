@@ -519,7 +519,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (size > 2U || (!q && size == 2U) ||
           (simd_integer_reduce_opcode == 27U && unsigned_group))
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_integer_reduce(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -750,7 +750,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned offset = (instruction >> 11) & 15U;
       if (!q && offset >= 8U)
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_extract(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -907,7 +907,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       }
       if (!valid)
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_two_register_integer(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -922,7 +922,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0x9fbf'fc00U) == 0x0ea1'c800U) {
       if ((instruction & 0x0040'0000U) != 0)
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_unsigned_estimate(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -983,7 +983,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         simd_three_same_opcode < 24U) {
       if (!valid_simd_three_same_integer(instruction))
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_three_same_integer(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -993,7 +993,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           arm64::detail::decode_simd_modified_immediate(instruction);
       if (!decoded)
         return reject();
-      if (!host_capabilities().advanced_simd())
+      if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_modified_immediate(instruction, decoded->action != 0U);
       return Action::keep_going;
@@ -1004,7 +1004,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const bool q = (instruction & 0x4000'0000U) != 0;
       if (!lane || (!q && lane->element_shift == 3U))
         return reject();
-      if (!host_capabilities().advanced_simd())
+      if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_duplicate_general(instruction);
       return Action::keep_going;
@@ -1017,7 +1017,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (!arm64::detail::decode_simd_lane_index(
               (instruction >> 16) & 31U))
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_insert(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1034,7 +1034,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           (simd_duplicate_element_vector && !q &&
            lane->element_shift == 3U))
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_duplicate_element(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1055,7 +1055,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
               : alternate ? size <= 1U : size == 0U;
       if (!valid)
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_bit_unary(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1068,7 +1068,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (source_bits < 8U || source_bits > 32U ||
           encoded - source_bits >= source_bits)
         return reject();
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_shift_left_long(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1107,7 +1107,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           opcode == 8U || opcode == 9U || (opcode == 10U && !alternate);
       const bool valid_shape =
           (!scalar || size == 3U) && (scalar || q || size != 3U);
-      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd())
+      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd)
         return reject();
       emit_simd_unary_native(instruction);
       return Action::keep_going;
@@ -1127,7 +1127,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         simd_general_opcode == 0x9eae'0000U ||
         simd_general_opcode == 0x9eaf'0000U;
     if (simd_general_class) {
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_general_move(instruction))
         return reject();
       return Action::keep_going;

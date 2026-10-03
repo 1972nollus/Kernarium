@@ -542,8 +542,7 @@ void codegen_profile_partitions_the_cache_identity()
 	require(same == compiled);
 
 	auto other = compiled;
-	other.capabilities.supported.flip(
-		static_cast<std::size_t>(uml::cpu::ArmFeature::cssc));
+	other.capabilities.cssc = !compiled.capabilities.cssc;
 	require(!(other == compiled));
 
 	const auto compiled_entry = cache.insert(

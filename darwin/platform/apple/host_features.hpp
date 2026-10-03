@@ -138,6 +138,19 @@ probed_host_capabilities() noexcept
 		for (std::size_t index = 0; index < arm_feature_count; ++index)
 			result.supported.set(index, query_host_arm_feature(
 				static_cast<ArmFeature>(index)));
+		result.floating_point =
+			result.has(ArmFeature::floating_point);
+		result.advanced_simd =
+			result.has(ArmFeature::advanced_simd);
+		result.fp16 = result.has(ArmFeature::fp16);
+		result.cssc = result.has(ArmFeature::cssc);
+		result.aes = result.has(ArmFeature::aes);
+		result.pmull = result.has(ArmFeature::pmull);
+		result.sha1 = result.has(ArmFeature::sha1);
+		result.sha2 = result.has(ArmFeature::sha256);
+		result.crc32 = result.has(ArmFeature::crc32);
+		result.sha3 = result.has(ArmFeature::sha3);
+		result.sha512 = result.has(ArmFeature::sha512);
 		if (result.has(ArmFeature::jscvt))
 			result.jscvt_subnormal_flags_correct =
 				detail::native_jscvt_subnormal_flags_correct();

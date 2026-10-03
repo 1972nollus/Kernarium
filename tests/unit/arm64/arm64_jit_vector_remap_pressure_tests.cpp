@@ -588,7 +588,7 @@ void remaining_simd_arithmetic_full_cache_fallbacks_are_exact() {
       };
 
   const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd())
+  if (!host.advanced_simd)
     return;
   check_unrestricted(
       "widening accumulator", 0x0e20'5000U, 12U,
@@ -609,7 +609,7 @@ void remaining_simd_arithmetic_full_cache_fallbacks_are_exact() {
       "two-table TBL", 0x4e00'2000U, 11U, 30U, 30U, 30U,
       code_base + 0x43'000U);
 
-  if (host.fp16() && host.floating_point())
+  if (host.fp16 && host.floating_point)
     check_restricted(
         "half indexed floating accumulator", 0x4f00'1000U,
         code_base + 0x44'000U);
@@ -776,7 +776,7 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
   constexpr auto fields =
       (right_source << 16U) | (left_source << 5U) | destination;
   const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd())
+  if (!host.advanced_simd)
     return;
 
   require_vector_live_ins(
@@ -803,13 +803,13 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
   require_vector_live_ins(
       "TRN1 overwrite", 0x4e00'2800U | fields, 2U);
 
-  if (host.floating_point()) {
+  if (host.floating_point) {
     require_vector_live_ins(
         "word indexed FMLA accumulator", 0x4f80'1000U | fields, 3U);
     require_vector_live_ins(
         "word indexed FMUL overwrite", 0x4f80'9000U | fields, 2U);
   }
-  if (host.fp16() && host.floating_point()) {
+  if (host.fp16 && host.floating_point) {
     require_vector_live_ins(
         "half indexed FMLA accumulator", 0x4f00'1000U | fields, 3U);
     require_vector_live_ins(

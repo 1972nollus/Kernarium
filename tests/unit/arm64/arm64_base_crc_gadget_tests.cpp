@@ -135,7 +135,7 @@ void exact_translation_selection_and_stream_shape(bool force_software)
 		base, std::array{std::uint32_t{0xd503'201fU}, svc});
 	require(nop.complete, "NOP production program did not build");
 
-	const bool native = !force_software && ::uml::platform::apple::probed_host_capabilities().crc32();
+	const bool native = !force_software && ::uml::platform::apple::probed_host_capabilities().crc32;
 	const auto &expected = native ? native_gadgets : software_gadgets;
 	std::set<std::uintptr_t> entries;
 	for (unsigned operation = 0; operation < 8; ++operation) {

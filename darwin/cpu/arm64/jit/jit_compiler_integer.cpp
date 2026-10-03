@@ -388,7 +388,7 @@ void JitCompilerFamilies::emit_integer_min_max(std::uint32_t instruction,
     return;
   }
 
-  if (host_capabilities().cssc()) {
+  if (host_capabilities().cssc) {
     if (!immediate) {
       emit_native_binary(instruction, false, false);
       return;
@@ -469,7 +469,7 @@ void JitCompilerFamilies::emit_integer_min_max(std::uint32_t instruction,
 
 void JitCompilerFamilies::emit_bit_reverse_count(std::uint32_t instruction) {
   const unsigned operation = (instruction >> 10) & 31U;
-  if (operation < 6U || host_capabilities().cssc()) {
+  if (operation < 6U || host_capabilities().cssc) {
     emit_native_unary(instruction);
     return;
   }
