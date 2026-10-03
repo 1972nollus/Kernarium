@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace uml::cpu::x86_64::gadgets {
 namespace {
@@ -907,6 +908,30 @@ struct EncodedMemory final {
 	std::uintptr_t displacement{};
 };
 
+enum class DescriptorTag { none, vex };
+
+/* The four words every memory form's stream starts with: its entry, the
+ * operand descriptor, tagged for a VEX form, the displacement and the guest
+ * address. It is always inlined, and each push takes its word the way the
+ * callers' own pushes did: the entry by its value category, the rest from
+ * where they live. The callers' code then stays within a few instructions
+ * of the open-coded pushes. */
+template<typename Entry>
+[[gnu::always_inline]] inline void append_memory_words(
+	std::vector<std::uintptr_t> &stream, Entry &&entry,
+	const EncodedMemory &encoded, const Gadget &gadget,
+	DescriptorTag tag = DescriptorTag::none)
+{
+	stream.push_back(std::forward<Entry>(entry));
+	if (tag == DescriptorTag::vex)
+		stream.push_back(
+			encoded.descriptor | vex_tag(gadget.instruction));
+	else
+		stream.push_back(encoded.descriptor);
+	stream.push_back(encoded.displacement);
+	stream.push_back(gadget.address);
+}
+
 [[nodiscard]] std::optional<EncodedMemory> encode_memory(
 	const Gadget &gadget, const Operand &operand,
 	std::uint16_t value_offset, bool apply_segment = true) noexcept
@@ -1007,10 +1032,7 @@ struct EncodedMemory final {
 	const auto entry = memory_move_entry(memory_operand.width, form);
 	if (!encoded || entry == 0)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	if (form == MemoryMoveForm::store_immediate)
 		stream.push_back(value_operand.immediate);
 	return true;
@@ -1049,10 +1071,7 @@ struct EncodedMemory final {
 		instruction.locked);
 	if (!encoded || entry == 0)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	if (form == MemoryArithmeticForm::memory_immediate)
 		stream.push_back(value_operand.immediate);
 	return true;
@@ -1104,10 +1123,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, count_offset);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	if (immediate)
 		stream.push_back(instruction.source.immediate);
 	return true;
@@ -1157,10 +1173,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, *source);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	stream.push_back(count);
 	return true;
 }
@@ -1193,10 +1206,7 @@ struct EncodedMemory final {
 			gadget, instruction.destination, 0);
 		if (!encoded)
 			return false;
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		return true;
 	}
 
@@ -1234,10 +1244,7 @@ struct EncodedMemory final {
 		gadget, instruction.source, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	if (immediate)
 		stream.push_back(instruction.auxiliary.immediate);
 	return true;
@@ -1268,10 +1275,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, 0);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1320,10 +1324,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, index_offset);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	if (immediate)
 		stream.push_back(instruction.source.immediate);
 	return true;
@@ -1355,10 +1356,7 @@ struct EncodedMemory final {
 		gadget, instruction.source, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1387,10 +1385,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, *source);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1405,12 +1400,9 @@ struct EncodedMemory final {
 		gadget, instruction.destination, 0);
 	if (!encoded || (size != 8 && size != 16))
 		return false;
-	stream.push_back(entry_address(size == 16 ?
+	append_memory_words(stream, entry_address(size == 16 ?
 		native::uml_x86_64_gadget_cmpxchg_pair_16 :
-		native::uml_x86_64_gadget_cmpxchg_pair_8));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+		native::uml_x86_64_gadget_cmpxchg_pair_8), *encoded, gadget);
 	return true;
 }
 
@@ -1432,10 +1424,7 @@ struct EncodedMemory final {
 		gadget, memory_operand, *register_value) : std::nullopt;
 	if (!encoded || entry == 0)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1464,10 +1453,7 @@ struct EncodedMemory final {
 		gadget, instruction.source, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1497,10 +1483,7 @@ struct EncodedMemory final {
 		gadget, instruction.source, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -1541,10 +1524,7 @@ struct EncodedMemory final {
 			gadget, instruction.source, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		return true;
 	}
 
@@ -1568,10 +1548,7 @@ struct EncodedMemory final {
 			gadget, instruction.source, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -1617,10 +1594,7 @@ struct EncodedMemory final {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	stream.push_back(*first);
 	return true;
 }
@@ -1638,11 +1612,9 @@ struct EncodedMemory final {
 				gadget, instruction.source, *destination);
 			if (!encoded || instruction.source.width != OperandWidth::qword)
 				return false;
-			stream.push_back(entry_address(
-				native::uml_x86_64_gadget_vector_move_64_mmx_rm));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry_address(
+				native::uml_x86_64_gadget_vector_move_64_mmx_rm),
+				*encoded, gadget);
 			return true;
 		}
 		const auto source = vector_state_offset(instruction.source);
@@ -1701,10 +1673,7 @@ struct EncodedMemory final {
 				native::uml_x86_64_gadget_vector_move_128_rm);
 		if (entry == 0)
 			return false;
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		return true;
 	}
 	if (instruction.destination.kind == OperandKind::memory &&
@@ -1731,10 +1700,7 @@ struct EncodedMemory final {
 			break;
 		default: return false;
 		}
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		return true;
 	}
 	return false;
@@ -1758,10 +1724,8 @@ struct EncodedMemory final {
 			entry = native::uml_x86_64_gadget_vector_move_64_mr;
 		else
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget);
 		return true;
 	}
 	if (instruction.destination.kind != OperandKind::vector_reg)
@@ -1784,10 +1748,8 @@ struct EncodedMemory final {
 			(instruction.vex ?
 				native::uml_x86_64_gadget_vector_scalar_move_64_rm_vex :
 				native::uml_x86_64_gadget_vector_scalar_move_64_rm);
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget);
 		return true;
 	}
 	const auto source = vector_offset(instruction.source);
@@ -1900,10 +1862,8 @@ struct EncodedMemory final {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(memory_entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(memory_entry), *encoded,
+		gadget);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -1961,10 +1921,7 @@ struct EncodedMemory final {
 		gadget, instruction.auxiliary, *left);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -2002,10 +1959,7 @@ struct EncodedMemory final {
 		gadget, instruction.auxiliary, *left);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -2023,12 +1977,11 @@ struct EncodedMemory final {
 				gadget, instruction.source, *destination);
 			if (!encoded)
 				return false;
-			stream.push_back(entry_address(instruction.vex ?
+			append_memory_words(stream, entry_address(
+				instruction.vex ?
 				native::uml_x86_64_gadget_vector_move_64_128_rm_vex :
-				native::uml_x86_64_gadget_vector_move_64_128_rm));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+				native::uml_x86_64_gadget_vector_move_64_128_rm),
+				*encoded, gadget);
 			return true;
 		}
 		const auto source = vector_offset(instruction.source);
@@ -2065,10 +2018,8 @@ struct EncodedMemory final {
 				entry = instruction.vex ?
 					native::uml_x86_64_gadget_vector_scalar_move_64_rm_vex :
 					native::uml_x86_64_gadget_vector_scalar_move_64_rm;
-			stream.push_back(entry_address(entry));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry_address(entry),
+				*encoded, gadget);
 			return true;
 		}
 		const auto source = register_offset(instruction.source);
@@ -2102,12 +2053,10 @@ struct EncodedMemory final {
 			gadget, instruction.destination, *source);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(dword ?
+		append_memory_words(stream, entry_address(dword ?
 			native::uml_x86_64_gadget_vector_move_32_mr :
-			native::uml_x86_64_gadget_vector_move_64_mr));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+			native::uml_x86_64_gadget_vector_move_64_mr),
+			*encoded, gadget);
 		return true;
 	}
 	const auto destination = register_offset(instruction.destination);
@@ -2163,10 +2112,7 @@ struct EncodedMemory final {
 		gadget, instruction.destination, *source);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*mask);
 	return true;
 }
@@ -2217,11 +2163,9 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 			gadget, instruction.destination, value_offset) : std::nullopt;
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(
-			native::uml_x86_64_gadget_vector_move_64_mr));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(
+			native::uml_x86_64_gadget_vector_move_64_mr),
+			*encoded, gadget);
 		return true;
 	}
 
@@ -2255,10 +2199,8 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 			gadget, instruction.auxiliary, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor | vex_tag(instruction));
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget, DescriptorTag::vex);
 		return true;
 	}
 
@@ -2287,11 +2229,9 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(
-		native::uml_x86_64_gadget_vector_lane_merge_rm));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(
+		native::uml_x86_64_gadget_vector_lane_merge_rm),
+		*encoded, gadget);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
 		(static_cast<std::uintptr_t>(destination_high) << 16U) |
 		(static_cast<std::uintptr_t>(instruction.vex) << 17U));
@@ -2356,10 +2296,7 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 			instruction.destination.width, instruction.vex, true);
 		if (!encoded || entry == 0)
 			return false;
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		stream.push_back(*left);
 		return true;
 	}
@@ -2444,10 +2381,8 @@ enum class VectorShuffleKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(static_cast<std::uintptr_t>(*left) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -2602,10 +2537,8 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	return true;
 }
@@ -2696,10 +2629,8 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(pack_offsets(*merge) | vex_tag(instruction));
 	return true;
 }
@@ -2818,10 +2749,8 @@ enum class VectorFloatKind {
 			gadget, instruction.auxiliary, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor | vex_tag(instruction));
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget, DescriptorTag::vex);
 		stream.push_back(pack_offsets(*merge) | vex_tag(instruction));
 		return true;
 	}
@@ -2845,10 +2774,8 @@ enum class VectorFloatKind {
 			gadget, instruction.auxiliary, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget);
 		return true;
 	}
 
@@ -2869,10 +2796,7 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -2939,10 +2863,7 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*left);
 	return true;
 }
@@ -3035,10 +2956,7 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*vvvv);
 	return true;
 }
@@ -3096,10 +3014,8 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(pack_offsets(*state) | vex_tag(instruction));
 	return true;
 }
@@ -3146,10 +3062,7 @@ enum class VectorFloatKind {
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*state);
 	return true;
 }
@@ -3378,10 +3291,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	if (instruction.vector_opcode == 0x70)
 		stream.push_back(shuffle);
@@ -3483,10 +3394,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	return true;
 }
@@ -3548,10 +3457,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*left);
 	return true;
 }
@@ -3610,10 +3516,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*left);
 	return true;
 }
@@ -3681,10 +3584,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -3718,10 +3618,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -3765,10 +3662,8 @@ inline void note_vector_result(const Instruction &instruction,
 			gadget, instruction.auxiliary, *destination) : std::nullopt;
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget);
 		stream.push_back(*mask);
 		return true;
 	}
@@ -3777,10 +3672,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.destination, *data) : std::nullopt;
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(*mask);
 	return true;
 }
@@ -3832,11 +3724,8 @@ inline void note_vector_result(const Instruction &instruction,
 	const auto index = static_cast<std::uint16_t>(
 		offsetof(CpuState, vectors) + addressing.memory.index *
 		sizeof(CpuState::vectors[0]));
-	stream.push_back(entry_address(vector_gather_entry(
-		instruction.vector_group)));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(vector_gather_entry(
+		instruction.vector_group)), *encoded, gadget);
 	stream.push_back(pack_offsets(*mask, index));
 	return true;
 }
@@ -3887,10 +3776,7 @@ inline void note_vector_result(const Instruction &instruction,
 	const auto encoded = encode_memory(gadget, instruction.destination, 0);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(static_cast<std::uintptr_t>(*source) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -3920,11 +3806,9 @@ inline void note_vector_result(const Instruction &instruction,
 	const auto encoded = encode_memory(gadget, instruction.destination, 0);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(
-		native::uml_x86_64_gadget_vector_map3_extract_128_m));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(
+		native::uml_x86_64_gadget_vector_map3_extract_128_m),
+		*encoded, gadget);
 	stream.push_back(static_cast<std::uintptr_t>(*source) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -3975,10 +3859,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -4010,11 +3892,9 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(
-		native::uml_x86_64_gadget_vector_map3_insertps_rm));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(
+		native::uml_x86_64_gadget_vector_map3_insertps_rm),
+		*encoded, gadget, DescriptorTag::vex);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
 		(static_cast<std::uintptr_t>(instruction.vector_control) << 16U));
 	return true;
@@ -4090,10 +3970,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(*left);
 	stream.push_back(instruction.vector_control);
 	return true;
@@ -4161,10 +4039,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(*left);
 	stream.push_back(instruction.vector_control);
 	return true;
@@ -4201,10 +4077,7 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.destination, *source);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	stream.push_back(instruction.vector_control);
 	return true;
 }
@@ -4261,10 +4134,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(*left);
 	stream.push_back(instruction.vector_control);
 	return true;
@@ -4299,10 +4170,8 @@ inline void note_vector_result(const Instruction &instruction,
 			gadget, instruction.auxiliary, *destination);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor | vex_tag(instruction));
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget, DescriptorTag::vex);
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4337,10 +4206,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *destination);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(*left);
 	stream.push_back(instruction.vector_control);
 	return true;
@@ -4387,10 +4254,8 @@ inline void note_vector_result(const Instruction &instruction,
 		gadget, instruction.auxiliary, *left);
 	if (!encoded)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor | vex_tag(instruction));
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget,
+		DescriptorTag::vex);
 	stream.push_back(control);
 	return true;
 }
@@ -4489,10 +4354,7 @@ inline void note_vector_result(const Instruction &instruction,
 		instruction.source.width, instruction.destination.width);
 	if (!encoded || entry == 0)
 		return false;
-	stream.push_back(entry);
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry, *encoded, gadget);
 	return true;
 }
 
@@ -4896,11 +4758,9 @@ struct FlagState final {
 				gadget, instruction.source, *selector);
 			if (!encoded)
 				return false;
-			stream.push_back(entry_address(
-				native::uml_x86_64_gadget_move_16_rm));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry_address(
+				native::uml_x86_64_gadget_move_16_rm),
+				*encoded, gadget);
 			return true;
 		}
 		const auto source = register_offset(instruction.source);
@@ -4915,10 +4775,9 @@ struct FlagState final {
 			gadget, instruction.destination, *selector);
 		if (!encoded || instruction.destination.width != OperandWidth::word)
 			return false;
-		stream.push_back(entry_address(native::uml_x86_64_gadget_move_16_mr));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream,
+			entry_address(native::uml_x86_64_gadget_move_16_mr),
+			*encoded, gadget);
 		return true;
 	}
 	const auto destination = register_offset(instruction.destination);
@@ -5024,10 +4883,7 @@ struct FlagState final {
 		gadget.instruction.source.width);
 	if (!encoded || entry == nullptr)
 		return false;
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -5146,10 +5002,7 @@ struct FlagState final {
 	case 5: entry = native::uml_x86_64_gadget_extended_state_xrstor; break;
 	default: return false;
 	}
-	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor);
-	stream.push_back(encoded->displacement);
-	stream.push_back(gadget.address);
+	append_memory_words(stream, entry_address(entry), *encoded, gadget);
 	return true;
 }
 
@@ -5274,10 +5127,8 @@ struct FlagState final {
 				entry = UML_X86_SELECT_X87_MEMORY(i16);
 #undef UML_X86_SELECT_X87_MEMORY
 		}
-		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(entry), *encoded,
+			gadget);
 		return true;
 	} else if (opcode == 0xd8 || opcode == 0xdc || opcode == 0xde) {
 		if ((opcode == 0xd8 || opcode == 0xdc) &&
@@ -6121,11 +5972,9 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				gadget, instruction.destination, *source) : std::nullopt;
 			if (!encoded)
 				return false;
-			stream.push_back(entry_address(
-				native::uml_x86_64_gadget_arpl_16_mr));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry_address(
+				native::uml_x86_64_gadget_arpl_16_mr),
+				*encoded, gadget);
 			return true;
 		}
 		return append_register_pair(stream,
@@ -6150,10 +5999,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			break;
 		default: return false;
 		}
-		stream.push_back(entry);
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry, *encoded, gadget);
 		return true;
 	}
 	case Operation::exchange: {
@@ -6179,10 +6025,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			}
 			if (!encoded)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		return append_register_pair(stream,
@@ -6248,10 +6091,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			}
 			if (!encoded || entry == 0)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		const auto destination = register_offset(instruction.destination);
@@ -6393,10 +6233,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			const auto entry = set_condition_memory_entry(instruction.condition);
 			if (!encoded || entry == 0)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		const auto destination = register_offset(instruction.destination);
@@ -6419,10 +6256,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				instruction.condition, instruction.destination.width);
 			if (!encoded || entry == 0)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		return append_register_pair(stream,
@@ -6516,15 +6350,13 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			const auto encoded = encode_memory(gadget, instruction.source, 0);
 			if (!encoded)
 				return false;
-			stream.push_back(entry_address(
+			append_memory_words(stream, entry_address(
 				mode == ExecutionMode::compat32 ?
 					(site ? native::uml_x86_64_gadget_jump_indirect_32_m_cached :
 						native::uml_x86_64_gadget_jump_indirect_32_m) :
 					(site ? native::uml_x86_64_gadget_jump_indirect_m_cached :
-						native::uml_x86_64_gadget_jump_indirect_m)));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+						native::uml_x86_64_gadget_jump_indirect_m)),
+						*encoded, gadget);
 			if (site)
 				stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 			return true;
@@ -6556,10 +6388,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				entry_address(native::uml_x86_64_gadget_push_64_m) : 0;
 			if (!encoded || entry == 0)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		const auto source = immediate ? std::optional<std::uint16_t>{0} :
@@ -6602,10 +6431,7 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				entry_address(native::uml_x86_64_gadget_pop_64_m) : 0;
 			if (!encoded || entry == 0)
 				return false;
-			stream.push_back(entry);
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+			append_memory_words(stream, entry, *encoded, gadget);
 			return true;
 		}
 		const auto destination = register_offset(instruction.destination);
@@ -6725,15 +6551,13 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			if (!encoded)
 				return false;
 			const auto next = next_instruction_pointer(gadget, mode);
-			stream.push_back(entry_address(
+			append_memory_words(stream, entry_address(
 				mode == ExecutionMode::compat32 ?
 					(site ? native::uml_x86_64_gadget_call_indirect_32_m_cached :
 						native::uml_x86_64_gadget_call_indirect_32_m) :
 					(site ? native::uml_x86_64_gadget_call_indirect_m_cached :
-						native::uml_x86_64_gadget_call_indirect_m)));
-			stream.push_back(encoded->descriptor);
-			stream.push_back(encoded->displacement);
-			stream.push_back(gadget.address);
+						native::uml_x86_64_gadget_call_indirect_m)),
+						*encoded, gadget);
 			stream.push_back(next);
 			if (site)
 				stream.push_back(reinterpret_cast<std::uintptr_t>(site));
@@ -6944,33 +6768,29 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		const auto encoded = encode_memory(gadget, instruction.destination, 0);
 		if (!encoded || instruction.destination.width != OperandWidth::word)
 			return false;
-		stream.push_back(entry_address(
-			native::uml_x86_64_gadget_store_machine_status_16_m));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream, entry_address(
+			native::uml_x86_64_gadget_store_machine_status_16_m),
+			*encoded, gadget);
 		return true;
 	}
 	case Operation::store_gdtr: {
 		const auto encoded = encode_memory(gadget, instruction.destination, 0);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(native::uml_x86_64_gadget_store_gdtr));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+		append_memory_words(stream,
+			entry_address(native::uml_x86_64_gadget_store_gdtr),
+			*encoded, gadget);
 		return true;
 	}
 	case Operation::mxcsr: {
 		const auto encoded = encode_memory(gadget, instruction.destination, 0);
 		if (!encoded)
 			return false;
-		stream.push_back(entry_address(instruction.vector_group == 2 ?
+		append_memory_words(stream, entry_address(
+			instruction.vector_group == 2 ?
 			native::uml_x86_64_gadget_mxcsr_load :
-			native::uml_x86_64_gadget_mxcsr_store));
-		stream.push_back(encoded->descriptor);
-		stream.push_back(encoded->displacement);
-		stream.push_back(gadget.address);
+			native::uml_x86_64_gadget_mxcsr_store),
+			*encoded, gadget);
 		return true;
 	}
 	case Operation::extended_state:
