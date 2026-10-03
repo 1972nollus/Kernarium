@@ -95,6 +95,7 @@ uml_add_arm64_unit_test(simd_ordinary_memory_gadget)
 uml_add_arm64_unit_test(simd_structure_gadget)
 uml_add_arm64_unit_test(simd_baseline_inventory WITHOUT_HARNESS
     SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/arm64-neon-inventory.s)
+uml_add_arm64_unit_test(sme_encoding_table WITHOUT_HARNESS NO_OBJECTS)
 uml_add_arm64_unit_test(gadget_simd_destination_residency)
 uml_add_arm64_unit_test(simd_widening_gadget)
 uml_add_arm64_unit_test(simd_high_narrow_gadget)
