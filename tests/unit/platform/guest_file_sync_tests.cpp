@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "guest_files.hpp"
+#include "require.hpp"
 #include "scratch_directory.hpp"
 
 #include <cerrno>
@@ -15,11 +16,7 @@
 
 namespace {
 
-void require(bool condition)
-{
-	if (!condition)
-		std::abort();
-}
+using uml::testing::require;
 
 std::filesystem::path scratchDirectory()
 {

@@ -4,6 +4,7 @@
 #include "mach_vm_region_test_support.hpp"
 #include "allocation_fault.hpp"
 #include "native_window_test_support.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "memory/shared_backing.hpp"
 #include "uml_darwin_memory.h"
@@ -36,11 +37,7 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-native-mmu.XXXXXX";
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 class ReservedSlot final {
 public:
@@ -672,7 +669,7 @@ void test_direct_retry_validates_ownership_mapping_and_permissions()
 	uml::testing::exercise_native_retry_direct(arena.address(),
 		arena.address() + host_page_size,
 		arena.address() + 2 * host_page_size, host_page_size,
-		backing.descriptor(), require);
+		backing.descriptor());
 }
 
 void test_direct_mapping_transitions_to_isolated_quarters()

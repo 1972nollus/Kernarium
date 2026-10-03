@@ -4,6 +4,7 @@
 #include "device/network/device.hpp"
 #include "native_window_test_support.hpp"
 #include "platform/run_routing.hpp"
+#include "require.hpp"
 #include "runtime/context.hpp"
 #include "runtime/native_kernel_layout.hpp"
 #include "scratch_backing.hpp"
@@ -73,11 +74,7 @@ NativeShadowKernelState native_shadow_a;
 NativeShadowKernelState native_shadow_b;
 #endif
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 void test_c_api_rejects_inconsistent_creation_inputs()
 {

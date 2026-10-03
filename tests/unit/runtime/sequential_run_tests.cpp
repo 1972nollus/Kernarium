@@ -10,6 +10,7 @@
  * Each mode runs in its own process because the claim outlives every handle.
  */
 #include "uml/emulator.h"
+#include "require.hpp"
 #include "testing.hpp"
 #include "uml_darwin_host.h"
 
@@ -31,11 +32,7 @@ constexpr int kernel_left_memory = 43;
 int kernel_entries;
 bool claim_guest_ram = true;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 /* Stands in for the start of a UML boot: setup_physmem() opens guest RAM. */
 int kernel(int, char *const[], char *const[])

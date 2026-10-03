@@ -4,6 +4,7 @@
 #include "connected_socket_channel.hpp"
 #include "in_process_service.hpp"
 #include "protocol.hpp"
+#include "require.hpp"
 #include "scratch_directory.hpp"
 #include "unique_descriptor.hpp"
 #include "unix_socket_channel.hpp"
@@ -35,22 +36,8 @@ namespace {
 
 namespace protocol = uml::console::protocol;
 
-void require(bool condition)
-{
-    if (!condition)
-        std::abort();
-}
-
-template<typename Operation>
-void requireThrows(Operation&& operation)
-{
-    try {
-        operation();
-    } catch (const std::exception&) {
-        return;
-    }
-    std::abort();
-}
+using uml::testing::require;
+using uml::testing::requireThrows;
 
 class TestChannel final : public uml::console::ConsoleChannel {
 public:

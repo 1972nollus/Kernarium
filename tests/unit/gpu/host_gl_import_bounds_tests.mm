@@ -14,6 +14,7 @@
 // buffer and sent it to the guest. The accepted cases keep the legitimate
 // imports and transfers working.
 
+#include "scratch_backing.hpp"
 #include "virgl_renderer.hpp"
 
 #import <Metal/Metal.h>
@@ -48,9 +49,12 @@ void virgl_resource_native_release(std::uint64_t id);
 #include <source_location>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
+
+using uml::testing::ScratchBacking;
 
 // Stable Virtio-GPU ABI identifier for the virgl2 capability set.
 constexpr std::uint32_t virgl2CapsetId = 2;
@@ -69,6 +73,9 @@ constexpr std::uint32_t bytesPerPixel = 4;
 constexpr std::uint32_t importWidth = 64;
 constexpr std::uint32_t importStride = importWidth * bytesPerPixel;
 constexpr std::uint64_t segmentSize = 64 * 1024;
+// An unlinked scratch file stands in for the exporter's segment: its vnode is
+// what the native registry keys on, and its pages are what a plain import maps.
+constexpr std::string_view segmentName = "uml-import-bounds.XXXXXX";
 
 void require(
     bool condition,
@@ -83,39 +90,6 @@ void require(
         description,
         location.line());
     std::exit(1);
-}
-
-class Descriptor final {
-public:
-    explicit Descriptor(int descriptor) noexcept : descriptor_ {descriptor} {}
-    ~Descriptor()
-    {
-        if (descriptor_ >= 0)
-            ::close(descriptor_);
-    }
-    Descriptor(const Descriptor&) = delete;
-    Descriptor& operator=(const Descriptor&) = delete;
-
-    [[nodiscard]] int get() const noexcept { return descriptor_; }
-
-private:
-    int descriptor_;
-};
-
-// An anonymous file stands in for the exporter's segment: its vnode is what
-// the native registry keys on, and its pages are what a plain import maps.
-[[nodiscard]] Descriptor createSegment(std::uint64_t size)
-{
-    const char* directory = std::getenv("TMPDIR");
-    std::string path =
-        std::string(directory != nullptr ? directory : "/tmp") +
-        "/uml-import-bounds.XXXXXX";
-    const int descriptor = ::mkstemp(path.data());
-    require(descriptor >= 0, "the segment file could not be created");
-    ::unlink(path.c_str());
-    require(::ftruncate(descriptor, static_cast<off_t>(size)) == 0,
-        "the segment file could not be sized");
-    return Descriptor {descriptor};
 }
 
 [[nodiscard]] std::uint8_t patternByte(
@@ -286,7 +260,7 @@ void sharedMemoryImportsFitTheirSegment(
     uml::gpu::VirglRenderer& renderer,
     Importer& importer)
 {
-    const auto segment = createSegment(segmentSize);
+    const ScratchBacking segment {segmentName, segmentSize};
     std::vector<std::uint8_t> contents(segmentSize);
     const std::uint32_t rows =
         static_cast<std::uint32_t>(segmentSize / importStride);
@@ -295,39 +269,39 @@ void sharedMemoryImportsFitTheirSegment(
             for (std::uint32_t channel = 0; channel < bytesPerPixel; ++channel)
                 contents[static_cast<std::size_t>(y) * importStride +
                     x * bytesPerPixel + channel] = patternByte(x, y, channel);
-    require(::pwrite(segment.get(), contents.data(), contents.size(), 0) ==
+    require(::pwrite(segment.descriptor(), contents.data(), contents.size(), 0) ==
             static_cast<ssize_t>(contents.size()),
         "the segment could not be filled");
 
-    require(importer.import(segment.get(), segmentSize, importWidth, rows,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth, rows,
                 importStride, 0) == 0,
         "an image filling its segment exactly was refused");
     requireReadBackPattern(renderer, importer.resourceId(), rows,
         "an image filling its segment did not show the segment's pixels");
     importer.release();
 
-    require(importer.import(segment.get(), segmentSize, importWidth,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth,
                 rows / 2, importStride, segmentSize / 2) == 0,
         "an image in the second half of its segment was refused");
     importer.release();
 
-    require(importer.import(segment.get(), segmentSize, importWidth,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth,
                 rows * 8, importStride, 0) != 0,
         "an image eight times its segment was imported");
     importer.release();
-    require(importer.import(segment.get(), segmentSize, importWidth,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth,
                 rows / 2 + 1, importStride, segmentSize / 2) != 0,
         "an image running one row past its segment's end was imported");
     importer.release();
-    require(importer.import(segment.get(), segmentSize, importWidth, 1,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth, 1,
                 importStride, segmentSize * 2) != 0,
         "an image starting past its segment's end was imported");
     importer.release();
-    require(importer.import(segment.get(), segmentSize, importWidth, 16,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth, 16,
                 importStride / 2, 0) != 0,
         "a stride shorter than a row was accepted");
     importer.release();
-    require(importer.import(segment.get(), segmentSize, importWidth, 16,
+    require(importer.import(segment.descriptor(), segmentSize, importWidth, 16,
                 importStride + 2, 0) != 0,
         "a stride that is not a whole number of texels was accepted");
     importer.release();
@@ -349,20 +323,20 @@ void heapImportsFitTheirHeap(
     const std::uint32_t rows =
         static_cast<std::uint32_t>(heapSize / importStride);
 
-    const auto segment = createSegment(heapSize);
+    const ScratchBacking segment {segmentName, heapSize};
     const std::uint64_t native = virgl_resource_native_publish(
-        segment.get(), nativeHandleMetalHeap, (__bridge void*)heap);
+        segment.descriptor(), nativeHandleMetalHeap, (__bridge void*)heap);
     require(native != 0, "the Metal heap could not be published");
 
-    require(importer.import(segment.get(), heapSize, importWidth, rows,
+    require(importer.import(segment.descriptor(), heapSize, importWidth, rows,
                 importStride, 0) == 0,
         "an image filling its Metal heap exactly was refused");
     importer.release();
-    require(importer.import(segment.get(), heapSize, importWidth, rows * 8,
+    require(importer.import(segment.descriptor(), heapSize, importWidth, rows * 8,
                 importStride, 0) != 0,
         "an image eight times its Metal heap was imported");
     importer.release();
-    require(importer.import(segment.get(), heapSize, importWidth, rows,
+    require(importer.import(segment.descriptor(), heapSize, importWidth, rows,
                 importStride, importStride) != 0,
         "an image running one row past its Metal heap was imported");
     importer.release();
@@ -421,16 +395,16 @@ void textureImportsMatchTheTexturesTexelSize(
                        bytesPerRow:importStride];
         }
 
-        const auto segment = createSegment(heap.size);
+        const ScratchBacking segment {segmentName, heap.size};
         const std::uint64_t native = virgl_resource_native_publish(
-            segment.get(), nativeHandleMetalHeap, (__bridge void*)heap);
+            segment.descriptor(), nativeHandleMetalHeap, (__bridge void*)heap);
         require(native != 0, "the texture's Metal heap could not be published");
         require(virgl_resource_native_set_metal_texture(
                     native, (__bridge void*)texture, 0, side, side),
             "the heap texture could not be published");
 
         const int result = importer.import(
-            segment.get(), heap.size, side, side, importStride, 0);
+            segment.descriptor(), heap.size, side, side, importStride, 0);
         if (matches) {
             require(result == 0,
                 "a texture of the guest's own texel size was refused");

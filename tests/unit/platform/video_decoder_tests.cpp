@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_decoder.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <utility>
@@ -16,10 +17,7 @@ std::vector<std::uint8_t> read(const std::string& name)
     if (!file) throw std::runtime_error("missing video fixture: " + name);
     return {std::istreambuf_iterator<char>(file), {}};
 }
-void require(bool condition, const char* message)
-{
-    if (!condition) throw std::runtime_error(message);
-}
+using uml::testing::require;
 }
 
 int main()
