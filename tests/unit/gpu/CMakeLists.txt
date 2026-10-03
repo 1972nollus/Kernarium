@@ -196,10 +196,22 @@ if(TARGET uml_gpu_service)
     # GL_VERTICES_SUBMITTED_ARB counts submitted vertices, not assembled ones.
     # Zink does not advertise LINE_LOOP, so Mesa decomposes every line loop
     # into independent lines before the driver sees it, doubling the count
-    # unless the driver subtracts the conversion back out.
+    # unless the driver subtracts the conversion back out. A clipping query
+    # active beside it, which Zink begins as a second Vulkan statistics query,
+    # must still count the loop's clipping input primitives.
     uml_add_gpu_unit_test(gpu-line-loop-statistics
         uml_gpu_line_loop_statistics_tests
         host_gl_line_loop_statistics_tests.cpp
+        LIBRARIES ${_uml_host_gl_libraries}
+        INCLUDES ${_uml_gpu_device_directory}
+        UNIT_DIRECTORY)
+
+    # Zink keeps the first result it reads when a poll finds a statistics
+    # query available, so the host driver must not publish availability
+    # before the counts.
+    uml_add_gpu_unit_test(gpu-statistics-availability
+        uml_gpu_statistics_availability_tests
+        host_gl_statistics_availability_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
         UNIT_DIRECTORY)

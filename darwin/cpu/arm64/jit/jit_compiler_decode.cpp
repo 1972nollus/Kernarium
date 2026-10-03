@@ -1109,7 +1109,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           (!scalar || size == 3U) && (scalar || q || size != 3U);
       if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd)
         return reject();
-      emit_simd_unary_native(instruction);
+      emit_native_vector_unary(instruction, false);
       return Action::keep_going;
     }
     const auto simd_general_opcode = instruction & 0xffff'fc00U;

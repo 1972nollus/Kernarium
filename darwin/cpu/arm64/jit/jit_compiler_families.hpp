@@ -100,6 +100,29 @@ protected:
                                                  bool reads_old,
                                                  unsigned fallback);
   void commit_native_vector(NativeVector value, unsigned guest);
+  /*
+   * These emit instruction with its Rn (bits 5-9), Rm and Rd (bits 0-4)
+   * fields naming native vector bindings. Operands bind in the order
+   * listed, each from the fallback host register given when the cache is
+   * full, and an operand naming an earlier operand's register shares its
+   * binding.
+   *
+   * Unary: Rn (v1), then Rd (v0), whose old value is loaded when
+   * reads_destination is set.
+   */
+  void emit_native_vector_unary(std::uint32_t instruction,
+                                bool reads_destination);
+  /* Binary: Rn (v0), Rm in bits 16-20 (v1), then Rd (v2), whose old value
+   * is loaded when reads_destination is set. */
+  void emit_native_vector_binary(std::uint32_t instruction,
+                                 bool reads_destination);
+  /* By element, with Rm in bits 16-19: Rm from the constrained v0-v15
+   * bindings (v2), Rn (v1), then Rd, which is read (v0). */
+  void emit_native_vector_by_element(std::uint32_t instruction);
+  /* Accumulating: Rd, which is read (v0), Rn (v1), then, with has_second,
+   * Rm in bits 16-20 (v2). */
+  void emit_native_vector_accumulate(std::uint32_t instruction,
+                                     bool has_second);
 
   [[nodiscard]] std::uint16_t dirty_gpr_mask() const noexcept;
   [[nodiscard]] std::uint32_t dirty_vector_mask() const noexcept;

@@ -7,26 +7,27 @@ Subject: [PATCH] kosmickrisp: implement pipeline statistics queries
  src/kosmickrisp/compiler/msl_iomap.c          |  24 +
  src/kosmickrisp/compiler/nir_to_msl.h         |   9 +
  src/kosmickrisp/libkk/kk_geometry.cl          | 113 ++-
- src/kosmickrisp/libkk/kk_query.cl             |  30 +-
+ src/kosmickrisp/libkk/kk_query.cl             |  43 +-
  src/kosmickrisp/libkk/kk_tessellation.cl      |   3 +-
- src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  20 +-
- src/kosmickrisp/vulkan/kk_cmd_dispatch.c      |  33 +-
- src/kosmickrisp/vulkan/kk_cmd_draw.c          | 176 ++++-
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        |   6 +
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  35 +-
+ src/kosmickrisp/vulkan/kk_cmd_dispatch.c      |  37 +-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          | 183 +++-
  src/kosmickrisp/vulkan/kk_cmd_meta.c          |   9 +
- .../vulkan/kk_nir_lower_descriptors.c         | 113 ++-
+ .../vulkan/kk_nir_lower_descriptors.c         | 105 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   1 +
- .../vulkan/kk_pipeline_statistics.h           |  25 +
- src/kosmickrisp/vulkan/kk_query_pool.c        |  45 +-
- src/kosmickrisp/vulkan/kk_shader.c            | 153 +++-
+ .../vulkan/kk_pipeline_statistics.h           |  38 +
+ src/kosmickrisp/vulkan/kk_query_pool.c        | 167 +++-
+ src/kosmickrisp/vulkan/kk_shader.c            | 153 ++-
  src/kosmickrisp/vulkan/kk_shader.h            |   2 +-
  src/kosmickrisp/vulkan/meson.build            |  61 ++
  .../tests/max_varyings_shaders/generate.sh    |   8 +
  .../max_varyings_shaders/max_varyings.frag    |  17 +
- .../max_varyings_shaders/max_varyings.frag.h  |  88 +++
+ .../max_varyings_shaders/max_varyings.frag.h  |  88 ++
  .../max_varyings_shaders/max_varyings.geom    |  20 +
  .../max_varyings_shaders/max_varyings.geom.h  | 112 +++
  .../max_varyings_shaders/max_varyings.tesc    |  21 +
- .../max_varyings_shaders/max_varyings.tesc.h  |  95 +++
+ .../max_varyings_shaders/max_varyings.tesc.h  |  95 ++
  .../max_varyings_shaders/max_varyings.tese    |  19 +
  .../max_varyings_shaders/max_varyings.tese.h  | 111 +++
  .../max_varyings_shaders/max_varyings.vert    |  14 +
@@ -35,27 +36,27 @@ Subject: [PATCH] kosmickrisp: implement pipeline statistics queries
  .../max_varyings_passthrough.vert.h           |  36 +
  .../post_depth_coverage_shaders/generate.sh   |   7 +
  .../post_depth_coverage_shaders/pdc.frag      |  12 +
- .../post_depth_coverage_shaders/pdc.frag.h    |  49 ++
+ .../post_depth_coverage_shaders/pdc.frag.h    |  49 +
  .../post_depth_coverage_shaders/pdc.vert      |  20 +
- .../post_depth_coverage_shaders/pdc.vert.h    |  90 +++
+ .../post_depth_coverage_shaders/pdc.vert.h    |  90 ++
  .../post_depth_coverage_shaders/pdc_read.comp |  10 +
  .../pdc_read.comp.h                           |  57 ++
  .../tests/statistics_shaders/count.frag       |   9 +
- .../tests/statistics_shaders/count.frag.h     |  46 ++
+ .../tests/statistics_shaders/count.frag.h     |  46 +
  .../tests/statistics_shaders/fullscreen.vert  |   8 +
- .../statistics_shaders/fullscreen.vert.h      |  49 ++
+ .../statistics_shaders/fullscreen.vert.h      |  49 +
  .../tests/statistics_shaders/generate.sh      |   7 +
  .../tests/statistics_shaders/streams.geom     |  15 +
- .../tests/statistics_shaders/streams.geom.h   |  54 ++
- .../vulkan/tests/test_max_varyings.cpp        | 552 +++++++++++++++
- .../vulkan/tests/test_pipeline_statistics.c   |  45 ++
- .../tests/test_pipeline_statistics_gpu.c      | 650 +++++++++++++++++
- .../test_post_depth_coverage_sample_mask.cpp  | 651 ++++++++++++++++++
+ .../tests/statistics_shaders/streams.geom.h   |  54 +
+ .../vulkan/tests/test_max_varyings.cpp        | 552 +++++++++++
+ .../vulkan/tests/test_pipeline_statistics.c   |  49 +
+ .../tests/test_pipeline_statistics_gpu.c      | 922 ++++++++++++++++++
+ .../test_post_depth_coverage_sample_mask.cpp  | 651 +++++++++++++
  src/poly/cl/geometry.cl                       |  22 +-
  src/poly/cl/tessellator.h                     |   2 +-
  src/poly/geometry.h                           |  29 +-
  src/poly/nir/poly_nir_lower_gs.c              |   3 +-
- 51 files changed, 3728 insertions(+), 96 deletions(-)
+ 52 files changed, 4174 insertions(+), 98 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_pipeline_statistics.h
  create mode 100755 src/kosmickrisp/vulkan/tests/max_varyings_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/max_varyings_shaders/max_varyings.frag
@@ -290,7 +291,7 @@ index e776500cea8891d698f5505607d2e63c6fa4fb18..c826b4d605aa995a863119add325fc3c
 +   }
  }
 diff --git a/src/kosmickrisp/libkk/kk_query.cl b/src/kosmickrisp/libkk/kk_query.cl
-index 1f26513ec97cbe8b87e015a505b3cdc52235428a..defc2be6c172b5b2756606a1561c9f03947b1dfa 100644
+index 1f26513ec97cbe8b87e015a505b3cdc52235428a..12feaa992d763c6f949e226216673cfbc5bea219 100644
 --- a/src/kosmickrisp/libkk/kk_query.cl
 +++ b/src/kosmickrisp/libkk/kk_query.cl
 @@ -35,12 +35,7 @@ libkk_reset_query(global uint32_t *availability, global uint64_t *results,
@@ -322,7 +323,7 @@ index 1f26513ec97cbe8b87e015a505b3cdc52235428a..defc2be6c172b5b2756606a1561c9f03
  }
  
  KERNEL(1)
-@@ -64,6 +67,21 @@ libkk_write_u32(global uint32_t *address, uint32_t value)
+@@ -64,6 +67,34 @@ libkk_write_u32(global uint32_t *address, uint32_t value)
     *address = value;
  }
  
@@ -339,6 +340,19 @@ index 1f26513ec97cbe8b87e015a505b3cdc52235428a..defc2be6c172b5b2756606a1561c9f03
 +{
 +   poly_atomic_add_u64(statistic,
 +                        (uint64_t)local_size_threads * grid[0] * grid[1] * grid[2]);
++}
++
++/* Adds a pipeline-statistics interval, which holds each statistic at the
++ * index of its bit, into a query's report, which holds the statistics the
++ * query counts in ascending bit order. */
++KERNEL(1)
++libkk_resolve_statistics(global uint32_t *report, global uint64_t *interval,
++                         uint32_t statistics)
++{
++   for (uint32_t bits = statistics; bits != 0; bits &= bits - 1) {
++      poly_atomic_add_u64(report, interval[ctz(bits)]);
++      report += 2;
++   }
 +}
 +
  KERNEL(POLY_MAX_SO_BUFFERS)
@@ -358,8 +372,46 @@ index bb2d06e169516bd0b40e927b631a271a6994fd12..0e8c1a91ac9c44e0d171a36fc287baba
     }
  
     size_t draw_stride = 5 * sizeof(uint32_t);
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..ce93d646e781664d7c0c479bb47631b2a5afef97 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
+@@ -41,6 +41,7 @@ kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd)
+    kk_cmd_release_dynamic_ds_state(cmd);
+    kk_descriptor_state_fini(cmd, &cmd->state.gfx.descriptors);
+    kk_descriptor_state_fini(cmd, &cmd->state.cs.descriptors);
++   util_dynarray_clear(&cmd->statistics_queries);
+ 
+    kk_cmd_pool_free_bo_list(pool, &cmd->uploader.bos);
+ 
+@@ -103,6 +104,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+    kk_cmd_release_resources(dev, cmd);
++   util_dynarray_fini(&cmd->statistics_queries);
+    util_dynarray_fini(&cmd->submit_cmd_bufs);
+    util_dynarray_fini(&cmd->large_bos);
+ 
+@@ -163,6 +165,7 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+       mtl_release(desc);
+    }
+ 
++   cmd->statistics_queries = UTIL_DYNARRAY_INIT;
+    cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
+    cmd->large_bos = UTIL_DYNARRAY_INIT;
+ 
+@@ -389,6 +392,9 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
+        * must never become visible to a host WAIT before its result. */
+       unsigned fence = 0;
+       util_dynarray_foreach(&es->ts_resolves, struct kk_ts_resolve, r) {
++         /* A pipeline-statistics query only publishes its availability. */
++         if (!r->heap)
++            continue;
+          mtl_command_resolve_counter_heap(
+             es->cmd_buf, r->heap, r->index, 1u, r->dst_addr,
+             es->ts_fences[fence], es->ts_fences[fence ^ 1]);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cfb7d2e137 100644
+index 901239f351388235047704d96f169f94b823bcb4..c6b40071ac840c703110f47e5664d1fa1de6e63b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -14,6 +14,7 @@
@@ -370,13 +422,14 @@ index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cf
  #include "kk_shader.h"
  
  #include "kosmickrisp/bridge/mtl_types.h"
-@@ -32,6 +33,13 @@ struct kk_device_address;
+@@ -32,6 +33,14 @@ struct kk_device_address;
  struct kk_root_descriptor_table {
     uint64_t addr;
  
-+   /* Pipeline-statistics query state.  Results are compacted in ascending
-+    * VkQueryPipelineStatisticFlagBits order. Disabled statistics have a null
-+    * address and never issue memory operations. */
++   /* Pipeline-statistics query state: the current interval block, which
++    * holds each statistic at its fixed slot, and the union of the statistics
++    * the active queries count.  Disabled statistics have a null address and
++    * never issue memory operations. */
 +   uint64_t pipeline_stats;
 +   VkQueryPipelineStatisticFlags pipeline_stats_flags;
 +   uint32_t pipeline_stats_pad;
@@ -384,7 +437,7 @@ index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cf
     union {
        struct {
           /* Vertex input state */
-@@ -44,6 +52,8 @@ struct kk_root_descriptor_table {
+@@ -44,6 +53,8 @@ struct kk_root_descriptor_table {
           struct kk_depth_clip_transform depth_clip_transforms[KK_MAX_VIEWPORTS];
           struct kk_depth_clamp_range depth_clamp_ranges[KK_MAX_VIEWPORTS];
           uint32_t fragment_dynamic_state;
@@ -393,7 +446,7 @@ index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cf
        } draw;
        struct {
           uint32_t base_group[3];
-@@ -74,6 +84,15 @@ struct kk_descriptor_state {
+@@ -74,6 +85,15 @@ struct kk_descriptor_state {
     struct kk_push_descriptor_set *push[KK_MAX_SETS];
  };
  
@@ -409,7 +462,7 @@ index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cf
  struct kk_per_draw_data {
     uint32_t draw_id;
     uint32_t index_size;
-@@ -91,7 +110,6 @@ struct kk_per_draw_data {
+@@ -91,7 +111,6 @@ struct kk_per_draw_data {
  
     /* Transform-feedback geometry state consumed entirely on the GPU. */
     uint64_t geometry_params;
@@ -417,8 +470,38 @@ index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cf
     uint32_t provoking_last;
     uint32_t rasterization_stream;
  
+@@ -286,7 +305,10 @@ struct kk_encoder_state {
+    mtl_command_encoder *encoder;
+    mtl_command_allocator *allocator;
+    mtl_command_buffer *cmd_buf;
+-   /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
++   /* Pending timestamp resolves and the availability words they and
++    * pipeline-statistics queries publish once the encoder has ended (struct
++    * kk_ts_resolve, without a heap for a statistics query), flushed at
++    * cs_end. */
+    struct util_dynarray ts_resolves;
+    /* Lazily allocated only for timestamp producers. Alternate fences order
+     * the producer, every resolve, and the final availability publication. */
+@@ -318,8 +340,17 @@ struct kk_cmd_buffer {
+       uint64_t root_addr;
+       /* Only tracks graphics shaders since compute is always bound for now. */
+       uint32_t dirty_shaders;
++      /* The interval block the active pipeline-statistics queries count
++       * into, zero until one needs it, and whether a draw or dispatch has
++       * counted into it (see kk_query_pool.c). */
++      uint64_t statistics_interval;
++      bool statistics_interval_used;
+    } state;
+ 
++   /* The pipeline-statistics queries active in this recording, as struct
++    * kk_statistics_query. */
++   struct util_dynarray statistics_queries;
++
+    struct kk_uploader uploader;
+ 
+    struct util_dynarray submit_cmd_bufs;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_dispatch.c b/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
-index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d004d90e734 100644
+index 4bd81afa1dbcc21155097ebe66b5787bf9686087..ae89f6f34ea86eede2b7b0a81979efa93453fd61 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_dispatch.c
 @@ -64,7 +64,7 @@ kk_CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX,
@@ -441,11 +524,12 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
  
     mtl_compute_encoder *encoder = cs_get_compute(cmd, true);
     if (cmd->state.cond_render.enabled) {
-@@ -96,11 +100,23 @@ kk_CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX,
+@@ -96,11 +100,25 @@ kk_CmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX,
  
        kk_predicate_compute(cmd, patched.gpu, patched.gpu);
  
 +      if (statistic) {
++         cmd->state.statistics_interval_used = true;
 +         libkk_increment_cs_invocations(cmd, kk_grid_1d(1), true, patched.gpu,
 +                                        statistic, local_threads);
 +      }
@@ -456,6 +540,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
                                                       local_size);
     } else {
 +      if (statistic) {
++         cmd->state.statistics_interval_used = true;
 +         const uint64_t invocations =
 +            (uint64_t)groupCountX * groupCountY * groupCountZ * local_threads;
 +         libkk_increment_statistic(cmd, kk_grid_1d(1), true, statistic,
@@ -465,7 +550,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        struct mtl_size grid_size = {
           .x = groupCountX * local_size.x,
           .y = groupCountY * local_size.y,
-@@ -128,6 +144,10 @@ kk_CmdDispatchIndirect2KHR(VkCommandBuffer commandBuffer,
+@@ -128,6 +146,10 @@ kk_CmdDispatchIndirect2KHR(VkCommandBuffer commandBuffer,
  
     struct kk_shader *cs = cmd->state.shaders[MESA_SHADER_COMPUTE];
     struct mtl_size local_size = cs->info.cs.local_size;
@@ -476,11 +561,12 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
  
     mtl_compute_encoder *encoder = cs_get_compute(cmd, true);
     if (cmd->state.cond_render.enabled) {
-@@ -139,11 +159,22 @@ kk_CmdDispatchIndirect2KHR(VkCommandBuffer commandBuffer,
+@@ -139,11 +161,24 @@ kk_CmdDispatchIndirect2KHR(VkCommandBuffer commandBuffer,
  
        kk_predicate_compute(cmd, patched.gpu, pInfo->addressRange.address);
  
 +      if (statistic) {
++         cmd->state.statistics_interval_used = true;
 +         libkk_increment_cs_invocations(cmd, kk_grid_1d(1), true, patched.gpu,
 +                                        statistic, local_threads);
 +      }
@@ -491,6 +577,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
                                                       local_size);
     } else {
 +      if (statistic) {
++         cmd->state.statistics_interval_used = true;
 +         libkk_increment_cs_invocations(
 +            cmd, kk_grid_1d(1), true, pInfo->addressRange.address, statistic,
 +            local_threads);
@@ -500,7 +587,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0ff5bfb26f 100644
+index 94b08bd91432cd8265637ee6f270832385fbf892..919b4245cb27ab6d958ef47c193fb364427c7aa5 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1232,14 +1232,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
@@ -579,7 +666,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
     if (desc->push_dirty)
        kk_cmd_buffer_flush_push_descriptors(cmd, desc);
  
-@@ -1805,6 +1827,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -1805,6 +1827,102 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     return true;
  }
  
@@ -588,6 +675,13 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
 +                        struct kk_draw_command *data)
 +{
 +   struct kk_descriptor_state *desc = &cmd->state.gfx.descriptors;
++   if (!desc->root.pipeline_stats_flags)
++      return true;
++
++   /* Whatever the draw counts, here or in its shaders, lands in the current
++    * interval, which the next query begin or end now has to resolve. */
++   cmd->state.statistics_interval_used = true;
++
 +   uint64_t ia_vertices = kk_pipeline_stat_addr(
 +      desc, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT);
 +   uint64_t ia_primitives = kk_pipeline_stat_addr(
@@ -675,7 +769,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  /* Unrolling will always be done through indirect rendering, so if this is
   * called from non-indirect calls, we will fake it. */
  static bool
-@@ -2420,6 +2531,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2420,6 +2538,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     uint32_t input_patch_size = dyn->ts.patch_control_points;
     uint64_t state = gfx->per_draw_data.tess_params;
     struct kk_tess_info info = gfx->tess.info;
@@ -695,7 +789,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  
     /* Setup grids */
     if (kk_grid_is_indirect(draw.grid)) {
-@@ -2429,7 +2553,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2429,7 +2560,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
           .indirect = draw.grid.addr,
           .vp = gfx->per_draw_data.vertex_params,
           .vertex_outputs = vs->info.vs.outputs_written,
@@ -704,7 +798,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
        };
  
        if (draw.index.el_size_B) {
-@@ -2453,6 +2577,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2453,6 +2584,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        grid_tcs.size.x = patches * tcs->info.tess.tcs_output_patch_size;
        grid_tess = kk_grid_1d(patches * draw.grid.size.y);
@@ -716,7 +810,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
     }
  
     /* First launch the VS and TCS */
-@@ -2483,7 +2612,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2483,7 +2619,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_COUNT,
                      state);
  
@@ -727,7 +821,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_WITH_COUNTS,
                      state);
-@@ -2794,6 +2925,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2794,6 +2932,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
     return lines;
  }
  
@@ -752,7 +846,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  static struct kk_draw_data
  kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
-@@ -2847,9 +2996,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2847,9 +3003,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                            vs_local_size);
     }
  
@@ -763,7 +857,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  
     if (gfx->xfb.enabled || query_active) {
        mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -2969,9 +3116,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2969,9 +3123,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
        return draw;
     }
  
@@ -774,7 +868,7 @@ index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0f
  
     /* A memory-writing GS produces both its emitted values and counts once.
      * Prefix/pre-GS helpers consume those counts before the raster/XFB stage
-@@ -3094,6 +3239,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3094,6 +3246,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     if (data->predicate_count > 0 && !kk_predicate_draws(cmd, data))
        return;
  
@@ -819,7 +913,7 @@ index e90366d9bd08f38dcca88bc6a6c49b25c2eb4634..c1c5bd4c75048ee0fc4fc698ee768f3e
  
     if (save->desc0) {
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433862a1ffc 100644
+index 0a804efc7e5888b15fba7da8e9accc709d7035d3..d1971302579e68a9bd1a44b10ee317c2ff91eb27 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -20,6 +20,7 @@
@@ -906,7 +1000,7 @@ index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433
     switch (intrin->intrinsic) {
     case nir_intrinsic_load_vs_outputs_poly:
        return lower_sysval_to_per_draw(b, intrin, vertex_outputs);
-@@ -1251,11 +1318,34 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1251,11 +1318,26 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
     case nir_intrinsic_load_index_size_poly:
        return lower_sysval_to_per_draw(b, intrin, index_size);
     case nir_intrinsic_load_stat_query_address_poly:
@@ -928,15 +1022,7 @@ index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433
 +      nir_def *base = load_root(
 +         b, 1, 64, nir_imm_int(b, kk_root_descriptor_offset(pipeline_stats)),
 +         8);
-+      nir_def *flags = load_root(
-+         b, 1, 32,
-+         nir_imm_int(b, kk_root_descriptor_offset(pipeline_stats_flags)), 4);
-+
-+      nir_def *index =
-+         nir_bit_count(b, nir_iand_imm(b, flags, bit - 1));
-+      nir_def *address = nir_iadd(
-+         b, base,
-+         nir_imul_imm(b, nir_u2u64(b, index), sizeof(uint64_t)));
++      nir_def *address = nir_iadd_imm(b, base, kk_pipeline_stat_offset(bit));
 +      nir_def *present = load_pipeline_statistic_enabled(b, query);
 +
 +      nir_def_rewrite_uses(&intrin->def,
@@ -946,7 +1032,7 @@ index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433
     case nir_intrinsic_load_provoking_last:
        return lower_sysval_to_per_draw(b, intrin, provoking_last);
     case nir_intrinsic_load_rasterization_stream:
-@@ -1270,7 +1360,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1270,7 +1352,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return true;
     case nir_intrinsic_load_first_vertex:
        /* Lower only compute shaders */
@@ -955,7 +1041,7 @@ index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433
           uint32_t root_table_offset = kk_per_draw_offset(base_vertex_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1286,7 +1376,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1286,7 +1368,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return false;
     case nir_intrinsic_load_base_instance:
        /* Lower only compute shaders */
@@ -964,7 +1050,7 @@ index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433
           uint32_t root_table_offset = kk_per_draw_offset(base_instance_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1306,9 +1396,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1306,9 +1388,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
  }
  
  bool
@@ -994,10 +1080,10 @@ index 5c2a9df8e02d05e0f6d37264589ea1b13eee9885..2691fb8aa60db4120d280846050f0aef
        .sampleRateShading = true,
 diff --git a/src/kosmickrisp/vulkan/kk_pipeline_statistics.h b/src/kosmickrisp/vulkan/kk_pipeline_statistics.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db4828d9992c7
+index 0000000000000000000000000000000000000000..315b8891d4cc2293f77f18737ea8b1be4624f0a2
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_pipeline_statistics.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,38 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -1011,6 +1097,20 @@ index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db482
 +#include <assert.h>
 +#include <stdint.h>
 +
++/* Pipeline statistics count into an interval block that holds each statistic
++ * at a fixed slot, the index of its VkQueryPipelineStatisticFlagBits bit, so
++ * one block counts for every query active through it, whatever statistics
++ * each counts. These are the statistics up to compute shader invocations. */
++#define KK_PIPELINE_STATISTICS_COUNT 11
++
++/* The offset of a statistic's slot in an interval block. */
++static inline uint32_t
++kk_pipeline_stat_offset(uint32_t stat)
++{
++   assert(util_bitcount(stat) == 1);
++   return (ffs(stat) - 1) * sizeof(uint64_t);
++}
++
 +static inline uint64_t
 +kk_pipeline_stat_addr_for_flags(uint64_t base, uint32_t flags, uint32_t stat)
 +{
@@ -1018,13 +1118,12 @@ index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db482
 +   if (!(flags & stat))
 +      return 0;
 +
-+   const uint32_t index = util_bitcount(flags & (stat - 1));
-+   return base + index * sizeof(uint64_t);
++   return base + kk_pipeline_stat_offset(stat);
 +}
 +
 +#endif /* KK_PIPELINE_STATISTICS_H */
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 9e308db4c3d1881c896f836de55593f5ac8bf298..2d6be6ae61d1c5c443d607f527385191d5ef3ba4 100644
+index 9e308db4c3d1881c896f836de55593f5ac8bf298..2320bb72690547cf5ccb617b527dd29ba5ba437e 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -39,6 +39,8 @@ kk_reports_per_query(struct kk_query_pool *pool)
@@ -1059,33 +1158,166 @@ index 9e308db4c3d1881c896f836de55593f5ac8bf298..2d6be6ae61d1c5c443d607f527385191
  }
  
  VKAPI_ATTR void VKAPI_CALL
-@@ -445,6 +448,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+@@ -421,6 +424,141 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+    }
+ }
+ 
++/* A pipeline-statistics query active in a recording: where its report is
++ * and which statistics it counts. */
++struct kk_statistics_query {
++   uint64_t report;
++   VkQueryPipelineStatisticFlags statistics;
++};
++
++/* Pipeline statistics count into an interval block: each statistic at its
++ * fixed slot, for as long as one set of queries is active.  Beginning or
++ * ending a statistics query closes an interval that anything counted into,
++ * adding it into the report of every query that was active through it, so
++ * any number of queries can overlap, two counting the same statistic
++ * included.  Vulkan forbids two active queries of one type
++ * (VUID-vkCmdBeginQuery-queryPool-01922), but Zink begins one per GL target
++ * and relies on drivers tolerating it.
++ *
++ * A resolve goes out the way an availability write does.  During a render
++ * pass that is the post-render encoder, so it follows every draw of the pass
++ * that counted into the interval and precedes anything recorded later.  A
++ * host polling availability could see a word written in the same encoder
++ * before the counts a resolve adds, so a statistics query publishes its
++ * availability once that encoder has ended, as a timestamp does; copies and
++ * resets land what is pending first. */
++static void
++kk_close_statistics_interval(struct kk_cmd_buffer *cmd)
++{
++   if (!cmd->state.statistics_interval_used)
++      return;
++
++   util_dynarray_foreach(&cmd->statistics_queries, struct kk_statistics_query,
++                         query) {
++      libkk_resolve_statistics(cmd, kk_grid_1d(1), !cmd->gfx.encoder,
++                               query->report, cmd->state.statistics_interval,
++                               query->statistics);
++   }
++   cmd->state.statistics_interval = 0;
++   cmd->state.statistics_interval_used = false;
++}
++
++/* Points every draw and dispatch at the interval block, opening a fresh one
++ * if the active queries need it, and enables what they count. */
++static void
++kk_update_statistics_root(struct kk_cmd_buffer *cmd)
++{
++   VkQueryPipelineStatisticFlags statistics = 0;
++   util_dynarray_foreach(&cmd->statistics_queries, struct kk_statistics_query,
++                         query)
++      statistics |= query->statistics;
++
++   if (statistics && !cmd->state.statistics_interval) {
++      const uint32_t size = KK_PIPELINE_STATISTICS_COUNT * sizeof(uint64_t);
++      struct kk_ptr interval = kk_pool_alloc(cmd, size, 8u);
++      if (interval.gpu) {
++         memset(interval.cpu, 0, size);
++         cmd->state.statistics_interval = interval.gpu;
++      } else {
++         /* The recording has failed. Count nothing rather than near null. */
++         statistics = 0;
++      }
++   }
++
++   struct kk_descriptor_state *states[] = {
++      &cmd->state.gfx.descriptors,
++      &cmd->state.cs.descriptors,
++   };
++   for (uint32_t i = 0; i < ARRAY_SIZE(states); ++i) {
++      struct kk_root_descriptor_table *root = &states[i]->root;
++      if (root->pipeline_stats != cmd->state.statistics_interval ||
++          root->pipeline_stats_flags != statistics) {
++         root->pipeline_stats = cmd->state.statistics_interval;
++         root->pipeline_stats_flags = statistics;
++         states[i]->root_dirty = true;
++      }
++   }
++}
++
++/* Makes an ended statistics query available once the encoder that would
++ * have resolved into it has ended. */
++static void
++kk_publish_statistics_query(struct kk_cmd_buffer *cmd,
++                            struct kk_query_pool *pool, uint32_t query)
++{
++   const bool pre_gfx = !cmd->gfx.encoder;
++   /* The recording has failed if no encoder opens. */
++   if (!cs_get_compute(cmd, pre_gfx))
++      return;
++
++   struct kk_encoder_state *es = pre_gfx ? cmd->pre_gfx : cmd->post_gfx;
++   const struct kk_ts_resolve publish = {
++      .availability = mtl_retain(pool->bo->map),
++      .availability_offset = (uint64_t)query * sizeof(uint32_t),
++      .availability_count = 1u,
++   };
++   util_dynarray_append(&es->ts_resolves, publish);
++}
++
++static void
++kk_cmd_begin_end_statistics_query(struct kk_cmd_buffer *cmd,
++                                  struct kk_query_pool *pool, uint32_t query,
++                                  bool end)
++{
++   struct kk_device *dev = kk_cmd_buffer_device(cmd);
++   const struct kk_statistics_query statistics_query = {
++      .report = kk_query_report_addr(dev, pool, query),
++      .statistics = pool->vk.pipeline_statistics,
++   };
++   assert(statistics_query.statistics <
++          BITFIELD_BIT(KK_PIPELINE_STATISTICS_COUNT));
++
++   kk_close_statistics_interval(cmd);
++
++   if (end) {
++      util_dynarray_foreach(&cmd->statistics_queries,
++                            struct kk_statistics_query, active) {
++         if (active->report == statistics_query.report) {
++            *active = util_dynarray_pop(&cmd->statistics_queries,
++                                        struct kk_statistics_query);
++            break;
++         }
++      }
++   } else {
++      struct kk_statistics_query *active = util_dynarray_grow(
++         &cmd->statistics_queries, struct kk_statistics_query, 1);
++      if (active)
++         *active = statistics_query;
++      else
++         vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++   }
++
++   kk_update_statistics_root(cmd);
++
++   if (end)
++      kk_publish_statistics_query(cmd, pool, query);
++}
++
+ static void
+ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+                        uint32_t query, uint32_t index,
+@@ -445,11 +583,15 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
        cmd->state.gfx.xfb.query[index] =
           end ? 0 : kk_query_report_addr(dev, pool, query);
        break;
-+   case VK_QUERY_TYPE_PIPELINE_STATISTICS: {
++   case VK_QUERY_TYPE_PIPELINE_STATISTICS:
 +      assert(index == 0);
-+
-+      const uint64_t address =
-+         end ? 0 : kk_query_report_addr(dev, pool, query);
-+      const VkQueryPipelineStatisticFlags statistics =
-+         end ? 0 : pool->vk.pipeline_statistics;
-+
-+      struct kk_descriptor_state *states[] = {
-+         &cmd->state.gfx.descriptors,
-+         &cmd->state.cs.descriptors,
-+      };
-+      for (uint32_t i = 0; i < ARRAY_SIZE(states); ++i) {
-+         states[i]->root.pipeline_stats = address;
-+         states[i]->root.pipeline_stats_flags = statistics;
-+         states[i]->root_dirty = true;
-+      }
++      kk_cmd_begin_end_statistics_query(cmd, pool, query, end);
 +      break;
-+   }
     default:
        UNREACHABLE("Unsupported query type");
     }
-@@ -512,24 +534,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
+ 
+-   if (end) {
++   if (end && pool->vk.query_type != VK_QUERY_TYPE_PIPELINE_STATISTICS) {
+       kk_cmd_write(cmd, (struct libkk_imm_write){
+                            kk_query_available_addr(pool, query), true});
+    }
+@@ -512,24 +654,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
     return p_atomic_read(available) != 0;
  }
  
@@ -1115,7 +1347,7 @@ index 9e308db4c3d1881c896f836de55593f5ac8bf298..2d6be6ae61d1c5c443d607f527385191
  }
  
  static void
-@@ -623,7 +643,8 @@ kk_cmd_copy_query_pool_results(
+@@ -623,7 +763,8 @@ kk_cmd_copy_query_pool_results(
     struct libkk_copy_queries_args args = {
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,
@@ -3399,10 +3631,10 @@ index 0000000000000000000000000000000000000000..e1c257b6196e45dcae4a84a517a5fabf
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_statistics.c b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..635777447439515414ebcdbba6bc107e87e098cf
+index 0000000000000000000000000000000000000000..55257b636929c5aef00d92efea0cd2755a013491
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics.c
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,49 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -3428,18 +3660,22 @@ index 0000000000000000000000000000000000000000..635777447439515414ebcdbba6bc107e
 +   VK_QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS_BIT,
 +};
 +
++static_assert(ARRAY_SIZE(statistics) == KK_PIPELINE_STATISTICS_COUNT,
++              "an interval block holds every statistic");
++
 +int
 +main(void)
 +{
++   /* Each statistic has its own slot in an interval block, the same whatever
++    * else the mask enables, so overlapping queries can share one block. */
 +   const uint64_t base = 0x100000;
 +   for (uint32_t mask = 0; mask < BITFIELD_BIT(ARRAY_SIZE(statistics));
 +        mask++) {
 +      for (uint32_t i = 0; i < ARRAY_SIZE(statistics); i++) {
 +         const VkQueryPipelineStatisticFlagBits statistic = statistics[i];
++         assert(statistic == BITFIELD_BIT(i));
 +         const uint64_t expected =
-+            (mask & statistic)
-+               ? base + util_bitcount(mask & (statistic - 1)) * sizeof(uint64_t)
-+               : 0;
++            (mask & statistic) ? base + i * sizeof(uint64_t) : 0;
 +
 +         assert(kk_pipeline_stat_addr_for_flags(base, mask, statistic) ==
 +                expected);
@@ -3450,10 +3686,10 @@ index 0000000000000000000000000000000000000000..635777447439515414ebcdbba6bc107e
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b17f6a5a546b440370a7b4e0d19b6907003a99b7
+index 0000000000000000000000000000000000000000..edb8932ef7c11470bbeb3023d2e32c5f23cd3be4
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c
-@@ -0,0 +1,650 @@
+@@ -0,0 +1,922 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -4000,6 +4236,276 @@ index 0000000000000000000000000000000000000000..b17f6a5a546b440370a7b4e0d19b6907
 +   ctx->api->FreeMemory(ctx->device, memory, NULL);
 +}
 +
++/* Pipeline-statistics queries that overlap in one command buffer.  Every case
++ * but the sequential control begins a second statistics query while one is
++ * active, which VUID-vkCmdBeginQuery-queryPool-01922 forbids.  Zink does it
++ * anyway: it gives each GL statistics target a pool of its own and begins each
++ * GL query separately, and it emulates GL_PRIMITIVES_GENERATED with a
++ * geometry-primitives plus clipping-invocations pool, so one statistic can be
++ * active in two queries at once.  Other drivers tolerate that, so KosmicKrisp
++ * counts each such query as if it ran alone.  No valid application needs it.
++ *
++ * Each case is a step string: 'a' to 'c' begin a query of the pool with that
++ * index and 'A' to 'C' end it; a digit draws that many primitives.  Every
++ * query is read back twice: by vkCmdCopyQueryPoolResults recorded after the
++ * render pass in the same command buffer, which must observe each count, and
++ * by vkGetQueryPoolResults. */
++enum { OVERLAP_POOLS = 3, OVERLAP_REPORTS = 2 };
++
++static const VkQueryPipelineStatisticFlags overlap_statistics[OVERLAP_POOLS] = {
++   VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT,
++   VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT,
++   VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT |
++      VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT,
++};
++
++struct overlap_case {
++   const char *name;
++   const char *steps;
++   bool geometry;
++};
++
++/* What one primitive of a case's draw adds to a statistic.  A triangle from
++ * the vertex-only pipeline is three vertices and one primitive at the clipper;
++ * a point through streams.geom runs two invocations that each emit one point
++ * on stream 0, which is rasterized, and two on stream 1. */
++static uint64_t
++overlap_count(bool geometry, VkQueryPipelineStatisticFlagBits statistic)
++{
++   switch (statistic) {
++   case VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT:
++      return geometry ? 1 : 3;
++   case VK_QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES_BIT:
++      return geometry ? 6 : 0;
++   case VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT:
++      return geometry ? 2 : 1;
++   default:
++      abort();
++   }
++}
++
++static void
++test_overlapping_queries(struct context *ctx)
++{
++   static const struct overlap_case cases[] = {
++      {"sequential control", "a2Ab2B", false},
++      {"A: begin clip, begin vert, draw, end vert, end clip", "ab2BA", false},
++      {"B: begin vert, begin clip, draw, end clip, end vert", "ba2AB", false},
++      {"C: begin clip, begin vert, end vert, draw, end clip", "abB2A", false},
++      {"shared clipping statistic, vertex shader", "c1a2C4A", false},
++      {"shared clipping statistic, geometry shader", "c1a2C4A", true},
++   };
++
++   VkQueryPool pools[OVERLAP_POOLS];
++   for (uint32_t p = 0; p < OVERLAP_POOLS; p++) {
++      const VkQueryPoolCreateInfo info = {
++         .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
++         .queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS,
++         .queryCount = 1,
++         .pipelineStatistics = overlap_statistics[p],
++      };
++      CHECK(ctx->api->CreateQueryPool(ctx->device, &info, NULL, &pools[p]));
++   }
++
++   const VkDeviceSize copy_stride = (OVERLAP_REPORTS + 1) * sizeof(uint64_t);
++   const VkBufferCreateInfo buffer_info = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++      .size = OVERLAP_POOLS * copy_stride,
++      .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++   };
++   VkBuffer buffer;
++   CHECK(ctx->api->CreateBuffer(ctx->device, &buffer_info, NULL, &buffer));
++   VkMemoryRequirements requirements;
++   ctx->api->GetBufferMemoryRequirements(ctx->device, buffer, &requirements);
++   uint32_t type = 0;
++   const uint32_t flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   while (type < ctx->memory.memoryTypeCount &&
++          (!(requirements.memoryTypeBits & BITFIELD_BIT(type)) ||
++           (ctx->memory.memoryTypes[type].propertyFlags & flags) != flags))
++      type++;
++   assert(type < ctx->memory.memoryTypeCount);
++   const VkMemoryAllocateInfo memory_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = requirements.size,
++      .memoryTypeIndex = type,
++   };
++   VkDeviceMemory memory;
++   CHECK(ctx->api->AllocateMemory(ctx->device, &memory_info, NULL, &memory));
++   CHECK(ctx->api->BindBufferMemory(ctx->device, buffer, memory, 0));
++   uint64_t *copied;
++   CHECK(ctx->api->MapMemory(ctx->device, memory, 0, VK_WHOLE_SIZE, 0, (void **)&copied));
++
++   static const uint32_t vertex[] =
++#include "statistics_shaders/fullscreen.vert.h"
++   ;
++   static const uint32_t geometry[] =
++#include "statistics_shaders/streams.geom.h"
++   ;
++   const uint32_t *codes[] = {vertex, geometry};
++   const size_t sizes[] = {sizeof(vertex), sizeof(geometry)};
++   VkPipelineShaderStageCreateInfo stages[2];
++   for (unsigned i = 0; i < 2; i++) {
++      const VkShaderModuleCreateInfo module_info = {
++         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
++         .codeSize = sizes[i],
++         .pCode = codes[i],
++      };
++      stages[i] = (VkPipelineShaderStageCreateInfo){
++         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++         .stage = i ? VK_SHADER_STAGE_GEOMETRY_BIT : VK_SHADER_STAGE_VERTEX_BIT,
++         .pName = "main",
++      };
++      CHECK(ctx->api->CreateShaderModule(ctx->device, &module_info, NULL, &stages[i].module));
++   }
++   const VkPipelineLayoutCreateInfo layout_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
++   };
++   VkPipelineLayout layout;
++   CHECK(ctx->api->CreatePipelineLayout(ctx->device, &layout_info, NULL, &layout));
++   const VkPipelineVertexInputStateCreateInfo vi = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
++   };
++   const VkViewport viewport = {0, 0, 32, 32, 0, 1};
++   const VkRect2D scissor = {{0, 0}, {32, 32}};
++   const VkPipelineViewportStateCreateInfo vp = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
++      .viewportCount = 1,
++      .pViewports = &viewport,
++      .scissorCount = 1,
++      .pScissors = &scissor,
++   };
++   const VkPipelineRasterizationStateCreateInfo rs = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
++      .lineWidth = 1.0f,
++   };
++   const VkPipelineMultisampleStateCreateInfo ms = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
++      .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
++   };
++   const VkPipelineColorBlendStateCreateInfo cb = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
++   };
++   const VkPipelineRenderingCreateInfo rendering = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
++   };
++   VkPipeline pipelines[2];
++   for (unsigned g = 0; g < 2; g++) {
++      const VkPipelineInputAssemblyStateCreateInfo ia = {
++         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
++         .topology = g ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST
++                       : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
++      };
++      const VkGraphicsPipelineCreateInfo info = {
++         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
++         .pNext = &rendering,
++         .stageCount = g ? 2 : 1,
++         .pStages = stages,
++         .pVertexInputState = &vi,
++         .pInputAssemblyState = &ia,
++         .pViewportState = &vp,
++         .pRasterizationState = &rs,
++         .pMultisampleState = &ms,
++         .pColorBlendState = &cb,
++         .layout = layout,
++      };
++      CHECK(ctx->api->CreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &info, NULL,
++                                              &pipelines[g]));
++   }
++
++   const VkRenderingInfo render_info = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
++      .renderArea = scissor,
++      .layerCount = 1,
++   };
++   const VkQueryResultFlags result_flags = VK_QUERY_RESULT_64_BIT |
++                                           VK_QUERY_RESULT_WAIT_BIT |
++                                           VK_QUERY_RESULT_WITH_AVAILABILITY_BIT;
++   uint32_t lost_cases = 0;
++   for (uint32_t c = 0; c < ARRAY_SIZE(cases); c++) {
++      const struct overlap_case *test = &cases[c];
++      const uint32_t vertices_per_primitive = overlap_count(
++         test->geometry, VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT);
++      uint64_t expected[OVERLAP_POOLS][OVERLAP_REPORTS] = {{0}};
++      bool used[OVERLAP_POOLS] = {false};
++      bool active[OVERLAP_POOLS] = {false};
++
++      begin(ctx);
++      for (uint32_t p = 0; p < OVERLAP_POOLS; p++)
++         ctx->api->CmdResetQueryPool(ctx->command, pools[p], 0, 1);
++      ctx->api->CmdBeginRendering(ctx->command, &render_info);
++      ctx->api->CmdBindPipeline(ctx->command, VK_PIPELINE_BIND_POINT_GRAPHICS,
++                                pipelines[test->geometry]);
++      for (const char *step = test->steps; *step; step++) {
++         if (*step >= 'a' && *step < 'a' + OVERLAP_POOLS) {
++            const uint32_t p = *step - 'a';
++            ctx->api->CmdBeginQuery(ctx->command, pools[p], 0, 0);
++            used[p] = active[p] = true;
++         } else if (*step >= 'A' && *step < 'A' + OVERLAP_POOLS) {
++            const uint32_t p = *step - 'A';
++            ctx->api->CmdEndQuery(ctx->command, pools[p], 0);
++            active[p] = false;
++         } else {
++            assert(*step >= '1' && *step <= '9');
++            const uint32_t primitives = *step - '0';
++            ctx->api->CmdDraw(ctx->command, primitives * vertices_per_primitive, 1, 0, 0);
++            for (uint32_t p = 0; p < OVERLAP_POOLS; p++) {
++               uint32_t report = 0;
++               u_foreach_bit(bit, active[p] ? overlap_statistics[p] : 0) {
++                  expected[p][report++] +=
++                     primitives * overlap_count(test->geometry, BITFIELD_BIT(bit));
++               }
++            }
++         }
++      }
++      ctx->api->CmdEndRendering(ctx->command);
++      for (uint32_t p = 0; p < OVERLAP_POOLS; p++) {
++         if (used[p]) {
++            ctx->api->CmdCopyQueryPoolResults(ctx->command, pools[p], 0, 1, buffer,
++                                              p * copy_stride, copy_stride, result_flags);
++         }
++      }
++      memset(copied, 0xa5, buffer_info.size);
++      submit(ctx);
++
++      bool lost = false;
++      for (uint32_t p = 0; p < OVERLAP_POOLS; p++) {
++         if (!used[p])
++            continue;
++         const uint32_t reports = util_bitcount(overlap_statistics[p]);
++         uint64_t results[OVERLAP_REPORTS + 1];
++         CHECK(ctx->api->GetQueryPoolResults(ctx->device, pools[p], 0, 1, sizeof(results),
++                                             results, sizeof(results), result_flags));
++         const uint64_t *copy = copied + p * (OVERLAP_REPORTS + 1);
++         for (uint32_t r = 0; r <= reports; r++) {
++            const uint64_t want = r < reports ? expected[p][r] : 1;
++            if (results[r] != want || copy[r] != want) {
++               fprintf(stderr,
++                       "%s: query %c value %u: expected %" PRIu64 ", got %" PRIu64
++                       " from the host and %" PRIu64 " from the copy\n",
++                       test->name, 'a' + p, r, want, results[r], copy[r]);
++               lost = true;
++            }
++         }
++      }
++      printf("%s: %s\n", test->name, lost ? "LOST" : "ok");
++      lost_cases += lost;
++   }
++   if (lost_cases)
++      abort();
++
++   for (unsigned g = 0; g < 2; g++)
++      ctx->api->DestroyPipeline(ctx->device, pipelines[g], NULL);
++   ctx->api->DestroyPipelineLayout(ctx->device, layout, NULL);
++   for (unsigned i = 0; i < 2; i++)
++      ctx->api->DestroyShaderModule(ctx->device, stages[i].module, NULL);
++   ctx->api->UnmapMemory(ctx->device, memory);
++   ctx->api->DestroyBuffer(ctx->device, buffer, NULL);
++   ctx->api->FreeMemory(ctx->device, memory, NULL);
++   for (uint32_t p = 0; p < OVERLAP_POOLS; p++)
++      ctx->api->DestroyQueryPool(ctx->device, pools[p], NULL);
++}
++
 +int
 +main(void)
 +{
@@ -4096,12 +4602,14 @@ index 0000000000000000000000000000000000000000..b17f6a5a546b440370a7b4e0d19b6907
 +   test_helpers(&ctx);
 +   test_empty_multiview(&ctx);
 +   test_fragment_invocations(&ctx);
++   test_overlapping_queries(&ctx);
 +   ctx.api->DestroyQueryPool(ctx.device, ctx.queries, NULL);
 +   ctx.api->DestroyCommandPool(ctx.device, ctx.commands, NULL);
 +   kk_DestroyDevice(ctx.query_disabled_device, NULL);
 +   ctx.api->DestroyDevice(ctx.device, NULL);
 +   kk_DestroyInstance(instance, NULL);
-+   puts("pipeline statistics GPU arithmetic, empty multiview and fragments passed");
++   puts("pipeline statistics GPU arithmetic, empty multiview, fragments and "
++        "overlapping queries passed");
 +   return 0;
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_post_depth_coverage_sample_mask.cpp b/src/kosmickrisp/vulkan/tests/test_post_depth_coverage_sample_mask.cpp

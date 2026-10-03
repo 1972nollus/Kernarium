@@ -42,16 +42,7 @@ JitCompilerFamilies::emit_simd_aes(std::uint32_t instruction) {
   const unsigned operation = (instruction >> 12) & 7U;
   if (operation < 4U)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned source = (instruction >> 5) & 31U;
-  const auto native_destination =
-      write_native_vector(destination, true, 0U);
-  const auto native_source =
-      source == destination ? native_destination
-                            : read_native_vector(source, 1U);
-  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
-       native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_accumulate(instruction, false);
   return true;
 }
 
@@ -92,27 +83,7 @@ JitCompilerFamilies::emit_simd_sha1_sha2(std::uint32_t instruction) {
   if ((!sha1 && !sha2) || (sha1 && !host_capabilities().sha1) ||
       (sha2 && !host_capabilities().sha2))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned first = (instruction >> 5) & 31U;
-  const auto native_destination =
-      write_native_vector(destination, true, 0U);
-  const auto native_first =
-      first == destination ? native_destination
-                           : read_native_vector(first, 1U);
-  auto native = (instruction & ~((31U << 5) | 31U)) |
-                (native_first.host << 5) | native_destination.host;
-  if (three) {
-    const unsigned second = (instruction >> 16) & 31U;
-    const auto native_second =
-        second == destination
-            ? native_destination
-            : second == first ? native_first
-                              : read_native_vector(second, 2U);
-    native =
-        (native & ~(31U << 16)) | (native_second.host << 16);
-  }
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_accumulate(instruction, three);
   return true;
 }
 
@@ -126,27 +97,7 @@ JitCompilerFamilies::emit_simd_sha512(std::uint32_t instruction) {
   const bool two = (instruction & 0xffff'fc00U) == 0xcec0'8000U;
   if (!three && !two)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned first = (instruction >> 5) & 31U;
-  const auto native_destination =
-      write_native_vector(destination, true, 0U);
-  const auto native_first =
-      first == destination ? native_destination
-                           : read_native_vector(first, 1U);
-  auto native = (instruction & ~((31U << 5) | 31U)) |
-                (native_first.host << 5) | native_destination.host;
-  if (three) {
-    const unsigned second = (instruction >> 16) & 31U;
-    const auto native_second =
-        second == destination
-            ? native_destination
-            : second == first ? native_first
-                              : read_native_vector(second, 2U);
-    native =
-        (native & ~(31U << 16)) | (native_second.host << 16);
-  }
-  emit(native);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_accumulate(instruction, three);
   return true;
 }
 

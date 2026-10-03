@@ -150,6 +150,16 @@ private:
 
   void mark_direct_memory_write() noexcept;
 
+  /* As above for each of the length instructions starting at count_. */
+  void mark_direct_memory_writes(std::size_t length) noexcept;
+
+  /* Makes the label of a cold exit for instruction at pc and records the
+   * exit, retiring count_ + 1 instructions. Cold paths are emitted in the
+   * order they are recorded. */
+  [[nodiscard]] Arm64Emitter::Label cold_exit(std::uint32_t instruction,
+                                              std::uint64_t pc,
+                                              ColdPath::Action action);
+
   void track_direct_store(unsigned address, std::size_t size);
 
   void track_direct_store(unsigned address, std::size_t size,
@@ -216,8 +226,6 @@ private:
 
   [[nodiscard]] bool emit_simd_duplicate_element(std::uint32_t instruction);
 
-  void emit_simd_unary_native(std::uint32_t instruction);
-
   [[nodiscard]] bool emit_simd_bit_unary(std::uint32_t instruction);
 
   [[nodiscard]] bool emit_simd_integer_reduce(std::uint32_t instruction);
@@ -257,6 +265,11 @@ private:
   void emit_native_scalar_compare_swap(std::uint32_t instruction,
                                        std::uint64_t pc);
 
+  /* The shared address step of the two above: x8 holds the translated,
+   * write-checked base, with exclusive-slow and memory-fault exits. */
+  void emit_native_atomic_address(std::uint32_t instruction,
+                                  std::uint64_t pc);
+
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);
 
@@ -269,7 +282,7 @@ private:
   [[nodiscard]] bool emit_literal_memory(std::uint32_t instruction,
                                          std::uint64_t pc);
 
-  struct SimdUnsignedMemoryOperation final {
+  struct UnsignedMemoryOperation final {
     std::uint32_t instruction{};
     std::uint64_t offset{};
     std::size_t bytes{};
@@ -280,38 +293,24 @@ private:
 
   [[nodiscard]] static bool decode_simd_unsigned_memory(
       std::uint32_t instruction,
-      SimdUnsignedMemoryOperation &operation) noexcept;
+      UnsignedMemoryOperation &operation) noexcept;
 
   [[nodiscard]] std::size_t try_emit_simd_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
 
-  struct SpUnsignedMemoryOperation final {
-    std::uint32_t instruction{};
-    std::uint64_t offset{};
-    std::size_t bytes{};
-    unsigned transfer{};
-    bool load{};
-  };
+  /* A scalar unsigned-offset load or store whose base is SP exactly when
+   * sp_base is set. */
+  [[nodiscard]] static bool decode_scalar_unsigned_memory(
+      std::uint32_t instruction, bool sp_base,
+      UnsignedMemoryOperation &operation) noexcept;
 
-  [[nodiscard]] static bool decode_sp_unsigned_memory(
-      std::uint32_t instruction,
-      SpUnsignedMemoryOperation &operation) noexcept;
+  /* Emits each operation on the translated base in x8, naming its
+   * transfer register's native binding. */
+  void emit_native_gpr_run(std::span<const UnsignedMemoryOperation> operations,
+                           bool load);
 
   [[nodiscard]] std::size_t try_emit_sp_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
-
-  struct GprUnsignedMemoryOperation final {
-    std::uint32_t instruction{};
-    std::uint64_t offset{};
-    std::size_t bytes{};
-    unsigned base{};
-    unsigned transfer{};
-    bool load{};
-  };
-
-  [[nodiscard]] static bool decode_gpr_unsigned_memory(
-      std::uint32_t instruction,
-      GprUnsignedMemoryOperation &operation) noexcept;
 
   [[nodiscard]] std::size_t try_emit_gpr_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);

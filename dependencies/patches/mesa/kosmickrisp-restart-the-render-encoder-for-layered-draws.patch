@@ -195,10 +195,10 @@ index 4e1a6c004110588e9b28418c0993361cf94c7121..8137ea4564d99f43f80fc29a3a63ecd3
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 4e3bb301db2381fe09b81794dec82e0fc348ec46..4d584d4c647334efe8282f0df332ce10abb5224b 100644
+index abbc91e87599113cc3452c09800663b2dbb26e11..ddd8da4fe0b709afab3950c38f12d55c4b3b8ff4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -331,14 +331,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -334,14 +334,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
  
@@ -226,7 +226,7 @@ index 4e3bb301db2381fe09b81794dec82e0fc348ec46..4d584d4c647334efe8282f0df332ce10
  
     /* Argument table won't ever change */
     mtl_render_set_argument_table(
-@@ -348,6 +354,25 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -351,6 +357,25 @@ cs_start_render(struct kk_cmd_buffer *cmd)
     kk_cmd_buffer_dirty_all_gfx(cmd);
  }
  
@@ -253,10 +253,10 @@ index 4e3bb301db2381fe09b81794dec82e0fc348ec46..4d584d4c647334efe8282f0df332ce10
  cs_get_render(struct kk_cmd_buffer *cmd)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 19dcc4e74f4427c4b45ab70d01423fb198a84d10..db3dda0283125fed23d4e82d9fbf66e68943e65e 100644
+index a83e9a6d575aa57da52255b11d0307dc1bfd04d2..25d7aecc45c04ad280e222555cd1271b5edaf963 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -206,6 +206,17 @@ struct kk_graphics_state {
+@@ -207,6 +207,17 @@ struct kk_graphics_state {
     bool is_cull_front_and_back;
     bool need_to_start_render_pass;
  
@@ -274,7 +274,7 @@ index 19dcc4e74f4427c4b45ab70d01423fb198a84d10..db3dda0283125fed23d4e82d9fbf66e6
     enum kk_dirty dirty;
     uint32_t pipeline_sample_count;
  
-@@ -399,6 +410,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
+@@ -412,6 +423,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
  void kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd);
  void cs_start_render(struct kk_cmd_buffer *cmd);
  mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
@@ -285,7 +285,7 @@ index 19dcc4e74f4427c4b45ab70d01423fb198a84d10..db3dda0283125fed23d4e82d9fbf66e6
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 02d6d5ce70436f63e212ce355ba0e8d97389bb31..3ecebbd0d2ab0706b57a8a6bac0b0f983edd8b2e 100644
+index 65ae10b92fb28c8464cf5362b5dcc33e4f8619e2..9a8a6529b6f5c30284d502394aebe1613d6df96c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -354,6 +354,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -348,7 +348,7 @@ index 02d6d5ce70436f63e212ce355ba0e8d97389bb31..3ecebbd0d2ab0706b57a8a6bac0b0f98
     bool color_map_changed = false;
  
     if (IS_DIRTY(COLOR_ATTACHMENT_MAP)) {
-@@ -2282,6 +2314,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
+@@ -2289,6 +2321,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
  {
     mtl_render_encoder *enc = cs_get_render(cmd);
  
@@ -357,7 +357,7 @@ index 02d6d5ce70436f63e212ce355ba0e8d97389bb31..3ecebbd0d2ab0706b57a8a6bac0b0f98
     if (kk_grid_is_indirect(data.grid)) {
        if (data.index.el_size_B) {
           struct kk_addr_range index_range =
-@@ -3400,6 +3434,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3407,6 +3441,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  
     for (uint32_t i = 0; i < data->draw_count; i++) {

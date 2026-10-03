@@ -116,10 +116,10 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eece0347ae4 100644
+index bbe6df540b4edc5ace683dd9b078dd9b06fbf437..acbd04ccd58b65a9211b38907ef0e87ec8d8e255 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -101,6 +101,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -102,6 +102,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
     cs_flush(cmd);
  
     mtl_release(cmd->argument_table);
@@ -127,7 +127,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     kk_destroy_encoder_state(&cmd->cmp[0]);
     kk_destroy_encoder_state(&cmd->cmp[1]);
     kk_destroy_encoder_state(&cmd->gfx);
-@@ -128,13 +129,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
+@@ -130,13 +131,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
     return allocator ? allocator : mtl_new_command_allocator(dev->mtl_handle);
  }
  
@@ -163,7 +163,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
  }
  
  static VkResult
-@@ -164,14 +183,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -166,14 +185,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     cmd->pre_gfx = &cmd->cmp[0];
     cmd->post_gfx = &cmd->cmp[1];
@@ -181,7 +181,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
  
     {
        mtl_argument_table_descriptor *desc = mtl_new_argument_table_descriptor();
-@@ -207,23 +221,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -210,23 +224,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     return VK_SUCCESS;
  
@@ -211,7 +211,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
  }
  
  void
-@@ -235,9 +245,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -238,9 +248,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cs_flush(cmd);
     kk_cmd_release_resources(dev, cmd);
  
@@ -224,7 +224,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
  
     cmd->uploader.bo = NULL;
     cmd->uploader.offset = 0;
-@@ -250,23 +260,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -253,23 +263,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  
  static void
  kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
@@ -254,7 +254,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -277,17 +282,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+@@ -280,17 +285,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
     .destroy = kk_destroy_cmd_buffer,
  };
  
@@ -272,7 +272,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
-@@ -295,18 +289,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -298,18 +292,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);
@@ -291,7 +291,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     vk_command_buffer_begin(&cmd->vk, pBeginInfo);
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-@@ -342,11 +324,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
+@@ -345,11 +327,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
  static mtl_command_buffer *
  cs_open_main(struct kk_cmd_buffer *cmd)
  {
@@ -305,7 +305,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     return cmd->main.cmd_buf;
  }
  
-@@ -401,6 +380,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -404,6 +383,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
  
     cmd->main.render_follows_work = cmd->main.cmd_buf != NULL;
     cmd->gfx.cmd_buf = cs_open_main(cmd);
@@ -315,7 +315,7 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     if (layered)
        cmd->main.queue_wait = true;
     cmd->gfx.in_main = true;
-@@ -469,13 +451,10 @@ static void
+@@ -472,13 +454,10 @@ static void
  kk_start_compute_encoder(struct kk_cmd_buffer *cmd,
                           struct kk_encoder_state *es, bool in_main)
  {
@@ -334,10 +334,10 @@ index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eec
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 80f9e0229f910e56cad37da173924c29be20652d..83b586ca33347b5aec06c7d6b31c77d57c6f3a37 100644
+index af62d43c89cfbd9ca95503ec6dae7ad435a3b223..5b9dc75e4ff5166029626e19b8f92bbf4e275d6c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -335,6 +335,9 @@ struct kk_ts_sample {
+@@ -336,6 +336,9 @@ struct kk_ts_sample {
  struct kk_encoder_state {
     /* either a mtl_compute_encoder or a mtl_render_encoder */
     mtl_command_encoder *encoder;
@@ -346,8 +346,8 @@ index 80f9e0229f910e56cad37da173924c29be20652d..83b586ca33347b5aec06c7d6b31c77d5
 +    * buffer therefore holds no command storage. */
     mtl_command_allocator *allocator;
     mtl_command_buffer *cmd_buf;
-    /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
-@@ -425,6 +428,10 @@ struct kk_cmd_buffer {
+    /* Pending timestamp resolves and the availability words they and
+@@ -438,6 +441,10 @@ struct kk_cmd_buffer {
     /* Metal command buffers are single-shot: a resubmission must re-record
      * by replaying the enqueued commands (see rerecord_cmd_buffer). */
     bool submitted;
