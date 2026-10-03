@@ -4,12 +4,14 @@
  * the SVCR write rules and the lazy state transfer. */
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/execution_types.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "platform/apple/host_features.hpp"
 #include "require.hpp"
+#include "uml_darwin_cpu.h"
 
 #include <array>
 #include <cstddef>
@@ -429,6 +431,120 @@ void defaults_follow_engine_support()
 	require(::uml::cpu::terminal_does_not_retire(
 		::uml::cpu::EngineEvent::sme_access));
 }
+
+/* AT_HWCAP2 bits arm64 Linux 6.18 defines for SME
+ * (arch/arm64/include/uapi/asm/hwcap.h), and what its arm64_elf_hwcaps
+ * table derives them from: ID_AA64PFR1_EL1.SME and the
+ * ID_AA64SMFR0_EL1 fields at their IMP values. */
+constexpr unsigned long hwcap2_sme = 1UL << 23;
+constexpr unsigned long hwcap2_sme_i16i64 = 1UL << 24;
+constexpr unsigned long hwcap2_sme_f64f64 = 1UL << 25;
+constexpr unsigned long hwcap2_sme_i8i32 = 1UL << 26;
+constexpr unsigned long hwcap2_sme_f16f32 = 1UL << 27;
+constexpr unsigned long hwcap2_sme_b16f32 = 1UL << 28;
+constexpr unsigned long hwcap2_sme_f32f32 = 1UL << 29;
+constexpr unsigned long hwcap2_sme_fa64 = 1UL << 30;
+constexpr unsigned long hwcap2_sme2 = 1UL << 37;
+constexpr unsigned long hwcap2_sme2p1 = 1UL << 38;
+constexpr unsigned long hwcap2_sme_i16i32 = 1UL << 39;
+constexpr unsigned long hwcap2_sme_bi32i32 = 1UL << 40;
+constexpr unsigned long hwcap2_sme_b16b16 = 1UL << 41;
+constexpr unsigned long hwcap2_sme_f16f16 = 1UL << 42;
+/* LUTV2, the SME F8 family and SME2P2's companions: bits 57-62 and the
+ * AT_HWCAP3-era bits arm64 Linux 6.18 places in AT_HWCAP. */
+constexpr unsigned long hwcap2_sme_lutv2_and_f8 = 0x3fUL << 57;
+
+constexpr unsigned long sme1_hwcap2 = hwcap2_sme | hwcap2_sme_i16i64 |
+	hwcap2_sme_f64f64 | hwcap2_sme_i8i32 | hwcap2_sme_f16f32 |
+	hwcap2_sme_b16f32 | hwcap2_sme_f32f32;
+constexpr unsigned long sme2_hwcap2 = sme1_hwcap2 | hwcap2_sme2 |
+	hwcap2_sme_i16i32 | hwcap2_sme_bi32i32;
+constexpr unsigned long never_hwcap2 = hwcap2_sme_fa64 | hwcap2_sme2p1 |
+	hwcap2_sme_b16b16 | hwcap2_sme_f16f16 | hwcap2_sme_lutv2_and_f8;
+
+/* ID_AA64SMFR0_EL1 field by field (Arm's sysreg definitions): F32F32 [32],
+ * BI32I32 [33], B16F32 [34], F16F32 [35], I8I32 [39:36] = 0b1111,
+ * I16I32 [47:44] = 0b0101, F64F64 [48], I16I64 [55:52] = 0b1111,
+ * SMEver [59:56] = 1 for SME2; FA64 [63] never. */
+constexpr std::uint64_t sme1_smfr0 = (1ULL << 32) | (1ULL << 34) |
+	(1ULL << 35) | (0xfULL << 36) | (1ULL << 48) | (0xfULL << 52);
+constexpr std::uint64_t sme2_smfr0 = sme1_smfr0 | (1ULL << 33) |
+	(0x5ULL << 44) | (1ULL << 56);
+
+[[nodiscard]] std::uint64_t read_id(const HostCapabilities &host,
+	std::uint32_t mrs)
+{
+	const ::uml::cpu::HostCapabilitiesScope scope{host};
+	return arm64::detail::emulated_id_register_value(mrs);
+}
+
+/* The identification registers and AT_HWCAP2 at every vector length, for
+ * both profiles, with the non-SME words unchanged; incomplete profiles and
+ * impossible vector lengths advertise nothing. */
+void identification_follows_profile()
+{
+	namespace detail = arm64::detail;
+	HostCapabilities base;
+	for (const auto feature : {ArmFeature::fp16, ArmFeature::lse,
+		     ArmFeature::dotprod, ArmFeature::i8mm, ArmFeature::bf16})
+		base.supported.set(static_cast<std::size_t>(feature));
+	base.fp16 = true;
+	const auto base_words = detail::guest_hwcaps(base);
+	require((base_words[1] & (sme2_hwcap2 | never_hwcap2)) == 0);
+	require(read_id(base, detail::id_aa64pfr1_el1) == 0 &&
+		read_id(base, detail::id_aa64smfr0_el1) == 0);
+
+	for (const auto svl : vector_lengths)
+		for (const bool sme2 : {false, true}) {
+			auto host = sme_host(svl, sme2);
+			host.supported |= base.supported;
+			host.fp16 = true;
+			const auto words = detail::guest_hwcaps(host);
+			require(words[0] == base_words[0],
+				"SME changed AT_HWCAP");
+			require(words[1] == (base_words[1] |
+				(sme2 ? sme2_hwcap2 : sme1_hwcap2)),
+				"AT_HWCAP2 is not Linux's SME derivation");
+			require((words[1] & never_hwcap2) == 0);
+			require(read_id(host, detail::id_aa64pfr1_el1) ==
+				(std::uint64_t{sme2 ? 2U : 1U} << 24));
+			require(read_id(host, detail::id_aa64smfr0_el1) ==
+				(sme2 ? sme2_smfr0 : sme1_smfr0));
+			require(read_id(host, detail::id_aa64pfr0_el1) ==
+				read_id(base, detail::id_aa64pfr0_el1));
+		}
+
+	for (const auto missing : {ArmFeature::sme, ArmFeature::sme_f64f64,
+		     ArmFeature::sme_i16i64}) {
+		auto host = sme_host(64, true);
+		host.supported.reset(static_cast<std::size_t>(missing));
+		require((detail::guest_hwcaps(host)[1] &
+			(sme2_hwcap2 | never_hwcap2)) == 0);
+		require(read_id(host, detail::id_aa64pfr1_el1) == 0 &&
+			read_id(host, detail::id_aa64smfr0_el1) == 0);
+	}
+	for (const unsigned svl : {0U, 48U, 512U})
+		require((detail::guest_hwcaps(sme_host(svl, true))[1] &
+			sme2_hwcap2) == 0);
+
+	/* The probed host: no SME words with the policy off, Linux's
+	 * derivation with it on where the host has the profile, and the entry
+	 * points the guest kernel calls agree. */
+	const auto off_words = detail::guest_hwcaps(
+		apple::probe_host_capabilities(apple::GuestSmePolicy::off));
+	require((off_words[1] & (sme2_hwcap2 | never_hwcap2)) == 0);
+	const auto on = apple::probe_host_capabilities(apple::GuestSmePolicy::on);
+	const auto on_words = detail::guest_hwcaps(on);
+	const auto profile = arm64::sme_profile(on);
+	require(on_words[0] == off_words[0]);
+	require(on_words[1] == (off_words[1] |
+		(profile == arm64::SmeProfile::sme2 ? sme2_hwcap2 :
+		 profile == arm64::SmeProfile::sme ? sme1_hwcap2 : 0UL)));
+	const auto probed = detail::guest_hwcaps(
+		apple::probed_host_capabilities());
+	require(darwin_uml_guest_hwcap() == probed[0]);
+	require(darwin_uml_guest_hwcap2() == probed[1]);
+}
 } // namespace
 
 int main()
@@ -442,5 +558,6 @@ int main()
 	lazy_transfer_round_trips();
 	svcr_writes_apply_to_state();
 	defaults_follow_engine_support();
+	identification_follows_profile();
 	return 0;
 }

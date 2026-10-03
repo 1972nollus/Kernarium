@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/floating_controls.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <array>
@@ -52,6 +53,8 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 /* The registers whose fields carry features, by the MRS that reads each into
  * X0. */
 inline constexpr std::uint32_t id_aa64pfr0_el1 = 0xd538'0400U;
+inline constexpr std::uint32_t id_aa64pfr1_el1 = 0xd538'0420U;
+inline constexpr std::uint32_t id_aa64smfr0_el1 = 0xd538'04a0U;
 inline constexpr std::uint32_t id_aa64isar0_el1 = 0xd538'0600U;
 inline constexpr std::uint32_t id_aa64isar1_el1 = 0xd538'0620U;
 inline constexpr std::uint32_t id_aa64isar2_el1 = 0xd538'0640U;
@@ -97,6 +100,35 @@ inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
 			value |= field(1, 16) | field(1, 20);
 		if (host.has(ArmFeature::dit))
 			value |= field(1, 48);
+		return value;
+	}
+	if (group == 4U && selector == 1U) {
+		/* ID_AA64PFR1_EL1.SME, its one field this virtual CPU sets:
+		 * FEAT_SME, or FEAT_SME2 in the SME2 profile. */
+		switch (sme_profile(host)) {
+		case SmeProfile::none:
+			return 0;
+		case SmeProfile::sme:
+			return field(1, 24);
+		case SmeProfile::sme2:
+			return field(2, 24);
+		}
+		return 0;
+	}
+	if (group == 4U && selector == 5U) {
+		/* ID_AA64SMFR0_EL1, every field arm64 Linux shows EL0, for the
+		 * profile (sme_profile.hpp): F32F32, B16F32, F16F32, I8I32,
+		 * F64F64 and I16I64 always; SME2 adds SMEver 1, I16I32 and
+		 * BI32I32. FA64, B16B16, F16F16, the FP8 fields and LUTv2 stay
+		 * zero. Nothing here depends on the streaming vector length. */
+		const auto profile = sme_profile(host);
+		if (profile == SmeProfile::none)
+			return 0;
+		std::uint64_t value = field(1, 32) | field(1, 34) |
+			field(1, 35) | field(15, 36) | field(1, 48) |
+			field(15, 52);
+		if (profile == SmeProfile::sme2)
+			value |= field(1, 33) | field(5, 44) | field(1, 56);
 		return value;
 	}
 	if (group == 6U && selector == 0U) {
@@ -182,13 +214,14 @@ inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
 
 /* A bit of AT_HWCAP or AT_HWCAP2 and the field it is read from: bit
  * `hwcap`, numbered as the kernel's KERNEL_HWCAP_* (AT_HWCAP's as 0-63,
- * AT_HWCAP2's as 64-127), is set where the 4-bit field at `shift` holds at
- * least `minimum`. */
+ * AT_HWCAP2's as 64-127), is set where the `width`-bit field at `shift`
+ * holds at least `minimum`. */
 struct HwcapField final {
 	std::uint32_t id_register;
 	unsigned shift;
 	unsigned minimum;
 	unsigned hwcap;
+	unsigned width{4};
 };
 
 /* arm64 Linux's own derivation (arm64_elf_hwcaps in
@@ -198,6 +231,18 @@ inline constexpr HwcapField hwcap_fields[]{
 	{id_aa64pfr0_el1, 16, 1, 9},		/* FP: FPHP */
 	{id_aa64pfr0_el1, 20, 1, 10},		/* AdvSIMD: ASIMDHP */
 	{id_aa64pfr0_el1, 48, 1, 24},		/* DIT */
+	/* SME. Linux reads the ID_AA64SMFR0_EL1 bits only with SME
+	 * (has_sme_feature()); that register is zero without it here. */
+	{id_aa64pfr1_el1, 24, 1, 64 + 23},	/* SME */
+	{id_aa64smfr0_el1, 56, 1, 64 + 37},	/* SMEver: SME2 */
+	{id_aa64smfr0_el1, 52, 15, 64 + 24},	/* I16I64 */
+	{id_aa64smfr0_el1, 48, 1, 64 + 25, 1},	/* F64F64 */
+	{id_aa64smfr0_el1, 44, 5, 64 + 39},	/* I16I32 */
+	{id_aa64smfr0_el1, 36, 15, 64 + 26},	/* I8I32 */
+	{id_aa64smfr0_el1, 35, 1, 64 + 27, 1},	/* F16F32 */
+	{id_aa64smfr0_el1, 34, 1, 64 + 28, 1},	/* B16F32 */
+	{id_aa64smfr0_el1, 33, 1, 64 + 40, 1},	/* BI32I32 */
+	{id_aa64smfr0_el1, 32, 1, 64 + 29, 1},	/* F32F32 */
 	{id_aa64isar0_el1, 4, 1, 3},		/* AES */
 	{id_aa64isar0_el1, 4, 2, 4},		/* AES: PMULL */
 	{id_aa64isar0_el1, 8, 1, 5},		/* SHA1 */
@@ -245,7 +290,7 @@ inline constexpr HwcapField hwcap_fields[]{
 	const HostCapabilitiesScope scope{host};
 	for (const auto &bit : hwcap_fields)
 		if (((emulated_id_register_value(bit.id_register) >>
-		      bit.shift) & 15U) >= bit.minimum)
+		      bit.shift) & ((1U << bit.width) - 1U)) >= bit.minimum)
 			words[bit.hwcap / 64U] |= 1UL << (bit.hwcap % 64U);
 	return words;
 }
