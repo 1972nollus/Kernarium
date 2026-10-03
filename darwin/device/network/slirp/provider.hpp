@@ -2,6 +2,7 @@
 #pragma once
 
 #include "uml_darwin_network.h"
+#include "platform/descriptor.hpp"
 
 #include <libslirp.h>
 #include <poll.h>
@@ -61,24 +62,6 @@ struct HostForward final {
  * DHCP lease. Returns false on any malformed field. */
 [[nodiscard]] bool parse_host_forward(
 	std::string_view specification, HostForward &forward) noexcept;
-
-class UniqueFd final {
-public:
-	UniqueFd() = default;
-	explicit UniqueFd(int descriptor) noexcept : descriptor_(descriptor) {}
-	~UniqueFd();
-
-	UniqueFd(const UniqueFd &) = delete;
-	UniqueFd &operator=(const UniqueFd &) = delete;
-	UniqueFd(UniqueFd &&other) noexcept;
-	UniqueFd &operator=(UniqueFd &&other) noexcept;
-
-	void reset(int descriptor = -1) noexcept;
-	[[nodiscard]] int get() const noexcept { return descriptor_; }
-
-private:
-	int descriptor_{-1};
-};
 
 struct Frame final {
 	std::size_t length{};
@@ -213,8 +196,8 @@ private:
 	std::list<std::unique_ptr<Timer>> timers_;
 	std::vector<HostForward> forwards_;
 	std::unique_ptr<Slirp, SlirpDeleter> slirp_;
-	std::array<UniqueFd, 2> wake_pipe_;
-	std::array<UniqueFd, 2> receive_pipe_;
+	std::array<uml::platform::UniqueDescriptor, 2> wake_pipe_;
+	std::array<uml::platform::UniqueDescriptor, 2> receive_pipe_;
 	std::jthread worker_;
 	std::atomic_bool started_{false};
 	std::atomic_bool stopping_{true};

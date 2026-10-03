@@ -26,6 +26,8 @@
 namespace uml::network {
 namespace {
 
+using uml::platform::UniqueDescriptor;
+
 constexpr std::array<unsigned char, 6> default_mac{
 	0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 
@@ -43,7 +45,7 @@ bool configure_close_on_exec(int descriptor) noexcept
 		fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) >= 0;
 }
 
-bool create_pipe(std::array<UniqueFd, 2> &result) noexcept
+bool create_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 {
 	std::array<int, 2> descriptors{};
 	if (pipe(descriptors.data()) != 0)
@@ -62,7 +64,7 @@ bool create_pipe(std::array<UniqueFd, 2> &result) noexcept
 	return false;
 }
 
-bool ensure_pipe(std::array<UniqueFd, 2> &result) noexcept
+bool ensure_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 {
 	if (result[0].get() >= 0 && result[1].get() >= 0)
 		return true;
@@ -71,7 +73,7 @@ bool ensure_pipe(std::array<UniqueFd, 2> &result) noexcept
 	return create_pipe(result);
 }
 
-void drain_pipe(UniqueFd &descriptor) noexcept
+void drain_pipe(UniqueDescriptor &descriptor) noexcept
 {
 	std::array<std::byte, 64> buffer{};
 	while (descriptor.get() >= 0 &&
@@ -80,34 +82,6 @@ void drain_pipe(UniqueFd &descriptor) noexcept
 }
 
 } // namespace
-
-UniqueFd::~UniqueFd()
-{
-	reset();
-}
-
-UniqueFd::UniqueFd(UniqueFd &&other) noexcept
-	: descriptor_(other.descriptor_)
-{
-	other.descriptor_ = -1;
-}
-
-UniqueFd &UniqueFd::operator=(UniqueFd &&other) noexcept
-{
-	if (this != &other) {
-		reset();
-		descriptor_ = other.descriptor_;
-		other.descriptor_ = -1;
-	}
-	return *this;
-}
-
-void UniqueFd::reset(int descriptor) noexcept
-{
-	if (descriptor_ >= 0)
-		(void)close(descriptor_);
-	descriptor_ = descriptor;
-}
 
 void SlirpDeleter::operator()(Slirp *slirp) const noexcept
 {
