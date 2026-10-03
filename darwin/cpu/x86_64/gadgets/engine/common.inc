@@ -299,26 +299,21 @@ Lx86_simd_no_nan\@:
 .endm
 
 /* MXCSR.DAZ and FTZ: replace each denormal lane of v`vector` (`element` bits
- * wide) with a zero of its sign. Uses v16, v17 and w14. */
+ * wide) with a zero of its sign. A lane whose exponent is zero keeps its sign
+ * bit alone, which leaves a zero as it was. Uses v17. */
 .macro simd_flush_denormals vector, element
 	.if \element == 32
-	mov w14, #0x7f800000
-	dup v16.4s, w14
-	and v17.16b, v\vector\().16b, v16.16b
+	shl v17.4s, v\vector\().4s, #1
+	ushr v17.4s, v17.4s, #24
 	cmeq v17.4s, v17.4s, #0
-	mov w14, #0x80000000
-	dup v16.4s, w14
+	ushr v17.4s, v17.4s, #1
 	.else
-	mov x14, #0x7ff0000000000000
-	dup v16.2d, x14
-	and v17.16b, v\vector\().16b, v16.16b
+	shl v17.2d, v\vector\().2d, #1
+	ushr v17.2d, v17.2d, #53
 	cmeq v17.2d, v17.2d, #0
-	mov x14, #0x8000000000000000
-	dup v16.2d, x14
+	ushr v17.2d, v17.2d, #1
 	.endif
-	and v16.16b, v\vector\().16b, v16.16b
-	bsl v17.16b, v16.16b, v\vector\().16b
-	mov v\vector\().16b, v17.16b
+	bic v\vector\().16b, v\vector\().16b, v17.16b
 .endm
 
 /* v`mask` = all ones in the lanes of v`output` that are not zero and at most
