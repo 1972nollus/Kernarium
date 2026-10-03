@@ -20,21 +20,40 @@ using arm64::detail::decode_little_endian;
 using arm64::detail::encode_little_endian;
 using arm64::detail::sign_extend;
 
-namespace {
-
-/* The access check and register transfer that every immediate and
- * register-offset form shares once its address is generated. Returns the
- * fault, or nothing when the transfer is complete. Always inlined, so neither
- * form's slow path pays a call for it. */
-[[nodiscard, gnu::always_inline]] inline std::optional<RunResult>
-transfer_register(CpuState &cpu, GuestMemory &memory,
-	std::uint32_t instruction, std::uint64_t tagged_address, bool base_sp,
-	std::size_t size, bool vector, unsigned operation, bool load)
+RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
+					  std::uint32_t instruction)
 {
+	const auto pc = cpu.pc;
+	const bool vector = (instruction & 0x0400'0000U) != 0;
+	const unsigned size_code = instruction >> 30;
+	const unsigned operation = (instruction >> 22) & 0x3U;
+	if (!vector && size_code == 3 && operation == 2) {
+		/* PRFM is only a performance hint in this emulator. */
+		cpu.pc += 4;
+		return continue_after(pc, instruction);
+	}
+	if (vector && operation >= 2 && size_code != 0)
+		return illegal(pc, instruction);
+	const std::size_t size = vector && operation >= 2 ? 16 :
+		std::size_t{1} << size_code;
+	if (!vector && size >= 4 && operation == 3)
+		return illegal(pc, instruction);
+	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
+	const unsigned base_register = (instruction >> 5) & 0x1fU;
+	const auto base = cpu.read_register(base_register, true);
+	/* CheckSPAlignment precedes address generation and memory observation.
+	 * The slow path deliberately diagnoses this before touching either the
+	 * transfer register or GuestMemory.
+	 */
+	if (base_register == 31U && (base & 15U) != 0)
+		return alignment_fault(base, instruction, !load);
+	const auto tagged_address = base +
+		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
 	std::uint64_t address{};
 	std::uint64_t fault_address{};
-	if (!simd_structure_address(cpu, memory, tagged_address, base_sp,
-		    size, size, load ? MemoryAccess::read : MemoryAccess::write,
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, size, size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
 		    address, fault_address))
 		return memory_fault(fault_address, instruction, !load);
 	std::array<std::byte, 16> bytes{};
@@ -66,44 +85,6 @@ transfer_register(CpuState &cpu, GuestMemory &memory,
 		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
 			return memory_fault(address, instruction, true);
 	}
-	return std::nullopt;
-}
-
-} // namespace
-
-RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
-					  std::uint32_t instruction)
-{
-	const auto pc = cpu.pc;
-	const bool vector = (instruction & 0x0400'0000U) != 0;
-	const unsigned size_code = instruction >> 30;
-	const unsigned operation = (instruction >> 22) & 0x3U;
-	if (!vector && size_code == 3 && operation == 2) {
-		/* PRFM is only a performance hint in this emulator. */
-		cpu.pc += 4;
-		return continue_after(pc, instruction);
-	}
-	if (vector && operation >= 2 && size_code != 0)
-		return illegal(pc, instruction);
-	const std::size_t size = vector && operation >= 2 ? 16 :
-		std::size_t{1} << size_code;
-	if (!vector && size >= 4 && operation == 3)
-		return illegal(pc, instruction);
-	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
-	const unsigned base_register = (instruction >> 5) & 0x1fU;
-	const auto base = cpu.read_register(base_register, true);
-	/* CheckSPAlignment precedes address generation and memory observation.
-	 * The slow path deliberately diagnoses this before touching either the
-	 * transfer register or GuestMemory.
-	 */
-	if (base_register == 31U && (base & 15U) != 0)
-		return alignment_fault(base, instruction, !load);
-	const auto tagged_address = base +
-		static_cast<std::uint64_t>((instruction >> 10) & 0xfffU) * size;
-	if (const auto fault = transfer_register(cpu, memory, instruction,
-		    tagged_address, base_register == 31U, size, vector, operation,
-		    load))
-		return *fault;
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
 }
@@ -212,15 +193,48 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 			writeback = mode == 3;
 		}
 	}
-	if (const auto fault = transfer_register(cpu, memory, instruction,
-		    address, base_register == 31U, size, vector, operation, load))
-		return *fault;
+	const auto tagged_address = address;
+	std::uint64_t fault_address{};
+	if (!simd_structure_address(cpu, memory, tagged_address,
+		    base_register == 31U, size, size,
+		    load ? MemoryAccess::read : MemoryAccess::write,
+		    address, fault_address))
+		return memory_fault(fault_address, instruction, !load);
+	std::array<std::byte, 16> bytes{};
+	const unsigned transfer = instruction & 0x1fU;
+	if (load) {
+		if (!memory.read(address, std::span{bytes}.first(size)))
+			return memory_fault(address, instruction, false);
+		if (vector) {
+			cpu.vectors[transfer].bytes.fill(std::byte{});
+			std::copy_n(bytes.begin(), size,
+				cpu.vectors[transfer].bytes.begin());
+		} else {
+			auto value = decode_little_endian(std::span{bytes}.first(size));
+			if (operation >= 2) {
+				value = static_cast<std::uint64_t>(sign_extend(value,
+					static_cast<unsigned>(size * 8)));
+				if (operation == 3)
+					value &= 0xffff'ffffU;
+			}
+			cpu.write_register(transfer, value, false);
+		}
+	} else {
+		if (vector)
+			std::copy_n(cpu.vectors[transfer].bytes.begin(), size,
+				bytes.begin());
+		else
+			encode_little_endian(cpu.read_register(transfer, false),
+				std::span{bytes}.first(size));
+		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
+			return memory_fault(address, instruction, true);
+	}
 	/* The 2026-06 architectural constraint selection suppresses writeback for
 	 * a load whose transfer register overlaps a non-SP base. Stores retain
 	 * Constraint_NONE and therefore store the pre-writeback base value.
 	 */
 	if (writeback && load && !vector &&
-	    base_register == (instruction & 0x1fU) && base_register != 31U)
+	    base_register == transfer && base_register != 31U)
 		writeback = false;
 	if (writeback)
 		cpu.write_register(base_register, adjusted, true);
