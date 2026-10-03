@@ -26,9 +26,9 @@ bool has_published_jit_store(
     const JitStoreParticipant *excluded) noexcept {
   /* The hot path: a bounded scan of stable storage with no lock taken. The
    * states are seq_cst on both sides, so they order against
-   * jit_exclusive_operation_phase without help from a mutex; the mutex this
-   * replaces was preventing a scan from dereferencing a destroyed participant,
-   * which slots make impossible. */
+   * jit_exclusive_operation_phase without help from a mutex, and a slot
+   * outlives its participant, so the scan never dereferences a destroyed
+   * one. */
   const auto *excluded_slot =
       excluded != nullptr ? excluded->published_ : nullptr;
   const auto limit = jit_store_slot_limit.load(std::memory_order_acquire);
@@ -41,8 +41,8 @@ bool has_published_jit_store(
   }
   /* Only reached if the slot array was exhausted, which needs more than
    * jit_store_slot_capacity live participants. Those keep their own slot and
-   * are scanned here under the mutex, exactly as every participant was before,
-   * so exhaustion degrades speed rather than correctness. */
+   * are scanned here under the mutex, so exhaustion degrades speed rather than
+   * correctness. */
   if (jit_store_overflow_count.load(std::memory_order_acquire) == 0)
     return false;
   std::scoped_lock lock{jit_store_participants_mutex};
@@ -144,8 +144,7 @@ void unregister_jit_store_participant(JitStoreParticipant &participant) {
   /* Release the slot idle-first. A scan racing this sees either the
    * participant's final state or idle, and both mean the same thing once the
    * participant is gone. The slot itself is static, so an in-flight scan that
-   * is already reading it stays inside live storage - which is the hazard the
-   * mutex used to cover. */
+   * is already reading it stays inside live storage. */
   auto *slot = participant.published_;
   participant.published_ = &participant.local_;
   slot->state.store(JitStoreState::idle, std::memory_order_seq_cst);

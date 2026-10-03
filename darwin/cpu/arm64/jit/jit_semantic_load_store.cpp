@@ -33,13 +33,11 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		return continue_after(pc, instruction);
 	}
 	if (vector && operation >= 2 && size_code != 0)
-		return {StopReason::illegal_instruction, pc, instruction, 0,
-			false};
+		return illegal(pc, instruction);
 	const std::size_t size = vector && operation >= 2 ? 16 :
 		std::size_t{1} << size_code;
 	if (!vector && size >= 4 && operation == 3)
-		return {StopReason::illegal_instruction, pc, instruction, 0,
-			false};
+		return illegal(pc, instruction);
 	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto base = cpu.read_register(base_register, true);
@@ -57,13 +55,12 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 		    base_register == 31U, size, size,
 		    load ? MemoryAccess::read : MemoryAccess::write,
 		    address, fault_address))
-		return {StopReason::memory_fault, fault_address, instruction, 0,
-			!load};
+		return memory_fault(fault_address, instruction, !load);
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
 	if (load) {
 		if (!memory.read(address, std::span{bytes}.first(size)))
-			return {StopReason::memory_fault, address, instruction, 0, false};
+			return memory_fault(address, instruction, false);
 		if (vector) {
 			cpu.vectors[transfer].bytes.fill(std::byte{});
 			std::copy_n(bytes.begin(), size,
@@ -86,7 +83,7 @@ RunResult load_store_unsigned(CpuState &cpu, GuestMemory &memory,
 			encode_little_endian(cpu.read_register(transfer, false),
 				std::span{bytes}.first(size));
 		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
-			return {StopReason::memory_fault, address, instruction, 0, true};
+			return memory_fault(address, instruction, true);
 	}
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
@@ -99,7 +96,7 @@ RunResult load_literal(CpuState &cpu, GuestMemory &memory,
 	const bool vector = (instruction & 0x0400'0000U) != 0;
 	const unsigned operation = instruction >> 30;
 	if (vector && operation == 3U)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+		return illegal(pc, instruction);
 	const std::size_t size = vector ? std::size_t{4} << operation :
 		operation == 1U ? 8U : 4U;
 	const auto offset = sign_extend(
@@ -109,7 +106,7 @@ RunResult load_literal(CpuState &cpu, GuestMemory &memory,
 		static_cast<std::int64_t>(pc) + offset);
 	std::array<std::byte, 16> bytes{};
 	if (!memory.read(address, std::span{bytes}.first(size)))
-		return {StopReason::memory_fault, address, instruction, 0, false};
+		return memory_fault(address, instruction, false);
 	const unsigned destination = instruction & 31U;
 	if (vector) {
 		cpu.vectors[destination].bytes.fill(std::byte{});
@@ -139,29 +136,25 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 		const bool valid = register_offset ?
 			(mode == 2U && (option & 2U) != 0) : mode == 0U;
 		if (!valid)
-			return {StopReason::illegal_instruction, pc, instruction, 0,
-				false};
+			return illegal(pc, instruction);
 		/* Register-offset PRFM and unscaled PRFUM are advisory only. */
 		cpu.pc += 4;
 		return continue_after(pc, instruction);
 	}
 	if (vector && operation >= 2 && size_code != 0)
-		return {StopReason::illegal_instruction, pc, instruction, 0,
-			false};
+		return illegal(pc, instruction);
 	const std::size_t size = vector && operation >= 2 ? 16 :
 		std::size_t{1} << size_code;
 	if (!vector && ((size == 8 && operation != 0 && operation != 1) ||
 	    (size == 4 && operation == 3)))
-		return {StopReason::illegal_instruction, pc, instruction, 0,
-			false};
+		return illegal(pc, instruction);
 	const bool register_offset = (instruction & 0x0020'0000U) != 0;
 	const unsigned mode = (instruction >> 10) & 0x3U;
 	const unsigned option = (instruction >> 13) & 0x7U;
 	if ((register_offset &&
 	     (mode != 2U || (option & 2U) == 0)) ||
 	    (!register_offset && vector && mode == 2U))
-		return {StopReason::illegal_instruction, pc, instruction, 0,
-			false};
+		return illegal(pc, instruction);
 	const bool load = vector ? (operation & 1U) != 0 : operation != 0;
 	const unsigned base_register = (instruction >> 5) & 0x1fU;
 	const auto base = cpu.read_register(base_register, true);
@@ -206,13 +199,12 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 		    base_register == 31U, size, size,
 		    load ? MemoryAccess::read : MemoryAccess::write,
 		    address, fault_address))
-		return {StopReason::memory_fault, fault_address, instruction, 0,
-			!load};
+		return memory_fault(fault_address, instruction, !load);
 	std::array<std::byte, 16> bytes{};
 	const unsigned transfer = instruction & 0x1fU;
 	if (load) {
 		if (!memory.read(address, std::span{bytes}.first(size)))
-			return {StopReason::memory_fault, address, instruction, 0, false};
+			return memory_fault(address, instruction, false);
 		if (vector) {
 			cpu.vectors[transfer].bytes.fill(std::byte{});
 			std::copy_n(bytes.begin(), size,
@@ -235,7 +227,7 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 			encode_little_endian(cpu.read_register(transfer, false),
 				std::span{bytes}.first(size));
 		if (!ordinary_store(memory, address, std::span{bytes}.first(size)))
-			return {StopReason::memory_fault, address, instruction, 0, true};
+			return memory_fault(address, instruction, true);
 	}
 	/* The 2026-06 architectural constraint selection suppresses writeback for
 	 * a load whose transfer register overlaps a non-SP base. Stores retain

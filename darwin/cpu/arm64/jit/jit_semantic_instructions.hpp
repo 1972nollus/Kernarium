@@ -48,6 +48,19 @@ struct RunResult final {
   return {StopReason::memory_fault, address, instruction, 0, write, true};
 }
 
+/* A failed guest access at address. The instruction does not retire. */
+[[nodiscard]] constexpr RunResult memory_fault(std::uint64_t address,
+                                               std::uint32_t instruction,
+                                               bool write) noexcept {
+  return {StopReason::memory_fault, address, instruction, 0, write};
+}
+
+/* An UNDEFINED encoding at pc. The instruction does not retire. */
+[[nodiscard]] constexpr RunResult illegal(std::uint64_t pc,
+                                          std::uint32_t instruction) noexcept {
+  return {StopReason::illegal_instruction, pc, instruction, 0, false};
+}
+
 /* The FEAT_LSE2 alignment rule for atomic, exclusive and ordered accesses,
  * under the executor's host-capability scope. */
 [[nodiscard]] inline bool single_copy_alignment_faults(std::uint64_t address,
