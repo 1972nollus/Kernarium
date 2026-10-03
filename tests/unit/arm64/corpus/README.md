@@ -212,9 +212,8 @@ and each export directory lists the ordinal of every exported case in
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack, and that every row of
 [`../a64_instruction_evidence_bindings.tsv`](../a64_instruction_evidence_bindings.tsv)
-names, by producer and case name, a pack case whose entry word is its witness,
-or `-` for both columns; a regeneration that drops a binding's case repoints
-it to another witnessing case or sets its `ctest` and `case` to `-`.
+names a producer with a record in the pack, or `-`; a regeneration that drops
+a producer's last record sets its bindings' `ctest` and `case` to `-`.
 `--dump PACK --text FILE` writes a reviewable JSON lines form, and
 `--repack FILE` rebuilds the pack and metadata from it.
 
