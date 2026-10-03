@@ -40,10 +40,10 @@ void DeferredFences::defer(
         ringHasStoppedRetiring(escapesForRing(fence).consecutive);
     pending_.push_back(Pending {
         .requestId = requestId,
-        .requestHeader = requestHeader,
         .response = std::move(response),
         .fence = fence,
         .deadline = deadRing ? now : now + maximumFenceWait,
+        .commandType = requestHeader.type,
         .orderingReleased = deadRing,
     });
 }
@@ -177,7 +177,7 @@ void DeferredFences::reportOverdueFence(
         "GPU fence overdue: context=%u ring=%u command=0x%x: %s\n",
         pending.fence.contextId,
         pending.fence.ringIndex,
-        pending.requestHeader.type,
+        pending.commandType,
         action);
 }
 

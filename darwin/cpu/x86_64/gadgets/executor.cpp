@@ -1677,7 +1677,6 @@ struct Executor::Storage final {
 	ProgramCacheDiagnostics diagnostics{};
 	bool prepared{};
 	bool cache_ready{};
-	bool unaligned_exclusives{};
 	unsigned checked{};
 };
 
@@ -1838,16 +1837,6 @@ void Executor::check_exceptions(unsigned checked) noexcept
 unsigned Executor::checked_exceptions() const noexcept
 {
 	return storage_->checked;
-}
-
-void Executor::permit_unaligned_exclusives(bool value) noexcept
-{
-	storage_->unaligned_exclusives = value;
-}
-
-bool Executor::unaligned_exclusives() const noexcept
-{
-	return storage_->unaligned_exclusives;
 }
 
 void *Executor::execution_context() const noexcept

@@ -1459,7 +1459,8 @@ def check(options: argparse.Namespace) -> int:
     if not set(tokens) <= set(feature_tokens()):
         fail("the pack names a feature the runtime no longer defines")
     stale = []
-    for name, data in metadata(corpus, pack).items():
+    files = metadata(corpus, pack)
+    for name, data in files.items():
         path = options.output / name
         if not path.is_file() or path.read_bytes() != data:
             stale.append(name)
@@ -1491,18 +1492,28 @@ def check(options: argparse.Namespace) -> int:
             stale.append("absent-feature failing list")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
-    # An evidence binding names the producer check its witness came from, or
-    # "-" for both columns once no record of the pack comes from it.
-    producers = {record.producer for record in corpus.records}
+    # Every inventory entry has a case, or an illegal-instruction case.
+    uncovered = [row["stable_id"] for row in csv.DictReader(
+                     files["coverage.tsv"].decode().splitlines(), delimiter="\t")
+                 if row["cases"] == row["illegal_cases"] == "0"]
+    if uncovered:
+        fail(f"{len(uncovered)} inventory entries have no case in the pack: " +
+             ", ".join(uncovered))
+    # An evidence binding names a pack case whose entry word is its witness,
+    # by producer and case name, or "-" for both columns when no case is.
+    witnesses = {(record.producer, case.name, entry_word(case))
+                 for record in corpus.records
+                 for _program, case in record.cases}
     with BINDINGS.open(encoding="utf-8", newline="") as source:
-        unbound = [f"{row['stable_id']} ({row['ctest']})"
+        unbound = [f"{row['stable_id']} ({row['ctest']}: {row['case']})"
                    for row in csv.DictReader(source, delimiter="\t")
-                   if row["ctest"] not in producers and
-                   (row["ctest"], row["case"]) != ("-", "-")]
+                   if (row["ctest"], row["case"]) != ("-", "-") and
+                   (row["ctest"], row["case"], int(row["encoding"], 16))
+                   not in witnesses]
     if unbound:
-        fail(f"{BINDINGS.name}: {len(unbound)} bindings name a producer with "
-             "no record in the pack; set their ctest and case to -: " +
-             ", ".join(unbound))
+        fail(f"{BINDINGS.name}: {len(unbound)} bindings name no pack case "
+             "whose entry word is their witness; name one, or set their "
+             "ctest and case to -: " + ", ".join(unbound))
     print(f"A64 instruction corpus is fresh: "
           f"{sum(len(record.cases) for record in corpus.records)} cases in "
           f"{len(corpus.records)} records")

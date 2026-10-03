@@ -230,6 +230,13 @@ struct Prefixes final {
 	return operand;
 }
 
+/* The eight classic ALU operations, in the order opcode bits 5:3 of 0x00-0x3d
+ * and ModRM.reg of the 0x80-0x83 group number them. */
+constexpr std::array<Operation, 8> alu_operations{Operation::add,
+	Operation::bit_or, Operation::add_carry, Operation::subtract_borrow,
+	Operation::bit_and, Operation::subtract, Operation::bit_xor,
+	Operation::compare};
+
 class InstructionDecoder final {
 public:
 	InstructionDecoder(::uml::memory::GuestAddressSpace &memory,
@@ -568,18 +575,7 @@ private:
 		std::uint8_t modrm{};
 		if (!read(modrm))
 			return false;
-		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
-		switch (group) {
-		case 0: instruction.operation = Operation::add; break;
-		case 1: instruction.operation = Operation::bit_or; break;
-		case 2: instruction.operation = Operation::add_carry; break;
-		case 3: instruction.operation = Operation::subtract_borrow; break;
-		case 4: instruction.operation = Operation::bit_and; break;
-		case 5: instruction.operation = Operation::subtract; break;
-		case 6: instruction.operation = Operation::bit_xor; break;
-		case 7: instruction.operation = Operation::compare; break;
-		default: return false;
-		}
+		instruction.operation = alu_operations[(modrm >> 3U) & 7U];
 		if (!rm_operand(modrm, width, instruction.destination))
 			return false;
 		std::uint64_t immediate{};
@@ -2730,6 +2726,20 @@ private:
 		std::uint8_t opcode, Instruction &instruction)
 	{
 		const auto width = ordinary_width(prefixes_);
+		/* 0x00-0x3d with bits 2:0 below 6: bits 5:3 name the
+		 * operation, bit 0 the width, bit 1 the direction and bit 2
+		 * the accumulator form. The rest of each row is segment
+		 * stack operations, prefixes and BCD adjustments. */
+		if (opcode < 0x40 && (opcode & 7U) < 6U) {
+			const auto operation = alu_operations[opcode >> 3U];
+			const auto alu_width = (opcode & 1U) != 0 ?
+				width : OperandWidth::byte;
+			return (opcode & 4U) != 0 ?
+				decode_accumulator_immediate(
+					instruction, operation, alu_width) :
+				decode_binary(instruction, operation, alu_width,
+					(opcode & 2U) != 0);
+		}
 		if (prefixes_.mode == ExecutionMode::compat32 &&
 			opcode >= 0x40 && opcode <= 0x4f) {
 			instruction.operation = opcode < 0x48 ?
@@ -2834,82 +2844,6 @@ private:
 				Operation::push_all : Operation::pop_all;
 			instruction.destination.width = stack_width(prefixes_);
 			return true;
-		case 0x00: return decode_binary(instruction, Operation::add,
-			OperandWidth::byte, false);
-		case 0x01: return decode_binary(instruction, Operation::add, width, false);
-		case 0x02: return decode_binary(instruction, Operation::add,
-			OperandWidth::byte, true);
-		case 0x03: return decode_binary(instruction, Operation::add, width, true);
-		case 0x04: return decode_accumulator_immediate(instruction,
-			Operation::add, OperandWidth::byte);
-		case 0x05: return decode_accumulator_immediate(instruction, Operation::add, width);
-		case 0x08: return decode_binary(instruction, Operation::bit_or,
-			OperandWidth::byte, false);
-		case 0x09: return decode_binary(instruction, Operation::bit_or, width, false);
-		case 0x0a: return decode_binary(instruction, Operation::bit_or,
-			OperandWidth::byte, true);
-		case 0x0b: return decode_binary(instruction, Operation::bit_or, width, true);
-		case 0x0c: return decode_accumulator_immediate(instruction,
-			Operation::bit_or, OperandWidth::byte);
-		case 0x0d: return decode_accumulator_immediate(instruction, Operation::bit_or, width);
-		case 0x10: return decode_binary(instruction, Operation::add_carry,
-			OperandWidth::byte, false);
-		case 0x11: return decode_binary(instruction, Operation::add_carry, width, false);
-		case 0x12: return decode_binary(instruction, Operation::add_carry,
-			OperandWidth::byte, true);
-		case 0x13: return decode_binary(instruction, Operation::add_carry, width, true);
-		case 0x14: return decode_accumulator_immediate(instruction,
-			Operation::add_carry, OperandWidth::byte);
-		case 0x15: return decode_accumulator_immediate(instruction,
-			Operation::add_carry, width);
-		case 0x18: return decode_binary(instruction, Operation::subtract_borrow,
-			OperandWidth::byte, false);
-		case 0x19: return decode_binary(instruction, Operation::subtract_borrow,
-			width, false);
-		case 0x1a: return decode_binary(instruction, Operation::subtract_borrow,
-			OperandWidth::byte, true);
-		case 0x1b: return decode_binary(instruction, Operation::subtract_borrow,
-			width, true);
-		case 0x1c: return decode_accumulator_immediate(instruction,
-			Operation::subtract_borrow, OperandWidth::byte);
-		case 0x1d: return decode_accumulator_immediate(instruction,
-			Operation::subtract_borrow, width);
-		case 0x20: return decode_binary(instruction, Operation::bit_and,
-			OperandWidth::byte, false);
-		case 0x21: return decode_binary(instruction, Operation::bit_and, width, false);
-		case 0x22: return decode_binary(instruction, Operation::bit_and,
-			OperandWidth::byte, true);
-		case 0x23: return decode_binary(instruction, Operation::bit_and, width, true);
-		case 0x24: return decode_accumulator_immediate(instruction,
-			Operation::bit_and, OperandWidth::byte);
-		case 0x25: return decode_accumulator_immediate(instruction, Operation::bit_and, width);
-		case 0x28: return decode_binary(instruction, Operation::subtract,
-			OperandWidth::byte, false);
-		case 0x29: return decode_binary(instruction, Operation::subtract, width, false);
-		case 0x2a: return decode_binary(instruction, Operation::subtract,
-			OperandWidth::byte, true);
-		case 0x2b: return decode_binary(instruction, Operation::subtract, width, true);
-		case 0x2c: return decode_accumulator_immediate(instruction,
-			Operation::subtract, OperandWidth::byte);
-		case 0x2d: return decode_accumulator_immediate(instruction, Operation::subtract, width);
-		case 0x30: return decode_binary(instruction, Operation::bit_xor,
-			OperandWidth::byte, false);
-		case 0x31: return decode_binary(instruction, Operation::bit_xor, width, false);
-		case 0x32: return decode_binary(instruction, Operation::bit_xor,
-			OperandWidth::byte, true);
-		case 0x33: return decode_binary(instruction, Operation::bit_xor, width, true);
-		case 0x34: return decode_accumulator_immediate(instruction,
-			Operation::bit_xor, OperandWidth::byte);
-		case 0x35: return decode_accumulator_immediate(instruction, Operation::bit_xor, width);
-		case 0x38: return decode_binary(instruction, Operation::compare,
-			OperandWidth::byte, false);
-		case 0x39: return decode_binary(instruction, Operation::compare, width, false);
-		case 0x3a: return decode_binary(instruction, Operation::compare,
-			OperandWidth::byte, true);
-		case 0x3b: return decode_binary(instruction, Operation::compare, width, true);
-		case 0x3c: return decode_accumulator_immediate(instruction,
-			Operation::compare, OperandWidth::byte);
-		case 0x3d: return decode_accumulator_immediate(instruction, Operation::compare, width);
 		case 0x62: {
 			/* BOUND exists only outside 64-bit mode. With a register
 			 * operand the byte starts an EVEX prefix, which this CPU does
