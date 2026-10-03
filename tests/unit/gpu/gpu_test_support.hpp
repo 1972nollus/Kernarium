@@ -3,7 +3,7 @@
 
 #include "gpu_require.hpp"
 #include "protocol.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 
@@ -24,6 +24,8 @@
 #include <vector>
 
 namespace uml::gpu::testing {
+
+using ::uml::testing::ScratchBacking;
 
 void runVhostUserServerTests(const char* executable);
 [[noreturn]] void runVhostUserServerChild(std::string_view mode);
@@ -58,16 +60,8 @@ struct SocketPair {
     return UniqueDescriptor {descriptor};
 }
 
-[[nodiscard]] inline UniqueDescriptor openMemoryDescriptor(
-    std::size_t size = 4096)
-{
-    auto path = ::uml::testing::scratch_template("uml-gpu-memory.XXXXXX");
-    const int descriptor = ::mkstemp(path.data());
-    require(descriptor >= 0);
-    require(::unlink(path.c_str()) == 0);
-    require(::ftruncate(descriptor, static_cast<off_t>(size)) == 0);
-    return UniqueDescriptor {descriptor};
-}
+// The name of the scratch file behind a test's guest memory.
+inline constexpr std::string_view memoryBackingName = "uml-gpu-memory.XXXXXX";
 
 inline void sendBytesWithDescriptors(
     int socket,

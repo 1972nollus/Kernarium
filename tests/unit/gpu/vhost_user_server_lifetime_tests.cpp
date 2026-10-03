@@ -226,11 +226,11 @@ void memoryReplacementReleasesQueueDescriptors()
         const auto ownedServer = makeGpuVhostUserServer(
             "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
-        auto memory = openMemoryDescriptor();
+        const ScratchBacking memory {memoryBackingName, 4096};
         std::size_t stableConfiguredCount = 0;
         withServerConnection(server, [&](int socket) {
             for (unsigned iteration = 0; iteration < 16; ++iteration) {
-                configureMemory(socket, memory.get());
+                configureMemory(socket, memory.descriptor());
                 std::array<int, 2> pipeDescriptors {-1, -1};
                 require(::pipe(pipeDescriptors.data()) == 0);
                 UniqueDescriptor readEnd {pipeDescriptors[0]};
@@ -258,9 +258,9 @@ void failedMemoryReplacementIsRetryable(
         const auto ownedServer = makeGpuVhostUserServer(
             "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
-        auto memory = openMemoryDescriptor(backingSize);
+        const ScratchBacking memory {memoryBackingName, backingSize};
         withServerConnection(server, [&](int socket) {
-            configureMemory(socket, memory.get());
+            configureMemory(socket, memory.descriptor());
             const protocol::MemoryRegion invalidRegion {
                 .guestAddress = 0x1000,
                 .size = size,
@@ -269,7 +269,7 @@ void failedMemoryReplacementIsRetryable(
             };
             const auto payload =
                 memoryTablePayload(std::span {&invalidRegion, 1U});
-            const std::array descriptors {memory.get()};
+            const std::array descriptors {memory.descriptor()};
             sendRequest(
                 socket,
                 protocol::VhostRequest::setMemTable,
@@ -278,7 +278,7 @@ void failedMemoryReplacementIsRetryable(
             waitForConnectionClose(socket);
         });
         withServerConnection(server, [&](int socket) {
-            configureMemory(socket, memory.get(), backingSize);
+            configureMemory(socket, memory.descriptor(), backingSize);
         });
     }
     require(descriptorCount() == before);
@@ -291,8 +291,8 @@ void twoRegionFailureRollsBackEveryOwner()
         const auto ownedServer = makeGpuVhostUserServer(
             "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
-        auto first = openMemoryDescriptor();
-        auto shortSecond = openMemoryDescriptor(1024);
+        const ScratchBacking first {memoryBackingName, 4096};
+        const ScratchBacking shortSecond {memoryBackingName, 1024};
         const std::array regions {
             protocol::MemoryRegion {
                 .guestAddress = 0x1000,
@@ -308,7 +308,7 @@ void twoRegionFailureRollsBackEveryOwner()
             },
         };
         const auto payload = memoryTablePayload(regions);
-        const std::array descriptors {first.get(), shortSecond.get()};
+        const std::array descriptors {first.descriptor(), shortSecond.descriptor()};
         withServerConnection(server, [&](int socket) {
             sendRequest(
                 socket,
@@ -318,7 +318,7 @@ void twoRegionFailureRollsBackEveryOwner()
             waitForConnectionClose(socket);
         });
         withServerConnection(server, [&](int socket) {
-            configureMemory(socket, first.get());
+            configureMemory(socket, first.descriptor());
         });
     }
     require(descriptorCount() == before);
@@ -529,13 +529,13 @@ void configureQueueForOneRequest(
 {
     (void)::signal(SIGPIPE, SIG_DFL);
     auto server = makeTransportTestServer();
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     void* mapped = ::mmap(
         nullptr,
         4096,
         PROT_READ | PROT_WRITE,
         MAP_SHARED,
-        memoryDescriptor.get(),
+        memoryDescriptor.descriptor(),
         0);
     require(mapped != MAP_FAILED);
     auto memory = std::span {
@@ -557,7 +557,7 @@ void configureQueueForOneRequest(
             socket,
             protocol::VhostRequest::setProtocolFeatures,
             bytesOf(protocolFeatures));
-        configureMemory(socket, memoryDescriptor.get());
+        configureMemory(socket, memoryDescriptor.descriptor());
         std::array<int, 2> pipeDescriptors {-1, -1};
         require(::pipe(pipeDescriptors.data()) == 0);
         UniqueDescriptor readEnd {pipeDescriptors[0]};
