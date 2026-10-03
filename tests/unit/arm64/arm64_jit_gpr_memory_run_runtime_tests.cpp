@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_immediate_memory_test_support.hpp"
+#include "arm64_jit_memory_run_runtime_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
-#include "cpu/arm64/jit/jit_executor.hpp"
 
 #include <array>
 #include <cstddef>
@@ -15,41 +15,31 @@
 namespace arm64 = uml::cpu::arm64;
 namespace engine = uml::emulator::tests;
 namespace immediate = uml::emulator::tests::base_immediate_memory;
+namespace run = arm64_jit_memory_run_runtime_test;
 
 namespace {
 
-constexpr auto page_size = std::uint64_t{DARWIN_UML_GUEST_PAGE_SIZE};
-constexpr auto data_base = engine::engine_test_data_base;
-constexpr std::uint32_t system_call = 0xd400'0001U;
+using run::compare_x;
+using run::data_base;
+using run::move_wide;
+using run::page_size;
+using run::system_call;
+
+constexpr run::ScalarBase scalar_base{
+    .reg = 2,
+    .remap_transfers = {3, 4},
+    .tracked_transfers = {3, 4},
+    .remap_generation = 9401,
+    .remap_base = 0xd0'0000,
+    .tracked_generation = 9500,
+    .tracked_base = 0xe0'0000,
+};
 
 [[nodiscard]] constexpr std::uint32_t
 unsigned_x(bool load, unsigned immediate, unsigned base,
            unsigned transfer) noexcept {
   return immediate::encode_unsigned(3, load ? 1U : 0U, immediate, base,
                                     transfer);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-move_wide(unsigned destination, unsigned immediate) noexcept {
-  return 0xd280'0000U | ((immediate & 0xffffU) << 5U) |
-         (destination & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-compare_x(unsigned left, unsigned right) noexcept {
-  return 0xeb00'001fU | ((right & 31U) << 16U) | ((left & 31U) << 5U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-load_exclusive_byte(unsigned base, unsigned transfer) noexcept {
-  return 0x085f'7c00U | ((base & 31U) << 5U) | (transfer & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-store_exclusive_byte(unsigned status, unsigned base,
-                     unsigned transfer) noexcept {
-  return 0x0800'7c00U | ((status & 31U) << 16U) |
-         ((base & 31U) << 5U) | (transfer & 31U);
 }
 
 void every_scalar_variant(engine::EngineHarness &harness) {
@@ -589,163 +579,6 @@ void prefixed_cold_faults_preserve_state(engine::EngineHarness &harness) {
   }
 }
 
-struct Run final {
-  ::uml::cpu::EngineEvent event{};
-  std::size_t executed{};
-};
-
-[[nodiscard]] Run run_once(uml::cpu::arm64::JitExecutor &executor,
-                           uml::memory::StaticGuestMemory &memory,
-                           unsigned long generation, arm64::CpuState &cpu) {
-  engine::require(executor.begin_execution(generation, cpu.pc));
-  std::size_t executed = 0;
-  const auto event = executor.run_block(cpu, memory, generation, executed);
-  executor.end_execution();
-  return {event, executed};
-}
-
-void remapped_page_uses_new_backing() {
-  constexpr unsigned long generation = 9401;
-  constexpr std::uint64_t base = 0xd0'0000;
-  constexpr std::uint64_t old_first = 0x1111'2222'3333'4444ULL;
-  constexpr std::uint64_t old_second = 0x5555'6666'7777'8888ULL;
-  constexpr std::uint64_t new_first = 0x9999'aaaa'bbbb'ccccULL;
-  constexpr std::uint64_t new_second = 0xdddd'eeee'ffff'0001ULL;
-  engine::JitBacking original{2};
-  engine::JitBacking replacement{1};
-  original.put32(0, unsigned_x(true, 0, 2, 3));
-  original.put32(4, unsigned_x(true, 1, 2, 4));
-  original.put32(8, system_call);
-  original.put64(page_size, old_first);
-  original.put64(page_size + 8U, old_second);
-  replacement.put64(0, new_first);
-  replacement.put64(8, new_second);
-  engine::JitMapping mapping{generation, base, original, 2};
-  uml::cpu::arm64::JitExecutor executor;
-  uml::memory::StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  cpu.pc = base;
-  cpu.registers[2] = base + page_size;
-
-  auto run = run_once(executor, memory, generation, cpu);
-  engine::require(run.event == ::uml::cpu::EngineEvent::system_call);
-  engine::require(run.executed == 3);
-  engine::require(cpu.registers[3] == old_first &&
-                  cpu.registers[4] == old_second);
-
-  mapping.replace_page(base + page_size, replacement);
-  cpu.pc = base;
-  cpu.registers[3] = 0;
-  cpu.registers[4] = 0;
-  run = run_once(executor, memory, generation, cpu);
-  engine::require(run.event == ::uml::cpu::EngineEvent::system_call);
-  engine::require(run.executed == 3);
-  engine::require(cpu.registers[3] == new_first &&
-                  cpu.registers[4] == new_second);
-}
-
-enum class ReservationTarget : unsigned {
-  first,
-  second,
-  nonoverlap,
-};
-
-void tracked_store_reservation_case(unsigned size_shift,
-                                    ReservationTarget target) {
-  const auto case_index =
-      size_shift * 3U + static_cast<unsigned>(target);
-  const auto generation = static_cast<unsigned long>(9500U + case_index);
-  const auto base =
-      std::uint64_t{0xe0'0000} + case_index * 4U * page_size;
-  constexpr std::size_t first_offset = 16;
-  constexpr std::size_t second_offset = 32;
-  constexpr std::size_t nonoverlap_offset = 64;
-  const auto bytes = std::size_t{1} << size_shift;
-  const auto reservation_offset =
-      target == ReservationTarget::first
-          ? first_offset + bytes - 1U
-      : target == ReservationTarget::second
-          ? second_offset + bytes - 1U
-          : nonoverlap_offset;
-  constexpr std::uint64_t first_value = 0x0123'4567'89ab'cda5ULL;
-  constexpr std::uint64_t second_value = 0xfedc'ba98'7654'325aULL;
-  constexpr std::uint64_t exclusive_value = 0xc7U;
-  engine::JitBacking backing{2};
-  backing.put32(0, load_exclusive_byte(1, 5));
-  backing.put32(4, system_call);
-  backing.put32(
-      8, immediate::encode_unsigned(
-             size_shift, 0, first_offset >> size_shift, 2, 3));
-  backing.put32(
-      12, immediate::encode_unsigned(
-              size_shift, 0, second_offset >> size_shift, 2, 4));
-  backing.put32(16, system_call);
-  backing.put32(20, store_exclusive_byte(6, 1, 4));
-  backing.put32(24, system_call);
-  backing.put64(page_size + first_offset, 0);
-  backing.put64(page_size + second_offset, 0);
-  backing.put64(page_size + nonoverlap_offset, 0);
-  engine::JitMapping mapping{generation, base, backing, 2};
-
-  uml::cpu::arm64::JitExecutor first;
-  uml::cpu::arm64::JitExecutor second;
-  uml::memory::StaticGuestMemory shared_memory;
-  arm64::CpuState first_cpu{};
-  arm64::CpuState second_cpu{};
-  first_cpu.pc = base;
-  first_cpu.registers[1] = base + page_size + reservation_offset;
-  first_cpu.registers[4] = exclusive_value;
-  second_cpu.pc = base + 8U;
-  second_cpu.registers[2] = base + page_size;
-  second_cpu.registers[3] = first_value;
-  second_cpu.registers[4] = second_value;
-
-  engine::require(first.begin_execution(generation, first_cpu.pc));
-  std::size_t executed = 0;
-  engine::require(first.run_block(first_cpu, shared_memory, generation,
-                                  executed) ==
-                  ::uml::cpu::EngineEvent::continued);
-  engine::require(executed == 1);
-  engine::require(first_cpu.exclusive_size == 1);
-
-  engine::require(second.begin_execution(generation, second_cpu.pc));
-  engine::require(second.run_block(second_cpu, shared_memory, generation,
-                                   executed) ==
-                  ::uml::cpu::EngineEvent::system_call);
-  engine::require(executed == 3);
-  const auto value_mask =
-      bytes == sizeof(std::uint64_t)
-          ? ~std::uint64_t{}
-          : (std::uint64_t{1} << (bytes * 8U)) - 1U;
-  engine::require((backing.get64(page_size + first_offset) & value_mask) ==
-                  (first_value & value_mask));
-  engine::require((backing.get64(page_size + second_offset) & value_mask) ==
-                  (second_value & value_mask));
-  second.end_execution();
-
-  first_cpu.pc = base + 20U;
-  engine::require(first.run_block(first_cpu, shared_memory, generation,
-                                  executed) ==
-                  ::uml::cpu::EngineEvent::continued);
-  engine::require(executed == 1);
-  const bool overlaps = target != ReservationTarget::nonoverlap;
-  engine::require(first_cpu.registers[6] == (overlaps ? 1U : 0U));
-  engine::require(first_cpu.exclusive_size == 0);
-  if (!overlaps)
-    engine::require(
-        (backing.get64(page_size + nonoverlap_offset) & 0xffU) ==
-        exclusive_value);
-  first.end_execution();
-}
-
-void tracked_store_runs_track_every_range() {
-  for (unsigned size_shift = 0; size_shift < 4U; ++size_shift)
-    for (const auto target : {ReservationTarget::first,
-                              ReservationTarget::second,
-                              ReservationTarget::nonoverlap})
-      tracked_store_reservation_case(size_shift, target);
-}
-
 } // namespace
 
 int main() {
@@ -760,14 +593,6 @@ int main() {
   exact_page_end_and_runtime_crossing(harness);
   precise_fault_cases(harness);
   prefixed_cold_faults_preserve_state(harness);
-  const auto &counts = harness.counts();
-  engine::require(counts.gadgets != 0);
-  engine::require(counts.jit == counts.gadgets);
-  engine::require(counts.jit_skipped == 0);
-  engine::require(counts.jit_skipped_host_feature == 0);
-  engine::require(counts.jit_unavailable == 0);
-  harness.print_summary("arm64-jit-gpr-memory-run-runtime");
-  remapped_page_uses_new_backing();
-  tracked_store_runs_track_every_range();
+  run::finish(harness, "arm64-jit-gpr-memory-run-runtime", scalar_base);
   return 0;
 }
