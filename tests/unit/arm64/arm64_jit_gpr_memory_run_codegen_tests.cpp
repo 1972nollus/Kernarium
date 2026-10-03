@@ -26,8 +26,9 @@ constexpr unsigned page_shift =
     DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
 constexpr std::uint32_t page_span_tbnz =
     0x3700'0000U | ((page_shift & 31U) << 19U);
-constexpr std::uint32_t sp_alignment_test =
-    0xf240'001fU | (3U << 10U) | (8U << 5U);
+// The SP run's alignment check extracts the low four address bits.
+constexpr std::uint32_t sp_alignment_extract =
+    0xd340'0000U | (3U << 10U) | (8U << 5U);
 constexpr std::uint32_t monitor_clear =
     0x3900'0000U |
     (static_cast<std::uint32_t>(
@@ -152,7 +153,7 @@ void every_scalar_variant_coalesces() {
             "first scalar GPR operation lost its native offset");
     require(count_memory_form(hot, guest[1]) == 1,
             "second scalar GPR operation lost its native offset");
-    require(count_word(hot, sp_alignment_test) == 0,
+    require(count_word(hot, sp_alignment_extract) == 0,
             "non-SP memory run emitted an SP alignment check");
     const auto expected_mask =
         variant.load ? std::uint64_t{0} : std::uint64_t{3};
@@ -408,7 +409,7 @@ void reserved_and_unrelated_allocations_do_not_coalesce() {
   require_count(
       count_word(vector_hot, translation_probe), 1,
       "vector unsigned memory did not use its dedicated shared run");
-  require(count_word(vector_hot, sp_alignment_test) == 0,
+  require(count_word(vector_hot, sp_alignment_extract) == 0,
           "GPR-based vector run emitted the scalar SP alignment guard");
 
   const std::array unscaled{
