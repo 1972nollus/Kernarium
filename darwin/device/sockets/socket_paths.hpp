@@ -12,8 +12,8 @@ namespace uml::device {
  * additionally published to the handler installed by
  * install_socket_path_signal_cleanup(), because a terminating signal never
  * unwinds this object and would otherwise leave the path behind.  A stale path
- * is not merely untidy: both socket servers refuse to replace an existing path,
- * so the next run of the same command fails to start.
+ * is not merely untidy: the console socket server refuses to replace an
+ * existing path, so the next run of the same command fails to start.
  */
 class SocketPath final {
 public:

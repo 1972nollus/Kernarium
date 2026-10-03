@@ -2,8 +2,8 @@
 
 #include "playback_sink.hpp"
 
+#include "platform/descriptor.hpp"
 #include "protocol.hpp"
-#include "unique_descriptor.hpp"
 
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
@@ -11,69 +11,20 @@
 
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <cstring>
-#include <fcntl.h>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 #include <utility>
 
 namespace uml::audio {
 namespace {
 
-class WakeSource final {
-public:
-    WakeSource()
-    {
-        std::array<int, 2> descriptors {-1, -1};
-        if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0)
-            throw std::runtime_error(
-                "creating audio readiness socketpair failed: " +
-                std::string(std::strerror(errno)));
-        read_ = uml::gpu::UniqueDescriptor {descriptors[0]};
-        write_ = uml::gpu::UniqueDescriptor {descriptors[1]};
-        for (const auto descriptor : descriptors) {
-            const int descriptorFlags = ::fcntl(descriptor, F_GETFD);
-            const int statusFlags = ::fcntl(descriptor, F_GETFL);
-            if (descriptorFlags < 0 || statusFlags < 0 ||
-                ::fcntl(
-                    descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) != 0 ||
-                ::fcntl(
-                    descriptor, F_SETFL, statusFlags | O_NONBLOCK) != 0) {
-                throw std::runtime_error(
-                    "configuring audio readiness socketpair failed: " +
-                    std::string(std::strerror(errno)));
-            }
-        }
-    }
-
-    [[nodiscard]] int descriptor() const noexcept { return read_.get(); }
-
-    void notify() const noexcept
-    {
-        constexpr std::uint8_t ready = 1;
-        const auto result = ::write(write_.get(), &ready, sizeof(ready));
-        (void)result;
-    }
-
-    void drain() const noexcept
-    {
-        std::array<std::uint8_t, 64> bytes {};
-        while (::read(read_.get(), bytes.data(), bytes.size()) > 0) {
-        }
-    }
-
-private:
-    uml::gpu::UniqueDescriptor read_;
-    uml::gpu::UniqueDescriptor write_;
-};
+using uml::platform::WakeSocket;
 
 struct NotificationFlags final {
-    explicit NotificationFlags(std::shared_ptr<WakeSource> source)
+    explicit NotificationFlags(std::shared_ptr<WakeSocket> source)
         : wake(std::move(source))
     {
     }
@@ -81,10 +32,10 @@ struct NotificationFlags final {
     void signal(std::atomic_bool& flag) noexcept
     {
         flag.store(true, std::memory_order_release);
-        wake->notify();
+        (void)wake->notify();
     }
 
-    std::shared_ptr<WakeSource> wake;
+    std::shared_ptr<WakeSocket> wake;
     std::atomic_bool configurationChanged {};
 #if TARGET_OS_IPHONE
     std::atomic_bool interruptionBegan {};
@@ -145,7 +96,7 @@ struct PlaybackState final {
         std::uint64_t requestId {};
     };
 
-    explicit PlaybackState(std::shared_ptr<WakeSource> source)
+    explicit PlaybackState(std::shared_ptr<WakeSocket> source)
         : wake(std::move(source))
         , slots(std::make_unique<Slot[]>(protocol::maximumPeriods))
     {
@@ -164,7 +115,7 @@ struct PlaybackState final {
             .latencyBytes = remaining * periodBytes,
             .success = success,
         });
-        wake->notify();
+        (void)wake->notify();
     }
 
     void discard() noexcept
@@ -188,7 +139,7 @@ private:
     }
 
 public:
-    std::shared_ptr<WakeSource> wake;
+    std::shared_ptr<WakeSocket> wake;
     std::unique_ptr<Slot[]> slots;
     CompletionQueue completions;
     std::atomic<std::uint32_t> pending {};
@@ -201,7 +152,7 @@ public:
 class ApplePlaybackSink final : public PlaybackSink {
 public:
     ApplePlaybackSink()
-        : wake_(std::make_shared<WakeSource>())
+        : wake_(std::make_shared<WakeSocket>("audio readiness"))
         , notifications_(std::make_shared<NotificationFlags>(wake_))
         , state_(std::make_shared<PlaybackState>(wake_))
         , engine_([[AVAudioEngine alloc] init])
@@ -477,7 +428,7 @@ public:
 
     void drainEventSource() override
     {
-        wake_->drain();
+        (void)wake_->drain();
         @try {
 #if TARGET_OS_IPHONE
             if (notifications_->interruptionBegan.exchange(
@@ -581,7 +532,7 @@ private:
 #endif
     }
 
-    std::shared_ptr<WakeSource> wake_;
+    std::shared_ptr<WakeSocket> wake_;
     std::shared_ptr<NotificationFlags> notifications_;
     std::shared_ptr<PlaybackState> state_;
     AVAudioEngine* __strong engine_;

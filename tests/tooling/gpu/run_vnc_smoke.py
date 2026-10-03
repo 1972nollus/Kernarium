@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import select
 import subprocess
-import tempfile
 import time
 
 
@@ -64,85 +63,70 @@ def main() -> int:
         parser.error("--startup-timeout must be positive")
     password = "umltest"
 
-    with tempfile.TemporaryDirectory(prefix="uml-gpu-vnc-") as directory:
-        vhost_socket = Path(directory) / "gpu.sock"
-        server = subprocess.Popen(
+    server = subprocess.Popen(
+        [
+            str(options.server),
+            "--vnc-port",
+            "0",
+            "--vnc-password",
+            password,
+            "--width",
+            "64",
+            "--height",
+            "48",
+            "--self-test-pattern",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+    try:
+        port = wait_for_vnc_port(server, options.startup_timeout)
+
+        rejected = subprocess.run(
             [
-                str(options.server),
-                "--socket",
-                str(vhost_socket),
-                "--vnc-port",
-                "0",
-                "--vnc-password",
-                password,
-                "--width",
-                "64",
-                "--height",
-                "48",
-                "--self-test-pattern",
+                str(options.client),
+                "--password",
+                "wrong",
+                str(port),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=0,
+            text=True,
+            timeout=10,
         )
-        try:
-            port = wait_for_vnc_port(server, options.startup_timeout)
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                if server.poll() is not None:
-                    output, _ = server.communicate()
-                    raise RuntimeError(
-                        "VNC server exited early:\n" + output_text(output))
-                if vhost_socket.exists():
-                    break
-                time.sleep(0.05)
-            else:
-                raise RuntimeError("VNC server did not become ready")
+        if rejected.returncode == 0:
+            raise RuntimeError("VNC server accepted an incorrect password")
 
-            rejected = subprocess.run(
-                [
-                    str(options.client),
-                    "--password",
-                    "wrong",
-                    str(port),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=10,
-            )
-            if rejected.returncode == 0:
-                raise RuntimeError("VNC server accepted an incorrect password")
-
-            subprocess.run(
-                [
-                    str(options.client),
-                    "--password",
-                    password,
-                    str(port),
-                ],
-                check=True,
-                timeout=10,
-            )
-            subprocess.run(
-                [
-                    str(options.client),
-                    "--password",
-                    password,
-                    "--input",
-                    str(port),
-                ],
-                check=True,
-                timeout=10,
-            )
-        finally:
-            if server.poll() is None:
-                server.terminate()
-                try:
-                    server.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    server.kill()
-                    server.wait(timeout=5)
+        subprocess.run(
+            [
+                str(options.client),
+                "--password",
+                password,
+                str(port),
+            ],
+            check=True,
+            timeout=10,
+        )
+        subprocess.run(
+            [
+                str(options.client),
+                "--password",
+                password,
+                "--input",
+                str(port),
+            ],
+            check=True,
+            timeout=10,
+        )
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
     return 0
 
 
