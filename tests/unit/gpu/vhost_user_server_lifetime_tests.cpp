@@ -10,6 +10,7 @@
 #include <chrono>
 #include <csignal>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -320,6 +321,120 @@ void twoRegionFailureRollsBackEveryOwner()
         withServerConnection(server, [&](int socket) {
             configureMemory(socket, first.get());
         });
+    }
+    require(descriptorCount() == before);
+}
+
+std::atomic_uint interruptedWriterWaits;
+
+void countInterruptedWriterWait(int)
+{
+    interruptedWriterWaits.fetch_add(1, std::memory_order_relaxed);
+}
+
+/* Sends GET_FEATURES requests whose replies the caller does not read until
+ * the socket refuses more. The replies fill the server's direction first; the
+ * server then waits to write and stops reading, and the requests fill the
+ * other direction. A pass that adds nothing after a pause means the server
+ * has stopped reading. Returns the number of requests sent. */
+[[nodiscard]] std::size_t fillUntilTheServerWaitsToWrite(int socket)
+{
+    const protocol::VhostHeader header {
+        .request = static_cast<std::uint32_t>(
+            protocol::VhostRequest::getFeatures),
+        .flags = protocol::vhostUserVersion,
+        .size = 0,
+    };
+    std::size_t sent = 0;
+    for (;;) {
+        std::size_t pass = 0;
+        for (;;) {
+            const auto count = ::send(socket, &header, sizeof(header), 0);
+            if (count < 0 && errno == EINTR)
+                continue;
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                break;
+            require(count == static_cast<ssize_t>(sizeof(header)));
+            ++pass;
+        }
+        sent += pass;
+        if (pass == 0 && sent != 0)
+            return sent;
+        std::this_thread::sleep_for(std::chrono::milliseconds {200});
+    }
+}
+
+/* A peer that stops reading leaves the server's replies on a full socket. The
+ * reply write waits for room: an interrupted wait and a would-block write are
+ * retried, every reply arrives whole and in order once the peer reads again,
+ * and a stop request still ends a write that is waiting. */
+void backpressuredRepliesArriveWholeAndStopEndsTheWait()
+{
+    const auto before = descriptorCount();
+    {
+        auto server = makeTransportTestServer();
+        auto sockets = makeSocketPair();
+        const int peer = sockets.descriptors[0].get();
+        require(::fcntl(peer, F_SETNOSIGPIPE, 1) == 0);
+        const int statusFlags = ::fcntl(peer, F_GETFL);
+        require(statusFlags >= 0);
+        std::atomic_bool stopRequested {};
+        std::atomic_bool finished {};
+        std::thread worker {[&, connection = sockets.descriptors[1].release()] {
+            server->runConnected(connection, stopRequested);
+            finished.store(true, std::memory_order_release);
+        }};
+
+        struct sigaction interrupt {};
+        interrupt.sa_handler = countInterruptedWriterWait;
+        sigemptyset(&interrupt.sa_mask);
+        interrupt.sa_flags = 0;
+        struct sigaction previous {};
+        require(::sigaction(SIGUSR2, &interrupt, &previous) == 0);
+        interruptedWriterWaits.store(0, std::memory_order_relaxed);
+
+        require(::fcntl(peer, F_SETFL, statusFlags | O_NONBLOCK) == 0);
+        const auto queued = fillUntilTheServerWaitsToWrite(peer);
+        for (unsigned signal = 0; signal < 3; ++signal) {
+            require(::pthread_kill(worker.native_handle(), SIGUSR2) == 0);
+            std::this_thread::sleep_for(std::chrono::milliseconds {20});
+        }
+        require(::fcntl(peer, F_SETFL, statusFlags) == 0);
+        std::uint64_t expectedFeatures = 0;
+        for (std::size_t index = 0; index < queued; ++index) {
+            protocol::VhostHeader reply {};
+            std::uint64_t features {};
+            readExact(peer, &reply, sizeof(reply));
+            readExact(peer, &features, sizeof(features));
+            require(
+                reply.request == static_cast<std::uint32_t>(
+                    protocol::VhostRequest::getFeatures));
+            require(
+                reply.flags ==
+                (protocol::vhostUserVersion | protocol::vhostUserReply));
+            require(reply.size == sizeof(features));
+            require(features != 0);
+            if (index == 0)
+                expectedFeatures = features;
+            require(features == expectedFeatures);
+        }
+        require(interruptedWriterWaits.load(std::memory_order_relaxed) == 3);
+        require(::sigaction(SIGUSR2, &previous, nullptr) == 0);
+
+        require(::fcntl(peer, F_SETFL, statusFlags | O_NONBLOCK) == 0);
+        (void)fillUntilTheServerWaitsToWrite(peer);
+        require(!finished.load(std::memory_order_acquire));
+        stopRequested.store(true, std::memory_order_release);
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds {5};
+        while (!finished.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds {10});
+        }
+        const bool stopped = finished.load(std::memory_order_acquire);
+        (void)::shutdown(peer, SHUT_RDWR);
+        worker.join();
+        require(stopped);
     }
     require(descriptorCount() == before);
 }
@@ -674,6 +789,7 @@ void runVhostUserServerTests(const char* executable)
     failedMemoryReplacementIsRetryable(4096, UINT64_MAX);
     failedMemoryReplacementIsRetryable(8192, 0);
     twoRegionFailureRollsBackEveryOwner();
+    backpressuredRepliesArriveWholeAndStopEndsTheWait();
     standaloneRunCanBeRetriedWithoutLeaking();
     standaloneRunDoesNotReplaceExistingPath();
     anOverdueFenceEscapesOrderingBeforeItIsRetired();
