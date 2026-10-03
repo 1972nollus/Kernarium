@@ -24,11 +24,12 @@ namespace {
 
 /* The access check and register transfer that every immediate and
  * register-offset form shares once its address is generated. Returns the
- * fault, or nothing when the transfer is complete. */
-[[nodiscard]] std::optional<RunResult> transfer_register(CpuState &cpu,
-	GuestMemory &memory, std::uint32_t instruction,
-	std::uint64_t tagged_address, bool base_sp, std::size_t size,
-	bool vector, unsigned operation, bool load)
+ * fault, or nothing when the transfer is complete. Always inlined, so neither
+ * form's slow path pays a call for it. */
+[[nodiscard, gnu::always_inline]] inline std::optional<RunResult>
+transfer_register(CpuState &cpu, GuestMemory &memory,
+	std::uint32_t instruction, std::uint64_t tagged_address, bool base_sp,
+	std::size_t size, bool vector, unsigned operation, bool load)
 {
 	std::uint64_t address{};
 	std::uint64_t fault_address{};
