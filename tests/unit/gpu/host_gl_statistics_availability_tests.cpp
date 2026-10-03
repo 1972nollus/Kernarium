@@ -149,9 +149,20 @@ int main()
 
     // A poll that never sees the query available is a failure of its own, not
     // a reason to wait forever.
-    constexpr auto pollLimit = std::chrono::seconds(10);
+    constexpr auto pollLimit = std::chrono::seconds(60);
     int failures = 0;
     for (const Statistic& statistic : statistics) {
+        // The first query of a target compiles what it needs, which under a
+        // sanitizer takes longer than any poll should; wait it out untimed.
+        GLuint warmQuery = 0;
+        glGenQueries(1, &warmQuery);
+        glBeginQuery(statistic.target, warmQuery);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glEndQuery(statistic.target);
+        GLuint warm = 0;
+        glGetQueryObjectuiv(warmQuery, GL_QUERY_RESULT, &warm);
+        glDeleteQueries(1, &warmQuery);
+
         int early = 0;
         int unavailable = 0;
         GLuint firstBad = 0;

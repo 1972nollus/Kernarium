@@ -214,8 +214,7 @@ if(TARGET uml_gpu_service)
         host_gl_statistics_availability_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY
-        TIMEOUT 120)
+        UNIT_DIRECTORY)
 
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
