@@ -3013,9 +3013,8 @@ void aDestroyedContextsHeldFencesComplete()
     for (const std::uint64_t requestId : {41U, 43U}) {
         require(fences.takeCompletion(completion));
         require(completion.requestId == requestId);
-        require(completion.requestHeader.contextId ==
-            exiting.header.contextId);
         const auto reply = responseHeader(completion.response);
+        require(reply.contextId == exiting.header.contextId);
         require(reply.fenceId == requestId);
         require((reply.flags & protocol::gpuFlagFence) != 0);
     }
