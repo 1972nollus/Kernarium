@@ -1111,6 +1111,34 @@ void blobCommandsAllocateBeforeCommitAndRetry()
     require(responseType(created.response) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.createResourceCount == 1);
+
+    /* A map or unmap that committed queues its shared-memory action. */
+    const auto noAction = [&] {
+        return !device.takeSharedMemoryAction().has_value();
+    };
+    protocol::GpuResourceMapBlob map {};
+    map.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceMapBlob);
+    map.resourceId = create.resourceId;
+    const auto mapped =
+        failEachAllocationBeforeCommit(device, requestBytes(map), noAction);
+    require(responseType(mapped.response) ==
+        protocol::GpuResponse::okMapInfo);
+    auto action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    device.completeSharedMemoryAction(action->actionId, true);
+
+    protocol::GpuResourceUnmapBlob unmap {};
+    unmap.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceUnmapBlob);
+    unmap.resourceId = create.resourceId;
+    const auto unmapped =
+        failEachAllocationBeforeCommit(device, requestBytes(unmap), noAction);
+    require(responseType(unmapped.response) ==
+        protocol::GpuResponse::okNoData);
+    action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    device.completeSharedMemoryAction(action->actionId, true);
 }
 
 void edidReportsDisplayPixelsAndEffectiveDensity()

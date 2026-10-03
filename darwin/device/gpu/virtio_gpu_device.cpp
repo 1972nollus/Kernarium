@@ -1302,6 +1302,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
+        protocol::GpuMapInfo information {};
+        information.header = *header;
+        information.header.type =
+            static_cast<std::uint32_t>(protocol::GpuResponse::okMapInfo);
+        information.header.flags &=
+            protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+        information.mapInfo = mapInfo;
+        std::vector<std::uint8_t> bytes(sizeof(information));
+        std::memcpy(bytes.data(), &information, sizeof(information));
         const auto actionId = nextSharedMemoryActionId_++;
         try {
             sharedMemoryActions_.push_back(SharedMemoryAction {
@@ -1323,16 +1332,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         resource.regionOffset = map->offset;
         resource.pendingActionId = actionId;
         std::fill(pages.begin(), pages.end(), map->resourceId);
-
-        protocol::GpuMapInfo information {};
-        information.header = *header;
-        information.header.type =
-            static_cast<std::uint32_t>(protocol::GpuResponse::okMapInfo);
-        information.header.flags &=
-            protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
-        information.mapInfo = mapInfo;
-        std::vector<std::uint8_t> bytes(sizeof(information));
-        std::memcpy(bytes.data(), &information, sizeof(information));
         return bytes;
     }
 
@@ -1364,6 +1363,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             return response(
                 *header, protocol::GpuResponse::errorUnspecified);
         }
+        auto success = response(*header, protocol::GpuResponse::okNoData);
         const auto actionId = nextSharedMemoryActionId_++;
         try {
             sharedMemoryActions_.push_back(SharedMemoryAction {
@@ -1380,7 +1380,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
         resource.mappingState = BlobResource::MappingState::unmapping;
         resource.pendingActionId = actionId;
-        return response(*header, protocol::GpuResponse::okNoData);
+        return success;
     }
 
     case protocol::GpuCommand::transferToHost3d:
