@@ -17,6 +17,8 @@
 
 #include "display.hpp"
 #include "display_geometry.hpp"
+#include "gpu_metal_test_support.hpp"
+#include "require.hpp"
 
 #import <Metal/Metal.h>
 
@@ -38,6 +40,10 @@
 
 namespace {
 
+using uml::gpu::testing::solidImage;
+using uml::gpu::testing::uploadPrivateTexture;
+using uml::testing::require;
+
 constexpr std::uint32_t displayExtent = 64;
 constexpr std::uint32_t cursorExtent = 32;
 using Pixel = std::array<std::uint8_t, 4>;
@@ -54,12 +60,6 @@ constexpr std::uint32_t vncWidth = 1280;
 constexpr std::uint32_t vncHeight = 720;
 constexpr int timeoutSeconds = 10;
 constexpr auto operationTimeout = std::chrono::seconds(timeoutSeconds);
-
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 class Connection final {
 public:
@@ -242,60 +242,17 @@ private:
     std::uint32_t height_ {};
 };
 
+/* A Venus scanout is an optimal render target in a private Metal heap;
+ * nothing on the host can read it without a blit. */
 id<MTLTexture> makePrivateScanoutTexture(
     id<MTLDevice> device,
     const Pixel& pixel)
 {
-    const auto rowBytes = static_cast<std::size_t>(displayExtent) *
-        uml::gpu::protocol::gpuBytesPerPixel;
-    const auto byteCount = rowBytes * displayExtent;
-    id<MTLBuffer> upload = [device
-        newBufferWithLength:byteCount
-        options:MTLResourceStorageModeShared];
-    require(upload != nil, "Metal upload buffer creation failed");
-    auto* bytes = static_cast<std::uint8_t*>(upload.contents);
-    for (std::size_t offset = 0; offset < byteCount; offset += 4U) {
-        bytes[offset] = pixel[0];
-        bytes[offset + 1U] = pixel[1];
-        bytes[offset + 2U] = pixel[2];
-        bytes[offset + 3U] = pixel[3];
-    }
-
-    /* A Venus scanout is an optimal render target in a private Metal heap;
-     * nothing on the host can read it without a blit. */
-    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-        width:displayExtent
-        height:displayExtent
-        mipmapped:NO];
-    descriptor.storageMode = MTLStorageModePrivate;
-    descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-    id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-    require(texture != nil, "private Metal texture creation failed");
-
-    id<MTLCommandQueue> queue = [device newCommandQueue];
-    id<MTLCommandBuffer> commands = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> encoder = [commands blitCommandEncoder];
-    require(
-        queue != nil && commands != nil && encoder != nil,
-        "Metal upload command creation failed");
-    [encoder
-        copyFromBuffer:upload
-        sourceOffset:0
-        sourceBytesPerRow:rowBytes
-        sourceBytesPerImage:byteCount
-        sourceSize:MTLSizeMake(displayExtent, displayExtent, 1)
-        toTexture:texture
-        destinationSlice:0
-        destinationLevel:0
-        destinationOrigin:MTLOriginMake(0, 0, 0)];
-    [encoder endEncoding];
-    [commands commit];
-    [commands waitUntilCompleted];
-    require(
-        commands.status == MTLCommandBufferStatusCompleted,
-        "private Metal texture upload failed");
-    return texture;
+    return uploadPrivateTexture(
+        device,
+        solidImage(pixel, displayExtent, displayExtent),
+        displayExtent,
+        displayExtent);
 }
 
 [[nodiscard]] uml::gpu::MetalScanout wholeScanout(id<MTLTexture> texture)
@@ -354,49 +311,61 @@ void waitFor(Predicate predicate, const char* message)
     }
 }
 
+struct ConnectedDisplay final {
+    std::unique_ptr<uml::gpu::Display> display;
+    std::unique_ptr<Connection> connection;
+};
+
+/* A VNC display with one client, counted before the display returns: the
+ * display drops a scanout while no client is watching. */
+[[nodiscard]] ConnectedDisplay connectedDisplay(
+    std::uint32_t width = vncWidth,
+    std::uint32_t height = vncHeight,
+    uml::input::vnc::VncInputSink sink = {},
+    uml::input::vnc::PointerMode pointerMode =
+        uml::input::vnc::PointerMode::mouse)
+{
+    ConnectedDisplay connected;
+    connected.display = uml::gpu::makeDisplay(
+        uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, width, height,
+        std::move(sink), nullptr, pointerMode);
+    require(connected.display != nullptr, "VNC display creation failed");
+    const auto port = connected.display->vncPort();
+    require(port.has_value() && *port != 0, "VNC display has no port");
+    connected.connection = std::make_unique<Connection>(*port);
+    connected.connection->handshake();
+    waitFor(
+        [&] { return connected.display->needsFullCpuFallback(); },
+        "no VNC client was counted");
+    return connected;
+}
+
 void shippedVncDisplayReadsBackAVenusScanout()
 {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         require(device != nil, "Metal device unavailable");
-
-        auto display = uml::gpu::makeDisplay(
-            uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, displayExtent,
-            displayExtent);
-        require(display != nullptr, "VNC display creation failed");
-        const auto port = display->vncPort();
-        require(port.has_value() && *port != 0, "VNC display has no port");
-
-        Connection connection(*port);
-        connection.handshake();
-        /* The display drops a scanout while no client is watching, so wait
-         * until this one is counted before presenting. */
-        const auto attached =
-            std::chrono::steady_clock::now() + operationTimeout;
-        while (!display->needsFullCpuFallback() &&
-               std::chrono::steady_clock::now() < attached) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        require(display->needsFullCpuFallback(), "no VNC client was counted");
+        auto connected = connectedDisplay(displayExtent, displayExtent);
+        auto& display = *connected.display;
 
         id<MTLTexture> texture =
             makePrivateScanoutTexture(device, expectedPixel);
-        const auto outcome = display->presentMetal(wholeScanout(texture));
+        const auto outcome = display.presentMetal(wholeScanout(texture));
         require(
             outcome == uml::gpu::PresentOutcome::presented,
             "the shipped VNC display refused a native Metal scanout");
         require(
-            display->statistics().guestFrames == 1,
+            display.statistics().guestFrames == 1,
             "the shipped VNC display did not count the guest frame");
         waitFor(
-            [&] { return display->statistics().presentedFrames != 0; },
+            [&] { return display.statistics().presentedFrames != 0; },
             "the native Metal readback never completed");
         require(
-            display->statistics().presentedFrames == 1,
+            display.statistics().presentedFrames == 1,
             "the native Metal readback completed more than once");
 
         requireImage(
-            connection.readFramebuffer(),
+            connected.connection->readFramebuffer(),
             expectedPixel,
             "the VNC framebuffer did not carry the scanout's pixels");
     }
@@ -411,34 +380,23 @@ void clientAfterAnIdleIntervalSeesTheNewestScanout()
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         require(device != nil, "Metal device unavailable");
-
-        auto display = uml::gpu::makeDisplay(
-            uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, displayExtent,
-            displayExtent);
-        require(display != nullptr, "VNC display creation failed");
-        const auto port = display->vncPort();
-        require(port.has_value() && *port != 0, "VNC display has no port");
+        auto connected = connectedDisplay(displayExtent, displayExtent);
+        auto& display = *connected.display;
 
         id<MTLTexture> seen = makePrivateScanoutTexture(device, expectedPixel);
         id<MTLTexture> idle = makePrivateScanoutTexture(device, idlePixel);
-        {
-            Connection watching(*port);
-            watching.handshake();
-            waitFor(
-                [&] { return display->needsFullCpuFallback(); },
-                "no VNC client was counted");
-            require(
-                display->presentMetal(wholeScanout(seen)) ==
-                    uml::gpu::PresentOutcome::presented,
-                "the shipped VNC display refused a native Metal scanout");
-            waitFor(
-                [&] { return display->statistics().presentedFrames != 0; },
-                "the native Metal readback never completed");
-            requireImage(
-                watching.readFramebuffer(),
-                expectedPixel,
-                "the watching client did not see the scanout");
-        }
+        require(
+            display.presentMetal(wholeScanout(seen)) ==
+                uml::gpu::PresentOutcome::presented,
+            "the shipped VNC display refused a native Metal scanout");
+        waitFor(
+            [&] { return display.statistics().presentedFrames != 0; },
+            "the native Metal readback never completed");
+        requireImage(
+            connected.connection->readFramebuffer(),
+            expectedPixel,
+            "the watching client did not see the scanout");
+        connected.connection.reset();
 
         /* Presenting the frame the framebuffer already holds is harmless
          * while the departed client is still counted. Only a display with no
@@ -446,18 +404,18 @@ void clientAfterAnIdleIntervalSeesTheNewestScanout()
          * counts every frame it is offered. */
         waitFor(
             [&] {
-                const auto offered = display->statistics().guestFrames;
-                return display->presentMetal(wholeScanout(seen)) ==
+                const auto offered = display.statistics().guestFrames;
+                return display.presentMetal(wholeScanout(seen)) ==
                         uml::gpu::PresentOutcome::dropped &&
-                    display->statistics().guestFrames == offered;
+                    display.statistics().guestFrames == offered;
             },
             "the display kept counting a departed client");
         require(
-            display->presentMetal(wholeScanout(idle)) ==
+            display.presentMetal(wholeScanout(idle)) ==
                 uml::gpu::PresentOutcome::dropped,
             "the display read back a scanout with no client");
 
-        Connection late(*port);
+        Connection late(*display.vncPort());
         late.handshake();
         requireImage(
             late.readFramebuffer(),
@@ -504,45 +462,8 @@ id<MTLTexture> makeCornerTexture(
     std::uint32_t block,
     bool flipped = false)
 {
-    const auto pixels = cornerImage(width, height, block, flipped);
-    const auto rowBytes = static_cast<std::size_t>(width) * 4U;
-    id<MTLBuffer> upload = [device
-        newBufferWithBytes:pixels.data()
-        length:pixels.size()
-        options:MTLResourceStorageModeShared];
-    require(upload != nil, "Metal upload buffer creation failed");
-    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-        width:width
-        height:height
-        mipmapped:NO];
-    descriptor.storageMode = MTLStorageModePrivate;
-    descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-    id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
-    require(texture != nil, "private Metal texture creation failed");
-    id<MTLCommandQueue> queue = [device newCommandQueue];
-    id<MTLCommandBuffer> commands = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> encoder = [commands blitCommandEncoder];
-    require(
-        queue != nil && commands != nil && encoder != nil,
-        "Metal upload command creation failed");
-    [encoder
-        copyFromBuffer:upload
-        sourceOffset:0
-        sourceBytesPerRow:rowBytes
-        sourceBytesPerImage:pixels.size()
-        sourceSize:MTLSizeMake(width, height, 1)
-        toTexture:texture
-        destinationSlice:0
-        destinationLevel:0
-        destinationOrigin:MTLOriginMake(0, 0, 0)];
-    [encoder endEncoding];
-    [commands commit];
-    [commands waitUntilCompleted];
-    require(
-        commands.status == MTLCommandBufferStatusCompleted,
-        "private Metal texture upload failed");
-    return texture;
+    return uploadPrivateTexture(
+        device, cornerImage(width, height, block, flipped), width, height);
 }
 
 [[nodiscard]] uml::gpu::MetalScanout wholeScanout(
@@ -627,31 +548,6 @@ void requireFittedImage(
             message);
         requirePixel(image, vncWidth - 1U, middleY, blackPixel, message);
     }
-}
-
-struct ConnectedDisplay final {
-    std::unique_ptr<uml::gpu::Display> display;
-    std::unique_ptr<Connection> connection;
-};
-
-[[nodiscard]] ConnectedDisplay connectedDisplay(
-    uml::input::vnc::VncInputSink sink = {},
-    uml::input::vnc::PointerMode pointerMode =
-        uml::input::vnc::PointerMode::mouse)
-{
-    ConnectedDisplay connected;
-    connected.display = uml::gpu::makeDisplay(
-        uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, vncWidth, vncHeight,
-        std::move(sink), nullptr, pointerMode);
-    require(connected.display != nullptr, "VNC display creation failed");
-    const auto port = connected.display->vncPort();
-    require(port.has_value() && *port != 0, "VNC display has no port");
-    connected.connection = std::make_unique<Connection>(*port);
-    connected.connection->handshake();
-    waitFor(
-        [&] { return connected.display->needsFullCpuFallback(); },
-        "no VNC client was counted");
-    return connected;
 }
 
 /* glmark2-es2-drm's 4096x2160 mode on a 1280x720 framebuffer: the whole
@@ -917,7 +813,7 @@ void pointerInputMapsThroughTheFittedRectangle()
 {
     namespace input = uml::input::vnc;
     RecordedInput mouseInput;
-    auto mouse = connectedDisplay(mouseInput.sink());
+    auto mouse = connectedDisplay(vncWidth, vncHeight, mouseInput.sink());
     require(
         mouse.display->guestScanoutChanged(4096, 2160),
         "the VNC display refused an oversized mode");
@@ -936,7 +832,10 @@ void pointerInputMapsThroughTheFittedRectangle()
 
     RecordedInput touchInput;
     auto touch = connectedDisplay(
-        touchInput.sink(), input::PointerMode::touchscreen);
+        vncWidth,
+        vncHeight,
+        touchInput.sink(),
+        input::PointerMode::touchscreen);
     require(
         touch.display->guestScanoutChanged(4096, 2160),
         "the VNC display refused an oversized mode");
@@ -968,7 +867,7 @@ int main()
         clientAfterAnIdleIntervalSeesTheNewestScanout();
         oversizedNativeScanoutIsAspectFitted();
         oversizedCpuScanoutIsAspectFitted();
-    lateClientReceivesAStagedCpuFrame();
+        lateClientReceivesAStagedCpuFrame();
         smallerModesAreMagnifiedAndResetRestoresThePreferredMode();
         pointerInputMapsThroughTheFittedRectangle();
     } catch (const std::exception& error) {

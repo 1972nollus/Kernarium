@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/legacy_vertex_input_spirv.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdio>
@@ -11,6 +12,7 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
@@ -28,12 +30,6 @@ constexpr std::array<VertexInputDraw, 8> draws{{
     {VK_FORMAT_R16_UNORM, 5, 2, 1, first, false},
     {VK_FORMAT_R8_UNORM, 3, 1, 1, last, true},
 }};
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 void verify(const DrawConfig &config, const DrawResult &result,
             const std::string &name)

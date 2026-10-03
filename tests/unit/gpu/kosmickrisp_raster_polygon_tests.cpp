@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/raster_polygon_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,15 +15,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 struct ReferenceVertex {
     std::array<float, 4> position;

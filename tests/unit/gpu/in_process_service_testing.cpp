@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "gpu_test_support.hpp"
 #include "in_process_service_testing.hpp"
-#include "vhost_user_device.hpp"
-#include "vhost_user_server.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -18,34 +17,9 @@ namespace {
 
 std::atomic<StartupFailure> startupFailure {};
 
-class TransportTestDevice final : public uml::virtio::VhostUserDevice {
+class TransportTestDevice final : public FixtureDevice {
 public:
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "transport-test";
-    }
-
-    [[nodiscard]] std::uint64_t features() const noexcept override
-    {
-        return 0;
-    }
-
-    [[nodiscard]] std::size_t queueCount() const noexcept override
-    {
-        return 2;
-    }
-
-    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
-    {
-        return {};
-    }
-
-    void writeConfiguration(
-        std::uint32_t,
-        std::uint32_t,
-        std::span<const std::uint8_t>) override
-    {
-    }
+    TransportTestDevice() : FixtureDevice("transport-test", 2) {}
 
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t,
@@ -61,8 +35,6 @@ public:
             .response = std::move(response),
         };
     }
-
-    void reset() noexcept override {}
 };
 
 } // namespace

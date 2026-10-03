@@ -9,32 +9,11 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
-#include <poll.h>
 #include <pthread.h>
-#include <sys/mman.h>
 #include <sys/wait.h>
 
 namespace uml::gpu::testing {
 namespace {
-
-[[nodiscard]] pid_t launchChild(const char* executable, const char* mode)
-{
-    const pid_t child = ::fork();
-    require(child >= 0);
-    if (child == 0) {
-        ::execl(executable, executable, mode, nullptr);
-        std::_Exit(127);
-    }
-    return child;
-}
-
-void waitForConnectionClose(int socket)
-{
-    pollfd descriptor {.fd = socket, .events = POLLIN | POLLHUP};
-    require(::poll(&descriptor, 1, 2000) == 1);
-    std::uint8_t byte {};
-    require(::read(socket, &byte, sizeof(byte)) == 0);
-}
 
 void verifyControlRetry(VhostUserServer& server)
 {
@@ -87,36 +66,14 @@ void verifyControlRetry(VhostUserServer& server)
             while (!ready.load(std::memory_order_acquire))
                 std::this_thread::yield();
 
-            const protocol::VhostHeader header {
-                .request = static_cast<std::uint32_t>(
-                    protocol::VhostRequest::setFeatures),
-                .flags = protocol::vhostUserVersion,
-                .size = partialPayload ?
-                    static_cast<std::uint32_t>(sizeof(std::uint64_t)) : 0U,
-            };
             const std::array descriptors {sent.get()};
             const std::span<const int> sentDescriptors = carryDescriptor ?
                 std::span<const int> {descriptors} : std::span<const int> {};
             // The server reads a frame only once its socket is readable, so
             // it waits for more only after consuming the fragment below.
             testing::resetStopWaitObserver();
-            if (partialPayload) {
-                std::array<
-                    std::uint8_t,
-                    sizeof(header) + sizeof(std::uint32_t)> fragment {};
-                std::memcpy(fragment.data(), &header, sizeof(header));
-                sendBytesWithDescriptors(
-                    sockets.descriptors[0].get(),
-                    fragment.data(),
-                    fragment.size(),
-                    sentDescriptors);
-            } else {
-                sendBytesWithDescriptors(
-                    sockets.descriptors[0].get(),
-                    &header,
-                    sizeof(header) / 2U,
-                    sentDescriptors);
-            }
+            writePartialFrame(
+                sockets.descriptors[0].get(), partialPayload, sentDescriptors);
 
             if (!testing::waitForStopWaitCount(1, 2000))
                 std::_Exit(102);
@@ -157,24 +114,7 @@ void partialFrameStopIsPrompt(
         (carryDescriptor ? "--partial-header-fd-child"
                          : "--partial-header-child");
     const pid_t child = launchChild(executable, mode);
-
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds {10};
-    int status = 0;
-    for (;;) {
-        const auto result = ::waitpid(child, &status, WNOHANG);
-        if (result < 0 && errno == EINTR)
-            continue;
-        require(result >= 0);
-        if (result == child)
-            break;
-        if (std::chrono::steady_clock::now() >= deadline) {
-            require(::kill(child, SIGKILL) == 0);
-            require(::waitpid(child, &status, 0) == child);
-            require(false);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds {10});
-    }
+    const int status = waitForChild(child, std::chrono::seconds {10});
     require(WIFEXITED(status));
     if (WEXITSTATUS(status) != EXIT_SUCCESS) {
         std::fprintf(
@@ -231,13 +171,10 @@ void memoryReplacementReleasesQueueDescriptors()
         withServerConnection(server, [&](int socket) {
             for (unsigned iteration = 0; iteration < 16; ++iteration) {
                 configureMemory(socket, memory.descriptor());
-                std::array<int, 2> pipeDescriptors {-1, -1};
-                require(::pipe(pipeDescriptors.data()) == 0);
-                UniqueDescriptor readEnd {pipeDescriptors[0]};
-                UniqueDescriptor writeEnd {pipeDescriptors[1]};
-                configureCallDescriptor(socket, writeEnd.get());
-                readEnd.reset();
-                writeEnd.reset();
+                auto call = makePipe();
+                configureCallDescriptor(socket, call.writeEnd.get());
+                call.readEnd.reset();
+                call.writeEnd.reset();
                 const auto configuredCount = descriptorCount();
                 if (iteration == 0)
                     stableConfiguredCount = configuredCount;
@@ -463,65 +400,34 @@ void concurrentRendererConstructionFailsAndLaterRetries()
 
 void configureQueueForOneRequest(
     int socket,
-    std::span<std::uint8_t> memory,
+    const SplitRing& ring,
     int callDescriptor)
 {
-    constexpr std::uint64_t guestBase = 0x1000;
-    constexpr std::uint64_t userBase = 0x1000'0000;
-    constexpr std::size_t descriptorOffset = 0x000;
-    constexpr std::size_t availableOffset = 0x100;
-    constexpr std::size_t usedOffset = 0x200;
     constexpr std::size_t requestOffset = 0x300;
     constexpr std::size_t responseOffset = 0x400;
 
-    std::array<protocol::VirtqueueDescriptor, 2> descriptors {
+    const std::array descriptors {
         protocol::VirtqueueDescriptor {
-            .address = guestBase + requestOffset,
+            .address = SplitRing::guestBase + requestOffset,
             .length = sizeof(protocol::GpuControlHeader),
             .flags = protocol::descriptorNext,
             .next = 1,
         },
         protocol::VirtqueueDescriptor {
-            .address = guestBase + responseOffset,
+            .address = SplitRing::guestBase + responseOffset,
             .length = sizeof(protocol::GpuDisplayInfo),
             .flags = protocol::descriptorWrite,
             .next = 0,
         },
     };
-    std::memcpy(
-        memory.data() + descriptorOffset,
-        descriptors.data(),
-        sizeof(descriptors));
-    const std::uint16_t availableIndex = 1;
-    const std::uint16_t head = 0;
-    std::memcpy(
-        memory.data() + availableOffset + sizeof(std::uint16_t),
-        &availableIndex,
-        sizeof(availableIndex));
-    std::memcpy(
-        memory.data() + availableOffset + protocol::splitRingHeaderSize,
-        &head,
-        sizeof(head));
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(descriptors, heads);
     protocol::GpuControlHeader request {};
     request.type = static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
-    std::memcpy(memory.data() + requestOffset, &request, sizeof(request));
+    std::memcpy(
+        ring.memory().data() + requestOffset, &request, sizeof(request));
 
-    const protocol::VringState queueSize {.index = 0, .value = 8};
-    sendRequestAndReadAcknowledgement(
-        socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
-    const protocol::VringAddress addresses {
-        .index = 0,
-        .flags = 0,
-        .descriptor = userBase + descriptorOffset,
-        .used = userBase + usedOffset,
-        .available = userBase + availableOffset,
-        .log = 0,
-    };
-    sendRequestAndReadAcknowledgement(
-        socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
-    const protocol::VringState enable {.index = 0, .value = 1};
-    sendRequestAndReadAcknowledgement(
-        socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
+    configureQueue(socket, ring, 0);
     configureCallDescriptor(socket, callDescriptor);
 }
 
@@ -529,51 +435,39 @@ void configureQueueForOneRequest(
 {
     (void)::signal(SIGPIPE, SIG_DFL);
     auto server = makeTransportTestServer();
-    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
-    void* mapped = ::mmap(
-        nullptr,
-        4096,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED,
-        memoryDescriptor.descriptor(),
-        0);
-    require(mapped != MAP_FAILED);
-    auto memory = std::span {
-        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
-    withServerConnection(*server, [&](int socket) {
-        constexpr std::uint64_t deviceFeatures =
-            protocol::vhostFeatureProtocol;
-        sendRequest(
-            socket,
-            protocol::VhostRequest::setFeatures,
-            bytesOf(deviceFeatures),
-            {},
-            false);
-        constexpr std::uint64_t protocolFeatures =
-            protocol::protocolFeatureInbandNotifications |
-            protocol::protocolFeatureSlaveRequest |
-            protocol::protocolFeatureReplyAck;
-        sendRequestAndReadAcknowledgement(
-            socket,
-            protocol::VhostRequest::setProtocolFeatures,
-            bytesOf(protocolFeatures));
-        configureMemory(socket, memoryDescriptor.descriptor());
-        std::array<int, 2> pipeDescriptors {-1, -1};
-        require(::pipe(pipeDescriptors.data()) == 0);
-        UniqueDescriptor readEnd {pipeDescriptors[0]};
-        UniqueDescriptor writeEnd {pipeDescriptors[1]};
-        configureQueueForOneRequest(socket, memory, writeEnd.get());
-        readEnd.reset();
-        writeEnd.reset();
-        const protocol::VringState kick {.index = 0, .value = 0};
-        sendRequest(
-            socket,
-            protocol::VhostRequest::vringKick,
-            bytesOf(kick));
-        readAcknowledgement(socket, protocol::VhostRequest::vringKick);
-        waitForConnectionClose(socket);
-    });
-    require(::munmap(mapped, 4096) == 0);
+    {
+        const SplitRing ring;
+        withServerConnection(*server, [&](int socket) {
+            constexpr std::uint64_t deviceFeatures =
+                protocol::vhostFeatureProtocol;
+            sendRequest(
+                socket,
+                protocol::VhostRequest::setFeatures,
+                bytesOf(deviceFeatures),
+                {},
+                false);
+            constexpr std::uint64_t protocolFeatures =
+                protocol::protocolFeatureInbandNotifications |
+                protocol::protocolFeatureSlaveRequest |
+                protocol::protocolFeatureReplyAck;
+            sendRequestAndReadAcknowledgement(
+                socket,
+                protocol::VhostRequest::setProtocolFeatures,
+                bytesOf(protocolFeatures));
+            configureMemory(socket, ring.descriptor());
+            auto call = makePipe();
+            configureQueueForOneRequest(socket, ring, call.writeEnd.get());
+            call.readEnd.reset();
+            call.writeEnd.reset();
+            const protocol::VringState kick {.index = 0, .value = 0};
+            sendRequest(
+                socket,
+                protocol::VhostRequest::vringKick,
+                bytesOf(kick));
+            readAcknowledgement(socket, protocol::VhostRequest::vringKick);
+            waitForConnectionClose(socket);
+        });
+    }
     std::_Exit(EXIT_SUCCESS);
 }
 

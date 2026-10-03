@@ -201,7 +201,8 @@ int main()
         loopVertexCount,
         submitted);
 
-    // Same draw as independent lines: the count the decomposition would give.
+    // Independent lines have no closing vertex, so the line-loop compensation
+    // must leave them alone: the count is exactly the vertices submitted.
     GLuint linesQuery = 0;
     glGenQueries(1, &linesQuery);
     glBeginQuery(GL_VERTICES_SUBMITTED_ARB, linesQuery);
@@ -216,26 +217,9 @@ int main()
         "GL_VERTICES_SUBMITTED_ARB=%u (control)\n",
         loopVertexCount - 1,
         lines);
+    check(lines == static_cast<GLuint>(loopVertexCount - 1),
+        "GL_LINES did not count exactly the vertices submitted");
     glDeleteQueries(1, &linesQuery);
-
-    // virglrenderer issues an ordinary guest draw through the INSTANCED entry
-    // point whenever instance_count is set, which it is for a plain draw, so
-    // this is the call the guest's line loop actually reaches.
-    GLuint instancedQuery = 0;
-    glGenQueries(1, &instancedQuery);
-    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, instancedQuery);
-    glDrawArraysInstancedARB(GL_LINE_LOOP, 0, loopVertexCount, 1);
-    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
-    glFinish();
-    GLuint instanced = 0;
-    glGetQueryObjectuiv(instancedQuery, GL_QUERY_RESULT, &instanced);
-    std::fprintf(
-        stderr,
-        "Host line-loop statistics: glDrawArraysInstanced GL_LINE_LOOP n=%d "
-        "instances=1 -> GL_VERTICES_SUBMITTED_ARB=%u\n",
-        loopVertexCount,
-        instanced);
-    glDeleteQueries(1, &instancedQuery);
 
     // The CTS case queries clipping primitives alongside the submitted
     // vertices, and Zink splits a statistics query's starts when the line-loop
@@ -265,46 +249,6 @@ int main()
         clipped);
     glDeleteQueries(1, &pairVertices);
     glDeleteQueries(1, &pairClipping);
-
-    // Zink suspends and resumes statistics queries across renderpass
-    // boundaries, and the line-loop flag is recorded per query start. A guest
-    // driving the host through virglrenderer changes render targets constantly,
-    // so bracket the draw with a framebuffer change -- the shape a standalone
-    // probe otherwise never produces.
-    GLuint scratch = 0;
-    glGenTextures(1, &scratch);
-    glBindTexture(GL_TEXTURE_2D, scratch);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 32, 32, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLuint scratchFbo = 0;
-    glGenFramebuffers(1, &scratchFbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, scratchFbo);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, scratch, 0);
-
-    GLuint rpQuery = 0;
-    glGenQueries(1, &rpQuery);
-    glBeginQuery(GL_VERTICES_SUBMITTED_ARB, rpQuery);
-    // Force a renderpass boundary inside the query, then draw the loop.
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glViewport(0, 0, 64, 64);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
-    glBindFramebuffer(GL_FRAMEBUFFER, scratchFbo);
-    glViewport(0, 0, 32, 32);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glViewport(0, 0, 64, 64);
-    glEndQuery(GL_VERTICES_SUBMITTED_ARB);
-    glFinish();
-    GLuint acrossRenderpass = 0;
-    glGetQueryObjectuiv(rpQuery, GL_QUERY_RESULT, &acrossRenderpass);
-    std::fprintf(
-        stderr,
-        "Host line-loop statistics: across a renderpass change, GL_LINE_LOOP "
-        "n=%d -> GL_VERTICES_SUBMITTED_ARB=%u\n",
-        loopVertexCount,
-        acrossRenderpass);
-    glDeleteQueries(1, &rpQuery);
 
     // The CTS case reports the entry point with every mismatch, and it fails on
     // six of them while passing on the plain ones. So the entry point, not the

@@ -2,6 +2,7 @@
 #include "vulkan_draw_test.hpp"
 #include "vulkan_draw_performance.hpp"
 #include "shaders/raster_polygon_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,15 +16,10 @@
 #include <vector>
 
 namespace {
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 bool diamond_exit(std::array<double, 2> a, std::array<double, 2> b,
                   uint32_t x, uint32_t y)

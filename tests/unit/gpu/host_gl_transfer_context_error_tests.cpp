@@ -11,6 +11,7 @@
 // The contract under test: after a refused transfer, the same context
 // transfers normally once the resource is attached to it.
 
+#include "require.hpp"
 #include "virgl_renderer.hpp"
 
 #include <sys/uio.h>
@@ -22,11 +23,12 @@
 #include <cstdlib>
 #include <exception>
 #include <memory>
-#include <source_location>
 #include <span>
 #include <vector>
 
 namespace {
+
+using uml::testing::require;
 
 // Stable Virtio-GPU ABI identifier for the virgl2 capability set.
 constexpr std::uint32_t virgl2CapsetId = 2;
@@ -39,21 +41,6 @@ constexpr std::uint32_t virglBindSamplerView = 1U << 3U;
 constexpr std::uint32_t contextId = 1;
 constexpr std::uint32_t resourceId = 1;
 constexpr std::uint32_t size = 16;
-
-void require(
-    bool condition,
-    const char* description,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "Transfer context error: %s (line %u)\n",
-        description,
-        location.line());
-    std::exit(1);
-}
 
 } // namespace
 

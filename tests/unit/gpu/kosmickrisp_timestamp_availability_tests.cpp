@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "require.hpp"
+#include "vulkan_draw_test.hpp"
+
 #include <vulkan/vulkan_core.h>
 
 #include <array>
@@ -11,17 +14,8 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
-
-void check(VkResult result, const char *operation)
-{
-    if (result != VK_SUCCESS)
-        throw std::runtime_error(std::string(operation) + ": " + std::to_string(result));
-}
+using uml::gpu::test::check;
+using uml::testing::require;
 
 template <typename T>
 T structure(VkStructureType type)

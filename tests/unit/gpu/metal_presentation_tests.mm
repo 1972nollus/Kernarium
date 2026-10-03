@@ -8,6 +8,7 @@
  * presenter drew into. The CPU path's framebuffer and texture exist only once
  * it is written, so its frames before that present the clear alone. */
 
+#include "gpu_metal_test_support.hpp"
 #include "metal_presentation.hpp"
 
 #import <Metal/Metal.h>
@@ -173,29 +174,9 @@ private:
         require(texture.width == framebufferWidth &&
                 texture.height == framebufferHeight,
             "the drawable is not the requested size");
-        const NSUInteger rowBytes = framebufferWidth * 4;
-        id<MTLBuffer> buffer = [queue_.device
-            newBufferWithLength:rowBytes * framebufferHeight
-            options:MTLResourceStorageModeShared];
-        id<MTLCommandBuffer> commands = [queue_ commandBuffer];
-        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-        [blit copyFromTexture:texture
-                  sourceSlice:0
-                  sourceLevel:0
-                 sourceOrigin:MTLOriginMake(0, 0, 0)
-                   sourceSize:MTLSizeMake(
-                       framebufferWidth, framebufferHeight, 1)
-                     toBuffer:buffer
-            destinationOffset:0
-       destinationBytesPerRow:rowBytes
-     destinationBytesPerImage:rowBytes * framebufferHeight];
-        [blit endEncoding];
-        [commands commit];
-        [commands waitUntilCompleted];
-        require(commands.status == MTLCommandBufferStatusCompleted,
-            "the drawable readback failed");
-        const auto* bytes = static_cast<const std::uint8_t*>(buffer.contents);
-        pixels.assign(bytes, bytes + rowBytes * framebufferHeight);
+        pixels = uml::gpu::testing::readTexture(
+            queue_, texture, framebufferWidth, framebufferHeight,
+            framebufferWidth * 4U);
     }
 
     MetalPresentation& presentation_;

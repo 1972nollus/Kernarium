@@ -2,6 +2,7 @@
 #include "vulkan_draw_test.hpp"
 #include "vulkan_draw_performance.hpp"
 #include "shaders/geometry_invocations_spirv.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdio>
@@ -12,15 +13,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 void verify(const DrawResult &result, uint32_t invocations, uint32_t primitives)
 {

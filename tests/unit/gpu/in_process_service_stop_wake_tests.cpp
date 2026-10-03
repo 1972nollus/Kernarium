@@ -4,29 +4,12 @@
 #include "in_process_service.hpp"
 #include "vhost_user_message_testing.hpp"
 
-#include <array>
-#include <cerrno>
 #include <chrono>
-#include <csignal>
-#include <cstdint>
 #include <cstring>
 #include <sys/wait.h>
 
 namespace uml::gpu::testing {
 namespace {
-
-[[nodiscard]] pid_t launchChild(const char* executable, bool partialPayload)
-{
-    const pid_t child = ::fork();
-    require(child >= 0);
-    if (child == 0) {
-        const char* mode = partialPayload ?
-            "--partial-payload-child" : "--partial-header-child";
-        ::execl(executable, executable, mode, nullptr);
-        std::_Exit(127);
-    }
-    return child;
-}
 
 [[noreturn]] void runPartialFrameChild(bool partialPayload)
 {
@@ -37,27 +20,7 @@ namespace {
     options.height = 64;
     InProcessGpuService service {std::move(options)};
     const int transport = descriptorFromName(service.takeConnectionName());
-
-    const protocol::VhostHeader header {
-        .request = static_cast<std::uint32_t>(
-            protocol::VhostRequest::setFeatures),
-        .flags = protocol::vhostUserVersion,
-        .size = partialPayload ?
-            static_cast<std::uint32_t>(sizeof(std::uint64_t)) : 0U,
-    };
-    if (partialPayload) {
-        std::array<
-            std::uint8_t,
-            sizeof(header) + sizeof(std::uint32_t)> fragment {};
-        std::memcpy(fragment.data(), &header, sizeof(header));
-        require(
-            ::write(transport, fragment.data(), fragment.size()) ==
-            static_cast<ssize_t>(fragment.size()));
-    } else {
-        require(
-            ::write(transport, &header, sizeof(header) / 2U) ==
-            static_cast<ssize_t>(sizeof(header) / 2U));
-    }
+    writePartialFrame(transport, partialPayload);
 
     require(waitForStopWaitCount(1, 1000));
     service.stop();
@@ -68,28 +31,14 @@ namespace {
 void partialFrameUsesWake(const char* executable, bool partialPayload)
 {
     const auto before = descriptorCount();
-    const pid_t child = launchChild(executable, partialPayload);
+    const pid_t child = launchChild(
+        executable,
+        partialPayload ? "--partial-payload-child" : "--partial-header-child");
 
     // The linked test-only transport polls every five seconds. The child can
     // finish inside this two-second watchdog only if InProcessGpuService::stop
     // interrupts the blocked endpoint through its separately owned duplicate.
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds {2};
-    int status = 0;
-    for (;;) {
-        const auto result = ::waitpid(child, &status, WNOHANG);
-        if (result < 0 && errno == EINTR)
-            continue;
-        require(result >= 0);
-        if (result == child)
-            break;
-        if (std::chrono::steady_clock::now() >= deadline) {
-            require(::kill(child, SIGKILL) == 0);
-            require(::waitpid(child, &status, 0) == child);
-            require(false);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds {10});
-    }
+    const int status = waitForChild(child, std::chrono::seconds {2});
     require(WIFEXITED(status));
     require(WEXITSTATUS(status) == EXIT_SUCCESS);
     require(descriptorCount() == before);

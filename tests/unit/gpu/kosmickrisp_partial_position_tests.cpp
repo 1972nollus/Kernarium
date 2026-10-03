@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/partial_position_spirv.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstdio>
@@ -11,15 +12,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 /* The fragment depth result is a scalar and the colour results are vectors,
  * and a fragment shader numbers them from the same zero the varying slots use,
