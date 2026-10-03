@@ -102,7 +102,10 @@ operand combinations. The variant-complete count is therefore 0/983.
 - `a64_instruction_allocations.tsv` and `a64_instruction_decode_partitions.tsv`
   map the pinned Arm A-profile 2026-06 release and LLVM MC 22.1.8 allocation
   space. The corpus builder attributes every case to inventory entries through
-  them.
+  them. The architecture oracle numbers the forms of all four index sections,
+  Base, FP&SIMD, SVE (`SVE-`) and SME (`SME-`), 2,291 in all, in index order,
+  so the decode partitions relate SVE and SME encodings to their forms; the
+  inventory holds the Base and FP&SIMD forms.
 - `a64_instruction_evidence_bindings.tsv` supplies one witness encoding for
   each allocation, and `a64_instruction_variant_contracts.tsv` supplies
   independently reviewed encoding contracts that override the decoder's

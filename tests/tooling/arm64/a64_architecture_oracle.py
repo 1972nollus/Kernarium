@@ -23,11 +23,32 @@ COMMIT_ID = "2026-06_rel"
 ARCHIVE_NAME = f"ISA_A64_xml_A_profile-{RELEASE}.tar.gz"
 ARCHIVE_SHA256 = "63a01a1696483bbe2edfef9e0f0cd053d6c1c619ec0587876cb7a60bb344f354"
 SOURCE_ORACLE = f"arm-a-profile-{RELEASE}-xml-{COMMIT_ID}"
-INDEXES = {"Base": ("index.xml", 516), "FP&SIMD": ("fpsimdindex.xml", 467)}
-STABLE_ID_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD"}
+INDEXES = {
+    "Base": ("index.xml", 516),
+    "FP&SIMD": ("fpsimdindex.xml", 467),
+    "SVE": ("sveindex.xml", 955),
+    "SME": ("mortlachindex.xml", 353),
+}
+STABLE_ID_PREFIXES = {
+    "Base": "BASE",
+    "FP&SIMD": "FPSIMD",
+    "SVE": "SVE",
+    "SME": "SME",
+}
+# Index headings the pinned XML repeats within one index, as
+# (section, file): (heading, label). The SVE index and the PDF title two
+# alias pages just "MOV"; each label names the operand its index
+# description gives, as the sibling MOV headings of each section do.
+HEADING_ERRATA = {
+    ("SVE", "mov_dupm_z_i.xml"): ("MOV", "MOV (bitmask immediate)"),
+    ("SVE", "mov_orr_p_p_pp.xml"): ("MOV", "MOV (predicate, unpredicated)"),
+}
 SIMPLE_CONSTRAINT = re.compile(r"(!=|==) ([01x]+)\Z")
-FEATURE_EXPRESSION = re.compile(
-    r"FEAT_[A-Za-z0-9_]+(?: (?:&&|\|\|) FEAT_[A-Za-z0-9_]+)*\Z"
+# A feature expression is FEAT_ names and field comparisons joined by &&
+# and ||, with parentheses: "FEAT_SME2 && (sz == '0' || FEAT_SME_I16I64)".
+FEATURE_TOKEN = re.compile(
+    r"\s*(FEAT_[A-Za-z0-9_]+|[A-Za-z][A-Za-z0-9_]* (?:==|!=) '[01x]+'"
+    r"|&&|\|\||\(|\))"
 )
 UNDEF_GUARD = re.compile(r"if (.+) then EndOfDecode\(Decode_UNDEF\); end;\Z")
 GUARD_FEATURE = re.compile(r"!IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)\Z")
@@ -166,15 +187,158 @@ def _add_boxes(
     return mask, value, fields, constraints
 
 
+def parse_feature_expression(text: str) -> tuple:
+    """Parse an Arm XML feature expression into a tree.
+
+    A node is ("feature", name), ("field", name, operator, pattern),
+    ("and", children) or ("or", children); && binds tighter than ||.
+    """
+    tokens: list[str] = []
+    position = 0
+    while position < len(text):
+        match = FEATURE_TOKEN.match(text, position)
+        if match is None:
+            raise ValueError(
+                f"unsupported Arm XML feature expression {text!r}"
+            )
+        tokens.append(match.group(1))
+        position = match.end()
+    index = 0
+
+    def peek() -> str | None:
+        return tokens[index] if index < len(tokens) else None
+
+    def take() -> str:
+        nonlocal index
+        if index >= len(tokens):
+            raise ValueError(
+                f"unsupported Arm XML feature expression {text!r}"
+            )
+        index += 1
+        return tokens[index - 1]
+
+    def primary() -> tuple:
+        token = take()
+        if token == "(":
+            node = disjunction()
+            if take() != ")":
+                raise ValueError(
+                    f"unsupported Arm XML feature expression {text!r}"
+                )
+            return node
+        if token.startswith("FEAT_"):
+            return ("feature", token)
+        field = GUARD_FIELD.fullmatch(token)
+        if field is None:
+            raise ValueError(
+                f"unsupported Arm XML feature expression {text!r}"
+            )
+        return ("field", *field.groups())
+
+    def conjunction() -> tuple:
+        children = [primary()]
+        while peek() == "&&":
+            take()
+            children.append(primary())
+        return children[0] if len(children) == 1 else ("and", tuple(children))
+
+    def disjunction() -> tuple:
+        children = [conjunction()]
+        while peek() == "||":
+            take()
+            children.append(conjunction())
+        return children[0] if len(children) == 1 else ("or", tuple(children))
+
+    node = disjunction()
+    if index != len(tokens):
+        raise ValueError(f"unsupported Arm XML feature expression {text!r}")
+    return node
+
+
+def _expression_has_fields(node: tuple) -> bool:
+    if node[0] == "field":
+        return True
+    if node[0] == "feature":
+        return False
+    return any(_expression_has_fields(child) for child in node[1])
+
+
+def resolve_feature_fields(
+    node: tuple, fields: dict[str, tuple[int, int]], word: int
+) -> tuple | bool:
+    """Replace each field comparison with its value for word and simplify.
+
+    Returns True or False when the expression no longer names a feature.
+    """
+    kind = node[0]
+    if kind == "feature":
+        return node
+    if kind == "field":
+        _kind, name, operator, pattern = node
+        if name not in fields:
+            raise ValueError(
+                f"feature expression names unknown field {name!r}"
+            )
+        low, width = fields[name]
+        constraint = FieldConstraint(name, low, width, f"{operator} {pattern}")
+        return constraint.matches(word)
+    children: list[tuple] = []
+    for child in node[1]:
+        value = resolve_feature_fields(child, fields, word)
+        if value is True or value is False:
+            if (value is True) == (kind == "or"):
+                return value
+            continue
+        children.append(value)
+    if not children:
+        return kind == "and"
+    return children[0] if len(children) == 1 else (kind, tuple(children))
+
+
+def format_feature_expression(node: tuple, parent: str = "or") -> str:
+    kind = node[0]
+    if kind == "feature":
+        return node[1]
+    if kind == "field":
+        return f"{node[1]} {node[2]} '{node[3]}'"
+    text = (" && " if kind == "and" else " || ").join(
+        format_feature_expression(child, kind) for child in node[1]
+    )
+    return f"({text})" if kind == "or" and parent == "and" else text
+
+
+def feature_expression_terms(node: tuple) -> list[frozenset[str]]:
+    """Return the expression's disjunctive normal form as FEAT_ name sets."""
+    kind = node[0]
+    if kind == "feature":
+        return [frozenset((node[1],))]
+    if kind == "field":
+        raise ValueError(
+            "feature expression still depends on field "
+            f"{format_feature_expression(node)!r}"
+        )
+    if kind == "or":
+        return [
+            term
+            for child in node[1]
+            for term in feature_expression_terms(child)
+        ]
+    terms = [frozenset()]
+    for child in node[1]:
+        terms = [
+            left | right
+            for left in terms
+            for right in feature_expression_terms(child)
+        ]
+    return terms
+
+
 def _declared_features(element: ET.Element) -> list[str]:
     result: list[str] = []
     for variant in element.findall("./arch_variants/arch_variant"):
         feature = variant.get("feature")
         if feature:
-            if FEATURE_EXPRESSION.fullmatch(feature) is None:
-                raise ValueError(
-                    f"unsupported Arm XML feature expression {feature!r}"
-                )
+            parse_feature_expression(feature)
             result.append(feature)
     return result
 
@@ -313,10 +477,12 @@ def _matching_table_features(
                 for variant in entry.findall(".//arch_variant"):
                     feature = variant.get("feature")
                     if feature:
-                        if FEATURE_EXPRESSION.fullmatch(feature) is None:
+                        if _expression_has_fields(
+                            parse_feature_expression(feature)
+                        ):
                             raise ValueError(
                                 "unsupported Arm XML feature expression "
-                                f"{feature!r}"
+                                f"{feature!r} in a value table"
                             )
                         result.append(feature)
     return result
@@ -338,7 +504,10 @@ def _decode_feature_guards(
     feature and its field conditions.  Top-level unconditional guards only
     repeat the declared features.  Statements nested in a case arm, which
     also depend on their selector, and other shapes (IN sets, disjunctions)
-    are not read.  DECODE_ERRATA corrects statements the XML gets wrong.
+    are not read, nor are statements without a feature test that compare a
+    decode variable such as SVE's tsize (tszh:tszl), which reserve values
+    rather than require features.  DECODE_ERRATA corrects statements the XML
+    gets wrong.
     """
     text = "\n".join(
         "".join(element.itertext())
@@ -358,6 +527,7 @@ def _decode_feature_guards(
             continue
         features: list[str] = []
         conditions: list[FieldConstraint] = []
+        unknown: list[str] = []
         for atom in statement.group(1).split(" && "):
             feature = GUARD_FEATURE.fullmatch(atom)
             field = GUARD_FIELD.fullmatch(atom)
@@ -366,9 +536,8 @@ def _decode_feature_guards(
             elif field is not None:
                 name, operator, pattern = field.groups()
                 if name not in fields:
-                    raise ValueError(
-                        f"decode guard {line!r} names unknown field {name!r}"
-                    )
+                    unknown.append(name)
+                    continue
                 low, width = fields[name]
                 conditions.append(
                     FieldConstraint(name, low, width, f"{operator} {pattern}")
@@ -376,7 +545,11 @@ def _decode_feature_guards(
             else:
                 break
         else:
-            if len(features) == 1 and conditions:
+            if unknown and features:
+                raise ValueError(
+                    f"decode guard {line!r} names unknown field {unknown[0]!r}"
+                )
+            if len(features) == 1 and conditions and not unknown:
                 result.append((features[0], tuple(conditions)))
     return tuple(result)
 
@@ -389,6 +562,7 @@ class ArchitectureCatalog:
         self._files: dict[tuple[str, str], str] = {}
         self._stable_forms: dict[str, tuple[str, str, str]] = {}
         self._trees: dict[str, ET.Element] = {}
+        unused_errata = set(HEADING_ERRATA)
         for section, (index_name, expected_count) in INDEXES.items():
             index_path = root / index_name
             if not index_path.is_file():
@@ -404,6 +578,15 @@ class ArchitectureCatalog:
                 filename = entry.get("iformfile")
                 if not heading or not filename:
                     raise ValueError(f"{index_path}: malformed form index entry")
+                erratum = HEADING_ERRATA.get((section, filename))
+                if erratum is not None:
+                    if heading != erratum[0]:
+                        raise ValueError(
+                            f"{index_path}: heading erratum for {filename} "
+                            "no longer applies"
+                        )
+                    heading = erratum[1]
+                    unused_errata.discard((section, filename))
                 key = (section, heading)
                 if key in self._files:
                     raise ValueError(f"{index_path}: duplicate form {heading!r}")
@@ -416,6 +599,11 @@ class ArchitectureCatalog:
                     heading,
                     filename,
                 )
+        if unused_errata:
+            raise ValueError(
+                "heading errata name no indexed form: "
+                + ", ".join(sorted(f"{s} {f}" for s, f in unused_errata))
+            )
         self._forms_by_file = {
             filename: key for key, filename in self._files.items()
         }
@@ -553,6 +741,24 @@ class ArchitectureCatalog:
         for variant in self.all_variants(section, form):
             if not variant.matches(word):
                 continue
+            fields = {
+                name: (low, width) for name, low, width in variant.fields
+            }
+            declared: list[str] = []
+            for expression in variant.feature_expressions:
+                tree = parse_feature_expression(expression)
+                if not _expression_has_fields(tree):
+                    declared.append(expression)
+                    continue
+                resolved = resolve_feature_fields(tree, fields, word)
+                if resolved is False:
+                    raise ValueError(
+                        f"{section} {form}: {word:08x} fails its feature "
+                        f"expression {expression!r}"
+                    )
+                if resolved is not True:
+                    declared.append(format_feature_expression(resolved))
+            variant = replace(variant, feature_expressions=tuple(declared))
             dynamic = (
                 _matching_table_features(
                     root,
@@ -747,11 +953,12 @@ def feature_alternatives(
     """Convert the conjunction of Arm feature expressions to host alternatives."""
     alternatives: set[frozenset[str]] = {frozenset()}
     for expression in expressions:
-        disjunction = expression.split(" || ")
-        terms: list[frozenset[str]] = []
-        for term in disjunction:
-            names = term.split(" && ")
-            terms.append(frozenset(_host_feature(name) for name in names))
+        terms = [
+            frozenset(_host_feature(name) for name in term)
+            for term in feature_expression_terms(
+                parse_feature_expression(expression)
+            )
+        ]
         alternatives = {
             left | right for left in alternatives for right in terms
         }
