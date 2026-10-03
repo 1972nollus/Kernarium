@@ -18,11 +18,8 @@ class JitExecutor;
  * translation cache. Short-lived compiler results and rejected publication
  * candidates remain transient caller scratch rather than cache-owned storage.
  *
- * Every structure below used to be a fixed per-executor constant, so the total
- * multiplied by the guest's CPU count with nothing bounding it: at 131072 sets
- * and a 512 MiB arena a ten-vCPU guest could reach 9 GiB of host memory before
- * counting guest RAM. Sizing from a budget makes the total the thing that is
- * chosen and the per-executor geometry the thing that is derived.
+ * The total is chosen and every per-executor structure is derived from it
+ * (G135), so retained JIT memory stays bounded however many guest CPUs run.
  *
  * The budget is a whole-process figure. Each expected executor, one per guest
  * CPU, receives a bounded private working-set cache and the process-global

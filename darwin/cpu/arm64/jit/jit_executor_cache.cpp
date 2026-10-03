@@ -20,17 +20,13 @@ JitExecutor::Implementation::validate_stale_block(
     return JitCacheValidationResult::mismatch;
 
   /*
-   * This runs on every stale hit in production builds, and it used to do the
-   * job in the slowest available shape: one virtual fetch through the software
-   * TLB per instruction, plus a four-byte memcmp, up to 64 times, for at most
-   * 256 contiguous bytes. Fetch page-bounded runs instead and compare each run
-   * once, which is the same page-splitting loop fetch_instruction_window()
-   * already uses in the gadget executor.
+   * This runs on every stale hit in production builds, so it fetches
+   * page-bounded runs and compares each run once, with the page-splitting
+   * loop fetch_instruction_window() uses in the gadget executor.
    *
-   * Fault reporting has to stay exactly as it was: the old loop returned
-   * mismatch as soon as a word differed, and only reported fault for an
-   * unreadable word it actually reached. A bulk fetch cannot tell which of
-   * those applies when it fails, so a failed run falls back to the
+   * Validation reports mismatch at the first differing word, and fault only
+   * for an unreadable word it reaches before any mismatch. A failed bulk fetch
+   * cannot tell which of those applies, so a failed run falls back to the
    * word-at-a-time path over that run rather than reporting either outcome
    * for the whole span.
    */
