@@ -106,9 +106,10 @@ operand combinations. The variant-complete count is therefore 0/983.
   each allocation, and `a64_instruction_variant_contracts.tsv` supplies
   independently reviewed encoding contracts that override the decoder's
   allocation for the witnesses they match. Both are inputs of the allocation
-  generator; the bindings' `ctest` and `case` columns are provenance only.
-  They name the producer check a witness came from, or `-` once no corpus
-  record comes from that producer, and the corpus check enforces it.
+  generator, whose `binding_encoding` column copies the witness; the
+  bindings' `ctest` and `case` columns are provenance only. They name the
+  pack case, by producer and case name, whose entry word is the witness, or
+  `-` for both when no case is, and the corpus check enforces it.
 
 The checked TSV files, not a Markdown checklist, are the exact inventory. The
 generators live under `tests/tooling/arm64`; use their `--help` output for the
