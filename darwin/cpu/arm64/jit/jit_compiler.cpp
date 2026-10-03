@@ -309,6 +309,17 @@ void JitCompiler::mark_direct_memory_write() noexcept {
       direct_memory_write_mask_ |= std::uint64_t{1} << count_;
   }
 
+void JitCompiler::mark_direct_memory_writes(std::size_t length) noexcept {
+    for (std::size_t index = 0; index < length; ++index) {
+      const auto instruction_index = count_ + index;
+      if (instruction_index >= maximum_block_instructions)
+        break;
+      const auto bit = std::uint64_t{1} << instruction_index;
+      memory_write_mask_ |= bit;
+      direct_memory_write_mask_ |= bit;
+    }
+  }
+
 [[nodiscard]] Arm64Emitter::Label
   JitCompiler::cold_exit(std::uint32_t instruction, std::uint64_t pc,
                          ColdPath::Action action) {

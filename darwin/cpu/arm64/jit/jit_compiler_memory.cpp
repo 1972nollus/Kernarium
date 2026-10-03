@@ -923,7 +923,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
 
 [[nodiscard]] bool JitCompiler::decode_simd_unsigned_memory(
       std::uint32_t instruction,
-      SimdUnsignedMemoryOperation &operation) noexcept {
+      UnsignedMemoryOperation &operation) noexcept {
     if ((instruction & 0x3b00'0000U) != 0x3900'0000U ||
         (instruction & 0x0400'0000U) == 0U)
       return false;
@@ -955,7 +955,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         instructions.size() < 2)
       return 0;
 
-    std::array<SimdUnsignedMemoryOperation, maximum_run> operations{};
+    std::array<UnsignedMemoryOperation, maximum_run> operations{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
@@ -963,7 +963,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
-      SimdUnsignedMemoryOperation operation{};
+      UnsignedMemoryOperation operation{};
       if (!decode_simd_unsigned_memory(instructions[candidates], operation))
         break;
       if (candidates == 0) {
@@ -1058,25 +1058,18 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     }
 
     if (!load) {
-      for (std::size_t index = 0; index < length; ++index) {
-        const auto instruction_index = count_ + index;
-        if (instruction_index >= maximum_block_instructions)
-          break;
-        const auto bit = std::uint64_t{1} << instruction_index;
-        memory_write_mask_ |= bit;
-        direct_memory_write_mask_ |= bit;
-      }
+      mark_direct_memory_writes(length);
       clear_local_exclusive_monitor();
     }
     return length;
   }
 
-[[nodiscard]] bool JitCompiler::decode_sp_unsigned_memory(
-      std::uint32_t instruction,
-      SpUnsignedMemoryOperation &operation) noexcept {
+[[nodiscard]] bool JitCompiler::decode_scalar_unsigned_memory(
+      std::uint32_t instruction, bool sp_base,
+      UnsignedMemoryOperation &operation) noexcept {
+    const unsigned base = (instruction >> 5) & 31U;
     if ((instruction & 0x3b00'0000U) != 0x3900'0000U ||
-        (instruction & 0x0400'0000U) != 0U ||
-        ((instruction >> 5) & 31U) != 31U)
+        (instruction & 0x0400'0000U) != 0U || (base == 31U) != sp_base)
       return false;
 
     const unsigned size_shift = instruction >> 30;
@@ -1091,10 +1084,26 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
                       (instruction >> 10) & 0xfffU)
                   << size_shift,
         .bytes = std::size_t{1} << size_shift,
+        .base = base,
         .transfer = instruction & 31U,
         .load = opc != 0U,
     };
     return true;
+  }
+
+void JitCompiler::emit_native_gpr_run(
+      std::span<const UnsignedMemoryOperation> operations, bool load) {
+    for (const auto &operation : operations) {
+      const auto native_gpr =
+          load ? write_native_gpr(operation.transfer, false, false, 9)
+               : read_native_gpr(operation.transfer, false, 9);
+      const auto native =
+          (operation.instruction & ~((31U << 5) | 31U)) | (8U << 5) |
+          native_gpr.host;
+      emitter_.emit(native);
+      if (load)
+        commit_native_gpr(native_gpr, operation.transfer, false);
+    }
   }
 
 [[nodiscard]] std::size_t JitCompiler::try_emit_sp_unsigned_run(
@@ -1103,15 +1112,16 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<SpUnsignedMemoryOperation, maximum_run> operations{};
+    std::array<UnsignedMemoryOperation, maximum_run> operations{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     bool load = false;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
-      SpUnsignedMemoryOperation operation{};
-      if (!decode_sp_unsigned_memory(instructions[candidates], operation))
+      UnsignedMemoryOperation operation{};
+      if (!decode_scalar_unsigned_memory(instructions[candidates], true,
+                                         operation))
         break;
       if (candidates == 0)
         load = operation.load;
@@ -1155,58 +1165,13 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
-    for (std::size_t index = 0; index < length; ++index) {
-      const auto &operation = operations[index];
-      const auto native_gpr =
-          load ? write_native_gpr(operation.transfer, false, false, 9)
-               : read_native_gpr(operation.transfer, false, 9);
-      const auto native =
-          (operation.instruction & ~((31U << 5) | 31U)) | (8U << 5) |
-          native_gpr.host;
-      emitter_.emit(native);
-      if (load)
-        commit_native_gpr(native_gpr, operation.transfer, false);
-    }
+    emit_native_gpr_run(std::span{operations}.first(length), load);
 
     if (!load) {
-      for (std::size_t index = 0; index < length; ++index) {
-        const auto instruction_index = count_ + index;
-        if (instruction_index >= maximum_block_instructions)
-          break;
-        const auto bit = std::uint64_t{1} << instruction_index;
-        memory_write_mask_ |= bit;
-        direct_memory_write_mask_ |= bit;
-      }
+      mark_direct_memory_writes(length);
       clear_local_exclusive_monitor();
     }
     return length;
-  }
-
-[[nodiscard]] bool JitCompiler::decode_gpr_unsigned_memory(
-      std::uint32_t instruction,
-      GprUnsignedMemoryOperation &operation) noexcept {
-    if ((instruction & 0x3b00'0000U) != 0x3900'0000U ||
-        (instruction & 0x0400'0000U) != 0U)
-      return false;
-
-    const unsigned size_shift = instruction >> 30;
-    const unsigned opc = (instruction >> 22) & 3U;
-    const unsigned base = (instruction >> 5) & 31U;
-    if (base == 31U || (size_shift == 3U && opc >= 2U) ||
-        (size_shift == 2U && opc == 3U))
-      return false;
-
-    operation = {
-        .instruction = instruction,
-        .offset = static_cast<std::uint64_t>(
-                      (instruction >> 10) & 0xfffU)
-                  << size_shift,
-        .bytes = std::size_t{1} << size_shift,
-        .base = base,
-        .transfer = instruction & 31U,
-        .load = opc != 0U,
-    };
-    return true;
   }
 
 [[nodiscard]] std::size_t JitCompiler::try_emit_gpr_unsigned_run(
@@ -1215,7 +1180,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (track_direct_stores_ || instructions.size() < 2)
       return 0;
 
-    std::array<GprUnsignedMemoryOperation, maximum_run> operations{};
+    std::array<UnsignedMemoryOperation, maximum_run> operations{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
@@ -1223,8 +1188,9 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
-      GprUnsignedMemoryOperation operation{};
-      if (!decode_gpr_unsigned_memory(instructions[candidates], operation))
+      UnsignedMemoryOperation operation{};
+      if (!decode_scalar_unsigned_memory(instructions[candidates], false,
+                                         operation))
         break;
       if (candidates == 0) {
         base = operation.base;
@@ -1284,28 +1250,10 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
-    for (std::size_t index = 0; index < length; ++index) {
-      const auto &operation = operations[index];
-      const auto native_gpr =
-          load ? write_native_gpr(operation.transfer, false, false, 9)
-               : read_native_gpr(operation.transfer, false, 9);
-      const auto native =
-          (operation.instruction & ~((31U << 5) | 31U)) | (8U << 5) |
-          native_gpr.host;
-      emitter_.emit(native);
-      if (load)
-        commit_native_gpr(native_gpr, operation.transfer, false);
-    }
+    emit_native_gpr_run(std::span{operations}.first(length), load);
 
     if (!load) {
-      for (std::size_t index = 0; index < length; ++index) {
-        const auto instruction_index = count_ + index;
-        if (instruction_index >= maximum_block_instructions)
-          break;
-        const auto bit = std::uint64_t{1} << instruction_index;
-        memory_write_mask_ |= bit;
-        direct_memory_write_mask_ |= bit;
-      }
+      mark_direct_memory_writes(length);
       clear_local_exclusive_monitor();
     }
     return length;
