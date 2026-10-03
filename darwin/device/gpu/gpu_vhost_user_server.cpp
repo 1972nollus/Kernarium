@@ -61,6 +61,7 @@ public:
             eventQueue_.get(),
             {.closeOnExec = true},
             "close-on-exec descriptor");
+        addFenceTimer(eventQueue_.get());
         const int resizeDescriptor = display_.resizeEventDescriptor();
         if (resizeDescriptor >= 0) {
             struct kevent change {};

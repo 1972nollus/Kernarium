@@ -14,6 +14,7 @@
 #include <optional>
 #include <source_location>
 #include <stdexcept>
+#include <sys/event.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -3152,6 +3153,49 @@ void heldAndCompletedFencesShareTheQueueCapacity()
     require(!fences.full());
 }
 
+/* The server arms its fence timer after the device has run a command, so
+ * arming must not be able to fail for want of kernel memory: the timer's knote
+ * is added once with the queue, and arming, firing and cancelling only modify
+ * it. A knote exists exactly when it can be disabled without being added. */
+void theFenceTimerKeepsItsKnote()
+{
+    const UniqueDescriptor queue {::kqueue()};
+    require(queue.get() >= 0);
+    const auto knoteExists = [&] {
+        struct kevent change {};
+        EV_SET(&change, fenceTimerIdentifier, EVFILT_TIMER, EV_DISABLE, 0, 0,
+            nullptr);
+        return ::kevent(queue.get(), &change, 1, nullptr, 0, nullptr) == 0;
+    };
+    const auto fires = [&](long milliseconds) {
+        struct kevent event {};
+        const timespec timeout {
+            .tv_sec = milliseconds / 1000,
+            .tv_nsec = milliseconds % 1000 * 1'000'000,
+        };
+        const int count =
+            ::kevent(queue.get(), nullptr, 0, &event, 1, &timeout);
+        require(count >= 0);
+        return count == 1 && event.filter == EVFILT_TIMER &&
+            event.ident == fenceTimerIdentifier;
+    };
+
+    addFenceTimer(queue.get());
+    require(!fires(5));
+    for (unsigned round = 0; round < 2; ++round) {
+        armFenceTimer(queue.get());
+        require(fires(2000));
+        require(!fires(5));
+        require(knoteExists(), "the fence timer's knote went when it fired");
+    }
+    armFenceTimer(queue.get());
+    cancelFenceTimer(queue.get());
+    require(!fires(5));
+    require(knoteExists(), "cancelling the fence timer removed its knote");
+    armFenceTimer(queue.get());
+    require(fires(2000));
+}
+
 /* Each deferrable command, on a ring the server has not held a command for:
  * holding the first command on a ring is what adds the ring to the server's
  * escape counts. */
@@ -3341,6 +3385,7 @@ int main()
     aReusedContextIdStartsWithALiveRing();
     heldAndCompletedFencesShareTheQueueCapacity();
     deferredCommandsAllocateBeforeTheDeviceCommits();
+    theFenceTimerKeepsItsKnote();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();
     rendererBackingAttachIsRetryableAfterAllocationFailure();
