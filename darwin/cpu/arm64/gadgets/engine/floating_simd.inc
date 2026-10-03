@@ -267,18 +267,9 @@ afp_twins_end
 gadget floating_round_sized_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_floating_round_sized_software
-	ldp x1, x2, [sp], #16
 	/* Merge any host IDC/other status raised while classifying operands with
 	 * the explicit IOC/IXC produced by the bounded reference helper. */
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper floating_round_sized_software
 	next_gadget
 
 /* Horizontal/pairwise FP operations are completely specialized by operation
@@ -437,24 +428,14 @@ gadget bfloat_convert_upper_native
 gadget bfloat_convert_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_conversion_software
-	ldp x1, x2, [sp], #16
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper bfloat_conversion_software
 	next_gadget
 
-/* Native BFDOT is exact on every BF16 host: FPCR.EBF is RES0, so the guest
- * can only select the standard behavior, which ignores FPCR. Width and indexed
- * pair are fixed by translation, so these gadgets contain no instruction-shape
- * branch. */
-.macro bfloat_dot_native name, encoding
-gadget bfloat_dot_native_\name
+/* One native instruction \encoding on q0, q1 and the accumulator q2, whose
+ * CpuState offsets the operand packs at bits 16, 32 and 0. The two macros
+ * differ only in how they address CpuState. */
+.macro ternary_q_native name, encoding
+gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -468,29 +449,8 @@ gadget bfloat_dot_native_\name
 	next_gadget
 .endm
 
-bfloat_dot_native vector_2s, 0x2e41fc02
-bfloat_dot_native vector_4s, 0x6e41fc02
-bfloat_dot_native indexed_2s_0, 0x0f41f002
-bfloat_dot_native indexed_2s_1, 0x0f61f002
-bfloat_dot_native indexed_2s_2, 0x0f41f802
-bfloat_dot_native indexed_2s_3, 0x0f61f802
-bfloat_dot_native indexed_4s_0, 0x4f41f002
-bfloat_dot_native indexed_4s_1, 0x4f61f002
-bfloat_dot_native indexed_4s_2, 0x4f41f802
-bfloat_dot_native indexed_4s_3, 0x4f61f802
-.purgem bfloat_dot_native
-
-gadget bfloat_dot_software
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_dot_software
-	ldp x1, x2, [sp], #16
-	next_gadget
-
-gadget bfloat_matrix_native
+.macro ternary_q_native_base name, encoding
+gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -502,48 +462,54 @@ gadget bfloat_matrix_native
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
-	.inst 0x6e41ec02
+	.inst \encoding
 	str q2, [x15]
 	next_gadget
+.endm
+
+/* Native BFDOT is exact on every BF16 host: FPCR.EBF is RES0, so the guest
+ * can only select the standard behavior, which ignores FPCR. Width and indexed
+ * pair are fixed by translation, so these gadgets contain no instruction-shape
+ * branch. */
+ternary_q_native bfloat_dot_native_vector_2s, 0x2e41fc02
+ternary_q_native bfloat_dot_native_vector_4s, 0x6e41fc02
+ternary_q_native bfloat_dot_native_indexed_2s_0, 0x0f41f002
+ternary_q_native bfloat_dot_native_indexed_2s_1, 0x0f61f002
+ternary_q_native bfloat_dot_native_indexed_2s_2, 0x0f41f802
+ternary_q_native bfloat_dot_native_indexed_2s_3, 0x0f61f802
+ternary_q_native bfloat_dot_native_indexed_4s_0, 0x4f41f002
+ternary_q_native bfloat_dot_native_indexed_4s_1, 0x4f61f002
+ternary_q_native bfloat_dot_native_indexed_4s_2, 0x4f41f802
+ternary_q_native bfloat_dot_native_indexed_4s_3, 0x4f61f802
+
+gadget bfloat_dot_software
+	ensure_fp_environment
+	ldr x8, [_stream], #8
+	software_helper bfloat_dot_software
+	next_gadget
+
+ternary_q_native_base bfloat_matrix_native, 0x6e41ec02
 
 gadget bfloat_matrix_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_matrix_software
-	ldp x1, x2, [sp], #16
+	software_helper bfloat_matrix_software
 	next_gadget
 
 /* Shape and CpuState offsets are resolved by the builder, leaving no runtime
  * test. */
-.macro half_fused_long_native name, encoding
-gadget half_fused_long_\name
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	uxth w9, w8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
-	ldr q2, [_cpu, x9]
-	.inst \encoding
-	str q2, [_cpu, x9]
-	next_gadget
-.endm
-
-half_fused_long_native native_vector_add_lower_2s, 0x0e21ec02
-half_fused_long_native native_vector_add_lower_4s, 0x4e21ec02
-half_fused_long_native native_vector_add_upper_2s, 0x2e21cc02
-half_fused_long_native native_vector_add_upper_4s, 0x6e21cc02
-half_fused_long_native native_vector_sub_lower_2s, 0x0ea1ec02
-half_fused_long_native native_vector_sub_lower_4s, 0x4ea1ec02
-half_fused_long_native native_vector_sub_upper_2s, 0x2ea1cc02
-half_fused_long_native native_vector_sub_upper_4s, 0x6ea1cc02
+ternary_q_native half_fused_long_native_vector_add_lower_2s, 0x0e21ec02
+ternary_q_native half_fused_long_native_vector_add_lower_4s, 0x4e21ec02
+ternary_q_native half_fused_long_native_vector_add_upper_2s, 0x2e21cc02
+ternary_q_native half_fused_long_native_vector_add_upper_4s, 0x6e21cc02
+ternary_q_native half_fused_long_native_vector_sub_lower_2s, 0x0ea1ec02
+ternary_q_native half_fused_long_native_vector_sub_lower_4s, 0x4ea1ec02
+ternary_q_native half_fused_long_native_vector_sub_upper_2s, 0x2ea1cc02
+ternary_q_native half_fused_long_native_vector_sub_upper_4s, 0x6ea1cc02
 
 .macro half_fused_long_indexed operation, half, shape, prefix, index, bits
-	half_fused_long_native native_indexed_\operation\()_\half\()_\shape\()_\index, \
+	ternary_q_native \
+		half_fused_long_native_indexed_\operation\()_\half\()_\shape\()_\index, \
 		(\prefix | \bits)
 .endm
 .macro half_fused_long_indexed_shapes operation, half, shape, prefix
@@ -568,7 +534,6 @@ half_fused_long_indexed_shapes sub, upper, 4s, 0x6f81c002
 
 .purgem half_fused_long_indexed_shapes
 .purgem half_fused_long_indexed
-.purgem half_fused_long_native
 
 gadget half_fused_long_software
 	ensure_fp_environment
@@ -579,57 +544,29 @@ gadget half_fused_long_software
 /* BFMLALB/BFMLALT map one-for-one to branch-free BF16 instructions. Shape,
  * half selection, and indexed lane are all selected by the builder, leaving
  * only register extraction in the hot path. */
-.macro bfloat_multiply_long_native name, encoding
-gadget bfloat_multiply_long_native_\name
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	uxth w9, w8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x13, _cpu, x10
-	add x14, _cpu, x11
-	add x15, _cpu, x9
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
-	.inst \encoding
-	str q2, [x15]
-	next_gadget
-.endm
-
-bfloat_multiply_long_native vector_b, 0x2ec1fc02
-bfloat_multiply_long_native vector_t, 0x6ec1fc02
-bfloat_multiply_long_native indexed_b_0, 0x0fc1f002
-bfloat_multiply_long_native indexed_b_1, 0x0fd1f002
-bfloat_multiply_long_native indexed_b_2, 0x0fe1f002
-bfloat_multiply_long_native indexed_b_3, 0x0ff1f002
-bfloat_multiply_long_native indexed_b_4, 0x0fc1f802
-bfloat_multiply_long_native indexed_b_5, 0x0fd1f802
-bfloat_multiply_long_native indexed_b_6, 0x0fe1f802
-bfloat_multiply_long_native indexed_b_7, 0x0ff1f802
-bfloat_multiply_long_native indexed_t_0, 0x4fc1f002
-bfloat_multiply_long_native indexed_t_1, 0x4fd1f002
-bfloat_multiply_long_native indexed_t_2, 0x4fe1f002
-bfloat_multiply_long_native indexed_t_3, 0x4ff1f002
-bfloat_multiply_long_native indexed_t_4, 0x4fc1f802
-bfloat_multiply_long_native indexed_t_5, 0x4fd1f802
-bfloat_multiply_long_native indexed_t_6, 0x4fe1f802
-bfloat_multiply_long_native indexed_t_7, 0x4ff1f802
-.purgem bfloat_multiply_long_native
+ternary_q_native_base bfloat_multiply_long_native_vector_b, 0x2ec1fc02
+ternary_q_native_base bfloat_multiply_long_native_vector_t, 0x6ec1fc02
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_0, 0x0fc1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_1, 0x0fd1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_2, 0x0fe1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_3, 0x0ff1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_4, 0x0fc1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_5, 0x0fd1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_6, 0x0fe1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_7, 0x0ff1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_0, 0x4fc1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_1, 0x4fd1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_2, 0x4fe1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_3, 0x4ff1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_4, 0x4fc1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_5, 0x4fd1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_6, 0x4fe1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_7, 0x4ff1f802
 
 gadget bfloat_multiply_long_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_multiply_long_software
-	ldp x1, x2, [sp], #16
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper bfloat_multiply_long_software
 	next_gadget
 
 /* Reciprocal operation, arity, precision, and vector width are selected at
@@ -754,11 +691,11 @@ afp_twins_end
 /* FCADD/FCMLA rotation, shape, and indexed complex source are all selected
  * during translation. The valid hot path is the exact host complex opcode. */
 .macro floating_complex_vector name, operation, arrangement, rotation, accumulate, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -774,7 +711,7 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement, #\rotation
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, floating_complex_vector, \name, \operation, \arrangement, \rotation, \accumulate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, floating_complex_vector, \name, \operation, \arrangement, \rotation, \accumulate
 .endm
 
 .macro floating_complex_vector_rotations name, operation, arrangement, accumulate
@@ -785,8 +722,8 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 .endm
 
 .macro floating_complex_element name, arrangement, element, index, rotation, forward=0
-.set .Lvector_old\@, scalar_offset0
-vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+.set Lvector_old\@, scalar_offset0
+vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -798,7 +735,7 @@ vector_entry floating_complex_\name, \forward, scalar_offset0, scalar_offset16, 
 	fcmla v2.\arrangement, v0.\arrangement, v1.\element[\index], #\rotation
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, floating_complex_element, \name, \arrangement, \element, \index, \rotation
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, floating_complex_element, \name, \arrangement, \element, \index, \rotation
 .endm
 
 .macro floating_complex_element_rotations name, arrangement, element, index
@@ -1067,12 +1004,12 @@ floating_compare_direct floating_compare_signaling_d_zero, 64, 1, 1
 gadget \name
 	ldr x8, [_stream], #8
 	msr nzcv, x27
-	b.\condition .Lfloating_condition_passed_\@
+	b.\condition Lfloating_condition_passed_\@
 	and w9, w8, #0xf
 	lsl w9, w9, #28
 	mov w27, w9
 	next_gadget
-.Lfloating_condition_passed_\@:
+Lfloating_condition_passed_\@:
 	floating_compare_body \bits, \signal, 0
 .endm
 
@@ -1268,7 +1205,7 @@ gadget \name
 	ldr q0, [x12]
 	.if \half_involved && !\afp
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #26, .Lsimd_fcvt_vector_software_\@
+	tbnz w16, #26, Lsimd_fcvt_vector_software_\@
 	.endif
 	.if \upper_narrow
 	ldr d2, [x13]
@@ -1279,7 +1216,7 @@ gadget \name
 	str q2, [x13]
 	next_gadget
 	.if \half_involved && !\afp
-.Lsimd_fcvt_vector_software_\@:
+Lsimd_fcvt_vector_software_\@:
 	fpsr_model_helper simd_floating_precision_vector_software
 	next_gadget
 	.endif
@@ -1363,7 +1300,7 @@ gadget \name
 	ldr q2, [x13]
 	.elseif \source_bits == 16 || \destination_bits == 16
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #26, .Lfloating_convert_software_\@
+	tbnz w16, #26, Lfloating_convert_software_\@
 	.endif
 	.if \source_bits == 16 && \destination_bits == 32
 	fcvt s2, h0
@@ -1382,7 +1319,7 @@ gadget \name
 	next_gadget
 
 	.if (\source_bits == 16 || \destination_bits == 16) && !\afp
-.Lfloating_convert_software_\@:
+Lfloating_convert_software_\@:
 	/* x1/x2 are the threaded engine's CpuState/TLB registers. Preserve them
 	 * in ABI callee-saved registers across the integer-only helper call. */
 	mov x19, x1
@@ -1404,11 +1341,11 @@ gadget \name
 	mov x1, x19
 	mov x2, x20
 	mov x13, x21
-	cbz x15, .Lfloating_convert_insert_\@
+	cbz x15, Lfloating_convert_insert_\@
 	mrs x17, fpsr
 	orr x17, x17, x15
 	msr fpsr, x17
-.Lfloating_convert_insert_\@:
+Lfloating_convert_insert_\@:
 	movi v2.16b, #0
 	.if \destination_bits == 16
 	ins v2.h[0], w14
@@ -1473,18 +1410,18 @@ gadget \name
 	ldr d0, [x12]
 	.if !\afp
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #24, .Lfloating_javascript_convert_software_\@
+	tbnz w16, #24, Lfloating_javascript_convert_software_\@
 	.endif
 	fjcvtzs w14, d0
 	mrs x27, nzcv
 	.if \afp
 	fmov x15, d0
 	ubfx x16, x15, #52, #11
-	cbnz x16, .Lfloating_javascript_convert_flags_\@
+	cbnz x16, Lfloating_javascript_convert_flags_\@
 	lsl x16, x15, #12
-	cbz x16, .Lfloating_javascript_convert_flags_\@
+	cbz x16, Lfloating_javascript_convert_flags_\@
 	mov w27, wzr
-.Lfloating_javascript_convert_flags_\@:
+Lfloating_javascript_convert_flags_\@:
 	.endif
 	.if \discard == 0
 	and w9, w8, #0x1f
@@ -1493,7 +1430,7 @@ gadget \name
 	.endif
 	next_gadget
 	.if !\afp
-.Lfloating_javascript_convert_software_\@:
+Lfloating_javascript_convert_software_\@:
 	fpsr_model_helper floating_javascript_convert_software
 	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
@@ -2156,11 +2093,11 @@ afp_twins_end
  * destination[4:0], left[12:8], right[20:16]. Native A64 writes also perform
  * the architecturally required zeroing above short-vector/scalar results. */
 .macro simd_three_same_vector name, operation, arrangement, accumulate=0, fpstate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2176,15 +2113,15 @@ vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, s
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_three_same_vector, \name, \operation, \arrangement, \accumulate, \fpstate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_three_same_vector, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
 
 .macro simd_three_same_scalar name, operation, arrangement, accumulate=0, fpstate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2200,7 +2137,7 @@ vector_entry simd_three_same_\name, \forward, scalar_offset0, scalar_offset16, s
 	\operation \arrangement\()2, \arrangement\()0, \arrangement\()1
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_three_same_scalar, \name, \operation, \arrangement, \accumulate, \fpstate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_three_same_scalar, \name, \operation, \arrangement, \accumulate, \fpstate
 .endm
 
 .macro simd_three_same_v6 name, operation, accumulate=0, fpstate=0
@@ -2617,11 +2554,11 @@ simd_matrix_software usmmla, 0, 1, 0
  * above, the builder resolves operation, signedness, element size, and
  * lower/upper-half form once. */
 .macro simd_widening_vector name, operation, destination, left, right, accumulate=0, fpstate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2635,15 +2572,15 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation v2.\destination, v0.\left, v1.\right
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_widening_vector, \name, \operation, \destination, \left, \right, \accumulate, \fpstate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_widening_vector, \name, \operation, \destination, \left, \right, \accumulate, \fpstate
 .endm
 
 .macro simd_widening_scalar name, operation, destination, source, accumulate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
@@ -2655,7 +2592,7 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation \destination\()2, \source\()0, \source\()1
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_widening_scalar, \name, \operation, \destination, \source, \accumulate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_widening_scalar, \name, \operation, \destination, \source, \accumulate
 .endm
 
 .macro simd_widening_long3 name, operation, operation2, accumulate=0, fpstate=0
@@ -2679,11 +2616,11 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 /* High-narrow streams carry three packed CpuState offsets. The upper-half
  * forms alone load the old destination because lower-half forms clear it. */
 .macro simd_high_narrow_vector name, operation, destination, left, right, preserve=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \preserve
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
 	vector_read \forward, 1, q0, [_cpu, x10]
@@ -2694,7 +2631,7 @@ vector_entry simd_widening_\name, \forward, scalar_offset0, scalar_offset16, sca
 	\operation v2.\destination, v0.\left, v1.\right
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_high_narrow_vector, \name, \operation, \destination, \left, \right, \preserve
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_high_narrow_vector, \name, \operation, \destination, \left, \right, \preserve
 .endm
 
 .macro simd_high_narrow3 name, operation, operation2
@@ -2762,11 +2699,11 @@ simd_widening_scalar sqdmull_s, sqdmull, d, s
  * direct CpuState vector byte offsets; runtime performs no guest-register
  * decoding or vector-base address formation. */
 .macro simd_unary_vector name, operation, destination, source, accumulate=0, fpstate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, .Lvector_old\@, scalar_none, 1
+vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvector_old\@, scalar_none, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2780,15 +2717,15 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, .Lvect
 	\operation v2.\destination, v0.\source
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, .Lvector_old\@, scalar_none, simd_unary_vector, \name, \operation, \destination, \source, \accumulate, \fpstate
+	vector_variants \forward, scalar_offset16, Lvector_old\@, scalar_none, simd_unary_vector, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
 
 .macro simd_unary_scalar name, operation, destination, source, accumulate=0, fpstate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, .Lvector_old\@, scalar_none, 1
+vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, Lvector_old\@, scalar_none, 1
 	.if \fpstate
 	ensure_fp_environment
 	.endif
@@ -2802,7 +2739,7 @@ vector_entry simd_unary_\name, \forward, scalar_offset0, scalar_offset16, .Lvect
 	\operation \destination\()2, \source\()0
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, .Lvector_old\@, scalar_none, simd_unary_scalar, \name, \operation, \destination, \source, \accumulate, \fpstate
+	vector_variants \forward, scalar_offset16, Lvector_old\@, scalar_none, simd_unary_scalar, \name, \operation, \destination, \source, \accumulate, \fpstate
 .endm
 
 .macro simd_unary_v6 name, operation, fpstate=0
@@ -3049,11 +2986,11 @@ simd_unary_vector ursqrte_4s, ursqrte, 4s, 4s
  * become packed CpuState byte offsets in the stream, so the runtime only
  * unpacks offsets rather than decoding guest registers or forming addresses. */
 .macro simd_bitwise_shape name, operation, arrangement, wide, accumulate=0, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry \name\()_\arrangement, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry \name\()_\arrangement, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ldr x8, [_stream], #8
 	unpack_u16_3 x8, x9, x10, x11
 	.if \wide
@@ -3072,7 +3009,7 @@ vector_entry \name\()_\arrangement, \forward, scalar_offset0, scalar_offset16, s
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_bitwise_shape, \name, \operation, \arrangement, \wide, \accumulate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_bitwise_shape, \name, \operation, \arrangement, \wide, \accumulate
 .endm
 
 .macro simd_bitwise name, operation, accumulate=0
@@ -3133,7 +3070,9 @@ gadget \name\()_native
 	next_gadget
 .endm
 
-.macro simd_aes_software name
+/* A two-register transform in software: the helper takes CpuState and both
+ * vector offsets. The SHA family below shares it. */
+.macro simd_crypto_two_software name
 gadget \name\()_soft
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
@@ -3150,12 +3089,11 @@ simd_aes_native_binary simd_aese, aese
 simd_aes_native_binary simd_aesd, aesd
 simd_aes_native_unary simd_aesmc, aesmc
 simd_aes_native_unary simd_aesimc, aesimc
-simd_aes_software simd_aese
-simd_aes_software simd_aesd
-simd_aes_software simd_aesmc
-simd_aes_software simd_aesimc
+simd_crypto_two_software simd_aese
+simd_crypto_two_software simd_aesd
+simd_crypto_two_software simd_aesmc
+simd_crypto_two_software simd_aesimc
 
-.purgem simd_aes_software
 .purgem simd_aes_native_unary
 .purgem simd_aes_native_binary
 
@@ -3236,25 +3174,12 @@ simd_sha_three_software simd_sha512su1
 
 .purgem simd_sha_three_software
 
-.macro simd_sha_two_software name
-gadget \name\()_soft
-	ldr x10, [_stream], #8
-	unpack_u16_2 x10, x8, x9
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	mov x2, x9
-	helper_call uml_arm64_\name\()_software
-	ldp x1, x2, [sp], #16
-	next_gadget
-.endm
+simd_crypto_two_software simd_sha1h
+simd_crypto_two_software simd_sha1su1
+simd_crypto_two_software simd_sha256su0
+simd_crypto_two_software simd_sha512su0
 
-simd_sha_two_software simd_sha1h
-simd_sha_two_software simd_sha1su1
-simd_sha_two_software simd_sha256su0
-simd_sha_two_software simd_sha512su0
-
-.purgem simd_sha_two_software
+.purgem simd_crypto_two_software
 
 .macro simd_four_source_logic name, operation, native, kind
 gadget \name
@@ -4310,11 +4235,11 @@ simd_indexed_saturating_accumulate_high_family sqrdmlsh, sqrdmlsh
  * arrangement, scalar/vector form, and element index. The hot path has no
  * decode or control branches. */
 .macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, accumulate, forward=0
-.set .Lvector_old\@, scalar_none
+.set Lvector_old\@, scalar_none
 .if \accumulate
-.set .Lvector_old\@, scalar_offset0
+.set Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
+vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, scalar_offset16, scalar_offset32, Lvector_old\@, 1
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
@@ -4328,7 +4253,7 @@ vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, s
 	\operation \destination, \source, v1.\element[\index]
 	str q2, [_cpu, x9]
 	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
+	vector_variants \forward, scalar_offset16, scalar_offset32, Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
 .endm
 
 .macro simd_indexed_floating_family name, operation, accumulate

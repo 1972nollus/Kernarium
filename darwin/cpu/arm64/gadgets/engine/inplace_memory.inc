@@ -10,12 +10,10 @@
  * the change buys. Baking both costs one entry per base register per
  * transferred register, which no template can afford; baking one costs 31.
  *
- * A host microbenchmark alternating a memory gadget with the in-place ALU entry
- * G196 already bakes, three chains in flight, measured 3.71 cycles a gadget as
- * the engine ships, 3.15 with the base read baked and 2.43 with the transferred
- * register baked. The transferred register is therefore the one taken here: a
- * loaded value is nearly always consumed soon afterwards, while a base is
- * commonly a long-lived pointer whose producer is far away or absent.
+ * Baking the transferred register gains more than baking the base read (G199),
+ * so it is the one taken here: a loaded value is nearly always consumed soon
+ * afterwards, while a base is commonly a long-lived pointer whose producer is
+ * far away or absent.
  *
  * Baking the transferred register is also what keeps an in-place update from
  * regressing. When only the ALU entry is baked, both of the loaded register's
@@ -33,9 +31,9 @@
  */
 
 .macro scalar_unsigned_inplace_register load, bits64, reg, prefix
-	.set .Lipmem\@, 0x8000 | (\reg * 8)
-scalar_unsigned_fast \load, \bits64, 0, 0, \prefix\()_r_\reg, .Lipmem\@
-scalar_unsigned_fast \load, \bits64, 0, 1, \prefix\()_r_sp_\reg, .Lipmem\@
+	.set Lipmem\@, 0x8000 | (\reg * 8)
+scalar_unsigned_fast \load, \bits64, 0, 0, \prefix\()_r_\reg, Lipmem\@
+scalar_unsigned_fast \load, \bits64, 0, 1, \prefix\()_r_sp_\reg, Lipmem\@
 .endm
 
 .macro scalar_unsigned_inplace_modes load, bits64, prefix
@@ -60,11 +58,7 @@ scalar_unsigned_inplace_modes 1, 1, load64_unsigned_inplace
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_gadget_scalar_unsigned_inplace_table)
 NAME(uml_arm64_gadget_scalar_unsigned_inplace_table):

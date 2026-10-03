@@ -11,15 +11,15 @@
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x9, #0x8c1
 	bic x8, x8, x9
-	cbz w19, .Lx86_bmi_no_carry\@
+	cbz w19, Lx86_bmi_no_carry\@
 	orr x8, x8, #1
-.Lx86_bmi_no_carry\@:
-	cbnz \host_register\()27, .Lx86_bmi_nonzero\@
+Lx86_bmi_no_carry\@:
+	cbnz \host_register\()27, Lx86_bmi_nonzero\@
 	orr x8, x8, #0x40
-.Lx86_bmi_nonzero\@:
-	tbz \host_register\()27, #(\width - 1), .Lx86_bmi_not_sign\@
+Lx86_bmi_nonzero\@:
+	tbz \host_register\()27, #(\width - 1), Lx86_bmi_not_sign\@
 	orr x8, x8, #0x80
-.Lx86_bmi_not_sign\@:
+Lx86_bmi_not_sign\@:
 	orr x8, x8, #0x2
 	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
@@ -61,18 +61,18 @@ gadget \operation\()_\width\()_rr
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_bmi_unary_read_cross\@
+	page_cross_check (\width / 8), Lx86_bmi_unary_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_bmi_unary_loaded\@
-.Lx86_bmi_unary_read_cross\@:
+	b Lx86_bmi_unary_loaded\@
+Lx86_bmi_unary_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_bmi_unary_loaded\@:
+Lx86_bmi_unary_loaded\@:
 	and x22, x23, #0xffff
 	bmi_unary_compute \operation, \width, \host_register
 	bmi_flags \width, \host_register
@@ -114,22 +114,22 @@ bmi_unary_family blsi
 	.ifc \operation,bzhi
 	and w8, w24, #0xff
 	cmp w8, #\width
-	b.hs .Lx86_bzhi_large\@
-	cbz w8, .Lx86_bzhi_zero\@
+	b.hs Lx86_bzhi_large\@
+	cbz w8, Lx86_bzhi_zero\@
 	mov \host_register\()9, #1
 	lslv \host_register\()9, \host_register\()9, \host_register\()8
 	sub \host_register\()9, \host_register\()9, #1
 	and \host_register\()27, \host_register\()26, \host_register\()9
 	mov w19, wzr
-	b .Lx86_bzhi_ready\@
-.Lx86_bzhi_large\@:
+	b Lx86_bzhi_ready\@
+Lx86_bzhi_large\@:
 	mov \host_register\()27, \host_register\()26
 	mov w19, #1
-	b .Lx86_bzhi_ready\@
-.Lx86_bzhi_zero\@:
+	b Lx86_bzhi_ready\@
+Lx86_bzhi_zero\@:
 	eor \host_register\()27, \host_register\()27, \host_register\()27
 	mov w19, wzr
-.Lx86_bzhi_ready\@:
+Lx86_bzhi_ready\@:
 	bmi_flags \width, \host_register
 	.endif
 
@@ -137,21 +137,21 @@ bmi_unary_family blsi
 	and w8, w24, #0xff
 	ubfx w9, w24, #8, #8
 	cmp w8, #\width
-	b.hs .Lx86_bextr_zero\@
-	cbz w9, .Lx86_bextr_zero\@
+	b.hs Lx86_bextr_zero\@
+	cbz w9, Lx86_bextr_zero\@
 	lsrv \host_register\()27, \host_register\()26, \host_register\()8
 	mov w10, #\width
 	sub w10, w10, w8
 	cmp w9, w10
-	b.hs .Lx86_bextr_ready\@
+	b.hs Lx86_bextr_ready\@
 	mov \host_register\()10, #1
 	lslv \host_register\()10, \host_register\()10, \host_register\()9
 	sub \host_register\()10, \host_register\()10, #1
 	and \host_register\()27, \host_register\()27, \host_register\()10
-	b .Lx86_bextr_ready\@
-.Lx86_bextr_zero\@:
+	b Lx86_bextr_ready\@
+Lx86_bextr_zero\@:
 	eor \host_register\()27, \host_register\()27, \host_register\()27
-.Lx86_bextr_ready\@:
+Lx86_bextr_ready\@:
 	mov w19, wzr
 	bmi_flags \width, \host_register
 	.endif
@@ -173,34 +173,34 @@ bmi_unary_family blsi
 	eor \host_register\()27, \host_register\()27, \host_register\()27
 	mov \host_register\()8, #1
 	mov \host_register\()9, #1
-.Lx86_pdep_loop\@:
+Lx86_pdep_loop\@:
 	tst \host_register\()26, \host_register\()9
-	b.eq .Lx86_pdep_next\@
+	b.eq Lx86_pdep_next\@
 	tst \host_register\()24, \host_register\()8
-	b.eq .Lx86_pdep_source_clear\@
+	b.eq Lx86_pdep_source_clear\@
 	orr \host_register\()27, \host_register\()27, \host_register\()9
-.Lx86_pdep_source_clear\@:
+Lx86_pdep_source_clear\@:
 	lsl \host_register\()8, \host_register\()8, #1
-.Lx86_pdep_next\@:
+Lx86_pdep_next\@:
 	lsl \host_register\()9, \host_register\()9, #1
-	cbnz \host_register\()9, .Lx86_pdep_loop\@
+	cbnz \host_register\()9, Lx86_pdep_loop\@
 	.endif
 
 	.ifc \operation,pext
 	eor \host_register\()27, \host_register\()27, \host_register\()27
 	mov \host_register\()8, #1
 	mov \host_register\()9, #1
-.Lx86_pext_loop\@:
+Lx86_pext_loop\@:
 	tst \host_register\()26, \host_register\()9
-	b.eq .Lx86_pext_next\@
+	b.eq Lx86_pext_next\@
 	tst \host_register\()24, \host_register\()9
-	b.eq .Lx86_pext_source_clear\@
+	b.eq Lx86_pext_source_clear\@
 	orr \host_register\()27, \host_register\()27, \host_register\()8
-.Lx86_pext_source_clear\@:
+Lx86_pext_source_clear\@:
 	lsl \host_register\()8, \host_register\()8, #1
-.Lx86_pext_next\@:
+Lx86_pext_next\@:
 	lsl \host_register\()9, \host_register\()9, #1
-	cbnz \host_register\()9, .Lx86_pext_loop\@
+	cbnz \host_register\()9, Lx86_pext_loop\@
 	.endif
 
 	.ifc \operation,mulx
@@ -237,18 +237,18 @@ gadget \operation\()_\width\()_rrm
 	effective_address
 	mov x27, x7
 	ldr x25, [_stream], #8
-	page_cross_check (\width / 8), .Lx86_bmi_ternary_read_cross\@
+	page_cross_check (\width / 8), Lx86_bmi_ternary_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()26, [x7]
-	b .Lx86_bmi_ternary_loaded\@
-.Lx86_bmi_ternary_read_cross\@:
+	b Lx86_bmi_ternary_loaded\@
+Lx86_bmi_ternary_read_cross\@:
 	mov x0, _context
 	mov x1, x27
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x26, x0
-.Lx86_bmi_ternary_loaded\@:
+Lx86_bmi_ternary_loaded\@:
 	and x22, x23, #0xffff
 	\load \host_register\()24, [_cpu, x25]
 	bmi_ternary_compute \operation, \width, \host_register, \store_register
@@ -299,18 +299,18 @@ gadget rorx_\width\()_rmi
 	effective_address
 	mov x25, x7
 	ldr x26, [_stream], #8
-	page_cross_check (\width / 8), .Lx86_rorx_read_cross\@
+	page_cross_check (\width / 8), Lx86_rorx_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_rorx_loaded\@
-.Lx86_rorx_read_cross\@:
+	b Lx86_rorx_loaded\@
+Lx86_rorx_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_rorx_loaded\@:
+Lx86_rorx_loaded\@:
 	and x22, x23, #0xffff
 	and w26, w26, #(\width - 1)
 	rorv \host_register\()27, \host_register\()24, \host_register\()26

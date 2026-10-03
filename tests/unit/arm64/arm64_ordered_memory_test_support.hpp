@@ -222,14 +222,6 @@ inline void set_base(arm64::CpuState &cpu, unsigned rn, std::uint64_t value)
 		cpu.registers[rn] = value;
 }
 
-inline void write_base(arm64::CpuState &cpu, unsigned rn, std::uint64_t value)
-{
-	if (rn == 31U)
-		cpu.sp = value;
-	else
-		cpu.registers[rn] = value;
-}
-
 inline void write_gpr(arm64::CpuState &cpu, unsigned rt,
 	std::uint64_t value)
 {

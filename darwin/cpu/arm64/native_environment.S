@@ -1,11 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/arm64/layout/assembly_offsets.h"
 
-#if __APPLE__
 #define NAME(value) _##value
-#else
-#define NAME(value) value
-#endif
 
 /* Shared execution-boundary helpers.  Both precompiled gadgets and native
  * translated blocks may retain guest floating-point state in architectural

@@ -14,8 +14,6 @@
 
 namespace uml::emulator::tests::base_condition {
 
-namespace arm64 = uml::cpu::arm64;
-
 enum class SelectOperation : unsigned {
 	select,
 	increment,

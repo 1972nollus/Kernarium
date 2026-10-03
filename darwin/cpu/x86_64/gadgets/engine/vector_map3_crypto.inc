@@ -4,18 +4,18 @@
 .arch_extension crypto
 
 .macro vector_map3_pclmul_lane output, left, right
-	tbz w13, #0, .Lx86_vector_map3_pclmul_left_low\@
+	tbz w13, #0, Lx86_vector_map3_pclmul_left_low\@
 	dup v6.2d, v\left\().d[1]
-	b .Lx86_vector_map3_pclmul_left_done\@
-.Lx86_vector_map3_pclmul_left_low\@:
+	b Lx86_vector_map3_pclmul_left_done\@
+Lx86_vector_map3_pclmul_left_low\@:
 	dup v6.2d, v\left\().d[0]
-.Lx86_vector_map3_pclmul_left_done\@:
-	tbz w13, #4, .Lx86_vector_map3_pclmul_right_low\@
+Lx86_vector_map3_pclmul_left_done\@:
+	tbz w13, #4, Lx86_vector_map3_pclmul_right_low\@
 	dup v7.2d, v\right\().d[1]
-	b .Lx86_vector_map3_pclmul_right_done\@
-.Lx86_vector_map3_pclmul_right_low\@:
+	b Lx86_vector_map3_pclmul_right_done\@
+Lx86_vector_map3_pclmul_right_low\@:
 	dup v7.2d, v\right\().d[0]
-.Lx86_vector_map3_pclmul_right_done\@:
+Lx86_vector_map3_pclmul_right_done\@:
 	pmull v\output\().1q, v6.1d, v7.1d
 .endm
 
@@ -49,27 +49,27 @@ gadget vector_map3_pclmul_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_vector_map3_pclmul_cross\@
+	page_cross_check (\width / 8), Lx86_vector_map3_pclmul_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256
 	ldr q3, [x7, #16]
 	.endif
-	b .Lx86_vector_map3_pclmul_loaded\@
-.Lx86_vector_map3_pclmul_cross\@:
+	b Lx86_vector_map3_pclmul_loaded\@
+Lx86_vector_map3_pclmul_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_pclmul_cross_fault\@
+	cbz w0, Lx86_vector_map3_pclmul_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
-.Lx86_vector_map3_pclmul_loaded\@:
+Lx86_vector_map3_pclmul_loaded\@:
 	mov w13, w27
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -80,9 +80,9 @@ gadget vector_map3_pclmul_\width\()_rm
 	vector_map3_pclmul_body \width
 	vector_write_xmm \width, 23
 	retire_and_next
-.Lx86_vector_map3_pclmul_cross_fault\@:
+Lx86_vector_map3_pclmul_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 vector_map3_pclmul_register 128
@@ -97,23 +97,23 @@ vector_map3_pclmul_memory 256
 
 .macro vector_map3_sha1_function output, b, c, d
 	cmp w14, #0
-	b.eq .Lx86_vector_map3_sha1_choice\@
+	b.eq Lx86_vector_map3_sha1_choice\@
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_sha1_majority\@
+	b.eq Lx86_vector_map3_sha1_majority\@
 	eor w\output, w\b, w\c
 	eor w\output, w\output, w\d
-	b .Lx86_vector_map3_sha1_function_done\@
-.Lx86_vector_map3_sha1_choice\@:
+	b Lx86_vector_map3_sha1_function_done\@
+Lx86_vector_map3_sha1_choice\@:
 	eor w15, w\c, w\d
 	and w15, w15, w\b
 	eor w\output, w15, w\d
-	b .Lx86_vector_map3_sha1_function_done\@
-.Lx86_vector_map3_sha1_majority\@:
+	b Lx86_vector_map3_sha1_function_done\@
+Lx86_vector_map3_sha1_majority\@:
 	eor w15, w\b, w\c
 	and w15, w15, w\d
 	and w\output, w\b, w\c
 	eor w\output, w\output, w15
-.Lx86_vector_map3_sha1_function_done\@:
+Lx86_vector_map3_sha1_function_done\@:
 .endm
 
 .macro vector_map3_sha1_round source_lane, first
@@ -139,22 +139,22 @@ vector_map3_pclmul_memory 256
 	mov w12, #0x7999
 	movk w12, #0x5a82, lsl #16
 	cmp w14, #1
-	b.ne .Lx86_vector_map3_sha1_not_parity_1\@
+	b.ne Lx86_vector_map3_sha1_not_parity_1\@
 	mov w12, #0xeba1
 	movk w12, #0x6ed9, lsl #16
-	b .Lx86_vector_map3_sha1_constant_ready\@
-.Lx86_vector_map3_sha1_not_parity_1\@:
+	b Lx86_vector_map3_sha1_constant_ready\@
+Lx86_vector_map3_sha1_not_parity_1\@:
 	cmp w14, #2
-	b.ne .Lx86_vector_map3_sha1_not_majority\@
+	b.ne Lx86_vector_map3_sha1_not_majority\@
 	mov w12, #0xbcdc
 	movk w12, #0x8f1b, lsl #16
-	b .Lx86_vector_map3_sha1_constant_ready\@
-.Lx86_vector_map3_sha1_not_majority\@:
+	b Lx86_vector_map3_sha1_constant_ready\@
+Lx86_vector_map3_sha1_not_majority\@:
 	cmp w14, #3
-	b.ne .Lx86_vector_map3_sha1_constant_ready\@
+	b.ne Lx86_vector_map3_sha1_constant_ready\@
 	mov w12, #0xc1d6
 	movk w12, #0xca62, lsl #16
-.Lx86_vector_map3_sha1_constant_ready\@:
+Lx86_vector_map3_sha1_constant_ready\@:
 	mov w0, v0.s[3]
 	mov w1, v0.s[2]
 	mov w2, v0.s[1]
@@ -184,30 +184,30 @@ gadget vector_map3_sha1rnds4_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check 16, .Lx86_vector_map3_sha1_cross
+	page_cross_check 16, Lx86_vector_map3_sha1_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldr q1, [x7]
-	b .Lx86_vector_map3_sha1_loaded
-.Lx86_vector_map3_sha1_cross:
+	b Lx86_vector_map3_sha1_loaded
+Lx86_vector_map3_sha1_cross:
 	sub sp, sp, #16
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_sha1_cross_fault
+	cbz w0, Lx86_vector_map3_sha1_cross_fault
 	ldr q1, [sp]
 	add sp, sp, #16
-.Lx86_vector_map3_sha1_loaded:
+Lx86_vector_map3_sha1_loaded:
 	mov w13, w27
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_map3_sha1_body
 	vector_write_xmm 128, 23
 	retire_and_next
-.Lx86_vector_map3_sha1_cross_fault:
+Lx86_vector_map3_sha1_cross_fault:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 .purgem vector_map3_sha1_body
 .purgem vector_map3_sha1_round
@@ -248,27 +248,27 @@ gadget vector_map3_aeskeygen_rm
 	effective_address
 	ldr x27, [_stream], #8
 	mov x25, x7
-	page_cross_check 16, .Lx86_vector_map3_aeskeygen_cross
+	page_cross_check 16, Lx86_vector_map3_aeskeygen_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldr q1, [x7]
-	b .Lx86_vector_map3_aeskeygen_loaded
-.Lx86_vector_map3_aeskeygen_cross:
+	b Lx86_vector_map3_aeskeygen_loaded
+Lx86_vector_map3_aeskeygen_cross:
 	sub sp, sp, #16
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_aeskeygen_cross_fault
+	cbz w0, Lx86_vector_map3_aeskeygen_cross_fault
 	ldr q1, [sp]
 	add sp, sp, #16
-.Lx86_vector_map3_aeskeygen_loaded:
+Lx86_vector_map3_aeskeygen_loaded:
 	mov w13, w27
 	vector_map3_aeskeygen_body
 	vector_write_xmm 128, 23
 	retire_and_next
-.Lx86_vector_map3_aeskeygen_cross_fault:
+Lx86_vector_map3_aeskeygen_cross_fault:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 .purgem vector_map3_aeskeygen_body

@@ -83,17 +83,17 @@ gadget x87_examine
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w10, #0x4700
 	bic w9, w9, w10
-	tbz w16, #15, .Lx86_x87_examine_positive
-	orr w9, w9, #.Lx86_x87_status_c1
-.Lx86_x87_examine_positive:
-	cmp w15, #.Lx86_x87_tag_empty
-	b.ne .Lx86_x87_examine_present
+	tbz w16, #15, Lx86_x87_examine_positive
+	orr w9, w9, #Lx86_x87_status_c1
+Lx86_x87_examine_positive:
+	cmp w15, #Lx86_x87_tag_empty
+	b.ne Lx86_x87_examine_present
 	mov w10, #0x4100
 	orr w9, w9, w10
-	b .Lx86_x87_examine_done
-.Lx86_x87_examine_present:
-	orr w9, w9, #.Lx86_x87_status_c2
-.Lx86_x87_examine_done:
+	b Lx86_x87_examine_done
+Lx86_x87_examine_present:
+	orr w9, w9, #Lx86_x87_status_c2
+Lx86_x87_examine_done:
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
@@ -119,7 +119,7 @@ gadget x87_decrement_top
 	and w9, w9, #7
 	strb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	bic w9, w9, #.Lx86_x87_status_c1
+	bic w9, w9, #Lx86_x87_status_c1
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
@@ -129,7 +129,7 @@ gadget x87_increment_top
 	and w9, w9, #7
 	strb w9, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	bic w9, w9, #.Lx86_x87_status_c1
+	bic w9, w9, #Lx86_x87_status_c1
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
@@ -137,7 +137,7 @@ gadget x87_increment_top
 gadget x87_free_\name
 	ldr w13, [_stream], #8
 	x87_physical w13, w14
-	mov w18, #.Lx86_x87_tag_empty
+	mov w18, #Lx86_x87_tag_empty
 	x87_set_tag w14, w18
 	.if \pop
 	x87_pop

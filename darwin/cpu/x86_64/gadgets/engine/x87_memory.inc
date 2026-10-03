@@ -44,20 +44,20 @@ gadget x87_load_f80
 	effective_address
 	mov x25, x7
 	sub sp, sp, #16
-	x87_bulk_load 10, sp, .Lx86_x87_load_f80_fault
+	x87_bulk_load 10, sp, Lx86_x87_load_f80_fault
 	x87_load_value sp, x9, w10
 	add sp, sp, #16
 	x87_push x9, w10
 	retire_and_next
-.Lx86_x87_load_f80_fault:
+Lx86_x87_load_f80_fault:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 gadget x87_load_bcd
 	effective_address
 	mov x25, x7
 	sub sp, sp, #32
-	x87_bulk_load 10, sp, .Lx86_x87_load_bcd_fault
+	x87_bulk_load 10, sp, Lx86_x87_load_bcd_fault
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
@@ -67,9 +67,9 @@ gadget x87_load_bcd
 	add sp, sp, #32
 	x87_push x9, w10
 	retire_and_next
-.Lx86_x87_load_bcd_fault:
+Lx86_x87_load_bcd_fault:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 .macro x87_store_float name, size, helper, pop
 gadget x87_store_\name
@@ -135,13 +135,13 @@ gadget x87_store_f80_pop
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	x87_bulk_store 10, sp, .Lx86_x87_store_f80_fault
+	x87_bulk_store 10, sp, Lx86_x87_store_f80_fault
 	add sp, sp, #16
 	x87_pop
 	finish_store 10
-.Lx86_x87_store_f80_fault:
+Lx86_x87_store_f80_fault:
 	add sp, sp, #16
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 gadget x87_store_bcd_pop
 	effective_address
@@ -156,13 +156,13 @@ gadget x87_store_bcd_pop
 	bl NAME(uml_x86_64_x87_to_bcd)
 	x87_leave_if_raised
 	add x11, sp, #16
-	x87_bulk_store 10, x11, .Lx86_x87_store_bcd_fault
+	x87_bulk_store 10, x11, Lx86_x87_store_bcd_fault
 	add sp, sp, #32
 	x87_pop
 	finish_store 10
-.Lx86_x87_store_bcd_fault:
+Lx86_x87_store_bcd_fault:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 
 gadget x87_load_control
 	effective_address
@@ -191,15 +191,15 @@ gadget x87_store_status
 gadget x87_environment_restore_\name
 	effective_address
 	mov x25, x7
-	.set .Lx86_x87_environment_total\@, (\environment_size + (\full * 80))
-	.if .Lx86_x87_environment_total\@ <= 96
-	.set .Lx86_x87_environment_stack\@, 96
+	.set Lx86_x87_environment_total\@, (\environment_size + (\full * 80))
+	.if Lx86_x87_environment_total\@ <= 96
+	.set Lx86_x87_environment_stack\@, 96
 	.else
-	.set .Lx86_x87_environment_stack\@, 112
+	.set Lx86_x87_environment_stack\@, 112
 	.endif
-	sub sp, sp, #.Lx86_x87_environment_stack\@
-	x87_bulk_load .Lx86_x87_environment_total\@, sp, \
-		.Lx86_x87_environment_restore_fault\@
+	sub sp, sp, #Lx86_x87_environment_stack\@
+	x87_bulk_load Lx86_x87_environment_total\@, sp, \
+		Lx86_x87_environment_restore_fault\@
 	ldrh w9, [sp]
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	.if \environment_size == 28
@@ -219,7 +219,7 @@ gadget x87_environment_restore_\name
 	add x10, _cpu, #UML_X86_64_CPU_X87
 	add x11, _cpu, #UML_X86_64_CPU_MMX
 	mov w12, #8
-.Lx86_x87_environment_restore_loop\@:
+Lx86_x87_environment_restore_loop\@:
 	ldr x13, [x9]
 	ldrh w14, [x9, #8]
 	str x13, [x10]
@@ -228,36 +228,36 @@ gadget x87_environment_restore_\name
 	add x9, x9, #10
 	add x10, x10, #16
 	subs w12, w12, #1
-	b.ne .Lx86_x87_environment_restore_loop\@
+	b.ne Lx86_x87_environment_restore_loop\@
 	.endif
-	add sp, sp, #.Lx86_x87_environment_stack\@
+	add sp, sp, #Lx86_x87_environment_stack\@
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	retire_unless_x87_unchecked w9
-.Lx86_x87_environment_restore_fault\@:
-	add sp, sp, #.Lx86_x87_environment_stack\@
-	b .Lx86_memory_fault
+Lx86_x87_environment_restore_fault\@:
+	add sp, sp, #Lx86_x87_environment_stack\@
+	b Lx86_memory_fault
 .endm
 
 .macro x87_environment_save name, environment_size, full
 gadget x87_environment_save_\name
 	effective_address
 	mov x25, x7
-	.set .Lx86_x87_environment_total\@, (\environment_size + (\full * 80))
-	.if .Lx86_x87_environment_total\@ <= 96
-	.set .Lx86_x87_environment_stack\@, 96
+	.set Lx86_x87_environment_total\@, (\environment_size + (\full * 80))
+	.if Lx86_x87_environment_total\@ <= 96
+	.set Lx86_x87_environment_stack\@, 96
 	.else
-	.set .Lx86_x87_environment_stack\@, 112
+	.set Lx86_x87_environment_stack\@, 112
 	.endif
-	sub sp, sp, #.Lx86_x87_environment_stack\@
+	sub sp, sp, #Lx86_x87_environment_stack\@
 	movi v0.16b, #0
 	mov x9, sp
-	.set .Lx86_x87_environment_clear_count\@, \
-		(.Lx86_x87_environment_stack\@ / 16)
-	mov w10, #.Lx86_x87_environment_clear_count\@
-.Lx86_x87_environment_clear_loop\@:
+	.set Lx86_x87_environment_clear_count\@, \
+		(Lx86_x87_environment_stack\@ / 16)
+	mov w10, #Lx86_x87_environment_clear_count\@
+Lx86_x87_environment_clear_loop\@:
 	str q0, [x9], #16
 	subs w10, w10, #1
-	b.ne .Lx86_x87_environment_clear_loop\@
+	b.ne Lx86_x87_environment_clear_loop\@
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	strh w9, [sp]
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
@@ -276,7 +276,7 @@ gadget x87_environment_save_\name
 	add x9, sp, #\environment_size
 	add x10, _cpu, #UML_X86_64_CPU_X87
 	mov w11, #8
-.Lx86_x87_environment_save_loop\@:
+Lx86_x87_environment_save_loop\@:
 	ldr x12, [x10]
 	ldrh w13, [x10, #8]
 	str x12, [x9]
@@ -284,11 +284,11 @@ gadget x87_environment_save_\name
 	add x9, x9, #10
 	add x10, x10, #16
 	subs w11, w11, #1
-	b.ne .Lx86_x87_environment_save_loop\@
+	b.ne Lx86_x87_environment_save_loop\@
 	.endif
-	x87_bulk_store .Lx86_x87_environment_total\@, sp, \
-		.Lx86_x87_environment_save_fault\@
-	add sp, sp, #.Lx86_x87_environment_stack\@
+	x87_bulk_store Lx86_x87_environment_total\@, sp, \
+		Lx86_x87_environment_save_fault\@
+	add sp, sp, #Lx86_x87_environment_stack\@
 	.if \full
 	x87_initialize_state
 	.else
@@ -296,10 +296,10 @@ gadget x87_environment_save_\name
 	orr w9, w9, #0x3f
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	.endif
-	finish_store .Lx86_x87_environment_total\@
-.Lx86_x87_environment_save_fault\@:
-	add sp, sp, #.Lx86_x87_environment_stack\@
-	b .Lx86_memory_fault
+	finish_store Lx86_x87_environment_total\@
+Lx86_x87_environment_save_fault\@:
+	add sp, sp, #Lx86_x87_environment_stack\@
+	b Lx86_memory_fault
 .endm
 
 x87_environment_restore env14, 14, 0

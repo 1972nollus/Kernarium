@@ -46,28 +46,28 @@
 
 .macro vector_map3_select_128 output, shift
 	ubfx w14, w13, #\shift, #4
-	tbnz w14, #3, .Lx86_vector_map3_select_zero\@
+	tbnz w14, #3, Lx86_vector_map3_select_zero\@
 	and w14, w14, #3
 	cmp w14, #1
-	b.eq .Lx86_vector_map3_select_left_high\@
+	b.eq Lx86_vector_map3_select_left_high\@
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_select_right_low\@
+	b.eq Lx86_vector_map3_select_right_low\@
 	cmp w14, #3
-	b.eq .Lx86_vector_map3_select_right_high\@
+	b.eq Lx86_vector_map3_select_right_high\@
 	mov v\output\().16b, v0.16b
-	b .Lx86_vector_map3_select_done\@
-.Lx86_vector_map3_select_left_high\@:
+	b Lx86_vector_map3_select_done\@
+Lx86_vector_map3_select_left_high\@:
 	mov v\output\().16b, v2.16b
-	b .Lx86_vector_map3_select_done\@
-.Lx86_vector_map3_select_right_low\@:
+	b Lx86_vector_map3_select_done\@
+Lx86_vector_map3_select_right_low\@:
 	mov v\output\().16b, v1.16b
-	b .Lx86_vector_map3_select_done\@
-.Lx86_vector_map3_select_right_high\@:
+	b Lx86_vector_map3_select_done\@
+Lx86_vector_map3_select_right_high\@:
 	mov v\output\().16b, v3.16b
-	b .Lx86_vector_map3_select_done\@
-.Lx86_vector_map3_select_zero\@:
+	b Lx86_vector_map3_select_done\@
+Lx86_vector_map3_select_zero\@:
 	movi v\output\().16b, #0
-.Lx86_vector_map3_select_done\@:
+Lx86_vector_map3_select_done\@:
 .endm
 
 .macro vector_map3_variable_blend element, output, left, right, mask
@@ -108,31 +108,31 @@
 	tbl v5.16b, {v3.16b}, v6.16b
 	.endif
 	.elseif \opcode == 0x05
-	tbz w13, #0, .Lx86_vector_map3_pd_0_low\@
+	tbz w13, #0, Lx86_vector_map3_pd_0_low\@
 	mov v4.d[0], v1.d[1]
-	b .Lx86_vector_map3_pd_0_done\@
-.Lx86_vector_map3_pd_0_low\@:
+	b Lx86_vector_map3_pd_0_done\@
+Lx86_vector_map3_pd_0_low\@:
 	mov v4.d[0], v1.d[0]
-.Lx86_vector_map3_pd_0_done\@:
-	tbz w13, #1, .Lx86_vector_map3_pd_1_low\@
+Lx86_vector_map3_pd_0_done\@:
+	tbz w13, #1, Lx86_vector_map3_pd_1_low\@
 	mov v4.d[1], v1.d[1]
-	b .Lx86_vector_map3_pd_1_done\@
-.Lx86_vector_map3_pd_1_low\@:
+	b Lx86_vector_map3_pd_1_done\@
+Lx86_vector_map3_pd_1_low\@:
 	mov v4.d[1], v1.d[0]
-.Lx86_vector_map3_pd_1_done\@:
+Lx86_vector_map3_pd_1_done\@:
 	.if \width == 256
-	tbz w13, #2, .Lx86_vector_map3_pd_2_low\@
+	tbz w13, #2, Lx86_vector_map3_pd_2_low\@
 	mov v5.d[0], v3.d[1]
-	b .Lx86_vector_map3_pd_2_done\@
-.Lx86_vector_map3_pd_2_low\@:
+	b Lx86_vector_map3_pd_2_done\@
+Lx86_vector_map3_pd_2_low\@:
 	mov v5.d[0], v3.d[0]
-.Lx86_vector_map3_pd_2_done\@:
-	tbz w13, #3, .Lx86_vector_map3_pd_3_low\@
+Lx86_vector_map3_pd_2_done\@:
+	tbz w13, #3, Lx86_vector_map3_pd_3_low\@
 	mov v5.d[1], v3.d[1]
-	b .Lx86_vector_map3_pd_3_done\@
-.Lx86_vector_map3_pd_3_low\@:
+	b Lx86_vector_map3_pd_3_done\@
+Lx86_vector_map3_pd_3_low\@:
 	mov v5.d[1], v3.d[0]
-.Lx86_vector_map3_pd_3_done\@:
+Lx86_vector_map3_pd_3_done\@:
 	.endif
 	.elseif \opcode == 0x06 || \opcode == 0x46
 	vector_map3_select_128 4, 0
@@ -185,12 +185,12 @@
 	.elseif \opcode == 0x18 || \opcode == 0x38
 	mov v4.16b, v0.16b
 	mov v5.16b, v2.16b
-	tbz w13, #0, .Lx86_vector_map3_insert_low\@
+	tbz w13, #0, Lx86_vector_map3_insert_low\@
 	mov v5.16b, v1.16b
-	b .Lx86_vector_map3_insert_done\@
-.Lx86_vector_map3_insert_low\@:
+	b Lx86_vector_map3_insert_done\@
+Lx86_vector_map3_insert_low\@:
 	mov v4.16b, v1.16b
-.Lx86_vector_map3_insert_done\@:
+Lx86_vector_map3_insert_done\@:
 	.elseif \opcode == 0x4a || \opcode == 0x4b || \opcode == 0x4c
 	lsr w14, w13, #4
 	and w14, w14, #0xf
@@ -219,9 +219,9 @@
 .endm
 
 .macro vector_map3_shuffle_input_size opcode, width
-	.set .Lx86_vector_map3_shuffle_input_size, (\width / 8)
+	.set Lx86_vector_map3_shuffle_input_size, (\width / 8)
 	.if \opcode == 0x18 || \opcode == 0x38
-	.set .Lx86_vector_map3_shuffle_input_size, 16
+	.set Lx86_vector_map3_shuffle_input_size, 16
 	.endif
 .endm
 
@@ -242,7 +242,7 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rr
 	.if \width == 256
 	ldr q2, [x10, #16]
 	vector_map3_shuffle_input_size \opcode, \width
-	.if .Lx86_vector_map3_shuffle_input_size == 32
+	.if Lx86_vector_map3_shuffle_input_size == 32
 	ldr q3, [x11, #16]
 	.else
 	movi v3.16b, #0
@@ -260,39 +260,39 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rm
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
 	vector_map3_shuffle_input_size \opcode, \width
-	page_cross_check (.Lx86_vector_map3_shuffle_input_size), .Lx86_vector_map3_shuffle_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, .Lx86_vector_map3_shuffle_input_size
-	.if .Lx86_vector_map3_shuffle_input_size == 8
+	page_cross_check (Lx86_vector_map3_shuffle_input_size), Lx86_vector_map3_shuffle_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, Lx86_vector_map3_shuffle_input_size
+	.if Lx86_vector_map3_shuffle_input_size == 8
 	ldr d1, [x7]
 	.else
 	ldr q1, [x7]
 	.endif
-	.if .Lx86_vector_map3_shuffle_input_size == 32
+	.if Lx86_vector_map3_shuffle_input_size == 32
 	ldr q3, [x7, #16]
 	.elseif \width == 256
 	movi v3.16b, #0
 	.endif
-	b .Lx86_vector_map3_shuffle_loaded\@
-.Lx86_vector_map3_shuffle_cross\@:
+	b Lx86_vector_map3_shuffle_loaded\@
+Lx86_vector_map3_shuffle_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
-	mov w3, #.Lx86_vector_map3_shuffle_input_size
+	mov w3, #Lx86_vector_map3_shuffle_input_size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_shuffle_cross_fault\@
-	.if .Lx86_vector_map3_shuffle_input_size == 8
+	cbz w0, Lx86_vector_map3_shuffle_cross_fault\@
+	.if Lx86_vector_map3_shuffle_input_size == 8
 	ldr d1, [sp]
 	.else
 	ldr q1, [sp]
 	.endif
-	.if .Lx86_vector_map3_shuffle_input_size == 32
+	.if Lx86_vector_map3_shuffle_input_size == 32
 	ldr q3, [sp, #16]
 	.elseif \width == 256
 	movi v3.16b, #0
 	.endif
 	add sp, sp, #32
-.Lx86_vector_map3_shuffle_loaded\@:
+Lx86_vector_map3_shuffle_loaded\@:
 	mov w13, w27
 	and x10, x26, #0xffff
 	.if \width == 64
@@ -307,9 +307,9 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rm
 	vector_map3_shuffle_lane \opcode, \width
 	vector_write \width, 23
 	retire_and_next
-.Lx86_vector_map3_shuffle_cross_fault\@:
+Lx86_vector_map3_shuffle_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 .macro vector_map3_shuffle_family opcode

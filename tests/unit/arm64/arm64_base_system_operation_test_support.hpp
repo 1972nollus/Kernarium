@@ -9,11 +9,6 @@
 
 namespace arm64_base_system_operation_test {
 
-namespace engine = uml::emulator::tests;
-namespace feature_test = arm64_base_feature_system_test;
-namespace sys_test = arm64_system_test;
-using ::uml::cpu::ArmFeature;
-
 enum class Requirement {
 	baseline,
 	dpb,

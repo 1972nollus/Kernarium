@@ -26,17 +26,17 @@
 .macro vector_convert_check_range element
 	.if \element == 32
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #1, .Lx86_vector_convert_in_range\@
+	tbz w14, #1, Lx86_vector_convert_in_range\@
 	.endif
 	uminv s18, v7.4s
 	fmov w14, s18
-	cbnz w14, .Lx86_vector_convert_in_range\@
+	cbnz w14, Lx86_vector_convert_in_range\@
 	simd_leave_if_checking
 	.if \element == 64
 	movi d18, #0xffffffffffffffff
 	fcmpe d18, d18
 	.endif
-.Lx86_vector_convert_in_range\@:
+Lx86_vector_convert_in_range\@:
 .endm
 
 /* Convert one q register of float/double values to signed int32. Double
@@ -161,7 +161,7 @@ gadget vector_convert_\name\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\input_size), .Lx86_vector_convert_cross\@
+	page_cross_check (\input_size), Lx86_vector_convert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 4
 	ldr s1, [x7]
@@ -173,14 +173,14 @@ gadget vector_convert_\name\()_rm
 	ldr q3, [x7, #16]
 	.endif
 	.endif
-	b .Lx86_vector_convert_loaded\@
-.Lx86_vector_convert_cross\@:
+	b Lx86_vector_convert_loaded\@
+Lx86_vector_convert_cross\@:
 	.if \input_size <= 8
 	mov x0, _context
 	mov x1, x25
 	mov w2, #\input_size
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \input_size == 4
 	fmov s1, w0
 	.else
@@ -193,14 +193,14 @@ gadget vector_convert_\name\()_rm
 	mov x2, sp
 	mov w3, #\input_size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_convert_cross_fault\@
+	cbz w0, Lx86_vector_convert_cross_fault\@
 	ldr q1, [sp]
 	.if \input_size == 32
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
 	.endif
-.Lx86_vector_convert_loaded\@:
+Lx86_vector_convert_loaded\@:
 	.if \scalar
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -210,9 +210,9 @@ gadget vector_convert_\name\()_rm
 	vector_write_xmm \output_width, 23
 	retire_and_next
 	.if \input_size > 8
-.Lx86_vector_convert_cross_fault\@:
+Lx86_vector_convert_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 	.endif
 .endm
 

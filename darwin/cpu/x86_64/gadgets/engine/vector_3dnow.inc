@@ -133,18 +133,18 @@ gadget vector_3dnow_\opcode\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 8, .Lx86_vector_3dnow_cross\@
+	page_cross_check 8, Lx86_vector_3dnow_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr d1, [x7]
-	b .Lx86_vector_3dnow_loaded\@
-.Lx86_vector_3dnow_cross\@:
+	b Lx86_vector_3dnow_loaded\@
+Lx86_vector_3dnow_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #8
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	fmov d1, x0
-.Lx86_vector_3dnow_loaded\@:
+Lx86_vector_3dnow_loaded\@:
 	and x10, x26, #0xffff
 	ldr d0, [_cpu, x10]
 	vector_3dnow_body 0x\opcode

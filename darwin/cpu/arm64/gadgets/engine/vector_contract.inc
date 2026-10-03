@@ -6,11 +6,7 @@
 .set vector_register8, 0x4000 | 8
 .set vector_register16, 0x4000 | 16
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_vector
-#else
-.pushsection .data.rel.ro.gadget_vector,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_vector_contract_begin)
 NAME(uml_arm64_vector_contract_begin):
@@ -27,15 +23,11 @@ NAME(uml_arm64_vector_contract_begin):
 .macro vector_entry name, forward, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
- .set .Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
-#if __APPLE__
+ .set Lvector_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
  .pushsection __DATA_CONST,__gadget_vector
-#else
- .pushsection .data.rel.ro.gadget_vector,"aw"
-#endif
  .quad NAME(uml_arm64_gadget_\name)
  .irp mask, 1, 2, 3, 4, 5, 6, 7
- vector_pointer \name, \mask, .Lvector_sources\@
+ vector_pointer \name, \mask, Lvector_sources\@
  .endr
  .short \destination, \first, \second, \third
  /* Vector contracts leave the unread family slot zero. */
@@ -48,11 +40,11 @@ NAME(uml_arm64_vector_contract_begin):
 .endm
 
 .macro vector_variants forward, first, second, third, generator, arguments:vararg
- .set .Lvector_masks\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
- .if \forward == 0 && .Lvector_masks\@ != 0
+ .set Lvector_masks\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .if \forward == 0 && Lvector_masks\@ != 0
  .pushsection GADGET_SECTION_VECTOR_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7
- .if (\mask & .Lvector_masks\@) == \mask
+ .if (\mask & Lvector_masks\@) == \mask
  \generator \arguments, \mask
  .endif
  .endr
@@ -88,16 +80,16 @@ NAME(uml_arm64_vector_contract_begin):
 
 .macro vector_read forward, bit, value, address:vararg
  .if \forward & \bit
- .set .Lvector_read_found\@, 0
+ .set Lvector_read_found\@, 0
  .irp width, q, d, s, h, b
  .irp number, 0, 1, 2, 3, 4
  .ifc \value, \width\number
- .set .Lvector_read_found\@, 1
+ .set Lvector_read_found\@, 1
  vector_read_move \value, \width, \number
  .endif
  .endr
  .endr
- .if !.Lvector_read_found\@
+ .if !Lvector_read_found\@
  .error "unsupported vector forwarding register"
  .endif
  .else

@@ -5,14 +5,13 @@
  *
  * The ordinary family addresses its operand through a register index decoded
  * from the stream word: "ldr x15, [x1, x10, lsl #3]" feeding "str x0, [x1, x9,
- * lsl #3]". On this host a dependent store-to-load pair in that form costs
- * about 6.8 cycles, because the core's memory-dependence prediction forwards
- * at rename only when both accesses name a base register and a constant
- * displacement. Giving both sides the immediate form costs about 2.5 cycles,
- * which is the latency of the register move that adjacent forwarding already
- * achieves, and unlike a forwarded register it survives a block link, an
- * intervening gadget and an executor round trip, because the value is in
- * memory the whole time.
+ * lsl #3]". A dependent store-to-load pair in that form is slow, because the
+ * core's memory-dependence prediction forwards at rename only when both
+ * accesses name a base register and a constant displacement. Giving both sides
+ * the immediate form makes the pair about as cheap as the register move that
+ * adjacent forwarding achieves (G196), and unlike a forwarded register it
+ * survives a block link, an intervening gadget and an executor round trip,
+ * because the value is in memory the whole time.
  *
  * Baking a displacement means one entry per guest register, so the general
  * shape would be one entry per operand combination. The in-place shape --
@@ -34,8 +33,8 @@
  * the two register fields are now dead, and the immediate still arrives in
  * bits 39:16. */
 .macro add_sub_immediate_inplace_entry bits64, subtract, flags, reg, suffix, forward
-	.set .Lipd\@, 0x8000 | (\reg * 8)
-scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, .Lipd\@, .Lipd\@, scalar_none, scalar_none, 1
+	.set Lipd\@, 0x8000 | (\reg * 8)
+scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, Lipd\@, Lipd\@, scalar_none, scalar_none, 1
 	/* Non-faulting, and x14 is free: the same bounded hoist the ordinary
 	 * family uses. Builder always emits a terminal after a translated
 	 * fallthrough, so the successor word exists. */
@@ -114,11 +113,7 @@ add_sub_immediate_inplace_modes 1, 1, 1, x_sub_s
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_gadget_add_sub_immediate_inplace_table)
 NAME(uml_arm64_gadget_add_sub_immediate_inplace_table):

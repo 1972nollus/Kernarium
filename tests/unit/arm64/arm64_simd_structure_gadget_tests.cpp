@@ -16,7 +16,6 @@
 
 namespace arm64_simd_structure_test {
 
-namespace arm64 = uml::cpu::arm64;
 namespace engine = uml::emulator::tests;
 
 enum class AddressMode : unsigned {

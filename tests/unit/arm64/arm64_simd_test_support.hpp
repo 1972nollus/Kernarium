@@ -9,8 +9,6 @@
 
 namespace arm64_simd_test {
 
-namespace arm64 = uml::cpu::arm64;
-
 inline void require(bool condition,
 	const std::source_location location = std::source_location::current())
 {

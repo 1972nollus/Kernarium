@@ -20,8 +20,6 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_absent_features.py
     LABELS cpu
     TIMEOUT 300)
-set_tests_properties(arm64-instruction-corpus-absent-features PROPERTIES
-    SKIP_RETURN_CODE 77)
 
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
@@ -58,4 +56,24 @@ if(_uml_gadget_region_images AND APPLE)
             ${_uml_gadget_region_images}
         LABELS cpu
         TIMEOUT 120)
+endif()
+
+# Both gadget engines name their private labels with Mach-O's temporary L
+# prefix (docs/architecture.md). The engine target name ahead of each object
+# makes the tooling build assemble it.
+set(_uml_gadget_engine_objects)
+foreach(_uml_gadget_engine IN ITEMS uml_arm64_gadgets uml_x86_64_gadgets)
+    if(TARGET ${_uml_gadget_engine})
+        list(APPEND _uml_gadget_engine_objects ${_uml_gadget_engine}
+            "$<FILTER:$<TARGET_OBJECTS:${_uml_gadget_engine}>,INCLUDE,/engine[.]S[.]o$>")
+    endif()
+endforeach()
+if(_uml_gadget_engine_objects)
+    uml_add_tooling_test(
+        NAME gadget-engine-temporary-labels
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_gadget_engine_labels.py
+            ${_uml_gadget_engine_objects}
+        LABELS cpu
+        TIMEOUT 60)
 endif()

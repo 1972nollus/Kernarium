@@ -55,31 +55,31 @@
 	tbl v5.16b, {v2.16b, v3.16b}, v6.16b
 	.endif
 	.else
-	tbz w13, #0, .Lx86_vector_shuffle_pd_left_low\@
+	tbz w13, #0, Lx86_vector_shuffle_pd_left_low\@
 	mov v4.d[0], v0.d[1]
-	b .Lx86_vector_shuffle_pd_left_done\@
-.Lx86_vector_shuffle_pd_left_low\@:
+	b Lx86_vector_shuffle_pd_left_done\@
+Lx86_vector_shuffle_pd_left_low\@:
 	mov v4.d[0], v0.d[0]
-.Lx86_vector_shuffle_pd_left_done\@:
-	tbz w13, #1, .Lx86_vector_shuffle_pd_right_low\@
+Lx86_vector_shuffle_pd_left_done\@:
+	tbz w13, #1, Lx86_vector_shuffle_pd_right_low\@
 	mov v4.d[1], v1.d[1]
-	b .Lx86_vector_shuffle_pd_right_done\@
-.Lx86_vector_shuffle_pd_right_low\@:
+	b Lx86_vector_shuffle_pd_right_done\@
+Lx86_vector_shuffle_pd_right_low\@:
 	mov v4.d[1], v1.d[0]
-.Lx86_vector_shuffle_pd_right_done\@:
+Lx86_vector_shuffle_pd_right_done\@:
 	.if \width == 256
-	tbz w13, #2, .Lx86_vector_shuffle_pd_upper_left_low\@
+	tbz w13, #2, Lx86_vector_shuffle_pd_upper_left_low\@
 	mov v5.d[0], v2.d[1]
-	b .Lx86_vector_shuffle_pd_upper_left_done\@
-.Lx86_vector_shuffle_pd_upper_left_low\@:
+	b Lx86_vector_shuffle_pd_upper_left_done\@
+Lx86_vector_shuffle_pd_upper_left_low\@:
 	mov v5.d[0], v2.d[0]
-.Lx86_vector_shuffle_pd_upper_left_done\@:
-	tbz w13, #3, .Lx86_vector_shuffle_pd_upper_right_low\@
+Lx86_vector_shuffle_pd_upper_left_done\@:
+	tbz w13, #3, Lx86_vector_shuffle_pd_upper_right_low\@
 	mov v5.d[1], v3.d[1]
-	b .Lx86_vector_shuffle_pd_upper_right_done\@
-.Lx86_vector_shuffle_pd_upper_right_low\@:
+	b Lx86_vector_shuffle_pd_upper_right_done\@
+Lx86_vector_shuffle_pd_upper_right_low\@:
 	mov v5.d[1], v3.d[0]
-.Lx86_vector_shuffle_pd_upper_right_done\@:
+Lx86_vector_shuffle_pd_upper_right_done\@:
 	.endif
 	.endif
 	.endif
@@ -183,27 +183,27 @@ gadget vector_\operation\()_\element\()_\width\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_vector_shuffle_cross\@
+	page_cross_check (\width / 8), Lx86_vector_shuffle_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256
 	ldr q3, [x7, #16]
 	.endif
-	b .Lx86_vector_shuffle_loaded\@
-.Lx86_vector_shuffle_cross\@:
+	b Lx86_vector_shuffle_loaded\@
+Lx86_vector_shuffle_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_shuffle_cross_fault\@
+	cbz w0, Lx86_vector_shuffle_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
-.Lx86_vector_shuffle_loaded\@:
+Lx86_vector_shuffle_loaded\@:
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q0, [x10]
@@ -216,9 +216,9 @@ gadget vector_\operation\()_\element\()_\width\()_rm
 	vector_shuffle_body \operation, \element, \width
 	vector_write_xmm \width, 23
 	retire_and_next
-.Lx86_vector_shuffle_cross_fault\@:
+Lx86_vector_shuffle_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 .macro vector_shuffle_family operation, element, width, control=0
