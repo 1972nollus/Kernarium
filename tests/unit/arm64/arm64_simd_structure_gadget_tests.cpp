@@ -25,7 +25,6 @@ enum class AddressMode : unsigned {
 
 struct MultipleForm final {
 	unsigned opcode;
-	unsigned register_count;
 	unsigned structure_elements;
 };
 
@@ -36,19 +35,17 @@ struct MultipleForm final {
  * structures.
  */
 inline constexpr std::array multiple_forms{
-	MultipleForm{7, 1, 1}, // LD1/ST1 one-register
-	MultipleForm{10, 2, 1}, // LD1/ST1 two-register
-	MultipleForm{6, 3, 1}, // LD1/ST1 three-register
-	MultipleForm{2, 4, 1}, // LD1/ST1 four-register
-	MultipleForm{8, 2, 2}, // LD2/ST2
-	MultipleForm{4, 3, 3}, // LD3/ST3
-	MultipleForm{0, 4, 4}, // LD4/ST4
+	MultipleForm{7, 1}, // LD1/ST1 one-register
+	MultipleForm{10, 1}, // LD1/ST1 two-register
+	MultipleForm{6, 1}, // LD1/ST1 three-register
+	MultipleForm{2, 1}, // LD1/ST1 four-register
+	MultipleForm{8, 2}, // LD2/ST2
+	MultipleForm{4, 3}, // LD3/ST3
+	MultipleForm{0, 4}, // LD4/ST4
 };
 
 struct SingleForm final {
 	bool valid{};
-	bool replicate{};
-	unsigned register_count{};
 	std::size_t element_size{};
 	std::size_t lane{};
 };
@@ -92,27 +89,21 @@ struct SingleForm final {
  *   scale=11: load-and-replicate only, S must be zero
  */
 [[nodiscard]] inline constexpr SingleForm decode_single(
-	bool full_vector, bool load, unsigned extra_register, unsigned opcode,
-	unsigned scale_bit, unsigned size)
+	bool full_vector, bool load, unsigned opcode, unsigned scale_bit,
+	unsigned size)
 {
 	const unsigned scale = opcode >> 1;
-	const unsigned count = (opcode & 1U) != 0U ?
-		3U + extra_register : 1U + extra_register;
 	if (scale == 3U) {
 		if (!load || scale_bit != 0U)
 			return {};
 		return {
 			.valid = true,
-			.replicate = true,
-			.register_count = opcode == 6U ?
-				1U + extra_register : 3U + extra_register,
 			.element_size = std::size_t{1} << size,
 		};
 	}
 	if (scale == 0U)
 		return {
 			.valid = true,
-			.register_count = count,
 			.element_size = 1,
 			.lane = (static_cast<std::size_t>(full_vector) << 3) |
 				(scale_bit << 2) | size,
@@ -122,7 +113,6 @@ struct SingleForm final {
 			return {};
 		return {
 			.valid = true,
-			.register_count = count,
 			.element_size = 2,
 			.lane = (static_cast<std::size_t>(full_vector) << 2) |
 				(scale_bit << 1) | (size >> 1),
@@ -133,7 +123,6 @@ struct SingleForm final {
 		return {};
 	return {
 		.valid = true,
-		.register_count = count,
 		.element_size = (size & 1U) != 0U ? 8U : 4U,
 		.lane = (size & 1U) != 0U ?
 			static_cast<std::size_t>(full_vector) :
@@ -259,8 +248,7 @@ void replicate_translation_is_fully_specialized()
 			for (unsigned opcode = 6; opcode < 8U; ++opcode)
 				for (unsigned size = 0; size < 4U; ++size) {
 					const auto form = structure::decode_single(
-						full_vector, true, extra, opcode, 0,
-						size);
+						full_vector, true, opcode, 0, size);
 					if (!form.valid)
 						std::abort();
 					for (unsigned mode = 0; mode < 3U; ++mode)
@@ -306,8 +294,8 @@ void lane_translation_is_fully_specialized()
 							const auto form =
 								structure::decode_single(
 									full_vector, load,
-									extra, opcode,
-									scale_bit, size);
+									opcode, scale_bit,
+									size);
 							if (!form.valid)
 								continue;
 							for (unsigned mode = 0; mode < 3U;
