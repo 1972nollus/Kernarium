@@ -12,19 +12,10 @@
 #include <mutex>
 #include <optional>
 #include <poll.h>
-#include <sys/mman.h>
 #include <thread>
 
 namespace uml::gpu::testing {
 namespace {
-
-void waitForConnectionClose(int socket)
-{
-    pollfd descriptor {.fd = socket, .events = POLLIN | POLLHUP};
-    require(::poll(&descriptor, 1, 2000) == 1);
-    std::uint8_t byte {};
-    require(::read(socket, &byte, sizeof(byte)) == 0);
-}
 
 void negotiateProtocolFeatures(int socket, std::uint64_t features)
 {
@@ -79,32 +70,10 @@ void expectRejected(VhostUserServer& server, Operation operation)
     });
 }
 
-class DeferredQueueDevice final : public uml::virtio::VhostUserDevice {
+class DeferredQueueDevice final : public FixtureDevice {
 public:
-    DeferredQueueDevice()
-    {
-        std::array<int, 2> descriptors {-1, -1};
-        require(::pipe(descriptors.data()) == 0);
-        readinessRead_ = UniqueDescriptor {descriptors[0]};
-        readinessWrite_ = UniqueDescriptor {descriptors[1]};
-    }
+    DeferredQueueDevice() : FixtureDevice("deferred queue fixture", 4, true) {}
 
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "deferred queue fixture";
-    }
-    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
-    [[nodiscard]] std::size_t queueCount() const noexcept override { return 4; }
-    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
-    {
-        return {};
-    }
-    void writeConfiguration(
-        std::uint32_t,
-        std::uint32_t,
-        std::span<const std::uint8_t>) override
-    {
-    }
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
         std::uint64_t requestId,
@@ -123,15 +92,6 @@ public:
         requestId_.store(0, std::memory_order_release);
         std::lock_guard lock(completionMutex_);
         completion_.reset();
-    }
-    [[nodiscard]] int eventDescriptor() const noexcept override
-    {
-        return readinessRead_.get();
-    }
-    void drainEventSource() override
-    {
-        std::uint8_t ready {};
-        require(::read(readinessRead_.get(), &ready, sizeof(ready)) == 1);
     }
     [[nodiscard]] bool takeQueueCompletion(
         uml::virtio::VhostUserQueueCompletion& completion) override
@@ -155,44 +115,22 @@ public:
                 .response = {9, 8, 7, 6},
             };
         }
-        constexpr std::uint8_t ready = 1;
-        require(::write(readinessWrite_.get(), &ready, sizeof(ready)) == 1);
+        signalReadiness();
     }
 
 private:
-    UniqueDescriptor readinessRead_;
-    UniqueDescriptor readinessWrite_;
     std::atomic<std::uint64_t> requestId_ {};
     std::mutex completionMutex_;
     std::optional<uml::virtio::VhostUserQueueCompletion> completion_;
 };
 
-class MultiDeferredQueueDevice final : public uml::virtio::VhostUserDevice {
+class MultiDeferredQueueDevice final : public FixtureDevice {
 public:
     MultiDeferredQueueDevice()
+        : FixtureDevice("multi-deferred queue fixture", 1, true)
     {
-        std::array<int, 2> descriptors {-1, -1};
-        require(::pipe(descriptors.data()) == 0);
-        readinessRead_ = UniqueDescriptor {descriptors[0]};
-        readinessWrite_ = UniqueDescriptor {descriptors[1]};
     }
 
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "multi-deferred queue fixture";
-    }
-    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
-    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
-    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
-    {
-        return {};
-    }
-    void writeConfiguration(
-        std::uint32_t,
-        std::uint32_t,
-        std::span<const std::uint8_t>) override
-    {
-    }
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
         std::uint64_t requestId,
@@ -213,15 +151,6 @@ public:
         requestIds_.clear();
         requestValues_.clear();
         completions_.clear();
-    }
-    [[nodiscard]] int eventDescriptor() const noexcept override
-    {
-        return readinessRead_.get();
-    }
-    void drainEventSource() override
-    {
-        std::uint8_t ready {};
-        require(::read(readinessRead_.get(), &ready, sizeof(ready)) == 1);
     }
     [[nodiscard]] bool takeQueueCompletion(
         uml::virtio::VhostUserQueueCompletion& completion) override
@@ -252,37 +181,22 @@ public:
                     });
             }
         }
-        constexpr std::uint8_t ready = 1;
-        require(::write(readinessWrite_.get(), &ready, sizeof(ready)) == 1);
+        signalReadiness();
     }
 
 private:
-    UniqueDescriptor readinessRead_;
-    UniqueDescriptor readinessWrite_;
     std::mutex mutex_;
     std::vector<std::uint64_t> requestIds_;
     std::vector<std::uint8_t> requestValues_;
     std::deque<uml::virtio::VhostUserQueueCompletion> completions_;
 };
 
-class CompleteThenRetryDevice final : public uml::virtio::VhostUserDevice {
+class CompleteThenRetryDevice final : public FixtureDevice {
 public:
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "complete-then-retry fixture";
-    }
-    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
-    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
-    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
-    {
-        return {};
-    }
-    void writeConfiguration(
-        std::uint32_t,
-        std::uint32_t,
-        std::span<const std::uint8_t>) override
+    CompleteThenRetryDevice() : FixtureDevice("complete-then-retry fixture", 1)
     {
     }
+
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t index,
         std::uint64_t,
@@ -314,22 +228,10 @@ private:
     std::atomic_uint attempts_ {};
 };
 
-class ConfigChangeDevice final : public uml::virtio::VhostUserDevice {
+class ConfigChangeDevice final : public FixtureDevice {
 public:
-    ConfigChangeDevice()
-    {
-        std::array<int, 2> descriptors {-1, -1};
-        require(::pipe(descriptors.data()) == 0);
-        readinessRead_ = UniqueDescriptor {descriptors[0]};
-        readinessWrite_ = UniqueDescriptor {descriptors[1]};
-    }
+    ConfigChangeDevice() : FixtureDevice("config change fixture", 1, true) {}
 
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "config change fixture";
-    }
-    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
-    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
     [[nodiscard]] std::vector<std::uint8_t> configuration() const override
     {
         protocol::GpuConfig config {
@@ -398,14 +300,9 @@ public:
         reportedGeneration_.store(0, std::memory_order_release);
         clearedGeneration_.store(0, std::memory_order_release);
     }
-    [[nodiscard]] int eventDescriptor() const noexcept override
-    {
-        return readinessRead_.get();
-    }
     void drainEventSource() override
     {
-        std::uint8_t ready {};
-        require(::read(readinessRead_.get(), &ready, sizeof(ready)) == 1);
+        FixtureDevice::drainEventSource();
         pending_.store(true, std::memory_order_release);
     }
     [[nodiscard]] bool configChangePending() const noexcept override
@@ -420,8 +317,7 @@ public:
     void trigger()
     {
         generation_.fetch_add(1, std::memory_order_acq_rel);
-        constexpr std::uint8_t ready = 1;
-        require(::write(readinessWrite_.get(), &ready, sizeof(ready)) == 1);
+        signalReadiness();
     }
 
     [[nodiscard]] bool pending() const noexcept
@@ -430,8 +326,6 @@ public:
     }
 
 private:
-    UniqueDescriptor readinessRead_;
-    UniqueDescriptor readinessWrite_;
     std::atomic_bool pending_ {};
     std::atomic_uint64_t generation_ {};
     mutable std::atomic_uint64_t reportedGeneration_ {};
@@ -726,29 +620,13 @@ void configChangeWaitStillAnswersConfigReads()
     });
 }
 
-class SharedMemoryDevice final : public uml::virtio::VhostUserDevice {
+class SharedMemoryDevice final : public FixtureDevice {
 public:
     explicit SharedMemoryDevice(std::size_t actionCount = 1)
-        : actionCount_(actionCount)
+        : FixtureDevice("shared-memory fixture", 1), actionCount_(actionCount)
     {
     }
 
-    [[nodiscard]] const char* name() const noexcept override
-    {
-        return "shared-memory fixture";
-    }
-    [[nodiscard]] std::uint64_t features() const noexcept override { return 0; }
-    [[nodiscard]] std::size_t queueCount() const noexcept override { return 1; }
-    [[nodiscard]] std::vector<std::uint8_t> configuration() const override
-    {
-        return {};
-    }
-    void writeConfiguration(
-        std::uint32_t,
-        std::uint32_t,
-        std::span<const std::uint8_t>) override
-    {
-    }
     [[nodiscard]] uml::virtio::VhostUserQueueResult processQueue(
         std::uint32_t,
         std::uint64_t,
@@ -757,7 +635,6 @@ public:
     {
         return {.action = uml::virtio::VhostUserQueueAction::retry};
     }
-    void reset() noexcept override {}
     void prepareReset() noexcept override
     {
         if (actionIssued_)
@@ -1030,117 +907,52 @@ void deferredCompletionSupportsFourQueues()
     auto device = std::make_unique<DeferredQueueDevice>();
     auto* completionSource = device.get();
     VhostUserServer server {std::move(device)};
-    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
-    void* mapped = ::mmap(
-        nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.descriptor(), 0);
-    require(mapped != MAP_FAILED);
-    auto memory = std::span {
-        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
 
     constexpr std::uint32_t queueIndex = 3;
-    constexpr std::uint64_t guestBase = 0x1000;
-    constexpr std::uint64_t userBase = 0x1000'0000;
-    constexpr std::size_t descriptorOffset = 0x000;
-    constexpr std::size_t availableOffset = 0x100;
-    constexpr std::size_t usedOffset = 0x200;
     constexpr std::size_t requestOffset = 0x300;
     constexpr std::size_t responseOffset = 0x400;
     const std::array descriptors {
         protocol::VirtqueueDescriptor {
-            .address = guestBase + requestOffset,
+            .address = SplitRing::guestBase + requestOffset,
             .length = 4,
             .flags = protocol::descriptorNext,
             .next = 1,
         },
         protocol::VirtqueueDescriptor {
-            .address = guestBase + responseOffset,
+            .address = SplitRing::guestBase + responseOffset,
             .length = 4,
             .flags = protocol::descriptorWrite,
             .next = 0,
         },
     };
-    std::memcpy(memory.data() + descriptorOffset,
-                descriptors.data(), sizeof(descriptors));
     const std::array<std::uint8_t, 4> request {1, 2, 3, 4};
     std::memcpy(memory.data() + requestOffset, request.data(), request.size());
     std::memset(memory.data() + responseOffset, 0xa5, 4);
-    const std::uint16_t availableIndex = 1;
-    const std::uint16_t head = 0;
-    std::memcpy(memory.data() + availableOffset + sizeof(std::uint16_t),
-                &availableIndex, sizeof(availableIndex));
-    std::memcpy(memory.data() + availableOffset + protocol::splitRingHeaderSize,
-                &head, sizeof(head));
+    constexpr std::array<std::uint16_t, 1> heads {0};
+    ring.publish(descriptors, heads);
 
     withServerConnection(server, [&](int socket) {
         sendRequest(socket, protocol::VhostRequest::getQueueNum, {}, {}, false);
         require(readValueReply<std::uint64_t>(
                     socket, protocol::VhostRequest::getQueueNum) == 4);
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.descriptor());
-        const protocol::VringState queueSize {
-            .index = queueIndex,
-            .value = 8,
-        };
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
-        const protocol::VringAddress addresses {
-            .index = queueIndex,
-            .flags = 0,
-            .descriptor = userBase + descriptorOffset,
-            .used = userBase + usedOffset,
-            .available = userBase + availableOffset,
-            .log = 0,
-        };
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
-        const protocol::VringState enable {
-            .index = queueIndex,
-            .value = 1,
-        };
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
-
-        std::array<int, 2> callPipe {-1, -1};
-        require(::pipe(callPipe.data()) == 0);
-        UniqueDescriptor callRead {callPipe[0]};
-        UniqueDescriptor callWrite {callPipe[1]};
-        const std::uint64_t encodedQueue = queueIndex;
-        const std::array callDescriptors {callWrite.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringCall,
-            bytesOf(encodedQueue), callDescriptors);
-
-        std::array<int, 2> kickPipe {-1, -1};
-        require(::pipe(kickPipe.data()) == 0);
-        UniqueDescriptor kickRead {kickPipe[0]};
-        UniqueDescriptor kickWrite {kickPipe[1]};
-        const std::array kickDescriptors {kickRead.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringKick,
-            bytesOf(encodedQueue), kickDescriptors);
+        configureMemory(socket, ring.descriptor());
+        const auto channels = startQueue(socket, ring, queueIndex);
         sendRequest(
             socket, protocol::VhostRequest::getFeatures, {}, {}, false);
         (void)readValueReply<std::uint64_t>(
             socket, protocol::VhostRequest::getFeatures);
 
-        auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
-            memory.data() + usedOffset + sizeof(std::uint16_t));
-        require(std::atomic_ref<std::uint16_t>(usedIndex)
-                    .load(std::memory_order_acquire) == 0);
+        require(ring.usedIndex() == 0);
         completionSource->complete();
-        pollfd completion {.fd = callRead.get(), .events = POLLIN};
-        require(::poll(&completion, 1, 2000) == 1);
-        std::uint64_t completionCount {};
-        readExact(callRead.get(), &completionCount, sizeof(completionCount));
-        require(completionCount == 1);
-        require(std::atomic_ref<std::uint16_t>(usedIndex)
-                    .load(std::memory_order_acquire) == 1);
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 1);
         require(std::ranges::equal(
             memory.subspan(responseOffset, 4),
             std::array<std::uint8_t, 4> {9, 8, 7, 6}));
     });
-    require(::munmap(mapped, 4096) == 0);
 }
 
 void multipleDeferredCompletionsRetainTheirDescriptorChains()
@@ -1148,19 +960,9 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
     auto device = std::make_unique<MultiDeferredQueueDevice>();
     auto* completionSource = device.get();
     VhostUserServer server {std::move(device)};
-    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
-    void* mapped = ::mmap(
-        nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.descriptor(), 0);
-    require(mapped != MAP_FAILED);
-    auto memory = std::span {
-        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
 
-    constexpr std::uint64_t guestBase = 0x1000;
-    constexpr std::uint64_t userBase = 0x1000'0000;
-    constexpr std::size_t descriptorOffset = 0x000;
-    constexpr std::size_t availableOffset = 0x100;
-    constexpr std::size_t usedOffset = 0x200;
     constexpr std::array<std::size_t, 3> requestOffsets {
         0x300, 0x310, 0x320};
     constexpr std::array<std::size_t, 3> responseOffsets {
@@ -1173,13 +975,13 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
             static_cast<std::uint16_t>(requestDescriptor + 1U);
         heads[index] = requestDescriptor;
         descriptors[requestDescriptor] = {
-            .address = guestBase + requestOffsets[index],
+            .address = SplitRing::guestBase + requestOffsets[index],
             .length = 1,
             .flags = protocol::descriptorNext,
             .next = responseDescriptor,
         };
         descriptors[responseDescriptor] = {
-            .address = guestBase + responseOffsets[index],
+            .address = SplitRing::guestBase + responseOffsets[index],
             .length = 1,
             .flags = protocol::descriptorWrite,
             .next = 0,
@@ -1187,80 +989,21 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
         memory[requestOffsets[index]] = static_cast<std::uint8_t>(index + 1U);
         memory[responseOffsets[index]] = 0x5a;
     }
-    std::memcpy(
-        memory.data() + descriptorOffset,
-        descriptors.data(),
-        sizeof(descriptors));
-    const std::uint16_t availableIndex = 3;
-    std::memcpy(
-        memory.data() + availableOffset + sizeof(std::uint16_t),
-        &availableIndex,
-        sizeof(availableIndex));
-    std::memcpy(
-        memory.data() + availableOffset + protocol::splitRingHeaderSize,
-        heads.data(),
-        sizeof(heads));
+    ring.publish(descriptors, heads);
 
     withServerConnection(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.descriptor());
-        const protocol::VringState queueSize {.index = 0, .value = 8};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
-        const protocol::VringAddress addresses {
-            .index = 0,
-            .flags = 0,
-            .descriptor = userBase + descriptorOffset,
-            .used = userBase + usedOffset,
-            .available = userBase + availableOffset,
-            .log = 0,
-        };
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
-        const protocol::VringState enable {.index = 0, .value = 1};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
+        configureMemory(socket, ring.descriptor());
+        const auto channels = startQueue(socket, ring);
 
-        std::array<int, 2> callPipe {-1, -1};
-        require(::pipe(callPipe.data()) == 0);
-        UniqueDescriptor callRead {callPipe[0]};
-        UniqueDescriptor callWrite {callPipe[1]};
-        constexpr std::uint64_t queue = 0;
-        const std::array callDescriptors {callWrite.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringCall,
-            bytesOf(queue), callDescriptors);
-
-        std::array<int, 2> kickPipe {-1, -1};
-        require(::pipe(kickPipe.data()) == 0);
-        UniqueDescriptor kickRead {kickPipe[0]};
-        UniqueDescriptor kickWrite {kickPipe[1]};
-        const std::array kickDescriptors {kickRead.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringKick,
-            bytesOf(queue), kickDescriptors);
-
-        auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
-            memory.data() + usedOffset + sizeof(std::uint16_t));
-        require(std::atomic_ref<std::uint16_t>(usedIndex)
-                    .load(std::memory_order_acquire) == 0);
+        require(ring.usedIndex() == 0);
         constexpr std::array<std::size_t, 3> completionOrder {2, 0, 1};
         completionSource->complete(completionOrder);
-        pollfd completion {.fd = callRead.get(), .events = POLLIN};
-        require(::poll(&completion, 1, 2000) == 1);
-        std::uint64_t completionCount {};
-        readExact(callRead.get(), &completionCount, sizeof(completionCount));
-        require(completionCount == 1);
-        require(std::atomic_ref<std::uint16_t>(usedIndex)
-                    .load(std::memory_order_acquire) == 3);
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 3);
 
         for (std::size_t used = 0; used < completionOrder.size(); ++used) {
-            protocol::VirtqueueUsedElement element {};
-            std::memcpy(
-                &element,
-                memory.data() + usedOffset + protocol::splitRingHeaderSize +
-                    used * sizeof(element),
-                sizeof(element));
+            const auto element = ring.usedElement(used);
             require(element.id == heads[completionOrder[used]]);
             require(element.length == 1);
         }
@@ -1269,7 +1012,6 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
                 static_cast<std::uint8_t>(0xa0U + index));
         }
     });
-    require(::munmap(mapped, 4096) == 0);
 }
 
 void completedPrefixNotifiesBeforeRetry()
@@ -1277,98 +1019,38 @@ void completedPrefixNotifiesBeforeRetry()
     auto device = std::make_unique<CompleteThenRetryDevice>();
     auto* observed = device.get();
     VhostUserServer server {std::move(device)};
-    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
-    void* mapped = ::mmap(
-        nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.descriptor(), 0);
-    require(mapped != MAP_FAILED);
-    auto memory = std::span {
-        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
 
-    constexpr std::uint64_t guestBase = 0x1000;
-    constexpr std::uint64_t userBase = 0x1000'0000;
-    constexpr std::size_t descriptorOffset = 0x000;
-    constexpr std::size_t availableOffset = 0x100;
-    constexpr std::size_t usedOffset = 0x200;
     constexpr std::size_t firstResponseOffset = 0x300;
     constexpr std::size_t secondResponseOffset = 0x400;
     const std::array descriptors {
         protocol::VirtqueueDescriptor {
-            .address = guestBase + firstResponseOffset,
+            .address = SplitRing::guestBase + firstResponseOffset,
             .length = 4,
             .flags = protocol::descriptorWrite,
             .next = 0,
         },
         protocol::VirtqueueDescriptor {
-            .address = guestBase + secondResponseOffset,
+            .address = SplitRing::guestBase + secondResponseOffset,
             .length = 4,
             .flags = protocol::descriptorWrite,
             .next = 0,
         },
     };
-    std::memcpy(
-        memory.data() + descriptorOffset, descriptors.data(),
-        sizeof(descriptors));
-    const std::uint16_t availableIndex = 2;
-    const std::array<std::uint16_t, 2> heads {0, 1};
-    std::memcpy(
-        memory.data() + availableOffset + sizeof(std::uint16_t),
-        &availableIndex, sizeof(availableIndex));
-    std::memcpy(
-        memory.data() + availableOffset + protocol::splitRingHeaderSize,
-        heads.data(), sizeof(heads));
+    constexpr std::array<std::uint16_t, 2> heads {0, 1};
+    ring.publish(descriptors, heads);
     constexpr std::uint8_t responseSentinel = 0xa5;
     std::memset(memory.data() + firstResponseOffset, responseSentinel, 4);
     std::memset(memory.data() + secondResponseOffset, responseSentinel, 4);
 
     withServerConnection(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.descriptor());
-        const protocol::VringState queueSize {.index = 0, .value = 8};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
-        const protocol::VringAddress addresses {
-            .index = 0,
-            .flags = 0,
-            .descriptor = userBase + descriptorOffset,
-            .used = userBase + usedOffset,
-            .available = userBase + availableOffset,
-            .log = 0,
-        };
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringAddr, bytesOf(addresses));
-        const protocol::VringState enable {.index = 0, .value = 1};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringEnable, bytesOf(enable));
+        configureMemory(socket, ring.descriptor());
+        const auto channels = startQueue(socket, ring);
 
-        std::array<int, 2> callPipe {-1, -1};
-        require(::pipe(callPipe.data()) == 0);
-        UniqueDescriptor callRead {callPipe[0]};
-        UniqueDescriptor callWrite {callPipe[1]};
-        constexpr std::uint64_t queue = 0;
-        const std::array callDescriptors {callWrite.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringCall,
-            bytesOf(queue), callDescriptors);
-
-        std::array<int, 2> kickPipe {-1, -1};
-        require(::pipe(kickPipe.data()) == 0);
-        UniqueDescriptor kickRead {kickPipe[0]};
-        UniqueDescriptor kickWrite {kickPipe[1]};
-        const std::array kickDescriptors {kickRead.get()};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringKick,
-            bytesOf(queue), kickDescriptors);
-
-        pollfd completion {.fd = callRead.get(), .events = POLLIN};
-        require(::poll(&completion, 1, 2000) == 1);
-        std::uint64_t completionCount {};
-        readExact(callRead.get(), &completionCount, sizeof(completionCount));
-        require(completionCount == 1);
-        auto& usedIndex = *reinterpret_cast<std::uint16_t*>(
-            memory.data() + usedOffset + sizeof(std::uint16_t));
-        require(std::atomic_ref<std::uint16_t>(usedIndex)
-                    .load(std::memory_order_acquire) == 1);
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == 1);
         require(observed->attempts() == 2);
         require(std::ranges::equal(
             memory.subspan(firstResponseOffset, 4),
@@ -1377,7 +1059,6 @@ void completedPrefixNotifiesBeforeRetry()
             memory.subspan(secondResponseOffset, 4),
             [](std::uint8_t byte) { return byte == responseSentinel; }));
     });
-    require(::munmap(mapped, 4096) == 0);
 }
 
 void validConfigurationProtocol(VhostUserServer& server)
@@ -1787,23 +1468,11 @@ void queueNotificationProcessesQueue(
     VhostUserServer& server,
     QueueScenario scenario)
 {
-    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
-    void* mapped = ::mmap(
-        nullptr,
-        4096,
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED,
-        memoryDescriptor.descriptor(),
-        0);
-    require(mapped != MAP_FAILED);
-    auto memory = std::span {
-        static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
+    const SplitRing ring;
+    const auto memory = ring.memory();
 
-    constexpr std::uint64_t guestBase = 0x1000;
-    constexpr std::uint64_t userBase = 0x1000'0000;
-    constexpr std::size_t descriptorOffset = 0x000;
-    constexpr std::size_t availableOffset = 0x100;
-    constexpr std::size_t usedOffset = 0x200;
+    constexpr std::uint64_t guestBase = SplitRing::guestBase;
+    constexpr std::size_t availableOffset = SplitRing::availableOffset;
     constexpr std::size_t requestOffset = 0x300;
     constexpr std::size_t responseOffset = 0x400;
     const bool createContext = scenario.resetOwnerRecreatesContext ||
@@ -1853,10 +1522,7 @@ void queueNotificationProcessesQueue(
             },
         };
     }
-    std::memcpy(
-        memory.data() + descriptorOffset,
-        descriptors.data(),
-        sizeof(descriptors));
+    ring.writeDescriptors(descriptors);
     if (createContext) {
         protocol::GpuContextCreate request {};
         request.header.type =
@@ -1880,7 +1546,7 @@ void queueNotificationProcessesQueue(
             static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
         std::memcpy(memory.data() + requestOffset, &request, sizeof(request));
     }
-    const std::uint16_t head = 0;
+    constexpr std::array<std::uint16_t, 1> head {0};
     const std::uint16_t availableFlags =
         static_cast<std::uint16_t>(
             (scenario.suppressInterrupt ?
@@ -1891,10 +1557,7 @@ void queueNotificationProcessesQueue(
         memory.data() + availableOffset,
         &initialAvailableFlags,
         sizeof(initialAvailableFlags));
-    std::memcpy(
-        memory.data() + availableOffset + protocol::splitRingHeaderSize,
-        &head,
-        sizeof(head));
+    ring.writeHeads(head);
     constexpr std::uint8_t responseSentinel = 0xa5;
     std::memset(
         memory.data() + responseOffset,
@@ -1921,33 +1584,16 @@ void queueNotificationProcessesQueue(
             }
             negotiateProtocolFeatures(socket, protocolFeatures);
         }
-        configureMemory(socket, memoryDescriptor.descriptor());
-        const protocol::VringState queueSize {.index = 0, .value = 8};
-        sendRequestAndReadAcknowledgement(
-            socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
-        const protocol::VringAddress addresses {
-            .index = 0,
-            .flags = 0,
-            .descriptor = userBase + descriptorOffset,
-            .used = userBase + usedOffset,
-            .available = userBase + availableOffset,
-            .log = 0,
-        };
-        sendRequestAndReadAcknowledgement(
+        configureMemory(socket, ring.descriptor());
+        configureQueue(
             socket,
-            protocol::VhostRequest::setVringAddr,
-            bytesOf(addresses));
+            ring,
+            0,
+            scenario.enableQueue && !scenario.legacyFeatureNegotiation);
         const protocol::VringState enable {.index = 0, .value = 1};
-        if (scenario.enableQueue && !scenario.legacyFeatureNegotiation) {
-            sendRequestAndReadAcknowledgement(
-                socket,
-                protocol::VhostRequest::setVringEnable,
-                bytesOf(enable));
-        }
 
         constexpr std::uint64_t queue = 0;
-        UniqueDescriptor callRead;
-        UniqueDescriptor callWrite;
+        Pipe call;
         SocketPair backendChannel;
         if (scenario.inbandNotification) {
             backendChannel = makeSocketPair();
@@ -1966,11 +1612,8 @@ void queueNotificationProcessesQueue(
                 protocol::VhostRequest::setVringCall,
                 bytesOf(pollingQueue));
         } else {
-            std::array<int, 2> callPipe {-1, -1};
-            require(::pipe(callPipe.data()) == 0);
-            callRead = UniqueDescriptor {callPipe[0]};
-            callWrite = UniqueDescriptor {callPipe[1]};
-            const std::array callDescriptors {callWrite.get()};
+            call = makePipe();
+            const std::array callDescriptors {call.writeEnd.get()};
             sendRequestAndReadAcknowledgement(
                 socket,
                 protocol::VhostRequest::setVringCall,
@@ -1987,16 +1630,12 @@ void queueNotificationProcessesQueue(
                 bytesOf(enable));
         }
 
-        UniqueDescriptor kickRead;
-        UniqueDescriptor kickWrite;
+        Pipe kick;
         if (scenario.inbandNotification) {
             // VRING_KICK travels over the main channel below.
         } else if (scenario.descriptorNotification) {
-            std::array<int, 2> kickPipe {-1, -1};
-            require(::pipe(kickPipe.data()) == 0);
-            kickRead = UniqueDescriptor {kickPipe[0]};
-            kickWrite = UniqueDescriptor {kickPipe[1]};
-            const std::array kickDescriptors {kickRead.get()};
+            kick = makePipe();
+            const std::array kickDescriptors {kick.readEnd.get()};
             sendRequestAndReadAcknowledgement(
                 socket,
                 protocol::VhostRequest::setVringKick,
@@ -2013,18 +1652,15 @@ void queueNotificationProcessesQueue(
 
         auto& sharedAvailableFlags = *reinterpret_cast<std::uint16_t*>(
             memory.data() + availableOffset);
-        auto& sharedAvailableIndex = *reinterpret_cast<std::uint16_t*>(
-            memory.data() + availableOffset + sizeof(std::uint16_t));
         std::atomic_ref<std::uint16_t>(sharedAvailableFlags)
             .store(availableFlags, std::memory_order_relaxed);
-        std::atomic_ref<std::uint16_t>(sharedAvailableIndex)
-            .store(scenario.availableIndex, std::memory_order_release);
+        ring.setAvailableIndex(scenario.availableIndex);
         if (scenario.inbandNotification) {
-            const protocol::VringState kick {.index = 0, .value = 0};
+            const protocol::VringState inbandKick {.index = 0, .value = 0};
             sendRequest(
                 socket,
                 protocol::VhostRequest::vringKick,
-                bytesOf(kick));
+                bytesOf(inbandKick));
             protocol::VhostHeader notification {};
             protocol::VringState notifiedQueue {};
             readExact(
@@ -2065,9 +1701,10 @@ void queueNotificationProcessesQueue(
             (void)readValueReply<std::uint64_t>(
                 socket, protocol::VhostRequest::getFeatures);
         } else if (scenario.descriptorNotification) {
-            constexpr std::uint64_t kick = 1;
-            require(::write(kickWrite.get(), &kick, sizeof(kick)) ==
-                    static_cast<ssize_t>(sizeof(kick)));
+            constexpr std::uint64_t kickValue = 1;
+            require(
+                ::write(kick.writeEnd.get(), &kickValue, sizeof(kickValue)) ==
+                static_cast<ssize_t>(sizeof(kickValue)));
         }
         if (scenario.availableIndex > 8 ||
             scenario.reservedDescriptorFlag ||
@@ -2094,11 +1731,7 @@ void queueNotificationProcessesQueue(
                 std::chrono::seconds(2);
             std::uint16_t observedUsedIndex {};
             do {
-                auto& sharedUsedIndex = *reinterpret_cast<std::uint16_t*>(
-                    memory.data() + usedOffset + sizeof(std::uint16_t));
-                observedUsedIndex =
-                    std::atomic_ref<std::uint16_t>(sharedUsedIndex)
-                        .load(std::memory_order_acquire);
+                observedUsedIndex = ring.usedIndex();
                 if (observedUsedIndex == 1)
                     break;
                 std::this_thread::yield();
@@ -2106,23 +1739,14 @@ void queueNotificationProcessesQueue(
             require(observedUsedIndex == 1);
             if (scenario.suppressInterrupt &&
                 !scenario.pollingCompletion) {
-                pollfd completion {.fd = callRead.get(), .events = POLLIN};
+                pollfd completion {.fd = call.readEnd.get(), .events = POLLIN};
                 require(::poll(&completion, 1, 50) == 0);
             }
         } else {
-            pollfd completion {.fd = callRead.get(), .events = POLLIN};
-            require(::poll(&completion, 1, 2000) == 1);
-            std::uint64_t completionCount {};
-            readExact(callRead.get(), &completionCount, sizeof(completionCount));
-            require(completionCount == 1);
+            awaitCall(call.readEnd.get());
         }
 
-        auto& sharedUsedIndex = *reinterpret_cast<std::uint16_t*>(
-            memory.data() + usedOffset + sizeof(std::uint16_t));
-        const auto usedIndex =
-            std::atomic_ref<std::uint16_t>(sharedUsedIndex)
-                .load(std::memory_order_acquire);
-        require(usedIndex == 1);
+        require(ring.usedIndex() == 1);
         protocol::GpuControlHeader response {};
         std::memcpy(
             &response, memory.data() + responseOffset, sizeof(response));
@@ -2139,12 +1763,7 @@ void queueNotificationProcessesQueue(
                 [](std::uint8_t byte) {
                     return byte == responseSentinel;
                 }));
-            protocol::VirtqueueUsedElement usedElement {};
-            std::memcpy(
-                &usedElement,
-                memory.data() + usedOffset + protocol::splitRingHeaderSize,
-                sizeof(usedElement));
-            require(usedElement.length == 0);
+            require(ring.usedElement(0).length == 0);
         }
 
         if (scenario.resetOwnerRecreatesContext) {
@@ -2157,45 +1776,33 @@ void queueNotificationProcessesQueue(
                 socket,
                 protocol::VhostRequest::setVringEnable,
                 bytesOf(enable));
-            const std::array kickDescriptors {kickRead.get()};
+            const std::array kickDescriptors {kick.readEnd.get()};
             sendRequestAndReadAcknowledgement(
                 socket,
                 protocol::VhostRequest::setVringKick,
                 bytesOf(queue),
                 kickDescriptors);
 
-            const std::uint16_t secondHead = 0;
-            std::memcpy(
-                memory.data() + availableOffset +
-                    protocol::splitRingHeaderSize + sizeof(secondHead),
-                &secondHead,
-                sizeof(secondHead));
+            constexpr std::array<std::uint16_t, 1> secondHead {0};
+            ring.writeHeads(secondHead, 1);
             std::memset(
                 memory.data() + responseOffset,
                 responseSentinel,
                 sizeof(protocol::GpuControlHeader));
-            std::atomic_ref<std::uint16_t>(sharedAvailableIndex)
-                .store(2, std::memory_order_release);
+            ring.setAvailableIndex(2);
             constexpr std::uint64_t secondKick = 1;
             require(::write(
-                kickWrite.get(), &secondKick, sizeof(secondKick)) ==
+                kick.writeEnd.get(), &secondKick, sizeof(secondKick)) ==
                 static_cast<ssize_t>(sizeof(secondKick)));
 
-            pollfd completion {.fd = callRead.get(), .events = POLLIN};
-            require(::poll(&completion, 1, 2000) == 1);
-            std::uint64_t completionCount {};
-            readExact(
-                callRead.get(), &completionCount, sizeof(completionCount));
-            require(completionCount == 1);
-            require(std::atomic_ref<std::uint16_t>(sharedUsedIndex)
-                .load(std::memory_order_acquire) == 2);
+            awaitCall(call.readEnd.get());
+            require(ring.usedIndex() == 2);
             std::memcpy(
                 &response, memory.data() + responseOffset, sizeof(response));
             require(response.type == static_cast<std::uint32_t>(
                 protocol::GpuResponse::okNoData));
         }
     });
-    require(::munmap(mapped, 4096) == 0);
 }
 
 void disconnectReconnectIsPristine(VhostUserServer& server)
