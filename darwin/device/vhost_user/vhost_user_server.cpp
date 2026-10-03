@@ -115,6 +115,40 @@ void flushReadinessOutput()
         std::string(std::strerror(flushError)));
 }
 
+/* Waits until `descriptor` takes output, throwing ConnectionStopped once the
+ * connection is asked to stop. Returns false when the wait was interrupted or
+ * timed out; the caller then waits again, which checks the stop request. */
+[[nodiscard]] bool awaitWritable(
+    int descriptor,
+    const std::atomic_bool* stopRequested)
+{
+    if (stopRequested != nullptr &&
+        stopRequested->load(std::memory_order_acquire)) {
+        throw ConnectionStopped {};
+    }
+    pollfd output {
+        .fd = descriptor,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+    const int pollResult = ::poll(
+        &output,
+        1,
+        stopRequested == nullptr ? -1 : socketPollTimeoutMilliseconds);
+    if (pollResult < 0) {
+        if (errno == EINTR)
+            return false;
+        throw std::runtime_error(
+            "vhost-user write poll failed: " +
+            std::string(std::strerror(errno)));
+    }
+    if (pollResult == 0)
+        return false;
+    if ((output.revents & POLLNVAL) != 0)
+        throw std::runtime_error("invalid vhost-user write descriptor");
+    return true;
+}
+
 void writeExact(
     int descriptor,
     const void* source,
@@ -123,30 +157,8 @@ void writeExact(
 {
     const auto* bytes = static_cast<const std::uint8_t*>(source);
     while (length != 0) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = descriptor,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output,
-            1,
-            stopRequested == nullptr ? -1 : socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(
-                "vhost-user write poll failed: " +
-                std::string(std::strerror(errno)));
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(descriptor, stopRequested))
             continue;
-        if ((output.revents & POLLNVAL) != 0)
-            throw std::runtime_error("invalid vhost-user write descriptor");
         const auto count = ::write(descriptor, bytes, length);
         if (count < 0) {
             if (errno == EINTR)
@@ -182,28 +194,8 @@ void writeFrame(
     std::size_t current = 0;
     const std::size_t vectorCount = payload.empty() ? 1U : vectors.size();
     while (current < vectorCount) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = descriptor,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output, 1, socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(
-                "vhost-user frame poll failed: " +
-                std::string(std::strerror(errno)));
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(descriptor, stopRequested))
             continue;
-        if ((output.revents & POLLNVAL) != 0)
-            throw std::runtime_error("invalid vhost-user frame descriptor");
 
         const auto count = ::writev(
             descriptor,
@@ -248,23 +240,7 @@ void writeFrameWithDescriptor(
     std::memcpy(frame.data() + sizeof(header), payload.data(), payload.size());
 
     for (;;) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = socket,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output, 1, socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error("vhost-user descriptor poll failed");
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(socket, stopRequested))
             continue;
 
         iovec vector {
