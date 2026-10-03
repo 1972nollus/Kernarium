@@ -515,10 +515,10 @@ index 0000000000000000000000000000000000000000..d53a32784c40172e8d95777ef3e033f8
 +}
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e1724e78d62d2b1502972366a40d5000f27bbd10..0f1d54cb0a807dc6e74f8c47c19fba51f9672cf3 100644
+index 0fed71b3e2b0ac5b33f2df15ee4a691f8b8f3a36..c209da4ab7ba611588e2ff9c06e3b1b85d523d20 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -754,6 +754,7 @@ if with_tests
+@@ -769,6 +769,7 @@ if with_tests
            idep_vulkan_util_headers,
            idep_vulkan_wsi_headers,
            idep_libkk_shaders_h,

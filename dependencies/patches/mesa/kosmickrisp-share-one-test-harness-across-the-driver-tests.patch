@@ -28,15 +28,17 @@ their own pool and submission code, which is what they test.
 
 The Meson stanzas of the four uniform families - Vulkan-level C++ tests,
 whole-library internal tests, header-only helper tests and NIR-to-MSL
-compiler tests - become loops over their names and timeouts.  The
-dynamically uniform TES sampler test, a near-copy of the uniform one, becomes
-an argument of it, and the point-clip test reads the polygon-point fragment
-shader it had duplicated byte for byte.  Test names and timeouts are
-unchanged.
+compiler tests - become loops over their names and timeouts.  Near-copies
+become cases of one executable, each case run in its own process: the
+dynamically uniform TES sampler test of the uniform one, the geometry and
+tessellation draw-size tests of test_draw_size, and the layered draw
+sequence test of the layered draw routes test.  The point-clip test reads
+the polygon-point fragment shader it had duplicated byte for byte.  Test
+names and timeouts are unchanged.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/meson.build            |  686 ++------
+ src/kosmickrisp/vulkan/meson.build            |  701 ++------
  .../vulkan/tests/bench_blend_path.cpp         |   20 +-
  .../vulkan/tests/bench_vertex_fetch_path.cpp  |   20 +-
  src/kosmickrisp/vulkan/tests/kk_test.h        |  374 ++++
@@ -56,11 +58,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_command_pool_threads.c  |   87 +-
  .../vulkan/tests/test_command_resubmit.c      |   90 +-
  .../tests/test_custom_border_lowering.c       |    9 +-
+ ..._tess_draw_size.cpp => test_draw_size.cpp} |  250 +--
  .../vulkan/tests/test_drm_plane_offset.c      |   53 +-
  .../tests/test_dynamic_vertex_input_cache.cpp |  499 +++---
  .../tests/test_early_sample_mask_count.cpp    |  642 +++----
  .../tests/test_fragment_output_swizzle.c      |    9 +-
- .../vulkan/tests/test_geometry_draw_size.cpp  |  139 +-
+ .../vulkan/tests/test_geometry_draw_size.cpp  |  342 ----
  .../tests/test_geometry_primitive_id_link.cpp |  969 +++++------
  .../vulkan/tests/test_geometry_setup_gpu.c    |   28 +-
  .../vulkan/tests/test_heap_growth.c           |  160 +-
@@ -70,8 +73,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/test_image_compression_chain.c      |   51 +-
  .../vulkan/tests/test_integer_point_target.c  |   82 +-
  .../vulkan/tests/test_invalid_view_type.c     |   20 +-
- .../vulkan/tests/test_layered_draw_routes.cpp |  729 ++++----
- .../tests/test_layered_draw_sequence.cpp      |  642 +++----
+ .../vulkan/tests/test_layered_draw_routes.cpp |  786 ++++-----
+ .../tests/test_layered_draw_sequence.cpp      |  457 -----
  .../vulkan/tests/test_line_raster_cache.cpp   | 1529 ++++++++---------
  .../tests/test_linear_input_attachment.m      |  138 +-
  src/kosmickrisp/vulkan/tests/test_logic_op.c  |    9 +-
@@ -102,7 +105,6 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../test_tes_sampler_dynamic_indexing.cpp     |  682 --------
  .../tests/test_tes_sampler_indexing.cpp       | 1129 ++++++------
  .../vulkan/tests/test_tess_bound_gpu.c        |   19 +-
- .../vulkan/tests/test_tess_draw_size.cpp      |  141 +-
  .../tests/test_tess_passthrough_geometry.cpp  |  810 ++++-----
  .../vulkan/tests/test_tess_setup_gpu.c        |   19 +-
  .../vulkan/tests/test_texel_buffer_bounds.c   |  124 +-
@@ -111,17 +113,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   69 +-
  .../test_transform_feedback_builtins.cpp      |  480 ++----
  .../tests/test_unused_attachment_gaps.cpp     |  786 ++++-----
- 75 files changed, 8594 insertions(+), 14047 deletions(-)
+ 75 files changed, 8456 insertions(+), 14384 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
+ rename src/kosmickrisp/vulkan/tests/{test_tess_draw_size.cpp => test_draw_size.cpp} (53%)
+ delete mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
+ delete mode 100644 src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4ccad2490 100644
+index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..158c976a18f2605a00623ea9688ea9d52a2a08ff 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -228,20 +228,62 @@ if with_tests
+@@ -228,20 +228,77 @@ if with_tests
    ]
  
    if host_machine.system() == 'darwin'
@@ -143,7 +148,6 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
 +    foreach kk_vulkan_test : [
 +      ['unused_attachment_gaps', 120],
 +      ['polygon_point_raster', 120],
-+      ['layered_draw_sequence', 120],
 +      ['multiview_clear_attachments', 120],
 +      ['alpha_to_coverage_no_attachment', 120],
 +      ['point_clip_volume', 120],
@@ -157,8 +161,6 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
 +      ['helper_invocation_demote', 120],
 +      ['terminate_full_quads', 120],
 +      ['geometry_primitive_id_link', 120],
-+      ['geometry_draw_size', 120],
-+      ['tess_draw_size', 120],
 +      ['max_varyings', 120],
 +    ]
 +      test(
@@ -183,8 +185,8 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
 +      dependencies : [idep_vulkan_runtime_headers],
 +      link_with : libvulkan_kosmickrisp,
 +      override_options : ['cpp_std=c++20'],
-     )
-+    foreach route : ['multi_draw', 'geometry']
++    )
++    foreach route : ['sequence', 'multi_draw', 'geometry']
 +      test(
 +        'kosmickrisp_layered_draw_' + route,
 +        layered_draw_routes_test,
@@ -194,10 +196,28 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
 +        timeout : 120,
 +      )
 +    endforeach
++    draw_size_test = executable(
++      'test_kosmickrisp_draw_size',
++      files('tests/test_draw_size.cpp'),
++      include_directories : kk_test_include_directories,
++      dependencies : [idep_vulkan_runtime_headers],
++      link_with : libvulkan_kosmickrisp,
++      override_options : ['cpp_std=c++20'],
+     )
++    foreach stage : ['geometry', 'tess']
++      test(
++        'kosmickrisp_' + stage + '_draw_size',
++        draw_size_test,
++        args : [stage],
++        suite : ['kosmickrisp'],
++        env : ['MESA_SHADER_CACHE_DISABLE=true'],
++        timeout : 120,
++      )
++    endforeach
      test(
        'kosmickrisp_geometry_setup_gpu',
        executable(
-@@ -348,256 +390,37 @@ if with_tests
+@@ -348,256 +405,37 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
@@ -480,7 +500,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
      test(
        'kosmickrisp_raster_discard',
        executable(
-@@ -619,48 +442,24 @@ if with_tests
+@@ -619,48 +457,24 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -546,7 +566,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
      test(
        'kosmickrisp_pipeline_statistics_gpu',
        executable(
-@@ -681,34 +480,6 @@ if with_tests
+@@ -681,34 +495,6 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -581,7 +601,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -728,104 +499,6 @@ if with_tests
+@@ -728,104 +514,6 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -686,7 +706,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1266,16 +939,25 @@ if with_tests
+@@ -1266,16 +954,25 @@ if with_tests
      )
    endif
  
@@ -722,7 +742,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
  
    test(
      'kosmickrisp_queue_error',
-@@ -1313,49 +995,6 @@ if with_tests
+@@ -1313,49 +1010,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -772,7 +792,7 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1513,75 +1152,28 @@ if with_tests
+@@ -1513,75 +1167,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -3744,6 +3764,372 @@ index f657858d271b3d133f732d71586a4fa0c7b2032c..a2dd0e3f5bfe33e7902c1a196e15e750
  
  struct lowering_stats {
     unsigned samples;
+diff --git a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_draw_size.cpp
+similarity index 53%
+rename from src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
+rename to src/kosmickrisp/vulkan/tests/test_draw_size.cpp
+index 64c467737fab0ca914bc6d904fe6583870630e4a..bca16495769dafa8527cc4495a9f662668e4a55d 100644
+--- a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
++++ b/src/kosmickrisp/vulkan/tests/test_draw_size.cpp
+@@ -2,14 +2,19 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
+-/* A direct tessellated draw sizes the TCS output, patch coordinate and index
+- * count buffers at recording time: every patch of every instance needs the
+- * TCS's whole output patch.  Vulkan puts no bound on a draw's vertex or
+- * instance count, so a large enough draw makes that size overflow the 32 bits
+- * the upload allocator and the GPU address it in.  The draw must then fail
+- * the command buffer instead of handing the TCS and the tessellator a
+- * truncated buffer to write gigabytes past.  The test only records:
+- * submitting the unfixed case would corrupt GPU memory.
++/* A direct draw through an emulated stage sizes that stage's buffers at
++ * recording time.  Vulkan puts no bound on a draw's vertex or instance count,
++ * so a large enough draw makes that size overflow the 32 bits the upload
++ * allocator and the GPU address it in.  The draw must then fail the command
++ * buffer instead of handing the stage a truncated buffer to write gigabytes
++ * past.  The test only records: submitting the unfixed case would corrupt
++ * GPU memory.  The argument names the stage:
++ *
++ *   geometry  the geometry stage's output index buffer: max_vertices indices
++ *             for every input primitive;
++ *   tess      the TCS output, patch coordinate and index count buffers:
++ *             every patch of every instance needs the TCS's whole output
++ *             patch.
+  */
+ 
+ #define VK_NO_PROTOTYPES
+@@ -17,33 +22,16 @@
+ 
+ #include <cstdio>
+ #include <cstdlib>
+-#include <vector>
++#include <cstring>
+ 
+-extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-
+-static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
+-{
+-   if (!ok) {
+-      std::fprintf(stderr, "%s: %d\n", operation, value);
+-      std::exit(1);
+-   }
+-}
+-
+-template <typename T> static T load(VkInstance instance, const char *name)
+-{
+-   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
+-   require(function != nullptr, name);
+-   return function;
+-}
+-
+-#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
+-#define LOAD_D(name)                                                             \
+-   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
+-   require(name != nullptr, #name)
++#include "kk_test.h"
+ 
+ static const uint32_t vertex_spirv[] =
+ #include "geometry_draw_size_shaders/points.vert.h"
+ ;
++static const uint32_t geometry_spirv[] =
++#include "geometry_draw_size_shaders/dynamic_points.geom.h"
++;
+ static const uint32_t control_spirv[] =
+ #include "tess_draw_size_shaders/wide.tesc.h"
+ ;
+@@ -60,92 +48,48 @@ static const uint32_t fragment_spirv[] =
+  * the first draw whose buffers need 2^32 bytes leaves a wrapped size of a
+  * few kilobytes.  Fewer slots would let that draw fit and fail this test. */
+ static constexpr uint64_t patch_bytes = 1926 * 4 + 2 * 4;
+-static constexpr uint32_t first_overflowing_draw =
+-   uint32_t(((UINT64_C(1) << 32) + patch_bytes - 1) / patch_bytes);
+ 
+-int main()
++/* dynamic_points.geom emits up to 256 points, so it needs 256 four-byte
++ * indices per point drawn: 2^22 points already need 2^32 bytes. */
++static constexpr uint32_t max_vertices = 256;
++
++struct Stage {
++   VkShaderStageFlagBits bit;
++   const uint32_t *code;
++   size_t size;
++};
++
++int main(int argc, char **argv)
+ {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+-   VkInstance instance = VK_NULL_HANDLE;
+-   LOAD_I(vkCreateInstance);
+-   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+-   app.pApplicationName = "tess-draw-size";
+-   app.apiVersion = VK_API_VERSION_1_3;
+-   VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+-   instance_info.pApplicationInfo = &app;
+-   auto result = vkCreateInstance(&instance_info, nullptr, &instance);
+-   require(result == VK_SUCCESS, "create instance", result);
+-   LOAD_I(vkDestroyInstance);
+-   LOAD_I(vkEnumeratePhysicalDevices);
++   require(argc == 2 && (std::strcmp(argv[1], "geometry") == 0 ||
++                         std::strcmp(argv[1], "tess") == 0),
++           "usage: test_kosmickrisp_draw_size geometry|tess");
++   const bool tess = std::strcmp(argv[1], "tess") == 0;
++   const uint32_t first_overflowing_draw =
++      tess ? uint32_t(((UINT64_C(1) << 32) + patch_bytes - 1) / patch_bytes)
++           : uint32_t((UINT64_C(1) << 32) / (max_vertices * sizeof(uint32_t)));
++   kk_test_device t;
++   VkResult result;
++   kk_test_create_instance(&t, "draw-size");
++   VkInstance instance = t.instance;
+    LOAD_I(vkGetPhysicalDeviceFeatures);
+-   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
+-   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
+-   LOAD_I(vkCreateDevice);
+-   LOAD_I(vkGetDeviceProcAddr);
+-   uint32_t physical_count = 1;
+-   VkPhysicalDevice physical = VK_NULL_HANDLE;
+-   result = vkEnumeratePhysicalDevices(instance, &physical_count, &physical);
+-   require((result == VK_SUCCESS || result == VK_INCOMPLETE) && physical_count,
+-           "physical device", result);
+ 
+    VkPhysicalDeviceFeatures features{};
+-   vkGetPhysicalDeviceFeatures(physical, &features);
+-   require(features.tessellationShader, "tessellation shaders");
+-   uint32_t queue_count = 0;
+-   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
+-   std::vector<VkQueueFamilyProperties> queues(queue_count);
+-   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
+-                                            queues.data());
+-   uint32_t queue = 0;
+-   while (queue < queue_count &&
+-          !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+-      ++queue;
+-   require(queue < queue_count, "graphics queue");
+-   float priority = 1.0f;
+-   VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+-   queue_info.queueFamilyIndex = queue;
+-   queue_info.queueCount = 1;
+-   queue_info.pQueuePriorities = &priority;
++   vkGetPhysicalDeviceFeatures(t.physical, &features);
++   require(tess ? features.tessellationShader : features.geometryShader,
++           tess ? "tessellation shaders" : "geometry shaders");
+    VkPhysicalDeviceFeatures enabled{};
+-   enabled.tessellationShader = VK_TRUE;
++   enabled.geometryShader = !tess;
++   enabled.tessellationShader = tess;
+    VkPhysicalDeviceVulkan13Features features13{
+       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    features13.dynamicRendering = VK_TRUE;
+-   VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+-   device_info.pNext = &features13;
+-   device_info.queueCreateInfoCount = 1;
+-   device_info.pQueueCreateInfos = &queue_info;
+-   device_info.pEnabledFeatures = &enabled;
+-   VkDevice device = VK_NULL_HANDLE;
+-   result = vkCreateDevice(physical, &device_info, nullptr, &device);
+-   require(result == VK_SUCCESS, "create device", result);
+-   LOAD_D(vkDestroyDevice);
+-   LOAD_D(vkCreateShaderModule);
+-   LOAD_D(vkDestroyShaderModule);
+-   LOAD_D(vkCreatePipelineLayout);
+-   LOAD_D(vkDestroyPipelineLayout);
+-   LOAD_D(vkCreateGraphicsPipelines);
+-   LOAD_D(vkDestroyPipeline);
+-   LOAD_D(vkCreateCommandPool);
+-   LOAD_D(vkDestroyCommandPool);
+-   LOAD_D(vkAllocateCommandBuffers);
++   kk_test_create_device(&t, &features13, &enabled, 0, nullptr);
++   KK_LOAD_DEVICE_FUNCTIONS(t);
+    LOAD_D(vkResetCommandBuffer);
+-   LOAD_D(vkBeginCommandBuffer);
+-   LOAD_D(vkEndCommandBuffer);
+-   LOAD_D(vkCmdBeginRendering);
+-   LOAD_D(vkCmdEndRendering);
+-   LOAD_D(vkCmdBindPipeline);
+    LOAD_D(vkCmdSetViewport);
+    LOAD_D(vkCmdSetScissor);
+-   LOAD_D(vkCmdDraw);
+-   LOAD_D(vkCreateImage);
+-   LOAD_D(vkDestroyImage);
+-   LOAD_D(vkCreateImageView);
+-   LOAD_D(vkDestroyImageView);
+-   LOAD_D(vkGetImageMemoryRequirements);
+-   LOAD_D(vkAllocateMemory);
+-   LOAD_D(vkFreeMemory);
+-   LOAD_D(vkBindImageMemory);
+ 
+    constexpr uint32_t extent = 8;
+    constexpr VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
+@@ -163,13 +107,7 @@ int main()
+    require(result == VK_SUCCESS, "create image", result);
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device, image, &requirements);
+-   VkPhysicalDeviceMemoryProperties memory_properties{};
+-   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
+-   uint32_t type = 0;
+-   while (type < memory_properties.memoryTypeCount &&
+-          !(requirements.memoryTypeBits & (1u << type)))
+-      ++type;
+-   require(type < memory_properties.memoryTypeCount, "memory type");
++   uint32_t type = kk_test_memory_type(&t, requirements.memoryTypeBits, 0);
+    VkMemoryAllocateInfo memory_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    memory_info.allocationSize = requirements.size;
+    memory_info.memoryTypeIndex = type;
+@@ -187,32 +125,28 @@ int main()
+    result = vkCreateImageView(device, &view_info, nullptr, &view);
+    require(result == VK_SUCCESS, "create view", result);
+ 
+-   auto make_module = [&](const uint32_t *code, size_t size) {
+-      VkShaderModuleCreateInfo module_info{
+-         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+-      module_info.codeSize = size;
+-      module_info.pCode = code;
+-      VkShaderModule module = VK_NULL_HANDLE;
+-      result = vkCreateShaderModule(device, &module_info, nullptr, &module);
+-      require(result == VK_SUCCESS, "create module", result);
+-      return module;
++   const Stage geometry_stages[] = {
++      {VK_SHADER_STAGE_VERTEX_BIT, vertex_spirv, sizeof(vertex_spirv)},
++      {VK_SHADER_STAGE_GEOMETRY_BIT, geometry_spirv, sizeof(geometry_spirv)},
++      {VK_SHADER_STAGE_FRAGMENT_BIT, fragment_spirv, sizeof(fragment_spirv)},
+    };
+-   VkShaderModule modules[4] = {
+-      make_module(vertex_spirv, sizeof(vertex_spirv)),
+-      make_module(control_spirv, sizeof(control_spirv)),
+-      make_module(evaluation_spirv, sizeof(evaluation_spirv)),
+-      make_module(fragment_spirv, sizeof(fragment_spirv)),
+-   };
+-   const VkShaderStageFlagBits stage_bits[4] = {
+-      VK_SHADER_STAGE_VERTEX_BIT,
+-      VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
+-      VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
+-      VK_SHADER_STAGE_FRAGMENT_BIT,
++   const Stage tess_stages[] = {
++      {VK_SHADER_STAGE_VERTEX_BIT, vertex_spirv, sizeof(vertex_spirv)},
++      {VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, control_spirv,
++       sizeof(control_spirv)},
++      {VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, evaluation_spirv,
++       sizeof(evaluation_spirv)},
++      {VK_SHADER_STAGE_FRAGMENT_BIT, fragment_spirv, sizeof(fragment_spirv)},
+    };
++   const Stage *stage_list = tess ? tess_stages : geometry_stages;
++   const unsigned stage_count = tess ? 4 : 3;
++   VkShaderModule modules[4]{};
+    VkPipelineShaderStageCreateInfo stages[4]{};
+-   for (unsigned i = 0; i < 4; ++i) {
++   for (unsigned i = 0; i < stage_count; ++i) {
++      modules[i] =
++         kk_test_shader_module(&t, stage_list[i].code, stage_list[i].size);
+       stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+-      stages[i].stage = stage_bits[i];
++      stages[i].stage = stage_list[i].bit;
+       stages[i].module = modules[i];
+       stages[i].pName = "main";
+    }
+@@ -227,7 +161,8 @@ int main()
+       VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo assembly{
+       VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+-   assembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
++   assembly.topology = tess ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST
++                            : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    VkPipelineTessellationStateCreateInfo tessellation{
+       VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO};
+    tessellation.patchControlPoints = 1;
+@@ -262,11 +197,11 @@ int main()
+    VkGraphicsPipelineCreateInfo pipeline_info{
+       VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline_info.pNext = &rendering_info;
+-   pipeline_info.stageCount = 4;
++   pipeline_info.stageCount = stage_count;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &assembly;
+-   pipeline_info.pTessellationState = &tessellation;
++   pipeline_info.pTessellationState = tess ? &tessellation : nullptr;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &raster;
+    pipeline_info.pMultisampleState = &multisample;
+@@ -278,24 +213,14 @@ int main()
+                                       nullptr, &pipeline);
+    require(result == VK_SUCCESS, "create pipeline", result);
+ 
+-   VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+-   pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+-   pool_info.queueFamilyIndex = queue;
+    VkCommandPool pool = VK_NULL_HANDLE;
+-   result = vkCreateCommandPool(device, &pool_info, nullptr, &pool);
+-   require(result == VK_SUCCESS, "create command pool", result);
+-   VkCommandBufferAllocateInfo allocate{
+-      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+-   allocate.commandPool = pool;
+-   allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+-   allocate.commandBufferCount = 1;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+-   result = vkAllocateCommandBuffers(device, &allocate, &command);
+-   require(result == VK_SUCCESS, "allocate command buffer", result);
++   kk_test_command_buffer(
++      &t, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, &pool, &command);
+ 
+-   /* Records one draw of `patches` single-vertex patches and returns what
+-    * ending the recording reports. */
+-   auto record = [&](uint32_t patches) {
++   /* Records one draw of `count` points or single-vertex patches and returns
++    * what ending the recording reports. */
++   auto record = [&](uint32_t count) {
+       result = vkResetCommandBuffer(command, 0);
+       require(result == VK_SUCCESS, "reset command buffer", result);
+       VkCommandBufferBeginInfo begin{
+@@ -321,19 +246,25 @@ int main()
+       const VkRect2D scissor{{0, 0}, {extent, extent}};
+       vkCmdSetViewport(command, 0, 1, &viewport);
+       vkCmdSetScissor(command, 0, 1, &scissor);
+-      vkCmdDraw(command, patches, 1, 0, 0);
++      vkCmdDraw(command, count, 1, 0, 0);
+       vkCmdEndRendering(command);
+       return vkEndCommandBuffer(command);
+    };
+ 
+    result = record(3);
+-   require(result == VK_SUCCESS, "record a small tessellated draw", result);
++   require(result == VK_SUCCESS,
++           tess ? "record a small tessellated draw"
++                : "record a small geometry draw",
++           result);
+    result = record(first_overflowing_draw);
+    require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-           "record a draw whose patch buffers need 2^32 bytes", result);
++           tess ? "record a draw whose patch buffers need 2^32 bytes"
++                : "record a draw whose index buffer needs 2^32 bytes",
++           result);
+    result = record(first_overflowing_draw + 1u);
+    require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-           "record a draw whose patch buffers need more than 2^32 bytes",
++           tess ? "record a draw whose patch buffers need more than 2^32 bytes"
++                : "record a draw whose index buffer needs more than 2^32 bytes",
+            result);
+    result = record(3);
+    require(result == VK_SUCCESS, "record a small draw after a refused one",
+@@ -342,13 +273,14 @@ int main()
+    vkDestroyCommandPool(device, pool, nullptr);
+    vkDestroyPipeline(device, pipeline, nullptr);
+    vkDestroyPipelineLayout(device, layout, nullptr);
+-   for (VkShaderModule module : modules)
+-      vkDestroyShaderModule(device, module, nullptr);
++   for (unsigned i = 0; i < stage_count; ++i)
++      vkDestroyShaderModule(device, modules[i], nullptr);
+    vkDestroyImageView(device, view, nullptr);
+    vkDestroyImage(device, image, nullptr);
+    vkFreeMemory(device, memory, nullptr);
+-   vkDestroyDevice(device, nullptr);
+-   vkDestroyInstance(instance, nullptr);
+-   std::printf("oversized tessellated draws fail their command buffer\n");
++   kk_test_destroy(&t);
++   std::printf(tess ? "oversized tessellated draws fail their command buffer\n"
++                    : "oversized geometry-shader draws fail their command "
++                      "buffer\n");
+    return 0;
+ }
 diff --git a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c b/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
 index b3353c15f4c59270f21d7216d95ac90d58161d05..bc506b0119625898de780eef9cfa200dc955732e 100644
 --- a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
@@ -5072,13 +5458,32 @@ index 2cff37893083732e7505da0d39551150b16f2492..67328e5be3cedced902e2006b8bd8732
  static nir_shader *
  build_fragment_store(unsigned components)
 diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
-index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97e4eea8a4 100644
+deleted file mode 100644
+index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..0000000000000000000000000000000000000000
 --- a/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
-+++ b/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
-@@ -19,27 +19,7 @@
- #include <cstdlib>
- #include <vector>
- 
++++ /dev/null
+@@ -1,342 +0,0 @@
+-/*
+- * SPDX-License-Identifier: MIT
+- */
+-
+-/* A direct draw with a geometry shader sizes the geometry stage's output
+- * index buffer at recording time: max_vertices indices for every input
+- * primitive.  Vulkan puts no bound on a non-indexed draw's vertex count, so a
+- * large enough draw makes that size overflow the 32 bits the upload allocator
+- * and the GPU address it in.  The draw must then fail the command buffer
+- * instead of handing the geometry stage a truncated buffer to write gigabytes
+- * past.  The test only records: submitting the unfixed case would corrupt
+- * GPU memory.
+- */
+-
+-#define VK_NO_PROTOTYPES
+-#include <vulkan/vulkan.h>
+-
+-#include <cstdio>
+-#include <cstdlib>
+-#include <vector>
+-
 -extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
 -
 -static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
@@ -5100,14 +5505,26 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -#define LOAD_D(name)                                                             \
 -   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
 -   require(name != nullptr, #name)
-+#include "kk_test.h"
- 
- static const uint32_t vertex_spirv[] =
- #include "geometry_draw_size_shaders/points.vert.h"
-@@ -60,86 +40,25 @@ static constexpr uint32_t first_overflowing_draw =
- int main()
- {
-    std::setvbuf(stdout, nullptr, _IONBF, 0);
+-
+-static const uint32_t vertex_spirv[] =
+-#include "geometry_draw_size_shaders/points.vert.h"
+-;
+-static const uint32_t geometry_spirv[] =
+-#include "geometry_draw_size_shaders/dynamic_points.geom.h"
+-;
+-static const uint32_t fragment_spirv[] =
+-#include "geometry_draw_size_shaders/green.frag.h"
+-;
+-
+-/* dynamic_points.geom emits up to 256 points, so it needs 256 four-byte
+- * indices per point drawn: 2^22 points already need 2^32 bytes. */
+-static constexpr uint32_t max_vertices = 256;
+-static constexpr uint32_t first_overflowing_draw =
+-   uint32_t((UINT64_C(1) << 32) / (max_vertices * sizeof(uint32_t)));
+-
+-int main()
+-{
+-   std::setvbuf(stdout, nullptr, _IONBF, 0);
 -   VkInstance instance = VK_NULL_HANDLE;
 -   LOAD_I(vkCreateInstance);
 -   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -5119,11 +5536,7 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   require(result == VK_SUCCESS, "create instance", result);
 -   LOAD_I(vkDestroyInstance);
 -   LOAD_I(vkEnumeratePhysicalDevices);
-+   kk_test_device t;
-+   VkResult result;
-+   kk_test_create_instance(&t, "geometry-draw-size");
-+   VkInstance instance = t.instance;
-    LOAD_I(vkGetPhysicalDeviceFeatures);
+-   LOAD_I(vkGetPhysicalDeviceFeatures);
 -   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
 -   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
 -   LOAD_I(vkCreateDevice);
@@ -5133,11 +5546,10 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   result = vkEnumeratePhysicalDevices(instance, &physical_count, &physical);
 -   require((result == VK_SUCCESS || result == VK_INCOMPLETE) && physical_count,
 -           "physical device", result);
- 
-    VkPhysicalDeviceFeatures features{};
+-
+-   VkPhysicalDeviceFeatures features{};
 -   vkGetPhysicalDeviceFeatures(physical, &features);
-+   vkGetPhysicalDeviceFeatures(t.physical, &features);
-    require(features.geometryShader, "geometry shaders");
+-   require(features.geometryShader, "geometry shaders");
 -   uint32_t queue_count = 0;
 -   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
 -   std::vector<VkQueueFamilyProperties> queues(queue_count);
@@ -5153,11 +5565,11 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   queue_info.queueFamilyIndex = queue;
 -   queue_info.queueCount = 1;
 -   queue_info.pQueuePriorities = &priority;
-    VkPhysicalDeviceFeatures enabled{};
-    enabled.geometryShader = VK_TRUE;
-    VkPhysicalDeviceVulkan13Features features13{
-       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    features13.dynamicRendering = VK_TRUE;
+-   VkPhysicalDeviceFeatures enabled{};
+-   enabled.geometryShader = VK_TRUE;
+-   VkPhysicalDeviceVulkan13Features features13{
+-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+-   features13.dynamicRendering = VK_TRUE;
 -   VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 -   device_info.pNext = &features13;
 -   device_info.queueCreateInfoCount = 1;
@@ -5176,16 +5588,14 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   LOAD_D(vkCreateCommandPool);
 -   LOAD_D(vkDestroyCommandPool);
 -   LOAD_D(vkAllocateCommandBuffers);
-+   kk_test_create_device(&t, &features13, &enabled, 0, nullptr);
-+   KK_LOAD_DEVICE_FUNCTIONS(t);
-    LOAD_D(vkResetCommandBuffer);
+-   LOAD_D(vkResetCommandBuffer);
 -   LOAD_D(vkBeginCommandBuffer);
 -   LOAD_D(vkEndCommandBuffer);
 -   LOAD_D(vkCmdBeginRendering);
 -   LOAD_D(vkCmdEndRendering);
 -   LOAD_D(vkCmdBindPipeline);
-    LOAD_D(vkCmdSetViewport);
-    LOAD_D(vkCmdSetScissor);
+-   LOAD_D(vkCmdSetViewport);
+-   LOAD_D(vkCmdSetScissor);
 -   LOAD_D(vkCmdDraw);
 -   LOAD_D(vkCreateImage);
 -   LOAD_D(vkDestroyImage);
@@ -5195,13 +5605,23 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   LOAD_D(vkAllocateMemory);
 -   LOAD_D(vkFreeMemory);
 -   LOAD_D(vkBindImageMemory);
- 
-    constexpr uint32_t extent = 8;
-    constexpr VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
-@@ -157,13 +76,7 @@ int main()
-    require(result == VK_SUCCESS, "create image", result);
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(device, image, &requirements);
+-
+-   constexpr uint32_t extent = 8;
+-   constexpr VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
+-   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+-   image_info.imageType = VK_IMAGE_TYPE_2D;
+-   image_info.format = color_format;
+-   image_info.extent = {extent, extent, 1};
+-   image_info.mipLevels = 1;
+-   image_info.arrayLayers = 1;
+-   image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+-   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+-   image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+-   VkImage image = VK_NULL_HANDLE;
+-   result = vkCreateImage(device, &image_info, nullptr, &image);
+-   require(result == VK_SUCCESS, "create image", result);
+-   VkMemoryRequirements requirements{};
+-   vkGetImageMemoryRequirements(device, image, &requirements);
 -   VkPhysicalDeviceMemoryProperties memory_properties{};
 -   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
 -   uint32_t type = 0;
@@ -5209,14 +5629,22 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -          !(requirements.memoryTypeBits & (1u << type)))
 -      ++type;
 -   require(type < memory_properties.memoryTypeCount, "memory type");
-+   uint32_t type = kk_test_memory_type(&t, requirements.memoryTypeBits, 0);
-    VkMemoryAllocateInfo memory_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    memory_info.allocationSize = requirements.size;
-    memory_info.memoryTypeIndex = type;
-@@ -180,21 +93,10 @@ int main()
-    VkImageView view = VK_NULL_HANDLE;
-    result = vkCreateImageView(device, &view_info, nullptr, &view);
-    require(result == VK_SUCCESS, "create view", result);
+-   VkMemoryAllocateInfo memory_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+-   memory_info.allocationSize = requirements.size;
+-   memory_info.memoryTypeIndex = type;
+-   VkDeviceMemory memory = VK_NULL_HANDLE;
+-   result = vkAllocateMemory(device, &memory_info, nullptr, &memory);
+-   require(result == VK_SUCCESS, "allocate image", result);
+-   result = vkBindImageMemory(device, image, memory, 0);
+-   require(result == VK_SUCCESS, "bind image", result);
+-   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+-   view_info.image = image;
+-   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+-   view_info.format = color_format;
+-   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+-   VkImageView view = VK_NULL_HANDLE;
+-   result = vkCreateImageView(device, &view_info, nullptr, &view);
+-   require(result == VK_SUCCESS, "create view", result);
 -
 -   auto make_module = [&](const uint32_t *code, size_t size) {
 -      VkShaderModuleCreateInfo module_info{
@@ -5228,24 +5656,85 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -      require(result == VK_SUCCESS, "create module", result);
 -      return module;
 -   };
-    VkShaderModule modules[3] = {
+-   VkShaderModule modules[3] = {
 -      make_module(vertex_spirv, sizeof(vertex_spirv)),
 -      make_module(geometry_spirv, sizeof(geometry_spirv)),
 -      make_module(fragment_spirv, sizeof(fragment_spirv)),
-+      kk_test_shader_module(&t, vertex_spirv, sizeof(vertex_spirv)),
-+      kk_test_shader_module(&t, geometry_spirv, sizeof(geometry_spirv)),
-+      kk_test_shader_module(&t, fragment_spirv, sizeof(fragment_spirv)),
-    };
-    const VkShaderStageFlagBits stage_bits[3] = {
-       VK_SHADER_STAGE_VERTEX_BIT,
-@@ -266,20 +168,10 @@ int main()
-                                       nullptr, &pipeline);
-    require(result == VK_SUCCESS, "create pipeline", result);
- 
+-   };
+-   const VkShaderStageFlagBits stage_bits[3] = {
+-      VK_SHADER_STAGE_VERTEX_BIT,
+-      VK_SHADER_STAGE_GEOMETRY_BIT,
+-      VK_SHADER_STAGE_FRAGMENT_BIT,
+-   };
+-   VkPipelineShaderStageCreateInfo stages[3]{};
+-   for (unsigned i = 0; i < 3; ++i) {
+-      stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+-      stages[i].stage = stage_bits[i];
+-      stages[i].module = modules[i];
+-      stages[i].pName = "main";
+-   }
+-
+-   VkPipelineLayoutCreateInfo layout_info{
+-      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+-   VkPipelineLayout layout = VK_NULL_HANDLE;
+-   result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
+-   require(result == VK_SUCCESS, "create layout", result);
+-
+-   VkPipelineVertexInputStateCreateInfo vertex_input{
+-      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+-   VkPipelineInputAssemblyStateCreateInfo assembly{
+-      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+-   assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+-   VkPipelineViewportStateCreateInfo viewport_state{
+-      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+-   viewport_state.viewportCount = 1;
+-   viewport_state.scissorCount = 1;
+-   VkPipelineRasterizationStateCreateInfo raster{
+-      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+-   raster.polygonMode = VK_POLYGON_MODE_FILL;
+-   raster.cullMode = VK_CULL_MODE_NONE;
+-   raster.lineWidth = 1.0f;
+-   VkPipelineMultisampleStateCreateInfo multisample{
+-      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+-   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+-   VkPipelineColorBlendAttachmentState blend_attachment{};
+-   blend_attachment.colorWriteMask = 0xf;
+-   VkPipelineColorBlendStateCreateInfo blend{
+-      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+-   blend.attachmentCount = 1;
+-   blend.pAttachments = &blend_attachment;
+-   const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
+-                                            VK_DYNAMIC_STATE_SCISSOR};
+-   VkPipelineDynamicStateCreateInfo dynamic{
+-      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+-   dynamic.dynamicStateCount = 2;
+-   dynamic.pDynamicStates = dynamic_states;
+-   VkPipelineRenderingCreateInfo rendering_info{
+-      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+-   rendering_info.colorAttachmentCount = 1;
+-   rendering_info.pColorAttachmentFormats = &color_format;
+-   VkGraphicsPipelineCreateInfo pipeline_info{
+-      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+-   pipeline_info.pNext = &rendering_info;
+-   pipeline_info.stageCount = 3;
+-   pipeline_info.pStages = stages;
+-   pipeline_info.pVertexInputState = &vertex_input;
+-   pipeline_info.pInputAssemblyState = &assembly;
+-   pipeline_info.pViewportState = &viewport_state;
+-   pipeline_info.pRasterizationState = &raster;
+-   pipeline_info.pMultisampleState = &multisample;
+-   pipeline_info.pColorBlendState = &blend;
+-   pipeline_info.pDynamicState = &dynamic;
+-   pipeline_info.layout = layout;
+-   VkPipeline pipeline = VK_NULL_HANDLE;
+-   result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info,
+-                                      nullptr, &pipeline);
+-   require(result == VK_SUCCESS, "create pipeline", result);
+-
 -   VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
 -   pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 -   pool_info.queueFamilyIndex = queue;
-    VkCommandPool pool = VK_NULL_HANDLE;
+-   VkCommandPool pool = VK_NULL_HANDLE;
 -   result = vkCreateCommandPool(device, &pool_info, nullptr, &pool);
 -   require(result == VK_SUCCESS, "create command pool", result);
 -   VkCommandBufferAllocateInfo allocate{
@@ -5253,24 +5742,69 @@ index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..d1b8f5474547c15c4ff2d7c12a302d97
 -   allocate.commandPool = pool;
 -   allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 -   allocate.commandBufferCount = 1;
-    VkCommandBuffer command = VK_NULL_HANDLE;
+-   VkCommandBuffer command = VK_NULL_HANDLE;
 -   result = vkAllocateCommandBuffers(device, &allocate, &command);
 -   require(result == VK_SUCCESS, "allocate command buffer", result);
-+   kk_test_command_buffer(
-+      &t, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, &pool, &command);
- 
-    /* Records one draw of `points` points and returns what ending the
-     * recording reports. */
-@@ -335,8 +227,7 @@ int main()
-    vkDestroyImageView(device, view, nullptr);
-    vkDestroyImage(device, image, nullptr);
-    vkFreeMemory(device, memory, nullptr);
+-
+-   /* Records one draw of `points` points and returns what ending the
+-    * recording reports. */
+-   auto record = [&](uint32_t points) {
+-      result = vkResetCommandBuffer(command, 0);
+-      require(result == VK_SUCCESS, "reset command buffer", result);
+-      VkCommandBufferBeginInfo begin{
+-         VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+-      begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+-      result = vkBeginCommandBuffer(command, &begin);
+-      require(result == VK_SUCCESS, "begin command buffer", result);
+-      VkRenderingAttachmentInfo attachment{
+-         VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+-      attachment.imageView = view;
+-      attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+-      attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+-      attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+-      VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+-      rendering.renderArea = {{0, 0}, {extent, extent}};
+-      rendering.layerCount = 1;
+-      rendering.colorAttachmentCount = 1;
+-      rendering.pColorAttachments = &attachment;
+-      vkCmdBeginRendering(command, &rendering);
+-      vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+-      const VkViewport viewport{0.0f, 0.0f, float(extent), float(extent),
+-                                0.0f, 1.0f};
+-      const VkRect2D scissor{{0, 0}, {extent, extent}};
+-      vkCmdSetViewport(command, 0, 1, &viewport);
+-      vkCmdSetScissor(command, 0, 1, &scissor);
+-      vkCmdDraw(command, points, 1, 0, 0);
+-      vkCmdEndRendering(command);
+-      return vkEndCommandBuffer(command);
+-   };
+-
+-   result = record(3);
+-   require(result == VK_SUCCESS, "record a small geometry draw", result);
+-   result = record(first_overflowing_draw);
+-   require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-           "record a draw whose index buffer needs 2^32 bytes", result);
+-   result = record(first_overflowing_draw + 1u);
+-   require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
+-           "record a draw whose index buffer needs more than 2^32 bytes",
+-           result);
+-   result = record(3);
+-   require(result == VK_SUCCESS, "record a small draw after a refused one",
+-           result);
+-
+-   vkDestroyCommandPool(device, pool, nullptr);
+-   vkDestroyPipeline(device, pipeline, nullptr);
+-   vkDestroyPipelineLayout(device, layout, nullptr);
+-   for (VkShaderModule module : modules)
+-      vkDestroyShaderModule(device, module, nullptr);
+-   vkDestroyImageView(device, view, nullptr);
+-   vkDestroyImage(device, image, nullptr);
+-   vkFreeMemory(device, memory, nullptr);
 -   vkDestroyDevice(device, nullptr);
 -   vkDestroyInstance(instance, nullptr);
-+   kk_test_destroy(&t);
-    std::printf("oversized geometry-shader draws fail their command buffer\n");
-    return 0;
- }
+-   std::printf("oversized geometry-shader draws fail their command buffer\n");
+-   return 0;
+-}
 diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp b/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 index 031f97d4361d2691a506927ca820136172ebb45f..3242b725130cc33eaace41ac13d492e087a570a8 100644
 --- a/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
@@ -8177,10 +8711,48 @@ index 1ee7cd7489c9f5b460bb57ae6a4faaac96ff6545..19c002e2211c0e7e33eb963e9458a01e
        (PFN_vkGetPhysicalDeviceMemoryProperties)kk_GetInstanceProcAddr(
           instance, "vkGetPhysicalDeviceMemoryProperties");
 diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
-index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed62580145a6b 100644
+index 9ff35085d14d6115368734d3c6d98fa9d806f60e..52d661132378278abd55c0bd11dcad11f3468369 100644
 --- a/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
-@@ -25,27 +25,7 @@
+@@ -2,20 +2,30 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
+-/* KK_WORKAROUND_18 has to see every Metal draw that selects a layer, however
+- * the application reaches it. kosmickrisp_layered_draw_sequence covers one
+- * draw call per layer with a vertex-shader layer; this test covers the other
+- * two routes, each in a fresh process because only the first affected pass of
+- * a process loses primitives:
++/* KK_WORKAROUND_18: a render command encoder that already ran one draw drops
++ * most of the primitives of a later draw that selects a different
++ * render_target_array_index, so the workaround has to see every Metal draw
++ * that selects a layer, however the application reaches it.  Each route runs
++ * in a fresh process because only the first affected pass of a process loses
++ * primitives:
+  *
++ *   sequence    one draw call per layer with a vertex-shader layer: one point
++ *               per texel into layer 0 of a two-layer attachment, then one
++ *               point per texel of its first 16 rows into layer 1;
+  *   multi_draw  one vkCmdDrawMultiEXT whose two entries select layers 0 and 1
+  *               through gl_DrawID, so the second is a later Metal draw of the
+  *               same call;
+  *   geometry    one draw call per layer, with the layer written by a geometry
+  *               shader rather than the vertex shader.
+  *
+- * Every texel of every layer must carry the value its own layer's draw
+- * writes.
++ * Every texel each draw covers must carry the value its own layer's draw
++ * writes.  The attachment size, the layered point draws and the DONT_CARE
++ * load op all matter: without the workaround a later draw loses its leading
++ * points, but a CLEAR load op on the same pass renders correctly.  The short
++ * second draw of the sequence also catches the rest of the workaround: a
++ * restarted encoder ordered behind the first only by a barrier still loses
++ * leading 1984-point batches of it in most fresh processes, unless the queue
++ * finishes the first encoder before starting the second.
+  */
+ #define VK_NO_PROTOTYPES
+ #include <vulkan/vulkan.h>
+@@ -25,28 +35,11 @@
  #include <cstring>
  #include <vector>
  
@@ -8207,11 +8779,38 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -   require(name != nullptr, #name)
 +#include "kk_test.h"
  
++static const uint32_t points_vertex_spirv[] =
++#include "layered_draw_shaders/points.vert.h"
++;
  static const uint32_t draw_id_vertex_spirv[] =
  #include "layered_draw_shaders/draw_id.vert.h"
-@@ -77,436 +57,329 @@ int main(int argc, char **argv)
+ ;
+@@ -60,9 +53,12 @@ static const uint32_t fragment_spirv[] =
+ #include "layered_draw_shaders/points.frag.h"
+ ;
+ 
+-/* Large enough to lose primitives without the workaround. */
++/* Large enough to lose primitives without the workaround: after a
++ * 1048576-point draw into a 1024x1024 layer, a later layer's draw loses its
++ * leading points on the first affected pass of a process. */
+ static const uint32_t kExtent = 1024u;
+ static const uint32_t kLayers = 2u;
++static const uint32_t kLaterPoints = 16384u;
+ static const uint32_t kTexelBytes = 16u;
+ 
+ struct PushConstants {
+@@ -73,440 +69,352 @@ struct PushConstants {
+ int main(int argc, char **argv)
+ {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+-   require(argc == 2 && (std::strcmp(argv[1], "multi_draw") == 0 ||
++   require(argc == 2 && (std::strcmp(argv[1], "sequence") == 0 ||
++                         std::strcmp(argv[1], "multi_draw") == 0 ||
                           std::strcmp(argv[1], "geometry") == 0),
-            "usage: test_kosmickrisp_layered_draw_routes multi_draw|geometry");
+-           "usage: test_kosmickrisp_layered_draw_routes multi_draw|geometry");
++           "usage: test_kosmickrisp_layered_draw_routes "
++           "sequence|multi_draw|geometry");
++   const bool sequence = std::strcmp(argv[1], "sequence") == 0;
     const bool multi_draw = std::strcmp(argv[1], "multi_draw") == 0;
 -   VkInstance instance = VK_NULL_HANDLE;
 -   LOAD_I(vkCreateInstance);
@@ -8226,6 +8825,7 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -   LOAD_I(vkEnumeratePhysicalDevices);
 -   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
 -   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   const bool geometry = !sequence && !multi_draw;
 +   kk_test_device t;
 +   VkResult result;
 +   kk_test_create_instance(&t, "layered-draw-routes");
@@ -8259,24 +8859,7 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -                              supported_multi_draw.multiDraw
 -                         : supported.features.geometryShader,
 -              "the route's features");
-+   VkPhysicalDeviceMultiDrawFeaturesEXT supported_multi_draw{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT};
-+   VkPhysicalDeviceVulkan11Features supported11{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
-+   supported11.pNext = &supported_multi_draw;
-+   VkPhysicalDeviceVulkan12Features supported12{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-+   supported12.pNext = &supported11;
-+   VkPhysicalDeviceFeatures2 supported{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-+   supported.pNext = &supported12;
-+   vkGetPhysicalDeviceFeatures2(t.physical, &supported);
-+   require(multi_draw ? supported12.shaderOutputLayer &&
-+                           supported11.shaderDrawParameters &&
-+                           supported_multi_draw.multiDraw
-+                      : supported.features.geometryShader,
-+           "the route's features");
- 
+-
 -      uint32_t queue_count = 0;
 -      vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
 -      std::vector<VkQueueFamilyProperties> queues(queue_count);
@@ -8285,30 +8868,7 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      while (queue < queue_count && !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 -         ++queue;
 -      require(queue < queue_count, "graphics queue");
-+   VkPhysicalDeviceMultiDrawFeaturesEXT features_multi_draw{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT};
-+   features_multi_draw.multiDraw = multi_draw;
-+   VkPhysicalDeviceVulkan11Features features11{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
-+   features11.pNext = multi_draw ? &features_multi_draw : nullptr;
-+   features11.shaderDrawParameters = multi_draw;
-+   VkPhysicalDeviceVulkan12Features features12{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-+   features12.pNext = &features11;
-+   features12.shaderOutputLayer = multi_draw;
-+   VkPhysicalDeviceVulkan13Features features13{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-+   features13.pNext = &features12;
-+   features13.dynamicRendering = VK_TRUE;
-+   VkPhysicalDeviceFeatures2 features{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-+   features.pNext = &features13;
-+   features.features.geometryShader = !multi_draw;
-+   const char *multi_draw_extension = VK_EXT_MULTI_DRAW_EXTENSION_NAME;
-+   kk_test_create_device(&t, &features, nullptr,
-+                         multi_draw ? 1u : 0u, &multi_draw_extension);
-+   KK_LOAD_DEVICE_FUNCTIONS(t);
- 
+-
 -      float priority = 1.0f;
 -      VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
 -      queue_info.queueFamilyIndex = queue;
@@ -8343,9 +8903,29 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      VkDevice device = VK_NULL_HANDLE;
 -      result = vkCreateDevice(physical, &device_info, nullptr, &device);
 -      require(result == VK_SUCCESS, "create device", result);
-+   auto vkCmdDrawMultiEXT = reinterpret_cast<PFN_vkCmdDrawMultiEXT>(
-+      vkGetDeviceProcAddr(device, "vkCmdDrawMultiEXT"));
-+   require(!multi_draw || vkCmdDrawMultiEXT != nullptr, "vkCmdDrawMultiEXT");
++   VkPhysicalDeviceMultiDrawFeaturesEXT supported_multi_draw{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT};
++   VkPhysicalDeviceVulkan11Features supported11{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
++   supported11.pNext = &supported_multi_draw;
++   VkPhysicalDeviceVulkan12Features supported12{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
++   supported12.pNext = &supported11;
++   VkPhysicalDeviceFeatures2 supported{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
++   supported.pNext = &supported12;
++   vkGetPhysicalDeviceFeatures2(t.physical, &supported);
++   if (sequence && !supported12.shaderOutputLayer) {
++      std::printf("shaderOutputLayer unsupported, skipping\n");
++      kk_test_destroy(&t);
++      return 0;
++   }
++   require(sequence ||
++              (multi_draw ? supported12.shaderOutputLayer &&
++                               supported11.shaderDrawParameters &&
++                               supported_multi_draw.multiDraw
++                          : supported.features.geometryShader),
++           "the route's features");
  
 -      LOAD_D(vkDestroyDevice);
 -      LOAD_D(vkGetDeviceQueue);
@@ -8386,10 +8966,74 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      LOAD_D(vkCmdCopyImageToBuffer);
 -      LOAD_D(vkQueueSubmit);
 -      LOAD_D(vkQueueWaitIdle);
-+   VkQueue graphics_queue = t.queue;
++   VkPhysicalDeviceMultiDrawFeaturesEXT features_multi_draw{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT};
++   features_multi_draw.multiDraw = multi_draw;
++   VkPhysicalDeviceVulkan11Features features11{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
++   features11.pNext = multi_draw ? &features_multi_draw : nullptr;
++   features11.shaderDrawParameters = multi_draw;
++   VkPhysicalDeviceVulkan12Features features12{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
++   features12.pNext = &features11;
++   features12.shaderOutputLayer = !geometry;
++   VkPhysicalDeviceVulkan13Features features13{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
++   features13.pNext = &features12;
++   features13.dynamicRendering = VK_TRUE;
++   VkPhysicalDeviceFeatures2 features{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
++   features.pNext = &features13;
++   features.features.geometryShader = geometry;
++   const char *multi_draw_extension = VK_EXT_MULTI_DRAW_EXTENSION_NAME;
++   kk_test_create_device(&t, &features, nullptr,
++                         multi_draw ? 1u : 0u, &multi_draw_extension);
++   KK_LOAD_DEVICE_FUNCTIONS(t);
  
 -      VkQueue graphics_queue = VK_NULL_HANDLE;
 -      vkGetDeviceQueue(device, queue, 0, &graphics_queue);
++   auto vkCmdDrawMultiEXT = reinterpret_cast<PFN_vkCmdDrawMultiEXT>(
++      vkGetDeviceProcAddr(device, "vkCmdDrawMultiEXT"));
++   require(!multi_draw || vkCmdDrawMultiEXT != nullptr, "vkCmdDrawMultiEXT");
+ 
+-      VkPhysicalDeviceMemoryProperties memory_properties{};
+-      vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
+-      auto find_memory = [&](uint32_t bits, VkMemoryPropertyFlags want) {
+-         for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
+-            if ((bits & (1u << i)) &&
+-                (memory_properties.memoryTypes[i].propertyFlags & want) == want)
+-               return i;
+-         require(false, "memory type");
+-         return 0u;
+-      };
++   VkQueue graphics_queue = t.queue;
+ 
+-      const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+-      VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+-      image_info.imageType = VK_IMAGE_TYPE_2D;
+-      image_info.format = format;
+-      image_info.extent = {kExtent, kExtent, 1u};
+-      image_info.mipLevels = 1u;
+-      image_info.arrayLayers = kLayers;
+-      image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+-      image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+-      image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+-                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+-      image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+-      VkImage image = VK_NULL_HANDLE;
+-      result = vkCreateImage(device, &image_info, nullptr, &image);
+-      require(result == VK_SUCCESS, "create image", result);
+-      VkMemoryRequirements image_requirements{};
+-      vkGetImageMemoryRequirements(device, image, &image_requirements);
+-      VkMemoryAllocateInfo image_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+-      image_allocate.allocationSize = image_requirements.size;
+-      image_allocate.memoryTypeIndex = find_memory(
+-         image_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+-      VkDeviceMemory image_memory = VK_NULL_HANDLE;
+-      result = vkAllocateMemory(device, &image_allocate, nullptr, &image_memory);
+-      require(result == VK_SUCCESS, "allocate image", result);
+-      result = vkBindImageMemory(device, image, image_memory, 0);
+-      require(result == VK_SUCCESS, "bind image", result);
 +   const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
 +   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
 +   image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -8418,78 +9062,6 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 +   result = vkBindImageMemory(device, image, image_memory, 0);
 +   require(result == VK_SUCCESS, "bind image", result);
  
--      VkPhysicalDeviceMemoryProperties memory_properties{};
--      vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
--      auto find_memory = [&](uint32_t bits, VkMemoryPropertyFlags want) {
--         for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
--            if ((bits & (1u << i)) &&
--                (memory_properties.memoryTypes[i].propertyFlags & want) == want)
--               return i;
--         require(false, "memory type");
--         return 0u;
--      };
-+   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-+   view_info.image = image;
-+   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-+   view_info.format = format;
-+   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, kLayers};
-+   VkImageView view = VK_NULL_HANDLE;
-+   result = vkCreateImageView(device, &view_info, nullptr, &view);
-+   require(result == VK_SUCCESS, "create view", result);
- 
--      const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
--      VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
--      image_info.imageType = VK_IMAGE_TYPE_2D;
--      image_info.format = format;
--      image_info.extent = {kExtent, kExtent, 1u};
--      image_info.mipLevels = 1u;
--      image_info.arrayLayers = kLayers;
--      image_info.samples = VK_SAMPLE_COUNT_1_BIT;
--      image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
--      image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
--                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
--      image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
--      VkImage image = VK_NULL_HANDLE;
--      result = vkCreateImage(device, &image_info, nullptr, &image);
--      require(result == VK_SUCCESS, "create image", result);
--      VkMemoryRequirements image_requirements{};
--      vkGetImageMemoryRequirements(device, image, &image_requirements);
--      VkMemoryAllocateInfo image_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
--      image_allocate.allocationSize = image_requirements.size;
--      image_allocate.memoryTypeIndex = find_memory(
--         image_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
--      VkDeviceMemory image_memory = VK_NULL_HANDLE;
--      result = vkAllocateMemory(device, &image_allocate, nullptr, &image_memory);
--      require(result == VK_SUCCESS, "allocate image", result);
--      result = vkBindImageMemory(device, image, image_memory, 0);
--      require(result == VK_SUCCESS, "bind image", result);
-+   const VkDeviceSize layer_bytes =
-+      VkDeviceSize(kExtent) * kExtent * kTexelBytes;
-+   const VkDeviceSize readback_bytes = layer_bytes * kLayers;
-+   VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-+   buffer_info.size = readback_bytes;
-+   buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-+   VkBuffer readback = VK_NULL_HANDLE;
-+   result = vkCreateBuffer(device, &buffer_info, nullptr, &readback);
-+   require(result == VK_SUCCESS, "create buffer", result);
-+   VkMemoryRequirements buffer_requirements{};
-+   vkGetBufferMemoryRequirements(device, readback, &buffer_requirements);
-+   VkMemoryAllocateInfo buffer_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-+   buffer_allocate.allocationSize = buffer_requirements.size;
-+   buffer_allocate.memoryTypeIndex =
-+      kk_test_memory_type(&t, buffer_requirements.memoryTypeBits,
-+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-+   VkDeviceMemory readback_memory = VK_NULL_HANDLE;
-+   result = vkAllocateMemory(device, &buffer_allocate, nullptr, &readback_memory);
-+   require(result == VK_SUCCESS, "allocate buffer", result);
-+   result = vkBindBufferMemory(device, readback, readback_memory, 0);
-+   require(result == VK_SUCCESS, "bind buffer", result);
-+   void *mapped = nullptr;
-+   result = vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped);
-+   require(result == VK_SUCCESS, "map buffer", result);
-+   std::memset(mapped, 0, size_t(readback_bytes));
- 
 -      VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 -      view_info.image = image;
 -      view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
@@ -8498,15 +9070,14 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      VkImageView view = VK_NULL_HANDLE;
 -      result = vkCreateImageView(device, &view_info, nullptr, &view);
 -      require(result == VK_SUCCESS, "create view", result);
-+   VkShaderModule vertex_module =
-+      multi_draw ? kk_test_shader_module(&t, draw_id_vertex_spirv,
-+                                         sizeof(draw_id_vertex_spirv))
-+                 : kk_test_shader_module(&t, passthrough_vertex_spirv,
-+                                         sizeof(passthrough_vertex_spirv));
-+   VkShaderModule geometry_module =
-+      kk_test_shader_module(&t, geometry_spirv, sizeof(geometry_spirv));
-+   VkShaderModule fragment_module =
-+      kk_test_shader_module(&t, fragment_spirv, sizeof(fragment_spirv));
++   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
++   view_info.image = image;
++   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
++   view_info.format = format;
++   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, kLayers};
++   VkImageView view = VK_NULL_HANDLE;
++   result = vkCreateImageView(device, &view_info, nullptr, &view);
++   require(result == VK_SUCCESS, "create view", result);
  
 -      const VkDeviceSize layer_bytes =
 -         VkDeviceSize(kExtent) * kExtent * kTexelBytes;
@@ -8534,17 +9105,32 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      result = vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped);
 -      require(result == VK_SUCCESS, "map buffer", result);
 -      std::memset(mapped, 0, size_t(readback_bytes));
-+   const VkShaderStageFlags push_stages =
-+      VK_SHADER_STAGE_VERTEX_BIT |
-+      (multi_draw ? 0u : VK_SHADER_STAGE_GEOMETRY_BIT);
-+   VkPushConstantRange push_range{push_stages, 0u, sizeof(PushConstants)};
-+   VkPipelineLayoutCreateInfo layout_info{
-+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-+   layout_info.pushConstantRangeCount = 1u;
-+   layout_info.pPushConstantRanges = &push_range;
-+   VkPipelineLayout layout = VK_NULL_HANDLE;
-+   result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
-+   require(result == VK_SUCCESS, "pipeline layout", result);
++   const VkDeviceSize layer_bytes =
++      VkDeviceSize(kExtent) * kExtent * kTexelBytes;
++   const VkDeviceSize readback_bytes = layer_bytes * kLayers;
++   VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
++   buffer_info.size = readback_bytes;
++   buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
++   VkBuffer readback = VK_NULL_HANDLE;
++   result = vkCreateBuffer(device, &buffer_info, nullptr, &readback);
++   require(result == VK_SUCCESS, "create buffer", result);
++   VkMemoryRequirements buffer_requirements{};
++   vkGetBufferMemoryRequirements(device, readback, &buffer_requirements);
++   VkMemoryAllocateInfo buffer_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++   buffer_allocate.allocationSize = buffer_requirements.size;
++   buffer_allocate.memoryTypeIndex =
++      kk_test_memory_type(&t, buffer_requirements.memoryTypeBits,
++                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
++                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
++   VkDeviceMemory readback_memory = VK_NULL_HANDLE;
++   result = vkAllocateMemory(device, &buffer_allocate, nullptr, &readback_memory);
++   require(result == VK_SUCCESS, "allocate buffer", result);
++   result = vkBindBufferMemory(device, readback, readback_memory, 0);
++   require(result == VK_SUCCESS, "bind buffer", result);
++   void *mapped = nullptr;
++   result = vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped);
++   require(result == VK_SUCCESS, "map buffer", result);
++   std::memset(mapped, 0, size_t(readback_bytes));
  
 -      VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
 -      module_info.codeSize = multi_draw ? sizeof(draw_id_vertex_spirv)
@@ -8564,70 +9150,17 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      VkShaderModule fragment_module = VK_NULL_HANDLE;
 -      result = vkCreateShaderModule(device, &module_info, nullptr, &fragment_module);
 -      require(result == VK_SUCCESS, "fragment module", result);
-+   VkPipelineShaderStageCreateInfo stages[3]{};
-+   stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-+   stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-+   stages[0].module = vertex_module;
-+   stages[0].pName = "main";
-+   stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-+   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-+   stages[1].module = fragment_module;
-+   stages[1].pName = "main";
-+   stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-+   stages[2].stage = VK_SHADER_STAGE_GEOMETRY_BIT;
-+   stages[2].module = geometry_module;
-+   stages[2].pName = "main";
-+   VkPipelineVertexInputStateCreateInfo vertex_input{
-+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-+   VkPipelineInputAssemblyStateCreateInfo assembly{
-+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-+   assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-+   VkViewport viewport{0.0f, 0.0f, float(kExtent), float(kExtent), 0.0f, 1.0f};
-+   VkRect2D scissor{{0, 0}, {kExtent, kExtent}};
-+   VkPipelineViewportStateCreateInfo viewport_state{
-+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-+   viewport_state.viewportCount = 1u;
-+   viewport_state.pViewports = &viewport;
-+   viewport_state.scissorCount = 1u;
-+   viewport_state.pScissors = &scissor;
-+   VkPipelineRasterizationStateCreateInfo raster{
-+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-+   raster.polygonMode = VK_POLYGON_MODE_FILL;
-+   raster.cullMode = VK_CULL_MODE_NONE;
-+   raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-+   raster.lineWidth = 1.0f;
-+   VkPipelineMultisampleStateCreateInfo multisample{
-+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-+   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-+   VkPipelineColorBlendAttachmentState blend_attachment{};
-+   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-+                                     VK_COLOR_COMPONENT_G_BIT |
-+                                     VK_COLOR_COMPONENT_B_BIT |
-+                                     VK_COLOR_COMPONENT_A_BIT;
-+   VkPipelineColorBlendStateCreateInfo blend{
-+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-+   blend.attachmentCount = 1u;
-+   blend.pAttachments = &blend_attachment;
-+   VkPipelineRenderingCreateInfo rendering_info{
-+      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-+   rendering_info.colorAttachmentCount = 1u;
-+   rendering_info.pColorAttachmentFormats = &format;
-+   VkGraphicsPipelineCreateInfo pipeline_info{
-+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-+   pipeline_info.pNext = &rendering_info;
-+   pipeline_info.stageCount = multi_draw ? 2u : 3u;
-+   pipeline_info.pStages = stages;
-+   pipeline_info.pVertexInputState = &vertex_input;
-+   pipeline_info.pInputAssemblyState = &assembly;
-+   pipeline_info.pViewportState = &viewport_state;
-+   pipeline_info.pRasterizationState = &raster;
-+   pipeline_info.pMultisampleState = &multisample;
-+   pipeline_info.pColorBlendState = &blend;
-+   pipeline_info.layout = layout;
-+   VkPipeline pipeline = VK_NULL_HANDLE;
-+   result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipeline_info,
-+                                      nullptr, &pipeline);
-+   require(result == VK_SUCCESS, "create pipeline", result);
++   VkShaderModule vertex_module =
++      sequence     ? kk_test_shader_module(&t, points_vertex_spirv,
++                                           sizeof(points_vertex_spirv))
++      : multi_draw ? kk_test_shader_module(&t, draw_id_vertex_spirv,
++                                           sizeof(draw_id_vertex_spirv))
++                   : kk_test_shader_module(&t, passthrough_vertex_spirv,
++                                           sizeof(passthrough_vertex_spirv));
++   VkShaderModule geometry_module =
++      kk_test_shader_module(&t, geometry_spirv, sizeof(geometry_spirv));
++   VkShaderModule fragment_module =
++      kk_test_shader_module(&t, fragment_spirv, sizeof(fragment_spirv));
  
 -      const VkShaderStageFlags push_stages =
 -         VK_SHADER_STAGE_VERTEX_BIT |
@@ -8640,9 +9173,17 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      VkPipelineLayout layout = VK_NULL_HANDLE;
 -      result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
 -      require(result == VK_SUCCESS, "pipeline layout", result);
-+   VkCommandPool pool = VK_NULL_HANDLE;
-+   VkCommandBuffer commands = VK_NULL_HANDLE;
-+   kk_test_command_buffer(&t, 0, &pool, &commands);
++   const VkShaderStageFlags push_stages =
++      VK_SHADER_STAGE_VERTEX_BIT |
++      (geometry ? VK_SHADER_STAGE_GEOMETRY_BIT : 0u);
++   VkPushConstantRange push_range{push_stages, 0u, sizeof(PushConstants)};
++   VkPipelineLayoutCreateInfo layout_info{
++      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++   layout_info.pushConstantRangeCount = 1u;
++   layout_info.pPushConstantRanges = &push_range;
++   VkPipelineLayout layout = VK_NULL_HANDLE;
++   result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
++   require(result == VK_SUCCESS, "pipeline layout", result);
  
 -      VkPipelineShaderStageCreateInfo stages[3]{};
 -      stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -8708,10 +9249,70 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipeline_info,
 -                                         nullptr, &pipeline);
 -      require(result == VK_SUCCESS, "create pipeline", result);
-+   VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-+   begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-+   result = vkBeginCommandBuffer(commands, &begin);
-+   require(result == VK_SUCCESS, "begin commands", result);
++   VkPipelineShaderStageCreateInfo stages[3]{};
++   stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
++   stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
++   stages[0].module = vertex_module;
++   stages[0].pName = "main";
++   stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
++   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
++   stages[1].module = fragment_module;
++   stages[1].pName = "main";
++   stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
++   stages[2].stage = VK_SHADER_STAGE_GEOMETRY_BIT;
++   stages[2].module = geometry_module;
++   stages[2].pName = "main";
++   VkPipelineVertexInputStateCreateInfo vertex_input{
++      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
++   VkPipelineInputAssemblyStateCreateInfo assembly{
++      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
++   assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
++   VkViewport viewport{0.0f, 0.0f, float(kExtent), float(kExtent), 0.0f, 1.0f};
++   VkRect2D scissor{{0, 0}, {kExtent, kExtent}};
++   VkPipelineViewportStateCreateInfo viewport_state{
++      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
++   viewport_state.viewportCount = 1u;
++   viewport_state.pViewports = &viewport;
++   viewport_state.scissorCount = 1u;
++   viewport_state.pScissors = &scissor;
++   VkPipelineRasterizationStateCreateInfo raster{
++      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
++   raster.polygonMode = VK_POLYGON_MODE_FILL;
++   raster.cullMode = VK_CULL_MODE_NONE;
++   raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
++   raster.lineWidth = 1.0f;
++   VkPipelineMultisampleStateCreateInfo multisample{
++      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
++   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
++   VkPipelineColorBlendAttachmentState blend_attachment{};
++   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
++                                     VK_COLOR_COMPONENT_G_BIT |
++                                     VK_COLOR_COMPONENT_B_BIT |
++                                     VK_COLOR_COMPONENT_A_BIT;
++   VkPipelineColorBlendStateCreateInfo blend{
++      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
++   blend.attachmentCount = 1u;
++   blend.pAttachments = &blend_attachment;
++   VkPipelineRenderingCreateInfo rendering_info{
++      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
++   rendering_info.colorAttachmentCount = 1u;
++   rendering_info.pColorAttachmentFormats = &format;
++   VkGraphicsPipelineCreateInfo pipeline_info{
++      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
++   pipeline_info.pNext = &rendering_info;
++   pipeline_info.stageCount = geometry ? 3u : 2u;
++   pipeline_info.pStages = stages;
++   pipeline_info.pVertexInputState = &vertex_input;
++   pipeline_info.pInputAssemblyState = &assembly;
++   pipeline_info.pViewportState = &viewport_state;
++   pipeline_info.pRasterizationState = &raster;
++   pipeline_info.pMultisampleState = &multisample;
++   pipeline_info.pColorBlendState = &blend;
++   pipeline_info.layout = layout;
++   VkPipeline pipeline = VK_NULL_HANDLE;
++   result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipeline_info,
++                                      nullptr, &pipeline);
++   require(result == VK_SUCCESS, "create pipeline", result);
  
 -      VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
 -      pool_info.queueFamilyIndex = queue;
@@ -8726,12 +9327,19 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -      VkCommandBuffer commands = VK_NULL_HANDLE;
 -      result = vkAllocateCommandBuffers(device, &command_info, &commands);
 -      require(result == VK_SUCCESS, "command buffer", result);
--
++   VkCommandPool pool = VK_NULL_HANDLE;
++   VkCommandBuffer commands = VK_NULL_HANDLE;
++   kk_test_command_buffer(&t, 0, &pool, &commands);
+ 
 -      VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 -      begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 -      result = vkBeginCommandBuffer(commands, &begin);
 -      require(result == VK_SUCCESS, "begin commands", result);
--
++   VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++   begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++   result = vkBeginCommandBuffer(commands, &begin);
++   require(result == VK_SUCCESS, "begin commands", result);
+ 
 -      VkRenderingAttachmentInfo color_attachment{
 -         VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
 -      color_attachment.imageView = view;
@@ -8790,7 +9398,9 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 -                               &push);
 -            vkCmdDraw(commands, kExtent * kExtent, 1u, 0u, 0u);
 -         }
-+         vkCmdDraw(commands, kExtent * kExtent, 1u, 0u, 0u);
++         vkCmdDraw(commands,
++                   sequence && layer ? kLaterPoints : kExtent * kExtent, 1u,
++                   0u, 0u);
        }
 -      vkCmdEndRendering(commands);
 +   }
@@ -8884,9 +9494,11 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 +   const uint8_t *bytes = static_cast<const uint8_t *>(mapped);
 +   for (uint32_t layer = 0u; layer < kLayers; ++layer) {
 +      const float expected = float(layer + 1u);
++      const uint64_t drawn =
++         sequence && layer ? kLaterPoints : uint64_t(kExtent) * kExtent;
 +      uint64_t wrong = 0u;
 +      int64_t first_wrong = -1;
-+      for (uint64_t texel = 0u; texel < uint64_t(kExtent) * kExtent; ++texel) {
++      for (uint64_t texel = 0u; texel < drawn; ++texel) {
 +         float value[4];
 +         std::memcpy(value, bytes + layer * layer_bytes + texel * kTexelBytes,
 +                     sizeof(value));
@@ -8907,7 +9519,7 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 +                      "layer %u: %llu of %llu texels were not drawn by their "
 +                      "own layer's draw, first at %lld (got %f %f %f %f)\n",
 +                      layer, static_cast<unsigned long long>(wrong),
-+                      static_cast<unsigned long long>(uint64_t(kExtent) * kExtent),
++                      static_cast<unsigned long long>(drawn),
 +                      static_cast<long long>(first_wrong), double(value[0]),
 +                      double(value[1]), double(value[2]), double(value[3]));
 +         std::exit(1);
@@ -8929,6 +9541,7 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
     }
  
 -   vkDestroyInstance(instance, nullptr);
+-   std::printf("layered draw route %s ok\n", argv[1]);
 +   vkDestroyPipeline(device, pipeline, nullptr);
 +   vkDestroyPipelineLayout(device, layout, nullptr);
 +   vkDestroyShaderModule(device, fragment_module, nullptr);
@@ -8943,17 +9556,45 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..e2ad30a417e4450e5647f2588aaed625
 +   vkFreeMemory(device, image_memory, nullptr);
 +   kk_test_destroy(&t);
 +
-    std::printf("layered draw route %s ok\n", argv[1]);
++   if (sequence)
++      std::printf("layered draw sequence ok\n");
++   else
++      std::printf("layered draw route %s ok\n", argv[1]);
     return 0;
  }
 diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
-index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33ca6b45615 100644
+deleted file mode 100644
+index 782d1f97a94fc6312d868fe24258634fea33eadf..0000000000000000000000000000000000000000
 --- a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
-+++ b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
-@@ -25,27 +25,7 @@
- #include <cstring>
- #include <vector>
- 
++++ /dev/null
+@@ -1,457 +0,0 @@
+-/*
+- * SPDX-License-Identifier: MIT
+- */
+-
+-/* KK_WORKAROUND_18: a render command encoder that already ran one draw drops
+- * most of the primitives of a later draw that selects a different
+- * render_target_array_index. Draw one point per texel into layer 0 of a
+- * two-layer attachment and then one point per texel of its first 16 rows into
+- * layer 1, one draw per layer, and require every texel each draw covers to
+- * carry the value its own layer's draw writes.
+- *
+- * The attachment size, the layered point draws and the DONT_CARE load op all
+- * matter: without the workaround the second draw loses its leading points,
+- * but a CLEAR load op on the same pass renders correctly. The short second
+- * draw also catches the rest of the workaround: a restarted encoder ordered
+- * behind the first only by a barrier still loses leading 1984-point batches
+- * of it in most fresh processes, unless the queue finishes the first encoder
+- * before starting the second.
+- */
+-#define VK_NO_PROTOTYPES
+-#include <vulkan/vulkan.h>
+-
+-#include <cstdio>
+-#include <cstdlib>
+-#include <cstring>
+-#include <vector>
+-
 -extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
 -
 -static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
@@ -8975,14 +9616,30 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -#define LOAD_D(name)                                                             \
 -   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
 -   require(name != nullptr, #name)
-+#include "kk_test.h"
- 
- static const uint32_t vertex_spirv[] =
- #include "layered_draw_shaders/points.vert.h"
-@@ -70,388 +50,284 @@ struct PushConstants {
- int main()
- {
-    std::setvbuf(stdout, nullptr, _IONBF, 0);
+-
+-static const uint32_t vertex_spirv[] =
+-#include "layered_draw_shaders/points.vert.h"
+-;
+-static const uint32_t fragment_spirv[] =
+-#include "layered_draw_shaders/points.frag.h"
+-;
+-
+-/* Large enough to lose primitives without the workaround: after a
+- * 1048576-point draw into a 1024x1024 layer, a later layer's draw loses its
+- * leading points on the first affected pass of a process. */
+-static const uint32_t kExtent = 1024u;
+-static const uint32_t kLaterPoints = 16384u;
+-static const uint32_t kLayers = 2u;
+-static const uint32_t kTexelBytes = 16u;
+-
+-struct PushConstants {
+-   int32_t layer;
+-   int32_t width;
+-};
+-
+-int main()
+-{
+-   std::setvbuf(stdout, nullptr, _IONBF, 0);
 -   VkInstance instance = VK_NULL_HANDLE;
 -   LOAD_I(vkCreateInstance);
 -   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -8996,11 +9653,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -   LOAD_I(vkEnumeratePhysicalDevices);
 -   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
 -   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
-+   kk_test_device t;
-+   VkResult result;
-+   kk_test_create_instance(&t, "layered-draw-sequence");
-+   VkInstance instance = t.instance;
-    LOAD_I(vkGetPhysicalDeviceFeatures2);
+-   LOAD_I(vkGetPhysicalDeviceFeatures2);
 -   LOAD_I(vkCreateDevice);
 -   LOAD_I(vkGetDeviceProcAddr);
 -
@@ -9010,7 +9663,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -   std::vector<VkPhysicalDevice> physicals(physical_count);
 -   result = vkEnumeratePhysicalDevices(instance, &physical_count, physicals.data());
 -   require(result == VK_SUCCESS, "physical devices", result);
- 
+-
 -   for (VkPhysicalDevice physical : physicals) {
 -      VkPhysicalDeviceVulkan12Features supported12{
 -         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -9022,18 +9675,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -         std::printf("shaderOutputLayer unsupported, skipping\n");
 -         continue;
 -      }
-+   VkPhysicalDeviceVulkan12Features supported12{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-+   VkPhysicalDeviceFeatures2 supported{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-+   supported.pNext = &supported12;
-+   vkGetPhysicalDeviceFeatures2(t.physical, &supported);
-+   if (!supported12.shaderOutputLayer) {
-+      std::printf("shaderOutputLayer unsupported, skipping\n");
-+      kk_test_destroy(&t);
-+      return 0;
-+   }
- 
+-
 -      uint32_t queue_count = 0;
 -      vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
 -      std::vector<VkQueueFamilyProperties> queues(queue_count);
@@ -9042,16 +9684,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      while (queue < queue_count && !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
 -         ++queue;
 -      require(queue < queue_count, "graphics queue");
-+   VkPhysicalDeviceVulkan12Features features12{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-+   features12.shaderOutputLayer = VK_TRUE;
-+   VkPhysicalDeviceVulkan13Features features13{
-+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-+   features13.pNext = &features12;
-+   features13.dynamicRendering = VK_TRUE;
-+   kk_test_create_device(&t, &features13, nullptr, 0, nullptr);
-+   KK_LOAD_DEVICE_FUNCTIONS(t);
- 
+-
 -      float priority = 1.0f;
 -      VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
 -      queue_info.queueFamilyIndex = queue;
@@ -9071,8 +9704,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      VkDevice device = VK_NULL_HANDLE;
 -      result = vkCreateDevice(physical, &device_info, nullptr, &device);
 -      require(result == VK_SUCCESS, "create device", result);
-+   VkQueue graphics_queue = t.queue;
- 
+-
 -      LOAD_D(vkDestroyDevice);
 -      LOAD_D(vkGetDeviceQueue);
 -      LOAD_D(vkCreateShaderModule);
@@ -9109,45 +9741,10 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      LOAD_D(vkCmdCopyImageToBuffer);
 -      LOAD_D(vkQueueSubmit);
 -      LOAD_D(vkQueueWaitIdle);
-+   const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
-+   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-+   image_info.imageType = VK_IMAGE_TYPE_2D;
-+   image_info.format = format;
-+   image_info.extent = {kExtent, kExtent, 1u};
-+   image_info.mipLevels = 1u;
-+   image_info.arrayLayers = kLayers;
-+   image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-+   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-+   image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-+                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-+   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-+   VkImage image = VK_NULL_HANDLE;
-+   result = vkCreateImage(device, &image_info, nullptr, &image);
-+   require(result == VK_SUCCESS, "create image", result);
-+   VkMemoryRequirements image_requirements{};
-+   vkGetImageMemoryRequirements(device, image, &image_requirements);
-+   VkMemoryAllocateInfo image_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-+   image_allocate.allocationSize = image_requirements.size;
-+   image_allocate.memoryTypeIndex =
-+      kk_test_memory_type(&t, image_requirements.memoryTypeBits,
-+                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-+   VkDeviceMemory image_memory = VK_NULL_HANDLE;
-+   result = vkAllocateMemory(device, &image_allocate, nullptr, &image_memory);
-+   require(result == VK_SUCCESS, "allocate image", result);
-+   result = vkBindImageMemory(device, image, image_memory, 0);
-+   require(result == VK_SUCCESS, "bind image", result);
- 
+-
 -      VkQueue graphics_queue = VK_NULL_HANDLE;
 -      vkGetDeviceQueue(device, queue, 0, &graphics_queue);
-+   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-+   view_info.image = image;
-+   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-+   view_info.format = format;
-+   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, kLayers};
-+   VkImageView view = VK_NULL_HANDLE;
-+   result = vkCreateImageView(device, &view_info, nullptr, &view);
-+   require(result == VK_SUCCESS, "create view", result);
- 
+-
 -      VkPhysicalDeviceMemoryProperties memory_properties{};
 -      vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
 -      auto find_memory = [&](uint32_t bits, VkMemoryPropertyFlags want) {
@@ -9158,33 +9755,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -         require(false, "memory type");
 -         return 0u;
 -      };
-+   const VkDeviceSize layer_bytes =
-+      VkDeviceSize(kExtent) * kExtent * kTexelBytes;
-+   const VkDeviceSize readback_bytes = layer_bytes * kLayers;
-+   VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-+   buffer_info.size = readback_bytes;
-+   buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-+   VkBuffer readback = VK_NULL_HANDLE;
-+   result = vkCreateBuffer(device, &buffer_info, nullptr, &readback);
-+   require(result == VK_SUCCESS, "create buffer", result);
-+   VkMemoryRequirements buffer_requirements{};
-+   vkGetBufferMemoryRequirements(device, readback, &buffer_requirements);
-+   VkMemoryAllocateInfo buffer_allocate{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-+   buffer_allocate.allocationSize = buffer_requirements.size;
-+   buffer_allocate.memoryTypeIndex =
-+      kk_test_memory_type(&t, buffer_requirements.memoryTypeBits,
-+                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-+                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-+   VkDeviceMemory readback_memory = VK_NULL_HANDLE;
-+   result = vkAllocateMemory(device, &buffer_allocate, nullptr, &readback_memory);
-+   require(result == VK_SUCCESS, "allocate buffer", result);
-+   result = vkBindBufferMemory(device, readback, readback_memory, 0);
-+   require(result == VK_SUCCESS, "bind buffer", result);
-+   void *mapped = nullptr;
-+   result = vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped);
-+   require(result == VK_SUCCESS, "map buffer", result);
-+   std::memset(mapped, 0, size_t(readback_bytes));
- 
+-
 -      const VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
 -      VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
 -      image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -9211,11 +9782,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      require(result == VK_SUCCESS, "allocate image", result);
 -      result = vkBindImageMemory(device, image, image_memory, 0);
 -      require(result == VK_SUCCESS, "bind image", result);
-+   VkShaderModule vertex_module =
-+      kk_test_shader_module(&t, vertex_spirv, sizeof(vertex_spirv));
-+   VkShaderModule fragment_module =
-+      kk_test_shader_module(&t, fragment_spirv, sizeof(fragment_spirv));
- 
+-
 -      VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
 -      view_info.image = image;
 -      view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
@@ -9224,16 +9791,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      VkImageView view = VK_NULL_HANDLE;
 -      result = vkCreateImageView(device, &view_info, nullptr, &view);
 -      require(result == VK_SUCCESS, "create view", result);
-+   VkPushConstantRange push_range{VK_SHADER_STAGE_VERTEX_BIT, 0u,
-+                                  sizeof(PushConstants)};
-+   VkPipelineLayoutCreateInfo layout_info{
-+      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-+   layout_info.pushConstantRangeCount = 1u;
-+   layout_info.pPushConstantRanges = &push_range;
-+   VkPipelineLayout layout = VK_NULL_HANDLE;
-+   result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
-+   require(result == VK_SUCCESS, "pipeline layout", result);
- 
+-
 -      const VkDeviceSize layer_bytes =
 -         VkDeviceSize(kExtent) * kExtent * kTexelBytes;
 -      const VkDeviceSize readback_bytes = layer_bytes * kLayers;
@@ -9260,67 +9818,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      result = vkMapMemory(device, readback_memory, 0, VK_WHOLE_SIZE, 0, &mapped);
 -      require(result == VK_SUCCESS, "map buffer", result);
 -      std::memset(mapped, 0, size_t(readback_bytes));
-+   VkPipelineShaderStageCreateInfo stages[2]{};
-+   stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-+   stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-+   stages[0].module = vertex_module;
-+   stages[0].pName = "main";
-+   stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-+   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-+   stages[1].module = fragment_module;
-+   stages[1].pName = "main";
-+   VkPipelineVertexInputStateCreateInfo vertex_input{
-+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-+   VkPipelineInputAssemblyStateCreateInfo assembly{
-+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-+   assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-+   VkViewport viewport{0.0f, 0.0f, float(kExtent), float(kExtent), 0.0f, 1.0f};
-+   VkRect2D scissor{{0, 0}, {kExtent, kExtent}};
-+   VkPipelineViewportStateCreateInfo viewport_state{
-+      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-+   viewport_state.viewportCount = 1u;
-+   viewport_state.pViewports = &viewport;
-+   viewport_state.scissorCount = 1u;
-+   viewport_state.pScissors = &scissor;
-+   VkPipelineRasterizationStateCreateInfo raster{
-+      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-+   raster.polygonMode = VK_POLYGON_MODE_FILL;
-+   raster.cullMode = VK_CULL_MODE_NONE;
-+   raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-+   raster.lineWidth = 1.0f;
-+   VkPipelineMultisampleStateCreateInfo multisample{
-+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-+   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-+   VkPipelineColorBlendAttachmentState blend_attachment{};
-+   blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-+                                     VK_COLOR_COMPONENT_G_BIT |
-+                                     VK_COLOR_COMPONENT_B_BIT |
-+                                     VK_COLOR_COMPONENT_A_BIT;
-+   VkPipelineColorBlendStateCreateInfo blend{
-+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-+   blend.attachmentCount = 1u;
-+   blend.pAttachments = &blend_attachment;
-+   VkPipelineRenderingCreateInfo rendering_info{
-+      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-+   rendering_info.colorAttachmentCount = 1u;
-+   rendering_info.pColorAttachmentFormats = &format;
-+   VkGraphicsPipelineCreateInfo pipeline_info{
-+      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-+   pipeline_info.pNext = &rendering_info;
-+   pipeline_info.stageCount = 2u;
-+   pipeline_info.pStages = stages;
-+   pipeline_info.pVertexInputState = &vertex_input;
-+   pipeline_info.pInputAssemblyState = &assembly;
-+   pipeline_info.pViewportState = &viewport_state;
-+   pipeline_info.pRasterizationState = &raster;
-+   pipeline_info.pMultisampleState = &multisample;
-+   pipeline_info.pColorBlendState = &blend;
-+   pipeline_info.layout = layout;
-+   VkPipeline pipeline = VK_NULL_HANDLE;
-+   result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipeline_info,
-+                                      nullptr, &pipeline);
-+   require(result == VK_SUCCESS, "create pipeline", result);
- 
+-
 -      VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
 -      module_info.codeSize = sizeof(vertex_spirv);
 -      module_info.pCode = vertex_spirv;
@@ -9332,10 +9830,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      VkShaderModule fragment_module = VK_NULL_HANDLE;
 -      result = vkCreateShaderModule(device, &module_info, nullptr, &fragment_module);
 -      require(result == VK_SUCCESS, "fragment module", result);
-+   VkCommandPool pool = VK_NULL_HANDLE;
-+   VkCommandBuffer commands = VK_NULL_HANDLE;
-+   kk_test_command_buffer(&t, 0, &pool, &commands);
- 
+-
 -      VkPushConstantRange push_range{VK_SHADER_STAGE_VERTEX_BIT, 0u,
 -                                     sizeof(PushConstants)};
 -      VkPipelineLayoutCreateInfo layout_info{
@@ -9345,11 +9840,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      VkPipelineLayout layout = VK_NULL_HANDLE;
 -      result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
 -      require(result == VK_SUCCESS, "pipeline layout", result);
-+   VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-+   begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-+   result = vkBeginCommandBuffer(commands, &begin);
-+   require(result == VK_SUCCESS, "begin commands", result);
- 
+-
 -      VkPipelineShaderStageCreateInfo stages[2]{};
 -      stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 -      stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -9410,30 +9901,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipeline_info,
 -                                         nullptr, &pipeline);
 -      require(result == VK_SUCCESS, "create pipeline", result);
-+   VkRenderingAttachmentInfo color_attachment{
-+      VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-+   color_attachment.imageView = view;
-+   color_attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-+   /* A CLEAR load op hides the defect, so keep DONT_CARE as the CTS
-+    * cases that found it use. */
-+   color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-+   color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-+   VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
-+   rendering.renderArea = scissor;
-+   rendering.layerCount = kLayers;
-+   rendering.colorAttachmentCount = 1u;
-+   rendering.pColorAttachments = &color_attachment;
-+   vkCmdBeginRendering(commands, &rendering);
-+   vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-+   for (uint32_t layer = 0u; layer < kLayers; ++layer) {
-+      PushConstants push{int32_t(layer), int32_t(kExtent)};
-+      vkCmdPushConstants(commands, layout, VK_SHADER_STAGE_VERTEX_BIT, 0u,
-+                         sizeof(push), &push);
-+      vkCmdDraw(commands, layer ? kLaterPoints : kExtent * kExtent, 1u, 0u,
-+                0u);
-+   }
-+   vkCmdEndRendering(commands);
- 
+-
 -      VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
 -      pool_info.queueFamilyIndex = queue;
 -      VkCommandPool pool = VK_NULL_HANDLE;
@@ -9447,38 +9915,12 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      VkCommandBuffer commands = VK_NULL_HANDLE;
 -      result = vkAllocateCommandBuffers(device, &command_info, &commands);
 -      require(result == VK_SUCCESS, "command buffer", result);
-+   VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-+   barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-+   barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-+   barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-+   barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-+   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-+   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-+   barrier.image = image;
-+   barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, kLayers};
-+   vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-+                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0u, 0u, nullptr, 0u,
-+                        nullptr, 1u, &barrier);
-+   VkBufferImageCopy copy{};
-+   copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, kLayers};
-+   copy.imageExtent = {kExtent, kExtent, 1u};
-+   vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-+                          readback, 1u, &copy);
-+   result = vkEndCommandBuffer(commands);
-+   require(result == VK_SUCCESS, "end commands", result);
- 
+-
 -      VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 -      begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 -      result = vkBeginCommandBuffer(commands, &begin);
 -      require(result == VK_SUCCESS, "begin commands", result);
-+   VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-+   submit.commandBufferCount = 1u;
-+   submit.pCommandBuffers = &commands;
-+   result = vkQueueSubmit(graphics_queue, 1u, &submit, VK_NULL_HANDLE);
-+   require(result == VK_SUCCESS, "submit", result);
-+   result = vkQueueWaitIdle(graphics_queue);
-+   require(result == VK_SUCCESS, "wait idle", result);
- 
+-
 -      VkRenderingAttachmentInfo color_attachment{
 -         VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
 -      color_attachment.imageView = view;
@@ -9500,23 +9942,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -                            sizeof(push), &push);
 -         vkCmdDraw(commands, layer ? kLaterPoints : kExtent * kExtent, 1u, 0u,
 -                   0u);
-+   const uint8_t *bytes = static_cast<const uint8_t *>(mapped);
-+   for (uint32_t layer = 0u; layer < kLayers; ++layer) {
-+      const float expected = float(layer + 1u);
-+      const uint64_t drawn = layer ? kLaterPoints : uint64_t(kExtent) * kExtent;
-+      uint64_t wrong = 0u;
-+      int64_t first_wrong = -1;
-+      for (uint64_t texel = 0u; texel < drawn; ++texel) {
-+         float value[4];
-+         std::memcpy(value, bytes + layer * layer_bytes + texel * kTexelBytes,
-+                     sizeof(value));
-+         if (value[0] == expected && value[1] == 0.0f && value[2] == 0.0f &&
-+             value[3] == 1.0f)
-+            continue;
-+         ++wrong;
-+         if (first_wrong < 0)
-+            first_wrong = int64_t(texel);
-       }
+-      }
 -      vkCmdEndRendering(commands);
 -
 -      VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
@@ -9579,21 +10005,7 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -                         double(value[1]), double(value[2]), double(value[3]));
 -            std::exit(1);
 -         }
-+      if (wrong) {
-+         float value[4];
-+         std::memcpy(value,
-+                     bytes + layer * layer_bytes +
-+                        uint64_t(first_wrong) * kTexelBytes,
-+                     sizeof(value));
-+         std::fprintf(stderr,
-+                      "layer %u: %llu of %llu texels were not drawn by their "
-+                      "own layer's draw, first at %lld (got %f %f %f %f)\n",
-+                      layer, static_cast<unsigned long long>(wrong),
-+                      static_cast<unsigned long long>(drawn),
-+                      static_cast<long long>(first_wrong), double(value[0]),
-+                      double(value[1]), double(value[2]), double(value[3]));
-+         std::exit(1);
-       }
+-      }
 -
 -      vkDestroyPipeline(device, pipeline, nullptr);
 -      vkDestroyPipelineLayout(device, layout, nullptr);
@@ -9607,25 +10019,12 @@ index 782d1f97a94fc6312d868fe24258634fea33eadf..285e74eafdfcb3e4dae89ebdcb94e33c
 -      vkDestroyImage(device, image, nullptr);
 -      vkFreeMemory(device, image_memory, nullptr);
 -      vkDestroyDevice(device, nullptr);
-    }
- 
+-   }
+-
 -   vkDestroyInstance(instance, nullptr);
-+   vkDestroyPipeline(device, pipeline, nullptr);
-+   vkDestroyPipelineLayout(device, layout, nullptr);
-+   vkDestroyShaderModule(device, fragment_module, nullptr);
-+   vkDestroyShaderModule(device, vertex_module, nullptr);
-+   vkDestroyCommandPool(device, pool, nullptr);
-+   vkUnmapMemory(device, readback_memory);
-+   vkDestroyBuffer(device, readback, nullptr);
-+   vkFreeMemory(device, readback_memory, nullptr);
-+   vkDestroyImageView(device, view, nullptr);
-+   vkDestroyImage(device, image, nullptr);
-+   vkFreeMemory(device, image_memory, nullptr);
-+   kk_test_destroy(&t);
-+
-    std::printf("layered draw sequence ok\n");
-    return 0;
- }
+-   std::printf("layered draw sequence ok\n");
+-   return 0;
+-}
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp b/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
 index 07f5d05bf4689c2a1d107d89c0ad78f229738ade..8bb593e886bedc0598be9e72cfb5570eae1c1d20 100644
 --- a/src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
@@ -22213,208 +22612,6 @@ index ec0c70d7d21d5a383b0cd1088e3569935dc54d2b..9056289c916f005d3aeffe902fb7c3ce
  
  enum { PATCHES = 4096, STRIDE_EL = 8 };
  
-diff --git a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
-index 64c467737fab0ca914bc6d904fe6583870630e4a..6de82b00331e5d87eed97557d0c72fa9b4ab1069 100644
---- a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
-+++ b/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
-@@ -19,27 +19,7 @@
- #include <cstdlib>
- #include <vector>
- 
--extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
--
--static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
--{
--   if (!ok) {
--      std::fprintf(stderr, "%s: %d\n", operation, value);
--      std::exit(1);
--   }
--}
--
--template <typename T> static T load(VkInstance instance, const char *name)
--{
--   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
--   require(function != nullptr, name);
--   return function;
--}
--
--#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
--#define LOAD_D(name)                                                             \
--   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
--   require(name != nullptr, #name)
-+#include "kk_test.h"
- 
- static const uint32_t vertex_spirv[] =
- #include "geometry_draw_size_shaders/points.vert.h"
-@@ -66,86 +46,25 @@ static constexpr uint32_t first_overflowing_draw =
- int main()
- {
-    std::setvbuf(stdout, nullptr, _IONBF, 0);
--   VkInstance instance = VK_NULL_HANDLE;
--   LOAD_I(vkCreateInstance);
--   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
--   app.pApplicationName = "tess-draw-size";
--   app.apiVersion = VK_API_VERSION_1_3;
--   VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
--   instance_info.pApplicationInfo = &app;
--   auto result = vkCreateInstance(&instance_info, nullptr, &instance);
--   require(result == VK_SUCCESS, "create instance", result);
--   LOAD_I(vkDestroyInstance);
--   LOAD_I(vkEnumeratePhysicalDevices);
-+   kk_test_device t;
-+   VkResult result;
-+   kk_test_create_instance(&t, "tess-draw-size");
-+   VkInstance instance = t.instance;
-    LOAD_I(vkGetPhysicalDeviceFeatures);
--   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
--   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
--   LOAD_I(vkCreateDevice);
--   LOAD_I(vkGetDeviceProcAddr);
--   uint32_t physical_count = 1;
--   VkPhysicalDevice physical = VK_NULL_HANDLE;
--   result = vkEnumeratePhysicalDevices(instance, &physical_count, &physical);
--   require((result == VK_SUCCESS || result == VK_INCOMPLETE) && physical_count,
--           "physical device", result);
- 
-    VkPhysicalDeviceFeatures features{};
--   vkGetPhysicalDeviceFeatures(physical, &features);
-+   vkGetPhysicalDeviceFeatures(t.physical, &features);
-    require(features.tessellationShader, "tessellation shaders");
--   uint32_t queue_count = 0;
--   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
--   std::vector<VkQueueFamilyProperties> queues(queue_count);
--   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
--                                            queues.data());
--   uint32_t queue = 0;
--   while (queue < queue_count &&
--          !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
--      ++queue;
--   require(queue < queue_count, "graphics queue");
--   float priority = 1.0f;
--   VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
--   queue_info.queueFamilyIndex = queue;
--   queue_info.queueCount = 1;
--   queue_info.pQueuePriorities = &priority;
-    VkPhysicalDeviceFeatures enabled{};
-    enabled.tessellationShader = VK_TRUE;
-    VkPhysicalDeviceVulkan13Features features13{
-       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    features13.dynamicRendering = VK_TRUE;
--   VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
--   device_info.pNext = &features13;
--   device_info.queueCreateInfoCount = 1;
--   device_info.pQueueCreateInfos = &queue_info;
--   device_info.pEnabledFeatures = &enabled;
--   VkDevice device = VK_NULL_HANDLE;
--   result = vkCreateDevice(physical, &device_info, nullptr, &device);
--   require(result == VK_SUCCESS, "create device", result);
--   LOAD_D(vkDestroyDevice);
--   LOAD_D(vkCreateShaderModule);
--   LOAD_D(vkDestroyShaderModule);
--   LOAD_D(vkCreatePipelineLayout);
--   LOAD_D(vkDestroyPipelineLayout);
--   LOAD_D(vkCreateGraphicsPipelines);
--   LOAD_D(vkDestroyPipeline);
--   LOAD_D(vkCreateCommandPool);
--   LOAD_D(vkDestroyCommandPool);
--   LOAD_D(vkAllocateCommandBuffers);
-+   kk_test_create_device(&t, &features13, &enabled, 0, nullptr);
-+   KK_LOAD_DEVICE_FUNCTIONS(t);
-    LOAD_D(vkResetCommandBuffer);
--   LOAD_D(vkBeginCommandBuffer);
--   LOAD_D(vkEndCommandBuffer);
--   LOAD_D(vkCmdBeginRendering);
--   LOAD_D(vkCmdEndRendering);
--   LOAD_D(vkCmdBindPipeline);
-    LOAD_D(vkCmdSetViewport);
-    LOAD_D(vkCmdSetScissor);
--   LOAD_D(vkCmdDraw);
--   LOAD_D(vkCreateImage);
--   LOAD_D(vkDestroyImage);
--   LOAD_D(vkCreateImageView);
--   LOAD_D(vkDestroyImageView);
--   LOAD_D(vkGetImageMemoryRequirements);
--   LOAD_D(vkAllocateMemory);
--   LOAD_D(vkFreeMemory);
--   LOAD_D(vkBindImageMemory);
- 
-    constexpr uint32_t extent = 8;
-    constexpr VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
-@@ -163,13 +82,7 @@ int main()
-    require(result == VK_SUCCESS, "create image", result);
-    VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(device, image, &requirements);
--   VkPhysicalDeviceMemoryProperties memory_properties{};
--   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
--   uint32_t type = 0;
--   while (type < memory_properties.memoryTypeCount &&
--          !(requirements.memoryTypeBits & (1u << type)))
--      ++type;
--   require(type < memory_properties.memoryTypeCount, "memory type");
-+   uint32_t type = kk_test_memory_type(&t, requirements.memoryTypeBits, 0);
-    VkMemoryAllocateInfo memory_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-    memory_info.allocationSize = requirements.size;
-    memory_info.memoryTypeIndex = type;
-@@ -186,22 +99,11 @@ int main()
-    VkImageView view = VK_NULL_HANDLE;
-    result = vkCreateImageView(device, &view_info, nullptr, &view);
-    require(result == VK_SUCCESS, "create view", result);
--
--   auto make_module = [&](const uint32_t *code, size_t size) {
--      VkShaderModuleCreateInfo module_info{
--         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
--      module_info.codeSize = size;
--      module_info.pCode = code;
--      VkShaderModule module = VK_NULL_HANDLE;
--      result = vkCreateShaderModule(device, &module_info, nullptr, &module);
--      require(result == VK_SUCCESS, "create module", result);
--      return module;
--   };
-    VkShaderModule modules[4] = {
--      make_module(vertex_spirv, sizeof(vertex_spirv)),
--      make_module(control_spirv, sizeof(control_spirv)),
--      make_module(evaluation_spirv, sizeof(evaluation_spirv)),
--      make_module(fragment_spirv, sizeof(fragment_spirv)),
-+      kk_test_shader_module(&t, vertex_spirv, sizeof(vertex_spirv)),
-+      kk_test_shader_module(&t, control_spirv, sizeof(control_spirv)),
-+      kk_test_shader_module(&t, evaluation_spirv, sizeof(evaluation_spirv)),
-+      kk_test_shader_module(&t, fragment_spirv, sizeof(fragment_spirv)),
-    };
-    const VkShaderStageFlagBits stage_bits[4] = {
-       VK_SHADER_STAGE_VERTEX_BIT,
-@@ -278,20 +180,10 @@ int main()
-                                       nullptr, &pipeline);
-    require(result == VK_SUCCESS, "create pipeline", result);
- 
--   VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
--   pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
--   pool_info.queueFamilyIndex = queue;
-    VkCommandPool pool = VK_NULL_HANDLE;
--   result = vkCreateCommandPool(device, &pool_info, nullptr, &pool);
--   require(result == VK_SUCCESS, "create command pool", result);
--   VkCommandBufferAllocateInfo allocate{
--      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
--   allocate.commandPool = pool;
--   allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
--   allocate.commandBufferCount = 1;
-    VkCommandBuffer command = VK_NULL_HANDLE;
--   result = vkAllocateCommandBuffers(device, &allocate, &command);
--   require(result == VK_SUCCESS, "allocate command buffer", result);
-+   kk_test_command_buffer(
-+      &t, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, &pool, &command);
- 
-    /* Records one draw of `patches` single-vertex patches and returns what
-     * ending the recording reports. */
-@@ -347,8 +239,7 @@ int main()
-    vkDestroyImageView(device, view, nullptr);
-    vkDestroyImage(device, image, nullptr);
-    vkFreeMemory(device, memory, nullptr);
--   vkDestroyDevice(device, nullptr);
--   vkDestroyInstance(instance, nullptr);
-+   kk_test_destroy(&t);
-    std::printf("oversized tessellated draws fail their command buffer\n");
-    return 0;
- }
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp b/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp
 index d7de8f71429df79685386b49762e196236b046bd..7947291c77a48268847eb17f549b4e8ed12807e4 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_passthrough_geometry.cpp
