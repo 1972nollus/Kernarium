@@ -482,7 +482,6 @@ private:
 } // namespace
 
 std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
-    std::filesystem::path socketPath,
     std::string vncBindAddress,
     std::uint16_t vncPort,
     std::string vncPassword,
@@ -513,8 +512,7 @@ std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
     auto& presented = *display;
     auto server = std::make_unique<VhostUserServer>(
         std::make_unique<GpuVhostUserDevice>(
-            std::move(display), std::move(vncBindAddress), dotsPerInch),
-        std::move(socketPath));
+            std::move(display), std::move(vncBindAddress), dotsPerInch));
     if (selfTestPattern)
         presented.fillSelfTestPattern();
     return server;

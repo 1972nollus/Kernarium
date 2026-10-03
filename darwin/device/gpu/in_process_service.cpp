@@ -116,7 +116,6 @@ private:
         return testing::makeTransportTestServer();
 #else
         return makeGpuVhostUserServer(
-            std::filesystem::path {},
             options_.vncBindAddress,
             options_.vncPort,
             options_.vncPassword,

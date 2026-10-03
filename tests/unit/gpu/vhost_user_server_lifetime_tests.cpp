@@ -12,7 +12,6 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 
 namespace uml::gpu::testing {
@@ -192,7 +191,7 @@ void unsupportedRequestReclaimsDescriptor()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         withServerConnection(server, [](int socket) {
             auto sent = openTestDescriptor();
@@ -225,7 +224,7 @@ void memoryReplacementReleasesQueueDescriptors()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto memory = openMemoryDescriptor();
         std::size_t stableConfiguredCount = 0;
@@ -257,7 +256,7 @@ void failedMemoryReplacementIsRetryable(
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto memory = openMemoryDescriptor(backingSize);
         withServerConnection(server, [&](int socket) {
@@ -290,7 +289,7 @@ void twoRegionFailureRollsBackEveryOwner()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto first = openMemoryDescriptor();
         auto shortSecond = openMemoryDescriptor(1024);
@@ -439,74 +438,16 @@ void backpressuredRepliesArriveWholeAndStopEndsTheWait()
     require(descriptorCount() == before);
 }
 
-[[nodiscard]] std::filesystem::path temporarySocketPath()
-{
-    auto path =
-        ::uml::testing::socket_scratch_template("uml-gpu-socket.XXXXXX");
-    UniqueDescriptor descriptor {::mkstemp(path.data())};
-    require(descriptor.get() >= 0);
-    descriptor.reset();
-    require(::unlink(path.c_str()) == 0);
-    return path;
-}
-
-void standaloneRunCanBeRetriedWithoutLeaking()
-{
-    const auto path = temporarySocketPath();
-    const auto ownedServer = makeGpuVhostUserServer(
-        path, "127.0.0.1", 0, {}, 64, 64, false);
-    auto& server = *ownedServer;
-    const auto before = descriptorCount();
-    std::atomic_bool alreadyStopped {true};
-    server.run(alreadyStopped);
-    require(descriptorCount() == before);
-    require(!std::filesystem::exists(path));
-    server.run(alreadyStopped);
-    require(descriptorCount() == before);
-    require(!std::filesystem::exists(path));
-}
-
-void standaloneRunDoesNotReplaceExistingPath()
-{
-    auto rawPath =
-        ::uml::testing::socket_scratch_template("uml-gpu-owned-path.XXXXXX");
-    UniqueDescriptor sentinel {::mkstemp(rawPath.data())};
-    require(sentinel.get() >= 0);
-    constexpr std::uint8_t marker = 0x5a;
-    require(::write(sentinel.get(), &marker, sizeof(marker)) ==
-        static_cast<ssize_t>(sizeof(marker)));
-    const std::filesystem::path path {rawPath};
-    const auto ownedServer = makeGpuVhostUserServer(
-        path, "127.0.0.1", 0, {}, 64, 64, false);
-    auto& server = *ownedServer;
-    std::atomic_bool alreadyStopped {true};
-    bool rejected = false;
-    try {
-        server.run(alreadyStopped);
-    } catch (const std::runtime_error&) {
-        rejected = true;
-    }
-    require(rejected);
-    struct stat status {};
-    require(::lstat(path.c_str(), &status) == 0 && S_ISREG(status.st_mode));
-    std::uint8_t observed {};
-    require(::pread(sentinel.get(), &observed, sizeof(observed), 0) ==
-            static_cast<ssize_t>(sizeof(observed)) &&
-        observed == marker);
-    sentinel.reset();
-    require(::unlink(path.c_str()) == 0);
-}
-
 void concurrentRendererConstructionFailsAndLaterRetries()
 {
     const auto before = descriptorCount();
     {
         const auto first = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         bool rejected = false;
         try {
             const auto second = makeGpuVhostUserServer(
-                {}, "127.0.0.1", 0, {}, 64, 64, false);
+                "127.0.0.1", 0, {}, 64, 64, false);
         } catch (const std::runtime_error&) {
             rejected = true;
         }
@@ -515,7 +456,7 @@ void concurrentRendererConstructionFailsAndLaterRetries()
     require(descriptorCount() == before);
     {
         const auto retry = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
     }
     require(descriptorCount() == before);
 }
@@ -780,7 +721,7 @@ void runVhostUserServerTests(const char* executable)
     partialFrameStopIsPrompt(executable, true, true);
     {
         const auto warmRuntime = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
     }
     concurrentRendererConstructionFailsAndLaterRetries();
     unsupportedRequestReclaimsDescriptor();
@@ -790,8 +731,6 @@ void runVhostUserServerTests(const char* executable)
     failedMemoryReplacementIsRetryable(8192, 0);
     twoRegionFailureRollsBackEveryOwner();
     backpressuredRepliesArriveWholeAndStopEndsTheWait();
-    standaloneRunCanBeRetriedWithoutLeaking();
-    standaloneRunDoesNotReplaceExistingPath();
     anOverdueFenceEscapesOrderingBeforeItIsRetired();
     aRingThatStopsRetiringIsCountedAndRevivable();
 }
