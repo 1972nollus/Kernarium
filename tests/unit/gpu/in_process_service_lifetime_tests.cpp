@@ -4,9 +4,6 @@
 #include "in_process_service.hpp"
 #include "in_process_service_testing.hpp"
 
-#include <array>
-#include <cstdint>
-#include <cstring>
 #include <fcntl.h>
 #include <memory>
 #include <stdexcept>
@@ -128,27 +125,7 @@ void partialFrameStopUsesOwnedWake(bool partialPayload)
         const int transport =
             descriptorFromName(service.takeConnectionName());
         require(transport >= 0);
-
-        const protocol::VhostHeader header {
-            .request = static_cast<std::uint32_t>(
-                protocol::VhostRequest::setFeatures),
-            .flags = protocol::vhostUserVersion,
-            .size = partialPayload ?
-                static_cast<std::uint32_t>(sizeof(std::uint64_t)) : 0U,
-        };
-        if (partialPayload) {
-            std::array<
-                std::uint8_t,
-                sizeof(header) + sizeof(std::uint32_t)> fragment {};
-            std::memcpy(fragment.data(), &header, sizeof(header));
-            require(
-                ::write(transport, fragment.data(), fragment.size()) ==
-                static_cast<ssize_t>(fragment.size()));
-        } else {
-            require(
-                ::write(transport, &header, sizeof(header) / 2U) ==
-                static_cast<ssize_t>(sizeof(header) / 2U));
-        }
+        writePartialFrame(transport, partialPayload);
 
         service.stop();
         require(::close(transport) == 0);

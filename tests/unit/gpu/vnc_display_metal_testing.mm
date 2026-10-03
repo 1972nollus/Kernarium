@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "gpu_metal_test_support.hpp"
+#include "require.hpp"
 #include "vnc_display.hpp"
 #include "vnc_display_testing.hpp"
 
@@ -9,21 +11,16 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
-#include <cstring>
 #include <thread>
 #include <vector>
 
 namespace uml::gpu::testing {
 namespace {
 
+using uml::testing::require;
+
 constexpr std::array<std::uint8_t, 4> expectedPixel {
     0x19U, 0x38U, 0x57U, 0xffU};
-
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 } // namespace
 
@@ -35,56 +32,9 @@ void verifyPrivateMetalTextureReadback(VncDisplay& display)
 
         const auto width = display.width();
         const auto height = display.height();
-        const auto rowBytes =
-            static_cast<std::size_t>(width) * protocol::gpuBytesPerPixel;
-        const auto byteCount = rowBytes * height;
-        id<MTLBuffer> upload = [device
-            newBufferWithLength:byteCount
-            options:MTLResourceStorageModeShared];
-        require(upload != nil, "Metal upload buffer creation failed");
-        auto* bytes = static_cast<std::uint8_t*>(upload.contents);
-        for (std::size_t offset = 0; offset < byteCount; offset += 4U) {
-            bytes[offset] = expectedPixel[0];
-            bytes[offset + 1U] = expectedPixel[1];
-            bytes[offset + 2U] = expectedPixel[2];
-            bytes[offset + 3U] = expectedPixel[3];
-        }
-
-        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-            width:width
-            height:height
-            mipmapped:NO];
-        descriptor.textureType = MTLTextureType2DArray;
-        descriptor.arrayLength = 1;
-        descriptor.storageMode = MTLStorageModePrivate;
-        descriptor.usage =
-            MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
-        id<MTLTexture> texture =
-            [device newTextureWithDescriptor:descriptor];
-        require(texture != nil, "private Metal texture creation failed");
-
-        id<MTLCommandQueue> queue = [device newCommandQueue];
-        id<MTLCommandBuffer> commands = [queue commandBuffer];
-        id<MTLBlitCommandEncoder> encoder =
-            [commands blitCommandEncoder];
-        require(queue != nil && commands != nil && encoder != nil,
-                "Metal upload command creation failed");
-        [encoder
-            copyFromBuffer:upload
-            sourceOffset:0
-            sourceBytesPerRow:rowBytes
-            sourceBytesPerImage:byteCount
-            sourceSize:MTLSizeMake(width, height, 1)
-            toTexture:texture
-            destinationSlice:0
-            destinationLevel:0
-            destinationOrigin:MTLOriginMake(0, 0, 0)];
-        [encoder endEncoding];
-        [commands commit];
-        [commands waitUntilCompleted];
-        require(commands.status == MTLCommandBufferStatusCompleted,
-                "private Metal texture upload failed");
+        id<MTLTexture> texture = uploadPrivateTexture(
+            device, solidImage(expectedPixel, width, height), width, height,
+            true);
 
         constexpr std::uint32_t damageX = 7;
         constexpr std::uint32_t damageY = 11;
@@ -151,10 +101,7 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
         id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
         require(texture != nil, "scaled readback texture creation failed");
         const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
-            std::vector<std::uint8_t> pixels(
-                static_cast<std::size_t>(width) * height * 4U);
-            for (std::size_t offset = 0; offset < pixels.size(); offset += 4U)
-                std::memcpy(&pixels[offset], pixel.data(), pixel.size());
+            const auto pixels = solidImage(pixel, width, height);
             [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
                        mipmapLevel:0
                          withBytes:pixels.data()
@@ -241,10 +188,7 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
         id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
         require(texture != nil, "clear test texture creation failed");
         const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
-            std::vector<std::uint8_t> pixels(
-                static_cast<std::size_t>(width) * height * 4U);
-            for (std::size_t offset = 0; offset < pixels.size(); offset += 4U)
-                std::memcpy(&pixels[offset], pixel.data(), pixel.size());
+            const auto pixels = solidImage(pixel, width, height);
             [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
                        mipmapLevel:0
                          withBytes:pixels.data()
@@ -318,9 +262,7 @@ void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
                   "the readback before the CPU copy did not complete");
         const std::size_t rowBytes =
             static_cast<std::size_t>(width) * protocol::gpuBytesPerPixel;
-        std::vector<std::uint8_t> image(rowBytes * height);
-        for (std::size_t offset = 0; offset < image.size(); offset += 4U)
-            std::memcpy(&image[offset], copied.data(), copied.size());
+        const auto image = solidImage(copied, width, height);
         display.update(
             image,
             width,

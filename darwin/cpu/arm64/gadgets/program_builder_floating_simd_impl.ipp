@@ -684,8 +684,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     emit(words, instruction & 31U);
                     emit(words, decoded->pattern);
                   } else {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
+                    return illegal_instruction(context);
                   }
                 } else if ((instruction & 0x9f80'fc00U) == 0x0f00'a400U) {
                   const auto encoded = (instruction >> 16) & 0x7fU;

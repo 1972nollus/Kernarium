@@ -8,6 +8,7 @@
 
 #include "virtio_balloon_device.hpp"
 #include "host_gpu_memory.hpp"
+#include "require.hpp"
 
 #import <Metal/Metal.h>
 
@@ -19,19 +20,13 @@
 
 namespace {
 
+using uml::testing::require;
+
 constexpr double mib = 1024.0 * 1024.0;
 /* Dense recordings write nearly all of the storage they grow; an encoder
  * with no commands reserves far more than it writes. */
 constexpr unsigned encoders = 16;
 constexpr unsigned copiesPerEncoder = 65536;
-
-void require(bool condition, const char* message)
-{
-    if (condition)
-        return;
-    std::fprintf(stderr, "FAIL host graphics footprint: %s\n", message);
-    std::exit(1);
-}
 
 /* Grows one allocator by recording many copy commands and returns its
  * storage, checking what each counter charges while it is held. */

@@ -2,6 +2,7 @@
 #include "virtio_video_device.hpp"
 #include "require.hpp"
 #include "scratch_backing.hpp"
+#include "scratch_directory.hpp"
 #include "shared_memory_regions.hpp"
 #include "video_capabilities.hpp"
 
@@ -306,7 +307,7 @@ void packedDefaultThroughStreamon(std::size_t page);
 
 void activityLog()
 {
-    const auto path = std::filesystem::temp_directory_path() /
+    const auto path = uml::testing::scratch_directory() /
         ("uml-video-activity-" + std::to_string(::getpid()) + ".log");
     std::filesystem::remove(path);
     ::unsetenv("UML_VIDEO_ACTIVITY_LOG");

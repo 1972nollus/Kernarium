@@ -2,6 +2,7 @@
 
 #include "display_geometry.hpp"
 #include "display_resize_notifier.hpp"
+#include "require.hpp"
 #include "scanout_framebuffer.hpp"
 
 #include <algorithm>
@@ -17,11 +18,7 @@
 
 namespace {
 
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
+using uml::testing::require;
 
 void resizeNotificationsAreCoalescedAndBounded()
 {
