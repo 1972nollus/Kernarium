@@ -185,18 +185,6 @@ extern const RcpcStoreGadgets rcpc_store_gadgets;
 [[nodiscard]] const SimdStructureGadgets * simd_structure_gadgets(unsigned int, bool, unsigned int) noexcept;
 [[nodiscard]] const SimdReplicateCounts & simd_replicate_gadgets(unsigned int, bool) noexcept;
 [[nodiscard]] const SimdLaneCounts & simd_lane_gadgets(unsigned int) noexcept;
-[[nodiscard]] bool host_has_sha1() noexcept;
-[[nodiscard]] bool host_has_sha256() noexcept;
-[[nodiscard]] bool host_has_sha512() noexcept;
-[[nodiscard]] bool host_has_sha3() noexcept;
-[[nodiscard]] bool host_has_aes() noexcept;
-[[nodiscard]] bool host_has_pmull() noexcept;
-[[nodiscard]] bool host_has_rdm() noexcept;
-[[nodiscard]] bool host_has_dotprod() noexcept;
-[[nodiscard]] bool host_has_i8mm() noexcept;
-[[nodiscard]] bool host_has_frintts() noexcept;
-[[nodiscard]] bool host_has_bf16() noexcept;
-[[nodiscard]] bool host_has_fhm() noexcept;
 [[nodiscard]] bool pointer_auth_lr_unavailable(std::uint32_t) noexcept;
 /* Fused guest CMP of two registers + B.cond. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
