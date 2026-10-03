@@ -11,7 +11,6 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
-#include <filesystem>
 #include <functional>
 #include <memory>
 #include <span>
@@ -23,19 +22,13 @@ namespace uml::gpu {
 
 class VhostUserServer {
 public:
-    /* Serves `device`. `socketPath` is the listening socket run() creates;
-     * runConnected() needs none. */
     explicit VhostUserServer(
-        std::unique_ptr<uml::virtio::VhostUserDevice> device,
-        std::filesystem::path socketPath = {});
+        std::unique_ptr<uml::virtio::VhostUserDevice> device);
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
     VhostUserServer& operator=(const VhostUserServer&) = delete;
 
-    void run(
-        const std::atomic_bool& stopRequested,
-        const std::function<void()>& ready = {});
     void runConnected(
         int connection,
         const std::atomic_bool& stopRequested,
@@ -44,7 +37,7 @@ public:
     /* Shares one shared-memory index with the other backends of the same
      * guest. The backend that owns a region publishes its ranges here; a
      * device whose guest names buffers inside a region resolves them here.
-     * Call before run(). */
+     * Call before runConnected(). */
     void setSharedMemoryRegions(
         std::shared_ptr<uml::virtio::SharedMemoryRegions> regions);
 
@@ -140,7 +133,6 @@ private:
         std::uint16_t head);
     [[nodiscard]] std::uint64_t allocateRequestId();
 
-    std::filesystem::path socketPath_;
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;

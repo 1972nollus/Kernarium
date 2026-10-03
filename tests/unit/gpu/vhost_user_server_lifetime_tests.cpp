@@ -10,8 +10,8 @@
 #include <chrono>
 #include <csignal>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 
 namespace uml::gpu::testing {
@@ -191,7 +191,7 @@ void unsupportedRequestReclaimsDescriptor()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         withServerConnection(server, [](int socket) {
             auto sent = openTestDescriptor();
@@ -224,7 +224,7 @@ void memoryReplacementReleasesQueueDescriptors()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto memory = openMemoryDescriptor();
         std::size_t stableConfiguredCount = 0;
@@ -256,7 +256,7 @@ void failedMemoryReplacementIsRetryable(
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto memory = openMemoryDescriptor(backingSize);
         withServerConnection(server, [&](int socket) {
@@ -289,7 +289,7 @@ void twoRegionFailureRollsBackEveryOwner()
     const auto before = descriptorCount();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         auto first = openMemoryDescriptor();
         auto shortSecond = openMemoryDescriptor(1024);
@@ -324,62 +324,118 @@ void twoRegionFailureRollsBackEveryOwner()
     require(descriptorCount() == before);
 }
 
-[[nodiscard]] std::filesystem::path temporarySocketPath()
+std::atomic_uint interruptedWriterWaits;
+
+void countInterruptedWriterWait(int)
 {
-    auto path =
-        ::uml::testing::socket_scratch_template("uml-gpu-socket.XXXXXX");
-    UniqueDescriptor descriptor {::mkstemp(path.data())};
-    require(descriptor.get() >= 0);
-    descriptor.reset();
-    require(::unlink(path.c_str()) == 0);
-    return path;
+    interruptedWriterWaits.fetch_add(1, std::memory_order_relaxed);
 }
 
-void standaloneRunCanBeRetriedWithoutLeaking()
+/* Sends GET_FEATURES requests whose replies the caller does not read until
+ * the socket refuses more. The replies fill the server's direction first; the
+ * server then waits to write and stops reading, and the requests fill the
+ * other direction. A pass that adds nothing after a pause means the server
+ * has stopped reading. Returns the number of requests sent. */
+[[nodiscard]] std::size_t fillUntilTheServerWaitsToWrite(int socket)
 {
-    const auto path = temporarySocketPath();
-    const auto ownedServer = makeGpuVhostUserServer(
-        path, "127.0.0.1", 0, {}, 64, 64, false);
-    auto& server = *ownedServer;
-    const auto before = descriptorCount();
-    std::atomic_bool alreadyStopped {true};
-    server.run(alreadyStopped);
-    require(descriptorCount() == before);
-    require(!std::filesystem::exists(path));
-    server.run(alreadyStopped);
-    require(descriptorCount() == before);
-    require(!std::filesystem::exists(path));
-}
-
-void standaloneRunDoesNotReplaceExistingPath()
-{
-    auto rawPath =
-        ::uml::testing::socket_scratch_template("uml-gpu-owned-path.XXXXXX");
-    UniqueDescriptor sentinel {::mkstemp(rawPath.data())};
-    require(sentinel.get() >= 0);
-    constexpr std::uint8_t marker = 0x5a;
-    require(::write(sentinel.get(), &marker, sizeof(marker)) ==
-        static_cast<ssize_t>(sizeof(marker)));
-    const std::filesystem::path path {rawPath};
-    const auto ownedServer = makeGpuVhostUserServer(
-        path, "127.0.0.1", 0, {}, 64, 64, false);
-    auto& server = *ownedServer;
-    std::atomic_bool alreadyStopped {true};
-    bool rejected = false;
-    try {
-        server.run(alreadyStopped);
-    } catch (const std::runtime_error&) {
-        rejected = true;
+    const protocol::VhostHeader header {
+        .request = static_cast<std::uint32_t>(
+            protocol::VhostRequest::getFeatures),
+        .flags = protocol::vhostUserVersion,
+        .size = 0,
+    };
+    std::size_t sent = 0;
+    for (;;) {
+        std::size_t pass = 0;
+        for (;;) {
+            const auto count = ::send(socket, &header, sizeof(header), 0);
+            if (count < 0 && errno == EINTR)
+                continue;
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                break;
+            require(count == static_cast<ssize_t>(sizeof(header)));
+            ++pass;
+        }
+        sent += pass;
+        if (pass == 0 && sent != 0)
+            return sent;
+        std::this_thread::sleep_for(std::chrono::milliseconds {200});
     }
-    require(rejected);
-    struct stat status {};
-    require(::lstat(path.c_str(), &status) == 0 && S_ISREG(status.st_mode));
-    std::uint8_t observed {};
-    require(::pread(sentinel.get(), &observed, sizeof(observed), 0) ==
-            static_cast<ssize_t>(sizeof(observed)) &&
-        observed == marker);
-    sentinel.reset();
-    require(::unlink(path.c_str()) == 0);
+}
+
+/* A peer that stops reading leaves the server's replies on a full socket. The
+ * reply write waits for room: an interrupted wait and a would-block write are
+ * retried, every reply arrives whole and in order once the peer reads again,
+ * and a stop request still ends a write that is waiting. */
+void backpressuredRepliesArriveWholeAndStopEndsTheWait()
+{
+    const auto before = descriptorCount();
+    {
+        auto server = makeTransportTestServer();
+        auto sockets = makeSocketPair();
+        const int peer = sockets.descriptors[0].get();
+        require(::fcntl(peer, F_SETNOSIGPIPE, 1) == 0);
+        const int statusFlags = ::fcntl(peer, F_GETFL);
+        require(statusFlags >= 0);
+        std::atomic_bool stopRequested {};
+        std::atomic_bool finished {};
+        std::thread worker {[&, connection = sockets.descriptors[1].release()] {
+            server->runConnected(connection, stopRequested);
+            finished.store(true, std::memory_order_release);
+        }};
+
+        struct sigaction interrupt {};
+        interrupt.sa_handler = countInterruptedWriterWait;
+        sigemptyset(&interrupt.sa_mask);
+        interrupt.sa_flags = 0;
+        struct sigaction previous {};
+        require(::sigaction(SIGUSR2, &interrupt, &previous) == 0);
+        interruptedWriterWaits.store(0, std::memory_order_relaxed);
+
+        require(::fcntl(peer, F_SETFL, statusFlags | O_NONBLOCK) == 0);
+        const auto queued = fillUntilTheServerWaitsToWrite(peer);
+        for (unsigned signal = 0; signal < 3; ++signal) {
+            require(::pthread_kill(worker.native_handle(), SIGUSR2) == 0);
+            std::this_thread::sleep_for(std::chrono::milliseconds {20});
+        }
+        require(::fcntl(peer, F_SETFL, statusFlags) == 0);
+        std::uint64_t expectedFeatures = 0;
+        for (std::size_t index = 0; index < queued; ++index) {
+            protocol::VhostHeader reply {};
+            std::uint64_t features {};
+            readExact(peer, &reply, sizeof(reply));
+            readExact(peer, &features, sizeof(features));
+            require(
+                reply.request == static_cast<std::uint32_t>(
+                    protocol::VhostRequest::getFeatures));
+            require(
+                reply.flags ==
+                (protocol::vhostUserVersion | protocol::vhostUserReply));
+            require(reply.size == sizeof(features));
+            require(features != 0);
+            if (index == 0)
+                expectedFeatures = features;
+            require(features == expectedFeatures);
+        }
+        require(interruptedWriterWaits.load(std::memory_order_relaxed) == 3);
+        require(::sigaction(SIGUSR2, &previous, nullptr) == 0);
+
+        require(::fcntl(peer, F_SETFL, statusFlags | O_NONBLOCK) == 0);
+        (void)fillUntilTheServerWaitsToWrite(peer);
+        require(!finished.load(std::memory_order_acquire));
+        stopRequested.store(true, std::memory_order_release);
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds {5};
+        while (!finished.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds {10});
+        }
+        const bool stopped = finished.load(std::memory_order_acquire);
+        (void)::shutdown(peer, SHUT_RDWR);
+        worker.join();
+        require(stopped);
+    }
+    require(descriptorCount() == before);
 }
 
 void concurrentRendererConstructionFailsAndLaterRetries()
@@ -387,11 +443,11 @@ void concurrentRendererConstructionFailsAndLaterRetries()
     const auto before = descriptorCount();
     {
         const auto first = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         bool rejected = false;
         try {
             const auto second = makeGpuVhostUserServer(
-                {}, "127.0.0.1", 0, {}, 64, 64, false);
+                "127.0.0.1", 0, {}, 64, 64, false);
         } catch (const std::runtime_error&) {
             rejected = true;
         }
@@ -400,7 +456,7 @@ void concurrentRendererConstructionFailsAndLaterRetries()
     require(descriptorCount() == before);
     {
         const auto retry = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
     }
     require(descriptorCount() == before);
 }
@@ -665,7 +721,7 @@ void runVhostUserServerTests(const char* executable)
     partialFrameStopIsPrompt(executable, true, true);
     {
         const auto warmRuntime = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
     }
     concurrentRendererConstructionFailsAndLaterRetries();
     unsupportedRequestReclaimsDescriptor();
@@ -674,8 +730,7 @@ void runVhostUserServerTests(const char* executable)
     failedMemoryReplacementIsRetryable(4096, UINT64_MAX);
     failedMemoryReplacementIsRetryable(8192, 0);
     twoRegionFailureRollsBackEveryOwner();
-    standaloneRunCanBeRetriedWithoutLeaking();
-    standaloneRunDoesNotReplaceExistingPath();
+    backpressuredRepliesArriveWholeAndStopEndsTheWait();
     anOverdueFenceEscapesOrderingBeforeItIsRetired();
     aRingThatStopsRetiringIsCountedAndRevivable();
 }

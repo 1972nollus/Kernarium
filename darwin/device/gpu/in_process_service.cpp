@@ -3,6 +3,7 @@
 #include "in_process_service.hpp"
 
 #include "gpu_vhost_user_server.hpp"
+#include "platform/descriptor.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 #include "virgl_renderer.hpp"
@@ -20,7 +21,6 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -45,29 +45,17 @@ DescriptorPair makeInputSocketPair()
     DescriptorPair result {
         UniqueDescriptor {descriptors[0]}, UniqueDescriptor {descriptors[1]}};
     for (const auto& descriptor : result) {
-        const int flags = ::fcntl(descriptor.get(), F_GETFD);
-        if (flags < 0 ||
-            ::fcntl(
-                descriptor.get(), F_SETFD, flags | FD_CLOEXEC) != 0) {
-            throw std::runtime_error(
-                "configuring in-process GPU descriptor failed: " +
-                std::string(std::strerror(errno)));
-        }
+        uml::platform::configureDescriptorOrThrow(
+            descriptor.get(),
+            {.closeOnExec = true},
+            "in-process GPU descriptor");
     }
-    const int flags = ::fcntl(result[0].get(), F_GETFL);
-    if (flags < 0 ||
-        ::fcntl(result[0].get(), F_SETFL, flags | O_NONBLOCK) != 0) {
-        const int error = errno;
-        throw std::runtime_error(
-            "configuring display input socket failed: " +
-            std::string(std::strerror(error)));
-    }
-    if (::fcntl(result[0].get(), F_SETNOSIGPIPE, 1) != 0) {
-        const int error = errno;
-        throw std::runtime_error(
-            "configuring display input no-signal writes failed: " +
-            std::string(std::strerror(error)));
-    }
+    uml::platform::configureDescriptorOrThrow(
+        result[0].get(), {.nonblocking = true}, "display input socket");
+    uml::platform::configureDescriptorOrThrow(
+        result[0].get(),
+        {.noSigpipe = true},
+        "display input no-signal writes");
 #if UML_GPU_STARTUP_TESTING
     testing::startupCheckpoint(
         testing::StartupFailure::afterInputSocketPair);
@@ -128,7 +116,6 @@ private:
         return testing::makeTransportTestServer();
 #else
         return makeGpuVhostUserServer(
-            std::filesystem::path {},
             options_.vncBindAddress,
             options_.vncPort,
             options_.vncPassword,
