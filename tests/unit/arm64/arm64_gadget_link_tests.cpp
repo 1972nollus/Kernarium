@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory_resource>
-#include <source_location>
 #include <utility>
 
 namespace arm64 = uml::cpu::arm64;
@@ -20,20 +19,8 @@ extern "C" void uml_arm64_gadget_fp_link_entry();
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
-
-std::uintptr_t gadget_address(void (*gadget)())
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
 {
@@ -48,7 +35,7 @@ gadgets::BuildResult build_target(std::uint64_t pc, std::uint16_t value)
  * link_exit word, which takes the PC from the BlockLink behind it. */
 struct LinkTarget final {
 	explicit LinkTarget(std::uint64_t pc) noexcept
-		: fallback_stream{gadget_address(uml_arm64_gadget_link_exit)},
+		: fallback_stream{address(uml_arm64_gadget_link_exit)},
 		  link{
 			.stream = &fallback_stream,
 			.instruction_count = 0,
@@ -73,7 +60,7 @@ struct LinkTarget final {
 		require(target.program.accesses_fp_state());
 		const auto words = target.program.words();
 		require(words.size() < fp_stream.size());
-		fp_stream[0] = gadget_address(uml_arm64_gadget_fp_link_entry);
+		fp_stream[0] = address(uml_arm64_gadget_fp_link_entry);
 		std::copy(words.begin(), words.end(), fp_stream.begin() + 1);
 		link.stream = fp_stream.data();
 		link.instruction_count = target.program.instruction_count();

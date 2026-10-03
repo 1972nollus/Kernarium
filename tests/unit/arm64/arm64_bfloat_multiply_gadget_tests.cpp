@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_bfloat_arithmetic_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
@@ -102,7 +103,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 constexpr std::array<Gadget, 18> native_gadgets{
 	uml_arm64_gadget_bfloat_multiply_long_native_vector_b,
@@ -125,16 +126,8 @@ constexpr std::array<Gadget, 18> native_gadgets{
 	uml_arm64_gadget_bfloat_multiply_long_native_indexed_t_7,
 };
 
-[[nodiscard]] std::uintptr_t address(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned reg)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		reg * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t translated_operand(
 	test::Form form, unsigned index, test::Registers registers)

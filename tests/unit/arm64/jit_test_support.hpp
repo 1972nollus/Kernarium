@@ -6,13 +6,11 @@
 #include "uml_darwin_static_mmu.h"
 #include "runtime/execution_engine.hpp"
 #include "scratch_backing.hpp"
+#include "require.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <fcntl.h>
-#include <source_location>
 #include <span>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -25,15 +23,7 @@ namespace uml::emulator::tests {
 		::uml::runtime::ExecutionEngine::jit);
 }
 
-inline void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
+using uml::testing::require;
 
 /* Guest pages of scratch backing for the JIT tests. */
 class JitBacking final : public ::uml::testing::ScratchBacking {

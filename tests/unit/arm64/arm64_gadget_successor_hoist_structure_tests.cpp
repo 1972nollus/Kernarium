@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/gadget_symbols.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <memory_resource>
-#include <source_location>
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = arm64::gadgets;
@@ -17,22 +16,9 @@ namespace selection = gadgets::selection;
 
 namespace {
 
-using Gadget = void (*)();
-
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::Gadget;
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 [[nodiscard]] std::uint32_t instruction(Gadget gadget, std::size_t index)
 {

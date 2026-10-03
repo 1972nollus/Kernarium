@@ -2,12 +2,10 @@
 #pragma once
 
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <source_location>
 #include <string_view>
 
 namespace arm64_system_test {
@@ -15,16 +13,7 @@ namespace arm64_system_test {
 namespace arm64 = uml::cpu::arm64;
 namespace engine_tests = uml::emulator::tests;
 
-inline void require(
-	bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition) {
-		std::fprintf(stderr, "require failed at %s:%u\n",
-			location.file_name(), location.line());
-		std::abort();
-	}
-}
+using uml::testing::require;
 
 [[nodiscard]] inline arm64::CpuState state()
 {

@@ -5,13 +5,13 @@
 #include "cpu/engine_factory.hpp"
 #include "jit_test_support.hpp"
 #include "memory/static_guest_memory.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <optional>
@@ -40,15 +40,8 @@ constexpr std::uint64_t initial_x8 = 0x1234'5678'9abc'def0ULL;
 constexpr std::uint64_t initial_x9 = 0x0fed'cba9'8765'4321ULL;
 constexpr std::uint32_t system_call = 0xd400'0001U;
 
-[[noreturn]] void fail(const char *message) {
-  std::fprintf(stderr, "arm64-jit-executor-pool: %s\n", message);
-  std::abort();
-}
-
-void require(bool condition, const char *message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 template <typename Predicate>
 void wait_until(Predicate predicate, const char *message) {

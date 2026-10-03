@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <span>
 
@@ -16,15 +15,7 @@ namespace jit_test = uml::cpu::arm64::jit::testing;
 
 namespace {
 
-[[noreturn]] void fail(const char *message) {
-  std::fprintf(stderr, "%s\n", message);
-  std::abort();
-}
-
-void require(bool condition, const char *message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t
 move_wide(unsigned destination, unsigned immediate) noexcept {

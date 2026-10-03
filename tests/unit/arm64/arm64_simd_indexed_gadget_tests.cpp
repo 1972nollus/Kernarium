@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -8,10 +10,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
-#include <source_location>
 #include <span>
 #include <string_view>
 
@@ -110,20 +109,8 @@ inline constexpr std::array saturating_shapes{
 	Shape{1U, true, false}, Shape{2U, true, false},
 };
 
-[[noreturn]] inline void fail(const char *message,
-	const std::source_location location = std::source_location::current())
-{
-	std::fprintf(stderr, "%s at %s:%u\n", message,
-		location.file_name(), location.line());
-	std::abort();
-}
-
-inline void require(bool condition, const char *message = "require failed",
-	const std::source_location location = std::source_location::current())
-{
-	if (!condition)
-		fail(message, location);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr bool is_unsigned(Operation operation) noexcept
 {
@@ -383,18 +370,9 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned reg)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		reg * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::Gadget;
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 #define UML_ADD_INDEXED_ONE(set, name, shape, index) \
 	(set).insert(address( \

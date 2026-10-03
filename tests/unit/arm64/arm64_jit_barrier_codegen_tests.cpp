@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <span>
 #include <vector>
 
@@ -21,15 +21,7 @@ constexpr std::uint32_t dsb_nxs_base = 0xd503'323fU;
 constexpr std::uint32_t sb = 0xd503'30ffU;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
-[[noreturn]] void fail(const char *message) {
-  std::fprintf(stderr, "%s\n", message);
-  std::abort();
-}
-
-void require(bool condition, const char *message) {
-  if (!condition)
-    fail(message);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t standard(std::uint32_t base,
                                                unsigned option) noexcept {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -11,8 +13,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <set>
 #include <span>
 #include <string_view>
@@ -43,17 +43,8 @@ struct Variant final {
 	unsigned rotate{};
 };
 
-[[noreturn]] inline void fail(const char *message)
-{
-	std::fprintf(stderr, "%s\n", message);
-	std::abort();
-}
-
-inline void require(bool condition, const char *message)
-{
-	if (!condition)
-		fail(message);
-}
+using uml::testing::fail;
+using uml::testing::require;
 
 [[nodiscard]] constexpr bool four_sources(Operation operation) noexcept
 {
@@ -146,7 +137,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 #define UML_XAR_GADGETS(implementation) std::array<Gadget, 64>{ \
 	uml_arm64_gadget_simd_xar_##implementation##_0, \
@@ -218,16 +209,8 @@ constexpr auto native_xar = UML_XAR_GADGETS(native);
 constexpr auto software_xar = UML_XAR_GADGETS(soft);
 #undef UML_XAR_GADGETS
 
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index) noexcept
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		index * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] Gadget expected_gadget(
 	test::Operation operation, bool native, unsigned rotate = 0)

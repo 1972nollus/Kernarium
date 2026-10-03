@@ -2,17 +2,18 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_arena.hpp"
 #include "cpu/arm64/jit/jit_linking.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -23,11 +24,7 @@ namespace arm64 = ::uml::cpu::arm64;
 constexpr std::size_t mib = std::size_t{1024} * 1024U;
 constexpr std::size_t gib = mib * 1024U;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 void geometry_respects_every_supported_executor_count()
 {

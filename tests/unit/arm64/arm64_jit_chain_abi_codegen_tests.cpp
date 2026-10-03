@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
-#include <source_location>
 #include <span>
 
 using uml::testing::a64::indirect_branch;
@@ -18,20 +16,7 @@ namespace jit_test = uml::cpu::arm64::jit::testing;
 
 namespace {
 
-[[noreturn]] void fail(
-    const char *message,
-    const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] std::span<const std::uint32_t>
 hot_code(const jit_test::CompiledCode &compiled) {

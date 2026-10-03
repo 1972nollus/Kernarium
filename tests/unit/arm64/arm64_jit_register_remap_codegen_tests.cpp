@@ -2,15 +2,13 @@
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/cpu_state.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <optional>
-#include <source_location>
 #include <span>
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
@@ -32,20 +30,7 @@ constexpr std::uint64_t code_base = 0x4f00'0000ULL;
          reg == 17U;
 }
 
-[[noreturn]] void
-fail(const char *message,
-     const std::source_location location = std::source_location::current()) {
-  std::fprintf(stderr, "%s at %s:%u\n", message, location.file_name(),
-               location.line());
-  std::abort();
-}
-
-void require(bool condition, const char *message,
-             const std::source_location location =
-                 std::source_location::current()) {
-  if (!condition)
-    fail(message, location);
-}
+using uml::testing::require;
 
 [[nodiscard]] constexpr std::uint32_t
 three_register(std::uint32_t operation, unsigned destination, unsigned left,

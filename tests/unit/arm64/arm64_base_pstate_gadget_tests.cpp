@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "arm64_system_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -161,7 +162,7 @@ namespace uml::emulator::tests::base_pstate {
 namespace {
 
 namespace gadgets = arm64::gadgets;
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 extern "C" {
 #define UML_DECLARE_PSTATE_FIELD(name) \
@@ -238,10 +239,7 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 	uml_arm64_gadget_pstate_daif_clear_15,
 };
 
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] Gadget expected_gadget(
 	const Decoded &decoded, unsigned immediate)

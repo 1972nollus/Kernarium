@@ -6,6 +6,7 @@
 #include "mach_vm_region_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "uml_darwin_guest.h"
+#include "require.hpp"
 
 #include <array>
 #include <atomic>
@@ -178,11 +179,7 @@ struct InterruptPollState final {
 	return state.calls >= state.pending_on_call;
 }
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 class StaticGeneration final {
 public:

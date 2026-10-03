@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <map>
 #include <memory_resource>
-#include <source_location>
 #include <utility>
 
 namespace arm64 = uml::cpu::arm64;
@@ -21,26 +20,14 @@ extern "C" void uml_arm64_gadget_return_cached();
 
 namespace {
 
-void require(bool condition,
-	const std::source_location location = std::source_location::current())
-{
-	if (condition)
-		return;
-	std::fprintf(stderr, "require failed at %s:%u\n",
-		location.file_name(), location.line());
-	std::abort();
-}
-
-std::uintptr_t gadget_address(void (*gadget)())
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::testing::require;
+using uml::emulator::tests::address;
 
 /* Laid out as the executor's link record: the unlinked stream is one
  * link_exit word, which takes the PC from the BlockLink behind it. */
 struct LinkTarget final {
 	explicit LinkTarget(std::uint64_t pc) noexcept
-		: fallback_stream{gadget_address(uml_arm64_gadget_link_exit)},
+		: fallback_stream{address(uml_arm64_gadget_link_exit)},
 		  link{
 			.stream = &fallback_stream,
 			.instruction_count = 0,
@@ -137,7 +124,7 @@ int main()
 		auto source = build_cached(
 			source_pc, branch_register(5), site);
 		require(source.program.words()[0] ==
-			gadget_address(uml_arm64_gadget_branch_register_cached));
+			address(uml_arm64_gadget_branch_register_cached));
 		arm64::CpuState cpu{};
 		cpu.registers[5] = 0x5000;
 		::uml::memory::Tlb tlb;
@@ -205,7 +192,7 @@ int main()
 		auto call = build_cached(
 			source_pc, branch_link_register(9), site);
 		require(call.program.words()[0] ==
-			gadget_address(uml_arm64_gadget_branch_link_register_cached));
+			address(uml_arm64_gadget_branch_link_register_cached));
 		arm64::CpuState call_cpu{};
 		call_cpu.registers[9] = 0x7000;
 		::uml::memory::Tlb tlb;
@@ -219,7 +206,7 @@ int main()
 		auto ret = build_cached(
 			source_pc, return_register(12), site);
 		require(ret.program.words()[0] ==
-			gadget_address(uml_arm64_gadget_return_cached));
+			address(uml_arm64_gadget_return_cached));
 		arm64::CpuState return_cpu{};
 		return_cpu.registers[12] = 0x7000;
 		executed = 0;
