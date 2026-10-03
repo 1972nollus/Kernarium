@@ -107,9 +107,13 @@ protected:
    * full, and an operand naming an earlier operand's register shares its
    * binding.
    *
-   * Binary: Rn (v0), Rm in bits 16-20 (v1), then Rd (v2), whose old value
-   * is loaded when reads_destination is set.
+   * Unary: Rn (v1), then Rd (v0), whose old value is loaded when
+   * reads_destination is set.
    */
+  void emit_native_vector_unary(std::uint32_t instruction,
+                                bool reads_destination);
+  /* Binary: Rn (v0), Rm in bits 16-20 (v1), then Rd (v2), whose old value
+   * is loaded when reads_destination is set. */
   void emit_native_vector_binary(std::uint32_t instruction,
                                  bool reads_destination);
   /* By element, with Rm in bits 16-19: Rm from the constrained v0-v15

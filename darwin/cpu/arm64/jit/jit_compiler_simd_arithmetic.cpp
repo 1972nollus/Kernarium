@@ -530,20 +530,13 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
       (instruction & 0xbf3f'fc00U) != 0x0e21'2800U ||
       ((instruction >> 22) & 3U) == 3U)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned source = (instruction >> 5) & 31U;
   const bool upper = (instruction & 0x4000'0000U) != 0;
   /*
    * Import Rn before defining Rd. Lower-half XTN overwrites/zeroes all of Rd,
    * whereas XTN2 preserves its lower half. The ordering still keeps Rd == Rn
    * correct: the aliased source is live before the zeroing form defines it.
    */
-  const auto native_source = read_native_vector(source, 1U);
-  const auto native_destination =
-      write_native_vector(destination, upper, 0U);
-  emit((instruction & ~0x3ffU) |
-       (native_source.host << 5) | native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_unary(instruction, upper);
   return true;
 }
 
@@ -620,14 +613,7 @@ JitCompilerFamilies::emit_simd_narrow_move(std::uint32_t instruction) {
       (instruction & 0x9fbf'fc00U) != 0x0ea1'c800U ||
       (instruction & 0x0040'0000U) != 0)
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned source = (instruction >> 5) & 31U;
-  const auto native_source = read_native_vector(source, 1U);
-  const auto native_destination =
-      write_native_vector(destination, false, 0U);
-  emit((instruction & ~0x3ffU) |
-       (native_source.host << 5) | native_destination.host);
-  commit_native_vector(native_destination, destination);
+  emit_native_vector_unary(instruction, false);
   return true;
 }
 

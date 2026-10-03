@@ -226,8 +226,6 @@ private:
 
   [[nodiscard]] bool emit_simd_duplicate_element(std::uint32_t instruction);
 
-  void emit_simd_unary_native(std::uint32_t instruction);
-
   [[nodiscard]] bool emit_simd_bit_unary(std::uint32_t instruction);
 
   [[nodiscard]] bool emit_simd_integer_reduce(std::uint32_t instruction);

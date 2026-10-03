@@ -1026,19 +1026,8 @@ void JitCompiler::emit_simd_duplicate_general(std::uint32_t instruction) {
     const bool q = (instruction & 0x4000'0000U) != 0;
     if (!lane || (vector && !q && lane->element_shift == 3U))
       return false;
-    emit_simd_unary_native(instruction);
+    emit_native_vector_unary(instruction, false);
     return true;
-  }
-
-void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
-    const unsigned source = (instruction >> 5) & 31U;
-    const unsigned destination = instruction & 31U;
-    const auto native_source = read_native_vector(source, 1);
-    const auto native_destination =
-        write_native_vector(destination, false, 0);
-    emitter_.emit((instruction & ~((31U << 5) | 31U)) |
-                  (native_source.host << 5) | native_destination.host);
-    commit_native_vector(native_destination, destination);
   }
 
 [[nodiscard]] bool JitCompiler::emit_simd_bit_unary(std::uint32_t instruction) {
@@ -1058,7 +1047,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
                        : opcode == 6U && !alternate && size == 0U;
     if (!valid)
       return false;
-    emit_simd_unary_native(instruction);
+    emit_native_vector_unary(instruction, false);
     return true;
   }
 
@@ -1075,7 +1064,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
     const unsigned size = (instruction >> 22) & 3U;
     if (size > 2U || (!q && size == 2U))
       return false;
-    emit_simd_unary_native(instruction);
+    emit_native_vector_unary(instruction, false);
     return true;
   }
 
@@ -1083,7 +1072,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
     if (!host_capabilities().advanced_simd ||
         (instruction & 0xffff'fc00U) != 0x5ef1'b800U)
       return false;
-    emit_simd_unary_native(instruction);
+    emit_native_vector_unary(instruction, false);
     return true;
   }
 
@@ -1129,17 +1118,10 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
           (!shift_left && (shift == 0U || shift > lane_bits)))
         return false;
     }
-    const unsigned destination = instruction & 31U;
-    const unsigned source = (instruction >> 5) & 31U;
     const bool reads_destination =
         opcode == 2U || opcode == 6U || opcode == 8U ||
         (opcode == 10U && alternate) || (narrow && !scalar && q);
-    const auto native_source = read_native_vector(source, 1);
-    const auto native_destination =
-        write_native_vector(destination, reads_destination, 0);
-    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
-                  native_destination.host);
-    commit_native_vector(native_destination, destination);
+    emit_native_vector_unary(instruction, reads_destination);
     const bool saturating =
         saturating_left || opcode >= 18U ||
         ((opcode == 16U || opcode == 17U) && alternate);
@@ -1157,7 +1139,7 @@ void JitCompiler::emit_simd_unary_native(std::uint32_t instruction) {
     if (source_bits < 8U || source_bits > 32U ||
         encoded - source_bits >= source_bits)
       return false;
-    emit_simd_unary_native(instruction);
+    emit_native_vector_unary(instruction, false);
     return true;
   }
 

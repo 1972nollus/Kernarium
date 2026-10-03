@@ -482,6 +482,18 @@ void JitCompilerFamilies::commit_native_vector(NativeVector value,
                     guest * sizeof(arm64::VectorRegister));
 }
 
+void JitCompilerFamilies::emit_native_vector_unary(
+    std::uint32_t instruction, bool reads_destination) {
+  const unsigned destination = instruction & 31U;
+  const unsigned source = (instruction >> 5) & 31U;
+  const auto native_source = read_native_vector(source, 1U);
+  const auto native_destination =
+      write_native_vector(destination, reads_destination, 0U);
+  emit((instruction & ~0x3ffU) | (native_source.host << 5) |
+       native_destination.host);
+  commit_native_vector(native_destination, destination);
+}
+
 void JitCompilerFamilies::emit_native_vector_binary(
     std::uint32_t instruction, bool reads_destination) {
   const unsigned destination = instruction & 31U;
