@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "uml/emulator.h"
+#include "testing.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -31,14 +32,16 @@ using Emulator =
     std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
 
 Emulator makeEmulator(
-    uml_emulator_kernel_entry entry,
+    uml::emulator::testing::KernelEntry entry,
     const uml_emulator_network_callbacks* network = nullptr)
 {
+    const auto image = uml::emulator::testing::kernel_image(entry);
     const uml_emulator_config config{
         .abi_version = UML_EMULATOR_ABI_VERSION,
         .struct_size = sizeof(uml_emulator_config),
         .rootfs_path = "/tmp/uml-c-api-boundary.img",
-        .native_kernel_entry = entry,
+        .kernel_image = image.data(),
+        .kernel_image_size = image.size(),
         .network = network,
     };
     uml_emulator* created = nullptr;
@@ -61,10 +64,16 @@ void kernelExceptionsBecomeApiErrorsAndLeaveARetryableHandle()
 {
     kernelEntries.store(0, std::memory_order_relaxed);
     auto emulator = makeEmulator(kernelThatFailsOnce);
+    uml_emulator_capabilities before{
+        .struct_size = sizeof(uml_emulator_capabilities),
+    };
+    require(uml_emulator_get_capabilities(emulator.get(), &before) ==
+            UML_EMULATOR_OK,
+        "could not query a fresh C API boundary handle");
     const char* arguments[]{"uml-c-api-boundary"};
     require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) ==
             -UML_EMULATOR_RUNTIME_ERROR,
-        "a native-kernel exception escaped the public C run boundary");
+        "a kernel exception escaped the public C run boundary");
 
     unsigned char mac[6]{};
     unsigned int mtu{};
@@ -78,7 +87,11 @@ void kernelExceptionsBecomeApiErrorsAndLeaveARetryableHandle()
     };
     require(uml_emulator_get_capabilities(emulator.get(), &capabilities) ==
                 UML_EMULATOR_OK &&
-            capabilities.can_run && capabilities.kernel_is_native_macho,
+            capabilities.abi_version == before.abi_version &&
+            capabilities.userspace_execution == before.userspace_execution &&
+            capabilities.can_run == before.can_run &&
+            capabilities.sandbox_safe == before.sandbox_safe &&
+            capabilities.platform == before.platform,
         "a contained run exception corrupted public handle capabilities");
 }
 

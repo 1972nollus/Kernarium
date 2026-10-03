@@ -42,11 +42,10 @@ later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
 without entering a kernel; see
 [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
-Different 16 KiB native-callback handles may run concurrently when their host
-mappings do not overlap. Embedded kernels and 4 KiB native-callback runs use a
-process address-space gate because their fixed host mappings cannot be safely
-shared. Ambiguous unbound callbacks fail closed rather than borrowing another
-handle's context.
+Runs on different handles serialize through a process address-space gate,
+because an embedded kernel's fixed host mappings cannot be shared. A stop
+request cancels a run queued there. Ambiguous unbound callbacks fail closed
+rather than borrowing another handle's context.
 
 The caller owns provider lifetimes. The macOS app therefore creates and
 destroys SLiRP around emulator use; the library has no process-global network
@@ -343,15 +342,8 @@ normal mainline slices and Android remain arm64-userspace-only and contain
 none of the x86_64 kernel overlay.
 
 The [Steam rootfs](../tools/rootfs/steam-x86_64/README.md) runs Valve's native
-x86-64 Linux client on this x86_64 userspace product, without a desktop
-environment; Steam manages Proton itself. Its experimental Vulkan variant
-consumes the receipt-verified Mesa/Venus guest runtime and the paired
-KosmicKrisp host product. The producer owns gaming-session validation and
-documents any remaining GPU startup boundary. Its image-owned init mounts
-EROFS read-only and binds home and system state from a separate persistent
-GPT/ext4 disk. Replacing the rootfs never resets that disk or reseeds an
-existing Steam client. Boot and client-update progress use a Kernarium splash
-before handing the display to Big Picture.
+x86-64 Linux client on this x86_64 userspace product; its producer owns the
+image, its persistent data disk and its startup contract.
 
 The JIT uses a process budget with a bounded private working set per executor
 and a process-global shared translation tier. Shared entries contain immutable
@@ -508,17 +500,12 @@ device and the guest's Vulkan client is killed within seconds, but a client
 that happens to be waiting on a full control queue stays blocked until Mesa's
 own ring timeout, on the order of fifteen minutes.
 
-The Apple graphics path is:
-
-```text
-Linux virtio-gpu -> vhost-user -> virglrenderer -> Mesa Zink on KosmicKrisp
-    -> shared Metal presentation -> AppKit or UIKit
-```
-
-GPU commands and rendering stay off the UI thread. The shared presentation
-layer keeps the newest frame and at most one command buffer in flight. A
-backpressured presentation may drop a superseded frame; only unsupported
-resource shapes use CPU readback. See [`graphics.md`](graphics.md).
+The default Apple graphics path, from guest Mesa through Virgl and
+virglrenderer to Zink on KosmicKrisp and the shared Metal presentation, is in
+[`graphics.md`](graphics.md). GPU commands and rendering stay off
+the UI thread. The shared presentation layer keeps the newest frame and at
+most one command buffer in flight. A backpressured presentation may drop a
+superseded frame; only unsupported resource shapes use CPU readback.
 
 A guest drives the renderer, so no host write into guest memory is sized by
 the renderer alone: the device bounds a translated guest range to one
@@ -564,13 +551,8 @@ a later context the guest gives the same ID starts with none.
 Venus keeps shareable Zink scanouts in their renderer-optimal Metal
 layout. An unlinked vnode-backed identity descriptor reconnects each guest
 dma-buf with its in-process MTLHeap and native MTLTexture; the descriptor never
-stores pixel data. Native presentation samples that texture directly. The VNC
-consumer instead performs a damage-bounded asynchronous Metal blit into one
-shared staging buffer, first drawing the scanout at its fitted size with the
-native presenter's pass when the guest mode or a bottom-up texture needs it,
-keeps at most one newer pending frame, and publishes to LibVNCServer only after
-GPU completion, so neither readback, scaling, nor encoding blocks the guest
-flush timeline.
+stores pixel data. Native presentation samples that texture directly; the VNC
+consumer reads it back as [`graphics.md`](graphics.md) describes.
 
 Sharing runs the other way too, for a guest whose buffer allocator is not the
 Vulkan driver: when another context asks to import a GL resource, the renderer

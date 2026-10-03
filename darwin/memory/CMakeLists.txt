@@ -57,8 +57,8 @@ if(UML_APPLE_PLATFORM MATCHES "^ios" AND
 endif()
 
 target_compile_definitions(uml_memory_vm_bridge PRIVATE
-    # A caller-supplied native Mach-O kernel also needs this bridge when the
-    # embedded ELF runner is disabled.
+    # macOS keeps this bridge without the embedded ELF runner too: the unit
+    # presets exercise native mappings through it.
     UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>)
 
 if(_uml_memory_has_native_vm)

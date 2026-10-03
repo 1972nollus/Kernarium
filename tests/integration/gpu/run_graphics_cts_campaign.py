@@ -28,6 +28,14 @@ shards without a validated attempt; a retry gets its own directory under
 retries/, and --max-attempts bounds how often. A catalogued attempt whose
 directory was removed fails the campaign closed.
 
+A campaign directory holds campaign.json, which records the plan, every
+generation of inputs, the attempt catalogue, the state and, once the campaign
+is complete, its aggregate status counts. A shard's first attempt lives in
+shards/<shard>/ and later ones in retries/<shard>/<NNNN>/. Each attempt keeps
+its attempt.json, runner.log and guest ownership journal, and under
+driver-output/ the leaf run's run.json, console log and transported
+artifacts/, including results.qpa and summary.txt.
+
 Generated guest files, such as the CTS launcher and its case list, reach the
 guest through the per-run initramfs and are named by SHA-256 and mode in the
 recorded harness command, so changing one invalidates the attempts already

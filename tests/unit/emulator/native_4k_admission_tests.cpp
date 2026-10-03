@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
 #include "native_window_test_support.hpp"
+#include "runtime/native_kernel_layout.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
@@ -30,23 +31,40 @@ using uml::testing::ScratchBacking;
 
 constexpr std::string_view backing_name = "uml-native-admission-XXXXXX";
 
+/* These runs exercise process admission, so keep the managed-JIT run gate
+ * from becoming an earlier, independent serialization boundary. */
+constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
+
 void require(bool condition, const char *message)
 {
 	if (!condition)
 		throw std::runtime_error{message};
 }
 
+/* A run maps its kernel window where an embedded kernel's run does; default
+ * options give the guest 256 MiB. */
+constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
+
+/* A free host page inside that window. */
 class NativeSlot final {
 public:
 	NativeSlot() : size_{static_cast<std::size_t>(getpagesize())}
 	{
-		base_ = uml::testing::reserve_native_test_window(size_);
+		const auto window =
+			uml::runtime::prepare_native_kernel_layout(run_guest_memory);
+		require(window.valid, "could not derive the run's native window");
+		for (auto candidate = window.window_start;
+		     base_ == 0 && candidate <= window.window_end - size_;
+		     candidate += size_) {
+			mach_vm_address_t reservation = candidate;
+			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
+				    VM_FLAGS_FIXED) == KERN_SUCCESS)
+				base_ = static_cast<std::uintptr_t>(reservation);
+		}
 		require(base_ != 0,
-			"could not reserve native admission slot");
-		require(base_ >= uml::testing::native_test_window_start &&
-			base_ <= uml::testing::native_test_window_end - size_,
-			"native admission slot escaped the shared native window");
-		require(uml::testing::release_native_test_window(base_, size_),
+			"could not reserve native admission slot in the run's window");
+		require(mach_vm_deallocate(mach_task_self(), base_, size_) ==
+				KERN_SUCCESS,
 			"could not release native admission reservation");
 	}
 
@@ -197,13 +215,16 @@ public:
 
 using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
 
-Emulator make_emulator(uml_emulator_kernel_entry entry, const char *rootfs)
+Emulator make_emulator(uml::emulator::testing::KernelEntry entry,
+	const char *rootfs)
 {
+	const auto image = uml::emulator::testing::kernel_image(entry);
 	const uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = rootfs,
-		.native_kernel_entry = entry,
+		.kernel_image = image.data(),
+		.kernel_image_size = image.size(),
 	};
 	uml_emulator *created = nullptr;
 	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
@@ -258,11 +279,12 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xe3, 0xf4, false);
 	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-a.img");
 	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-b.img");
-	const char *arguments[]{"native-4k-same-address"};
+	const char *arguments[]{
+		"native-4k-same-address", admission_engine_argument};
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] {
-		status_a = uml_emulator_run(handle_a.get(), 1, arguments, nullptr);
+		status_a = uml_emulator_run(handle_a.get(), 2, arguments, nullptr);
 	}};
 	require(wait_entered(state_a), "first same-address kernel did not enter");
 
@@ -272,14 +294,14 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 	admission.retiring_value = 0x2a;
 	AdmissionHooks hooks{admission};
 	std::thread second{[&] {
-		status_b = uml_emulator_run(handle_b.get(), 1, arguments, nullptr);
+		status_b = uml_emulator_run(handle_b.get(), 2, arguments, nullptr);
 	}};
 	require(wait_for_admission(admission),
 		"second same-address kernel did not reach the process gate");
 	{
 		std::lock_guard lock{kernel_coordinator.mutex};
 		require(!state_b.entered,
-			"same-address native callbacks overlapped in a 4 KiB build");
+			"same-address kernels overlapped across handles");
 	}
 	release(state_a);
 	first.join();
@@ -310,12 +332,13 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xa6, 0xb7, false);
 	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-stop-a.img");
 	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-stop-b.img");
-	const char *arguments[]{"native-4k-queued-stop"};
+	const char *arguments[]{
+		"native-4k-queued-stop", admission_engine_argument};
 	int status_a = -1;
 	int status_b = -1;
 	bool second_finished{};
 	std::thread first{[&] {
-		status_a = uml_emulator_run(handle_a.get(), 1, arguments, nullptr);
+		status_a = uml_emulator_run(handle_a.get(), 2, arguments, nullptr);
 	}};
 	require(wait_entered(state_a), "queued-stop holder did not enter");
 
@@ -327,7 +350,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	{
 		std::thread second{[&] {
 			status_b = uml_emulator_run(
-				handle_b.get(), 1, arguments, nullptr);
+				handle_b.get(), 2, arguments, nullptr);
 			{
 				std::lock_guard lock{admission.mutex};
 				second_finished = true;
@@ -336,7 +359,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 		}};
 		require(wait_for_admission(admission),
 			"queued native run did not reach the process gate");
-		require(uml_emulator_run(handle_b.get(), 1, arguments, nullptr) ==
+		require(uml_emulator_run(handle_b.get(), 2, arguments, nullptr) ==
 				-UML_EMULATOR_RUNTIME_ERROR,
 			"same-handle queued duplicate did not fail fast");
 		uml_emulator_request_stop(handle_b.get());
@@ -351,7 +374,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	{
 		std::lock_guard lock{kernel_coordinator.mutex};
 		require(!state_b.entered,
-			"cancelled queued native callback entered the shared address space");
+			"cancelled queued kernel entered the shared address space");
 	}
 	require(status_b == -UML_EMULATOR_RUNTIME_ERROR,
 		"cancelled queued native run returned the wrong status");
@@ -366,7 +389,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 			"queued holder released the gate before native retirement");
 	}
 
-	require(uml_emulator_run(handle_b.get(), 1, arguments, nullptr) == 0 &&
+	require(uml_emulator_run(handle_b.get(), 2, arguments, nullptr) == 0 &&
 		state_b.entered && state_b.valid,
 		"cancelled native handle could not retry with fresh state");
 	require(backing_a.get_byte(0) == std::byte{0x46} &&
@@ -383,9 +406,6 @@ int main()
 {
 	try {
 		static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096);
-		uml::testing::NativeTestWindowScope native_window;
-		require(native_window.entered(),
-			"could not configure native admission test window");
 		require(uml::memory::testing::native_domain_count() == 0,
 			"native admission test started with a retained domain");
 		NativeSlot slot;
