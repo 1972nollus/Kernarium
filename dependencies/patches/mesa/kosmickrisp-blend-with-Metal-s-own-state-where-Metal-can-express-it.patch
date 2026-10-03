@@ -450,7 +450,7 @@ index fa4b9cde1df9456a76b4fa4066081d08bf6cbfed..8319e2d10da17d3dfb4275500076fda5
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 6243ed3d6f3960c2b5ab0592ac371fba7bcc9e2c..ebdadad34519aad135889803e8765be67768a6a8 100644
+index c1609538fff091860a40ed36555750e9b65a1de4..8509deb688d8ea16d02a4ad7cd6454cf089bc08a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1778,14 +1778,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)

@@ -49,7 +49,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/kk_device_memory_pool.h
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 5288221279e2773b76a3aa9f081fa52f2914a768..71f146c99646b83c1cfbbb01ca5370f179354716 100644
+index 82b6c1c1746ec4f16514704347f6aa7d27021090..94afc8dd3b69f76dd6655b295cfc78ec9d2d1a39 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -18,6 +18,7 @@

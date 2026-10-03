@@ -138,10 +138,10 @@ index b16501d89a4447da46c9765cd87e54e8add420a8..bc56afd6293d53a6e3add7fea93f1906
  libkk_increment_ia(global uint32_t *ia_vertices,
                     global uint32_t *ia_primitives,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index e9aad1e62133281eb13813d923457b278e832595..adc9b348fa08cd47f9325eac6e873e4f70f40a11 100644
+index fcb0582b3f6092b1eeec6b2d258a5e2b47c4a770..684b2e0e12c067bbc42bbe6cc08f3ce4f43256de 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -55,6 +55,8 @@ kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd)
+@@ -56,6 +56,8 @@ kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd)
        kk_destroy_bo(dev, *bo);
     }
     util_dynarray_clear(&cmd->large_bos);
@@ -150,23 +150,23 @@ index e9aad1e62133281eb13813d923457b278e832595..adc9b348fa08cd47f9325eac6e873e4f
  }
  
  /* Drops a lane's pending timestamp work and the query-pool objects it holds. */
-@@ -105,6 +107,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
-    kk_cmd_release_resources(dev, cmd);
+@@ -107,6 +109,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+    util_dynarray_fini(&cmd->statistics_queries);
     util_dynarray_fini(&cmd->submit_cmd_bufs);
     util_dynarray_fini(&cmd->large_bos);
 +   util_dynarray_fini(&cmd->pinned_heaps);
  
     vk_free(&pool->vk.alloc, cmd);
  }
-@@ -186,6 +189,7 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
- 
+@@ -189,6 +192,7 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+    cmd->statistics_queries = UTIL_DYNARRAY_INIT;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
     cmd->large_bos = UTIL_DYNARRAY_INIT;
 +   cmd->pinned_heaps = UTIL_DYNARRAY_INIT;
  
     cmd->vk.dynamic_graphics_state.vi = &cmd->state.gfx._dynamic_vi;
     cmd->vk.dynamic_graphics_state.ms.sample_locations =
-@@ -235,7 +239,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -238,7 +242,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cmd->uploader.offset = 0;
  
     memset(&cmd->state, 0, sizeof(cmd->state));
@@ -177,10 +177,10 @@ index e9aad1e62133281eb13813d923457b278e832595..adc9b348fa08cd47f9325eac6e873e4f
  
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f551f6fc5d 100644
+index 92ae55f0bf63d4bedddc67b24a96dd389d46c762..3f05efbb0b72b5b5ca7564475f4eac175d8f75b0 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -373,8 +373,17 @@ struct kk_cmd_buffer {
+@@ -386,8 +386,17 @@ struct kk_cmd_buffer {
     /* Owned large BOs */
     struct util_dynarray large_bos;
  
@@ -200,7 +200,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f5
     /* Set at vkBeginCommandBuffer. One-time-submit buffers skip command
      * enqueueing in the trampolines since they can never be replayed. */
     bool one_time_submit;
-@@ -415,6 +424,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
+@@ -428,6 +437,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
  };
  
  void kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd);
@@ -210,7 +210,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f5
  void cs_start_render(struct kk_cmd_buffer *cmd);
  mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
  void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
-@@ -434,10 +446,10 @@ kk_cmd_buffer_dirty_all_gfx(struct kk_cmd_buffer *cmd)
+@@ -447,10 +459,10 @@ kk_cmd_buffer_dirty_all_gfx(struct kk_cmd_buffer *cmd)
     cmd->state.gfx.dirty = ~0u;
     cmd->state.gfx.descriptors.root_dirty = true;
  
@@ -226,7 +226,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f5
  
  void kk_cmd_release_dynamic_ds_state(struct kk_cmd_buffer *cmd);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de3e7b56ef 100644
+index a368cf60c9d750005d83a2efad44e97cc472c576..dee753c51689efdd6341e640adbddef2274ef0e8 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -16,6 +16,7 @@
@@ -645,7 +645,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
        }
     } else {
        if (gsi->output_vertex_stride) {
-@@ -2093,7 +2407,6 @@ static bool
+@@ -2100,7 +2414,6 @@ static bool
  kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
                     bool rotate_provoking_to_first, bool discard_adjacency)
  {
@@ -653,7 +653,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
  
     if (unlikely(!kk_convert_to_indirect_draw(cmd, data)))
        return false;
-@@ -2139,8 +2452,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -2146,8 +2459,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     data->prim = discard_adjacency ? u_reduced_prim(data->prim)
                                    : u_decomposed_prim(data->prim);
     /* TODO_KOSMICKRISP Self-contained until we have rodata at the device. */
@@ -663,7 +663,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     data->restart_index = UINT32_MAX;
     data->index_buffer_el_size_B = 4u;
     data->indirect = true;
-@@ -2178,7 +2490,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2185,7 +2497,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
         !rotate_provoking_to_first)
        return draw;
  
@@ -671,7 +671,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     uint64_t in_draw;
     uint32_t in_draw_stride_el;
  
-@@ -2251,10 +2562,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2258,10 +2569,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
     libkk_unroll_geometry_struct(cmd, kk_grid_1d(1024), true, args);
  
     draw.grid = kk_grid_indirect(out_draw.gpu);
@@ -683,7 +683,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     draw.index.el_size_B = sizeof(uint32_t);
     draw.vertex_offset = 0;
     draw.line_raster_run_starts_addr =
-@@ -2728,7 +3036,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2735,7 +3043,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
  static struct kk_draw_data
  kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  {
@@ -691,7 +691,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     struct kk_grid grid_vs, grid_tcs, grid_tess;
  
-@@ -2830,8 +3137,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2837,8 +3144,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
     draw.grid = kk_grid_indirect(gfx->tess.out_draws_addr);
  
@@ -701,7 +701,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     draw.index.el_size_B = 4u;
     draw.primitive_type = mesa_prim_to_mtl_primitive_type(gfx->tess.prim);
     return draw;
-@@ -3402,6 +3708,78 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3409,6 +3715,78 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     return draw;
  }
  
@@ -780,7 +780,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
  static void
  kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  {
-@@ -3471,15 +3849,41 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3478,15 +3856,41 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
         requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
         (discard_adjacency && !emulate_line_raster));
@@ -825,7 +825,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de
     }
  
     for (uint32_t i = 0; i < data->draw_count; i++) {
-@@ -3491,6 +3895,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3498,6 +3902,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  
        struct kk_draw_data draw_data = build_draw_data(cmd, data, i);
  

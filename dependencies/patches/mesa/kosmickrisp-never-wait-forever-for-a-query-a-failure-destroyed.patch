@@ -34,7 +34,7 @@ destroyed.
  4 files changed, 71 insertions(+), 12 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb377579ce 100644
+index 2320bb72690547cf5ccb617b527dd29ba5ba437e..82cb7d5501a5fa0ef3d90107bf1fa8d76e7947ca 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -16,9 +16,15 @@
@@ -53,7 +53,7 @@ index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb
  struct kk_query_report {
     uint64_t value;
  };
-@@ -538,8 +544,15 @@ static VkResult
+@@ -658,8 +664,15 @@ static VkResult
  kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
                              uint32_t query)
  {
@@ -71,7 +71,7 @@ index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb
     for (;;) {
        if (kk_query_is_available(dev, pool, query))
           return VK_SUCCESS;
-@@ -548,6 +561,20 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -668,6 +681,20 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
        if (status != VK_SUCCESS)
           return status;
  

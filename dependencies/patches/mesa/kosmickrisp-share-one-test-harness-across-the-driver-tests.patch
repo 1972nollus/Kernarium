@@ -121,7 +121,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/test_offline_device_library.c       |   59 +-
  .../vulkan/tests/test_owed_signal_bound.c     |   51 +-
  .../tests/test_pipeline_library_link_time.cpp | 1250 ++++++--------
- .../tests/test_pipeline_statistics_gpu.c      |  110 +-
+ .../tests/test_pipeline_statistics_gpu.c      |  132 +-
  .../vulkan/tests/test_point_clip_volume.cpp   |  725 ++++----
  .../tests/test_polygon_point_raster.cpp       |  777 ++++-----
  .../test_post_depth_coverage_sample_mask.cpp  | 1063 +++++-------
@@ -146,7 +146,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/test_unused_attachment_gaps.cpp     |  786 ++++-----
  .../texel_buffer_bounds_shaders/generate.sh   |    5 -
  .../unused_attachment_shaders/generate.sh     |    7 -
- 99 files changed, 8650 insertions(+), 15146 deletions(-)
+ 99 files changed, 8661 insertions(+), 15157 deletions(-)
  delete mode 100755 src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
  delete mode 100755 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
@@ -16995,7 +16995,7 @@ index aff0c55f3e6f4030bf859ba4fd00b35e6b3d50de..43cd152d656491d51ef4a0f8686ad897
     return failures ? 1 : 0;
  }
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c
-index b17f6a5a546b440370a7b4e0d19b6907003a99b7..e47f3e37482ada93366427ff5bc389f77b2070fd 100644
+index edb8932ef7c11470bbeb3023d2e32c5f23cd3be4..21cadb06c23ec4a54867eceedb57d7dd8d793b09 100644
 --- a/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_pipeline_statistics_gpu.c
 @@ -16,13 +16,7 @@
@@ -17253,7 +17253,77 @@ index b17f6a5a546b440370a7b4e0d19b6907003a99b7..e47f3e37482ada93366427ff5bc389f7
        assert(results[REPORTS] == 1);
        assert((discard ? invocations[0] == 0 : invocations[0] > 0) &&
               invocations[0] == invocations[1] &&
-@@ -556,13 +550,13 @@ main(void)
+@@ -612,7 +606,7 @@ test_overlapping_queries(struct context *ctx)
+          .queryCount = 1,
+          .pipelineStatistics = overlap_statistics[p],
+       };
+-      CHECK(ctx->api->CreateQueryPool(ctx->device, &info, NULL, &pools[p]));
++      VK_CHECK(ctx->api->CreateQueryPool(ctx->device, &info, NULL, &pools[p]));
+    }
+ 
+    const VkDeviceSize copy_stride = (OVERLAP_REPORTS + 1) * sizeof(uint64_t);
+@@ -622,7 +616,7 @@ test_overlapping_queries(struct context *ctx)
+       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    };
+    VkBuffer buffer;
+-   CHECK(ctx->api->CreateBuffer(ctx->device, &buffer_info, NULL, &buffer));
++   VK_CHECK(ctx->api->CreateBuffer(ctx->device, &buffer_info, NULL, &buffer));
+    VkMemoryRequirements requirements;
+    ctx->api->GetBufferMemoryRequirements(ctx->device, buffer, &requirements);
+    uint32_t type = 0;
+@@ -639,10 +633,10 @@ test_overlapping_queries(struct context *ctx)
+       .memoryTypeIndex = type,
+    };
+    VkDeviceMemory memory;
+-   CHECK(ctx->api->AllocateMemory(ctx->device, &memory_info, NULL, &memory));
+-   CHECK(ctx->api->BindBufferMemory(ctx->device, buffer, memory, 0));
++   VK_CHECK(ctx->api->AllocateMemory(ctx->device, &memory_info, NULL, &memory));
++   VK_CHECK(ctx->api->BindBufferMemory(ctx->device, buffer, memory, 0));
+    uint64_t *copied;
+-   CHECK(ctx->api->MapMemory(ctx->device, memory, 0, VK_WHOLE_SIZE, 0, (void **)&copied));
++   VK_CHECK(ctx->api->MapMemory(ctx->device, memory, 0, VK_WHOLE_SIZE, 0, (void **)&copied));
+ 
+    static const uint32_t vertex[] =
+ #include "statistics_shaders/fullscreen.vert.h"
+@@ -664,13 +658,13 @@ test_overlapping_queries(struct context *ctx)
+          .stage = i ? VK_SHADER_STAGE_GEOMETRY_BIT : VK_SHADER_STAGE_VERTEX_BIT,
+          .pName = "main",
+       };
+-      CHECK(ctx->api->CreateShaderModule(ctx->device, &module_info, NULL, &stages[i].module));
++      VK_CHECK(ctx->api->CreateShaderModule(ctx->device, &module_info, NULL, &stages[i].module));
+    }
+    const VkPipelineLayoutCreateInfo layout_info = {
+       .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    };
+    VkPipelineLayout layout;
+-   CHECK(ctx->api->CreatePipelineLayout(ctx->device, &layout_info, NULL, &layout));
++   VK_CHECK(ctx->api->CreatePipelineLayout(ctx->device, &layout_info, NULL, &layout));
+    const VkPipelineVertexInputStateCreateInfo vi = {
+       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+@@ -717,8 +711,8 @@ test_overlapping_queries(struct context *ctx)
+          .pColorBlendState = &cb,
+          .layout = layout,
+       };
+-      CHECK(ctx->api->CreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &info, NULL,
+-                                              &pipelines[g]));
++      VK_CHECK(ctx->api->CreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &info, NULL,
++                                                 &pipelines[g]));
+    }
+ 
+    const VkRenderingInfo render_info = {
+@@ -782,8 +776,8 @@ test_overlapping_queries(struct context *ctx)
+             continue;
+          const uint32_t reports = util_bitcount(overlap_statistics[p]);
+          uint64_t results[OVERLAP_REPORTS + 1];
+-         CHECK(ctx->api->GetQueryPoolResults(ctx->device, pools[p], 0, 1, sizeof(results),
+-                                             results, sizeof(results), result_flags));
++         VK_CHECK(ctx->api->GetQueryPoolResults(ctx->device, pools[p], 0, 1, sizeof(results),
++                                                results, sizeof(results), result_flags));
+          const uint64_t *copy = copied + p * (OVERLAP_REPORTS + 1);
+          for (uint32_t r = 0; r <= reports; r++) {
+             const uint64_t want = r < reports ? expected[p][r] : 1;
+@@ -826,13 +820,13 @@ main(void)
        .pApplicationInfo = &app,
     };
     VkInstance instance;
@@ -17269,7 +17339,7 @@ index b17f6a5a546b440370a7b4e0d19b6907003a99b7..e47f3e37482ada93366427ff5bc389f7
     assert(count == 1);
     const float priority = 1;
     const VkDeviceQueueCreateInfo queue_info = {
-@@ -605,12 +599,12 @@ main(void)
+@@ -875,12 +869,12 @@ main(void)
        .ppEnabledExtensionNames = extensions,
     };
     struct context ctx = {0};
@@ -17284,7 +17354,7 @@ index b17f6a5a546b440370a7b4e0d19b6907003a99b7..e47f3e37482ada93366427ff5bc389f7
     PFN_vkGetPhysicalDeviceMemoryProperties get_memory =
        (PFN_vkGetPhysicalDeviceMemoryProperties)kk_GetInstanceProcAddr(
           instance, "vkGetPhysicalDeviceMemoryProperties");
-@@ -622,21 +616,21 @@ main(void)
+@@ -892,21 +886,21 @@ main(void)
        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
        .queueFamilyIndex = 0,
     };

@@ -15,10 +15,10 @@ Add native coverage for release, reset, recycling and trim, with real GPU fill r
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..2d0b1431599db6b30a99aabcf3bb2ef3484ff662 100644
+index ce93d646e781664d7c0c479bb47631b2a5afef97..7bb009a0a617d744af8887dbe31d622028fef9c4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -191,7 +191,8 @@ alloc_fail:
+@@ -194,7 +194,8 @@ alloc_fail:
  static void
  kk_reset_encoder_state(struct kk_encoder_state *es)
  {
@@ -28,7 +28,7 @@ index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..2d0b1431599db6b30a99aabcf3bb2ef3
  }
  
  void
-@@ -218,13 +219,23 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -221,13 +222,23 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  
  static void
  kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
@@ -53,7 +53,7 @@ index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..2d0b1431599db6b30a99aabcf3bb2ef3
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -235,6 +246,17 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+@@ -238,6 +249,17 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
     .destroy = kk_destroy_cmd_buffer,
  };
  
@@ -71,7 +71,7 @@ index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..2d0b1431599db6b30a99aabcf3bb2ef3
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
-@@ -242,6 +264,18 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -245,6 +267,18 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);

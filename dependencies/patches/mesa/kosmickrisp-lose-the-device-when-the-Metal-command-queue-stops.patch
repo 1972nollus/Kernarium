@@ -55,10 +55,10 @@ requires the device lost between 30 and 45 s.
  6 files changed, 282 insertions(+), 25 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 9c03b79fddc81f3aac958ac270eeabdb377579ce..8990b6eaa42b60c96c0733b46259d655001760e3 100644
+index 82cb7d5501a5fa0ef3d90107bf1fa8d76e7947ca..b8abb9fefcbd59ac4e0d183a304f5b798561fe62 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -549,9 +549,13 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -669,9 +669,13 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
      * one. What it cannot report is a GPU write it destroyed: a query becomes
      * available through a write inside a submitted command buffer, and no
      * report names the query that write was for. So a queue that has failed
@@ -74,7 +74,7 @@ index 9c03b79fddc81f3aac958ac270eeabdb377579ce..8990b6eaa42b60c96c0733b46259d655
  
     for (;;) {
        if (kk_query_is_available(dev, pool, query))
-@@ -561,17 +565,41 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -681,17 +685,41 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
        if (status != VK_SUCCESS)
           return status;
  
