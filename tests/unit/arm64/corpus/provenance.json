@@ -1,6 +1,6 @@
 {
   "absent_features": {
-    "added_cases": 443,
+    "added_cases": 448,
     "afp": {
       "added_requirement": 419,
       "controls": 2393,
@@ -77,28 +77,28 @@
     },
     "input_sha256": "0839e3ba74e7a015b6913583517b54862b6d5f47fb4c1da7d0c7859add2a288e",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "8233f6f6be28846dc52fb7e68d4e313e9c1cadbdde2b58b66cc908fefb2e1282",
+    "sha256": "f7855e55c67ded573158ee6f6511a318ec2a82ba122a753459296e0adef43bee",
     "stripped_cases": 108995,
     "tbi_replacement_cases": 4284
   },
-  "cases": 141721,
+  "cases": 141726,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 25044,
+    "illegal-instruction": 25049,
     "instruction-budget": 186,
     "memory-fault": 9271,
     "system-call": 107124
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 86505,
+    "16k+4k": 86510,
     "4k": 27601
   },
   "coverage": {
     "entries": 983,
     "entries_with_cases": 747,
-    "entries_with_illegal_cases": 852,
+    "entries_with_illegal_cases": 857,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -155,16 +155,16 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13316319,
-  "pack_sha256": "1a53ff460286dc97b9485e40bdc08eff71a71025fc9ee96e452e4654e4e55d99",
+  "pack_bytes": 13316347,
+  "pack_sha256": "be234d3e06270675854a1dcc19c1d77676cb430a908a6766c50b49295e5b770b",
   "producer_commit": "34e37ce5a3d76e399f79fbbf732798a0ff54ae39",
-  "programs": 125836,
+  "programs": 125841,
   "records": 1081,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "full": 868,
+    "full": 873,
     "narrow": 140853
   },
   "validator_cases": {

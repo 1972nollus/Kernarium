@@ -6,7 +6,8 @@ representative cases in the checked-in
 through the gadget and JIT engines. Each case passed the interpreter and gadget
 lanes, and the JIT lane where the export host implements its features, before
 it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
+entry, and the corpus check fails if an entry has none. In
+`tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
 marked `verified`. The other 199 are marked `absent`: they need FEAT_MTE,
 FEAT_GCS, FEAT_CPA, FEAT_PAuth, one of the memory extensions FEAT_LSE128,
 FEAT_THE, FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64, FEAT_LSFE, FEAT_LSUI,
@@ -106,9 +107,10 @@ operand combinations. The variant-complete count is therefore 0/983.
   each allocation, and `a64_instruction_variant_contracts.tsv` supplies
   independently reviewed encoding contracts that override the decoder's
   allocation for the witnesses they match. Both are inputs of the allocation
-  generator; the bindings' `ctest` and `case` columns are provenance only.
-  They name the producer check a witness came from, or `-` once no corpus
-  record comes from that producer, and the corpus check enforces it.
+  generator, whose `binding_encoding` column copies the witness; the
+  bindings' `ctest` and `case` columns are provenance only. They name the
+  pack case, by producer and case name, whose entry word is the witness, or
+  `-` for both when no case is, and the corpus check enforces it.
 
 The checked TSV files, not a Markdown checklist, are the exact inventory. The
 generators live under `tests/tooling/arm64`; use their `--help` output for the

@@ -5,20 +5,20 @@ BASE-0003	Base	ADCS	arm64-base-arithmetic-carry	base-carry-rd width=32 sub=0 fla
 BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	extended width=32 op=0 flags=0 option=0 amount=0 ordinary	0b220027	-	baseline
 BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	extended width=64 op=0 flags=0 option=0 amount=0 ordinary	8b220027	-	baseline
 BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	reserved extended shift width=32 op=0 flags=0 option=0 amount=5 ordinary	0b221427	-	baseline
-BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	reserved extended shift width=32 op=0 flags=0 option=0 amount=6 ordinary	0b221827	-	baseline
-BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	reserved extended shift width=32 op=0 flags=0 option=0 amount=7 ordinary	0b221c27	-	baseline
+BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	reserved extended shift width=32 op=0 flags=0 option=2 amount=6 special	0b3f5bff	-	baseline
+BASE-0004	Base	ADD (extended register)	arm64-base-add-sub-extended	reserved extended shift width=32 op=0 flags=0 option=2 amount=7 ordinary	0b225c27	-	baseline
 BASE-0005	Base	ADD (immediate)	arm64-base-add-sub-immediate	ADD immediate width=32 sh=0 imm=0 rn=0 rd=0	11000000	-	baseline
 BASE-0006	Base	ADD (shifted register)	arm64-base-add-sub-shifted	shifted width=32 op=0 flags=0 type=0 amount=0 ordinary	0b020027	-	baseline
-BASE-0007	Base	ADDG	arm64-base-mte-tag	addg-d0-n0-i0-t0	91800000	-	mte
+BASE-0007	Base	ADDG	-	-	91800000	-	mte
 BASE-0008	Base	ADDPT	-	-	9a002000	-	cpa
 BASE-0009	Base	ADDS (extended register)	arm64-base-add-sub-extended	extended width=32 op=0 flags=1 option=0 amount=0 ordinary	2b220027	-	baseline
 BASE-0010	Base	ADDS (immediate)	arm64-base-add-sub-immediate	ADDS immediate width=32 sh=0 imm=0 rn=0 rd=0	31000000	-	baseline
 BASE-0011	Base	ADDS (shifted register)	arm64-base-add-sub-shifted	shifted width=32 op=0 flags=1 type=0 amount=0 ordinary	2b020027	-	baseline
 BASE-0012	Base	ADR	arm64-base-control-pc-relative	ADR rd=0 immediate=0	10000000	-	baseline
 BASE-0013	Base	ADRP	arm64-base-control-pc-relative	ADRP rd=0 immediate=0	90000000	-	baseline
-BASE-0014	Base	AND (immediate)	arm64-base-logical-immediate	AND immediate width=32 N=0 immr=0 imms=5 rn=15 rd=5	120015e5	-	baseline
+BASE-0014	Base	AND (immediate)	arm64-base-logical-immediate	AND immediate register matrix width=32 rn=27 rd=5	120b1765	-	baseline
 BASE-0015	Base	AND (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=0 N=0 type=0 amount=0 ordinary	0a020027	-	baseline
-BASE-0016	Base	ANDS (immediate)	arm64-base-logical-immediate	ANDS immediate width=32 N=0 immr=0 imms=5 rn=15 rd=26	720015fa	-	baseline
+BASE-0016	Base	ANDS (immediate)	arm64-base-logical-immediate	ANDS immediate width=32 N=0 immr=0 imms=9 rn=27 rd=30	7200277e	-	baseline
 BASE-0017	Base	ANDS (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=3 N=0 type=0 amount=0 ordinary	6a020027	-	baseline
 BASE-0018	Base	APAS	arm64-base-privileged_feature_alias	BASE-0018 apas-t0	d50e7000	-	rme_gpc3
 BASE-0019	Base	ASR (immediate)	arm64-base-bitfield-behavior	BASE-0360 SBFM	13007c27	-	baseline
@@ -38,7 +38,7 @@ BASE-0032	Base	AUTIBSPPCR	arm64-base-pauth-lr-data	autibspppcr-n0	dac1941e	-	pau
 BASE-0033	Base	AXFLAG	arm64-base-flag-fixed	BASE-0033 AXFLAG nzcv=0	d500405f	-	flag_m2
 BASE-0034	Base	B	arm64-base-control-direct-branch	B displacement=0	14000000	-	baseline
 BASE-0035	Base	B.cond	arm64-base-control-conditional-branch	BASE-0035 B.cond condition=0 nzcv=0 displacement=0	54000000	-	baseline
-BASE-0036	Base	BC.cond	arm64-base-control-conditional-branch	BASE-0036 BC.cond condition=0 nzcv=0 displacement=0	54000010	-	hbc
+BASE-0036	Base	BC.cond	-	-	54000010	-	hbc
 BASE-0037	Base	BFC	arm64-base-bitfield-behavior	BASE-0037 BFC	b37e03e7	-	asmv8p2
 BASE-0038	Base	BFI	arm64-base-bitfield-behavior	BASE-0039 BFM	b3600027	-	baseline
 BASE-0039	Base	BFM	arm64-base-bitfield-behavior	BASE-0039 BFM	33000027	base-bfm-bfxil	baseline
@@ -47,9 +47,9 @@ BASE-0041	Base	BIC (shifted register)	arm64-base-logical-shifted	logical shifted
 BASE-0042	Base	BICS (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=3 N=1 type=0 amount=0 ordinary	6a220027	-	baseline
 BASE-0043	Base	BL	arm64-base-control-direct-branch	BL displacement=0	94000000	-	baseline
 BASE-0044	Base	BLR	arm64-base-control-register-branch	BLR x0	d63f0000	-	baseline
-BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	arm64-base-pauth-branch	blra-xzr-a-z0	d73f0be7	-	pauth
+BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	-	-	d73f0be7	-	pauth
 BASE-0046	Base	BR	arm64-base-control-register-branch	BR x0	d61f0000	-	baseline
-BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	arm64-base-pauth-branch	bra-xzr-a-z0	d71f0be7	-	pauth
+BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	-	-	d71f0be7	-	pauth
 BASE-0048	Base	BRB	arm64-base-privileged_feature_alias	BASE-0048 brb-iall-t31	d509729f	-	brbe
 BASE-0049	Base	BRK	arm64-base-breakpoints	base-breakpoint	d4200000	-	baseline
 BASE-0050	Base	BTI	arm64-base-hint-behavior	BASE-0050 BTI full-state pattern=0	d503241f	-	bti
@@ -57,28 +57,28 @@ BASE-0051	Base	CAS, CASA, CASAL, CASL	arm64-base-compare-swap	scalar compare-and
 BASE-0052	Base	CASB, CASAB, CASALB, CASLB	arm64-base-compare-swap	scalar compare-and-swap behavior	08a3fc44	-	lse
 BASE-0053	Base	CASH, CASAH, CASALH, CASLH	arm64-base-compare-swap	scalar compare-and-swap behavior	48e37c44	-	lse
 BASE-0054	Base	CASP, CASPA, CASPAL, CASPL	arm64-base-compare-swap-pair	pair compare-and-swap behavior	4864fc46	-	lse
-BASE-0055	Base	CASPT, CASPAT, CASPALT, CASPLT	arm64-base-compare-swap-pair	pair compare-and-swap behavior	49c4fc46	-	lsui
-BASE-0056	Base	CAST, CASAT, CASALT, CASLT	arm64-base-compare-swap	scalar compare-and-swap behavior	c9837c44	-	lsui
-BASE-0057	Base	CB<cc> (immediate)	arm64-base-cmpbr-immediate	BASE-0057 CBcc immediate BASE-0071 CBLE immediate	75200000	base-cbcc-cble	cmpbr
-BASE-0058	Base	CB<cc> (register)	arm64-base-cmpbr-register	BASE-0058 CBcc register	74c00020	-	cmpbr
-BASE-0059	Base	CBB<cc>	arm64-base-cmpbr-register	BASE-0059 CBBcc	74c08020	-	cmpbr
-BASE-0060	Base	CBBLE	arm64-base-cmpbr-register	BASE-0059 CBBcc BASE-0060 CBBLE	74208020	-	cmpbr
-BASE-0061	Base	CBBLO	arm64-base-cmpbr-register	BASE-0059 CBBcc BASE-0061 CBBLO	74408000	-	cmpbr
-BASE-0062	Base	CBBLS	arm64-base-cmpbr-register	BASE-0059 CBBcc BASE-0062 CBBLS	74608020	-	cmpbr
-BASE-0063	Base	CBBLT	arm64-base-cmpbr-register	BASE-0059 CBBcc BASE-0063 CBBLT	74008000	-	cmpbr
-BASE-0064	Base	CBGE (immediate)	arm64-base-cmpbr-immediate	BASE-0057 CBcc immediate BASE-0064 CBGE immediate	75002000	-	cmpbr
-BASE-0065	Base	CBH<cc>	arm64-base-cmpbr-register	BASE-0065 CBHcc	74c0c020	-	cmpbr
-BASE-0066	Base	CBHLE	arm64-base-cmpbr-register	BASE-0065 CBHcc BASE-0066 CBHLE	7420c020	-	cmpbr
-BASE-0067	Base	CBHLO	arm64-base-cmpbr-register	BASE-0065 CBHcc BASE-0067 CBHLO	7440c000	-	cmpbr
-BASE-0068	Base	CBHLS	arm64-base-cmpbr-register	BASE-0065 CBHcc BASE-0068 CBHLS	7460c020	-	cmpbr
-BASE-0069	Base	CBHLT	arm64-base-cmpbr-register	BASE-0065 CBHcc BASE-0069 CBHLT	7400c000	-	cmpbr
-BASE-0070	Base	CBHS (immediate)	arm64-base-cmpbr-immediate	BASE-0057 CBcc immediate BASE-0070 CBHS immediate	75402000	-	cmpbr
-BASE-0071	Base	CBLE (immediate)	arm64-base-cmpbr-immediate	BASE-0057 CBcc immediate BASE-0071 CBLE immediate	75200000	base-cbcc-cble	cmpbr
-BASE-0072	Base	CBLE (register)	arm64-base-cmpbr-register	BASE-0058 CBcc register BASE-0072 CBLE register	74200020	-	cmpbr
-BASE-0073	Base	CBLO (register)	arm64-base-cmpbr-register	BASE-0058 CBcc register BASE-0073 CBLO register	74400000	-	cmpbr
-BASE-0074	Base	CBLS (immediate)	arm64-base-cmpbr-immediate	BASE-0057 CBcc immediate BASE-0074 CBLS immediate	75600000	-	cmpbr
-BASE-0075	Base	CBLS (register)	arm64-base-cmpbr-register	BASE-0058 CBcc register BASE-0075 CBLS register	74600020	-	cmpbr
-BASE-0076	Base	CBLT (register)	arm64-base-cmpbr-register	BASE-0058 CBcc register BASE-0076 CBLT register	74000000	-	cmpbr
+BASE-0055	Base	CASPT, CASPAT, CASPALT, CASPLT	-	-	49c4fc46	-	lsui
+BASE-0056	Base	CAST, CASAT, CASALT, CASLT	-	-	c9837c44	-	lsui
+BASE-0057	Base	CB<cc> (immediate)	-	-	75200000	base-cbcc-cble	cmpbr
+BASE-0058	Base	CB<cc> (register)	-	-	74c00020	-	cmpbr
+BASE-0059	Base	CBB<cc>	-	-	74c08020	-	cmpbr
+BASE-0060	Base	CBBLE	-	-	74208020	-	cmpbr
+BASE-0061	Base	CBBLO	-	-	74408000	-	cmpbr
+BASE-0062	Base	CBBLS	-	-	74608020	-	cmpbr
+BASE-0063	Base	CBBLT	-	-	74008000	-	cmpbr
+BASE-0064	Base	CBGE (immediate)	-	-	75002000	-	cmpbr
+BASE-0065	Base	CBH<cc>	-	-	74c0c020	-	cmpbr
+BASE-0066	Base	CBHLE	-	-	7420c020	-	cmpbr
+BASE-0067	Base	CBHLO	-	-	7440c000	-	cmpbr
+BASE-0068	Base	CBHLS	-	-	7460c020	-	cmpbr
+BASE-0069	Base	CBHLT	-	-	7400c000	-	cmpbr
+BASE-0070	Base	CBHS (immediate)	-	-	75402000	-	cmpbr
+BASE-0071	Base	CBLE (immediate)	-	-	75200000	base-cbcc-cble	cmpbr
+BASE-0072	Base	CBLE (register)	-	-	74200020	-	cmpbr
+BASE-0073	Base	CBLO (register)	-	-	74400000	-	cmpbr
+BASE-0074	Base	CBLS (immediate)	-	-	75600000	-	cmpbr
+BASE-0075	Base	CBLS (register)	-	-	74600020	-	cmpbr
+BASE-0076	Base	CBLT (register)	-	-	74000000	-	cmpbr
 BASE-0077	Base	CBNZ	arm64-base-control-compare-test	CBNZ w0 value=0 displacement=0	35000000	-	baseline
 BASE-0078	Base	CBZ	arm64-base-control-compare-test	CBZ x0 value=0 displacement=0	b4000000	-	baseline
 BASE-0079	Base	CCMN (immediate)	arm64-base-condition-compare-immediate	BASE-0079 CCMN (immediate) width=32 cond=0 incoming=0 alternative=0 imm=0	3a400860	-	baseline
@@ -88,8 +88,8 @@ BASE-0082	Base	CCMP (register)	arm64-base-condition-compare-register	BASE-0082 C
 BASE-0083	Base	CFINV	arm64-base-flag-fixed	BASE-0083 CFINV nzcv=0	d500401f	-	flag_m
 BASE-0084	Base	CFP	arm64-base-prediction_restriction	BASE-0084 cfp-t0	d50b7380	-	specres
 BASE-0085	Base	CHKFEAT	arm64-base-chkfeat	chkfeat-feature-absent-pattern0-value=0	d503251f	-	chk
-BASE-0086	Base	CINC	arm64-base-condition-select	BASE-0086 CINC width=32 cond=1 nzcv=0	1a8504a7	-	baseline
-BASE-0087	Base	CINV	arm64-base-condition-select	BASE-0087 CINV width=32 cond=1 nzcv=0	5a8500a7	-	baseline
+BASE-0086	Base	CINC	arm64-base-condition-select	BASE-0086 CINC width=32 cond=13 nzcv=15	1a85c4a7	-	baseline
+BASE-0087	Base	CINV	arm64-base-condition-select	BASE-0087 CINV width=32 cond=13 nzcv=15	5a85c0a7	-	baseline
 BASE-0088	Base	CLRBHB	arm64-base-hint-behavior	BASE-0088 CLRBHB full-state pattern=0	d50322df	-	clrbhb
 BASE-0089	Base	CLREX	arm64-base-clear-exclusive	clear-exclusive immediate	d503375f	-	baseline
 BASE-0090	Base	CLS	arm64-base-bit-allocation	base-bit-allocation width=32 op=5 rn=0 rd=0	5ac01400	-	baseline
@@ -100,8 +100,8 @@ BASE-0094	Base	CMN (shifted register)	arm64-base-add-sub-shifted	shifted width=3
 BASE-0095	Base	CMP (extended register)	arm64-base-add-sub-extended	extended width=32 op=1 flags=1 option=0 amount=0 sp-special-destination	6b2203ff	-	baseline
 BASE-0096	Base	CMP (immediate)	arm64-base-add-sub-immediate	CMP immediate width=64 sh=0 imm=0 rn=0	f100001f	-	baseline
 BASE-0097	Base	CMP (shifted register)	arm64-base-add-sub-shifted	shifted width=32 op=1 flags=1 type=1 amount=31 discard	6b427c3f	-	baseline
-BASE-0098	Base	CMPP	arm64-base-mte-pointer	BASE-0098 CMPP subps-d31-n0-m0	bac0001f	-	mte
-BASE-0099	Base	CNEG	arm64-base-condition-select	BASE-0099 CNEG width=32 cond=1 nzcv=0	5a8504a7	-	baseline
+BASE-0098	Base	CMPP	-	-	bac0001f	-	mte
+BASE-0099	Base	CNEG	arm64-base-condition-select	BASE-0099 CNEG width=32 cond=13 nzcv=15	5a85c4a7	-	baseline
 BASE-0100	Base	CNT	arm64-base-bit-allocation	base-bit-allocation width=32 op=7 rn=0 rd=0	5ac01c00	-	cssc
 BASE-0101	Base	COSP	arm64-base-prediction_restriction	BASE-0101 cosp-t0	d50b73c0	-	specres2
 BASE-0102	Base	CPP	arm64-base-prediction_restriction	BASE-0102 cpp-t0	d50b73e0	-	specres
@@ -154,16 +154,16 @@ BASE-0148	Base	DCPS3	arm64-base-el0-undefined-exceptions	BASE-0148 DCPS3	d4a0000
 BASE-0149	Base	DGH	arm64-base-hint-behavior	BASE-0149 DGH full-state pattern=0	d50320df	-	dgh
 BASE-0150	Base	DMB	arm64-base-barrier-allocation	BASE-0150 DMB option=0 state=0	d50330bf	-	baseline
 BASE-0151	Base	DRPS	arm64-base-el0-undefined-exceptions	base-el0-undefined-return	d6bf03e0	-	baseline
-BASE-0152	Base	DSB	arm64-base-barrier-allocation	BASE-0152 DSB nXS scope=0 state=0	d503323f	-	xs
+BASE-0152	Base	DSB	arm64-absent-xs	DSB OSHNXS is undefined	d503323f	-	xs
 BASE-0153	Base	DVP	arm64-base-prediction_restriction	BASE-0153 dvp-t0	d50b73a0	-	specres
 BASE-0154	Base	EON (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=2 N=1 type=0 amount=0 ordinary	4a220027	-	baseline
-BASE-0155	Base	EOR (immediate)	arm64-base-logical-immediate	EOR immediate width=32 N=0 immr=0 imms=5 rn=15 rd=19	520015f3	-	baseline
+BASE-0155	Base	EOR (immediate)	arm64-base-logical-immediate	EOR immediate width=32 N=0 immr=0 imms=7 rn=21 rd=21	52001eb5	-	baseline
 BASE-0156	Base	EOR (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=2 N=0 type=0 amount=0 ordinary	4a020027	-	baseline
 BASE-0157	Base	ERET	arm64-base-el0-undefined-exceptions	base-el0-undefined-return	d69f03e0	-	baseline
 BASE-0158	Base	ERETAA, ERETAB	arm64-base-pauth-return	eretab-el0-s0	d69f0fff	-	pauth
 BASE-0159	Base	ESB	arm64-base-hint-behavior	BASE-0159 ESB full-state pattern=0	d503221f	-	ras
 BASE-0160	Base	EXTR	arm64-base-extract-allocation	base-extract-shift	13820027	-	baseline
-BASE-0161	Base	GCSB	arm64-base-hint-behavior	BASE-0161 GCSB DSYNC full-state pattern=0	d503227f	-	gcs
+BASE-0161	Base	GCSB	arm64-absent-gcs	GCSB DSYNC is a NOP	d503227f	-	gcs
 BASE-0162	Base	GCSPOPCX	arm64-base-gcs-reserved	BASE-0162 GCSPOPCX gcs-el0-undefined-op0-t31	d50877bf	-	gcs
 BASE-0163	Base	GCSPOPM	arm64-base-gcs-allocation	BASE-0163 GCSPOPM gcs-allocation-op1-t0	d52b7720	-	gcs
 BASE-0164	Base	GCSPOPX	arm64-base-gcs-reserved	BASE-0164 GCSPOPX gcs-el0-undefined-op2-t31	d50877df	-	gcs
@@ -175,22 +175,22 @@ BASE-0169	Base	GCSSTR	arm64-base-gcs-allocation	BASE-0169 GCSSTR gcs-allocation-
 BASE-0170	Base	GCSSTTR	arm64-base-gcs-allocation	BASE-0170 GCSSTTR gcs-allocation-op8-b0-t0	d91f1c00	-	gcs
 BASE-0171	Base	GIC	arm64-base-gic	BASE-0171 GIC op10-crm1-op20-t0	d508c100	-	gcie
 BASE-0172	Base	GICR	arm64-base-gicr	BASE-0172 GICR op0-t0	d528c300	-	gcie
-BASE-0173	Base	GMI	arm64-base-mte-pointer	gmi-d0-n0-m0	9ac01400	-	mte
+BASE-0173	Base	GMI	-	-	9ac01400	-	mte
 BASE-0174	Base	GSB	arm64-base-hint-allocation	BASE-0174 GSB operation=SYS Rt=0 EL0 profile	d508c000	-	gcie
 BASE-0175	Base	HINT	arm64-base-hint-allocation	BASE-0175 HINT primary immediate=64 allocation=unallocated-nop	d503281f	-	baseline
 BASE-0176	Base	HINTE	arm64-base-extended-hints-0	BASE-0176 HINTE	d5002000	-	hinte
 BASE-0177	Base	HLT	arm64-base-el0-undefined-exceptions	BASE-0177 HLT	d4400000	-	baseline
 BASE-0178	Base	HVC	arm64-base-el0-undefined-exceptions	BASE-0178 HVC	d4000002	-	baseline
 BASE-0179	Base	IC	arm64-base-ic_ivau	BASE-0179 IC IVAU Rt=0	d50b7520	-	baseline
-BASE-0180	Base	IRG	arm64-base-mte-random-tag	irg-d0-n0-m31	9adf1000	-	mte
+BASE-0180	Base	IRG	-	-	9adf1000	-	mte
 BASE-0181	Base	ISB	arm64-base-barrier-allocation	BASE-0181 ISB option=0 state=0	d50330df	-	baseline
-BASE-0182	Base	LD64B	arm64-base-ls64-allocation	ls64-allocated-op0-t0-n0-s31	f83fd000	-	ls64
+BASE-0182	Base	LD64B	-	-	f83fd000	-	ls64
 BASE-0183	Base	LDADD, LDADDA, LDADDAL, LDADDL	arm64-base-atomic-bit	atomic RMW standard matrix	b8e30044	-	lse
 BASE-0184	Base	LDADDB, LDADDAB, LDADDALB, LDADDLB	arm64-base-atomic-bit	atomic RMW standard matrix	38e30044	-	lse
 BASE-0185	Base	LDADDH, LDADDAH, LDADDALH, LDADDLH	arm64-base-atomic-bit	atomic RMW standard matrix	78e30044	-	lse
 BASE-0186	Base	LDAP	-	-	d9445803	-	lscp
 BASE-0187	Base	LDAPP	-	-	d9447803	-	lscp
-BASE-0188	Base	LDAPR	arm64-base-ordered-allocation	ldapr-w-post allocated rn=0 rt=0	99c00800	-	lrcpc3
+BASE-0188	Base	LDAPR	arm64-absent-lrcpc3	LDAPR w post is undefined	99c00820	-	lrcpc3
 BASE-0189	Base	LDAPRB	arm64-base-ordered-allocation	ldaprb allocated rn=0 rt=0	38bfc000	-	lrcpc
 BASE-0190	Base	LDAPRH	arm64-base-ordered-allocation	ldaprh allocated rn=0 rt=0	78bfc000	-	lrcpc
 BASE-0191	Base	LDAPUR	arm64-base-ordered-allocation	ldapur-w allocated rn=0 rt=0	99400000	-	lrcpc2
@@ -202,7 +202,7 @@ BASE-0196	Base	LDAPURSW	arm64-base-ordered-allocation	ldapursw-x allocated rn=0 
 BASE-0197	Base	LDAR	arm64-base-ordered-allocation	ldar-w allocated rn=0 rt=0	88dffc00	-	baseline
 BASE-0198	Base	LDARB	arm64-base-ordered-allocation	ldarb allocated rn=0 rt=0	08dffc00	-	baseline
 BASE-0199	Base	LDARH	arm64-base-ordered-allocation	ldarh allocated rn=0 rt=0	48dffc00	-	baseline
-BASE-0200	Base	LDATXR	arm64-base-exclusive	scalar exclusive load	895ffc43	-	lsui
+BASE-0200	Base	LDATXR	-	-	895ffc43	-	lsui
 BASE-0201	Base	LDAXP	arm64-base-exclusive-pair	pair exclusive load	c87f9043	-	baseline
 BASE-0202	Base	LDAXR	arm64-base-exclusive	scalar exclusive load	c85ffc40	-	baseline
 BASE-0203	Base	LDAXRB	arm64-base-exclusive	scalar exclusive load	085ffc40	-	baseline
@@ -214,19 +214,19 @@ BASE-0208	Base	LDCLRP, LDCLRPA, LDCLRPAL, LDCLRPL	-	-	19a413e3	-	lse128
 BASE-0209	Base	LDEOR, LDEORA, LDEORAL, LDEORL	arm64-base-atomic-bit	atomic RMW standard matrix	b8e32044	-	lse
 BASE-0210	Base	LDEORB, LDEORAB, LDEORALB, LDEORLB	arm64-base-atomic-bit	atomic RMW standard matrix	38e32044	-	lse
 BASE-0211	Base	LDEORH, LDEORAH, LDEORALH, LDEORLH	arm64-base-atomic-bit	atomic RMW standard matrix	78e32044	-	lse
-BASE-0212	Base	LDG	arm64-base-mte-tag-load	ldg-b0-t0-i0-l0	d9600000	-	mte
+BASE-0212	Base	LDG	-	-	d9600000	-	mte
 BASE-0213	Base	LDGM	arm64-base-mte-multiple-load	BASE-0213 LDGM Rt=0 Rn=0 EL0 undefined	d9e00000	-	mte2
 BASE-0214	Base	LDIAPP	-	-	99440803	-	lrcpc3
-BASE-0215	Base	LDLAR	arm64-base-ordered-allocation	ldlar-w allocated rn=0 rt=0	88df7c00	-	lor
-BASE-0216	Base	LDLARB	arm64-base-ordered-allocation	ldlarb allocated rn=0 rt=0	08df7c00	-	lor
-BASE-0217	Base	LDLARH	arm64-base-ordered-allocation	ldlarh allocated rn=0 rt=0	48df7c00	-	lor
+BASE-0215	Base	LDLAR	-	-	88df7c00	-	lor
+BASE-0216	Base	LDLARB	-	-	08df7c00	-	lor
+BASE-0217	Base	LDLARH	-	-	48df7c00	-	lor
 BASE-0218	Base	LDNP	arm64-base-load-store-pair	load-32 mode=0 imm7=1	2840c783	-	baseline
 BASE-0219	Base	LDP	arm64-base-load-store-pair	load-32 mode=1 imm7=1	28c0c783	-	baseline
 BASE-0220	Base	LDPSW	arm64-base-load-store-pair	load-signed-32 mode=1 imm7=1	68c0c783	-	baseline
 BASE-0221	Base	LDR (immediate)	arm64-base-immediate-memory-offset	ldr-x unsigned offsets 0..28	f94003c0	-	baseline
 BASE-0222	Base	LDR (literal)	arm64-literal-load-behavior	ldr-w reads code page	18000017	-	baseline
 BASE-0223	Base	LDR (register)	arm64-base-load-store-register	ldr-x option=2 scaled=0 rm=0	f8604b5b	-	baseline
-BASE-0224	Base	LDRAA, LDRAB	arm64-base-pauth-load	ldraa-offset-unmapped	f8201467	-	pauth
+BASE-0224	Base	LDRAA, LDRAB	-	-	f8201467	-	pauth
 BASE-0225	Base	LDRB (immediate)	arm64-base-immediate-memory-offset	ldrb unsigned offsets 0..28	394003c0	-	baseline
 BASE-0226	Base	LDRB (register)	arm64-base-load-store-register	ldrb option=2 scaled=0 rm=0	38604b5b	-	baseline
 BASE-0227	Base	LDRH (immediate)	arm64-base-immediate-memory-offset	ldrh unsigned offsets 0..28	794003c0	-	baseline
@@ -248,8 +248,8 @@ BASE-0242	Base	LDSMAXH, LDSMAXAH, LDSMAXALH, LDSMAXLH	arm64-base-atomic-minmax	a
 BASE-0243	Base	LDSMIN, LDSMINA, LDSMINAL, LDSMINL	arm64-base-atomic-minmax	atomic RMW standard matrix	b8e35044	-	lse
 BASE-0244	Base	LDSMINB, LDSMINAB, LDSMINALB, LDSMINLB	arm64-base-atomic-minmax	atomic RMW standard matrix	38e35044	-	lse
 BASE-0245	Base	LDSMINH, LDSMINAH, LDSMINALH, LDSMINLH	arm64-base-atomic-minmax	atomic RMW standard matrix	78e35044	-	lse
-BASE-0246	Base	LDTADD, LDTADDA, LDTADDAL, LDTADDL	arm64-base-atomic-bit	atomic RMW unprivileged matrix	19e30444	-	lsui
-BASE-0247	Base	LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL	arm64-base-atomic-bit	atomic RMW unprivileged matrix	19e31444	-	lsui
+BASE-0246	Base	LDTADD, LDTADDA, LDTADDAL, LDTADDL	-	-	19e30444	-	lsui
+BASE-0247	Base	LDTCLR, LDTCLRA, LDTCLRAL, LDTCLRL	-	-	19e31444	-	lsui
 BASE-0248	Base	LDTNP	-	-	e8411003	-	lsui
 BASE-0249	Base	LDTP	-	-	e8c11003	-	lsui
 BASE-0250	Base	LDTR	arm64-base-immediate-memory-behavior	ldr-w unprivileged Rt=0	b85f9ba0	-	baseline
@@ -258,8 +258,8 @@ BASE-0252	Base	LDTRH	arm64-base-immediate-memory-behavior	ldrh unprivileged Rt=0
 BASE-0253	Base	LDTRSB	arm64-base-immediate-memory-behavior	ldrsb-x unprivileged signed boundary 0	389f9885	-	baseline
 BASE-0254	Base	LDTRSH	arm64-base-immediate-memory-behavior	ldrsh-x unprivileged signed boundary 0	789f9885	-	baseline
 BASE-0255	Base	LDTRSW	arm64-base-immediate-memory-behavior	ldrsw-x unprivileged signed boundary 0	b89f9885	-	baseline
-BASE-0256	Base	LDTSET, LDTSETA, LDTSETAL, LDTSETL	arm64-base-atomic-bit	atomic RMW unprivileged matrix	19e33444	-	lsui
-BASE-0257	Base	LDTXR	arm64-base-exclusive	scalar exclusive load	c95f7c43	-	lsui
+BASE-0256	Base	LDTSET, LDTSETA, LDTSETAL, LDTSETL	-	-	19e33444	-	lsui
+BASE-0257	Base	LDTXR	-	-	c95f7c43	-	lsui
 BASE-0258	Base	LDUMAX, LDUMAXA, LDUMAXAL, LDUMAXL	arm64-base-atomic-minmax	atomic RMW standard matrix	b8e36044	-	lse
 BASE-0259	Base	LDUMAXB, LDUMAXAB, LDUMAXALB, LDUMAXLB	arm64-base-atomic-minmax	atomic RMW standard matrix	38e36044	-	lse
 BASE-0260	Base	LDUMAXH, LDUMAXAH, LDUMAXALH, LDUMAXLH	arm64-base-atomic-minmax	atomic RMW standard matrix	78e36044	-	lse
@@ -285,7 +285,7 @@ BASE-0279	Base	LSRV	arm64-base-arithmetic-variable-shift	BASE-0279 LSRV base-var
 BASE-0280	Base	MADD	arm64-base-multiply-behavior	MADD W arithmetic boundary case=0	1b1b4da7	-	baseline
 BASE-0281	Base	MADDPT	-	-	9b600c00	-	cpa
 BASE-0282	Base	MNEG	arm64-base-multiply-behavior	MNEG alias rn=0 rm=11 rd=23 pattern=0	1b0bfc17	-	baseline
-BASE-0283	Base	MOV (bitmask immediate)	arm64-base-logical-behavior	MOV bitmask width=32 N=0 immr=1 imms=1 rd=12	320107ec	-	baseline
+BASE-0283	Base	MOV (bitmask immediate)	arm64-base-logical-behavior	MOV bitmask width=32 N=0 immr=4 imms=32 rd=12	320483ec	-	baseline
 BASE-0284	Base	MOV (inverted wide immediate)	arm64-base-mov-inverted-alias	BASE-0284 MOV inverted alias width=32 halfword=0 imm16=0	12800007	-	baseline
 BASE-0285	Base	MOV (register)	arm64-base-logical-behavior	MOV register width=32 rm=0 rd=0	2a0003e0	-	baseline
 BASE-0286	Base	MOV (to/from SP)	arm64-base-add-sub-immediate	MOV from SP width=32 rd=0	110003e0	-	baseline
@@ -294,29 +294,29 @@ BASE-0288	Base	MOVK	arm64-base-move-wide-allocation	base-movk	72800007	-	baselin
 BASE-0289	Base	MOVN	arm64-base-move-wide-allocation	base-movn	12a00007	-	baseline
 BASE-0290	Base	MOVZ	arm64-base-move-wide-allocation	base-movz	52a00007	-	baseline
 BASE-0291	Base	MRRS	arm64-base-system-register-pair-1-0	mrrs-o00-op10-c0-c0-op20-t0	d5700000	-	sysreg128
-BASE-0292	Base	MRS	arm64-base-system_register_allocation-0	base-system-illegal	d5302400	-	baseline
-BASE-0293	Base	MSR (immediate)	arm64-base-pstate-behavior	base-pstate-boolean-behavior	d503403f	-	ssbs
-BASE-0294	Base	MSR (register)	arm64-base-system_register_allocation-0	base-system-illegal	d510d000	-	baseline
+BASE-0292	Base	MRS	arm64-base-system_register_allocation-0	base-system-illegal	d5300000	-	baseline
+BASE-0293	Base	MSR (immediate)	arm64-absent-ssbs	MSR SSBS 0 is undefined	d503403f	-	ssbs
+BASE-0294	Base	MSR (register)	arm64-base-system_register_allocation-0	base-system-illegal	d5100000	-	baseline
 BASE-0295	Base	MSRR	arm64-base-system-register-pair-0-0	msrr-o00-op10-c0-c0-op20-t0	d5500000	-	sysreg128
 BASE-0296	Base	MSUB	arm64-base-multiply-behavior	MSUB W arithmetic boundary case=0	1b1bcda7	-	baseline
 BASE-0297	Base	MSUBPT	-	-	9b608c00	-	cpa
 BASE-0298	Base	MUL	arm64-base-multiply-behavior	MUL alias rn=0 rm=11 rd=23 pattern=0	1b0b7c17	-	baseline
-BASE-0299	Base	MVN	arm64-base-logical-shifted	logical shifted width=32 op=1 N=1 type=3 amount=21 zero-left	2ae257e7	-	baseline
+BASE-0299	Base	MVN	arm64-base-logical-shifted	logical shifted width=32 op=1 N=1 type=3 amount=23 zero-left	2ae25fe7	-	baseline
 BASE-0300	Base	NEG (shifted register)	arm64-base-add-sub-shifted	shifted width=32 op=1 flags=0 type=1 amount=31 zero-left	4b427fe7	-	baseline
 BASE-0301	Base	NEGS	arm64-base-add-sub-shifted	shifted width=32 op=1 flags=1 type=1 amount=31 zero-left	6b427fe7	-	baseline
 BASE-0302	Base	NGC	arm64-base-arithmetic-carry	base-carry-rn width=32 sub=1 flags=0 rn=31	5a0503e7	-	baseline
 BASE-0303	Base	NGCS	arm64-base-arithmetic-carry	base-carry-rn width=32 sub=1 flags=1 rn=31	7a0503e7	-	baseline
 BASE-0304	Base	NOP	arm64-base-hint-allocation	BASE-0175 HINT primary immediate=0 allocation=allocated	d503201f	-	baseline
 BASE-0305	Base	ORN (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=1 N=1 type=0 amount=0 ordinary	2a220027	-	baseline
-BASE-0306	Base	ORR (immediate)	arm64-base-logical-immediate	ORR immediate width=32 N=0 immr=0 imms=5 rn=15 rd=12	320015ec	-	baseline
+BASE-0306	Base	ORR (immediate)	arm64-base-logical-immediate	ORR immediate register matrix width=32 rn=12 rd=12	320b158c	-	baseline
 BASE-0307	Base	ORR (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=1 N=0 type=0 amount=0 ordinary	2a020027	-	baseline
-BASE-0308	Base	PACDA, PACDZA	arm64-base-pauth-load	ldraa-offset-offset0	dac12bfc	-	pauth
-BASE-0309	Base	PACDB, PACDZB	arm64-base-pauth-load	ldrab-offset-offset0	dac12ffc	-	pauth
+BASE-0308	Base	PACDA, PACDZA	-	-	dac12bfc	-	pauth
+BASE-0309	Base	PACDB, PACDZB	-	-	dac12ffc	-	pauth
 BASE-0310	Base	PACGA	-	-	9ac03000	-	pauth
-BASE-0311	Base	PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA	arm64-base-pauth-code	pac-register-op0-d0-n0-v0	dac10000	-	pauth
+BASE-0311	Base	PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA	-	-	dac10000	-	pauth
 BASE-0312	Base	PACIA171615	arm64-base-pauth-lr-data	pauth-lr-fixed-0-s0	dac18bfe	-	pauth_lr
 BASE-0313	Base	PACIASPPC	arm64-base-pauth-lr-data	pauth-lr-fixed-4-s0	dac1a3fe	-	pauth_lr
-BASE-0314	Base	PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB	arm64-base-pauth-code	pac-register-op1-d0-n0-v0	dac10400	-	pauth
+BASE-0314	Base	PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB	-	-	dac10400	-	pauth
 BASE-0315	Base	PACIB171615	arm64-base-pauth-lr-data	pauth-lr-fixed-1-s0	dac18ffe	-	pauth_lr
 BASE-0316	Base	PACIBSPPC	arm64-base-pauth-lr-data	pauth-lr-fixed-5-s0	dac1a7fe	-	pauth_lr
 BASE-0317	Base	PACM	arm64-base-pauth-lr-data	pacm-nop-s0	d50324ff	-	pauth_lr
@@ -346,7 +346,7 @@ BASE-0340	Base	RCWSSWPP, RCWSSWPPA, RCWSSWPPAL, RCWSSWPPL	-	-	59a4a3e3	-	d128+th
 BASE-0341	Base	RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL	-	-	3823a044	-	the
 BASE-0342	Base	RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL	-	-	1924a3e3	-	d128+the
 BASE-0343	Base	RET	arm64-base-control-register-branch	RET x0	d65f0000	-	baseline
-BASE-0344	Base	RETAA, RETAB	arm64-base-pauth-return	retaa-zero-target	d65f0bff	-	pauth
+BASE-0344	Base	RETAA, RETAB	arm64-absent-pauth	RETAA is undefined	d65f0bff	-	pauth
 BASE-0345	Base	RETAASPPC, RETABSPPC	arm64-base-pauth-lr-return	retabppc-i0	5520001f	-	pauth_lr
 BASE-0346	Base	RETAASPPCR, RETABSPPCR	arm64-base-pauth-lr-return	retabppcr-m0	d65f0fe0	-	pauth_lr
 BASE-0347	Base	REV	arm64-base-rev64-alias	BASE-0350 REV64 rn=0 rd=0 case=0	dac00c00	base-rev-rev64	baseline
@@ -366,10 +366,10 @@ BASE-0360	Base	SBFM	arm64-base-bitfield-behavior	BASE-0360 SBFM	13000027	base-sb
 BASE-0361	Base	SBFX	arm64-base-bitfield-behavior	BASE-0360 SBFM	13000027	base-sbfm-sbfx	baseline
 BASE-0362	Base	SDIV (quotient)	arm64-base-arithmetic-divide	base-divide-rd width=32 signed=1 rd=0	1ac50c60	-	baseline
 BASE-0363	Base	SETF8, SETF16	arm64-base-flag-setf	BASE-0363 SETF8 flags=0 value-index=0	3a0009ad	-	flag_m
-BASE-0364	Base	SETGP, SETGM, SETGE	arm64-base-mops-allocation	set register allocation	1dc30420	-	mops+mte
-BASE-0365	Base	SETGPN, SETGMN, SETGEN	arm64-base-mops-allocation	set register allocation	1dc52420	-	mops+mte
-BASE-0366	Base	SETGPT, SETGMT, SETGET	arm64-base-mops-allocation	set register allocation	1dc41420	-	mops+mte
-BASE-0367	Base	SETGPTN, SETGMTN, SETGETN	arm64-base-mops-allocation	set register allocation	1dc23420	-	mops+mte
+BASE-0364	Base	SETGP, SETGM, SETGE	-	-	1dc30420	-	mops+mte
+BASE-0365	Base	SETGPN, SETGMN, SETGEN	-	-	1dc52420	-	mops+mte
+BASE-0366	Base	SETGPT, SETGMT, SETGET	-	-	1dc41420	-	mops+mte
+BASE-0367	Base	SETGPTN, SETGMTN, SETGETN	arm64-absent-mte	SETGPTN is undefined	1dc23420	-	mops+mte
 BASE-0368	Base	SETP, SETM, SETE	arm64-base-mops-allocation	set register allocation	19c30420	-	mops
 BASE-0369	Base	SETPN, SETMN, SETEN	arm64-base-mops-allocation	set register allocation	19c52420	-	mops
 BASE-0370	Base	SETPT, SETMT, SETET	arm64-base-mops-allocation	set register allocation	19c41420	-	mops
@@ -384,16 +384,16 @@ BASE-0378	Base	SMC	arm64-base-el0-undefined-exceptions	BASE-0378 SMC	d4000003	-	
 BASE-0379	Base	SMIN (immediate)	arm64-base-min-max-immediate	BASE-0379 SMIN (immediate) every-imm8 width=32 encoded=0	11c80067	-	cssc
 BASE-0380	Base	SMIN (register)	arm64-base-min-max-register	BASE-0380 SMIN (register) source-fields width=32 rn=0 rm=0	1ac06807	-	cssc
 BASE-0381	Base	SMNEGL	arm64-base-multiply-behavior	SMNEGL alias rn=0 rm=11 rd=23 pattern=0	9b2bfc17	-	baseline
-BASE-0382	Base	SMSTART	arm64-base-pstate-behavior	BASE-0382 SMSTART streaming-alias-behavior	d503457f	-	sme
-BASE-0383	Base	SMSTOP	arm64-base-pstate-behavior	BASE-0383 SMSTOP streaming-alias-behavior	d503447f	-	sme
+BASE-0382	Base	SMSTART	arm64-absent-sme	SMSTART ZA is undefined	d503457f	-	sme
+BASE-0383	Base	SMSTOP	arm64-absent-sme	SMSTOP ZA is undefined	d503447f	-	sme
 BASE-0384	Base	SMSUBL	arm64-base-multiply-behavior	SMSUBL arithmetic boundary case=0	9b3bcda7	-	baseline
 BASE-0385	Base	SMULH	arm64-base-multiply-behavior	SMULH arithmetic boundary case=0	9b5b7da7	-	baseline
 BASE-0386	Base	SMULL (32-bit)	arm64-base-multiply-behavior	SMULL alias rn=0 rm=11 rd=23 pattern=0	9b2b7c17	-	baseline
 BASE-0387	Base	SSBB	arm64-base-barrier-alias	BASE-0387 SSBB state=0	d503309f	-	baseline
 BASE-0388	Base	ST2G	-	-	d9aeb40c	-	mte
-BASE-0389	Base	ST64B	arm64-base-ls64-allocation	ls64-allocated-op1-t0-n0-s31	f83f9000	-	ls64
-BASE-0390	Base	ST64BV	arm64-base-ls64-allocation	ls64-allocated-op2-t0-n0-s0	f820b000	-	ls64_v
-BASE-0391	Base	ST64BV0	arm64-base-ls64-allocation	ls64-allocated-op3-t0-n0-s0	f820a000	-	ls64_accdata
+BASE-0389	Base	ST64B	-	-	f83f9000	-	ls64
+BASE-0390	Base	ST64BV	-	-	f820b000	-	ls64_v
+BASE-0391	Base	ST64BV0	-	-	f820a000	-	ls64_accdata
 BASE-0392	Base	STADD, STADDL	arm64-base-atomic-bit	BASE-0392 STADD STADDL	f823005f	-	lse
 BASE-0393	Base	STADDB, STADDLB	arm64-base-atomic-bit	BASE-0393 STADDB STADDLB	3823005f	-	lse
 BASE-0394	Base	STADDH, STADDLH	arm64-base-atomic-bit	BASE-0394 STADDH STADDLH	7823005f	-	lse
@@ -406,16 +406,16 @@ BASE-0400	Base	STEORB, STEORLB	arm64-base-atomic-bit	BASE-0400 STEORB STEORLB	38
 BASE-0401	Base	STEORH, STEORLH	arm64-base-atomic-bit	BASE-0401 STEORH STEORLH	7823205f	-	lse
 BASE-0402	Base	STG	-	-	d92eb40c	-	mte
 BASE-0403	Base	STGM	arm64-base-mte-multiple-store	BASE-0403 STGM Rt=0 Rn=0 EL0 undefined	d9a00000	-	mte2
-BASE-0404	Base	STGP	arm64-base-mte-stgp	stgp-1-b5-t0-t28-i40	689420a0	-	mte
+BASE-0404	Base	STGP	-	-	689420a0	-	mte
 BASE-0405	Base	STILP	-	-	99040803	-	lrcpc3
-BASE-0406	Base	STLLR	arm64-base-ordered-allocation	stllr-w allocated rn=0 rt=0	889f7c00	-	lor
-BASE-0407	Base	STLLRB	arm64-base-ordered-allocation	stllrb allocated rn=0 rt=0	089f7c00	-	lor
-BASE-0408	Base	STLLRH	arm64-base-ordered-allocation	stllrh allocated rn=0 rt=0	489f7c00	-	lor
+BASE-0406	Base	STLLR	-	-	889f7c00	-	lor
+BASE-0407	Base	STLLRB	-	-	089f7c00	-	lor
+BASE-0408	Base	STLLRH	-	-	489f7c00	-	lor
 BASE-0409	Base	STLP	-	-	d9045803	-	lscp
-BASE-0410	Base	STLR	arm64-base-ordered-allocation	stlr-w-pre allocated rn=0 rt=0	99800800	-	lrcpc3
+BASE-0410	Base	STLR	arm64-absent-lrcpc3	STLR w pre is undefined	99800820	-	lrcpc3
 BASE-0411	Base	STLRB	arm64-base-ordered-allocation	stlrb allocated rn=0 rt=0	089ffc00	-	baseline
 BASE-0412	Base	STLRH	arm64-base-ordered-allocation	stlrh allocated rn=0 rt=0	489ffc00	-	baseline
-BASE-0413	Base	STLTXR	arm64-base-exclusive	scalar exclusive store without monitor	8905fc44	-	lsui
+BASE-0413	Base	STLTXR	-	-	8905fc44	-	lsui
 BASE-0414	Base	STLUR	arm64-base-ordered-allocation	stlur-w allocated rn=0 rt=0	99000000	-	lrcpc2
 BASE-0415	Base	STLURB	arm64-base-ordered-allocation	stlurb allocated rn=0 rt=0	19000000	-	lrcpc2
 BASE-0416	Base	STLURH	arm64-base-ordered-allocation	stlurh allocated rn=0 rt=0	59000000	-	lrcpc2
@@ -441,15 +441,15 @@ BASE-0435	Base	STSMAXH, STSMAXLH	arm64-base-atomic-minmax	BASE-0435 STSMAXH STSM
 BASE-0436	Base	STSMIN, STSMINL	arm64-base-atomic-minmax	BASE-0436 STSMIN STSMINL	f823505f	-	lse
 BASE-0437	Base	STSMINB, STSMINLB	arm64-base-atomic-minmax	BASE-0437 STSMINB STSMINLB	3823505f	-	lse
 BASE-0438	Base	STSMINH, STSMINLH	arm64-base-atomic-minmax	BASE-0438 STSMINH STSMINLH	7823505f	-	lse
-BASE-0439	Base	STTADD, STTADDL	arm64-base-atomic-bit	BASE-0439 STTADD STTADDL	1923045f	-	lsui
-BASE-0440	Base	STTCLR, STTCLRL	arm64-base-atomic-bit	BASE-0440 STTCLR STTCLRL	1923145f	-	lsui
+BASE-0439	Base	STTADD, STTADDL	-	-	1923045f	-	lsui
+BASE-0440	Base	STTCLR, STTCLRL	-	-	1923145f	-	lsui
 BASE-0441	Base	STTNP	-	-	e8011003	-	lsui
 BASE-0442	Base	STTP	-	-	e8811003	-	lsui
 BASE-0443	Base	STTR	arm64-base-immediate-memory-behavior	str-w unprivileged Rt=0	b81f9ba0	-	baseline
 BASE-0444	Base	STTRB	arm64-base-immediate-memory-behavior	strb unprivileged Rt=0	381f9ba0	-	baseline
 BASE-0445	Base	STTRH	arm64-base-immediate-memory-behavior	strh unprivileged Rt=0	781f9ba0	-	baseline
-BASE-0446	Base	STTSET, STTSETL	arm64-base-atomic-bit	BASE-0446 STTSET STTSETL	1923345f	-	lsui
-BASE-0447	Base	STTXR	arm64-base-exclusive	scalar exclusive store without monitor	89057c44	-	lsui
+BASE-0446	Base	STTSET, STTSETL	-	-	1923345f	-	lsui
+BASE-0447	Base	STTXR	-	-	89057c44	-	lsui
 BASE-0448	Base	STUMAX, STUMAXL	arm64-base-atomic-minmax	BASE-0448 STUMAX STUMAXL	f823605f	-	lse
 BASE-0449	Base	STUMAXB, STUMAXLB	arm64-base-atomic-minmax	BASE-0449 STUMAXB STUMAXLB	3823605f	-	lse
 BASE-0450	Base	STUMAXH, STUMAXLH	arm64-base-atomic-minmax	BASE-0450 STUMAXH STUMAXLH	7823605f	-	lse
@@ -469,9 +469,9 @@ BASE-0463	Base	STZGM	arm64-base-mte-multiple-store	BASE-0463 STZGM Rt=0 Rn=0 EL0
 BASE-0464	Base	SUB (extended register)	arm64-base-add-sub-extended	extended width=32 op=1 flags=0 option=0 amount=0 ordinary	4b220027	-	baseline
 BASE-0465	Base	SUB (immediate)	arm64-base-add-sub-immediate	SUB immediate width=32 sh=0 imm=0 rn=0 rd=0	51000000	-	baseline
 BASE-0466	Base	SUB (shifted register)	arm64-base-add-sub-shifted	shifted width=32 op=1 flags=0 type=0 amount=0 ordinary	4b020027	-	baseline
-BASE-0467	Base	SUBG	arm64-base-mte-tag	subg-d0-n0-i0-t0	d1800000	-	mte
-BASE-0468	Base	SUBP	arm64-base-mte-pointer	subp-d0-n0-m0	9ac00000	-	mte
-BASE-0469	Base	SUBPS	arm64-base-mte-pointer	subps-d0-n0-m0	bac00000	-	mte
+BASE-0467	Base	SUBG	-	-	d1800000	-	mte
+BASE-0468	Base	SUBP	-	-	9ac00000	-	mte
+BASE-0469	Base	SUBPS	-	-	bac00000	-	mte
 BASE-0470	Base	SUBPT	-	-	da002000	-	cpa
 BASE-0471	Base	SUBS (extended register)	arm64-base-add-sub-extended	extended width=32 op=1 flags=1 option=0 amount=0 ordinary	6b220027	-	baseline
 BASE-0472	Base	SUBS (immediate)	arm64-base-add-sub-immediate	SUBS immediate width=32 sh=0 imm=0 rn=0 rd=0	71000000	-	baseline
@@ -481,20 +481,20 @@ BASE-0475	Base	SWP, SWPA, SWPAL, SWPL	arm64-base-atomic-swap	atomic RMW standard
 BASE-0476	Base	SWPB, SWPAB, SWPALB, SWPLB	arm64-base-atomic-swap	atomic RMW standard matrix	38e38044	-	lse
 BASE-0477	Base	SWPH, SWPAH, SWPALH, SWPLH	arm64-base-atomic-swap	atomic RMW standard matrix	78e38044	-	lse
 BASE-0478	Base	SWPP, SWPPA, SWPPAL, SWPPL	-	-	196483e3	-	lse128
-BASE-0479	Base	SWPT, SWPTA, SWPTAL, SWPTL	arm64-base-atomic-swap	atomic RMW unprivileged matrix	19e38444	-	lsui
+BASE-0479	Base	SWPT, SWPTA, SWPTAL, SWPTL	-	-	19e38444	-	lsui
 BASE-0480	Base	SXTB	arm64-base-bitfield-behavior	BASE-0360 SBFM	13001c27	-	baseline
 BASE-0481	Base	SXTH	arm64-base-bitfield-behavior	BASE-0360 SBFM	13003c27	-	baseline
 BASE-0482	Base	SXTW	arm64-base-bitfield-behavior	BASE-0360 SBFM	93407c27	-	baseline
 BASE-0483	Base	SYS	arm64-base-system_instruction	base-system-illegal	d5080000	-	baseline
 BASE-0484	Base	SYSL	arm64-base-system_result_instruction	base-system-illegal	d5280000	-	baseline
-BASE-0485	Base	SYSP	arm64-base-tlbip_named	tlbip-d128-04a9-t0	d5489520	-	d128+sysinstr128
+BASE-0485	Base	SYSP	-	-	d5489520	-	d128+sysinstr128
 BASE-0486	Base	TBNZ	arm64-base-control-compare-test	TBNZ x0 bit=0 set=0 displacement=-32768	37040000	-	baseline
-BASE-0487	Base	TBZ	arm64-base-control-compare-test	TBZ x0 bit=36 set=0 displacement=-32768	b6240000	-	baseline
-BASE-0488	Base	TLBI	arm64-base-tlbi_named	tlbi-0438-t0	d5088700	-	baseline
-BASE-0489	Base	TLBIP	arm64-base-tlbip_named	tlbip-d128-0429-t0	d5488520	-	d128+sysinstr128
+BASE-0487	Base	TBZ	arm64-base-control-compare-test	TBZ x0 bit=32 set=0 displacement=-32768	b6040000	-	baseline
+BASE-0488	Base	TLBI	arm64-base-tlbi_named	tlbi-0418-t0	d5088300	-	baseline
+BASE-0489	Base	TLBIP	-	-	d5488520	-	d128+sysinstr128
 BASE-0490	Base	TRCIT	arm64-base-privileged_feature_alias	BASE-0490 trcit-t0	d50b72e0	-	ite
 BASE-0491	Base	TSB	arm64-base-hint-behavior	BASE-0491 TSB CSYNC full-state pattern=0	d503225f	-	trf
-BASE-0492	Base	TST (immediate)	arm64-base-logical-immediate	ANDS immediate width=32 N=0 immr=1 imms=5 rn=16 rd=31	7201161f	-	baseline
+BASE-0492	Base	TST (immediate)	arm64-base-logical-immediate	ANDS immediate register matrix width=32 rn=22 rd=31	720b16df	-	baseline
 BASE-0493	Base	TST (shifted register)	arm64-base-logical-shifted	logical shifted width=32 op=3 N=0 type=3 amount=21 discard	6ac2543f	-	baseline
 BASE-0494	Base	UBFIZ	arm64-base-bitfield-behavior	BASE-0495 UBFM	d3600027	-	baseline
 BASE-0495	Base	UBFM	arm64-base-bitfield-behavior	BASE-0495 UBFM	53000027	base-ubfm-ubfx	baseline
@@ -502,9 +502,9 @@ BASE-0496	Base	UBFX	arm64-base-bitfield-behavior	BASE-0495 UBFM	53000027	base-ub
 BASE-0497	Base	UDF	arm64-base-permanently-undefined	base-permanently-undefined	00000000	-	baseline
 BASE-0498	Base	UDIV (quotient)	arm64-base-arithmetic-divide	base-divide-rd width=32 signed=0 rd=0	1ac50860	-	baseline
 BASE-0499	Base	UMADDL	arm64-base-multiply-behavior	UMADDL arithmetic boundary case=0	9bbb4da7	-	baseline
-BASE-0500	Base	UMAX (immediate)	arm64-base-min-max-immediate	BASE-0500 UMAX (immediate) every-imm8 width=32 encoded=63	11c4fc67	-	cssc
+BASE-0500	Base	UMAX (immediate)	arm64-base-min-max-immediate	BASE-0500 UMAX (immediate) every-imm8 width=32 encoded=31	11c47c67	-	cssc
 BASE-0501	Base	UMAX (register)	arm64-base-min-max-register	BASE-0501 UMAX (register) source-fields width=32 rn=0 rm=0	1ac06407	-	cssc
-BASE-0502	Base	UMIN (immediate)	arm64-base-min-max-immediate	BASE-0502 UMIN (immediate) every-imm8 width=32 encoded=63	11ccfc67	-	cssc
+BASE-0502	Base	UMIN (immediate)	arm64-base-min-max-immediate	BASE-0502 UMIN (immediate) every-imm8 width=32 encoded=31	11cc7c67	-	cssc
 BASE-0503	Base	UMIN (register)	arm64-base-min-max-register	BASE-0503 UMIN (register) source-fields width=32 rn=0 rm=0	1ac06c07	-	cssc
 BASE-0504	Base	UMNEGL	arm64-base-multiply-behavior	UMNEGL alias rn=0 rm=11 rd=23 pattern=0	9babfc17	-	baseline
 BASE-0505	Base	UMSUBL	arm64-base-multiply-behavior	UMSUBL arithmetic boundary case=0	9bbbcda7	-	baseline
@@ -513,11 +513,11 @@ BASE-0507	Base	UMULL (32-bit)	arm64-base-multiply-behavior	UMULL alias rn=0 rm=1
 BASE-0508	Base	UXTB	arm64-base-bitfield-behavior	BASE-0495 UBFM	53001c27	-	baseline
 BASE-0509	Base	UXTH	arm64-base-bitfield-behavior	BASE-0495 UBFM	53003c27	-	baseline
 BASE-0510	Base	WFE	arm64-base-hint-behavior	BASE-0510 WFE full-state pattern=0	d503205f	-	baseline
-BASE-0511	Base	WFET	arm64-base-hint-behavior	BASE-0511 WFET source=0	d5031000	-	wfxt
+BASE-0511	Base	WFET	arm64-absent-wfxt	WFET is undefined	d5031000	-	wfxt
 BASE-0512	Base	WFI	arm64-base-hint-behavior	BASE-0512 WFI full-state pattern=0	d503207f	-	baseline
-BASE-0513	Base	WFIT	arm64-base-hint-behavior	BASE-0513 WFIT source=0	d5031020	-	wfxt
+BASE-0513	Base	WFIT	-	-	d5031020	-	wfxt
 BASE-0514	Base	XAFLAG	arm64-base-flag-fixed	BASE-0514 XAFLAG nzcv=0	d500403f	-	flag_m2
-BASE-0515	Base	XPACD, XPACI, XPACLRI	arm64-base-pauth-strip	xpac-d-mte0-d3-v0	dac147e3	-	pauth
+BASE-0515	Base	XPACD, XPACI, XPACLRI	-	-	dac147e3	-	pauth
 BASE-0516	Base	YIELD	arm64-base-hint-behavior	BASE-0516 YIELD full-state pattern=0	d503203f	-	baseline
 FPSIMD-0001	FP&SIMD	ABS	arm64-simd-two-register-ordinary	simd-two-register-ordinary scalar=0 q=0 u=0 size=0 opcode=11 rd=0	0e20b960	-	advanced_simd
 FPSIMD-0002	FP&SIMD	ADD (vector)	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e228420	-	advanced_simd
@@ -573,11 +573,11 @@ FPSIMD-0051	FP&SIMD	FADD (scalar)	arm64-basic-floating-allocation	basic-floating
 FPSIMD-0052	FP&SIMD	FADD (vector)	arm64-basic-floating-allocation	basic-floating-valid-allocation	0e22d420	-	advanced_simd
 FPSIMD-0053	FP&SIMD	FADDP (scalar)	arm64-floating-horizontal-allocation	horizontal allocated form=8 field=0 value=0	5e30d820	-	advanced_simd+fp16
 FPSIMD-0054	FP&SIMD	FADDP (vector)	arm64-floating-horizontal-allocation	horizontal allocated form=13 field=0 value=0	2e22d420	-	advanced_simd
-FPSIMD-0055	FP&SIMD	FAMAX	arm64-floating-absolute-minmax-allocation	absolute minmax allocated form=2 field=0 value=0	0ea2dc20	-	advanced_simd+faminmax
-FPSIMD-0056	FP&SIMD	FAMIN	arm64-floating-absolute-minmax-allocation	absolute minmax allocated form=7 field=0 value=0	2ea2dc20	-	advanced_simd+faminmax
+FPSIMD-0055	FP&SIMD	FAMAX	arm64-absent-faminmax	FAMAX 2S is undefined	0ea2dc20	-	advanced_simd+faminmax
+FPSIMD-0056	FP&SIMD	FAMIN	arm64-absent-faminmax	FAMIN 2S is undefined	2ea2dc20	-	advanced_simd+faminmax
 FPSIMD-0057	FP&SIMD	FCADD	arm64-floating-complex-add	FPSIMD-0057 complex add exact form=0 width=16 bytes=8 rotation=1	2e42e420	-	advanced_simd+fcma+fp16
 FPSIMD-0058	FP&SIMD	FCCMP	arm64-simd-fcmp-allocation	FCCMP/FCCMPE valid allocation	1e200400	-	floating_point
-FPSIMD-0059	FP&SIMD	FCCMPE	arm64-simd-fcmp-allocation	FCCMP/FCCMPE valid allocation	1e6c241f	-	floating_point
+FPSIMD-0059	FP&SIMD	FCCMPE	arm64-simd-fcmp-allocation	FCCMP/FCCMPE valid allocation	1e7e041f	-	floating_point
 FPSIMD-0060	FP&SIMD	FCMEQ (register)	arm64-simd-floating-compare-allocation	simd-floating-compare-register-allocation	0e20e400	-	advanced_simd
 FPSIMD-0061	FP&SIMD	FCMEQ (zero)	arm64-simd-floating-compare-allocation	simd-floating-compare-zero-allocation	0ea0d800	-	advanced_simd
 FPSIMD-0062	FP&SIMD	FCMGE (register)	arm64-simd-floating-compare-allocation	simd-floating-compare-register-allocation	2e20e400	-	advanced_simd
@@ -592,41 +592,41 @@ FPSIMD-0070	FP&SIMD	FCMP	arm64-simd-fcmp-direct	FCMP/FCMPE value classes	1e3e23a
 FPSIMD-0071	FP&SIMD	FCMPE	arm64-floating-trap-scalar	comparison NZCV rollback	1e2720d0	-	floating_point
 FPSIMD-0072	FP&SIMD	FCSEL	arm64-simd-fcsel-behavior	FCSEL behavior	1e3e0fbc	-	floating_point
 FPSIMD-0073	FP&SIMD	FCVT	arm64-simd-fcvt-precision-allocation	scalar-precision-allocation source=32 destination=16 merge=0 rd=0 rn=0	1e23c000	-	floating_point
-FPSIMD-0074	FP&SIMD	FCVTAS (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=4 unsigned=0 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e3a0020	-	fprcvt
+FPSIMD-0074	FP&SIMD	FCVTAS (scalar SIMD&FP)	arm64-absent-fprcvt	FCVTAS D S is undefined	9e3a0020	-	fprcvt
 FPSIMD-0075	FP&SIMD	FCVTAS (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=4 unsigned=0 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e240020	-	floating_point
 FPSIMD-0076	FP&SIMD	FCVTAS (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=4 unsigned=0 scalar=0 source=16 integer=16 bytes=16 class=0	4e79c987	-	advanced_simd+fp16
-FPSIMD-0077	FP&SIMD	FCVTAU (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=4 unsigned=1 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e3b0020	-	fprcvt
+FPSIMD-0077	FP&SIMD	FCVTAU (scalar SIMD&FP)	-	-	9e3b0020	-	fprcvt
 FPSIMD-0078	FP&SIMD	FCVTAU (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=4 unsigned=1 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e250020	-	floating_point
 FPSIMD-0079	FP&SIMD	FCVTAU (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=4 unsigned=1 scalar=0 source=16 integer=16 bytes=16 class=0	6e79c987	-	advanced_simd+fp16
 FPSIMD-0080	FP&SIMD	FCVTL, FCVTL2	arm64-simd-fcvt-vector-control	floating-precision-control operation=0 source=16 destination=32 upper=0 fpcr=0 input=0	0e217bbc	-	advanced_simd
-FPSIMD-0081	FP&SIMD	FCVTMS (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=2 unsigned=0 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e340020	-	fprcvt
+FPSIMD-0081	FP&SIMD	FCVTMS (scalar SIMD&FP)	arm64-absent-fprcvt	FCVTMS D S is undefined	9e340020	-	fprcvt
 FPSIMD-0082	FP&SIMD	FCVTMS (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=2 unsigned=0 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e300020	-	floating_point
 FPSIMD-0083	FP&SIMD	FCVTMS (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=2 unsigned=0 scalar=0 source=16 integer=16 bytes=16 class=0	4e79b987	-	advanced_simd+fp16
-FPSIMD-0084	FP&SIMD	FCVTMU (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=2 unsigned=1 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e350020	-	fprcvt
+FPSIMD-0084	FP&SIMD	FCVTMU (scalar SIMD&FP)	-	-	9e350020	-	fprcvt
 FPSIMD-0085	FP&SIMD	FCVTMU (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=2 unsigned=1 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e310020	-	floating_point
 FPSIMD-0086	FP&SIMD	FCVTMU (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=2 unsigned=1 scalar=0 source=16 integer=16 bytes=16 class=0	6e79b987	-	advanced_simd+fp16
 FPSIMD-0087	FP&SIMD	FCVTN (half-precision to 8-bit floating-point)	-	-	0e42f420	-	fp8
 FPSIMD-0088	FP&SIMD	FCVTN, FCVTN2 (double to single-precision, single to half-precision)	arm64-simd-fcvt-vector-allocation	floating-precision-allocation operation=1 source=32 destination=16 upper=0 rd=0 rn=1	0e216820	-	advanced_simd
 FPSIMD-0089	FP&SIMD	FCVTN, FCVTN2 (single-precision to 8-bit floating-point)	-	-	0e02f420	-	fp8
-FPSIMD-0090	FP&SIMD	FCVTNS (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=0 unsigned=0 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e2a0020	-	fprcvt
+FPSIMD-0090	FP&SIMD	FCVTNS (scalar SIMD&FP)	-	-	9e2a0020	-	fprcvt
 FPSIMD-0091	FP&SIMD	FCVTNS (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=0 unsigned=0 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e200020	-	floating_point
 FPSIMD-0092	FP&SIMD	FCVTNS (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=0 unsigned=0 scalar=0 source=16 integer=16 bytes=16 class=0	4e79a987	-	advanced_simd+fp16
-FPSIMD-0093	FP&SIMD	FCVTNU (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=0 unsigned=1 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e2b0020	-	fprcvt
+FPSIMD-0093	FP&SIMD	FCVTNU (scalar SIMD&FP)	-	-	9e2b0020	-	fprcvt
 FPSIMD-0094	FP&SIMD	FCVTNU (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=0 unsigned=1 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e210020	-	floating_point
 FPSIMD-0095	FP&SIMD	FCVTNU (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=0 unsigned=1 scalar=0 source=16 integer=16 bytes=16 class=0	6e79a987	-	advanced_simd+fp16
-FPSIMD-0096	FP&SIMD	FCVTPS (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=1 unsigned=0 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e320020	-	fprcvt
+FPSIMD-0096	FP&SIMD	FCVTPS (scalar SIMD&FP)	arm64-absent-fprcvt	FCVTPS D S is undefined	9e320020	-	fprcvt
 FPSIMD-0097	FP&SIMD	FCVTPS (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=1 unsigned=0 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e280020	-	floating_point
 FPSIMD-0098	FP&SIMD	FCVTPS (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=1 unsigned=0 scalar=0 source=16 integer=16 bytes=16 class=0	4ef9a987	-	advanced_simd+fp16
-FPSIMD-0099	FP&SIMD	FCVTPU (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=1 unsigned=1 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e330020	-	fprcvt
+FPSIMD-0099	FP&SIMD	FCVTPU (scalar SIMD&FP)	-	-	9e330020	-	fprcvt
 FPSIMD-0100	FP&SIMD	FCVTPU (scalar)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=1 unsigned=1 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e290020	-	floating_point
 FPSIMD-0101	FP&SIMD	FCVTPU (vector)	arm64-floating-to-integer-behavior	floating-to-integer-behavior destination=1 rounding=1 unsigned=1 scalar=0 source=16 integer=16 bytes=16 class=0	6ef9a987	-	advanced_simd+fp16
 FPSIMD-0102	FP&SIMD	FCVTXN, FCVTXN2	arm64-simd-fcvtxn-control	floating-round-odd-control scalar=0 upper=0 fpcr=0 input=0	2e616bbc	-	advanced_simd
-FPSIMD-0103	FP&SIMD	FCVTZS (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=3 unsigned=0 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e360020	-	fprcvt
+FPSIMD-0103	FP&SIMD	FCVTZS (scalar SIMD&FP)	-	-	9e360020	-	fprcvt
 FPSIMD-0104	FP&SIMD	FCVTZS (scalar, fixed-point)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=3 unsigned=0 scalar=1 fixed=1 source=32 integer=32 bytes=4 fraction=2 rd=0 rn=1	1e18f820	-	floating_point
 FPSIMD-0105	FP&SIMD	FCVTZS (scalar, integer)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=3 unsigned=0 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e380020	-	floating_point
 FPSIMD-0106	FP&SIMD	FCVTZS (vector, fixed-point)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=1 rounding=3 unsigned=0 scalar=0 fixed=1 source=32 integer=32 bytes=8 fraction=2 rd=0 rn=1	0f3efc20	-	advanced_simd
 FPSIMD-0107	FP&SIMD	FCVTZS (vector, integer)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=1 rounding=3 unsigned=0 scalar=0 fixed=0 source=32 integer=32 bytes=8 fraction=0 rd=0 rn=1	0ea1b820	-	advanced_simd
-FPSIMD-0108	FP&SIMD	FCVTZU (scalar SIMD&FP)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=2 rounding=3 unsigned=1 scalar=1 fixed=0 source=32 integer=64 bytes=8 fraction=0 rd=0 rn=1	9e370020	-	fprcvt
+FPSIMD-0108	FP&SIMD	FCVTZU (scalar SIMD&FP)	-	-	9e370020	-	fprcvt
 FPSIMD-0109	FP&SIMD	FCVTZU (scalar, fixed-point)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=3 unsigned=1 scalar=1 fixed=1 source=32 integer=32 bytes=4 fraction=2 rd=0 rn=1	1e19f820	-	floating_point
 FPSIMD-0110	FP&SIMD	FCVTZU (scalar, integer)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=0 rounding=3 unsigned=1 scalar=1 fixed=0 source=32 integer=32 bytes=4 fraction=0 rd=0 rn=1	1e390020	-	floating_point
 FPSIMD-0111	FP&SIMD	FCVTZU (vector, fixed-point)	arm64-floating-to-integer-allocation	floating-to-integer-allocation destination=1 rounding=3 unsigned=1 scalar=0 fixed=1 source=32 integer=32 bytes=8 fraction=2 rd=0 rn=1	2f3efc20	-	advanced_simd
@@ -719,7 +719,7 @@ FPSIMD-0197	FP&SIMD	FRINTZ (scalar)	arm64-floating-round-allocation	FPSIMD-0197 
 FPSIMD-0198	FP&SIMD	FRINTZ (vector)	arm64-floating-round-allocation	FPSIMD-0198 FRINTZ vector	4ef99800	-	advanced_simd+fp16
 FPSIMD-0199	FP&SIMD	FRSQRTE	arm64-floating-reciprocal-allocation	frsqrte	6ef9d800	-	advanced_simd+fp16
 FPSIMD-0200	FP&SIMD	FRSQRTS	arm64-floating-reciprocal-allocation	frsqrts	0ea0fc00	-	advanced_simd
-FPSIMD-0201	FP&SIMD	FSCALE	arm64-floating-scale-allocation	floating-scale-valid-allocation	2ea0fc00	-	fp8
+FPSIMD-0201	FP&SIMD	FSCALE	-	-	2ea0fc00	-	fp8
 FPSIMD-0202	FP&SIMD	FSQRT (scalar)	arm64-basic-floating-allocation	basic-floating-valid-allocation	1e21c020	-	floating_point
 FPSIMD-0203	FP&SIMD	FSQRT (vector)	arm64-basic-floating-allocation	basic-floating-valid-allocation	6ef9f820	-	advanced_simd+fp16
 FPSIMD-0204	FP&SIMD	FSUB (scalar)	arm64-basic-floating-allocation	basic-floating-valid-allocation	1e223820	-	floating_point
@@ -738,8 +738,8 @@ FPSIMD-0216	FP&SIMD	LD3R	arm64-simd-structure-replicate-behavior	replicate q=1 c
 FPSIMD-0217	FP&SIMD	LD4 (multiple structures)	arm64-simd-structure-multiple-fault	LD4/ST4 cross-page q=1 size=0 load=1 mode=1	4cdf005e	-	advanced_simd
 FPSIMD-0218	FP&SIMD	LD4 (single structure)	arm64-simd-structure-lane-behavior	lane q=1 load=1 count=4 width=1 lane=8 opcode=1 r=1 s=0 size=0 mode=2	4de5205d	-	advanced_simd
 FPSIMD-0219	FP&SIMD	LD4R	arm64-simd-structure-replicate-behavior	replicate q=1 count=4 width=1 opcode=7 r=1 size=0 mode=2	4de5e05d	-	advanced_simd
-FPSIMD-0220	FP&SIMD	LDAP1 (SIMD&FP)	arm64-simd-ordered-allocation	ldap1-d0 allocated offset=0 rn=0 rt=3	0d418403	-	advanced_simd+lrcpc3
-FPSIMD-0221	FP&SIMD	LDAPUR (SIMD&FP)	arm64-simd-ordered-allocation	ldapur-b allocated offset=0 rn=2 rt=3	1d400843	-	floating_point+lrcpc3
+FPSIMD-0220	FP&SIMD	LDAP1 (SIMD&FP)	-	-	0d418403	-	advanced_simd+lrcpc3
+FPSIMD-0221	FP&SIMD	LDAPUR (SIMD&FP)	-	-	1d400843	-	floating_point+lrcpc3
 FPSIMD-0222	FP&SIMD	LDBFADD, LDBFADDA, LDBFADDAL, LDBFADDL	-	-	3c6a0032	-	lsfe
 FPSIMD-0223	FP&SIMD	LDBFMAX, LDBFMAXA, LDBFMAXAL, LDBFMAXL	-	-	3c7440e0	-	lsfe
 FPSIMD-0224	FP&SIMD	LDBFMAXNM, LDBFMAXNMA, LDBFMAXNMAL, LDBFMAXNML	-	-	3c376181	-	lsfe
@@ -752,7 +752,7 @@ FPSIMD-0230	FP&SIMD	LDFMIN, LDFMINA, LDFMINAL, LDFMINL	-	-	7c7a5222	-	lsfe
 FPSIMD-0231	FP&SIMD	LDFMINNM, LDFMINNMA, LDFMINNMAL, LDFMINNML	-	-	7cab731d	-	lsfe
 FPSIMD-0232	FP&SIMD	LDNP (SIMD&FP)	arm64-simd-load-store-pair	vector-load-32 mode=0 imm7=1	2c40c783	-	floating_point
 FPSIMD-0233	FP&SIMD	LDP (SIMD&FP)	arm64-simd-load-store-pair	vector-load-32 mode=1 imm7=1	2cc0c783	-	floating_point
-FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	arm64-simd-ordinary-memory-immediate	load-b signed mode=3 imm9=3	3c403c5d	-	floating_point
+FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	arm64-simd-ordinary-memory-immediate	load-b signed mode=3 imm9=7	3c407c5d	-	floating_point
 FPSIMD-0235	FP&SIMD	LDR (literal, SIMD&FP)	arm64-literal-load-behavior	ldr-s reads code page	1c000017	-	floating_point
 FPSIMD-0236	FP&SIMD	LDR (register, SIMD&FP)	arm64-simd-ordinary-memory-register	load-b every offset rm=0	3c606a9f	-	floating_point
 FPSIMD-0237	FP&SIMD	LDTNP (SIMD&FP)	-	-	ec404683	-	floating_point+lsui
@@ -798,7 +798,7 @@ FPSIMD-0276	FP&SIMD	SADDL, SADDL2	arm64-simd-widening-allocation	simd-widening-v
 FPSIMD-0277	FP&SIMD	SADDLP	arm64-simd-two-register-pairwise	simd-two-register-pairwise scalar=0 q=0 u=0 size=0 opcode=2 rd=0	0e202960	-	advanced_simd
 FPSIMD-0278	FP&SIMD	SADDLV	arm64-simd-reduce-behavior	signed-add-long-across-vector	0e303820	-	advanced_simd
 FPSIMD-0279	FP&SIMD	SADDW, SADDW2	arm64-simd-widening-allocation	simd-widening-valid-allocation	4e221020	-	advanced_simd
-FPSIMD-0280	FP&SIMD	SCVTF (scalar SIMD&FP)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e7c0167	-	fprcvt
+FPSIMD-0280	FP&SIMD	SCVTF (scalar SIMD&FP)	-	-	1e7c0167	-	fprcvt
 FPSIMD-0281	FP&SIMD	SCVTF (scalar, fixed-point)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e02f967	-	floating_point
 FPSIMD-0282	FP&SIMD	SCVTF (scalar, integer)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e220167	-	floating_point
 FPSIMD-0283	FP&SIMD	SCVTF (vector, fixed-point)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	4f3ee567	-	advanced_simd
@@ -822,18 +822,18 @@ FPSIMD-0300	FP&SIMD	SHA512SU1	arm64-simd-sha512_allocation	fixed64-valid-destina
 FPSIMD-0301	FP&SIMD	SHADD	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e220420	-	advanced_simd
 FPSIMD-0302	FP&SIMD	SHL	arm64-simd-shift-immediate-left	ordinary shift-left-immediate behavior	0f2056d5	-	advanced_simd
 FPSIMD-0303	FP&SIMD	SHLL, SHLL2	arm64-simd-two-register-narrow	simd-two-register-narrow-shift scalar=0 q=0 u=1 size=0 opcode=19 rd=0	2e213960	-	advanced_simd
-FPSIMD-0304	FP&SIMD	SHRN, SHRN2	arm64-simd-shift-immediate-narrow	ordinary narrowing shift behavior	4f208759	-	advanced_simd
+FPSIMD-0304	FP&SIMD	SHRN, SHRN2	arm64-simd-shift-immediate-narrow	ordinary narrowing shift behavior	4f3e875a	-	advanced_simd
 FPSIMD-0305	FP&SIMD	SHSUB	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e222420	-	advanced_simd
 FPSIMD-0306	FP&SIMD	SLI	arm64-simd-shift-immediate-left	ordinary shift-left-immediate behavior	2f2056d5	-	advanced_simd
-FPSIMD-0307	FP&SIMD	SM3PARTW1	arm64-simd-sm_allocation	later-three-valid-destination	ce62c020	-	sm3
-FPSIMD-0308	FP&SIMD	SM3PARTW2	arm64-simd-sm_allocation	later-three-valid-destination	ce62c420	-	sm3
-FPSIMD-0309	FP&SIMD	SM3SS1	arm64-simd-sm_allocation	later-four-valid-destination	ce420c20	-	sm3
-FPSIMD-0310	FP&SIMD	SM3TT1A	arm64-simd-sm_allocation	later-indexed-valid-destination	ce428020	-	sm3
-FPSIMD-0311	FP&SIMD	SM3TT1B	arm64-simd-sm_allocation	later-indexed-valid-destination	ce428420	-	sm3
-FPSIMD-0312	FP&SIMD	SM3TT2A	arm64-simd-sm_allocation	later-indexed-valid-destination	ce428820	-	sm3
-FPSIMD-0313	FP&SIMD	SM3TT2B	arm64-simd-sm_allocation	later-indexed-valid-destination	ce428c20	-	sm3
-FPSIMD-0314	FP&SIMD	SM4E	arm64-simd-sm_allocation	later-round-valid-destination	cec08420	-	sm4
-FPSIMD-0315	FP&SIMD	SM4EKEY	arm64-simd-sm_allocation	later-key-valid-destination	ce62c820	-	sm4
+FPSIMD-0307	FP&SIMD	SM3PARTW1	arm64-absent-sm3	SM3PARTW1 is undefined	ce62c020	-	sm3
+FPSIMD-0308	FP&SIMD	SM3PARTW2	-	-	ce62c420	-	sm3
+FPSIMD-0309	FP&SIMD	SM3SS1	arm64-absent-sm3	SM3SS1 is undefined	ce420c20	-	sm3
+FPSIMD-0310	FP&SIMD	SM3TT1A	arm64-absent-sm3	SM3TT1A is undefined	ce428020	-	sm3
+FPSIMD-0311	FP&SIMD	SM3TT1B	-	-	ce428420	-	sm3
+FPSIMD-0312	FP&SIMD	SM3TT2A	-	-	ce428820	-	sm3
+FPSIMD-0313	FP&SIMD	SM3TT2B	-	-	ce428c20	-	sm3
+FPSIMD-0314	FP&SIMD	SM4E	arm64-absent-sm4	SM4E is undefined	cec08420	-	sm4
+FPSIMD-0315	FP&SIMD	SM4EKEY	arm64-absent-sm4	SM4EKEY is undefined	ce62c820	-	sm4
 FPSIMD-0316	FP&SIMD	SMAX	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e226420	-	advanced_simd
 FPSIMD-0317	FP&SIMD	SMAXP	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e22a420	-	advanced_simd
 FPSIMD-0318	FP&SIMD	SMAXV	arm64-simd-reduce-behavior	signed-maximum-across-vector	0e30a820	-	advanced_simd
@@ -867,11 +867,11 @@ FPSIMD-0345	FP&SIMD	SQRDMULH (by element)	arm64-simd-indexed-allocation	simd-mul
 FPSIMD-0346	FP&SIMD	SQRDMULH (vector)	arm64-simd-three-same-allocation	simd-three-same-allocation	2e62b420	-	advanced_simd
 FPSIMD-0347	FP&SIMD	SQRSHL	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e225c20	-	advanced_simd
 FPSIMD-0348	FP&SIMD	SQRSHRN, SQRSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	4f209f9b	-	advanced_simd
-FPSIMD-0349	FP&SIMD	SQRSHRUN, SQRSHRUN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f208f9b	-	advanced_simd
+FPSIMD-0349	FP&SIMD	SQRSHRUN, SQRSHRUN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f278f9c	-	advanced_simd
 FPSIMD-0350	FP&SIMD	SQSHL (immediate)	arm64-simd-shift-immediate-left	saturating shift-left-immediate behavior	0f207717	-	advanced_simd
 FPSIMD-0351	FP&SIMD	SQSHL (register)	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e224c20	-	advanced_simd
 FPSIMD-0352	FP&SIMD	SQSHLU	arm64-simd-shift-immediate-left	saturating shift-left-immediate behavior	2f206717	-	advanced_simd
-FPSIMD-0353	FP&SIMD	SQSHRN, SQSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	4f20979b	-	advanced_simd
+FPSIMD-0353	FP&SIMD	SQSHRN, SQSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	4f23979b	-	advanced_simd
 FPSIMD-0354	FP&SIMD	SQSHRUN, SQSHRUN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	2f20879b	-	advanced_simd
 FPSIMD-0355	FP&SIMD	SQSUB	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e222c20	-	advanced_simd
 FPSIMD-0356	FP&SIMD	SQXTN, SQXTN2	arm64-simd-two-register-narrow	simd-two-register-narrow-shift scalar=0 q=1 u=0 size=0 opcode=20 rd=0	4e214960	-	advanced_simd
@@ -882,7 +882,7 @@ FPSIMD-0360	FP&SIMD	SRSHL	arm64-simd-three-same-arithmetic	simd-three-same-behav
 FPSIMD-0361	FP&SIMD	SRSHR	arm64-simd-shift-immediate-right	shift-immediate right behavior	0f202693	-	advanced_simd
 FPSIMD-0362	FP&SIMD	SRSRA	arm64-simd-shift-immediate-right	shift-immediate right behavior	0f203693	-	advanced_simd
 FPSIMD-0363	FP&SIMD	SSHL	arm64-simd-three-same-arithmetic	simd-three-same-behavior	0e224420	-	advanced_simd
-FPSIMD-0364	FP&SIMD	SSHLL, SSHLL2	arm64-simd-shift-left-long-behavior	shift-left-long behavior	4f21a77a	-	advanced_simd
+FPSIMD-0364	FP&SIMD	SSHLL, SSHLL2	arm64-simd-shift-left-long-behavior	shift-left-long behavior	4f39a77b	-	advanced_simd
 FPSIMD-0365	FP&SIMD	SSHR	arm64-simd-shift-immediate-right	shift-immediate right behavior	0f200693	-	advanced_simd
 FPSIMD-0366	FP&SIMD	SSRA	arm64-simd-shift-immediate-right	shift-immediate right behavior	0f201693	-	advanced_simd
 FPSIMD-0367	FP&SIMD	SSUBL, SSUBL2	arm64-simd-widening-allocation	simd-widening-valid-allocation	4e222020	-	advanced_simd
@@ -905,8 +905,8 @@ FPSIMD-0383	FP&SIMD	STFMAX, STFMAXL	-	-	7c39c11f	-	lsfe
 FPSIMD-0384	FP&SIMD	STFMAXNM, STFMAXNML	-	-	7c3be1df	-	lsfe
 FPSIMD-0385	FP&SIMD	STFMIN, STFMINL	-	-	7c3dd29f	-	lsfe
 FPSIMD-0386	FP&SIMD	STFMINNM, STFMINNML	-	-	bc29f31f	-	lsfe
-FPSIMD-0387	FP&SIMD	STL1 (SIMD&FP)	arm64-simd-ordered-allocation	stl1-d0 allocated offset=0 rn=0 rt=3	0d018403	-	advanced_simd+lrcpc3
-FPSIMD-0388	FP&SIMD	STLUR (SIMD&FP)	arm64-simd-ordered-allocation	stlur-b allocated offset=0 rn=2 rt=3	1d000843	-	floating_point+lrcpc3
+FPSIMD-0387	FP&SIMD	STL1 (SIMD&FP)	-	-	0d018403	-	advanced_simd+lrcpc3
+FPSIMD-0388	FP&SIMD	STLUR (SIMD&FP)	-	-	1d000843	-	floating_point+lrcpc3
 FPSIMD-0389	FP&SIMD	STNP (SIMD&FP)	arm64-simd-load-store-pair	vector-store-32 mode=0 imm7=1	2c00c783	-	floating_point
 FPSIMD-0390	FP&SIMD	STP (SIMD&FP)	arm64-simd-load-store-pair	vector-store-32 mode=1 imm7=1	2c80c783	-	floating_point
 FPSIMD-0391	FP&SIMD	STR (immediate, SIMD&FP)	arm64-simd-ordinary-memory-immediate	store-b unsigned imm12=0	3d00007f	-	floating_point
@@ -932,7 +932,7 @@ FPSIMD-0410	FP&SIMD	UADDL, UADDL2	arm64-simd-widening-allocation	simd-widening-v
 FPSIMD-0411	FP&SIMD	UADDLP	arm64-simd-two-register-pairwise	simd-two-register-pairwise scalar=0 q=0 u=1 size=0 opcode=2 rd=0	2e202960	-	advanced_simd
 FPSIMD-0412	FP&SIMD	UADDLV	arm64-simd-reduce-behavior	unsigned-add-long-across-vector	2e303820	-	advanced_simd
 FPSIMD-0413	FP&SIMD	UADDW, UADDW2	arm64-simd-widening-allocation	simd-widening-valid-allocation	6e221020	-	advanced_simd
-FPSIMD-0414	FP&SIMD	UCVTF (scalar SIMD&FP)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e7d0167	-	fprcvt
+FPSIMD-0414	FP&SIMD	UCVTF (scalar SIMD&FP)	-	-	1e7d0167	-	fprcvt
 FPSIMD-0415	FP&SIMD	UCVTF (scalar, fixed-point)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e03f967	-	floating_point
 FPSIMD-0416	FP&SIMD	UCVTF (scalar, integer)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	1e230167	-	floating_point
 FPSIMD-0417	FP&SIMD	UCVTF (vector, fixed-point)	arm64-integer-to-floating-allocation	integer-to-floating-every-encoding-variant	6f3ee567	-	advanced_simd
@@ -957,10 +957,10 @@ FPSIMD-0435	FP&SIMD	UMULL, UMULL2 (by element)	arm64-simd-indexed-allocation	sim
 FPSIMD-0436	FP&SIMD	UMULL, UMULL2 (vector)	arm64-simd-indexed-allocation	simd-multiply-allocated	2e22c020	-	advanced_simd
 FPSIMD-0437	FP&SIMD	UQADD	arm64-simd-three-same-arithmetic	simd-three-same-behavior	2e220c20	-	advanced_simd
 FPSIMD-0438	FP&SIMD	UQRSHL	arm64-simd-three-same-arithmetic	simd-three-same-behavior	2e225c20	-	advanced_simd
-FPSIMD-0439	FP&SIMD	UQRSHRN, UQRSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f209f9b	-	advanced_simd
+FPSIMD-0439	FP&SIMD	UQRSHRN, UQRSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f3e9f9c	-	advanced_simd
 FPSIMD-0440	FP&SIMD	UQSHL (immediate)	arm64-simd-shift-immediate-left	saturating shift-left-immediate behavior	2f207717	-	advanced_simd
 FPSIMD-0441	FP&SIMD	UQSHL (register)	arm64-simd-three-same-arithmetic	simd-three-same-behavior	2e224c20	-	advanced_simd
-FPSIMD-0442	FP&SIMD	UQSHRN, UQSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f20979b	-	advanced_simd
+FPSIMD-0442	FP&SIMD	UQSHRN, UQSHRN2	arm64-simd-shift-immediate-narrow	saturating narrowing shift behavior	6f35979b	-	advanced_simd
 FPSIMD-0443	FP&SIMD	UQSUB	arm64-simd-three-same-arithmetic	simd-three-same-behavior	2e222c20	-	advanced_simd
 FPSIMD-0444	FP&SIMD	UQXTN, UQXTN2	arm64-simd-two-register-narrow	simd-two-register-narrow-shift scalar=0 q=1 u=1 size=0 opcode=20 rd=0	6e214960	-	advanced_simd
 FPSIMD-0445	FP&SIMD	URECPE	arm64-simd-estimate-allocation	unsigned-inverse-estimate	0ea1c800	-	advanced_simd
@@ -972,7 +972,7 @@ FPSIMD-0450	FP&SIMD	URSRA	arm64-simd-shift-immediate-right	shift-immediate right
 FPSIMD-0451	FP&SIMD	USDOT (by element)	arm64-simd-dot-indexed	dot indexed behavior	0f9efbbc	-	i8mm
 FPSIMD-0452	FP&SIMD	USDOT (vector)	arm64-simd-dot-vector	dot vector behavior	0e9e9fbc	-	i8mm
 FPSIMD-0453	FP&SIMD	USHL	arm64-simd-three-same-arithmetic	simd-three-same-behavior	2e224420	-	advanced_simd
-FPSIMD-0454	FP&SIMD	USHLL, USHLL2	arm64-simd-shift-left-long-behavior	shift-left-long behavior	2f21a77a	-	advanced_simd
+FPSIMD-0454	FP&SIMD	USHLL, USHLL2	arm64-simd-shift-left-long-behavior	shift-left-long behavior	2f23a77a	-	advanced_simd
 FPSIMD-0455	FP&SIMD	USHR	arm64-simd-shift-immediate-right	shift-immediate right behavior	2f200693	-	advanced_simd
 FPSIMD-0456	FP&SIMD	USMMLA (vector)	arm64-simd-matrix-allocation	FPSIMD-0456 USMMLA vector	4e9eafbc	-	i8mm
 FPSIMD-0457	FP&SIMD	USQADD	arm64-simd-two-register-ordinary	simd-two-register-ordinary scalar=0 q=0 u=1 size=0 opcode=3 rd=0	2e203960	-	advanced_simd
