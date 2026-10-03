@@ -195,6 +195,7 @@ constexpr std::array vector_gadgets{
 using uml::testing::fail;
 using uml::testing::require;
 using uml::emulator::tests::address;
+using uml::emulator::tests::emitted_entry;
 using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t translated_operand(
@@ -259,13 +260,13 @@ void translation_selects_every_shape_and_direct_offset()
 		const auto words = built.program.words();
 		require(words.size() >= 2U,
 			"reciprocal gadget stream is truncated");
-		const auto gadget = expected_gadget(form);
-		require(words[0] == address(gadget),
+		const auto gadget = emitted_entry(address(expected_gadget(form)));
+		require(words[0] == gadget,
 			"operation or shape remained in the runtime stream");
 		require(words[1] == translated_operand(form, registers),
 			"register fields were not translated to direct offsets");
 		selected.insert(words[0]);
-		expected.insert(address(gadget));
+		expected.insert(gadget);
 	});
 	require(expected.size() == valid_form_count(),
 		"reciprocal gadget declaration table is incomplete");

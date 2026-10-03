@@ -99,6 +99,7 @@ constexpr std::array<Gadget, 6> declared_gadgets{
 
 using uml::testing::require;
 using uml::emulator::tests::address;
+using uml::emulator::tests::emitted_entry;
 using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t translated_operand(
@@ -129,7 +130,7 @@ void translation_selects_each_precision_pair_and_direct_offsets()
 		const auto words = built.program.words();
 		require(words.size() >= 2U,
 			"scalar precision gadget stream is truncated");
-		require(words[0] == address(declared_gadgets[index]),
+		require(words[0] == emitted_entry(address(declared_gadgets[index])),
 			"precision pair remained undecoded in the runtime stream");
 		require(words[1] == translated_operand(registers),
 			"register fields were not translated to direct offsets");
@@ -137,7 +138,7 @@ void translation_selects_each_precision_pair_and_direct_offsets()
 	}
 	std::set<std::uintptr_t> declared;
 	for (const auto gadget : declared_gadgets)
-		declared.insert(address(gadget));
+		declared.insert(emitted_entry(address(gadget)));
 	require(declared.size() == declared_gadgets.size(),
 		"scalar precision gadget table contains duplicate entries");
 	require(selected == declared,
