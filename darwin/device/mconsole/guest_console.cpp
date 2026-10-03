@@ -96,22 +96,6 @@ std::atomic_uint32_t nextClientId;
 	return umid;
 }
 
-#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
-/* The user's temporary directory as Darwin names it, whatever $TMPDIR says. */
-[[nodiscard]] std::string userTemporaryDirectory()
-{
-	const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR, nullptr, 0);
-	if (length <= 1U)
-		return {};
-	std::string directory(length, '\0');
-	if (::confstr(_CS_DARWIN_USER_TEMP_DIR, directory.data(), length) !=
-	    length)
-		return {};
-	directory.resize(length - 1U);
-	return directory;
-}
-#endif
-
 /* Where this process's console goes, and the directory named in a report
  * when no location fits. */
 [[nodiscard]] std::optional<GuestConsoleLocation> composeProcessLocation(
@@ -123,7 +107,7 @@ std::atomic_uint32_t nextClientId;
 	return compose_guest_console_location(described);
 #else
 	const std::array<std::string, 3> parents {
-		described, userTemporaryDirectory(), "/tmp"};
+		described, user_temporary_directory(), "/tmp"};
 	described = "$TMPDIR, " + parents[1] + " or /tmp";
 	return compose_run_console_location(parents, consoleUmid());
 #endif

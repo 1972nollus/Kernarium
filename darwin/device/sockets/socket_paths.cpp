@@ -188,6 +188,19 @@ void DirectoryPath::adopt(const std::filesystem::path &name)
 		"no free directory cleanup slot for " + directory);
 }
 
+std::string user_temporary_directory()
+{
+	const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR, nullptr, 0);
+	if (length <= 1U)
+		return {};
+	std::string directory(length, '\0');
+	if (::confstr(_CS_DARWIN_USER_TEMP_DIR, directory.data(), length) !=
+	    length)
+		return {};
+	directory.resize(length - 1U);
+	return directory;
+}
+
 void remove_registered_socket_paths() noexcept
 {
 	for (const auto &slot : table)

@@ -2,6 +2,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 namespace uml::device {
 
@@ -60,6 +61,13 @@ private:
 	std::filesystem::path path_;
 	int slot_{-1};
 };
+
+/*
+ * The user's temporary directory as Darwin names it, whatever $TMPDIR says: the
+ * place for a run's own host files when $TMPDIR is unset or unusable, rather
+ * than the shared /tmp. Empty where there is none, as on an iOS device.
+ */
+[[nodiscard]] std::string user_temporary_directory();
 
 /*
  * Removes every adopted socket path whose device and inode still match what

@@ -135,8 +135,10 @@ before the display manager.
 
 `uml-darwin` embeds the accepted base for its kernel slice's userspace
 architecture and the default `init`. It writes the initrd into a private
-`$TMPDIR/uml-guest-initrd-<pid>-*` directory, removes it when the run returns
-and removes directories left by runs that have since exited.
+`$TMPDIR/uml-guest-initrd-<pid>-*` directory, in the user's temporary
+directory when `$TMPDIR` is unset. The run removes it when it returns and on
+a terminating signal it can handle, a guest panic or a host fault, and removes
+the directories of runs since killed outright.
 
 - `--guest-init=<host file>` replaces `/init`;
 - `--guest-file=<archive path>=<host file>` adds a file, such as `/boot.env`
