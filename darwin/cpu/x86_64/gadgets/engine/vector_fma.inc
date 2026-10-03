@@ -313,33 +313,74 @@ Lx86_vector_fma_tiny_done\@:
 
 /* The exact path (`simd_exact_branch`). MXCSR.DAZ flushes the inputs -- for
  * a scalar one lane 0 of the destination alone, whose other lanes the
- * result keeps. A special result leaves while the gadgets check SIMD
- * exceptions, and FTZ flushes a tiny one. */
-.macro vector_fma_exact form, operation, element_bits, width, scalar
+ * result keeps. One test finds a special result, and under FTZ a result no
+ * larger than the smallest normal; the path for either leaves while the
+ * gadgets check SIMD exceptions, repairs a NaN, and flushes a tiny result.
+ * Returns to `back`. Uses v16 to v21. */
+.macro vector_fma_exact form, operation, element_bits, width, scalar, back
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fma_inputs_ready\@
+	simd_flush_masks \element_bits, 18, 19
 	.if \scalar
 	mov v7.16b, v0.16b
-	simd_flush_denormals 7, \element_bits
+	simd_flush_denormals_masked 7, \element_bits, 18, 19
 	.if \element_bits == 32
 	mov v0.s[0], v7.s[0]
 	.else
 	mov v0.d[0], v7.d[0]
 	.endif
-	simd_flush_denormals 1, \element_bits
-	simd_flush_denormals 2, \element_bits
+	simd_flush_denormals_masked 1, \element_bits, 18, 19
+	simd_flush_denormals_masked 2, \element_bits, 18, 19
 	.else
-	simd_flush_denormals 0, \element_bits
-	simd_flush_denormals 1, \element_bits
-	simd_flush_denormals 2, \element_bits
+	simd_flush_denormals_masked 0, \element_bits, 18, 19
+	simd_flush_denormals_masked 1, \element_bits, 18, 19
+	simd_flush_denormals_masked 2, \element_bits, 18, 19
 	.if \width == 256
-	simd_flush_denormals 3, \element_bits
-	simd_flush_denormals 4, \element_bits
-	simd_flush_denormals 5, \element_bits
+	simd_flush_denormals_masked 3, \element_bits, 18, 19
+	simd_flush_denormals_masked 4, \element_bits, 18, 19
+	simd_flush_denormals_masked 5, \element_bits, 18, 19
 	.endif
 	.endif
 Lx86_vector_fma_inputs_ready\@:
 	vector_fma_compute \form, \operation, \element_bits, \width, \scalar
+	.if \scalar
+	.if \element_bits == 32
+	fmov w14, s6
+	ubfx w15, w14, #23, #8
+	cmp w15, #0xfe
+	b.hs Lx86_vector_fma_unusual_stub\@
+	tbz w12, #15, Lx86_vector_fma_ready\@
+	lsl w15, w14, #1
+	sub w15, w15, #1
+	tst w15, #0xff000000
+	b.eq Lx86_vector_fma_unusual_stub\@
+	.else
+	fmov x14, d6
+	ubfx x15, x14, #52, #11
+	cmp x15, #0x7fe
+	b.hs Lx86_vector_fma_unusual_stub\@
+	tbz w12, #15, Lx86_vector_fma_ready\@
+	lsl x15, x14, #1
+	sub x15, x15, #1
+	tst x15, #0xffe0000000000000
+	b.eq Lx86_vector_fma_unusual_stub\@
+	.endif
+	.else
+	vector_fma_unusual_lanes \element_bits, 6, 20
+	.if \width == 256
+	vector_fma_unusual_lanes \element_bits, 7, 21
+	orr v20.16b, v20.16b, v21.16b
+	.endif
+	umaxv s20, v20.4s
+	fmov w14, s20
+	cbnz w14, Lx86_vector_fma_unusual_stub\@
+	.endif
+Lx86_vector_fma_ready\@:
+	b \back
+Lx86_vector_fma_unusual_stub\@:
+	b Lx86_vector_fma_unusual\@
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_fma_unusual\@:
 	.if \scalar
 	simd_special_scalar \element_bits, 6, Lx86_vector_fma_nan_ready\@, lo
 	.else
@@ -384,6 +425,37 @@ Lx86_vector_fma_nan_ready\@:
 	.endif
 	.endif
 Lx86_vector_fma_tiny_ready\@:
+	b Lx86_vector_fma_ready\@
+	.popsection
+.endm
+
+/* v`mask` = all ones in the lanes of v`output` whose exponent is all ones or
+ * one below, and under FTZ (w12 is MXCSR) also in those that are not zero
+ * and at most the smallest normal. Uses v16 to v19. */
+.macro vector_fma_unusual_lanes element, output, mask
+	.if \element == 32
+	shl v16.4s, v\output\().4s, #1
+	movi v17.4s, #0xfe, lsl #24
+	cmhs v\mask\().4s, v16.4s, v17.4s
+	tbz w12, #15, Lx86_vector_fma_unusual_ready\@
+	movi v18.16b, #0xff
+	add v16.4s, v16.4s, v18.4s
+	movi v19.4s, #0x01, lsl #24
+	cmhi v16.4s, v19.4s, v16.4s
+	.else
+	shl v16.2d, v\output\().2d, #1
+	mov x14, #0xffc0000000000000
+	dup v17.2d, x14
+	cmhs v\mask\().2d, v16.2d, v17.2d
+	tbz w12, #15, Lx86_vector_fma_unusual_ready\@
+	movi v18.16b, #0xff
+	add v16.2d, v16.2d, v18.2d
+	mov x14, #0x0020000000000000
+	dup v19.2d, x14
+	cmhi v16.2d, v19.2d, v16.2d
+	.endif
+	orr v\mask\().16b, v\mask\().16b, v16.16b
+Lx86_vector_fma_unusual_ready\@:
 .endm
 
 /* The common path, while `exception_check_simd_exact` is clear: a NaN result
@@ -433,20 +505,19 @@ Lx86_vector_fma_tiny_ready\@:
 .endm
 
 /* The paths `vector_fma_body` branches to, placed after the gadget's tail so
- * that the common path takes no branch: each reaches its body in the cold
- * section. A NaN result on the common path needs only x86's NaN. */
+ * that the common path takes no branch. A NaN result on the common path needs
+ * only x86's NaN, in the cold section. The exact path runs here, as
+ * applications commonly set DAZ and FTZ for good, and keeps its rare repairs
+ * in the cold section. */
 .macro vector_fma_paths form, operation, element_bits, width, scalar, special, special_back, exact, exact_back
 \special:
 	b \special\()_cold
 \exact:
-	b \exact\()_cold
+	vector_fma_exact \form, \operation, \element_bits, \width, \scalar, \exact_back
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
 \special\()_cold:
 	vector_fma_x86_nan \form, \operation, \element_bits, \width, \scalar
 	b \special_back
-\exact\()_cold:
-	vector_fma_exact \form, \operation, \element_bits, \width, \scalar
-	b \exact_back
 	.popsection
 .endm
 
@@ -607,6 +678,7 @@ vector_fma_opcode bf, 0xb0, 0xf
 .purgem vector_fma_paths
 .purgem vector_fma_body
 .purgem vector_fma_exact
+.purgem vector_fma_unusual_lanes
 .purgem vector_fma_x86_nan
 .purgem vector_fma_compute
 .purgem vector_fma_flush_tiny_packed

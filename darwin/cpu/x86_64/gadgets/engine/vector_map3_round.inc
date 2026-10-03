@@ -89,9 +89,10 @@ Lx86_vector_map3_round_done\@:
 .macro vector_map3_round_inputs element, width
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_map3_round_inputs_ready\@
-	simd_flush_denormals 1, \element
 	.if \width == 256
-	simd_flush_denormals 3, \element
+	simd_flush_denormals_each \element, 1, 3
+	.else
+	simd_flush_denormals 1, \element
 	.endif
 Lx86_vector_map3_round_inputs_ready\@:
 .endm
@@ -138,14 +139,12 @@ Lx86_vector_map3_round_inputs_ready\@:
 .endm
 
 .macro vector_map3_round_body opcode, width
-	simd_exact_branch Lx86_vector_map3_round_exact\@
-	vector_map3_round_compute \opcode, \width, 0
-Lx86_vector_map3_round_done\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_map3_round_exact\@:
+	simd_exact_branch Lx86_vector_map3_round_common\@
 	vector_map3_round_compute \opcode, \width, 1
 	b Lx86_vector_map3_round_done\@
-	.popsection
+Lx86_vector_map3_round_common\@:
+	vector_map3_round_compute \opcode, \width, 0
+Lx86_vector_map3_round_done\@:
 .endm
 
 .macro vector_map3_round_register symbol, opcode, width
@@ -275,14 +274,12 @@ Lx86_vector_map3_half_mode_ready\@:
 .endm
 
 .macro vector_map3_half_body width
-	simd_exact_branch Lx86_vector_map3_half_exact\@
-	vector_map3_half_compute \width, 0
-Lx86_vector_map3_half_done\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_map3_half_exact\@:
+	simd_exact_branch Lx86_vector_map3_half_common\@
 	vector_map3_half_compute \width, 1
 	b Lx86_vector_map3_half_done\@
-	.popsection
+Lx86_vector_map3_half_common\@:
+	vector_map3_half_compute \width, 0
+Lx86_vector_map3_half_done\@:
 .endm
 
 .macro vector_map3_half_register width

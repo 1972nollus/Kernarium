@@ -62,8 +62,7 @@ Lx86_vector_map3_dot_daz_ready\@:
 	and v20.16b, v\left\().16b, v7.16b
 	and v22.16b, v\right\().16b, v7.16b
 	tbz w12, #6, Lx86_vector_map3_dot_inputs_ready\@
-	simd_flush_denormals 20, \element
-	simd_flush_denormals 22, \element
+	simd_flush_denormals_each \element, 20, 22
 Lx86_vector_map3_dot_inputs_ready\@:
 	.if \element == 32
 	fmul v21.4s, v20.4s, v22.4s
@@ -96,11 +95,15 @@ Lx86_vector_map3_dot_inputs_ready\@:
 .endm
 
 /* A dot product runs as above on its common path, while its result is not a
- * NaN, and otherwise on the exact path (`simd_exact_branch`). A dot product
- * can overflow and cancel on the way to its result, so while the gadgets
- * check SIMD exceptions one always leaves there, to run checked. */
+ * NaN, and otherwise on the exact path (`exception_check_simd_exact`), which
+ * stays in the cold section: it repairs every step. A dot product can
+ * overflow and cancel on the way to its result, so while the gadgets check
+ * SIMD exceptions one always leaves there, to run checked. */
 .macro vector_map3_dot element, width
-	simd_exact_branch Lx86_vector_map3_dot_exact\@
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #2, Lx86_vector_map3_dot_common\@
+	b Lx86_vector_map3_dot_exact\@
+Lx86_vector_map3_dot_common\@:
 	.if \element == 32
 	vector_map3_dpps_lane 4, 0, 1
 	.if \width == 256

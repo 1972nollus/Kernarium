@@ -193,16 +193,15 @@ Lx86_simd_unchecked\@:
 .endm
 
 /* A SIMD floating-point gadget whose common path assumes MXCSR.DAZ and FTZ
- * clear and no SIMD check runs its exact path instead, in the cold section,
- * while `exception_check_simd_exact` says so: one load and branch serve all
- * three. The exact path reads MXCSR itself and returns with a branch; what
- * it expands must not push the cold section again, which would place that
- * code inline. Uses w14. */
-.macro simd_exact_branch label
+ * clear and no SIMD check runs its exact path instead while
+ * `exception_check_simd_exact` says so: one load and branch serve all three.
+ * Applications commonly set DAZ and FTZ for good, so the exact path follows
+ * inline and ends with a branch past the common path at `common`; only its
+ * rare repairs go to the cold section. The exact path reads MXCSR itself.
+ * Uses w14. */
+.macro simd_exact_branch common
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #2, Lx86_simd_common\@
-	b \label
-Lx86_simd_common\@:
+	tbz w14, #2, \common
 .endm
 
 /* Keep `exception_check_simd_exact` current after an instruction loads
@@ -299,21 +298,54 @@ Lx86_simd_no_nan\@:
 .endm
 
 /* MXCSR.DAZ and FTZ: replace each denormal lane of v`vector` (`element` bits
- * wide) with a zero of its sign. A lane whose exponent is zero keeps its sign
- * bit alone, which leaves a zero as it was. Uses v17. */
+ * wide) with a zero of its sign. A lane whose exponent is zero takes its sign
+ * bit alone, which leaves a zero as it was. The value passes through two
+ * dependent instructions, as a scalar computation waits on it. Uses v16, v17
+ * and x14. */
 .macro simd_flush_denormals vector, element
+	simd_flush_masks \element, 16, 17
+	simd_flush_denormals_masked \vector, \element, 16, 17
+.endm
+
+/* The masks `simd_flush_denormals_masked` takes: the exponent in
+ * v`exponent`, the sign in v`sign`. Several flushes share them. Uses x14. */
+.macro simd_flush_masks element, exponent, sign
 	.if \element == 32
-	shl v17.4s, v\vector\().4s, #1
-	ushr v17.4s, v17.4s, #24
-	cmeq v17.4s, v17.4s, #0
-	ushr v17.4s, v17.4s, #1
+	mov w14, #0x7f800000
+	dup v\exponent\().4s, w14
+	movi v\sign\().4s, #0x80, lsl #24
 	.else
-	shl v17.2d, v\vector\().2d, #1
-	ushr v17.2d, v17.2d, #53
-	cmeq v17.2d, v17.2d, #0
-	ushr v17.2d, v17.2d, #1
+	mov x14, #0x7ff0000000000000
+	dup v\exponent\().2d, x14
+	mov x14, #0x8000000000000000
+	dup v\sign\().2d, x14
 	.endif
-	bic v\vector\().16b, v\vector\().16b, v17.16b
+.endm
+
+/* The flush itself, with the masks in v`exponent` and v`sign`, which may be
+ * v16 and v17 for a single flush. Uses v16 and v17. */
+.macro simd_flush_denormals_masked vector, element, exponent, sign
+	and v17.16b, v\vector\().16b, v\sign\().16b
+	.if \element == 32
+	cmtst v16.4s, v\vector\().4s, v\exponent\().4s
+	.else
+	cmtst v16.2d, v\vector\().2d, v\exponent\().2d
+	.endif
+	bif v\vector\().16b, v17.16b, v16.16b
+.endm
+
+/* The same for two to four vectors, which share masks in v18 and v19. Uses
+ * v16 to v19 and x14. */
+.macro simd_flush_denormals_each element, first, second, third=-1, fourth=-1
+	simd_flush_masks \element, 18, 19
+	simd_flush_denormals_masked \first, \element, 18, 19
+	simd_flush_denormals_masked \second, \element, 18, 19
+	.if \third >= 0
+	simd_flush_denormals_masked \third, \element, 18, 19
+	.endif
+	.if \fourth >= 0
+	simd_flush_denormals_masked \fourth, \element, 18, 19
+	.endif
 .endm
 
 /* v`mask` = all ones in the lanes of v`output` that are not zero and at most

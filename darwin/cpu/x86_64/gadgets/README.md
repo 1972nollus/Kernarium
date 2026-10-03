@@ -10,7 +10,7 @@ Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
 distance past the nearest named symbol before it as a signed 24-bit addend, so
 such a target must lie within 8 MiB of one; the cold section names only its
-start and is 0.3 MB. The assembler rejects a larger addend, and a named local
+start and is 0.5 MB. The assembler rejects a larger addend, and a named local
 symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
 a `.L` symbol in the engine object.
 
@@ -319,11 +319,17 @@ the cold section, which a gadget enters only for a special result, an
 estimate's special input, or under FTZ a result no larger than the smallest
 normal. Conversions, rounding, F16C's narrowing, HADD, HSUB, ADDSUB, DPPS,
 DPPD and FMA instead keep a common path that assumes DAZ and FTZ clear and no
-SIMD check, and run an exact path in the cold section while `exception_checks`
-holds `exception_check_simd_exact`: with `exception_check_simd`, or while DAZ
-or FTZ is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One
-load and branch thus serve all three, as the check alone did before, and the
-common path adds only a NaN test where x86's NaN differs from the host's.
+SIMD check, and run an exact path while `exception_checks` holds
+`exception_check_simd_exact`: with `exception_check_simd`, or while DAZ or FTZ
+is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One load
+and branch thus serve all three, as the check alone did before, and the common
+path adds only a NaN test where x86's NaN differs from the host's.
+Applications set DAZ and FTZ for good as often as not -- Geekbench's image
+workloads and embree do -- so the exact path is a common path too: it follows
+the gadget inline (FMA's after the gadget's tail), and only its repairs, and
+DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
+denormal input passes the value through two dependent instructions, as scalar
+code waits on it.
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the

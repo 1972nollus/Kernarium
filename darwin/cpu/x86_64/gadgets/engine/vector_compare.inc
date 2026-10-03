@@ -39,8 +39,7 @@ Lx86_vector_compare_done\@:
 .macro vector_compare_inputs element
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_compare_inputs_ready\@
-	simd_flush_denormals 0, \element
-	simd_flush_denormals 1, \element
+	simd_flush_denormals_each \element, 0, 1
 Lx86_vector_compare_inputs_ready\@:
 .endm
 

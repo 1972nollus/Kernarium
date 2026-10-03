@@ -9,11 +9,10 @@
 .macro vector_horizontal_inputs element, width
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_horizontal_inputs_ready\@
-	simd_flush_denormals 0, \element
-	simd_flush_denormals 1, \element
 	.if \width == 256
-	simd_flush_denormals 2, \element
-	simd_flush_denormals 3, \element
+	simd_flush_denormals_each \element, 0, 1, 2, 3
+	.else
+	simd_flush_denormals_each \element, 0, 1
 	.endif
 Lx86_vector_horizontal_inputs_ready\@:
 .endm
@@ -43,18 +42,24 @@ Lx86_vector_horizontal_inputs_ready\@:
 	.endif
 	cbz w14, Lx86_vector_horizontal_nan_ready\@
 Lx86_vector_horizontal_special\@:
+	b Lx86_vector_horizontal_repair\@
+Lx86_vector_horizontal_nan_ready\@:
+	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
+	.if \width == 256
+	simd_flush_denormals_each \element, 4, 5
+	.else
+	simd_flush_denormals 4, \element
+	.endif
+Lx86_vector_horizontal_ftz_ready\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_horizontal_repair\@:
 	simd_leave_if_checking
 	vector_horizontal_nan \operation, \element, 4, 0, 1
 	.if \width == 256
 	vector_horizontal_nan \operation, \element, 5, 2, 3
 	.endif
-Lx86_vector_horizontal_nan_ready\@:
-	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
-	simd_flush_denormals 4, \element
-	.if \width == 256
-	simd_flush_denormals 5, \element
-	.endif
-Lx86_vector_horizontal_ftz_ready\@:
+	b Lx86_vector_horizontal_nan_ready\@
+	.popsection
 .endm
 
 .macro vector_horizontal_operation operation, element, width
@@ -132,7 +137,12 @@ Lx86_vector_horizontal_ftz_ready\@:
 /* The common path repairs a NaN result alone; the exact path
  * (`simd_exact_branch`) applies DAZ and FTZ and the SIMD checks too. */
 .macro vector_horizontal_body operation, element, width
-	simd_exact_branch Lx86_vector_horizontal_exact\@
+	simd_exact_branch Lx86_vector_horizontal_common\@
+	vector_horizontal_inputs \element, \width
+	vector_horizontal_operation \operation, \element, \width
+	vector_horizontal_results \operation, \element, \width
+	b Lx86_vector_horizontal_done\@
+Lx86_vector_horizontal_common\@:
 	vector_horizontal_operation \operation, \element, \width
 	.if \width == 256
 	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4, 5
@@ -146,11 +156,6 @@ Lx86_vector_horizontal_nan\@:
 	.if \width == 256
 	vector_horizontal_nan \operation, \element, 5, 2, 3
 	.endif
-	b Lx86_vector_horizontal_done\@
-Lx86_vector_horizontal_exact\@:
-	vector_horizontal_inputs \element, \width
-	vector_horizontal_operation \operation, \element, \width
-	vector_horizontal_results \operation, \element, \width
 	b Lx86_vector_horizontal_done\@
 	.popsection
 .endm

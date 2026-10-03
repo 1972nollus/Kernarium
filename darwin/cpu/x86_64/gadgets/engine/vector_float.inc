@@ -543,11 +543,10 @@ Lx86_vector_fp_estimate_special\@:
 	.else
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fp_inputs_ready\@
-	simd_flush_denormals 0, \element
-	simd_flush_denormals 1, \element
 	.if \width == 256
-	simd_flush_denormals 2, \element
-	simd_flush_denormals 3, \element
+	simd_flush_denormals_each \element, 0, 1, 2, 3
+	.else
+	simd_flush_denormals_each \element, 0, 1
 	.endif
 Lx86_vector_fp_inputs_ready\@:
 	vector_fp_check_inputs \operation, \element, \width, \scalar

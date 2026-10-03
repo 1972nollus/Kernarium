@@ -83,9 +83,10 @@ Lx86_vector_convert_in_range\@:
 .macro vector_convert_inputs element, input_size
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_convert_inputs_ready\@
-	simd_flush_denormals 1, \element
 	.if \input_size == 32
-	simd_flush_denormals 3, \element
+	simd_flush_denormals_each \element, 1, 3
+	.else
+	simd_flush_denormals 1, \element
 	.endif
 Lx86_vector_convert_inputs_ready\@:
 .endm
@@ -94,8 +95,7 @@ Lx86_vector_convert_inputs_ready\@:
  * vector_float.inc): every denormal one, and one the host rounded up to the
  * smallest normal when its double, scaled up, narrows below the scaled
  * threshold. The scalar result is in lane 0 of v6 from d1; the packed one in
- * v4 from v1, and v3 for a 32-byte input. It runs on the exact path, in
- * the cold section, and tests w12, MXCSR. */
+ * v4 from v1, and v3 for a 32-byte input. It tests w12, MXCSR. */
 .macro vector_convert_flush_narrowed scalar, input_size
 	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
 	.if \scalar
@@ -110,6 +110,10 @@ Lx86_vector_convert_inputs_ready\@:
 	fmov w14, s17
 	cbz w14, Lx86_vector_convert_ftz_ready\@
 	.endif
+	b Lx86_vector_convert_tiny\@
+Lx86_vector_convert_ftz_ready\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_convert_tiny\@:
 	mrs x15, fpsr
 	mov x14, #0x43f0000000000000
 	.if \scalar
@@ -150,7 +154,8 @@ Lx86_vector_convert_tiny_done\@:
 	bsl v17.16b, v16.16b, v4.16b
 	mov v4.16b, v17.16b
 	.endif
-Lx86_vector_convert_ftz_ready\@:
+	b Lx86_vector_convert_ftz_ready\@
+	.popsection
 .endm
 
 /* A conversion from floating point but to integers with truncation, which
@@ -240,14 +245,12 @@ Lx86_vector_convert_ftz_ready\@:
 	.set Lx86_vector_convert_exact\@, 0
 	.endif
 	.if Lx86_vector_convert_exact\@
-	simd_exact_branch Lx86_vector_convert_exact_path\@
-	vector_convert_floating \operation, \output_width, \input_size, \truncate, 0
-Lx86_vector_convert_done\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_convert_exact_path\@:
+	simd_exact_branch Lx86_vector_convert_common\@
 	vector_convert_floating \operation, \output_width, \input_size, \truncate, 1
 	b Lx86_vector_convert_done\@
-	.popsection
+Lx86_vector_convert_common\@:
+	vector_convert_floating \operation, \output_width, \input_size, \truncate, 0
+Lx86_vector_convert_done\@:
 	.else
 	.ifc \operation,dq_ps
 	scvtf v4.4s, v1.4s
