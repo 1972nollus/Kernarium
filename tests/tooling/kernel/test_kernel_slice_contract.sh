@@ -20,7 +20,10 @@ for abandoned in "$TEMPORARY_PARENT"/uml-kernel-slices-*.*; do
 	case $owner in
 	'' | 0* | *[!0-9]*) continue ;;
 	esac
-	ps -p "$owner" >/dev/null 2>&1 || rm -rf -- "$abandoned"
+	# A killed run's children can still be writing into its directory, so
+	# what one run cannot remove is left to a later run.
+	ps -p "$owner" >/dev/null 2>&1 ||
+		rm -rf -- "$abandoned" 2>/dev/null || :
 done
 TEST_ROOT=$(mktemp -d "$TEMPORARY_PARENT/uml-kernel-slices-$$.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
