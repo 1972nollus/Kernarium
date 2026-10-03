@@ -21,12 +21,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const unsigned destination = instruction & 31U;
 		if (operation == 1 ||
-		    (!is_64_bit && halfword >= 2)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		    (!is_64_bit && halfword >= 2))
+			return illegal_instruction(context);
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
 		} else if (operation == 3U) {
@@ -60,8 +56,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				(instruction >> 10) & 0xffU;
 			const bool is_64_bit =
 				(instruction & 0x8000'0000U) != 0;
-			const auto zero = offsetof(CpuState, gadget_zero);
-			const auto source_offset = source == 31U ? zero : source * 8U;
+			const auto source_offset =
+				arithmetic_register_offset(source);
 			/* UMAX #0 is an unconditional copy. */
 			if (operation == 1U && encoded == 0U) {
 				if (is_64_bit && destination == source) {
@@ -96,10 +92,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 	} else if ((instruction & 0x1f80'0000U) == 0x1180'0000U) {
 		/* Includes FEAT_MTE ADDG/SUBG, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x1f80'0000U) == 0x1100'0000U) {
 		const bool set_flags = (instruction & 0x2000'0000U) != 0;
 		const bool subtract = (instruction & 0x4000'0000U) != 0;
@@ -190,10 +183,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		if ((extended && shift > 4) ||
 		    (!extended && (shift_type == 3 ||
 			(!is_64_bit && shift >= 32)))) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 		const unsigned destination = instruction & 31U;
 		const unsigned left = (instruction >> 5) & 31U;
@@ -298,10 +288,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		   (instruction & 0xffe0'e000U) == 0xda00'2000U) {
 		/* FEAT_MTE IRG/GMI/SUBP/SUBPS and FEAT_CPA ADDPT/SUBPT: the
 		 * virtual CPU implements neither feature. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x1fe0'fc00U) == 0x1a00'0000U) {
 		const unsigned destination = instruction & 31U;
 		const unsigned left = (instruction >> 5) & 31U;
@@ -340,8 +327,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		}
 	} else if ((instruction & 0xffff'bc1fU) == 0x3a00'080dU) {
 		const unsigned source = (instruction >> 5) & 31U;
-		const auto source_offset = source == 31U ?
-			offsetof(CpuState, gadget_zero) : source * 8U;
+		const auto source_offset = arithmetic_register_offset(source);
 		const bool native = !options.force_software_flags &&
 			host_capabilities().has(ArmFeature::flag_m);
 		if ((instruction & 0x4000U) != 0)
@@ -353,17 +339,11 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		emit(words, source_offset);
 	} else if ((instruction & 0xffe0'0400U) == 0xba00'0400U ||
 		   (instruction & 0xffff'0800U) == 0x3a00'0800U) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
 		/* PACGA needs FEAT_PAuth, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x7fe0'f000U) == 0x1ac0'6000U) {
 		const unsigned destination = instruction & 31U;
 		if (destination == 31U) {
@@ -422,16 +402,10 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			}
 		}
 	} else if ((instruction & 0x5fe0'f000U) == 0x1ac0'6000U) {
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffe0'0000U) == 0x9b60'0000U) {
 		/* FEAT_CPA MADDPT/MSUBPT are not implemented. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x1f00'0000U) == 0x1b00'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const auto operation = (instruction >> 21) & 7U;
@@ -468,10 +442,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 						addend * 8U) << 48));
 			}
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x7fe0'f000U) == 0x1ac0'2000U) {
 		const unsigned destination = instruction & 31U;
@@ -521,19 +492,13 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				emit(words, arithmetic_binary_operand(instruction));
 			}
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x5fe0'0000U) == 0x1ac0'0000U) {
 		/* Every allocated data-processing (2 source) member is selected
 		 * above. The remaining opcode combinations are reserved.
 		 */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x1f80'0000U) == 0x1380'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const unsigned shift = (instruction >> 10) & 0x3fU;
@@ -553,20 +518,13 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				(static_cast<std::uintptr_t>(right) << 16) |
 				(static_cast<std::uintptr_t>(shift) << 24));
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0x1f00'0000U) == 0x0a00'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const unsigned shift = (instruction >> 10) & 0x3fU;
-		if (!is_64_bit && shift >= 32) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!is_64_bit && shift >= 32)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		const unsigned left = (instruction >> 5) & 31U;
 		const unsigned right = (instruction >> 16) & 31U;
@@ -588,12 +546,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				(static_cast<std::uintptr_t>(shift) << 24));
 		}
 	} else if ((instruction & 0x3fe0'0000U) == 0x1a80'0000U) {
-		if ((instruction & 0x0000'0800U) != 0) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if ((instruction & 0x0000'0800U) != 0)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
@@ -623,19 +577,14 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				 << 32));
 		}
 	} else if ((instruction & 0x3fe0'0000U) == 0x3a40'0000U) {
-		if ((instruction & 0x0000'0410U) != 0) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if ((instruction & 0x0000'0410U) != 0)
+			return illegal_instruction(context);
 		const bool immediate = (instruction & 0x800U) != 0;
 		const unsigned left = (instruction >> 5) & 31U;
 		const unsigned right = (instruction >> 16) & 31U;
-		const auto zero = offsetof(CpuState, gadget_zero);
-		const auto left_operand = left == 31U ? zero : left * 8U;
+		const auto left_operand = arithmetic_register_offset(left);
 		const auto right_operand = immediate ? right :
-			right == 31U ? zero : right * 8U;
+			arithmetic_register_offset(right);
 		emit(words, conditional_compare_gadget(
 			(instruction >> 12) & 15U,
 			(instruction & 0x4000'0000U) != 0,
@@ -649,12 +598,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			is_64_bit, (instruction >> 22) & 1U,
 			(instruction >> 16) & 0x3fU,
 			(instruction >> 10) & 0x3fU);
-		if (!immediate) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!immediate)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		const unsigned source = (instruction >> 5) & 31U;
 		if (destination == source && destination != 31U)
@@ -677,12 +622,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			is_64_bit, n, rotate, imms, false);
 		if (operation == 3 || n != static_cast<unsigned>(is_64_bit) ||
 		    (!is_64_bit && ((rotate | imms) & 0x20U) != 0) ||
-		    !masks) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		    !masks)
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
@@ -702,19 +643,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		   (instruction & 0xffff'f800U) == 0xdac1'4000U) {
 		/* PAC*, AUT*, XPACI and XPACD need FEAT_PAuth, which the virtual
 		 * CPU does not implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x7fff'8000U) == 0x5ac0'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const auto operation = (instruction >> 10) & 0x1fU;
-		if (operation > 8 || (!is_64_bit && operation == 3)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (operation > 8 || (!is_64_bit && operation == 3))
+			return illegal_instruction(context);
 		const unsigned destination = instruction & 31U;
 		const unsigned source = (instruction >> 5) & 31U;
 		if (destination == 31U) {
@@ -723,9 +657,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			emit(words, bit_reverse_count_gadget(
 				is_64_bit, operation));
 			emit(words, packed_u16_operands(
-				source == 31U ? offsetof(CpuState, gadget_zero) :
-					offsetof(CpuState, registers) +
-						source * sizeof(std::uint64_t),
+				arithmetic_register_offset(source),
 				offsetof(CpuState, registers) +
 					destination * sizeof(std::uint64_t)));
 		}

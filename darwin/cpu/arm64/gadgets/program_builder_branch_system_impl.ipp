@@ -19,10 +19,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	if (pointer_auth_lr_unavailable(instruction)) {
 		/* FEAT_PAuth_LR is not advertised by the static guest profile.
 		 * Its non-HINT encodings are architecturally UNDEFINED. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x7c00'0000U) == 0x1400'0000U) {
 		const auto displacement = sign_extend(
 			static_cast<std::uint64_t>(instruction & 0x03ff'ffffU) << 2,
@@ -50,10 +47,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	} else if ((instruction & 0xff00'0010U) == 0x5400'0010U) {
 		/* BC.cond needs FEAT_HBC, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xff00'0010U) == 0x5400'0000U) {
 		const auto displacement = sign_extend(
 			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
@@ -85,10 +79,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	} else if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
 		/* The virtual CPU implements no FEAT_CMPBR: the compare-and-branch
 		 * class is unallocated. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0x7e00'0000U) == 0x3400'0000U) {
 		const auto displacement = sign_extend(
 			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
@@ -176,10 +167,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		/* BRAA, BRAB, BLRAA, BLRAB, their zero-modifier forms, RETAA and
 		 * RETAB need FEAT_PAuth, which the virtual CPU does not
 		 * implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U ||
 		   (instruction & 0xffff'fc1fU) == 0xd63f'0000U ||
 		   (instruction & 0xffff'fc1fU) == 0xd65f'0000U) {
@@ -198,8 +186,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				uml_arm64_gadget_branch_link_register) :
 			(cached ? uml_arm64_gadget_return_cached :
 				uml_arm64_gadget_return));
-		emit(words, source == 31U ? offsetof(CpuState, gadget_zero) :
-			static_cast<std::uintptr_t>(source * 8U));
+		emit(words, arithmetic_register_offset(source));
 		if (cached)
 			emit_indirect_link(context, address,
 				opcode == 0xd65f'0000U);
@@ -277,12 +264,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			uml_arm64_gadget_xaflag);
 	} else if ((instruction & 0xfff8'f01fU) == 0xd500'401fU) {
 		const auto selected = pstate_immediate_gadget(instruction);
-		if (!selected.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		if (!selected.valid)
+			return illegal_instruction(context);
 		emit(words, selected.gadget);
 		if (selected.fault_address)
 			emit(words, address);
@@ -337,10 +320,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		/* Every implemented EL0 register is selected above. Unknown 64-bit
 		 * registers plus FEAT_SYSREG128/SYSINSTR128 operations are
 		 * inaccessible in the current userspace architectural profile. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xfff8'0000U) == 0xd508'0000U ||
 		   (instruction & 0xfff8'0000U) == 0xd528'0000U) {
 		const auto operation = instruction & 0xffff'ffe0U;
@@ -370,10 +350,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
+			return illegal_instruction(context);
 		}
 	} else if ((instruction & 0xffff'f0ffU) == 0xd503'305fU) {
 		emit(words, uml_arm64_gadget_clear_exclusive);
@@ -386,10 +363,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		   (instruction & 0xffff'f3ffU) == 0xd503'323fU) {
 		/* SB with a nonzero CRm is reserved, and DSB nXS needs
 		 * FEAT_XS, which the virtual CPU does not implement. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
 		emit(words, architectural_hint_gadget(instruction));
 	} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U) {
@@ -401,10 +375,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		   instruction == 0xd69f'0fffU) {
 		/* WFET and WFIT need FEAT_WFxT, which the virtual CPU does not
 		 * implement; DRPS and the ERET forms are not EL0 instructions. */
-		emit(words, uml_arm64_gadget_illegal);
-		emit(words, address);
-		++compiled;
-		return DecodeResult::terminal;
+		return illegal_instruction(context);
 	} else {
 		return implementation_gap(context);
 	}

@@ -1,43 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "gadget_symbols.hpp"
-#include "program.hpp"
-#include "software_helpers.hpp"
-
-#include "cpu/arm64/layout/assembly_layout.hpp"
-
-#include "../detail/floating_compare.hpp"
-#include "../detail/bfloat_conversion.hpp"
-#include "../detail/bfloat_dot.hpp"
-#include "../detail/bfloat_matrix.hpp"
-#include "../detail/bfloat_multiply.hpp"
-#include "../detail/half_fused_long.hpp"
-#include "../detail/floating_complex.hpp"
-#include "../detail/floating_arithmetic.hpp"
-#include "../detail/floating_conversion.hpp"
-#include "../detail/floating_fused.hpp"
-#include "../detail/floating_horizontal.hpp"
-#include "../detail/floating_integer_conversion.hpp"
-#include "../detail/floating_reciprocal.hpp"
-#include "../detail/floating_round.hpp"
-#include "../detail/fp_state_access.hpp"
-#include "../detail/instruction_primitives.hpp"
-#include "../detail/integer_multiply.hpp"
-#include "cpu/host_capabilities.hpp"
-#include "uml_darwin_static_mmu.h"
-
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <bit>
-#include <cstddef>
-#include <optional>
-#include <span>
-#include <type_traits>
-#include <utility>
+#include "gadget_selection_api.hpp"
 
 namespace uml::cpu::arm64::gadgets::selection {
-
-using Gadget = void (*)();
 
 [[nodiscard]] Gadget literal_load_gadget(
 	bool vector, unsigned operation, bool discard) noexcept
@@ -139,16 +103,6 @@ using Gadget = void (*)();
 		((operation & 1U) != 0U ? loads : stores)[width][base_sp] : nullptr;
 }
 
-using ScalarOtherRegisterChoices = std::array<Gadget, 2>;
-using ScalarOtherBaseChoices = std::array<ScalarOtherRegisterChoices, 2>;
-using ScalarOtherImmediateModes = std::array<ScalarOtherBaseChoices, 4>;
-using ScalarOtherRegisterModes = std::array<ScalarOtherBaseChoices, 6>;
-
-struct ScalarOtherGadgets final {
-	ScalarOtherImmediateModes immediate;
-	ScalarOtherRegisterModes register_offset;
-};
-
 #define UML_SCALAR_OTHER_REGISTER_CHOICES(name, mode) \
 	ScalarOtherRegisterChoices{ \
 	uml_arm64_gadget_scalar_other_##name##_##mode##_r, \
@@ -224,15 +178,6 @@ struct ScalarOtherGadgets final {
 #undef UML_SCALAR_OTHER_BASE_CHOICES
 #undef UML_SCALAR_OTHER_REGISTER_CHOICES
 
-using VectorOtherBaseModes = std::array<Gadget, 2>;
-using VectorOtherImmediateModes = std::array<VectorOtherBaseModes, 3>;
-using VectorOtherRegisterModes = std::array<VectorOtherBaseModes, 6>;
-
-struct VectorOtherGadgets final {
-	VectorOtherImmediateModes immediate;
-	VectorOtherRegisterModes register_offset;
-};
-
 #define UML_VECTOR_OTHER_GADGETS(name) VectorOtherGadgets{ \
 	VectorOtherImmediateModes{ \
 		VectorOtherBaseModes{ \
@@ -288,10 +233,6 @@ struct VectorOtherGadgets final {
 
 #undef UML_VECTOR_OTHER_GADGETS
 
-using IntegerPairRegisterModes = std::array<Gadget, 4>;
-using IntegerPairBaseModes = std::array<IntegerPairRegisterModes, 2>;
-using IntegerPairAddressModes = std::array<IntegerPairBaseModes, 4>;
-
 #define UML_INTEGER_PAIR_REGISTER_MODES(name, mode) \
 	IntegerPairRegisterModes{ \
 		uml_arm64_gadget_integer_pair_##name##_##mode##_rr, \
@@ -341,9 +282,6 @@ using IntegerPairAddressModes = std::array<IntegerPairBaseModes, 4>;
 #undef UML_INTEGER_PAIR_SP_REGISTER_MODES
 #undef UML_INTEGER_PAIR_REGISTER_MODES
 
-using VectorPairBaseModes = std::array<Gadget, 2>;
-using VectorPairAddressModes = std::array<VectorPairBaseModes, 3>;
-
 #define UML_VECTOR_PAIR_GADGETS(name) VectorPairAddressModes{ \
 	VectorPairBaseModes{uml_arm64_gadget_vector_pair_##name##_0, \
 		uml_arm64_gadget_vector_pair_##name##_0_sp}, \
@@ -369,13 +307,6 @@ using VectorPairAddressModes = std::array<VectorPairBaseModes, 3>;
 }
 
 #undef UML_VECTOR_PAIR_GADGETS
-
-using SimdStructureAddressModes = std::array<Gadget, 3>;
-using SimdStructureBases = std::array<SimdStructureAddressModes, 2>;
-struct SimdStructureGadgets final {
-	SimdStructureBases store;
-	SimdStructureBases load;
-};
 
 #define UML_SIMD_STRUCTURE_DIRECTION(base, direction) \
 	SimdStructureBases{ \
@@ -438,10 +369,6 @@ struct SimdStructureGadgets final {
 #undef UML_SIMD_STRUCTURE_GADGETS
 #undef UML_SIMD_STRUCTURE_DIRECTION
 
-using SimdReplicateAddressModes = std::array<Gadget, 3>;
-using SimdReplicateBases = std::array<SimdReplicateAddressModes, 2>;
-using SimdReplicateCounts = std::array<SimdReplicateBases, 4>;
-
 #define UML_SIMD_REPLICATE_MODES(type, count) SimdReplicateBases{ \
 	SimdReplicateAddressModes{ \
 		uml_arm64_gadget_simd_replicate_##type##_##count##_0, \
@@ -475,14 +402,6 @@ using SimdReplicateCounts = std::array<SimdReplicateBases, 4>;
 
 #undef UML_SIMD_REPLICATE_GADGETS
 #undef UML_SIMD_REPLICATE_MODES
-
-using SimdLaneAddressModes = std::array<Gadget, 3>;
-using SimdLaneBases = std::array<SimdLaneAddressModes, 2>;
-struct SimdLaneGadgets final {
-	SimdLaneBases store;
-	SimdLaneBases load;
-};
-using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 
 #define UML_SIMD_LANE_DIRECTION(type, count, direction) \
 	SimdLaneBases{ \
@@ -518,72 +437,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 #undef UML_SIMD_LANE_COUNT
 #undef UML_SIMD_LANE_DIRECTION
 
-[[nodiscard]] bool host_has_sha1() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha1);
-}
-
-[[nodiscard]] bool host_has_sha256() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha256);
-}
-
-[[nodiscard]] bool host_has_sha512() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha512);
-}
-
-[[nodiscard]] bool host_has_sha3() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha3);
-}
-
-[[nodiscard]] bool host_has_aes() noexcept
-{
-	return host_capabilities().has(ArmFeature::advanced_simd) &&
-		host_capabilities().has(ArmFeature::aes);
-}
-
-[[nodiscard]] bool host_has_pmull() noexcept
-{
-	return host_capabilities().has(ArmFeature::pmull);
-}
-
-[[nodiscard]] bool host_has_rdm() noexcept
-{
-	return host_capabilities().has(ArmFeature::rdm);
-}
-
-[[nodiscard]] bool host_has_dotprod() noexcept
-{
-	return host_capabilities().has(ArmFeature::dotprod);
-}
-
-[[nodiscard]] bool host_has_i8mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::i8mm);
-}
-
-[[nodiscard]] bool host_has_frintts() noexcept
-{
-	return host_capabilities().has(ArmFeature::frintts);
-}
-
-[[nodiscard]] bool host_has_bf16() noexcept
-{
-	return host_capabilities().has(ArmFeature::bf16);
-}
-
-[[nodiscard]] bool host_has_fhm() noexcept
-{
-	return host_capabilities().has(ArmFeature::fhm);
-}
-
-using AtomicRegisterGadgets = std::array<Gadget, 4>;
-using AtomicSizeGadgets = std::array<AtomicRegisterGadgets, 4>;
-using AtomicOrderGadgets = std::array<AtomicSizeGadgets, 4>;
-using AtomicOperationGadgets = std::array<AtomicOrderGadgets, 9>;
-
 #define UML_ATOMIC_REGISTER_GADGETS(operation, ordering, size) \
 	AtomicRegisterGadgets{ \
 		uml_arm64_gadget_atomic_##operation##_##ordering##_##size##_rr, \
@@ -618,10 +471,6 @@ extern constexpr AtomicOperationGadgets atomic_rmw_gadgets{
 #undef UML_ATOMIC_ORDER_GADGETS
 #undef UML_ATOMIC_SIZE_GADGETS
 #undef UML_ATOMIC_REGISTER_GADGETS
-
-using CompareSwapGadgets = std::array<AtomicSizeGadgets, 4>;
-using CompareSwapPairSizeGadgets = std::array<AtomicRegisterGadgets, 2>;
-using CompareSwapPairGadgets = std::array<CompareSwapPairSizeGadgets, 4>;
 
 #define UML_COMPARE_SWAP_REGISTER_GADGETS(ordering, size) \
 	AtomicRegisterGadgets{ \
@@ -662,20 +511,6 @@ extern constexpr CompareSwapPairGadgets compare_swap_pair_gadgets{
 };
 #undef UML_COMPARE_SWAP_PAIR_SIZE_GADGETS
 #undef UML_COMPARE_SWAP_PAIR_REGISTER_GADGETS
-
-using ExclusiveLoadRegisterGadgets = std::array<Gadget, 2>;
-using ExclusiveLoadSizeGadgets = std::array<ExclusiveLoadRegisterGadgets, 4>;
-using ExclusiveLoadGadgets = std::array<ExclusiveLoadSizeGadgets, 2>;
-using ExclusiveStoreGadgets = std::array<AtomicSizeGadgets, 2>;
-using ExclusivePairLoadSizeGadgets =
-	std::array<AtomicRegisterGadgets, 2>;
-using ExclusivePairLoadGadgets =
-	std::array<ExclusivePairLoadSizeGadgets, 2>;
-using ExclusivePairStoreRegisterGadgets = std::array<Gadget, 8>;
-using ExclusivePairStoreSizeGadgets =
-	std::array<ExclusivePairStoreRegisterGadgets, 2>;
-using ExclusivePairStoreGadgets =
-	std::array<ExclusivePairStoreSizeGadgets, 2>;
 
 #define UML_EXCLUSIVE_LOAD_REGISTER_GADGETS(ordering, size) \
 	ExclusiveLoadRegisterGadgets{ \
@@ -751,9 +586,6 @@ extern constexpr ExclusivePairStoreGadgets exclusive_pair_store_gadgets{
 #undef UML_EXCLUSIVE_PAIR_STORE_SIZE_GADGETS
 #undef UML_EXCLUSIVE_PAIR_STORE_REGISTER_GADGETS
 
-using OrderedLoadGadgets = ExclusiveLoadSizeGadgets;
-using OrderedStoreGadgets = ExclusiveLoadSizeGadgets;
-
 #define UML_ORDERED_REGISTER_GADGETS(kind, ordering, size) \
 	ExclusiveLoadRegisterGadgets{ \
 		uml_arm64_gadget_ordered_##kind##_##ordering##_##size##_r, \
@@ -771,9 +603,6 @@ extern constexpr OrderedStoreGadgets ordered_store_gadgets =
 #undef UML_ORDERED_SIZE_GADGETS
 #undef UML_ORDERED_REGISTER_GADGETS
 
-using RcpcRegisterGadgets = std::array<Gadget, 2>;
-using RcpcLoadGadgets = std::array<RcpcRegisterGadgets, 9>;
-using RcpcStoreGadgets = std::array<RcpcRegisterGadgets, 4>;
 #define UML_RCPC_REGISTER_GADGETS(kind, name) \
 	RcpcRegisterGadgets{ \
 		uml_arm64_gadget_rcpc_##kind##_##name##_r, \

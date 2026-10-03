@@ -70,11 +70,7 @@ code_synchronize z, 1
 .macro mops_prologue name
 gadget mops_prologue_\name
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_gadget_mops_prologue_transfer_\name
-	ldp x1, x2, [sp], #16
+	software_helper gadget_mops_prologue_transfer_\name
 	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
 .endm
