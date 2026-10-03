@@ -23,6 +23,13 @@ bool DeferredFences::full() const noexcept
         protocol::maximumVirtqueueSize;
 }
 
+void DeferredFences::reserveDefer()
+{
+    /* The constructor made room for every command a queue can hold, so a
+     * deferral can only add its ring. */
+    ringEscapes_.reserve(ringEscapes_.size() + 1);
+}
+
 void DeferredFences::defer(
     std::uint64_t requestId,
     const protocol::GpuControlHeader& requestHeader,

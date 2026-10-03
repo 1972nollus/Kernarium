@@ -747,9 +747,10 @@ template<typename Header>
 struct AllocationSweep {
     /* One per allocation the command makes, first to last: the response of
      * the attempt that could not make it, or nullopt when the bad_alloc left
-     * process(). */
+     * the attempt. */
     std::vector<std::optional<protocol::GpuResponse>> failures;
-    /* The response of the attempt that made every allocation it needed. */
+    /* The response of the attempt that made every allocation it needed, or
+     * nothing when that attempt held the command behind a fence. */
     std::vector<std::uint8_t> response;
 };
 
@@ -758,13 +759,15 @@ struct AllocationSweep {
  * `unchanged()` true. A command that commits before it has made all its
  * allocations leaves state behind, which `unchanged`, the next attempt's own
  * validation or the caller's counts see. The attempt that makes them all is
- * the command's own, and the caller checks its response. */
-template<typename Unchanged>
-AllocationSweep failEachAllocationBeforeCommit(
-    VirtioGpuDevice& device,
-    std::span<const std::uint8_t> request,
+ * the command's own, and the caller checks what it did. It ends with the
+ * failure still armed, so it allocated nothing after its last allocation.
+ * `attempt()` runs the command once and returns its response, or nullopt
+ * when it held the command. */
+template<typename Attempt, typename Unchanged>
+AllocationSweep failEachAllocationOf(
+    Attempt attempt,
     Unchanged unchanged,
-    const std::source_location location = std::source_location::current())
+    const std::source_location location)
 {
     constexpr std::size_t maximumAllocations = 32;
     AllocationSweep sweep;
@@ -772,17 +775,19 @@ AllocationSweep failEachAllocationBeforeCommit(
          allocation < maximumAllocations;
          ++allocation) {
         fail_after_allocations(allocation);
+        bool outOfMemory = false;
         std::optional<std::vector<std::uint8_t>> response;
         try {
-            response = device.process(request, false);
+            response = attempt();
         } catch (const std::bad_alloc&) {
+            outOfMemory = true;
         }
         if (cancel_pending_allocation_failure()) {
-            require(response.has_value(), "the command ran out of memory",
-                location);
+            require(!outOfMemory, "the command ran out of memory", location);
             require(!sweep.failures.empty(), "the command allocated nothing",
                 location);
-            sweep.response = std::move(*response);
+            if (response)
+                sweep.response = std::move(*response);
             return sweep;
         }
         std::optional<protocol::GpuResponse> failure;
@@ -799,6 +804,21 @@ AllocationSweep failEachAllocationBeforeCommit(
     fail("the command never stopped allocating", location);
 }
 
+template<typename Unchanged>
+AllocationSweep failEachAllocationBeforeCommit(
+    VirtioGpuDevice& device,
+    std::span<const std::uint8_t> request,
+    Unchanged unchanged,
+    const std::source_location location = std::source_location::current())
+{
+    return failEachAllocationOf(
+        [&] {
+            return std::optional<std::vector<std::uint8_t>> {
+                device.process(request, false)};
+        },
+        unchanged, location);
+}
+
 AllocationSweep failEachAllocationBeforeCommit(
     VirtioGpuDevice& device,
     std::span<const std::uint8_t> request,
@@ -806,6 +826,42 @@ AllocationSweep failEachAllocationBeforeCommit(
 {
     return failEachAllocationBeforeCommit(
         device, request, [] { return true; }, location);
+}
+
+/* The sweep over a fenced command in the vhost-user server's order, which
+ * mirrors GpuVhostUserDevice::processQueue: the server makes room to hold the
+ * command, the device runs it, and the server holds one the device deferred
+ * in `fences` until its fence retires. Once the device has run it, the
+ * renderer owns a fence that names the request, so a failure after that
+ * point leaves the command committed with nothing held to answer the
+ * guest. */
+template<typename Unchanged>
+AllocationSweep failEachAllocationBeforeDeferral(
+    VirtioGpuDevice& device,
+    DeferredFences& fences,
+    std::span<const std::uint8_t> request,
+    std::uint64_t requestId,
+    Unchanged unchanged,
+    const std::source_location location = std::source_location::current())
+{
+    protocol::GpuControlHeader header {};
+    std::memcpy(&header, request.data(), sizeof(header));
+    return failEachAllocationOf(
+        [&]() -> std::optional<std::vector<std::uint8_t>> {
+            fences.reserveDefer();
+            auto result =
+                device.processWithDeferredFence(request, false, requestId);
+            if (!result.fence)
+                return std::move(result.response);
+            fences.defer(
+                requestId,
+                header,
+                std::move(result.response),
+                *result.fence,
+                DeferredFences::Clock::now());
+            return std::nullopt;
+        },
+        unchanged, location);
 }
 
 /* Processes a request that may allocate its reply and nothing else. */
@@ -3090,6 +3146,87 @@ void heldAndCompletedFencesShareTheQueueCapacity()
     require(!fences.full());
 }
 
+/* Each deferrable command, on a ring the server has not held a command for:
+ * holding the first command on a ring is what adds the ring to the server's
+ * escape counts. */
+void deferredCommandsAllocateBeforeTheDeviceCommits()
+{
+    std::array<std::uint8_t, 256> guestMemory {};
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
+    const auto resource = create3d(850);
+    requireOk(device, requestBytes(resource));
+    protocol::GpuAttachBacking attach {};
+    attach.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceAttachBacking);
+    attach.resourceId = resource.resourceId;
+    attach.entryCount = 1;
+    const protocol::GpuMemoryEntry entry {
+        .address = 0x1000,
+        .length = static_cast<std::uint32_t>(guestMemory.size()),
+    };
+    requireOk(device, requestWithEntry(attach, entry));
+
+    /* The fake renderer records each fence in containers of its own, where
+     * the real one allocates in C, out of the sweep's reach. Make room in
+     * them first, so that the sweep counts only the device and the server. */
+    dependencies.contextFenceCookies.reserve(3);
+    const auto commits = [&dependencies] {
+        return dependencies.submitCount + dependencies.transferCount;
+    };
+    const auto status = [&device](const DeferredFence& fence) {
+        return device.contextFenceStatus(fence);
+    };
+
+    DeferredFences fences;
+    protocol::GpuSubmit3d submit {};
+    protocol::GpuTransferHost3d transfer {};
+    transfer.box = {.width = 1, .height = 1, .depth = 1};
+    transfer.resourceId = resource.resourceId;
+    std::uint32_t contextId = 851;
+    for (const auto command : {
+             protocol::GpuCommand::submit3d,
+             protocol::GpuCommand::transferToHost3d,
+             protocol::GpuCommand::transferFromHost3d}) {
+        requireOk(device, requestBytes(createContext(contextId)));
+        dependencies.retireContextFence(contextId, 0, 0);
+        const bool submits = command == protocol::GpuCommand::submit3d;
+        auto& header = submits ? submit.header : transfer.header;
+        header.type = static_cast<std::uint32_t>(command);
+        header.flags = protocol::gpuFlagFence;
+        header.contextId = contextId;
+        header.fenceId = contextId;
+        const auto request =
+            submits ? requestBytes(submit) : requestBytes(transfer);
+        const std::uint64_t requestId = contextId;
+        const auto committed = commits();
+        const auto fenced = dependencies.contextFenceCookies.size();
+        const auto held = failEachAllocationBeforeDeferral(
+            device, fences, request, requestId, [&] {
+                return commits() == committed &&
+                    dependencies.contextFenceCookies.size() == fenced &&
+                    fences.empty();
+            });
+        require(held.response.empty());
+        require(commits() == committed + 1);
+        require(!fences.empty());
+
+        dependencies.retireContextFence(contextId, 0, requestId);
+        fences.retire(DeferredFences::Clock::now(), status);
+        require(fences.empty());
+        DeferredFences::Completion completion;
+        require(fences.takeCompletion(completion));
+        require(completion.requestId == requestId);
+        const auto reply = responseHeader(completion.response);
+        require(reply.type == static_cast<std::uint32_t>(
+            protocol::GpuResponse::okNoData));
+        require(reply.fenceId == header.fenceId);
+        require((reply.flags & protocol::gpuFlagFence) != 0);
+        ++contextId;
+    }
+}
+
 } // namespace
 
 } // namespace uml::gpu::testing
@@ -3110,6 +3247,7 @@ int main()
     aDestroyedContextsHeldFencesComplete();
     aReusedContextIdStartsWithALiveRing();
     heldAndCompletedFencesShareTheQueueCapacity();
+    deferredCommandsAllocateBeforeTheDeviceCommits();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();
     rendererBackingAttachIsRetryableAfterAllocationFailure();

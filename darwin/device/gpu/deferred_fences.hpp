@@ -65,6 +65,13 @@ public:
         return orderingRelaxed_;
     }
 
+    /* Makes room for one more defer(), so that it allocates nothing. The
+     * transport holds a command only after the device has run it, and a
+     * failure then would leave the command committed with nothing held to
+     * answer the guest. So it calls this before the device runs a command
+     * that may defer; it throws bad_alloc with nothing changed. */
+    void reserveDefer();
+
     void defer(
         std::uint64_t requestId,
         const protocol::GpuControlHeader& requestHeader,
