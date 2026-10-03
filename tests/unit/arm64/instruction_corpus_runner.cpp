@@ -463,8 +463,24 @@ std::optional<std::string> ignore_counter_register(const RelationInput &in) {
   return first_architecture_difference(expected, in.actual);
 }
 
+/* MRS CNTFRQ_EL0 reads the frequency of the host that runs the case, 24 MHz
+ * on an M1 and 1 GHz on an M4. The runner reads it with the host's own
+ * instruction, not through an engine, and expects it in the destination. */
+std::optional<std::string> host_counter_frequency(const RelationInput &in) {
+  std::uint64_t frequency{};
+  __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+  auto expected = in.expected;
+  for (const auto word : in.program.words) {
+    const unsigned destination = word.word & 31U;
+    if ((word.word & ~31U) == 0xd53b'e000U && destination != 31U)
+      expected.registers[destination] = frequency;
+  }
+  return first_architecture_difference(expected, in.actual);
+}
+
 [[nodiscard]] Relation relation_for(std::string_view name) {
   static const std::map<std::string_view, Relation> relations{
+      {"host-counter-frequency/v1", host_counter_frequency},
       {"ignore-host-counter-register/v1", ignore_counter_register},
       {"permitted-exclusive-store-failure/v1", exclusive_store_failure},
   };
