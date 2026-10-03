@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "uml/emulator.h"
+/*
+ * Native-window ownership across guest runs. A run here is what the runtime
+ * makes of one: its own Context, that Context's run scope, and its route
+ * bound to the running thread. The memory module keys native ownership to the
+ * Context's memory domain and retires every mapping a run leaves when its run
+ * scope ends. Runs on different threads overlap freely, which exercises the
+ * owner registry's cross-domain rules directly.
+ */
 #include "allocation_fault.hpp"
 #include "domain_registry_testing.hpp"
 #include "native_retry_validation_test_support.hpp"
@@ -8,6 +15,7 @@
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#include "runtime/context.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -151,36 +159,44 @@ int invoke(Dispatch &dispatch) noexcept
 	}
 }
 
-int kernel_a(int, char *const[], char *const[]) noexcept
+int kernel_a() noexcept
 {
 	return invoke(dispatch_a);
 }
 
-int kernel_b(int, char *const[], char *const[]) noexcept
+int kernel_b() noexcept
 {
 	return invoke(dispatch_b);
 }
 
-using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
+using KernelEntry = int (*)() noexcept;
 
-Emulator make_emulator(uml_emulator_kernel_entry entry, const char *rootfs)
+class Run final {
+public:
+	explicit Run(KernelEntry entry) noexcept : entry_{entry} {}
+
+	[[nodiscard]] int operator()()
+	{
+		uml::runtime::RunScope scope{context_};
+		if (!scope.entered())
+			return 122;
+		uml::runtime::ActiveContextScope route{context_};
+		return entry_();
+	}
+
+private:
+	KernelEntry entry_;
+	uml::runtime::Context context_;
+};
+
+std::unique_ptr<Run> make_run(KernelEntry entry)
 {
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = rootfs,
-		.native_kernel_entry = entry,
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"could not create native ownership emulator");
-	return {created, uml_emulator_destroy};
+	return std::make_unique<Run>(entry);
 }
 
-int run(uml_emulator *emulator)
+int run(Run *handle)
 {
-	const char *arguments[]{"native-16k-ownership"};
-	return uml_emulator_run(emulator, 1, arguments, nullptr);
+	return (*handle)();
 }
 
 struct PairBarrier final {
@@ -245,8 +261,8 @@ void test_nonoverlap_concurrency_and_leaked_cleanup(
 	};
 	set_dispatch(dispatch_a, concurrent_map, &state_a);
 	set_dispatch(dispatch_b, concurrent_map, &state_b);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-16k-concurrent-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-16k-concurrent-b.img");
+	auto handle_a = make_run(kernel_a);
+	auto handle_b = make_run(kernel_b);
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] { status_a = run(handle_a.get()); }};
@@ -416,8 +432,8 @@ void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 	};
 	set_dispatch(dispatch_a, hold_map, &holder);
 	set_dispatch(dispatch_b, collide_with_foreign_owner, &collision);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-16k-collision-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-16k-collision-b.img");
+	auto handle_a = make_run(kernel_a);
+	auto handle_b = make_run(kernel_b);
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] { status_a = run(handle_a.get()); }};
@@ -540,8 +556,8 @@ void test_retire_acquire_handoff(const NativeWindowArena &arena)
 	};
 	set_dispatch(dispatch_a, hold_map, &holder);
 	set_dispatch(dispatch_b, acquire_after_retirement, &contender);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-16k-handoff-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-16k-handoff-b.img");
+	auto handle_a = make_run(kernel_a);
+	auto handle_b = make_run(kernel_b);
 	int status_a = -1;
 	int status_b = -1;
 	std::thread first{[&] { status_a = run(handle_a.get()); }};
@@ -610,7 +626,7 @@ void test_same_owner_replacement(const NativeWindowArena &arena)
 		.second_fd = second.descriptor(),
 	};
 	set_dispatch(dispatch_a, replace_same_owner, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-replace.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid,
 		"same owner could not replace its direct mapping");
 	require(first.byte() == 0x51 && second.byte() == 0x72 &&
@@ -692,8 +708,8 @@ void test_mixed_foreign_range_is_atomic(const NativeWindowArena &arena)
 	};
 	set_dispatch(dispatch_a, hold_map, &holder);
 	set_dispatch(dispatch_b, collide_mixed_range, &mixed);
-	auto handle_a = make_emulator(kernel_a, "/tmp/native-16k-mixed-a.img");
-	auto handle_b = make_emulator(kernel_b, "/tmp/native-16k-mixed-b.img");
+	auto handle_a = make_run(kernel_a);
+	auto handle_b = make_run(kernel_b);
 	int status_a = -1;
 	int collision_status = -1;
 	std::thread first{[&] { status_a = run(handle_a.get()); }};
@@ -786,7 +802,7 @@ void test_unowned_host_mapping_is_replaced(const NativeWindowArena &arena)
 		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, test_unowned_operations, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-unowned.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid &&
 		exactly_released(arena.page(14)) && counts_are_zero(),
 		"unowned host mapping did not follow required MAP_FIXED replacement");
@@ -838,7 +854,7 @@ void run_failure_retry(const NativeWindowArena &arena, std::size_t page,
 		.inject = inject,
 	};
 	set_dispatch(dispatch_a, fail_then_retry_map, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-rollback.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid && backing.byte() == 0xe6 &&
 		exactly_released(state.address) && counts_are_zero(),
 		"failed native map did not roll back completely and permit retry");
@@ -901,8 +917,7 @@ void test_direct_software_publication_is_identity(
 		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, direct_software_publication, &state);
-	auto handle = make_emulator(
-		kernel_a, "/tmp/native-16k-software-publication.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid && backing.byte() == 0xa2 &&
 		exactly_released(state.native_address) && counts_are_zero(),
 		"16 KiB shared mapping was not an identity publication path");
@@ -997,7 +1012,7 @@ void test_owned_bridge_lifecycle(const NativeWindowArena &arena)
 		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, owned_bridge_lifecycle, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-lifecycle.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid &&
 		backing.byte(0) == 0x51 && backing.byte(1) == 0x62 &&
 		counts_are_zero(),
@@ -1110,7 +1125,7 @@ void test_two_page_rollback(const NativeWindowArena &arena)
 		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, two_page_rollback, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-two-page.img");
+	auto handle = make_run(kernel_a);
 	require(run(handle.get()) == 0 && state.valid && counts_are_zero(),
 		"two-page native map rollback retained state or blocked retry");
 }
@@ -1158,7 +1173,7 @@ int run_registry_oom_child(std::string_view mode)
 		.site = site,
 	};
 	set_dispatch(dispatch_a, registry_oom, &state);
-	auto handle = make_emulator(kernel_a, "/tmp/native-16k-registry-oom.img");
+	auto handle = make_run(kernel_a);
 	const int status = run(handle.get());
 	return status == 0 && state.safe &&
 		uml::memory::testing::native_domain_count() == 0 &&

@@ -10,6 +10,7 @@
  * Each mode runs in its own process because the claim outlives every handle.
  */
 #include "uml/emulator.h"
+#include "testing.hpp"
 #include "uml_darwin_host.h"
 
 #include <cstdio>
@@ -55,11 +56,13 @@ using Emulator =
 
 Emulator make_emulator()
 {
+	const auto image = uml::emulator::testing::kernel_image(kernel);
 	const uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = "/tmp/uml-sequential-runs.img",
-		.native_kernel_entry = kernel,
+		.kernel_image = image.data(),
+		.kernel_image_size = image.size(),
 	};
 	uml_emulator *created = nullptr;
 	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK &&

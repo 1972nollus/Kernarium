@@ -473,7 +473,6 @@ int uml::app::runEmbeddedKernel(
 		.kernel_image = uml_elf_start,
 		.kernel_image_size = static_cast<std::size_t>(
 			uml_elf_end - uml_elf_start),
-		.native_kernel_entry = nullptr,
 		.network = app_network ? &network_callbacks : nullptr,
 	};
 	uml_emulator *created = nullptr;
