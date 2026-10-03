@@ -155,8 +155,8 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13332940,
-  "pack_sha256": "e9df91de71c1205965bf3374017f015ee48c89e45a0b2aef43091725a8965103",
+  "pack_bytes": 13333279,
+  "pack_sha256": "7022fffb34b413c9d83da7db292aca562eb039722b111fad87479a68192b2249",
   "producer_commit": "b7739961b269fec80b09b8740669d270cdf235a0",
   "programs": 125869,
   "records": 1085,
