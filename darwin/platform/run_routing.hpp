@@ -37,8 +37,7 @@ private:
 
 /* A bound public entry thread resolves its exact route. An unbound kernel
  * thread resolves a route only while it is the sole, never-ambiguous active
- * run. Empty endpoints mean that the caller must fail closed (or, for the
- * runtime compatibility bridge, select its legacy no-public-run context). */
+ * run. Empty endpoints mean that the caller must fail closed. */
 [[nodiscard]] Route current_route() noexcept;
 
 } // namespace uml::routing

@@ -160,8 +160,8 @@ private:
  * genuinely sole active context as a fallback. While runs overlap, unbound
  * callers receive nullptr and fail closed rather than borrowing either
  * handle's state. Ambiguity remains sticky for the surviving route until the
- * complete overlapping cohort retires. With no public run, legacy C callers
- * retain the process-local compatibility context. */
+ * complete overlapping cohort retires. With no active route, every caller
+ * receives nullptr. */
 [[nodiscard]] Context *current_context() noexcept;
 
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed

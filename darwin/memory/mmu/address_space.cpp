@@ -1697,7 +1697,7 @@ std::atomic_flag address_space_registry_initialization = ATOMIC_FLAG_INIT;
 AddressSpaceRegistry *address_space_registry() noexcept
 {
 	/* Context teardown can run during static destruction. Keep the registry at
-	 * process lifetime so a late legacy-context destructor never calls through
+	 * process lifetime so a late Context destructor never calls through
 	 * an already destroyed mutex or container. Initialization is retryable: a
 	 * transient allocation failure must not permanently cache a null registry. */
 	return process_singleton(published_address_space_registry,

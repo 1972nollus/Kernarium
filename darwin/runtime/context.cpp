@@ -4,7 +4,6 @@
 #include "cpu/engine_factory.hpp"
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
-#include "memory/process_singleton.hpp"
 #include "platform/descriptor.hpp"
 #include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
@@ -13,7 +12,6 @@
 #include <cerrno>
 #include <cstdint>
 #include <memory>
-#include <new>
 #include <optional>
 #include <thread>
 #include <unordered_map>
@@ -203,23 +201,6 @@ struct ResolvedThreadExecution final {
 
 thread_local ResolvedThreadExecution resolved_thread_execution;
 
-std::atomic<Context *> published_legacy_context{};
-std::atomic_flag legacy_context_initialization = ATOMIC_FLAG_INIT;
-
-[[nodiscard]] Context *legacy_context() noexcept
-{
-	/* The compatibility context is process state, not an emulator handle.  Its
-	 * destructor would otherwise run after this thread's MMU TLS destructors on
-	 * Darwin and attempt to retire through already-destroyed thread-local
-	 * owners.  Deliberately give it process lifetime, just like the MMU domain
-	 * registry it addresses. A transient first allocation failure must remain
-	 * retryable rather than permanently caching an unavailable compatibility
-	 * context. */
-	return uml::memory::process_singleton(published_legacy_context,
-		legacy_context_initialization,
-		[]() noexcept { return new (std::nothrow) Context; });
-}
-
 } // namespace
 
 Context::Context() noexcept
@@ -265,10 +246,10 @@ bool Context::begin_run() noexcept
 	while (read(stop_notification_read_, pending, sizeof(pending)) > 0)
 		;
 	stop_requested_.store(false, std::memory_order_release);
-	/* A context can be routed through the compatibility-facing internal scope
-	 * before its first run. Retire every execution object while its old memory
-	 * domain is still valid, then rotate and retire that domain before admitting
-	 * the run. thread_execution_state() takes the same lifecycle lock, so a
+	/* A context can be routed before its first run, as white-box tests route
+	 * theirs. Retire every execution object while its old memory domain is
+	 * still valid, then rotate and retire that domain before admitting the
+	 * run. thread_execution_state() takes the same lifecycle lock, so a
 	 * concurrent pre-run acquisition cannot publish between these two steps.
 	 * Later runs normally exchange zero because end_run() already retired their
 	 * domain. All operations in this boundary are allocation-free. */
@@ -465,10 +446,7 @@ RunScope::~RunScope()
 
 Context *current_context() noexcept
 {
-	const auto route = ::uml::routing::current_route();
-	if (route.runtime != nullptr)
-		return static_cast<Context *>(route.runtime);
-	return route.public_run_active ? nullptr : legacy_context();
+	return static_cast<Context *>(::uml::routing::current_route().runtime);
 }
 
 namespace {

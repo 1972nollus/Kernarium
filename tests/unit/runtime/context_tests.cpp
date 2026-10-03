@@ -163,47 +163,6 @@ private:
 	RetirementInterleave &interleave_;
 };
 
-void test_legacy_context_initialization_retries()
-{
-	uml::testing::fail_next_allocation();
-	require(uml::runtime::current_context() == nullptr,
-		"legacy context initialization failure was not contained");
-	const auto failure = uml::testing::last_allocation_failure();
-	require(failure.observed &&
-		failure.form == uml::testing::AllocationForm::scalar_nothrow &&
-		failure.size == sizeof(uml::runtime::Context),
-		"fault injection did not reach the legacy Context allocation");
-	require(!uml::testing::cancel_pending_allocation_failure(),
-		"legacy Context allocation did not consume the injected failure");
-
-	constexpr std::size_t thread_count = 8;
-	std::array<std::thread, thread_count> workers;
-	std::array<uml::runtime::Context *, thread_count> contexts{};
-	std::atomic_size_t ready{};
-	std::atomic_bool release{};
-	for (std::size_t index = 0; index < thread_count; ++index)
-		workers[index] = std::thread{[&, index] {
-			ready.fetch_add(1, std::memory_order_release);
-			while (!release.load(std::memory_order_acquire))
-				std::this_thread::yield();
-			contexts[index] = uml::runtime::current_context();
-		}};
-	while (ready.load(std::memory_order_acquire) != thread_count)
-		std::this_thread::yield();
-	release.store(true, std::memory_order_release);
-	for (auto &worker : workers)
-		worker.join();
-
-	const auto *context = contexts.front();
-	require(context != nullptr,
-		"legacy context initialization failure was cached permanently");
-	require(std::ranges::all_of(contexts,
-		[context](const auto *candidate) { return candidate == context; }),
-		"concurrent legacy Context retry published multiple instances");
-	require(uml::runtime::current_context() == context,
-		"legacy Context retry did not remain stably published");
-}
-
 void test_pre_run_memory_domain_is_retired_before_run()
 {
 	uml::runtime::Context context;
@@ -1069,7 +1028,6 @@ void test_invalid_engine_selection_fails_closed()
 int main()
 {
 	try {
-		test_legacy_context_initialization_retries();
 		test_pre_run_memory_domain_is_retired_before_run();
 		test_pre_run_execution_states_do_not_cross_run_boundary();
 		test_rejected_begin_preserves_active_execution_state();
