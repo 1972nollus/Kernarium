@@ -263,9 +263,10 @@ the Mach-O assembler-temporary prefix `L`, which keeps them out of the symbol
 table; a branch to one in another part encodes its distance past the nearest
 named symbol before it as a signed 24-bit addend, so such a target must lie
 within 8 MiB of one, and the cold part names only its bounds and is 0.1 MB.
-The FEAT_AFP twins
-follow every base part: they run only on a host with FEAT_AFP, where they need
-the same fixed placement, and elsewhere their position moves no base entry.
+`gadget-engine-temporary-labels` fails on a `.L` symbol in either engine's
+object. The FEAT_AFP twins follow every base part: they run only on a host
+with FEAT_AFP, where they need the same fixed placement, and elsewhere their
+position moves no base entry.
 
 The bank holds no padding. A new entry or family is appended after the
 established ones of its part, which moves none of them. Removing one re-packs

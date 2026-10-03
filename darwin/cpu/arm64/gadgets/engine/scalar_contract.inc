@@ -28,11 +28,7 @@ _scalar_w16 .req w0
 .set scalar_register16, (3 << 12) | (5 << 6) | 16
 .set scalar_sp, 0x8000 | UML_GADGET_CPU_SP
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_scalar
-#else
-.pushsection .data.rel.ro.gadget_scalar,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_scalar_contract_begin)
 NAME(uml_arm64_scalar_contract_begin):
@@ -85,11 +81,7 @@ NAME(uml_arm64_scalar_contract_begin):
  .if \forward == 0
  gadget \name
  .set Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
-#if __APPLE__
  .pushsection __DATA_CONST,__gadget_scalar
-#else
- .pushsection .data.rel.ro.gadget_scalar,"aw"
-#endif
  .quad NAME(uml_arm64_gadget_\name)
  scalar_pointer \name, 1, Lscalar_sources\@
  scalar_pointer \name, 2, Lscalar_sources\@
