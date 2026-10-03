@@ -232,9 +232,8 @@ three-dimensional texture beside a two-dimensional texture, which leaves no
 attachment layered, and the rule requiring a common texture target applies
 only when one is.
 
-Hardware video decode is not advertised. It published frames through a Metal
-texture client buffer that only the retired ANGLE provider exposed, and the
-renderer is built without it.
+Hardware video decode is not advertised over Virgl; the renderer is built
+without it.
 
 A Virgl scanout reaches the native display as a Metal texture, not as pixels
 read back into CPU memory. Zink creates each GL texture's image as an
@@ -560,28 +559,16 @@ fourth additionally only when the ICD exposes `VK_KHR_calibrated_timestamps`.
 Every layer of this stack already carries that one dependency, so the guest
 Venus driver owes no common-WSI work for any of the four.
 
-The pinned venus-protocol is v1.1.3, which tracks the Vulkan 1.4.357 registry
-and carries 201 extensions; the maintained series on top of it raises the
-table to 205. An extension the protocol does not name has no
+The guest driver and the renderer generate their halves of the encoder at
+build time from one pinned venus-protocol and its maintained series
+([`../dependencies/README.md`](../dependencies/README.md)), so the two halves
+change together: a guest image sealed against one protocol cannot talk to a
+renderer built from another. An extension the protocol does not name has no
 index in `vn_info_extension_index`, so the guest silently refuses it however
-the other layers are configured; the uprev is what makes `VK_KHR_maintenance8`,
-`VK_KHR_maintenance9`, `VK_KHR_maintenance10`,
-`VK_KHR_device_address_commands`, `VK_KHR_unified_image_layouts`,
-`VK_EXT_vertex_attribute_robustness` and `VK_EXT_primitive_restart_index`
-reachable at all. Both the guest driver and the renderer generate their halves
-of the encoder from that one pin at build time - the driver through
-`-Dvenus-protocol-dir`, which makes Mesa's vendored `src/virtio/venus-protocol`
-copies unused here - so the two halves must be replaced together: a guest image
-sealed against one protocol cannot talk to a renderer built from another.
-
-The four extensions the pin itself does not describe -
-`VK_EXT_image_compression_control` with its swapchain companion,
-`VK_EXT_device_address_binding_report` and `VK_KHR_pipeline_binary` - are
-carried by the maintained protocol series. The first three define no command
-and need only an entry in the generator's extension list; pipeline binaries
-additionally need command ids for five entrypoints and a `VkPipelineBinaryKHR`
-object type in the renderer's object tracking, which is the real cost of that
-one.
+the other layers are configured. The maintained series adds the four
+extensions the pin does not describe: `VK_EXT_image_compression_control` with
+its swapchain companion, `VK_EXT_device_address_binding_report` and
+`VK_KHR_pipeline_binary`.
 
 Two of the four are advertised honestly rather than completely, because Metal
 does not express what they describe:
@@ -610,42 +597,15 @@ does not express what they describe:
 shader objects rather than monolithic pipelines, so Mesa's common runtime
 serves all five commands from the shader binaries it already produces. Its
 internal-cache properties are all false, because the driver keeps no pipeline
-cache of its own. `MTLBinaryArchive` cannot stand in for a pipeline binary: it
-is keyed by internal pipeline descriptors and serializes only as a whole
-archive to a file URL, so it can neither produce one binary per pipeline nor
-return a binary's bytes.
-
-A binary's key is a hash of the bytes that binary carries rather than the
-cache key of the shader they were compiled from. That cache key names what a
-compile was asked for - every stage of the linked partition, the pipeline
-state and the pipeline layout - and different requests regularly compile to
-the same output, so keying by it gave byte-identical binaries different names
-and left an application's own store holding each copy separately. The cost is
-that a binary loaded back into a pipeline names its entry in the driver's
-internal shader cache by those bytes, so a pipeline created later from the
-same state without binaries compiles again instead of finding it.
-
-`vkGetPipelineBinaryDataKHR` answers a buffer too small for the binary with
-`VK_ERROR_NOT_ENOUGH_SPACE_KHR`, the size the caller needs, and no data, which
-makes it the one command in the protocol whose in-out data size can come back
-larger than it went in. A reply's blob is measured by the size the driver
-reports, while the room for it was reserved from the size the guest offered,
-so the renderer drops the blob from such a reply: the guest learns the size it
-needs and reads nothing into a buffer that could not have held it. Every other
-blob a reply carries takes its size by value or can only shrink it.
-
-`vkGetPipelineKeyKHR` names the pipeline it should key through
-`VkPipelineCreateInfoKHR::pNext`, and `vk.xml` gives that chain no member,
-because each structure a caller chains there is a pipeline create info in its
-own right rather than an extension of anything. The generator is told about
-the chain instead: the three pipeline create infos the command can be asked
-about, together with the structures that extend them, because a Venus chain
-travels flat and a node's own chain is encoded by the codec of the chain it
-belongs to. Without those siblings a dynamic-rendering or pipeline-binary
-chain would be dropped along with the create info's own extensions. The
-renderer still refuses a request that arrives with an empty chain, which the
-specification gives a caller no way to make and which the host driver would
-read without checking.
+cache of its own. A binary's key is a hash of the bytes it carries, so
+byte-identical binaries share one key; a pipeline created later from the same
+state without binaries therefore compiles again rather than finding the entry
+a loaded binary left in the driver's shader cache. A
+`vkGetPipelineBinaryDataKHR` buffer too small for the binary is answered with
+`VK_ERROR_NOT_ENOUGH_SPACE_KHR`, the size the caller needs, and no data, and
+the renderer refuses a `vkGetPipelineKeyKHR` whose `VkPipelineCreateInfoKHR`
+carries no chain. The topic messages of the Mesa, virglrenderer and
+venus-protocol series record why.
 
 ### A wide buffer load covers at most sixteen bytes
 
