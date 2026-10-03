@@ -105,6 +105,21 @@ Lx86_zero_from_flags\@:
 Lx86_zero_ready\@:
 .endm
 
+/* E and NE read ZF from the pending record without materializing the flags;
+ * every other condition materializes them first. The result is in w11. */
+.macro evaluate_guest_condition condition
+	.ifc \condition,e
+	evaluate_deferred_zero \condition
+	.else
+	.ifc \condition,ne
+	evaluate_deferred_zero \condition
+	.else
+	bl uml_x86_64_gadget_materialize_flags
+	evaluate_condition \condition
+	.endif
+	.endif
+.endm
+
 /* The stream an unlinked BlockLink names is the link_exit word right in front
  * of that BlockLink, so the RIP is the BlockLink's own. */
 gadget link_exit
@@ -135,16 +150,7 @@ gadget set_\condition\()_m
 
 .macro conditional_move condition, width, load, store, load_register, store_register
 gadget cmov_\condition\()_\width\()_rr
-	.ifc \condition,e
-	evaluate_deferred_zero \condition
-	.else
-	.ifc \condition,ne
-	evaluate_deferred_zero \condition
-	.else
-	bl uml_x86_64_gadget_materialize_flags
-	evaluate_condition \condition
-	.endif
-	.endif
+	evaluate_guest_condition \condition
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x13, x8, #16, #16
@@ -178,16 +184,7 @@ gadget cmov_\condition\()_\width\()_rm
 
 .macro jump_condition condition
 gadget jump_\condition
-	.ifc \condition,e
-	evaluate_deferred_zero \condition
-	.else
-	.ifc \condition,ne
-	evaluate_deferred_zero \condition
-	.else
-	bl uml_x86_64_gadget_materialize_flags
-	evaluate_condition \condition
-	.endif
-	.endif
+	evaluate_guest_condition \condition
 	ldp x12, x13, [_stream], #16
 	cmp w11, #0
 	csel x8, x12, x13, ne
@@ -200,16 +197,7 @@ gadget jump_\condition
 
 .macro jump_condition_linked condition
 gadget jump_\condition\()_linked
-	.ifc \condition,e
-	evaluate_deferred_zero \condition
-	.else
-	.ifc \condition,ne
-	evaluate_deferred_zero \condition
-	.else
-	bl uml_x86_64_gadget_materialize_flags
-	evaluate_condition \condition
-	.endif
-	.endif
+	evaluate_guest_condition \condition
 	ldp x12, x13, [_stream], #16
 	cmp w11, #0
 	csel x8, x12, x13, ne
@@ -225,16 +213,7 @@ gadget jump_\condition\()_linked
  */
 .macro jump_condition_inline condition
 gadget jump_\condition\()_inline
-	.ifc \condition,e
-	evaluate_deferred_zero \condition
-	.else
-	.ifc \condition,ne
-	evaluate_deferred_zero \condition
-	.else
-	bl uml_x86_64_gadget_materialize_flags
-	evaluate_condition \condition
-	.endif
-	.endif
+	evaluate_guest_condition \condition
 	ldr x12, [_stream], #8
 	add _executed, _executed, #1
 	x86_memory_order_boundary
@@ -387,6 +366,7 @@ condition_family_nzcv g, gt
 .purgem conditional_move
 .purgem set_condition_memory
 .purgem set_condition
+.purgem evaluate_guest_condition
 .purgem evaluate_deferred_zero
 .purgem evaluate_condition
 
