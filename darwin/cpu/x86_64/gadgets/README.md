@@ -438,12 +438,10 @@ pending is work, so its low bit answers for it and joins the TLB entry's
 cached-code bit in a single test, while the arm that takes a record for a page
 some executor holds a translation of sits in the cold section.
 
-A writer stores the bytes, then moves the page stamp, then moves the
-code-change sequence, which is the order
-[Keeping a cached translation](#keeping-a-cached-translation) relies on:
 `finish_store` performs the guest store before its publication call, and
 `GuestAddressSpace::invalidate_code` moves the page stamp before publishing the
-range.
+range, which is the writer's order that
+[Keeping a cached translation](#keeping-a-cached-translation) relies on.
 
 ## Keeping a cached translation
 
@@ -471,10 +469,11 @@ publishing at speed -- a JIT heap, or a trampoline sharing a page with hot data
 -- costs the other vCPUs of its address space a revalidation per block, not a
 translation per block.
 
-A kept program matched guest memory at an instant inside the validation, and
-every change published up to the sequence the cache was prepared with had
-landed before that instant, because the reader observed that sequence before
-it looked. A store still in flight reaches the vCPU at its next code-change
+A writer stores the bytes, then moves the page stamp, then moves the sequence,
+and a reader observes the sequence before it looks. A kept program therefore
+matched guest memory at an instant inside the validation, and every change
+published up to the sequence the cache was prepared with had landed before
+that instant. A store still in flight reaches the vCPU at its next code-change
 checkpoint, which is where the x86 cross-modifying-code protocol requires an
 executing processor to look. A moved mapping sequence or a raised execution
 interrupt still abandons the validation: those say the memory being read
