@@ -144,6 +144,10 @@ aperture to Virgl contexts as well as Venus ones, and vrend backs those
 coherent buffers with shared host pages pinned into GL. The device always
 publishes the aperture, so a macOS Virgl guest reaches 4.6.
 
+That version is the profile the guest reports, not a conformance result. Guest
+Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
+own conformance standing is whatever its recorded campaigns show.
+
 GLES reaches the guest over the same path and from the same capsets: the
 guest's Mesa derives its GLES version from what Virgl advertises, so nothing
 targets GLES separately and no GLES-only host provider exists.
@@ -191,10 +195,6 @@ features and so from the GL formats Virgl advertises above them. The Vulkan
 claims the feature while denying all sixteen BC formats fails
 `dEQP-VK.api.info.format_properties.compressed_formats` on the disagreement
 alone. Every Apple silicon Mac supports BC, so macOS is unaffected.
-
-That version is the profile the guest reports, not a conformance result. Guest
-Zink over Venus is the qualified desktop OpenGL path on macOS; the Virgl path's
-own conformance standing is whatever its recorded campaigns show.
 
 A point is clipped against user clip and cull distances and against the depth
 planes, never against the view-volume side planes, which is what KosmicKrisp
