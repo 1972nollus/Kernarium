@@ -359,14 +359,11 @@ def spec_runner(spec: dict[str, Any], suite: str) -> str:
     the file contained is pinned separately, by the generation's source
     identity.
     """
-    runners = spec.get("runners")
-    if isinstance(runners, dict) and suite in runners:
-        return str(runners[suite])
-    return str(RUNNERS[suite])
+    return str(spec["runners"][suite])
 
 
 def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]:
-    command = [str(spec.get("interpreter", sys.executable)),
+    command = [str(spec["interpreter"]),
                "-B", spec_runner(spec, shard.suite),
                "--qualification", "--fraction", f"{shard.index},{FRACTIONS}",
                "--page-profile", spec["page_profile"], "--engine", "jit",

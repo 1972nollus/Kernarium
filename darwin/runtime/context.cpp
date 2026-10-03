@@ -5,13 +5,13 @@
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
 #include "memory/process_singleton.hpp"
+#include "platform/descriptor.hpp"
 #include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
 
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
-#include <fcntl.h>
 #include <memory>
 #include <new>
 #include <optional>
@@ -230,13 +230,10 @@ Context::Context() noexcept
 
 	if (pipe(descriptors) != 0)
 		return;
-	const auto configure = [](int descriptor) {
-		const int status = fcntl(descriptor, F_GETFL);
-		return status >= 0 &&
-			fcntl(descriptor, F_SETFL, status | O_NONBLOCK) == 0 &&
-			fcntl(descriptor, F_SETFD, FD_CLOEXEC) == 0;
-	};
-	if (!configure(descriptors[0]) || !configure(descriptors[1])) {
+	constexpr ::uml::platform::DescriptorFlags flags{
+		.closeOnExec = true, .nonblocking = true};
+	if (!::uml::platform::configureDescriptor(descriptors[0], flags) ||
+	    !::uml::platform::configureDescriptor(descriptors[1], flags)) {
 		close(descriptors[0]);
 		close(descriptors[1]);
 		return;

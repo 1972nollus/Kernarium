@@ -281,12 +281,15 @@ entries.
 ## Host sampling of the x86-64 gadget engine
 
 Host sampling profiles the x86-64 gadget engine without instrumenting it. The
-bank publishes one symbol per gadget, so a sampled host PC attributes straight
-to the gadget that owned it; assembler-local labels fold into their routine,
-and self time is a frame's count less its children's. Threaded dispatch leaves
-no usable frame chain, because `x29` holds the retired-instruction count rather
-than a frame pointer, but the deepest frame is the real PC, which is all a
-gadget profile needs. A 5 ms interval leaves the scored rate unchanged.
+bank publishes one symbol per gadget, so a sampled PC in the bank attributes
+straight to the gadget that owned it; assembler-local labels fold into their
+routine, and self time is a frame's count less its children's. The cold
+section names only its start, so a PC there reads as
+`uml_x86_64_gadget_cold_section_begin` plus an offset rather than as the
+gadget that branched to it. Threaded dispatch leaves no usable frame chain,
+because `x29` holds the retired-instruction count rather than a frame pointer,
+but the deepest frame is the real PC, which is all a gadget profile needs. A
+5 ms interval leaves the scored rate unchanged.
 
 ## Guest code sampling
 
