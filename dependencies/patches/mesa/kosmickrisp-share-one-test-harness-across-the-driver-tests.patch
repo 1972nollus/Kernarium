@@ -40,16 +40,45 @@ layered draw routes test.  The point-clip test reads the polygon-point
 fragment shader it had duplicated byte for byte.  Test names, timeouts and
 environments are unchanged.
 
+One tests/generate-shaders.sh rebuilds the SPIR-V headers of every shader
+directory, or of those it is given, in place of 26 per-directory generate.sh
+scripts, and runs the script xfb_builtin_shaders keeps for the three
+variants of its one shader.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/vulkan/meson.build            | 1467 ++++------------
+ .../alpha_to_coverage_shaders/generate.sh     |    7 -
  .../vulkan/tests/bench_blend_path.cpp         |   20 +-
  .../vulkan/tests/bench_vertex_fetch_path.cpp  |   20 +-
+ .../tests/command_buffer_shaders/generate.sh  |    7 -
+ .../early_sample_mask_shaders/generate.sh     |    7 -
+ .../vulkan/tests/generate-shaders.sh          |   28 +
+ .../geometry_draw_size_shaders/generate.sh    |    7 -
+ .../tests/heap_growth_shaders/generate.sh     |    7 -
+ .../helper_invocation_shaders/generate.sh     |    7 -
+ .../tests/integer_point_shaders/generate.sh   |    7 -
  src/kosmickrisp/vulkan/tests/kk_test.h        |  374 ++++
+ .../tests/layered_draw_shaders/generate.sh    |    7 -
  .../vulkan/tests/line_raster_cache_state.m    |   90 +-
- .../tests/point_clip_shaders/generate.sh      |    2 +-
+ .../tests/line_raster_shaders/generate.sh     |    7 -
+ .../tests/max_varyings_shaders/generate.sh    |    8 -
+ .../tests/metal_blend_shaders/generate.sh     |    7 -
+ .../metal_vertex_fetch_shaders/generate.sh    |    9 -
+ .../tests/multiview_clear_shaders/generate.sh |    7 -
+ .../pipeline_library_shaders/generate.sh      |    8 -
+ .../tests/point_clip_shaders/generate.sh      |    7 -
  .../tests/point_clip_shaders/points.frag      |    7 -
  .../tests/point_clip_shaders/points.frag.h    |   20 -
+ .../tests/polygon_point_shaders/generate.sh   |    7 -
+ .../post_depth_coverage_shaders/generate.sh   |    7 -
+ .../primitive_id_link_shaders/generate.sh     |    7 -
+ .../tests/raster_discard_shaders/generate.sh  |    7 -
+ .../tests/statistics_shaders/generate.sh      |    7 -
+ .../terminate_full_quads_shaders/generate.sh  |    7 -
+ .../tests/tes_sampler_shaders/generate.sh     |    7 -
+ .../tests/tess_draw_size_shaders/generate.sh  |    7 -
+ .../tess_passthrough_shaders/generate.sh      |    8 -
  .../vulkan/tests/test_16bit_varying_io.c      |    9 +-
  .../vulkan/tests/test_3d_array_alias.c        |   44 +-
  .../tests/test_address_binding_planes.c       |   69 +-
@@ -117,14 +146,43 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   69 +-
  .../test_transform_feedback_builtins.cpp      |  480 ++----
  .../tests/test_unused_attachment_gaps.cpp     |  786 ++++-----
- 75 files changed, 8615 insertions(+), 14991 deletions(-)
+ .../texel_buffer_bounds_shaders/generate.sh   |    5 -
+ .../unused_attachment_shaders/generate.sh     |    7 -
+ 101 files changed, 8642 insertions(+), 15175 deletions(-)
+ delete mode 100755 src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
+ create mode 100755 src/kosmickrisp/vulkan/tests/generate-shaders.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/heap_growth_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
+ delete mode 100755 src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh
+ delete mode 100644 src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/max_varyings_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
+ delete mode 100644 src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/post_depth_coverage_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
+ delete mode 100644 src/kosmickrisp/vulkan/tests/statistics_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh
  rename src/kosmickrisp/vulkan/tests/{test_tess_draw_size.cpp => test_draw_size.cpp} (53%)
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
+ delete mode 100755 src/kosmickrisp/vulkan/tests/texel_buffer_bounds_shaders/generate.sh
+ delete mode 100755 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
 index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..665cdbf8e27dad48df6ea26b1997d012a96b9738 100644
@@ -1728,6 +1786,19 @@ index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..665cdbf8e27dad48df6ea26b1997d012
  
    test(
      'kosmickrisp_pipeline_statistics',
+diff --git a/src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
+deleted file mode 100755
+index d7595e1807b652af9d7c9e5c926d1ee2e7c0f339..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/alpha_to_coverage_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in a2c.vert a2c_alpha.frag a2c_red.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp b/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp
 index 0ce2b7bdc187763b20e8dcdf7c4464582a6d05b0..15925533986aa1edc79119fb9cb199ac49a80c9e 100644
 --- a/src/kosmickrisp/vulkan/tests/bench_blend_path.cpp
@@ -1790,6 +1861,118 @@ index a4f51f2101e7b60580ce82eba2b21b3abe44fac8..541af8e9e8f0014cd178e65ca4847229
  
  static const uint32_t vertex_spirv[] =
  #include "metal_vertex_fetch_shaders/bench_fetch.vert.h"
+diff --git a/src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
+deleted file mode 100755
+index 9c3cf1f1530c590e84948987cfa6ade1d73c8b48..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in color.vert color.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
+deleted file mode 100755
+index 643eb9f43d032a6548e2f2b19097494e435e07dd..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in esm.vert esm_late.frag esm_early.frag esm_plain.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/generate-shaders.sh b/src/kosmickrisp/vulkan/tests/generate-shaders.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..c2020fe8490e939ab59c068b8fe113ed717f17a1
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/generate-shaders.sh
+@@ -0,0 +1,28 @@
++#!/bin/sh
++# SPDX-License-Identifier: MIT
++#
++# Compiles each GLSL shader in the given *_shaders directories, all of them
++# by default, to the SPIR-V header the tests include: <shader>.h beside
++# <shader>.  A directory with a generate.sh of its own builds its headers
++# with it instead.
++set -eu
++cd -- "$(dirname -- "$0")"
++# These two directories' headers are built without -O.
++no_optimize="max_varyings_shaders primitive_id_link_shaders"
++[ "$#" -gt 0 ] || set -- *_shaders
++for dir in "$@"; do
++   dir=${dir%/}
++   if [ -e "$dir/generate.sh" ]; then
++      sh "$dir/generate.sh"
++      continue
++   fi
++   optimize=-O
++   case " $no_optimize " in *" $dir "*) optimize= ;; esac
++   (
++      cd -- "$dir"
++      for shader in *.vert *.tesc *.tese *.geom *.frag *.comp; do
++         [ -e "$shader" ] || continue
++         glslc $optimize --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
++      done
++   )
++done
+diff --git a/src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/generate.sh
+deleted file mode 100755
+index 631b5d22c482ae790e830598ce1fa04263159c58..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in points.vert dynamic_points.geom green.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/heap_growth_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/heap_growth_shaders/generate.sh
+deleted file mode 100755
+index 321b79d662f0157d0813e6dc1965f9fbc496b4ff..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/heap_growth_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in level64.tesc level1.tesc dynamic.tesc tile.tese; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh
+deleted file mode 100755
+index 74c8f5851f0690a64a59f9b9393531fa461f53e1..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/helper_invocation_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in helper.vert helper.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh
+deleted file mode 100755
+index a16f8af8a09632c105ae5b0536775f2eb1954831..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/integer_point_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in point.vert constant.frag passthrough.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/kk_test.h b/src/kosmickrisp/vulkan/tests/kk_test.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..9ffd333cc25e0ac4729cae48c850a844b8edf23b
@@ -2170,6 +2353,19 @@ index 0000000000000000000000000000000000000000..9ffd333cc25e0ac4729cae48c850a844
 +   PFN_vkGetDeviceProcAddr vkGetDeviceProcAddr __attribute__((unused)) =       \
 +      (t).get_device_proc_addr;                                                \
 +   KK_TEST_DEVICE_FUNCTIONS(KK_TEST_LOAD_DEVICE_FUNCTION)
+diff --git a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh
+deleted file mode 100755
+index cb7ce9e13541847aeed85d0be383291eaae5e5d9..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/layered_draw_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in points.vert points.frag draw_id.vert passthrough.vert layer.geom; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m b/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
 index 78614c5d67b8206e21aecd86980d2b25916034c6..537cf1646b426de236adaeeea5efab1bacb0f311 100644
 --- a/src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
@@ -2360,18 +2556,101 @@ index 78614c5d67b8206e21aecd86980d2b25916034c6..537cf1646b426de236adaeeea5efab1b
        }
     }
  }
+diff --git a/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh
+deleted file mode 100644
+index 8021be2c397c7c89a187ac39e1240de3bdbcc22c..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/line_raster_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in cache.vert xfb.vert cache.frag cache.comp lines.geom triangles.geom cache.tesc lines.tese triangles.tese; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/max_varyings_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/max_varyings_shaders/generate.sh
+deleted file mode 100755
+index de1006e8e0911729f7df47cb3a700e0324c06576..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/max_varyings_shaders/generate.sh
++++ /dev/null
+@@ -1,8 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in max_varyings.vert max_varyings_passthrough.vert max_varyings.frag \
+-              max_varyings.tesc max_varyings.tese max_varyings.geom; do
+-   glslc --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh
+deleted file mode 100755
+index c16500ee146ea60d9a09bbea900c9087907e5e56..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/metal_blend_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in blend.vert blend.frag blend_dual.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
+deleted file mode 100755
+index 5a8a2175f171344dc4e77026dffabee46533518c..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/metal_vertex_fetch_shaders/generate.sh
++++ /dev/null
+@@ -1,9 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in fetch.vert fetch_single.vert fetch_high_location.vert \
+-              fetch.frag bench_fetch.vert \
+-              bench_fetch_instanced.vert bench_fetch_wide.vert bench_fetch.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh
+deleted file mode 100755
+index 6c7f9a12c4900ba1c9f627e80254caacb6a06bd1..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/multiview_clear_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in quad.vert quad.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
+deleted file mode 100755
+index 96775849b3fc5f592cbc86bd273703f31d057bb4..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/pipeline_library_shaders/generate.sh
++++ /dev/null
+@@ -1,8 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in gpl.vert gpl.frag gpl_varying.vert gpl_varying_wide.frag \
+-              gpl_varying_narrow.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
-index ce3afbe64c92a92e28f12a3a69dff31ae774f302..3ac517dca0bc7828f43de2621423d0611dbf4b50 100755
+deleted file mode 100755
+index ce3afbe64c92a92e28f12a3a69dff31ae774f302..0000000000000000000000000000000000000000
 --- a/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
-+++ b/src/kosmickrisp/vulkan/tests/point_clip_shaders/generate.sh
-@@ -2,6 +2,6 @@
- # SPDX-License-Identifier: MIT
- set -eu
- cd -- "$(dirname -- "$0")"
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
 -for shader in points.vert points.geom points.frag; do
-+for shader in points.vert points.geom; do
-    glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
- done
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag b/src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
 deleted file mode 100644
 index 80f7f93a2006ecaca67a8851031bbbea40efeef1..0000000000000000000000000000000000000000
@@ -2411,6 +2690,124 @@ index 50544d69c37b4e3889a931f38533262b813a6160..00000000000000000000000000000000
 -0x00000005,0x0004003d,0x00000007,0x0000000c,
 -0x0000000b,0x0003003e,0x00000009,0x0000000c,
 -0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh
+deleted file mode 100644
+index ce3afbe64c92a92e28f12a3a69dff31ae774f302..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/polygon_point_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in points.vert points.geom points.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/post_depth_coverage_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/post_depth_coverage_shaders/generate.sh
+deleted file mode 100755
+index 97e600da625d7bccc52bc810a0f5e7c794f34393..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/post_depth_coverage_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in pdc.vert pdc.frag pdc_read.comp; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
+deleted file mode 100755
+index 3c17b60b6910d1d00f6047639603c36e1b935cec..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in passthrough.vert copy_id.geom green.frag green_if_id.frag; do
+-   glslc --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
+deleted file mode 100755
+index a4f84f7f816425b145984038bc7bb7bd39619e99..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/raster_discard_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in discard.vert discard.geom discard.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/statistics_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/statistics_shaders/generate.sh
+deleted file mode 100644
+index 0fac8545b037d6dbb9e2ba926818f65c7bc3cc01..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/statistics_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in fullscreen.vert count.frag streams.geom; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh
+deleted file mode 100755
+index 850fde73a69bc03cf887ab9f6675a8ce703bd6cd..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/terminate_full_quads_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in terminate.vert terminate.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
+deleted file mode 100755
+index 1c416f9501c8b4519cb2b72c43c5e310d4136399..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/tes_sampler_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in sampler.vert sampler.tesc sampler.tese sampler.frag dynamic.tese; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
+deleted file mode 100755
+index d45539bbe9ec55126dea700e0436ff78e49e0a6b..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in wide.tesc wide.tese; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
+diff --git a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh
+deleted file mode 100755
+index fcde9ff7b2ce2f2074f329f3ac11d286ba08b0b6..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/tess_passthrough_shaders/generate.sh
++++ /dev/null
+@@ -1,8 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in passthrough.vert passthrough.tesc tris.tese quads.tese \
+-              isolines.tese triangles.geom lines.geom passthrough.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
 diff --git a/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c b/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
 index 40657bb5c97b94f09a55ee066a6d7a4875db0b52..51f7b6e268dc92d1044ddf3c09cb1a3b944a25d6 100644
 --- a/src/kosmickrisp/vulkan/tests/test_16bit_varying_io.c
@@ -27098,3 +27495,27 @@ index 5a0bfe1b3a271cd0151f9e9fabd7027e3b5214da..e0cb0f9b4eb41103aa69d79ade277bee
 +   kk_test_destroy(&t);
     return 0;
  }
+diff --git a/src/kosmickrisp/vulkan/tests/texel_buffer_bounds_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/texel_buffer_bounds_shaders/generate.sh
+deleted file mode 100755
+index baecf0a7d67c687ea881f1ef75861917f58cf3e3..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/texel_buffer_bounds_shaders/generate.sh
++++ /dev/null
+@@ -1,5 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-glslc -O --target-env=vulkan1.3 -mfmt=c bounds.comp -o bounds.comp.h
+diff --git a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
+deleted file mode 100755
+index 53e208e320c208a3d78a777d6f4dc8e1c22ef27e..0000000000000000000000000000000000000000
+--- a/src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
++++ /dev/null
+@@ -1,7 +0,0 @@
+-#!/bin/sh
+-# SPDX-License-Identifier: MIT
+-set -eu
+-cd -- "$(dirname -- "$0")"
+-for shader in unused_att.vert unused_att.frag; do
+-   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
+-done
