@@ -595,7 +595,8 @@ runs that have exited. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it
-binds it.
+binds it. `guest-host-residue` ends guests by poweroff, SIGTERM, SIGHUP, a
+panic and SIGKILL and finds nothing left in `/tmp` or `$TMPDIR`.
 
 ## Tests and structural audit
 
