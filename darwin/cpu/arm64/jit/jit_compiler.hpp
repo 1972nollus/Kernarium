@@ -150,6 +150,13 @@ private:
 
   void mark_direct_memory_write() noexcept;
 
+  /* Makes the label of a cold exit for instruction at pc and records the
+   * exit, retiring count_ + 1 instructions. Cold paths are emitted in the
+   * order they are recorded. */
+  [[nodiscard]] Arm64Emitter::Label cold_exit(std::uint32_t instruction,
+                                              std::uint64_t pc,
+                                              ColdPath::Action action);
+
   void track_direct_store(unsigned address, std::size_t size);
 
   void track_direct_store(unsigned address, std::size_t size,
@@ -256,6 +263,11 @@ private:
 
   void emit_native_scalar_compare_swap(std::uint32_t instruction,
                                        std::uint64_t pc);
+
+  /* The shared address step of the two above: x8 holds the translated,
+   * write-checked base, with exclusive-slow and memory-fault exits. */
+  void emit_native_atomic_address(std::uint32_t instruction,
+                                  std::uint64_t pc);
 
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);

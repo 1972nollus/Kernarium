@@ -309,6 +309,14 @@ void JitCompiler::mark_direct_memory_write() noexcept {
       direct_memory_write_mask_ |= std::uint64_t{1} << count_;
   }
 
+[[nodiscard]] Arm64Emitter::Label
+  JitCompiler::cold_exit(std::uint32_t instruction, std::uint64_t pc,
+                         ColdPath::Action action) {
+    const auto label = emitter_.make_label();
+    cold_.push_back({label, instruction, pc, count_ + 1, action});
+    return label;
+  }
+
 void JitCompiler::track_direct_store(unsigned address, std::size_t size) {
     track_direct_store(address, size, count_);
   }
@@ -533,9 +541,8 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
       emitter_.bind(no_tagged_state);
     }
     mask_register(8, ~std::uint64_t{63}, true);
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     /* The advertised 64-byte block size divides every supported guest
      * page, so an aligned DC ZVA block needs exactly one translation.
      */
@@ -817,9 +824,8 @@ void JitCompiler::emit_small_copy_set(bool set, unsigned source_start,
       emitter_.move_x(10, count.host);
     if (!set && source.host != 8U)
       emitter_.move_x(8, source.host);
-    const auto slow = emitter_.make_label();
-    cold_.push_back({slow, prologue, pc, count_ + 1U,
-                     ColdPath::Action::memory_copy_set_slow});
+    const auto slow =
+        cold_exit(prologue, pc, ColdPath::Action::memory_copy_set_slow);
     const auto forward_done = emitter_.make_label();
     const auto update = emitter_.make_label();
     emitter_.compare_zero(forward_done, 10, true, false);

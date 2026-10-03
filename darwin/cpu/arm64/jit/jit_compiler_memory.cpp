@@ -236,14 +236,10 @@ void JitCompiler::clear_local_exclusive_monitor() {
       return 0;
 
     const std::size_t bytes = std::size_t{1} << size;
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {slow, load_instruction, pc, count_ + 1,
-         ColdPath::Action::deferred_exclusive_slow});
-    cold_.push_back(
-        {fault, load_instruction, pc, count_ + 1,
-         ColdPath::Action::memory_fault});
+    const auto slow = cold_exit(load_instruction, pc,
+                                ColdPath::Action::deferred_exclusive_slow);
+    const auto fault =
+        cold_exit(load_instruction, pc, ColdPath::Action::memory_fault);
 
     load_gpr(8, base, true);
     if (base == 31U) {
@@ -325,11 +321,11 @@ void JitCompiler::clear_local_exclusive_monitor() {
       ++count_;
     }
     if (compare_retry) {
-      const auto mismatch = emitter_.make_label();
       const auto target = pc + 8U +
           sign_extend((instructions[2] >> 5) & 0x7ffffU, 19) * 4;
-      cold_.push_back({mismatch, instructions[2], target, count_ + 1U,
-                      ColdPath::Action::exclusive_compare_mismatch});
+      const auto mismatch =
+          cold_exit(instructions[2], target,
+                    ColdPath::Action::exclusive_compare_mismatch);
       load_flags();
       emitter_.branch_condition(mismatch, 1); // NE
       ++count_;
@@ -394,10 +390,8 @@ void JitCompiler::clear_local_exclusive_monitor() {
               (instruction & 0x0000'8000U) != 0U;
       if (!valid)
         return Action::unsupported;
-      const auto slow = emitter_.make_label();
-      cold_.push_back(
-          {slow, instruction, pc, count_ + 1, ColdPath::Action::ordered_slow});
-      emitter_.branch(slow);
+      emitter_.branch(
+          cold_exit(instruction, pc, ColdPath::Action::ordered_slow));
       return Action::terminate;
     }
     if (!valid)
@@ -408,11 +402,8 @@ void JitCompiler::clear_local_exclusive_monitor() {
     }
     if (pair_compare_swap || scalar_compare_swap || !load)
       mark_memory_write();
-    const auto slow = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1,
-         ColdPath::Action::exclusive_slow});
-    emitter_.branch(slow);
+    emitter_.branch(
+        cold_exit(instruction, pc, ColdPath::Action::exclusive_slow));
     return Action::terminate;
   }
 
@@ -427,31 +418,22 @@ void JitCompiler::clear_local_exclusive_monitor() {
       return Action::keep_going;
     }
     mark_memory_write();
-    const auto slow = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1, ColdPath::Action::exclusive_slow});
-    emitter_.branch(slow);
+    emitter_.branch(
+        cold_exit(instruction, pc, ColdPath::Action::exclusive_slow));
     return Action::terminate;
   }
 
-void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
-                                 std::uint64_t pc) {
+void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
+                                              std::uint64_t pc) {
     mark_direct_memory_write();
-    const unsigned size = instruction >> 30;
     const unsigned base = (instruction >> 5) & 31U;
-    const unsigned source = (instruction >> 16) & 31U;
-    const unsigned destination = instruction & 31U;
-    const std::size_t bytes = std::size_t{1} << size;
+    const std::size_t bytes = std::size_t{1} << (instruction >> 30);
     load_gpr(8, base, true);
 
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1,
-         ColdPath::Action::exclusive_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1,
-         ColdPath::Action::memory_fault});
+    const auto slow =
+        cold_exit(instruction, pc, ColdPath::Action::exclusive_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     } else {
@@ -461,6 +443,13 @@ void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
     }
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
+  }
+
+void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
+                                 std::uint64_t pc) {
+    emit_native_atomic_address(instruction, pc);
+    const unsigned source = (instruction >> 16) & 31U;
+    const unsigned destination = instruction & 31U;
 
     /*
      * Rs is consumed before Rt is defined, so a guest register may legally
@@ -481,31 +470,9 @@ void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
 
 void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
                                        std::uint64_t pc) {
-    mark_direct_memory_write();
-    const unsigned size = instruction >> 30;
-    const unsigned base = (instruction >> 5) & 31U;
+    emit_native_atomic_address(instruction, pc);
     const unsigned compare = (instruction >> 16) & 31U;
     const unsigned replacement = instruction & 31U;
-    const std::size_t bytes = std::size_t{1} << size;
-    load_gpr(8, base, true);
-
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1,
-         ColdPath::Action::exclusive_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1,
-         ColdPath::Action::memory_fault});
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
-    emit_translate(8, Access::write, slow, fault, 1);
-    track_direct_store(8, bytes);
 
     /*
      * CAS reads both guest operands before publishing the old memory value
@@ -565,12 +532,9 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     const auto native_base = read_native_gpr(base, true, 8);
     if (native_base.host != 8U)
       emitter_.move_x(8, native_base.host);
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1, ColdPath::Action::pair_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto slow = cold_exit(instruction, pc, ColdPath::Action::pair_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     if (base == 31U) {
       /* Pair accesses through SP require the architectural stack alignment
        * check before either memory or writeback can change. */
@@ -729,12 +693,10 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       mark_direct_memory_write();
 
     load_gpr(8, base, true);
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back({slow, instruction, pc, count_ + 1,
-                     ColdPath::Action::simd_structure_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto slow =
+        cold_exit(instruction, pc, ColdPath::Action::simd_structure_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     }
@@ -837,9 +799,8 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
 
     load_gpr(8, base, true);
     if (base == 31U) {
-      const auto alignment = emitter_.make_label();
-      cold_.push_back({alignment, instruction, pc, count_ + 1,
-                       ColdPath::Action::alignment_fault});
+      const auto alignment =
+          cold_exit(instruction, pc, ColdPath::Action::alignment_fault);
       /* Only the translation-selected SP path pays this architectural
        * alignment branch. */
       emit_misalignment_check(8, 16, alignment);
@@ -858,12 +819,10 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       emitter_.add_shifted(8, 8, 9, 0);
     }
 
-    const auto fallback = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {fallback, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto fallback =
+        cold_exit(instruction, pc, ColdPath::Action::memory_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     if (base != 31U) {
       /* Tagged-address handling stays on the exact semantic cold path. The
        * ordinary untagged hot path pays one load and one predicted branch;
@@ -933,12 +892,10 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     const auto address = pc + static_cast<std::uint64_t>(displacement);
     const unsigned destination = instruction & 31U;
     emitter_.load_constant(8, address);
-    const auto fallback = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {fallback, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto fallback =
+        cold_exit(instruction, pc, ColdPath::Action::memory_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     emit_translate(8, Access::read, fallback, fault, bytes);
     if (vector) {
       static constexpr std::array<std::uint32_t, 3> loads{
@@ -1034,16 +991,13 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
      * semantic path for operation zero with the complete dirty prefix still
      * visible, preserving its effective fault address and retirement count.
      */
-    const auto slow = emitter_.make_label();
-    cold_.push_back({slow, operations[0].instruction, pc, count_ + 1,
-                     ColdPath::Action::memory_slow});
+    const auto slow = cold_exit(operations[0].instruction, pc,
+                                ColdPath::Action::memory_slow);
 
     Arm64Emitter::Label alignment{};
-    if (base == 31U) {
-      alignment = emitter_.make_label();
-      cold_.push_back({alignment, operations[0].instruction, pc, count_ + 1,
-                       ColdPath::Action::alignment_fault});
-    }
+    if (base == 31U)
+      alignment = cold_exit(operations[0].instruction, pc,
+                            ColdPath::Action::alignment_fault);
 
     load_gpr(8, base, true);
     if (base == 31U) {
@@ -1176,12 +1130,10 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (length < 2)
       return 0;
 
-    const auto alignment = emitter_.make_label();
-    const auto slow = emitter_.make_label();
-    cold_.push_back({alignment, operations[0].instruction, pc, count_ + 1,
-                     ColdPath::Action::alignment_fault});
-    cold_.push_back({slow, operations[0].instruction, pc, count_ + 1,
-                     ColdPath::Action::memory_slow});
+    const auto alignment = cold_exit(operations[0].instruction, pc,
+                                     ColdPath::Action::alignment_fault);
+    const auto slow = cold_exit(operations[0].instruction, pc,
+                                ColdPath::Action::memory_slow);
 
     load_gpr(8, 31, true);
     /* Every selected instruction names SP, so check its architectural
@@ -1307,9 +1259,8 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
      * the ordinary slow helper executes exactly operation zero with the
      * architectural prefix state and precise fault address.
      */
-    const auto slow = emitter_.make_label();
-    cold_.push_back({slow, operations[0].instruction, pc, count_ + 1,
-                     ColdPath::Action::memory_slow});
+    const auto slow = cold_exit(operations[0].instruction, pc,
+                                ColdPath::Action::memory_slow);
 
     load_gpr(8, base, true);
     emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
@@ -1394,21 +1345,18 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       mark_direct_memory_write();
     load_gpr(8, base, true);
     if (base == 31U) {
-      const auto alignment = emitter_.make_label();
-      cold_.push_back({alignment, instruction, pc, count_ + 1,
-                       ColdPath::Action::alignment_fault});
+      const auto alignment =
+          cold_exit(instruction, pc, ColdPath::Action::alignment_fault);
       emit_misalignment_check(8, 16, alignment);
     }
     if (offset != 0) {
       emitter_.load_constant(9, offset);
       emitter_.add_shifted(8, 8, 9, 0);
     }
-    const auto fallback = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {fallback, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
+    const auto fallback =
+        cold_exit(instruction, pc, ColdPath::Action::memory_slow);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
     if (base != 31U) {
       emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(fallback, 0, false, true);
