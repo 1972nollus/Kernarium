@@ -210,7 +210,8 @@ and each export directory lists the ordinal of every exported case in
 `coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
-encoding match the pack, and that every row of
+encoding match the pack, that every inventory entry has a case or an
+illegal-instruction case, and that every row of
 [`../a64_instruction_evidence_bindings.tsv`](../a64_instruction_evidence_bindings.tsv)
 names, by producer and case name, a pack case whose entry word is its witness,
 or `-` for both columns. A regeneration that drops a binding's case names

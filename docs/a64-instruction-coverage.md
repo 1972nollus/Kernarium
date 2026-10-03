@@ -6,7 +6,8 @@ representative cases in the checked-in
 through the gadget and JIT engines. Each case passed the interpreter and gadget
 lanes, and the JIT lane where the export host implements its features, before
 it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
+entry, and the corpus check fails if an entry has none. In
+`tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
 marked `verified`. The other 199 are marked `absent`: they need FEAT_MTE,
 FEAT_GCS, FEAT_CPA, FEAT_PAuth, one of the memory extensions FEAT_LSE128,
 FEAT_THE, FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64, FEAT_LSFE, FEAT_LSUI,

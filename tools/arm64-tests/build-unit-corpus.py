@@ -1459,7 +1459,8 @@ def check(options: argparse.Namespace) -> int:
     if not set(tokens) <= set(feature_tokens()):
         fail("the pack names a feature the runtime no longer defines")
     stale = []
-    for name, data in metadata(corpus, pack).items():
+    files = metadata(corpus, pack)
+    for name, data in files.items():
         path = options.output / name
         if not path.is_file() or path.read_bytes() != data:
             stale.append(name)
@@ -1491,6 +1492,13 @@ def check(options: argparse.Namespace) -> int:
             stale.append("absent-feature failing list")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
+    # Every inventory entry has a case, or an illegal-instruction case.
+    uncovered = [row["stable_id"] for row in csv.DictReader(
+                     files["coverage.tsv"].decode().splitlines(), delimiter="\t")
+                 if row["cases"] == row["illegal_cases"] == "0"]
+    if uncovered:
+        fail(f"{len(uncovered)} inventory entries have no case in the pack: " +
+             ", ".join(uncovered))
     # An evidence binding names a pack case whose entry word is its witness,
     # by producer and case name, or "-" for both columns when no case is.
     witnesses = {(record.producer, case.name, entry_word(case))
