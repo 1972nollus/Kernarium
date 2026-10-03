@@ -58,18 +58,7 @@ Lx86_cmpxchg_exclusive\@:
 	retire_and_next
 Lx86_cmpxchg_split\@:
 	split_operand (\width / 8), Lx86_cmpxchg_exclusive\@
-	page_cross_check (\width / 8), Lx86_cmpxchg_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_cmpxchg_loaded\@
-Lx86_cmpxchg_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_cmpxchg_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	cmp \host_register\()27, \host_register\()24
 	b.ne Lx86_cmpxchg_memory_unequal\@
@@ -79,12 +68,7 @@ Lx86_cmpxchg_loaded\@:
 	\store \host_register\()26, [x7]
 	b Lx86_cmpxchg_memory_written\@
 Lx86_cmpxchg_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x26
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x26, (\width / 8)
 Lx86_cmpxchg_memory_written\@:
 	split_lock_leave
 	mov x11, x27
@@ -160,18 +144,7 @@ Lx86_xadd_exclusive\@:
 	finish_store (\width / 8)
 Lx86_xadd_split\@:
 	split_operand (\width / 8), Lx86_xadd_exclusive\@
-	page_cross_check (\width / 8), Lx86_xadd_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_xadd_loaded\@
-Lx86_xadd_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_xadd_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	add \host_register\()27, \host_register\()24, \host_register\()26
 	normalize_result \width, \host_register\()27
 	mov x7, x25
@@ -180,12 +153,7 @@ Lx86_xadd_loaded\@:
 	\store \host_register\()27, [x7]
 	b Lx86_xadd_written\@
 Lx86_xadd_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_xadd_written\@:
 	split_lock_leave
 	and x8, x23, #0xffff
@@ -256,18 +224,7 @@ Lx86_cmpxchg_pair_8_exclusive:
 	retire_and_next
 Lx86_cmpxchg_pair_8_split:
 	split_operand 8, Lx86_cmpxchg_pair_8_exclusive
-	page_cross_check 8, Lx86_cmpxchg_pair_8_read_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-	b Lx86_cmpxchg_pair_8_loaded
-Lx86_cmpxchg_pair_8_read_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_cmpxchg_pair_8_loaded:
+	read_operand 8, ldr, x, 24
 	ldr w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	cmp w8, w24
@@ -285,12 +242,7 @@ Lx86_cmpxchg_pair_8_loaded:
 	str x27, [x7]
 	b Lx86_cmpxchg_pair_8_written
 Lx86_cmpxchg_pair_8_write_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, 8
 Lx86_cmpxchg_pair_8_written:
 	split_lock_leave
 	compare_exchange_pair_flags

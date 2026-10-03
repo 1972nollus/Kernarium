@@ -625,6 +625,41 @@ Lx86_plain_tlb_hit\@:
 Lx86_plain_tlb_done\@:
 .endm
 
+/* An access whose `size` bytes at guest address x25 cross a page goes
+ * through the helpers, and a fault the MMU raises leaves through the shared
+ * exit. A load returns the value zero-extended in x0. */
+.macro cross_page_load size
+	mov x0, _context
+	mov x1, x25
+	mov w2, #\size
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, Lx86_memory_fault
+.endm
+
+.macro cross_page_store value, size
+	mov x0, _context
+	mov x1, x25
+	mov x2, \value
+	mov w3, #\size
+	bl NAME(uml_x86_64_gadget_cross_page_store)
+	cbz w0, Lx86_memory_fault
+.endm
+
+/* Read a `size`-byte memory operand into register `number`: x7 holds its
+ * address and x25 the copy the cross-page helper reads from. `load` and
+ * `register` give the in-page load and its register width, and `move` the
+ * width at which the helper's result is copied. */
+.macro read_operand size, load, register, number, move=x
+	page_cross_check \size, Lx86_read_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, \size
+	\load \register\()\number, [x7]
+	b Lx86_read_loaded\@
+Lx86_read_cross\@:
+	cross_page_load \size
+	mov \move\()\number, \move\()0
+Lx86_read_loaded\@:
+.endm
+
 /* x86 LOCK-prefixed read-modify-write.
  *
  * A locked gadget must be atomic against the other vCPU threads that execute

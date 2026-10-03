@@ -148,18 +148,7 @@ vector_insert_register 128, _vex
 gadget vector_insert_\width\()_rm\vex
 	effective_address
 	mov x25, x7
-	page_cross_check 2, Lx86_vector_insert_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, 2
-	ldrh w27, [x7]
-	b Lx86_vector_insert_loaded\@
-Lx86_vector_insert_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #2
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov w27, w0
-Lx86_vector_insert_loaded\@:
+	read_operand 2, ldrh, w, 27, w
 	ldr x24, [_stream], #8
 	and x9, x23, #0xffff
 	and x10, x24, #0xffff

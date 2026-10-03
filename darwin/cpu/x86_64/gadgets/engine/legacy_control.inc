@@ -12,12 +12,7 @@
 	\store \host_register\()27, [x7]
 	b Lx86_enter_push_done\@
 Lx86_enter_push_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_enter_push_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	publish_pending_code x25, (\width / 8)
@@ -103,11 +98,7 @@ enter_gadget 64, ldr, x, str, x
 	\load \host_register\()\destination, [x7]
 	b Lx86_legacy_load_done\@
 Lx86_legacy_load_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 8)
 	mov x\destination, x0
 Lx86_legacy_load_done\@:
 .endm

@@ -246,11 +246,7 @@ Lx86_arithmetic_rm_loaded\@:
 	record_deferred \flag_operation, \width
 	retire_and_next
 Lx86_arithmetic_rm_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 8)
 	mov x12, x0
 	b Lx86_arithmetic_rm_loaded\@
 .endm
@@ -317,20 +313,11 @@ Lx86_arithmetic_msource_written\@:
 	record_deferred \flag_operation, \width
 	finish_store (\width / 8)
 Lx86_arithmetic_msource_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 	b Lx86_arithmetic_msource_written\@
 	.endif
 Lx86_arithmetic_msource_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 8)
 	mov x24, x0
 	b Lx86_arithmetic_msource_read\@
 .endm
@@ -367,18 +354,7 @@ gadget \name\()_\width\()_rm
 	and w19, w19, #1
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_carry_rm_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()12, [x7]
-	b Lx86_carry_rm_loaded\@
-Lx86_carry_rm_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x12, x0
-Lx86_carry_rm_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 12
 	and x8, x23, #0xffff
 	\load \host_register\()11, [_cpu, x8]
 	\instruction \host_register\()13, \host_register\()11, \host_register\()12
@@ -429,18 +405,7 @@ Lx86_carry_msource_exclusive\@:
 Lx86_carry_msource_split\@:
 	split_operand (\width / 8), Lx86_carry_msource_exclusive\@
 	.endif
-	page_cross_check (\width / 8), Lx86_carry_msource_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_carry_msource_read\@
-Lx86_carry_msource_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_carry_msource_read\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	\instruction \host_register\()27, \host_register\()24, \host_register\()26
 	\instruction \host_register\()27, \host_register\()27, \host_register\()19
 	normalize_result \width, \host_register\()27
@@ -450,12 +415,7 @@ Lx86_carry_msource_read\@:
 	\store \host_register\()27, [x7]
 	b Lx86_carry_msource_written\@
 Lx86_carry_msource_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_carry_msource_written\@:
 	.if \locked
 	split_lock_leave
@@ -510,30 +470,14 @@ Lx86_exchange_exclusive\@:
 	finish_store (\width / 8)
 Lx86_exchange_split\@:
 	split_operand (\width / 8), Lx86_exchange_exclusive\@
-	page_cross_check (\width / 8), Lx86_exchange_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_exchange_loaded\@
-Lx86_exchange_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_exchange_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	mov x7, x25
 	page_cross_check (\width / 8), Lx86_exchange_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()26, [x7]
 	b Lx86_exchange_written\@
 Lx86_exchange_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x26
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x26, (\width / 8)
 Lx86_exchange_written\@:
 	split_lock_leave
 	and x8, x23, #0xffff
@@ -600,18 +544,7 @@ Lx86_unary_exclusive\@:
 Lx86_unary_split\@:
 	split_operand (\width / 8), Lx86_unary_exclusive\@
 	.endif
-	page_cross_check (\width / 8), Lx86_unary_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_unary_loaded\@
-Lx86_unary_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_unary_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	.ifc \instruction,add
 	add \host_register\()27, \host_register\()24, #1
 	.endif
@@ -631,12 +564,7 @@ Lx86_unary_loaded\@:
 	\store \host_register\()27, [x7]
 	b Lx86_unary_written\@
 Lx86_unary_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_unary_written\@:
 	.if \locked
 	split_lock_leave

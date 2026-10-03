@@ -165,18 +165,7 @@ gadget cmov_\condition\()_\width\()_rr
 gadget cmov_\condition\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_cmov_memory_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_cmov_memory_loaded\@
-Lx86_cmov_memory_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_cmov_memory_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	bl uml_x86_64_gadget_materialize_flags
 	evaluate_condition \condition
 	and x8, x23, #0xffff

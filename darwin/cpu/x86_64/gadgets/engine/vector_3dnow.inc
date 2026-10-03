@@ -138,11 +138,7 @@ gadget vector_3dnow_\opcode\()_rm
 	ldr d1, [x7]
 	b Lx86_vector_3dnow_loaded\@
 Lx86_vector_3dnow_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d1, x0
 Lx86_vector_3dnow_loaded\@:
 	and x10, x26, #0xffff

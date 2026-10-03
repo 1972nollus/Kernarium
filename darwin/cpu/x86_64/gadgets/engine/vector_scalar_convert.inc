@@ -154,11 +154,7 @@ gadget vector_scalar_i\integer_width\()_f\element\()_rm
 	.endif
 	b Lx86_vector_integer_to_scalar_loaded\@
 Lx86_vector_integer_to_scalar_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\integer_width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\integer_width / 8)
 	.if \integer_width == 32
 	mov w24, w0
 	.else
@@ -222,11 +218,7 @@ gadget vector_pi_f\element\()_rm
 	ldr d1, [x7]
 	b Lx86_vector_pi_loaded\@
 Lx86_vector_pi_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d1, x0
 Lx86_vector_pi_loaded\@:
 	and x10, x26, #0xffff
@@ -276,11 +268,7 @@ gadget vector_scalar_f\element\()_i\width\()_\truncate\()_rm
 	.endif
 	b Lx86_vector_fp_to_gpr_loaded\@
 Lx86_vector_fp_to_gpr_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\element / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\element / 8)
 	.if \element == 32
 	fmov s1, w0
 	.else
@@ -361,11 +349,7 @@ gadget vector_f\element\()_pi_\truncate\()_rm
 	b Lx86_vector_fp_to_pi_loaded\@
 Lx86_vector_fp_to_pi_cross\@:
 	.if \element == 32
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d1, x0
 	.else
 	sub sp, sp, #16

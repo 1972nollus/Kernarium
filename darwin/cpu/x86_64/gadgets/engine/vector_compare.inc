@@ -55,11 +55,7 @@ gadget vector_\name\()_\width\()_rm
 	ldr \fp_register\()1, [x7]
 	b Lx86_vector_compare_loaded\@
 Lx86_vector_compare_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 8)
 	fmov \fp_register\()1, \host_register\()0
 Lx86_vector_compare_loaded\@:
 	and x8, x23, #0xffff

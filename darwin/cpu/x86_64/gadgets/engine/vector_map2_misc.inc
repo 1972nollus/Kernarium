@@ -332,11 +332,7 @@ gadget vector_map2_broadcast_\element\()_\width\()_m
 	b Lx86_vector_map2_broadcast_loaded\@
 Lx86_vector_map2_broadcast_cross\@:
 	.if \element <= 64
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\element / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\element / 8)
 	fmov d1, x0
 	.else
 	sub sp, sp, #16
@@ -410,11 +406,7 @@ gadget vector_map2_half_\width\()_m
 	b Lx86_vector_map2_half_loaded\@
 Lx86_vector_map2_half_cross\@:
 	.if \input_size == 8
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 8
 	fmov d1, x0
 	.else
 	sub sp, sp, #16

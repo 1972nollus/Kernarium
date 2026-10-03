@@ -61,18 +61,7 @@ gadget \operation\()_\width\()_rr
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_bmi_unary_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_bmi_unary_loaded\@
-Lx86_bmi_unary_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_bmi_unary_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	and x22, x23, #0xffff
 	bmi_unary_compute \operation, \width, \host_register
 	bmi_flags \width, \host_register
@@ -299,18 +288,7 @@ gadget rorx_\width\()_rmi
 	effective_address
 	mov x25, x7
 	ldr x26, [_stream], #8
-	page_cross_check (\width / 8), Lx86_rorx_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_rorx_loaded\@
-Lx86_rorx_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_rorx_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	and x22, x23, #0xffff
 	and w26, w26, #(\width - 1)
 	rorv \host_register\()27, \host_register\()24, \host_register\()26

@@ -395,11 +395,7 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 	b Lx86_vector_map2_loaded\@
 Lx86_vector_map2_cross\@:
 	.if Lx86_vector_map2_input_size <= 8
-	mov x0, _context
-	mov x1, x25
-	mov w2, #Lx86_vector_map2_input_size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load Lx86_vector_map2_input_size
 	fmov d1, x0
 	.else
 	sub sp, sp, #32
