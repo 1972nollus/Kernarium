@@ -33,7 +33,7 @@ uml_add_unit_test(
 add_executable(uml_runtime_sequential_run_tests sequential_run_tests.cpp)
 target_link_libraries(uml_runtime_sequential_run_tests PRIVATE
     UML::BridgeAbi
-    UML::Emulator)
+    uml_emulator_test_variant)
 uml_add_unit_test(
     NAME runtime-sequential-run-same-handle
     COMMAND uml_runtime_sequential_run_tests same-handle)

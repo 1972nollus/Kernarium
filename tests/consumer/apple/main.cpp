@@ -4,15 +4,9 @@
 #include <cstdint>
 #include <cstring>
 
-namespace {
-
-int native_kernel(int, char *const[], char *const[])
-{
-	return 0;
-}
-
-} // namespace
-
+/* Packages are built without the embedded-kernel runner, so the consumer
+ * checks the package's API on a handle without a kernel: it reports that it
+ * cannot run and refuses a run. */
 int main()
 {
 	uml_emulator *emulator = nullptr;
@@ -22,7 +16,6 @@ int main()
 	const uml_emulator_config configuration{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
-		.native_kernel_entry = native_kernel,
 	};
 	if (uml_emulator_create(&configuration, &emulator) != UML_EMULATOR_OK)
 		return 1;
@@ -36,9 +29,9 @@ int main()
 	uml_emulator_request_stop(emulator);
 	uml_emulator_destroy(emulator);
 	return status == UML_EMULATOR_OK &&
-		run_status == UML_EMULATOR_OK &&
+		run_status == -UML_EMULATOR_UNSUPPORTED &&
 		capabilities.abi_version == UML_EMULATOR_ABI_VERSION &&
-		capabilities.can_run && capabilities.kernel_is_native_macho &&
-		capabilities.sandbox_safe && capabilities.platform != nullptr &&
+		!capabilities.can_run && capabilities.sandbox_safe &&
+		capabilities.platform != nullptr &&
 		std::strcmp(capabilities.platform, UML_EXPECTED_PLATFORM) == 0 ? 0 : 1;
 }

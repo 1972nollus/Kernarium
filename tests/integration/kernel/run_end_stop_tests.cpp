@@ -18,6 +18,8 @@
  * thread breaks that rule on purpose once the kernel handles SIGALRM: it
  * unblocks the signal and sends it to itself. The kernel must refuse to run a
  * guest tick there and leave SIGALRM blocked on that thread.
+ *
+ * The run-end and SIGALRM contracts are in kernel/common/README.md.
  */
 #include "uml/emulator.h"
 

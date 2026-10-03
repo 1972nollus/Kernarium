@@ -11,9 +11,6 @@
 extern "C" {
 #endif
 
-typedef int (*uml_emulator_kernel_entry)(int argc, char *const argv[],
-					char *const envp[]);
-
 /* The callback table is copied by uml_emulator_create. Its context remains
  * caller-owned and must stay valid during every run that can invoke it.
  *
@@ -56,7 +53,6 @@ struct uml_emulator_config {
 	const char *rootfs_path;
 	const void *kernel_image;
 	size_t kernel_image_size;
-	uml_emulator_kernel_entry native_kernel_entry;
 	const struct uml_emulator_network_callbacks *network;
 };
 
@@ -65,7 +61,6 @@ struct uml_emulator_capabilities {
 	uint32_t struct_size;
 	enum uml_emulator_execution_model userspace_execution;
 	int can_run;
-	int kernel_is_native_macho;
 	int sandbox_safe;
 	const char *platform;
 };
@@ -83,14 +78,9 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
 				 struct uml_emulator_capabilities *capabilities);
 /* A run is synchronous. It copies argv, envp, and all referenced strings
  * before entering the kernel and retains none of them after returning. At
- * most one run may be active on a handle; concurrent runs fail. Different
- * native-callback-backed handles may run concurrently in a 16 KiB guest-page
- * build when their native mappings do not overlap; an overlapping mapping
- * fails instead of replacing another run's mapping. Native mappings belong
- * to the run and are flushed and unmapped before that run returns. The 4 KiB
- * compatibility build admits one native callback run at a time because
- * identical guest addresses materialize in one host address space. An
- * embedded ELF kernel run is admitted only while no other run is active.
+ * most one run may be active on a handle; concurrent runs fail. An embedded
+ * kernel run is admitted only while no other run is active. Native mappings
+ * belong to the run and are flushed and unmapped before that run returns.
  *
  * A process runs one guest. A kernel claims guest RAM early in its boot, and
  * a process hands guest RAM out once. After a run has claimed it, every later
@@ -103,10 +93,9 @@ int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* This and uml_emulator_sync are the operations intended to overlap
  * uml_emulator_run on the same handle. A stop request made while idle is not
- * inherited by a later run. A request
- * made while a 4 KiB native or embedded run is queued at process admission
- * cancels that run with -UML_EMULATOR_RUNTIME_ERROR and is not inherited by a
- * retry. */
+ * inherited by a later run. A request made while a run is queued at process
+ * admission cancels that run with -UML_EMULATOR_RUNTIME_ERROR and is not
+ * inherited by a retry. */
 void uml_emulator_request_stop(struct uml_emulator *emulator);
 /* Flushes every host file the running guest can still write to, so that the
  * writes it has already issued survive the process. Like a stop request, this

@@ -207,7 +207,11 @@ public:
 	AdmissionHooks &operator=(const AdmissionHooks &) = delete;
 };
 
-std::vector<std::byte> embedded_image(uml_emulator_kernel_entry entry)
+/* What the image's entry trampoline branches to, with the kernel's argc, argv
+ * and envp. */
+using KernelCallback = int (*)(int, char *const[], char *const[]);
+
+std::vector<std::byte> embedded_image(KernelCallback entry)
 {
 	constexpr std::size_t payload_offset = 256;
 	constexpr std::uint32_t load_callback = 0x5800'0050U;
@@ -317,22 +321,6 @@ Emulator make_emulator(const std::vector<std::byte> &image)
 		"embedded-kernel emulator creation failed");
 	return {created, uml_emulator_destroy};
 }
-
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-Emulator make_native_emulator(uml_emulator_kernel_entry entry)
-{
-	const uml_emulator_config config{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/native-admission-retry.img",
-		.native_kernel_entry = entry,
-	};
-	uml_emulator *created = nullptr;
-	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
-		"native admission-retry emulator creation failed");
-	return {created, uml_emulator_destroy};
-}
-#endif
 
 class TemporaryBacking final {
 public:
@@ -639,69 +627,6 @@ void test_queued_handle_stop_cancels_admission()
 	require_runtime_window_available();
 }
 
-void test_failed_exclusive_wait_does_not_poison_shared_admission()
-{
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	reset_interleave();
-	const auto blocking_image = embedded_image(first_kernel);
-	const auto waiting_image = embedded_image(second_kernel);
-	auto blocking = make_emulator(blocking_image);
-	auto waiting = make_emulator(waiting_image);
-	const char *arguments[]{
-		"embedded-admission-wait-failure", admission_engine_argument};
-	int blocking_status = -1;
-	std::thread first{[&] {
-		blocking_status = uml_emulator_run(
-			blocking.get(), 2, arguments, nullptr);
-	}};
-	{
-		std::unique_lock lock{interleave.mutex};
-		require(interleave.changed.wait_for(lock, 5s, [] {
-			return interleave.first_entered;
-		}), "exclusive admission holder did not enter");
-	}
-
-	int failed_status = -1;
-	{
-		AdmissionHooks hooks;
-		uml::emulator::testing::fail_next_address_space_admission_wait();
-		failed_status = uml_emulator_run(
-			waiting.get(), 2, arguments, nullptr);
-	}
-	require(failed_status == -UML_EMULATOR_RUNTIME_ERROR &&
-		!interleave.second_entered,
-		"injected exclusive admission wait did not fail closed");
-	release_blocked_kernel();
-	first.join();
-	require(blocking_status == 17,
-		"exclusive admission holder failed during wait injection");
-
-	{
-		std::lock_guard lock{interleave.mutex};
-		interleave.second_entered = false;
-	}
-	auto shared = make_native_emulator(second_kernel);
-	int shared_status = -1;
-	std::thread retry{[&] {
-		shared_status = uml_emulator_run(
-			shared.get(), 2, arguments, nullptr);
-	}};
-	bool shared_entered = false;
-	{
-		std::unique_lock lock{interleave.mutex};
-		shared_entered = interleave.changed.wait_for(lock, 1s, [] {
-			return interleave.second_entered;
-		});
-	}
-	if (!shared_entered)
-		uml_emulator_request_stop(shared.get());
-	retry.join();
-	require(shared_entered && shared_status == 23,
-		"failed exclusive wait poisoned later shared admission");
-	require_runtime_window_available();
-#endif
-}
-
 void test_embedded_handles_are_process_serialized()
 {
 	reset_interleave();
@@ -780,7 +705,6 @@ int main()
 		test_embedded_runs_start_with_fresh_mmu_domain();
 		test_same_handle_run_fails_before_global_admission();
 		test_queued_handle_stop_cancels_admission();
-		test_failed_exclusive_wait_does_not_poison_shared_admission();
 		test_embedded_handles_are_process_serialized();
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {
