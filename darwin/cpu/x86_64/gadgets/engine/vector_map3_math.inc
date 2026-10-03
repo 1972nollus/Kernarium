@@ -95,15 +95,12 @@ Lx86_vector_map3_dot_inputs_ready\@:
 	and v\output\().16b, v21.16b, v7.16b
 .endm
 
-/* A dot product runs as above while MXCSR.DAZ and FTZ are clear and its
- * result is not special, which take the exact path in the cold section. */
+/* A dot product runs as above on its common path, while its result is not a
+ * NaN, and otherwise on the exact path (`simd_exact_branch`). A dot product
+ * can overflow and cancel on the way to its result, so while the gadgets
+ * check SIMD exceptions one always leaves there, to run checked. */
 .macro vector_map3_dot element, width
-	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
-	mov w14, #0x8040
-	tst w12, w14
-	b.eq Lx86_vector_map3_dot_plain\@
-	b Lx86_vector_map3_dot_cold\@
-Lx86_vector_map3_dot_plain\@:
+	simd_exact_branch Lx86_vector_map3_dot_exact\@
 	.if \element == 32
 	vector_map3_dpps_lane 4, 0, 1
 	.if \width == 256
@@ -115,17 +112,16 @@ Lx86_vector_map3_dot_plain\@:
 	vector_map3_dppd_lane 5, 2, 3
 	.endif
 	.endif
-	simd_special_lanes \element, 4
 	.if \width == 256
-	cbnz w14, Lx86_vector_map3_dot_special\@
-	simd_special_lanes \element, 5
+	simd_nan_lanes \element, Lx86_vector_map3_dot_exact\@, 4, 5
+	.else
+	simd_nan_lanes \element, Lx86_vector_map3_dot_exact\@, 4
 	.endif
-	cbz w14, Lx86_vector_map3_dot_ready\@
-Lx86_vector_map3_dot_special\@:
-	b Lx86_vector_map3_dot_cold\@
 Lx86_vector_map3_dot_ready\@:
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_map3_dot_cold\@:
+Lx86_vector_map3_dot_exact\@:
+	simd_leave_if_checking
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	vector_map3_dot_exact \element, 4, 0, 1
 	.if \width == 256
 	vector_map3_dot_exact \element, 5, 2, 3
@@ -161,14 +157,10 @@ Lx86_vector_map3_dot_cold\@:
 	uabal v\output\().8h, v11.8b, v10.8b
 .endm
 
-/* A dot product can overflow and cancel on the way to its result, so while
- * the gadgets check SIMD exceptions one always runs checked. */
 .macro vector_map3_math_body opcode, width
 	.if \opcode == 0x40
-	simd_leave_if_checking
 	vector_map3_dot 32, \width
 	.elseif \opcode == 0x41
-	simd_leave_if_checking
 	vector_map3_dot 64, \width
 	.else
 	vector_map3_mpsadbw_lane 4, 0, 1, 0

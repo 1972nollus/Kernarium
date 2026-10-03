@@ -327,8 +327,9 @@ namespace {
  * `instruction_budget`. With `WatchFloating` the host's floating-point
  * exception flags are cleared as the stream starts and reported, as MXCSR
  * flags, in `floating_exceptions` as it ends. A `Checked` run is one
- * instruction the runtime checks itself, so the gadgets check nothing; any
- * other run has them check what `gadget_checks` asks for. */
+ * instruction the runtime checks itself, so the gadgets check nothing
+ * (`checked_run_checks`); any other run has them check what `gadget_checks`
+ * asks for. */
 template<bool WatchFloating, bool Checked = false>
 [[nodiscard, gnu::always_inline]] inline ExecuteResult run_stream(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
@@ -360,7 +361,8 @@ template<bool WatchFloating, bool Checked = false>
 	 * exits before this run no instruction and keep it, as an interrupt
 	 * taken before the instruction does. */
 	cpu.rflags &= ~rflags_resume;
-	cpu.exception_checks = Checked ? std::uint8_t{} : gadget_checks(cpu);
+	cpu.exception_checks =
+		Checked ? checked_run_checks(cpu) : gadget_checks(cpu);
 	executor.enter_engine();
 	if constexpr (WatchFloating)
 		clear_host_floating_exceptions();

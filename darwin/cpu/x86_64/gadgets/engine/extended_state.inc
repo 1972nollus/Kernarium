@@ -213,6 +213,7 @@ Lx86_extended_restore_x87_done\@:
 	tbnz x25, #1, Lx86_extended_restore_sse_present\@
 	mov w9, #0x1f80
 	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	refresh_simd_exact w9, 10, 11
 	publish_guest_rounding 9, 10, 11
 	add x10, _cpu, #UML_X86_64_CPU_VECTORS
 	movi v0.16b, #0
@@ -225,6 +226,7 @@ Lx86_extended_clear_sse_loop\@:
 Lx86_extended_restore_sse_present\@:
 	ldr w9, [x19, #24]
 	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	refresh_simd_exact w9, 10, 11
 	publish_guest_rounding 9, 10, 11
 	add x10, _cpu, #UML_X86_64_CPU_VECTORS
 	add x11, x19, #160

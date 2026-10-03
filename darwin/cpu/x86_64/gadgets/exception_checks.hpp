@@ -71,16 +71,29 @@ inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 		(enabled_exceptions(cpu) & unsigned{check_alignment});
 }
 
+/* CpuState::exception_checks for an instruction the runtime runs checked:
+ * the gadgets check nothing, and take their exact path while MXCSR.DAZ or
+ * FTZ is set. */
+[[nodiscard]] constexpr std::uint8_t checked_run_checks(
+	const CpuState &cpu) noexcept
+{
+	return (cpu.mxcsr & (mxcsr_denormals_are_zero | mxcsr_flush_to_zero)) !=
+			0U ?
+		exception_check_simd_exact : std::uint8_t{};
+}
+
 /* What the gadgets check themselves, as CpuState::exception_checks. */
 [[nodiscard]] constexpr std::uint8_t gadget_checks(
 	const CpuState &cpu) noexcept
 {
+	const auto simd =
+		(cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks &&
+		(cpu.mxcsr & mxcsr_unchecked_masks) == mxcsr_unchecked_masks;
 	return static_cast<std::uint8_t>(
 		((cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
 			exception_check_x87 : 0U) |
-		((cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks &&
-			(cpu.mxcsr & mxcsr_unchecked_masks) == mxcsr_unchecked_masks ?
-			exception_check_simd : 0U));
+		(simd ? exception_check_simd | exception_check_simd_exact : 0U) |
+		checked_run_checks(cpu));
 }
 
 /* Whether `instruction` could raise an exception `checked` enables, so that

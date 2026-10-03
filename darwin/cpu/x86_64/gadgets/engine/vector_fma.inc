@@ -287,13 +287,35 @@ Lx86_vector_fma_tiny_done\@:
 .endm
 
 /* The computation, in v6 (and v7 for 256 bits), from the destination in v0,
- * vvvv in v1 and r/m in v2 (and their upper halves in v3, v4 and v5).
- * MXCSR.DAZ flushes the inputs -- for a scalar one lane 0 of the
- * destination alone, whose other lanes the result keeps. A special result
- * branches to `special`, and under FTZ a result no larger than the smallest
- * normal to `tiny`; their paths, after the gadget, return to `special_back`
- * and `tiny_back`. */
-.macro vector_fma_body form, operation, element_bits, width, scalar, special, special_back, tiny, tiny_back
+ * vvvv in v1 and r/m in v2 (and their upper halves in v3, v4 and v5). */
+.macro vector_fma_compute form, operation, element_bits, width, scalar
+	.if \scalar
+	vector_fma_by_form \form, vector_fma_scalar_value, \operation, \element_bits, 6, 0, 1, 2
+	.else
+	vector_fma_by_form \form, vector_fma_packed_value, \operation, \element_bits, 6, 0, 1, 2
+	.if \width == 256
+	vector_fma_by_form \form, vector_fma_packed_value, \operation, \element_bits, 7, 3, 4, 5
+	.endif
+	.endif
+.endm
+
+/* x86's NaN result in v6 (and v7). */
+.macro vector_fma_x86_nan form, operation, element_bits, width, scalar
+	.if \scalar
+	vector_fma_by_form \form, vector_fma_x86_nan_scalar, \operation, \element_bits, 6, 0, 1, 2
+	.else
+	vector_fma_by_form \form, vector_fma_x86_nan_packed, \operation, \element_bits, 6, 0, 1, 2
+	.if \width == 256
+	vector_fma_by_form \form, vector_fma_x86_nan_packed, \operation, \element_bits, 7, 3, 4, 5
+	.endif
+	.endif
+.endm
+
+/* The exact path (`simd_exact_branch`). MXCSR.DAZ flushes the inputs -- for
+ * a scalar one lane 0 of the destination alone, whose other lanes the
+ * result keeps. A special result leaves while the gadgets check SIMD
+ * exceptions, and FTZ flushes a tiny one. */
+.macro vector_fma_exact form, operation, element_bits, width, scalar
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fma_inputs_ready\@
 	.if \scalar
@@ -317,23 +339,22 @@ Lx86_vector_fma_tiny_done\@:
 	.endif
 	.endif
 Lx86_vector_fma_inputs_ready\@:
+	vector_fma_compute \form, \operation, \element_bits, \width, \scalar
 	.if \scalar
-	vector_fma_by_form \form, vector_fma_scalar_value, \operation, \element_bits, 6, 0, 1, 2
-	simd_special_scalar \element_bits, 6, \special
+	simd_special_scalar \element_bits, 6, Lx86_vector_fma_nan_ready\@, lo
 	.else
-	vector_fma_by_form \form, vector_fma_packed_value, \operation, \element_bits, 6, 0, 1, 2
-	.if \width == 256
-	vector_fma_by_form \form, vector_fma_packed_value, \operation, \element_bits, 7, 3, 4, 5
-	.endif
 	simd_special_lanes \element_bits, 6
 	.if \width == 256
-	cbnz w14, \special
+	cbnz w14, Lx86_vector_fma_special\@
 	simd_special_lanes \element_bits, 7
 	.endif
-	cbnz w14, \special
+	cbz w14, Lx86_vector_fma_nan_ready\@
 	.endif
-\special_back:
-	tbz w12, #15, \tiny_back
+Lx86_vector_fma_special\@:
+	simd_leave_if_checking
+	vector_fma_x86_nan \form, \operation, \element_bits, \width, \scalar
+Lx86_vector_fma_nan_ready\@:
+	tbz w12, #15, Lx86_vector_fma_tiny_ready\@
 	.if \scalar
 	.if \element_bits == 32
 	fmov w14, s6
@@ -346,7 +367,8 @@ Lx86_vector_fma_inputs_ready\@:
 	sub x14, x14, #1
 	tst x14, #0xffe0000000000000
 	.endif
-	b.eq \tiny
+	b.ne Lx86_vector_fma_tiny_ready\@
+	vector_fma_by_form \form, vector_fma_flush_tiny_scalar, \operation, \element_bits, 6, 0, 1, 2
 	.else
 	simd_small_lanes \element_bits, 6, 17, 18
 	.if \width == 256
@@ -355,9 +377,50 @@ Lx86_vector_fma_inputs_ready\@:
 	.endif
 	umaxv s17, v17.4s
 	fmov w14, s17
-	cbnz w14, \tiny
+	cbz w14, Lx86_vector_fma_tiny_ready\@
+	vector_fma_by_form \form, vector_fma_flush_tiny_packed, \operation, \element_bits, 6, 0, 1, 2
+	.if \width == 256
+	vector_fma_by_form \form, vector_fma_flush_tiny_packed, \operation, \element_bits, 7, 3, 4, 5
 	.endif
-\tiny_back:
+	.endif
+Lx86_vector_fma_tiny_ready\@:
+.endm
+
+/* The common path, while `exception_check_simd_exact` is clear: a NaN result
+ * branches to `special`, and the exact path starts at `exact`. Their paths,
+ * after the gadget, return to `special_back` and `exact_back`. */
+.macro vector_fma_body form, operation, element_bits, width, scalar, special, special_back, exact, exact_back
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbnz w14, #2, \exact
+	vector_fma_compute \form, \operation, \element_bits, \width, \scalar
+	.if \scalar
+	.if \element_bits == 32
+	fcmp s6, s6
+	.else
+	fcmp d6, d6
+	.endif
+	.else
+	.if \element_bits == 32
+	.if \width == 256
+	fmax v17.4s, v6.4s, v7.4s
+	fmaxv s17, v17.4s
+	.else
+	fmaxv s17, v6.4s
+	.endif
+	fcmp s17, s17
+	.else
+	.if \width == 256
+	fmax v17.2d, v6.2d, v7.2d
+	fmaxp d17, v17.2d
+	.else
+	fmaxp d17, v6.2d
+	.endif
+	fcmp d17, d17
+	.endif
+	.endif
+	b.vs \special
+\special_back:
+\exact_back:
 	.if \scalar
 	.if \element_bits == 32
 	mov v6.s[1], v0.s[1]
@@ -371,34 +434,19 @@ Lx86_vector_fma_inputs_ready\@:
 
 /* The paths `vector_fma_body` branches to, placed after the gadget's tail so
  * that the common path takes no branch: each reaches its body in the cold
- * section. */
-.macro vector_fma_paths form, operation, element_bits, width, scalar, special, special_back, tiny, tiny_back
+ * section. A NaN result on the common path needs only x86's NaN. */
+.macro vector_fma_paths form, operation, element_bits, width, scalar, special, special_back, exact, exact_back
 \special:
 	b \special\()_cold
-\tiny:
-	b \tiny\()_cold
+\exact:
+	b \exact\()_cold
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
 \special\()_cold:
-	simd_leave_if_checking
-	.if \scalar
-	vector_fma_by_form \form, vector_fma_x86_nan_scalar, \operation, \element_bits, 6, 0, 1, 2
-	.else
-	vector_fma_by_form \form, vector_fma_x86_nan_packed, \operation, \element_bits, 6, 0, 1, 2
-	.if \width == 256
-	vector_fma_by_form \form, vector_fma_x86_nan_packed, \operation, \element_bits, 7, 3, 4, 5
-	.endif
-	.endif
+	vector_fma_x86_nan \form, \operation, \element_bits, \width, \scalar
 	b \special_back
-\tiny\()_cold:
-	.if \scalar
-	vector_fma_by_form \form, vector_fma_flush_tiny_scalar, \operation, \element_bits, 6, 0, 1, 2
-	.else
-	vector_fma_by_form \form, vector_fma_flush_tiny_packed, \operation, \element_bits, 6, 0, 1, 2
-	.if \width == 256
-	vector_fma_by_form \form, vector_fma_flush_tiny_packed, \operation, \element_bits, 7, 3, 4, 5
-	.endif
-	.endif
-	b \tiny_back
+\exact\()_cold:
+	vector_fma_exact \form, \operation, \element_bits, \width, \scalar
+	b \exact_back
 	.popsection
 .endm
 
@@ -431,10 +479,10 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rr
 	ldr q4, [x10, #16]
 	ldr q5, [x11, #16]
 	.endif
-	vector_fma_body \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_tiny\@, Lx86_vector_fma_tiny_back\@
+	vector_fma_body \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_exact\@, Lx86_vector_fma_exact_back\@
 	vector_fma_write \width, 8
 	retire_and_next
-	vector_fma_paths \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_tiny\@, Lx86_vector_fma_tiny_back\@
+	vector_fma_paths \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_exact\@, Lx86_vector_fma_exact_back\@
 .endm
 
 .macro vector_fma_memory name, form, operation, element, shape, width, scalar
@@ -495,7 +543,7 @@ Lx86_vector_fma_loaded\@:
 	ldr q3, [x9, #16]
 	ldr q4, [x10, #16]
 	.endif
-	vector_fma_body \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_tiny\@, Lx86_vector_fma_tiny_back\@
+	vector_fma_body \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_exact\@, Lx86_vector_fma_exact_back\@
 	vector_fma_write \width, 23
 	retire_and_next
 	.if !\scalar
@@ -503,7 +551,7 @@ Lx86_vector_fma_cross_fault\@:
 	add sp, sp, #32
 	b Lx86_memory_fault
 	.endif
-	vector_fma_paths \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_tiny\@, Lx86_vector_fma_tiny_back\@
+	vector_fma_paths \form, \operation, \element, \width, \scalar, Lx86_vector_fma_special\@, Lx86_vector_fma_special_back\@, Lx86_vector_fma_exact\@, Lx86_vector_fma_exact_back\@
 .endm
 
 .macro vector_fma_family name, form, operation, element, shape, width, scalar
@@ -558,6 +606,9 @@ vector_fma_opcode bf, 0xb0, 0xf
 .purgem vector_fma_write
 .purgem vector_fma_paths
 .purgem vector_fma_body
+.purgem vector_fma_exact
+.purgem vector_fma_x86_nan
+.purgem vector_fma_compute
 .purgem vector_fma_flush_tiny_packed
 .purgem vector_fma_flush_tiny_scalar
 .purgem vector_fma_x86_nan_packed

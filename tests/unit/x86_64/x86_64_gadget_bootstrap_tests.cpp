@@ -6752,6 +6752,95 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"LDMXCSR masking everything left");
 }
 
+/* XRSTOR, LDMXCSR and FXRSTOR that set MXCSR.DAZ or FTZ within a run send
+ * the conversions after them to the SIMD gadgets' exact path, and an XRSTOR
+ * that initializes the SSE state clears both. */
+[[nodiscard]] bool mxcsr_loads_switch_the_simd_exact_path()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xae, 0x2b,             // xrstor [rbx]
+		0xf3, 0x0f, 0x5a, 0xc8,       // cvtss2sd xmm1, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xc8, // movq r8, xmm1
+		0x0f, 0xae, 0x16,             // ldmxcsr [rsi]
+		0xf3, 0x0f, 0x5a, 0xd0,       // cvtss2sd xmm2, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xd1, // movq r9, xmm2
+		0x0f, 0xae, 0x0f,             // fxrstor [rdi]
+		0xf2, 0x0f, 0x5a, 0xdc,       // cvtsd2ss xmm3, xmm4
+		0x66, 0x41, 0x0f, 0x7e, 0xda, // movd r10d, xmm3
+		0x0f, 0xae, 0x56, 0x04,       // ldmxcsr [rsi+4]
+		0xf3, 0x0f, 0x5a, 0xe8,       // cvtss2sd xmm5, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xed, // movq r13, xmm5
+		0x0f, 0x05,                   // syscall
+	});
+	memory.load(0x400, {
+		0x0f, 0xae, 0x2b,             // xrstor [rbx]
+		0x66, 0x41, 0x0f, 0x6e, 0xc4, // movd xmm0, r12d
+		0xf3, 0x0f, 0x5a, 0xc8,       // cvtss2sd xmm1, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xc8, // movq r8, xmm1
+		0x0f, 0x05,                   // syscall
+	});
+	const auto put = [&](std::uint64_t address, auto value) {
+		std::array<std::byte, sizeof(value)> bytes{};
+		std::memcpy(bytes.data(), &value, sizeof(value));
+		memory.fill(address, bytes);
+	};
+	/* The XSAVE image at 0x1000 holds the SSE state, MXCSR with DAZ and a
+	 * denormal single in xmm0; the FXSAVE image at 0x2000 MXCSR with FTZ,
+	 * that single in xmm0 and in xmm4 a double that narrows to a denormal.
+	 * LDMXCSR loads $1f80 and then $1fc0. */
+	put(0x1000, std::uint16_t{0x037f});
+	put(0x1000 + 24, std::uint32_t{0x1fc0});
+	put(0x1000 + 160, std::uint32_t{1});
+	put(0x1000 + 512, std::uint64_t{2});
+	put(0x2000, std::uint16_t{0x037f});
+	put(0x2000 + 24, std::uint32_t{0x9f80});
+	put(0x2000 + 160, std::uint32_t{1});
+	put(0x2000 + 160 + 4 * 16, std::uint64_t{0x37d0000000000000ULL});
+	put(0x3000, std::uint32_t{0x1f80});
+	put(0x3004, std::uint32_t{0x1fc0});
+	constexpr std::uint64_t denormal_single_widened = 0x36a0000000000000ULL;
+	const auto program = require_built(gadgets::build(memory, 0),
+		"MXCSR-loading block did not build");
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 2;
+	cpu.gpr(Register::rbx) = 0x1000;
+	cpu.gpr(Register::rsi) = 0x3000;
+	cpu.gpr(Register::rdi) = 0x2000;
+	cpu.gpr(Register::r8) = ~0ULL;
+	cpu.gpr(Register::r9) = ~0ULL;
+	cpu.gpr(Register::r10) = ~0ULL;
+	cpu.gpr(Register::r13) = ~0ULL;
+	const auto loaded = gadgets::execute(program.program, cpu, memory, 64);
+	if (!expect(loaded.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1fc0,
+		"the MXCSR-loading block did not run to its end") ||
+		!expect(cpu.gpr(Register::r8) == 0,
+			"a conversion after XRSTOR set DAZ kept its denormal input") ||
+		!expect(cpu.gpr(Register::r9) == denormal_single_widened,
+			"a conversion after LDMXCSR cleared DAZ flushed its input") ||
+		!expect(cpu.gpr(Register::r10) == 0,
+			"a narrowing after FXRSTOR set FTZ kept its denormal result") ||
+		!expect(cpu.gpr(Register::r13) == 0,
+			"a conversion after LDMXCSR set DAZ kept its denormal input"))
+		return false;
+	put(0x1000 + 512, std::uint64_t{0});
+	const auto initial = require_built(gadgets::build(memory, 0x400),
+		"XRSTOR initializing block did not build");
+	cpu = CpuState{};
+	cpu.rip = 0x400;
+	cpu.mxcsr = 0x1fc0;
+	cpu.gpr(Register::rax) = 2;
+	cpu.gpr(Register::rbx) = 0x1000;
+	cpu.gpr(Register::r12) = 1;
+	const auto cleared = gadgets::execute(initial.program, cpu, memory, 64);
+	return expect(cleared.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1f80 &&
+			cpu.gpr(Register::r8) == denormal_single_widened,
+		"a conversion after XRSTOR initialized MXCSR flushed its input");
+}
+
 /* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as
  * the instruction before it made them, even while those are still only
  * recorded. */
@@ -8225,6 +8314,7 @@ int main()
 		unmasked_simd_exceptions_leave_linked_blocks() &&
 		simd_checks_match_the_checked_path() &&
 		mxcsr_loads_leave_when_checks_change() &&
+		mxcsr_loads_switch_the_simd_exact_path() &&
 		faulting_comisd_keeps_earlier_flags() &&
 		alignment_checks_follow_rflags_ac() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&

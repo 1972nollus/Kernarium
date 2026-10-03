@@ -179,7 +179,8 @@ Lx86_simd_unchecked\@:
  * the runtime runs it again, checked, which raises #XM or completes it with
  * its exact flags. Where the gadget already takes a separate path for such a
  * value the test costs nothing more; elsewhere it costs a load and a branch
- * while the gadgets do not check.
+ * while the gadgets do not check. A gadget with an exact path tests there
+ * (`simd_exact_branch`).
  *
  * Leaves while the gadgets check SIMD exceptions: on a path taken only for a
  * special value, or for an instruction whose intermediate results no test of
@@ -189,6 +190,35 @@ Lx86_simd_unchecked\@:
 	tbz w14, #1, Lx86_simd_unchecked\@
 	b uml_x86_64_gadget_exception_check
 Lx86_simd_unchecked\@:
+.endm
+
+/* A SIMD floating-point gadget whose common path assumes MXCSR.DAZ and FTZ
+ * clear and no SIMD check runs its exact path instead, in the cold section,
+ * while `exception_check_simd_exact` says so: one load and branch serve all
+ * three. The exact path reads MXCSR itself and returns with a branch; what
+ * it expands must not push the cold section again, which would place that
+ * code inline. Uses w14. */
+.macro simd_exact_branch label
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #2, Lx86_simd_common\@
+	b \label
+Lx86_simd_common\@:
+.endm
+
+/* Keep `exception_check_simd_exact` current after an instruction loads
+ * MXCSR, now `value`: it follows DAZ, FTZ and `exception_check_simd`, which
+ * stays as the run set it -- an instruction that changes what a run checks
+ * leaves. Uses w`scratch0` and w`scratch1`. */
+.macro refresh_simd_exact value, scratch0, scratch1
+	ldrb w\scratch0, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	and w\scratch0, w\scratch0, #0xfffffffb
+	mov w\scratch1, #0x8040
+	tst \value, w\scratch1
+	cset w\scratch1, ne
+	orr w\scratch1, w\scratch1, w\scratch0, lsr #1
+	and w\scratch1, w\scratch1, #1
+	orr w\scratch0, w\scratch0, w\scratch1, lsl #2
+	strb w\scratch0, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 .endm
 
 /* w14 = nonzero when a lane of v`register` (`element` bits wide) has an
@@ -240,6 +270,32 @@ Lx86_simd_unchecked\@:
 	and v17.16b, v17.16b, v18.16b
 	uminv s17, v17.4s
 	fmov w14, s17
+.endm
+
+/* Branches to `label` when a lane of v`first`, or of v`second` for a
+ * 256-bit result, is a NaN. The results it tests are quiet, so the test
+ * raises no host flag. Uses v17. */
+.macro simd_nan_lanes element, label, first, second=-1
+	.if \element == 32
+	.if \second >= 0
+	fmax v17.4s, v\first\().4s, v\second\().4s
+	fmaxv s17, v17.4s
+	.else
+	fmaxv s17, v\first\().4s
+	.endif
+	fcmp s17, s17
+	.else
+	.if \second >= 0
+	fmax v17.2d, v\first\().2d, v\second\().2d
+	fmaxp d17, v17.2d
+	.else
+	fmaxp d17, v\first\().2d
+	.endif
+	fcmp d17, d17
+	.endif
+	b.vc Lx86_simd_no_nan\@
+	b \label
+Lx86_simd_no_nan\@:
 .endm
 
 /* MXCSR.DAZ and FTZ: replace each denormal lane of v`vector` (`element` bits

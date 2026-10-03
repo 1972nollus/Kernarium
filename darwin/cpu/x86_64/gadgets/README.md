@@ -316,8 +316,14 @@ MIN and MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a
 denormal input as zero and return zero for RCP's tiny results; elsewhere the
 host's exact quotient lies within x86's estimate error. These repairs live in
 the cold section, which a gadget enters only for a special result, an
-estimate's special input, under FTZ a result no larger than the smallest
-normal, or a dot product under DAZ or FTZ.
+estimate's special input, or under FTZ a result no larger than the smallest
+normal. Conversions, rounding, F16C's narrowing, HADD, HSUB, ADDSUB, DPPS,
+DPPD and FMA instead keep a common path that assumes DAZ and FTZ clear and no
+SIMD check, and run an exact path in the cold section while `exception_checks`
+holds `exception_check_simd_exact`: with `exception_check_simd`, or while DAZ
+or FTZ is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One
+load and branch thus serve all three, as the check alone did before, and the
+common path adds only a NaN test where x86's NaN differs from the host's.
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
@@ -347,7 +353,8 @@ and:
   NaN, an infinity, or the largest finite value an overflow rounds to), a NaN
   input to a comparison, minimum or maximum, or a conversion to an integer out
   of its range. A dot product, whose intermediate results no test of its
-  result sees, always leaves.
+  result sees, always leaves. These tests sit on the exact path where a
+  gadget has one.
 
 Either leaves before it stores anything, with
 `UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position. The runtime finds

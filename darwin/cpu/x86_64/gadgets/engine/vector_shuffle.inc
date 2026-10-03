@@ -43,33 +43,115 @@ Lx86_vector_horizontal_inputs_ready\@:
 	.endif
 	cbz w14, Lx86_vector_horizontal_nan_ready\@
 Lx86_vector_horizontal_special\@:
-	b Lx86_vector_horizontal_cold\@
-Lx86_vector_horizontal_nan_ready\@:
-	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
-	simd_small_lanes \element, 4, 17, 18
-	.if \width == 256
-	simd_small_lanes \element, 5, 16, 18
-	orr v17.16b, v17.16b, v16.16b
-	.endif
-	umaxv s17, v17.4s
-	fmov w14, s17
-	cbz w14, Lx86_vector_horizontal_ftz_ready\@
-	b Lx86_vector_horizontal_tiny\@
-Lx86_vector_horizontal_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_horizontal_cold\@:
 	simd_leave_if_checking
 	vector_horizontal_nan \operation, \element, 4, 0, 1
 	.if \width == 256
 	vector_horizontal_nan \operation, \element, 5, 2, 3
 	.endif
-	b Lx86_vector_horizontal_nan_ready\@
-Lx86_vector_horizontal_tiny\@:
+Lx86_vector_horizontal_nan_ready\@:
+	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
 	simd_flush_denormals 4, \element
 	.if \width == 256
 	simd_flush_denormals 5, \element
 	.endif
-	b Lx86_vector_horizontal_ftz_ready\@
+Lx86_vector_horizontal_ftz_ready\@:
+.endm
+
+.macro vector_horizontal_operation operation, element, width
+	.ifc \operation,hadd
+	.if \element == 32
+	faddp v4.4s, v0.4s, v1.4s
+	.if \width == 256
+	faddp v5.4s, v2.4s, v3.4s
+	.endif
+	.else
+	faddp d4, v0.2d
+	faddp d6, v1.2d
+	mov v4.d[1], v6.d[0]
+	.if \width == 256
+	faddp d5, v2.2d
+	faddp d6, v3.2d
+	mov v5.d[1], v6.d[0]
+	.endif
+	.endif
+	.endif
+	.ifc \operation,hsub
+	.if \element == 32
+	rev64 v6.4s, v0.4s
+	fsub v6.4s, v0.4s, v6.4s
+	rev64 v7.4s, v1.4s
+	fsub v7.4s, v1.4s, v7.4s
+	uzp1 v4.4s, v6.4s, v7.4s
+	.if \width == 256
+	rev64 v6.4s, v2.4s
+	fsub v6.4s, v2.4s, v6.4s
+	rev64 v7.4s, v3.4s
+	fsub v7.4s, v3.4s, v7.4s
+	uzp1 v5.4s, v6.4s, v7.4s
+	.endif
+	.else
+	ext v6.16b, v0.16b, v0.16b, #8
+	fsub d4, d0, d6
+	ext v6.16b, v1.16b, v1.16b, #8
+	fsub d6, d1, d6
+	mov v4.d[1], v6.d[0]
+	.if \width == 256
+	ext v6.16b, v2.16b, v2.16b, #8
+	fsub d5, d2, d6
+	ext v6.16b, v3.16b, v3.16b, #8
+	fsub d6, d3, d6
+	mov v5.d[1], v6.d[0]
+	.endif
+	.endif
+	.endif
+	.ifc \operation,addsub
+	.if \element == 32
+	fsub v4.4s, v0.4s, v1.4s
+	fadd v6.4s, v0.4s, v1.4s
+	mov v4.s[1], v6.s[1]
+	mov v4.s[3], v6.s[3]
+	.if \width == 256
+	fsub v5.4s, v2.4s, v3.4s
+	fadd v6.4s, v2.4s, v3.4s
+	mov v5.s[1], v6.s[1]
+	mov v5.s[3], v6.s[3]
+	.endif
+	.else
+	fsub v4.2d, v0.2d, v1.2d
+	fadd v6.2d, v0.2d, v1.2d
+	mov v4.d[1], v6.d[1]
+	.if \width == 256
+	fsub v5.2d, v2.2d, v3.2d
+	fadd v6.2d, v2.2d, v3.2d
+	mov v5.d[1], v6.d[1]
+	.endif
+	.endif
+	.endif
+.endm
+
+/* The common path repairs a NaN result alone; the exact path
+ * (`simd_exact_branch`) applies DAZ and FTZ and the SIMD checks too. */
+.macro vector_horizontal_body operation, element, width
+	simd_exact_branch Lx86_vector_horizontal_exact\@
+	vector_horizontal_operation \operation, \element, \width
+	.if \width == 256
+	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4, 5
+	.else
+	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4
+	.endif
+Lx86_vector_horizontal_done\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_horizontal_nan\@:
+	vector_horizontal_nan \operation, \element, 4, 0, 1
+	.if \width == 256
+	vector_horizontal_nan \operation, \element, 5, 2, 3
+	.endif
+	b Lx86_vector_horizontal_done\@
+Lx86_vector_horizontal_exact\@:
+	vector_horizontal_inputs \element, \width
+	vector_horizontal_operation \operation, \element, \width
+	vector_horizontal_results \operation, \element, \width
+	b Lx86_vector_horizontal_done\@
 	.popsection
 .endm
 
@@ -156,79 +238,13 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	.endif
 	.endif
 	.ifc \operation,hadd
-	vector_horizontal_inputs \element, \width
-	.if \element == 32
-	faddp v4.4s, v0.4s, v1.4s
-	.if \width == 256
-	faddp v5.4s, v2.4s, v3.4s
-	.endif
-	.else
-	faddp d4, v0.2d
-	faddp d6, v1.2d
-	mov v4.d[1], v6.d[0]
-	.if \width == 256
-	faddp d5, v2.2d
-	faddp d6, v3.2d
-	mov v5.d[1], v6.d[0]
-	.endif
-	.endif
-	vector_horizontal_results \operation, \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 	.ifc \operation,hsub
-	vector_horizontal_inputs \element, \width
-	.if \element == 32
-	rev64 v6.4s, v0.4s
-	fsub v6.4s, v0.4s, v6.4s
-	rev64 v7.4s, v1.4s
-	fsub v7.4s, v1.4s, v7.4s
-	uzp1 v4.4s, v6.4s, v7.4s
-	.if \width == 256
-	rev64 v6.4s, v2.4s
-	fsub v6.4s, v2.4s, v6.4s
-	rev64 v7.4s, v3.4s
-	fsub v7.4s, v3.4s, v7.4s
-	uzp1 v5.4s, v6.4s, v7.4s
-	.endif
-	.else
-	ext v6.16b, v0.16b, v0.16b, #8
-	fsub d4, d0, d6
-	ext v6.16b, v1.16b, v1.16b, #8
-	fsub d6, d1, d6
-	mov v4.d[1], v6.d[0]
-	.if \width == 256
-	ext v6.16b, v2.16b, v2.16b, #8
-	fsub d5, d2, d6
-	ext v6.16b, v3.16b, v3.16b, #8
-	fsub d6, d3, d6
-	mov v5.d[1], v6.d[0]
-	.endif
-	.endif
-	vector_horizontal_results \operation, \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 	.ifc \operation,addsub
-	vector_horizontal_inputs \element, \width
-	.if \element == 32
-	fsub v4.4s, v0.4s, v1.4s
-	fadd v6.4s, v0.4s, v1.4s
-	mov v4.s[1], v6.s[1]
-	mov v4.s[3], v6.s[3]
-	.if \width == 256
-	fsub v5.4s, v2.4s, v3.4s
-	fadd v6.4s, v2.4s, v3.4s
-	mov v5.s[1], v6.s[1]
-	mov v5.s[3], v6.s[3]
-	.endif
-	.else
-	fsub v4.2d, v0.2d, v1.2d
-	fadd v6.2d, v0.2d, v1.2d
-	mov v4.d[1], v6.d[1]
-	.if \width == 256
-	fsub v5.2d, v2.2d, v3.2d
-	fadd v6.2d, v2.2d, v3.2d
-	mov v5.d[1], v6.d[1]
-	.endif
-	.endif
-	vector_horizontal_results \operation, \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 .endm
 
@@ -321,6 +337,8 @@ vector_shuffle_family addsub, 64, 256
 .purgem vector_shuffle_memory
 .purgem vector_shuffle_register
 .purgem vector_shuffle_body
+.purgem vector_horizontal_body
+.purgem vector_horizontal_operation
 .purgem vector_horizontal_results
 .purgem vector_horizontal_nan
 .purgem vector_horizontal_inputs

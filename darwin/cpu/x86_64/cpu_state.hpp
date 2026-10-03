@@ -81,9 +81,13 @@ struct X87Register final {
 
 /* CpuState::exception_checks: the gadgets check for x87 exceptions the
  * guest unmasked, and for SIMD ones while underflow, precision and a
- * denormal operand stay masked. */
+ * denormal operand stay masked. The SIMD floating-point gadgets take their
+ * exact path, in the cold section, while they check SIMD exceptions or
+ * MXCSR.DAZ or FTZ is set, in every run, checked or not; the gadgets that
+ * load MXCSR keep that bit current. */
 inline constexpr std::uint8_t exception_check_x87 = 1U << 0U;
 inline constexpr std::uint8_t exception_check_simd = 1U << 1U;
+inline constexpr std::uint8_t exception_check_simd_exact = 1U << 2U;
 
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
@@ -118,9 +122,10 @@ struct CpuState final {
 	std::uint16_t x87_tag{0xffff};
 	std::uint8_t x87_top{};
 	/* The exceptions the gadgets check for themselves during a dispatch,
-	 * the `exception_check_*` bits. The runtime sets it as
-	 * each dispatch enters the engine and clears it for an instruction it
-	 * runs checked; it is not architectural state. */
+	 * the `exception_check_*` bits. The runtime sets it as each dispatch
+	 * enters the engine, and for an instruction it runs checked keeps only
+	 * the exact path that MXCSR.DAZ or FTZ asks for; it is not
+	 * architectural state. */
 	std::uint8_t exception_checks{};
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};

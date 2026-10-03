@@ -19,11 +19,13 @@
 .endm
 
 /* A lane whose in-range mask in v7 is clear raises invalid operation. While
- * the gadgets check SIMD exceptions its conversion leaves. A conversion of
- * doubles also raises the host's invalid-operation flag for it, which its
- * conversion to 64-bit integers would not, so that a checked run finds the
- * flag as x86 sets MXCSR's. */
-.macro vector_convert_check_range element
+ * the gadgets check SIMD exceptions its conversion leaves; the common path
+ * of a conversion of singles with an exact path (`checked` clear) runs only
+ * while they do not. A conversion of doubles also raises the host's
+ * invalid-operation flag for it, which its conversion to 64-bit integers
+ * would not, so that a checked run finds the flag as x86 sets MXCSR's. */
+.macro vector_convert_check_range element, checked
+	.if \element == 64 || \checked
 	.if \element == 32
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #1, Lx86_vector_convert_in_range\@
@@ -37,12 +39,13 @@
 	fcmpe d18, d18
 	.endif
 Lx86_vector_convert_in_range\@:
+	.endif
 .endm
 
 /* Convert one q register of float/double values to signed int32. Double
  * inputs produce two packed dwords in the low d register.
  */
-.macro vector_convert_fp_i32 input, output, element, truncate
+.macro vector_convert_fp_i32 input, output, element, truncate, checked=1
 	vector_convert_round \input, 6, \element, \truncate
 	.if \element == 32
 	mov w14, #0x4f000000
@@ -52,7 +55,7 @@ Lx86_vector_convert_in_range\@:
 	dup v17.4s, w14
 	fcmge v17.4s, v6.4s, v17.4s
 	and v7.16b, v7.16b, v17.16b
-	vector_convert_check_range 32
+	vector_convert_check_range 32, \checked
 	fcvtzs v16.4s, v6.4s
 	mov w14, #0x80000000
 	dup v17.4s, w14
@@ -66,7 +69,7 @@ Lx86_vector_convert_in_range\@:
 	dup v17.2d, x14
 	fcmge v17.2d, v6.2d, v17.2d
 	and v7.16b, v7.16b, v17.16b
-	vector_convert_check_range 64
+	vector_convert_check_range 64, 1
 	fcvtzs v16.2d, v6.2d
 	mov x14, #0x80000000
 	dup v17.2d, x14
@@ -76,8 +79,7 @@ Lx86_vector_convert_in_range\@:
 .endm
 
 /* MXCSR.DAZ flushes a conversion's denormal inputs, v1 and for a 32-byte
- * input v3, `element` bits wide. A truncating conversion to integers, which
- * gives a denormal input zero in any case, has no need of it. */
+ * input v3, `element` bits wide. Sets w12 to MXCSR. */
 .macro vector_convert_inputs element, input_size
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_convert_inputs_ready\@
@@ -92,7 +94,8 @@ Lx86_vector_convert_inputs_ready\@:
  * vector_float.inc): every denormal one, and one the host rounded up to the
  * smallest normal when its double, scaled up, narrows below the scaled
  * threshold. The scalar result is in lane 0 of v6 from d1; the packed one in
- * v4 from v1, and v3 for a 32-byte input. */
+ * v4 from v1, and v3 for a 32-byte input. It runs on the exact path, in
+ * the cold section, and tests w12, MXCSR. */
 .macro vector_convert_flush_narrowed scalar, input_size
 	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
 	.if \scalar
@@ -107,10 +110,6 @@ Lx86_vector_convert_inputs_ready\@:
 	fmov w14, s17
 	cbz w14, Lx86_vector_convert_ftz_ready\@
 	.endif
-	b Lx86_vector_convert_tiny\@
-Lx86_vector_convert_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-Lx86_vector_convert_tiny\@:
 	mrs x15, fpsr
 	mov x14, #0x43f0000000000000
 	.if \scalar
@@ -151,62 +150,109 @@ Lx86_vector_convert_tiny_done\@:
 	bsl v17.16b, v16.16b, v4.16b
 	mov v4.16b, v17.16b
 	.endif
-	b Lx86_vector_convert_ftz_ready\@
-	.popsection
+Lx86_vector_convert_ftz_ready\@:
+.endm
+
+/* A conversion from floating point but to integers with truncation, which
+ * gives a denormal input zero in any case, has an exact path
+ * (`simd_exact_branch`): there MXCSR.DAZ flushes its inputs and FTZ its
+ * narrowed results, and the SIMD checks run. `exact` emits that path. */
+.macro vector_convert_floating operation, output_width, input_size, truncate, exact
+	.ifc \operation,ps_pd
+	.if \exact
+	vector_convert_inputs 32, \input_size
+	.endif
+	fcvtl v4.2d, v1.2s
+	.if \output_width == 256
+	fcvtl2 v5.2d, v1.4s
+	.endif
+	.if \exact
+	simd_check_result 64, \output_width
+	.endif
+	.endif
+	.ifc \operation,pd_ps
+	.if \exact
+	vector_convert_inputs 64, \input_size
+	.endif
+	movi v4.16b, #0
+	fcvtn v4.2s, v1.2d
+	.if \input_size == 32
+	fcvtn2 v4.4s, v3.2d
+	.endif
+	.if \exact
+	simd_check_packed 32, 4
+	vector_convert_flush_narrowed 0, \input_size
+	.endif
+	.endif
+	.ifc \operation,ss_sd
+	.if \exact
+	vector_convert_inputs 32, \input_size
+	.endif
+	mov v4.16b, v0.16b
+	fcvt d6, s1
+	.if \exact
+	simd_check_scalar 64, 6
+	.endif
+	mov v4.d[0], v6.d[0]
+	.endif
+	.ifc \operation,sd_ss
+	.if \exact
+	vector_convert_inputs 64, \input_size
+	.endif
+	mov v4.16b, v0.16b
+	fcvt s6, d1
+	.if \exact
+	simd_check_scalar 32, 6
+	vector_convert_flush_narrowed 1, \input_size
+	.endif
+	mov v4.s[0], v6.s[0]
+	.endif
+	.ifc \operation,ps_dq
+	.if \exact
+	vector_convert_inputs 32, \input_size
+	.endif
+	vector_convert_fp_i32 1, 4, 32, \truncate, \exact
+	.if \output_width == 256
+	vector_convert_fp_i32 3, 5, 32, \truncate, \exact
+	.endif
+	.endif
+	.ifc \operation,pd_dq
+	.if \exact
+	vector_convert_inputs 64, \input_size
+	.endif
+	vector_convert_fp_i32 1, 4, 64, \truncate, \exact
+	.if \input_size == 32
+	vector_convert_fp_i32 3, 5, 64, \truncate, \exact
+	mov v4.d[1], v5.d[0]
+	.endif
+	.endif
 .endm
 
 /* A conversion from integers raises at most precision, which the gadgets
  * never check. One to a wider format raises invalid operation only for a
  * signalling NaN, which its result shows as a NaN. */
 .macro vector_convert_body operation, output_width, input_size, scalar, truncate
-	.ifc \operation,ps_pd
-	vector_convert_inputs 32, \input_size
-	fcvtl v4.2d, v1.2s
-	.if \output_width == 256
-	fcvtl2 v5.2d, v1.4s
-	simd_check_packed 64, 4, 5
+	.set Lx86_vector_convert_exact\@, !\truncate
+	.ifc \operation,dq_ps
+	.set Lx86_vector_convert_exact\@, 0
+	.endif
+	.ifc \operation,dq_pd
+	.set Lx86_vector_convert_exact\@, 0
+	.endif
+	.if Lx86_vector_convert_exact\@
+	simd_exact_branch Lx86_vector_convert_exact_path\@
+	vector_convert_floating \operation, \output_width, \input_size, \truncate, 0
+Lx86_vector_convert_done\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_convert_exact_path\@:
+	vector_convert_floating \operation, \output_width, \input_size, \truncate, 1
+	b Lx86_vector_convert_done\@
+	.popsection
 	.else
-	simd_check_packed 64, 4
-	.endif
-	.endif
-	.ifc \operation,pd_ps
-	vector_convert_inputs 64, \input_size
-	movi v4.16b, #0
-	fcvtn v4.2s, v1.2d
-	.if \input_size == 32
-	fcvtn2 v4.4s, v3.2d
-	.endif
-	simd_check_packed 32, 4
-	vector_convert_flush_narrowed 0, \input_size
-	.endif
-	.ifc \operation,ss_sd
-	vector_convert_inputs 32, \input_size
-	mov v4.16b, v0.16b
-	fcvt d6, s1
-	simd_check_scalar 64, 6
-	mov v4.d[0], v6.d[0]
-	.endif
-	.ifc \operation,sd_ss
-	vector_convert_inputs 64, \input_size
-	mov v4.16b, v0.16b
-	fcvt s6, d1
-	simd_check_scalar 32, 6
-	vector_convert_flush_narrowed 1, \input_size
-	mov v4.s[0], v6.s[0]
-	.endif
 	.ifc \operation,dq_ps
 	scvtf v4.4s, v1.4s
 	.if \output_width == 256
 	scvtf v5.4s, v3.4s
-	.endif
-	.endif
-	.ifc \operation,ps_dq
-	.if !\truncate
-	vector_convert_inputs 32, \input_size
-	.endif
-	vector_convert_fp_i32 1, 4, 32, \truncate
-	.if \output_width == 256
-	vector_convert_fp_i32 3, 5, 32, \truncate
 	.endif
 	.endif
 	.ifc \operation,dq_pd
@@ -217,14 +263,18 @@ Lx86_vector_convert_tiny_done\@:
 	scvtf v5.2d, v6.2d
 	.endif
 	.endif
-	.ifc \operation,pd_dq
-	.if !\truncate
-	vector_convert_inputs 64, \input_size
+	.ifc \operation,ps_dq
+	vector_convert_fp_i32 1, 4, 32, \truncate
+	.if \output_width == 256
+	vector_convert_fp_i32 3, 5, 32, \truncate
 	.endif
+	.endif
+	.ifc \operation,pd_dq
 	vector_convert_fp_i32 1, 4, 64, \truncate
 	.if \input_size == 32
 	vector_convert_fp_i32 3, 5, 64, \truncate
 	mov v4.d[1], v5.d[0]
+	.endif
 	.endif
 	.endif
 .endm
