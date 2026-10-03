@@ -12,6 +12,7 @@
 #include "require.hpp"
 #include "uml_darwin_cpu.h"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <cstddef>
@@ -201,7 +202,9 @@ struct Profile final {
 	result.push_back({"none +afp +rpres",
 		with({ArmFeature::afp, ArmFeature::rpres})});
 
-	/* The pairs apart, which no host reports. */
+	/* The pairs apart, which no host reports. AT_HWCAP follows the
+	 * field, as on Linux: none of PMULL, FLAGM2 or ILRCPC without the
+	 * lower value, and SHA2 with SHA512, whose field reads 2. */
 	for (const auto &[base, extension] : extensions) {
 		result.push_back({"none +" + name(extension) + " alone",
 			with({extension})});
@@ -614,27 +617,27 @@ constexpr Advertised pinned[]{
 		{0, 0, 0, 0x10000000010000, 0, 0, 0}},
 	{"none +afp +rpres", 0x807, 0x80400000000,
 		{0, 0, 0, 0x10000000010000, 0, 0, 0}},
-	{"none +pmull alone", 0x817, 0x80400000000,
+	{"none +pmull alone", 0x807, 0x80400000000,
 		{0, 0, 0, 0x10000000010000, 0, 0, 0}},
-	{"all -aes alone", 0x2fb2fff7, 0x80400386180,
+	{"all -aes alone", 0x2fb2ffe7, 0x80400386180,
 		{0x1000000110000, 0x21100110212100, 0x10101100211000,
 			0x10000000010010, 0x1000000000000000, 0x100000000000,
 			0x100000000}},
-	{"none +sha512 alone", 0x200807, 0x80400000000,
+	{"none +sha512 alone", 0x200847, 0x80400000000,
 		{0, 0x2000, 0, 0x10000000010000, 0, 0, 0}},
-	{"all -sha256 alone", 0x2fb2ffbf, 0x80400386180,
+	{"all -sha256 alone", 0x2fb2ffff, 0x80400386180,
 		{0x1000000110000, 0x21100110212120, 0x10101100211000,
 			0x10000000010010, 0x1000000000000000, 0x100000000000,
 			0x100000000}},
-	{"none +flag_m2 alone", 0x807, 0x80400000080,
+	{"none +flag_m2 alone", 0x807, 0x80400000000,
 		{0, 0, 0, 0x10000000010000, 0, 0, 0}},
-	{"all -flag_m alone", 0x27b2ffff, 0x80400386180,
+	{"all -flag_m alone", 0x27b2ffff, 0x80400386100,
 		{0x1000000110000, 0x1100110212120, 0x10101100211000,
 			0x10000000010010, 0x1000000000000000, 0x100000000000,
 			0x100000000}},
-	{"none +lrcpc2 alone", 0x4000807, 0x80400000000,
+	{"none +lrcpc2 alone", 0x807, 0x80400000000,
 		{0, 0, 0, 0x10000000010000, 0, 0, 0}},
-	{"all -lrcpc alone", 0x2fb27fff, 0x80400386180,
+	{"all -lrcpc alone", 0x2bb27fff, 0x80400386180,
 		{0x1000000110000, 0x21100110212120, 0x10101100011000,
 			0x10000000010010, 0x1000000000000000, 0x100000000000,
 			0x100000000}},
@@ -773,6 +776,26 @@ void print(const std::vector<Profile> &all)
 	}
 }
 
+/* Every field the registers set is one an AT_HWCAP or AT_HWCAP2 bit is read
+ * from, so MRS cannot show the guest a feature its auxiliary vector
+ * withholds. */
+void require_every_field_read(const Advertised &advertised)
+{
+	for (std::size_t which = 0; which < feature_registers.size(); ++which)
+		for (unsigned shift = 0; shift < 64U; shift += 4U) {
+			if (((advertised.registers[which] >> shift) & 15U) == 0)
+				continue;
+			const bool read = std::ranges::any_of(detail::hwcap_fields,
+				[&](const detail::HwcapField &bit) {
+					return bit.id_register ==
+							feature_registers[which] &&
+						bit.shift == shift;
+				});
+			require(read, std::string{advertised.profile} +
+				": no hwcap is read from a field a register sets");
+		}
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -795,6 +818,7 @@ int main(int argc, char **argv)
 		require(observed.registers == expected.registers,
 			all[index].name +
 				": an identification register changed");
+		require_every_field_read(observed);
 	}
 	for (std::size_t index = 0; index < pinned_features.size(); ++index) {
 		require(all[index].name == pinned_features[index].first);

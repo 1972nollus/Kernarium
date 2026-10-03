@@ -20,6 +20,17 @@ corpus cases expect exactly that. LDAPR and STLR stay `verified`: only their
 FEAT_LRCPC3 writeback forms are UNDEFINED. So do DSB, whose FEAT_XS nXS form
 is UNDEFINED, and MSR (immediate), whose FEAT_SSBS form is.
 
+A guest learns what the virtual CPU implements from the identification
+registers, which an EL0 MRS reads as on arm64 Linux, and from AT_HWCAP and
+AT_HWCAP2. Each register field is set on the host predicate the engines'
+native path uses, and the two words are read from those fields with arm64
+Linux's own table (`guest_hwcaps()` in
+[`darwin/cpu/arm64/id_registers.hpp`](../darwin/cpu/arm64/id_registers.hpp)),
+so the two answers always agree. `arm64-advertised-features` pins the words,
+the registers, and the `/proc/cpuinfo` Features line over named hosts, every
+host feature they read toggled, and FEAT_AFP and FEAT_RPRES with and without
+the host features AFP needs.
+
 FEAT_AFP, which has no instructions, is implemented exactly where the host
 implements it along with FEAT_FP16, FEAT_FHM, FEAT_BF16, FEAT_FRINTTS,
 FEAT_FCMA, and FEAT_JSCVT, whose software stand-ins do not model it
