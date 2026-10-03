@@ -11,16 +11,19 @@
 #include <cerrno>
 #include <cstdio>
 #include <new>
+#include <optional>
+#include <source_location>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace uml::gpu::testing {
 namespace {
 
 using ::uml::testing::cancel_pending_allocation_failure;
+using ::uml::testing::fail;
 using ::uml::testing::fail_after_allocations;
-using ::uml::testing::fail_next_allocation;
 
 class FakeGpuDependencies final : public VirtioGpuDeviceDependencies {
 public:
@@ -693,37 +696,69 @@ template<typename Header>
     return request;
 }
 
-template<typename Request>
-void requireFirstAllocationFailsBeforeCommit(
+/* What a command did on the attempts that ran out of memory. */
+struct AllocationSweep {
+    /* One per allocation the command makes, first to last: the response of
+     * the attempt that could not make it, or nullopt when the bad_alloc left
+     * process(). */
+    std::vector<std::optional<protocol::GpuResponse>> failures;
+    /* The response of the attempt that made every allocation it needed. */
+    std::vector<std::uint8_t> response;
+};
+
+/* Fails each allocation a command makes in turn, first to last, each on a
+ * fresh attempt. Every such attempt must fail the command and leave
+ * `unchanged()` true. A command that commits before it has made all its
+ * allocations leaves state behind, which `unchanged`, the next attempt's own
+ * validation or the caller's counts see. The attempt that makes them all is
+ * the command's own, and the caller checks its response. */
+template<typename Unchanged>
+AllocationSweep failEachAllocationBeforeCommit(
     VirtioGpuDevice& device,
-    const Request& request)
+    std::span<const std::uint8_t> request,
+    Unchanged unchanged,
+    const std::source_location location = std::source_location::current())
 {
-    fail_next_allocation();
-    bool failed = false;
-    try {
-        const auto result = device.process(requestBytes(request), false);
-        failed = responseType(result) != protocol::GpuResponse::okNoData;
-    } catch (const std::bad_alloc&) {
-        failed = true;
+    constexpr std::size_t maximumAllocations = 32;
+    AllocationSweep sweep;
+    for (std::size_t allocation = 0;
+         allocation < maximumAllocations;
+         ++allocation) {
+        fail_after_allocations(allocation);
+        std::optional<std::vector<std::uint8_t>> response;
+        try {
+            response = device.process(request, false);
+        } catch (const std::bad_alloc&) {
+        }
+        if (cancel_pending_allocation_failure()) {
+            require(response.has_value(), "the command ran out of memory",
+                location);
+            require(!sweep.failures.empty(), "the command allocated nothing",
+                location);
+            sweep.response = std::move(*response);
+            return sweep;
+        }
+        std::optional<protocol::GpuResponse> failure;
+        if (response) {
+            failure = responseType(*response);
+            require(*failure != protocol::GpuResponse::okNoData,
+                "the command succeeded without an allocation it made",
+                location);
+        }
+        sweep.failures.push_back(failure);
+        require(unchanged(), "a command that ran out of memory changed state",
+            location);
     }
-    (void)cancel_pending_allocation_failure();
-    require(failed);
+    fail("the command never stopped allocating", location);
 }
 
-void requireFirstAllocationFailsBeforeCommit(
+AllocationSweep failEachAllocationBeforeCommit(
     VirtioGpuDevice& device,
-    const std::vector<std::uint8_t>& request)
+    std::span<const std::uint8_t> request,
+    const std::source_location location = std::source_location::current())
 {
-    fail_next_allocation();
-    bool failed = false;
-    try {
-        const auto result = device.process(request, false);
-        failed = responseType(result) != protocol::GpuResponse::okNoData;
-    } catch (const std::bad_alloc&) {
-        failed = true;
-    }
-    (void)cancel_pending_allocation_failure();
-    require(failed);
+    return failEachAllocationBeforeCommit(
+        device, request, [] { return true; }, location);
 }
 
 /* Processes a request that may allocate its reply and nothing else. */
@@ -851,17 +886,17 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
             return std::span<std::uint8_t> {guestMemory}.first(size);
         }};
     auto context = createContext(501);
-    requireFirstAllocationFailsBeforeCommit(device, context);
-    require(dependencies.createContextCount == 0);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    auto sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(context),
+        [&] { return dependencies.createContextCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.createContextCount == 1);
 
     auto rendered = create3d(601);
-    requireFirstAllocationFailsBeforeCommit(device, rendered);
-    require(dependencies.createResourceCount == 0);
-    require(responseType(device.process(requestBytes(rendered), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(rendered),
+        [&] { return dependencies.createResourceCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.createResourceCount == 1);
 
     protocol::GpuContextResource association {};
@@ -869,28 +904,28 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     association.resourceId = rendered.resourceId;
     association.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::contextAttachResource);
-    requireFirstAllocationFailsBeforeCommit(device, association);
-    require(dependencies.attachResourceCount == 0);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_resource);
     require(responseType(device.process(requestBytes(association), false)) ==
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.attachResourceCount == 0);
-    require(responseType(device.process(requestBytes(association), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(association),
+        [&] { return dependencies.attachResourceCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.attachResourceCount == 1);
 
     association.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::contextDetachResource);
-    requireFirstAllocationFailsBeforeCommit(device, association);
-    require(dependencies.detachResourceCount == 0);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::detach_resource);
     require(responseType(device.process(requestBytes(association), false)) ==
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.detachResourceCount == 0);
-    require(responseType(device.process(requestBytes(association), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(association),
+        [&] { return dependencies.detachResourceCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.detachResourceCount == 1);
 
     protocol::GpuAttachBacking attach {};
@@ -903,15 +938,16 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
         .length = static_cast<std::uint32_t>(guestMemory.size()),
     };
     const auto attachRequest = requestWithEntry(attach, entry);
-    requireFirstAllocationFailsBeforeCommit(device, attachRequest);
-    require(dependencies.attachBackingCount == 0);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_backing);
     require(responseType(device.process(attachRequest, false)) ==
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.attachedBackingAddress == nullptr);
-    require(responseType(device.process(attachRequest, false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(device, attachRequest, [&] {
+        return dependencies.attachBackingCount == 0 &&
+            dependencies.attachedBackingAddress == nullptr;
+    });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.attachBackingCount == 1);
     require(dependencies.attachedBackingAddress != nullptr);
 
@@ -919,57 +955,56 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     reference.resourceId = rendered.resourceId;
     reference.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceDetachBacking);
-    requireFirstAllocationFailsBeforeCommit(device, reference);
-    require(dependencies.detachBackingCount == 0);
-    require(dependencies.attachedBackingAddress != nullptr);
-    require(responseType(device.process(requestBytes(reference), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(reference), [&] {
+            return dependencies.detachBackingCount == 0 &&
+                dependencies.attachedBackingAddress != nullptr;
+        });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.detachBackingCount == 1);
     require(dependencies.attachedBackingAddress == nullptr);
 
     reference.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
-    requireFirstAllocationFailsBeforeCommit(device, reference);
-    require(dependencies.unrefResourceCount == 0);
-    require(responseType(device.process(requestBytes(reference), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(reference),
+        [&] { return dependencies.unrefResourceCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.unrefResourceCount == 1);
     require(!dependencies.resources.contains(rendered.resourceId));
 
     protocol::GpuControlHeader destroy = context.header;
     destroy.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
-    requireFirstAllocationFailsBeforeCommit(device, destroy);
-    require(dependencies.destroyContextCount == 0);
-    require(responseType(device.process(requestBytes(destroy), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(
+        device, requestBytes(destroy),
+        [&] { return dependencies.destroyContextCount == 0; });
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     require(dependencies.destroyContextCount == 1);
     require(!dependencies.contexts.contains(context.header.contextId));
 
     require(responseType(device.process(requestBytes(destroy), false)) ==
         protocol::GpuResponse::errorInvalidContext);
 
+    /* A software resource's commands keep their state in the device, so a
+     * failed attempt that committed shows as the next attempt's rejection. */
     auto software = create2d(602);
-    requireFirstAllocationFailsBeforeCommit(device, software);
-    require(responseType(device.process(requestBytes(software), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(device, requestBytes(software));
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
 
     attach.resourceId = software.resourceId;
     const auto softwareAttachRequest = requestWithEntry(attach, entry);
-    requireFirstAllocationFailsBeforeCommit(device, softwareAttachRequest);
-    require(responseType(device.process(softwareAttachRequest, false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(device, softwareAttachRequest);
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     reference.resourceId = software.resourceId;
     reference.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceDetachBacking);
-    requireFirstAllocationFailsBeforeCommit(device, reference);
-    require(responseType(device.process(requestBytes(reference), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(device, requestBytes(reference));
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
     reference.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
-    requireFirstAllocationFailsBeforeCommit(device, reference);
-    require(responseType(device.process(requestBytes(reference), false)) ==
-        protocol::GpuResponse::okNoData);
+    sweep = failEachAllocationBeforeCommit(device, requestBytes(reference));
+    require(responseType(sweep.response) == protocol::GpuResponse::okNoData);
 }
 
 void edidReportsDisplayPixelsAndEffectiveDensity()
@@ -1137,13 +1172,14 @@ void rendererExecutionFailuresPreserveDeviceState()
     submit.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
     submit.header.contextId = context.header.contextId;
-    requireFirstAllocationFailsBeforeCommit(device, submit);
-    require(dependencies.submitCount == 0);
     dependencies.rejectNext(FakeGpuDependencies::Operation::submit);
     require(responseType(device.process(requestBytes(submit), false)) ==
         protocol::GpuResponse::errorInvalidContext);
     require(dependencies.submitCount == 0);
-    require(responseType(device.process(requestBytes(submit), false)) ==
+    const auto submitted = failEachAllocationBeforeCommit(
+        device, requestBytes(submit),
+        [&] { return dependencies.submitCount == 0; });
+    require(responseType(submitted.response) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.submitCount == 1);
 
@@ -1156,13 +1192,14 @@ void rendererExecutionFailuresPreserveDeviceState()
              protocol::GpuCommand::transferFromHost3d}) {
         transfer.header.type = static_cast<std::uint32_t>(command);
         const auto before = dependencies.transferCount;
-        requireFirstAllocationFailsBeforeCommit(device, transfer);
-        require(dependencies.transferCount == before);
         dependencies.rejectNext(FakeGpuDependencies::Operation::transfer);
         require(responseType(device.process(requestBytes(transfer), false)) ==
             protocol::GpuResponse::errorInvalidParameter);
         require(dependencies.transferCount == before);
-        require(responseType(device.process(requestBytes(transfer), false)) ==
+        const auto transferred = failEachAllocationBeforeCommit(
+            device, requestBytes(transfer),
+            [&] { return dependencies.transferCount == before; });
+        require(responseType(transferred.response) ==
             protocol::GpuResponse::okNoData);
         require(dependencies.transferCount == before + 1);
     }
@@ -1187,16 +1224,21 @@ void rendererExecutionFailuresPreserveDeviceState()
     scanout.rectangle = {.x = 1, .y = 1, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = resource.resourceId;
-    requireFirstAllocationFailsBeforeCommit(device, scanout);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    const auto scanoutChangesBefore = dependencies.guestScanoutChangeCount;
+    const auto scanoutSet = failEachAllocationBeforeCommit(
+        device, requestBytes(scanout), [&] {
+            return dependencies.guestScanoutChangeCount ==
+                scanoutChangesBefore;
+        });
+    require(responseType(scanoutSet.response) ==
         protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == scanoutChangesBefore + 1);
 
     protocol::GpuResourceFlush flush {};
     flush.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = resource.resourceId;
-    requireFirstAllocationFailsBeforeCommit(device, flush);
     require(dependencies.readResourceCount == 0);
     require(dependencies.displayUpdateCount == 0);
     dependencies.rejectNext(FakeGpuDependencies::Operation::read_resource);
@@ -1217,8 +1259,13 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(responseType(device.process(requestBytes(flush), false)) ==
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.displayUpdateCount == 0);
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == 2);
+    const auto flushed = failEachAllocationBeforeCommit(
+        device, requestBytes(flush), [&] {
+            return dependencies.readResourceCount == 2 &&
+                dependencies.displayUpdateCount == 0;
+        });
+    require(responseType(flushed.response) == protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
 
@@ -1378,9 +1425,11 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeRefusal + 1);
 
     scanout.resourceId = protocol::invalidResourceId;
-    requireFirstAllocationFailsBeforeCommit(device, scanout);
     const auto clearsBeforeDisable = dependencies.clearCount;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    const auto disabled = failEachAllocationBeforeCommit(
+        device, requestBytes(scanout),
+        [&] { return dependencies.clearCount == clearsBeforeDisable; });
+    require(responseType(disabled.response) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.clearCount == clearsBeforeDisable + 1);
 
@@ -1716,25 +1765,21 @@ void resetIsPristineAndAllocationRetryIsAtomic()
 
     device.reset();
     context.header.contextId = 42;
-    fail_next_allocation();
-    bool contextFailed = false;
-    try {
-        (void)device.process(requestBytes(context), false);
-    } catch (const std::bad_alloc&) {
-        contextFailed = true;
-    }
-    (void)cancel_pending_allocation_failure();
-    require(contextFailed);
-    require(responseType(device.process(requestBytes(context), false)) ==
+    const auto contextsBefore = dependencies.createContextCount;
+    const auto createdContext = failEachAllocationBeforeCommit(
+        device, requestBytes(context),
+        [&] { return dependencies.createContextCount == contextsBefore; });
+    /* The reply's bad_alloc leaves process(). */
+    require(!createdContext.failures.front().has_value());
+    require(responseType(createdContext.response) ==
         protocol::GpuResponse::okNoData);
 
     resource.resourceId = 74;
-    fail_next_allocation();
-    const auto failedResource = device.process(requestBytes(resource), false);
-    (void)cancel_pending_allocation_failure();
-    require(responseType(failedResource) ==
-        protocol::GpuResponse::errorOutOfMemory);
-    require(responseType(device.process(requestBytes(resource), false)) ==
+    const auto createdResource =
+        failEachAllocationBeforeCommit(device, requestBytes(resource));
+    for (const auto failure : createdResource.failures)
+        require(failure == protocol::GpuResponse::errorOutOfMemory);
+    require(responseType(createdResource.response) ==
         protocol::GpuResponse::okNoData);
 
     device.reset();
@@ -1914,9 +1959,17 @@ void failedTransferDoesNotPartiallyCommitPixels()
     transfer.rectangle = scanout.rectangle;
     transfer.offset = 0;
     transfer.resourceId = create.resourceId;
-    requireFirstAllocationFailsBeforeCommit(device, transfer);
-    require(reads == 0);
-    require(responseType(device.process(requestBytes(transfer), false)) ==
+    /* Each attempt reads the rows only after allocating its reply, and its
+     * second read fails. No failed attempt commits a pixel, which the flush
+     * below shows. */
+    std::vector<unsigned> readsBeforeFailure;
+    const auto failedTransfer = failEachAllocationBeforeCommit(
+        device, requestBytes(transfer), [&] {
+            readsBeforeFailure.push_back(std::exchange(reads, 0U));
+            return true;
+        });
+    require(readsBeforeFailure.front() == 0);
+    require(responseType(failedTransfer.response) ==
         protocol::GpuResponse::errorInvalidParameter);
 
     protocol::GpuResourceFlush flush {};
@@ -1985,22 +2038,14 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
 
-    fail_next_allocation();
-    bool responseFailed = false;
-    try {
-        (void)device.process(requestBytes(scanout), false);
-    } catch (const std::bad_alloc&) {
-        responseFailed = true;
-    }
-    (void)cancel_pending_allocation_failure();
-    require(responseFailed);
-    require(dependencies.guestScanoutChangeCount == 0);
-
     /* The reply is all a Virgl scanout allocates: its readback staging waits
      * for the first flush that reads back. */
-    require(responseType(processAllocatingOnlyTheReply(
-                device, requestBytes(scanout))) ==
-        protocol::GpuResponse::okNoData);
+    const auto set = failEachAllocationBeforeCommit(
+        device, requestBytes(scanout),
+        [&] { return dependencies.guestScanoutChangeCount == 0; });
+    require(set.failures.size() == 1);
+    require(!set.failures.front().has_value());
+    require(responseType(set.response) == protocol::GpuResponse::okNoData);
     require(dependencies.guestScanoutChangeCount == 1);
     require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
     require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
@@ -2602,10 +2647,12 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.createBlobScanoutCount == 0);
 
-    requireFirstAllocationFailsBeforeCommit(device, scanout);
-    require(dependencies.createBlobScanoutCount == 0);
-    require(dependencies.guestScanoutChangeCount == 0);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    const auto blobScanout = failEachAllocationBeforeCommit(
+        device, requestBytes(scanout), [&] {
+            return dependencies.createBlobScanoutCount == 0 &&
+                dependencies.guestScanoutChangeCount == 0;
+        });
+    require(responseType(blobScanout.response) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.createBlobScanoutCount == 1);
     /* The scanout rectangle is the guest's mode on the native path too. */
@@ -2724,10 +2771,12 @@ void virglBlobScanoutPresentsItsGlTexture()
     /* A Virgl context's blob is a GL texture with no scanout texture of its
      * own, the framebuffer Android's gralloc allocates once blobs exist. */
     dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
-    requireFirstAllocationFailsBeforeCommit(device, scanout);
-    require(dependencies.createBlobScanoutCount == 0);
-    require(dependencies.guestScanoutChangeCount == 0);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    const auto blobScanout = failEachAllocationBeforeCommit(
+        device, requestBytes(scanout), [&] {
+            return dependencies.createBlobScanoutCount == 0 &&
+                dependencies.guestScanoutChangeCount == 0;
+        });
+    require(responseType(blobScanout.response) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.createBlobScanoutCount == 1);
     require(dependencies.guestScanoutChangeCount == 1);
