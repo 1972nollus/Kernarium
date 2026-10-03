@@ -15,7 +15,8 @@ an initrd that uml-initramfs writes. The remaining cases require every broken
 boot to stop with a named reason and a nonzero exit instead of reaching the
 image's own init: the base archive alone, a segment appended without the
 base's padding, an initrd the kernel never loads, and an invalid /boot.env.
-The launcher must remove its scratch initrd, including one an aborted run left
+The launcher must remove its scratch initrd when the run returns and when the
+guest panics, and the next launch must remove one a run killed outright left
 behind. The contract is tools/rootfs/boot-ramdisk/README.md.
 """
 
@@ -231,13 +232,21 @@ def run(arguments: argparse.Namespace) -> None:
             output,
             "Requested init /uml-per-run-initramfs-did-not-run failed",
         )
+        leftovers = sorted(path.name for path in scratch.iterdir())
         require(
-            any(scratch.iterdir()),
-            "an aborted run left no scratch directory to exercise its removal",
+            not leftovers,
+            f"a run that panicked left {leftovers}",
             output,
         )
         print("ok: an initrd the kernel never loads stops at the launcher's init=")
 
+        # A run killed outright removes nothing, so the next launch removes
+        # what it left.
+        exited = subprocess.Popen(["/usr/bin/true"])
+        exited.wait()
+        killed = scratch / f"uml-guest-initrd-{exited.pid}-killed"
+        killed.mkdir()
+        (killed / "initrd.cpio").write_bytes(b"")
         status, output = launch(emulator, rootfs, engine, scratch, guest_files)
         require_probe(status, output, token, MISSING_INIT)
         leftovers = sorted(path.name for path in scratch.iterdir())

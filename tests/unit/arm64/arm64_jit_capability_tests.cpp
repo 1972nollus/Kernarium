@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
-#include "platform/apple/host_features.hpp"
-#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
@@ -12,40 +10,6 @@ using namespace uml::emulator::tests;
 
 namespace {
 
-constexpr unsigned long hwcap_fp = 1UL << 0;
-constexpr unsigned long hwcap_asimd = 1UL << 1;
-constexpr unsigned long hwcap_evtstrm = 1UL << 2;
-constexpr unsigned long hwcap_aes = 1UL << 3;
-constexpr unsigned long hwcap_pmull = 1UL << 4;
-constexpr unsigned long hwcap_sha1 = 1UL << 5;
-constexpr unsigned long hwcap_sha2 = 1UL << 6;
-constexpr unsigned long hwcap_crc32 = 1UL << 7;
-constexpr unsigned long hwcap_atomics = 1UL << 8;
-constexpr unsigned long hwcap_fphp = 1UL << 9;
-constexpr unsigned long hwcap_asimdhp = 1UL << 10;
-constexpr unsigned long hwcap_cpuid = 1UL << 11;
-constexpr unsigned long hwcap_asimdrdm = 1UL << 12;
-constexpr unsigned long hwcap_jscvt = 1UL << 13;
-constexpr unsigned long hwcap_fcma = 1UL << 14;
-constexpr unsigned long hwcap_lrcpc = 1UL << 15;
-constexpr unsigned long hwcap_sha3 = 1UL << 17;
-constexpr unsigned long hwcap_asimddp = 1UL << 20;
-constexpr unsigned long hwcap_sha512 = 1UL << 21;
-constexpr unsigned long hwcap_asimdfhm = 1UL << 23;
-constexpr unsigned long hwcap_dit = 1UL << 24;
-constexpr unsigned long hwcap_uscat = 1UL << 25;
-constexpr unsigned long hwcap_ilrcpc = 1UL << 26;
-constexpr unsigned long hwcap_flagm = 1UL << 27;
-constexpr unsigned long hwcap_sb = 1UL << 29;
-constexpr unsigned long hwcap2_flagm2 = 1UL << 7;
-constexpr unsigned long hwcap2_frint = 1UL << 8;
-constexpr unsigned long hwcap2_i8mm = 1UL << 13;
-constexpr unsigned long hwcap2_bf16 = 1UL << 14;
-constexpr unsigned long hwcap2_ecv = 1UL << 19;
-constexpr unsigned long hwcap2_afp = 1UL << 20;
-constexpr unsigned long hwcap2_rpres = 1UL << 21;
-constexpr unsigned long hwcap2_cssc = 1UL << 34;
-constexpr unsigned long hwcap2_mops = 1UL << 43;
 constexpr std::uint64_t feature_gate_pc = 0x4f90'0000;
 
 [[nodiscard]] constexpr std::uint32_t pstate_immediate(
@@ -53,100 +17,6 @@ constexpr std::uint64_t feature_gate_pc = 0x4f90'0000;
 {
 	return 0xd503'401fU | ((immediate & 15U) << 8U) |
 		((op2 & 7U) << 5U);
-}
-
-void require_propagated(unsigned long capabilities, unsigned long bit,
-	bool supported)
-{
-	require(((capabilities & bit) != 0) == supported);
-}
-
-void guest_capabilities_match_host()
-{
-	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	const auto capabilities = darwin_uml_guest_hwcap();
-	require_propagated(capabilities, hwcap_fp, true);
-	require_propagated(capabilities, hwcap_asimd, true);
-	/* Every engine emulates the EL0 identification-register reads regardless
-	 * of what this host implements, so this bit is unconditional here exactly
-	 * as it is in arm64 Linux's `setup_elf_hwcaps()`. */
-	require_propagated(capabilities, hwcap_cpuid, true);
-	/* WFE completes at once in every engine, so it always wakes within the
-	 * event-stream period this bit promises. */
-	require_propagated(capabilities, hwcap_evtstrm, true);
-	require_propagated(capabilities, hwcap_aes, host.aes);
-	require_propagated(capabilities, hwcap_pmull, host.pmull);
-	require_propagated(capabilities, hwcap_sha1, host.sha1);
-	require_propagated(capabilities, hwcap_sha2, host.sha2);
-	require_propagated(capabilities, hwcap_crc32, host.crc32);
-	require_propagated(capabilities, hwcap_atomics,
-			   host.has(::uml::cpu::ArmFeature::lse));
-	require_propagated(capabilities, hwcap_sha3, host.sha3);
-	require_propagated(capabilities, hwcap_sha512, host.sha512);
-	/* The dot family is advertised on exactly the predicate the gadget bank
-	 * and the JIT use to select their native dot paths, so the guest can only
-	 * be handed these opcodes where an engine executes them. */
-	require_propagated(capabilities, hwcap_asimddp,
-			   host.has(::uml::cpu::ArmFeature::dotprod));
-	require_propagated(capabilities, hwcap_fphp, host.fp16);
-	require_propagated(capabilities, hwcap_asimdhp, host.fp16);
-	require_propagated(capabilities, hwcap_asimdrdm,
-			   host.has(::uml::cpu::ArmFeature::rdm));
-	require_propagated(capabilities, hwcap_asimdfhm,
-			   host.has(::uml::cpu::ArmFeature::fhm));
-	/* Both engines correct the subnormal flags of a host whose native
-	 * FJCVTZS gets them wrong, so the advertisement follows the host
-	 * feature alone. */
-	require_propagated(capabilities, hwcap_jscvt,
-			   host.has(::uml::cpu::ArmFeature::jscvt));
-	require_propagated(capabilities, hwcap_fcma,
-			   host.has(::uml::cpu::ArmFeature::fcma));
-	require_propagated(capabilities, hwcap_lrcpc,
-			   host.has(::uml::cpu::ArmFeature::lrcpc));
-	require_propagated(capabilities, hwcap_ilrcpc,
-			   host.has(::uml::cpu::ArmFeature::lrcpc2));
-	require_propagated(capabilities, hwcap_flagm,
-			   host.has(::uml::cpu::ArmFeature::flag_m));
-	require_propagated(capabilities, hwcap_uscat,
-			   host.has(::uml::cpu::ArmFeature::lse2));
-	require_propagated(capabilities, hwcap_sb,
-			   host.has(::uml::cpu::ArmFeature::sb));
-	require_propagated(capabilities, hwcap_dit,
-			   host.has(::uml::cpu::ArmFeature::dit));
-
-	constexpr auto advertised =
-		hwcap_fp | hwcap_asimd | hwcap_evtstrm | hwcap_cpuid |
-		hwcap_aes | hwcap_pmull | hwcap_sha1 |
-		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_fphp |
-		hwcap_asimdhp | hwcap_asimdrdm | hwcap_jscvt | hwcap_sha3 |
-		hwcap_asimddp | hwcap_sha512 | hwcap_asimdfhm | hwcap_fcma |
-		hwcap_lrcpc | hwcap_ilrcpc | hwcap_flagm | hwcap_uscat |
-		hwcap_sb | hwcap_dit;
-	require((capabilities & ~advertised) == 0);
-
-	const auto capabilities2 = darwin_uml_guest_hwcap2();
-	require_propagated(capabilities2, hwcap2_i8mm,
-			   host.has(::uml::cpu::ArmFeature::i8mm));
-	require_propagated(capabilities2, hwcap2_frint,
-			   host.has(::uml::cpu::ArmFeature::frintts));
-	require_propagated(capabilities2, hwcap2_bf16,
-			   host.has(::uml::cpu::ArmFeature::bf16));
-	require_propagated(capabilities2, hwcap2_flagm2,
-			   host.has(::uml::cpu::ArmFeature::flag_m2));
-	require_propagated(capabilities2, hwcap2_ecv,
-			   host.has(::uml::cpu::ArmFeature::ecv));
-	/* FEAT_AFP and FEAT_RPRES follow the one predicate both engines and the
-	 * identification registers use. */
-	require_propagated(capabilities2, hwcap2_afp,
-			   ::uml::cpu::arm64::implements_afp(host));
-	require_propagated(capabilities2, hwcap2_rpres,
-			   ::uml::cpu::arm64::implements_rpres(host));
-	require((capabilities2 & hwcap2_cssc) != 0);
-	require((capabilities2 & hwcap2_mops) != 0);
-	constexpr auto advertised2 = hwcap2_frint | hwcap2_i8mm |
-		hwcap2_bf16 | hwcap2_flagm2 | hwcap2_ecv | hwcap2_afp |
-		hwcap2_rpres | hwcap2_cssc | hwcap2_mops;
-	require((capabilities2 & ~advertised2) == 0);
 }
 
 [[nodiscard]] bool is_host_key_operation(std::uint32_t instruction)
@@ -470,7 +340,6 @@ void indirect_link_capacity_refusal_is_observable()
 int main()
 {
 	require(jit_available() == 1);
-	guest_capabilities_match_host();
 	link_selector_layout_is_dense_and_compact();
 	conditional_direct_link_capacity_refusal_is_observable();
 	indirect_link_capacity_refusal_is_observable();

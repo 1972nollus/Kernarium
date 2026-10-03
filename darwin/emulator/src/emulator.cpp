@@ -270,10 +270,10 @@ public:
 		 * admission. */
 		if (::uml::runtime::process_guest_spent())
 			return -UML_EMULATOR_UNSUPPORTED;
-		/* A process killed before its guest shut down left that guest's
-		 * console socket behind, and this guest could not bind over it. */
-		if (!prepared.informational)
-			::uml::device::release_guest_management_console();
+		/* Readies the guest console's location before the guest binds it,
+		 * and removes it when the run returns, however the guest ended. */
+		const ::uml::device::GuestConsoleRun console_run{
+			!prepared.informational && prepared.host_console_directory};
 		const auto native_layout = ::uml::runtime::prepare_native_kernel_layout(
 			prepared.guest_memory_bytes);
 		if (!native_layout.valid)
