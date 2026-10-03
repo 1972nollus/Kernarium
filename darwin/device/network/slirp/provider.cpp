@@ -5,7 +5,6 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
-#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <system_error>
@@ -31,20 +30,6 @@ using uml::platform::UniqueDescriptor;
 constexpr std::array<unsigned char, 6> default_mac{
 	0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 
-bool configure_nonblocking(int descriptor) noexcept
-{
-	const int flags = fcntl(descriptor, F_GETFL);
-	return flags >= 0 &&
-		fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0;
-}
-
-bool configure_close_on_exec(int descriptor) noexcept
-{
-	const int flags = fcntl(descriptor, F_GETFD);
-	return flags >= 0 &&
-		fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) >= 0;
-}
-
 bool create_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 {
 	std::array<int, 2> descriptors{};
@@ -52,10 +37,11 @@ bool create_pipe(std::array<UniqueDescriptor, 2> &result) noexcept
 		return false;
 	result[0].reset(descriptors[0]);
 	result[1].reset(descriptors[1]);
-	if (configure_close_on_exec(result[0].get()) &&
-	    configure_close_on_exec(result[1].get()) &&
-	    configure_nonblocking(result[0].get()) &&
-	    configure_nonblocking(result[1].get()))
+	using uml::platform::configureDescriptor;
+	if (configureDescriptor(result[0].get(), {.closeOnExec = true}) &&
+	    configureDescriptor(result[1].get(), {.closeOnExec = true}) &&
+	    configureDescriptor(result[0].get(), {.nonblocking = true}) &&
+	    configureDescriptor(result[1].get(), {.nonblocking = true}))
 		return true;
 	const int error = errno;
 	result[0].reset();

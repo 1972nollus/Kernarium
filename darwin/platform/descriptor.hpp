@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <unistd.h>
 
@@ -50,5 +55,45 @@ public:
 private:
     int descriptor_ {-1};
 };
+
+/* The flags configureDescriptor() adds to a descriptor. */
+struct DescriptorFlags final {
+    bool closeOnExec {};
+    bool nonblocking {};
+    bool noSigpipe {};
+};
+
+/* Adds `flags` to `descriptor`. Both flag words it changes are read before
+ * either is written, and F_SETNOSIGPIPE comes last. Returns false with errno
+ * set if a call fails, leaving any flag already written in place. */
+[[nodiscard]] inline bool configureDescriptor(
+    int descriptor,
+    DescriptorFlags flags)
+{
+    const int descriptorFlags =
+        flags.closeOnExec ? ::fcntl(descriptor, F_GETFD) : 0;
+    const int statusFlags =
+        flags.nonblocking ? ::fcntl(descriptor, F_GETFL) : 0;
+    return descriptorFlags >= 0 && statusFlags >= 0 &&
+        (!flags.closeOnExec ||
+         ::fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0) &&
+        (!flags.nonblocking ||
+         ::fcntl(descriptor, F_SETFL, statusFlags | O_NONBLOCK) == 0) &&
+        (!flags.noSigpipe || ::fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0);
+}
+
+/* configureDescriptor(), throwing "configuring <what> failed: <error>". */
+inline void configureDescriptorOrThrow(
+    int descriptor,
+    DescriptorFlags flags,
+    const char* what)
+{
+    if (configureDescriptor(descriptor, flags))
+        return;
+    const int error = errno;
+    throw std::runtime_error(
+        std::string("configuring ") + what + " failed: " +
+        std::strerror(error));
+}
 
 } // namespace uml::platform

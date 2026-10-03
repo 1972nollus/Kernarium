@@ -3,6 +3,7 @@
 #include "gpu_vhost_user_server.hpp"
 
 #include "deferred_fences.hpp"
+#include "platform/descriptor.hpp"
 #include "protocol.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_device.hpp"
@@ -12,7 +13,6 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
-#include <fcntl.h>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -23,15 +23,6 @@
 
 namespace uml::gpu {
 namespace {
-
-void setCloseOnExec(int descriptor)
-{
-    const int flags = ::fcntl(descriptor, F_GETFD);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0)
-        throw std::runtime_error(
-            "configuring close-on-exec descriptor failed: " +
-            std::string(std::strerror(errno)));
-}
 
 template<typename Value>
 Value loadUnaligned(const void* address)
@@ -66,7 +57,10 @@ public:
     {
         if (eventQueue_.get() < 0)
             throw std::runtime_error("creating GPU event queue failed");
-        setCloseOnExec(eventQueue_.get());
+        uml::platform::configureDescriptorOrThrow(
+            eventQueue_.get(),
+            {.closeOnExec = true},
+            "close-on-exec descriptor");
         const int resizeDescriptor = display_.resizeEventDescriptor();
         if (resizeDescriptor >= 0) {
             struct kevent change {};

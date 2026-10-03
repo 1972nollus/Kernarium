@@ -5,6 +5,7 @@
 #include "socket_paths.hpp"
 #include "memory/shared_backing.hpp"
 #include "platform/apple/autorelease_scope.hpp"
+#include "platform/descriptor.hpp"
 #include "platform/guest_timer_mask.hpp"
 
 #include <algorithm>
@@ -78,31 +79,21 @@ class ConnectionStopped final {};
 
 void setCloseOnExec(int descriptor)
 {
-    const int flags = ::fcntl(descriptor, F_GETFD);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0)
-        throw std::runtime_error(
-            "configuring close-on-exec descriptor failed: " +
-            std::string(std::strerror(errno)));
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.closeOnExec = true}, "close-on-exec descriptor");
 }
 
 void setNonblocking(int descriptor)
 {
-    const int flags = ::fcntl(descriptor, F_GETFL);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) {
-        throw std::runtime_error(
-            "configuring nonblocking vhost-user descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.nonblocking = true}, "nonblocking vhost-user descriptor");
 }
 
 void configureOutputDescriptor(int descriptor)
 {
     setNonblocking(descriptor);
-    if (::fcntl(descriptor, F_SETNOSIGPIPE, 1) != 0) {
-        throw std::runtime_error(
-            "configuring no-signal vhost-user descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.noSigpipe = true}, "no-signal vhost-user descriptor");
 }
 
 void flushReadinessOutput()
