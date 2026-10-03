@@ -25,10 +25,6 @@
 
 namespace uml::gpu::testing {
 
-void failNextAllocation() noexcept;
-void failAfterAllocations(std::size_t count) noexcept;
-void clearAllocationFailure() noexcept;
-
 void runVhostUserServerTests(const char* executable);
 [[noreturn]] void runVhostUserServerChild(std::string_view mode);
 void runVhostUserProtocolTests();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "allocation_failure.hpp"
 #include "gpu_test_support.hpp"
 #include "vhost_user_message.hpp"
 #include "vhost_user_message_testing.hpp"
@@ -126,7 +127,7 @@ void allocationFailureDoesNotLeak()
             descriptors,
             std::span {&payload, 1U});
         VhostUserMessage message;
-        failNextAllocation();
+        ::uml::testing::fail_next_allocation();
         bool failed = false;
         try {
             (void)receiveVhostUserMessage(
@@ -134,7 +135,7 @@ void allocationFailureDoesNotLeak()
         } catch (const std::bad_alloc&) {
             failed = true;
         }
-        clearAllocationFailure();
+        (void)::uml::testing::cancel_pending_allocation_failure();
         require(failed);
     });
 }
