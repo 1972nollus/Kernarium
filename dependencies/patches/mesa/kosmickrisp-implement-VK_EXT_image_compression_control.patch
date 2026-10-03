@@ -132,7 +132,7 @@ index 2710b0b940ccdd3d2c59cb43ff11edaeb6e0350f..f2c96dbea7462a7fa3f73354c844b483
        .legacyVertexAttributes = true,
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index f3a166442c027f130e8bea52931cc7765b75e093..28d7025a75d0f29f6e606a7c5b2207be51f4735c 100644
+index 9bbb7e95e89ac501551795ca5bfb06f451046888..4956246da4623123af1887076a6598a06d43585e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -517,6 +517,26 @@ if with_tests

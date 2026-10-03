@@ -355,10 +355,10 @@ index b96eeec993ce569cd356babceec691048608d933..f5a849c8120e591bcfda885f31a8e24b
        return kk_image_aspects_to_plane(image, aspectMask);
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4d46a7c8f4938b073b74ac61ae22a7032dbbee65..348a171eb3ba9c2a3747d71a5c94d6a0354009bd 100644
+index d3c731a5b573af8d571ddfbf2b8d9a9be53e42c7..6bff994a22c53f7b7c9ee9b2717d8336c93053fa 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1048,6 +1048,19 @@ if with_tests
+@@ -1029,6 +1029,19 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
