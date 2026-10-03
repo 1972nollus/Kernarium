@@ -9,6 +9,9 @@
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
+#include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -49,6 +52,7 @@ namespace {
 
 namespace arm64 = ::uml::cpu::arm64;
 using ::uml::emulator::tests::first_architecture_difference;
+using ::uml::emulator::tests::first_sme_register_difference;
 using ::uml::cpu::ArmFeature;
 using ::uml::cpu::ArmFeatureSet;
 using ::uml::cpu::EngineKind;
@@ -78,11 +82,11 @@ constexpr std::uint16_t without_sme_option = 0x800U;
 constexpr std::uint16_t known_options = 0xfffU;
 /* SME state: Z0-Z31, P0-P15 and the ZA rows are sized by a record's
  * streaming vector length (SVL), ZT0 is 64 bytes. */
-constexpr std::size_t zt0_bytes = 64;
+constexpr std::size_t zt0_bytes = arm64::sme_zt0_bytes;
 
 [[nodiscard]] constexpr bool valid_svl(unsigned bytes) noexcept
 {
-  return bytes >= 16U && bytes <= 256U && (bytes & (bytes - 1U)) == 0U;
+  return arm64::valid_streaming_vector_length(bytes);
 }
 
 class CorpusError final : public std::runtime_error {
@@ -391,7 +395,58 @@ sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl) {
   return state;
 }
 
-void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
+/* One byte of the SME base fill; see the README's SME state. */
+[[nodiscard]] std::byte sme_fill(std::uint32_t index) noexcept {
+  return static_cast<std::byte>((index * 0x9e37'79b1U) >> 24U);
+}
+
+/* The SME state every initial state is encoded against, in the register
+ * file's layout (Z, P, ZA rows, ZT0). */
+[[nodiscard]] std::vector<std::byte> sme_base_image(unsigned svl) {
+  std::vector<std::byte> image(arm64::sme_storage_size(svl));
+  for (unsigned n = 0; n < arm64::sme_z_registers; ++n)
+    for (unsigned byte = 0; byte < svl; ++byte)
+      image[arm64::sme_z_offset(svl, n) + byte] = sme_fill(n << 8U | byte);
+  for (unsigned n = 0; n < arm64::sme_p_registers; ++n)
+    for (unsigned byte = 0; byte < svl / 8U; ++byte)
+      image[arm64::sme_p_offset(svl, n) + byte] =
+          sme_fill(0x2000U | n << 5U | byte);
+  for (unsigned row = 0; row < svl; ++row)
+    for (unsigned byte = 0; byte < svl; ++byte)
+      image[arm64::sme_za_offset(svl, row) + byte] =
+          sme_fill(0x1'0000U | row << 8U | byte);
+  for (unsigned byte = 0; byte < zt0_bytes; ++byte)
+    image[arm64::sme_zt0_offset(svl) + byte] = sme_fill(0x3'0000U | byte);
+  return image;
+}
+
+/* Applies one sparse state's SME sections to an SME image. */
+void apply_sme_sections(Reader &reader, std::span<std::byte> image,
+                        unsigned svl) {
+  const auto copy = [&](std::size_t offset, std::size_t size) {
+    const auto data = reader.bytes(size);
+    std::copy(data.begin(), data.end(), image.begin() + offset);
+  };
+  const auto z = reader.u32();
+  for (unsigned n = 0; n < arm64::sme_z_registers; ++n)
+    if ((z >> n) & 1U)
+      copy(arm64::sme_z_offset(svl, n), svl);
+  const auto p = reader.u16();
+  for (unsigned n = 0; n < arm64::sme_p_registers; ++n)
+    if ((p >> n) & 1U)
+      copy(arm64::sme_p_offset(svl, n), svl / 8U);
+  const auto rows = reader.bytes(svl / 8U);
+  for (unsigned row = 0; row < svl; ++row)
+    if ((std::to_integer<unsigned>(rows[row / 8U]) >> (row % 8U)) & 1U)
+      copy(arm64::sme_za_offset(svl, row), svl);
+  if (reader.u8() != 0U)
+    copy(arm64::sme_zt0_offset(svl), zt0_bytes);
+}
+
+/* Applies a sparse state; `image` receives its SME sections when the
+ * record has an SVL. */
+void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
+                  unsigned svl = 0, std::span<std::byte> image = {}) {
   Reader reader{encoded};
   const auto registers = reader.u32();
   for (unsigned index = 0; index < 32U; ++index)
@@ -408,6 +463,8 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
       const auto data = reader.bytes(16);
       std::copy(data.begin(), data.end(), state.vectors[index].bytes.begin());
     }
+  if (svl != 0U)
+    apply_sme_sections(reader, image, svl);
   const auto fields = reader.u8();
   for (unsigned field = 0; field < fields; ++field) {
     const auto identifier = reader.u8();
@@ -461,12 +518,30 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::fp_dirty:
       state.fp_dirty = flag();
       break;
+    case Field::svcr:
+      state.svcr = reader.u8();
+      break;
+    case Field::tpidr2:
+      state.tpidr2 = reader.u64();
+      break;
     default:
       throw CorpusError{"unknown state field " + std::to_string(identifier)};
     }
   }
   if (!reader.done())
     throw CorpusError{"trailing sparse state data"};
+}
+
+/* While a state's PSTATE.SM is set its V registers are its Z registers' low
+ * bytes. */
+void streaming_view(arm64::CpuState &state, std::span<const std::byte> image,
+                    unsigned svl) {
+  if (svl == 0U || (state.svcr & arm64::svcr_sm) == 0U)
+    return;
+  for (unsigned n = 0; n < arm64::sme_z_registers; ++n)
+    std::copy_n(image.begin() + static_cast<std::ptrdiff_t>(
+                                    arm64::sme_z_offset(svl, n)),
+                16, state.vectors[n].bytes.begin());
 }
 
 /* ------------------------------------------------------------------------ */
@@ -937,6 +1012,17 @@ enum class Lane : std::uint8_t { gadgets, jit };
   return lane == Lane::gadgets ? "gadgets" : "jit";
 }
 
+/* How much of the SME profile a lane's engine implements. */
+[[nodiscard]] constexpr arm64::SmeSupport lane_sme_support(Lane lane) noexcept {
+  return lane == Lane::gadgets ? arm64::gadgets::sme_support
+                               : arm64::jit::sme_support;
+}
+
+/* The SME profile's tokens, which without_sme removes. */
+constexpr std::array<ArmFeature, 4> sme_features{
+    ArmFeature::sme, ArmFeature::sme2, ArmFeature::sme_f64f64,
+    ArmFeature::sme_i16i64};
+
 struct Outcome final {
   Event event{Event::fatal};
   arm64::CpuState cpu;
@@ -954,8 +1040,11 @@ public:
       : host_{std::move(host)} {
     if ((options & without_afp_option) != 0U)
       host_.supported.reset(static_cast<std::size_t>(ArmFeature::afp));
-    if ((options & without_sme_option) != 0U)
-      host_.supported.reset(static_cast<std::size_t>(ArmFeature::sme));
+    if ((options & without_sme_option) != 0U) {
+      for (const auto feature : sme_features)
+        host_.supported.reset(static_cast<std::size_t>(feature));
+      host_.sme_svl_bytes = 0;
+    }
     const ::uml::cpu::EngineConfiguration configuration{
         .host_capabilities = host_,
     };
@@ -1050,16 +1139,29 @@ struct Counts final {
   std::map<std::string_view, std::size_t> missing_features;
 };
 
-/* The feature a case needs that the virtual CPU for `host` lacks although
- * the host may have it: FEAT_AFP or FEAT_RPRES outside their predicates, and
- * FEAT_SME, which the runtime does not implement yet, for any case with SME
- * state or an SME requirement. */
+/* The feature a case needs that a lane's virtual CPU for `host` lacks
+ * although the host may have it: FEAT_AFP or FEAT_RPRES outside their
+ * predicates; FEAT_SME for a case with SME state or an SME requirement
+ * unless the virtual CPU implements the profile at the record's SVL and the
+ * lane's engine implements all of it; and FEAT_SME2 outside the SME2
+ * profile. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
-                  const ::uml::platform::HostCapabilities &host) {
-  if (record.svl != 0U || native.test(static_cast<std::size_t>(ArmFeature::sme)))
-    return ArmFeature::sme;
+                  const ::uml::platform::HostCapabilities &host, Lane lane) {
+  const bool sme_case =
+      record.svl != 0U ||
+      std::ranges::any_of(sme_features, [&](ArmFeature feature) {
+        return native.test(static_cast<std::size_t>(feature));
+      });
+  if (sme_case) {
+    if (!arm64::implements_sme(host) || record.svl != host.sme_svl_bytes ||
+        lane_sme_support(lane) != arm64::SmeSupport::complete)
+      return ArmFeature::sme;
+    if (native.test(static_cast<std::size_t>(ArmFeature::sme2)) &&
+        arm64::sme_profile(host) != arm64::SmeProfile::sme2)
+      return ArmFeature::sme2;
+  }
   if (native.test(static_cast<std::size_t>(ArmFeature::afp)) &&
       !arm64::implements_afp(host))
     return ArmFeature::afp;
@@ -1178,15 +1280,21 @@ private:
     std::optional<arm64::CpuState> initial;
     std::optional<arm64::CpuState> expected;
     std::vector<std::unique_ptr<CaseRegion>> regions;
+    /* A record with an SVL holds its cases' Z, P, ZA and ZT0 in the SME
+     * register file's layout. */
+    std::vector<std::byte> initial_sme;
+    std::vector<std::byte> expected_sme;
 
     /* FEAT_AFP and FEAT_RPRES are implemented exactly where the virtual
      * CPU's predicates say so, and only the hardware's own floating-point
      * instructions honour them, so a case that needs either runs in neither
-     * lane elsewhere. */
+     * lane elsewhere. SME runs where the profile and the lane's engine
+     * implement it. */
     const auto &native = corpus_.native_sets[test_case.native];
-    const auto lacking = virtual_cpu_lacks(record, native, engines.host());
 
     for (const auto lane : {Lane::gadgets, Lane::jit}) {
+      const auto lacking =
+          virtual_cpu_lacks(record, native, engines.host(), lane);
       if (lane == Lane::gadgets) {
         if (!options_.run_gadgets)
           continue;
@@ -1236,9 +1344,14 @@ private:
       }
       if (!initial.has_value()) {
         initial = base_state(program.entry);
-        apply_sparse(*initial, test_case.initial);
+        if (record.svl != 0U)
+          initial_sme = sme_base_image(record.svl);
+        apply_sparse(*initial, test_case.initial, record.svl, initial_sme);
+        streaming_view(*initial, initial_sme, record.svl);
         expected = *initial;
-        apply_sparse(*expected, test_case.expected);
+        expected_sme = initial_sme;
+        apply_sparse(*expected, test_case.expected, record.svl, expected_sme);
+        streaming_view(*expected, expected_sme, record.svl);
         regions.reserve(test_case.memory.size());
         for (const auto &region : test_case.memory)
           regions.push_back(std::make_unique<CaseRegion>(
@@ -1246,10 +1359,23 @@ private:
       }
       for (const auto &region : regions)
         region->restore();
-      const auto outcome = engines.run(lane, *initial, memory_);
+      /* Each run starts from the initial SME state, as the task storage
+       * the kernel would hand the engine, with an empty register file. */
+      auto start = *initial;
+      std::vector<std::byte> task = initial_sme;
+      arm64::SmeRegisterFile file;
+      if (record.svl != 0U) {
+        file = arm64::SmeRegisterFile{record.svl};
+        start.bind_sme_registers(file);
+        start.defer_sme_load(task.data(), initial->svcr, initial->tpidr2);
+      }
+      auto outcome = engines.run(lane, start, memory_);
+      if (record.svl != 0U)
+        outcome.cpu.write_back_sme_state();
       ++(lane == Lane::gadgets ? counts_.gadgets : counts_.jit);
-      if (auto failure = check(test_case, program, *initial, *expected,
-                               outcome, regions)) {
+      if (auto failure =
+              check(test_case, program, *initial, *expected, outcome, regions,
+                    {record.svl, expected_sme, task})) {
         report(record, index, lane, *failure);
         if (++counts_.failures == options_.max_failures)
           return false;
@@ -1258,11 +1384,19 @@ private:
     return true;
   }
 
+  /* A run's SME register files: expected and actual, at the record's SVL. */
+  struct SmeImages final {
+    unsigned svl{};
+    std::span<const std::byte> expected;
+    std::span<const std::byte> actual;
+  };
+
   [[nodiscard]] std::optional<std::string>
   check(const CorpusCase &test_case, const Program &program,
         const arm64::CpuState &initial, const arm64::CpuState &expected,
         const Outcome &outcome,
-        const std::vector<std::unique_ptr<CaseRegion>> &regions) const {
+        const std::vector<std::unique_ptr<CaseRegion>> &regions,
+        const SmeImages &sme) const {
     if (outcome.cpu.gadget_fp_active ||
         outcome.cpu.gadget_indirect_miss != nullptr)
       return std::string{
@@ -1314,6 +1448,10 @@ private:
                  ? *state_failure
                  : std::string{corpus_.validator_names[test_case.validator]} +
                        ": " + *state_failure;
+    if (sme.svl != 0U)
+      if (auto failure = first_sme_register_difference(
+              sme.svl, expected.svcr, sme.expected, sme.actual))
+        return failure;
     if (test_case.compare_fault &&
         (outcome.fault.address != test_case.fault_address ||
          outcome.fault.access != test_case.fault_access))
