@@ -545,6 +545,40 @@ void identification_follows_profile()
 	require(darwin_uml_guest_hwcap() == probed[0]);
 	require(darwin_uml_guest_hwcap2() == probed[1]);
 }
+
+/* SVCR as the host reads it: 0 here, where no engine has entered streaming
+ * mode, and SM inside a streaming region on SME hardware. A profile a test
+ * injects never claims the hardware, so it never reads SVCR. */
+void host_streaming_state_is_read_only_on_sme_hardware()
+{
+	require(arm64::host_streaming_state_clear(sme_host(64, true)));
+	require(arm64::host_streaming_state_clear(HostCapabilities{}));
+	const auto &host = ::uml::cpu::host_capabilities();
+	require(host.sme_hardware == sysctl_flag("hw.optional.arm.FEAT_SME"));
+	require(arm64::host_streaming_state_clear(host));
+	arm64::debug_check_host_streaming_state(host);
+	if (!host.sme_hardware)
+		return;
+	std::uint64_t streaming = 0;
+	std::uint64_t saved_fpsr = 0;
+	/* SMSTART SM, MRS SVCR, SMSTOP SM in one block: nothing compiled runs
+	 * in streaming mode. Both mode changes zero the vector registers and
+	 * set FPSR, which the block restores. */
+	asm volatile(
+		"mrs %[fpsr], fpsr\n\t"
+		".inst 0xd503437f\n\t"
+		"mrs %[svcr], S3_3_C4_C2_2\n\t"
+		".inst 0xd503427f\n\t"
+		"msr fpsr, %[fpsr]\n\t"
+		: [svcr] "=&r"(streaming), [fpsr] "=&r"(saved_fpsr)
+		:
+		: "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9",
+		  "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18",
+		  "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27",
+		  "v28", "v29", "v30", "v31", "memory");
+	require(streaming == arm64::svcr_sm, "MRS SVCR missed streaming mode");
+	require(arm64::read_host_svcr() == 0);
+}
 } // namespace
 
 int main()
@@ -559,5 +593,6 @@ int main()
 	svcr_writes_apply_to_state();
 	defaults_follow_engine_support();
 	identification_follows_profile();
+	host_streaming_state_is_read_only_on_sme_hardware();
 	return 0;
 }

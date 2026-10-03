@@ -178,6 +178,40 @@ static_assert(!svcr_write(svcr_sm, svcr_sm, svcr_sm, true).reset_fpsr);
 static_assert(svcr_write(0, svcr_za, svcr_za, false).needs_storage);
 static_assert(!svcr_write(0, svcr_za, 0, false).needs_storage);
 
+/* The host's own SVCR. MRS SVCR is UNDEFINED without FEAT_SME in hardware,
+ * so only code that has seen HostCapabilities::sme_hardware may read it; the
+ * register is named by its encoding, so no target needs the SME assembler
+ * extension. */
+[[nodiscard]] inline std::uint64_t read_host_svcr() noexcept
+{
+	std::uint64_t value;
+	asm volatile("mrs %0, S3_3_C4_C2_2" : "=r"(value));
+	return value;
+}
+
+/* Everything but SM=1 translated code runs with the host out of streaming
+ * mode and ZA off, which is also what AAPCS64 requires of a caller of
+ * ordinary functions. True on a host without FEAT_SME, which never reads
+ * SVCR, and for a profile a test injects, which never claims the hardware. */
+[[nodiscard]] inline bool host_streaming_state_clear(
+	const HostCapabilities &host) noexcept
+{
+	return !host.sme_hardware || read_host_svcr() == 0U;
+}
+
+/* Debug builds trap at a C++ boundary the host crosses in streaming mode or
+ * with ZA on; release builds compile nothing. The runtime checks each engine
+ * entry and return; the engines check their own leave sequences, which are
+ * the only code that changes the host's mode. */
+inline void debug_check_host_streaming_state(
+	[[maybe_unused]] const HostCapabilities &host) noexcept
+{
+#ifndef NDEBUG
+	if (!host_streaming_state_clear(host))
+		__builtin_trap();
+#endif
+}
+
 /* A vCPU's SME register file, sme_storage_size(svl) zeroed bytes allocated
  * once at start-up for the host's SVL, or nothing when the run does not
  * implement SME. CpuState points at it; its owner outlives every entry. */
