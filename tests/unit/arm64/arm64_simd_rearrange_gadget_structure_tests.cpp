@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
-#include "arm64_simd_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -83,11 +83,12 @@ UML_DECLARE_TABLE(tbx, 4)
 }
 
 namespace test = arm64_simd_rearrange_test;
-namespace base = arm64_simd_test;
 namespace gadgets = uml::cpu::arm64::gadgets;
 namespace arm64 = uml::cpu::arm64;
 
 namespace {
+
+using uml::testing::require;
 
 using Gadget = void (*)();
 
@@ -152,7 +153,7 @@ static_assert(vector_offset(31U) <= 0xffffU);
 	const std::array stream{instruction, 0xd400'0001U};
 	auto built = gadgets::Builder{}.build(
 		test::engine_tests::engine_test_code_base, stream);
-	base::require(built.complete);
+	require(built.complete);
 	return std::move(built.program);
 }
 
@@ -169,10 +170,10 @@ void every_operation_and_shape_is_selected_during_translation()
 				const auto program = build_one(test::permute_instruction(
 					q, size, operation.opcode, registers));
 				const unsigned shape = q ? size + 3U : size;
-				base::require(program.words()[0] ==
+				require(program.words()[0] ==
 					address_of(operation.shapes[shape]));
-				base::require(program.words()[1] == operand);
-				base::require(program.words()[2] ==
+				require(program.words()[1] == operand);
+				require(program.words()[2] ==
 					address_of(uml_arm64_gadget_svc));
 			}
 }
@@ -194,16 +195,16 @@ void every_table_form_has_resolved_wrapped_offsets()
 					q, extend, count, registers));
 				const unsigned shape = (extend ? 8U : 0U) +
 					(count - 1U) * 2U + (q ? 1U : 0U);
-				base::require(program.words()[0] ==
+				require(program.words()[0] ==
 					address_of(expected_tables[shape]));
-				base::require(program.words()[1] == first_operand);
+				require(program.words()[1] == first_operand);
 				if (count > 2U) {
-					base::require(
+					require(
 						program.words()[2] == remaining_operand);
-					base::require(program.words()[3] ==
+					require(program.words()[3] ==
 						address_of(uml_arm64_gadget_svc));
 				} else {
-					base::require(program.words()[2] ==
+					require(program.words()[2] ==
 						address_of(uml_arm64_gadget_svc));
 				}
 			}
@@ -213,8 +214,8 @@ void require_branch_free(Gadget gadget)
 {
 	const auto shape = a64::body_shape(
 		reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
-	base::require(shape.conditional_branches == 0U);
-	base::require(shape.reached_dispatch);
+	require(shape.conditional_branches == 0U);
+	require(shape.reached_dispatch);
 }
 
 void every_specialized_hot_path_is_branch_free()

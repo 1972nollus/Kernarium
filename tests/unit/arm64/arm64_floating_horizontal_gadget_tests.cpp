@@ -2,6 +2,7 @@
 #include "a64_body_inspection.hpp"
 #include "arm64_basic_floating_test_support.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/detail/floating_horizontal.hpp"
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -19,7 +20,7 @@
 namespace arm64_floating_horizontal_test {
 
 namespace basic = arm64_basic_floating_test;
-namespace common = arm64_simd_test;
+namespace common = uml::testing;
 namespace arm64 = uml::cpu::arm64;
 namespace detail = uml::cpu::arm64::detail;
 namespace engine_tests = uml::emulator::tests;

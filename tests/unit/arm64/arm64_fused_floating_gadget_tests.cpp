@@ -2,6 +2,7 @@
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
 #include "arm64_basic_floating_test_support.hpp"
+#include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -17,7 +18,7 @@
 namespace arm64_fused_floating_test {
 
 namespace basic = arm64_basic_floating_test;
-namespace common = arm64_simd_test;
+namespace common = uml::testing;
 namespace engine_tests = uml::emulator::tests;
 
 struct Form final {
