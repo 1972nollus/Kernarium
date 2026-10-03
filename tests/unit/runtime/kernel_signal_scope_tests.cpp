@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "kernel_signal_scope.hpp"
+#include "require.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -22,11 +23,7 @@ using namespace std::chrono_literals;
 std::atomic_int kernel_deliveries;
 std::atomic_int host_deliveries;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 /* Stands in for a handler inside the embedded kernel image. The scopes below
  * are given an image range that covers exactly this function. */

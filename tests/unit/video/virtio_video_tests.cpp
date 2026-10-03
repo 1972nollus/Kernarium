@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "require.hpp"
 #include "shared_memory_regions.hpp"
 #include "video_capabilities.hpp"
 
@@ -22,10 +23,7 @@ using namespace uml::platform;
 using namespace uml::video;
 using namespace uml::virtio;
 namespace {
-void require(bool value, const char* message)
-{
-    if (!value) throw std::runtime_error(message);
-}
+using uml::testing::require;
 template<class T> void append(std::vector<std::uint8_t>& data, const T& value)
 {
     const auto size = data.size();

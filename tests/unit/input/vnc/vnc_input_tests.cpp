@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "require.hpp"
 #include "vnc_input.hpp"
 
 #include <array>
@@ -11,11 +12,7 @@ namespace {
 
 struct SinkFailure final {};
 
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
+using uml::testing::require;
 
 void keySymbolsMapToStableGuestCodes()
 {

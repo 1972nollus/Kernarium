@@ -2,6 +2,7 @@
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
 #include "native_window_test_support.hpp"
+#include "require.hpp"
 #include "runtime/native_kernel_layout.hpp"
 #include "scratch_backing.hpp"
 #include "testing.hpp"
@@ -35,11 +36,7 @@ constexpr std::string_view backing_name = "uml-native-admission-XXXXXX";
  * from becoming an earlier, independent serialization boundary. */
 constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 /* A run maps its kernel window where an embedded kernel's run does; default
  * options give the guest 256 MiB. */

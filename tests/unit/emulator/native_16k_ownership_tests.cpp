@@ -11,6 +11,7 @@
 #include "domain_registry_testing.hpp"
 #include "native_retry_validation_test_support.hpp"
 #include "native_window_test_support.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
@@ -47,11 +48,7 @@ using namespace std::chrono_literals;
 
 constexpr std::size_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 /* Guest pages whose first bytes start as `page_values`. */
 class TemporaryBacking final : public uml::testing::ScratchBacking {
@@ -1024,7 +1021,7 @@ void test_direct_retry_validates_ownership_mapping_and_permissions(
 {
 	TemporaryBacking backing{0x93};
 	uml::testing::exercise_native_retry_direct(arena.page(24),
-		arena.page(25), arena.page(26), page_size, backing.descriptor(), require);
+		arena.page(25), arena.page(26), page_size, backing.descriptor());
 }
 
 struct TwoPageRollbackState final {

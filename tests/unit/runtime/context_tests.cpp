@@ -2,6 +2,7 @@
 #include "allocation_failure.hpp"
 #include "cpu/engine.hpp"
 #include "memory/domain_contract.hpp"
+#include "require.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
 #include "scratch_backing.hpp"
@@ -35,11 +36,7 @@ namespace {
 using namespace std::chrono_literals;
 using EngineKind = uml::cpu::EngineKind;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 class DestructionCounterEngine final : public uml::cpu::CpuEngine {
 public:
