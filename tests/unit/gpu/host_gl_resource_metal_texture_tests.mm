@@ -12,6 +12,7 @@
 // writes a pattern, waits for a fence, and then copies the named texture on a
 // Metal queue of its own, as the display's draw does.
 
+#include "gpu_metal_test_support.hpp"
 #include "require.hpp"
 #include "virgl_renderer.hpp"
 
@@ -135,28 +136,9 @@ void checkResource(
     require(bgra || texture.pixelFormat == MTLPixelFormatRGBA8Unorm,
         "the texture does not store 8-bit RGBA channels");
 
-    id<MTLCommandQueue> queue = [device newCommandQueue];
-    id<MTLBuffer> copy = [device newBufferWithLength:backing.size()
-                                             options:MTLResourceStorageModeShared];
-    require(queue != nil && copy != nil, "the copy could not be prepared");
-    id<MTLCommandBuffer> commands = [queue commandBuffer];
-    id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-    [blit copyFromTexture:texture
-                sourceSlice:0
-                sourceLevel:0
-               sourceOrigin:MTLOriginMake(0, 0, 0)
-                 sourceSize:MTLSizeMake(width, height, 1)
-                   toBuffer:copy
-          destinationOffset:0
-     destinationBytesPerRow:rowBytes
-   destinationBytesPerImage:backing.size()];
-    [blit endEncoding];
-    [commands commit];
-    [commands waitUntilCompleted];
-    require(commands.status == MTLCommandBufferStatusCompleted,
-        "the texture copy failed");
-
-    const auto* stored = static_cast<const std::uint8_t*>(copy.contents);
+    const auto copy = uml::gpu::testing::readTexture(
+        [device newCommandQueue], texture, width, height, rowBytes);
+    const auto* stored = copy.data();
     for (std::uint32_t row = 0; row < height; ++row) {
         const std::uint32_t y = y0Top ? height - 1U - row : row;
         for (std::uint32_t x = 0; x < width; ++x) {
