@@ -100,6 +100,25 @@ const Structure* readStructure(std::span<const std::uint8_t> bytes)
     return reinterpret_cast<const Structure*>(bytes.data());
 }
 
+/* The size of a control command's successful reply. GET_CAPSET's reply also
+ * carries the capability set after its header, which capset() checks. */
+[[nodiscard]] constexpr std::size_t replySize(
+    protocol::GpuCommand command) noexcept
+{
+    switch (command) {
+    case protocol::GpuCommand::getDisplayInfo:
+        return sizeof(protocol::GpuDisplayInfo);
+    case protocol::GpuCommand::getEdid:
+        return sizeof(protocol::GpuEdid);
+    case protocol::GpuCommand::getCapsetInfo:
+        return sizeof(protocol::GpuCapsetInfo);
+    case protocol::GpuCommand::resourceMapBlob:
+        return sizeof(protocol::GpuMapInfo);
+    default:
+        return sizeof(protocol::GpuControlHeader);
+    }
+}
+
 /* Two formats that differ only in whether the fourth byte is alpha or
  * padding store their colour channels identically. */
 [[nodiscard]] std::uint32_t formatLayout(std::uint32_t format) noexcept
@@ -738,7 +757,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
 }
 
 std::vector<std::uint8_t> VirtioGpuDevice::capset(
-    const protocol::GpuGetCapset& request) const
+    const protocol::GpuGetCapset& request,
+    std::size_t responseCapacity) const
 {
     if (request.capsetId != protocol::virglCapsetId &&
         request.capsetId != protocol::virgl2CapsetId &&
@@ -750,9 +770,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::capset(
     if (const auto* error = std::get_if<protocol::GpuResponse>(&result))
         return response(request.header, *error);
     const auto& virglCapset = std::get<VirglRenderer::Capset>(result);
-    if (request.version > virglCapset.maximumVersion)
+    if (request.version > virglCapset.maximumVersion ||
+        sizeof(protocol::GpuControlHeader) + virglCapset.data.size() >
+            responseCapacity) {
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
+    }
 
     auto header = request.header;
     header.type = static_cast<std::uint32_t>(protocol::GpuResponse::okCapset);
@@ -772,19 +795,27 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     std::span<const std::uint8_t> request,
     bool cursorQueue)
 {
-    return processInternal(request, cursorQueue, 0, nullptr, nullptr);
+    return processInternal(
+        request,
+        cursorQueue,
+        std::numeric_limits<std::size_t>::max(),
+        0,
+        nullptr,
+        nullptr);
 }
 
 VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
-    std::uint64_t fenceCookie)
+    std::uint64_t fenceCookie,
+    std::size_t responseCapacity)
 {
     std::optional<DeferredFence> deferredFence;
     std::optional<std::uint32_t> destroyedContextId;
     auto response = processInternal(
         request,
         cursorQueue,
+        responseCapacity,
         fenceCookie,
         &deferredFence,
         &destroyedContextId);
@@ -850,6 +881,7 @@ int VirtioGpuDevice::contextFenceStatus(
 std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
+    std::size_t responseCapacity,
     std::uint64_t fenceCookie,
     std::optional<DeferredFence>* deferredFence,
     std::optional<std::uint32_t>* destroyedContextId)
@@ -880,6 +912,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         return {};
     }
 
+    /* A reply the guest left no room for is refused before the command runs,
+     * so the command changes nothing. The refusal is a bare header, which the
+     * caller has checked fits. */
+    if (responseCapacity < replySize(command))
+        return response(*header, protocol::GpuResponse::errorInvalidParameter);
+
     switch (command) {
     case protocol::GpuCommand::getDisplayInfo:
         return displayInfo(*header);
@@ -908,7 +946,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         if (capsetRequest == nullptr)
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
-        return capset(*capsetRequest);
+        return capset(*capsetRequest, responseCapacity);
     }
 
     case protocol::GpuCommand::contextCreate: {

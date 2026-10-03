@@ -162,9 +162,11 @@ public:
         std::size_t responseCapacity) override
     {
         const bool cursorQueue = index == protocol::gpuCursorQueue;
+        /* A control request with no room even for an error header does not
+         * run: it completes with nothing written. */
         if (!cursorQueue &&
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
-            throw std::runtime_error("short Virtio-GPU response buffer");
+            return {.action = uml::virtio::VhostUserQueueAction::complete};
         }
         if (!fences_.empty() && !fences_.orderingRelaxed() &&
             !gpu_.canProcessWhileFencesPending(request, cursorQueue)) {
@@ -181,9 +183,7 @@ public:
             armFenceTimer();
 
         auto result = gpu_.processWithDeferredFence(
-            request, cursorQueue, requestId);
-        if (result.response.size() > responseCapacity)
-            throw std::runtime_error("short Virtio-GPU response buffer");
+            request, cursorQueue, requestId, responseCapacity);
         if (result.destroyedContextId) {
             /* The context's held commands complete on the next tick. */
             const bool held = !fences_.empty();

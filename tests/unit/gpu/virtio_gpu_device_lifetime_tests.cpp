@@ -657,6 +657,9 @@ private:
         retiredContextFences;
 };
 
+/* The writable bytes a guest leaves a command whose reply is a bare header. */
+constexpr std::size_t headerReplyCapacity = sizeof(protocol::GpuControlHeader);
+
 template<typename Request>
 [[nodiscard]] std::span<const std::uint8_t> requestBytes(
     const Request& request)
@@ -849,8 +852,8 @@ AllocationSweep failEachAllocationBeforeDeferral(
     return failEachAllocationOf(
         [&]() -> std::optional<std::vector<std::uint8_t>> {
             fences.reserveDefer();
-            auto result =
-                device.processWithDeferredFence(request, false, requestId);
+            auto result = device.processWithDeferredFence(
+                request, false, requestId, headerReplyCapacity);
             if (!result.fence)
                 return std::move(result.response);
             fences.defer(
@@ -1656,7 +1659,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
         protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
     waitSubmit.header.ringIndex = 1;
     const auto pending = device.processWithDeferredFence(
-        requestBytes(waitSubmit), false, 41);
+        requestBytes(waitSubmit), false, 41, headerReplyCapacity);
     require(pending.fence.has_value());
     require(device.contextFenceStatus(*pending.fence) == EBUSY);
 
@@ -1750,7 +1753,10 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
         submit.header.contextId = firstContext.header.contextId;
         submit.header.fenceId = guestFenceIds[index];
         const auto result = device.processWithDeferredFence(
-            requestBytes(submit), false, hostFenceCookies[index]);
+            requestBytes(submit),
+            false,
+            hostFenceCookies[index],
+            headerReplyCapacity);
         require(result.fence.has_value());
         require(result.fence->contextId == firstContext.header.contextId);
         require(result.fence->ringIndex == 0);
@@ -1783,7 +1789,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
     otherSubmit.header.contextId = secondContext.header.contextId;
     otherSubmit.header.fenceId = 1;
     const auto otherResult = device.processWithDeferredFence(
-        requestBytes(otherSubmit), false, 20);
+        requestBytes(otherSubmit), false, 20, headerReplyCapacity);
     require(otherResult.fence.has_value());
     require(device.contextFenceStatus(*otherResult.fence) == EBUSY);
     dependencies.retireContextFence(secondContext.header.contextId, 0, 20);
@@ -1798,7 +1804,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
     nonzeroRing.header.ringIndex = 1;
     nonzeroRing.header.fenceId = 7;
     const auto synchronous = device.processWithDeferredFence(
-        requestBytes(nonzeroRing), false, 21);
+        requestBytes(nonzeroRing), false, 21, headerReplyCapacity);
     require(!synchronous.fence.has_value());
     require(responseType(synchronous.response) ==
         protocol::GpuResponse::okNoData);
@@ -1812,7 +1818,7 @@ void deferredFencesUseHostTimelineAndMergedRetirement()
     dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
     const auto submitsBeforeFailure = dependencies.submitCount;
     const auto failure = device.processWithDeferredFence(
-        requestBytes(failedFence), false, 22);
+        requestBytes(failedFence), false, 22, headerReplyCapacity);
     require(!failure.fence.has_value());
     require(responseType(failure.response) ==
         protocol::GpuResponse::errorUnspecified);
@@ -2472,7 +2478,7 @@ void venusBlobsAndFencesUseStandardWireState()
     submit.header.fenceId = 0x1234;
     constexpr std::uint64_t venusFenceCookie = 0x5aa5;
     const auto deferred = device.processWithDeferredFence(
-        requestBytes(submit), false, venusFenceCookie);
+        requestBytes(submit), false, venusFenceCookie, headerReplyCapacity);
     require(responseType(deferred.response) ==
         protocol::GpuResponse::okNoData);
     require(deferred.fence.has_value());
@@ -2999,7 +3005,7 @@ void aDestroyedContextsHeldFencesComplete()
         submit.header.contextId = contextId;
         submit.header.fenceId = requestId;
         auto result = device.processWithDeferredFence(
-            requestBytes(submit), false, requestId);
+            requestBytes(submit), false, requestId, headerReplyCapacity);
         require(result.fence.has_value());
         require(!result.destroyedContextId.has_value());
         fences.defer(
@@ -3028,8 +3034,8 @@ void aDestroyedContextsHeldFencesComplete()
     destroy.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
     destroy.contextId = exiting.header.contextId;
-    const auto destroyed =
-        device.processWithDeferredFence(requestBytes(destroy), false, 0);
+    const auto destroyed = device.processWithDeferredFence(
+        requestBytes(destroy), false, 0, headerReplyCapacity);
     require(responseType(destroyed.response) ==
         protocol::GpuResponse::okNoData);
     require(!destroyed.fence.has_value());
@@ -3071,8 +3077,8 @@ void aDestroyedContextsHeldFencesComplete()
     require(!fences.takeCompletion(completion));
 
     /* A destroy the device refuses reports no context. */
-    const auto refused =
-        device.processWithDeferredFence(requestBytes(destroy), false, 0);
+    const auto refused = device.processWithDeferredFence(
+        requestBytes(destroy), false, 0, headerReplyCapacity);
     require(responseType(refused.response) ==
         protocol::GpuResponse::errorInvalidContext);
     require(!refused.destroyedContextId.has_value());
@@ -3227,6 +3233,93 @@ void deferredCommandsAllocateBeforeTheDeviceCommits()
     }
 }
 
+/* The vhost-user server passes the device the bytes the guest left for the
+ * reply. A command whose reply would not fit there is refused before it runs,
+ * since the server could not deliver the reply: a map that ran anyway would
+ * already have queued its shared-memory action and claimed its pages. Only
+ * the reply's whole size is enough. */
+void repliesThatDoNotFitAreRefusedBeforeTheCommandRuns()
+{
+    FakeGpuDependencies dependencies;
+    constexpr std::uint32_t dotsPerInch = 96;
+    VirtioGpuDevice device {
+        dependencies, noGuestReads, noGuestMappings, dotsPerInch};
+    const auto context = createContext(0x921, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+    protocol::GpuResourceCreateBlob create {};
+    create.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0x922;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+    requireOk(device, requestBytes(create));
+
+    protocol::GpuControlHeader displayInfo {};
+    displayInfo.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
+    protocol::GpuGetEdid edid {};
+    edid.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
+    edid.scanoutId = protocol::primaryScanoutId;
+    protocol::GpuGetCapsetInfo capsetInfo {};
+    capsetInfo.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getCapsetInfo);
+    capsetInfo.capsetIndex = protocol::virgl2CapsetIndex;
+    protocol::GpuGetCapset capset {};
+    capset.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::getCapset);
+    capset.capsetId = protocol::virgl2CapsetId;
+    capset.version = 1;
+    protocol::GpuResourceMapBlob map {};
+    map.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::resourceMapBlob);
+    map.resourceId = create.resourceId;
+
+    struct Command {
+        std::span<const std::uint8_t> request;
+        std::size_t replySize;
+        protocol::GpuResponse success;
+    };
+    const std::array commands {
+        Command {requestBytes(displayInfo), sizeof(protocol::GpuDisplayInfo),
+            protocol::GpuResponse::okDisplayInfo},
+        Command {requestBytes(edid), sizeof(protocol::GpuEdid),
+            protocol::GpuResponse::okEdid},
+        Command {requestBytes(capsetInfo), sizeof(protocol::GpuCapsetInfo),
+            protocol::GpuResponse::okCapsetInfo},
+        Command {requestBytes(capset),
+            sizeof(protocol::GpuControlHeader) +
+                dependencies.capset(capset.capsetId).data.size(),
+            protocol::GpuResponse::okCapset},
+        Command {requestBytes(map), sizeof(protocol::GpuMapInfo),
+            protocol::GpuResponse::okMapInfo},
+    };
+    for (const auto& command : commands) {
+        for (const std::size_t capacity :
+             {headerReplyCapacity, command.replySize - 1}) {
+            const auto refused = device.processWithDeferredFence(
+                command.request, false, 0, capacity);
+            require(refused.response.size() <= capacity);
+            require(responseType(refused.response) ==
+                protocol::GpuResponse::errorInvalidParameter);
+            require(!device.takeSharedMemoryAction().has_value());
+        }
+        const auto answered = device.processWithDeferredFence(
+            command.request, false, 0, command.replySize);
+        require(answered.response.size() == command.replySize);
+        require(responseType(answered.response) == command.success);
+    }
+
+    /* The refused maps left the blob unmapped: only the map that fit queued
+     * an action. */
+    const auto action = device.takeSharedMemoryAction();
+    require(action.has_value());
+    require(!device.takeSharedMemoryAction().has_value());
+    device.completeSharedMemoryAction(action->actionId, true);
+}
+
 } // namespace
 
 } // namespace uml::gpu::testing
@@ -3258,6 +3351,7 @@ int main()
     unanswerableCapabilityQueriesFailOnlyThemselves();
     venusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
+    repliesThatDoNotFitAreRefusedBeforeTheCommandRuns();
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
