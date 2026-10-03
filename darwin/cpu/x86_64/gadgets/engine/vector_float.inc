@@ -1,76 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Packed and scalar SSE/AVX floating-point arithmetic and comparisons. */
 
-/* x86 detects underflow after rounding: a result is tiny when, rounded to
- * full precision as if the exponent were unbounded, it lies below the
- * smallest normal. A denormal result always is. A product or quotient the
- * host rounded up to exactly the smallest normal is when the same operation,
- * with the first source scaled up into the normal range, rounds below the
- * threshold scaled alike. Results that small bound the first source, so the
- * scaling is exact, and the scaled operation's flags are discarded.
- *
- * v18 = all ones in the packed lanes whose scaled result is tiny. Uses v16,
- * x14 and x15. */
-.macro vector_fp_scaled_tiny operation, element, left, right
-	mrs x15, fpsr
-	.if \element == 32
-	mov w14, #0x5f800000
-	dup v18.4s, w14
-	fmul v18.4s, v\left\().4s, v18.4s
-	.ifc \operation,mul
-	fmul v18.4s, v18.4s, v\right\().4s
-	.else
-	fdiv v18.4s, v18.4s, v\right\().4s
-	.endif
-	shl v18.4s, v18.4s, #1
-	movi v16.4s, #0x41, lsl #24
-	cmhi v18.4s, v16.4s, v18.4s
-	.else
-	mov x14, #0x5ff0000000000000
-	dup v18.2d, x14
-	fmul v18.2d, v\left\().2d, v18.2d
-	.ifc \operation,mul
-	fmul v18.2d, v18.2d, v\right\().2d
-	.else
-	fdiv v18.2d, v18.2d, v\right\().2d
-	.endif
-	shl v18.2d, v18.2d, #1
-	mov x14, #0x4020000000000000
-	dup v16.2d, x14
-	cmhi v18.2d, v16.2d, v18.2d
-	.endif
-	msr fpsr, x15
-.endm
-
-/* MXCSR.FTZ: replace each tiny lane of the packed v`output` with a zero of
- * its sign. A sum or difference that small is exact, so only a denormal one
- * is tiny. */
-.macro vector_fp_flush_tiny_packed operation, element, output, left, right
-	.set Lx86_vector_fp_rounded\@, 0
-	.ifc \operation,mul
-	.set Lx86_vector_fp_rounded\@, 1
-	.endif
-	.ifc \operation,div
-	.set Lx86_vector_fp_rounded\@, 1
-	.endif
-	.if !Lx86_vector_fp_rounded\@
-	simd_flush_denormals \output, \element
-	.else
-	simd_small_lanes \element, \output, 17, 18
-	vector_fp_scaled_tiny \operation, \element, \left, \right
-	and v17.16b, v17.16b, v18.16b
-	.if \element == 32
-	movi v16.4s, #0x80, lsl #24
-	.else
-	mov x14, #0x8000000000000000
-	dup v16.2d, x14
-	.endif
-	and v16.16b, v\output\().16b, v16.16b
-	bsl v17.16b, v16.16b, v\output\().16b
-	mov v\output\().16b, v17.16b
-	.endif
-.endm
-
 /* The same for the scalar result in lane 0 of v6, from v0 and v1, which is
  * not zero and at most the smallest normal in magnitude. */
 .macro vector_fp_flush_tiny_scalar operation, element
@@ -354,93 +284,6 @@ Lx86_vector_fp_tiny_done\@:
 	.endif
 .endm
 
-.macro vector_fp_x86_nan element, output, left, right, binary, scalar
-	/* x86 returns the first source quieted when it is a NaN, else the
-	 * second, else -- for a NaN the operation generated -- the negative
-	 * quiet-NaN indefinite. The host prefers a signaling NaN of either
-	 * source and generates its positive default NaN, and its result is right
-	 * only where just the second source is a NaN.
-	 */
-	.if \scalar
-	.if \element == 32
-	fcmp s\output, s\output
-	b.vc Lx86_vector_fp_nan_done\@
-	.if \binary
-	fcmp s\left, s\left
-	b.vs Lx86_vector_fp_first_nan\@
-	.endif
-	fcmp s\right, s\right
-	b.vs Lx86_vector_fp_nan_done\@
-	mov w14, #0xffc00000
-	fmov s\output, w14
-	b Lx86_vector_fp_nan_done\@
-	.if \binary
-Lx86_vector_fp_first_nan\@:
-	fmov w14, s\left
-	orr w14, w14, #0x00400000
-	fmov s\output, w14
-	.endif
-	.else
-	fcmp d\output, d\output
-	b.vc Lx86_vector_fp_nan_done\@
-	.if \binary
-	fcmp d\left, d\left
-	b.vs Lx86_vector_fp_first_nan\@
-	.endif
-	fcmp d\right, d\right
-	b.vs Lx86_vector_fp_nan_done\@
-	mov x14, #0xfff8000000000000
-	fmov d\output, x14
-	b Lx86_vector_fp_nan_done\@
-	.if \binary
-Lx86_vector_fp_first_nan\@:
-	fmov x14, d\left
-	orr x14, x14, #0x0008000000000000
-	fmov d\output, x14
-	.endif
-	.endif
-	.else
-	.if \element == 32
-	fcmeq v17.4s, v\output\().4s, v\output\().4s
-	uminv s18, v17.4s
-	fmov w14, s18
-	cbnz w14, Lx86_vector_fp_nan_done\@
-	mov w14, #0xffc00000
-	dup v16.4s, w14
-	fcmeq v18.4s, v\right\().4s, v\right\().4s
-	.if \binary
-	fcmeq v19.4s, v\left\().4s, v\left\().4s
-	.endif
-	.else
-	fcmeq v17.2d, v\output\().2d, v\output\().2d
-	uminv s18, v17.4s
-	fmov w14, s18
-	cbnz w14, Lx86_vector_fp_nan_done\@
-	mov x14, #0xfff8000000000000
-	dup v16.2d, x14
-	fcmeq v18.2d, v\right\().2d, v\right\().2d
-	.if \binary
-	fcmeq v19.2d, v\left\().2d, v\left\().2d
-	.endif
-	.endif
-	bsl v18.16b, v16.16b, v\output\().16b
-	.if \binary
-	.if \element == 32
-	movi v16.4s, #0x40, lsl #16
-	.else
-	mov x14, #0x0008000000000000
-	dup v16.2d, x14
-	.endif
-	orr v16.16b, v\left\().16b, v16.16b
-	bsl v19.16b, v18.16b, v16.16b
-	bsl v17.16b, v\output\().16b, v19.16b
-	.else
-	bsl v17.16b, v\output\().16b, v18.16b
-	.endif
-	mov v\output\().16b, v17.16b
-	.endif
-Lx86_vector_fp_nan_done\@:
-.endm
 
 /* A result with an exponent of all ones or one below takes the cold path,
  * which leaves while the gadgets check SIMD exceptions -- the path for any
@@ -458,7 +301,7 @@ Lx86_vector_fp_nan_ready\@:
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
 Lx86_vector_fp_special\@:
 	simd_leave_if_checking
-	vector_fp_x86_nan \element, \output, \left, \right, \binary, \scalar
+	simd_x86_nan \element, \output, \left, \right, \binary, \scalar
 	b Lx86_vector_fp_nan_ready\@
 	.popsection
 .endm
@@ -531,9 +374,9 @@ Lx86_vector_fp_tiny\@:
 	.if \scalar
 	vector_fp_flush_tiny_scalar \operation, \element
 	.else
-	vector_fp_flush_tiny_packed \operation, \element, 4, 0, 1
+	simd_flush_tiny_packed \operation, \element, 4, 0, 1
 	.if \width == 256
-	vector_fp_flush_tiny_packed \operation, \element, 5, 2, 3
+	simd_flush_tiny_packed \operation, \element, 5, 2, 3
 	.endif
 	.endif
 	b Lx86_vector_fp_ftz_ready\@
@@ -892,11 +735,8 @@ vector_fp_predicate 15
 .purgem vector_fp_flush_to_zero
 .purgem vector_fp_fix_generated_nan
 .purgem vector_fp_fix_nan
-.purgem vector_fp_x86_nan
 .purgem vector_fp_packed_value
 .purgem vector_fp_regular_value
 .purgem vector_fp_compare_mask
 .purgem vector_fp_cmp
 .purgem vector_fp_flush_tiny_scalar
-.purgem vector_fp_flush_tiny_packed
-.purgem vector_fp_scaled_tiny

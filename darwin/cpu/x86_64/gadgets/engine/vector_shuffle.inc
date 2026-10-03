@@ -1,6 +1,78 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Packed floating-point unpack, shuffle, horizontal, and add/sub layouts. */
 
+/* HADD, HSUB and ADDSUB follow x86's NaN, DAZ and FTZ rules (see
+ * vector_float.inc). Their first operand is the lower element of each
+ * pair, or the first source for ADDSUB, as x86 hardware chooses between two
+ * NaNs; the SDM ranks only distinct source operands. A sum or difference
+ * that is tiny is exact, so FTZ flushes denormal results alone. */
+.macro vector_horizontal_inputs element, width
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_horizontal_inputs_ready\@
+	simd_flush_denormals 0, \element
+	simd_flush_denormals 1, \element
+	.if \width == 256
+	simd_flush_denormals 2, \element
+	simd_flush_denormals 3, \element
+	.endif
+Lx86_vector_horizontal_inputs_ready\@:
+.endm
+
+/* Repair the NaN results of v`output` from the pairs of v`left` and
+ * v`right`. Uses v16 to v22 and x14. */
+.macro vector_horizontal_nan operation, element, output, left, right
+	.ifc \operation,addsub
+	simd_x86_nan \element, \output, \left, \right, 1, 0
+	.else
+	.if \element == 32
+	uzp1 v21.4s, v\left\().4s, v\right\().4s
+	uzp2 v22.4s, v\left\().4s, v\right\().4s
+	.else
+	uzp1 v21.2d, v\left\().2d, v\right\().2d
+	uzp2 v22.2d, v\left\().2d, v\right\().2d
+	.endif
+	simd_x86_nan \element, \output, 21, 22, 1, 0
+	.endif
+.endm
+
+.macro vector_horizontal_results operation, element, width
+	simd_special_lanes \element, 4
+	.if \width == 256
+	cbnz w14, Lx86_vector_horizontal_special\@
+	simd_special_lanes \element, 5
+	.endif
+	cbz w14, Lx86_vector_horizontal_nan_ready\@
+Lx86_vector_horizontal_special\@:
+	b Lx86_vector_horizontal_cold\@
+Lx86_vector_horizontal_nan_ready\@:
+	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
+	simd_small_lanes \element, 4, 17, 18
+	.if \width == 256
+	simd_small_lanes \element, 5, 16, 18
+	orr v17.16b, v17.16b, v16.16b
+	.endif
+	umaxv s17, v17.4s
+	fmov w14, s17
+	cbz w14, Lx86_vector_horizontal_ftz_ready\@
+	b Lx86_vector_horizontal_tiny\@
+Lx86_vector_horizontal_ftz_ready\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_horizontal_cold\@:
+	simd_leave_if_checking
+	vector_horizontal_nan \operation, \element, 4, 0, 1
+	.if \width == 256
+	vector_horizontal_nan \operation, \element, 5, 2, 3
+	.endif
+	b Lx86_vector_horizontal_nan_ready\@
+Lx86_vector_horizontal_tiny\@:
+	simd_flush_denormals 4, \element
+	.if \width == 256
+	simd_flush_denormals 5, \element
+	.endif
+	b Lx86_vector_horizontal_ftz_ready\@
+	.popsection
+.endm
+
 .macro vector_shuffle_ps_index lane, shift, right
 	lsr w16, w13, #\shift
 	and w16, w16, #3
@@ -84,6 +156,7 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	.endif
 	.endif
 	.ifc \operation,hadd
+	vector_horizontal_inputs \element, \width
 	.if \element == 32
 	faddp v4.4s, v0.4s, v1.4s
 	.if \width == 256
@@ -99,9 +172,10 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	mov v5.d[1], v6.d[0]
 	.endif
 	.endif
-	simd_check_result \element, \width
+	vector_horizontal_results \operation, \element, \width
 	.endif
 	.ifc \operation,hsub
+	vector_horizontal_inputs \element, \width
 	.if \element == 32
 	rev64 v6.4s, v0.4s
 	fsub v6.4s, v0.4s, v6.4s
@@ -129,9 +203,10 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	mov v5.d[1], v6.d[0]
 	.endif
 	.endif
-	simd_check_result \element, \width
+	vector_horizontal_results \operation, \element, \width
 	.endif
 	.ifc \operation,addsub
+	vector_horizontal_inputs \element, \width
 	.if \element == 32
 	fsub v4.4s, v0.4s, v1.4s
 	fadd v6.4s, v0.4s, v1.4s
@@ -153,7 +228,7 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	mov v5.d[1], v6.d[1]
 	.endif
 	.endif
-	simd_check_result \element, \width
+	vector_horizontal_results \operation, \element, \width
 	.endif
 .endm
 
@@ -246,4 +321,7 @@ vector_shuffle_family addsub, 64, 256
 .purgem vector_shuffle_memory
 .purgem vector_shuffle_register
 .purgem vector_shuffle_body
+.purgem vector_horizontal_results
+.purgem vector_horizontal_nan
+.purgem vector_horizontal_inputs
 .purgem vector_shuffle_ps_index

@@ -134,6 +134,7 @@ private:
 
 enum class Op : std::uint8_t {
 	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma, convert,
+	hadd, hsub, addsub, dot,
 };
 
 [[nodiscard]] std::uint64_t host32(Op op, std::uint32_t a, std::uint32_t b)
@@ -641,6 +642,8 @@ struct Instruction final {
 	Conversion conversion{};
 	bool truncate{};
 	unsigned bits{};
+	/* DPPS and DPPD: the immediate. */
+	std::uint8_t control{};
 };
 
 void add_arithmetic(std::vector<Instruction> &list)
@@ -790,12 +793,66 @@ void add_conversions(std::vector<Instruction> &list)
 	}
 }
 
+/* HADD, HSUB and ADDSUB: SSE3 xmm0 = xmm0 op xmm1, and VEX.256 ymm0 = ymm1
+ * op ymm2. */
+void add_horizontal(std::vector<Instruction> &list)
+{
+	struct Family {
+		std::string_view name;
+		Op op;
+		std::uint8_t opcode;
+	};
+	static constexpr std::array<Family, 3> families{{
+		{"hadd", Op::hadd, 0x7c}, {"hsub", Op::hsub, 0x7d},
+		{"addsub", Op::addsub, 0xd0},
+	}};
+	for (const auto &family : families)
+	for (const bool dbl : {false, true}) {
+		const std::string name = std::string{family.name} +
+			(dbl ? "pd" : "ps");
+		list.push_back({name, family.op, dbl, Shape::sse_packed,
+			{static_cast<std::uint8_t>(dbl ? 0x66 : 0xf2), 0x0f,
+				family.opcode, 0xc1}});
+		list.push_back({name, family.op, dbl, Shape::vex256,
+			{0xc5, static_cast<std::uint8_t>(dbl ? 0xf5 : 0xf7),
+				family.opcode, 0xc2}});
+	}
+}
+
+/* DPPS and DPPD with a few immediates: SSE4.1 xmm0 = dp(xmm0, xmm1), and
+ * VEX ymm0/xmm0 = dp(ymm1, ymm2). */
+void add_dot_products(std::vector<Instruction> &list)
+{
+	for (const std::uint8_t control : {0xff, 0x7d, 0xa3, 0x3f}) {
+		Instruction legacy{"dpps", Op::dot, false, Shape::sse_packed,
+			{0x66, 0x0f, 0x3a, 0x40, 0xc1, control}};
+		legacy.control = control;
+		list.push_back(legacy);
+		Instruction wide{"dpps", Op::dot, false, Shape::vex256,
+			{0xc4, 0xe3, 0x75, 0x40, 0xc2, control}};
+		wide.control = control;
+		list.push_back(wide);
+	}
+	for (const std::uint8_t control : {0x33, 0x31, 0x12, 0x23}) {
+		Instruction legacy{"dppd", Op::dot, true, Shape::sse_packed,
+			{0x66, 0x0f, 0x3a, 0x41, 0xc1, control}};
+		legacy.control = control;
+		list.push_back(legacy);
+		Instruction narrow{"dppd", Op::dot, true, Shape::vex128,
+			{0xc4, 0xe3, 0x71, 0x41, 0xc2, control}};
+		narrow.control = control;
+		list.push_back(narrow);
+	}
+}
+
 [[nodiscard]] std::vector<Instruction> instructions()
 {
 	std::vector<Instruction> list;
 	add_arithmetic(list);
 	add_fused(list);
 	add_conversions(list);
+	add_horizontal(list);
+	add_dot_products(list);
 	return list;
 }
 
@@ -996,6 +1053,54 @@ void model_conversion(const Instruction &instruction, const std::byte *input,
 	}
 }
 
+/* x86's DPPS or DPPD, step by step on each 128-bit half: the selected
+ * products, zero elsewhere, then their sums with x86's NaN, DAZ and FTZ
+ * rules at every step. Each result lane sums in its own order, which picks
+ * among NaNs as x86 hardware does: for DPPS lane i adds p[i ^ 1] + p[i] and
+ * then that sum + the other pair's, for DPPD p[i] + p[i ^ 1]. */
+void model_dot(const Instruction &instruction, const std::byte *input,
+	bool daz, bool ftz, std::byte *output)
+{
+	const Format f{instruction.dbl};
+	const bool vex = instruction.shape != Shape::sse_packed;
+	const auto *first = vex ? input + 32 : input;
+	const auto *second = vex ? input + 64 : input + 32;
+	const std::size_t per_half = instruction.dbl ? 2U : 4U;
+	const std::size_t halves = instruction.shape == Shape::vex256 ? 2U : 1U;
+	if (vex)
+		std::memset(output, 0, 32);
+	else
+		std::memcpy(output, input, 32);
+	for (std::size_t half = 0; half < halves; ++half) {
+		std::array<std::uint64_t, 4> products{};
+		for (std::size_t index = 0; index < per_half; ++index) {
+			const auto lane_index = half * per_half + index;
+			if (((instruction.control >> (4U + index)) & 1U) != 0)
+				products[index] = x86_lane(f, Op::mul,
+					lane(first, f.dbl, lane_index),
+					lane(second, f.dbl, lane_index), daz, ftz);
+		}
+		std::array<std::uint64_t, 4> results{};
+		if (instruction.dbl) {
+			for (std::size_t index = 0; index < 2; ++index)
+				results[index] = x86_lane(f, Op::add, products[index],
+					products[index ^ 1U], daz, ftz);
+		} else {
+			std::array<std::uint64_t, 4> pairs{};
+			for (std::size_t index = 0; index < 4; ++index)
+				pairs[index] = x86_lane(f, Op::add, products[index ^ 1U],
+					products[index], daz, ftz);
+			for (std::size_t index = 0; index < 4; ++index)
+				results[index] = x86_lane(f, Op::add, pairs[index],
+					pairs[index ^ 2U], daz, ftz);
+		}
+		for (std::size_t index = 0; index < per_half; ++index)
+			set_lane(output, f.dbl, half * per_half + index,
+				((instruction.control >> index) & 1U) != 0 ?
+					results[index] : 0U);
+	}
+}
+
 /* The model's ymm0 for one iteration. */
 void model_result(const Instruction &instruction, const std::byte *input,
 	bool daz, bool ftz, std::byte *output)
@@ -1022,6 +1127,10 @@ void model_result(const Instruction &instruction, const std::byte *input,
 		const auto *source = instruction.op == Op::fma ? input : input + 32;
 		std::memcpy(output, source, 16);
 	}
+	if (instruction.op == Op::dot) {
+		model_dot(instruction, input, daz, ftz, output);
+		return;
+	}
 	for (std::size_t index = 0; index < computed; ++index) {
 		std::uint64_t value{};
 		if (instruction.op == Op::fma) {
@@ -1039,6 +1148,31 @@ void model_result(const Instruction &instruction, const std::byte *input,
 				negate_addend = (index & 1U) != 0;
 			value = x86_fused_lane(f, operand(0), operand(1), operand(2),
 				negate_product, negate_addend, daz, ftz);
+		} else if (instruction.op == Op::hadd ||
+			instruction.op == Op::hsub || instruction.op == Op::addsub) {
+			const auto *first = vex ? input + 32 : input;
+			const auto *second = vex ? input + 64 : input + 32;
+			/* Within each 128-bit half: HADD and HSUB combine
+			 * adjacent pairs of the first source, then of the second,
+			 * the lower element first; ADDSUB subtracts in even lanes. */
+			const std::size_t half = lanes / 2U;
+			const std::size_t base = index / half * half;
+			const std::size_t position = index % half;
+			std::uint64_t a{};
+			std::uint64_t b{};
+			Op op = Op::add;
+			if (instruction.op == Op::addsub) {
+				a = lane(first, f.dbl, index);
+				b = lane(second, f.dbl, index);
+				op = (index & 1U) == 0 ? Op::sub : Op::add;
+			} else {
+				const auto *source = position < half / 2U ? first : second;
+				const std::size_t pair = base + 2U * (position % (half / 2U));
+				a = lane(source, f.dbl, pair);
+				b = lane(source, f.dbl, pair + 1U);
+				op = instruction.op == Op::hadd ? Op::add : Op::sub;
+			}
+			value = x86_lane(f, op, a, b, daz, ftz);
 		} else {
 			const auto *first = vex ? input + 32 : input;
 			const auto *second = vex ? input + 64 : input + 32;
