@@ -67,6 +67,7 @@ a `/16k` or `/4k` suffix holds profile-specific cases.
 
 | Relation | Accepted result |
 | --- | --- |
+| `host-counter-frequency/v1` | expected state with the host's CNTFRQ_EL0 in each MRS CNTFRQ_EL0 destination |
 | `ignore-host-counter-register/v1` | expected state except system-register read destinations |
 | `permitted-exclusive-store-failure/v1` | expected state except the opaque exclusive-monitor value and version |
 

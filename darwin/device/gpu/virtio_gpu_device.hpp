@@ -90,10 +90,16 @@ public:
     [[nodiscard]] std::vector<std::uint8_t> process(
         std::span<const std::uint8_t> request,
         bool cursorQueue);
+    /* A control command whose reply would not fit in `responseCapacity`, the
+     * bytes the guest left for it, is refused with errorInvalidParameter and
+     * changes nothing: before it runs, or for GET_CAPSET, which changes
+     * nothing anyway, once its reply is built. The caller has checked that a
+     * response header fits. */
     [[nodiscard]] ProcessResult processWithDeferredFence(
         std::span<const std::uint8_t> request,
         bool cursorQueue,
-        std::uint64_t fenceCookie);
+        std::uint64_t fenceCookie,
+        std::size_t responseCapacity);
     [[nodiscard]] bool canProcessWhileFencesPending(
         std::span<const std::uint8_t> request,
         bool cursorQueue) const noexcept;

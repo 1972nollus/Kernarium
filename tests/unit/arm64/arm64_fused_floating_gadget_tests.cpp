@@ -103,6 +103,7 @@ DECLARE_SCALAR(nmsub)
 }
 
 using uml::emulator::tests::address;
+using uml::emulator::tests::emitted_entry;
 
 [[nodiscard]] std::uintptr_t scalar_entry(const test::Form &form)
 {
@@ -151,8 +152,8 @@ void direct_operands_and_live_bank()
 			const auto expected_entry = form.scalar ?
 				scalar_entry(form) :
 				vector_entry(form, registers.destination);
-			test::common::require(
-				built.program.words()[0] == expected_entry);
+			test::common::require(built.program.words()[0] ==
+				emitted_entry(expected_entry));
 			test::common::require(
 				built.program.words().size() == 4U);
 			test::common::require(built.program.words()[1] ==

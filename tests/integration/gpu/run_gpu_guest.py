@@ -41,6 +41,7 @@ from guest import (  # noqa: E402
     SESSION_GUEST_PATH,
     SESSION_PARAMETERS_GUEST_PATH,
     SESSION_SCRIPT,
+    remove_emulator_run_directories,
     validate_payload_path,
 )
 
@@ -605,7 +606,10 @@ exit "$status"
 
 
 def terminate_process(process: subprocess.Popen[bytes]) -> None:
+    """Stop the emulator and remove the run directories that one ended with
+    SIGKILL could not."""
     guest_process.stop_process(process, guest_process.EMULATOR_STOP)
+    remove_emulator_run_directories(process.pid)
 
 
 def write_pending(stream: BinaryIO, pending: bytearray) -> None:

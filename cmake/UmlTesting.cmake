@@ -145,6 +145,9 @@ function(uml_finalize_test_preset_binary_target TEST_PRESET AGGREGATE_TARGET)
 endfunction()
 
 set(UML_UNIT_TEST_DEFAULT_TIMEOUT 600)
+# Seconds from the SIGINT CTest sends a test at its timeout to the SIGKILL,
+# enough for a runner to stop its emulator.
+set(UML_TEST_TIMEOUT_GRACE_PERIOD 20)
 
 # Registers one test in SUITE (unit, tooling or integration). Its labels are
 # the suite, then rootfs for a ROOTFS integration test, then the caller's
@@ -190,6 +193,19 @@ function(_uml_add_suite_test SUITE)
         # source directories. Keep validation from recreating source-adjacent
         # __pycache__ debris.
         set(_environment "PYTHONDONTWRITEBYTECODE=1")
+        # A shell runs its traps only once the command it waits for has
+        # finished, so a shell test that times out inside a child cannot
+        # remove its temporary files. They go to a per-test build-tree
+        # directory instead of the host's. Python tests keep $TMPDIR, whose
+        # short paths fit Unix-domain sockets, and unwind on the timeout's
+        # SIGINT.
+        list(GET TEST_COMMAND 0 _command)
+        if(SUITE STREQUAL "tooling" AND
+           _command MATCHES "(^|/)(sh|bash|zsh)$|\\.sh$")
+            set(_scratch "${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
+            file(MAKE_DIRECTORY "${_scratch}")
+            list(APPEND _environment "TMPDIR=${_scratch}")
+        endif()
     endif()
     if(TEST_ROOTFS)
         if(NOT SUITE STREQUAL "integration")
@@ -216,7 +232,12 @@ function(_uml_add_suite_test SUITE)
     endif()
 
     add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
-    set_tests_properties("${TEST_NAME}" PROPERTIES LABELS "${_labels}")
+    # At the timeout, SIGINT rather than SIGKILL lets a Python runner unwind
+    # its cleanups and a shell run its INT trap. The test still fails as a
+    # timeout, and the SIGKILL follows the grace period.
+    set_tests_properties("${TEST_NAME}" PROPERTIES LABELS "${_labels}"
+        TIMEOUT_SIGNAL_NAME SIGINT
+        TIMEOUT_SIGNAL_GRACE_PERIOD "${UML_TEST_TIMEOUT_GRACE_PERIOD}")
     foreach(_property IN ITEMS WORKING_DIRECTORY TIMEOUT PROCESSORS RESOURCE_GROUPS)
         if(TEST_${_property})
             set_tests_properties("${TEST_NAME}" PROPERTIES

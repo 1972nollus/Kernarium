@@ -5,6 +5,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import dataclasses
+import functools
 import os
 import pathlib
 import pty
@@ -42,6 +43,12 @@ SWAP_DEVICE = "/dev/ubdb"
 # The session mounts fresh filesystems over these, and the kernel owns the
 # rest, so a payload placed there would never be seen.
 HIDDEN_PAYLOAD_ROOTS = ("/tmp", "/run", "/dev", "/proc", "/sys")
+# The directories an emulator makes for its run, named after its process: the
+# guest console's and the launcher's initrd scratch.
+EMULATOR_RUN_DIRECTORIES = (
+    re.compile(r"^uml-kern(\d+)$"),
+    re.compile(r"^uml-guest-initrd-(\d+)-.+$"),
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -248,6 +255,55 @@ def cleanup_stale_guest_files() -> None:
     for path in abandoned_host_files(STAGING_DIRECTORY):
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path, ignore_errors=True)
+
+
+@functools.lru_cache(maxsize=None)
+def darwin_user_temporary_directory() -> pathlib.Path | None:
+    """Darwin's per-user temporary directory, which tempfile never consults."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    directory = result.stdout.strip()
+    return pathlib.Path(directory) if directory.startswith("/") else None
+
+
+def remove_emulator_run_directories(process_id: int) -> None:
+    """Remove the run directories of an emulator that has exited.
+
+    An emulator removes them itself on every exit it observes, and a later
+    emulator removes those of runs since killed outright. A harness that kills
+    one removes them at once, so its test leaves nothing behind. They are in
+    $TMPDIR, or in Darwin's per-user temporary directory when $TMPDIR is unset.
+    Nothing is removed while the process exists."""
+    try:
+        os.kill(process_id, 0)
+        return
+    except ProcessLookupError:
+        pass
+    except (PermissionError, OverflowError):
+        return
+    directories = {pathlib.Path(tempfile.gettempdir())}
+    if (user := darwin_user_temporary_directory()) is not None:
+        directories.add(user)
+    for directory in directories:
+        for path in directory.glob(f"uml-*{process_id}*"):
+            for pattern in EMULATOR_RUN_DIRECTORIES:
+                match = pattern.fullmatch(path.name)
+                if (
+                    match is not None
+                    and int(match.group(1)) == process_id
+                    and path.is_dir()
+                    and not path.is_symlink()
+                ):
+                    shutil.rmtree(path, ignore_errors=True)
 
 
 def create_swap_image(value: str) -> pathlib.Path:
@@ -464,7 +520,8 @@ class ConsoleProcess:
         return True
 
     def close(self) -> None:
-        """Stop the emulator if it still runs and release the console."""
+        """Stop the emulator if it still runs, release the console and remove
+        what an emulator killed outright left."""
         try:
             if self._process.poll() is None:
                 self._signal(signal.SIGTERM)
@@ -489,6 +546,8 @@ class ConsoleProcess:
                     os.close(self._master)
                 except OSError:
                     pass
+                if self._process.poll() is not None:
+                    remove_emulator_run_directories(self._process.pid)
 
     def output(self) -> str:
         return self._normal_output(bytes(self._transcript))

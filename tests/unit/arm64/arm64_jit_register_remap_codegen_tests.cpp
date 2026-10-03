@@ -2,6 +2,7 @@
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "require.hpp"
 
 #include <algorithm>
@@ -389,6 +390,9 @@ void cross_domain_chain_is_direct_and_resident() {
   /*
    * Guest register numbers deliberately overlap across the GPR and vector
    * namespaces. Each result feeds the next instruction in the other namespace.
+   * Where the virtual CPU implements FEAT_AFP, a scalar SCVTF keeps the rest
+   * of its old destination under FPCR.NEP, so the JIT loads d6 from CpuState
+   * into its resident register just before the conversion.
    */
   constexpr std::array guest{
       std::uint32_t{0xd280'00a5U}, // movz x5, #5
@@ -397,6 +401,17 @@ void cross_domain_chain_is_direct_and_resident() {
       std::uint32_t{0x9e62'00c6U}, // scvtf d6, x6
       std::uint32_t{0x9e78'00c7U}, // fcvtzs x7, d6
   };
+  constexpr std::size_t conversion = 3U;
+  constexpr std::uint32_t old_d6_load =
+      0x3dc0'0000U | (15U << 5U) |
+      static_cast<std::uint32_t>(
+          (offsetof(uml::cpu::arm64::CpuState, vectors) +
+           6U * sizeof(uml::cpu::arm64::VectorRegister)) /
+          16U)
+          << 10U; // ldr q<d6>, [x15, #vectors[6]]
+  const bool merges =
+      uml::cpu::arm64::implements_afp(uml::cpu::host_capabilities());
+  const std::size_t length = guest.size() + (merges ? 1U : 0U);
   const auto compiled = jit_test::compile_block(code_base + 0x4000U, guest);
   require(compiled.guest_instructions == guest.size(),
           "JIT did not compile the complete cross-domain chain");
@@ -404,9 +419,13 @@ void cross_domain_chain_is_direct_and_resident() {
       std::span<const std::uint32_t>{compiled.words}.first(compiled.hot_words);
 
   bool found = false;
-  for (std::size_t start = 0; start + guest.size() <= hot.size(); ++start) {
-    const auto native = hot.subspan(start, guest.size());
-    bool opcodes_match = true;
+  for (std::size_t start = 0; start + length <= hot.size(); ++start) {
+    const auto chain = hot.subspan(start, length);
+    std::array<std::uint32_t, guest.size()> native{};
+    for (std::size_t index = 0; index < guest.size(); ++index)
+      native[index] = chain[merges && index >= conversion ? index + 1U : index];
+    bool opcodes_match =
+        !merges || (chain[conversion] & ~31U) == old_d6_load;
     for (std::size_t index = 0; index < guest.size(); ++index) {
       const auto mask = index == 0U ? 31U : two_register_mask;
       opcodes_match &= (native[index] & ~mask) == (guest[index] & ~mask);
@@ -433,6 +452,8 @@ void cross_domain_chain_is_direct_and_resident() {
     for (const auto host : {v5, v6})
       require(host >= first_cached_vector && host <= last_cached_vector,
               "cross-domain result escaped the vector cache");
+    require(!merges || destination(chain[conversion]) == v6,
+            "SCVTF did not load its old destination for the NEP merge");
     require(!found, "JIT emitted the cross-domain chain more than once");
     found = true;
   }

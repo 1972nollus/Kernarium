@@ -8,3 +8,6 @@ uml_add_unit_test(NAME guest-console-suspend-timeout
 uml_add_unit_test(NAME guest-console-location
     COMMAND uml_guest_console_tests location
     LABELS console)
+uml_add_unit_test(NAME guest-console-run
+    COMMAND uml_guest_console_tests run
+    LABELS console)

@@ -157,4 +157,18 @@ private:
     bool orderingRelaxed_ {};
 };
 
+/* The device's poll for held fences and renderer work: a timer on the
+ * device's kqueue that fires once, shortly after it is armed.
+ *
+ * The server arms it after the device has run a command, when a failure
+ * would leave the command committed and fail the connection. So the timer's
+ * knote is added once, disabled, with the queue, and arming, firing and
+ * cancelling only modify it, which allocates nothing in the kernel: a
+ * dispatched timer is disabled rather than deleted when it fires. Once the
+ * knote is added, only a broken queue fails to arm it. */
+inline constexpr std::uintptr_t fenceTimerIdentifier = 1;
+void addFenceTimer(int queue);
+void armFenceTimer(int queue);
+void cancelFenceTimer(int queue) noexcept;
+
 } // namespace uml::gpu

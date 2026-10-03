@@ -12,6 +12,7 @@ import contextlib
 import io
 import os
 import pathlib
+import re
 import signal
 import subprocess
 import sys
@@ -462,6 +463,51 @@ class AttachedGuestSessionTests(unittest.TestCase):
             "a killed harness's guest files outlived the next guest's start",
         )
         self.assertTrue(live.is_dir())
+
+    def test_a_killed_emulator_leaves_no_run_directories(self) -> None:
+        # An emulator that ignores SIGTERM, as a wedged one does, so the
+        # harness ends it with SIGKILL and no handler of its own runs.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "trap '' TERM\n"
+            'mkdir "$TMPDIR/uml-kern$$" "$TMPDIR/uml-guest-initrd-$$-x"\n'
+            'touch "$TMPDIR/uml-kern$$/mconsole"\n'
+            "echo made\n"
+            "exec sleep 3600\n",
+            encoding="utf-8",
+        )
+        # Another run's directories are that run's, and a later emulator's.
+        exited = subprocess.Popen(["/usr/bin/true"])
+        exited.wait()
+        others = [
+            self.temporary / f"uml-kern{os.getpid()}",
+            self.temporary / f"uml-kern{exited.pid}",
+        ]
+        for directory in others:
+            directory.mkdir()
+        environment = {**os.environ, "TMPDIR": str(self.temporary)}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with self.private_temporary_directory():
+                guest = guest_support.Guest(
+                    emulator=self.emulator,
+                    rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+                    memory="4G",
+                    workspace="tmpfs",
+                    init_shell=True,
+                )
+                self.addCleanup(guest.close)
+                guest._read_until(re.compile(rb"made"), 30)
+                pid = guest.process_id
+                made = sorted(path.name for path in self.temporary.iterdir())
+                self.assertIn(f"uml-kern{pid}", made)
+                guest.close()
+        self.assertEqual(guest.return_code, -signal.SIGKILL)
+        left = sorted(
+            path.name
+            for path in self.temporary.iterdir()
+            if not path.name.startswith("uml-guest-files-")
+        )
+        self.assertEqual(left, sorted(path.name for path in others))
 
     def test_swap_images_of_exited_processes_are_removed(self) -> None:
         finished = subprocess.Popen(["/usr/bin/true"])
