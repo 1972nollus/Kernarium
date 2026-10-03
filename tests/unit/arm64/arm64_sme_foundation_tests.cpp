@@ -13,6 +13,7 @@
 #include "require.hpp"
 #include "uml_darwin_cpu.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/sysctl.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -168,6 +170,69 @@ void profile_needs_every_part()
 		(apple::guest_sme_policy() == apple::GuestSmePolicy::on &&
 		 arm64::implements_sme(apple::probe_host_capabilities(
 			 apple::GuestSmePolicy::on))));
+}
+
+/* Each token the encoding table names maps to its own bit and nothing
+ * else does; the rows the virtual CPU implements follow the profile. */
+void feature_mask_follows_tokens()
+{
+	namespace detail = arm64::detail;
+	const std::array<std::pair<ArmFeature, detail::SmeFeatureMask>, 6>
+		bits{{
+			{ArmFeature::sme, detail::sme_feature_sme},
+			{ArmFeature::sme2, detail::sme_feature_sme2},
+			{ArmFeature::sme_f64f64, detail::sme_feature_sme_f64f64},
+			{ArmFeature::sme_i16i64, detail::sme_feature_sme_i16i64},
+			{ArmFeature::bf16, detail::sme_feature_bf16},
+			{ArmFeature::i8mm, detail::sme_feature_i8mm},
+		}};
+	unsigned all = 0;
+	for (const auto &[feature, bit] : bits) {
+		::uml::platform::ArmFeatureSet features;
+		features.set(static_cast<std::size_t>(feature));
+		require(arm64::sme_feature_mask(features) == bit,
+			"an ArmFeature token maps to the wrong table bit");
+		require((all & bit) == 0U, "two tokens share a table bit");
+		all |= bit;
+	}
+	for (std::size_t index = 0; index < ::uml::platform::arm_feature_count;
+	     ++index) {
+		::uml::platform::ArmFeatureSet features;
+		features.set(index);
+		const bool named = std::any_of(bits.begin(), bits.end(),
+			[&](const auto &entry) {
+				return static_cast<std::size_t>(entry.first) ==
+					index;
+			});
+		require(named || arm64::sme_feature_mask(features) == 0U,
+			"a token the table does not name maps to a bit");
+	}
+	::uml::platform::ArmFeatureSet every;
+	every.set();
+	require(arm64::sme_feature_mask(every) == all);
+
+	const unsigned profile = detail::sme_feature_sme |
+		detail::sme_feature_sme_f64f64 | detail::sme_feature_sme_i16i64;
+	const unsigned extras = detail::sme_feature_bf16 |
+		detail::sme_feature_i8mm;
+	for (const auto svl : vector_lengths) {
+		auto host = sme_host(svl, false);
+		require(arm64::implemented_sme_features(host) == profile);
+		host = sme_host(svl, true);
+		require(arm64::implemented_sme_features(host) ==
+			(profile | detail::sme_feature_sme2));
+		for (const auto feature : {ArmFeature::bf16, ArmFeature::i8mm})
+			host.supported.set(static_cast<std::size_t>(feature));
+		require(arm64::implemented_sme_features(host) ==
+			(profile | detail::sme_feature_sme2 | extras));
+		host.sme_svl_bytes = 0;
+		require(arm64::implemented_sme_features(host) == 0U,
+			"rows implemented without the SME profile");
+	}
+	HostCapabilities plain;
+	for (const auto feature : {ArmFeature::bf16, ArmFeature::i8mm})
+		plain.supported.set(static_cast<std::size_t>(feature));
+	require(arm64::implemented_sme_features(plain) == 0U);
 }
 
 /* Z0-Z31, P0-P15, ZA's SVL rows, ZT0, contiguous, each part on an SVL
@@ -587,6 +652,7 @@ int main()
 	prober_follows_policy();
 	process_profile_honours_environment();
 	profile_needs_every_part();
+	feature_mask_follows_tokens();
 	storage_layout_scales_with_svl();
 	svcr_writes_follow_the_architecture();
 	lazy_transfer_round_trips();

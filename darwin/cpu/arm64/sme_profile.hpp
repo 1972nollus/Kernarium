@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/detail/sme_encoding_types.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstddef>
@@ -58,6 +59,46 @@ enum class SmeSupport : std::uint8_t {
 [[nodiscard]] inline bool implements_sme(const HostCapabilities &host) noexcept
 {
 	return sme_profile(host) != SmeProfile::none;
+}
+
+/* The encoding table names its requirement bits after the ArmFeature
+ * tokens; this is the one place that translates between them. */
+[[nodiscard]] inline detail::SmeFeatureMask sme_feature_mask(
+	const ArmFeatureSet &features) noexcept
+{
+	const auto bit = [&](ArmFeature feature, detail::SmeFeatureMask mask) {
+		return features[static_cast<std::size_t>(feature)] ? mask :
+			detail::SmeFeatureMask{};
+	};
+	return static_cast<detail::SmeFeatureMask>(
+		bit(ArmFeature::sme, detail::sme_feature_sme) |
+		bit(ArmFeature::sme2, detail::sme_feature_sme2) |
+		bit(ArmFeature::sme_f64f64, detail::sme_feature_sme_f64f64) |
+		bit(ArmFeature::sme_i16i64, detail::sme_feature_sme_i16i64) |
+		bit(ArmFeature::bf16, detail::sme_feature_bf16) |
+		bit(ArmFeature::i8mm, detail::sme_feature_i8mm));
+}
+
+/* The table rows the virtual CPU implements on `host`, as their
+ * requirement bits: none without the SME profile; otherwise the profile's
+ * parts, SME2 only in the SME2 profile, and BF16 and I8MM where the virtual
+ * CPU has them, which is where the host does. */
+[[nodiscard]] inline detail::SmeFeatureMask implemented_sme_features(
+	const HostCapabilities &host) noexcept
+{
+	const SmeProfile profile = sme_profile(host);
+	if (profile == SmeProfile::none)
+		return {};
+	ArmFeatureSet features;
+	for (const ArmFeature feature : {ArmFeature::sme,
+		     ArmFeature::sme_f64f64, ArmFeature::sme_i16i64})
+		features.set(static_cast<std::size_t>(feature));
+	if (profile == SmeProfile::sme2)
+		features.set(static_cast<std::size_t>(ArmFeature::sme2));
+	for (const ArmFeature feature : {ArmFeature::bf16, ArmFeature::i8mm})
+		if (host.has(feature))
+			features.set(static_cast<std::size_t>(feature));
+	return sme_feature_mask(features);
 }
 
 /* SVCR: PSTATE.SM in bit 0 and PSTATE.ZA in bit 1. The lazy-transfer bits
