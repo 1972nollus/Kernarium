@@ -647,6 +647,16 @@ class GraphicsCampaignTests(unittest.TestCase):
             gl.sha256_file(gl.WAIVERS_PATH),
         )
 
+    def test_source_identity_covers_modules_the_runners_import(self) -> None:
+        files = campaign.source_identity()["files"]
+        # run_gpu_guest.py imports its emulator cleanup from the support tree.
+        cleanup = gl.gpu_guest.remove_emulator_run_directories
+        support = Path(sys.modules[cleanup.__module__].__file__).resolve()
+        self.assertEqual(
+            files[str(support.relative_to(gl.REPO_ROOT))],
+            gl.sha256_file(support),
+        )
+
     def test_aggregate_rejects_omission_duplicate_order_and_mandatory_drift(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             definition = spec(Path(temporary))
