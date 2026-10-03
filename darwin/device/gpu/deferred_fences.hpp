@@ -157,4 +157,10 @@ private:
     bool orderingRelaxed_ {};
 };
 
+/* The device's poll for held fences and renderer work: a timer on the
+ * device's kqueue that fires once, shortly after it is armed. */
+inline constexpr std::uintptr_t fenceTimerIdentifier = 1;
+void armFenceTimer(int queue);
+void cancelFenceTimer(int queue) noexcept;
+
 } // namespace uml::gpu

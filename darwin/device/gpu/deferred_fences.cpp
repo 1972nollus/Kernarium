@@ -7,9 +7,15 @@
 #include <cerrno>
 #include <cstdio>
 #include <stdexcept>
+#include <sys/event.h>
 #include <utility>
 
 namespace uml::gpu {
+namespace {
+
+constexpr std::intptr_t fencePollMicroseconds = 100;
+
+} // namespace
 
 DeferredFences::DeferredFences()
 {
@@ -205,6 +211,41 @@ void DeferredFences::reportRingStoppedRetiring(
         fence.contextId,
         fence.ringIndex,
         maximumRingEscapes);
+}
+
+void armFenceTimer(int queue)
+{
+    struct kevent change {};
+    EV_SET(
+        &change,
+        fenceTimerIdentifier,
+        EVFILT_TIMER,
+        EV_ADD | EV_ENABLE | EV_ONESHOT,
+        NOTE_USECONDS,
+        fencePollMicroseconds,
+        nullptr);
+    int result;
+    do {
+        result = ::kevent(queue, &change, 1, nullptr, 0, nullptr);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0)
+        throw std::runtime_error("arming GPU fence timer failed");
+}
+
+void cancelFenceTimer(int queue) noexcept
+{
+    struct kevent change {};
+    EV_SET(
+        &change,
+        fenceTimerIdentifier,
+        EVFILT_TIMER,
+        EV_DELETE,
+        0,
+        0,
+        nullptr);
+    while (::kevent(queue, &change, 1, nullptr, 0, nullptr) < 0 &&
+        errno == EINTR) {
+    }
 }
 
 } // namespace uml::gpu
