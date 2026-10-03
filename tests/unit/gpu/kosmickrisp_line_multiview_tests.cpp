@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/line_multiview_spirv.hpp"
+#include "require.hpp"
 
 #include <array>
 #include <cmath>
@@ -12,15 +13,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 uint8_t unorm(float value)
 {

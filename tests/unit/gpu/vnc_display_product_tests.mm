@@ -17,6 +17,7 @@
 
 #include "display.hpp"
 #include "display_geometry.hpp"
+#include "require.hpp"
 
 #import <Metal/Metal.h>
 
@@ -38,6 +39,8 @@
 
 namespace {
 
+using uml::testing::require;
+
 constexpr std::uint32_t displayExtent = 64;
 constexpr std::uint32_t cursorExtent = 32;
 using Pixel = std::array<std::uint8_t, 4>;
@@ -54,12 +57,6 @@ constexpr std::uint32_t vncWidth = 1280;
 constexpr std::uint32_t vncHeight = 720;
 constexpr int timeoutSeconds = 10;
 constexpr auto operationTimeout = std::chrono::seconds(timeoutSeconds);
-
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 class Connection final {
 public:

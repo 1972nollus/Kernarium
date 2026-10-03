@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
+#include "require.hpp"
 
 #include "shaders/line_multiview_spirv.hpp"
 #include "shaders/geometry_side_effects_spirv.hpp"
@@ -15,15 +16,10 @@
 
 namespace {
 
+using uml::testing::require;
 using uml::gpu::test::DrawConfig;
 using uml::gpu::test::DrawContext;
 using uml::gpu::test::DrawResult;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 void verify(const DrawConfig &config, const DrawResult &result,
             std::string_view name)

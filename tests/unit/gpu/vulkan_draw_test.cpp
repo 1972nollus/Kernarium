@@ -13,24 +13,14 @@
 namespace uml::gpu::test {
 namespace {
 
+using uml::testing::require;
+
 template <typename T>
 T structure(VkStructureType type)
 {
     T value{};
     value.sType = type;
     return value;
-}
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
-
-void check(VkResult result, const char *operation)
-{
-    require(result == VK_SUCCESS,
-            std::string(operation) + ": " + std::to_string(result));
 }
 
 template <typename Function>

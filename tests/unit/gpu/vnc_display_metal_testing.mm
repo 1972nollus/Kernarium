@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "require.hpp"
 #include "vnc_display.hpp"
 #include "vnc_display_testing.hpp"
 
@@ -16,14 +17,10 @@
 namespace uml::gpu::testing {
 namespace {
 
+using uml::testing::require;
+
 constexpr std::array<std::uint8_t, 4> expectedPixel {
     0x19U, 0x38U, 0x57U, 0xffU};
-
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 } // namespace
 

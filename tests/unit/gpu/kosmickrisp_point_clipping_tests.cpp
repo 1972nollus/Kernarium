@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "vulkan_draw_test.hpp"
 #include "shaders/point_clipping_spirv.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,14 +17,9 @@
 
 namespace {
 
+using uml::testing::require;
 using namespace uml::gpu::test;
 using Position = std::array<float, 4>;
-
-void require(bool condition, const std::string &message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
 
 template <typename T>
 T structure(VkStructureType type)
