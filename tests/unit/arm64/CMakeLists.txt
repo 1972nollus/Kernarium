@@ -57,6 +57,10 @@ endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
 
+# The guest-SME policy, the host prober and the SME state every SME lane
+# shares; header-only, so no engine objects.
+uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS NO_OBJECTS)
+
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
 uml_add_arm64_unit_test(base_bit_allocation)
