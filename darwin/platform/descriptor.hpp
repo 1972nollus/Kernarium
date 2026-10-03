@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <array>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <stdexcept>
 #include <string>
+#include <sys/socket.h>
 #include <utility>
 #include <unistd.h>
 
@@ -95,5 +98,83 @@ inline void configureDescriptorOrThrow(
         std::string("configuring ") + what + " failed: " +
         std::strerror(error));
 }
+
+/* A datagram socketpair that wakes a thread polling descriptor(). notify()
+ * queues one byte without blocking and drain() reads every queued byte. Both
+ * ends are close-on-exec and non-blocking, and the write end raises no
+ * SIGPIPE. */
+class WakeSocket final {
+public:
+    enum class Drained {
+        empty,
+        closed,
+        failed,
+    };
+
+    /* Throws "creating <what> socketpair failed: <error>" or
+     * "configuring <what> descriptor failed: <error>". */
+    explicit WakeSocket(const char* what)
+    {
+        std::array<int, 2> descriptors {-1, -1};
+        if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0) {
+            const int error = errno;
+            throw std::runtime_error(
+                std::string("creating ") + what + " socketpair failed: " +
+                std::strerror(error));
+        }
+        read_.reset(descriptors[0]);
+        write_.reset(descriptors[1]);
+        const auto name = std::string(what) + " descriptor";
+        configureDescriptorOrThrow(
+            read_.get(),
+            {.closeOnExec = true, .nonblocking = true},
+            name.c_str());
+        configureDescriptorOrThrow(
+            write_.get(),
+            {.closeOnExec = true, .nonblocking = true, .noSigpipe = true},
+            name.c_str());
+    }
+
+    WakeSocket(const WakeSocket&) = delete;
+    WakeSocket& operator=(const WakeSocket&) = delete;
+
+    [[nodiscard]] int descriptor() const noexcept { return read_.get(); }
+
+    /* Returns false with errno set unless the byte was queued or the queue
+     * was already full, which leaves the reader woken anyway. */
+    [[nodiscard]] bool notify() const noexcept
+    {
+        constexpr std::uint8_t ready = 1;
+        for (;;) {
+            if (::send(write_.get(), &ready, sizeof(ready), MSG_DONTWAIT) >= 0)
+                return true;
+            if (errno != EINTR)
+                return errno == EAGAIN || errno == EWOULDBLOCK;
+        }
+    }
+
+    /* Reports closed at end of file and failed, with errno set, on an error
+     * other than an empty queue. */
+    [[nodiscard]] Drained drain() const noexcept
+    {
+        std::array<std::uint8_t, 64> bytes {};
+        for (;;) {
+            const auto result = ::recv(
+                read_.get(), bytes.data(), bytes.size(), MSG_DONTWAIT);
+            if (result > 0)
+                continue;
+            if (result == 0)
+                return Drained::closed;
+            if (errno == EINTR)
+                continue;
+            return errno == EAGAIN || errno == EWOULDBLOCK ?
+                Drained::empty : Drained::failed;
+        }
+    }
+
+private:
+    UniqueDescriptor read_;
+    UniqueDescriptor write_;
+};
 
 } // namespace uml::platform
