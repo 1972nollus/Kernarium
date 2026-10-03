@@ -25,6 +25,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -131,7 +132,9 @@ private:
 	std::uint64_t saved_{};
 };
 
-enum class Op : std::uint8_t { add, sub, mul, div, sqrt, min, max, rcp, rsqrt };
+enum class Op : std::uint8_t {
+	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma,
+};
 
 [[nodiscard]] std::uint64_t host32(Op op, std::uint32_t a, std::uint32_t b)
 {
@@ -210,6 +213,27 @@ enum class Op : std::uint8_t { add, sub, mul, div, sqrt, min, max, rcp, rsqrt };
 	return dbl ? host64(op, a, b) :
 		host32(op, static_cast<std::uint32_t>(a),
 			static_cast<std::uint32_t>(b));
+}
+
+/* a * b + c, fused. */
+[[nodiscard]] std::uint64_t host_fma(bool dbl, std::uint64_t a,
+	std::uint64_t b, std::uint64_t c)
+{
+	std::uint64_t r{};
+	if (dbl)
+		__asm__ volatile("fmov d0, %1\n fmov d1, %2\n fmov d2, %3\n"
+			" fmadd d3, d0, d1, d2\n fmov %0, d3" : "=r"(r)
+			: "r"(a), "r"(b), "r"(c) : "v0", "v1", "v2", "v3");
+	else {
+		std::uint32_t narrow{};
+		__asm__ volatile("fmov s0, %w1\n fmov s1, %w2\n fmov s2, %w3\n"
+			" fmadd s3, s0, s1, s2\n fmov %w0, s3" : "=r"(narrow)
+			: "r"(static_cast<std::uint32_t>(a)),
+			  "r"(static_cast<std::uint32_t>(b)),
+			  "r"(static_cast<std::uint32_t>(c)) : "v0", "v1", "v2", "v3");
+		r = narrow;
+	}
+	return r;
 }
 
 /* ---- the x86 model ---- */
@@ -334,6 +358,54 @@ struct Format final {
 	return result;
 }
 
+/* The same for a * b + c, whose operands are already signed as the
+ * operation negates them. A result the host rounded up to the smallest
+ * normal is tiny when the operation with a and c scaled up stays below the
+ * scaled threshold. */
+[[nodiscard]] bool tiny_fused(Format f, std::uint64_t a, std::uint64_t b,
+	std::uint64_t c, std::uint64_t result)
+{
+	if (f.denormal(result))
+		return true;
+	if ((result & f.magnitude()) != f.minimum_normal())
+		return false;
+	const int k = f.dbl ? 512 : 64;
+	const std::uint64_t scale = f.dbl ?
+		static_cast<std::uint64_t>(1023 + k) << 52U :
+		static_cast<std::uint64_t>(127 + k) << 23U;
+	const auto rescaled = host_fma(f.dbl, host(f.dbl, Op::mul, a, scale), b,
+		host(f.dbl, Op::mul, c, scale)) & f.magnitude();
+	const std::uint64_t threshold = f.dbl ?
+		static_cast<std::uint64_t>(1 + k) << 52U :
+		static_cast<std::uint64_t>(1 + k) << 23U;
+	return rescaled < threshold;
+}
+
+/* One lane of an FMA: x86's a * b + c with the product and the addend
+ * negated as `negate_product` and `negate_addend` say. A NaN result is the
+ * first of a, b and c that is a NaN, quieted and with its own sign. */
+[[nodiscard]] std::uint64_t x86_fused_lane(Format f, std::uint64_t a,
+	std::uint64_t b, std::uint64_t c, bool negate_product,
+	bool negate_addend, bool daz, bool ftz)
+{
+	if (daz) {
+		a = f.flush(a);
+		b = f.flush(b);
+		c = f.flush(c);
+	}
+	for (const auto value : {a, b, c})
+		if (f.nan(value))
+			return f.quiet(value);
+	const auto signed_a = negate_product ? a ^ f.sign() : a;
+	const auto signed_c = negate_addend ? c ^ f.sign() : c;
+	const auto result = host_fma(f.dbl, signed_a, b, signed_c);
+	if (f.nan(result))
+		return f.indefinite();
+	if (ftz && tiny_fused(f, signed_a, b, signed_c, result))
+		return result & f.sign();
+	return result;
+}
+
 /* ---- operand stream (X-AFP's oracle generator) ---- */
 
 class Operands final {
@@ -441,53 +513,62 @@ private:
 /* ---- instructions ---- */
 
 enum class Shape : std::uint8_t {
-	sse_scalar,  /* xmm0 = xmm0 op xmm1, lane 0, upper lanes kept */
-	sse_packed,  /* xmm0 = xmm0 op xmm1, ymm0's upper half kept */
-	vex256,      /* ymm0 = ymm1 op ymm2 */
+	sse_scalar,  /* xmm0 = xmm0 op xmm1, lane 0; the rest of ymm0 kept */
+	sse_packed,  /* xmm0 = xmm0 op xmm1; ymm0's upper half kept */
+	vex_scalar,  /* lane 0 computed, the rest of xmm0 from a source, the
+	              * upper half zeroed */
+	vex128,      /* xmm0 computed, the upper half zeroed */
+	vex256,      /* ymm0 computed */
 };
 
+/* FMA's signs: a * b + c, a * b - c, -(a * b) + c, -(a * b) - c, and the
+ * two alternations, whose even lanes subtract (maddsub) or add (msubadd). */
+enum class Fused : std::uint8_t { madd, msub, nmadd, nmsub, maddsub, msubadd };
+
 struct Instruction final {
-	std::string_view name;
+	std::string name;
 	Op op;
 	bool dbl;
 	Shape shape;
 	std::vector<std::uint8_t> bytes;
+	/* FMA: the form (132, 213 or 231) and the signs. */
+	unsigned form{};
+	Fused fused{};
 };
 
-[[nodiscard]] std::vector<Instruction> instructions()
+void add_arithmetic(std::vector<Instruction> &list)
 {
 	struct Family {
 		std::string_view name;
 		Op op;
 		std::uint8_t opcode;
-		bool packed_only;
 		bool single_only;
 	};
 	static constexpr std::array<Family, 9> families{{
-		{"add", Op::add, 0x58, false, false},
-		{"sub", Op::sub, 0x5c, false, false},
-		{"mul", Op::mul, 0x59, false, false},
-		{"div", Op::div, 0x5e, false, false},
-		{"sqrt", Op::sqrt, 0x51, false, false},
-		{"min", Op::min, 0x5d, false, false},
-		{"max", Op::max, 0x5f, false, false},
-		{"rcp", Op::rcp, 0x53, false, true},
-		{"rsqrt", Op::rsqrt, 0x52, false, true},
+		{"add", Op::add, 0x58, false},
+		{"sub", Op::sub, 0x5c, false},
+		{"mul", Op::mul, 0x59, false},
+		{"div", Op::div, 0x5e, false},
+		{"sqrt", Op::sqrt, 0x51, false},
+		{"min", Op::min, 0x5d, false},
+		{"max", Op::max, 0x5f, false},
+		{"rcp", Op::rcp, 0x53, true},
+		{"rsqrt", Op::rsqrt, 0x52, true},
 	}};
-	std::vector<Instruction> list;
 	for (const auto &family : families) {
 		const bool unary = family.op == Op::sqrt || family.op == Op::rcp ||
 			family.op == Op::rsqrt;
 		for (const bool dbl : {false, true}) {
 			if (dbl && family.single_only)
 				continue;
-			const std::uint8_t packed_prefix = dbl ? 0x66 : 0;
+			const std::string name = std::string{family.name} +
+				(dbl ? "d" : "s");
 			const std::uint8_t scalar_prefix = dbl ? 0xf2 : 0xf3;
 			std::vector<std::uint8_t> scalar{scalar_prefix, 0x0f,
 				family.opcode, 0xc1};
 			std::vector<std::uint8_t> packed;
-			if (packed_prefix != 0)
-				packed.push_back(packed_prefix);
+			if (dbl)
+				packed.push_back(0x66);
 			packed.insert(packed.end(), {0x0f, family.opcode, 0xc1});
 			/* VEX.256: vvvv names ymm1, or none for a unary operation;
 			 * pp is 00 for singles and 01 (66) for doubles. */
@@ -495,14 +576,61 @@ struct Instruction final {
 			const std::uint8_t vex = static_cast<std::uint8_t>(0x80U |
 				(vvvv << 3U) | 0x04U | (dbl ? 1U : 0U));
 			std::vector<std::uint8_t> wide{0xc5, vex, family.opcode, 0xc2};
-			list.push_back({family.name, family.op, dbl, Shape::sse_scalar,
-				scalar});
-			list.push_back({family.name, family.op, dbl, Shape::sse_packed,
-				packed});
-			list.push_back({family.name, family.op, dbl, Shape::vex256,
-				wide});
+			list.push_back({name, family.op, dbl, Shape::sse_scalar, scalar});
+			list.push_back({name, family.op, dbl, Shape::sse_packed, packed});
+			list.push_back({name, family.op, dbl, Shape::vex256, wide});
 		}
 	}
+}
+
+/* VFM*{132,213,231}{PS,PD,SS,SD} ymm0/xmm0, ymm1/xmm1, ymm2/xmm2: VEX.66.0F38
+ * with W naming doubles and vvvv ymm1. */
+void add_fused(std::vector<Instruction> &list)
+{
+	struct Kind {
+		std::string_view name;
+		Fused fused;
+		std::uint8_t packed;  /* low nibble of the opcode */
+		bool has_scalar;
+	};
+	static constexpr std::array<Kind, 6> kinds{{
+		{"fmaddsub", Fused::maddsub, 0x6, false},
+		{"fmsubadd", Fused::msubadd, 0x7, false},
+		{"fmadd", Fused::madd, 0x8, true},
+		{"fmsub", Fused::msub, 0xa, true},
+		{"fnmadd", Fused::nmadd, 0xc, true},
+		{"fnmsub", Fused::nmsub, 0xe, true},
+	}};
+	static constexpr std::array<std::pair<unsigned, std::uint8_t>, 3> forms{{
+		{132, 0x90}, {213, 0xa0}, {231, 0xb0},
+	}};
+	for (const auto &kind : kinds)
+	for (const auto &[form, base] : forms)
+	for (const bool dbl : {false, true}) {
+		const std::string name = std::string{kind.name} +
+			std::to_string(form) + (dbl ? "d" : "s");
+		const auto vex = [&](bool wide) {
+			return static_cast<std::uint8_t>((dbl ? 0x80U : 0U) |
+				(0x0eU << 3U) | (wide ? 0x04U : 0U) | 0x01U);
+		};
+		const auto opcode = static_cast<std::uint8_t>(base | kind.packed);
+		list.push_back({name, Op::fma, dbl, Shape::vex128,
+			{0xc4, 0xe2, vex(false), opcode, 0xc2}, form, kind.fused});
+		list.push_back({name, Op::fma, dbl, Shape::vex256,
+			{0xc4, 0xe2, vex(true), opcode, 0xc2}, form, kind.fused});
+		if (kind.has_scalar)
+			list.push_back({name, Op::fma, dbl, Shape::vex_scalar,
+				{0xc4, 0xe2, vex(false),
+					static_cast<std::uint8_t>(opcode + 1U), 0xc2},
+				form, kind.fused});
+	}
+}
+
+[[nodiscard]] std::vector<Instruction> instructions()
+{
+	std::vector<Instruction> list;
+	add_arithmetic(list);
+	add_fused(list);
 	return list;
 }
 
@@ -511,9 +639,33 @@ struct Instruction final {
 	switch (shape) {
 	case Shape::sse_scalar: return "scalar";
 	case Shape::sse_packed: return "packed";
+	case Shape::vex_scalar: return "vexscalar";
+	case Shape::vex128: return "vex128";
 	case Shape::vex256: return "vex256";
 	}
 	return "?";
+}
+
+[[nodiscard]] std::size_t lane_count(const Instruction &instruction) noexcept
+{
+	return instruction.dbl ? 4U : 8U;
+}
+
+/* Lanes the instruction computes. */
+[[nodiscard]] std::size_t computed_lanes(
+	const Instruction &instruction) noexcept
+{
+	switch (instruction.shape) {
+	case Shape::sse_scalar:
+	case Shape::vex_scalar:
+		return 1;
+	case Shape::sse_packed:
+	case Shape::vex128:
+		return lane_count(instruction) / 2U;
+	case Shape::vex256:
+		return lane_count(instruction);
+	}
+	return 0;
 }
 
 /* ---- the guest loop ---- */
@@ -616,23 +768,104 @@ void set_lane(std::byte *bytes, bool dbl, std::size_t index,
 	std::memcpy(bytes + index * 4U, &narrow, 4U);
 }
 
+/* x86's a, b and c of a * b + c for an FMA form, as indices of ymm0 (the
+ * destination), ymm1 (vvvv) and ymm2 (r/m): 132 is destination * r/m + vvvv,
+ * 213 vvvv * destination + r/m, and 231 vvvv * r/m + destination. */
+[[nodiscard]] std::array<std::size_t, 3> fused_operands(unsigned form) noexcept
+{
+	switch (form) {
+	case 132: return {0, 2, 1};
+	case 213: return {1, 0, 2};
+	default: return {1, 2, 0};
+	}
+}
+
 /* The model's ymm0 for one iteration. */
 void model_result(const Instruction &instruction, const std::byte *input,
 	bool daz, bool ftz, std::byte *output)
 {
 	const Format f{instruction.dbl};
-	const std::size_t lanes = instruction.dbl ? 4U : 8U;
-	const auto *first = instruction.shape == Shape::vex256 ?
-		input + 32 : input;
-	const auto *second = instruction.shape == Shape::vex256 ?
-		input + 64 : input + 32;
-	std::memcpy(output, input, 32);
-	const std::size_t computed = instruction.shape == Shape::sse_scalar ? 1U :
-		instruction.shape == Shape::sse_packed ? lanes / 2U : lanes;
-	for (std::size_t index = 0; index < computed; ++index)
-		set_lane(output, instruction.dbl, index,
-			x86_lane(f, instruction.op, lane(first, f.dbl, index),
-				lane(second, f.dbl, index), daz, ftz));
+	const std::size_t lanes = lane_count(instruction);
+	const std::size_t computed = computed_lanes(instruction);
+	const bool vex = instruction.shape == Shape::vex_scalar ||
+		instruction.shape == Shape::vex128 ||
+		instruction.shape == Shape::vex256;
+	/* Lanes the instruction does not compute: an SSE form keeps ymm0's, a
+	 * VEX form zeroes the upper half and a VEX scalar one takes lanes 1 and
+	 * up of the low half from its first source. */
+	if (vex)
+		std::memset(output, 0, 32);
+	else
+		std::memcpy(output, input, 32);
+	if (instruction.shape == Shape::vex_scalar) {
+		const auto *source = instruction.op == Op::fma ? input : input + 32;
+		std::memcpy(output, source, 16);
+	}
+	for (std::size_t index = 0; index < computed; ++index) {
+		std::uint64_t value{};
+		if (instruction.op == Op::fma) {
+			const auto roles = fused_operands(instruction.form);
+			const auto operand = [&](std::size_t role) {
+				return lane(input + roles[role] * 32U, f.dbl, index);
+			};
+			bool negate_product = instruction.fused == Fused::nmadd ||
+				instruction.fused == Fused::nmsub;
+			bool negate_addend = instruction.fused == Fused::msub ||
+				instruction.fused == Fused::nmsub;
+			if (instruction.fused == Fused::maddsub)
+				negate_addend = (index & 1U) == 0;
+			else if (instruction.fused == Fused::msubadd)
+				negate_addend = (index & 1U) != 0;
+			value = x86_fused_lane(f, operand(0), operand(1), operand(2),
+				negate_product, negate_addend, daz, ftz);
+		} else {
+			const auto *first = vex ? input + 32 : input;
+			const auto *second = vex ? input + 64 : input + 32;
+			value = x86_lane(f, instruction.op, lane(first, f.dbl, index),
+				lane(second, f.dbl, index), daz, ftz);
+		}
+		set_lane(output, instruction.dbl, index, value);
+	}
+	(void)lanes;
+}
+
+/* One iteration's ymm0, ymm1 and ymm2: the operand stream, with a quarter
+ * of the lanes of products, quotients and FMAs at the underflow threshold. */
+void fill_input(const Instruction &instruction, Operands &operands,
+	std::byte *input)
+{
+	const Format f{instruction.dbl};
+	const std::size_t lanes = lane_count(instruction);
+	for (std::size_t reg = 0; reg < 3; ++reg)
+		for (std::size_t index = 0; index < lanes; ++index)
+			set_lane(input + reg * 32U, instruction.dbl, index,
+				operands.pick(instruction.dbl));
+	if (instruction.op != Op::mul && instruction.op != Op::div &&
+		instruction.op != Op::fma)
+		return;
+	for (std::size_t index = 0; index < lanes; ++index) {
+		if ((operands.next() & 3U) != 0)
+			continue;
+		if (instruction.op == Op::fma) {
+			/* a * b at the threshold, and a small addend that moves
+			 * the fused result in steps of the least denormal. */
+			const auto pair = operands.threshold_pair(instruction.dbl,
+				Op::mul);
+			const auto r = operands.next();
+			const std::uint64_t addend = ((r & 7U) == 0 ? 0U : (r >> 8U) % 9U) |
+				((r & 8U) != 0 ? f.sign() : 0U);
+			const auto roles = fused_operands(instruction.form);
+			set_lane(input + roles[0] * 32U, f.dbl, index, pair[0]);
+			set_lane(input + roles[1] * 32U, f.dbl, index, pair[1]);
+			set_lane(input + roles[2] * 32U, f.dbl, index, addend);
+			continue;
+		}
+		auto *first = instruction.shape == Shape::vex256 ? input + 32 : input;
+		const auto pair = operands.threshold_pair(instruction.dbl,
+			instruction.op);
+		set_lane(first, instruction.dbl, index, pair[0]);
+		set_lane(first + 32, instruction.dbl, index, pair[1]);
+	}
 }
 
 struct Totals final {
@@ -658,35 +891,14 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 		(ftz ? 0x8000U : 0U) | (rounding << 13U);
 	Operands operands;
 	Totals totals;
-	const std::size_t lanes = instruction.dbl ? 4U : 8U;
-	/* Lanes the instruction writes; an SSE shape keeps ymm0's upper half,
-	 * and a scalar one also lanes 1 and up, which the model copies. */
-	const std::size_t width = instruction.shape == Shape::vex256 ? lanes :
-		lanes / 2U;
+	const std::size_t lanes = lane_count(instruction);
+	const std::size_t width = computed_lanes(instruction);
 	std::vector<std::byte> expected(32);
 	for (std::size_t done = 0; done < iterations;) {
 		const auto count = std::min(chunk, iterations - done);
-		for (std::size_t row = 0; row < count; ++row) {
-			auto *input = memory.at(input_address + row * input_stride);
-			for (std::size_t reg = 0; reg < 3; ++reg)
-				for (std::size_t index = 0; index < lanes; ++index)
-					set_lane(input + reg * 32U, instruction.dbl, index,
-						operands.pick(instruction.dbl));
-			if (instruction.op != Op::mul && instruction.op != Op::div)
-				continue;
-			/* A quarter of the lanes of products and quotients sit at
-			 * the underflow threshold. */
-			auto *first = instruction.shape == Shape::vex256 ?
-				input + 32 : input;
-			for (std::size_t index = 0; index < lanes; ++index) {
-				if ((operands.next() & 3U) != 0)
-					continue;
-				const auto pair = operands.threshold_pair(instruction.dbl,
-					instruction.op);
-				set_lane(first, instruction.dbl, index, pair[0]);
-				set_lane(first + 32, instruction.dbl, index, pair[1]);
-			}
-		}
+		for (std::size_t row = 0; row < count; ++row)
+			fill_input(instruction, operands,
+				memory.at(input_address + row * input_stride));
 		if (!run_engine(memory, executor, mxcsr, count)) {
 			totals.engine_failed = true;
 			return totals;
@@ -711,19 +923,17 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 					++totals.kept_differing;
 				if (shown.count < 12U) {
 					++shown.count;
-					std::fprintf(stderr, "  %.*s%s %s daz=%d ftz=%d rc=%u "
-						"lane %zu a=%#llx b=%#llx engine=%#llx x86=%#llx\n",
-						static_cast<int>(instruction.name.size()),
-						instruction.name.data(), instruction.dbl ? "d" : "s",
+					std::fprintf(stderr, "  %s %s daz=%d ftz=%d rc=%u lane %zu "
+						"ymm0=%#llx ymm1=%#llx ymm2=%#llx engine=%#llx "
+						"x86=%#llx\n", instruction.name.c_str(),
 						shape_name(instruction.shape), daz ? 1 : 0,
 						ftz ? 1 : 0, rounding, index,
-						static_cast<unsigned long long>(lane(
-							instruction.shape == Shape::vex256 ?
-								input + 32 : input, instruction.dbl, index)),
-						static_cast<unsigned long long>(lane(
-							instruction.shape == Shape::vex256 ?
-								input + 64 : input + 32, instruction.dbl,
-							index)),
+						static_cast<unsigned long long>(
+							lane(input, instruction.dbl, index)),
+						static_cast<unsigned long long>(
+							lane(input + 32, instruction.dbl, index)),
+						static_cast<unsigned long long>(
+							lane(input + 64, instruction.dbl, index)),
 						static_cast<unsigned long long>(got),
 						static_cast<unsigned long long>(want));
 				}
@@ -747,7 +957,7 @@ int main(int argc, char **argv)
 		else if (argument == "--only" && index + 1 < argc)
 			only = argv[++index];
 		else {
-			std::fprintf(stderr, "usage: %s [--iterations N] [--only NAME]\n",
+			std::fprintf(stderr, "usage: %s [--iterations N] [--only TEXT]\n",
 				argv[0]);
 			return 2;
 		}
@@ -759,7 +969,8 @@ int main(int argc, char **argv)
 	Shown shown;
 	std::printf("instruction\tshape\tdaz\tftz\trc\tlanes\tdiffering\n");
 	for (const auto &instruction : instructions()) {
-		if (!only.empty() && instruction.name != only)
+		if (!only.empty() &&
+			instruction.name.find(only) == std::string::npos)
 			continue;
 		for (const bool daz : {false, true})
 		for (const bool ftz : {false, true})
@@ -767,18 +978,16 @@ int main(int argc, char **argv)
 			const auto totals = run_cell(instruction, daz, ftz, rounding,
 				iterations, shown);
 			if (totals.engine_failed) {
-				std::fprintf(stderr, "x86-64 SSE exactness: %.*s did not run "
-					"to its end\n", static_cast<int>(instruction.name.size()),
-					instruction.name.data());
+				std::fprintf(stderr, "x86-64 SSE exactness: %s did not run "
+					"to its end\n", instruction.name.c_str());
 				failed = true;
 				continue;
 			}
 			lanes += totals.lanes;
 			differing += totals.differing;
 			kept += totals.kept_differing;
-			std::printf("%.*s%s\t%s\t%d\t%d\t%u\t%llu\t%llu\n",
-				static_cast<int>(instruction.name.size()),
-				instruction.name.data(), instruction.dbl ? "d" : "s",
+			std::printf("%s\t%s\t%d\t%d\t%u\t%llu\t%llu\n",
+				instruction.name.c_str(),
 				shape_name(instruction.shape), daz ? 1 : 0, ftz ? 1 : 0,
 				rounding, static_cast<unsigned long long>(totals.lanes),
 				static_cast<unsigned long long>(totals.differing));

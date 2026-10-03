@@ -1,46 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Packed and scalar SSE/AVX floating-point arithmetic and comparisons. */
 
-.macro vector_fp_flush_subnormals vector, element
-	.if \element == 32
-	mov w14, #0x7f800000
-	dup v16.4s, w14
-	and v17.16b, v\vector\().16b, v16.16b
-	cmeq v17.4s, v17.4s, #0
-	mov w14, #0x80000000
-	dup v16.4s, w14
-	.else
-	mov x14, #0x7ff0000000000000
-	dup v16.2d, x14
-	and v17.16b, v\vector\().16b, v16.16b
-	cmeq v17.2d, v17.2d, #0
-	mov x14, #0x8000000000000000
-	dup v16.2d, x14
-	.endif
-	and v16.16b, v\vector\().16b, v16.16b
-	bsl v17.16b, v16.16b, v\vector\().16b
-	mov v\vector\().16b, v17.16b
-.endm
-
-/* v`mask` = all ones in the lanes of v`output` that are not zero and at most
- * the smallest normal in magnitude. Uses v`temporary`. */
-.macro vector_fp_small_lanes element, output, mask, temporary
-	.if \element == 32
-	shl v\mask\().4s, v\output\().4s, #1
-	movi v\temporary\().16b, #0xff
-	add v\mask\().4s, v\mask\().4s, v\temporary\().4s
-	movi v\temporary\().4s, #0x01, lsl #24
-	cmhi v\mask\().4s, v\temporary\().4s, v\mask\().4s
-	.else
-	shl v\mask\().2d, v\output\().2d, #1
-	movi v\temporary\().16b, #0xff
-	add v\mask\().2d, v\mask\().2d, v\temporary\().2d
-	mov x14, #0x0020000000000000
-	dup v\temporary\().2d, x14
-	cmhi v\mask\().2d, v\temporary\().2d, v\mask\().2d
-	.endif
-.endm
-
 /* x86 detects underflow after rounding: a result is tiny when, rounded to
  * full precision as if the exponent were unbounded, it lies below the
  * smallest normal. A denormal result always is. A product or quotient the
@@ -94,9 +54,9 @@
 	.set Lx86_vector_fp_rounded\@, 1
 	.endif
 	.if !Lx86_vector_fp_rounded\@
-	vector_fp_flush_subnormals \output, \element
+	simd_flush_denormals \output, \element
 	.else
-	vector_fp_small_lanes \element, \output, 17, 18
+	simd_small_lanes \element, \output, 17, 18
 	vector_fp_scaled_tiny \operation, \element, \left, \right
 	and v17.16b, v17.16b, v18.16b
 	.if \element == 32
@@ -555,9 +515,9 @@ Lx86_vector_fp_special\@:
 	.endif
 	b.ne Lx86_vector_fp_ftz_ready\@
 	.else
-	vector_fp_small_lanes \element, 4, 17, 18
+	simd_small_lanes \element, 4, 17, 18
 	.if \width == 256
-	vector_fp_small_lanes \element, 5, 16, 18
+	simd_small_lanes \element, 5, 16, 18
 	orr v17.16b, v17.16b, v16.16b
 	.endif
 	umaxv s17, v17.4s
@@ -605,7 +565,7 @@ Lx86_vector_fp_tiny\@:
 .endm
 
 .macro vector_fp_estimate_special_packed operation, output, input
-	vector_fp_flush_subnormals \input, 32
+	simd_flush_denormals \input, 32
 	vector_fp_packed_value \operation, 32, \output, \input, \input
 	.ifc \operation,rcp
 	shl v17.4s, v\input\().4s, #1
@@ -628,7 +588,7 @@ Lx86_vector_fp_tiny\@:
 .endm
 
 .macro vector_fp_estimate_special_scalar operation
-	vector_fp_flush_subnormals 1, 32
+	simd_flush_denormals 1, 32
 	vector_fp_regular_value \operation, 32, 6, 1, 1
 	.ifc \operation,rcp
 	fmov w14, s1
@@ -740,11 +700,11 @@ Lx86_vector_fp_estimate_special\@:
 	.else
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fp_inputs_ready\@
-	vector_fp_flush_subnormals 0, \element
-	vector_fp_flush_subnormals 1, \element
+	simd_flush_denormals 0, \element
+	simd_flush_denormals 1, \element
 	.if \width == 256
-	vector_fp_flush_subnormals 2, \element
-	vector_fp_flush_subnormals 3, \element
+	simd_flush_denormals 2, \element
+	simd_flush_denormals 3, \element
 	.endif
 Lx86_vector_fp_inputs_ready\@:
 	vector_fp_check_inputs \operation, \element, \width, \scalar
@@ -940,5 +900,3 @@ vector_fp_predicate 15
 .purgem vector_fp_flush_tiny_scalar
 .purgem vector_fp_flush_tiny_packed
 .purgem vector_fp_scaled_tiny
-.purgem vector_fp_small_lanes
-.purgem vector_fp_flush_subnormals

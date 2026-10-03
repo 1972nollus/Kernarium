@@ -240,6 +240,48 @@ Lx86_simd_unchecked\@:
 	fmov w14, s17
 .endm
 
+/* MXCSR.DAZ and FTZ: replace each denormal lane of v`vector` (`element` bits
+ * wide) with a zero of its sign. Uses v16, v17 and w14. */
+.macro simd_flush_denormals vector, element
+	.if \element == 32
+	mov w14, #0x7f800000
+	dup v16.4s, w14
+	and v17.16b, v\vector\().16b, v16.16b
+	cmeq v17.4s, v17.4s, #0
+	mov w14, #0x80000000
+	dup v16.4s, w14
+	.else
+	mov x14, #0x7ff0000000000000
+	dup v16.2d, x14
+	and v17.16b, v\vector\().16b, v16.16b
+	cmeq v17.2d, v17.2d, #0
+	mov x14, #0x8000000000000000
+	dup v16.2d, x14
+	.endif
+	and v16.16b, v\vector\().16b, v16.16b
+	bsl v17.16b, v16.16b, v\vector\().16b
+	mov v\vector\().16b, v17.16b
+.endm
+
+/* v`mask` = all ones in the lanes of v`output` that are not zero and at most
+ * the smallest normal in magnitude. Uses v`temporary`. */
+.macro simd_small_lanes element, output, mask, temporary
+	.if \element == 32
+	shl v\mask\().4s, v\output\().4s, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().4s, v\mask\().4s, v\temporary\().4s
+	movi v\temporary\().4s, #0x01, lsl #24
+	cmhi v\mask\().4s, v\temporary\().4s, v\mask\().4s
+	.else
+	shl v\mask\().2d, v\output\().2d, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().2d, v\mask\().2d, v\temporary\().2d
+	mov x14, #0x0020000000000000
+	dup v\temporary\().2d, x14
+	cmhi v\mask\().2d, v\temporary\().2d, v\mask\().2d
+	.endif
+.endm
+
 /* While the gadgets check SIMD exceptions, leave when a lane of a packed
  * result -- v`first`, and v`second` for a 256-bit one -- is special. */
 .macro simd_check_packed element, first, second=-1
