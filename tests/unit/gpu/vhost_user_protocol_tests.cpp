@@ -1459,9 +1459,6 @@ struct QueueScenario final {
     bool inbandNotification {};
     bool legacyFeatureNegotiation {};
     QueueDeviceCommand command {QueueDeviceCommand::displayInfo};
-    // Zero selects the complete response for the requested command. Tests set
-    // an explicit smaller capacity only when exercising response preflight.
-    std::uint32_t responseLength {};
 };
 
 void queueNotificationProcessesQueue(
@@ -1483,12 +1480,10 @@ void queueNotificationProcessesQueue(
         sizeof(protocol::GpuContextCreate) :
         createResource ? sizeof(protocol::GpuResourceCreate2d) :
                          sizeof(protocol::GpuControlHeader);
-    const std::uint32_t completeResponseLength =
+    const std::uint32_t responseLength =
         createContext || createResource ?
         sizeof(protocol::GpuControlHeader) :
         sizeof(protocol::GpuDisplayInfo);
-    const auto responseLength = scenario.responseLength == 0 ?
-        completeResponseLength : scenario.responseLength;
     std::array<protocol::VirtqueueDescriptor, 2> descriptors {
         protocol::VirtqueueDescriptor {
             .address = guestBase + requestOffset,
@@ -1709,18 +1704,8 @@ void queueNotificationProcessesQueue(
         if (scenario.availableIndex > 8 ||
             scenario.reservedDescriptorFlag ||
             scenario.reservedAvailableFlag ||
-            scenario.reversedDescriptorOrder ||
-            ((scenario.enableQueue || scenario.legacyFeatureNegotiation) &&
-             responseLength < completeResponseLength)) {
+            scenario.reversedDescriptorOrder) {
             waitForConnectionClose(socket);
-            if (responseLength < sizeof(protocol::GpuDisplayInfo)) {
-                require(std::ranges::all_of(
-                    memory.subspan(
-                        responseOffset, sizeof(protocol::GpuDisplayInfo)),
-                    [](std::uint8_t byte) {
-                        return byte == responseSentinel;
-                    }));
-            }
             return;
         }
         if (scenario.inbandNotification) {
@@ -1820,6 +1805,110 @@ void disconnectReconnectIsPristine(VhostUserServer& server)
     }
 }
 
+/* A control request whose writable descriptors cannot hold its reply does not
+ * run, and the connection survives it: with room for a response header it is
+ * answered with an invalid-parameter error, and with less it completes with
+ * nothing written. The repeated context create shows that the unanswered one
+ * did not run, since it would have taken the ID. */
+void shortResponseBuffersAreAnsweredWithoutRunningTheCommand(
+    VhostUserServer& server)
+{
+    const SplitRing ring;
+    const auto memory = ring.memory();
+    struct Chain {
+        std::size_t requestOffset;
+        std::uint32_t requestLength;
+        std::size_t responseOffset;
+        std::uint32_t responseLength;
+    };
+    constexpr std::uint32_t header = sizeof(protocol::GpuControlHeader);
+    constexpr std::uint32_t create = sizeof(protocol::GpuContextCreate);
+    constexpr std::uint32_t displayInfo = sizeof(protocol::GpuDisplayInfo);
+    constexpr std::size_t responsesOffset = 0x400;
+    constexpr std::array chains {
+        Chain {0x300, header, responsesOffset, header},
+        Chain {0x320, create, 0x600, header - 1},
+        Chain {0x380, create, 0x700, header},
+        Chain {0x3e0, header, 0x800, displayInfo},
+    };
+    std::array<protocol::VirtqueueDescriptor, 2 * chains.size()> descriptors {};
+    std::array<std::uint16_t, chains.size()> heads {};
+    for (std::size_t index = 0; index < chains.size(); ++index) {
+        const auto& chain = chains[index];
+        const auto first = static_cast<std::uint16_t>(2 * index);
+        heads[index] = first;
+        descriptors[first] = {
+            .address = SplitRing::guestBase + chain.requestOffset,
+            .length = chain.requestLength,
+            .flags = protocol::descriptorNext,
+            .next = static_cast<std::uint16_t>(first + 1),
+        };
+        descriptors[first + 1U] = {
+            .address = SplitRing::guestBase + chain.responseOffset,
+            .length = chain.responseLength,
+            .flags = protocol::descriptorWrite,
+            .next = 0,
+        };
+    }
+    for (const auto& chain : {chains[0], chains[3]}) {
+        protocol::GpuControlHeader request {};
+        request.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::getDisplayInfo);
+        std::memcpy(
+            memory.data() + chain.requestOffset, &request, sizeof(request));
+    }
+    for (const auto& chain : {chains[1], chains[2]}) {
+        protocol::GpuContextCreate request {};
+        request.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::contextCreate);
+        request.header.contextId = 51;
+        request.contextInit = protocol::virglCapsetId;
+        std::memcpy(
+            memory.data() + chain.requestOffset, &request, sizeof(request));
+    }
+    constexpr std::uint8_t responseSentinel = 0xa5;
+    std::memset(memory.data() + responsesOffset, responseSentinel,
+        memory.size() - responsesOffset);
+    ring.publish(descriptors, heads);
+
+    const auto responseType = [&](const Chain& chain) {
+        protocol::GpuControlHeader response {};
+        std::memcpy(
+            &response, memory.data() + chain.responseOffset, sizeof(response));
+        return static_cast<protocol::GpuResponse>(response.type);
+    };
+    const auto untouched = [&](std::size_t offset, std::size_t size) {
+        return std::ranges::all_of(
+            memory.subspan(offset, size),
+            [](std::uint8_t byte) { return byte == responseSentinel; });
+    };
+    withServerConnection(server, [&](int socket) {
+        negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
+        configureMemory(socket, ring.descriptor());
+        const auto channels = startQueue(socket, ring);
+        awaitCall(channels.call.readEnd.get());
+        require(ring.usedIndex() == chains.size());
+        for (std::size_t index = 0; index < chains.size(); ++index)
+            require(ring.usedElement(index).id == heads[index]);
+
+        require(ring.usedElement(0).length == header);
+        require(responseType(chains[0]) ==
+            protocol::GpuResponse::errorInvalidParameter);
+        require(untouched(
+            chains[0].responseOffset + header, displayInfo - header));
+
+        require(ring.usedElement(1).length == 0);
+        require(untouched(chains[1].responseOffset, header));
+
+        require(ring.usedElement(2).length == header);
+        require(responseType(chains[2]) == protocol::GpuResponse::okNoData);
+
+        require(ring.usedElement(3).length == displayInfo);
+        require(responseType(chains[3]) ==
+            protocol::GpuResponse::okDisplayInfo);
+    });
+}
+
 } // namespace
 
 void runVhostUserProtocolTests()
@@ -1858,6 +1947,7 @@ void runVhostUserProtocolTests()
         queueNotificationProcessesQueue(
             server, {.resetOwnerRecreatesContext = true});
         disconnectReconnectIsPristine(server);
+        shortResponseBuffersAreAnsweredWithoutRunningTheCommand(server);
         queueNotificationProcessesQueue(
             server, {.reversedDescriptorOrder = true});
         queueNotificationProcessesQueue(
@@ -1868,9 +1958,6 @@ void runVhostUserProtocolTests()
             server, {.inbandNotification = true});
         queueNotificationProcessesQueue(
             server, {.legacyFeatureNegotiation = true});
-        queueNotificationProcessesQueue(
-            server,
-            {.responseLength = sizeof(protocol::GpuControlHeader)});
     }
     require(descriptorCount() == before);
 }

@@ -61,6 +61,7 @@ public:
             eventQueue_.get(),
             {.closeOnExec = true},
             "close-on-exec descriptor");
+        addFenceTimer(eventQueue_.get());
         const int resizeDescriptor = display_.resizeEventDescriptor();
         if (resizeDescriptor >= 0) {
             struct kevent change {};
@@ -162,9 +163,11 @@ public:
         std::size_t responseCapacity) override
     {
         const bool cursorQueue = index == protocol::gpuCursorQueue;
+        /* A control request with no room even for an error header does not
+         * run: it completes with nothing written. */
         if (!cursorQueue &&
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
-            throw std::runtime_error("short Virtio-GPU response buffer");
+            return {.action = uml::virtio::VhostUserQueueAction::complete};
         }
         if (!fences_.empty() && !fences_.orderingRelaxed() &&
             !gpu_.canProcessWhileFencesPending(request, cursorQueue)) {
@@ -178,18 +181,16 @@ public:
         if (mayDefer)
             fences_.reserveDefer();
         if (mayDefer && fences_.empty())
-            armFenceTimer();
+            armFenceTimer(eventQueue_.get());
 
         auto result = gpu_.processWithDeferredFence(
-            request, cursorQueue, requestId);
-        if (result.response.size() > responseCapacity)
-            throw std::runtime_error("short Virtio-GPU response buffer");
+            request, cursorQueue, requestId, responseCapacity);
         if (result.destroyedContextId) {
             /* The context's held commands complete on the next tick. */
             const bool held = !fences_.empty();
             fences_.forgetContext(*result.destroyedContextId);
             if (held)
-                armFenceTimer();
+                armFenceTimer(eventQueue_.get());
         }
         if (result.fence) {
             if (!mayDefer)
@@ -203,7 +204,7 @@ public:
             return {.action = uml::virtio::VhostUserQueueAction::defer};
         }
         if (fences_.empty() && gpu_.rendererHasPendingWork())
-            armFenceTimer();
+            armFenceTimer(eventQueue_.get());
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = std::move(result.response),
@@ -212,7 +213,7 @@ public:
 
     void reset() noexcept override
     {
-        cancelFenceTimer();
+        cancelFenceTimer(eventQueue_.get());
         fences_.clear();
         gpu_.reset();
         configChangePending_ = false;
@@ -277,7 +278,7 @@ public:
             if (gpu_.pollRenderer() != 0)
                 throw std::runtime_error("polling GPU fences failed");
             if (gpu_.rendererHasPendingWork())
-                armFenceTimer();
+                armFenceTimer(eventQueue_.get());
             return;
         }
 
@@ -295,7 +296,7 @@ public:
                 return gpu_.contextFenceStatus(fence);
             });
         if (!fences_.empty() || gpu_.rendererHasPendingWork())
-            armFenceTimer();
+            armFenceTimer(eventQueue_.get());
     }
 
     [[nodiscard]] bool takeQueueCompletion(
@@ -398,8 +399,6 @@ public:
     }
 
 private:
-    static constexpr std::uintptr_t fenceTimerIdentifier = 1;
-
     /* The transport's own translation: a range that one mapped region holds
      * whole, copied out. */
     [[nodiscard]] bool readGuest(
@@ -412,7 +411,6 @@ private:
         std::memcpy(destination.data(), source.data(), destination.size());
         return true;
     }
-    static constexpr std::intptr_t fencePollMicroseconds = 100;
 
     [[nodiscard]] bool canDeferFence(
         bool cursorQueue,
@@ -432,43 +430,6 @@ private:
          * guest ring. The device knows each context's capset, so it decides
          * which rings defer and completes the rest synchronously. */
         return pipelineCommand && fence && header.contextId != 0;
-    }
-
-    void armFenceTimer()
-    {
-        struct kevent change {};
-        EV_SET(
-            &change,
-            fenceTimerIdentifier,
-            EVFILT_TIMER,
-            EV_ADD | EV_ENABLE | EV_ONESHOT,
-            NOTE_USECONDS,
-            fencePollMicroseconds,
-            nullptr);
-        int result;
-        do {
-            result = ::kevent(
-                eventQueue_.get(), &change, 1, nullptr, 0, nullptr);
-        } while (result < 0 && errno == EINTR);
-        if (result < 0)
-            throw std::runtime_error("arming GPU fence timer failed");
-    }
-
-    void cancelFenceTimer() noexcept
-    {
-        struct kevent change {};
-        EV_SET(
-            &change,
-            fenceTimerIdentifier,
-            EVFILT_TIMER,
-            EV_DELETE,
-            0,
-            0,
-            nullptr);
-        while (::kevent(
-                   eventQueue_.get(), &change, 1, nullptr, 0, nullptr) < 0 &&
-            errno == EINTR) {
-        }
     }
 
     std::unique_ptr<Display> ownedDisplay_;
