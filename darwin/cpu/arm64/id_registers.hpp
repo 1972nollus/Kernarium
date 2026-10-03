@@ -4,6 +4,7 @@
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/host_capabilities.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace uml::cpu::arm64::detail {
@@ -48,15 +49,25 @@ inline constexpr std::uint64_t emulated_midr_el1 = 0x000f'0000ULL;
  * derive a vCPU identity from a read that carries none on arm64 either. */
 inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 
-/* The values below carry exactly the features `darwin_uml_guest_hwcap()`
- * advertises, on the identical host predicates, and nothing else. That is the
- * same contract AT_HWCAP already follows: a guest may select an opcode only
- * where an engine has committed to executing it, and an identification
- * register is just the second way to ask. Fields Linux hides from userspace
- * (the exception levels, ID_AA64MMFR0_EL1 except ECV, ID_AA64MMFR1_EL1
- * except AFP, debug and IMPLEMENTATION DEFINED registers) read as zero here
- * for the same reason they do on arm64: they describe state EL0 cannot act
- * on.
+/* The registers whose fields carry features, by the MRS that reads each into
+ * X0. */
+inline constexpr std::uint32_t id_aa64pfr0_el1 = 0xd538'0400U;
+inline constexpr std::uint32_t id_aa64isar0_el1 = 0xd538'0600U;
+inline constexpr std::uint32_t id_aa64isar1_el1 = 0xd538'0620U;
+inline constexpr std::uint32_t id_aa64isar2_el1 = 0xd538'0640U;
+inline constexpr std::uint32_t id_aa64mmfr0_el1 = 0xd538'0700U;
+inline constexpr std::uint32_t id_aa64mmfr1_el1 = 0xd538'0720U;
+inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
+
+/* These values are the virtual CPU's advertised feature set, and AT_HWCAP
+ * and AT_HWCAP2 are read from them (`guest_hwcaps()` below). A field reports
+ * a feature only where an engine has committed to executing it, on the host
+ * predicate its native path uses, never the host's whole feature set: a guest
+ * that selects an opcode from either answer must not reach one an engine
+ * would treat as illegal. Fields Linux hides from userspace (the exception
+ * levels, ID_AA64MMFR0_EL1 except ECV, ID_AA64MMFR1_EL1 except AFP, debug and
+ * IMPLEMENTATION DEFINED registers) read as zero here for the same reason
+ * they do on arm64: they describe state EL0 cannot act on.
  */
 [[nodiscard]] inline std::uint64_t emulated_id_register_value(
 	std::uint32_t instruction) noexcept
@@ -78,7 +89,9 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 	}
 	if (group == 4U && selector == 0U) {
 		/* ID_AA64PFR0_EL1. An FP or AdvSIMD field of zero already means
-		 * "implemented"; one additionally means half precision. */
+		 * "implemented"; one additionally means half precision, whose
+		 * native scalar and vector paths both engines gate on this
+		 * probe. DIT: PSTATE.DIT is settable and readable. */
 		std::uint64_t value = 0;
 		if (host.fp16)
 			value |= field(1, 16) | field(1, 20);
@@ -87,7 +100,9 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		return value;
 	}
 	if (group == 6U && selector == 0U) {
-		/* ID_AA64ISAR0_EL1. */
+		/* ID_AA64ISAR0_EL1. The crypto, CRC32, LSE, RDM, dot-product
+		 * and FHM families run as the host's own instructions. TS is
+		 * CFINV, RMIF and SETF, then AXFLAG and XAFLAG. */
 		std::uint64_t value = 0;
 		if (host.aes)
 			value |= field(host.pmull ? 2 : 1, 4);
@@ -113,9 +128,13 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		return value;
 	}
 	if (group == 6U && selector == 1U) {
-		/* ID_AA64ISAR1_EL1. DPB stays zero because no engine implements
-		 * DC CVAP, and the pointer-authentication fields stay zero
-		 * because AT_HWCAP does not advertise PACA/PACG either. */
+		/* ID_AA64ISAR1_EL1. Both engines correct the Z flag FJCVTZS
+		 * sets on some cores, such as the M1, for a subnormal FPCR.FZ
+		 * flushes, so JSCVT follows the host. The gadget bank has a
+		 * native RCpc load and store for every size. DPB stays zero
+		 * because no engine implements DC CVAP, and the
+		 * pointer-authentication fields because the virtual CPU has no
+		 * FEAT_PAuth. */
 		std::uint64_t value = 0;
 		if (host.has(ArmFeature::jscvt))
 			value |= field(1, 12);
@@ -135,26 +154,100 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		return value;
 	}
 	if (group == 6U && selector == 2U)
-		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_MOPS and
-		 * FEAT_CSSC on every host; RPRES follows the host. */
+		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_MOPS, one host
+		 * memmove or memset per page region, and FEAT_CSSC, natively or
+		 * as base sequences, on every host; RPRES, the 12-bit estimates
+		 * under FPCR.AH, follows the host. */
 		return field(1, 16) | field(1, 52) |
 			(implements_rpres(host) ? field(1, 4) : 0);
 	if (group == 7U && selector == 0U)
-		/* ID_AA64MMFR0_EL1. ECV is the one field Linux shows EL0, and
-		 * where it derives HWCAP2_ECV. */
+		/* ID_AA64MMFR0_EL1. ECV, the one field Linux shows EL0: both
+		 * engines read CNTVCTSS_EL0 with the host's instruction. */
 		return host.has(ArmFeature::ecv) ? field(1, 60) : 0;
 	if (group == 7U && selector == 1U)
-		/* ID_AA64MMFR1_EL1.AFP is the one field of it Linux shows EL0,
-		 * and where it derives HWCAP2_AFP. */
+		/* ID_AA64MMFR1_EL1. AFP, the one field Linux shows EL0, on the
+		 * predicate that names the host features exact FIZ, AH and
+		 * NEP take. */
 		return implements_afp(host) ? field(1, 44) : 0;
 	if (group == 7U && selector == 2U)
-		/* ID_AA64MMFR2_EL1.AT is where Linux derives HWCAP_USCAT, the
-		 * single-copy atomicity guarantee for an unaligned LSE atomic. */
+		/* ID_AA64MMFR2_EL1.AT, FEAT_LSE2: an LSE atomic on an address
+		 * that is not naturally aligned is single-copy atomic rather
+		 * than a fault. */
 		return host.has(ArmFeature::lse2) ? field(1, 32) : 0;
 	/* Every remaining register in the emulated space describes an AArch32
 	 * profile this AArch64-only guest does not implement, an extension no
 	 * engine executes, or state Linux keeps hidden from EL0. */
 	return 0;
+}
+
+/* A bit of AT_HWCAP or AT_HWCAP2 and the field it is read from: bit
+ * `hwcap`, numbered as the kernel's KERNEL_HWCAP_* (AT_HWCAP's as 0-63,
+ * AT_HWCAP2's as 64-127), is set where the 4-bit field at `shift` holds at
+ * least `minimum`. */
+struct HwcapField final {
+	std::uint32_t id_register;
+	unsigned shift;
+	unsigned minimum;
+	unsigned hwcap;
+};
+
+/* arm64 Linux's own derivation (arm64_elf_hwcaps in
+ * arch/arm64/kernel/cpufeature.c), restricted to the fields the values
+ * above can set. */
+inline constexpr HwcapField hwcap_fields[]{
+	{id_aa64pfr0_el1, 16, 1, 9},		/* FP: FPHP */
+	{id_aa64pfr0_el1, 20, 1, 10},		/* AdvSIMD: ASIMDHP */
+	{id_aa64pfr0_el1, 48, 1, 24},		/* DIT */
+	{id_aa64isar0_el1, 4, 1, 3},		/* AES */
+	{id_aa64isar0_el1, 4, 2, 4},		/* AES: PMULL */
+	{id_aa64isar0_el1, 8, 1, 5},		/* SHA1 */
+	{id_aa64isar0_el1, 12, 1, 6},		/* SHA2 */
+	{id_aa64isar0_el1, 12, 2, 21},		/* SHA2: SHA512 */
+	{id_aa64isar0_el1, 16, 1, 7},		/* CRC32 */
+	{id_aa64isar0_el1, 20, 2, 8},		/* Atomic: ATOMICS */
+	{id_aa64isar0_el1, 28, 1, 12},		/* RDM: ASIMDRDM */
+	{id_aa64isar0_el1, 32, 1, 17},		/* SHA3 */
+	{id_aa64isar0_el1, 44, 1, 20},		/* DP: ASIMDDP */
+	{id_aa64isar0_el1, 48, 1, 23},		/* FHM: ASIMDFHM */
+	{id_aa64isar0_el1, 52, 1, 27},		/* TS: FLAGM */
+	{id_aa64isar0_el1, 52, 2, 64 + 7},	/* TS: FLAGM2 */
+	{id_aa64isar1_el1, 12, 1, 13},		/* JSCVT */
+	{id_aa64isar1_el1, 16, 1, 14},		/* FCMA */
+	{id_aa64isar1_el1, 20, 1, 15},		/* LRCPC */
+	{id_aa64isar1_el1, 20, 2, 26},		/* LRCPC: ILRCPC */
+	{id_aa64isar1_el1, 32, 1, 64 + 8},	/* FRINTTS: FRINT */
+	{id_aa64isar1_el1, 36, 1, 29},		/* SB */
+	{id_aa64isar1_el1, 44, 1, 64 + 14},	/* BF16 */
+	{id_aa64isar1_el1, 52, 1, 64 + 13},	/* I8MM */
+	{id_aa64isar2_el1, 4, 1, 64 + 21},	/* RPRES */
+	{id_aa64isar2_el1, 16, 1, 64 + 43},	/* MOPS */
+	{id_aa64isar2_el1, 52, 1, 64 + 34},	/* CSSC */
+	{id_aa64mmfr0_el1, 60, 1, 64 + 19},	/* ECV */
+	{id_aa64mmfr1_el1, 44, 1, 64 + 20},	/* AFP */
+	{id_aa64mmfr2_el1, 32, 1, 25},		/* AT: USCAT */
+};
+
+/* AT_HWCAP and AT_HWCAP2 for a host, which `darwin_uml_guest_hwcap()` and
+ * `darwin_uml_guest_hwcap2()` return to the guest kernel. Each word is read
+ * from the identification registers exactly as arm64 Linux reads it, so a
+ * guest gets the same answer from MRS and from its auxiliary vector. The
+ * registers are read in a scope for `host`, because the kernel asks on a
+ * thread where no engine need have installed one. */
+[[nodiscard]] inline std::array<unsigned long, 2> guest_hwcaps(
+	const HostCapabilities &host) noexcept
+{
+	/* FP and ASIMD, whose fields are never 0b1111 here; EVTSTRM, the
+	 * promise that WFE wakes once per event-stream period, which holds
+	 * because both engines complete WFE at once; and CPUID, the emulation
+	 * of these reads itself, which Linux also sets unconditionally. */
+	std::array<unsigned long, 2> words{
+		(1UL << 0) | (1UL << 1) | (1UL << 2) | (1UL << 11), 0};
+	const HostCapabilitiesScope scope{host};
+	for (const auto &bit : hwcap_fields)
+		if (((emulated_id_register_value(bit.id_register) >>
+		      bit.shift) & 15U) >= bit.minimum)
+			words[bit.hwcap / 64U] |= 1UL << (bit.hwcap % 64U);
+	return words;
 }
 
 } // namespace uml::cpu::arm64::detail
