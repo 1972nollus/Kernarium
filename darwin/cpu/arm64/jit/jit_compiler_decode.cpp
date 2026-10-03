@@ -59,11 +59,13 @@ bool JitCompiler::emit_common_control_flow(std::uint32_t instruction, std::uint6
 
 JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std::uint64_t pc) {
     const auto resulting_count = count_ + 1;
-    if ((instruction & 0xffff'0000U) == 0U) {
+    const auto reject = [&] {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
-    }
+    };
+    if ((instruction & 0xffff'0000U) == 0U)
+      return reject();
     /*
      * The FP/SIMD class decoders below match only the bits that separate
      * their own allocations, and many copy the guest word into host code.
@@ -85,11 +87,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     }
     /* BC.cond needs FEAT_HBC, which the virtual CPU does not implement. */
-    if ((instruction & 0xff00'0010U) == 0x5400'0010U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0xff00'0010U) == 0x5400'0010U)
+      return reject();
     if (emit_common_control_flow(instruction, pc, resulting_count))
       return Action::terminate;
     if ((instruction & 0xffe0'001fU) == 0xd400'0002U ||
@@ -99,20 +98,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xffe0'001fU) == 0xd4a0'0002U ||
         (instruction & 0xffe0'001fU) == 0xd4a0'0003U ||
         instruction == 0xd6bf'03e0U || instruction == 0xd69f'03e0U ||
-        instruction == 0xd69f'0bffU || instruction == 0xd69f'0fffU) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        instruction == 0xd69f'0bffU || instruction == 0xd69f'0fffU)
+      return reject();
     /*
      * The virtual CPU implements no FEAT_GCS: GCSSTR and GCSSTTR are
      * unallocated. The GCS SYS and SYSL forms take the generic SYS path.
      */
-    if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U)
+      return reject();
     /*
      * Ordered-memory allocations overlap broader ordinary, structure, and
      * atomic load/store classes. Resolve the complete allocations here so
@@ -123,11 +116,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      * width, ordering, and addressing-mode decode remains at translation
      * time, while the bridge supplies the software-MMU address override.
      */
-    const auto reject_ordered = [&] {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    };
     const auto ordered_memory = [&](bool store) {
       if (store)
         mark_memory_write();
@@ -144,7 +132,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U ||
         (instruction & 0x3f20'0c00U) == 0x1d00'0800U ||
         (instruction & 0x3f20'0c00U) == 0x1900'0800U)
-      return reject_ordered();
+      return reject();
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
@@ -155,7 +143,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned operation = (instruction >> 22) & 3U;
       if ((operation == 2U && size == 3U) ||
           (operation == 3U && size >= 2U))
-        return reject_ordered();
+        return reject();
       if (!host_capabilities().has(ArmFeature::lrcpc2))
         return Action::unsupported;
       return ordered_memory(operation == 0U);
@@ -169,11 +157,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      */
     if (((instruction & 0x1f80'0000U) == 0x1180'0000U &&
          (instruction & 0x7ff0'0000U) != 0x11c0'0000U) ||
-        (instruction & 0xff20'0000U) == 0xd920'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xff20'0000U) == 0xd920'0000U)
+      return reject();
     if (emit_system_register(instruction)) {
       /*
        * A register-sourced FPCR write may enable precise guest exception
@@ -199,11 +184,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     }
     if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
         (instruction & 0xffd0'0000U) == 0xd550'0000U ||
-        (instruction & 0xfff8'0000U) == 0xd548'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xfff8'0000U) == 0xd548'0000U)
+      return reject();
     if ((instruction & 0xffff'ffe0U) == 0xd50b'7420U) {
       emit_cache_zero(instruction, pc);
       return Action::keep_going;
@@ -217,11 +199,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     }
     if ((instruction & 0xfff8'0000U) == 0xd508'0000U ||
-        (instruction & 0xfff8'0000U) == 0xd528'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xfff8'0000U) == 0xd528'0000U)
+      return reject();
     if ((instruction & 0xfff8'f01fU) == 0xd500'401fU) {
       const unsigned op1 = (instruction >> 16) & 7U;
       const unsigned immediate = (instruction >> 8) & 15U;
@@ -231,12 +210,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           return Action::keep_going;
         return Action::unsupported;
       } else {
-        const auto reject = [&] {
-          store_pc(pc);
-          emitter_.return_constant(Event::illegal_instruction,
-                                   resulting_count);
-          return Action::terminate;
-        };
         if (op1 != 3U)
           return reject();
 
@@ -286,11 +259,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::unsupported;
     }
     if ((instruction & 0xffe0'0400U) == 0xba00'0400U ||
-        (instruction & 0xffff'0800U) == 0x3a00'0800U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xffff'0800U) == 0x3a00'0800U)
+      return reject();
     if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
@@ -304,11 +274,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which
      * the virtual CPU does not implement. */
     if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU ||
-        (instruction & 0xffff'f3ffU) == 0xd503'323fU) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xffff'f3ffU) == 0xd503'323fU)
+      return reject();
     if ((instruction & 0xffff'f0ffU) == 0xd503'305fU) {
       emitter_.emit(instruction);
       emitter_.load_constant(8, ~std::uint64_t{0});
@@ -335,43 +302,28 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xffc0'0000U) == 0xf380'0000U ||
         (instruction & 0xffc0'0000U) == 0x5500'0000U ||
         ((instruction & 0xffff'fbe0U) == 0xd65f'0be0U &&
-         (instruction & 31U) != 31U)) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+         (instruction & 31U) != 31U))
+      return reject();
     /* The authenticated branches and returns need FEAT_PAuth, which the
      * virtual CPU does not implement. */
     if ((instruction & 0xfedf'f800U) == 0xd61f'0800U ||
-        (instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xffff'fbffU) == 0xd65f'0bffU)
+      return reject();
     /* WFET and WFIT need FEAT_WFxT, which the virtual CPU does not
      * implement. */
-    if ((instruction & 0xffff'ffc0U) == 0xd503'1000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0xffff'ffc0U) == 0xd503'1000U)
+      return reject();
     /* The virtual CPU implements no FEAT_CMPBR: the compare-and-branch class
      * is unallocated. */
-    if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0x7e00'0000U) == 0x7400'0000U)
+      return reject();
     if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {
       emit_pc_relative(instruction, pc);
       return Action::keep_going;
     }
     if ((instruction & 0x1f80'0000U) == 0x1280'0000U) {
-      if (!valid_move_wide(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_move_wide(instruction))
+        return reject();
       emit_move_wide(instruction);
       return Action::keep_going;
     }
@@ -384,20 +336,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x1f20'0000U) == 0x0b00'0000U) {
-      if (!valid_shifted_register(instruction, true)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_shifted_register(instruction, true))
+        return reject();
       emit_native_binary(instruction, false, (instruction & 0x2000'0000U) != 0);
       return Action::keep_going;
     }
     if ((instruction & 0x1fe0'0000U) == 0x0b20'0000U) {
-      if (!valid_extended_register(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_extended_register(instruction))
+        return reject();
       emit_add_sub_extended(instruction);
       return Action::keep_going;
     }
@@ -406,20 +352,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x1f80'0000U) == 0x1200'0000U) {
-      if (!valid_logical_immediate(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_logical_immediate(instruction))
+        return reject();
       emit_logical_immediate(instruction);
       return Action::keep_going;
     }
     if ((instruction & 0x1f80'0000U) == 0x1300'0000U) {
-      if (!valid_bitfield(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_bitfield(instruction))
+        return reject();
       emit_bitfield(instruction);
       return Action::keep_going;
     }
@@ -428,38 +368,26 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (((instruction >> 29) & 3U) != 0U ||
           (instruction & 0x0020'0000U) != 0U ||
           ((instruction >> 22) & 1U) != static_cast<unsigned>(wide) ||
-          (!wide && ((instruction >> 10) & 63U) >= 32U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+          (!wide && ((instruction >> 10) & 63U) >= 32U))
+        return reject();
       emit_native_binary(instruction, false, false);
       return Action::keep_going;
     }
     if ((instruction & 0x1f00'0000U) == 0x0a00'0000U) {
-      if (!valid_shifted_register(instruction, false)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_shifted_register(instruction, false))
+        return reject();
       emit_logical_shifted(instruction);
       return Action::keep_going;
     }
     if ((instruction & 0x3fe0'0000U) == 0x1a80'0000U) {
-      if ((instruction & 0x0000'0800U) != 0) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if ((instruction & 0x0000'0800U) != 0)
+        return reject();
       emit_conditional_select(instruction);
       return Action::keep_going;
     }
     if ((instruction & 0x3fe0'0000U) == 0x3a40'0000U) {
-      if ((instruction & 0x0000'0410U) != 0) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if ((instruction & 0x0000'0410U) != 0)
+        return reject();
       emit_conditional_compare(instruction);
       return Action::keep_going;
     }
@@ -467,21 +395,15 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if ((instruction & 0xffe0'8000U) == 0x9b60'0000U ||
           (instruction & 0xffe0'8000U) == 0x9b60'8000U)
         return Action::unsupported;
-      if (!valid_multiply_add(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_multiply_add(instruction))
+        return reject();
       emit_multiply_add(instruction);
       return Action::keep_going;
     }
     if ((instruction & 0x7fe0'e000U) == 0x1ac0'4000U) {
       const unsigned size = (instruction >> 10) & 3U;
-      if (((instruction >> 31) != 0) != (size == 3U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (((instruction >> 31) != 0) != (size == 3U))
+        return reject();
       if (emit_crc32(instruction))
         return Action::keep_going;
       return Action::unsupported;
@@ -499,20 +421,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emit_integer_min_max(instruction, false);
       return Action::keep_going;
     }
-    if ((instruction & 0x5fe0'f000U) == 0x1ac0'6000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0x5fe0'f000U) == 0x1ac0'6000U)
+      return reject();
     /* PAC*, AUT*, XPACI, XPACD and PACGA need FEAT_PAuth, which the
      * virtual CPU does not implement. */
     if ((instruction & 0xffff'c000U) == 0xdac1'0000U ||
         (instruction & 0xffff'f800U) == 0xdac1'4000U ||
-        (instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xffe0'fc00U) == 0x9ac0'3000U)
+      return reject();
     if ((instruction & 0x5fe0'0000U) == 0x1ac0'0000U) {
       const bool wide = (instruction & 0x8000'0000U) != 0;
       const bool s = (instruction & 0x2000'0000U) != 0;
@@ -537,16 +453,11 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       }
       if (allocated)
         return Action::unsupported;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0x7fff'8000U) == 0x5ac0'0000U) {
-      if (!valid_bit_reverse_count(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_bit_reverse_count(instruction))
+        return reject();
       emit_bit_reverse_count(instruction);
       return Action::keep_going;
     }
@@ -564,12 +475,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto floating_to_integer =
             arm64::detail::decode_floating_to_integer(instruction);
         floating_to_integer.recognized) {
-      if (!floating_to_integer.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!floating_to_integer.valid)
+        return reject();
       if (!emit_floating_to_integer(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -586,20 +493,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xbfe0'fc00U) == 0x0ec0'fc00U ||
         (instruction & 0xbf80'f400U) == 0x2f00'8000U ||
         (instruction & 0xbfa0'fc00U) == 0x0e00'c400U ||
-        (instruction & 0xff60'fc00U) == 0x6e00'ec00U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xff60'fc00U) == 0x6e00'ec00U)
+      return reject();
     if (const auto complex =
             arm64::detail::decode_floating_complex(instruction);
         complex.recognized) {
-      if (!complex.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!complex.valid)
+        return reject();
       if (!emit_simd_floating_complex(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -617,12 +517,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const bool q = (instruction & 0x4000'0000U) != 0;
       const unsigned size = (instruction >> 22) & 3U;
       if (size > 2U || (!q && size == 2U) ||
-          (simd_integer_reduce_opcode == 27U && unsigned_group)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+          (simd_integer_reduce_opcode == 27U && unsigned_group))
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_integer_reduce(instruction))
         return Action::unsupported;
@@ -632,59 +528,40 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned type = (instruction >> 22) & 3U;
       const bool compare_zero = (instruction & 8U) != 0U;
       if (type == 2U || (instruction & 7U) != 0U ||
-          (compare_zero && ((instruction >> 16) & 31U) != 0U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+          (compare_zero && ((instruction >> 16) & 31U) != 0U))
+        return reject();
       if (!host_supports_floating_type(instruction))
         return Action::unsupported;
       emit_floating_compare(instruction, false);
       return Action::keep_going;
     }
     if ((instruction & 0xff20'0c00U) == 0x1e20'0400U) {
-      if (((instruction >> 22) & 3U) == 2U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (((instruction >> 22) & 3U) == 2U)
+        return reject();
       if (!host_supports_floating_type(instruction))
         return Action::unsupported;
       emit_floating_compare(instruction, true);
       return Action::keep_going;
     }
     if ((instruction & 0xff20'0c00U) == 0x1e20'0c00U) {
-      if (((instruction >> 22) & 3U) == 2U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (((instruction >> 22) & 3U) == 2U)
+        return reject();
       if (!host_supports_floating_type(instruction))
         return Action::unsupported;
       emit_floating_select(instruction);
       return Action::keep_going;
     }
     if ((instruction & 0xff20'1fe0U) == 0x1e20'1000U) {
-      if (((instruction >> 22) & 3U) == 2U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (((instruction >> 22) & 3U) == 2U)
+        return reject();
       if (!host_supports_floating_type(instruction))
         return Action::unsupported;
       emit_floating_move(instruction, true);
       return Action::keep_going;
     }
     if ((instruction & 0xff3f'fc00U) == 0x1e20'4000U) {
-      if (((instruction >> 22) & 3U) == 2U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (((instruction >> 22) & 3U) == 2U)
+        return reject();
       if (!host_supports_floating_type(instruction))
         return Action::unsupported;
       emit_floating_move(instruction, false);
@@ -693,12 +570,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto floating_compare =
             arm64::detail::decode_simd_floating_compare(instruction);
         floating_compare.recognized) {
-      if (!floating_compare.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!floating_compare.valid)
+        return reject();
       if (!emit_simd_floating_compare(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -719,11 +592,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           source_type == 1U && destination_type == 2U;
       if (!separate_allocation &&
           (source_type == 2U || destination_type == 2U ||
-           source_type == destination_type)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+           source_type == destination_type))
+        return reject();
       if (!separate_allocation) {
         if (!emit_floating_precision_convert(instruction))
           return Action::unsupported;
@@ -735,12 +605,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto floating_round =
             arm64::detail::decode_floating_round(instruction);
         floating_round.recognized) {
-      if (!floating_round.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!floating_round.valid)
+        return reject();
       if (!emit_floating_round(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -765,12 +631,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                       : half_sign ||
                             ((instruction & 0x0080'0000U) != 0 &&
                              ((instruction & 0x0040'0000U) == 0 || q));
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid)
+        return reject();
       if (!emit_floating_unary(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -780,12 +642,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto floating_horizontal =
             arm64::detail::decode_floating_horizontal(instruction);
         floating_horizontal.recognized) {
-      if (!floating_horizontal.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!floating_horizontal.valid)
+        return reject();
       if (!emit_floating_horizontal(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -793,32 +651,21 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto floating_reciprocal =
             arm64::detail::decode_floating_reciprocal(instruction);
         floating_reciprocal.recognized) {
-      if (!floating_reciprocal.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!floating_reciprocal.valid)
+        return reject();
       if (!emit_floating_reciprocal(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     /* FSCALE belongs to FEAT_FP8, which the virtual CPU does not implement. */
     if ((instruction & 0xbfe0'fc00U) == 0x2ec0'3c00U ||
-        (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U)
+      return reject();
     if (const auto integer_to_floating =
             arm64::detail::decode_integer_to_floating(instruction);
         integer_to_floating.recognized) {
-      if (!integer_to_floating.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!integer_to_floating.valid)
+        return reject();
       if (!emit_integer_to_floating(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -832,11 +679,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
          (instruction & 0xafc0'f400U) == 0x0f40'9000U) &&
         ((instruction & 0x1000'0000U) == 0U ||
          !arm64::detail::decode_fused_floating_arithmetic(instruction)
-              .recognized)) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+              .recognized))
+      return reject();
     if (arm64::detail::decode_half_fused_long(instruction).recognized) {
       if (!emit_half_fused_long(instruction))
         return Action::unsupported;
@@ -844,28 +688,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     }
     /* The virtual CPU implements neither FEAT_F16MM nor FEAT_F16F32MM. */
     if ((instruction & 0x9fe0'fc00U) == 0x0ec0'ec00U ||
-        (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
-    if (arm64::detail::reserved_half_fused_long(instruction)) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction,
-                               resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U)
+      return reject();
+    if (arm64::detail::reserved_half_fused_long(instruction))
+      return reject();
     if (emit_simd_integer_float_convert(instruction))
       return Action::keep_going;
     if (const auto fused_floating =
             arm64::detail::decode_fused_floating_arithmetic(instruction);
         fused_floating.recognized) {
-      if (!fused_floating.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!fused_floating.valid)
+        return reject();
       if (!emit_fused_floating(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -873,11 +706,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (const auto basic_floating =
             arm64::detail::decode_basic_floating_arithmetic(instruction);
         basic_floating.recognized) {
-      if (!basic_floating.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!basic_floating.valid)
+        return reject();
       if (!emit_basic_floating(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -906,31 +736,20 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      */
     if ((instruction & 0xbf20'fc00U) == 0x2e00'fc00U) {
       const unsigned size = (instruction >> 22) & 3U;
-      if (size == 0U || size == 2U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (size == 0U || size == 2U)
+        return reject();
     }
     if ((instruction & 0xbf20'fc00U) == 0x2e00'ec00U) {
       const bool q = (instruction & 0x4000'0000U) != 0U;
       const unsigned size = (instruction >> 22) & 3U;
-      if ((!q && size == 1U) || (q && size == 3U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if ((!q && size == 1U) || (q && size == 3U))
+        return reject();
     }
     if ((instruction & 0xbfe0'8400U) == 0x2e00'0000U) {
       const bool q = (instruction & 0x4000'0000U) != 0;
       const unsigned offset = (instruction >> 11) & 15U;
-      if (!q && offset >= 8U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!q && offset >= 8U)
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_extract(instruction))
         return Action::unsupported;
@@ -939,11 +758,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     /* LUTI2 and LUTI4 need FEAT_LUT, which the virtual CPU does not
      * implement. */
     if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
-        (instruction & 0x00c0'0000U) != 0U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0x00c0'0000U) != 0U)
+      return reject();
     if (emit_simd_table_lookup(instruction))
       return Action::keep_going;
     const auto simd_permute_operation = instruction & 0xbf20'fc00U;
@@ -954,30 +770,21 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                               simd_permute_operation == 0x0e00'6800U ||
                               simd_permute_operation == 0x0e00'7800U;
     if (simd_permute && (instruction & 0x4000'0000U) == 0 &&
-        ((instruction >> 22) & 3U) == 3U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        ((instruction >> 22) & 3U) == 3U)
+      return reject();
     if (emit_simd_permute(instruction))
       return Action::keep_going;
     const bool simd_aes =
         (instruction & 0xffff'8c00U) == 0x4e28'0800U;
-    if (simd_aes && ((instruction >> 12) & 7U) < 4U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if (simd_aes && ((instruction >> 12) & 7U) < 4U)
+      return reject();
     if (emit_simd_aes(instruction))
       return Action::keep_going;
     const bool simd_pmull =
         (instruction & 0xbf20'fc00U) == 0x0e20'e000U;
     const unsigned simd_pmull_size = (instruction >> 22) & 3U;
-    if (simd_pmull && simd_pmull_size != 0U && simd_pmull_size != 3U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if (simd_pmull && simd_pmull_size != 0U && simd_pmull_size != 3U)
+      return reject();
     if (emit_simd_pmull(instruction))
       return Action::keep_going;
     const bool simd_sha12_three =
@@ -985,11 +792,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     const bool simd_sha12_two =
         (instruction & 0xffff'cc00U) == 0x5e28'0800U;
     if ((simd_sha12_three && ((instruction >> 12) & 7U) == 7U) ||
-        (simd_sha12_two && ((instruction >> 12) & 3U) == 3U)) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (simd_sha12_two && ((instruction >> 12) & 3U) == 3U))
+      return reject();
     if (emit_simd_sha1_sha2(instruction))
       return Action::keep_going;
     if (emit_simd_sha512(instruction))
@@ -1007,22 +811,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xffff'fc00U) == 0xcec0'8400U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8c00U;
-    if (reserved_simd_logic) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if (reserved_simd_logic)
+      return reject();
     if (emit_simd_sha3(instruction))
       return Action::keep_going;
     const auto simd_high_narrow_class = instruction & 0x9f20'fc00U;
     const bool simd_high_narrow =
         simd_high_narrow_class == 0x0e20'4000U ||
         simd_high_narrow_class == 0x0e20'6000U;
-    if (simd_high_narrow && ((instruction >> 22) & 3U) == 3U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if (simd_high_narrow && ((instruction >> 22) & 3U) == 3U)
+      return reject();
     if (emit_simd_arithmetic_narrow(instruction))
       return Action::keep_going;
     const bool simd_widening_vector =
@@ -1053,12 +851,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                            simd_widening_operation == 8U ||
                            simd_widening_operation == 10U ||
                            simd_widening_operation == 12U);
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid)
+        return reject();
     }
     if (emit_simd_widening(instruction))
       return Action::keep_going;
@@ -1111,12 +905,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         valid = size < 3U;
         break;
       }
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid)
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_two_register_integer(instruction))
         return Action::unsupported;
@@ -1127,83 +917,54 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
          simd_two_register_opcode == 1U ||
          simd_two_register_opcode == 5U)) {
       /* Reverse and byte-unary operations have no scalar allocation. */
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0x9fbf'fc00U) == 0x0ea1'c800U) {
-      if ((instruction & 0x0040'0000U) != 0) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if ((instruction & 0x0040'0000U) != 0)
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_unsigned_estimate(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_fmulx(instruction)) {
-      if (!valid_simd_fmulx(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_fmulx(instruction))
+        return reject();
       if (!emit_simd_fmulx(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_dot(instruction)) {
-      if (!valid_simd_dot(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_dot(instruction))
+        return reject();
       if (!emit_simd_dot(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_matrix(instruction)) {
-      if (!valid_simd_matrix(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_matrix(instruction))
+        return reject();
       if (!emit_simd_matrix(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_floating_indexed(instruction)) {
-      if (!valid_simd_floating_indexed(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_floating_indexed(instruction))
+        return reject();
       if (!emit_simd_floating_indexed(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_integer_indexed(instruction)) {
-      if (!valid_simd_integer_indexed(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_integer_indexed(instruction))
+        return reject();
       if (!emit_simd_integer_indexed(instruction))
         return Action::unsupported;
       return Action::keep_going;
     }
     if (recognized_simd_rdm(instruction)) {
-      if (!valid_simd_rdm(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_rdm(instruction))
+        return reject();
       if (!emit_simd_rdm(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1220,11 +981,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     const unsigned simd_three_same_opcode = (instruction >> 11) & 31U;
     if ((simd_three_same_vector || simd_three_same_scalar) &&
         simd_three_same_opcode < 24U) {
-      if (!valid_simd_three_same_integer(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_simd_three_same_integer(instruction))
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_three_same_integer(instruction))
         return Action::unsupported;
@@ -1233,11 +991,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0x9ff8'0400U) == 0x0f00'0400U) {
       const auto decoded =
           arm64::detail::decode_simd_modified_immediate(instruction);
-      if (!decoded) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!decoded)
+        return reject();
       if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_modified_immediate(instruction, decoded->action != 0U);
@@ -1247,11 +1002,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const auto lane =
           arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U);
       const bool q = (instruction & 0x4000'0000U) != 0;
-      if (!lane || (!q && lane->element_shift == 3U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!lane || (!q && lane->element_shift == 3U))
+        return reject();
       if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_duplicate_general(instruction);
@@ -1263,11 +1015,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xffe0'8400U) == 0x6e00'0400U;
     if (simd_insert_general || simd_insert_element) {
       if (!arm64::detail::decode_simd_lane_index(
-              (instruction >> 16) & 31U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+              (instruction >> 16) & 31U))
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_insert(instruction))
         return Action::unsupported;
@@ -1283,11 +1032,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const bool q = (instruction & 0x4000'0000U) != 0;
       if (!lane ||
           (simd_duplicate_element_vector && !q &&
-           lane->element_shift == 3U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+           lane->element_shift == 3U))
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_duplicate_element(instruction))
         return Action::unsupported;
@@ -1307,12 +1053,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           : simd_bit_unary_operation == 0x0e20'1800U
               ? !alternate && size == 0U
               : alternate ? size <= 1U : size == 0U;
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
+      if (!valid)
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_bit_unary(instruction))
         return Action::unsupported;
@@ -1324,11 +1066,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned encoded = (instruction >> 16) & 0x7fU;
       const unsigned source_bits = std::bit_floor(encoded);
       if (source_bits < 8U || source_bits > 32U ||
-          encoded - source_bits >= source_bits) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+          encoded - source_bits >= source_bits)
+        return reject();
       if (!host_capabilities().advanced_simd ||
           !emit_simd_shift_left_long(instruction))
         return Action::unsupported;
@@ -1348,11 +1087,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         shift_opcode == 29U || shift_opcode == 30U ||
         (scalar_shift_immediate && shift_opcode == 20U);
     if ((vector_shift_immediate || scalar_shift_immediate) &&
-        reserved_shift_opcode) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        reserved_shift_opcode)
+      return reject();
     const auto simd_compare_zero_class = instruction & 0x9f3f'fc00U;
     /* The scalar forms are op0 01x1; op0 00x1 is scalar floating point. */
     const auto scalar_compare_zero_class = instruction & 0xdf3f'fc00U;
@@ -1371,11 +1107,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           opcode == 8U || opcode == 9U || (opcode == 10U && !alternate);
       const bool valid_shape =
           (!scalar || size == 3U) && (scalar || q || size != 3U);
-      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd)
+        return reject();
       emit_simd_unary_native(instruction);
       return Action::keep_going;
     }
@@ -1395,28 +1128,19 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         simd_general_opcode == 0x9eaf'0000U;
     if (simd_general_class) {
       if (!host_capabilities().advanced_simd ||
-          !emit_simd_general_move(instruction)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+          !emit_simd_general_move(instruction))
+        return reject();
       return Action::keep_going;
     }
     /* STGP occupies the GPR opc=01 store allocation and needs FEAT_MTE. */
     if ((instruction & 0xffc0'0000U) == 0x6880'0000U ||
         (instruction & 0xffc0'0000U) == 0x6900'0000U ||
-        (instruction & 0xffc0'0000U) == 0x6980'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0xffc0'0000U) == 0x6980'0000U)
+      return reject();
     /* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
      * implement. */
-    if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+    if ((instruction & 0xff20'0400U) == 0xf820'0400U)
+      return reject();
     /*
      * The virtual CPU implements none of FEAT_LS64, FEAT_LSFE, FEAT_LSE128,
      * FEAT_THE, FEAT_D128, and FEAT_LSUI. LD64B, ST64B, ST64BV, ST64BV0, the
@@ -1433,11 +1157,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         (instruction & 0xbf20'0c00U) == 0x1920'0000U ||
         (instruction & 0xbf20'0800U) == 0x1920'0800U ||
         (instruction & 0x3f20'0c00U) == 0x1920'0400U ||
-        (instruction & 0x3f00'0000U) == 0x0900'0000U) {
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
+        (instruction & 0x3f00'0000U) == 0x0900'0000U)
+      return reject();
     /*
      * MOPS shares major encodings with atomic memory instructions. Decode its
      * complete allocation first. Translation resolves every legality choice,
@@ -1447,11 +1168,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      */
     if (const auto mops = arm64::detail::decode_mops(instruction);
         mops.recognized) {
-      if (!mops.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!mops.valid)
+        return reject();
       if (mops.stage == 1U)
         return Action::keep_going;
       if (mops.stage == 2U)
@@ -1463,17 +1181,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const auto action = emit_atomic_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0x3f00'0000U) == 0x0800'0000U) {
       const auto action = emit_exclusive_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0x3a00'0000U) == 0x2800'0000U) {
       const bool vector = (instruction & 0x0400'0000U) != 0;
@@ -1488,11 +1202,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           operation != 3U &&
           (vector || (operation != 1U || (load && mode != 0U))) &&
           (!load || first != second);
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!valid)
+        return reject();
       if (emit_pair_memory(instruction, pc))
         return Action::keep_going;
       return Action::unsupported;
@@ -1500,17 +1211,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0xbf20'0000U) == 0x0c00'0000U) {
       if (emit_simd_structure_memory(instruction, pc, false))
         return Action::keep_going;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0xbf80'0000U) == 0x0d00'0000U ||
         (instruction & 0xbf80'0000U) == 0x0d80'0000U) {
       if (emit_simd_structure_memory(instruction, pc, true))
         return Action::keep_going;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if (emit_literal_memory(instruction, pc))
       return Action::keep_going;
@@ -1520,9 +1227,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
        * host-feature gate is SIMD&FP opc=11. Resolve that reserved quadrant
        * while translating so it cannot become an unsupported runtime event.
        */
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
+      return reject();
     }
     if ((instruction & 0x3b00'0000U) == 0x3800'0000U) {
       if (emit_other_memory(instruction, pc))
@@ -1538,11 +1243,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           ((opc >= 2U && size_shift != 0U) ||
            (register_offset && (mode != 2U || (option & 2U) == 0U)) ||
            (!register_offset && mode == 2U));
-      if (!vector || invalid_vector) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!vector || invalid_vector)
+        return reject();
       return Action::unsupported;
     }
     if ((instruction & 0x3b00'0000U) == 0x3900'0000U) {
@@ -1551,11 +1253,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const bool vector = (instruction & 0x0400'0000U) != 0U;
       const unsigned size_shift = instruction >> 30;
       const unsigned opc = (instruction >> 22) & 3U;
-      if (!vector || (opc >= 2U && size_shift != 0U)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
+      if (!vector || (opc >= 2U && size_shift != 0U))
+        return reject();
       return Action::unsupported;
     }
     return Action::unsupported;
