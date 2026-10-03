@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "gadget_selection_dependencies.hpp"
+#include "gadget_selection_api.hpp"
 
 namespace uml::cpu::arm64::gadgets::selection {
 
@@ -11,19 +11,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 		(instruction & 0xffc0'0000U) == 0x5500'0000U ||
 		((instruction & 0xffff'fbe0U) == 0xd65f'0be0U &&
 		 (instruction & 31U) != 31U);
-}
-
-template<typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words, Gadget gadget)
-{
-	words.push_back(reinterpret_cast<std::uintptr_t>(gadget));
-}
-
-template<typename Allocator>
-void emit(std::vector<std::uintptr_t, Allocator> &words,
-	  std::uintptr_t operand)
-{
-	words.push_back(operand);
 }
 
 /* Fused CMP of two registers + B.cond (G116); the builder says why. */
@@ -392,17 +379,6 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 			uml_arm64_gadget_mops_epilogue_set_r;
 	return epilogue[family];
 }
-
-struct SystemRegisterGadget final {
-	Gadget gadget;
-	bool operand;
-};
-
-struct PstateImmediateGadget final {
-	Gadget gadget;
-	bool valid;
-	bool fault_address;
-};
 
 [[nodiscard]] PstateImmediateGadget pstate_boolean_gadget(
 	Gadget zero, Gadget one, unsigned immediate) noexcept

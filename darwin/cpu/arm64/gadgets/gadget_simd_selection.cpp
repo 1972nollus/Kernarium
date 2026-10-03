@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "gadget_selection_dependencies.hpp"
+#include "gadget_selection_api.hpp"
 #include "gadget_operand_encoding.hpp"
 
 namespace uml::cpu::arm64::gadgets::selection {
@@ -24,8 +24,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 	};
 	return q ? q_gadgets[offset] : d_gadgets[offset];
 }
-
-using SimdThreeSameGadgets = std::array<Gadget, 11>;
 
 #define UML_SIMD_THREE_SAME_V6(name) SimdThreeSameGadgets{ \
 	uml_arm64_gadget_simd_three_same_##name##_8b, \
@@ -202,13 +200,6 @@ using SimdThreeSameGadgets = std::array<Gadget, 11>;
 	return (subtract ? sub : add)[shape];
 }
 
-enum class SimdDotSignedness {
-	signed_signed,
-	unsigned_unsigned,
-	signed_unsigned,
-	unsigned_signed,
-};
-
 [[nodiscard]] Gadget simd_dot_vector_gadget(
 	SimdDotSignedness signedness, bool q, bool force_software) noexcept
 {
@@ -328,8 +319,6 @@ enum class SimdDotSignedness {
 		native : software)[index];
 }
 
-using SimdWideningGadgets = std::array<Gadget, 6>;
-
 #define UML_SIMD_WIDENING_V6(name) SimdWideningGadgets{ \
 	uml_arm64_gadget_simd_widening_##name##_8b, \
 	uml_arm64_gadget_simd_widening_##name##_4h, \
@@ -433,8 +422,6 @@ using SimdWideningGadgets = std::array<Gadget, 6>;
 
 #undef UML_SIMD_HIGH_NARROW
 
-using SimdUnaryGadgets = std::array<Gadget, 11>;
-
 [[nodiscard]] std::uintptr_t simd_unary_operand(
 	unsigned destination, unsigned source) noexcept
 {
@@ -444,7 +431,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] std::uintptr_t simd_ternary_operand(
 	unsigned destination, unsigned first, unsigned second,
-	unsigned descriptor = 0U) noexcept
+	unsigned descriptor) noexcept
 {
 	return packed_u16_operands(vector_operand_offset(destination),
 		vector_operand_offset(first), vector_operand_offset(second),
@@ -1724,12 +1711,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		uml_arm64_gadget_simd_lane_to_gpr_discard : gadget;
 }
 
-struct SimdImmediateShift final {
-	unsigned lane_bits;
-	unsigned shift;
-	unsigned shape;
-};
-
 [[nodiscard]] std::optional<SimdImmediateShift> decode_simd_immediate_shift(
 	std::uint32_t instruction, bool left) noexcept
 {
@@ -1824,12 +1805,6 @@ decode_simd_saturating_shift_left(std::uint32_t instruction) noexcept
 	return SimdImmediateShift{lane_bits, shift,
 		scalar ? size + 7U : q ? size + 3U : size};
 }
-
-enum class SimdSaturatingShiftLeft {
-	signed_to_signed,
-	signed_to_unsigned,
-	unsigned_to_unsigned,
-};
 
 [[nodiscard]] Gadget simd_saturating_shift_left_gadget(
 	SimdSaturatingShiftLeft operation, unsigned shape, unsigned shift) noexcept
@@ -2204,11 +2179,6 @@ enum class SimdSaturatingShiftLeft {
 	return gadgets[double_precision ? (scalar ? 6U : 7U) :
 		(scalar ? 3U : q ? 5U : 4U)];
 }
-
-struct SimdIndexedElement final {
-	unsigned register_index;
-	unsigned lane_index;
-};
 
 [[nodiscard]] std::optional<SimdIndexedElement>
 decode_simd_indexed_element(std::uint32_t instruction) noexcept
