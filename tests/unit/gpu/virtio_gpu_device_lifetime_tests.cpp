@@ -685,6 +685,53 @@ template<typename Request>
     return header;
 }
 
+/* Fails the test unless the device answers `request` with `expected`. The
+ * failure names the caller's line. */
+void requireResponse(
+    VirtioGpuDevice& device,
+    std::span<const std::uint8_t> request,
+    protocol::GpuResponse expected,
+    const std::source_location location = std::source_location::current())
+{
+    const auto actual = responseType(device.process(request, false));
+    if (actual == expected)
+        return;
+    char message[64];
+    std::snprintf(message, sizeof(message), "response 0x%x, expected 0x%x",
+        static_cast<unsigned>(actual), static_cast<unsigned>(expected));
+    fail(message, location);
+}
+
+void requireOk(
+    VirtioGpuDevice& device,
+    std::span<const std::uint8_t> request,
+    const std::source_location location = std::source_location::current())
+{
+    requireResponse(device, request, protocol::GpuResponse::okNoData, location);
+}
+
+/* Guest memory callbacks for a device whose commands reach no guest memory. */
+bool noGuestReads(std::uint64_t, std::span<std::uint8_t>)
+{
+    return false;
+}
+
+std::span<std::uint8_t> noGuestMappings(std::uint64_t, std::size_t)
+{
+    return {};
+}
+
+/* Maps the guest range at 0x1000 onto `memory`. */
+template<std::size_t Size>
+[[nodiscard]] auto guestMemoryAt0x1000(std::array<std::uint8_t, Size>& memory)
+{
+    return [&memory](std::uint64_t address, std::size_t size) {
+        if (address != 0x1000 || size > memory.size())
+            return std::span<std::uint8_t> {};
+        return std::span<std::uint8_t> {memory}.first(size);
+    };
+}
+
 template<typename Header>
 [[nodiscard]] std::vector<std::uint8_t> requestWithEntry(
     const Header& header,
@@ -830,45 +877,35 @@ AllocationSweep failEachAllocationBeforeCommit(
 void contextInitUsesVirgl2ForTheDeviceSelectedDefault()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
 
     const auto deviceSelected = createContext(401, 0);
-    require(responseType(device.process(requestBytes(deviceSelected), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(deviceSelected));
     require(dependencies.lastContextFlags == protocol::virgl2CapsetId);
 
     auto resource = create3d(402);
-    require(responseType(device.process(requestBytes(resource), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(resource));
     protocol::GpuContextResource association {};
     association.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::contextAttachResource);
     association.header.contextId = deviceSelected.header.contextId;
     association.resourceId = resource.resourceId;
-    require(responseType(device.process(requestBytes(association), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(association));
     require(dependencies.attachResourceCount == 1);
 
     const auto virgl = createContext(403, protocol::virglCapsetId);
-    require(responseType(device.process(requestBytes(virgl), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virgl));
     require(dependencies.lastContextFlags == protocol::virglCapsetId);
 
     const auto virgl2 = createContext(404, protocol::virgl2CapsetId);
-    require(responseType(device.process(requestBytes(virgl2), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virgl2));
     require(dependencies.lastContextFlags == protocol::virgl2CapsetId);
 
     const auto invalidCapset = createContext(405, 3);
-    require(responseType(device.process(requestBytes(invalidCapset), false)) ==
+    requireResponse(device, requestBytes(invalidCapset),
         protocol::GpuResponse::errorInvalidParameter);
     const auto reservedBits = createContext(406, 1U << 8U);
-    require(responseType(device.process(requestBytes(reservedBits), false)) ==
+    requireResponse(device, requestBytes(reservedBits),
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.createContextCount == 3);
 }
@@ -878,13 +915,7 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     std::array<std::uint8_t, 256> guestMemory {};
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [&guestMemory](std::uint64_t address, std::size_t size) {
-            if (address != 0x1000 || size > guestMemory.size())
-                return std::span<std::uint8_t> {};
-            return std::span<std::uint8_t> {guestMemory}.first(size);
-        }};
+        dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
     auto context = createContext(501);
     auto sweep = failEachAllocationBeforeCommit(
         device, requestBytes(context),
@@ -906,7 +937,7 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
         protocol::GpuCommand::contextAttachResource);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_resource);
-    require(responseType(device.process(requestBytes(association), false)) ==
+    requireResponse(device, requestBytes(association),
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.attachResourceCount == 0);
     sweep = failEachAllocationBeforeCommit(
@@ -919,7 +950,7 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
         protocol::GpuCommand::contextDetachResource);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::detach_resource);
-    require(responseType(device.process(requestBytes(association), false)) ==
+    requireResponse(device, requestBytes(association),
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.detachResourceCount == 0);
     sweep = failEachAllocationBeforeCommit(
@@ -940,7 +971,7 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     const auto attachRequest = requestWithEntry(attach, entry);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::attach_backing);
-    require(responseType(device.process(attachRequest, false)) ==
+    requireResponse(device, attachRequest,
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.attachedBackingAddress == nullptr);
     sweep = failEachAllocationBeforeCommit(device, attachRequest, [&] {
@@ -983,7 +1014,7 @@ void lifecycleCommandsAllocateBeforeCommitAndRetry()
     require(dependencies.destroyContextCount == 1);
     require(!dependencies.contexts.contains(context.header.contextId));
 
-    require(responseType(device.process(requestBytes(destroy), false)) ==
+    requireResponse(device, requestBytes(destroy),
         protocol::GpuResponse::errorInvalidContext);
 
     /* A software resource's commands keep their state in the device, so a
@@ -1014,12 +1045,7 @@ void edidReportsDisplayPixelsAndEffectiveDensity()
     dependencies.displayHeight = 2796;
     constexpr std::uint32_t dotsPerInch = 288;
     VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        },
-        dotsPerInch};
+        dependencies, noGuestReads, noGuestMappings, dotsPerInch};
 
     protocol::GpuGetEdid request {};
     request.header.type =
@@ -1059,24 +1085,19 @@ void edidReportsDisplayPixelsAndEffectiveDensity()
     require(verticalMillimeters == 247);
 
     request.scanoutId = 1;
-    require(responseType(device.process(requestBytes(request), false)) ==
+    requireResponse(device, requestBytes(request),
         protocol::GpuResponse::errorInvalidScanout);
     protocol::GpuControlHeader truncated {};
     truncated.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::getEdid);
-    require(responseType(device.process(requestBytes(truncated), false)) ==
+    requireResponse(device, requestBytes(truncated),
         protocol::GpuResponse::errorInvalidParameter);
 }
 
 void displayChangeEventsPreserveAResizeThatRacesGuestClear()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
 
     const auto recordFullConfigRead = [&device] {
         device.recordConfigRead(0, sizeof(protocol::GpuConfig));
@@ -1127,33 +1148,25 @@ void rendererExecutionFailuresPreserveDeviceState()
     std::array<std::uint8_t, 256> guestMemory {};
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [&guestMemory](std::uint64_t address, std::size_t size) {
-            if (address != 0x1000 || size > guestMemory.size())
-                return std::span<std::uint8_t> {};
-            return std::span<std::uint8_t> {guestMemory}.first(size);
-        }};
+        dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
     std::atomic_bool stopRequested {};
     device.setStopRequest(&stopRequested);
 
     auto context = createContext(701);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::create_context);
-    require(responseType(device.process(requestBytes(context), false)) ==
+    requireResponse(device, requestBytes(context),
         protocol::GpuResponse::errorInvalidContext);
     require(!dependencies.contexts.contains(context.header.contextId));
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
 
     auto resource = create3d(702, 4, 4);
     dependencies.rejectNext(
         FakeGpuDependencies::Operation::create_resource);
-    require(responseType(device.process(requestBytes(resource), false)) ==
+    requireResponse(device, requestBytes(resource),
         protocol::GpuResponse::errorInvalidParameter);
     require(!dependencies.resources.contains(resource.resourceId));
-    require(responseType(device.process(requestBytes(resource), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(resource));
 
     protocol::GpuAttachBacking attach {};
     attach.header.type = static_cast<std::uint32_t>(
@@ -1165,15 +1178,14 @@ void rendererExecutionFailuresPreserveDeviceState()
         .length = static_cast<std::uint32_t>(guestMemory.size()),
     };
     const auto attachRequest = requestWithEntry(attach, entry);
-    require(responseType(device.process(attachRequest, false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, attachRequest);
 
     protocol::GpuSubmit3d submit {};
     submit.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
     submit.header.contextId = context.header.contextId;
     dependencies.rejectNext(FakeGpuDependencies::Operation::submit);
-    require(responseType(device.process(requestBytes(submit), false)) ==
+    requireResponse(device, requestBytes(submit),
         protocol::GpuResponse::errorInvalidContext);
     require(dependencies.submitCount == 0);
     const auto submitted = failEachAllocationBeforeCommit(
@@ -1193,7 +1205,7 @@ void rendererExecutionFailuresPreserveDeviceState()
         transfer.header.type = static_cast<std::uint32_t>(command);
         const auto before = dependencies.transferCount;
         dependencies.rejectNext(FakeGpuDependencies::Operation::transfer);
-        require(responseType(device.process(requestBytes(transfer), false)) ==
+        requireResponse(device, requestBytes(transfer),
             protocol::GpuResponse::errorInvalidParameter);
         require(dependencies.transferCount == before);
         const auto transferred = failEachAllocationBeforeCommit(
@@ -1208,7 +1220,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     submit.header.fenceId = 17;
     dependencies.rejectNext(FakeGpuDependencies::Operation::fence);
     const auto submittedBeforeFenceFailure = dependencies.submitCount;
-    require(responseType(device.process(requestBytes(submit), false)) ==
+    requireResponse(device, requestBytes(submit),
         protocol::GpuResponse::errorUnspecified);
     // Submission acceptance is irreversible. A later fence-status failure is
     // reported exactly once and never causes an internal retry.
@@ -1242,21 +1254,21 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.readResourceCount == 0);
     require(dependencies.displayUpdateCount == 0);
     dependencies.rejectNext(FakeGpuDependencies::Operation::read_resource);
-    require(responseType(device.process(requestBytes(flush), false)) ==
+    requireResponse(device, requestBytes(flush),
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.displayUpdateCount == 0);
     dependencies.throwNext(FakeGpuDependencies::Operation::read_resource);
-    require(responseType(device.process(requestBytes(flush), false)) ==
+    requireResponse(device, requestBytes(flush),
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.displayUpdateCount == 0);
     dependencies.failAllocationNext(
         FakeGpuDependencies::Operation::display_update);
-    require(responseType(device.process(requestBytes(flush), false)) ==
+    requireResponse(device, requestBytes(flush),
         protocol::GpuResponse::errorOutOfMemory);
     require(dependencies.displayUpdateCount == 0);
     dependencies.throwNext(
         FakeGpuDependencies::Operation::display_update);
-    require(responseType(device.process(requestBytes(flush), false)) ==
+    requireResponse(device, requestBytes(flush),
         protocol::GpuResponse::errorUnspecified);
     require(dependencies.displayUpdateCount == 0);
     require(dependencies.readResourceCount == 2);
@@ -1291,8 +1303,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     const auto beforePartialFlush = dependencies.framebuffer;
     dependencies.readResourceTag = 0xa5U;
     flush.rectangle = {.x = 2, .y = 2, .width = 1, .height = 1};
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.lastReadResource == resource.resourceId);
     require(dependencies.lastReadX == 2);
     require(dependencies.lastReadY == 2);
@@ -1336,8 +1347,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     // nonzero-origin scanout, still packed at the start of the staging buffer.
     dependencies.fullCpuFallback = true;
     dependencies.readResourceTag = 0xc3U;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.lastReadX == scanout.rectangle.x);
     require(dependencies.lastReadY == scanout.rectangle.y);
     require(dependencies.lastReadWidth == scanout.rectangle.width);
@@ -1365,8 +1375,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     dependencies.directPresentationEnabled = true;
     const auto readsBeforeDirect = dependencies.readResourceCount;
     const auto updatesBeforeDirect = dependencies.displayUpdateCount;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.resourceMetalTextureCount == 1);
     require(dependencies.directPresentationCount == 1);
     require(dependencies.lastTextureResource == resource.resourceId);
@@ -1389,8 +1398,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     const auto readsBeforeDrop = dependencies.readResourceCount;
     const auto updatesBeforeDrop = dependencies.displayUpdateCount;
     const auto fallbacksBeforeDrop = dependencies.cpuFallbackFrameCount;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationDropCount == 1);
     require(dependencies.readResourceCount == readsBeforeDrop);
     require(dependencies.displayUpdateCount == updatesBeforeDrop);
@@ -1400,8 +1408,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     /* A resource the renderer stores bottom row first reaches the display
      * with that orientation rather than through a readback. */
     dependencies.nativeTextureBottomUp = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.lastMetalScanout.flipped);
     require(dependencies.readResourceCount == readsBeforeDrop);
     dependencies.nativeTextureBottomUp = false;
@@ -1410,8 +1417,7 @@ void rendererExecutionFailuresPreserveDeviceState()
      * instead of shown. */
     const auto presentsBeforeMismatch = dependencies.directPresentationCount;
     dependencies.nativeTextures[resource.resourceId].height += 1U;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationCount == presentsBeforeMismatch);
     require(dependencies.readResourceCount == readsBeforeDrop + 1U);
     dependencies.nativeTextures[resource.resourceId].height -= 1U;
@@ -1420,8 +1426,7 @@ void rendererExecutionFailuresPreserveDeviceState()
      * told so. */
     dependencies.directPresentationEnabled = false;
     const auto fallbacksBeforeRefusal = dependencies.cpuFallbackFrameCount;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeRefusal + 1);
 
     scanout.resourceId = protocol::invalidResourceId;
@@ -1434,15 +1439,13 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.clearCount == clearsBeforeDisable + 1);
 
     scanout.resourceId = resource.resourceId;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     protocol::GpuResourceReference unref {};
     unref.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
     unref.resourceId = resource.resourceId;
     const auto clearsBeforeUnref = dependencies.clearCount;
-    require(responseType(device.process(requestBytes(unref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unref));
     require(dependencies.clearCount == clearsBeforeUnref + 1);
 }
 
@@ -1465,12 +1468,9 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     const auto context = createContext(811, protocol::venusCapsetId);
     const auto software = create2d(812, 1, 1);
     const auto rendered = create3d(813, 1, 1);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(software), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(rendered), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
+    requireOk(device, requestBytes(software));
+    requireOk(device, requestBytes(rendered));
 
     protocol::GpuAttachBacking attach {};
     attach.header.type = static_cast<std::uint32_t>(
@@ -1481,16 +1481,13 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
         .address = 0x1000,
         .length = static_cast<std::uint32_t>(pixel.size()),
     };
-    require(responseType(device.process(
-        requestWithEntry(attach, entry), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestWithEntry(attach, entry));
     protocol::GpuSetScanout scanout {};
     scanout.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::setScanout);
     scanout.rectangle = {.x = 0, .y = 0, .width = 1, .height = 1};
     scanout.resourceId = software.resourceId;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
 
     protocol::GpuSubmit3d waitSubmit {};
     waitSubmit.header.type = static_cast<std::uint32_t>(
@@ -1513,16 +1510,14 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     transfer.rectangle = scanout.rectangle;
     transfer.resourceId = software.resourceId;
     require(device.canProcessWhileFencesPending(requestBytes(transfer), false));
-    require(responseType(device.process(requestBytes(transfer), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(transfer));
     protocol::GpuResourceFlush flush {};
     flush.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = software.resourceId;
     require(device.canProcessWhileFencesPending(requestBytes(flush), false));
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(std::equal(
         pixel.begin(), pixel.end(), dependencies.framebuffer.begin()));
     require(device.contextFenceStatus(*pending.fence) == EBUSY);
@@ -1536,7 +1531,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     require(!device.canProcessWhileFencesPending(
         requestBytes(flush).first(sizeof(protocol::GpuControlHeader)), false));
     transfer.resourceId = rendered.resourceId;
-    require(responseType(device.process(requestBytes(transfer), false)) ==
+    requireResponse(device, requestBytes(transfer),
         protocol::GpuResponse::errorInvalidResource);
     require(dependencies.transferCount == 0);
     for (const auto command : {
@@ -1557,8 +1552,7 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     signalSubmit.header.ringIndex = 0;
     require(device.canProcessWhileFencesPending(
         requestBytes(signalSubmit), false));
-    require(responseType(device.process(requestBytes(signalSubmit), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(signalSubmit));
     require(dependencies.submitCount == 2);
     dependencies.retireContextFence(context.header.contextId, 1, 41);
     require(device.pollContextFences(context.header.contextId) == 0);
@@ -1569,32 +1563,23 @@ void softwareScanoutProgressesWhileRendererFenceIsPending()
     unref.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
     unref.resourceId = software.resourceId;
-    require(responseType(device.process(requestBytes(unref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unref));
     flush.resourceId = software.resourceId;
     require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
     const auto replacement = create3d(software.resourceId, 1, 1);
-    require(responseType(device.process(requestBytes(replacement), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(replacement));
     require(!device.canProcessWhileFencesPending(requestBytes(flush), false));
 }
 
 void deferredFencesUseHostTimelineAndMergedRetirement()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
 
     const auto firstContext = createContext(801);
     const auto secondContext = createContext(802);
-    require(responseType(device.process(requestBytes(firstContext), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(secondContext), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(firstContext));
+    requireOk(device, requestBytes(secondContext));
 
     constexpr std::array<std::uint64_t, 3> guestFenceIds {900, 2, 900};
     constexpr std::array<std::uint64_t, 3> hostFenceCookies {11, 12, 13};
@@ -1680,23 +1665,14 @@ void resetRetiresEachExternalOwnerExactlyOnce()
     std::array<std::uint8_t, 64> guestMemory {};
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [&guestMemory](std::uint64_t address, std::size_t size) {
-            if (address != 0x1000 || size > guestMemory.size())
-                return std::span<std::uint8_t> {};
-            return std::span<std::uint8_t> {guestMemory}.first(size);
-        }};
+        dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
 
     const auto context = createContext(801);
     const auto first = create3d(802);
     const auto second = create3d(803);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(first), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(second), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
+    requireOk(device, requestBytes(first));
+    requireOk(device, requestBytes(second));
 
     protocol::GpuAttachBacking attach {};
     attach.header.type = static_cast<std::uint32_t>(
@@ -1707,9 +1683,7 @@ void resetRetiresEachExternalOwnerExactlyOnce()
         .address = 0x1000,
         .length = static_cast<std::uint32_t>(guestMemory.size()),
     };
-    require(responseType(device.process(
-        requestWithEntry(attach, entry), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestWithEntry(attach, entry));
 
     device.reset();
     require(dependencies.detachBackingCount == 1);
@@ -1728,40 +1702,29 @@ void resetRetiresEachExternalOwnerExactlyOnce()
     require(dependencies.resetFenceCount == 2);
     require(dependencies.clearCount == 2);
 
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(first), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
+    requireOk(device, requestBytes(first));
 }
 
 void resetIsPristineAndAllocationRetryIsAtomic()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
 
     protocol::GpuContextCreate context {};
     context.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::contextCreate);
     context.header.contextId = 41;
     context.contextInit = protocol::virglCapsetId;
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
 
     auto resource = create2d(73);
-    require(responseType(device.process(requestBytes(resource), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(resource));
 
     device.reset();
     device.reset();
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(resource), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
+    requireOk(device, requestBytes(resource));
 
     device.reset();
     context.header.contextId = 42;
@@ -1785,12 +1748,10 @@ void resetIsPristineAndAllocationRetryIsAtomic()
     device.reset();
     const auto overflowingResource =
         create2d(76, UINT32_MAX, UINT32_MAX);
-    require(responseType(
-        device.process(requestBytes(overflowingResource), false)) ==
+    requireResponse(device, requestBytes(overflowingResource),
         protocol::GpuResponse::errorOutOfMemory);
     const auto overflowRetry = create2d(76);
-    require(responseType(device.process(requestBytes(overflowRetry), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(overflowRetry));
 }
 
 void rendererBackingAttachIsRetryableAfterAllocationFailure()
@@ -1798,17 +1759,10 @@ void rendererBackingAttachIsRetryableAfterAllocationFailure()
     std::array<std::uint8_t, 64> guestMemory {};
     FakeGpuDependencies dependencies;
     VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [&guestMemory](std::uint64_t address, std::size_t size) {
-            if (address != 0x1000 || size > guestMemory.size())
-                return std::span<std::uint8_t> {};
-            return std::span<std::uint8_t> {guestMemory}.first(size);
-        }};
+        dependencies, noGuestReads, guestMemoryAt0x1000(guestMemory)};
 
     const auto create = create3d(75);
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
     protocol::GpuAttachBacking attach {};
     attach.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceAttachBacking);
@@ -1830,8 +1784,7 @@ void rendererBackingAttachIsRetryableAfterAllocationFailure()
     }
     (void)cancel_pending_allocation_failure();
     require(failed);
-    require(responseType(device.process(request, false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, request);
 }
 
 void backingRangesAndAttachStateAreValidated()
@@ -1851,10 +1804,8 @@ void backingRangesAndAttachStateAreValidated()
 
     const auto software = create2d(81);
     const auto rendered = create3d(82);
-    require(responseType(device.process(requestBytes(software), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(rendered), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(software));
+    requireOk(device, requestBytes(rendered));
 
     for (const auto resourceId : {software.resourceId, rendered.resourceId}) {
         protocol::GpuAttachBacking attach {};
@@ -1862,7 +1813,7 @@ void backingRangesAndAttachStateAreValidated()
             protocol::GpuCommand::resourceAttachBacking);
         attach.resourceId = resourceId;
         attach.entryCount = 0;
-        require(responseType(device.process(requestBytes(attach), false)) ==
+        requireResponse(device, requestBytes(attach),
             protocol::GpuResponse::errorInvalidParameter);
 
         attach.entryCount = 1;
@@ -1870,8 +1821,7 @@ void backingRangesAndAttachStateAreValidated()
             .address = std::numeric_limits<std::uint64_t>::max() - 31U,
             .length = 64,
         };
-        require(responseType(device.process(
-            requestWithEntry(attach, overflow), false)) ==
+        requireResponse(device, requestWithEntry(attach, overflow),
             protocol::GpuResponse::errorInvalidParameter);
 
         const protocol::GpuMemoryEntry valid {
@@ -1879,19 +1829,16 @@ void backingRangesAndAttachStateAreValidated()
             .length = static_cast<std::uint32_t>(guestMemory.size()),
         };
         const auto request = requestWithEntry(attach, valid);
-        require(responseType(device.process(request, false)) ==
-            protocol::GpuResponse::okNoData);
-        require(responseType(device.process(request, false)) ==
+        requireOk(device, request);
+        requireResponse(device, request,
             protocol::GpuResponse::errorInvalidParameter);
 
         protocol::GpuResourceReference detach {};
         detach.header.type = static_cast<std::uint32_t>(
             protocol::GpuCommand::resourceDetachBacking);
         detach.resourceId = resourceId;
-        require(responseType(device.process(requestBytes(detach), false)) ==
-            protocol::GpuResponse::okNoData);
-        require(responseType(device.process(request, false)) ==
-            protocol::GpuResponse::okNoData);
+        requireOk(device, requestBytes(detach));
+        requireOk(device, request);
     }
     // Only the rendered resource asks the mapper for valid backing. Invalid
     // wrapping ranges are rejected before the callback.
@@ -1929,8 +1876,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
         }};
 
     const auto create = create2d(83, 2, 2);
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
     protocol::GpuAttachBacking attach {};
     attach.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceAttachBacking);
@@ -1940,9 +1886,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
         .address = 0x1000,
         .length = static_cast<std::uint32_t>(backing.size()),
     };
-    require(responseType(device.process(
-        requestWithEntry(attach, entry), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestWithEntry(attach, entry));
 
     protocol::GpuSetScanout scanout {};
     scanout.header.type =
@@ -1950,8 +1894,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
     scanout.rectangle = {.x = 0, .y = 0, .width = 2, .height = 2};
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
 
     protocol::GpuTransferToHost2d transfer {};
     transfer.header.type = static_cast<std::uint32_t>(
@@ -1977,8 +1920,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
         static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
     flush.rectangle = scanout.rectangle;
     flush.resourceId = create.resourceId;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     auto framebuffer = dependencies.framebuffer;
     for (const auto value : std::span {framebuffer}.first(8U))
         require(value == 0);
@@ -1987,8 +1929,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
 
     reads = 0;
     failSecondRead = false;
-    require(responseType(device.process(requestBytes(transfer), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(transfer));
 
     // Pixel conversion is staged before the live framebuffer is locked and
     // committed. An allocation failure therefore reports OOM without leaving
@@ -2004,8 +1945,7 @@ void failedTransferDoesNotPartiallyCommitPixels()
     for (const auto value : std::span {framebuffer}.subspan(64U * 4U, 8U))
         require(value == 0);
 
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     framebuffer = dependencies.framebuffer;
     require(std::memcmp(framebuffer.data(), backing.data(), 8) == 0);
     require(std::memcmp(
@@ -2021,15 +1961,9 @@ void failedTransferDoesNotPartiallyCommitPixels()
 void setScanoutReplyFailureDoesNotCommitAllocation()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto create = create3d(84);
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
 
     protocol::GpuSetScanout scanout {};
     scanout.header.type =
@@ -2052,31 +1986,28 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
 
     /* Resource rebinds at the active geometry are page flips, not guest mode
      * changes, and must not disturb the host-to-guest resize policy. */
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     require(dependencies.guestScanoutChangeCount == 1);
 
     scanout.rectangle = {.x = 1, .y = 0, .width = 3, .height = 4};
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     require(dependencies.guestScanoutChangeCount == 2);
     require(dependencies.lastGuestScanoutWidth == 3);
     require(dependencies.lastGuestScanoutHeight == 4);
 
     scanout.resourceId = 999;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    requireResponse(device, requestBytes(scanout),
         protocol::GpuResponse::errorInvalidResource);
     require(dependencies.guestScanoutChangeCount == 2);
 
     scanout.resourceId = create.resourceId;
     scanout.rectangle = {.x = 0, .y = 0, .width = 2, .height = 4};
     dependencies.guestScanoutChangeAccepted = false;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    requireResponse(device, requestBytes(scanout),
         protocol::GpuResponse::errorOutOfMemory);
     require(dependencies.guestScanoutChangeCount == 3);
     dependencies.guestScanoutChangeAccepted = true;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     require(dependencies.guestScanoutChangeCount == 4);
     require(dependencies.lastGuestScanoutWidth == 2);
     require(dependencies.lastGuestScanoutHeight == 4);
@@ -2093,21 +2024,13 @@ void readbackStagingIsAllocatedByTheFirstReadback()
 {
     FakeGpuDependencies dependencies;
     dependencies.fullCpuFallback = true;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto first = create3d(0x901);
     const auto second = create3d(0x902);
     const auto software = create2d(0x903);
-    require(responseType(device.process(requestBytes(first), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(second), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(software), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(first));
+    requireOk(device, requestBytes(second));
+    requireOk(device, requestBytes(software));
 
     protocol::GpuSetScanout scanout {};
     scanout.header.type =
@@ -2141,8 +2064,7 @@ void readbackStagingIsAllocatedByTheFirstReadback()
             protocol::GpuResponse::errorOutOfMemory);
         require(dependencies.readResourceCount == reads);
         require(dependencies.displayUpdateCount == updates);
-        require(responseType(device.process(requestBytes(flush), false)) ==
-            protocol::GpuResponse::okNoData);
+        requireOk(device, requestBytes(flush));
         require(dependencies.readResourceCount == reads + 1U);
         require(dependencies.displayUpdateCount == updates + 1U);
         require(dependencies.lastReadDestinationBytes ==
@@ -2185,13 +2107,7 @@ void readbackStagingIsAllocatedByTheFirstReadback()
 void unanswerableCapabilityQueriesFailOnlyThemselves()
 {
     FakeGpuDependencies dependencies;
-    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
-        return false;
-    };
-    const auto mapper = [](std::uint64_t, std::size_t) {
-        return std::span<std::uint8_t> {};
-    };
-    VirtioGpuDevice device {dependencies, reader, mapper};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     protocol::GpuGetCapsetInfo information {};
     information.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::getCapsetInfo);
@@ -2203,26 +2119,20 @@ void unanswerableCapabilityQueriesFailOnlyThemselves()
     capset.version = 1;
 
     dependencies.failNextCapsets(2);
-    require(responseType(device.process(requestBytes(information), false)) ==
+    requireResponse(device, requestBytes(information),
         protocol::GpuResponse::errorUnspecified);
-    require(responseType(device.process(requestBytes(capset), false)) ==
+    requireResponse(device, requestBytes(capset),
         protocol::GpuResponse::errorUnspecified);
-    require(responseType(device.process(requestBytes(information), false)) ==
+    requireResponse(device, requestBytes(information),
         protocol::GpuResponse::okCapsetInfo);
-    require(responseType(device.process(requestBytes(capset), false)) ==
+    requireResponse(device, requestBytes(capset),
         protocol::GpuResponse::okCapset);
 }
 
 void venusBlobsAndFencesUseStandardWireState()
 {
     FakeGpuDependencies dependencies;
-    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
-        return false;
-    };
-    const auto mapper = [](std::uint64_t, std::size_t) {
-        return std::span<std::uint8_t> {};
-    };
-    VirtioGpuDevice device {dependencies, reader, mapper};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     require(device.config().capsetCount == protocol::venusCapsetIndex + 1U);
     protocol::GpuGetCapsetInfo capsetInfo {};
     capsetInfo.header.type = static_cast<std::uint32_t>(
@@ -2235,13 +2145,11 @@ void venusBlobsAndFencesUseStandardWireState()
     require(venusInfo.maximumVersion == 0);
 
     auto context = createContext(0x401, protocol::venusCapsetId);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
 
     auto invalidContextFlags = createContext(0x402, protocol::venusCapsetId);
     invalidContextFlags.contextInit |= 1U << 8U;
-    require(responseType(
-        device.process(requestBytes(invalidContextFlags), false)) ==
+    requireResponse(device, requestBytes(invalidContextFlags),
         protocol::GpuResponse::errorInvalidParameter);
 
     protocol::GpuResourceCreateBlob create {};
@@ -2258,71 +2166,57 @@ void venusBlobsAndFencesUseStandardWireState()
     auto apertureCreate = create;
     apertureCreate.resourceId = 0x500;
     apertureCreate.size = protocol::hostVisibleSharedMemoryRegionSize;
-    require(responseType(device.process(requestBytes(apertureCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(apertureCreate));
     /* Unmapped renderer storage does not consume aperture address space. */
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
     protocol::GpuResourceReference apertureUnref {};
     apertureUnref.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
     apertureUnref.resourceId = apertureCreate.resourceId;
-    require(responseType(device.process(requestBytes(apertureUnref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(apertureUnref));
 
     auto crossDeviceCreate = create;
     crossDeviceCreate.resourceId = 0x502;
     crossDeviceCreate.flags |= protocol::blobFlagCrossDevice;
-    require(responseType(
-        device.process(requestBytes(crossDeviceCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(crossDeviceCreate));
     protocol::GpuResourceReference crossDeviceUnref {};
     crossDeviceUnref.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
     crossDeviceUnref.resourceId = crossDeviceCreate.resourceId;
-    require(responseType(
-        device.process(requestBytes(crossDeviceUnref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(crossDeviceUnref));
 
     auto invalidCreate = create;
     invalidCreate.resourceId = 0x502;
     invalidCreate.memory = protocol::blobMemoryHost3dGuest;
-    require(responseType(device.process(requestBytes(invalidCreate), false)) ==
+    requireResponse(device, requestBytes(invalidCreate),
         protocol::GpuResponse::errorInvalidParameter);
     auto rendererBlobCreate = create;
     rendererBlobCreate.resourceId = 0x5ff;
     rendererBlobCreate.blobId = 0x12345678;
-    require(responseType(
-        device.process(requestBytes(rendererBlobCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(rendererBlobCreate));
     require(dependencies.lastBlobId == rendererBlobCreate.blobId);
     protocol::GpuResourceReference rendererBlobUnref {};
     rendererBlobUnref.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
     rendererBlobUnref.resourceId = rendererBlobCreate.resourceId;
-    require(responseType(
-        device.process(requestBytes(rendererBlobUnref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(rendererBlobUnref));
 
     /*
      * Virgl contexts own host-visible storage too: coherent GL buffers reach
      * the guest through the same aperture as Venus device memory.
      */
     auto virglContext = createContext(0x403, protocol::virgl2CapsetId);
-    require(responseType(device.process(requestBytes(virglContext), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virglContext));
     auto virglBlobCreate = create;
     virglBlobCreate.header.contextId = virglContext.header.contextId;
     virglBlobCreate.resourceId = 0x5fe;
-    require(responseType(
-        device.process(requestBytes(virglBlobCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virglBlobCreate));
     auto virglBlobMap = protocol::GpuResourceMapBlob {};
     virglBlobMap.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceMapBlob);
     virglBlobMap.resourceId = virglBlobCreate.resourceId;
     virglBlobMap.offset = 0;
-    require(responseType(device.process(requestBytes(virglBlobMap), false)) ==
+    requireResponse(device, requestBytes(virglBlobMap),
         protocol::GpuResponse::okMapInfo);
     auto virglBlobAction = device.takeSharedMemoryAction();
     require(virglBlobAction.has_value());
@@ -2331,9 +2225,7 @@ void venusBlobsAndFencesUseStandardWireState()
     virglBlobUnmap.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnmapBlob);
     virglBlobUnmap.resourceId = virglBlobCreate.resourceId;
-    require(responseType(
-        device.process(requestBytes(virglBlobUnmap), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virglBlobUnmap));
     auto virglBlobUnmapAction = device.takeSharedMemoryAction();
     require(virglBlobUnmapAction.has_value());
     device.completeSharedMemoryAction(virglBlobUnmapAction->actionId, true);
@@ -2341,9 +2233,7 @@ void venusBlobsAndFencesUseStandardWireState()
     virglBlobUnref.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnref);
     virglBlobUnref.resourceId = virglBlobCreate.resourceId;
-    require(responseType(
-        device.process(requestBytes(virglBlobUnref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(virglBlobUnref));
 
     protocol::GpuResourceMapBlob map {};
     map.header.type = static_cast<std::uint32_t>(
@@ -2371,25 +2261,24 @@ void venusBlobsAndFencesUseStandardWireState()
     unmap.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnmapBlob);
     unmap.resourceId = create.resourceId;
-    require(responseType(device.process(requestBytes(unmap), false)) ==
+    requireResponse(device, requestBytes(unmap),
         protocol::GpuResponse::errorInvalidParameter);
     device.completeSharedMemoryAction(mapAction->actionId, true);
 
     auto secondCreate = create;
     secondCreate.resourceId = 0x502;
-    require(responseType(device.process(requestBytes(secondCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(secondCreate));
     auto secondMap = map;
     secondMap.resourceId = secondCreate.resourceId;
-    require(responseType(device.process(requestBytes(secondMap), false)) ==
+    requireResponse(device, requestBytes(secondMap),
         protocol::GpuResponse::errorInvalidParameter);
     secondMap.offset += protocol::hostVisibleSharedMemoryAlignment;
-    require(responseType(device.process(requestBytes(secondMap), false)) ==
+    requireResponse(device, requestBytes(secondMap),
         protocol::GpuResponse::okMapInfo);
     auto secondMapAction = device.takeSharedMemoryAction();
     require(secondMapAction.has_value());
     device.completeSharedMemoryAction(secondMapAction->actionId, false);
-    require(responseType(device.process(requestBytes(secondMap), false)) ==
+    requireResponse(device, requestBytes(secondMap),
         protocol::GpuResponse::okMapInfo);
     secondMapAction = device.takeSharedMemoryAction();
     require(secondMapAction.has_value());
@@ -2397,22 +2286,19 @@ void venusBlobsAndFencesUseStandardWireState()
 
     auto secondUnmap = unmap;
     secondUnmap.resourceId = secondCreate.resourceId;
-    require(responseType(device.process(requestBytes(secondUnmap), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(secondUnmap));
     auto secondUnmapAction = device.takeSharedMemoryAction();
     require(secondUnmapAction.has_value());
     device.completeSharedMemoryAction(secondUnmapAction->actionId, true);
 
-    require(responseType(device.process(requestBytes(unmap), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unmap));
     auto unmapAction = device.takeSharedMemoryAction();
     require(unmapAction.has_value());
     require(unmapAction->type ==
         VirtioGpuDevice::SharedMemoryAction::Type::unmap);
     require(unmapAction->descriptor.get() < 0);
     device.completeSharedMemoryAction(unmapAction->actionId, false);
-    require(responseType(device.process(requestBytes(unmap), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unmap));
     unmapAction = device.takeSharedMemoryAction();
     require(unmapAction.has_value());
     device.completeSharedMemoryAction(unmapAction->actionId, true);
@@ -2452,25 +2338,22 @@ void venusBlobsAndFencesUseStandardWireState()
     auto invalidRingSubmit = submit;
     invalidRingSubmit.header.ringIndex =
         protocol::venusContextRingCount;
-    require(responseType(
-        device.process(requestBytes(invalidRingSubmit), false)) ==
+    requireResponse(device, requestBytes(invalidRingSubmit),
         protocol::GpuResponse::errorInvalidParameter);
 
     protocol::GpuResourceReference unref {};
     unref.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::resourceUnref);
     unref.resourceId = secondCreate.resourceId;
-    require(responseType(device.process(requestBytes(unref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unref));
 
-    require(responseType(device.process(requestBytes(map), false)) ==
+    requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
     mapAction = device.takeSharedMemoryAction();
     require(mapAction.has_value());
     device.completeSharedMemoryAction(mapAction->actionId, true);
     unref.resourceId = create.resourceId;
-    require(responseType(device.process(requestBytes(unref), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unref));
     unmapAction = device.takeSharedMemoryAction();
     require(unmapAction.has_value());
     require(unmapAction->type ==
@@ -2479,11 +2362,10 @@ void venusBlobsAndFencesUseStandardWireState()
 
     auto resetCreate = create;
     resetCreate.resourceId = 0x503;
-    require(responseType(device.process(requestBytes(resetCreate), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(resetCreate));
     auto resetMap = map;
     resetMap.resourceId = resetCreate.resourceId;
-    require(responseType(device.process(requestBytes(resetMap), false)) ==
+    requireResponse(device, requestBytes(resetMap),
         protocol::GpuResponse::okMapInfo);
     auto resetMapAction = device.takeSharedMemoryAction();
     require(resetMapAction.has_value());
@@ -2500,16 +2382,9 @@ void venusBlobsAndFencesUseStandardWireState()
 void blobMappingCapacityFollowsTheAperture()
 {
     FakeGpuDependencies dependencies;
-    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
-        return false;
-    };
-    const auto mapper = [](std::uint64_t, std::size_t) {
-        return std::span<std::uint8_t> {};
-    };
-    VirtioGpuDevice device {dependencies, reader, mapper};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto context = createContext(0x601, protocol::venusCapsetId);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
 
     protocol::GpuResourceCreateBlob create {};
     create.header.type = static_cast<std::uint32_t>(
@@ -2526,11 +2401,10 @@ void blobMappingCapacityFollowsTheAperture()
     constexpr std::uint32_t smallMappings = 1025;
     for (std::uint32_t index = 0; index < smallMappings; ++index) {
         create.resourceId = index + 1U;
-        require(responseType(device.process(requestBytes(create), false)) ==
-            protocol::GpuResponse::okNoData);
+        requireOk(device, requestBytes(create));
         map.resourceId = create.resourceId;
         map.offset = index * protocol::hostVisibleSharedMemoryAlignment;
-        require(responseType(device.process(requestBytes(map), false)) ==
+        requireResponse(device, requestBytes(map),
             protocol::GpuResponse::okMapInfo);
         auto action = device.takeSharedMemoryAction();
         require(action.has_value());
@@ -2544,9 +2418,8 @@ void blobMappingCapacityFollowsTheAperture()
     map.resourceId = create.resourceId;
     map.offset = smallMappings * protocol::hostVisibleSharedMemoryAlignment;
     create.size = protocol::hostVisibleSharedMemoryRegionSize - map.offset;
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(map), false)) ==
+    requireOk(device, requestBytes(create));
+    requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
     auto action = device.takeSharedMemoryAction();
     require(action.has_value());
@@ -2554,27 +2427,25 @@ void blobMappingCapacityFollowsTheAperture()
 
     ++create.resourceId;
     create.size = protocol::hostVisibleSharedMemoryAlignment;
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
     map.resourceId = create.resourceId;
     map.offset = 0;
-    require(responseType(device.process(requestBytes(map), false)) ==
+    requireResponse(device, requestBytes(map),
         protocol::GpuResponse::errorInvalidParameter);
     map.offset = protocol::hostVisibleSharedMemoryRegionSize;
-    require(responseType(device.process(requestBytes(map), false)) ==
+    requireResponse(device, requestBytes(map),
         protocol::GpuResponse::errorInvalidParameter);
 
     protocol::GpuResourceUnmapBlob unmap {};
     unmap.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceUnmapBlob);
     unmap.resourceId = 1;
-    require(responseType(device.process(requestBytes(unmap), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(unmap));
     action = device.takeSharedMemoryAction();
     require(action.has_value());
     device.completeSharedMemoryAction(action->actionId, true);
     map.offset = 0;
-    require(responseType(device.process(requestBytes(map), false)) ==
+    requireResponse(device, requestBytes(map),
         protocol::GpuResponse::okMapInfo);
     action = device.takeSharedMemoryAction();
     require(action.has_value());
@@ -2594,13 +2465,7 @@ void blobMappingCapacityFollowsTheAperture()
 void blobScanoutUsesNativeTextureAndPersistentVncMapping()
 {
     FakeGpuDependencies dependencies;
-    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
-        return false;
-    };
-    const auto mapper = [](std::uint64_t, std::size_t) {
-        return std::span<std::uint8_t> {};
-    };
-    VirtioGpuDevice empty {dependencies, reader, mapper};
+    VirtioGpuDevice empty {dependencies, noGuestReads, noGuestMappings};
     protocol::GpuSetScanoutBlob scanout {};
     scanout.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::setScanoutBlob);
@@ -2616,10 +2481,9 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     require(responseType(empty.process(requestBytes(scanout), false)) !=
         protocol::GpuResponse::okNoData);
 
-    VirtioGpuDevice device {dependencies, reader, mapper};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto context = createContext(0x701, protocol::venusCapsetId);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
     protocol::GpuResourceCreateBlob create {};
     create.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceCreateBlob);
@@ -2630,20 +2494,19 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
         protocol::blobFlagShareable | protocol::blobFlagCrossDevice;
     create.blobId = 0x1234;
     create.size = dependencies.blobPixels.size();
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
 
     auto invalid = scanout;
     invalid.strides[0]--;
-    require(responseType(device.process(requestBytes(invalid), false)) ==
+    requireResponse(device, requestBytes(invalid),
         protocol::GpuResponse::errorInvalidParameter);
     invalid = scanout;
     invalid.strides[1] = 1;
-    require(responseType(device.process(requestBytes(invalid), false)) ==
+    requireResponse(device, requestBytes(invalid),
         protocol::GpuResponse::errorInvalidParameter);
     invalid = scanout;
     invalid.offsets[0] = static_cast<std::uint32_t>(create.size - 1U);
-    require(responseType(device.process(requestBytes(invalid), false)) ==
+    requireResponse(device, requestBytes(invalid),
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.createBlobScanoutCount == 0);
 
@@ -2672,8 +2535,7 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     flush.rectangle = scanout.rectangle;
     flush.resourceId = scanout.resourceId;
     dependencies.directPresentationEnabled = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationCount == 1);
     require(dependencies.lastMetalScanout.texture ==
         dependencies.blobScanoutTexture);
@@ -2688,26 +2550,23 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     dependencies.directPresentationEnabled = false;
     std::fill(
         dependencies.blobPixels.begin(), dependencies.blobPixels.end(), 0x6b);
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.mapResourceCount == 1);
     require(dependencies.displayUpdateCount == 1);
     require(dependencies.framebuffer[0] == 0x6b);
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.mapResourceCount == 1);
     require(dependencies.displayUpdateCount == 2);
 
     dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    requireResponse(device, requestBytes(scanout),
         protocol::GpuResponse::errorInvalidParameter);
     require(dependencies.releaseBlobScanoutCount == 0);
     require(dependencies.unmapResourceCount == 0);
 
     auto disable = scanout;
     disable.resourceId = protocol::invalidResourceId;
-    require(responseType(device.process(requestBytes(disable), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(disable));
     require(dependencies.releaseBlobScanoutCount == 1);
     require(dependencies.lastReleasedBlobScanout ==
         dependencies.blobScanoutTexture);
@@ -2718,15 +2577,14 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
     /* A display that cannot take the mode refuses the scanout, and the
      * device keeps no texture for it. */
     dependencies.guestScanoutChangeAccepted = false;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    requireResponse(device, requestBytes(scanout),
         protocol::GpuResponse::errorOutOfMemory);
     require(dependencies.guestScanoutChangeCount == 2);
     require(dependencies.releaseBlobScanoutCount == 2);
     require(dependencies.lastReleasedBlobScanout ==
         dependencies.blobScanoutTexture);
     dependencies.guestScanoutChangeAccepted = true;
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     require(dependencies.guestScanoutChangeCount == 3);
     require(dependencies.releaseBlobScanoutCount == 2);
 }
@@ -2734,16 +2592,9 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
 void virglBlobScanoutPresentsItsGlTexture()
 {
     FakeGpuDependencies dependencies;
-    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
-        return false;
-    };
-    const auto mapper = [](std::uint64_t, std::size_t) {
-        return std::span<std::uint8_t> {};
-    };
-    VirtioGpuDevice device {dependencies, reader, mapper};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto context = createContext(0x801, protocol::virgl2CapsetId);
-    require(responseType(device.process(requestBytes(context), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(context));
     protocol::GpuResourceCreateBlob create {};
     create.header.type = static_cast<std::uint32_t>(
         protocol::GpuCommand::resourceCreateBlob);
@@ -2753,8 +2604,7 @@ void virglBlobScanoutPresentsItsGlTexture()
     create.flags = protocol::blobFlagShareable;
     create.blobId = 0x2345;
     create.size = dependencies.blobPixels.size();
-    require(responseType(device.process(requestBytes(create), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(create));
 
     protocol::GpuSetScanoutBlob scanout {};
     scanout.header.type = static_cast<std::uint32_t>(
@@ -2789,8 +2639,7 @@ void virglBlobScanoutPresentsItsGlTexture()
     flush.rectangle = {.x = 2, .y = 3, .width = 4, .height = 2};
     flush.resourceId = scanout.resourceId;
     dependencies.directPresentationEnabled = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationCount == 0);
     require(dependencies.mapResourceCount == 0);
     require(dependencies.cpuFallbackFrameCount == 1);
@@ -2813,8 +2662,7 @@ void virglBlobScanoutPresentsItsGlTexture()
 
     /* A client that needs a whole frame gets the whole scanout. */
     dependencies.fullCpuFallback = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.readResourceCount == 2);
     require(dependencies.lastReadX == 0);
     require(dependencies.lastReadY == 0);
@@ -2837,8 +2685,7 @@ void virglBlobScanoutPresentsItsGlTexture()
     };
     const auto readsBeforeTexture = dependencies.readResourceCount;
     const auto fallbacksBeforeTexture = dependencies.cpuFallbackFrameCount;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationCount == 1);
     require(dependencies.lastTextureResource == scanout.resourceId);
     require(dependencies.lastMetalScanout.texture == blobTexture);
@@ -2858,8 +2705,7 @@ void virglBlobScanoutPresentsItsGlTexture()
     /* A texture stored bottom row first is presented turned the right way
      * up, not read back. */
     dependencies.nativeTextureBottomUp = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationCount == 2);
     require(dependencies.lastMetalScanout.flipped);
     require(dependencies.readResourceCount == readsBeforeTexture);
@@ -2867,8 +2713,7 @@ void virglBlobScanoutPresentsItsGlTexture()
 
     /* A dropped frame costs the guest what a presented one does. */
     dependencies.directPresentationDrops = true;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.directPresentationDropCount == 1);
     require(dependencies.readResourceCount == readsBeforeTexture);
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture);
@@ -2877,14 +2722,12 @@ void virglBlobScanoutPresentsItsGlTexture()
     /* A texture that is not exactly this scanout is read back instead. */
     const auto presentsBeforeMismatch = dependencies.directPresentationCount;
     dependencies.blobNativeTexture.width = scanout.width * 2U;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.readResourceCount == readsBeforeTexture + 1U);
     dependencies.blobNativeTexture.width = scanout.width;
     dependencies.blobNativeTexture.format =
         static_cast<std::uint32_t>(protocol::GpuFormat::b8g8r8a8Unorm);
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.readResourceCount == readsBeforeTexture + 2U);
     require(dependencies.directPresentationCount == presentsBeforeMismatch);
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture + 2U);
@@ -2892,11 +2735,9 @@ void virglBlobScanoutPresentsItsGlTexture()
 
     /* A scanout the display takes as a Metal texture releases the readback
      * staging, so the Virgl blob's next readback allocates it again. */
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(scanout));
     const auto readsBeforeRelease = dependencies.readResourceCount;
     fail_after_allocations(1);
     const auto releasedFlush = device.process(requestBytes(flush), false);
@@ -2904,43 +2745,35 @@ void virglBlobScanoutPresentsItsGlTexture()
     require(responseType(releasedFlush) ==
         protocol::GpuResponse::errorOutOfMemory);
     require(dependencies.readResourceCount == readsBeforeRelease);
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.readResourceCount == readsBeforeRelease + 1U);
 
     const auto releasesBeforeDisable = dependencies.releaseBlobScanoutCount;
     auto disable = scanout;
     disable.resourceId = protocol::invalidResourceId;
-    require(responseType(device.process(requestBytes(disable), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(disable));
     require(dependencies.releaseBlobScanoutCount == releasesBeforeDisable);
     require(dependencies.unmapResourceCount == 0);
     const auto readsAfterDisable = dependencies.readResourceCount;
-    require(responseType(device.process(requestBytes(flush), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(flush));
     require(dependencies.readResourceCount == readsAfterDisable);
 }
 
 void malformed3dCommandsUseSpecificErrors()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     protocol::GpuControlHeader transfer {};
     transfer.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::transferToHost3d);
-    require(responseType(device.process(requestBytes(transfer), false)) ==
+    requireResponse(device, requestBytes(transfer),
         protocol::GpuResponse::errorInvalidParameter);
 
     protocol::GpuSubmit3d submit {};
     submit.header.type =
         static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
     submit.header.contextId = 99;
-    require(responseType(device.process(requestBytes(submit), false)) ==
+    requireResponse(device, requestBytes(submit),
         protocol::GpuResponse::errorInvalidContext);
 
     const auto dependencyCallCount = [&] {
@@ -2990,18 +2823,11 @@ void malformed3dCommandsUseSpecificErrors()
 void aDestroyedContextsHeldFencesComplete()
 {
     FakeGpuDependencies dependencies;
-    VirtioGpuDevice device {
-        dependencies,
-        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
-        [](std::uint64_t, std::size_t) {
-            return std::span<std::uint8_t> {};
-        }};
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
     const auto exiting = createContext(831);
     const auto surviving = createContext(832);
-    require(responseType(device.process(requestBytes(exiting), false)) ==
-        protocol::GpuResponse::okNoData);
-    require(responseType(device.process(requestBytes(surviving), false)) ==
-        protocol::GpuResponse::okNoData);
+    requireOk(device, requestBytes(exiting));
+    requireOk(device, requestBytes(surviving));
 
     DeferredFences fences;
     auto now = DeferredFences::Clock::now();
