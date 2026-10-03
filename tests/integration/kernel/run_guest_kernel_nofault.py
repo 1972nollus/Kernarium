@@ -15,7 +15,8 @@ walked from the context it saved, so the dump's Call Traces list entries. A
 walk bounded by the wrong stack prints every Call Trace empty. The kernel
 follows frame records, so no entry may be marked unreliable ("?"); a kernel
 without frame pointers would guess every one. The log buffer is enlarged so
-the dump cannot overwrite its own header.
+the dump cannot overwrite its own header. The contract is
+kernel/common/README.md.
 """
 
 from __future__ import annotations
