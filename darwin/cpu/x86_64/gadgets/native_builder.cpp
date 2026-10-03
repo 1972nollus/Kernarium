@@ -38,6 +38,22 @@ using NativeEntry = void (*)();
 	return reinterpret_cast<std::uintptr_t>(entry);
 }
 
+/* Bit 63 of a descriptor or an offset word tells a gadget shared by the
+ * legacy and VEX encodings which one it runs. */
+[[nodiscard]] constexpr std::uintptr_t vex_tag(
+	const Instruction &instruction) noexcept
+{
+	return static_cast<std::uintptr_t>(instruction.vex) << 63U;
+}
+
+/* CpuState offsets packed into one stream word, 16 bits apiece. */
+[[nodiscard]] constexpr std::uintptr_t pack_offsets(std::uint16_t first,
+	std::uint16_t second = 0, std::uint16_t third = 0) noexcept
+{
+	return first | (std::uintptr_t{second} << 16U) |
+		(std::uintptr_t{third} << 32U);
+}
+
 [[nodiscard]] std::optional<std::uint16_t> register_offset(
 	const Operand &operand) noexcept
 {
@@ -1073,8 +1089,7 @@ struct EncodedMemory final {
 		const auto source = register_offset(instruction.source);
 		if (!source)
 			return false;
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 
@@ -1134,8 +1149,7 @@ struct EncodedMemory final {
 		if (!destination)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		stream.push_back(count);
 		return true;
 	}
@@ -1211,8 +1225,7 @@ struct EncodedMemory final {
 		if (!source)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		if (immediate)
 			stream.push_back(instruction.auxiliary.immediate);
 		return true;
@@ -1293,8 +1306,7 @@ struct EncodedMemory final {
 		const auto source = register_offset(instruction.source);
 		if (!source)
 			return false;
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	std::uint16_t index_offset{};
@@ -1336,8 +1348,7 @@ struct EncodedMemory final {
 		if (!source)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1369,8 +1380,7 @@ struct EncodedMemory final {
 		if (!destination)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1447,8 +1457,7 @@ struct EncodedMemory final {
 		if (!source)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1481,8 +1490,7 @@ struct EncodedMemory final {
 		if (!source)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1526,8 +1534,7 @@ struct EncodedMemory final {
 			if (!source)
 				return false;
 			stream.push_back(entry);
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*source) << 16U));
+			stream.push_back(pack_offsets(*destination, *source));
 			return true;
 		}
 		const auto encoded = encode_memory(
@@ -1553,8 +1560,7 @@ struct EncodedMemory final {
 			if (!source)
 				return false;
 			stream.push_back(entry);
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*source) << 16U));
+			stream.push_back(pack_offsets(*destination, *source));
 			stream.push_back(instruction.vector_control);
 			return true;
 		}
@@ -1604,9 +1610,7 @@ struct EncodedMemory final {
 		if (!second)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*first) << 16U) |
-			(static_cast<std::uintptr_t>(*second) << 32U));
+		stream.push_back(pack_offsets(*destination, *first, *second));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -1646,8 +1650,7 @@ struct EncodedMemory final {
 			return false;
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_vector_move_64_mmx_rr));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	if (instruction.destination.kind == OperandKind::vector_reg &&
@@ -1675,8 +1678,7 @@ struct EncodedMemory final {
 		if (entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	if (instruction.destination.kind == OperandKind::vector_reg &&
@@ -1798,16 +1800,13 @@ struct EncodedMemory final {
 		stream.push_back(entry_address(dword ?
 			native::uml_x86_64_gadget_vector_scalar_move_32_rr_vex :
 			native::uml_x86_64_gadget_vector_scalar_move_64_rr_vex));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U) |
-			(static_cast<std::uintptr_t>(*merge) << 32U));
+		stream.push_back(pack_offsets(*destination, *source, *merge));
 		return true;
 	}
 	stream.push_back(entry_address(dword ?
 		native::uml_x86_64_gadget_vector_scalar_move_32_rr :
 		native::uml_x86_64_gadget_vector_scalar_move_64_rr));
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(pack_offsets(*destination, *source));
 	return true;
 }
 
@@ -1858,8 +1857,7 @@ struct EncodedMemory final {
 	if (entry == nullptr)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(pack_offsets(*destination, *source));
 	if (instruction.vector_opcode == 0xc5)
 		stream.push_back(instruction.vector_control);
 	return true;
@@ -1892,9 +1890,7 @@ struct EncodedMemory final {
 		if (!input)
 			return false;
 		stream.push_back(entry_address(register_entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*merge) << 16U) |
-			(static_cast<std::uintptr_t>(*input) << 32U));
+		stream.push_back(pack_offsets(*destination, *merge, *input));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -1958,8 +1954,7 @@ struct EncodedMemory final {
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*left) |
-			(static_cast<std::uintptr_t>(*right) << 16U));
+		stream.push_back(pack_offsets(*left, *right));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -2000,8 +1995,7 @@ struct EncodedMemory final {
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*left) |
-			(static_cast<std::uintptr_t>(*right) << 16U));
+		stream.push_back(pack_offsets(*left, *right));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -2043,8 +2037,7 @@ struct EncodedMemory final {
 		stream.push_back(entry_address(instruction.vex ?
 			native::uml_x86_64_gadget_vector_move_64_128_rr_vex :
 			native::uml_x86_64_gadget_vector_move_64_128_rr));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	if (instruction.vector_opcode == 0x6e) {
@@ -2094,8 +2087,7 @@ struct EncodedMemory final {
 				native::uml_x86_64_gadget_vector_gpr_to_xmm_64_vex :
 				native::uml_x86_64_gadget_vector_gpr_to_xmm_64;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		return true;
 	}
 	if (instruction.vector_opcode != 0x7e)
@@ -2122,8 +2114,7 @@ struct EncodedMemory final {
 	if (!destination)
 		return false;
 	stream.push_back(select_move(instruction.destination.width, false));
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(pack_offsets(*destination, *source));
 	return true;
 }
 
@@ -2147,8 +2138,7 @@ struct EncodedMemory final {
 		(static_cast<std::uintptr_t>(instruction.vector_group) << 16U);
 	stream.push_back(entry_address(
 		native::uml_x86_64_gadget_vector_bitfield));
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(pack_offsets(*destination, *source));
 	stream.push_back(control);
 	return true;
 }
@@ -2257,9 +2247,8 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 			if (!input)
 				return false;
 			stream.push_back(entry_address(entry));
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*input) << 16U) |
-				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			stream.push_back(pack_offsets(*destination, *input) |
+				vex_tag(instruction));
 			return true;
 		}
 		const auto encoded = encode_memory(
@@ -2267,8 +2256,7 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 		if (!encoded)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->descriptor | vex_tag(instruction));
 		stream.push_back(encoded->displacement);
 		stream.push_back(gadget.address);
 		return true;
@@ -2358,9 +2346,7 @@ enum class VectorDuplicateKind { sldup, shdup, ddup };
 		if (!right || entry == 0)
 			return false;
 		stream.push_back(entry);
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U));
+		stream.push_back(pack_offsets(*destination, *left, *right));
 		return true;
 	}
 	if (instruction.auxiliary.kind == OperandKind::memory) {
@@ -2448,10 +2434,8 @@ enum class VectorShuffleKind {
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		if (control)
 			stream.push_back(instruction.vector_control);
 		return true;
@@ -2461,8 +2445,7 @@ enum class VectorShuffleKind {
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(static_cast<std::uintptr_t>(*left) |
@@ -2611,10 +2594,8 @@ enum class VectorFloatKind {
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -2622,12 +2603,10 @@ enum class VectorFloatKind {
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*left) |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	return true;
 }
 
@@ -2709,10 +2688,8 @@ enum class VectorFloatKind {
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*merge) << 16U) |
-			(static_cast<std::uintptr_t>(*input) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *merge, *input) |
+			vex_tag(instruction));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -2720,12 +2697,10 @@ enum class VectorFloatKind {
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*merge) |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(pack_offsets(*merge) | vex_tag(instruction));
 	return true;
 }
 
@@ -2835,10 +2810,8 @@ enum class VectorFloatKind {
 			if (!input)
 				return false;
 			stream.push_back(entry_address(entry));
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*merge) << 16U) |
-				(static_cast<std::uintptr_t>(*input) << 32U) |
-				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			stream.push_back(pack_offsets(*destination, *merge,
+				*input) | vex_tag(instruction));
 			return true;
 		}
 		const auto encoded = encode_memory(
@@ -2846,12 +2819,10 @@ enum class VectorFloatKind {
 		if (!encoded)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->descriptor | vex_tag(instruction));
 		stream.push_back(encoded->displacement);
 		stream.push_back(gadget.address);
-		stream.push_back(static_cast<std::uintptr_t>(*merge) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*merge) | vex_tag(instruction));
 		return true;
 	}
 
@@ -2867,8 +2838,7 @@ enum class VectorFloatKind {
 			if (!input)
 				return false;
 			stream.push_back(entry_address(entry));
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*input) << 16U));
+			stream.push_back(pack_offsets(*destination, *input));
 			return true;
 		}
 		const auto encoded = encode_memory(
@@ -2892,8 +2862,7 @@ enum class VectorFloatKind {
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*input) << 16U));
+		stream.push_back(pack_offsets(*destination, *input));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -2963,9 +2932,7 @@ enum class VectorFloatKind {
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U));
+		stream.push_back(pack_offsets(*destination, *left, *right));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3061,9 +3028,7 @@ enum class VectorFloatKind {
 		if (!rm)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*vvvv) << 16U) |
-			(static_cast<std::uintptr_t>(*rm) << 32U));
+		stream.push_back(pack_offsets(*destination, *vvvv, *rm));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3123,10 +3088,8 @@ enum class VectorFloatKind {
 		if (!key)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*state) << 16U) |
-			(static_cast<std::uintptr_t>(*key) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *state, *key) |
+			vex_tag(instruction));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3134,12 +3097,10 @@ enum class VectorFloatKind {
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*state) |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(pack_offsets(*state) | vex_tag(instruction));
 	return true;
 }
 
@@ -3178,9 +3139,7 @@ enum class VectorFloatKind {
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*state) << 16U) |
-			(static_cast<std::uintptr_t>(*input) << 32U));
+		stream.push_back(pack_offsets(*destination, *state, *input));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3384,9 +3343,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (entry == nullptr)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -3411,7 +3369,7 @@ inline void note_vector_result(const Instruction &instruction,
 			(static_cast<std::uintptr_t>(*left) << 16U) |
 			(static_cast<std::uintptr_t>(*right) << 32U) |
 			(static_cast<std::uintptr_t>(forwarded ? 1U : 0U) << 62U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			vex_tag(instruction));
 		if (instruction.vector_opcode == 0x70)
 			stream.push_back(shuffle);
 		return true;
@@ -3421,12 +3379,10 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*left) |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	if (instruction.vector_opcode == 0x70)
 		stream.push_back(shuffle);
 	return true;
@@ -3519,10 +3475,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3530,12 +3484,10 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*left) |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(pack_offsets(*left) | vex_tag(instruction));
 	return true;
 }
 
@@ -3589,9 +3541,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U));
+		stream.push_back(pack_offsets(*destination, *left, *right));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3653,9 +3603,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U));
+		stream.push_back(pack_offsets(*destination, *left, *right));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3726,8 +3674,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*input) << 16U));
+		stream.push_back(pack_offsets(*destination, *input));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3764,8 +3711,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*input) << 16U));
+		stream.push_back(pack_offsets(*destination, *input));
 		return true;
 	}
 	const auto encoded = encode_memory(
@@ -3891,8 +3837,7 @@ inline void note_vector_result(const Instruction &instruction,
 	stream.push_back(encoded->descriptor);
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
-	stream.push_back(static_cast<std::uintptr_t>(*mask) |
-		(static_cast<std::uintptr_t>(index) << 16U));
+	stream.push_back(pack_offsets(*mask, index));
 	return true;
 }
 
@@ -3935,8 +3880,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!destination)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -3969,8 +3913,7 @@ inline void note_vector_result(const Instruction &instruction,
 			return false;
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_vector_map3_extract_128_r));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4023,10 +3966,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!input)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*merge) << 16U) |
-			(static_cast<std::uintptr_t>(*input) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *merge, *input) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4035,8 +3976,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
@@ -4061,10 +4001,8 @@ inline void note_vector_result(const Instruction &instruction,
 			return false;
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_vector_map3_insertps_rr));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*merge) << 16U) |
-			(static_cast<std::uintptr_t>(*input) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *merge, *input) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4074,8 +4012,7 @@ inline void note_vector_result(const Instruction &instruction,
 		return false;
 	stream.push_back(entry_address(
 		native::uml_x86_64_gadget_vector_map3_insertps_rm));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(static_cast<std::uintptr_t>(*merge) |
@@ -4144,10 +4081,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4156,8 +4091,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(*left);
@@ -4218,10 +4152,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4230,8 +4162,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(*left);
@@ -4262,8 +4193,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!destination)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*destination, *source));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4322,10 +4252,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4334,8 +4262,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(*left);
@@ -4363,9 +4290,8 @@ inline void note_vector_result(const Instruction &instruction,
 			if (!input)
 				return false;
 			stream.push_back(entry_address(entry));
-			stream.push_back(static_cast<std::uintptr_t>(*destination) |
-				(static_cast<std::uintptr_t>(*input) << 16U) |
-				(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+			stream.push_back(pack_offsets(*destination, *input) |
+				vex_tag(instruction));
 			stream.push_back(instruction.vector_control);
 			return true;
 		}
@@ -4374,8 +4300,7 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!encoded)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(encoded->descriptor |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(encoded->descriptor | vex_tag(instruction));
 		stream.push_back(encoded->displacement);
 		stream.push_back(gadget.address);
 		stream.push_back(instruction.vector_control);
@@ -4403,10 +4328,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*destination) |
-			(static_cast<std::uintptr_t>(*left) << 16U) |
-			(static_cast<std::uintptr_t>(*right) << 32U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*destination, *left, *right) |
+			vex_tag(instruction));
 		stream.push_back(instruction.vector_control);
 		return true;
 	}
@@ -4415,8 +4338,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(*left);
@@ -4456,9 +4378,8 @@ inline void note_vector_result(const Instruction &instruction,
 		if (!right)
 			return false;
 		stream.push_back(entry_address(entry));
-		stream.push_back(static_cast<std::uintptr_t>(*left) |
-			(static_cast<std::uintptr_t>(*right) << 16U) |
-			(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+		stream.push_back(pack_offsets(*left, *right) |
+			vex_tag(instruction));
 		stream.push_back(control);
 		return true;
 	}
@@ -4467,8 +4388,7 @@ inline void note_vector_result(const Instruction &instruction,
 	if (!encoded)
 		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(encoded->descriptor |
-		(static_cast<std::uintptr_t>(instruction.vex) << 63U));
+	stream.push_back(encoded->descriptor | vex_tag(instruction));
 	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
 	stream.push_back(control);
@@ -4927,8 +4847,7 @@ struct FlagState final {
 	if (entry == 0 || !destination_offset || !source_offset)
 		return false;
 	stream.push_back(entry);
-	stream.push_back(static_cast<std::uintptr_t>(*destination_offset) |
-		(static_cast<std::uintptr_t>(*source_offset) << 16U));
+	stream.push_back(pack_offsets(*destination_offset, *source_offset));
 	return true;
 }
 
@@ -4951,8 +4870,7 @@ struct FlagState final {
 	if (!source)
 		return false;
 	stream.push_back(entry);
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*source) << 16U));
+	stream.push_back(pack_offsets(*destination, *source));
 	return true;
 }
 
@@ -4989,8 +4907,7 @@ struct FlagState final {
 		if (!source)
 			return false;
 		stream.push_back(entry_address(native::uml_x86_64_gadget_move_16_rr));
-		stream.push_back(static_cast<std::uintptr_t>(*selector) |
-			(static_cast<std::uintptr_t>(*source) << 16U));
+		stream.push_back(pack_offsets(*selector, *source));
 		return true;
 	}
 	if (instruction.destination.kind == OperandKind::memory) {
@@ -5021,8 +4938,7 @@ struct FlagState final {
 	default: return false;
 	}
 	stream.push_back(entry);
-	stream.push_back(static_cast<std::uintptr_t>(*destination) |
-		(static_cast<std::uintptr_t>(*selector) << 16U));
+	stream.push_back(pack_offsets(*destination, *selector));
 	return true;
 }
 
