@@ -29,7 +29,7 @@ function(_uml_add_network_provider TARGET TESTING)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
-    target_link_libraries(${TARGET} PUBLIC UML::BridgeAbi)
+    target_link_libraries(${TARGET} PUBLIC UML::BridgeAbi UML::Descriptor)
     target_link_libraries(${TARGET} PRIVATE
         UML::GuestTimerMask
         UML::ThirdPartySlirp)

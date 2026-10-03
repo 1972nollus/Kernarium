@@ -149,18 +149,7 @@ gadget vector_lane_merge_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 8, Lx86_vector_lane_merge_rm_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-	b Lx86_vector_lane_merge_rm_loaded
-Lx86_vector_lane_merge_rm_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_vector_lane_merge_rm_loaded:
+	read_operand 8, ldr, x, 24
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
 	add x9, _cpu, x9

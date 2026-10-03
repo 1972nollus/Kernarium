@@ -927,7 +927,6 @@ int runtimeRun(
             .kernel_image = uml_elf_start,
             .kernel_image_size = static_cast<std::size_t>(
                 uml_elf_end - uml_elf_start),
-            .native_kernel_entry = nullptr,
             .network = &networkCallbacks,
         };
         uml_emulator* created = nullptr;

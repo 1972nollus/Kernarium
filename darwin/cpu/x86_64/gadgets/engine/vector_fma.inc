@@ -212,11 +212,7 @@ gadget vector_fma_\name\()_\element\()_\shape\()_rm
 	b Lx86_vector_fma_loaded\@
 Lx86_vector_fma_cross\@:
 	.if \scalar
-	mov x0, _context
-	mov x1, x25
-	mov w2, #Lx86_vector_fma_input_size\@
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load Lx86_vector_fma_input_size\@
 	.if \element == 32
 	fmov s2, w0
 	.else

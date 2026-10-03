@@ -4,6 +4,10 @@
 This runs inside the guest as root. It assembles programs by hand, describes
 their functions and map values with hand-built BTF, and loads them through the
 raw bpf() system call, so it needs nothing beyond Python's standard library.
+It runs bpf_loop(), inlined and through the helper, bpf_for_each_map_elem(), a
+self-rearming BPF timer, nested callbacks and tail calls into callback
+programs; checks that the verifier's frame, stack and tail-call limits still
+reject; and exhausts and refills the interpreter's callback entry-point pool.
 Each check prints one PASS or FAIL line; the exit status is the failure count.
 """
 

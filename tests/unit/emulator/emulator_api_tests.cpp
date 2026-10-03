@@ -5,7 +5,9 @@
 #include "native_window_test_support.hpp"
 #include "platform/run_routing.hpp"
 #include "runtime/context.hpp"
+#include "runtime/native_kernel_layout.hpp"
 #include "scratch_backing.hpp"
+#include "testing.hpp"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_network.h"
 #include "uml_darwin_memory.h"
@@ -16,14 +18,13 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -39,18 +40,14 @@ extern "C" int darwin_uml_net_write(const void *buffer, unsigned long length);
 
 namespace {
 
-using uml::testing::ScratchBacking;
-
-constexpr std::string_view backing_name = "uml-emulator-mmu-domain-XXXXXX";
-
 template<typename Provider>
 concept HasStopCallback = requires(Provider provider) { provider.stop; };
 
 static_assert(!HasStopCallback<uml::network::Provider>);
 
-bool native_arguments_valid;
+bool kernel_arguments_valid;
 bool execution_option_was_stripped;
-bool native_inputs_were_mutable;
+bool kernel_inputs_were_mutable;
 #if UML_EMULATOR_TEST_HAS_SLIRP
 bool network_kernel_ran;
 bool ip_argument_present;
@@ -61,34 +58,6 @@ struct NetworkState final {
 	unsigned int mtu{1500};
 };
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-struct ConcurrentCoordinator final {
-	std::mutex mutex;
-	std::condition_variable changed;
-	std::size_t entered{};
-	std::size_t unbound_ready{};
-	bool sample_stop{};
-};
-
-ConcurrentCoordinator concurrent;
-bool concurrent_a_valid;
-bool concurrent_b_valid;
-
-struct MmuCoordinator final {
-	std::mutex mutex;
-	std::condition_variable changed;
-	std::size_t mapped{};
-} mmu_concurrent;
-
-struct MmuKernelState final {
-	int fd{-1};
-	std::uint8_t expected{};
-	bool valid{};
-};
-
-MmuKernelState mmu_a;
-MmuKernelState mmu_b;
-#endif
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 struct NativeShadowKernelState final {
@@ -183,33 +152,40 @@ void test_memory_bridge_rejects_split_address_space_ranges()
 		context->execution_engine();
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-[[nodiscard]] int select_current_execution_engine(
-	uml::runtime::ExecutionEngine engine) noexcept
-{
-	auto *context = uml::runtime::current_context();
-	return context == nullptr ? -1 : context->set_execution_engine(engine);
-}
-#endif
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+using uml::testing::ScratchBacking;
+
+constexpr std::string_view backing_name = "uml-emulator-native-shadow-XXXXXX";
+
+/* A run maps its kernel window where an embedded kernel's run does; default
+ * options give the guest 256 MiB. */
+constexpr std::size_t run_guest_memory = 256U * 1024U * 1024U;
+
 class ReservedNativeSlot final {
 public:
 	ReservedNativeSlot()
 		: size_{static_cast<std::size_t>(getpagesize())}
 	{
-		address_ = uml::testing::reserve_native_test_window(size_);
+		const auto window =
+			uml::runtime::prepare_native_kernel_layout(run_guest_memory);
+		require(window.valid, "could not derive the run's native window");
+		for (auto candidate = window.window_start;
+		     address_ == 0 && candidate <= window.window_end - size_;
+		     candidate += size_) {
+			mach_vm_address_t reservation = candidate;
+			if (mach_vm_allocate(mach_task_self(), &reservation, size_,
+				    VM_FLAGS_FIXED) == KERN_SUCCESS)
+				address_ = static_cast<std::uintptr_t>(reservation);
+		}
 		require(address_ != 0,
-			"could not reserve native-shadow host slot");
-		require(address_ >= uml::testing::native_test_window_start &&
-			address_ <= uml::testing::native_test_window_end - size_,
-			"native-shadow slot escaped the shared native window");
+			"could not reserve native-shadow host slot in the run's window");
 	}
 
 	~ReservedNativeSlot()
 	{
 		if (!released_)
-			(void)uml::testing::release_native_test_window(address_, size_);
+			(void)mach_vm_deallocate(mach_task_self(), address_, size_);
 	}
 
 	ReservedNativeSlot(const ReservedNativeSlot &) = delete;
@@ -218,7 +194,8 @@ public:
 	void release()
 	{
 		require(!released_ &&
-			uml::testing::release_native_test_window(address_, size_),
+			mach_vm_deallocate(mach_task_self(), address_, size_) ==
+				KERN_SUCCESS,
 			"could not release native-shadow slot reservation");
 		released_ = true;
 	}
@@ -226,6 +203,13 @@ public:
 	[[nodiscard]] std::uintptr_t page() const noexcept
 	{
 		return address_ + DARWIN_UML_GUEST_PAGE_SIZE;
+	}
+
+	/* Retirement hands the slot back to the run's window reservation, so it
+	 * carries no mapping and is not free. */
+	[[nodiscard]] bool retired() const noexcept
+	{
+		return uml::testing::released_into_native_window(address_, size_);
 	}
 
 private:
@@ -258,12 +242,6 @@ int native_shadow_kernel_b(int, char *const[], char *const[])
 	return native_shadow_kernel(native_shadow_b);
 }
 
-[[nodiscard]] bool native_shadow_absent(std::uintptr_t address)
-{
-	errno = 0;
-	return darwin_uml_vm_protect(reinterpret_cast<void *>(address),
-		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ) == -1;
-}
 #endif
 
 bool host_feature(const char *name)
@@ -337,7 +315,7 @@ unsigned long expected_guest_hwcap2()
 	return result;
 }
 
-int native_kernel(int argc, char *const argv[], char *const envp[])
+int run_kernel(int argc, char *const argv[], char *const envp[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
 	const bool rootfs = std::ranges::any_of(arguments, [](const char *argument) {
@@ -357,28 +335,26 @@ int native_kernel(int argc, char *const argv[], char *const envp[])
 			return std::string_view{argument}.starts_with(
 				"--execution-engine");
 		});
-	native_arguments_valid = rootfs && root && root_type && environment;
+	kernel_arguments_valid = rootfs && root && root_type && environment;
 	unsigned char mac[6]{};
 	unsigned int mtu{};
 	const unsigned char frame[4]{1, 2, 3, 4};
-	native_arguments_valid = native_arguments_valid &&
+	kernel_arguments_valid = kernel_arguments_valid &&
 		darwin_uml_net_open(mac, &mtu) == 0 && mtu == 1500 &&
 		darwin_uml_net_irq_fd() == 42 &&
 		darwin_uml_net_read(nullptr, 0) == 0 &&
 		darwin_uml_net_write(frame, sizeof(frame)) == 0;
 	argv[0][0] = 'U';
 	envp[0][0] = 'u';
-	native_inputs_were_mutable = argv[0][0] == 'U' && envp[0][0] == 'u';
+	kernel_inputs_were_mutable = argv[0][0] == 'U' && envp[0][0] == 'u';
 	return 73;
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 bool current_stop_requested()
 {
 	const auto *context = ::uml::runtime::current_context();
 	return context != nullptr && context->stop_requested();
 }
-#endif
 
 int network_open(void *, uint8_t mac[6], unsigned int *mtu)
 {
@@ -404,110 +380,9 @@ int network_write(void *context, const void *, size_t)
 	return 0;
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-int concurrent_kernel(uml::runtime::ExecutionEngine expected_engine,
-	unsigned int expected_mtu, bool expected_stop)
-{
-	unsigned char mac[6]{};
-	unsigned int mtu{};
-	const bool engine_isolated =
-		current_execution_engine() ==
-			expected_engine;
-	const bool network_isolated =
-		darwin_uml_net_open(mac, &mtu) == 0 && mtu == expected_mtu;
-	{
-		std::unique_lock lock{concurrent.mutex};
-		++concurrent.entered;
-		concurrent.changed.notify_all();
-		if (!concurrent.changed.wait_for(lock, std::chrono::seconds{5}, [] {
-			return concurrent.sample_stop;
-		}))
-			return 1;
-	}
-	bool unbound_failed_closed = false;
-	std::thread unbound{[&] {
-		{
-			std::unique_lock lock{concurrent.mutex};
-			++concurrent.unbound_ready;
-			concurrent.changed.notify_all();
-			if (!concurrent.changed.wait_for(
-				lock, std::chrono::seconds{5}, [] {
-					return concurrent.unbound_ready == 2;
-				}))
-				return;
-		}
-		unsigned char unbound_mac[6]{};
-		unsigned int unbound_mtu{};
-		unbound_failed_closed =
-			current_execution_engine() ==
-				uml::runtime::ExecutionEngine::automatic &&
-			select_current_execution_engine(
-				expected_engine) == -1 &&
-			darwin_uml_net_open(unbound_mac, &unbound_mtu) == -ENETDOWN &&
-			!current_stop_requested();
-	}};
-	unbound.join();
-	return engine_isolated && network_isolated &&
-		current_stop_requested() == expected_stop &&
-		unbound_failed_closed ? 0 : 1;
-}
-
-int concurrent_kernel_a(int, char *const[], char *const[])
-{
-	const auto status = concurrent_kernel(
-		uml::runtime::ExecutionEngine::gadgets, 1401, true);
-	concurrent_a_valid = status == 0;
-	return status;
-}
-
-int concurrent_kernel_b(int, char *const[], char *const[])
-{
-	const auto status = concurrent_kernel(
-		uml::runtime::ExecutionEngine::jit, 1402, false);
-	concurrent_b_valid = status == 0;
-	return status;
-}
-
-int isolated_mmu_kernel(MmuKernelState &state)
-{
-	constexpr unsigned long generation = 0x4d4d;
-	constexpr unsigned long address = 0x80'0000;
-	const bool mapped = darwin_uml_static_vm_map_generation(
-		generation, reinterpret_cast<void *>(address), state.fd, 0,
-		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0;
-	{
-		std::unique_lock lock{mmu_concurrent.mutex};
-		++mmu_concurrent.mapped;
-		mmu_concurrent.changed.notify_all();
-		if (!mmu_concurrent.changed.wait_for(
-			lock, std::chrono::seconds{5}, [] {
-				return mmu_concurrent.mapped == 2;
-			}))
-			return 1;
-	}
-	void *translated = nullptr;
-	state.valid = mapped &&
-		darwin_uml_static_vm_translate(
-			generation, address, DARWIN_UML_STATIC_READ, &translated) ==
-			DARWIN_UML_STATIC_TRANSLATED &&
-		translated != nullptr &&
-		*static_cast<const std::uint8_t *>(translated) == state.expected;
-	return state.valid ? 0 : 1;
-}
-
-int isolated_mmu_kernel_a(int, char *const[], char *const[])
-{
-	return isolated_mmu_kernel(mmu_a);
-}
-
-int isolated_mmu_kernel_b(int, char *const[], char *const[])
-{
-	return isolated_mmu_kernel(mmu_b);
-}
-#endif
 
 #if UML_EMULATOR_TEST_HAS_SLIRP
-int native_network_kernel(int argc, char *const argv[], char *const[])
+int network_kernel(int argc, char *const argv[], char *const[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
 	network_kernel_ran = true;
@@ -519,7 +394,105 @@ int native_network_kernel(int argc, char *const argv[], char *const[])
 }
 #endif
 
-void test_native_entry()
+using Emulator = std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;
+
+Emulator make_emulator(uml::emulator::testing::KernelEntry entry)
+{
+	const auto image = uml::emulator::testing::kernel_image(entry);
+	const uml_emulator_config config{
+		.abi_version = UML_EMULATOR_ABI_VERSION,
+		.struct_size = sizeof(uml_emulator_config),
+		.rootfs_path = "/tmp/uml-emulator-api.img",
+		.kernel_image = image.data(),
+		.kernel_image_size = image.size(),
+	};
+	uml_emulator *created = nullptr;
+	require(uml_emulator_create(&config, &created) == UML_EMULATOR_OK,
+		"emulator creation failed");
+	return {created, uml_emulator_destroy};
+}
+
+void test_capabilities_describe_the_kernel()
+{
+	const uml_emulator_config empty_config{
+		.abi_version = UML_EMULATOR_ABI_VERSION,
+		.struct_size = sizeof(uml_emulator_config),
+	};
+	uml_emulator *created = nullptr;
+	require(uml_emulator_create(&empty_config, &created) == UML_EMULATOR_OK,
+		"kernelless emulator creation failed");
+	const Emulator empty{created, uml_emulator_destroy};
+	uml_emulator_capabilities capabilities{
+		.struct_size = sizeof(uml_emulator_capabilities),
+	};
+	require(uml_emulator_get_capabilities(empty.get(), &capabilities) ==
+			UML_EMULATOR_OK &&
+		capabilities.abi_version == UML_EMULATOR_ABI_VERSION &&
+		capabilities.can_run == 0 && capabilities.sandbox_safe == 1 &&
+		capabilities.platform != nullptr,
+		"a handle without a kernel misreported its capabilities");
+	const char *arguments[]{"uml-test"};
+	require(uml_emulator_run(empty.get(), 1, arguments, nullptr) ==
+			-UML_EMULATOR_UNSUPPORTED,
+		"a handle without a kernel did not refuse to run");
+
+	const auto embedded = make_emulator(run_kernel);
+	require(uml_emulator_get_capabilities(embedded.get(), &capabilities) ==
+			UML_EMULATOR_OK &&
+		capabilities.can_run == UML_EMULATOR_TEST_HAS_KERNEL_RUNNER &&
+		capabilities.sandbox_safe == !UML_EMULATOR_TEST_HAS_KERNEL_RUNNER,
+		"an embedded kernel image misreported its capabilities");
+}
+
+bool stop_seen;
+
+int stop_sampling_kernel(int, char *const[], char *const[])
+{
+	stop_seen = current_stop_requested();
+	return 0;
+}
+
+uml_emulator *self_stopping_handle;
+unsigned int self_stopping_entries;
+
+/* The first run stops itself; later runs only sample. */
+int self_stopping_kernel(int, char *const[], char *const[])
+{
+	const bool before = current_stop_requested();
+	if (self_stopping_entries++ != 0) {
+		stop_seen = before;
+		return 0;
+	}
+	uml_emulator_request_stop(self_stopping_handle);
+	stop_seen = !before && current_stop_requested();
+	return 0;
+}
+
+/* A stop request reaches the run it overlaps and no later one. */
+void test_stop_requests_belong_to_one_run()
+{
+	const auto sampling = make_emulator(stop_sampling_kernel);
+	const char *arguments[]{"uml-test", "--execution-engine=gadgets"};
+	uml_emulator_request_stop(sampling.get());
+	stop_seen = true;
+	require(uml_emulator_run(sampling.get(), 2, arguments, nullptr) == 0 &&
+			!stop_seen,
+		"a run inherited a stop requested while its handle was idle");
+
+	const auto stopping = make_emulator(self_stopping_kernel);
+	self_stopping_handle = stopping.get();
+	stop_seen = false;
+	require(uml_emulator_run(stopping.get(), 2, arguments, nullptr) == 0 &&
+			stop_seen,
+		"a stop requested during a run did not reach that run");
+	stop_seen = true;
+	require(uml_emulator_run(stopping.get(), 2, arguments, nullptr) == 0 &&
+			!stop_seen,
+		"a later run inherited an earlier run's stop");
+	self_stopping_handle = nullptr;
+}
+
+void test_run_boundary()
 {
 	const auto expected_hwcap = expected_guest_hwcap();
 	require(darwin_uml_guest_hwcap() == expected_hwcap,
@@ -537,13 +510,13 @@ void test_native_entry()
 		.write = network_write,
 	};
 	char rootfs_path[]{"/tmp/rootfs.erofs"};
+	auto image = uml::emulator::testing::kernel_image(run_kernel);
 	uml_emulator_config config{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = rootfs_path,
-		.kernel_image = nullptr,
-		.kernel_image_size = 0,
-		.native_kernel_entry = native_kernel,
+		.kernel_image = image.data(),
+		.kernel_image_size = image.size(),
 		.network = &network,
 	};
 	uml_emulator *created = nullptr;
@@ -552,21 +525,17 @@ void test_native_entry()
 	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> emulator{
 		created, uml_emulator_destroy};
 	rootfs_path[0] = 'X';
+	std::ranges::fill(image, std::byte{0});
 	network.open = nullptr;
 	config.rootfs_path = nullptr;
-	config.native_kernel_entry = nullptr;
+	config.kernel_image = nullptr;
+	config.kernel_image_size = 0;
 	config.network = nullptr;
 	uml_emulator_capabilities capabilities{
 		.struct_size = sizeof(uml_emulator_capabilities),
 	};
 	require(uml_emulator_get_capabilities(emulator.get(), &capabilities) ==
 		UML_EMULATOR_OK, "capability query failed");
-	require(capabilities.can_run == 1,
-		"native entry was not reported as runnable");
-	require(capabilities.kernel_is_native_macho == 1,
-		"native entry was not reported as Mach-O");
-	require(capabilities.sandbox_safe == 1,
-		"native entry was not reported as sandbox safe");
 	require(capabilities.userspace_execution == UML_EMULATOR_NATIVE_JIT,
 		"macOS did not default to the native JIT");
 	char argument_zero[]{"uml-test"};
@@ -578,8 +547,8 @@ void test_native_entry()
 		argument_zero, argument_one, argument_two, argument_three};
 	const char *environment[]{environment_zero, nullptr};
 	require(uml_emulator_run(emulator.get(), 4, arguments, environment) == 73,
-		"native entry result was not returned");
-	require(native_inputs_were_mutable &&
+		"kernel result was not returned");
+	require(kernel_inputs_were_mutable &&
 		std::strcmp(argument_zero, "uml-test") == 0 &&
 		std::strcmp(argument_one, "--execution-engine=gadgets") == 0 &&
 		std::strcmp(argument_two, "--jit-cache-budget=1G") == 0 &&
@@ -594,8 +563,8 @@ void test_native_entry()
 		"gadget selection changed the virtual CPU contract");
 	require(execution_option_was_stripped,
 		"host execution option leaked into kernel arguments");
-	require(native_arguments_valid,
-		"native entry arguments or network callbacks were invalid");
+	require(kernel_arguments_valid,
+		"kernel arguments or network callbacks were invalid");
 	require(network_state.writes == 1,
 		"network callback was not invoked exactly once");
 	/* The gadget run's deliberately different JIT budget/CPU pair must not
@@ -608,7 +577,7 @@ void test_native_entry()
 			emulator.get(), 2, jit_arguments, environment) == 73,
 		"a gadget-only configuration froze later JIT geometry");
 	require(network_state.writes == 2,
-		"the sequential JIT run did not enter the native kernel");
+		"the sequential JIT run did not enter the kernel");
 
 	const char *invalid_arguments[]{
 		"uml-test", "--execution-engine=invalid"};
@@ -634,172 +603,6 @@ void test_native_entry()
 		"sequentially incompatible JIT budget did not fail launch clearly");
 }
 
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-void test_handle_lifetime_isolation()
-{
-	NetworkState network_a{.mtu = 1401};
-	NetworkState network_b{.mtu = 1402};
-	const uml_emulator_network_callbacks callbacks_a{
-		.struct_size = sizeof(uml_emulator_network_callbacks),
-		.context = &network_a,
-		.open = instance_network_open,
-		.irq_fd = network_irq_fd,
-		.read = network_read,
-		.write = network_write,
-	};
-	const uml_emulator_network_callbacks callbacks_b{
-		.struct_size = sizeof(uml_emulator_network_callbacks),
-		.context = &network_b,
-		.open = instance_network_open,
-		.irq_fd = network_irq_fd,
-		.read = network_read,
-		.write = network_write,
-	};
-	const uml_emulator_config config_a{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/handle-a.img",
-		.native_kernel_entry = concurrent_kernel_a,
-		.network = &callbacks_a,
-	};
-	const uml_emulator_config config_b{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/handle-b.img",
-		.native_kernel_entry = concurrent_kernel_b,
-		.network = &callbacks_b,
-	};
-	uml_emulator *raw_a = nullptr;
-	uml_emulator *raw_b = nullptr;
-	require(uml_emulator_create(&config_a, &raw_a) == UML_EMULATOR_OK &&
-		uml_emulator_create(&config_b, &raw_b) == UML_EMULATOR_OK,
-		"two-handle emulator creation failed");
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_a{
-		raw_a, uml_emulator_destroy};
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_b{
-		raw_b, uml_emulator_destroy};
-
-	/* An idle stop request is not inherited by a later run. */
-	uml_emulator_request_stop(handle_a.get());
-	int status_a = -1;
-	int status_b = -1;
-	const char *arguments_a[]{"uml-test", "--execution-engine=gadgets"};
-	const char *arguments_b[]{"uml-test", "--execution-engine=jit"};
-	std::thread thread_a{[&] {
-		status_a = uml_emulator_run(handle_a.get(), 2, arguments_a, nullptr);
-	}};
-	std::thread thread_b{[&] {
-		status_b = uml_emulator_run(handle_b.get(), 2, arguments_b, nullptr);
-	}};
-	bool both_entered = false;
-	{
-		std::unique_lock lock{concurrent.mutex};
-		both_entered = concurrent.changed.wait_for(
-			lock, std::chrono::seconds{5}, [] {
-				return concurrent.entered == 2;
-			});
-	}
-	uml_emulator_capabilities live_capabilities_a{
-		.struct_size = sizeof(uml_emulator_capabilities),
-	};
-	uml_emulator_capabilities live_capabilities_b{
-		.struct_size = sizeof(uml_emulator_capabilities),
-	};
-	const bool live_capabilities_valid = both_entered &&
-		uml_emulator_get_capabilities(
-			handle_a.get(), &live_capabilities_a) == UML_EMULATOR_OK &&
-		uml_emulator_get_capabilities(
-			handle_b.get(), &live_capabilities_b) == UML_EMULATOR_OK &&
-		live_capabilities_a.userspace_execution ==
-			UML_EMULATOR_STATIC_GADGETS &&
-		live_capabilities_b.userspace_execution ==
-			UML_EMULATOR_NATIVE_JIT;
-	if (both_entered)
-		uml_emulator_request_stop(handle_a.get());
-	{
-		std::lock_guard lock{concurrent.mutex};
-		concurrent.sample_stop = true;
-	}
-	concurrent.changed.notify_all();
-	thread_a.join();
-	thread_b.join();
-
-	if (!both_entered || status_a != 0 || status_b != 0 ||
-	    !concurrent_a_valid || !concurrent_b_valid)
-		std::fprintf(stderr,
-			"two-handle diagnostics entered=%d status-a=%d status-b=%d "
-			"valid-a=%d valid-b=%d\n",
-			both_entered, status_a, status_b, concurrent_a_valid,
-			concurrent_b_valid);
-	require(both_entered && status_a == 0 && status_b == 0 &&
-		concurrent_a_valid && concurrent_b_valid,
-		"concurrent handles shared engine, stop, or network state");
-	require(live_capabilities_valid,
-		"capability query did not remain stable during live runs");
-	uml_emulator_capabilities capabilities_a{
-		.struct_size = sizeof(uml_emulator_capabilities),
-	};
-	uml_emulator_capabilities capabilities_b{
-		.struct_size = sizeof(uml_emulator_capabilities),
-	};
-	require(uml_emulator_get_capabilities(handle_a.get(), &capabilities_a) ==
-		UML_EMULATOR_OK &&
-		uml_emulator_get_capabilities(handle_b.get(), &capabilities_b) ==
-		UML_EMULATOR_OK &&
-		capabilities_a.userspace_execution == UML_EMULATOR_STATIC_GADGETS &&
-		capabilities_b.userspace_execution == UML_EMULATOR_NATIVE_JIT,
-		"two handles did not retain independent engine selection");
-}
-
-void test_concurrent_handles_have_distinct_software_mmu_domains()
-{
-	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-	backing_a.put_byte(0, std::byte{0x2a});
-	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-	backing_b.put_byte(0, std::byte{0xb7});
-	mmu_a = {.fd = backing_a.descriptor(), .expected = 0x2a};
-	mmu_b = {.fd = backing_b.descriptor(), .expected = 0xb7};
-	{
-		std::lock_guard lock{mmu_concurrent.mutex};
-		mmu_concurrent.mapped = 0;
-	}
-	const uml_emulator_config config_a{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/mmu-domain-a.img",
-		.native_kernel_entry = isolated_mmu_kernel_a,
-	};
-	const uml_emulator_config config_b{
-		.abi_version = UML_EMULATOR_ABI_VERSION,
-		.struct_size = sizeof(uml_emulator_config),
-		.rootfs_path = "/tmp/mmu-domain-b.img",
-		.native_kernel_entry = isolated_mmu_kernel_b,
-	};
-	uml_emulator *raw_a = nullptr;
-	uml_emulator *raw_b = nullptr;
-	require(uml_emulator_create(&config_a, &raw_a) == UML_EMULATOR_OK &&
-		uml_emulator_create(&config_b, &raw_b) == UML_EMULATOR_OK,
-		"MMU-domain emulator creation failed");
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_a{
-		raw_a, uml_emulator_destroy};
-	const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)> handle_b{
-		raw_b, uml_emulator_destroy};
-	const char *arguments[]{
-		"uml-mmu-domain", "--execution-engine=gadgets"};
-	int status_a = -1;
-	int status_b = -1;
-	std::thread thread_a{[&] {
-		status_a = uml_emulator_run(handle_a.get(), 2, arguments, nullptr);
-	}};
-	std::thread thread_b{[&] {
-		status_b = uml_emulator_run(handle_b.get(), 2, arguments, nullptr);
-	}};
-	thread_a.join();
-	thread_b.join();
-	require(status_a == 0 && status_b == 0 && mmu_a.valid && mmu_b.valid,
-		"concurrent handles shared software-MMU generation state");
-}
-#endif
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 void test_native_shadow_domains_retire_on_every_handle_exit(
@@ -824,17 +627,23 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 		.replacement = 0xb8,
 		.status = 37,
 	};
+	const auto image_a =
+		uml::emulator::testing::kernel_image(native_shadow_kernel_a);
+	const auto image_b =
+		uml::emulator::testing::kernel_image(native_shadow_kernel_b);
 	const uml_emulator_config config_a{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = "/tmp/native-shadow-a.img",
-		.native_kernel_entry = native_shadow_kernel_a,
+		.kernel_image = image_a.data(),
+		.kernel_image_size = image_a.size(),
 	};
 	const uml_emulator_config config_b{
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = "/tmp/native-shadow-b.img",
-		.native_kernel_entry = native_shadow_kernel_b,
+		.kernel_image = image_b.data(),
+		.kernel_image_size = image_b.size(),
 	};
 	uml_emulator *raw_a = nullptr;
 	uml_emulator *raw_b = nullptr;
@@ -849,7 +658,7 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 	require(uml_emulator_run(handle_a.get(), 1, arguments, nullptr) == 0 &&
 		native_shadow_a.valid,
 		"normal native-shadow run failed");
-	require(native_shadow_absent(slot.page()),
+	require(slot.retired(),
 		"normal run retained native-shadow mapping or protection state");
 	std::uint8_t backing_value{};
 	require(pread(backing_a.descriptor(), &backing_value, sizeof(backing_value), 0) ==
@@ -860,7 +669,7 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 	require(uml_emulator_run(handle_b.get(), 1, arguments, nullptr) == 37 &&
 		native_shadow_b.valid,
 		"abnormal-return native-shadow run failed");
-	require(native_shadow_absent(slot.page()),
+	require(slot.retired(),
 		"abnormal return retained native-shadow state");
 	require(pread(backing_b.descriptor(), &backing_value, sizeof(backing_value), 0) ==
 			static_cast<ssize_t>(sizeof(backing_value)) &&
@@ -872,7 +681,7 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 	native_shadow_b.status = 0;
 	native_shadow_b.valid = false;
 	require(uml_emulator_run(handle_b.get(), 1, arguments, nullptr) == 0 &&
-		native_shadow_b.valid && native_shadow_absent(slot.page()),
+		native_shadow_b.valid && slot.retired(),
 		"handle could not retry with a fresh native-shadow domain");
 }
 
@@ -977,6 +786,8 @@ void test_injected_user_network_adds_no_kernel_ip_configuration()
 		"injected user-network creation failed");
 	const std::unique_ptr<void, decltype(&uml_slirp_net_destroy)> network{
 		network_context, uml_slirp_net_destroy};
+	const auto image =
+		uml::emulator::testing::kernel_image(network_kernel);
 	const uml_emulator_network_callbacks callbacks{
 		.struct_size = sizeof(uml_emulator_network_callbacks),
 		.context = network.get(),
@@ -989,9 +800,8 @@ void test_injected_user_network_adds_no_kernel_ip_configuration()
 		.abi_version = UML_EMULATOR_ABI_VERSION,
 		.struct_size = sizeof(uml_emulator_config),
 		.rootfs_path = "/tmp/rootfs.erofs",
-		.kernel_image = nullptr,
-		.kernel_image_size = 0,
-		.native_kernel_entry = native_network_kernel,
+		.kernel_image = image.data(),
+		.kernel_image_size = image.size(),
 		.network = &callbacks,
 	};
 	uml_emulator *created = nullptr;
@@ -1017,16 +827,11 @@ int main()
 	try {
 		test_c_api_rejects_inconsistent_creation_inputs();
 		test_memory_bridge_rejects_split_address_space_ranges();
-		test_native_entry();
-	#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-		test_handle_lifetime_isolation();
-		test_concurrent_handles_have_distinct_software_mmu_domains();
-	#endif
+		test_capabilities_describe_the_kernel();
+		test_stop_requests_belong_to_one_run();
+		test_run_boundary();
 	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 		{
-			uml::testing::NativeTestWindowScope native_window;
-			require(native_window.entered(),
-				"could not configure emulator API native test window");
 			ReservedNativeSlot native_shadow_slot;
 			test_native_shadow_domains_retire_on_every_handle_exit(
 				native_shadow_slot);

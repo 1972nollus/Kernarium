@@ -293,12 +293,7 @@ gadget store_machine_status_16_m
 Lx86_store_machine_status_done:
 	finish_store 2
 Lx86_store_machine_status_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #2
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, 2
 	b Lx86_store_machine_status_done
 
 gadget mxcsr_load
@@ -315,11 +310,7 @@ Lx86_mxcsr_load_done:
 	publish_guest_rounding 9, 10, 11
 	retire_unless_simd_unchecked w24
 Lx86_mxcsr_load_cross:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #4
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load 4
 	mov w24, w0
 	b Lx86_mxcsr_load_done
 
@@ -333,12 +324,7 @@ gadget mxcsr_store
 Lx86_mxcsr_store_done:
 	finish_store 4
 Lx86_mxcsr_store_cross:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #4
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, 4
 	b Lx86_mxcsr_store_done
 
 gadget cache_zero

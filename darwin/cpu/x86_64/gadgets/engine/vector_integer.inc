@@ -407,15 +407,7 @@ Lx86_vector_integer_loaded\@:
 	and w13, w27, #0xff
 	.endif
 	and x10, x26, #0xffff
-	.if \width == 64
-	ldr d0, [_cpu, x10]
-	.else
-	add x10, _cpu, x10
-	ldr q0, [x10]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	.endif
-	.endif
+	vector_read \width
 	vector_integer_body 0x\opcode, \width
 	vector_write \width, 23
 	retire_and_next
@@ -553,15 +545,7 @@ gadget vector_integer_\opcode\()_g\group\()_\width\()_ri
 	mov x23, x8
 	mov w12, w13
 	ubfx x10, x8, #16, #16
-	.if \width == 64
-	ldr d0, [_cpu, x10]
-	.else
-	add x10, _cpu, x10
-	ldr q0, [x10]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	.endif
-	.endif
+	vector_read \width
 	vector_integer_immediate_lane 0x\opcode, \group, 4, 0
 	.if \width == 256
 	mov w13, w12

@@ -2,6 +2,8 @@
 
 #include "vhost_user_message.hpp"
 
+#include "platform/descriptor.hpp"
+
 #ifndef UML_GPU_STOP_WAIT_TESTING
 #define UML_GPU_STOP_WAIT_TESTING 0
 #endif
@@ -17,7 +19,6 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
-#include <fcntl.h>
 #include <poll.h>
 #include <stdexcept>
 #include <string>
@@ -227,11 +228,10 @@ void adoptReceivedDescriptors(
                 descriptorBytes + index * sizeof(rawDescriptor),
                 sizeof(rawDescriptor));
             UniqueDescriptor owned(rawDescriptor);
-            const int flags = ::fcntl(rawDescriptor, F_GETFD);
-            if (flags < 0 ||
-                ::fcntl(rawDescriptor, F_SETFD, flags | FD_CLOEXEC) != 0) {
-                if (descriptorError == 0)
-                    descriptorError = errno;
+            if (!uml::platform::configureDescriptor(
+                    rawDescriptor, {.closeOnExec = true}) &&
+                descriptorError == 0) {
+                descriptorError = errno;
             }
             if (!destination.adopt(std::move(owned)))
                 malformed = true;

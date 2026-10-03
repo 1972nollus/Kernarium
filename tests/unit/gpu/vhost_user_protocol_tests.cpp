@@ -2229,7 +2229,7 @@ void runVhostUserProtocolTests()
     rejectedSharedMemoryActionClosesBackendChannel();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         validConfigurationProtocol(server);
         invalidControlMessagesAreRejected(server);

@@ -295,15 +295,7 @@ Lx86_vector_map3_shuffle_cross\@:
 Lx86_vector_map3_shuffle_loaded\@:
 	mov w13, w27
 	and x10, x26, #0xffff
-	.if \width == 64
-	ldr d0, [_cpu, x10]
-	.else
-	add x10, _cpu, x10
-	ldr q0, [x10]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	.endif
-	.endif
+	vector_read \width
 	vector_map3_shuffle_lane \opcode, \width
 	vector_write \width, 23
 	retire_and_next

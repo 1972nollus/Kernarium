@@ -16,18 +16,7 @@
 gadget movbe_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_movbe_load_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_movbe_loaded\@
-Lx86_movbe_load_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_movbe_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	reverse_scalar \width, \host_register\()24, \host_register\()24
 	and x8, x23, #0xffff
 	\store \store_register\()24, [_cpu, x8]
@@ -46,12 +35,7 @@ gadget movbe_\width\()_mr
 	\store \host_register\()24, [x7]
 	finish_store (\width / 8)
 Lx86_movbe_store_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, (\width / 8)
 	finish_store (\width / 8)
 .endm
 
@@ -88,18 +72,7 @@ gadget crc32_\width\()_rr
 gadget crc32_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_crc32_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()15, [x7]
-	b Lx86_crc32_loaded\@
-Lx86_crc32_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x15, x0
-Lx86_crc32_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 15
 	and x25, x23, #0xffff
 	crc32_compute \width, \instruction, \load, \host_register
 	retire_and_next
@@ -154,18 +127,7 @@ gadget \name\()_\width\()_rr
 gadget \name\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_adx_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()26, [x7]
-	b Lx86_adx_loaded\@
-Lx86_adx_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x26, x0
-Lx86_adx_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 26
 	and x25, x23, #0xffff
 	\load \host_register\()24, [_cpu, x25]
 	adx_compute \flag_bit, \width, \host_register, \store_register

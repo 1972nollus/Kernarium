@@ -7,7 +7,7 @@ probe spins in machine code with x0 holding each -ERESTART* code an
 interrupted system call returns (-512, -513, -514 and -516) while a 1 ms
 interval timer's SIGALRM interrupts it, with SA_RESTART and without, and
 checks that x0 comes back unchanged. Prints one line per check and exits with
-the number of failures.
+the number of failures. The contract is kernel/common/README.md.
 """
 
 import ctypes

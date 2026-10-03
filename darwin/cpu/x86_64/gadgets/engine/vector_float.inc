@@ -425,16 +425,7 @@ Lx86_vector_fp_packed_ftz_ready\@:
 .macro vector_fp_register name, operation, element, shape, width, scalar, predicate
 gadget vector_fp_\name\()_\element\()_\shape\()_rr
 	ldr x8, [_stream], #8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_fp_compute \operation, \element, \width, \scalar, \predicate
 	vector_write_xmm \width, 8
 	retire_and_next
@@ -467,11 +458,7 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	b Lx86_vector_fp_loaded\@
 Lx86_vector_fp_cross\@:
 	.if \scalar
-	mov x0, _context
-	mov x1, x25
-	mov w2, #Lx86_vector_fp_input_size\@
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load Lx86_vector_fp_input_size\@
 	.if \element == 32
 	fmov s1, w0
 	.else

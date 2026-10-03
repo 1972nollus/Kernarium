@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "platform/descriptor.hpp"
 #include "protocol.hpp"
 #include "vhost_user_device.hpp"
 
@@ -20,7 +21,6 @@ enum class DeviceKind {
 class EventQueue final {
 public:
     EventQueue();
-    ~EventQueue();
 
     EventQueue(const EventQueue&) = delete;
     EventQueue& operator=(const EventQueue&) = delete;
@@ -32,8 +32,7 @@ public:
     void clear() noexcept;
 
 private:
-    int readDescriptor_ {-1};
-    int writeDescriptor_ {-1};
+    uml::platform::WakeSocket wake_;
     std::mutex mutex_;
     std::deque<protocol::InputEvent> events_;
     bool reportedOverflow_ {};

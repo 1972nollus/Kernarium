@@ -7,7 +7,7 @@ if(UML_BUILD_KERNEL_RUNNER)
     list(APPEND _uml_emulator_boundary_sources loader/elf_loader.cpp)
 endif()
 
-function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
+function(_uml_add_emulator_boundary TARGET TESTING)
     add_library(${TARGET} OBJECT ${_uml_emulator_boundary_sources})
     uml_declare_architecture_target(${TARGET} emulator)
     target_link_libraries(${TARGET} PRIVATE
@@ -30,7 +30,7 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
     target_compile_definitions(${TARGET} PRIVATE
         UML_APPLE_PLATFORM_NAME="${UML_APPLE_PLATFORM}"
         UML_EMULATOR_HAS_KERNEL_RUNNER=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>
-        UML_EMULATOR_ADMISSION_TESTING=${ADMISSION_TESTING})
+        UML_EMULATOR_TESTING=${TESTING})
 endfunction()
 
 _uml_add_emulator_boundary(uml_emulator_boundary 0)
@@ -66,36 +66,39 @@ set_target_properties(uml_emulator PROPERTIES
     PUBLIC_HEADER
         "${PROJECT_SOURCE_DIR}/darwin/api/include/uml/emulator.h;${PROJECT_SOURCE_DIR}/darwin/api/include/uml/abi_identity.h")
 
-set(_uml_need_admission_test_variant OFF)
+set(_uml_need_emulator_test_variant OFF)
 if(UML_BUILD_UNIT_TESTS OR
    (UML_BUILD_TOOLING_TESTS AND UML_BUILD_KERNEL_RUNNER))
-    set(_uml_need_admission_test_variant ON)
+    set(_uml_need_emulator_test_variant ON)
 endif()
-if(_uml_need_admission_test_variant)
-    # Deterministic admission interleavings and memory failure probes belong
-    # to a test-only product variant. The emulator and memory modules reuse
-    # the exact production source manifests under compile-time test policies.
+if(_uml_need_emulator_test_variant)
+    # The test kernel image, deterministic admission interleavings and memory
+    # failure probes belong to a test-only product variant (src/testing.hpp).
+    # The emulator and memory modules reuse the exact production source
+    # manifests under compile-time test policies.
     _uml_add_emulator_boundary(uml_emulator_boundary_test_variant 1)
-    add_library(uml_emulator_admission_test_variant STATIC
+    add_library(uml_emulator_test_variant STATIC
         $<TARGET_OBJECTS:uml_emulator_boundary_test_variant>
         ${_uml_emulator_carried_objects})
-    uml_declare_architecture_target(
-        uml_emulator_admission_test_variant emulator)
+    uml_declare_architecture_target(uml_emulator_test_variant emulator)
     set(_uml_test_runtime_core UML::RuntimeCore)
     if(TARGET uml_runtime_core_test_variant)
         set(_uml_test_runtime_core UML::RuntimeCoreTestVariant)
-        target_compile_definitions(uml_emulator_admission_test_variant
+        target_compile_definitions(uml_emulator_test_variant
             PUBLIC UML_MEMORY_ALLOCATION_TESTING=1)
     endif()
-    target_link_libraries(uml_emulator_admission_test_variant PRIVATE
+    target_compile_definitions(uml_emulator_test_variant
+        PUBLIC UML_EMULATOR_TESTING=1)
+    target_link_libraries(uml_emulator_test_variant PRIVATE
         UML::ApiContract
         UML::DeviceGuestConsole
         UML::GuestPageConfiguration
         UML::NetworkDevice
         ${_uml_test_runtime_core}
         UML::RuntimeContract)
-    target_include_directories(uml_emulator_admission_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/api/include)
+    target_include_directories(uml_emulator_test_variant PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin/api/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
 endif()
 
 install(TARGETS uml_emulator

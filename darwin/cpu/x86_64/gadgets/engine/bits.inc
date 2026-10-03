@@ -110,18 +110,7 @@ Lx86_bit_exclusive\@:
 Lx86_bit_split\@:
 	split_operand (\width / 8), Lx86_bit_exclusive\@
 	.endif
-	page_cross_check (\width / 8), Lx86_bit_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_bit_loaded\@
-Lx86_bit_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_bit_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	bit_compute \operation, \width, \host_register
 	.ifc \operation,bt
 	bit_update_carry
@@ -133,12 +122,7 @@ Lx86_bit_loaded\@:
 	\store \host_register\()27, [x7]
 	b Lx86_bit_written\@
 Lx86_bit_write_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x27
-	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x27, (\width / 8)
 Lx86_bit_written\@:
 	.if \locked
 	split_lock_leave
@@ -290,18 +274,7 @@ gadget \operation\()_\width\()_rr
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), Lx86_bit_count_read_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()24, [x7]
-	b Lx86_bit_count_loaded\@
-Lx86_bit_count_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
-	mov x24, x0
-Lx86_bit_count_loaded\@:
+	read_operand (\width / 8), \load, \host_register, 24
 	and x25, x23, #0xffff
 	bit_count_compute \operation, \width, \host_register
 	bit_count_finish \operation, \width, \store, \host_register, \store_register

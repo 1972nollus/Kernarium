@@ -6,6 +6,7 @@ function(uml_configure_vhost_user_component target)
     uml_declare_architecture_target(${target} device)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(${target} PUBLIC UML::Descriptor)
 endfunction()
 
 add_library(uml_vhost_user_wire STATIC vhost_user_message.cpp)
@@ -17,7 +18,6 @@ add_library(uml_vhost_user_transport STATIC
 add_library(UML::VhostUserTransport ALIAS uml_vhost_user_transport)
 uml_configure_vhost_user_component(uml_vhost_user_transport)
 target_link_libraries(uml_vhost_user_transport PUBLIC
-    UML::DeviceSocketPaths
     UML::MemorySharedBacking
     uml_vhost_user_wire)
 # AutoreleaseScope calls the Objective-C runtime directly.
@@ -44,7 +44,6 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_GPU)
     target_compile_definitions(uml_gpu_transport_startup_test_variant PRIVATE
         UML_GPU_STARTUP_TESTING=1)
     target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
-        UML::DeviceSocketPaths
         UML::MemorySharedBacking
         uml_gpu_transport_wire_stop_wait_test_variant)
     target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
@@ -70,7 +69,6 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_GPU)
     target_compile_definitions(uml_gpu_transport_slow_stop_test_variant
         PRIVATE UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000)
     target_link_libraries(uml_gpu_transport_slow_stop_test_variant PUBLIC
-        UML::DeviceSocketPaths
         UML::MemorySharedBacking
         uml_gpu_transport_wire_slow_stop_test_variant)
     target_link_libraries(uml_gpu_transport_slow_stop_test_variant PRIVATE

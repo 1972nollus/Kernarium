@@ -4,6 +4,7 @@
 
 #include "unique_descriptor.hpp"
 
+#include "platform/descriptor.hpp"
 #include "socket_paths.hpp"
 
 #include <algorithm>
@@ -12,7 +13,6 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
-#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -28,26 +28,6 @@ namespace {
 constexpr std::size_t maximumInputBytes = 64U * 1024U;
 constexpr std::size_t maximumOutputTailBytes = 64U * 1024U;
 
-void setCloseOnExec(int descriptor)
-{
-    const int flags = ::fcntl(descriptor, F_GETFD);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0) {
-        throw std::runtime_error(
-            "configuring console descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
-}
-
-void setNonblocking(int descriptor)
-{
-    const int flags = ::fcntl(descriptor, F_GETFL);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) {
-        throw std::runtime_error(
-            "configuring nonblocking console descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
-}
-
 /*
  * A client that connects and closes again before this process accepts it is
  * ordinary, and Darwin rejects F_SETNOSIGPIPE on such a socket with EINVAL
@@ -58,13 +38,9 @@ void setNonblocking(int descriptor)
  */
 bool configureClient(int descriptor) noexcept
 {
-    const int descriptorFlags = ::fcntl(descriptor, F_GETFD);
-    const int statusFlags = ::fcntl(descriptor, F_GETFL);
-
-    return descriptorFlags >= 0 && statusFlags >= 0 &&
-        ::fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0 &&
-        ::fcntl(descriptor, F_SETFL, statusFlags | O_NONBLOCK) == 0 &&
-        ::fcntl(descriptor, F_SETNOSIGPIPE, 1) == 0;
+    return uml::platform::configureDescriptor(
+        descriptor,
+        {.closeOnExec = true, .nonblocking = true, .noSigpipe = true});
 }
 
 } // namespace
@@ -102,8 +78,12 @@ public:
                 "Virtio console socket creation failed: " +
                 std::string(std::strerror(errno)));
         }
-        setCloseOnExec(listener_.get());
-        setNonblocking(listener_.get());
+        uml::platform::configureDescriptorOrThrow(
+            listener_.get(), {.closeOnExec = true}, "console descriptor");
+        uml::platform::configureDescriptorOrThrow(
+            listener_.get(),
+            {.nonblocking = true},
+            "nonblocking console descriptor");
 
         sockaddr_un address {};
         address.sun_family = AF_UNIX;

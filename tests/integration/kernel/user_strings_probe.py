@@ -8,7 +8,8 @@ prctl(PR_SET_NAME). The checks cover lengths around the embedded name buffer
 and PATH_MAX, strings that cross a page boundary or end on its last byte,
 unterminated strings, faults on NULL, unmapped and PROT_NONE memory, and the
 exact bytes a symlink target and a task name keep. Each check prints one PASS
-or FAIL line; the exit status is the failure count.
+or FAIL line; the exit status is the failure count. The contract is
+kernel/common/README.md.
 """
 
 from __future__ import annotations

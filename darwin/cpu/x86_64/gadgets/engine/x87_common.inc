@@ -249,12 +249,7 @@ Lx86_x87_scalar_load_done\@:
 	.endif
 	b Lx86_x87_scalar_store_done\@
 Lx86_x87_scalar_store_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, Lx86_memory_fault
+	cross_page_store x24, \size
 Lx86_x87_scalar_store_done\@:
 .endm
 

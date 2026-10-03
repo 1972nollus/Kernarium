@@ -55,16 +55,7 @@ Lx86_vector_aes_write_done\@:
 .macro vector_aes_register opcode, width
 gadget vector_aes_\opcode\()_\width\()_rr
 	ldr x8, [_stream], #8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_aes_body 0x\opcode, \width
 	vector_aes_write \width, 8
 	retire_and_next

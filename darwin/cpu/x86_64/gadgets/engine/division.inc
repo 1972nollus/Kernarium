@@ -19,11 +19,7 @@ gadget \name\()_\width\()_m
 	x86_memory_order_boundary
 	b \target
 Lx86_divide_read_cross\@:
-	mov x0, _context
-	mov x1, x25
-	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, Lx86_memory_fault
+	cross_page_load (\width / 8)
 	mov x15, x0
 	x86_memory_order_boundary
 	b \target
