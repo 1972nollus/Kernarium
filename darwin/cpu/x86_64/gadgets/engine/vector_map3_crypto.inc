@@ -29,16 +29,7 @@ Lx86_vector_map3_pclmul_right_done\@:
 .macro vector_map3_pclmul_register width
 gadget vector_map3_pclmul_\width\()_rr
 	ldp x8, x13, [_stream], #16
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_map3_pclmul_body \width
 	vector_write_xmm \width, 8
 	retire_and_next

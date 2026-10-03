@@ -1646,6 +1646,36 @@ gadget block_exit_linked
 gadget nop
 	retire_and_next
 
+/* Read the vector register at state offset x10 into d0 for 64 bits, or into
+ * q0, and q2 for the upper half of 256 bits. */
+.macro vector_read width
+	.if \width == 64
+	ldr d0, [_cpu, x10]
+	.else
+	add x10, _cpu, x10
+	ldr q0, [x10]
+	.if \width == 256
+	ldr q2, [x10, #16]
+	.endif
+	.endif
+.endm
+
+/* Read the two source registers that bits 31:16 and 47:32 of descriptor x8
+ * address into q0 and q1, and their upper halves into q2 and q3 for 256
+ * bits; x10 and x11 are left holding their addresses. */
+.macro vector_read_pair width
+	ubfx x10, x8, #16, #16
+	ubfx x11, x8, #32, #16
+	add x10, _cpu, x10
+	add x11, _cpu, x11
+	ldr q0, [x10]
+	ldr q1, [x11]
+	.if \width == 256
+	ldr q2, [x10, #16]
+	ldr q3, [x11, #16]
+	.endif
+.endm
+
 /* Write the vector result in q4 (and q5 for 256 bits) to the register the
  * descriptor's low half addresses. A 128-bit VEX write, which bit 63 marks,
  * zeroes the upper half; a legacy SSE write leaves it. */

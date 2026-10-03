@@ -163,16 +163,7 @@ gadget vector_\operation\()_\element\()_\width\()_rr
 	.if \control
 	ldr x13, [_stream], #8
 	.endif
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x10, _cpu, x10
-	add x11, _cpu, x11
-	ldr q0, [x10]
-	ldr q1, [x11]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	ldr q3, [x11, #16]
-	.endif
+	vector_read_pair \width
 	vector_shuffle_body \operation, \element, \width
 	vector_write_xmm \width, 8
 	retire_and_next

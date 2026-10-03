@@ -413,15 +413,7 @@ Lx86_vector_map2_cross\@:
 	.endif
 Lx86_vector_map2_loaded\@:
 	and x10, x26, #0xffff
-	.if \width == 64
-	ldr d0, [_cpu, x10]
-	.else
-	add x10, _cpu, x10
-	ldr q0, [x10]
-	.if \width == 256
-	ldr q2, [x10, #16]
-	.endif
-	.endif
+	vector_read \width
 	vector_map2_lane \opcode, \width, 4, 0, 1
 	.if \width == 256 && !((\opcode >= 0x20 && \opcode <= 0x25) || \
 		(\opcode >= 0x30 && \opcode <= 0x35))
