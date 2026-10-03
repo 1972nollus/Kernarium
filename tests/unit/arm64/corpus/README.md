@@ -162,7 +162,9 @@ and its V registers are then the low 16 bytes of the Z registers, so its
 vector mask is empty; ZA and ZT0 exist only while its PSTATE.ZA is set. The
 expected state's SVCR is the initial one unless it names its own, and the
 runner compares the SME state only where the expected SVCR makes it live.
-Each byte of the SME base fill is `(n * 0x9e3779b1 mod 2^32) >> 24` for an
+An expected part that the initial state does not hold, such as Z after
+SMSTART, is encoded against its base fill, and the V registers of an initial
+state in streaming mode are its Z registers' low bytes. Each byte of the SME base fill is `(n * 0x9e3779b1 mod 2^32) >> 24` for an
 index `n` that names the byte's position at the largest SVL: `256i + b` for
 byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
 `r`, and `0x30000 + b` of ZT0. A version 1 pack is a version 2 pack without

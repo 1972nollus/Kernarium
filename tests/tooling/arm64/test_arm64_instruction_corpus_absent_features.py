@@ -20,7 +20,9 @@ on the checked-in pack:
   rewrite's addition counts match those records.
 
 The rewrite's drop and strip counts describe the export it read, which the
-repository does not keep, so they are not checked.
+repository does not keep, so they are not checked. The native SME records
+that sme-native-corpus.py appends after the rewrite exercise FEAT_SME by
+design; arm64-instruction-corpus-sme-native checks them.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 REWRITE = REPOSITORY / "tools" / "arm64-tests" / "absent-feature-corpus.py"
 TBI_NAME = re.compile(r"^(.*) with TBI tag 0x([0-9a-f]{2})$")
+# tools/arm64-tests/sme-native-corpus.py's producer.
+NATIVE_PRODUCER = "arm64-sme-native"
 
 
 def load_rewrite():
@@ -81,6 +85,8 @@ def check(rewrite, records: list[dict], step: dict) -> str:
     kept: dict[tuple, list[tuple[dict, dict]]] = collections.defaultdict(list)
     count = 0
     for item in records:
+        if item["producer"] == NATIVE_PRODUCER:
+            continue
         if item["producer"].startswith("arm64-absent-"):
             authored.append(item)
             continue

@@ -1655,6 +1655,18 @@ def check(options: argparse.Namespace) -> int:
         if table is None or sha256(
                 (REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the rewrite)")
+    # The native SME records are the current script's, from the current
+    # encoding table; sme-native-corpus.py --carry refreshes the script hash
+    # when its request is unchanged.
+    native = corpus.meta.get("sme_native")
+    if native is not None:
+        if sha256((REPOSITORY / native["script"]).read_bytes()) != \
+                native["sha256"]:
+            stale.append(native["script"] + " (not the native records' script)")
+        table = native["table"]
+        if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
+            stale.append("SVE/SME encoding table (changed since the native "
+                         "records)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.
