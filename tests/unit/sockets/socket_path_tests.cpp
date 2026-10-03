@@ -174,6 +174,110 @@ void theTableRefusesMoreThanItCanHold()
 			("slot-" + std::to_string(index) + ".sock"));
 }
 
+bool directoryExists(const std::filesystem::path &path)
+{
+	struct stat status {};
+	return ::lstat(path.c_str(), &status) == 0 && S_ISDIR(status.st_mode);
+}
+
+/* A fresh directory for one DirectoryPath case. */
+std::filesystem::path makeDirectory(const char *name)
+{
+	const auto path = scratchDirectory() / name;
+	std::filesystem::remove_all(path);
+	require(::mkdir(path.c_str(), S_IRWXU) == 0);
+	return path;
+}
+
+void anAdoptedDirectoryIsRemovedWithEverythingInIt()
+{
+	const auto path = makeDirectory("destroyed.dir");
+	const int descriptor = bindSocket(path / "entry");
+	{
+		::uml::device::DirectoryPath guard {path};
+		guard.adopt("entry");
+		/* An ordinary teardown also takes what the entry's name does
+		 * not cover. */
+		std::filesystem::create_directory(path / "nested");
+		require(directoryExists(path));
+	}
+	require(!std::filesystem::exists(path));
+	(void)::close(descriptor);
+}
+
+void anUnadoptedDirectoryIsLeftAlone()
+{
+	const auto path = makeDirectory("unadopted.dir");
+	{
+		::uml::device::DirectoryPath guard {path};
+	}
+	require(directoryExists(path));
+	std::filesystem::remove_all(path);
+}
+
+void theSignalPathRemovesAnAdoptedDirectory()
+{
+	const auto path = makeDirectory("signal.dir");
+	::uml::device::DirectoryPath guard {path};
+	guard.adopt("entry");
+	/* The entry is bound after adoption by someone else, as the guest
+	 * binds its console, and a reply socket beside it is adopted. */
+	const int entry = bindSocket(path / "entry");
+	const int reply = bindSocket(path / "reply");
+	::uml::device::SocketPath replyGuard {path / "reply"};
+	replyGuard.adopt();
+
+	/* What a terminating signal or a kernel-driven exit runs; no guard
+	 * unwinds there. Sockets go first, so the directory is empty when its
+	 * turn comes. */
+	::uml::device::remove_registered_socket_paths();
+	require(!std::filesystem::exists(path));
+	(void)::close(entry);
+	(void)::close(reply);
+}
+
+void aDirectoryWithAnUnknownEntryKeepsIt()
+{
+	const auto path = makeDirectory("unknown.dir");
+	::uml::device::DirectoryPath guard {path};
+	guard.adopt("entry");
+	const int entry = bindSocket(path / "entry");
+	const int stranger = bindSocket(path / "stranger");
+
+	/* The termination path removes only the name it knows, and rmdir()
+	 * then refuses a directory that is not empty. */
+	::uml::device::remove_registered_socket_paths();
+	require(directoryExists(path) && !socketExists(path / "entry") &&
+		socketExists(path / "stranger"));
+	(void)::close(entry);
+	(void)::close(stranger);
+	std::filesystem::remove_all(path);
+}
+
+void aReplacedDirectorySurvives()
+{
+	const auto path = makeDirectory("replaced.dir");
+	::uml::device::DirectoryPath guard {path};
+	guard.adopt("entry");
+
+	/* Something else now owns the name; its device and inode differ. */
+	std::filesystem::remove(path);
+	require(::mkdir(path.c_str(), S_IRWXU) == 0);
+	const int entry = bindSocket(path / "entry");
+	::uml::device::remove_registered_socket_paths();
+	require(directoryExists(path) && socketExists(path / "entry"));
+	(void)::close(entry);
+	std::filesystem::remove_all(path);
+}
+
+void aMissingDirectoryIsRefused()
+{
+	const auto path = scratchDirectory() / "never-created.dir";
+	std::filesystem::remove_all(path);
+	::uml::device::DirectoryPath guard {path};
+	requireThrows([&] { guard.adopt("entry"); });
+}
+
 } // namespace
 
 int main()
@@ -185,6 +289,12 @@ int main()
 	aPathTooLongForSunPathIsRefused();
 	anUnboundPathIsRefused();
 	theTableRefusesMoreThanItCanHold();
+	anAdoptedDirectoryIsRemovedWithEverythingInIt();
+	anUnadoptedDirectoryIsLeftAlone();
+	theSignalPathRemovesAnAdoptedDirectory();
+	aDirectoryWithAnUnknownEntryKeepsIt();
+	aReplacedDirectorySurvives();
+	aMissingDirectoryIsRefused();
 	std::filesystem::remove_all(scratchDirectory());
 	return EXIT_SUCCESS;
 }

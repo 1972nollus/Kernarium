@@ -36,6 +36,9 @@ struct EmulatorOptions final {
 	unsigned guest_cpus{1};
 	bool top_byte_ignore{};
 	bool informational{};
+	/* uml_dir= is the host's own, so the run prepares and removes the
+	 * console's location; a caller's directory is left to the caller. */
+	bool host_console_directory{};
 	bool valid{true};
 };
 
