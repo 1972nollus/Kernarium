@@ -221,10 +221,33 @@ int main()
         "GL_LINES did not count exactly the vertices submitted");
     glDeleteQueries(1, &linesQuery);
 
+    // A line loop of N vertices is N segments, so the clipper sees N
+    // primitives however the driver closes the loop. Count them alone first,
+    // so the paired measurement below has a control.
+    GLuint clippingQuery = 0;
+    glGenQueries(1, &clippingQuery);
+    glBeginQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB, clippingQuery);
+    glDrawArrays(GL_LINE_LOOP, 0, loopVertexCount);
+    glEndQuery(GL_CLIPPING_INPUT_PRIMITIVES_ARB);
+    glFinish();
+    GLuint clippedAlone = 0;
+    glGetQueryObjectuiv(clippingQuery, GL_QUERY_RESULT, &clippedAlone);
+    std::fprintf(
+        stderr,
+        "Host line-loop statistics: GL_LINE_LOOP n=%d -> "
+        "GL_CLIPPING_INPUT_PRIMITIVES_ARB=%u (control)\n",
+        loopVertexCount,
+        clippedAlone);
+    check(clippedAlone == static_cast<GLuint>(loopVertexCount),
+        "GL_LINE_LOOP did not reach the clipper as one primitive per vertex");
+    glDeleteQueries(1, &clippingQuery);
+
     // The CTS case queries clipping primitives alongside the submitted
     // vertices, and Zink splits a statistics query's starts when the line-loop
     // flag changes. Run the same line loop with a second statistics query
-    // active, which is the shape the failing case actually uses.
+    // active, which is the shape the failing case actually uses. Zink begins
+    // a Vulkan query per GL query, so the driver sees two statistics queries
+    // active at once; each must still count what it counts alone.
     GLuint pairVertices = 0;
     GLuint pairClipping = 0;
     glGenQueries(1, &pairVertices);
@@ -247,6 +270,11 @@ int main()
         loopVertexCount,
         paired,
         clipped);
+    check(paired == static_cast<GLuint>(loopVertexCount)
+            || paired == static_cast<GLuint>(loopVertexCount) + 1U,
+        "with a clipping query active, GL_LINE_LOOP did not count the vertices submitted");
+    check(clipped == static_cast<GLuint>(loopVertexCount),
+        "with a vertices query active, GL_LINE_LOOP did not count its clipping input primitives");
     glDeleteQueries(1, &pairVertices);
     glDeleteQueries(1, &pairClipping);
 
