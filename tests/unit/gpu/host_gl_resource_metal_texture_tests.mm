@@ -12,6 +12,7 @@
 // writes a pattern, waits for a fence, and then copies the named texture on a
 // Metal queue of its own, as the display's draw does.
 
+#include "require.hpp"
 #include "virgl_renderer.hpp"
 
 #import <Metal/Metal.h>
@@ -25,10 +26,11 @@
 #include <cstring>
 #include <exception>
 #include <memory>
-#include <source_location>
 #include <vector>
 
 namespace {
+
+using uml::testing::require;
 
 // virgl_hw.h and p_defines.h values the guest sends on the wire.
 constexpr std::uint32_t pipeTexture2d = 2;
@@ -42,21 +44,6 @@ constexpr std::uint32_t width = 16;
 constexpr std::uint32_t height = 8;
 constexpr std::size_t bytesPerPixel = 4;
 constexpr std::size_t rowBytes = width * bytesPerPixel;
-
-void require(
-    bool condition,
-    const char* description,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "Resource Metal texture: %s (line %u)\n",
-        description,
-        location.line());
-    std::exit(1);
-}
 
 [[nodiscard]] std::array<std::uint8_t, bytesPerPixel> guestPixel(
     std::uint32_t x,

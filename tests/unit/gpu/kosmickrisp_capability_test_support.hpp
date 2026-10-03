@@ -4,8 +4,8 @@
 // Helpers for the tests that each check one capability in the JSON report of
 // the KosmicKrisp capability probe.
 
-#include "gpu_require.hpp"
 #include "kosmickrisp_capability_probe.hpp"
+#include "require.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +14,8 @@
 #include <string_view>
 
 namespace uml::gpu::testing {
+
+using ::uml::testing::require;
 
 [[nodiscard]] inline std::string probeReport()
 {

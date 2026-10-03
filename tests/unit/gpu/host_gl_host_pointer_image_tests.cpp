@@ -8,6 +8,7 @@
 // past them is refused: the layout comes from a guest.
 
 #include "host_gl_provider.hpp"
+#include "require.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
@@ -20,7 +21,6 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <source_location>
 #include <vector>
 
 #include <sys/mman.h>
@@ -36,25 +36,13 @@ extern "C" {
 
 namespace {
 
+using uml::testing::require;
+
 // 'AB24': one plane, red in the first byte, matching PIPE_FORMAT_R8G8B8A8_UNORM.
 constexpr std::int32_t kFourccAbgr8888 = 0x34324241;
 constexpr std::uint32_t kWidth = 256;
 constexpr std::uint32_t kHeight = 128;
 constexpr std::size_t kHostPageSize = 16384;
-
-void require(
-    bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "require failed at %s:%u\n",
-        location.file_name(),
-        location.line());
-    std::exit(1);
-}
 
 GLuint compile(GLenum stage, const char* source)
 {

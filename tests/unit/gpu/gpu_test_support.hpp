@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "gpu_require.hpp"
 #include "protocol.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
@@ -25,6 +25,7 @@
 
 namespace uml::gpu::testing {
 
+using ::uml::testing::require;
 using ::uml::testing::ScratchBacking;
 
 void runVhostUserServerTests(const char* executable);

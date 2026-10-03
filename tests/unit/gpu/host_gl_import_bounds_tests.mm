@@ -14,6 +14,7 @@
 // buffer and sent it to the guest. The accepted cases keep the legitimate
 // imports and transfers working.
 
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "virgl_renderer.hpp"
 
@@ -46,7 +47,6 @@ void virgl_resource_native_release(std::uint64_t id);
 #include <cstring>
 #include <exception>
 #include <memory>
-#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -54,6 +54,7 @@ void virgl_resource_native_release(std::uint64_t id);
 
 namespace {
 
+using uml::testing::require;
 using uml::testing::ScratchBacking;
 
 // Stable Virtio-GPU ABI identifier for the virgl2 capability set.
@@ -76,21 +77,6 @@ constexpr std::uint64_t segmentSize = 64 * 1024;
 // An unlinked scratch file stands in for the exporter's segment: its vnode is
 // what the native registry keys on, and its pages are what a plain import maps.
 constexpr std::string_view segmentName = "uml-import-bounds.XXXXXX";
-
-void require(
-    bool condition,
-    const char* description,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "Import bounds: %s (line %u)\n",
-        description,
-        location.line());
-    std::exit(1);
-}
 
 [[nodiscard]] std::uint8_t patternByte(
     std::uint32_t x,

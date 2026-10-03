@@ -17,6 +17,7 @@
 // writer's work was never submitted.
 
 #include "host_gl_provider.hpp"
+#include "require.hpp"
 
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
@@ -31,11 +32,12 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
-#include <source_location>
 #include <thread>
 #include <vector>
 
 namespace {
+
+using uml::testing::require;
 
 constexpr GLsizei kWidth = 64;
 constexpr GLsizei kHeight = 64;
@@ -44,20 +46,6 @@ constexpr GLsizei kHeight = 64;
 // without it. Allow for that plus a slow host; a regression parks forever, so
 // any finite bound separates the two outcomes.
 constexpr std::chrono::seconds kReadbackDeadline {90};
-
-void require(
-    bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "require failed at %s:%u\n",
-        location.file_name(),
-        location.line());
-    std::abort();
-}
 
 GLuint compile(GLenum stage, const char* source)
 {
