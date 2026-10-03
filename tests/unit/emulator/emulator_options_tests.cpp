@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mach_vm_region_test_support.hpp"
 #include "options.hpp"
+#include "require.hpp"
 #include "runtime/native_kernel_layout.hpp"
 
 #include <algorithm>
@@ -17,11 +18,7 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 bool contains(const uml::emulator::EmulatorOptions &options,
 		      std::string_view value)

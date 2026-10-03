@@ -2,9 +2,9 @@
 
 #include "vhost_user_server.hpp"
 
-#include "socket_paths.hpp"
 #include "memory/shared_backing.hpp"
 #include "platform/apple/autorelease_scope.hpp"
+#include "platform/descriptor.hpp"
 #include "platform/guest_timer_mask.hpp"
 
 #include <algorithm>
@@ -22,7 +22,6 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <sys/uio.h>
 #include <type_traits>
 #include <utility>
@@ -78,31 +77,21 @@ class ConnectionStopped final {};
 
 void setCloseOnExec(int descriptor)
 {
-    const int flags = ::fcntl(descriptor, F_GETFD);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0)
-        throw std::runtime_error(
-            "configuring close-on-exec descriptor failed: " +
-            std::string(std::strerror(errno)));
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.closeOnExec = true}, "close-on-exec descriptor");
 }
 
 void setNonblocking(int descriptor)
 {
-    const int flags = ::fcntl(descriptor, F_GETFL);
-    if (flags < 0 || ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) {
-        throw std::runtime_error(
-            "configuring nonblocking vhost-user descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.nonblocking = true}, "nonblocking vhost-user descriptor");
 }
 
 void configureOutputDescriptor(int descriptor)
 {
     setNonblocking(descriptor);
-    if (::fcntl(descriptor, F_SETNOSIGPIPE, 1) != 0) {
-        throw std::runtime_error(
-            "configuring no-signal vhost-user descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
+    uml::platform::configureDescriptorOrThrow(
+        descriptor, {.noSigpipe = true}, "no-signal vhost-user descriptor");
 }
 
 void flushReadinessOutput()
@@ -115,6 +104,40 @@ void flushReadinessOutput()
         std::string(std::strerror(flushError)));
 }
 
+/* Waits until `descriptor` takes output, throwing ConnectionStopped once the
+ * connection is asked to stop. Returns false when the wait was interrupted or
+ * timed out; the caller then waits again, which checks the stop request. */
+[[nodiscard]] bool awaitWritable(
+    int descriptor,
+    const std::atomic_bool* stopRequested)
+{
+    if (stopRequested != nullptr &&
+        stopRequested->load(std::memory_order_acquire)) {
+        throw ConnectionStopped {};
+    }
+    pollfd output {
+        .fd = descriptor,
+        .events = POLLOUT,
+        .revents = 0,
+    };
+    const int pollResult = ::poll(
+        &output,
+        1,
+        stopRequested == nullptr ? -1 : socketPollTimeoutMilliseconds);
+    if (pollResult < 0) {
+        if (errno == EINTR)
+            return false;
+        throw std::runtime_error(
+            "vhost-user write poll failed: " +
+            std::string(std::strerror(errno)));
+    }
+    if (pollResult == 0)
+        return false;
+    if ((output.revents & POLLNVAL) != 0)
+        throw std::runtime_error("invalid vhost-user write descriptor");
+    return true;
+}
+
 void writeExact(
     int descriptor,
     const void* source,
@@ -123,30 +146,8 @@ void writeExact(
 {
     const auto* bytes = static_cast<const std::uint8_t*>(source);
     while (length != 0) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = descriptor,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output,
-            1,
-            stopRequested == nullptr ? -1 : socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(
-                "vhost-user write poll failed: " +
-                std::string(std::strerror(errno)));
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(descriptor, stopRequested))
             continue;
-        if ((output.revents & POLLNVAL) != 0)
-            throw std::runtime_error("invalid vhost-user write descriptor");
         const auto count = ::write(descriptor, bytes, length);
         if (count < 0) {
             if (errno == EINTR)
@@ -182,28 +183,8 @@ void writeFrame(
     std::size_t current = 0;
     const std::size_t vectorCount = payload.empty() ? 1U : vectors.size();
     while (current < vectorCount) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = descriptor,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output, 1, socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(
-                "vhost-user frame poll failed: " +
-                std::string(std::strerror(errno)));
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(descriptor, stopRequested))
             continue;
-        if ((output.revents & POLLNVAL) != 0)
-            throw std::runtime_error("invalid vhost-user frame descriptor");
 
         const auto count = ::writev(
             descriptor,
@@ -248,23 +229,7 @@ void writeFrameWithDescriptor(
     std::memcpy(frame.data() + sizeof(header), payload.data(), payload.size());
 
     for (;;) {
-        if (stopRequested != nullptr &&
-            stopRequested->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        pollfd output {
-            .fd = socket,
-            .events = POLLOUT,
-            .revents = 0,
-        };
-        const int pollResult = ::poll(
-            &output, 1, socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error("vhost-user descriptor poll failed");
-        }
-        if (pollResult == 0)
+        if (!awaitWritable(socket, stopRequested))
             continue;
 
         iovec vector {
@@ -405,10 +370,8 @@ void requireNoDescriptors(
 } // namespace
 
 VhostUserServer::VhostUserServer(
-    std::unique_ptr<uml::virtio::VhostUserDevice> device,
-    std::filesystem::path socketPath)
-    : socketPath_(std::move(socketPath))
-    , device_(std::move(device))
+    std::unique_ptr<uml::virtio::VhostUserDevice> device)
+    : device_(std::move(device))
 {
     constexpr std::size_t maximumQueueCount =
         protocol::vhostVringIndexMask + 1U;
@@ -1880,112 +1843,6 @@ void VhostUserServer::runConnected(
         ready();
     const int transferred = guard.release();
     serveConnection(transferred, stopRequested);
-}
-
-void VhostUserServer::run(
-    const std::atomic_bool& stopRequested,
-    const std::function<void()>& ready)
-{
-    if (socketPath_.empty())
-        throw std::invalid_argument("vhost-user socket path is empty");
-    if (socketPath_.string().size() >= sizeof(sockaddr_un::sun_path))
-        throw std::invalid_argument("vhost-user socket path is too long");
-    struct stat existingPath {};
-    if (::lstat(socketPath_.c_str(), &existingPath) == 0) {
-        throw std::runtime_error(
-            "vhost-user socket path already exists; refusing to replace it");
-    }
-    if (errno != ENOENT) {
-        throw std::runtime_error(
-            "vhost-user socket path inspection failed: " +
-            std::string(std::strerror(errno)));
-    }
-    ::uml::device::SocketPath socketPathCleanup {socketPath_};
-    UniqueDescriptor listener {::socket(AF_UNIX, SOCK_STREAM, 0)};
-    if (listener.get() < 0)
-        throw std::runtime_error(
-            "socket failed: " + std::string(std::strerror(errno)));
-    setCloseOnExec(listener.get());
-    setNonblocking(listener.get());
-
-    sockaddr_un address {};
-    address.sun_family = AF_UNIX;
-    std::memcpy(
-        address.sun_path,
-        socketPath_.c_str(),
-        socketPath_.string().size() + 1U);
-    if (::bind(
-            listener.get(),
-            reinterpret_cast<const sockaddr*>(&address),
-            sizeof(address)) != 0) {
-        throw std::runtime_error(
-            "vhost-user bind failed: " +
-            std::string(std::strerror(errno)));
-    }
-    socketPathCleanup.adopt();
-    if (::listen(listener.get(), 1) != 0) {
-        throw std::runtime_error(
-            "vhost-user listen failed: " +
-            std::string(std::strerror(errno)));
-    }
-    if (::chmod(socketPath_.c_str(), 0600) != 0) {
-        throw std::runtime_error(
-            "vhost-user socket permission update failed: " +
-            std::string(std::strerror(errno)));
-    }
-    std::fprintf(stdout, "%s vhost-user socket: %s\n",
-        device_->name(), socketPath_.c_str());
-    if (const auto readiness = device_->readinessDescription();
-        !readiness.empty()) {
-        std::fputs(readiness.c_str(), stdout);
-    }
-    flushReadinessOutput();
-    if (ready)
-        ready();
-
-    while (!stopRequested.load(std::memory_order_acquire)) {
-        pollfd listenerPoll {
-            .fd = listener.get(),
-            .events = POLLIN,
-            .revents = 0,
-        };
-        const int pollResult =
-            ::poll(&listenerPoll, 1, socketPollTimeoutMilliseconds);
-        if (pollResult < 0) {
-            if (errno == EINTR)
-                continue;
-            throw std::runtime_error(
-                "poll failed: " + std::string(std::strerror(errno)));
-        }
-        if (pollResult == 0)
-            continue;
-
-        UniqueDescriptor connection {
-            ::accept(listener.get(), nullptr, nullptr)};
-        if (connection.get() < 0) {
-            if (errno == EINTR)
-                continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                continue;
-            throw std::runtime_error(
-                "accept failed: " + std::string(std::strerror(errno)));
-        }
-        try {
-            setCloseOnExec(connection.get());
-            configureOutputDescriptor(connection.get());
-        } catch (const std::exception& error) {
-            /*
-             * A peer that connects and closes again before this accept lands
-             * leaves a fully shut down socket, which Darwin rejects with
-             * EINVAL.  Drop that one connection and keep listening rather than
-             * ending the server loop.
-             */
-            std::fprintf(
-                stderr, "vhost-user connection rejected: %s\n", error.what());
-            continue;
-        }
-        serveConnection(connection.release(), stopRequested);
-    }
 }
 
 InProcessVhostUserService::InProcessVhostUserService(

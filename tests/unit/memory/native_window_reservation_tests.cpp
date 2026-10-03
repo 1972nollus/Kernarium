@@ -7,6 +7,7 @@
  */
 #include "mach_vm_region_test_support.hpp"
 #include "native_window_test_support.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "uml_darwin_memory.h"
 
@@ -25,11 +26,7 @@
 
 namespace {
 
-void require(bool condition, const std::string &message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 [[nodiscard]] std::size_t host_page() noexcept
 {

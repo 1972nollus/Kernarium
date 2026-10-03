@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "uml/emulator.h"
+#include "require.hpp"
 #include "testing.hpp"
 
 #include <atomic>
@@ -22,11 +23,7 @@ namespace {
 
 struct CallbackFailure final {};
 
-void require(bool condition, const char* message)
-{
-    if (!condition)
-        throw std::runtime_error(message);
-}
+using uml::testing::require;
 
 using Emulator =
     std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>;

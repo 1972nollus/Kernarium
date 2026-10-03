@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "protocol.hpp"
+#include "require.hpp"
 #include "virtio_sound_device.hpp"
 
 #include <array>
@@ -17,11 +18,7 @@ namespace {
 
 namespace protocol = uml::audio::protocol;
 
-void require(bool condition)
-{
-    if (!condition)
-        std::abort();
-}
+using uml::testing::require;
 
 template<typename... Values>
 std::vector<std::uint8_t> bytes(const Values&... values)

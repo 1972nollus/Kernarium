@@ -2,6 +2,7 @@
 
 #include "host_battery.hpp"
 #include "protocol.hpp"
+#include "require.hpp"
 #include "virtio_battery_device.hpp"
 
 #include <cstdlib>
@@ -15,11 +16,7 @@ namespace {
 
 namespace protocol = uml::battery::protocol;
 
-void require(bool condition)
-{
-    if (!condition)
-        std::abort();
-}
+using uml::testing::require;
 
 template<typename Value>
 std::vector<std::uint8_t> bytes(const Value& value)

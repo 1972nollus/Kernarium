@@ -43,7 +43,6 @@ public:
 
     struct Completion {
         std::uint64_t requestId {};
-        protocol::GpuControlHeader requestHeader {};
         std::vector<std::uint8_t> response;
     };
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "allocation_failure.hpp"
+#include "require.hpp"
 #include "run_routing.hpp"
 #include "run_routing_testing.hpp"
 
@@ -14,11 +15,7 @@
 
 namespace {
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 template<typename Action>
 uml::routing::Route resolve_during_transaction(

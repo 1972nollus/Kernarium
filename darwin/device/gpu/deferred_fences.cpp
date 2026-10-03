@@ -125,7 +125,6 @@ void DeferredFences::complete(std::size_t index)
     auto& pending = pending_[index];
     completions_.push_back(Completion {
         .requestId = pending.requestId,
-        .requestHeader = pending.requestHeader,
         .response = std::move(pending.response),
     });
     pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(index));

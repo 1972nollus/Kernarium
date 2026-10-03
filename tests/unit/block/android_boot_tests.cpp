@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "android_boot.hpp"
+#include "require.hpp"
 #include "scratch_directory.hpp"
 
 #include <array>
@@ -54,22 +55,8 @@ constexpr std::array partitions {
 	Partition{"userdata", 1'944'059'904ULL, 134'217'728ULL},
 };
 
-void require(bool condition)
-{
-	if (!condition)
-		std::abort();
-}
-
-template<typename Operation>
-void requireThrows(Operation &&operation)
-{
-	try {
-		operation();
-	} catch (const std::exception &) {
-		return;
-	}
-	std::abort();
-}
+using uml::testing::require;
+using uml::testing::requireThrows;
 
 void little32(std::span<std::byte> output, std::size_t offset,
 	      std::uint32_t value)

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "boot_initramfs.hpp"
+#include "require.hpp"
 #include "scratch_directory.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
@@ -26,24 +26,8 @@ namespace {
 
 constexpr std::size_t headerSize = 110;
 
-void require(bool condition, const char *message)
-{
-	if (!condition) {
-		std::fprintf(stderr, "boot initramfs test failed: %s\n", message);
-		std::exit(1);
-	}
-}
-
-template <typename Exception, typename Function>
-void requireThrows(Function &&function, const char *message)
-{
-	try {
-		function();
-	} catch (const Exception &) {
-		return;
-	}
-	require(false, message);
-}
+using uml::testing::require;
+using uml::testing::requireThrows;
 
 std::vector<std::byte> bytes(std::string_view text)
 {

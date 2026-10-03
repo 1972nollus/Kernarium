@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
+#include "require.hpp"
+#include "scratch_backing.hpp"
 #include "shared_memory_regions.hpp"
 #include "video_capabilities.hpp"
 
@@ -9,10 +11,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <source_location>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <fcntl.h>
 #include <memory>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -22,10 +24,7 @@ using namespace uml::platform;
 using namespace uml::video;
 using namespace uml::virtio;
 namespace {
-void require(bool value, const char* message)
-{
-    if (!value) throw std::runtime_error(message);
-}
+using uml::testing::require;
 template<class T> void append(std::vector<std::uint8_t>& data, const T& value)
 {
     const auto size = data.size();
@@ -145,99 +144,127 @@ private:
     VideoFormat format_;
     std::vector<DecodedVideoFrame> frames_;
 };
-void exercise(unsigned format, std::size_t page)
-{
-    const bool ten = format == VIRTIO_VIDEO_FORMAT_P010;
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264,
-        ten ? VideoProfile::h264High10 : VideoProfile::h264High, 4096, 2304, 51, ten ? 10u : 8u}};
-    VirtioVideoDevice device(caps, [ten](auto) { return std::make_unique<Decoder>(ten); });
-    std::vector<std::uint8_t> memory(8 * page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
+using Planes = std::vector<std::vector<virtio_video_resource_sg_entry>>;
+
+/* A device for one case, with `memory` as the guest RAM behind its mapper.
+ * Every command names stream `stream`; `next` is the request identifier the
+ * next one takes, so a case that waits for a deferred command reads it first.
+ * The default capability is 8-bit H.264 High. */
+struct VideoFixture final {
+    VideoFixture(std::uint32_t streamId, std::size_t memorySize, VirtioVideoDevice::DecoderFactory factory,
+                 std::vector<VideoDecodeCapability> capabilities =
+                     {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}})
+        : device(std::move(capabilities), std::move(factory)), memory(memorySize, 0xcc), stream(streamId)
+    {
+        device.setGuestMapper([this](std::uint64_t offset, std::size_t size) {
+            if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
+            return std::span(memory).subspan(offset, size);
+        });
+    }
+    VideoFixture(const VideoFixture&) = delete;
+    VideoFixture& operator=(const VideoFixture&) = delete;
+
+    template<class T> VhostUserQueueResult command(const T& value)
+    {
         std::vector<std::uint8_t> request;
         append(request, value);
         return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        auto result = command(value);
-        require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "command failed");
-    };
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 7};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
-    require(device.processQueue(1, 1000, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer, "event not deferred");
-    virtio_video_set_params set {};
-    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 7};
-    set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    set.params.format = format;
-    set.params.frame_width = set.params.frame_height = 64;
-    ok(set);
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
+    }
+    template<class T> void ok(const T& value, std::source_location location = std::source_location::current())
+    {
+        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
+                "command failed", location);
+    }
+    void createStream(std::source_location location = std::source_location::current())
+    {
+        virtio_video_stream_create create {};
+        create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, stream};
+        create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
+        ok(create, location);
+    }
+    VhostUserQueueResult attach(unsigned queue, unsigned id, const Planes& planes)
+    {
         std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 7, queue, id});
+        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, stream, queue, id});
         for (const auto& plane : planes) {
             append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
             for (const auto& segment : plane) append(request, segment);
         }
         return device.processQueue(0, next++, request, 16384);
-    };
+    }
+
+    VirtioVideoDevice device;
+    std::vector<std::uint8_t> memory;
+    std::uint32_t stream;
+    std::uint64_t next {1};
+};
+
+void exercise(unsigned format, std::size_t page)
+{
+    const bool ten = format == VIRTIO_VIDEO_FORMAT_P010;
+    VideoFixture video(7, 8 * page, [ten](auto) { return std::make_unique<Decoder>(ten); },
+        {{VideoCodec::h264, ten ? VideoProfile::h264High10 : VideoProfile::h264High, 4096, 2304, 51,
+          ten ? 10u : 8u}});
+    video.createStream();
+    require(video.device.processQueue(1, 1000, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer, "event not deferred");
+    virtio_video_set_params set {};
+    set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 7};
+    set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
+    set.params.format = format;
+    set.params.frame_width = set.params.frame_height = 64;
+    video.ok(set);
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
-    require(read<virtio_video_cmd_hdr>(attach(input, 9, {{{memory.size(), 1, {}}}}).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "invalid guest address accepted");
-    std::vector<std::vector<virtio_video_resource_sg_entry>> planes;
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 9, {{{video.memory.size(), 1, {}}}}).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "invalid guest address accepted");
+    Planes planes;
     const unsigned sizes[] = {ten ? 12288u : 4096u, format == VIRTIO_VIDEO_FORMAT_YUV420 ? 1024u : 2048u, 1024u};
     const unsigned count = ten ? 1 : format == VIRTIO_VIDEO_FORMAT_YUV420 ? 3 : 2;
     for (unsigned i = 0; i < count; ++i) {
         const auto base = (3 + i) * page;
         planes.push_back({{base, 97, {}}, {base + 97, sizes[i] - 97, {}}});
     }
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "output attach failed");
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "output attach failed");
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     capture.stream_id = 7; capture.queue_type = output; capture.resource_id = 2;
-    const auto captureRequest = next;
-    require(command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
-    require(read<virtio_video_cmd_hdr>(command(capture).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "duplicate queue accepted");
+    const auto captureRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    require(read<virtio_video_cmd_hdr>(video.command(capture).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "duplicate queue accepted");
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 7; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 7654321;
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0, "decode input failed");
     VhostUserQueueCompletion completion;
-    require(device.takeQueueCompletion(completion) && completion.requestId == 1000, "missing source event");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 1000, "missing source event");
     require(read<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED, "incorrect source event");
-    require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
     const auto result = read<virtio_video_resource_queue_resp>(completion.response);
     require(result.flags == 0 && result.timestamp == packet.timestamp && result.data_sizes[0] == sizes[0], "incorrect frame completion");
-    require(memory[3 * page] == patternLumaByte(0, ten) &&
-            memory[3 * page + 4095] == patternLumaByte(4095, ten), "luma changed");
+    require(video.memory[3 * page] == patternLumaByte(0, ten) &&
+            video.memory[3 * page + 4095] == patternLumaByte(4095, ten), "luma changed");
     const auto chroma = ten ? 3 * page + 8192 : 4 * page;
-    require(memory[chroma] == 0x27, "chroma changed");
-    require(memory[chroma + 1] == (format == VIRTIO_VIDEO_FORMAT_YUV420 ? 0x27 : 0x91), "chroma layout changed");
-    if (count == 3) require(memory[5 * page] == 0x91, "third plane changed");
-    ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 7}});
-    require(command(capture).action == VhostUserQueueAction::defer, "EOS capture failed");
-    require(device.takeQueueCompletion(completion), "missing EOS");
+    require(video.memory[chroma] == 0x27, "chroma changed");
+    require(video.memory[chroma + 1] == (format == VIRTIO_VIDEO_FORMAT_YUV420 ? 0x27 : 0x91), "chroma layout changed");
+    if (count == 3) require(video.memory[5 * page] == 0x91, "third plane changed");
+    video.ok(virtio_video_stream_drain{{VIRTIO_VIDEO_CMD_STREAM_DRAIN, 7}});
+    require(video.command(capture).action == VhostUserQueueAction::defer, "EOS capture failed");
+    require(video.device.takeQueueCompletion(completion), "missing EOS");
     require(read<virtio_video_resource_queue_resp>(completion.response).flags == (VIRTIO_VIDEO_DEQUEUE_FLAG_EOS), "EOS flag missing");
-    require(command(capture).action == VhostUserQueueAction::defer, "post-EOS capture failed");
-    ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 7}, output, {}});
-    require(device.takeQueueCompletion(completion), "clear lost outstanding capture");
+    require(video.command(capture).action == VhostUserQueueAction::defer, "post-EOS capture failed");
+    video.ok(virtio_video_queue_clear{{VIRTIO_VIDEO_CMD_QUEUE_CLEAR, 7}, output, {}});
+    require(video.device.takeQueueCompletion(completion), "clear lost outstanding capture");
     require(read<virtio_video_resource_queue_resp>(completion.response).flags == (VIRTIO_VIDEO_DEQUEUE_FLAG_ERR), "clear did not cancel capture");
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
-    device.reset();
-    require(!device.takeQueueCompletion(completion), "reset retained completions");
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
+    video.device.reset();
+    require(!video.device.takeQueueCompletion(completion), "reset retained completions");
     for (unsigned i = 0; i < 256; ++i)
-        require(device.processQueue(1, 2000 + i, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer, "event descriptor was completed without an event");
-    require(device.processQueue(1, 3000, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::retry, "full event queue did not apply backpressure");
-    device.reset();
+        require(video.device.processQueue(1, 2000 + i, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer, "event descriptor was completed without an event");
+    require(video.device.processQueue(1, 3000, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::retry, "full event queue did not apply backpressure");
+    video.device.reset();
 
 }
 
@@ -411,12 +438,8 @@ void sharedMemoryCapture()
     constexpr std::uint8_t regionId = 1;
     constexpr std::uint64_t regionOffset = 64 * 1024;
     constexpr std::size_t regionLength = 64 * 1024;
-    const auto path = std::filesystem::temp_directory_path() /
-        ("uml-video-shm-" + std::to_string(::getpid()));
-    const int descriptor = ::open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
-    require(descriptor >= 0, "shared-memory fixture could not be created");
-    std::filesystem::remove(path);
-    require(::ftruncate(descriptor, regionLength) == 0, "shared-memory fixture could not be sized");
+    const uml::testing::ScratchBacking backing {"uml-video-shm-XXXXXX", regionLength};
+    const int descriptor = backing.descriptor();
 
     auto regions = std::make_shared<SharedMemoryRegions>();
     require(regions->publish(regionId, regionOffset, regionLength, descriptor, 0),
@@ -431,96 +454,65 @@ void sharedMemoryCapture()
         !regions->contains(regionId + 1, regionOffset, 1),
         "an unpublished range resolved");
 
-    std::vector<VideoDecodeCapability> caps {
-        {VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false); });
-    require((device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) == 0,
+    VideoFixture video(3, 8 * 4096, [](auto) { return std::make_unique<Decoder>(false); });
+    require((video.device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) == 0,
         "a device with no shared-memory index offered the region feature");
-    device.setSharedMemoryRegions(regions);
-    require((device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) != 0,
+    video.device.setSharedMemoryRegions(regions);
+    require((video.device.features() & (1 << VIRTIO_VIDEO_F_RESOURCE_SHM_REGION)) != 0,
         "a device with a shared-memory index withheld the region feature");
-    std::vector<std::uint8_t> memory(8 * 4096, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        auto result = command(value);
-        require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-            "command failed");
-    };
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 3};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
+    video.createStream();
     virtio_video_set_params set {};
     set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 3};
     set.params.queue_type = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
     set.params.format = VIRTIO_VIDEO_FORMAT_NV12;
     set.params.frame_width = set.params.frame_height = 64;
-    ok(set);
-    auto attach = [&](unsigned queue, unsigned id,
-                      const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 3, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
+    video.ok(set);
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    memory[0] = 1; memory[1] = 2; memory[2] = 3; memory[3] = 4; memory[4] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{0, 5, {}}}}).response) .type ==
+    video.memory[0] = 1; video.memory[1] = 2; video.memory[2] = 3; video.memory[3] = 4; video.memory[4] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{0, 5, {}}}}).response) .type ==
         VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
 
     const std::uint32_t shared = VIRTIO_VIDEO_RESOURCE_SG_FLAG_SHM_REGION |
         (std::uint32_t(regionId) << VIRTIO_VIDEO_RESOURCE_SG_SHM_ID_SHIFT);
     /* NV12 at 64x64: a 4096-byte luma plane followed by a 2048-byte chroma
      * plane, both inside the published range. */
-    const std::vector<std::vector<virtio_video_resource_sg_entry>> planes {
+    const Planes planes {
         {{regionOffset, 4096, shared}},
         {{regionOffset + 4096, 2048, shared}},
     };
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type ==
         VIRTIO_VIDEO_RESP_OK_NODATA, "shared-memory attach failed");
-    require(read<virtio_video_cmd_hdr>(attach(output, 3, {
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 3, {
             {{regionOffset + regionLength, 4096, shared}},
             {{regionOffset, 2048, shared}},
         }).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
         "a range outside the published region was accepted");
-    require(read<virtio_video_cmd_hdr>(attach(output, 4, {
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 4, {
             {{regionOffset, 4096, shared | 0x8000u}},
             {{regionOffset + 4096, 2048, shared}},
         }).response).type == VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER,
         "an unknown scatter entry flag was accepted");
     /* Rebinding a buffer index to other memory reattaches its identifier. */
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type ==
         VIRTIO_VIDEO_RESP_OK_NODATA, "reattaching an idle resource failed");
 
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     capture.stream_id = 3; capture.queue_type = output; capture.resource_id = 2;
-    const auto captureRequest = next;
-    require(command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, planes).response).type ==
+    const auto captureRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, planes).response).type ==
         VIRTIO_VIDEO_RESP_ERR_INVALID_PARAMETER, "a queued resource was reattached");
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 3; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 12345;
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+    require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0,
         "decode input failed");
     VhostUserQueueCompletion completion;
     bool delivered = false;
-    while (device.takeQueueCompletion(completion)) {
+    while (video.device.takeQueueCompletion(completion)) {
         if (completion.requestId != captureRequest) continue;
         const auto result = read<virtio_video_resource_queue_resp>(completion.response);
         require(result.flags == 0 && result.timestamp == packet.timestamp,
@@ -538,23 +530,22 @@ void sharedMemoryCapture()
     require(written, "the decoded frame did not reach the shared-memory range");
 
     /* A blob revoked while its buffer is queued fails that buffer. */
-    const auto revokedRequest = next;
-    require(command(capture).action == VhostUserQueueAction::defer, "second capture failed");
+    const auto revokedRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "second capture failed");
     regions->revoke(regionId, regionOffset, regionLength);
     require(!regions->contains(regionId, regionOffset, 1), "revoking a range left it published");
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+    require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0,
         "decode input after revocation failed");
     bool failed = false;
-    while (device.takeQueueCompletion(completion)) {
+    while (video.device.takeQueueCompletion(completion)) {
         if (completion.requestId != revokedRequest) continue;
         failed = read<virtio_video_resource_queue_resp>(completion.response).flags ==
             VIRTIO_VIDEO_DEQUEUE_FLAG_ERR;
     }
     require(failed, "a capture buffer whose region was revoked did not fail");
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 3}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 3}});
+    video.device.reset();
     regions->revokeAll();
-    ::close(descriptor);
 }
 
 /* A client that only draws through a 32-bit RGB surface negotiates packed
@@ -564,33 +555,17 @@ void sharedMemoryCapture()
 void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64,
                    std::uint32_t height = 64)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [&](auto) {
+    const std::size_t plane = std::size_t(width) * height * 4;
+    VideoFixture video(7, 3 * page + plane + page, [&](auto) {
         return std::make_unique<Decoder>(false, decoderPacks, false, width, height);
     });
-    const std::size_t plane = std::size_t(width) * height * 4;
-    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        auto result = command(value);
-        require(read<virtio_video_cmd_hdr>(result.response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "command failed");
-    };
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
 
     // The capture queue advertises the packed format for every stream.
     std::vector<std::uint8_t> query;
     append(query, virtio_video_query_capability{{VIRTIO_VIDEO_CMD_QUERY_CAPABILITY, 0}, output, {}});
-    const auto capability = device.processQueue(0, next++, query, 65536).response;
+    const auto capability = video.device.processQueue(0, video.next++, query, 65536).response;
     auto offset = sizeof(virtio_video_query_capability_resp);
     bool advertised = false;
     for (unsigned i = 0; i < read<virtio_video_query_capability_resp>(capability).num_descs; ++i) {
@@ -610,51 +585,39 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
     }
     require(advertised, "packed capture format is not advertised");
 
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 7};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
+    video.createStream();
     virtio_video_set_params set {};
     set.hdr = {VIRTIO_VIDEO_CMD_SET_PARAMS, 7};
     set.params.queue_type = output;
     set.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
     set.params.frame_width = width; set.params.frame_height = height;
-    ok(set);
+    video.ok(set);
     virtio_video_get_params get {};
     get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 7};
     get.queue_type = output;
-    const auto negotiated = read<virtio_video_get_params_resp>(command(get).response).params;
+    const auto negotiated = read<virtio_video_get_params_resp>(video.command(get).response).params;
     require(negotiated.format == VIRTIO_VIDEO_FORMAT_BGRA8888, "packed capture was substituted");
     require(negotiated.num_planes == 1, "packed capture is not a single plane");
     require(negotiated.plane_formats[0].stride == width * 4, "packed capture stride differs");
     require(negotiated.plane_formats[0].plane_size == plane, "packed capture plane size differs");
 
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 7, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
     const std::uint64_t base = 3 * page;
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, std::uint32_t(plane), {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, {{{base, std::uint32_t(plane), {}}}}).response).type == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     capture.stream_id = 7; capture.queue_type = output; capture.resource_id = 2;
-    const auto captureRequest = next;
-    require(command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
+    const auto captureRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture did not wait for input");
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 7; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 7654321;
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0, "decode input failed");
     VhostUserQueueCompletion completion;
-    require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest, "missing capture completion");
     const auto result = read<virtio_video_resource_queue_resp>(completion.response);
     require(result.flags == 0 && result.timestamp == packet.timestamp, "packed frame was not delivered");
     require(result.data_sizes[0] == plane, "packed frame size differs");
@@ -665,7 +628,7 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
      * the wrong sample, which only a per-row comparison sees. */
     for (unsigned row = 0; row < height; ++row)
         for (unsigned column = 0; column < width; ++column) {
-            const auto* got = memory.data() + base + (std::size_t(row) * width + column) * 4;
+            const auto* got = video.memory.data() + base + (std::size_t(row) * width + column) * 4;
             std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
                                         std::uint8_t(row + column), 0xff};
             if (!decoderPacks) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
@@ -676,8 +639,8 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
                 require(std::abs(int(got[channel]) - int(expected[channel])) <= slack,
                         "packed pixels differ");
         }
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 7}});
+    video.device.reset();
 }
 
 /* A client that changes its capture format after frames have already been
@@ -687,43 +650,15 @@ void packedCapture(std::size_t page, bool decoderPacks, std::uint32_t width = 64
  * whether the decoder adopted the layout or the device converted for it. */
 void lateNegotiation(std::size_t page)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true, true); });
-    std::vector<std::uint8_t> memory(8 * page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-                "command failed");
-    };
+    VideoFixture video(5, 8 * page, [](auto) { return std::make_unique<Decoder>(false, true, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 5};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
-    require(device.processQueue(1, 900, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+    video.createStream();
+    require(video.device.processQueue(1, 900, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
             "event not deferred");
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 5, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
 
     /* Settle on planar first, so that pictures are delivered before the
@@ -735,16 +670,16 @@ void lateNegotiation(std::size_t page)
     planar.params.queue_type = output;
     planar.params.format = VIRTIO_VIDEO_FORMAT_NV12;
     planar.params.frame_width = planar.params.frame_height = 64;
-    ok(planar);
+    video.ok(planar);
 
     // Decoding raises the source change.
     virtio_video_resource_queue packet {};
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 5; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 11;
-    require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0, "decode input failed");
+    require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0, "decode input failed");
     VhostUserQueueCompletion completion;
-    require(device.takeQueueCompletion(completion) && completion.requestId == 900, "missing source event");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 900, "missing source event");
     require(read<virtio_video_event>(completion.response).event_type == VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED,
             "incorrect source event");
 
@@ -754,9 +689,9 @@ void lateNegotiation(std::size_t page)
     set.params.queue_type = output;
     set.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
     set.params.frame_width = set.params.frame_height = 64;
-    ok(set);
+    video.ok(set);
     const std::uint64_t base = 3 * page;
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, {{{base, 64 * 64 * 4, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
 
     /* Three pictures: the one decoded before the request, one the decoder is
@@ -764,25 +699,25 @@ void lateNegotiation(std::size_t page)
      * reaches the decoder in the middle of a group of pictures, so a deferring
      * decoder is still planar for the first two and the device converts them. */
     for (unsigned round = 0; round < 3; ++round) {
-        std::memset(memory.data() + base, 0xcc, 64 * 64 * 4);
+        std::memset(video.memory.data() + base, 0xcc, 64 * 64 * 4);
         virtio_video_resource_queue capture {};
         capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         capture.stream_id = 5; capture.queue_type = output; capture.resource_id = 2;
-        const auto captureRequest = next;
-        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        const auto captureRequest = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
         if (round) {
             packet.timestamp = 11 + round;
-            require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+            require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0,
                     "later decode failed");
         }
-        require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
                 "missing capture completion");
         const auto result = read<virtio_video_resource_queue_resp>(completion.response);
         require(result.flags == 0, "late negotiation failed a capture buffer");
         require(result.data_sizes[0] == 64 * 64 * 4, "packed frame size differs");
         for (unsigned row = 0; row < 64; ++row)
             for (unsigned column = 0; column < 64; ++column) {
-                const auto* got = memory.data() + base + (std::size_t(row) * 64 + column) * 4;
+                const auto* got = video.memory.data() + base + (std::size_t(row) * 64 + column) * 4;
                 std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
                                             std::uint8_t(row + column), 0xff};
                 if (round != 2) convertBt601Limited(patternLuma(row, column), 0x27, 0x91, expected);
@@ -792,8 +727,8 @@ void lateNegotiation(std::size_t page)
                             "a late-negotiated frame has the wrong pixels");
             }
     }
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 5}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 5}});
+    video.device.reset();
 }
 
 /* A stateful client cannot name its capture format until the source change.
@@ -804,44 +739,16 @@ void lateNegotiation(std::size_t page)
  * space, so the samples the client reads are the decoder's own. */
 void planarAfterSourceChange(std::size_t page)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
     // A decoder that CAN pack, so a premature request for packing shows up.
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true); });
-    std::vector<std::uint8_t> memory(8 * page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-                "command failed");
-    };
+    VideoFixture video(6, 8 * page, [](auto) { return std::make_unique<Decoder>(false, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 6};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
-    require(device.processQueue(1, 901, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+    video.createStream();
+    require(video.device.processQueue(1, 901, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
             "event not deferred");
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 6, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
 
     /* The client's first act: queue a packet. Its headers say how big the
@@ -851,14 +758,14 @@ void planarAfterSourceChange(std::size_t page)
     packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     packet.stream_id = 6; packet.queue_type = input; packet.resource_id = 1;
     packet.data_sizes[0] = 5; packet.timestamp = 21;
-    const auto packetRequest = next;
-    require(command(packet).action == VhostUserQueueAction::defer,
+    const auto packetRequest = video.next;
+    require(video.command(packet).action == VhostUserQueueAction::defer,
             "the packet was decoded before the client chose a capture format");
     VhostUserQueueCompletion completion;
-    require(device.takeQueueCompletion(completion) && completion.requestId == 901, "missing source event");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == 901, "missing source event");
     require(read<virtio_video_event>(completion.response).event_type ==
             VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED, "incorrect source event");
-    require(!device.takeQueueCompletion(completion),
+    require(!video.device.takeQueueCompletion(completion),
             "an encoded buffer came back before the capture format settled");
 
     // Only now can it choose, and it chooses the planar format.
@@ -867,16 +774,16 @@ void planarAfterSourceChange(std::size_t page)
     set.params.queue_type = output;
     set.params.format = VIRTIO_VIDEO_FORMAT_NV12;
     set.params.frame_width = set.params.frame_height = 64;
-    ok(set);
+    video.ok(set);
     const std::uint64_t base = 3 * page;
     const std::size_t luma = 64 * 64, chroma = 64 * 32;
-    require(read<virtio_video_cmd_hdr>(attach(output, 2,
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2,
                 {{{base, std::uint32_t(luma), {}}}, {{base + luma, std::uint32_t(chroma), {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "planar output attach failed");
 
     /* Naming the format releases what was held, so the picture is decoded
      * into the layout the client just named. */
-    require(device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
             "settling the capture format did not release the held packet");
     require(read<virtio_video_resource_queue_resp>(completion.response).flags == 0,
             "the released encoded buffer came back failed");
@@ -884,9 +791,9 @@ void planarAfterSourceChange(std::size_t page)
     virtio_video_resource_queue capture {};
     capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
     capture.stream_id = 6; capture.queue_type = output; capture.resource_id = 2;
-    const auto captureRequest = next;
-    require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
-    require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+    const auto captureRequest = video.next;
+    require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+    require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
             "missing capture completion");
     const auto result = read<virtio_video_resource_queue_resp>(completion.response);
     require(result.flags == 0,
@@ -894,10 +801,10 @@ void planarAfterSourceChange(std::size_t page)
     require(result.data_sizes[0] == luma && result.data_sizes[1] == chroma, "planar frame sizes differ");
     for (std::uint32_t row = 0; row < 64; ++row)
         for (std::uint32_t column = 0; column < 64; ++column)
-            require(memory[base + row * 64 + column] == patternLuma(row, column),
+            require(video.memory[base + row * 64 + column] == patternLuma(row, column),
                     "the planar frame has the wrong pixels");
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 6}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 6}});
+    video.device.reset();
 }
 
 /* Chromium's order: a client that never names a format and simply starts the
@@ -910,51 +817,23 @@ void planarAfterSourceChange(std::size_t page)
  * trip and a hardware-packed one is. */
 void packedDefaultThroughStreamon(std::size_t page)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true, true); });
     const std::size_t plane = 64 * 64 * 4;
-    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-                "command failed");
-    };
+    VideoFixture video(8, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 8};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
+    video.createStream();
     // The format the client is given without asking is the packed one.
     virtio_video_get_params get {};
     get.hdr = {VIRTIO_VIDEO_CMD_GET_PARAMS, 8};
     get.queue_type = output;
-    require(read<virtio_video_get_params_resp>(command(get).response).params.format
+    require(read<virtio_video_get_params_resp>(video.command(get).response).params.format
             == VIRTIO_VIDEO_FORMAT_BGRA8888, "the default capture format is not the packed one");
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 8, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
-    require(read<virtio_video_cmd_hdr>(attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
+    require(read<virtio_video_cmd_hdr>(video.attach(input, 1, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
     const std::uint64_t base = 3 * page;
-    require(read<virtio_video_cmd_hdr>(attach(output, 2, {{{base, std::uint32_t(plane), {}}}}).response).type
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 2, {{{base, std::uint32_t(plane), {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "packed output attach failed");
 
     virtio_video_resource_queue packet {};
@@ -969,35 +848,35 @@ void packedDefaultThroughStreamon(std::size_t page)
              * how big the picture is; the packet itself waits, because the
              * client's silence is not yet a choice. */
             packet.timestamp = 31;
-            packetRequest = next;
-            require(command(packet).action == VhostUserQueueAction::defer,
+            packetRequest = video.next;
+            require(video.command(packet).action == VhostUserQueueAction::defer,
                     "the packet was decoded before the capture queue started");
         }
-        std::memset(memory.data() + base, 0xcc, plane);
+        std::memset(video.memory.data() + base, 0xcc, plane);
         virtio_video_resource_queue capture {};
         capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         capture.stream_id = 8; capture.queue_type = output; capture.resource_id = 2;
-        const auto captureRequest = next;
-        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        const auto captureRequest = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
         if (round) {
             packet.timestamp = 32;
-            require(read<virtio_video_resource_queue_resp>(command(packet).response).flags == 0,
+            require(read<virtio_video_resource_queue_resp>(video.command(packet).response).flags == 0,
                     "later decode failed");
         }
         if (round == 0) {
-            require(device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
+            require(video.device.takeQueueCompletion(completion) && completion.requestId == packetRequest,
                     "starting the capture queue did not release the held packet");
             require(read<virtio_video_resource_queue_resp>(completion.response).flags == 0,
                     "the released encoded buffer came back failed");
         }
-        require(device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
+        require(video.device.takeQueueCompletion(completion) && completion.requestId == captureRequest,
                 "missing capture completion");
         const auto result = read<virtio_video_resource_queue_resp>(completion.response);
         require(result.flags == 0, "a picture was failed for a client that never chose a format");
         require(result.data_sizes[0] == plane, "packed frame size differs");
         for (unsigned row = 0; row < 64; ++row)
             for (unsigned column = 0; column < 64; ++column) {
-                const auto* got = memory.data() + base + (std::size_t(row) * 64 + column) * 4;
+                const auto* got = video.memory.data() + base + (std::size_t(row) * 64 + column) * 4;
                 const std::uint8_t expected[4] = {std::uint8_t(row), std::uint8_t(column),
                                                   std::uint8_t(row + column), 0xff};
                 require(got[3] == 0xff, "a packed frame lost its alpha");
@@ -1006,8 +885,8 @@ void packedDefaultThroughStreamon(std::size_t page)
                             "a picture was converted by the device instead of packed by the decoder");
             }
     }
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 8}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 8}});
+    video.device.reset();
 }
 
 /* A client feeds packets at its own pace and takes frames at its display
@@ -1024,51 +903,23 @@ void packedDefaultThroughStreamon(std::size_t page)
  * reach.) */
 void unsettledHoldIsBounded(std::size_t page)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true); });
     const std::size_t plane = 64 * 64 * 4;
-    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-                "command failed");
-    };
+    VideoFixture video(9, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 9};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
-    require(device.processQueue(1, 950, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
+    video.createStream();
+    require(video.device.processQueue(1, 950, {}, sizeof(virtio_video_event)).action == VhostUserQueueAction::defer,
             "event not deferred");
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 9, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
     /* One encoded buffer more than the device will hold unanswered, each with
      * its own identifier because a held one stays queued. */
     const unsigned packets = 33;
     for (unsigned id = 1; id <= packets; ++id)
         require(read<virtio_video_cmd_hdr>(
-                    attach(input, id, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+                    video.attach(input, id, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
                 == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
-    require(read<virtio_video_cmd_hdr>(attach(output, 100, {{{3 * page, std::uint32_t(plane), {}}}}).response).type
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 100, {{{3 * page, std::uint32_t(plane), {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
 
     // Never name a format, never start the capture queue: only queue input.
@@ -1078,8 +929,8 @@ void unsettledHoldIsBounded(std::size_t page)
         packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         packet.stream_id = 9; packet.queue_type = input; packet.resource_id = id;
         packet.data_sizes[0] = 5; packet.timestamp = 200 + id;
-        const auto request = next;
-        const auto result = command(packet);
+        const auto request = video.next;
+        const auto result = video.command(packet);
         if (result.action == VhostUserQueueAction::defer) waiting.push_back(request);
         else {
             const auto answer = read<virtio_video_resource_queue_resp>(result.response);
@@ -1089,7 +940,7 @@ void unsettledHoldIsBounded(std::size_t page)
     }
     VhostUserQueueCompletion completion;
     unsigned released = 0;
-    while (device.takeQueueCompletion(completion)) {
+    while (video.device.takeQueueCompletion(completion)) {
         if (completion.requestId == 950) {
             require(read<virtio_video_event>(completion.response).event_type ==
                     VIRTIO_VIDEO_EVENT_DECODER_RESOLUTION_CHANGED, "incorrect source event");
@@ -1110,10 +961,10 @@ void unsettledHoldIsBounded(std::size_t page)
         virtio_video_resource_queue capture {};
         capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         capture.stream_id = 9; capture.queue_type = output; capture.resource_id = 100;
-        const auto captureRequest = next;
-        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        const auto captureRequest = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
         bool frame = false;
-        while (device.takeQueueCompletion(completion)) {
+        while (video.device.takeQueueCompletion(completion)) {
             if (completion.requestId == captureRequest) {
                 frame = true;
                 const auto result = read<virtio_video_resource_queue_resp>(completion.response);
@@ -1127,36 +978,17 @@ void unsettledHoldIsBounded(std::size_t page)
         }
         require(frame, "a returned capture buffer produced no frame");
     }
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 9}});
+    video.device.reset();
 }
 
 void inputBackpressure(std::size_t page)
 {
-    std::vector<VideoDecodeCapability> caps {{VideoCodec::h264, VideoProfile::h264High, 4096, 2304, 51, 8}};
-    VirtioVideoDevice device(caps, [](auto) { return std::make_unique<Decoder>(false, true); });
     const std::size_t plane = 64 * 64 * 4;
-    std::vector<std::uint8_t> memory(3 * page + plane + page, 0xcc);
-    device.setGuestMapper([&](std::uint64_t offset, std::size_t size) {
-        if (offset > memory.size() || size > memory.size() - offset) return std::span<std::uint8_t>{};
-        return std::span(memory).subspan(offset, size);
-    });
-    std::uint64_t next = 1;
-    auto command = [&](const auto& value) {
-        std::vector<std::uint8_t> request;
-        append(request, value);
-        return device.processQueue(0, next++, request, 16384);
-    };
-    auto ok = [&](const auto& value) {
-        require(read<virtio_video_cmd_hdr>(command(value).response).type == VIRTIO_VIDEO_RESP_OK_NODATA,
-                "command failed");
-    };
+    VideoFixture video(4, 3 * page + plane + page, [](auto) { return std::make_unique<Decoder>(false, true); });
     const auto input = VIRTIO_VIDEO_QUEUE_TYPE_INPUT;
     const auto output = VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT;
-    virtio_video_stream_create create {};
-    create.hdr = {VIRTIO_VIDEO_CMD_STREAM_CREATE, 4};
-    create.coded_format = VIRTIO_VIDEO_FORMAT_H264;
-    ok(create);
+    video.createStream();
     /* Choose the capture format up front, so the only thing that can hold an
      * encoded buffer here is the frame queue filling up. */
     virtio_video_set_params chosen {};
@@ -1164,25 +996,16 @@ void inputBackpressure(std::size_t page)
     chosen.params.queue_type = output;
     chosen.params.format = VIRTIO_VIDEO_FORMAT_BGRA8888;
     chosen.params.frame_width = chosen.params.frame_height = 64;
-    ok(chosen);
-    auto attach = [&](unsigned queue, unsigned id, const std::vector<std::vector<virtio_video_resource_sg_entry>>& planes) {
-        std::vector<std::uint8_t> request;
-        append(request, virtio_video_resource_attach{VIRTIO_VIDEO_CMD_RESOURCE_ATTACH, 4, queue, id});
-        for (const auto& plane : planes) {
-            append(request, std::uint32_t(plane.size())); append(request, std::uint32_t(0));
-            for (const auto& segment : plane) append(request, segment);
-        }
-        return device.processQueue(0, next++, request, 16384);
-    };
-    memory[page - 2] = 1; memory[page - 1] = 2;
-    memory[2 * page] = 3; memory[2 * page + 1] = 4; memory[2 * page + 2] = 5;
+    video.ok(chosen);
+    video.memory[page - 2] = 1; video.memory[page - 1] = 2;
+    video.memory[2 * page] = 3; video.memory[2 * page + 1] = 4; video.memory[2 * page + 2] = 5;
     // Twelve encoded buffers over the same five bytes, as a client's ring.
     const unsigned packets = 12;
     for (unsigned id = 1; id <= packets; ++id)
         require(read<virtio_video_cmd_hdr>(
-                    attach(input, id, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
+                    video.attach(input, id, {{{page - 2, 2, {}}, {2 * page, 3, {}}}}).response).type
                 == VIRTIO_VIDEO_RESP_OK_NODATA, "input attach failed");
-    require(read<virtio_video_cmd_hdr>(attach(output, 100, {{{3 * page, std::uint32_t(plane), {}}}}).response).type
+    require(read<virtio_video_cmd_hdr>(video.attach(output, 100, {{{3 * page, std::uint32_t(plane), {}}}}).response).type
             == VIRTIO_VIDEO_RESP_OK_NODATA, "capture attach failed");
 
     std::deque<std::uint64_t> waiting;
@@ -1192,8 +1015,8 @@ void inputBackpressure(std::size_t page)
         packet.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         packet.stream_id = 4; packet.queue_type = input; packet.resource_id = id;
         packet.data_sizes[0] = 5; packet.timestamp = 100 + id;
-        const auto request = next;
-        const auto result = command(packet);
+        const auto request = video.next;
+        const auto result = video.command(packet);
         if (result.action == VhostUserQueueAction::defer) waiting.push_back(request);
         else {
             ++answered;
@@ -1212,11 +1035,11 @@ void inputBackpressure(std::size_t page)
         virtio_video_resource_queue capture {};
         capture.cmd_type = VIRTIO_VIDEO_CMD_RESOURCE_QUEUE;
         capture.stream_id = 4; capture.queue_type = output; capture.resource_id = 100;
-        const auto captureRequest = next;
-        require(command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
+        const auto captureRequest = video.next;
+        require(video.command(capture).action == VhostUserQueueAction::defer, "capture was not deferred");
         bool frame = false, released = false;
         VhostUserQueueCompletion completion;
-        while (device.takeQueueCompletion(completion)) {
+        while (video.device.takeQueueCompletion(completion)) {
             if (completion.requestId == captureRequest) {
                 frame = true;
                 const auto result = read<virtio_video_resource_queue_resp>(completion.response);
@@ -1235,8 +1058,8 @@ void inputBackpressure(std::size_t page)
         require(frame && released, "a returned capture buffer did not release a held packet");
     }
     require(waiting.empty(), "the device kept an encoded buffer with room to decode");
-    ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 4}});
-    device.reset();
+    video.ok(virtio_video_stream_destroy{{VIRTIO_VIDEO_CMD_STREAM_DESTROY, 4}});
+    video.device.reset();
 }
 
 /* A format descriptor's `mask` names positions in the other queue's list, in

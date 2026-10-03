@@ -2,6 +2,7 @@
 #pragma once
 
 #include "native_address_space.hpp"
+#include "require.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -58,9 +59,8 @@ private:
 	mach_msg_type_number_t count_{};
 };
 
-template<typename Require>
-[[nodiscard]] ScopedMachSendRight mapping_object_name(
-	std::uintptr_t address, Require &&require)
+[[nodiscard]] inline ScopedMachSendRight mapping_object_name(
+	std::uintptr_t address)
 {
 	vm_address_t region = static_cast<vm_address_t>(address);
 	vm_size_t size = 0;
@@ -82,9 +82,8 @@ template<typename Require>
 	return ScopedMachSendRight{object};
 }
 
-template<typename Require>
-[[nodiscard]] mach_port_urefs_t send_right_references(
-	mach_port_t name, Require &&require)
+[[nodiscard]] inline mach_port_urefs_t send_right_references(
+	mach_port_t name)
 {
 	mach_port_urefs_t references = 0;
 	require(mach_port_get_refs(mach_task_self(), name, MACH_PORT_RIGHT_SEND,
@@ -96,8 +95,7 @@ template<typename Require>
 using SendRightSnapshot =
 	std::vector<std::pair<mach_port_name_t, mach_port_urefs_t>>;
 
-template<typename Require>
-[[nodiscard]] SendRightSnapshot send_right_snapshot(Require &&require)
+[[nodiscard]] inline SendRightSnapshot send_right_snapshot()
 {
 	mach_port_name_array_t names = nullptr;
 	mach_msg_type_number_t name_count = 0;
@@ -127,10 +125,9 @@ template<typename Require>
 
 } // namespace detail
 
-template<typename Require>
-void exercise_native_retry_direct(std::uintptr_t address,
+inline void exercise_native_retry_direct(std::uintptr_t address,
 	std::uintptr_t following_address, std::uintptr_t foreign_address,
-	std::size_t host_page_size, int fd, Require &&require)
+	std::size_t host_page_size, int fd)
 {
 	using uml::memory::NativeAddressSpace;
 	NativeAddressSpace space;
@@ -155,12 +152,12 @@ void exercise_native_retry_direct(std::uintptr_t address,
 		"direct retry rejected mapped interior or final-byte addresses");
 
 	{
-		auto object = detail::mapping_object_name(address, require);
-		const auto task_rights_before = detail::send_right_snapshot(require);
+		auto object = detail::mapping_object_name(address);
+		const auto task_rights_before = detail::send_right_snapshot();
 		mach_port_urefs_t object_references = 0;
 		if (object.get() != MACH_PORT_NULL)
-			object_references = detail::send_right_references(
-				object.get(), require);
+			object_references =
+				detail::send_right_references(object.get());
 		for (unsigned int iteration = 0; iteration < 256; ++iteration) {
 			const bool execute = (iteration & 2U) != 0;
 			const bool write = (iteration & 1U) != 0;
@@ -169,10 +166,10 @@ void exercise_native_retry_direct(std::uintptr_t address,
 				"repeated direct retry permission result changed");
 		}
 		if (object.get() != MACH_PORT_NULL)
-			require(detail::send_right_references(object.get(), require) ==
+			require(detail::send_right_references(object.get()) ==
 				object_references,
 				"direct retries changed the mapping object-name urefs");
-		require(detail::send_right_snapshot(require) == task_rights_before,
+		require(detail::send_right_snapshot() == task_rights_before,
 			"direct retries leaked Mach send rights or references");
 	}
 

@@ -6,17 +6,14 @@
 #include "../input/vnc/vnc_input.hpp"
 
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <string>
 
 namespace uml::gpu {
 
 /* The Virtio-GPU backend: a vhost-user server whose device renders through
- * virglrenderer and presents on a display of `displayMode`. `socketPath` is
- * the listening socket for run(); runConnected() needs none. */
+ * virglrenderer and presents on a display of `displayMode`. */
 [[nodiscard]] std::unique_ptr<VhostUserServer> makeGpuVhostUserServer(
-    std::filesystem::path socketPath,
     std::string vncBindAddress,
     std::uint16_t vncPort,
     std::string vncPassword,

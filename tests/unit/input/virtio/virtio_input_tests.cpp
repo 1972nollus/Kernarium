@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "require.hpp"
 #include "virtio_input_device.hpp"
 
 #include <array>
@@ -15,11 +16,7 @@ using uml::input::virtio::EventQueue;
 using uml::input::virtio::VirtioInputDevice;
 namespace protocol = uml::input::virtio::protocol;
 
-void require(bool condition)
-{
-    if (!condition)
-        std::abort();
-}
+using uml::testing::require;
 
 protocol::InputConfig configuration(VirtioInputDevice& device)
 {

@@ -9,30 +9,13 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <stdexcept>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace uml::input::virtio {
 namespace {
 
 constexpr std::size_t maximumQueuedEvents = 4096;
-
-void configureDescriptor(int descriptor, bool output)
-{
-    const int descriptorFlags = ::fcntl(descriptor, F_GETFD);
-    const int statusFlags = ::fcntl(descriptor, F_GETFL);
-    if (descriptorFlags < 0 || statusFlags < 0 ||
-        ::fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) != 0 ||
-        ::fcntl(descriptor, F_SETFL, statusFlags | O_NONBLOCK) != 0 ||
-        (output && ::fcntl(descriptor, F_SETNOSIGPIPE, 1) != 0)) {
-        throw std::runtime_error(
-            "configuring virtio-input event descriptor failed: " +
-            std::string(std::strerror(errno)));
-    }
-}
 
 void setBit(
     std::array<std::uint8_t, 128>& bitmap,
@@ -70,33 +53,8 @@ void copyString(protocol::InputConfig& config, const char* string)
 } // namespace
 
 EventQueue::EventQueue()
+    : wake_("virtio-input event")
 {
-    std::array<int, 2> descriptors {-1, -1};
-    if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0) {
-        throw std::runtime_error(
-            "creating virtio-input event socketpair failed: " +
-            std::string(std::strerror(errno)));
-    }
-    readDescriptor_ = descriptors[0];
-    writeDescriptor_ = descriptors[1];
-    try {
-        configureDescriptor(readDescriptor_, false);
-        configureDescriptor(writeDescriptor_, true);
-    } catch (...) {
-        ::close(readDescriptor_);
-        ::close(writeDescriptor_);
-        readDescriptor_ = -1;
-        writeDescriptor_ = -1;
-        throw;
-    }
-}
-
-EventQueue::~EventQueue()
-{
-    if (readDescriptor_ >= 0)
-        ::close(readDescriptor_);
-    if (writeDescriptor_ >= 0)
-        ::close(writeDescriptor_);
 }
 
 void EventQueue::enqueue(
@@ -119,16 +77,11 @@ void EventQueue::enqueue(
         wake = events_.empty();
         events_.insert(events_.end(), events.begin(), events.end());
     }
-    if (wake) {
-        constexpr std::uint8_t ready = 1;
-        const auto result = ::send(
-            writeDescriptor_, &ready, sizeof(ready), MSG_DONTWAIT);
-        if (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            std::fprintf(
-                stderr,
-                "Kernarium: virtio-input wake failed: %s\n",
-                std::strerror(errno));
-        }
+    if (wake && !wake_.notify()) {
+        std::fprintf(
+            stderr,
+            "Kernarium: virtio-input wake failed: %s\n",
+            std::strerror(errno));
     }
 }
 
@@ -144,27 +97,22 @@ bool EventQueue::take(protocol::InputEvent& event) noexcept
 
 int EventQueue::descriptor() const noexcept
 {
-    return readDescriptor_;
+    return wake_.descriptor();
 }
 
 void EventQueue::drain()
 {
-    std::array<std::uint8_t, 64> bytes {};
-    for (;;) {
-        const auto result =
-            ::recv(readDescriptor_, bytes.data(), bytes.size(), MSG_DONTWAIT);
-        if (result > 0)
-            continue;
-        if (result < 0 && errno == EINTR)
-            continue;
-        if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-            return;
-        if (result == 0)
-            throw std::runtime_error("closed virtio-input event source");
-        throw std::runtime_error(
-            "reading virtio-input event source failed: " +
-            std::string(std::strerror(errno)));
+    switch (wake_.drain()) {
+    case uml::platform::WakeSocket::Drained::empty:
+        return;
+    case uml::platform::WakeSocket::Drained::closed:
+        throw std::runtime_error("closed virtio-input event source");
+    case uml::platform::WakeSocket::Drained::failed:
+        break;
     }
+    throw std::runtime_error(
+        "reading virtio-input event source failed: " +
+        std::string(std::strerror(errno)));
 }
 
 void EventQueue::clear() noexcept

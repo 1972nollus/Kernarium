@@ -5,6 +5,7 @@
  * only for pages whose state they change. */
 #include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
+#include "require.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -41,11 +42,7 @@ constexpr const char *wiring_unsupported = nullptr;
 
 constexpr std::size_t mib = 1024U * 1024U;
 
-void require(bool condition, const std::string &message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 [[nodiscard]] std::size_t host_page() noexcept
 {

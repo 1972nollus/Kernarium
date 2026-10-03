@@ -11,6 +11,7 @@
 #include "mach_vm_region_test_support.hpp"
 #include "native_address_space.hpp"
 #include "native_window_test_support.hpp"
+#include "require.hpp"
 #include "scratch_backing.hpp"
 #include "uml_darwin_memory.h"
 
@@ -36,11 +37,7 @@ constexpr std::string_view backing_name = "uml-native-direct.XXXXXX";
 using uml::memory::testing::AllocationSite;
 using uml::testing::ScratchBacking;
 
-void require(bool condition, const char *message)
-{
-	if (!condition)
-		throw std::runtime_error{message};
-}
+using uml::testing::require;
 
 [[nodiscard]] std::size_t host_page() noexcept
 {

@@ -214,9 +214,10 @@ if(TARGET uml_gpu_service)
 
     uml_add_gpu_unit_test(gpu-transport-wire-ownership
         uml_gpu_transport_wire_tests
-        gpu_allocation_failure.cpp
         vhost_user_message_tests.cpp
-        LIBRARIES uml_gpu_transport_wire_stop_wait_test_variant
+        LIBRARIES
+            uml_gpu_transport_wire_stop_wait_test_variant
+            uml_test_allocation_failure
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
         UNIT_DIRECTORY)
 
@@ -224,7 +225,6 @@ if(TARGET uml_gpu_service)
     # the file table would decide the outcome of anything sharing the process.
     uml_add_gpu_unit_test(gpu-transport-descriptor-ceiling
         uml_gpu_transport_ceiling_tests
-        gpu_allocation_failure.cpp
         vhost_user_descriptor_ceiling_tests.cpp
         LIBRARIES uml_vhost_user_wire
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
@@ -254,9 +254,10 @@ if(TARGET uml_gpu_service)
 
     uml_add_gpu_unit_test(gpu-device-command-atomicity
         uml_gpu_device_atomicity_tests
-        gpu_allocation_failure.cpp
         virtio_gpu_device_lifetime_tests.cpp
-        LIBRARIES uml_gpu_protocol_device_test_variant
+        LIBRARIES
+            uml_gpu_protocol_device_test_variant
+            uml_test_allocation_failure
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
         UNIT_DIRECTORY)
 endif()

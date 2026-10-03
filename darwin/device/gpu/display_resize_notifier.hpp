@@ -2,8 +2,8 @@
 #pragma once
 
 #include "display_geometry.hpp"
+#include "platform/descriptor.hpp"
 #include "protocol.hpp"
-#include "unique_descriptor.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -42,8 +42,7 @@ private:
         std::uint32_t height,
         bool ensureNotification) noexcept;
 
-    UniqueDescriptor read_;
-    UniqueDescriptor write_;
+    uml::platform::WakeSocket wake_;
     std::uint32_t maximumDimension_;
     std::atomic_uint64_t requested_;
 };

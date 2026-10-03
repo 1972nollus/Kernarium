@@ -3,6 +3,7 @@
  * which host pages its inflate and deflate requests release and commit. */
 
 #include "protocol.hpp"
+#include "require.hpp"
 #include "virtio_balloon_device.hpp"
 
 #include <chrono>
@@ -25,11 +26,7 @@ using uml::balloon::VirtioBalloonDevice;
 constexpr std::uint64_t mib = 1ULL << 20;
 constexpr std::size_t hostPage = 16 * 1024;
 
-void require(bool condition, const std::string& message)
-{
-    if (!condition)
-        throw std::runtime_error {message};
-}
+using uml::testing::require;
 
 struct Call final {
     bool release;

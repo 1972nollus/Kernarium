@@ -2,11 +2,12 @@
 
 #include "connected_socket_channel.hpp"
 
+#include "platform/descriptor.hpp"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
 #include <stdexcept>
 #include <string>
 
@@ -29,13 +30,9 @@ ConnectedSocketChannel::ConnectedSocketChannel(int descriptor)
 {
     if (descriptor_ < 0)
         throw std::invalid_argument("connected console descriptor is invalid");
-    const int descriptorFlags = ::fcntl(descriptor_, F_GETFD);
-    const int statusFlags = ::fcntl(descriptor_, F_GETFL);
-    if (descriptorFlags < 0 ||
-        statusFlags < 0 ||
-        ::fcntl(descriptor_, F_SETFD, descriptorFlags | FD_CLOEXEC) != 0 ||
-        ::fcntl(descriptor_, F_SETFL, statusFlags | O_NONBLOCK) != 0 ||
-        ::fcntl(descriptor_, F_SETNOSIGPIPE, 1) != 0) {
+    if (!uml::platform::configureDescriptor(
+            descriptor_,
+            {.closeOnExec = true, .nonblocking = true, .noSigpipe = true})) {
         const int error = errno;
         ::close(descriptor_);
         descriptor_ = -1;

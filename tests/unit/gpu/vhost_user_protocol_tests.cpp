@@ -1030,10 +1030,10 @@ void deferredCompletionSupportsFourQueues()
     auto device = std::make_unique<DeferredQueueDevice>();
     auto* completionSource = device.get();
     VhostUserServer server {std::move(device)};
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     void* mapped = ::mmap(
         nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.get(), 0);
+        memoryDescriptor.descriptor(), 0);
     require(mapped != MAP_FAILED);
     auto memory = std::span {
         static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
@@ -1077,7 +1077,7 @@ void deferredCompletionSupportsFourQueues()
         require(readValueReply<std::uint64_t>(
                     socket, protocol::VhostRequest::getQueueNum) == 4);
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.get());
+        configureMemory(socket, memoryDescriptor.descriptor());
         const protocol::VringState queueSize {
             .index = queueIndex,
             .value = 8,
@@ -1148,10 +1148,10 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
     auto device = std::make_unique<MultiDeferredQueueDevice>();
     auto* completionSource = device.get();
     VhostUserServer server {std::move(device)};
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     void* mapped = ::mmap(
         nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.get(), 0);
+        memoryDescriptor.descriptor(), 0);
     require(mapped != MAP_FAILED);
     auto memory = std::span {
         static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
@@ -1203,7 +1203,7 @@ void multipleDeferredCompletionsRetainTheirDescriptorChains()
 
     withServerConnection(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.get());
+        configureMemory(socket, memoryDescriptor.descriptor());
         const protocol::VringState queueSize {.index = 0, .value = 8};
         sendRequestAndReadAcknowledgement(
             socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
@@ -1277,10 +1277,10 @@ void completedPrefixNotifiesBeforeRetry()
     auto device = std::make_unique<CompleteThenRetryDevice>();
     auto* observed = device.get();
     VhostUserServer server {std::move(device)};
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     void* mapped = ::mmap(
         nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED,
-        memoryDescriptor.get(), 0);
+        memoryDescriptor.descriptor(), 0);
     require(mapped != MAP_FAILED);
     auto memory = std::span {
         static_cast<std::uint8_t*>(mapped), static_cast<std::size_t>(4096)};
@@ -1323,7 +1323,7 @@ void completedPrefixNotifiesBeforeRetry()
 
     withServerConnection(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
-        configureMemory(socket, memoryDescriptor.get());
+        configureMemory(socket, memoryDescriptor.descriptor());
         const protocol::VringState queueSize {.index = 0, .value = 8};
         sendRequestAndReadAcknowledgement(
             socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
@@ -1597,7 +1597,7 @@ void invalidControlMessagesAreRejected(VhostUserServer& server)
             bytesOf(state));
     });
     expectRejected(server, [](int socket) {
-        auto descriptor = openMemoryDescriptor();
+        const ScratchBacking memory {memoryBackingName, 4096};
         const protocol::MemoryTableHeader table {
             .regionCount = 1,
             .padding = 1,
@@ -1612,7 +1612,7 @@ void invalidControlMessagesAreRejected(VhostUserServer& server)
         std::memcpy(payload.data(), &table, sizeof(table));
         std::memcpy(
             payload.data() + sizeof(table), &region, sizeof(region));
-        const std::array descriptors {descriptor.get()};
+        const std::array descriptors {memory.descriptor()};
         sendRequest(
             socket,
             protocol::VhostRequest::setMemTable,
@@ -1703,7 +1703,7 @@ void invalidConfigurationMessagesAreRejected(VhostUserServer& server)
 
 void misalignedTranslatedRingsAreRejected(VhostUserServer& server)
 {
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     expectRejected(server, [&](int socket) {
         negotiateProtocolFeatures(socket, protocol::protocolFeatureReplyAck);
 
@@ -1716,7 +1716,7 @@ void misalignedTranslatedRingsAreRejected(VhostUserServer& server)
             .mmapOffset = 0,
         };
         const auto payload = memoryTablePayload(std::span {&region, 1U});
-        const std::array memoryDescriptors {memoryDescriptor.get()};
+        const std::array memoryDescriptors {memoryDescriptor.descriptor()};
         sendRequestAndReadAcknowledgement(
             socket,
             protocol::VhostRequest::setMemTable,
@@ -1787,13 +1787,13 @@ void queueNotificationProcessesQueue(
     VhostUserServer& server,
     QueueScenario scenario)
 {
-    auto memoryDescriptor = openMemoryDescriptor();
+    const ScratchBacking memoryDescriptor {memoryBackingName, 4096};
     void* mapped = ::mmap(
         nullptr,
         4096,
         PROT_READ | PROT_WRITE,
         MAP_SHARED,
-        memoryDescriptor.get(),
+        memoryDescriptor.descriptor(),
         0);
     require(mapped != MAP_FAILED);
     auto memory = std::span {
@@ -1921,7 +1921,7 @@ void queueNotificationProcessesQueue(
             }
             negotiateProtocolFeatures(socket, protocolFeatures);
         }
-        configureMemory(socket, memoryDescriptor.get());
+        configureMemory(socket, memoryDescriptor.descriptor());
         const protocol::VringState queueSize {.index = 0, .value = 8};
         sendRequestAndReadAcknowledgement(
             socket, protocol::VhostRequest::setVringNum, bytesOf(queueSize));
@@ -2229,7 +2229,7 @@ void runVhostUserProtocolTests()
     rejectedSharedMemoryActionClosesBackendChannel();
     {
         const auto ownedServer = makeGpuVhostUserServer(
-            {}, "127.0.0.1", 0, {}, 64, 64, false);
+            "127.0.0.1", 0, {}, 64, 64, false);
         auto& server = *ownedServer;
         validConfigurationProtocol(server);
         invalidControlMessagesAreRejected(server);

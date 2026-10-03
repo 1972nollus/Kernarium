@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "allocation_failure.hpp"
 #include "deferred_fences.hpp"
 #include "fence_deadline.hpp"
 #include "gpu_test_support.hpp"
@@ -16,6 +17,10 @@
 
 namespace uml::gpu::testing {
 namespace {
+
+using ::uml::testing::cancel_pending_allocation_failure;
+using ::uml::testing::fail_after_allocations;
+using ::uml::testing::fail_next_allocation;
 
 class FakeGpuDependencies final : public VirtioGpuDeviceDependencies {
 public:
@@ -693,7 +698,7 @@ void requireFirstAllocationFailsBeforeCommit(
     VirtioGpuDevice& device,
     const Request& request)
 {
-    failNextAllocation();
+    fail_next_allocation();
     bool failed = false;
     try {
         const auto result = device.process(requestBytes(request), false);
@@ -701,7 +706,7 @@ void requireFirstAllocationFailsBeforeCommit(
     } catch (const std::bad_alloc&) {
         failed = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(failed);
 }
 
@@ -709,7 +714,7 @@ void requireFirstAllocationFailsBeforeCommit(
     VirtioGpuDevice& device,
     const std::vector<std::uint8_t>& request)
 {
-    failNextAllocation();
+    fail_next_allocation();
     bool failed = false;
     try {
         const auto result = device.process(request, false);
@@ -717,7 +722,7 @@ void requireFirstAllocationFailsBeforeCommit(
     } catch (const std::bad_alloc&) {
         failed = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(failed);
 }
 
@@ -728,13 +733,13 @@ void requireFirstAllocationFailsBeforeCommit(
 {
     std::vector<std::uint8_t> result;
     bool allocatedMore = false;
-    failAfterAllocations(1);
+    fail_after_allocations(1);
     try {
         result = device.process(request, false);
     } catch (const std::bad_alloc&) {
         allocatedMore = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(!allocatedMore);
     return result;
 }
@@ -1222,13 +1227,13 @@ void rendererExecutionFailuresPreserveDeviceState()
     // to per-frame staging or cloning.
     std::vector<std::uint8_t> warmedFlush;
     bool warmedFlushAllocated = false;
-    failAfterAllocations(1);
+    fail_after_allocations(1);
     try {
         warmedFlush = device.process(requestBytes(flush), false);
     } catch (const std::bad_alloc&) {
         warmedFlushAllocated = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(!warmedFlushAllocated);
     require(responseType(warmedFlush) == protocol::GpuResponse::okNoData);
     require(dependencies.readResourceCount == 4);
@@ -1711,22 +1716,22 @@ void resetIsPristineAndAllocationRetryIsAtomic()
 
     device.reset();
     context.header.contextId = 42;
-    failNextAllocation();
+    fail_next_allocation();
     bool contextFailed = false;
     try {
         (void)device.process(requestBytes(context), false);
     } catch (const std::bad_alloc&) {
         contextFailed = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(contextFailed);
     require(responseType(device.process(requestBytes(context), false)) ==
         protocol::GpuResponse::okNoData);
 
     resource.resourceId = 74;
-    failNextAllocation();
+    fail_next_allocation();
     const auto failedResource = device.process(requestBytes(resource), false);
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(responseType(failedResource) ==
         protocol::GpuResponse::errorOutOfMemory);
     require(responseType(device.process(requestBytes(resource), false)) ==
@@ -1771,14 +1776,14 @@ void rendererBackingAttachIsRetryableAfterAllocationFailure()
     const auto request = requestWithEntry(attach, entry);
 
     // The response is allocated first; the backing's iovec array second.
-    failAfterAllocations(1);
+    fail_after_allocations(1);
     bool failed = false;
     try {
         (void)device.process(request, false);
     } catch (const std::bad_alloc&) {
         failed = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(failed);
     require(responseType(device.process(request, false)) ==
         protocol::GpuResponse::okNoData);
@@ -1980,14 +1985,14 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
 
-    failNextAllocation();
+    fail_next_allocation();
     bool responseFailed = false;
     try {
         (void)device.process(requestBytes(scanout), false);
     } catch (const std::bad_alloc&) {
         responseFailed = true;
     }
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(responseFailed);
     require(dependencies.guestScanoutChangeCount == 0);
 
@@ -2084,9 +2089,9 @@ void readbackStagingIsAllocatedByTheFirstReadback()
     const auto requireReadbackAllocates = [&] {
         const auto reads = dependencies.readResourceCount;
         const auto updates = dependencies.displayUpdateCount;
-        failAfterAllocations(1);
+        fail_after_allocations(1);
         const auto failed = device.process(requestBytes(flush), false);
-        clearAllocationFailure();
+        (void)cancel_pending_allocation_failure();
         require(responseType(failed) ==
             protocol::GpuResponse::errorOutOfMemory);
         require(dependencies.readResourceCount == reads);
@@ -2844,9 +2849,9 @@ void virglBlobScanoutPresentsItsGlTexture()
     require(responseType(device.process(requestBytes(scanout), false)) ==
         protocol::GpuResponse::okNoData);
     const auto readsBeforeRelease = dependencies.readResourceCount;
-    failAfterAllocations(1);
+    fail_after_allocations(1);
     const auto releasedFlush = device.process(requestBytes(flush), false);
-    clearAllocationFailure();
+    (void)cancel_pending_allocation_failure();
     require(responseType(releasedFlush) ==
         protocol::GpuResponse::errorOutOfMemory);
     require(dependencies.readResourceCount == readsBeforeRelease);
@@ -3013,9 +3018,8 @@ void aDestroyedContextsHeldFencesComplete()
     for (const std::uint64_t requestId : {41U, 43U}) {
         require(fences.takeCompletion(completion));
         require(completion.requestId == requestId);
-        require(completion.requestHeader.contextId ==
-            exiting.header.contextId);
         const auto reply = responseHeader(completion.response);
+        require(reply.contextId == exiting.header.contextId);
         require(reply.fenceId == requestId);
         require((reply.flags & protocol::gpuFlagFence) != 0);
     }

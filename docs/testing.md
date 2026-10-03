@@ -34,6 +34,11 @@ build tree; a binary run outside CTest uses `$TMPDIR`. Unix-domain socket paths
 use `$TMPDIR` because a build-tree path may not fit `sun_path`. Tests remove
 what they create, so a leftover file names the test that leaked it.
 
+Unit tests assert with `require`, `fail` and `requireThrows` from
+`tests/unit/require/require.hpp`, which every unit binary links. A failure
+prints the caller's `file:line` and its message, then aborts, so no `catch` in
+the test or in the code under test can swallow it.
+
 For one test, use an anchored expression:
 
 ```sh
