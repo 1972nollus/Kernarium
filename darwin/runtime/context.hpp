@@ -102,25 +102,6 @@ private:
 	std::shared_ptr<ThreadStateStore> state_store_;
 };
 
-class ActiveContextScope final {
-public:
-	explicit ActiveContextScope(Context &context);
-	struct DeferredPublication final {};
-	explicit ActiveContextScope(Context &context, DeferredPublication);
-	~ActiveContextScope();
-
-	ActiveContextScope(const ActiveContextScope &) = delete;
-	ActiveContextScope &operator=(const ActiveContextScope &) = delete;
-
-	/* A deferred scope is invisible until commit.  commit() cannot allocate,
-	 * which lets callers prepare every participating registry before any
-	 * previous fallback is invalidated. */
-	void commit() noexcept;
-
-private:
-	::uml::routing::ActiveRouteScope route_;
-};
-
 /* Composition-facing run route. The provider endpoint is opaque here so the
  * runtime and device modules continue to depend only on the neutral routing
  * foundation, never on each other. */

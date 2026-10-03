@@ -399,26 +399,6 @@ void Context::retire_thread_execution_states() noexcept
 		store->retire_all();
 }
 
-ActiveContextScope::ActiveContextScope(Context &context)
-	: ActiveContextScope{context, DeferredPublication{}}
-{
-	commit();
-}
-
-ActiveContextScope::ActiveContextScope(Context &context,
-	DeferredPublication)
-	: route_{&context, nullptr,
-		::uml::routing::ActiveRouteScope::DeferredPublication{}}
-{
-}
-
-void ActiveContextScope::commit() noexcept
-{
-	route_.commit();
-}
-
-ActiveContextScope::~ActiveContextScope() = default;
-
 ActiveRunRouteScope::ActiveRunRouteScope(Context &context, void *network,
 	DeferredPublication) noexcept
 	: route_{&context, network,
