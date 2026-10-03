@@ -26,7 +26,7 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	words.push_back(operand);
 }
 
-/* Fused CMP of two registers + B.cond, the shape G116 ranks fourth. */
+/* Fused CMP of two registers + B.cond (G116); the builder says why. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
 	bool wide, unsigned condition, bool linked) noexcept
 {
