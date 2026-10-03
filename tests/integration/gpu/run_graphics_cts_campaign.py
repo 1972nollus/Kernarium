@@ -92,6 +92,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_vk_gl_cts as common  # noqa: E402
 import run_vk_cts as vk  # noqa: E402
 
+# Every first-party module loaded by the imports above: this campaign, both
+# leaf runners and whatever they import. Taken once, so the inputs a launch
+# records and those it rechecks later are the same set.
+IMPORTED_SOURCES = tuple(sorted(
+    path for path in {Path(module.__file__).resolve()
+                      for module in tuple(sys.modules.values())
+                      if getattr(module, "__file__", None)}
+    if path.is_relative_to(common.REPO_ROOT)))
+
 FRACTIONS = 8
 MAX_JOBS = 8
 CPUS = 4
@@ -212,12 +221,7 @@ def require(actual: dict[str, Any], expected: dict[str, Any]) -> None:
 def source_identity() -> dict[str, Any]:
     root = common.REPO_ROOT
     inputs = (
-        Path(__file__).resolve(), RUNNERS["vulkan"], RUNNERS["gl46"],
-        root / "tests/integration/gpu/run_gpu_guest.py",
-        root / "tests/integration/gpu/guest_process.py",
-        root / "tests/integration/gpu/vulkan_cts_receipt.py",
-        root / "tests/integration/gpu/opengl_cts_plan.py",
-        root / "tests/integration/gpu/gles_cts_plan.py",
+        *IMPORTED_SOURCES,
         root / "tests/integration/gpu/vk_gl_cts_gles32_matrix.json",
         root / "tests/integration/gpu/vk_gl_cts_gles_mustpass.xml",
         root / "tests/integration/gpu/vk_gl_cts_gles_mustpass_noctx.xml",
@@ -225,7 +229,6 @@ def source_identity() -> dict[str, Any]:
         root / "tests/integration/gpu/vk_gl_cts_gles_aosp_mustpass.xml",
         root / "tests/integration/gpu/vk_gl_cts_egl_aosp_mustpass.xml",
         root / "tests/integration/gpu/vk_gl_cts_waivers.json",
-        root / "tests/integration/support/kde_session.py",
         root / "dependencies/manifest.tsv",
         root / "dependencies/patches/mesa/series.tsv",
         root / "dependencies/patches/virglrenderer/series.tsv",
@@ -359,14 +362,11 @@ def spec_runner(spec: dict[str, Any], suite: str) -> str:
     the file contained is pinned separately, by the generation's source
     identity.
     """
-    runners = spec.get("runners")
-    if isinstance(runners, dict) and suite in runners:
-        return str(runners[suite])
-    return str(RUNNERS[suite])
+    return str(spec["runners"][suite])
 
 
 def child_command(spec: dict[str, Any], shard: Shard, output: Path) -> list[str]:
-    command = [str(spec.get("interpreter", sys.executable)),
+    command = [str(spec["interpreter"]),
                "-B", spec_runner(spec, shard.suite),
                "--qualification", "--fraction", f"{shard.index},{FRACTIONS}",
                "--page-profile", spec["page_profile"], "--engine", "jit",

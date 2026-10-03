@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import contextlib
 import io
+import os
 import signal
 from pathlib import Path
 import socket
@@ -554,6 +555,9 @@ class GpuGuestSafetyTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.alive = True
                 self.signals: list[int] = []
+                # A process that exists, so the stop removes no run
+                # directories.
+                self.pid = os.getpid()
 
             def poll(self) -> int | None:
                 return None if self.alive else -signal.SIGKILL

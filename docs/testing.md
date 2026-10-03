@@ -22,10 +22,17 @@ Every first-party CTest has exactly one primary suite:
 The helper that registers a test sets its suite label; `ctest -N -L <suite>`
 lists a configured tree's registrations. A unit test without its own `TIMEOUT`
 gets a 600 s bound, so a wedged binary fails the suite instead of stalling it.
-Performance and long external campaigns are not CTest correctness suites.
+At a test's timeout CTest sends it SIGINT, which a Python runner turns into
+`KeyboardInterrupt` to unwind its cleanups, and SIGKILL 20 s later; the test
+fails as a timeout either way. Performance and long external campaigns are not
+CTest correctness suites.
 
 Tooling tests run tools against fixtures; they do not grep tracked source for
-expected tokens or restate values that another file owns.
+expected tokens or restate values that another file owns. A shell tooling
+test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
+configure creates: a shell defers its traps while a child runs, so a shell
+test that times out in one cannot clean up, and what it leaves names it.
+Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
