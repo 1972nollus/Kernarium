@@ -110,10 +110,11 @@ public:
 private:
     struct Pending {
         std::uint64_t requestId {};
-        protocol::GpuControlHeader requestHeader {};
         std::vector<std::uint8_t> response;
         DeferredFence fence;
         Clock::time_point deadline;
+        /* The held command's type, which an overdue report names. */
+        std::uint32_t commandType {};
         /* Whether this fence has already spent its ordering-release window.
          * Connection-wide relaxation is a consequence of some fence escaping,
          * not evidence that this one has had its second chance. */
