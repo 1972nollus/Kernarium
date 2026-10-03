@@ -8,7 +8,24 @@ COMMON_METADATA="$LINE_ROOT/patches/metadata.env"
 SLICE_ROOT="$LINE_ROOT/slices/x86_64"
 SLICE_METADATA="$SLICE_ROOT/patches/metadata.env"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
-TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-slices.XXXXXX")
+TEMPORARY_PARENT=${TMPDIR:-/tmp}
+# CTest ends a run that exceeds its timeout with SIGKILL, which runs no trap,
+# so each run first removes this user's directories of runs whose process is
+# gone.
+for abandoned in "$TEMPORARY_PARENT"/uml-kernel-slices-*.*; do
+	[ -d "$abandoned" ] && [ ! -L "$abandoned" ] && [ -O "$abandoned" ] ||
+		continue
+	owner=${abandoned##*/uml-kernel-slices-}
+	owner=${owner%%.*}
+	case $owner in
+	'' | 0* | *[!0-9]*) continue ;;
+	esac
+	# A killed run's children can still be writing into its directory, so
+	# what one run cannot remove is left to a later run.
+	ps -p "$owner" >/dev/null 2>&1 ||
+		rm -rf -- "$abandoned" 2>/dev/null || :
+done
+TEST_ROOT=$(mktemp -d "$TEMPORARY_PARENT/uml-kernel-slices-$$.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 WRONG_TREE=ffffffffffffffffffffffffffffffffffffffff
 

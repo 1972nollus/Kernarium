@@ -303,6 +303,37 @@ class GuestProcessTests(unittest.TestCase):
             self.assertIsNotNone(spawned[0].poll())
             self.assertFalse((root / "serial.sock").exists())
 
+    def test_a_killed_emulator_leaves_no_run_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scratch = root / "tmp"
+            scratch.mkdir()
+            marker = root / "emulator.pid"
+            # An emulator that ignores SIGTERM, as a wedged one does, so the
+            # stop ends it with SIGKILL and no handler of its own runs.
+            emulator = (
+                "trap '' TERM; "
+                'mkdir "$TMPDIR/uml-kern$$" "$TMPDIR/uml-guest-initrd-$$-x"; '
+                'echo $$ > "$1"; exec sleep 30'
+            )
+            # Another run's directory is that run's.
+            other = scratch / f"uml-kern{os.getpid()}"
+            other.mkdir()
+            with mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}), mock.patch.object(
+                tempfile, "tempdir", str(scratch)
+            ), mock.patch.object(owned, "EMULATOR_STOP", ((signal.SIGTERM, 0.3), (signal.SIGKILL, 5))):
+                process = subprocess.Popen(["/bin/sh", "-c", emulator, "emulator", str(marker)])
+                try:
+                    pid = int(wait_for(marker))
+                    self.assertTrue((scratch / f"uml-kern{pid}").is_dir())
+                    guest.terminate_process(process)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=5)
+            self.assertEqual(process.returncode, -signal.SIGKILL)
+            self.assertEqual(sorted(path.name for path in scratch.iterdir()), [other.name])
+
     @unittest.skipUnless(os.name == "posix", "requires POSIX process ownership")
     def test_real_nested_cancellation_reaps_separate_session_with_repeated_signals(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

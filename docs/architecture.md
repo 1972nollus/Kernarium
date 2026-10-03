@@ -584,11 +584,12 @@ unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. Both live
-in a directory the host passes as `uml_dir=`, under short fixed names, and
-nothing goes to the shared `/tmp`. On macOS and the iOS Simulator each run
-makes its own `uml-kern<pid>` directory, mode 0700, in `$TMPDIR`, or in the
-user's temporary directory or `/tmp` when `$TMPDIR` is unset or too long, as
-the Simulator's is. The run removes it when it returns, and every terminating
+in a directory the host passes as `uml_dir=`, under short fixed names, never
+loose in the shared `/tmp`. On macOS and the iOS Simulator each run makes its
+own `uml-kern<pid>` directory, mode 0700, in `$TMPDIR`, or in the user's
+temporary directory or `/tmp` when `$TMPDIR` is unset or too long. In the
+Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
+`/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
 runs that have exited. An iOS device uses its application temporary directory
