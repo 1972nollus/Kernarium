@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/emulator.h"
 #include "allocation_failure.hpp"
-#include "cpu/arm64/floating_controls.hpp"
+#include "cpu/arm64/id_registers.hpp"
 #include "device/network/device.hpp"
 #include "native_window_test_support.hpp"
 #include "platform/apple/host_features.hpp"
@@ -31,7 +31,6 @@
 #include <span>
 #include <stdexcept>
 #include <string_view>
-#include <sys/sysctl.h>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
@@ -243,84 +242,6 @@ int native_shadow_kernel_b(int, char *const[], char *const[])
 
 #endif
 
-bool host_feature(const char *name)
-{
-	int enabled = 0;
-	std::size_t size = sizeof(enabled);
-	return sysctlbyname(name, &enabled, &size, nullptr, 0) == 0 &&
-		enabled != 0;
-}
-
-unsigned long expected_guest_hwcap()
-{
-	unsigned long result =
-		(1UL << 0) | (1UL << 1) | (1UL << 2) | (1UL << 11);
-	/* FP and ASIMD are the mandatory guest profile, and HWCAP_CPUID reports
-	 * the emulated EL0 reads of the identification registers that every
-	 * engine implements unconditionally, exactly as arm64 Linux advertises
-	 * them from `setup_elf_hwcaps()`. HWCAP_EVTSTRM holds on every host
-	 * because every engine completes WFE at once. */
-	const struct {
-		const char *sysctl;
-		unsigned bit;
-	} optional[]{
-		{"hw.optional.arm.FEAT_AES", 3},
-		{"hw.optional.arm.FEAT_PMULL", 4},
-		{"hw.optional.arm.FEAT_SHA1", 5},
-		{"hw.optional.arm.FEAT_SHA256", 6},
-		{"hw.optional.arm.FEAT_CRC32", 7},
-		{"hw.optional.arm.FEAT_LSE", 8},
-		{"hw.optional.arm.FEAT_FP16", 9},
-		{"hw.optional.arm.FEAT_FP16", 10},
-		{"hw.optional.arm.FEAT_RDM", 12},
-		{"hw.optional.arm.FEAT_JSCVT", 13},
-		{"hw.optional.arm.FEAT_FCMA", 14},
-		{"hw.optional.arm.FEAT_LRCPC", 15},
-		{"hw.optional.arm.FEAT_SHA3", 17},
-		/* HWCAP_ASIMDDP. Advertised only where the gadget bank and the JIT
-		 * select their native dot paths, which is the same host predicate. */
-		{"hw.optional.arm.FEAT_DotProd", 20},
-		{"hw.optional.arm.FEAT_SHA512", 21},
-		{"hw.optional.arm.FEAT_FHM", 23},
-		{"hw.optional.arm.FEAT_LRCPC2", 26},
-		{"hw.optional.arm.FEAT_FlagM", 27},
-		{"hw.optional.arm.FEAT_LSE2", 25},
-		{"hw.optional.arm.FEAT_SB", 29},
-		{"hw.optional.arm.FEAT_DIT", 24},
-	};
-	for (const auto &feature : optional)
-		if (host_feature(feature.sysctl))
-			result |= 1UL << feature.bit;
-	return result;
-}
-
-unsigned long expected_guest_hwcap2()
-{
-	/* FEAT_CSSC and FEAT_MOPS run on every host. */
-	unsigned long result = (1UL << 34) | (1UL << 43);
-	const struct {
-		const char *sysctl;
-		unsigned bit;
-	} optional[]{
-		{"hw.optional.arm.FEAT_FlagM2", 7},
-		{"hw.optional.arm.FEAT_FRINTTS", 8},
-		{"hw.optional.arm.FEAT_I8MM", 13},
-		{"hw.optional.arm.FEAT_BF16", 14},
-		{"hw.optional.arm.FEAT_ECV", 19},
-	};
-	for (const auto &feature : optional)
-		if (host_feature(feature.sysctl))
-			result |= 1UL << feature.bit;
-	/* HWCAP2_AFP and HWCAP2_RPRES follow the predicates behind the FPCR
-	 * write mask and the engines' code for FIZ, AH and NEP. */
-	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	if (::uml::cpu::arm64::implements_afp(host))
-		result |= 1UL << 20;
-	if (::uml::cpu::arm64::implements_rpres(host))
-		result |= 1UL << 21;
-	return result;
-}
-
 int run_kernel(int argc, char *const argv[], char *const envp[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
@@ -500,10 +421,14 @@ void test_stop_requests_belong_to_one_run()
 
 void test_run_boundary()
 {
-	const auto expected_hwcap = expected_guest_hwcap();
-	require(darwin_uml_guest_hwcap() == expected_hwcap,
+	/* The guest kernel reads guest_hwcaps() of the probed host, the words
+	 * arm64-advertised-features pins, before and after a run selects an
+	 * engine. */
+	const auto expected = ::uml::cpu::arm64::detail::guest_hwcaps(
+		::uml::platform::apple::probed_host_capabilities());
+	require(darwin_uml_guest_hwcap() == expected[0],
 		"guest HWCAP does not match the host-safe virtual CPU");
-	require(darwin_uml_guest_hwcap2() == expected_guest_hwcap2(),
+	require(darwin_uml_guest_hwcap2() == expected[1],
 		"guest HWCAP2 does not match the host-safe virtual CPU");
 
 	NetworkState network_state;
@@ -565,7 +490,8 @@ void test_run_boundary()
 		UML_EMULATOR_OK &&
 		capabilities.userspace_execution == UML_EMULATOR_STATIC_GADGETS,
 		"handle-local gadget selection was not retained");
-	require(darwin_uml_guest_hwcap() == expected_hwcap,
+	require(darwin_uml_guest_hwcap() == expected[0] &&
+			darwin_uml_guest_hwcap2() == expected[1],
 		"gadget selection changed the virtual CPU contract");
 	require(execution_option_was_stripped,
 		"host execution option leaked into kernel arguments");
