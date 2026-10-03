@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/emulator.h"
 #include "allocation_failure.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "device/network/device.hpp"
 #include "native_window_test_support.hpp"
+#include "platform/apple/host_features.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
 #include "runtime/context.hpp"
@@ -309,6 +311,13 @@ unsigned long expected_guest_hwcap2()
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))
 			result |= 1UL << feature.bit;
+	/* HWCAP2_AFP and HWCAP2_RPRES follow the predicates behind the FPCR
+	 * write mask and the engines' code for FIZ, AH and NEP. */
+	const auto &host = ::uml::platform::apple::probed_host_capabilities();
+	if (::uml::cpu::arm64::implements_afp(host))
+		result |= 1UL << 20;
+	if (::uml::cpu::arm64::implements_rpres(host))
+		result |= 1UL << 21;
 	return result;
 }
 

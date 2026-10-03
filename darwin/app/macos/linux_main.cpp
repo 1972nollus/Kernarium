@@ -2,6 +2,7 @@
 
 #include "launcher.hpp"
 #include "block/boot_initramfs.hpp"
+#include "sockets/socket_paths.hpp"
 
 #include <array>
 #include <cerrno>
@@ -153,11 +154,13 @@ std::filesystem::path temporary_directory()
 	if (const char *configured = std::getenv("TMPDIR");
 	    configured != nullptr && configured[0] == '/')
 		return configured;
+	if (auto user = uml::device::user_temporary_directory(); !user.empty())
+		return user;
 	return "/tmp";
 }
 
-/* A run killed by a signal or a kernel panic leaves its scratch directory
- * behind; the next launch removes those whose process has exited. */
+/* A run killed outright leaves its scratch directory behind; the next launch
+ * removes those whose process has exited. */
 void remove_abandoned_scratch(const std::filesystem::path &directory)
 {
 	std::error_code error;
@@ -200,9 +203,10 @@ std::vector<std::byte> per_run_segment(const GuestBootOptions &options)
 	return archive.serialize();
 }
 
-/* Writes base || segment as "initrd.cpio" in a private directory and returns
- * that directory. */
-std::filesystem::path write_run_initrd(std::span<const std::byte> segment)
+/* Writes base || segment as "initrd.cpio" in a private directory, which
+ * `owner` then holds, and returns that directory. */
+std::filesystem::path write_run_initrd(std::span<const std::byte> segment,
+				       std::optional<uml::device::DirectoryPath> &owner)
 {
 	const auto directory = temporary_directory();
 	remove_abandoned_scratch(directory);
@@ -221,7 +225,12 @@ std::filesystem::path write_run_initrd(std::span<const std::byte> segment)
 			static_cast<std::size_t>(uml_boot_base_end -
 						 uml_boot_base_start)});
 		uml::boot::writeInitrd(initrd, base, segment);
+		/* A terminating signal or a kernel-driven exit, which unwinds
+		 * nothing, removes it too. */
+		owner.emplace(scratch);
+		owner->adopt(initrd.filename());
 	} catch (...) {
+		owner.reset();
 		std::error_code ignored;
 		std::filesystem::remove_all(scratch, ignored);
 		throw;
@@ -259,6 +268,7 @@ void print_usage()
 int main(int argc, char *argv[], char *envp[])
 {
 	GuestBootOptions options;
+	std::optional<uml::device::DirectoryPath> scratch_owner;
 	std::filesystem::path scratch;
 	try {
 		const bool information_only = uml::app::informational(argc, argv);
@@ -275,7 +285,8 @@ int main(int argc, char *argv[], char *envp[])
 			has_prefix(kernel, "init=") || has_prefix(kernel, "initrd=");
 		if (!information_only && (requested || !caller_owns_boot)) {
 			const bool explicit_init = has_prefix(kernel, "init=");
-			scratch = write_run_initrd(per_run_segment(options));
+			scratch = write_run_initrd(per_run_segment(options),
+						   scratch_owner);
 			options.forwarded.push_back(
 				"initrd=" + (scratch / "initrd.cpio").string());
 			if (!explicit_init)

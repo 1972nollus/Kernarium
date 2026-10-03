@@ -2,6 +2,7 @@
 
 #include "guest_console.hpp"
 #include "require.hpp"
+#include "socket_paths.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,13 +10,17 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <poll.h>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -40,11 +45,16 @@ struct Reply final {
 
 using uml::testing::require;
 
-std::string consolePath()
+const ::uml::device::GuestConsoleLocation &processLocation()
 {
 	const auto &location = ::uml::device::guest_console_location();
 	require(location.has_value());
-	return location->console;
+	return *location;
+}
+
+std::string consolePath()
+{
+	return processLocation().console;
 }
 
 int bindServer(const std::string &path)
@@ -113,6 +123,8 @@ void observeRequests(int descriptor, std::vector<std::string> &requests)
 
 void aSuspendTimeoutCannotQueueLegacyStop()
 {
+	/* The run's directory exists before the guest binds its console. */
+	const ::uml::device::GuestConsoleRun run {true};
 	const auto path = consolePath();
 	const int server = bindServer(path);
 	std::vector<std::string> requests;
@@ -122,10 +134,7 @@ void aSuspendTimeoutCannotQueueLegacyStop()
 	observer.join();
 	require(suspension == ::uml::device::GuestSuspension::system);
 	require(requests == std::vector<std::string> {"suspend"});
-
-	::uml::device::release_guest_management_console();
 	(void)::close(server);
-	(void)::unlink(path.c_str());
 }
 
 /* The widest reply socket a location may name. */
@@ -134,34 +143,14 @@ std::size_t widestClientPath(const ::uml::device::GuestConsoleLocation &location
 	return location.client_prefix.size() + 8U;
 }
 
-void aSharedLocationKeepsTheGuestsTmpNames()
-{
-	const auto location = ::uml::device::compose_guest_console_location(
-		std::nullopt, "kern42", 42);
-	require(location.has_value());
-	require(location->directory.empty());
-	require(location->console == "/tmp/uml-kern42-mconsole");
-	require(location->client_prefix == "/tmp/uml-mc-42-");
-
-	/* Nothing on macOS moves the console out of /tmp, so the guest is told
-	 * only its name. */
-	const auto &process = ::uml::device::guest_console_location();
-	require(process.has_value() && process->directory.empty());
-	const auto arguments =
-		::uml::device::guest_management_console_arguments();
-	require(arguments.size() == 1U && arguments[0].starts_with("umid=kern"));
-	require(process->console == "/tmp/uml-" + arguments[0].substr(5U) +
-		"-mconsole");
-}
-
-void aPrivateDirectoryHoldsShortNamesThatFit()
+void aDirectoryHoldsShortNamesThatFit()
 {
 	/* $TMPDIR of an iOS application: 89 bytes with its trailing slash. */
 	const std::string container =
 		"/private/var/mobile/Containers/Data/Application/"
 		"00000000-0000-4000-8000-000000000000/tmp";
-	const auto location = ::uml::device::compose_guest_console_location(
-		container + "/", "kern42", 42);
+	const auto location =
+		::uml::device::compose_guest_console_location(container + "/");
 	require(location.has_value());
 	require(location->directory == container);
 	require(location->console == container + "/mconsole");
@@ -169,36 +158,188 @@ void aPrivateDirectoryHoldsShortNamesThatFit()
 	require(location->console.size() < sizeof(sockaddr_un {}.sun_path));
 	require(widestClientPath(*location) < sizeof(sockaddr_un {}.sun_path));
 
-	const auto slashes = ::uml::device::compose_guest_console_location(
-		container + "///", "kern42", 42);
+	const auto slashes =
+		::uml::device::compose_guest_console_location(container + "///");
 	require(slashes.has_value() && slashes->directory == container);
 }
 
-void aPrivateDirectoryThatDoesNotFitIsRefused()
+void aDirectoryThatDoesNotFitIsRefused()
 {
 	/* The longest directory whose widest reply socket still fits. */
 	constexpr std::size_t limit = sizeof(sockaddr_un {}.sun_path);
 	const std::size_t longest = limit - 1U - std::string_view {"/mc-"}.size() -
 		8U;
 	const auto fitting = "/" + std::string(longest - 1U, 'd');
-	const auto fits = ::uml::device::compose_guest_console_location(
-		fitting, "kern42", 42);
+	const auto fits = ::uml::device::compose_guest_console_location(fitting);
 	require(fits.has_value() && widestClientPath(*fits) == limit - 1U);
 
-	/* One byte more is refused outright: not truncated, and not moved to the
-	 * shared /tmp where the guest would not bind. */
+	/* One byte more is refused outright: never truncated. */
+	require(!::uml::device::compose_guest_console_location(fitting + "d")
+			 .has_value());
 	require(!::uml::device::compose_guest_console_location(
-		fitting + "d", "kern42", 42).has_value());
-	require(!::uml::device::compose_guest_console_location(
-		"/" + std::string(limit, 'd'), "kern42", 42).has_value());
+		"/" + std::string(limit, 'd')).has_value());
 }
 
-void aPrivateDirectoryMustBeAbsolute()
+void aDirectoryMustBeAbsolute()
 {
 	require(!::uml::device::compose_guest_console_location(
-		std::string_view {}, "kern42", 42).has_value());
-	require(!::uml::device::compose_guest_console_location(
-		"tmp/", "kern42", 42).has_value());
+		std::string_view {}).has_value());
+	require(!::uml::device::compose_guest_console_location("tmp/")
+			 .has_value());
+}
+
+void aRunDirectoryGoesInTheFirstParentThatFits()
+{
+	const std::vector<std::string> temporary {
+		"/var/folders/yb/lx9rftq56156_v7rkkngd8bc0000gn/T/"};
+	const auto location =
+		::uml::device::compose_run_console_location(temporary, "kern42");
+	require(location.has_value());
+	require(location->directory ==
+		"/var/folders/yb/lx9rftq56156_v7rkkngd8bc0000gn/T/uml-kern42");
+	require(location->console == location->directory + "/mconsole");
+	require(location->client_prefix == location->directory + "/mc-");
+
+	/* Unset, relative and too-long parents are passed over, as the
+	 * Simulator's application directory is. */
+	const std::vector<std::string> fallbacks {
+		"", "relative", "/" + std::string(100U, 'd'), "/tmp//"};
+	const auto fallback =
+		::uml::device::compose_run_console_location(fallbacks, "kern42");
+	require(fallback.has_value() &&
+		fallback->directory == "/tmp/uml-kern42");
+	const std::vector<std::string> root {"/"};
+	require(::uml::device::compose_run_console_location(root, "kern42")
+			->directory == "/uml-kern42");
+	const std::vector<std::string> none {"", "/" + std::string(100U, 'd')};
+	require(!::uml::device::compose_run_console_location(none, "kern42")
+			 .has_value());
+}
+
+void theProcessNamesItsOwnDirectory()
+{
+	const auto &process = processLocation();
+	const auto umid = "kern" + std::to_string(::getpid());
+	require(std::filesystem::path {process.directory}.filename() ==
+		"uml-" + umid);
+	/* $TMPDIR is the first choice whenever it is set and short enough. */
+	const char *temporary = std::getenv("TMPDIR");
+	if (temporary != nullptr && temporary[0] == '/' &&
+	    std::string_view {temporary}.size() < 70U) {
+		require(std::filesystem::path {process.directory}.parent_path() ==
+			std::filesystem::path {std::string {temporary} + "/"}
+				.lexically_normal().parent_path());
+	}
+	const auto arguments =
+		::uml::device::guest_management_console_arguments();
+	require(arguments == std::vector<std::string> {
+		"umid=" + umid, "uml_dir=" + process.directory});
+}
+
+bool directoryExists(const std::string &path)
+{
+	struct stat details {};
+	return ::lstat(path.c_str(), &details) == 0 && S_ISDIR(details.st_mode);
+}
+
+bool socketExists(const std::string &path)
+{
+	struct stat details {};
+	return ::lstat(path.c_str(), &details) == 0 &&
+		S_ISSOCK(details.st_mode);
+}
+
+void aRunOwnsItsDirectoryUntilItReturns()
+{
+	const auto &location = processLocation();
+	{
+		const ::uml::device::GuestConsoleRun inactive {false};
+		require(!directoryExists(location.directory));
+	}
+	int console = -1;
+	{
+		const ::uml::device::GuestConsoleRun run {true};
+		struct stat details {};
+		require(::lstat(location.directory.c_str(), &details) == 0 &&
+			S_ISDIR(details.st_mode) && details.st_uid == ::geteuid() &&
+			(details.st_mode & 07777) == S_IRWXU);
+		/* The guest binds its console there, and a run killed before the
+		 * guest shut down keeps it. */
+		console = bindServer(location.console);
+	}
+	require(!directoryExists(location.directory));
+	(void)::close(console);
+}
+
+void theTerminationPathRemovesTheRunDirectory()
+{
+	const auto &location = processLocation();
+	const ::uml::device::GuestConsoleRun run {true};
+	const int console = bindServer(location.console);
+	/* What darwin_uml_exit, darwin_uml_abort and the host's signal
+	 * handlers run; the guest's SIGINT and SIGTERM handler exits through
+	 * darwin_uml_exit. */
+	::uml::device::remove_registered_socket_paths();
+	require(!directoryExists(location.directory));
+	(void)::close(console);
+}
+
+void aDirectoryLeftByThisPidIsReplaced()
+{
+	const auto &location = processLocation();
+	require(::mkdir(location.directory.c_str(), S_IRWXU) == 0);
+	const int stale = bindServer(location.console);
+	{
+		const ::uml::device::GuestConsoleRun run {true};
+		require(directoryExists(location.directory) &&
+			!socketExists(location.console));
+	}
+	require(!directoryExists(location.directory));
+	(void)::close(stale);
+}
+
+/* A pid whose process has exited and been reaped. */
+pid_t exitedPid()
+{
+	const pid_t child = ::fork();
+	require(child >= 0);
+	if (child == 0)
+		::_exit(0);
+	int status = 0;
+	require(::waitpid(child, &status, 0) == child);
+	return child;
+}
+
+void aRunRemovesOnlyTheDirectoriesOfExitedRuns()
+{
+	const auto parent =
+		std::filesystem::path {processLocation().directory}.parent_path();
+	const auto dead = std::to_string(exitedPid());
+	const auto abandoned = parent / ("uml-kern" + dead);
+	const auto live = parent / ("uml-kern" + std::to_string(::getppid()));
+	const auto legacy = parent / ("uml-kern" + dead + "-mconsole");
+	const auto padded = parent / ("uml-kern0" + dead);
+	const auto file = parent / ("uml-kern" + std::to_string(exitedPid()));
+	for (const auto &directory : {abandoned, live, padded})
+		require(std::filesystem::create_directory(directory));
+	const int abandonedConsole = bindServer(abandoned / "mconsole");
+	const int legacyConsole = bindServer(legacy);
+	require(::close(::open(file.c_str(), O_CREAT | O_EXCL | O_WRONLY,
+		S_IRUSR | S_IWUSR)) == 0);
+
+	{
+		const ::uml::device::GuestConsoleRun run {true};
+	}
+	/* Only a directory named for an exited process goes; a live run's,
+	 * another program's names and anything not a directory stay. */
+	require(!std::filesystem::exists(abandoned));
+	require(directoryExists(live) && directoryExists(padded) &&
+		socketExists(legacy) && std::filesystem::is_regular_file(file));
+
+	(void)::close(abandonedConsole);
+	(void)::close(legacyConsole);
+	for (const auto &path : {live, legacy, padded, file})
+		std::filesystem::remove_all(path);
 }
 
 } // namespace
@@ -207,10 +348,18 @@ int main(int argc, char **argv)
 {
 	const std::string_view selected = argc > 1 ? argv[1] : "";
 	if (selected == "location") {
-		aSharedLocationKeepsTheGuestsTmpNames();
-		aPrivateDirectoryHoldsShortNamesThatFit();
-		aPrivateDirectoryThatDoesNotFitIsRefused();
-		aPrivateDirectoryMustBeAbsolute();
+		aDirectoryHoldsShortNamesThatFit();
+		aDirectoryThatDoesNotFitIsRefused();
+		aDirectoryMustBeAbsolute();
+		aRunDirectoryGoesInTheFirstParentThatFits();
+		theProcessNamesItsOwnDirectory();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "run") {
+		aRunOwnsItsDirectoryUntilItReturns();
+		theTerminationPathRemovesTheRunDirectory();
+		aDirectoryLeftByThisPidIsReplaced();
+		aRunRemovesOnlyTheDirectoriesOfExitedRuns();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {

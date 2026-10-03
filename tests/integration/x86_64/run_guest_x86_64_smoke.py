@@ -20,20 +20,23 @@ import time
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import emulator_arguments  # noqa: E402
+from guest import (  # noqa: E402
+    emulator_arguments,
+    remove_emulator_run_directories,
+)
 
 
 SUCCESS = b"x86_64 gadgets rootfs: syscall tls signal xstate ok"
 
 
 def terminate(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        process.send_signal(signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    process.wait()
+    if process.poll() is None:
+        try:
+            process.send_signal(signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+    remove_emulator_run_directories(process.pid)
 
 
 def boot(emulator: pathlib.Path, rootfs: pathlib.Path, timeout: int) -> bytes:

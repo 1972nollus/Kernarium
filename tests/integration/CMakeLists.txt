@@ -302,6 +302,16 @@ uml_add_guest_integration_test(
     TIMEOUT 600
     CPUS 1)
 
+# A guest run leaves nothing in the shared /tmp or its $TMPDIR, however it
+# ends: poweroff, SIGTERM, SIGHUP, a guest panic, or SIGKILL followed by the
+# next run.
+uml_add_guest_integration_test(
+    NAME guest-host-residue
+    SCRIPT boot/run_guest_host_residue.py
+    LABELS guest;boot;smoke
+    TIMEOUT 600
+    CPUS 1)
+
 # A faulting nofault kernel read resumes at its recovery point.
 uml_add_guest_integration_test(
     NAME guest-kernel-nofault

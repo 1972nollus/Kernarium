@@ -292,8 +292,11 @@ EmulatorOptions prepare_emulator_options(
 	for (auto &argument :
 	     ::uml::device::guest_management_console_arguments()) {
 		const auto name = argument.substr(0, argument.find('=') + 1U);
-		if (!has_prefix(prepared.arguments, name))
-			prepared.arguments.push_back(std::move(argument));
+		if (has_prefix(prepared.arguments, name))
+			continue;
+		if (name == "uml_dir=")
+			prepared.host_console_directory = true;
+		prepared.arguments.push_back(std::move(argument));
 	}
 #if DARWIN_UML_X86_64_USERSPACE_ONLY
 	/* The compatibility slice does not support object-cgroup charging of
