@@ -73,11 +73,9 @@ The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
 whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
 engine's fastest copy rather than its slowest.
 
-The x86_64 gadget engine assembles against ARMv8.5-A, so it lowers guest
-semantics onto LSE atomics, FlagM/FlagM2 condition transfer, and FRINTTS
-truncating conversion directly. Every arm64 Mac implements those extensions,
-and the engine is a macOS-only backend, so this constrains no shipping product.
-The arm64 engine keeps its own, higher, ARMv8.6-A declaration.
+The x86_64 gadget engine assembles against ARMv8.2-A with the CRC and
+cryptography extensions. The arm64 engine keeps its own, higher, ARMv8.6-A
+declaration.
 
 A gadget cache slot indexes a translation rather than holding one. Each stored
 program is a single exact-sized allocation carrying its stream and the guest
