@@ -627,7 +627,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     /* Address generation and writeback were resolved while translating.
      * Preserve the pair operation/mode, replace its immediate with zero, and
      * name the operands' resident host bindings directly. A full cache falls
-     * back to the same dedicated scratch registers used by the old path. */
+     * back to the scratch registers x9 and x10, or v0 and v1. */
     auto native =
         instruction & ~((0x7fU << 15) | (31U << 10) | (31U << 5) | 31U);
     native |=

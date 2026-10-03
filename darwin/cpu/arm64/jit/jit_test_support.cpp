@@ -857,9 +857,9 @@ bool invalid_emitter_metadata_is_rejected_for_testing() {
   if (!invalid_pair.finish().empty())
     return false;
 
-  /* Zero-count terminal and dynamic returns used to rely on unsigned
-   * underflow assertions. They are valid defensive translation shapes and
-   * must remain representable without terminating the translator. */
+  /* Zero-count terminal and dynamic returns are valid defensive
+   * translation shapes and must remain representable without terminating
+   * the translator. */
   Arm64Emitter terminal;
   terminal.prologue();
   terminal.return_constant(Event::illegal_instruction, 0);
