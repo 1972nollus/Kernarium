@@ -299,6 +299,19 @@ change, which for a guest that never leaves round-to-nearest is never. The
 rounding gadgets therefore round with the host's current mode instead of
 branching on MXCSR, and the arithmetic honours the guest's mode as well.
 
+SSE and AVX arithmetic returns x86's values where the host's differ. A NaN
+result is the first source quieted when that is a NaN, else the second, else
+the negative indefinite. MXCSR.DAZ flushes denormal inputs, and MXCSR.FTZ
+flushes a result that is tiny after rounding: below the smallest normal when
+rounded as if the exponent were unbounded, which a product or quotient the
+host rounds up to the smallest normal may be, so that one is run again scaled
+into the normal range. MIN and MAX return a source unchanged. RCP and RSQRT
+ignore MXCSR, take a denormal input as zero and return zero for RCP's tiny
+results; elsewhere the host's exact quotient lies within x86's estimate error.
+These repairs live in the cold section, which a gadget enters only for a
+special result, an estimate's special input, or under FTZ a result no larger
+than the smallest normal.
+
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved

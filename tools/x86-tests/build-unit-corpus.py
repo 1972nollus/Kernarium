@@ -69,6 +69,19 @@ EXACT_NATIVE_OVERRIDE_SOURCES = frozenset(
     {"tests/single-instruction-tests/vcvtps2ph_xmm_xmm_imm8/test.s"}
 )
 
+# K computes RCPSS and RSQRTSS as exact quotients, also for the denormal
+# inputs and tiny results the SDM defines as zero and infinity. These programs
+# take a native trace too: a K lane further from the native lane than the
+# SDM's estimate error is disputed, and the native value replaces it. The
+# remaining K quotients lie within that error.
+ESTIMATE_SOURCES = frozenset(
+    {
+        f"tests/single-instruction-tests/{name}/test.s"
+        for name in ("rcp", "rsqrt")
+    }
+)
+ESTIMATE_RELATIVE_ERROR = 1.5 * 2.0**-12
+
 # K chooses concrete NaN signs and payloads for these floating-point programs
 # where the Intel architecture permits another quiet NaN. Keep every other K
 # trace bit-exact so data movement and integer cases cannot inherit a looser
@@ -730,13 +743,51 @@ def encode_k_payload(states: list[State], instruction_offsets: list[int]) -> byt
     return bytes(output)
 
 
+def needs_native_trace(program: KProgram) -> bool:
+    return (
+        program.formal_states is None or
+        program.relative in NATIVE_OVERRIDE_SOURCES or
+        program.relative in ESTIMATE_SOURCES
+    )
+
+
+def single_value(bits: int) -> float:
+    return struct.unpack("<f", struct.pack("<I", bits))[0]
+
+
+def within_estimate(formal: int, native: int) -> bool:
+    """Whether native single `native` estimates K's exact single `formal`."""
+    if formal == native:
+        return True
+    exponent = 0x7F80_0000
+    if any(value & exponent in (0, exponent) for value in (formal, native)):
+        return False
+    if (formal ^ native) & 0x8000_0000:
+        return False
+    exact = single_value(formal)
+    return abs(single_value(native) - exact) <= (
+        ESTIMATE_RELATIVE_ERROR * abs(exact))
+
+
+def estimate_vector(formal: int, native: int) -> int:
+    merged = 0
+    for lane in range(8):
+        shift = 32 * lane
+        formal_lane = (formal >> shift) & 0xFFFF_FFFF
+        native_lane = (native >> shift) & 0xFFFF_FFFF
+        both_nan = all(
+            value & 0x7FFF_FFFF > 0x7F80_0000
+            for value in (formal_lane, native_lane)
+        )
+        chosen = formal_lane if both_nan or within_estimate(
+            formal_lane, native_lane) else native_lane
+        merged |= chosen << shift
+    return merged
+
+
 def native_request(programs: list[KProgram]) -> bytes:
     records = bytearray()
-    selected = [
-        program
-        for program in programs
-        if program.formal_states is None or program.relative in NATIVE_OVERRIDE_SOURCES
-    ]
+    selected = [program for program in programs if needs_native_trace(program)]
     for program in selected:
         control = [
             instruction.assembly
@@ -945,9 +996,7 @@ def collect_k_records(
 ) -> list[Record]:
     records: list[Record] = []
     required_native = {
-        program.relative
-        for program in programs
-        if program.formal_states is None or program.relative in NATIVE_OVERRIDE_SOURCES
+        program.relative for program in programs if needs_native_trace(program)
     }
     if set(native) != required_native:
         missing = sorted(required_native - set(native))
@@ -1000,6 +1049,28 @@ def collect_k_records(
             nan_class_equivalence = (
                 program.relative not in EXACT_NATIVE_OVERRIDE_SOURCES
             )
+        elif program.relative in ESTIMATE_SOURCES:
+            native_trace = native[program.relative]
+            if len(native_trace) != len(states) or any(
+                actual.rip_index != expected.rip_index
+                for actual, expected in zip(native_trace, states)
+            ):
+                fail(f"native K estimate has an unexpected path: {program.relative}")
+            states = [
+                State(
+                    expected.rip_index,
+                    expected.gprs,
+                    [
+                        estimate_vector(value, actual.vectors[index])
+                        if value is not None else None
+                        for index, value in enumerate(expected.vectors)
+                    ],
+                    expected.flags,
+                    expected.expected_event,
+                )
+                for actual, expected in zip(native_trace, states)
+            ]
+            oracle = "K checked trace with native Intel special estimates"
         record_forms = tuple(sorted(semantic_forms(program.instructions)))
         records.append(
             Record(
@@ -1513,9 +1584,7 @@ def main() -> int:
                 destination = arguments.native_request.resolve()
                 destination.write_bytes(request)
                 native_count = sum(
-                    program.formal_states is None or
-                    program.relative in NATIVE_OVERRIDE_SOURCES
-                    for program in programs
+                    needs_native_trace(program) for program in programs
                 )
                 print(f"wrote {native_count} native K trace requests to {destination}")
             if arguments.repository_request is not None:

@@ -2421,13 +2421,22 @@ enum class VectorFloatKind {
 	if (element == 64 && width == OperandWidth::ymm) \
 		UML_X86_VECTOR_FP_ENTRY(operation, 64, 256); \
 	break
+	/* The decoder accepts the estimates' single-precision forms only. */
+#define UML_X86_VECTOR_FP_SINGLE_SHAPE(operation) \
+	if (element == 32 && scalar) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, scalar); \
+	if (element == 32 && width == OperandWidth::xmm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, 128); \
+	if (element == 32 && width == OperandWidth::ymm) \
+		UML_X86_VECTOR_FP_ENTRY(operation, 32, 256); \
+	break
 	switch (kind) {
 	case VectorFloatKind::square_root:
 		UML_X86_VECTOR_FP_SHAPE(sqrt);
 	case VectorFloatKind::reciprocal_square_root:
-		UML_X86_VECTOR_FP_SHAPE(rsqrt);
+		UML_X86_VECTOR_FP_SINGLE_SHAPE(rsqrt);
 	case VectorFloatKind::reciprocal:
-		UML_X86_VECTOR_FP_SHAPE(rcp);
+		UML_X86_VECTOR_FP_SINGLE_SHAPE(rcp);
 	case VectorFloatKind::add:
 		UML_X86_VECTOR_FP_SHAPE(add);
 	case VectorFloatKind::multiply:
@@ -2441,6 +2450,7 @@ enum class VectorFloatKind {
 	case VectorFloatKind::maximum:
 		UML_X86_VECTOR_FP_SHAPE(max);
 	}
+#undef UML_X86_VECTOR_FP_SINGLE_SHAPE
 #undef UML_X86_VECTOR_FP_SHAPE
 #undef UML_X86_VECTOR_FP_ENTRY
 	return nullptr;
