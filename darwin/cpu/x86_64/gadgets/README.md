@@ -299,25 +299,25 @@ change, which for a guest that never leaves round-to-nearest is never. The
 rounding gadgets therefore round with the host's current mode instead of
 branching on MXCSR, and the arithmetic honours the guest's mode as well.
 
-SSE and AVX arithmetic and FMA return x86's values where the host's differ.
-A NaN result is the first source quieted when that is a NaN, else the second,
+SSE and AVX arithmetic and FMA return x86's values where the host's differ. A
+NaN result is the first source quieted when that is a NaN, else the second,
 else the negative indefinite; for an FMA the first of a, b and c in x86's
-a * b + c, with its own sign whatever the form negates. Where the elements
-come from one source, x86 hardware's order decides, as the SDM ranks only
-distinct sources: HADD and HSUB return a pair's lower NaN, and each DPPS or
-DPPD result lane sums in its own order, DPPS lane i p[i ^ 1] + p[i] and then
-the other pair, DPPD lane i p[i] + p[i ^ 1]. MXCSR.DAZ flushes denormal
-inputs, conversions' and a dot product's intermediates included, and
-MXCSR.FTZ flushes a result that is tiny after rounding: below the smallest
-normal when rounded as if the exponent were unbounded, which a product,
-quotient, fused result or narrowed double the host rounds up to the smallest
-normal may be, so that one is run again scaled into the normal range. MIN and
-MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a denormal
-input as zero and return zero for RCP's tiny results; elsewhere the host's
-exact quotient lies within x86's estimate error. These repairs live in the
-cold section, which a gadget enters only for a special result, an estimate's
-special input, under FTZ a result no larger than the smallest normal, or a
-dot product under DAZ or FTZ.
+a * b + c, with its own sign whatever the form negates. Where the elements come
+from one source, x86 hardware's order decides, as the SDM ranks only distinct
+sources: HADD and HSUB return a pair's lower NaN, and each DPPS or DPPD result
+lane sums in its own order, DPPS lane i p[i ^ 1] + p[i] and then the other
+pair, DPPD lane i p[i] + p[i ^ 1]. MXCSR.DAZ flushes denormal inputs, those of
+comparisons, rounding and conversions included, and a dot product's
+intermediates; MXCSR.FTZ flushes a result that is tiny after rounding: below
+the smallest normal when rounded as if the exponent were unbounded, which a
+product, quotient, fused result or narrowed double the host rounds up to the
+smallest normal may be, so that one is run again scaled into the normal range.
+MIN and MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a
+denormal input as zero and return zero for RCP's tiny results; elsewhere the
+host's exact quotient lies within x86's estimate error. These repairs live in
+the cold section, which a gadget enters only for a special result, an
+estimate's special input, under FTZ a result no larger than the smallest
+normal, or a dot product under DAZ or FTZ.
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
