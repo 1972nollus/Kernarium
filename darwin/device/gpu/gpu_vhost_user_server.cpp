@@ -174,6 +174,9 @@ public:
         const bool mayDefer = canDeferFence(cursorQueue, request);
         if (mayDefer && fences_.full())
             return {.action = uml::virtio::VhostUserQueueAction::retry};
+        /* Holding the command once the device has run it must not fail. */
+        if (mayDefer)
+            fences_.reserveDefer();
         if (mayDefer && fences_.empty())
             armFenceTimer();
 
