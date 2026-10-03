@@ -223,13 +223,16 @@ namespace uml::cpu::arm64::gadgets::selection {
 		uml_arm64_gadget_simd_dot_vector_usdot_4s_soft};
 	switch (signedness) {
 	case SimdDotSignedness::signed_signed:
-		return (!force_software && host_has_dotprod() ? signed_signed :
-			signed_signed_software)[q];
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::dotprod) ?
+			signed_signed : signed_signed_software)[q];
 	case SimdDotSignedness::unsigned_unsigned:
-		return (!force_software && host_has_dotprod() ? unsigned_unsigned :
-			unsigned_unsigned_software)[q];
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::dotprod) ?
+			unsigned_unsigned : unsigned_unsigned_software)[q];
 	case SimdDotSignedness::unsigned_signed:
-		return (!force_software && host_has_i8mm() ?
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::i8mm) ?
 			unsigned_signed_native :
 			unsigned_signed_software)[q];
 	case SimdDotSignedness::signed_unsigned: return nullptr;
@@ -277,17 +280,21 @@ namespace uml::cpu::arm64::gadgets::selection {
 	const unsigned shape = (q ? 4U : 0U) + index;
 	switch (signedness) {
 	case SimdDotSignedness::signed_signed:
-		return (!force_software && host_has_dotprod() ? signed_signed :
-			signed_signed_software)[shape];
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::dotprod) ?
+			signed_signed : signed_signed_software)[shape];
 	case SimdDotSignedness::unsigned_unsigned:
-		return (!force_software && host_has_dotprod() ? unsigned_unsigned :
-			unsigned_unsigned_software)[shape];
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::dotprod) ?
+			unsigned_unsigned : unsigned_unsigned_software)[shape];
 	case SimdDotSignedness::signed_unsigned:
-		return (!force_software && host_has_i8mm() ?
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::i8mm) ?
 			signed_unsigned_native :
 			signed_unsigned_software)[shape];
 	case SimdDotSignedness::unsigned_signed:
-		return (!force_software && host_has_i8mm() ?
+		return (!force_software &&
+			host_capabilities().has(ArmFeature::i8mm) ?
 			unsigned_signed_native :
 			unsigned_signed_software)[shape];
 	}
@@ -315,7 +322,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 	case SimdDotSignedness::unsigned_signed: index = 2U; break;
 	case SimdDotSignedness::signed_unsigned: return nullptr;
 	}
-	return (!force_software && host_has_i8mm() ?
+	return (!force_software && host_capabilities().has(ArmFeature::i8mm) ?
 		native : software)[index];
 }
 
@@ -1143,7 +1150,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 			(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
 		return vector[operation][shape];
 	}
-	if (!host_has_frintts())
+	if (!host_capabilities().has(ArmFeature::frintts))
 		return uml_arm64_gadget_floating_round_sized_software;
 	static constexpr std::array scalar{
 		std::array<Gadget, 2>{uml_arm64_gadget_floating_round_32x_s,
@@ -1256,7 +1263,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget bfloat_conversion_gadget(
 	const detail::BFloatConversion &decoded) noexcept
 {
-	if (!host_has_bf16())
+	if (!host_capabilities().has(ArmFeature::bf16))
 		return uml_arm64_gadget_bfloat_convert_software;
 	if (decoded.scalar)
 		return uml_arm64_gadget_bfloat_convert_scalar_native;
@@ -1267,7 +1274,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget bfloat_multiply_long_gadget(
 	const detail::BFloatMultiplyLong &decoded) noexcept
 {
-	if (!host_has_bf16())
+	if (!host_capabilities().has(ArmFeature::bf16))
 		return uml_arm64_gadget_bfloat_multiply_long_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_multiply_long_native_vector_b,
@@ -1297,7 +1304,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 [[nodiscard]] Gadget bfloat_dot_gadget(const detail::BFloatDot &decoded) noexcept
 {
-	if (!host_has_bf16())
+	if (!host_capabilities().has(ArmFeature::bf16))
 		return uml_arm64_gadget_bfloat_dot_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_dot_native_vector_2s,
@@ -1319,7 +1326,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 [[nodiscard]] Gadget bfloat_matrix_gadget() noexcept
 {
-	return host_has_bf16() ?
+	return host_capabilities().has(ArmFeature::bf16) ?
 		uml_arm64_gadget_bfloat_matrix_native :
 		uml_arm64_gadget_bfloat_matrix_software;
 }
@@ -1327,7 +1334,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] Gadget half_fused_long_gadget(
 	const detail::HalfFusedLong &decoded) noexcept
 {
-	if (!host_has_fhm())
+	if (!host_capabilities().has(ArmFeature::fhm))
 		return uml_arm64_gadget_half_fused_long_software;
 #define UML_HALF_FUSED_LONG_NATIVE(name) \
 	uml_arm64_gadget_half_fused_long_native_##name
@@ -2342,7 +2349,10 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 
 [[nodiscard]] Gadget simd_aes_gadget(unsigned operation,
                                      bool force_software) noexcept {
-  const bool native = !force_software && host_has_aes();
+  const auto &host = host_capabilities();
+  const bool native = !force_software &&
+                      host.has(ArmFeature::advanced_simd) &&
+                      host.has(ArmFeature::aes);
   switch (operation) {
   case 4:
     return native ? uml_arm64_gadget_simd_aese_native
@@ -2375,7 +2385,9 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
       uml_arm64_gadget_simd_sha256su1_soft};
   if (operation >= native.size())
     return nullptr;
-  const bool supported = operation <= 3U ? host_has_sha1() : host_has_sha256();
+  const bool supported = operation <= 3U
+                             ? host_capabilities().has(ArmFeature::sha1)
+                             : host_capabilities().has(ArmFeature::sha256);
   return (!force_software && supported ? native : software)[operation];
 }
 
@@ -2389,13 +2401,16 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
       uml_arm64_gadget_simd_sha256su0_soft};
   if (operation >= native.size())
     return nullptr;
-  const bool supported = operation <= 1U ? host_has_sha1() : host_has_sha256();
+  const bool supported = operation <= 1U
+                             ? host_capabilities().has(ArmFeature::sha1)
+                             : host_capabilities().has(ArmFeature::sha256);
   return (!force_software && supported ? native : software)[operation];
 }
 
 [[nodiscard]] Gadget simd_sha512_three_gadget(std::uint32_t instruction,
                                               bool force_software) noexcept {
-  const bool native = !force_software && host_has_sha512();
+  const bool native =
+      !force_software && host_capabilities().has(ArmFeature::sha512);
   switch (instruction & 0xffe0'fc00U) {
   case 0xce60'8000U:
     return native ? uml_arm64_gadget_simd_sha512h
@@ -2492,7 +2507,8 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 		return high ? uml_arm64_gadget_simd_pmull_8b2_direct :
 			uml_arm64_gadget_simd_pmull_8b_direct;
 	if (size == 3U) {
-		const bool native = !force_software && host_has_pmull();
+		const bool native = !force_software &&
+			host_capabilities().has(ArmFeature::pmull);
 		if (native)
 			return high ? uml_arm64_gadget_simd_pmull_1d2_native_direct :
 				uml_arm64_gadget_simd_pmull_1d_native_direct;

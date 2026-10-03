@@ -437,67 +437,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 #undef UML_SIMD_LANE_COUNT
 #undef UML_SIMD_LANE_DIRECTION
 
-[[nodiscard]] bool host_has_sha1() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha1);
-}
-
-[[nodiscard]] bool host_has_sha256() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha256);
-}
-
-[[nodiscard]] bool host_has_sha512() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha512);
-}
-
-[[nodiscard]] bool host_has_sha3() noexcept
-{
-	return host_capabilities().has(ArmFeature::sha3);
-}
-
-[[nodiscard]] bool host_has_aes() noexcept
-{
-	return host_capabilities().has(ArmFeature::advanced_simd) &&
-		host_capabilities().has(ArmFeature::aes);
-}
-
-[[nodiscard]] bool host_has_pmull() noexcept
-{
-	return host_capabilities().has(ArmFeature::pmull);
-}
-
-[[nodiscard]] bool host_has_rdm() noexcept
-{
-	return host_capabilities().has(ArmFeature::rdm);
-}
-
-[[nodiscard]] bool host_has_dotprod() noexcept
-{
-	return host_capabilities().has(ArmFeature::dotprod);
-}
-
-[[nodiscard]] bool host_has_i8mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::i8mm);
-}
-
-[[nodiscard]] bool host_has_frintts() noexcept
-{
-	return host_capabilities().has(ArmFeature::frintts);
-}
-
-[[nodiscard]] bool host_has_bf16() noexcept
-{
-	return host_capabilities().has(ArmFeature::bf16);
-}
-
-[[nodiscard]] bool host_has_fhm() noexcept
-{
-	return host_capabilities().has(ArmFeature::fhm);
-}
-
 #define UML_ATOMIC_REGISTER_GADGETS(operation, ordering, size) \
 	AtomicRegisterGadgets{ \
 		uml_arm64_gadget_atomic_##operation##_##ordering##_##size##_rr, \

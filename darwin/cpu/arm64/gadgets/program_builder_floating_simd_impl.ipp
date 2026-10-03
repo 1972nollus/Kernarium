@@ -397,8 +397,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		emit(words, destination | (left << 16) | (right << 32));
 	} else if ((instruction & 0xffe0'8000U) == 0xce00'0000U ||
 		   (instruction & 0xffe0'8000U) == 0xce20'0000U) {
-		const bool native =
-			!options.force_software_sha3 && host_has_sha3();
+		const bool native = !options.force_software_sha3 &&
+			host_capabilities().has(ArmFeature::sha3);
 		const bool bit_clear =
 			(instruction & 0x0020'0000U) != 0;
 		emit(words, bit_clear ?
@@ -411,7 +411,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			(instruction >> 16) & 31U, (instruction >> 10) & 31U));
 	} else if ((instruction & 0xffe0'fc00U) == 0xce60'8c00U) {
 		emit(words, !options.force_software_sha3 &&
-				host_has_sha3() ?
+				host_capabilities().has(ArmFeature::sha3) ?
 			uml_arm64_gadget_simd_rax1_native :
 			uml_arm64_gadget_simd_rax1_soft);
 		emit(words, simd_ternary_operand(
@@ -421,7 +421,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		emit(words, simd_xar_gadget(
 			(instruction >> 10) & 63U,
 			!options.force_software_sha3 &&
-				host_has_sha3()));
+				host_capabilities().has(ArmFeature::sha3)));
 		emit(words, simd_ternary_operand(
 			instruction & 31U, (instruction >> 5) & 31U,
 			(instruction >> 16) & 31U));
@@ -471,7 +471,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                   (instruction >> 16) & 31U));
                 } else if ((instruction & 0xffff'fc00U) == 0xcec0'8000U) {
                   emit(words, !options.force_software_fixed_transforms &&
-                                      host_has_sha512()
+                                      host_capabilities().has(ArmFeature::sha512)
                                   ? uml_arm64_gadget_simd_sha512su0
                                   : uml_arm64_gadget_simd_sha512su0_soft);
                   emit(words, simd_unary_operand(
@@ -567,7 +567,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   if (gadget == nullptr) {
                     return illegal_instruction(context);
                   }
-                  if (!host_has_rdm()) {
+                  if (!host_capabilities().has(ArmFeature::rdm)) {
                     emit(words, uml_arm64_gadget_simd_rdm_software);
                     emit(words, instruction);
                     emit(words, address);
@@ -861,7 +861,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   if (gadget == nullptr) {
                     return illegal_instruction(context);
                   }
-                  if (rdm && !host_has_rdm()) {
+                  if (rdm && !host_capabilities().has(ArmFeature::rdm)) {
                     emit(words, uml_arm64_gadget_simd_rdm_software);
                     emit(words, instruction);
                     emit(words, address);
