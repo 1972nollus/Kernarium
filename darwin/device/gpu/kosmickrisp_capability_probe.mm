@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -243,18 +244,110 @@ Function load_device_function(PFN_vkGetDeviceProcAddr get_device_proc_addr,
     return function;
 }
 
+// Declares member as the device entry point vk<name>, loaded through the
+// enclosing scope's device and get_device_proc_addr. A missing one throws.
+#define UML_DEVICE_FUNCTION(member, name)                                     \
+    const PFN_vk##name member = load_device_function<PFN_vk##name>(           \
+        get_device_proc_addr, device, "vk" #name)
+
+// Runs a verifier's cleanup when the verifier returns or throws.
 template <typename Function>
-Function load_counted_device_function(
-    PFN_vkGetDeviceProcAddr get_device_proc_addr,
-    VkDevice device,
-    const char *name,
-    uint32_t &count)
-{
-    Function function =
-        load_device_function<Function>(get_device_proc_addr, device, name);
-    ++count;
-    return function;
-}
+class ScopeExit {
+public:
+    explicit ScopeExit(Function function) : function_(std::move(function)) {}
+    ScopeExit(const ScopeExit &) = delete;
+    ScopeExit &operator=(const ScopeExit &) = delete;
+    ~ScopeExit() { function_(); }
+
+private:
+    Function function_;
+};
+
+struct CubeAliasReport;
+struct GraphicsPipelineLibraryReport;
+struct DeviceAddressCommandsReport;
+struct DynamicLogicOpReport;
+struct LegacyVertexAttributesReport;
+
+// A created device and the Vulkan 1.0 entry points its verifiers share, which
+// every Vulkan device exposes, loaded once. Each verifier exercises one
+// capability and loads the entry points its extension adds itself.
+struct ProbeDevice {
+    ProbeDevice(VkDevice device, PFN_vkGetDeviceProcAddr get_device_proc_addr)
+        : device(device), get_device_proc_addr(get_device_proc_addr)
+    {
+    }
+
+    CubeAliasReport verify_cube_alias_views(
+        VkPhysicalDevice physical,
+        const VkPhysicalDeviceMemoryProperties &memory,
+        PFN_vkGetPhysicalDeviceImageFormatProperties
+            get_image_format_properties) const;
+    GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
+        uint32_t queue_family) const;
+    DeviceAddressCommandsReport verify_device_address_commands(
+        uint32_t api_version,
+        uint32_t queue_family,
+        const VkPhysicalDeviceMemoryProperties &memory,
+        const std::vector<VkExtensionProperties> &extensions) const;
+    DynamicLogicOpReport verify_dynamic_logic_ops(
+        uint32_t queue_family,
+        const VkPhysicalDeviceMemoryProperties &memory) const;
+    LegacyVertexAttributesReport verify_legacy_vertex_attributes(
+        uint32_t queue_family,
+        const VkPhysicalDeviceMemoryProperties &memory) const;
+
+    const VkDevice device;
+    const PFN_vkGetDeviceProcAddr get_device_proc_addr;
+    UML_DEVICE_FUNCTION(allocate_command_buffers, AllocateCommandBuffers);
+    UML_DEVICE_FUNCTION(allocate_memory, AllocateMemory);
+    UML_DEVICE_FUNCTION(begin_command_buffer, BeginCommandBuffer);
+    UML_DEVICE_FUNCTION(bind_buffer_memory, BindBufferMemory);
+    UML_DEVICE_FUNCTION(bind_image_memory, BindImageMemory);
+    UML_DEVICE_FUNCTION(cmd_begin_render_pass, CmdBeginRenderPass);
+    UML_DEVICE_FUNCTION(cmd_bind_pipeline, CmdBindPipeline);
+    UML_DEVICE_FUNCTION(cmd_bind_vertex_buffers, CmdBindVertexBuffers);
+    UML_DEVICE_FUNCTION(cmd_copy_image_to_buffer, CmdCopyImageToBuffer);
+    UML_DEVICE_FUNCTION(cmd_draw, CmdDraw);
+    UML_DEVICE_FUNCTION(cmd_end_render_pass, CmdEndRenderPass);
+    UML_DEVICE_FUNCTION(cmd_pipeline_barrier, CmdPipelineBarrier);
+    UML_DEVICE_FUNCTION(cmd_set_scissor, CmdSetScissor);
+    UML_DEVICE_FUNCTION(cmd_set_viewport, CmdSetViewport);
+    UML_DEVICE_FUNCTION(create_buffer, CreateBuffer);
+    UML_DEVICE_FUNCTION(create_command_pool, CreateCommandPool);
+    UML_DEVICE_FUNCTION(create_framebuffer, CreateFramebuffer);
+    UML_DEVICE_FUNCTION(create_graphics_pipelines, CreateGraphicsPipelines);
+    UML_DEVICE_FUNCTION(create_image, CreateImage);
+    UML_DEVICE_FUNCTION(create_image_view, CreateImageView);
+    UML_DEVICE_FUNCTION(create_pipeline_cache, CreatePipelineCache);
+    UML_DEVICE_FUNCTION(create_pipeline_layout, CreatePipelineLayout);
+    UML_DEVICE_FUNCTION(create_render_pass, CreateRenderPass);
+    UML_DEVICE_FUNCTION(create_shader_module, CreateShaderModule);
+    UML_DEVICE_FUNCTION(destroy_buffer, DestroyBuffer);
+    UML_DEVICE_FUNCTION(destroy_command_pool, DestroyCommandPool);
+    UML_DEVICE_FUNCTION(destroy_device, DestroyDevice);
+    UML_DEVICE_FUNCTION(destroy_framebuffer, DestroyFramebuffer);
+    UML_DEVICE_FUNCTION(destroy_image, DestroyImage);
+    UML_DEVICE_FUNCTION(destroy_image_view, DestroyImageView);
+    UML_DEVICE_FUNCTION(destroy_pipeline, DestroyPipeline);
+    UML_DEVICE_FUNCTION(destroy_pipeline_cache, DestroyPipelineCache);
+    UML_DEVICE_FUNCTION(destroy_pipeline_layout, DestroyPipelineLayout);
+    UML_DEVICE_FUNCTION(destroy_render_pass, DestroyRenderPass);
+    UML_DEVICE_FUNCTION(destroy_shader_module, DestroyShaderModule);
+    UML_DEVICE_FUNCTION(end_command_buffer, EndCommandBuffer);
+    UML_DEVICE_FUNCTION(flush_memory, FlushMappedMemoryRanges);
+    UML_DEVICE_FUNCTION(free_memory, FreeMemory);
+    UML_DEVICE_FUNCTION(
+        get_buffer_memory_requirements, GetBufferMemoryRequirements);
+    UML_DEVICE_FUNCTION(get_device_queue, GetDeviceQueue);
+    UML_DEVICE_FUNCTION(
+        get_image_memory_requirements, GetImageMemoryRequirements);
+    UML_DEVICE_FUNCTION(invalidate_memory, InvalidateMappedMemoryRanges);
+    UML_DEVICE_FUNCTION(map_memory, MapMemory);
+    UML_DEVICE_FUNCTION(queue_submit, QueueSubmit);
+    UML_DEVICE_FUNCTION(queue_wait_idle, QueueWaitIdle);
+    UML_DEVICE_FUNCTION(unmap_memory, UnmapMemory);
+};
 
 std::string json_string(std::string_view value)
 {
@@ -575,32 +668,12 @@ struct CubeAliasReport {
     uint32_t cube_array_view_count = 0;
 };
 
-CubeAliasReport verify_cube_alias_views(
+CubeAliasReport ProbeDevice::verify_cube_alias_views(
     VkPhysicalDevice physical,
-    VkDevice device,
     const VkPhysicalDeviceMemoryProperties &memory,
-    PFN_vkGetPhysicalDeviceImageFormatProperties get_image_format_properties,
-    PFN_vkGetDeviceProcAddr get_device_proc_addr)
+    PFN_vkGetPhysicalDeviceImageFormatProperties get_image_format_properties)
+    const
 {
-    const auto create_image = load_device_function<PFN_vkCreateImage>(
-        get_device_proc_addr, device, "vkCreateImage");
-    const auto destroy_image = load_device_function<PFN_vkDestroyImage>(
-        get_device_proc_addr, device, "vkDestroyImage");
-    const auto get_image_memory_requirements =
-        load_device_function<PFN_vkGetImageMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetImageMemoryRequirements");
-    const auto allocate_memory = load_device_function<PFN_vkAllocateMemory>(
-        get_device_proc_addr, device, "vkAllocateMemory");
-    const auto free_memory = load_device_function<PFN_vkFreeMemory>(
-        get_device_proc_addr, device, "vkFreeMemory");
-    const auto bind_image_memory = load_device_function<PFN_vkBindImageMemory>(
-        get_device_proc_addr, device, "vkBindImageMemory");
-    const auto create_image_view = load_device_function<PFN_vkCreateImageView>(
-        get_device_proc_addr, device, "vkCreateImageView");
-    const auto destroy_image_view =
-        load_device_function<PFN_vkDestroyImageView>(
-            get_device_proc_addr, device, "vkDestroyImageView");
-
     CubeAliasReport report;
     for (const VkFormat format : cube_format_candidates()) {
         VkImageFormatProperties properties{};
@@ -646,7 +719,7 @@ CubeAliasReport verify_cube_alias_views(
         VkDeviceMemory image_memory = VK_NULL_HANDLE;
         VkImageView cube_view = VK_NULL_HANDLE;
         VkImageView cube_array_view = VK_NULL_HANDLE;
-        const auto cleanup = [&] {
+        const ScopeExit cleanup{[&] {
             if (cube_array_view != VK_NULL_HANDLE) {
                 destroy_image_view(device, cube_array_view, nullptr);
             }
@@ -659,13 +732,12 @@ CubeAliasReport verify_cube_alias_views(
             if (image_memory != VK_NULL_HANDLE) {
                 free_memory(device, image_memory, nullptr);
             }
-        };
+        }};
         const auto require_result = [&](VkResult result,
                                         std::string_view operation) {
             if (result == VK_SUCCESS) {
                 return;
             }
-            cleanup();
             throw std::runtime_error(
                 std::string(operation) + " failed for cube format " +
                 std::to_string(format) + ": " + std::to_string(result));
@@ -683,7 +755,6 @@ CubeAliasReport verify_cube_alias_views(
             }
         }
         if (memory_type == memory.memoryTypeCount) {
-            cleanup();
             throw std::runtime_error(
                 "no memory type for cube format " + std::to_string(format));
         }
@@ -721,7 +792,6 @@ CubeAliasReport verify_cube_alias_views(
                        "vkCreateImageView(CUBE_ARRAY)");
         ++report.cube_array_view_count;
         report.formats.push_back(format);
-        cleanup();
     }
     return report;
 }
@@ -758,52 +828,9 @@ struct GraphicsPipelineLibraryReport {
     uint64_t bind_record_ns = 0;
 };
 
-GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
-    VkDevice device,
-    uint32_t queue_family,
-    PFN_vkGetDeviceProcAddr get_device_proc_addr)
+GraphicsPipelineLibraryReport ProbeDevice::verify_graphics_pipeline_library(
+    uint32_t queue_family) const
 {
-    const auto create_shader_module =
-        load_device_function<PFN_vkCreateShaderModule>(
-            get_device_proc_addr, device, "vkCreateShaderModule");
-    const auto destroy_shader_module =
-        load_device_function<PFN_vkDestroyShaderModule>(
-            get_device_proc_addr, device, "vkDestroyShaderModule");
-    const auto create_pipeline_layout =
-        load_device_function<PFN_vkCreatePipelineLayout>(
-            get_device_proc_addr, device, "vkCreatePipelineLayout");
-    const auto destroy_pipeline_layout =
-        load_device_function<PFN_vkDestroyPipelineLayout>(
-            get_device_proc_addr, device, "vkDestroyPipelineLayout");
-    const auto create_pipeline_cache =
-        load_device_function<PFN_vkCreatePipelineCache>(
-            get_device_proc_addr, device, "vkCreatePipelineCache");
-    const auto destroy_pipeline_cache =
-        load_device_function<PFN_vkDestroyPipelineCache>(
-            get_device_proc_addr, device, "vkDestroyPipelineCache");
-    const auto create_graphics_pipelines =
-        load_device_function<PFN_vkCreateGraphicsPipelines>(
-            get_device_proc_addr, device, "vkCreateGraphicsPipelines");
-    const auto destroy_pipeline = load_device_function<PFN_vkDestroyPipeline>(
-        get_device_proc_addr, device, "vkDestroyPipeline");
-    const auto create_command_pool =
-        load_device_function<PFN_vkCreateCommandPool>(
-            get_device_proc_addr, device, "vkCreateCommandPool");
-    const auto destroy_command_pool =
-        load_device_function<PFN_vkDestroyCommandPool>(
-            get_device_proc_addr, device, "vkDestroyCommandPool");
-    const auto allocate_command_buffers =
-        load_device_function<PFN_vkAllocateCommandBuffers>(
-            get_device_proc_addr, device, "vkAllocateCommandBuffers");
-    const auto begin_command_buffer =
-        load_device_function<PFN_vkBeginCommandBuffer>(
-            get_device_proc_addr, device, "vkBeginCommandBuffer");
-    const auto end_command_buffer =
-        load_device_function<PFN_vkEndCommandBuffer>(
-            get_device_proc_addr, device, "vkEndCommandBuffer");
-    const auto cmd_bind_pipeline = load_device_function<PFN_vkCmdBindPipeline>(
-        get_device_proc_addr, device, "vkCmdBindPipeline");
-
     VkShaderModule vertex_module = VK_NULL_HANDLE;
     VkShaderModule fragment_module = VK_NULL_HANDLE;
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -817,7 +844,7 @@ GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
     VkPipeline lto_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
 
-    const auto cleanup = [&] {
+    const ScopeExit cleanup{[&] {
         if (command_pool != VK_NULL_HANDLE) {
             destroy_command_pool(device, command_pool, nullptr);
         }
@@ -858,13 +885,12 @@ GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
         if (vertex_module != VK_NULL_HANDLE) {
             destroy_shader_module(device, vertex_module, nullptr);
         }
-    };
+    }};
     const auto require_success = [&](VkResult result,
                                      std::string_view operation) {
         if (result == VK_SUCCESS) {
             return;
         }
-        cleanup();
         throw std::runtime_error(
             std::string(operation) + " failed: " + std::to_string(result));
     };
@@ -1004,7 +1030,6 @@ GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
         destroy_pipeline(device, unexpected_pipeline, nullptr);
     }
     if (report.compile_required_result != VK_PIPELINE_COMPILE_REQUIRED) {
-        cleanup();
         throw std::runtime_error(
             "cold GPL fail-on-compile did not return PIPELINE_COMPILE_REQUIRED: " +
             std::to_string(report.compile_required_result));
@@ -1177,7 +1202,6 @@ GraphicsPipelineLibraryReport verify_graphics_pipeline_library(
             .count());
     require_success(report.bind_result, "GPL command buffer bind recording");
 
-    cleanup();
     return report;
 }
 
@@ -1208,168 +1232,80 @@ struct DeviceAddressCommandsReport {
     bool transfer_verified = false;
 };
 
-DeviceAddressCommandsReport verify_device_address_commands(
-    VkDevice device,
+DeviceAddressCommandsReport ProbeDevice::verify_device_address_commands(
     uint32_t api_version,
     uint32_t queue_family,
     const VkPhysicalDeviceMemoryProperties &memory,
-    const std::vector<VkExtensionProperties> &extensions,
-    PFN_vkGetDeviceProcAddr get_device_proc_addr)
+    const std::vector<VkExtensionProperties> &extensions) const
 {
     DeviceAddressCommandsReport report;
 
-    const auto cmd_bind_index_buffer =
-        load_counted_device_function<PFN_vkCmdBindIndexBuffer3KHR>(
-            get_device_proc_addr, device, "vkCmdBindIndexBuffer3KHR",
-            report.entrypoint_count);
-    const auto cmd_bind_vertex_buffers =
-        load_counted_device_function<PFN_vkCmdBindVertexBuffers3KHR>(
-            get_device_proc_addr, device, "vkCmdBindVertexBuffers3KHR",
-            report.entrypoint_count);
-    (void)load_counted_device_function<PFN_vkCmdDrawIndirect2KHR>(
-        get_device_proc_addr, device, "vkCmdDrawIndirect2KHR",
-        report.entrypoint_count);
-    (void)load_counted_device_function<PFN_vkCmdDrawIndexedIndirect2KHR>(
-        get_device_proc_addr, device, "vkCmdDrawIndexedIndirect2KHR",
-        report.entrypoint_count);
-    (void)load_counted_device_function<PFN_vkCmdDispatchIndirect2KHR>(
-        get_device_proc_addr, device, "vkCmdDispatchIndirect2KHR",
-        report.entrypoint_count);
-    const auto cmd_copy_memory =
-        load_counted_device_function<PFN_vkCmdCopyMemoryKHR>(
-            get_device_proc_addr, device, "vkCmdCopyMemoryKHR",
-            report.entrypoint_count);
-    (void)load_counted_device_function<PFN_vkCmdCopyMemoryToImageKHR>(
-        get_device_proc_addr, device, "vkCmdCopyMemoryToImageKHR",
-        report.entrypoint_count);
-    (void)load_counted_device_function<PFN_vkCmdCopyImageToMemoryKHR>(
-        get_device_proc_addr, device, "vkCmdCopyImageToMemoryKHR",
-        report.entrypoint_count);
-    const auto cmd_update_memory =
-        load_counted_device_function<PFN_vkCmdUpdateMemoryKHR>(
-            get_device_proc_addr, device, "vkCmdUpdateMemoryKHR",
-            report.entrypoint_count);
-    const auto cmd_fill_memory =
-        load_counted_device_function<PFN_vkCmdFillMemoryKHR>(
-            get_device_proc_addr, device, "vkCmdFillMemoryKHR",
-            report.entrypoint_count);
-    (void)load_counted_device_function<
-        PFN_vkCmdCopyQueryPoolResultsToMemoryKHR>(
-        get_device_proc_addr, device,
-        "vkCmdCopyQueryPoolResultsToMemoryKHR", report.entrypoint_count);
-
+    // Every entry point the extension adds, and those it adds to the
+    // extensions this device has, must resolve. The report counts them.
+    const auto count_entry_points =
+        [&](std::initializer_list<const char *> names) {
+            for (const char *name : names) {
+                (void)load_device_function<PFN_vkVoidFunction>(
+                    get_device_proc_addr, device, name);
+                ++report.entrypoint_count;
+            }
+        };
+    count_entry_points({
+        "vkCmdBindIndexBuffer3KHR",
+        "vkCmdBindVertexBuffers3KHR",
+        "vkCmdDrawIndirect2KHR",
+        "vkCmdDrawIndexedIndirect2KHR",
+        "vkCmdDispatchIndirect2KHR",
+        "vkCmdCopyMemoryKHR",
+        "vkCmdCopyMemoryToImageKHR",
+        "vkCmdCopyImageToMemoryKHR",
+        "vkCmdUpdateMemoryKHR",
+        "vkCmdFillMemoryKHR",
+        "vkCmdCopyQueryPoolResultsToMemoryKHR",
+    });
     if (api_version >= VK_API_VERSION_1_2 ||
         has_extension(extensions,
                       VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)) {
-        (void)load_counted_device_function<PFN_vkCmdDrawIndirectCount2KHR>(
-            get_device_proc_addr, device, "vkCmdDrawIndirectCount2KHR",
-            report.entrypoint_count);
-        (void)load_counted_device_function<
-            PFN_vkCmdDrawIndexedIndirectCount2KHR>(
-            get_device_proc_addr, device,
-            "vkCmdDrawIndexedIndirectCount2KHR", report.entrypoint_count);
+        count_entry_points({
+            "vkCmdDrawIndirectCount2KHR",
+            "vkCmdDrawIndexedIndirectCount2KHR",
+        });
     }
     if (has_extension(extensions,
                       VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME)) {
-        (void)load_counted_device_function<
-            PFN_vkCmdBeginConditionalRendering2EXT>(
-            get_device_proc_addr, device,
-            "vkCmdBeginConditionalRendering2EXT", report.entrypoint_count);
+        count_entry_points({"vkCmdBeginConditionalRendering2EXT"});
     }
     if (has_extension(extensions, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME)) {
-        (void)load_counted_device_function<
-            PFN_vkCmdBindTransformFeedbackBuffers2EXT>(
-            get_device_proc_addr, device,
+        count_entry_points({
             "vkCmdBindTransformFeedbackBuffers2EXT",
-            report.entrypoint_count);
-        (void)load_counted_device_function<
-            PFN_vkCmdBeginTransformFeedback2EXT>(
-            get_device_proc_addr, device,
-            "vkCmdBeginTransformFeedback2EXT", report.entrypoint_count);
-        (void)load_counted_device_function<PFN_vkCmdEndTransformFeedback2EXT>(
-            get_device_proc_addr, device, "vkCmdEndTransformFeedback2EXT",
-            report.entrypoint_count);
-        (void)load_counted_device_function<
-            PFN_vkCmdDrawIndirectByteCount2EXT>(
-            get_device_proc_addr, device,
-            "vkCmdDrawIndirectByteCount2EXT", report.entrypoint_count);
+            "vkCmdBeginTransformFeedback2EXT",
+            "vkCmdEndTransformFeedback2EXT",
+            "vkCmdDrawIndirectByteCount2EXT",
+        });
     }
     if (has_extension(extensions, VK_EXT_MESH_SHADER_EXTENSION_NAME)) {
-        (void)load_counted_device_function<PFN_vkCmdDrawMeshTasksIndirect2EXT>(
-            get_device_proc_addr, device, "vkCmdDrawMeshTasksIndirect2EXT",
-            report.entrypoint_count);
+        count_entry_points({"vkCmdDrawMeshTasksIndirect2EXT"});
         if (api_version >= VK_API_VERSION_1_2 ||
             has_extension(extensions,
                           VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)) {
-            (void)load_counted_device_function<
-                PFN_vkCmdDrawMeshTasksIndirectCount2EXT>(
-                get_device_proc_addr, device,
-                "vkCmdDrawMeshTasksIndirectCount2EXT",
-                report.entrypoint_count);
+            count_entry_points({"vkCmdDrawMeshTasksIndirectCount2EXT"});
         }
     }
     if (has_extension(extensions, VK_AMD_BUFFER_MARKER_EXTENSION_NAME)) {
-        (void)load_counted_device_function<PFN_vkCmdWriteMarkerToMemoryAMD>(
-            get_device_proc_addr, device, "vkCmdWriteMarkerToMemoryAMD",
-            report.entrypoint_count);
+        count_entry_points({"vkCmdWriteMarkerToMemoryAMD"});
     }
     if (has_extension(extensions,
                       VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
-        (void)load_counted_device_function<
-            PFN_vkCreateAccelerationStructure2KHR>(
-            get_device_proc_addr, device,
-            "vkCreateAccelerationStructure2KHR", report.entrypoint_count);
+        count_entry_points({"vkCreateAccelerationStructure2KHR"});
     }
+    UML_DEVICE_FUNCTION(cmd_bind_index_buffer, CmdBindIndexBuffer3KHR);
+    UML_DEVICE_FUNCTION(cmd_bind_vertex_buffers3, CmdBindVertexBuffers3KHR);
+    UML_DEVICE_FUNCTION(cmd_copy_memory, CmdCopyMemoryKHR);
+    UML_DEVICE_FUNCTION(cmd_update_memory, CmdUpdateMemoryKHR);
+    UML_DEVICE_FUNCTION(cmd_fill_memory, CmdFillMemoryKHR);
 
-    const auto create_buffer = load_device_function<PFN_vkCreateBuffer>(
-        get_device_proc_addr, device, "vkCreateBuffer");
-    const auto destroy_buffer = load_device_function<PFN_vkDestroyBuffer>(
-        get_device_proc_addr, device, "vkDestroyBuffer");
-    const auto get_buffer_memory_requirements =
-        load_device_function<PFN_vkGetBufferMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetBufferMemoryRequirements");
-    const auto allocate_memory = load_device_function<PFN_vkAllocateMemory>(
-        get_device_proc_addr, device, "vkAllocateMemory");
-    const auto free_memory = load_device_function<PFN_vkFreeMemory>(
-        get_device_proc_addr, device, "vkFreeMemory");
-    const auto bind_buffer_memory =
-        load_device_function<PFN_vkBindBufferMemory>(
-            get_device_proc_addr, device, "vkBindBufferMemory");
-    const auto get_buffer_device_address =
-        load_device_function<PFN_vkGetBufferDeviceAddress>(
-            get_device_proc_addr, device, "vkGetBufferDeviceAddress");
-    const auto create_command_pool =
-        load_device_function<PFN_vkCreateCommandPool>(
-            get_device_proc_addr, device, "vkCreateCommandPool");
-    const auto destroy_command_pool =
-        load_device_function<PFN_vkDestroyCommandPool>(
-            get_device_proc_addr, device, "vkDestroyCommandPool");
-    const auto allocate_command_buffers =
-        load_device_function<PFN_vkAllocateCommandBuffers>(
-            get_device_proc_addr, device, "vkAllocateCommandBuffers");
-    const auto begin_command_buffer =
-        load_device_function<PFN_vkBeginCommandBuffer>(
-            get_device_proc_addr, device, "vkBeginCommandBuffer");
-    const auto end_command_buffer =
-        load_device_function<PFN_vkEndCommandBuffer>(
-            get_device_proc_addr, device, "vkEndCommandBuffer");
-    const auto cmd_pipeline_barrier2 =
-        load_device_function<PFN_vkCmdPipelineBarrier2>(
-            get_device_proc_addr, device, "vkCmdPipelineBarrier2");
-    const auto get_device_queue = load_device_function<PFN_vkGetDeviceQueue>(
-        get_device_proc_addr, device, "vkGetDeviceQueue");
-    const auto queue_submit = load_device_function<PFN_vkQueueSubmit>(
-        get_device_proc_addr, device, "vkQueueSubmit");
-    const auto queue_wait_idle = load_device_function<PFN_vkQueueWaitIdle>(
-        get_device_proc_addr, device, "vkQueueWaitIdle");
-    const auto map_memory = load_device_function<PFN_vkMapMemory>(
-        get_device_proc_addr, device, "vkMapMemory");
-    const auto unmap_memory = load_device_function<PFN_vkUnmapMemory>(
-        get_device_proc_addr, device, "vkUnmapMemory");
-    const auto invalidate_memory =
-        load_device_function<PFN_vkInvalidateMappedMemoryRanges>(
-            get_device_proc_addr, device,
-            "vkInvalidateMappedMemoryRanges");
+    UML_DEVICE_FUNCTION(get_buffer_device_address, GetBufferDeviceAddress);
+    UML_DEVICE_FUNCTION(cmd_pipeline_barrier2, CmdPipelineBarrier2);
 
     VkBuffer source = VK_NULL_HANDLE;
     VkBuffer destination = VK_NULL_HANDLE;
@@ -1377,7 +1313,7 @@ DeviceAddressCommandsReport verify_device_address_commands(
     VkDeviceMemory destination_memory = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     void *destination_map = nullptr;
-    const auto cleanup = [&] {
+    const ScopeExit cleanup{[&] {
         if (destination_map != nullptr) {
             unmap_memory(device, destination_memory);
             destination_map = nullptr;
@@ -1402,13 +1338,12 @@ DeviceAddressCommandsReport verify_device_address_commands(
             free_memory(device, source_memory, nullptr);
             source_memory = VK_NULL_HANDLE;
         }
-    };
+    }};
     const auto require_result = [&](VkResult result,
                                     std::string_view operation) {
         if (result == VK_SUCCESS) {
             return;
         }
-        cleanup();
         throw std::runtime_error(std::string(operation) + " failed: " +
                                  std::to_string(result));
     };
@@ -1465,7 +1400,6 @@ DeviceAddressCommandsReport verify_device_address_commands(
         }
     }
     if (memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error(
             "no host-visible buffer-device-address memory type");
     }
@@ -1515,7 +1449,6 @@ DeviceAddressCommandsReport verify_device_address_commands(
     const VkDeviceAddress destination_address =
         get_buffer_device_address(device, &destination_address_info);
     if (source_address == 0 || destination_address == 0) {
-        cleanup();
         throw std::runtime_error("buffer device address query returned zero");
     }
 
@@ -1640,14 +1573,13 @@ DeviceAddressCommandsReport verify_device_address_commands(
         {destination_address, copy_size, 16},
         address_flags,
     };
-    cmd_bind_vertex_buffers(command_buffer, 0, 1, &vertex_binding);
+    cmd_bind_vertex_buffers3(command_buffer, 0, 1, &vertex_binding);
     report.state_commands_recorded = true;
 
     require_result(end_command_buffer(command_buffer), "vkEndCommandBuffer");
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family, 0, &queue);
     if (queue == VK_NULL_HANDLE) {
-        cleanup();
         throw std::runtime_error("vkGetDeviceQueue returned null");
     }
     const VkSubmitInfo submit_info{
@@ -1682,12 +1614,10 @@ DeviceAddressCommandsReport verify_device_address_commands(
     std::fill(expected.begin() + update_data.size(), expected.end(),
               fill_data);
     if (std::memcmp(destination_map, expected.data(), copy_size) != 0) {
-        cleanup();
         throw std::runtime_error(
             "device-address update/fill/copy verification mismatch");
     }
     report.transfer_verified = true;
-    cleanup();
     return report;
 }
 
@@ -1749,121 +1679,13 @@ uint8_t apply_logic_op(VkLogicOp operation, uint8_t source, uint8_t destination)
     }
 }
 
-DynamicLogicOpReport verify_dynamic_logic_ops(
-    VkDevice device,
+DynamicLogicOpReport ProbeDevice::verify_dynamic_logic_ops(
     uint32_t queue_family,
-    const VkPhysicalDeviceMemoryProperties &memory,
-    PFN_vkGetDeviceProcAddr get_device_proc_addr)
+    const VkPhysicalDeviceMemoryProperties &memory) const
 {
     DynamicLogicOpReport report;
-    const auto cmd_set_logic_op =
-        load_counted_device_function<PFN_vkCmdSetLogicOpEXT>(
-            get_device_proc_addr, device, "vkCmdSetLogicOpEXT",
-            report.entrypoint_count);
-    const auto create_shader_module =
-        load_device_function<PFN_vkCreateShaderModule>(
-            get_device_proc_addr, device, "vkCreateShaderModule");
-    const auto destroy_shader_module =
-        load_device_function<PFN_vkDestroyShaderModule>(
-            get_device_proc_addr, device, "vkDestroyShaderModule");
-    const auto create_pipeline_layout =
-        load_device_function<PFN_vkCreatePipelineLayout>(
-            get_device_proc_addr, device, "vkCreatePipelineLayout");
-    const auto destroy_pipeline_layout =
-        load_device_function<PFN_vkDestroyPipelineLayout>(
-            get_device_proc_addr, device, "vkDestroyPipelineLayout");
-    const auto create_render_pass = load_device_function<PFN_vkCreateRenderPass>(
-        get_device_proc_addr, device, "vkCreateRenderPass");
-    const auto destroy_render_pass =
-        load_device_function<PFN_vkDestroyRenderPass>(
-            get_device_proc_addr, device, "vkDestroyRenderPass");
-    const auto create_graphics_pipelines =
-        load_device_function<PFN_vkCreateGraphicsPipelines>(
-            get_device_proc_addr, device, "vkCreateGraphicsPipelines");
-    const auto destroy_pipeline = load_device_function<PFN_vkDestroyPipeline>(
-        get_device_proc_addr, device, "vkDestroyPipeline");
-    const auto create_image = load_device_function<PFN_vkCreateImage>(
-        get_device_proc_addr, device, "vkCreateImage");
-    const auto destroy_image = load_device_function<PFN_vkDestroyImage>(
-        get_device_proc_addr, device, "vkDestroyImage");
-    const auto get_image_memory_requirements =
-        load_device_function<PFN_vkGetImageMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetImageMemoryRequirements");
-    const auto create_image_view = load_device_function<PFN_vkCreateImageView>(
-        get_device_proc_addr, device, "vkCreateImageView");
-    const auto destroy_image_view =
-        load_device_function<PFN_vkDestroyImageView>(
-            get_device_proc_addr, device, "vkDestroyImageView");
-    const auto create_framebuffer =
-        load_device_function<PFN_vkCreateFramebuffer>(
-            get_device_proc_addr, device, "vkCreateFramebuffer");
-    const auto destroy_framebuffer =
-        load_device_function<PFN_vkDestroyFramebuffer>(
-            get_device_proc_addr, device, "vkDestroyFramebuffer");
-    const auto create_buffer = load_device_function<PFN_vkCreateBuffer>(
-        get_device_proc_addr, device, "vkCreateBuffer");
-    const auto destroy_buffer = load_device_function<PFN_vkDestroyBuffer>(
-        get_device_proc_addr, device, "vkDestroyBuffer");
-    const auto get_buffer_memory_requirements =
-        load_device_function<PFN_vkGetBufferMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetBufferMemoryRequirements");
-    const auto allocate_memory = load_device_function<PFN_vkAllocateMemory>(
-        get_device_proc_addr, device, "vkAllocateMemory");
-    const auto free_memory = load_device_function<PFN_vkFreeMemory>(
-        get_device_proc_addr, device, "vkFreeMemory");
-    const auto bind_image_memory = load_device_function<PFN_vkBindImageMemory>(
-        get_device_proc_addr, device, "vkBindImageMemory");
-    const auto bind_buffer_memory =
-        load_device_function<PFN_vkBindBufferMemory>(
-            get_device_proc_addr, device, "vkBindBufferMemory");
-    const auto map_memory = load_device_function<PFN_vkMapMemory>(
-        get_device_proc_addr, device, "vkMapMemory");
-    const auto unmap_memory = load_device_function<PFN_vkUnmapMemory>(
-        get_device_proc_addr, device, "vkUnmapMemory");
-    const auto invalidate_memory =
-        load_device_function<PFN_vkInvalidateMappedMemoryRanges>(
-            get_device_proc_addr, device, "vkInvalidateMappedMemoryRanges");
-    const auto create_command_pool =
-        load_device_function<PFN_vkCreateCommandPool>(
-            get_device_proc_addr, device, "vkCreateCommandPool");
-    const auto destroy_command_pool =
-        load_device_function<PFN_vkDestroyCommandPool>(
-            get_device_proc_addr, device, "vkDestroyCommandPool");
-    const auto allocate_command_buffers =
-        load_device_function<PFN_vkAllocateCommandBuffers>(
-            get_device_proc_addr, device, "vkAllocateCommandBuffers");
-    const auto begin_command_buffer =
-        load_device_function<PFN_vkBeginCommandBuffer>(
-            get_device_proc_addr, device, "vkBeginCommandBuffer");
-    const auto end_command_buffer =
-        load_device_function<PFN_vkEndCommandBuffer>(
-            get_device_proc_addr, device, "vkEndCommandBuffer");
-    const auto cmd_pipeline_barrier =
-        load_device_function<PFN_vkCmdPipelineBarrier>(
-            get_device_proc_addr, device, "vkCmdPipelineBarrier");
-    const auto cmd_begin_render_pass =
-        load_device_function<PFN_vkCmdBeginRenderPass>(
-            get_device_proc_addr, device, "vkCmdBeginRenderPass");
-    const auto cmd_end_render_pass =
-        load_device_function<PFN_vkCmdEndRenderPass>(
-            get_device_proc_addr, device, "vkCmdEndRenderPass");
-    const auto cmd_bind_pipeline = load_device_function<PFN_vkCmdBindPipeline>(
-        get_device_proc_addr, device, "vkCmdBindPipeline");
-    const auto cmd_set_viewport = load_device_function<PFN_vkCmdSetViewport>(
-        get_device_proc_addr, device, "vkCmdSetViewport");
-    const auto cmd_set_scissor = load_device_function<PFN_vkCmdSetScissor>(
-        get_device_proc_addr, device, "vkCmdSetScissor");
-    const auto cmd_draw = load_device_function<PFN_vkCmdDraw>(
-        get_device_proc_addr, device, "vkCmdDraw");
-    const auto cmd_copy_image_to_buffer =
-        load_device_function<PFN_vkCmdCopyImageToBuffer>(
-            get_device_proc_addr, device, "vkCmdCopyImageToBuffer");
-    const auto get_device_queue = load_device_function<PFN_vkGetDeviceQueue>(
-        get_device_proc_addr, device, "vkGetDeviceQueue");
-    const auto queue_submit = load_device_function<PFN_vkQueueSubmit>(
-        get_device_proc_addr, device, "vkQueueSubmit");
-    const auto queue_wait_idle = load_device_function<PFN_vkQueueWaitIdle>(
-        get_device_proc_addr, device, "vkQueueWaitIdle");
+    UML_DEVICE_FUNCTION(cmd_set_logic_op, CmdSetLogicOpEXT);
+    ++report.entrypoint_count;
 
     VkShaderModule vertex_module = VK_NULL_HANDLE;
     VkShaderModule fragment_module = VK_NULL_HANDLE;
@@ -1878,7 +1700,7 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
     VkDeviceMemory readback_memory = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     void *readback_map = nullptr;
-    const auto cleanup = [&] {
+    const ScopeExit cleanup{[&] {
         if (readback_map != nullptr) {
             unmap_memory(device, readback_memory);
             readback_map = nullptr;
@@ -1919,13 +1741,12 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
         if (vertex_module != VK_NULL_HANDLE) {
             destroy_shader_module(device, vertex_module, nullptr);
         }
-    };
+    }};
     const auto require_result = [&](VkResult result,
                                     std::string_view operation) {
         if (result == VK_SUCCESS) {
             return;
         }
-        cleanup();
         throw std::runtime_error(std::string(operation) + " failed: " +
                                  std::to_string(result));
     };
@@ -2016,7 +1837,6 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
     const uint32_t image_memory_type = find_memory_type(
         image_requirements.memoryTypeBits, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (image_memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error("no compatible logic-op image memory type");
     }
     const VkMemoryAllocateInfo image_allocation{
@@ -2091,7 +1911,6 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (readback_memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error("no host-visible logic-op readback memory type");
     }
     const VkMemoryAllocateInfo buffer_allocation{
@@ -2271,7 +2090,6 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family, 0, &queue);
     if (queue == VK_NULL_HANDLE) {
-        cleanup();
         throw std::runtime_error("dynamic logic-op queue is null");
     }
     VkSubmitInfo submit_info{};
@@ -2304,7 +2122,6 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
                 destination[component]);
             const uint8_t actual = pixels[operation * source.size() + component];
             if (actual != expected) {
-                cleanup();
                 throw std::runtime_error(
                     "dynamic logic-op result mismatch for operation " +
                     std::to_string(operation) + ", component " +
@@ -2317,7 +2134,6 @@ DynamicLogicOpReport verify_dynamic_logic_ops(
     report.operation_count = logic_ops.size();
     report.results_verified = true;
     report.pipeline_reuse_verified = true;
-    cleanup();
     return report;
 }
 
@@ -2348,128 +2164,13 @@ struct LegacyVertexAttributesReport {
     bool parent_destroy_verified = false;
 };
 
-LegacyVertexAttributesReport verify_legacy_vertex_attributes(
-    VkDevice device,
+LegacyVertexAttributesReport ProbeDevice::verify_legacy_vertex_attributes(
     uint32_t queue_family,
-    const VkPhysicalDeviceMemoryProperties &memory,
-    PFN_vkGetDeviceProcAddr get_device_proc_addr)
+    const VkPhysicalDeviceMemoryProperties &memory) const
 {
     LegacyVertexAttributesReport report;
-    const auto cmd_set_vertex_input =
-        load_counted_device_function<PFN_vkCmdSetVertexInputEXT>(
-            get_device_proc_addr, device, "vkCmdSetVertexInputEXT",
-            report.entrypoint_count);
-    const auto create_shader_module =
-        load_device_function<PFN_vkCreateShaderModule>(
-            get_device_proc_addr, device, "vkCreateShaderModule");
-    const auto destroy_shader_module =
-        load_device_function<PFN_vkDestroyShaderModule>(
-            get_device_proc_addr, device, "vkDestroyShaderModule");
-    const auto create_pipeline_layout =
-        load_device_function<PFN_vkCreatePipelineLayout>(
-            get_device_proc_addr, device, "vkCreatePipelineLayout");
-    const auto destroy_pipeline_layout =
-        load_device_function<PFN_vkDestroyPipelineLayout>(
-            get_device_proc_addr, device, "vkDestroyPipelineLayout");
-    const auto create_render_pass = load_device_function<PFN_vkCreateRenderPass>(
-        get_device_proc_addr, device, "vkCreateRenderPass");
-    const auto destroy_render_pass =
-        load_device_function<PFN_vkDestroyRenderPass>(
-            get_device_proc_addr, device, "vkDestroyRenderPass");
-    const auto create_graphics_pipelines =
-        load_device_function<PFN_vkCreateGraphicsPipelines>(
-            get_device_proc_addr, device, "vkCreateGraphicsPipelines");
-    const auto destroy_pipeline = load_device_function<PFN_vkDestroyPipeline>(
-        get_device_proc_addr, device, "vkDestroyPipeline");
-    const auto create_image = load_device_function<PFN_vkCreateImage>(
-        get_device_proc_addr, device, "vkCreateImage");
-    const auto destroy_image = load_device_function<PFN_vkDestroyImage>(
-        get_device_proc_addr, device, "vkDestroyImage");
-    const auto get_image_memory_requirements =
-        load_device_function<PFN_vkGetImageMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetImageMemoryRequirements");
-    const auto create_image_view = load_device_function<PFN_vkCreateImageView>(
-        get_device_proc_addr, device, "vkCreateImageView");
-    const auto destroy_image_view =
-        load_device_function<PFN_vkDestroyImageView>(
-            get_device_proc_addr, device, "vkDestroyImageView");
-    const auto create_framebuffer =
-        load_device_function<PFN_vkCreateFramebuffer>(
-            get_device_proc_addr, device, "vkCreateFramebuffer");
-    const auto destroy_framebuffer =
-        load_device_function<PFN_vkDestroyFramebuffer>(
-            get_device_proc_addr, device, "vkDestroyFramebuffer");
-    const auto create_buffer = load_device_function<PFN_vkCreateBuffer>(
-        get_device_proc_addr, device, "vkCreateBuffer");
-    const auto destroy_buffer = load_device_function<PFN_vkDestroyBuffer>(
-        get_device_proc_addr, device, "vkDestroyBuffer");
-    const auto get_buffer_memory_requirements =
-        load_device_function<PFN_vkGetBufferMemoryRequirements>(
-            get_device_proc_addr, device, "vkGetBufferMemoryRequirements");
-    const auto allocate_memory = load_device_function<PFN_vkAllocateMemory>(
-        get_device_proc_addr, device, "vkAllocateMemory");
-    const auto free_memory = load_device_function<PFN_vkFreeMemory>(
-        get_device_proc_addr, device, "vkFreeMemory");
-    const auto bind_image_memory = load_device_function<PFN_vkBindImageMemory>(
-        get_device_proc_addr, device, "vkBindImageMemory");
-    const auto bind_buffer_memory =
-        load_device_function<PFN_vkBindBufferMemory>(
-            get_device_proc_addr, device, "vkBindBufferMemory");
-    const auto map_memory = load_device_function<PFN_vkMapMemory>(
-        get_device_proc_addr, device, "vkMapMemory");
-    const auto unmap_memory = load_device_function<PFN_vkUnmapMemory>(
-        get_device_proc_addr, device, "vkUnmapMemory");
-    const auto flush_memory =
-        load_device_function<PFN_vkFlushMappedMemoryRanges>(
-            get_device_proc_addr, device, "vkFlushMappedMemoryRanges");
-    const auto invalidate_memory =
-        load_device_function<PFN_vkInvalidateMappedMemoryRanges>(
-            get_device_proc_addr, device,
-            "vkInvalidateMappedMemoryRanges");
-    const auto create_command_pool =
-        load_device_function<PFN_vkCreateCommandPool>(
-            get_device_proc_addr, device, "vkCreateCommandPool");
-    const auto destroy_command_pool =
-        load_device_function<PFN_vkDestroyCommandPool>(
-            get_device_proc_addr, device, "vkDestroyCommandPool");
-    const auto allocate_command_buffers =
-        load_device_function<PFN_vkAllocateCommandBuffers>(
-            get_device_proc_addr, device, "vkAllocateCommandBuffers");
-    const auto begin_command_buffer =
-        load_device_function<PFN_vkBeginCommandBuffer>(
-            get_device_proc_addr, device, "vkBeginCommandBuffer");
-    const auto end_command_buffer =
-        load_device_function<PFN_vkEndCommandBuffer>(
-            get_device_proc_addr, device, "vkEndCommandBuffer");
-    const auto cmd_pipeline_barrier =
-        load_device_function<PFN_vkCmdPipelineBarrier>(
-            get_device_proc_addr, device, "vkCmdPipelineBarrier");
-    const auto cmd_begin_render_pass =
-        load_device_function<PFN_vkCmdBeginRenderPass>(
-            get_device_proc_addr, device, "vkCmdBeginRenderPass");
-    const auto cmd_end_render_pass =
-        load_device_function<PFN_vkCmdEndRenderPass>(
-            get_device_proc_addr, device, "vkCmdEndRenderPass");
-    const auto cmd_bind_pipeline = load_device_function<PFN_vkCmdBindPipeline>(
-        get_device_proc_addr, device, "vkCmdBindPipeline");
-    const auto cmd_set_viewport = load_device_function<PFN_vkCmdSetViewport>(
-        get_device_proc_addr, device, "vkCmdSetViewport");
-    const auto cmd_set_scissor = load_device_function<PFN_vkCmdSetScissor>(
-        get_device_proc_addr, device, "vkCmdSetScissor");
-    const auto cmd_bind_vertex_buffers =
-        load_device_function<PFN_vkCmdBindVertexBuffers>(
-            get_device_proc_addr, device, "vkCmdBindVertexBuffers");
-    const auto cmd_draw = load_device_function<PFN_vkCmdDraw>(
-        get_device_proc_addr, device, "vkCmdDraw");
-    const auto cmd_copy_image_to_buffer =
-        load_device_function<PFN_vkCmdCopyImageToBuffer>(
-            get_device_proc_addr, device, "vkCmdCopyImageToBuffer");
-    const auto get_device_queue = load_device_function<PFN_vkGetDeviceQueue>(
-        get_device_proc_addr, device, "vkGetDeviceQueue");
-    const auto queue_submit = load_device_function<PFN_vkQueueSubmit>(
-        get_device_proc_addr, device, "vkQueueSubmit");
-    const auto queue_wait_idle = load_device_function<PFN_vkQueueWaitIdle>(
-        get_device_proc_addr, device, "vkQueueWaitIdle");
+    UML_DEVICE_FUNCTION(cmd_set_vertex_input, CmdSetVertexInputEXT);
+    ++report.entrypoint_count;
 
     VkShaderModule vertex_module = VK_NULL_HANDLE;
     VkShaderModule fragment_module = VK_NULL_HANDLE;
@@ -2488,7 +2189,7 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
     VkCommandPool command_pool = VK_NULL_HANDLE;
     std::array<VkCommandPool, 2> race_pools{};
     void *readback_map = nullptr;
-    const auto cleanup = [&] {
+    const ScopeExit cleanup{[&] {
         if (readback_map != nullptr) {
             unmap_memory(device, readback_memory);
             readback_map = nullptr;
@@ -2543,13 +2244,12 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
         if (vertex_module != VK_NULL_HANDLE) {
             destroy_shader_module(device, vertex_module, nullptr);
         }
-    };
+    }};
     const auto require_result = [&](VkResult result,
                                     std::string_view operation) {
         if (result == VK_SUCCESS) {
             return;
         }
-        cleanup();
         throw std::runtime_error(std::string(operation) + " failed: " +
                                  std::to_string(result));
     };
@@ -2689,7 +2389,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
         destroy_pipeline(device, unexpected_pipeline, nullptr);
     }
     if (report.compile_required_result != VK_PIPELINE_COMPILE_REQUIRED) {
-        cleanup();
         throw std::runtime_error(
             "dynamic vertex-input fail-on-compile did not return "
             "PIPELINE_COMPILE_REQUIRED: " +
@@ -2728,7 +2427,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
         image_requirements.memoryTypeBits, 0,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (image_memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error("no compatible legacy image memory type");
     }
     const VkMemoryAllocateInfo image_allocation{
@@ -2787,7 +2485,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (vertex_memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error("no host-visible legacy vertex memory type");
     }
     const VkMemoryAllocateInfo vertex_allocation{
@@ -2828,7 +2525,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (readback_memory_type == memory.memoryTypeCount) {
-        cleanup();
         throw std::runtime_error("no host-visible legacy readback memory type");
     }
     const VkMemoryAllocateInfo readback_allocation{
@@ -2955,7 +2651,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
     }
     for (const VkResult result : race_results) {
         if (result != VK_SUCCESS) {
-            cleanup();
             throw std::runtime_error(
                 "concurrent same-key vertex-input recording failed: " +
                 std::to_string(result));
@@ -3050,7 +2745,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family, 0, &queue);
     if (queue == VK_NULL_HANDLE) {
-        cleanup();
         throw std::runtime_error("legacy queue is null");
     }
     VkSubmitInfo submit_info{};
@@ -3082,7 +2776,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
                 std::to_string(actual[0]) + "," + std::to_string(actual[1]) +
                 "," + std::to_string(actual[2]) + "," +
                 std::to_string(actual[3]);
-            cleanup();
             throw std::runtime_error(
                 "legacy vertex draw " + std::to_string(index) +
                 " mismatch: expected red, got " + actual_string);
@@ -3097,7 +2790,6 @@ LegacyVertexAttributesReport verify_legacy_vertex_attributes(
     pipeline = VK_NULL_HANDLE;
     report.parent_destroy_verified = true;
 
-    cleanup();
     return report;
 }
 
@@ -3708,9 +3400,10 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                     device_result =
                         create_device(physical, &device_info, nullptr, &device);
                     if (device_result == VK_SUCCESS) {
-                        const auto get_device_proc_addr =
+                        const ProbeDevice probe{
+                            device,
                             load_function<PFN_vkGetDeviceProcAddr>(
-                                instance, "vkGetDeviceProcAddr");
+                                instance, "vkGetDeviceProcAddr")};
                         DeviceAddressCommandsReport address_commands_report;
                         const bool verify_address_commands =
                             has_device_address_commands &&
@@ -3722,12 +3415,10 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                              VK_QUEUE_TRANSFER_BIT) != 0;
                         if (verify_address_commands) {
                             address_commands_report =
-                                verify_device_address_commands(
-                                    device,
+                                probe.verify_device_address_commands(
                                     properties.properties.apiVersion,
                                     selected_queue, memory,
-                                    device_extensions,
-                                    get_device_proc_addr);
+                                    device_extensions);
                         }
                         DynamicLogicOpReport dynamic_logic_op_report;
                         const bool verify_dynamic_logic_op =
@@ -3738,9 +3429,9 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                             (queues[selected_queue].queueFlags &
                              VK_QUEUE_GRAPHICS_BIT) != 0;
                         if (verify_dynamic_logic_op) {
-                            dynamic_logic_op_report = verify_dynamic_logic_ops(
-                                device, selected_queue, memory,
-                                get_device_proc_addr);
+                            dynamic_logic_op_report =
+                                probe.verify_dynamic_logic_ops(
+                                    selected_queue, memory);
                         }
                         LegacyVertexAttributesReport
                             legacy_vertex_attributes_report;
@@ -3755,9 +3446,8 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                              VK_QUEUE_GRAPHICS_BIT) != 0;
                         if (run_legacy_vertex_attributes) {
                             legacy_vertex_attributes_report =
-                                verify_legacy_vertex_attributes(
-                                    device, selected_queue, memory,
-                                    get_device_proc_addr);
+                                probe.verify_legacy_vertex_attributes(
+                                    selected_queue, memory);
                         }
                         CubeAliasReport alias_report;
                         GraphicsPipelineLibraryReport
@@ -3765,10 +3455,9 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                         if (has_non_seamless_cube_map &&
                             non_seamless_cube_map_features
                                 .nonSeamlessCubeMap) {
-                            alias_report = verify_cube_alias_views(
-                                physical, device, memory,
-                                get_image_format_properties,
-                                get_device_proc_addr);
+                            alias_report = probe.verify_cube_alias_views(
+                                physical, memory,
+                                get_image_format_properties);
                         }
                         const bool run_graphics_pipeline_library =
                             has_pipeline_library &&
@@ -3777,9 +3466,8 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                                 .graphicsPipelineLibrary;
                         if (run_graphics_pipeline_library) {
                             graphics_pipeline_library_report =
-                                verify_graphics_pipeline_library(
-                                    device, selected_queue,
-                                    get_device_proc_addr);
+                                probe.verify_graphics_pipeline_library(
+                                    selected_queue);
                         }
                         output << device_result
                                << ",\"device_address_commands_execution\":";
@@ -3813,11 +3501,7 @@ int run_kosmickrisp_capability_probe(std::ostream &output)
                         } else {
                             output << "null";
                         }
-                        const auto destroy_device =
-                            load_device_function<PFN_vkDestroyDevice>(
-                                get_device_proc_addr, device,
-                                "vkDestroyDevice");
-                        destroy_device(device, nullptr);
+                        probe.destroy_device(device, nullptr);
                     } else {
                         output << device_result
                                << ",\"device_address_commands_execution\":null"
