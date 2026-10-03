@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -48,7 +49,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 constexpr std::array<Gadget, 3> native_gadgets{
 	uml_arm64_gadget_bfloat_convert_scalar_native,
@@ -57,17 +58,8 @@ constexpr std::array<Gadget, 3> native_gadgets{
 };
 
 using uml::testing::require;
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned reg)
-{
-	return offsetof(test::arm64::CpuState, vectors) +
-		reg * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t translated_operand(
 	test::Form form, test::Registers registers)

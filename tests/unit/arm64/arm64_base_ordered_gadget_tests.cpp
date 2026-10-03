@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "arm64_ordered_memory_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -53,7 +54,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 using RegisterModes = std::array<Gadget, 2>;
 using SizeModes = std::array<RegisterModes, 4>;
 
@@ -92,10 +93,7 @@ constexpr std::array rcpc_store{
 };
 #undef UML_RCPC_MODES
 
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] gadgets::BuildResult build(std::uint32_t instruction)
 {
@@ -113,7 +111,7 @@ void require_selected(std::uint32_t instruction, Gadget expected,
 	const auto built = build(instruction);
 	const auto words = built.program.words();
 	if (!built.complete || words.size() < 3U ||
-	    words[0] != address_of(expected) || words[1] != operand)
+	    words[0] != address(expected) || words[1] != operand)
 		std::abort();
 	selected.insert(words[0]);
 }
@@ -149,13 +147,13 @@ void exact_translation_selection()
 	for (const auto &sizes : {ordered_load, ordered_store})
 		for (const auto &modes : sizes)
 			for (const auto gadget : modes)
-				expected.insert(address_of(gadget));
+				expected.insert(address(gadget));
 	for (const auto &modes : rcpc_load)
 		for (const auto gadget : modes)
-			expected.insert(address_of(gadget));
+			expected.insert(address(gadget));
 	for (const auto &modes : rcpc_store)
 		for (const auto gadget : modes)
-			expected.insert(address_of(gadget));
+			expected.insert(address(gadget));
 
 	for (const auto &variant : ordered::scalar_variants) {
 		if (variant.instruction_class == ordered::ScalarClass::ordered) {

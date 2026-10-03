@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -68,7 +69,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 constexpr std::array<std::array<Gadget, 2>, 8> expected_gadgets{{
     {uml_arm64_gadget_simd_and_8b, uml_arm64_gadget_simd_and_16b},
@@ -82,15 +83,8 @@ constexpr std::array<std::array<Gadget, 2>, 8> expected_gadgets{{
 }};
 
 using uml::testing::require;
-
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget) noexcept {
-  return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index) noexcept {
-  return offsetof(uml::cpu::arm64::CpuState, vectors) +
-         index * sizeof(uml::cpu::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 void encoding_examples() {
   require(bitwise::instruction(true, bitwise::Operation::bit_and, {0, 1, 2}) ==
@@ -116,7 +110,7 @@ void production_specialization() {
       require(built.complete && built.program.words().size() == 4U,
               "ordinary bitwise instruction has an unexpected stream shape");
       require(built.program.words()[0] ==
-                  address_of(expected_gadgets[operation][q ? 1U : 0U]),
+                  address(expected_gadgets[operation][q ? 1U : 0U]),
               "operation or arrangement was not specialized in translation");
       require(built.program.words()[1] ==
                   gadgets::selection::packed_u16_operands(
@@ -134,7 +128,7 @@ void production_specialization() {
         q ? uml_arm64_gadget_simd_mov_16b : uml_arm64_gadget_simd_mov_8b;
     require(moved.complete && moved.program.words().size() == 4U,
             "MOV alias has an unexpected stream shape");
-    require(moved.program.words()[0] == address_of(expected),
+    require(moved.program.words()[0] == address(expected),
             "MOV alias retained the generic two-source operation");
     require(moved.program.words()[1] ==
                 gadgets::selection::packed_u16_operands(
@@ -149,7 +143,7 @@ void production_specialization() {
                 true, bitwise::Operation::bit_or, {9, 9, 9})});
   require(ordinary_nop.complete && self_move.complete &&
               ordinary_nop.program.words().front() ==
-                  address_of(uml_arm64_gadget_nop) &&
+                  address(uml_arm64_gadget_nop) &&
               self_move.program.words().size() == 3U &&
               self_move.program.words().front() ==
                   ordinary_nop.program.words().front(),
@@ -161,7 +155,7 @@ void production_specialization() {
   require(narrow_self_move.complete &&
               narrow_self_move.program.words().size() == 4U &&
               narrow_self_move.program.words().front() ==
-                  address_of(uml_arm64_gadget_simd_mov_8b) &&
+                  address(uml_arm64_gadget_simd_mov_8b) &&
               narrow_self_move.program.words()[1] ==
                   gadgets::selection::packed_u16_operands(
                       vector_offset(9), vector_offset(9)),

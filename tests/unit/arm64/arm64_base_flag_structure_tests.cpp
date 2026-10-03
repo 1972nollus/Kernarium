@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -62,11 +63,7 @@ void uml_arm64_gadget_setf_native_8();
 void uml_arm64_gadget_setf_native_16();
 }
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] gadgets::BuildResult build(std::uint32_t instruction,
 	bool force_software = false)

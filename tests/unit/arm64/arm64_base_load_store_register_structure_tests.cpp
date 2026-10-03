@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_base_load_store_register_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
@@ -50,7 +51,7 @@ void uml_arm64_gadget_nop();
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 using RegisterChoices = std::array<Gadget, 2>;
 using BaseChoices = std::array<RegisterChoices, 2>;
 using AddressChoices = std::array<BaseChoices, 6>;
@@ -91,11 +92,7 @@ const std::array<AddressChoices, test::integer_variants.size()> rows{
 #undef BASE_CHOICES
 #undef REGISTER_CHOICES
 
-template<typename Function>
-[[nodiscard]] std::uintptr_t function_address(Function function)
-{
-	return reinterpret_cast<std::uintptr_t>(function);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] constexpr std::uintptr_t register_offset(unsigned reg,
 							bool stack_pointer)
@@ -126,7 +123,7 @@ void require_register_stream(const gadgets::BuildResult &built,
 {
 	test::require(built.complete && built.program.words().size() == 5U,
 		"register-offset scalar-memory stream has an unexpected shape");
-	test::require(built.program.words()[0] == function_address(expected),
+	test::require(built.program.words()[0] == address(expected),
 		"register-offset scalar-memory gadget was not selected at translation");
 	test::require(built.program.words()[1] == operand,
 		"register-offset scalar-memory fields were not predecoded");
@@ -153,7 +150,7 @@ void translation_selection_and_dead_bank_audit()
 		for (const auto &mode : row)
 			for (const auto &base : mode)
 				for (const auto entry : base)
-					expected.insert(function_address(entry));
+					expected.insert(address(entry));
 
 		for (const auto option : test::legal_options)
 			for (const bool scaled : {false, true})
@@ -193,7 +190,7 @@ void translation_selection_and_dead_bank_audit()
 									rm, rn,
 									rt));
 							selected.insert(
-								function_address(
+								address(
 									entry));
 						}
 	}
@@ -224,7 +221,7 @@ void prefetch_is_translation_only()
 							"PRFM register stream retained runtime address work");
 						test::require(
 							built.program.words().front() ==
-								function_address(
+								address(
 									uml_arm64_gadget_nop),
 							"PRFM register stream is not the non-faulting hint gadget");
 					}
@@ -245,7 +242,7 @@ struct BodyShape final {
 			offsetof(arm64::CpuState, tbi_enabled)) << 10U) |
 		(1U << 5U) | 9U;
 	BodyShape result{};
-	const auto shape = a64::body_shape(function_address(gadget),
+	const auto shape = a64::body_shape(address(gadget),
 		{.window = 192U}, [&](std::uint32_t instruction) {
 			result.direct_branches +=
 				(instruction & 0x7c00'0000U) == 0x1400'0000U;

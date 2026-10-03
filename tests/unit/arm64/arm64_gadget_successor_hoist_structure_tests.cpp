@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/gadget_symbols.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "require.hpp"
@@ -15,14 +16,9 @@ namespace selection = gadgets::selection;
 
 namespace {
 
-using Gadget = void (*)();
-
+using uml::emulator::tests::Gadget;
 using uml::testing::require;
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] std::uint32_t instruction(Gadget gadget, std::size_t index)
 {

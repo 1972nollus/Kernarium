@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_gadget_dependency_reference.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
 #include "require.hpp"
@@ -29,10 +30,7 @@ constexpr bool is_immediate(std::uint32_t word)
 	return (word & 0x1f80'0000U) == 0x1100'0000U;
 }
 
-std::uintptr_t address(void (*f)())
-{
-	return reinterpret_cast<std::uintptr_t>(f);
-}
+using uml::emulator::tests::address;
 
 /* Runs a program that ends in SVC through the test-local reference. */
 void run_reference(a::CpuState &cpu, std::span<const std::uint32_t> code,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -89,8 +90,7 @@ namespace arm64 = uml::cpu::arm64;
 namespace {
 
 using uml::testing::require;
-
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 #define UML_PERMUTE_SET(name) std::array<Gadget, 7>{ \
 	uml_arm64_gadget_simd_permute_##name##_8b, \
@@ -135,16 +135,8 @@ constexpr std::array<Gadget, 16> expected_tables{
 	uml_arm64_gadget_simd_tbx_4_16b,
 };
 
-[[nodiscard]] std::uintptr_t address_of(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index)
-{
-	return offsetof(arm64::CpuState, vectors) +
-		index * sizeof(arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 static_assert(vector_offset(31U) <= 0xffffU);
 
@@ -171,10 +163,10 @@ void every_operation_and_shape_is_selected_during_translation()
 					q, size, operation.opcode, registers));
 				const unsigned shape = q ? size + 3U : size;
 				require(program.words()[0] ==
-					address_of(operation.shapes[shape]));
+					address(operation.shapes[shape]));
 				require(program.words()[1] == operand);
 				require(program.words()[2] ==
-					address_of(uml_arm64_gadget_svc));
+					address(uml_arm64_gadget_svc));
 			}
 }
 
@@ -196,16 +188,16 @@ void every_table_form_has_resolved_wrapped_offsets()
 				const unsigned shape = (extend ? 8U : 0U) +
 					(count - 1U) * 2U + (q ? 1U : 0U);
 				require(program.words()[0] ==
-					address_of(expected_tables[shape]));
+					address(expected_tables[shape]));
 				require(program.words()[1] == first_operand);
 				if (count > 2U) {
 					require(
 						program.words()[2] == remaining_operand);
 					require(program.words()[3] ==
-						address_of(uml_arm64_gadget_svc));
+						address(uml_arm64_gadget_svc));
 				} else {
 					require(program.words()[2] ==
-						address_of(uml_arm64_gadget_svc));
+						address(uml_arm64_gadget_svc));
 				}
 			}
 }

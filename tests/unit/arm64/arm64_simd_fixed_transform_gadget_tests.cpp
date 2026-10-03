@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "a64_body_inspection.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -107,7 +108,7 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
+using uml::emulator::tests::Gadget;
 
 constexpr std::array<Gadget, 7> native32_three{
     uml_arm64_gadget_simd_sha1c,     uml_arm64_gadget_simd_sha1p,
@@ -141,14 +142,8 @@ constexpr std::array<Gadget, 3> software64_three{
     uml_arm64_gadget_simd_sha512h2_soft,
     uml_arm64_gadget_simd_sha512su1_soft,
 };
-[[nodiscard]] std::uintptr_t address(Gadget gadget) noexcept {
-  return reinterpret_cast<std::uintptr_t>(gadget);
-}
-
-[[nodiscard]] constexpr std::uintptr_t vector_offset(unsigned index) noexcept {
-  return offsetof(test::arm64::CpuState, vectors) +
-         index * sizeof(test::arm64::VectorRegister);
-}
+using uml::emulator::tests::address;
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] gadgets::BuildResult build(std::uint32_t instruction,
                                          bool force_software) {

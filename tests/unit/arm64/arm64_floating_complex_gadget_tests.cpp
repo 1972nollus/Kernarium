@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_basic_floating_test_support.hpp"
 #include "arm64_engine_test_support.hpp"
+#include "arm64_gadget_test_support.hpp"
 #include "require.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -114,12 +115,7 @@ void for_each_form(Function &&function)
 	return value;
 }
 
-[[nodiscard]] constexpr std::uintptr_t vector_offset(
-	unsigned reg) noexcept
-{
-	return offsetof(arm64::CpuState, vectors) +
-		reg * sizeof(arm64::VectorRegister);
-}
+using uml::emulator::tests::vector_offset;
 
 [[nodiscard]] constexpr std::uintptr_t gadget_operand(
 	Registers registers) noexcept
@@ -168,14 +164,9 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 
 namespace {
 
-using Gadget = void (*)();
-
+using uml::emulator::tests::Gadget;
 using uml::testing::require;
-
-[[nodiscard]] std::uintptr_t address(Gadget gadget)
-{
-	return reinterpret_cast<std::uintptr_t>(gadget);
-}
+using uml::emulator::tests::address;
 
 [[nodiscard]] Gadget expected_gadget(const test::Form &form)
 {
