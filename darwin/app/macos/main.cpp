@@ -692,6 +692,8 @@ int uml::app::runEmbeddedKernel(
 		video_service->stop();
 	if (console_service)
 		console_service->stop();
+	if (balloon_service)
+		balloon_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
 	if (!configuration.run_scratch.empty()) {
