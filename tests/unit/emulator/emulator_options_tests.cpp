@@ -107,24 +107,34 @@ void test_explicit_defaults_are_preserved()
 		"guest top-byte-ignore mode was enabled by default");
 	require(options.engine == uml::runtime::ExecutionEngine::gadgets,
 		"separate engine argument was not parsed");
-	/* The seven explicit values, plus the management-console name the guest
-	 * needs and the caller did not supply. */
-	require(options.arguments.size() == 8,
+	/* The seven explicit values, plus the management-console name and
+	 * directory the guest needs and the caller did not supply. */
+	require(options.arguments.size() == 9,
 		"explicit kernel policy values were duplicated");
-	require(starts_with_any(options, "umid="),
-		"the guest was left without a management-console name");
+	require(starts_with_any(options, "umid=") &&
+		starts_with_any(options, "uml_dir="),
+		"the guest was left without a management-console location");
+	require(options.host_console_directory,
+		"the host's console directory was not left to the run");
 	const char *named_console[]{"umid=chosen"};
 	const auto named = uml::emulator::prepare_emulator_options(
 		1, named_console, "/tmp/rootfs.erofs");
 	require(contains(named, "umid=chosen") &&
 		count_prefixed(named, "umid=") == 1,
 		"a caller-supplied management-console name was replaced");
+	/* The console's path does not use the umid when uml_dir= names a
+	 * directory, so the host's directory still applies. */
+	require(count_prefixed(named, "uml_dir=") == 1 &&
+		named.host_console_directory,
+		"a caller-supplied name displaced the host's console directory");
 	const char *placed_console[]{"uml_dir=/chosen"};
 	const auto placed = uml::emulator::prepare_emulator_options(
 		1, placed_console, "/tmp/rootfs.erofs");
 	require(contains(placed, "uml_dir=/chosen") &&
 		count_prefixed(placed, "uml_dir=") == 1,
 		"a caller-supplied management-console directory was replaced");
+	require(!placed.host_console_directory,
+		"the run would prepare a directory the guest does not use");
 	const char *explicit_mapping[]{"ubd0c=/custom/rootfs.erofs"};
 	require(uml::emulator::prepare_emulator_options(
 			1, explicit_mapping, "/unused/rootfs.erofs")

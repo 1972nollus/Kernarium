@@ -583,14 +583,19 @@ the console, host-file flushing still runs but guest writeback and freeze are
 unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
-to each request's own bound socket, which the host places beside it. On macOS
-and the iOS Simulator both live in the shared `/tmp` and carry the run's
-identity (`umid=`), so guests run side by side. The iOS sandbox refuses
-sockets in `/tmp`, so an iOS device passes its application temporary directory
-as `uml_dir=` and both sides use short fixed names there. Every such path must
+to each request's own bound socket, which the host places beside it. Both live
+in a directory the host passes as `uml_dir=`, under short fixed names, and
+nothing goes to the shared `/tmp`. On macOS and the iOS Simulator each run
+makes its own `uml-kern<pid>` directory, mode 0700, in `$TMPDIR`, or in the
+user's temporary directory or `/tmp` when `$TMPDIR` is unset or too long, as
+the Simulator's is. The run removes it when it returns, and every terminating
+signal and kernel-driven exit the process observes removes it too; only a
+process killed outright leaves it, and the next run removes the directories of
+runs that have exited. An iOS device uses its application temporary directory
+itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
-rather than truncated or moved. A killed process leaves its guest's socket
-behind, so each run removes a socket at its own path before booting.
+rather than truncated or moved. The guest prints the console's path when it
+binds it.
 
 ## Tests and structural audit
 

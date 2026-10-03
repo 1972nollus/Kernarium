@@ -8,17 +8,21 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 
@@ -63,27 +67,145 @@ constexpr std::string_view stopAcknowledgement = "stopped";
 constexpr std::size_t clientIdDigits = 8U;
 constexpr std::size_t socketPathLimit = sizeof(sockaddr_un {}.sun_path);
 
+/* arch/um/os-Darwin/umid.c names the console <uml_dir>/mconsole. */
+constexpr std::string_view consoleName = "mconsole";
+/* A run's directory is uml-<umid>, and the umid is kern<pid>. */
+constexpr std::string_view runDirectoryPrefix = "uml-";
+constexpr std::string_view umidPrefix = "kern";
+
+/* An iOS device application owns its temporary directory and uses it
+ * directly; everywhere else a run makes a directory of its own. */
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+constexpr bool ownRunDirectory = false;
+#else
+constexpr bool ownRunDirectory = true;
+#endif
+
 std::mutex consoleMutex;
 bool consoleAdopted;
 std::unique_ptr<SocketPath> consoleGuard;
+std::unique_ptr<DirectoryPath> runDirectoryGuard;
 std::atomic_uint32_t nextClientId;
 
 /* One console per process. Two guests in one process cannot both own the
  * kernel's single console anyway, and embedded runs are serialized. */
 [[nodiscard]] const std::string &consoleUmid()
 {
-	static const std::string umid = "kern" + std::to_string(::getpid());
+	static const std::string umid =
+		std::string {umidPrefix} + std::to_string(::getpid());
 	return umid;
 }
 
-[[nodiscard]] std::optional<std::string> privateConsoleDirectory()
+#if !(TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR)
+/* The user's temporary directory as Darwin names it, whatever $TMPDIR says. */
+[[nodiscard]] std::string userTemporaryDirectory()
 {
-#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
-	const char *directory = std::getenv("TMPDIR");
-	return std::string {directory == nullptr ? "" : directory};
-#else
-	return std::nullopt;
+	const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR, nullptr, 0);
+	if (length <= 1U)
+		return {};
+	std::string directory(length, '\0');
+	if (::confstr(_CS_DARWIN_USER_TEMP_DIR, directory.data(), length) !=
+	    length)
+		return {};
+	directory.resize(length - 1U);
+	return directory;
+}
 #endif
+
+/* Where this process's console goes, and the directory named in a report
+ * when no location fits. */
+[[nodiscard]] std::optional<GuestConsoleLocation> composeProcessLocation(
+	std::string &described)
+{
+	const char *temporary = std::getenv("TMPDIR");
+	described = temporary == nullptr ? "" : temporary;
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+	return compose_guest_console_location(described);
+#else
+	const std::array<std::string, 3> parents {
+		described, userTemporaryDirectory(), "/tmp"};
+	described = "$TMPDIR, " + parents[1] + " or /tmp";
+	return compose_run_console_location(parents, consoleUmid());
+#endif
+}
+
+/* The pid a run directory's name records, if `name` is one. */
+[[nodiscard]] std::optional<pid_t> runDirectoryOwner(std::string_view name)
+{
+	if (!name.starts_with(runDirectoryPrefix))
+		return std::nullopt;
+	name.remove_prefix(runDirectoryPrefix.size());
+	if (!name.starts_with(umidPrefix))
+		return std::nullopt;
+	name.remove_prefix(umidPrefix.size());
+	pid_t owner = 0;
+	const auto [end, error] =
+		std::from_chars(name.data(), name.data() + name.size(), owner);
+	if (name.starts_with('0') || error != std::errc {} ||
+	    end != name.data() + name.size() || owner <= 0)
+		return std::nullopt;
+	return owner;
+}
+
+/*
+ * A run killed outright leaves its directory behind, so each run removes the
+ * directories of runs that have exited: those this user owns, named
+ * uml-kern<pid>, whose process no longer exists. A live process, or one this
+ * user may not signal, keeps its directory, and nothing else is touched.
+ */
+void removeAbandonedRunDirectories(const std::filesystem::path &parent)
+{
+	std::error_code error;
+	for (std::filesystem::directory_iterator entry {parent, error};
+	     !error && entry != std::filesystem::directory_iterator {};
+	     entry.increment(error)) {
+		const auto owner =
+			runDirectoryOwner(entry->path().filename().native());
+		if (!owner || *owner == ::getpid())
+			continue;
+		struct stat details {};
+		if (::lstat(entry->path().c_str(), &details) != 0 ||
+		    !S_ISDIR(details.st_mode) || details.st_uid != ::geteuid())
+			continue;
+		if (::kill(*owner, 0) == 0 || errno != ESRCH)
+			continue;
+		std::error_code ignored;
+		std::filesystem::remove_all(entry->path(), ignored);
+	}
+}
+
+/*
+ * Creates the run's directory, readable by this user alone because the console
+ * accepts requests that stop the guest. One this user owns already at the name
+ * was left by an earlier process with this pid, and is replaced.
+ */
+[[nodiscard]] bool createRunDirectory(const std::string &directory)
+{
+	if (::mkdir(directory.c_str(), S_IRWXU) == 0)
+		return true;
+	if (errno != EEXIST)
+		return false;
+	struct stat details {};
+	if (::lstat(directory.c_str(), &details) != 0 ||
+	    !S_ISDIR(details.st_mode) || details.st_uid != ::geteuid())
+		return false;
+	std::error_code error;
+	std::filesystem::remove_all(directory, error);
+	return !error && ::mkdir(directory.c_str(), S_IRWXU) == 0;
+}
+
+void removeConsoleSocket(const GuestConsoleLocation &location)
+{
+	struct stat details {};
+	if (::lstat(location.console.c_str(), &details) == 0 &&
+	    S_ISSOCK(details.st_mode))
+		(void)::unlink(location.console.c_str());
+}
+
+void releaseConsoleGuard()
+{
+	consoleGuard.reset();
+	consoleAdopted = false;
 }
 
 [[nodiscard]] bool fillAddress(sockaddr_un &address, const std::string &path)
@@ -124,6 +246,14 @@ public:
 			descriptor_ = -1;
 			return;
 		}
+		/* A terminating signal while the request waits would otherwise
+		 * leave the reply socket, and with it the run's directory. */
+		try {
+			auto guard = std::make_unique<SocketPath>(path_);
+			guard->adopt();
+			guard_ = std::move(guard);
+		} catch (...) {
+		}
 		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
 		(void)::setsockopt(descriptor_, SOL_SOCKET, SO_RCVTIMEO, &timeout,
 			sizeof(timeout));
@@ -133,6 +263,7 @@ public:
 	{
 		if (descriptor_ >= 0)
 			::close(descriptor_);
+		guard_.reset();
 		(void)::unlink(path_.c_str());
 	}
 
@@ -145,13 +276,14 @@ public:
 private:
 	int descriptor_ {-1};
 	std::string path_;
+	std::unique_ptr<SocketPath> guard_;
 };
 
 /*
  * The guest created this socket, so it can only be adopted once it exists.
- * Naming it after this process makes anything at that path ours; tightening
- * the mode keeps the guest's console away from other local users, because a
- * console accepts requests that stop the guest.
+ * The location belongs to this process, which makes anything at that path
+ * ours; tightening the mode keeps the guest's console away from other local
+ * users, because a console accepts requests that stop the guest.
  */
 void adoptConsolePath(const std::string &path)
 {
@@ -234,45 +366,55 @@ void adoptConsolePath(const std::string &path)
 } // namespace
 
 std::optional<GuestConsoleLocation> compose_guest_console_location(
-	std::optional<std::string_view> private_directory,
-	std::string_view umid, pid_t pid)
+	std::string_view directory)
 {
+	/* arch/um/os-Darwin/umid.c composes <uml_dir>/<name> after dropping the
+	 * same trailing slashes. */
+	while (directory.size() > 1U && directory.ends_with('/'))
+		directory.remove_suffix(1U);
+	if (!directory.starts_with('/'))
+		return std::nullopt;
 	GuestConsoleLocation location;
-	if (private_directory) {
-		/* arch/um/os-Darwin/umid.c composes <uml_dir>/<name> after dropping
-		 * the same trailing slashes. */
-		auto directory = *private_directory;
-		while (directory.size() > 1U && directory.ends_with('/'))
-			directory.remove_suffix(1U);
-		if (!directory.starts_with('/'))
-			return std::nullopt;
-		location.directory = directory;
-		location.console = location.directory + "/mconsole";
-		location.client_prefix = location.directory + "/mc-";
-	} else {
-		/* And /tmp/uml-<umid>-<name> without uml_dir=. */
-		location.console = "/tmp/uml-" + std::string {umid} + "-mconsole";
-		location.client_prefix =
-			"/tmp/uml-mc-" + std::to_string(pid) + "-";
-	}
+	location.directory = directory;
+	location.console =
+		location.directory + "/" + std::string {consoleName};
+	location.client_prefix = location.directory + "/mc-";
 	if (location.console.size() >= socketPathLimit ||
 	    location.client_prefix.size() + clientIdDigits >= socketPathLimit)
 		return std::nullopt;
 	return location;
 }
 
+std::optional<GuestConsoleLocation> compose_run_console_location(
+	std::span<const std::string> parents, std::string_view umid)
+{
+	for (std::string_view parent : parents) {
+		while (parent.size() > 1U && parent.ends_with('/'))
+			parent.remove_suffix(1U);
+		if (!parent.starts_with('/'))
+			continue;
+		auto directory = std::string {parent};
+		if (directory != "/")
+			directory += '/';
+		directory += runDirectoryPrefix;
+		directory += umid;
+		if (auto location = compose_guest_console_location(directory))
+			return location;
+	}
+	return std::nullopt;
+}
+
 const std::optional<GuestConsoleLocation> &guest_console_location()
 {
 	static const std::optional<GuestConsoleLocation> location = [] {
-		const auto directory = privateConsoleDirectory();
-		auto composed = compose_guest_console_location(
-			directory, consoleUmid(), ::getpid());
+		std::string described;
+		auto composed = composeProcessLocation(described);
 		if (!composed) {
 			std::fprintf(stderr,
-				"Guest management console: no console under \"%s\": "
+				"Guest management console: no console under %s: "
 				"it needs an absolute directory whose socket paths fit "
 				"in %zu bytes; the host cannot reach the guest's console\n",
-				directory.value_or("/tmp").c_str(), socketPathLimit);
+				described.c_str(), socketPathLimit);
 		}
 		return composed;
 	}();
@@ -282,8 +424,7 @@ const std::optional<GuestConsoleLocation> &guest_console_location()
 std::vector<std::string> guest_management_console_arguments()
 {
 	std::vector<std::string> arguments {"umid=" + consoleUmid()};
-	const auto &location = guest_console_location();
-	if (location && !location->directory.empty())
+	if (const auto &location = guest_console_location())
 		arguments.push_back("uml_dir=" + location->directory);
 	return arguments;
 }
@@ -383,22 +524,55 @@ void resume_guest(GuestSuspension suspension) noexcept
 	}
 }
 
-void release_guest_management_console() noexcept
+GuestConsoleRun::GuestConsoleRun(bool active) noexcept
+	: active_(active)
 {
+	if (!active_)
+		return;
 	try {
 		std::lock_guard lock(consoleMutex);
-		if (consoleGuard) {
-			consoleGuard.reset();
-			consoleAdopted = false;
-			return;
-		}
 		const auto &location = guest_console_location();
 		if (!location)
 			return;
-		struct stat details {};
-		if (::lstat(location->console.c_str(), &details) == 0 &&
-		    S_ISSOCK(details.st_mode))
-			(void)::unlink(location->console.c_str());
+		releaseConsoleGuard();
+		if constexpr (!ownRunDirectory) {
+			removeConsoleSocket(*location);
+			return;
+		}
+		runDirectoryGuard.reset();
+		const std::filesystem::path directory {location->directory};
+		removeAbandonedRunDirectories(directory.parent_path());
+		if (!createRunDirectory(location->directory)) {
+			std::fprintf(stderr,
+				"Guest management console: cannot create %s: %s; "
+				"the host cannot reach the guest's console\n",
+				location->directory.c_str(), std::strerror(errno));
+			return;
+		}
+		auto guard = std::make_unique<DirectoryPath>(directory);
+		try {
+			guard->adopt(std::string {consoleName});
+		} catch (...) {
+			/* Never a directory that a terminating signal would leave. */
+			std::error_code ignored;
+			std::filesystem::remove_all(directory, ignored);
+			throw;
+		}
+		runDirectoryGuard = std::move(guard);
+	} catch (...) {
+	}
+}
+
+GuestConsoleRun::~GuestConsoleRun()
+{
+	if (!active_)
+		return;
+	try {
+		std::lock_guard lock(consoleMutex);
+		releaseConsoleGuard();
+		if (const auto &location = guest_console_location())
+			removeConsoleSocket(*location);
+		runDirectoryGuard.reset();
 	} catch (...) {
 	}
 }
