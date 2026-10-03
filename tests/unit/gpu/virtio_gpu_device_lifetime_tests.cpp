@@ -1088,6 +1088,31 @@ void contextCreateIsRetryableAfterEachAllocationFailure()
     }
 }
 
+void blobCommandsAllocateBeforeCommitAndRetry()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {dependencies, noGuestReads, noGuestMappings};
+    const auto context = createContext(0x901, protocol::venusCapsetId);
+    requireOk(device, requestBytes(context));
+
+    protocol::GpuResourceCreateBlob create {};
+    create.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::resourceCreateBlob);
+    create.header.contextId = context.header.contextId;
+    create.resourceId = 0x902;
+    create.memory = protocol::blobMemoryHost3d;
+    create.flags = protocol::blobFlagMappable;
+    create.size = protocol::hostVisibleSharedMemoryAlignment;
+    const auto created = failEachAllocationBeforeCommit(
+        device, requestBytes(create), [&] {
+            return dependencies.createResourceCount == 0 &&
+                !dependencies.resources.contains(create.resourceId);
+        });
+    require(responseType(created.response) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.createResourceCount == 1);
+}
+
 void edidReportsDisplayPixelsAndEffectiveDensity()
 {
     FakeGpuDependencies dependencies;
@@ -3050,6 +3075,7 @@ int main()
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
     lifecycleCommandsAllocateBeforeCommitAndRetry();
     contextCreateIsRetryableAfterEachAllocationFailure();
+    blobCommandsAllocateBeforeCommitAndRetry();
     rendererExecutionFailuresPreserveDeviceState();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();

@@ -1206,6 +1206,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         }
 
         try {
+            auto success = response(*header, protocol::GpuResponse::okNoData);
             auto [iterator, inserted] = blobResources_.emplace(
                 create->resourceId,
                 BlobResource {
@@ -1233,7 +1234,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 return response(
                     *header, protocol::GpuResponse::errorInvalidParameter);
             }
-            return response(*header, protocol::GpuResponse::okNoData);
+            return success;
         } catch (const std::bad_alloc&) {
             return response(
                 *header, protocol::GpuResponse::errorOutOfMemory);
