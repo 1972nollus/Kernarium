@@ -101,9 +101,9 @@ if(OWNER_PRODUCT_VIOLATIONS)
 endif()
 
 # The layer, engine-ownership, executable-memory, implementation-include,
-# CPU-header, test-registration and shell cd rules read the whole tree, so the
-# audit itself runs over a fixture tree that breaks each rule beside a file
-# the rule accepts. Every fixture starts on its second line, so a rule cannot
+# CPU-header, test-registration, compile-definition and shell cd rules read the
+# whole tree, so the audit itself runs over a fixture tree that breaks each
+# rule beside a file the rule accepts. Every fixture starts on its second line, so a rule cannot
 # pass by matching only at the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
@@ -252,6 +252,37 @@ list(APPEND ACCEPTED
 uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
     "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
 list(APPEND ACCEPTED "darwin/fixture/CMakeLists\\.txt: compiles")
+
+# A definition command or a -D option that names a source or build directory,
+# as a variable or a generator expression, is rejected. A path passed as a
+# test argument, a plain value, an option that defines nothing and a comment
+# are accepted, and a later command is not part of the definition before it.
+uml_write_audit_fixture(tests/fixture/SourceDefinition.cmake
+    "target_compile_definitions(fixture PRIVATE\n    A=1\n    FIXTURE_DIR=\"\${PROJECT_SOURCE_DIR}/tests/support/fixture\")")
+uml_write_audit_fixture(tools/fixture/BinaryDefinition.cmake
+    "ADD_COMPILE_DEFINITIONS(FIXTURE_OUTPUT=\"\${CMAKE_CURRENT_BINARY_DIR}\")")
+uml_write_audit_fixture(darwin/fixture/OptionDefinition.cmake
+    "target_compile_options(fixture PRIVATE -Wall\n    -DFIXTURE_ROOT=\${CMAKE_CURRENT_LIST_DIR})")
+uml_write_audit_fixture(kernel/fixture/TargetDefinition.cmake
+    "add_definitions(-DFIXTURE_TOOL=\"\$<TARGET_FILE_DIR:fixture>\")")
+list(APPEND REJECTED
+    "SourceDefinition\\.cmake: a compile definition names a source or build directory"
+    "BinaryDefinition\\.cmake: a compile definition names"
+    "OptionDefinition\\.cmake: a compile definition names"
+    "TargetDefinition\\.cmake: a compile definition names")
+uml_write_audit_fixture(tests/fixture/ArgumentPath.cmake
+    "uml_add_unit_test(NAME fixture COMMAND fixture\n    \${PROJECT_SOURCE_DIR}/tests/support/fixture)")
+uml_write_audit_fixture(tests/fixture/ValueDefinition.cmake
+    "target_compile_definitions(fixture PRIVATE\n    FIXTURE_PAGES=\${UML_GUEST_PAGE_SIZE})\ntarget_include_directories(fixture PRIVATE\n    \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE})")
+uml_write_audit_fixture(tests/fixture/PrefixMap.cmake
+    "target_compile_options(fixture PRIVATE\n    -fmacro-prefix-map=\${PROJECT_SOURCE_DIR}=.)")
+uml_write_audit_fixture(tests/fixture/CommentedDefinition.cmake
+    "# target_compile_definitions(fixture PRIVATE ROOT=\"\${PROJECT_SOURCE_DIR}\")")
+list(APPEND ACCEPTED
+    "ArgumentPath\\.cmake: a compile definition"
+    "ValueDefinition\\.cmake: a compile definition"
+    "PrefixMap\\.cmake: a compile definition"
+    "CommentedDefinition\\.cmake: a compile definition")
 
 # A first-party shell script's cd clears CDPATH unless its operand is a
 # literal absolute path: each report names the line and the command it found,

@@ -98,7 +98,8 @@ function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
-# First-party CMake files and Xcode projects are each read once for two rules.
+# First-party CMake files and Xcode projects are each read once for three
+# rules.
 #
 # A darwin/ implementation source is compiled only by the CMake owner beneath
 # darwin/ that lists it. Any other target reaches it through a product that
@@ -114,6 +115,13 @@ endfunction()
 # normalized before matching. A command starts its line, and CMake refuses a
 # newline or comment before its parenthesis, so a commented-out registration
 # never matches.
+#
+# A compile definition, or a -D compile option, that names a source or build
+# directory puts this checkout's absolute path into a binary, which then fails
+# wherever the checkout is absent, as in a relocated test bundle. A test takes
+# a data path as a registration argument instead. The definitions are scanned
+# without CMake lists, which would split a command at its semicolons and
+# brackets.
 function(uml_audit_build_files ROOT OUT_VIOLATIONS)
     set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
     set(_violations)
@@ -146,6 +154,22 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
             list(APPEND _violations
                 "${_path}: raw add_test bypasses the centralized suite helpers")
         endif()
+        string(REGEX REPLACE "#[^\n]*" "" _definition_code "${_normalized_text}")
+        string(REGEX REPLACE "[][;]" " " _definition_code "${_definition_code}")
+        string(REGEX MATCHALL
+            "(^|[\r\n])[ \t]*(target_compile_definitions|add_compile_definitions|add_definitions|target_compile_options|add_compile_options)[ \t\r]*\\([^)]*"
+            _definition_commands "${_definition_code}")
+        foreach(_command IN LISTS _definition_commands)
+            set(_definition "")
+            if(_command MATCHES "_options[ \t\r]*\\(")
+                set(_definition "-d[a-z0-9_]+=[^ \t\r\n]*")
+            endif()
+            if(_command MATCHES
+               "${_definition}(\\$\\{[a-z0-9_]*_(source|binary|list)_dir\\}|\\$<target_(file|bundle|linker_file)_dir:)")
+                list(APPEND _violations
+                    "${_path}: a compile definition names a source or build directory")
+            endif()
+        endforeach()
     endforeach()
     file(GLOB_RECURSE _projects LIST_DIRECTORIES false
         "${ROOT}/Kernarium/*.pbxproj")

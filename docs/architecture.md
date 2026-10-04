@@ -620,8 +620,10 @@ includes that only a darwin/ source's owner compiles it: no other CMake file
 and no Xcode project names one. A first-party shell script writes each `cd`
 as `CDPATH= cd --` unless it names a literal absolute directory, so an
 exported `CDPATH` can neither redirect it nor print into captured output.
-It does not prove performance, generated code shape, a kernel boot, or guest
-behavior; those require their owning validation.
+No compile definition names a source or build directory, so no binary needs
+the checkout it was built from at run time. The audit does not prove
+performance, generated code shape, a kernel boot, or guest behavior; those
+require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

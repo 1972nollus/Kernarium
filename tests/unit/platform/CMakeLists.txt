@@ -7,9 +7,8 @@ uml_add_unit_test(NAME platform-guest-file-sync
 
 add_executable(uml_video_decoder_tests video_decoder_tests.cpp)
 target_link_libraries(uml_video_decoder_tests PRIVATE UML::VideoDecoder)
-target_compile_definitions(uml_video_decoder_tests PRIVATE
-    UML_VIDEO_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/support/video")
-uml_add_unit_test(NAME platform-video-decoder COMMAND uml_video_decoder_tests
+uml_add_unit_test(NAME platform-video-decoder
+    COMMAND uml_video_decoder_tests ${PROJECT_SOURCE_DIR}/tests/support/video
     LABELS video TIMEOUT 120)
 
 # The platform's run routing; the transaction tests use its test variant.
