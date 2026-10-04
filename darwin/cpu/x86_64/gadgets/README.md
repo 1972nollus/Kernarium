@@ -405,7 +405,9 @@ checks, and runs every other block, linked, as `execute` does:
   also in a product or sum added. A flag the host raises otherwise than x86 is
   decided from the sources too (`host_flag_correction`): an FMA's invalid
   operation, which x86 does not raise for infinity times zero plus a quiet
-  NaN. An unmasked exception restores the state from
+  NaN, and a comparison's, which a quiet NaN raises under the signalling
+  predicates alone, VEX's 16 to 31 included, and a signalling NaN under
+  every predicate. An unmasked exception restores the state from
   before it, a memory destination included, and faults; MXCSR then holds only
   the flags checked before the computation when one of those was unmasked, and
   no precision flag when underflow was. Masked flags accumulate.

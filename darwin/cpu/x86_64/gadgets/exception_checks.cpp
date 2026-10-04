@@ -775,9 +775,47 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory)
 {
 	constexpr std::uint32_t invalid = 0x01U;
+	const auto &instruction = gadget.instruction;
 	const bool denormals_are_zero =
 		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
-	switch (gadget.instruction.operation) {
+	switch (instruction.operation) {
+	case Operation::vector_alu: {
+		if (instruction.vector_opcode != 0xc2)
+			return {};
+		/* CMPPS, CMPPD, CMPSS and CMPSD raise invalid operation for a
+		 * signalling NaN, and under a signalling predicate for a quiet one
+		 * too. The legacy encoding has predicates 0 to 7; VEX's bit 4 makes
+		 * a quiet predicate of the low four bits signalling and the
+		 * reverse, which the host's comparison does not follow, and its
+		 * false and true predicates compare nothing. */
+		const unsigned predicate = instruction.vex ?
+			instruction.vector_control & 0x1fU :
+			instruction.vector_control & 0x7U;
+		constexpr std::uint32_t signalling_predicates = 0x6666U;
+		const bool signalling =
+			(((signalling_predicates >> (predicate & 0xfU)) & 1U) != 0) !=
+			((predicate & 0x10U) != 0);
+		const auto prefix = instruction.vector_prefix;
+		const bool dbl = prefix == 1 || prefix == 3;
+		const FloatFormat f{dbl};
+		const std::size_t lanes = prefix >= 2 ? 1U :
+			vector_lanes(instruction.destination, dbl);
+		VectorValue first{};
+		VectorValue second{};
+		if (!operand_value(cpu, gadget, instruction.source, memory, first) ||
+			!operand_value(cpu, gadget, instruction.auxiliary, memory,
+				second))
+			return {};
+		HostFlagCorrection correction{.decided = invalid};
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto a = value_lane(first, dbl, index);
+			const auto b = value_lane(second, dbl, index);
+			if (f.signalling(a) || f.signalling(b) ||
+				(signalling && (f.nan(a) || f.nan(b))))
+				correction.raised |= invalid;
+		}
+		return correction;
+	}
 	case Operation::vector_fma: {
 		FmaOperands fma{};
 		if (!read_fma_operands(cpu, gadget, memory, fma))

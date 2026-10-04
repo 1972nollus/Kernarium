@@ -151,9 +151,11 @@ struct HostFlagCorrection final {
 
 /* The correction for the SIMD floating-point instruction `gadget`, from the
  * state before it runs. An FMA decides invalid operation, which the host
- * raises for infinity times zero plus a quiet NaN and x86 does not. Nothing
- * when a memory source is unreadable, which the instruction then faults
- * on. */
+ * raises for infinity times zero plus a quiet NaN and x86 does not, and so
+ * does a comparison, whose VEX predicates 16 to 31 raise it for a quiet NaN
+ * where 0 to 15 do not and the reverse, and whose false and true predicates
+ * still raise it for a signalling NaN. Nothing when a memory source is
+ * unreadable, which the instruction then faults on. */
 [[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
