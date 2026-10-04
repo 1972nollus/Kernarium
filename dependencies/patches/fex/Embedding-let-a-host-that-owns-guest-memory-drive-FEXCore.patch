@@ -21,14 +21,14 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
  FEXCore/Source/Interface/Core/Core.cpp        |  13 +-
- .../Interface/Core/Dispatcher/Dispatcher.cpp  |  65 ++-
+ .../Interface/Core/Dispatcher/Dispatcher.cpp  |  66 ++-
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
  FEXCore/Source/Interface/Core/Frontend.h      |   4 +
  FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |  12 +
  .../Source/Interface/Core/JIT/AtomicOps.cpp   |  66 +++
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
- .../Interface/Core/JIT/EmbedderMemory.cpp     | 349 ++++++++++++++++
+ .../Interface/Core/JIT/EmbedderMemory.cpp     | 351 ++++++++++++++++
  FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 114 ++++-
  FEXCore/Source/Interface/Core/JIT/JITClass.h  |  66 +++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 390 +++++++++++++++++-
@@ -42,10 +42,10 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
- FEXCore/include/FEXCore/Core/CoreState.h      |  86 ++++
+ FEXCore/include/FEXCore/Core/CoreState.h      |  89 ++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1513 insertions(+), 67 deletions(-)
+ 29 files changed, 1519 insertions(+), 67 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -229,7 +229,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..39f790f2fe061a3cc6bd9a54f14bb3e2
          }
  
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..8454d7f4ff1f00869ec8903d013decb81b345620 100644
+index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b8b82c778 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -34,11 +34,12 @@ static void SleepThread(FEXCore::Context::ContextImpl* CTX, FEXCore::Core::CpuSt
@@ -255,7 +255,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..8454d7f4ff1f00869ec8903d013decb8
    }
  }
  
-@@ -432,6 +433,56 @@ void Dispatcher::EmitDispatcher() {
+@@ -432,6 +433,57 @@ void Dispatcher::EmitDispatcher() {
      }
    }
  
@@ -298,6 +298,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..8454d7f4ff1f00869ec8903d013decb8
 +    PopDynamicRegs();
 +    ldp<ARMEmitter::IndexType::POST>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, 16);
 +    ldp<ARMEmitter::IndexType::POST>(ARMEmitter::XReg::x2, ARMEmitter::XReg::x30, ARMEmitter::Reg::rsp, 16);
++    ldr(TMP4, STATE_PTR(CpuStateFrame, Embedder.MissSavedTMP4));
 +    br(ARMEmitter::Reg::r2);
 +
 +    (void)Bind(&l_Fault);
@@ -312,7 +313,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..8454d7f4ff1f00869ec8903d013decb8
    {
      ThreadPauseHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -2623,6 +2674,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2623,6 +2675,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
      Ptrs.GuestSignal_SIGILL = GuestSignal_SIGILL;
      Ptrs.GuestSignal_SIGTRAP = GuestSignal_SIGTRAP;
      Ptrs.GuestSignal_SIGSEGV = GuestSignal_SIGSEGV;
@@ -667,10 +668,10 @@ index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4
    PendingTargetLabel = JumpTarget(Op->FalseBlock);
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..937af92ed33466d9b7a285cadb4235a34f2ffb2c
+index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101de61bf952
 --- /dev/null
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,351 @@
 +// SPDX-License-Identifier: MIT
 +/*
 +$info$
@@ -753,6 +754,8 @@ index 0000000000000000000000000000000000000000..937af92ed33466d9b7a285cadb4235a3
 +    // A block too large for a short branch to reach its cold code is
 +    // compiled again with far branches.
 +    BindOrRestart(&Site->Entry);
++    // The miss path returns with TMP4 as it found it.
++    str(TMP4, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.MissSavedTMP4));
 +
 +    if (Site->PreStore) {
 +      // Put the value where the host can complete a page-crossing store from.
@@ -2358,7 +2361,7 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..14fa3dbb23b28e8b3c0a506b9df4b5c6f0236b19 100644
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb70ed3c4dd 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -334,6 +334,54 @@ struct FallbackABIInfo {
@@ -2435,7 +2438,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..14fa3dbb23b28e8b3c0a506b9df4b5c6
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +492,32 @@ struct CpuStateFrame {
+@@ -432,6 +492,35 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  
@@ -2455,6 +2458,9 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..14fa3dbb23b28e8b3c0a506b9df4b5c6
 +    uint64_t AccessRIP {};
 +    // Opaque host pointer for the helpers.
 +    uint64_t HostContext {};
++    // TMP4 across a TLB miss, which the miss site needs as a scratch register
++    // while the code around an access may hold a value in it.
++    uint64_t MissSavedTMP4 {};
 +    // Bytes of host code a compile first reserves per IR node, 0 for the
 +    // default. A unit that outgrows its reservation restarts with twice as
 +    // much; a host lowers this only to exercise that growth.

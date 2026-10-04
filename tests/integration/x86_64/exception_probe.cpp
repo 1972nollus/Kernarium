@@ -1783,6 +1783,125 @@ bool divide_errors()
 }
 #endif
 
+#if defined(__x86_64__)
+/* VPMASKMOVD and VMASKMOVPS of YMM0 at (state)[0] under the mask
+ * (state)[4..7]; YMM0 starts as (state)[8..11] and the load leaves it in
+ * (state)[12..15]. */
+__asm__(".text\n"
+	".global probe_mask_load\n"
+	"probe_mask_load:\n"
+	"	movq (%rdi), %rax\n"
+	"	vmovdqu 32(%rdi), %ymm1\n"
+	"	vmovdqu 64(%rdi), %ymm0\n"
+	".global probe_mask_load_insn\n"
+	"probe_mask_load_insn:\n"
+	"	vpmaskmovd (%rax), %ymm1, %ymm0\n"
+	".global probe_mask_load_end\n"
+	"probe_mask_load_end:\n"
+	"	vmovdqu %ymm0, 96(%rdi)\n"
+	"	vzeroupper\n"
+	"	ret\n"
+	".global probe_mask_store\n"
+	"probe_mask_store:\n"
+	"	movq (%rdi), %rax\n"
+	"	vmovdqu 32(%rdi), %ymm1\n"
+	"	vmovdqu 64(%rdi), %ymm0\n"
+	".global probe_mask_store_insn\n"
+	"probe_mask_store_insn:\n"
+	"	vmaskmovps %ymm0, %ymm1, (%rax)\n"
+	".global probe_mask_store_end\n"
+	"probe_mask_store_end:\n"
+	"	vzeroupper\n"
+	"	ret\n");
+
+extern "C" void probe_mask_load(word *state);
+extern "C" char probe_mask_load_insn[];
+extern "C" char probe_mask_load_end[];
+extern "C" void probe_mask_store(word *state);
+extern "C" char probe_mask_store_insn[];
+extern "C" char probe_mask_store_end[];
+
+constexpr long nr_munmap = 11;
+constexpr word page_bytes = 4096;
+
+alignas(32) word mask_state[16];
+/* Three pages no other case touches; the probe unmaps the last. */
+alignas(4096) unsigned char mask_pages[3 * page_bytes];
+
+void mask_load() { probe_mask_load(mask_state); }
+void mask_store() { probe_mask_store(mask_state); }
+
+void set_mask_state(const unsigned char *address, unsigned lanes)
+{
+	auto *values = reinterpret_cast<u32 *>(&mask_state[4]);
+	mask_state[0] = reinterpret_cast<word>(address);
+	for (unsigned lane = 0; lane < 8; ++lane) {
+		values[lane] = (lanes >> lane) & 1U ? 0x80000000U : 0;
+		values[lane + 8] = 0x11111111U * (lane + 1);
+		values[lane + 16] = 0;
+	}
+}
+
+/* Checks the first (count) lanes at (bytes): each in (lanes) holds its
+ * value and the others zero. */
+bool expect_lanes(const char *what, const unsigned char *bytes,
+		  unsigned lanes, unsigned count = 8)
+{
+	const auto *values = reinterpret_cast<const volatile u32 *>(bytes);
+	bool ok = true;
+	for (unsigned lane = 0; lane < count; ++lane)
+		ok &= expect(what, values[lane],
+			     (lanes >> lane) & 1U ? 0x11111111U * (lane + 1) : 0);
+	return ok;
+}
+
+/* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
+ * on an unmapped page does not fault and a load zeroes it, every enabled
+ * lane completes when the first one misses a cold page, and an enabled
+ * lane on an unmapped page raises #PF at its address. */
+bool masked_moves()
+{
+	unsigned char *const cold = mask_pages;
+	unsigned char *const unmapped = mask_pages + 2 * page_bytes;
+	unsigned char *const edge = unmapped - 16;
+	if (raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  munmap failed\n");
+		return false;
+	}
+	bool ok = install_fault_handlers();
+	const auto *loaded = reinterpret_cast<const unsigned char *>(
+		&mask_state[12]);
+
+	set_mask_state(cold, 0xff);
+	ok &= delivers_nothing("VPMASKMOVD from a cold page", mask_load,
+			       address_of(probe_mask_load_end));
+	ok &= expect_lanes("cold lane", loaded, 0);
+
+	set_mask_state(edge, 0x0f);
+	ok &= delivers_nothing("VMASKMOVPS beside an unmapped page", mask_store,
+			       address_of(probe_mask_store_end));
+	ok &= expect_lanes("stored lane", edge, 0x0f, 4);
+
+	set_mask_state(edge, 0x0f);
+	ok &= delivers_nothing("VPMASKMOVD beside an unmapped page", mask_load,
+			       address_of(probe_mask_load_end));
+	ok &= expect_lanes("loaded lane", loaded, 0x0f);
+
+	set_mask_state(edge, 0x1f);
+	ok &= delivers("VMASKMOVPS onto an unmapped page", mask_store,
+		       address_of(probe_mask_store_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_mask_store_insn), 14, true, 6});
+	set_mask_state(edge, 0x1f);
+	ok &= delivers("VPMASKMOVD from an unmapped page", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_mask_load_insn), 14, true, 4});
+	return ok;
+}
+#endif
+
 extern "C" void probe_xm_div();
 extern "C" char probe_xm_div_insn[];
 extern "C" char probe_xm_div_end[];
@@ -2840,6 +2959,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "noncanonical"));
 	report("x86-64 DIV and IDIV raise #DE and write nothing",
 	       in_child(self, "divide-error"));
+	report("x86-64 VMASKMOV and VPMASKMOV access only enabled lanes",
+	       in_child(self, "masked-moves"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -2908,6 +3029,8 @@ extern "C" int probe_main(word *stack)
 			return noncanonical_faults() ? 0 : 1;
 		if (equal(mode, "divide-error"))
 			return divide_errors() ? 0 : 1;
+		if (equal(mode, "masked-moves"))
+			return masked_moves() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

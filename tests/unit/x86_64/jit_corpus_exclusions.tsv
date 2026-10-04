@@ -191,11 +191,6 @@ k/single-instruction-tests/rcp	sse-estimates
 k/single-instruction-tests/rsqrt	sse-estimates
 repository/sse-reciprocal-estimates-special-inputs.s	sse-estimates
 
-# masked-store-lanes (2): VMASKMOV and VPMASKMOV stores fault on a page that
-# only their masked-off lanes cover.
-fex/VEX/vmaskmovps_store.asm	masked-store-lanes
-fex/VEX/vpmaskmovd_store.asm	masked-store-lanes
-
 # shld16-overcount (2): 16-bit SHLD with a count above 15 leaves CF clear.
 k/single-instruction-tests/shldw_m16_r16_imm8	shld16-overcount
 k/single-instruction-tests/shldw_r16_r16_imm8	shld16-overcount

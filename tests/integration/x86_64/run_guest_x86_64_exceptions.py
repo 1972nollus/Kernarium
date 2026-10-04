@@ -7,7 +7,8 @@ probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
 runs long repeated string instructions; ICEBP, BOUND, INT 4, INTO, INT n, UD2,
 DIV and IDIV, page faults, non-canonical addresses, misaligned accesses under
 RFLAGS.AC and unmasked SSE and x87 exceptions deliver Linux's signals, codes,
-trap numbers and error codes; an x87 stack survives a signal; a signal taken between two
+trap numbers and error codes; VMASKMOV and VPMASKMOV access only their enabled
+lanes; an x87 stack survives a signal; a signal taken between two
 instructions leaves the accumulator alone; and a tracer of either ABI reads and
 writes registers, FP state, debug registers and TLS, steps a repeated string
 instruction one iteration at a time, and changes or skips a system call through

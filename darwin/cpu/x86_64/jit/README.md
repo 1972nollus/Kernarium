@@ -32,7 +32,8 @@ alone.
 
 FEXCore's generated code reaches guest memory through an inline software TLB.
 A miss calls the engine, which fills the entry from the static MMU or ends the
-dispatch with the guest's fault. An access that crosses a
+dispatch with the guest's fault; the miss path preserves every register the
+access sequence holds, including the element address of a masked move. An access that crosses a
 guest page, or an ordered access that crosses a 16-byte granule, completes
 through a bounce buffer in the address space's own fault order. FEXCore
 allocates and publishes code only through the executable-memory owner's hooks,
@@ -109,5 +110,4 @@ names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The classes are VEX gathers through the software TLB,
 split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules,
-IRET flags, masked-store lanes, 16-bit SHLD over-counts and a store into its
-own block.
+IRET flags, 16-bit SHLD over-counts and a store into its own block.
