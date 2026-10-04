@@ -38,6 +38,17 @@ uml_add_tooling_test(
     LABELS audit;package
     TIMEOUT 30)
 
+# The XCFramework, Kernarium framework and Kernarium app packaging run this
+# check on every iOS product; the fixtures show it finds FEXCore as a symbol,
+# an archive member, a nested framework and a stripped allocation name.
+uml_add_tooling_test(
+    NAME ios-products-carry-no-fexcore
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_check_no_fexcore.py
+        --checker ${PROJECT_SOURCE_DIR}/scripts/check-no-fexcore.py
+    LABELS audit;package
+    TIMEOUT 120)
+
 uml_add_tooling_test(
     NAME json-input-duplicate-key-policy
     COMMAND ${Python3_EXECUTABLE} -B
