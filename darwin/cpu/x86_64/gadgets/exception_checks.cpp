@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "exception_checks.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <span>
+
 namespace uml::cpu::x86_64::gadgets {
 namespace {
 
@@ -370,6 +375,340 @@ bool misaligned_access(const CpuState &cpu, const Gadget &gadget) noexcept
 			return true;
 	}
 	return false;
+}
+
+namespace {
+
+/* An IEEE binary32 or binary64 lane's classes. */
+struct FloatFormat final {
+	bool dbl{};
+
+	[[nodiscard]] std::uint64_t sign() const noexcept
+	{
+		return dbl ? 1ULL << 63U : 1ULL << 31U;
+	}
+	[[nodiscard]] std::uint64_t magnitude() const noexcept
+	{
+		return sign() - 1U;
+	}
+	[[nodiscard]] std::uint64_t exponent() const noexcept
+	{
+		return dbl ? 0x7ffULL << 52U : 0xffULL << 23U;
+	}
+	[[nodiscard]] bool nan(std::uint64_t x) const noexcept
+	{
+		return (x & magnitude()) > exponent();
+	}
+	[[nodiscard]] bool infinite(std::uint64_t x) const noexcept
+	{
+		return (x & magnitude()) == exponent();
+	}
+	[[nodiscard]] bool zero(std::uint64_t x) const noexcept
+	{
+		return (x & magnitude()) == 0;
+	}
+	[[nodiscard]] bool denormal(std::uint64_t x) const noexcept
+	{
+		return (x & exponent()) == 0 && !zero(x);
+	}
+	[[nodiscard]] bool negative(std::uint64_t x) const noexcept
+	{
+		return (x & sign()) != 0;
+	}
+	/* A lane of a two-source operation that raises a denormal operand,
+	 * which a NaN in it overrides. */
+	[[nodiscard]] bool denormal_pair(std::uint64_t a,
+		std::uint64_t b) const noexcept
+	{
+		return (denormal(a) || denormal(b)) && !nan(a) && !nan(b);
+	}
+};
+
+using VectorValue = std::array<std::byte, 32>;
+
+[[nodiscard]] std::uint64_t value_lane(const VectorValue &value, bool dbl,
+	std::size_t index) noexcept
+{
+	if (dbl) {
+		std::uint64_t lane{};
+		std::memcpy(&lane, value.data() + index * 8U, 8U);
+		return lane;
+	}
+	std::uint32_t lane{};
+	std::memcpy(&lane, value.data() + index * 4U, 4U);
+	return lane;
+}
+
+/* An operand's register, or the bytes its memory operand reads with zeros
+ * after them; false when that memory is unreadable. */
+[[nodiscard]] bool operand_value(const CpuState &cpu, const Gadget &gadget,
+	const Operand &operand, ::uml::memory::GuestAddressSpace &memory,
+	VectorValue &value)
+{
+	value = {};
+	if (operand.kind == OperandKind::vector_reg) {
+		value = cpu.vectors[operand.reg.index & 15U];
+		return true;
+	}
+	if (operand.kind != OperandKind::memory)
+		return false;
+	const auto bytes = std::min(static_cast<std::size_t>(operand.width),
+		value.size());
+	return memory.read(effective_address(cpu, gadget, operand),
+		std::span<std::byte>{value}.first(bytes));
+}
+
+[[nodiscard]] std::size_t vector_lanes(const Operand &operand,
+	bool dbl) noexcept
+{
+	return static_cast<std::size_t>(operand.width) / (dbl ? 8U : 4U);
+}
+
+/* a * b or a + b, correctly rounded in MXCSR's rounding mode, which FPCR
+ * numbers the other way round for the directed modes. */
+[[nodiscard]] std::uint64_t host_operation(bool dbl, bool multiply,
+	std::uint64_t a, std::uint64_t b, std::uint32_t mxcsr) noexcept
+{
+	static constexpr std::array<std::uint64_t, 4> rmode{0, 2, 1, 3};
+	const std::uint64_t mode = rmode[(mxcsr >> 13U) & 3U] << 22U;
+	std::uint64_t saved{};
+	std::uint64_t result{};
+	if (dbl && multiply)
+		__asm__ volatile("mrs %[saved], fpcr\n"
+			"bic x16, %[saved], #(3 << 22)\n"
+			"orr x16, x16, %[mode]\n"
+			"msr fpcr, x16\n"
+			"fmov d16, %[a]\n fmov d17, %[b]\n fmul d16, d16, d17\n"
+			"fmov %[result], d16\n"
+			"msr fpcr, %[saved]"
+			: [saved] "=&r"(saved), [result] "=&r"(result)
+			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
+			: "x16", "v16", "v17");
+	else if (dbl)
+		__asm__ volatile("mrs %[saved], fpcr\n"
+			"bic x16, %[saved], #(3 << 22)\n"
+			"orr x16, x16, %[mode]\n"
+			"msr fpcr, x16\n"
+			"fmov d16, %[a]\n fmov d17, %[b]\n fadd d16, d16, d17\n"
+			"fmov %[result], d16\n"
+			"msr fpcr, %[saved]"
+			: [saved] "=&r"(saved), [result] "=&r"(result)
+			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
+			: "x16", "v16", "v17");
+	else if (multiply)
+		__asm__ volatile("mrs %[saved], fpcr\n"
+			"bic x16, %[saved], #(3 << 22)\n"
+			"orr x16, x16, %[mode]\n"
+			"msr fpcr, x16\n"
+			"fmov s16, %w[a]\n fmov s17, %w[b]\n fmul s16, s16, s17\n"
+			"fmov %w[result], s16\n"
+			"msr fpcr, %[saved]"
+			: [saved] "=&r"(saved), [result] "=&r"(result)
+			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
+			: "x16", "v16", "v17");
+	else
+		__asm__ volatile("mrs %[saved], fpcr\n"
+			"bic x16, %[saved], #(3 << 22)\n"
+			"orr x16, x16, %[mode]\n"
+			"msr fpcr, x16\n"
+			"fmov s16, %w[a]\n fmov s17, %w[b]\n fadd s16, s16, s17\n"
+			"fmov %w[result], s16\n"
+			"msr fpcr, %[saved]"
+			: [saved] "=&r"(saved), [result] "=&r"(result)
+			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
+			: "x16", "v16", "v17");
+	return result;
+}
+
+/* DPPS or DPPD: a selected product's denormal source, or, unless FTZ
+ * flushes every tiny intermediate, a denormal product or pair sum added. */
+[[nodiscard]] bool dot_product_denormal(std::uint32_t mxcsr, bool dbl,
+	unsigned control, std::size_t halves, const VectorValue &first,
+	const VectorValue &second)
+{
+	const FloatFormat f{dbl};
+	const bool flush = (mxcsr & mxcsr_flush_to_zero) != 0;
+	const std::size_t per_half = dbl ? 2U : 4U;
+	for (std::size_t half = 0; half < halves; ++half) {
+		std::array<std::uint64_t, 4> products{};
+		for (std::size_t index = 0; index < per_half; ++index) {
+			if (((control >> (4U + index)) & 1U) == 0)
+				continue;
+			const auto a = value_lane(first, dbl, half * per_half + index);
+			const auto b = value_lane(second, dbl, half * per_half + index);
+			if (f.denormal_pair(a, b))
+				return true;
+			products[index] = host_operation(dbl, true, a, b, mxcsr);
+		}
+		if (flush)
+			continue;
+		if (f.denormal_pair(products[0], products[1]))
+			return true;
+		if (dbl)
+			continue;
+		if (f.denormal_pair(products[2], products[3]))
+			return true;
+		if (f.denormal_pair(
+				host_operation(false, false, products[0], products[1], mxcsr),
+				host_operation(false, false, products[2], products[3], mxcsr)))
+			return true;
+	}
+	return false;
+}
+
+} // namespace
+
+std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
+	::uml::memory::GuestAddressSpace &memory)
+{
+	constexpr std::uint32_t raised = 0x02U;
+	const auto &instruction = gadget.instruction;
+	if ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ||
+		!simd_floating(instruction))
+		return 0;
+	const auto opcode = instruction.vector_opcode;
+	const auto prefix = instruction.vector_prefix;
+	const auto read = [&](const Operand &operand, VectorValue &value) {
+		return operand_value(cpu, gadget, operand, memory, value);
+	};
+	VectorValue first{};
+	VectorValue second{};
+	switch (instruction.operation) {
+	case Operation::vector_alu: {
+		/* HADD, HSUB and ADDSUB are PD with 66 and PS with F2; the rest
+		 * PS, PD, SS and SD with none, 66, F3 and F2. */
+		const bool horizontal = opcode == 0x7c || opcode == 0x7d ||
+			opcode == 0xd0;
+		const bool dbl = horizontal ? prefix == 1 :
+			prefix == 1 || prefix == 3;
+		const bool scalar = !horizontal && prefix >= 2;
+		const FloatFormat f{dbl};
+		const std::size_t lanes = scalar ? 1U :
+			vector_lanes(instruction.destination, dbl);
+		if (!read(instruction.auxiliary, second))
+			return 0;
+		if (opcode == 0x51) {
+			/* The square root of a negative denormal is invalid. */
+			for (std::size_t index = 0; index < lanes; ++index) {
+				const auto x = value_lane(second, dbl, index);
+				if (f.denormal(x) && !f.negative(x))
+					return raised;
+			}
+			return 0;
+		}
+		if (!read(instruction.source, first))
+			return 0;
+		if (opcode == 0x7c || opcode == 0x7d) {
+			/* Adjacent pairs of either source, in each 128-bit half. */
+			for (std::size_t pair = 0; pair < lanes; pair += 2)
+				if (f.denormal_pair(value_lane(first, dbl, pair),
+						value_lane(first, dbl, pair + 1U)) ||
+					f.denormal_pair(value_lane(second, dbl, pair),
+						value_lane(second, dbl, pair + 1U)))
+					return raised;
+			return 0;
+		}
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto b = value_lane(second, dbl, index);
+			/* A division by zero takes precedence. */
+			if (f.denormal_pair(value_lane(first, dbl, index), b) &&
+				!(opcode == 0x5e && f.zero(b)))
+				return raised;
+		}
+		return 0;
+	}
+	case Operation::vector_compare_flags: {
+		const bool dbl = prefix == 1;
+		if (!read(instruction.source, first) ||
+			!read(instruction.auxiliary, second))
+			return 0;
+		return FloatFormat{dbl}.denormal_pair(value_lane(first, dbl, 0),
+			value_lane(second, dbl, 0)) ? raised : 0U;
+	}
+	case Operation::vector_convert: {
+		/* CVTPS2PD and CVTSS2SD widen singles, CVTPD2PS and CVTSD2SS
+		 * narrow doubles; the other conversions raise none. */
+		if (opcode != 0x5a || !read(instruction.auxiliary, second))
+			return 0;
+		const bool dbl = prefix == 1 || prefix == 3;
+		const std::size_t lanes = prefix >= 2 ? 1U :
+			vector_lanes(instruction.auxiliary, dbl);
+		for (std::size_t index = 0; index < lanes; ++index)
+			if (FloatFormat{dbl}.denormal(value_lane(second, dbl, index)))
+				return raised;
+		return 0;
+	}
+	case Operation::vector_fma: {
+		const bool dbl = instruction.vector_group != 0;
+		const FloatFormat f{dbl};
+		const unsigned operation = opcode & 0x0fU;
+		const bool scalar = operation >= 9U && (operation & 1U) != 0;
+		const std::size_t lanes = scalar ? 1U :
+			vector_lanes(instruction.destination, dbl);
+		VectorValue destination{};
+		if (!read(instruction.destination, destination) ||
+			!read(instruction.source, first) ||
+			!read(instruction.auxiliary, second))
+			return 0;
+		/* x86's a * b + c: 132 is destination * r/m + vvvv, 213 vvvv *
+		 * destination + r/m, and 231 vvvv * r/m + destination. */
+		const unsigned form = opcode >> 4U;
+		const auto &a = form == 0x9U ? destination : first;
+		const auto &b = form == 0xaU ? destination : second;
+		const auto &c = form == 0x9U ? first :
+			form == 0xaU ? second : destination;
+		const bool negate_product = operation >= 0xcU;
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto x = value_lane(a, dbl, index);
+			const auto y = value_lane(b, dbl, index);
+			const auto z = value_lane(c, dbl, index);
+			if (f.nan(x) || f.nan(y) || f.nan(z) ||
+				!(f.denormal(x) || f.denormal(y) || f.denormal(z)))
+				continue;
+			/* An invalid operation takes precedence: zero times
+			 * infinity, or infinities of opposite signs added. */
+			if ((f.zero(x) && f.infinite(y)) ||
+				(f.infinite(x) && f.zero(y)))
+				continue;
+			bool negate_addend = operation == 0xaU || operation == 0xbU ||
+				operation == 0xeU || operation == 0xfU;
+			if (operation == 6U)
+				negate_addend = (index & 1U) == 0;
+			else if (operation == 7U)
+				negate_addend = (index & 1U) != 0;
+			const bool product_negative =
+				(f.negative(x) != f.negative(y)) != negate_product;
+			const bool addend_negative = f.negative(z) != negate_addend;
+			if ((f.infinite(x) || f.infinite(y)) && f.infinite(z) &&
+				product_negative != addend_negative)
+				continue;
+			return raised;
+		}
+		return 0;
+	}
+	case Operation::vector_integer_map3:
+		if (opcode == 0x1d) {
+			/* VCVTPS2PH narrows singles. */
+			if (!read(instruction.source, first))
+				return 0;
+			const auto lanes = vector_lanes(instruction.source, false);
+			for (std::size_t index = 0; index < lanes; ++index)
+				if (FloatFormat{false}.denormal(
+						value_lane(first, false, index)))
+					return raised;
+			return 0;
+		}
+		if ((opcode != 0x40 && opcode != 0x41) ||
+			!read(instruction.source, first) ||
+			!read(instruction.auxiliary, second))
+			return 0;
+		return dot_product_denormal(cpu.mxcsr, opcode == 0x41,
+			instruction.vector_control,
+			instruction.destination.width == OperandWidth::ymm ? 2U : 1U,
+			first, second) ? raised : 0U;
+	default:
+		return 0;
+	}
 }
 
 void clear_host_floating_exceptions() noexcept

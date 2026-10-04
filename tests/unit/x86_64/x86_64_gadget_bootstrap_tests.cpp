@@ -6034,6 +6034,85 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"a masked division by zero did not only set its flag");
 }
 
+/* Run singly and checked, an SSE instruction raises a denormal operand
+ * before it computes, where x86 does: #XM while MXCSR unmasks it, keeping
+ * the destination, and otherwise its flag beside the others -- but not
+ * under DAZ, for a lane with a NaN or for a division by zero, while a DPPS
+ * raises it for a denormal product of normal sources too. */
+[[nodiscard]] bool checked_simd_denormal_operands_follow_x86()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::string_view name;
+		std::vector<std::uint8_t> bytes;
+		std::uint32_t mxcsr;
+		std::uint32_t left;
+		std::uint32_t right;
+		bool trap;
+		std::uint32_t after;
+		std::uint32_t result;
+	};
+	constexpr std::uint32_t one = 0x3f800000;
+	constexpr std::uint32_t least = 0x00000001;
+	constexpr std::uint32_t quiet = 0x7fc00000;
+	const std::vector<Case> cases{
+		{"ADDSS of a denormal", {0xf3, 0x0f, 0x58, 0xc1}, 0x1e80, one, least,
+		 true, 0x1e82, one},
+		{"ADDSS of a denormal, its exception masked",
+		 {0xf3, 0x0f, 0x58, 0xc1}, 0x1780, one, least, false, 0x17a2, one},
+		{"ADDSS of a denormal under DAZ", {0xf3, 0x0f, 0x58, 0xc1}, 0x1ec0,
+		 one, least, false, 0x1ec0, one},
+		{"ADDSS of a NaN and a denormal", {0xf3, 0x0f, 0x58, 0xc1}, 0x1e80,
+		 quiet, least, false, 0x1e80, quiet},
+		{"DIVSS of a denormal by zero", {0xf3, 0x0f, 0x5e, 0xc1}, 0x1e80,
+		 least, 0, false, 0x1e84, 0x7f800000},
+		{"COMISS of a denormal", {0x0f, 0x2f, 0xc1}, 0x1e80, least, 0,
+		 true, 0x1e82, least},
+		{"DPPS of a denormal product", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x11},
+		 0x1e80, 0x1c800000, 0x21800000, true, 0x1e82, 0x1c800000},
+	};
+	for (const auto &test : cases) {
+		TestMemory memory;
+		std::vector<std::byte> code(test.bytes.size() + 2U);
+		std::memcpy(code.data(), test.bytes.data(), test.bytes.size());
+		code[test.bytes.size()] = std::byte{0x0f};
+		code[test.bytes.size() + 1U] = std::byte{0x05};
+		memory.fill(0, code);
+		const auto built = gadgets::build(memory, 0, ExecutionMode::long64,
+			64, {}, gadgets::check_simd);
+		CpuState cpu{};
+		cpu.mxcsr = test.mxcsr;
+		set_xmm_low(cpu, 0, test.left);
+		set_xmm_low(cpu, 1, test.right);
+		if (!expect(built.status == gadgets::BuildStatus::built &&
+				built.program.check_head() &&
+				gadgets::checked_exceptions(cpu) == gadgets::check_simd,
+			"a SIMD instruction did not build as a check head"))
+			return false;
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		const auto result = gadgets::execute_checked(built.program, cpu,
+			memory, executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+		const bool right = test.trap ?
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+				result.vector == 19 && result.error == test.after &&
+				result.retired_instructions == 0 && cpu.rip == 0 :
+			result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1 &&
+				cpu.rip == test.bytes.size();
+		if (right && cpu.mxcsr == test.after &&
+			xmm_low(cpu, 0) == test.result)
+			continue;
+		std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d "
+			"mxcsr %#x xmm0 %#x\n", static_cast<int>(test.name.size()),
+			test.name.data(), static_cast<int>(result.event), cpu.mxcsr,
+			xmm_low(cpu, 0));
+		return expect(false,
+			"a denormal operand did not raise what x86 raises");
+	}
+	return true;
+}
+
 /* Run singly and checked, an SSE instruction raises invalid operation where
  * x86 does: COMISD for a quiet NaN but UCOMISD only for a signalling one, a
  * conversion to an integer for a value out of that integer's range, and a
@@ -6662,10 +6741,104 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 			precision.retired_instructions == 1 && cpu.rip == 3,
 		"LDMXCSR unmasking precision did not leave"))
 		return false;
+	const auto denormal = run(0x1900, 0x1800);
+	if (!expect(denormal.event == uml::cpu::EngineEvent::continued &&
+			denormal.retired_instructions == 1 && cpu.rip == 3,
+		"LDMXCSR unmasking a denormal operand did not leave"))
+		return false;
 	const auto masked = run(0x0900, 0x1f80);
 	return expect(masked.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1f80 && cpu.gpr(Register::rax) == 1,
 		"LDMXCSR masking everything left");
+}
+
+/* XRSTOR, LDMXCSR and FXRSTOR that set MXCSR.DAZ or FTZ within a run send
+ * the conversions after them to the SIMD gadgets' exact path, and an XRSTOR
+ * that initializes the SSE state clears both. */
+[[nodiscard]] bool mxcsr_loads_switch_the_simd_exact_path()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xae, 0x2b,             // xrstor [rbx]
+		0xf3, 0x0f, 0x5a, 0xc8,       // cvtss2sd xmm1, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xc8, // movq r8, xmm1
+		0x0f, 0xae, 0x16,             // ldmxcsr [rsi]
+		0xf3, 0x0f, 0x5a, 0xd0,       // cvtss2sd xmm2, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xd1, // movq r9, xmm2
+		0x0f, 0xae, 0x0f,             // fxrstor [rdi]
+		0xf2, 0x0f, 0x5a, 0xdc,       // cvtsd2ss xmm3, xmm4
+		0x66, 0x41, 0x0f, 0x7e, 0xda, // movd r10d, xmm3
+		0x0f, 0xae, 0x56, 0x04,       // ldmxcsr [rsi+4]
+		0xf3, 0x0f, 0x5a, 0xe8,       // cvtss2sd xmm5, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xed, // movq r13, xmm5
+		0x0f, 0x05,                   // syscall
+	});
+	memory.load(0x400, {
+		0x0f, 0xae, 0x2b,             // xrstor [rbx]
+		0x66, 0x41, 0x0f, 0x6e, 0xc4, // movd xmm0, r12d
+		0xf3, 0x0f, 0x5a, 0xc8,       // cvtss2sd xmm1, xmm0
+		0x66, 0x49, 0x0f, 0x7e, 0xc8, // movq r8, xmm1
+		0x0f, 0x05,                   // syscall
+	});
+	const auto put = [&](std::uint64_t address, auto value) {
+		std::array<std::byte, sizeof(value)> bytes{};
+		std::memcpy(bytes.data(), &value, sizeof(value));
+		memory.fill(address, bytes);
+	};
+	/* The XSAVE image at 0x1000 holds the SSE state, MXCSR with DAZ and a
+	 * denormal single in xmm0; the FXSAVE image at 0x2000 MXCSR with FTZ,
+	 * that single in xmm0 and in xmm4 a double that narrows to a denormal.
+	 * LDMXCSR loads $1f80 and then $1fc0. */
+	put(0x1000, std::uint16_t{0x037f});
+	put(0x1000 + 24, std::uint32_t{0x1fc0});
+	put(0x1000 + 160, std::uint32_t{1});
+	put(0x1000 + 512, std::uint64_t{2});
+	put(0x2000, std::uint16_t{0x037f});
+	put(0x2000 + 24, std::uint32_t{0x9f80});
+	put(0x2000 + 160, std::uint32_t{1});
+	put(0x2000 + 160 + 4 * 16, std::uint64_t{0x37d0000000000000ULL});
+	put(0x3000, std::uint32_t{0x1f80});
+	put(0x3004, std::uint32_t{0x1fc0});
+	constexpr std::uint64_t denormal_single_widened = 0x36a0000000000000ULL;
+	const auto program = require_built(gadgets::build(memory, 0),
+		"MXCSR-loading block did not build");
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 2;
+	cpu.gpr(Register::rbx) = 0x1000;
+	cpu.gpr(Register::rsi) = 0x3000;
+	cpu.gpr(Register::rdi) = 0x2000;
+	cpu.gpr(Register::r8) = ~0ULL;
+	cpu.gpr(Register::r9) = ~0ULL;
+	cpu.gpr(Register::r10) = ~0ULL;
+	cpu.gpr(Register::r13) = ~0ULL;
+	const auto loaded = gadgets::execute(program.program, cpu, memory, 64);
+	if (!expect(loaded.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1fc0,
+		"the MXCSR-loading block did not run to its end") ||
+		!expect(cpu.gpr(Register::r8) == 0,
+			"a conversion after XRSTOR set DAZ kept its denormal input") ||
+		!expect(cpu.gpr(Register::r9) == denormal_single_widened,
+			"a conversion after LDMXCSR cleared DAZ flushed its input") ||
+		!expect(cpu.gpr(Register::r10) == 0,
+			"a narrowing after FXRSTOR set FTZ kept its denormal result") ||
+		!expect(cpu.gpr(Register::r13) == 0,
+			"a conversion after LDMXCSR set DAZ kept its denormal input"))
+		return false;
+	put(0x1000 + 512, std::uint64_t{0});
+	const auto initial = require_built(gadgets::build(memory, 0x400),
+		"XRSTOR initializing block did not build");
+	cpu = CpuState{};
+	cpu.rip = 0x400;
+	cpu.mxcsr = 0x1fc0;
+	cpu.gpr(Register::rax) = 2;
+	cpu.gpr(Register::rbx) = 0x1000;
+	cpu.gpr(Register::r12) = 1;
+	const auto cleared = gadgets::execute(initial.program, cpu, memory, 64);
+	return expect(cleared.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1f80 &&
+			cpu.gpr(Register::r8) == denormal_single_widened,
+		"a conversion after XRSTOR initialized MXCSR flushed its input");
 }
 
 /* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as
@@ -8132,6 +8305,7 @@ int main()
 		a_single_step_runs_one_repeat_iteration() &&
 		loads_that_unmask_exceptions_leave() &&
 		checked_simd_exceptions_fault_before_the_result() &&
+		checked_simd_denormal_operands_follow_x86() &&
 		checked_simd_invalid_operations_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
@@ -8140,6 +8314,7 @@ int main()
 		unmasked_simd_exceptions_leave_linked_blocks() &&
 		simd_checks_match_the_checked_path() &&
 		mxcsr_loads_leave_when_checks_change() &&
+		mxcsr_loads_switch_the_simd_exact_path() &&
 		faulting_comisd_keeps_earlier_flags() &&
 		alignment_checks_follow_rflags_ac() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&

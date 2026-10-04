@@ -93,15 +93,15 @@ Lx86_rounding_ready\@:
 .endm
 
 /* The engine leaves #MF for an x87 exception already pending, and #XM while
- * MXCSR unmasks underflow or precision, to the runtime, which runs the
- * instructions that could raise them one at a time, checked; the gadgets check
- * other unmasked x87 and SIMD exceptions themselves while the run's
- * `exception_checks` says so. An instruction that loads MXCSR or the x87
- * control word therefore retires and leaves when it could change what a run
- * checks, so the runtime sees the change before the next instruction runs:
- * when it unmasks an exception in a run that does not check that kind, when it
- * unmasks SIMD underflow or precision, or when it unmasks an x87 exception
- * whose flag is set, which is then pending. For a gadget that computed its
+ * MXCSR unmasks underflow, precision or a denormal operand, to the runtime,
+ * which runs the instructions that could raise them one at a time, checked;
+ * the gadgets check other unmasked x87 and SIMD exceptions themselves while
+ * the run's `exception_checks` says so. An instruction that loads MXCSR or
+ * the x87 control word therefore retires and leaves when it could change what
+ * a run checks, so the runtime sees the change before the next instruction
+ * runs: when it unmasks an exception in a run that does not check that kind,
+ * when it unmasks SIMD underflow, precision or a denormal operand, or when it
+ * unmasks an x87 exception whose flag is set, which is then pending. For a gadget that computed its
  * effective address: x22 and the descriptor's length name the next
  * instruction. */
 .macro retire_and_leave
@@ -121,7 +121,8 @@ Lx86_rounding_ready\@:
 	b.ne Lx86_simd_unmasked\@
 	retire_and_next
 Lx86_simd_unmasked\@:
-	tst w8, #0x1800
+	mov w9, #0x1900
+	tst w8, w9
 	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w8, #1, Lx86_simd_unchecked\@
@@ -155,7 +156,8 @@ Lx86_x87_unchecked\@:
 	mvn w8, w8
 	tst w8, #0x1f80
 	b.eq Lx86_simd_masked\@
-	tst w8, #0x1800
+	mov w9, #0x1900
+	tst w8, w9
 	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w8, #1, Lx86_simd_unchecked\@
@@ -166,8 +168,8 @@ Lx86_simd_unchecked\@:
 	retire_and_leave
 .endm
 
-/* While MXCSR unmasks invalid operation, division by zero, overflow or a
- * denormal operand, and masks underflow and precision, the runtime sets
+/* While MXCSR unmasks invalid operation, division by zero or overflow, and
+ * masks underflow, precision and a denormal operand, the runtime sets
  * `exception_check_simd` in `exception_checks`. The SIMD floating-point
  * gadgets then test their values for anything that could have raised an
  * unmasked exception, before they store anything: a result whose exponent is
@@ -177,7 +179,8 @@ Lx86_simd_unchecked\@:
  * the runtime runs it again, checked, which raises #XM or completes it with
  * its exact flags. Where the gadget already takes a separate path for such a
  * value the test costs nothing more; elsewhere it costs a load and a branch
- * while the gadgets do not check.
+ * while the gadgets do not check. A gadget with an exact path tests there
+ * (`simd_exact_branch`).
  *
  * Leaves while the gadgets check SIMD exceptions: on a path taken only for a
  * special value, or for an instruction whose intermediate results no test of
@@ -187,6 +190,34 @@ Lx86_simd_unchecked\@:
 	tbz w14, #1, Lx86_simd_unchecked\@
 	b uml_x86_64_gadget_exception_check
 Lx86_simd_unchecked\@:
+.endm
+
+/* A SIMD floating-point gadget whose common path assumes MXCSR.DAZ and FTZ
+ * clear and no SIMD check runs its exact path instead while
+ * `exception_check_simd_exact` says so: one load and branch serve all three.
+ * Applications commonly set DAZ and FTZ for good, so the exact path follows
+ * inline and ends with a branch past the common path at `common`; only its
+ * rare repairs go to the cold section. The exact path reads MXCSR itself.
+ * Uses w14. */
+.macro simd_exact_branch common
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #2, \common
+.endm
+
+/* Keep `exception_check_simd_exact` current after an instruction loads
+ * MXCSR, now `value`: it follows DAZ, FTZ and `exception_check_simd`, which
+ * stays as the run set it -- an instruction that changes what a run checks
+ * leaves. Uses w`scratch0` and w`scratch1`. */
+.macro refresh_simd_exact value, scratch0, scratch1
+	ldrb w\scratch0, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	and w\scratch0, w\scratch0, #0xfffffffb
+	mov w\scratch1, #0x8040
+	tst \value, w\scratch1
+	cset w\scratch1, ne
+	orr w\scratch1, w\scratch1, w\scratch0, lsr #1
+	and w\scratch1, w\scratch1, #1
+	orr w\scratch0, w\scratch0, w\scratch1, lsl #2
+	strb w\scratch0, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 .endm
 
 /* w14 = nonzero when a lane of v`register` (`element` bits wide) has an
@@ -238,6 +269,264 @@ Lx86_simd_unchecked\@:
 	and v17.16b, v17.16b, v18.16b
 	uminv s17, v17.4s
 	fmov w14, s17
+.endm
+
+/* Branches to `label` when a lane of v`first`, or of v`second` for a
+ * 256-bit result, is a NaN. The results it tests are quiet, so the test
+ * raises no host flag. Uses v17. */
+.macro simd_nan_lanes element, label, first, second=-1
+	.if \element == 32
+	.if \second >= 0
+	fmax v17.4s, v\first\().4s, v\second\().4s
+	fmaxv s17, v17.4s
+	.else
+	fmaxv s17, v\first\().4s
+	.endif
+	fcmp s17, s17
+	.else
+	.if \second >= 0
+	fmax v17.2d, v\first\().2d, v\second\().2d
+	fmaxp d17, v17.2d
+	.else
+	fmaxp d17, v\first\().2d
+	.endif
+	fcmp d17, d17
+	.endif
+	b.vc Lx86_simd_no_nan\@
+	b \label
+Lx86_simd_no_nan\@:
+.endm
+
+/* MXCSR.DAZ and FTZ: replace each denormal lane of v`vector` (`element` bits
+ * wide) with a zero of its sign. A lane whose exponent is zero takes its sign
+ * bit alone, which leaves a zero as it was. The value passes through two
+ * dependent instructions, as a scalar computation waits on it. Uses v16, v17
+ * and x14. */
+.macro simd_flush_denormals vector, element
+	simd_flush_masks \element, 16, 17
+	simd_flush_denormals_masked \vector, \element, 16, 17
+.endm
+
+/* The masks `simd_flush_denormals_masked` takes: the exponent in
+ * v`exponent`, the sign in v`sign`. Several flushes share them. Uses x14. */
+.macro simd_flush_masks element, exponent, sign
+	.if \element == 32
+	mov w14, #0x7f800000
+	dup v\exponent\().4s, w14
+	movi v\sign\().4s, #0x80, lsl #24
+	.else
+	mov x14, #0x7ff0000000000000
+	dup v\exponent\().2d, x14
+	mov x14, #0x8000000000000000
+	dup v\sign\().2d, x14
+	.endif
+.endm
+
+/* The flush itself, with the masks in v`exponent` and v`sign`, which may be
+ * v16 and v17 for a single flush. Uses v16 and v17. */
+.macro simd_flush_denormals_masked vector, element, exponent, sign
+	and v17.16b, v\vector\().16b, v\sign\().16b
+	.if \element == 32
+	cmtst v16.4s, v\vector\().4s, v\exponent\().4s
+	.else
+	cmtst v16.2d, v\vector\().2d, v\exponent\().2d
+	.endif
+	bif v\vector\().16b, v17.16b, v16.16b
+.endm
+
+/* The same for two to four vectors, which share masks in v18 and v19. Uses
+ * v16 to v19 and x14. */
+.macro simd_flush_denormals_each element, first, second, third=-1, fourth=-1
+	simd_flush_masks \element, 18, 19
+	simd_flush_denormals_masked \first, \element, 18, 19
+	simd_flush_denormals_masked \second, \element, 18, 19
+	.if \third >= 0
+	simd_flush_denormals_masked \third, \element, 18, 19
+	.endif
+	.if \fourth >= 0
+	simd_flush_denormals_masked \fourth, \element, 18, 19
+	.endif
+.endm
+
+/* v`mask` = all ones in the lanes of v`output` that are not zero and at most
+ * the smallest normal in magnitude. Uses v`temporary`. */
+.macro simd_small_lanes element, output, mask, temporary
+	.if \element == 32
+	shl v\mask\().4s, v\output\().4s, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().4s, v\mask\().4s, v\temporary\().4s
+	movi v\temporary\().4s, #0x01, lsl #24
+	cmhi v\mask\().4s, v\temporary\().4s, v\mask\().4s
+	.else
+	shl v\mask\().2d, v\output\().2d, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().2d, v\mask\().2d, v\temporary\().2d
+	mov x14, #0x0020000000000000
+	dup v\temporary\().2d, x14
+	cmhi v\mask\().2d, v\temporary\().2d, v\mask\().2d
+	.endif
+.endm
+
+/* x86 detects underflow after rounding: a result is tiny when, rounded to
+ * full precision as if the exponent were unbounded, it lies below the
+ * smallest normal. A denormal result always is. A product or quotient the
+ * host rounded up to exactly the smallest normal is when the same operation,
+ * with the first source scaled up into the normal range, rounds below the
+ * threshold scaled alike. Results that small bound the first source, so the
+ * scaling is exact, and the scaled operation's flags are discarded.
+ *
+ * v18 = all ones in the packed lanes whose scaled result is tiny. Uses v16,
+ * x14 and x15. */
+.macro simd_scaled_tiny operation, element, left, right
+	mrs x15, fpsr
+	.if \element == 32
+	mov w14, #0x5f800000
+	dup v18.4s, w14
+	fmul v18.4s, v\left\().4s, v18.4s
+	.ifc \operation,mul
+	fmul v18.4s, v18.4s, v\right\().4s
+	.else
+	fdiv v18.4s, v18.4s, v\right\().4s
+	.endif
+	shl v18.4s, v18.4s, #1
+	movi v16.4s, #0x41, lsl #24
+	cmhi v18.4s, v16.4s, v18.4s
+	.else
+	mov x14, #0x5ff0000000000000
+	dup v18.2d, x14
+	fmul v18.2d, v\left\().2d, v18.2d
+	.ifc \operation,mul
+	fmul v18.2d, v18.2d, v\right\().2d
+	.else
+	fdiv v18.2d, v18.2d, v\right\().2d
+	.endif
+	shl v18.2d, v18.2d, #1
+	mov x14, #0x4020000000000000
+	dup v16.2d, x14
+	cmhi v18.2d, v16.2d, v18.2d
+	.endif
+	msr fpsr, x15
+.endm
+
+/* MXCSR.FTZ: replace each tiny lane of the packed v`output` with a zero of
+ * its sign. A sum or difference that small is exact, so only a denormal one
+ * is tiny. */
+.macro simd_flush_tiny_packed operation, element, output, left, right
+	.set Lx86_simd_rounded\@, 0
+	.ifc \operation,mul
+	.set Lx86_simd_rounded\@, 1
+	.endif
+	.ifc \operation,div
+	.set Lx86_simd_rounded\@, 1
+	.endif
+	.if !Lx86_simd_rounded\@
+	simd_flush_denormals \output, \element
+	.else
+	simd_small_lanes \element, \output, 17, 18
+	simd_scaled_tiny \operation, \element, \left, \right
+	and v17.16b, v17.16b, v18.16b
+	.if \element == 32
+	movi v16.4s, #0x80, lsl #24
+	.else
+	mov x14, #0x8000000000000000
+	dup v16.2d, x14
+	.endif
+	and v16.16b, v\output\().16b, v16.16b
+	bsl v17.16b, v16.16b, v\output\().16b
+	mov v\output\().16b, v17.16b
+	.endif
+.endm
+
+/* Repair a NaN result in v`output` (lane 0 alone for a scalar one) from
+ * v`left` and v`right`, the first and second operands of a two-operand
+ * operation, or v`right` alone of a one-operand one. Uses v16 to v19 and x14.
+ */
+.macro simd_x86_nan element, output, left, right, binary, scalar
+	/* x86 returns the first source quieted when it is a NaN, else the
+	 * second, else -- for a NaN the operation generated -- the negative
+	 * quiet-NaN indefinite. The host prefers a signaling NaN of either
+	 * source and generates its positive default NaN, and its result is right
+	 * only where just the second source is a NaN.
+	 */
+	.if \scalar
+	.if \element == 32
+	fcmp s\output, s\output
+	b.vc Lx86_simd_nan_done\@
+	.if \binary
+	fcmp s\left, s\left
+	b.vs Lx86_simd_first_nan\@
+	.endif
+	fcmp s\right, s\right
+	b.vs Lx86_simd_nan_done\@
+	mov w14, #0xffc00000
+	fmov s\output, w14
+	b Lx86_simd_nan_done\@
+	.if \binary
+Lx86_simd_first_nan\@:
+	fmov w14, s\left
+	orr w14, w14, #0x00400000
+	fmov s\output, w14
+	.endif
+	.else
+	fcmp d\output, d\output
+	b.vc Lx86_simd_nan_done\@
+	.if \binary
+	fcmp d\left, d\left
+	b.vs Lx86_simd_first_nan\@
+	.endif
+	fcmp d\right, d\right
+	b.vs Lx86_simd_nan_done\@
+	mov x14, #0xfff8000000000000
+	fmov d\output, x14
+	b Lx86_simd_nan_done\@
+	.if \binary
+Lx86_simd_first_nan\@:
+	fmov x14, d\left
+	orr x14, x14, #0x0008000000000000
+	fmov d\output, x14
+	.endif
+	.endif
+	.else
+	.if \element == 32
+	fcmeq v17.4s, v\output\().4s, v\output\().4s
+	uminv s18, v17.4s
+	fmov w14, s18
+	cbnz w14, Lx86_simd_nan_done\@
+	mov w14, #0xffc00000
+	dup v16.4s, w14
+	fcmeq v18.4s, v\right\().4s, v\right\().4s
+	.if \binary
+	fcmeq v19.4s, v\left\().4s, v\left\().4s
+	.endif
+	.else
+	fcmeq v17.2d, v\output\().2d, v\output\().2d
+	uminv s18, v17.4s
+	fmov w14, s18
+	cbnz w14, Lx86_simd_nan_done\@
+	mov x14, #0xfff8000000000000
+	dup v16.2d, x14
+	fcmeq v18.2d, v\right\().2d, v\right\().2d
+	.if \binary
+	fcmeq v19.2d, v\left\().2d, v\left\().2d
+	.endif
+	.endif
+	bsl v18.16b, v16.16b, v\output\().16b
+	.if \binary
+	.if \element == 32
+	movi v16.4s, #0x40, lsl #16
+	.else
+	mov x14, #0x0008000000000000
+	dup v16.2d, x14
+	.endif
+	orr v16.16b, v\left\().16b, v16.16b
+	bsl v19.16b, v18.16b, v16.16b
+	bsl v17.16b, v\output\().16b, v19.16b
+	.else
+	bsl v17.16b, v\output\().16b, v18.16b
+	.endif
+	mov v\output\().16b, v17.16b
+	.endif
+Lx86_simd_nan_done\@:
 .endm
 
 /* While the gadgets check SIMD exceptions, leave when a lane of a packed

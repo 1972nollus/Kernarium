@@ -307,6 +307,7 @@ Lx86_mxcsr_load_done:
 	 * STMXCSR shows; its reserved high half reads as zero. */
 	and w24, w24, #0xffff
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	refresh_simd_exact w24, 9, 10
 	publish_guest_rounding 9, 10, 11
 	retire_unless_simd_unchecked w24
 Lx86_mxcsr_load_cross:
