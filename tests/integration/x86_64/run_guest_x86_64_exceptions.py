@@ -8,12 +8,14 @@ runs long repeated string instructions; ICEBP, BOUND, INT 4, INTO, INT n, UD2,
 DIV and IDIV, page faults, non-canonical addresses, misaligned accesses under
 RFLAGS.AC and unmasked SSE and x87 exceptions deliver Linux's signals, codes,
 trap numbers and error codes; VMASKMOV and VPMASKMOV access only their enabled
-lanes; AVX2 gathers complete the elements before a fault; masked x87 exceptions set sticky status flags and FPREM, FSIN and
-FSINCOS keep a zero's sign; an x87 stack survives a signal; a signal taken
-between two instructions leaves the accumulator alone; and a tracer of either
-ABI reads and writes registers, FP state, debug registers and TLS, steps a
-repeated string instruction one iteration at a time, and changes or skips a
-system call through orig_ax. The kernel must relay every such signal without complaint.
+lanes; AVX2 gathers complete the elements before a fault; a faulting store or
+later load leaves the state its instruction found; masked x87 exceptions set
+sticky status flags and FPREM, FSIN and FSINCOS keep a zero's sign; an x87
+stack survives a signal; a signal taken between two instructions leaves the
+accumulator alone; and a tracer of either ABI reads and writes registers, FP
+state, debug registers and TLS, steps a repeated string instruction one
+iteration at a time, and changes or skips a system call through orig_ax. The
+kernel must relay every such signal without complaint.
 """
 
 from __future__ import annotations

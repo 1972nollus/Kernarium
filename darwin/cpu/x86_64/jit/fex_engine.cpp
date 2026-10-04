@@ -651,7 +651,10 @@ uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std:
 					record_code_write(*frame, at);
 					return 0;
 				}
-				engine.publish_code_write(space, address, size);
+				/* The load of a read-modify-write publishes nothing: its
+				 * store comes here again. */
+				if (store || atomic)
+					engine.publish_code_write(space, address, size);
 				return reinterpret_cast<uintptr_t>(pointer);
 			}
 			std::atomic_ref<std::uint64_t>{entry.WriteDelta}.store(delta, std::memory_order_relaxed);
@@ -665,7 +668,7 @@ uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std:
 
 	/* A plain access across two guest pages completes through the bounce
 	 * buffer, with the address space's own fault order. */
-	if (atomic || (info & Core::EMBEDDER_ACCESS_READ_WRITE) != 0 || size > sizeof(frame->Embedder.Bounce)) {
+	if (atomic || size > sizeof(frame->Embedder.Bounce)) {
 		record_unsupported(*frame, address, at);
 		return 0;
 	}
@@ -685,9 +688,22 @@ uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std:
 			if (space.stores_publish(memory, page))
 				engine.publish_code_write(space, std::max(page, address),
 					std::min<std::uint64_t>(page + guest_page_size, address + size) - std::max(page, address));
-	} else if (!memory.read(address, std::span<std::byte>{bounce, size})) {
-		record_fault(*frame, memory, address, MemoryAccess::read, at);
-		return 0;
+	} else {
+		/* The load of a read-modify-write checks its store first. */
+		if ((info & Core::EMBEDDER_ACCESS_READ_WRITE) != 0) {
+			if (!memory.validate_access(address, size, MemoryAccess::write)) {
+				record_fault(*frame, memory, address, MemoryAccess::write, at);
+				return 0;
+			}
+			if (store_ends_unit(space, memory, address, size)) {
+				record_code_write(*frame, at);
+				return 0;
+			}
+		}
+		if (!memory.read(address, std::span<std::byte>{bounce, size})) {
+			record_fault(*frame, memory, address, MemoryAccess::read, at);
+			return 0;
+		}
 	}
 	if (ordered)
 		std::atomic_thread_fence(std::memory_order_seq_cst);

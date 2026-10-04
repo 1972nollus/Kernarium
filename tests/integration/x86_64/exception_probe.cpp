@@ -1591,7 +1591,8 @@ void nc_push() { probe_nc_push(noncanonical); }
 
 /* A push through a non-canonical RSP can deliver its signal only on an
  * alternate stack. */
-bool handle_on_alternate_stack(long signal)
+bool handle_on_alternate_stack(long signal,
+			       void (*handler)(int, void *, void *) = record_fault)
 {
 	const struct {
 		word sp;
@@ -1600,7 +1601,7 @@ bool handle_on_alternate_stack(long signal)
 	} stack = {reinterpret_cast<word>(alternate_stack), 0,
 		   sizeof(alternate_stack)};
 	KernelSigaction action = {};
-	action.handler = reinterpret_cast<word>(record_fault);
+	action.handler = reinterpret_cast<word>(handler);
 	action.flags = sa_siginfo | sa_restorer | sa_onstack;
 	action.restorer = reinterpret_cast<word>(&probe_restorer);
 	return raw_syscall(nr_sigaltstack, reinterpret_cast<long>(&stack), 0) ==
@@ -2141,6 +2142,285 @@ bool gathers()
 			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x40),
 				address_of(probe_gather_fs_insn), 14, true, 4});
 		ok &= expect_gathered(4, 8, 0x07, loaded, 0xf8);
+	}
+	return ok;
+}
+
+/* Each fault-state case loads RFLAGS from (block)[16] and the registers
+ * from (block)[0..15] in x86 order, skipping RSP, runs its setup, records
+ * every register, RFLAGS, the x87 status and control words, MXCSR and XMM0
+ * as they stand before the instruction, switches to its own stack if it
+ * names one, and runs the instruction, whose store meets a read-only page
+ * or whose later load meets an unmapped one. The fault
+ * handler records the frame and resumes after the instruction on the
+ * case's own stack. */
+#define PROBE_STATE(name, setup, stack, instruction)                         \
+	".global probe_state_" #name "\n"                                    \
+	"probe_state_" #name ":\n"                                           \
+	"	push %rbx\n"                                                 \
+	"	push %rbp\n"                                                 \
+	"	push %r12\n"                                                 \
+	"	push %r13\n"                                                 \
+	"	push %r14\n"                                                 \
+	"	push %r15\n"                                                 \
+	"	movq %rsp, state_resume_rsp(%rip)\n"                         \
+	"	leaq 9f(%rip), %rax\n"                                       \
+	"	movq %rax, state_resume_ip(%rip)\n"                          \
+	"	pushq 128(%rdi)\n"                                           \
+	"	popfq\n"                                                     \
+	"	movq 0(%rdi), %rax\n"                                        \
+	"	movq 8(%rdi), %rcx\n"                                        \
+	"	movq 16(%rdi), %rdx\n"                                       \
+	"	movq 24(%rdi), %rbx\n"                                       \
+	"	movq 40(%rdi), %rbp\n"                                       \
+	"	movq 48(%rdi), %rsi\n"                                       \
+	"	movq 64(%rdi), %r8\n"                                        \
+	"	movq 72(%rdi), %r9\n"                                        \
+	"	movq 80(%rdi), %r10\n"                                       \
+	"	movq 88(%rdi), %r11\n"                                       \
+	"	movq 96(%rdi), %r12\n"                                       \
+	"	movq 104(%rdi), %r13\n"                                      \
+	"	movq 112(%rdi), %r14\n"                                      \
+	"	movq 120(%rdi), %r15\n"                                      \
+	"	movq 56(%rdi), %rdi\n"                                       \
+	"	" setup "\n"                                                 \
+	"	movq %r8, state_expect+0(%rip)\n"                            \
+	"	movq %r9, state_expect+8(%rip)\n"                            \
+	"	movq %r10, state_expect+16(%rip)\n"                          \
+	"	movq %r11, state_expect+24(%rip)\n"                          \
+	"	movq %r12, state_expect+32(%rip)\n"                          \
+	"	movq %r13, state_expect+40(%rip)\n"                          \
+	"	movq %r14, state_expect+48(%rip)\n"                          \
+	"	movq %r15, state_expect+56(%rip)\n"                          \
+	"	movq %rdi, state_expect+64(%rip)\n"                          \
+	"	movq %rsi, state_expect+72(%rip)\n"                          \
+	"	movq %rbp, state_expect+80(%rip)\n"                          \
+	"	movq %rbx, state_expect+88(%rip)\n"                          \
+	"	movq %rdx, state_expect+96(%rip)\n"                          \
+	"	movq %rax, state_expect+104(%rip)\n"                         \
+	"	movq %rcx, state_expect+112(%rip)\n"                         \
+	"	pushfq\n"                                                    \
+	"	popq state_expect+136(%rip)\n"                               \
+	"	fnstsw state_expect_fsw(%rip)\n"                             \
+	"	fnstcw state_expect_fcw(%rip)\n"                             \
+	"	stmxcsr state_expect_mxcsr(%rip)\n"                          \
+	"	movq %xmm0, state_expect_xmm0(%rip)\n"                       \
+	"	" stack "\n"                                                 \
+	"	movq %rsp, state_expect+120(%rip)\n"                         \
+	".global probe_state_" #name "_insn\n"                               \
+	"probe_state_" #name "_insn:\n"                                      \
+	"	" instruction "\n"                                           \
+	"9:\n"                                                               \
+	"	movq state_resume_rsp(%rip), %rsp\n"                         \
+	"	cld\n"                                                       \
+	"	fninit\n"                                                    \
+	"	pop %r15\n"                                                  \
+	"	pop %r14\n"                                                  \
+	"	pop %r13\n"                                                  \
+	"	pop %r12\n"                                                  \
+	"	pop %rbp\n"                                                  \
+	"	pop %rbx\n"                                                  \
+	"	ret\n"
+#define STATE_CASES(X)                                                       \
+	X(adc, "", "", "adcq %rbx, (%r8)")                                   \
+	X(adc_across, "", "", "adcq %rbx, (%r9)")                            \
+	X(sbb, "", "", "sbbl $1, (%r8)")                                     \
+	X(rcl, "", "", "rclq $1, (%r8)")                                     \
+	X(rcr, "movl $3, %ecx", "", "rcrq %cl, (%r8)")                       \
+	X(add, "", "", "addq %rbx, (%r8)")                                   \
+	X(inc, "", "", "incl (%r8)")                                         \
+	X(neg, "", "", "negq (%r8)")                                         \
+	X(shl, "", "", "shlq $3, (%r8)")                                     \
+	X(shld, "movl $5, %ecx", "", "shldq %cl, %rbx, (%r8)")               \
+	X(bts, "movl $5, %ebx", "", "btsq %rbx, (%r8)")                      \
+	X(pop_memory, "", "", "popq (%r8)")                                  \
+	X(push, "", "movq %r8, %rsp", "pushq %rbx")                          \
+	X(push_memory, "", "movq %r8, %rsp", "pushq 8(%r9)")                 \
+	X(call, "", "movq %r8, %rsp", "call 9f")                             \
+	X(call_memory, "", "movq %r8, %rsp", "call *8(%r9)")                 \
+	X(enter, "", "movq %r8, %rsp", "enter $16, $0")                      \
+	X(pushf, "", "movq %r8, %rsp", "pushfq")                             \
+	X(movs, "movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsq")            \
+	X(movs_down, "std; movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsb")  \
+	X(stos, "movq %r8, %rdi", "", "stosq")                               \
+	X(rep_stos, "movq %r8, %rdi; movl $5, %ecx", "", "rep stosb")        \
+	X(rep_movs, "leaq -64(%r9), %rsi; movq %r8, %rdi; movl $5, %ecx", "",\
+	  "rep movsb")                                                       \
+	X(repe_cmps, "movq %r8, %rsi; movq %r10, %rdi; movl $5, %ecx", "",   \
+	  "repe cmpsb")                                                      \
+	X(cmpxchg_equal, "movq (%r8), %rax", "", "cmpxchgq %rcx, (%r8)")     \
+	X(cmpxchg_unequal, "", "", "cmpxchgq %rcx, (%r8)")                   \
+	X(cmpxchg8b, "", "", "cmpxchg8b (%r8)")                              \
+	X(xadd, "", "", "xaddq %rbx, (%r8)")                                 \
+	X(xchg, "", "", "xchgq %rbx, (%r8)")                                 \
+	X(lock_adc, "", "", "lock adcq %rbx, (%r8)")                         \
+	X(fstp, "fninit; fld1; fld1", "", "fstpl (%r8)")                     \
+	X(fistp, "fninit; fld1; fld1", "", "fistpl (%r8)")                   \
+	X(fisttp, "fninit; fld1; fld1", "", "fisttpl (%r8)")                 \
+	X(fstpt, "fninit; fld1; fld1", "", "fstpt (%r8)")                    \
+	X(fbstp, "fninit; fld1; fld1", "", "fbstp (%r8)")                    \
+	X(fnstenv, "fninit; fld1", "", "fnstenv -12(%r9)")                   \
+	X(fnsave, "fninit; fld1", "", "fnsave -12(%r9)")                     \
+	X(frstor, "fninit; fld1", "", "frstor -60(%r10)")                    \
+	X(fldenv, "fninit; fld1", "", "fldenv -16(%r10)")                    \
+	X(fxrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",                 \
+	  "fxrstor -256(%r10)")                                              \
+	X(xrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax; "      \
+	  "xorl %edx, %edx", "", "xrstor -768(%r10)")                        \
+	X(iretq, "", "leaq -24(%r10), %rsp", "iretq")                        \
+	X(leave, "movq %r10, %rbp", "", "leave")
+
+#define EMIT_STATE(name, setup, stack, instruction)                          \
+	PROBE_STATE(name, setup, stack, instruction)
+__asm__(".text\n" STATE_CASES(EMIT_STATE));
+#undef EMIT_STATE
+#undef PROBE_STATE
+
+#define DECLARE_STATE(name, setup, stack, instruction)                       \
+	extern "C" void probe_state_##name(const word *block);               \
+	extern "C" char probe_state_##name##_insn[];
+STATE_CASES(DECLARE_STATE)
+#undef DECLARE_STATE
+
+/* The state before the instruction, in the frame's register order. */
+extern "C" {
+volatile word state_resume_rsp;
+volatile word state_resume_ip;
+word state_expect[18];
+u16 state_expect_fsw;
+u16 state_expect_fcw;
+u32 state_expect_mxcsr;
+u64 state_expect_xmm0;
+}
+
+/* The frame's general registers, R8 to RFLAGS, and x87 words. */
+constexpr unsigned frame_registers = 18;
+word state_frame[frame_registers];
+u16 state_frame_fsw;
+u16 state_frame_fcw;
+u32 state_frame_mxcsr;
+u64 state_frame_xmm0;
+const char *const frame_register_names[frame_registers] = {
+	"R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "RDI",
+	"RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP", "RIP", "RFLAGS"};
+constexpr unsigned frame_rsp_offset = 40 + 15 * 8;
+constexpr unsigned frame_fpstate_offset = 40 + 23 * 8;
+
+void record_state(int signal, void *info, void *context)
+{
+	resume_ip = 0;
+	record_fault(signal, info, context);
+	for (unsigned index = 0; index < frame_registers; ++index)
+		state_frame[index] = frame_word(context, 40 + index * 8);
+	const auto *fpstate = reinterpret_cast<const unsigned char *>(
+		frame_word(context, frame_fpstate_offset));
+	if (fpstate != nullptr) {
+		state_frame_fcw = *reinterpret_cast<const u16 *>(fpstate);
+		state_frame_fsw = *reinterpret_cast<const u16 *>(fpstate + 2);
+		state_frame_mxcsr = *reinterpret_cast<const u32 *>(fpstate + 24);
+		state_frame_xmm0 = *reinterpret_cast<const u64 *>(fpstate + 160);
+	}
+	frame_word(context, frame_ip_offset) = state_resume_ip;
+	frame_word(context, frame_rsp_offset) = state_resume_rsp;
+}
+
+struct StateCase {
+	const char *name;
+	void (*probe)(const word *block);
+	const char *instruction;
+	bool x87;
+};
+
+#define STATE_ENTRY(name, setup, stack, instruction)                         \
+	{#name, probe_state_##name, probe_state_##name##_insn,                \
+	 (setup)[0] == 'f'},
+const StateCase state_cases[] = {STATE_CASES(STATE_ENTRY)};
+#undef STATE_ENTRY
+
+constexpr long nr_mprotect = 10;
+constexpr long prot_read = 1;
+/* A writable page, a read-only one and an unmapped one. */
+alignas(4096) unsigned char state_pages[3 * page_bytes];
+
+/* An instruction whose store, or a load after its first, faults has done
+ * nothing: the frame shows every register, RFLAGS, the x87 stack and
+ * control word, MXCSR and XMM0 as the instruction found them, and RIP at
+ * it, whatever the instruction computed before, so the guest that resolves
+ * the fault runs it again from scratch. */
+bool fault_state()
+{
+	unsigned char *const read_only = state_pages + page_bytes;
+	unsigned char *const unmapped = state_pages + 2 * page_bytes;
+	for (word offset = 0; offset < page_bytes; ++offset)
+		read_only[offset] = static_cast<unsigned char>(0x5a + offset);
+	/* An XSAVE image of x87, SSE and AVX state whose AVX part runs onto the
+	 * unmapped page, with FCW 0x27f, MXCSR 0x1f80 and zero registers. */
+	unsigned char *const image = unmapped - 768;
+	for (word offset = 0; offset < 768 - 24; ++offset)
+		image[offset] = 0;
+	image[0] = 0x7f;
+	image[1] = 0x02;
+	image[24] = 0x80;
+	image[25] = 0x1f;
+	image[512] = 7;
+	/* IRETQ's RIP, CS and RFLAGS slots, before its RSP on the unmapped
+	 * page. */
+	const word iret_frame[3] = {reinterpret_cast<word>(state_pages), 0x33,
+				    0x246};
+	for (unsigned byte = 0; byte < sizeof(iret_frame); ++byte)
+		(unmapped - sizeof(iret_frame))[byte] =
+			reinterpret_cast<const unsigned char *>(iret_frame)[byte];
+	if (raw_syscall(nr_mprotect, reinterpret_cast<long>(read_only),
+			page_bytes, prot_read) != 0 ||
+	    raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  mprotect or munmap failed\n");
+		return false;
+	}
+	/* A push or call faults with RSP on the read-only page. */
+	if (!handle_on_alternate_stack(sigsegv, record_state) ||
+	    !handle_on_alternate_stack(sigbus, record_state)) {
+		put("  sigaltstack or rt_sigaction failed\n");
+		return false;
+	}
+	word block[17];
+	for (unsigned index = 0; index < 16; ++index)
+		block[index] = 0x0f0e0d0c0b0a0908ULL + 0x0101010101010101ULL * index;
+	block[8] = reinterpret_cast<word>(read_only + 0x100);
+	block[9] = reinterpret_cast<word>(read_only - 4);
+	block[10] = reinterpret_cast<word>(unmapped);
+	/* CF, PF, AF, SF and OF set; ZF and DF clear. */
+	block[16] = 0x897;
+	bool ok = true;
+	for (const auto &test : state_cases) {
+		observed[observed_count] = 0;
+		test.probe(block);
+		bool good = expect("signals", observed[observed_count], 1);
+		good &= expect("signal", observed[observed_signal],
+			       static_cast<word>(sigsegv));
+		good &= expect("frame ip", state_frame[16],
+			       reinterpret_cast<word>(test.instruction));
+		for (unsigned index = 0; index < 16; ++index)
+			good &= expect(frame_register_names[index],
+				       state_frame[index], state_expect[index]);
+		good &= expect("RFLAGS", state_frame[17] & 0xcd5,
+			       state_expect[17] & 0xcd5);
+		if (test.x87) {
+			good &= expect("x87 TOP", state_frame_fsw & 0x3800U,
+				       state_expect_fsw & 0x3800U);
+			good &= expect("x87 control", state_frame_fcw,
+				       state_expect_fcw);
+			good &= expect("MXCSR", state_frame_mxcsr,
+				       state_expect_mxcsr);
+			good &= expect("XMM0", state_frame_xmm0,
+				       state_expect_xmm0);
+		}
+		if (!good) {
+			put("  in ");
+			put(test.name);
+			put("\n");
+		}
+		ok &= good;
 	}
 	return ok;
 }
@@ -3302,6 +3582,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "masked-moves"));
 	report("x86-64 AVX2 gathers complete the elements before a fault",
 	       in_child(self, "gathers"));
+	report("x86-64 a faulting store leaves the state as the instruction found it",
+	       in_child(self, "fault-state"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -3380,6 +3662,8 @@ extern "C" int probe_main(word *stack)
 			return masked_moves() ? 0 : 1;
 		if (equal(mode, "gathers"))
 			return gathers() ? 0 : 1;
+		if (equal(mode, "fault-state"))
+			return fault_state() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

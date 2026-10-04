@@ -64,7 +64,14 @@ must resolve, an exhausted budget or a pending interrupt, often in the middle
 of a block. At each of those exits the guest registers, RFLAGS, the vector
 registers and the x87 stack and TOP are precise: the embedded x87 pass writes
 its cached stack values back after every x87 operation instead of at the
-block's end. Each dispatch also:
+block's end. A fault leaves the state as its instruction found it, because
+the guest resolves the fault, a copy-on-write store among them, and runs the
+instruction again: a load whose bytes the same instruction then stores takes
+write permission, so a read-modify-write faults before it changes a register
+or a flag; POP to memory stores before it moves RSP; and FLDENV, FRSTOR,
+FXRSTOR, XRSTOR and IRET probe their whole operand before they load state from
+it. The exceptions probe's fault-state mode holds both engines to that. Each
+dispatch also:
 
 - decodes by the address space's execution mode, not by whatever CS holds;
 - starts from the host FPCR the guest's MXCSR implies, because FEXCore applies
