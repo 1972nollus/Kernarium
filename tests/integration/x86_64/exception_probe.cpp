@@ -1925,7 +1925,8 @@ __asm__(".text\n"
 	PROBE_GATHER(dd256, "vpgatherdd %ymm1, (%rax,%ymm2,1), %ymm0")
 	PROBE_GATHER(dd128, "vpgatherdd %xmm1, (%rax,%xmm2,1), %xmm0")
 	PROBE_GATHER(qq256, "vpgatherqq %ymm1, (%rax,%ymm2,1), %ymm0")
-	PROBE_GATHER(qps128, "vgatherqps %xmm1, (%rax,%xmm2,1), %xmm0"));
+	PROBE_GATHER(qps128, "vgatherqps %xmm1, (%rax,%xmm2,1), %xmm0")
+	PROBE_GATHER(fs, "vpgatherdd %ymm1, %fs:0(,%ymm2,1), %ymm0"));
 #undef PROBE_GATHER
 
 #define DECLARE_GATHER(name)                                                 \
@@ -1936,6 +1937,7 @@ DECLARE_GATHER(dd256)
 DECLARE_GATHER(dd128)
 DECLARE_GATHER(qq256)
 DECLARE_GATHER(qps128)
+DECLARE_GATHER(fs)
 #undef DECLARE_GATHER
 
 alignas(32) word gather_state[24];
@@ -1948,6 +1950,10 @@ void gather_dd256() { probe_gather_dd256(gather_state); }
 void gather_dd128() { probe_gather_dd128(gather_state); }
 void gather_qq256() { probe_gather_qq256(gather_state); }
 void gather_qps128() { probe_gather_qps128(gather_state); }
+void gather_fs() { probe_gather_fs(gather_state); }
+
+constexpr long nr_arch_prctl = 158;
+constexpr long arch_set_fs = 0x1002;
 
 /* The pattern dword at byte offset (offset) of the first page. */
 u32 gather_pattern(word offset) { return 0x5a000000U | static_cast<u32>(offset); }
@@ -2022,7 +2028,7 @@ bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
  * sign is clear is not read, an element on a page not yet touched
  * completes, and an element on an unmapped page raises #PF at its address
  * with every element before it gathered and its mask cleared, and the
- * elements from it on untouched. */
+ * elements from it on untouched. An FS override adds the FS base. */
 bool gathers()
 {
 	unsigned char *const first = gather_pages;
@@ -2108,6 +2114,33 @@ bool gathers()
 			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x20),
 				address_of(probe_gather_qps128_insn), 14, true, 4});
 		ok &= expect_gathered(4, 2, 0x01, loaded, 0x02);
+	}
+	{
+		/* An FS override adds the FS base. */
+		const word offsets[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		u64 loaded[8];
+		for (unsigned lane = 0; lane < 8; ++lane)
+			loaded[lane] = gather_pattern(offsets[lane]);
+		set_gather_state(4, 8, offsets, 0xff);
+		if (raw_syscall(nr_arch_prctl, arch_set_fs,
+				reinterpret_cast<long>(gather_pages)) != 0) {
+			put("  arch_prctl failed\n");
+			return false;
+		}
+		ok &= delivers_nothing("VPGATHERDD with an FS override", gather_fs,
+				       address_of(probe_gather_fs_end));
+		ok &= expect_gathered(4, 8, 0xff, loaded, 0xff);
+	}
+	{
+		const word offsets[8] = {0x10, 0x20, 0x30, away + 0x40, 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), gather_pattern(0x20),
+				       gather_pattern(0x30), 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers("VPGATHERDD with an FS override onto an unmapped page",
+			       gather_fs, address_of(probe_gather_fs_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x40),
+				address_of(probe_gather_fs_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x07, loaded, 0xf8);
 	}
 	return ok;
 }

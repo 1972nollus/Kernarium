@@ -965,8 +965,8 @@ void save_state(Space &space, CpuState &cpu) noexcept
  * with what remains. The backend gathers into a temporary and leaves the
  * state as it was before the instruction, so the host redoes the elements
  * in order up to the first that faults, as the gadget engine does, with the
- * backend's address arithmetic: base plus displacement plus the scaled,
- * sign-extended index, wrapped to the address size. If no element faults
+ * backend's address arithmetic: segment base plus base plus displacement plus
+ * the scaled, sign-extended index, wrapped to the address size. If no element faults
  * now, the state and the fault stay as the dispatch left them. */
 void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::FaultInfo &fault) noexcept
 {
@@ -987,6 +987,10 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 	std::uint64_t base = static_cast<std::uint64_t>(static_cast<std::int64_t>(operand.displacement));
 	if (operand.base != MemoryOperand::no_register)
 		base += cpu.registers[operand.base];
+	if (operand.segment == Segment::fs)
+		base += cpu.fs_base;
+	else if (operand.segment == Segment::gs)
+		base += cpu.gs_base;
 	unsigned shift = 0;
 	while ((1U << shift) < operand.scale)
 		++shift;
