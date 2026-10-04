@@ -164,9 +164,12 @@ call, which discards such a mapping and leaves an absent or equal one alone,
 and the next access replays the PTE. An absent page is always sound.
 
 Gadget streams, MMU backing, and shadow mappings are data.
-Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
-publish RW pages as RX, control JIT write protection, or publish the instruction
-cache.
+Only `darwin/cpu/jit_memory/executable_memory.cpp` may allocate executable
+memory, publish RW pages as RX, control JIT write protection, or publish the
+instruction cache. JIT engines reach executable memory only through it; the
+arm64 JIT's arena maps and publishes its blocks with it. Its target's `native`
+engine kind and the source audit keep the gadget engines and shared CPU code
+from linking or including it.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit

@@ -7,7 +7,8 @@ api/       installed C API and ABI identity
 include/   host copies of the host/Linux bridge and host-only guest contracts
 platform/  Apple capabilities, VM, files, signals, and sockets
 memory/    guest address spaces, software MMU, and TLBs
-cpu/       gadgets, JIT, shared decode, and neutral engine selection
+cpu/       gadgets, JIT, executable memory, shared decode, and neutral
+           engine selection
 runtime/   guest-entry composition
 device/    block, console, GPU, input, audio, and network providers, and the
            vhost-user transport they share
