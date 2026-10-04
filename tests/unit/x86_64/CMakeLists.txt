@@ -91,4 +91,16 @@ if(TARGET uml_x86_64_jit)
         LABELS cpu;x86-64)
     set_tests_properties(x86-64-jit-instruction-corpus PROPERTIES
         TIMEOUT 300)
+    # The same run from a code-size estimate of one byte per IR node: every
+    # unit past the first buffer's baseline outgrows it and restarts with a
+    # larger one, with the same results.
+    uml_add_unit_test(
+        NAME x86-64-jit-code-buffer-growth
+        COMMAND uml_x86_64_fex_asm_jit_runner
+            --exclusions "${CMAKE_CURRENT_SOURCE_DIR}/jit_corpus_exclusions.tsv"
+            --code-size-per-node 1 --require-growth
+            "${_uml_x86_64_instruction_corpus}"
+        LABELS cpu;x86-64)
+    set_tests_properties(x86-64-jit-code-buffer-growth PROPERTIES
+        TIMEOUT 300)
 endif()

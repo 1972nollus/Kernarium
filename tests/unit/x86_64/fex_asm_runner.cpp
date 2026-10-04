@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <charconv>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -637,12 +638,18 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	return "unknown";
 }
 
+/* --code-size-per-node: the engine's first code-size estimate. A small one
+ * makes every large unit outgrow its buffer and restart, which
+ * --require-growth then requires to have happened. */
+uml::cpu::x86_64::jit::FexEngineOptions jit_options{};
+bool require_growth = false;
+
 /* One engine serves the process, as one serves a vCPU thread. Every case
  * runs in a fresh address-space generation, so no translation, software-TLB
  * entry or code-page registration crosses cases. */
 struct JitHarness final {
 	uml::cpu::x86_64::jit::FexEngine engine{
-		uml::platform::apple::probed_host_capabilities()};
+		uml::platform::apple::probed_host_capabilities(), jit_options};
 	unsigned long generation{};
 	uml::cpu::InterruptToken interrupt{};
 
@@ -1492,9 +1499,20 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 			"trailing corpus bytes");
 		return 2;
 	}
+#if UML_FEX_ASM_JIT
+	const auto restarts = jit_harness().engine.code_buffer_restarts();
+	if (require_growth && restarts == 0) {
+		print_result("no_growth", 0, 0, {},
+			"no compile outgrew its first code buffer");
+		++failures;
+	}
+#endif
 	std::cout << "status=" << (failures == 0 ? "passed" : "failed") << '\t'
 		<< "records=" << record_count << '\t' << "cases=" << cases << '\t'
 		<< "failures=" << failures;
+#if UML_FEX_ASM_JIT
+	std::cout << '\t' << "restarts=" << restarts;
+#endif
 	if (!exclusions.empty()) {
 		std::uint32_t excluded{};
 		for (const auto &[failure_class, count] : expected)
@@ -1516,17 +1534,42 @@ int main(int argc, char **argv)
 {
 	std::vector<std::byte> first;
 	std::string error;
-	if (argc == 2) {
-		if (!load_file(argv[1], first, error)) {
-			print_result("malformed_input", 0, 0, {}, error);
-			return 2;
+	/* Corpus options come before the corpus. */
+	const char *exclusion_list = nullptr;
+	bool corpus_options = false;
+	int index = 1;
+	while (index < argc - 1) {
+		const std::string_view option{argv[index]};
+		if (option == "--exclusions") {
+			exclusion_list = argv[index + 1];
+			index += 2;
+#if UML_FEX_ASM_JIT
+		} else if (option == "--code-size-per-node") {
+			const std::string_view value{argv[index + 1]};
+			auto &per_node = jit_options.code_bytes_per_node;
+			const auto parsed = std::from_chars(value.data(),
+				value.data() + value.size(), per_node);
+			if (parsed.ec != std::errc{} ||
+				parsed.ptr != value.data() + value.size() || per_node == 0) {
+				print_result("malformed_input", 0, 0, {},
+					"--code-size-per-node needs a positive byte count");
+				return 2;
+			}
+			index += 2;
+		} else if (option == "--require-growth") {
+			require_growth = true;
+			++index;
+#endif
+		} else {
+			break;
 		}
-		return run_corpus(first);
+		corpus_options = true;
 	}
-	if (argc == 4 && std::string_view{argv[1]} == "--exclusions") {
+	if (index == argc - 1 && (argc == 2 || corpus_options)) {
 		Exclusions exclusions;
-		if (!load_exclusions(argv[2], exclusions, error) ||
-			!load_file(argv[3], first, error)) {
+		if ((exclusion_list != nullptr &&
+			    !load_exclusions(exclusion_list, exclusions, error)) ||
+			!load_file(argv[index], first, error)) {
 			print_result("malformed_input", 0, 0, {}, error);
 			return 2;
 		}
@@ -1547,7 +1590,12 @@ int main(int argc, char **argv)
 			repository ? Dispatch::cached : Dispatch::fresh);
 	}
 	print_result("malformed_input", 0, 0, {},
+#if UML_FEX_ASM_JIT
+		"usage: runner [--exclusions LIST] [--code-size-per-node BYTES] "
+		"[--require-growth] CORPUS | "
+#else
 		"usage: runner [--exclusions LIST] CORPUS | "
+#endif
 		"runner [--repository] BINARY CONFIG");
 	return 2;
 }

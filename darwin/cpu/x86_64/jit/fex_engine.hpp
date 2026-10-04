@@ -54,9 +54,18 @@ struct JitRunResult final {
 	std::int32_t error_code{};
 };
 
+struct FexEngineOptions final {
+	/* Bytes of host code a compile first reserves per IR node, 0 for
+	 * FEXCore's default. A unit that outgrows its reservation restarts with
+	 * twice as much, so a small value costs only compile time; a test lowers
+	 * it to make every large unit grow. */
+	std::uint32_t code_bytes_per_node{};
+};
+
 class FexEngine final {
 public:
-	explicit FexEngine(const ::uml::platform::HostCapabilities &host) noexcept;
+	explicit FexEngine(const ::uml::platform::HostCapabilities &host,
+		FexEngineOptions options = {}) noexcept;
 	~FexEngine();
 	FexEngine(const FexEngine &) = delete;
 	FexEngine &operator=(const FexEngine &) = delete;
@@ -78,6 +87,9 @@ public:
 	[[nodiscard]] JitRunResult run(CpuState &cpu,
 		::uml::memory::GuestAddressSpace &memory,
 		const JitRunRequest &request) noexcept;
+
+	/* Compiles this engine restarted with a larger code buffer. */
+	[[nodiscard]] std::uint64_t code_buffer_restarts() const noexcept;
 
 	struct Impl;
 

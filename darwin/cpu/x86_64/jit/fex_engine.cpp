@@ -429,10 +429,18 @@ struct FexEngine::Impl final {
 	/* RFLAGS.TF was set on entry: a repeated string instruction steps one
 	 * element at a time. */
 	bool stepping{};
+	const std::uint32_t code_bytes_per_node;
+	/* Code-buffer restarts of the spaces already released. */
+	std::uint64_t released_restarts{};
 
-	explicit Impl(const ::uml::platform::HostCapabilities &host)
-		: host_features{fex_host_features(host)}
+	Impl(const ::uml::platform::HostCapabilities &host, const FexEngineOptions &options)
+		: host_features{fex_host_features(host)}, code_bytes_per_node{options.code_bytes_per_node}
 	{}
+
+	[[nodiscard]] static std::uint64_t restarts(const Space &space) noexcept
+	{
+		return space.thread != nullptr ? space.thread->CurrentFrame->Embedder.CodeBufferRestarts : 0;
+	}
 
 	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode) noexcept
 	{
@@ -838,6 +846,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	if (spaces.size() >= maximum_spaces) {
 		auto oldest = std::min_element(spaces.begin(), spaces.end(),
 			[](const auto &left, const auto &right) { return left->last_use < right->last_use; });
+		released_restarts += restarts(**oldest);
 		spaces.erase(oldest);
 	}
 	std::unique_ptr<Space> space;
@@ -893,6 +902,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	pointers.EmbedderStringHelper = reinterpret_cast<uint64_t>(&embedder_string);
 	frame->Embedder.TLB = reinterpret_cast<uint64_t>(space->tlb.get());
 	frame->Embedder.HostContext = reinterpret_cast<uint64_t>(space.get());
+	frame->Embedder.CodeSizePerNode = code_bytes_per_node;
 	spaces.push_back(std::move(space));
 	return spaces.back().get();
 }
@@ -907,16 +917,26 @@ void FexEngine::Impl::publish_code_write(Space &space, std::uint64_t address, st
 		((address + size - 1) & guest_page_mask) + guest_page_size - (address & guest_page_mask));
 }
 
-FexEngine::FexEngine(const ::uml::platform::HostCapabilities &host) noexcept
+FexEngine::FexEngine(const ::uml::platform::HostCapabilities &host, FexEngineOptions options) noexcept
 {
 	try {
-		impl_ = std::make_unique<Impl>(host);
+		impl_ = std::make_unique<Impl>(host, options);
 	} catch (...) {
 		impl_.reset();
 	}
 }
 
 FexEngine::~FexEngine() = default;
+
+std::uint64_t FexEngine::code_buffer_restarts() const noexcept
+{
+	if (!impl_)
+		return 0;
+	auto total = impl_->released_restarts;
+	for (const auto &space : impl_->spaces)
+		total += Impl::restarts(*space);
+	return total;
+}
 
 bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
 	std::uint64_t &mapping_sequence, std::uint64_t &code_sequence) const noexcept
