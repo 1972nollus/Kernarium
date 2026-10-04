@@ -162,6 +162,59 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
+# A shell searches an exported CDPATH before the working directory for a cd
+# operand that does not start with / or a . component, and prints the
+# directory it finds there, so a decoy replaces the intended directory and its
+# path lands in captured output. A first-party shell script therefore writes
+# every cd as CDPATH= cd -- unless its operand is a literal absolute path. A
+# variable operand takes the form even when its value is absolute, so the rule
+# needs neither data flow nor an exemption. Comments are ignored, and the text
+# is scanned without CMake lists, which would split at its semicolons and
+# brackets.
+function(uml_audit_shell_cd ROOT OUT_VIOLATIONS)
+    set(_globs)
+    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium
+            scripts tests tools)
+        list(APPEND _globs "${ROOT}/${_scope}/*.sh")
+    endforeach()
+    file(GLOB_RECURSE _scripts LIST_DIRECTORIES false ${_globs})
+    # A cd command word, its operand and the character that ends it.
+    set(_cd "[\n \t;&|(){}!`'\"]cd([ \t][^\n;&|)]*)?[\n;&|)]")
+    set(_violations)
+    foreach(_path IN LISTS _scripts)
+        file(READ "${_path}" _text)
+        string(REPLACE "CDPATH= cd -- " "CDPATH=@cd-- " _code "\n${_text}\n")
+        string(REGEX REPLACE "\n[ \t]*#[^\n]*" "\n" _code "${_code}")
+        string(REGEX REPLACE "[ \t]#[^\n]*" "" _code "${_code}")
+        set(_offset 0)
+        set(_rest "${_code}")
+        while(TRUE)
+            if(NOT _rest MATCHES "${_cd}")
+                break()
+            endif()
+            set(_match "${CMAKE_MATCH_0}")
+            string(FIND "${_rest}" "${_match}" _at)
+            string(LENGTH "${_match}" _length)
+            if(NOT _match MATCHES "^.cd[ \t]+(--[ \t]+)?[\"']?/")
+                math(EXPR _end "${_offset} + ${_at} + 1")
+                string(SUBSTRING "${_code}" 0 ${_end} _before)
+                string(REGEX MATCHALL "\n" _newlines "${_before}")
+                list(LENGTH _newlines _line)
+                math(EXPR _command_length "${_length} - 2")
+                string(SUBSTRING "${_match}" 1 ${_command_length} _command)
+                string(STRIP "${_command}" _command)
+                list(APPEND _violations
+                    "${_path}:${_line}: ${_command} needs CDPATH= cd -- unless it names a literal absolute directory")
+            endif()
+            # The character that ended this cd may begin the next one.
+            math(EXPR _next "${_at} + ${_length} - 1")
+            math(EXPR _offset "${_offset} + ${_next}")
+            string(SUBSTRING "${_rest}" ${_next} -1 _rest)
+        endwhile()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -301,6 +354,9 @@ list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
 
 uml_audit_build_files("${SOURCE_ROOT}" BUILD_FILE_VIOLATIONS)
 list(APPEND VIOLATIONS ${BUILD_FILE_VIOLATIONS})
+
+uml_audit_shell_cd("${SOURCE_ROOT}" SHELL_CD_VIOLATIONS)
+list(APPEND VIOLATIONS ${SHELL_CD_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source

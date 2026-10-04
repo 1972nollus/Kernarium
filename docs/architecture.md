@@ -617,9 +617,11 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Ownership
 includes that only a darwin/ source's owner compiles it: no other CMake file
-and no Xcode project names one. It does not
-prove performance, generated code shape, a kernel boot, or guest behavior;
-those require their owning validation.
+and no Xcode project names one. A first-party shell script writes each `cd`
+as `CDPATH= cd --` unless it names a literal absolute directory, so an
+exported `CDPATH` can neither redirect it nor print into captured output.
+It does not prove performance, generated code shape, a kernel boot, or guest
+behavior; those require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on
