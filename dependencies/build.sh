@@ -448,6 +448,48 @@ cmake_setup "$ROOT_DIR/dependencies/softfloat" "$BUILDS/softfloat" \
 	-DUML_FEX_SOURCE_DIR="$SOURCES/fex"
 cmake_build_install "$BUILDS/softfloat"
 
+printf '%s\n' "building FEXCore FEX-2608 with fmt 12.2.0 and xxHash 0.8.3"
+# FEX builds fmt, xxHash, and unordered_dense as its own submodules, which the
+# verified rows fill in. Only FEXCore and those libraries are built: the
+# shared library, frontends, and install rules stay out of the prefix.
+# FEXCore calls the prefix's SoftFloat, which has no preserve_all ABI.
+FEX_COMMIT=$(awk -F '\t' '$1 == "fex" { print $5 }' "$MANIFEST")
+for submodule in fmt:fmt xxhash:xxhash unordered-dense:unordered_dense; do
+	mkdir -p -- "$SOURCES/fex/External/${submodule#*:}"
+	cp -R "$SOURCES/${submodule%%:*}/." \
+		"$SOURCES/fex/External/${submodule#*:}"
+done
+cmake_setup "$SOURCES/fex" "$BUILDS/fex" \
+	-DFEXCORE_EMBEDDED=ON \
+	-DOVERRIDE_VERSION=FEX-2608 \
+	-DOVERRIDE_HASH="$FEX_COMMIT" \
+	-DPython_EXECUTABLE="$PYTHON" \
+	-DTUNE_CPU=none -DTUNE_ARCH=generic \
+	-DHAS_CLANG_PRESERVE_ALL=OFF \
+	-DENABLE_LTO=OFF -DENABLE_CCACHE=OFF \
+	-DENABLE_FEX_ALLOCATOR=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
+	-DENABLE_OFFLINE_TELEMETRY=OFF -DENABLE_GDB_SYMBOLS=OFF \
+	-DBUILD_TESTING=OFF -DBUILD_FEXCONFIG=OFF -DBUILD_THUNKS=OFF \
+	-DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
+	-DCMAKE_DISABLE_FIND_PACKAGE_xxhash=ON \
+	-DCMAKE_DISABLE_FIND_PACKAGE_unordered_dense=ON
+private_env "$CMAKE" --build "$BUILDS/fex" --parallel "$JOBS" \
+	--target FEXCore FEXCore_Base JemallocDummy fmt xxhash
+for archive in FEXCore/Source/libFEXCore.a FEXCore/Source/libFEXCore_Base.a \
+	FEXCore/Source/libJemallocDummy.a External/fmt/libfmt.a \
+	External/xxhash/cmake_unofficial/libxxhash.a; do
+	$INSTALL -p -m 0644 "$BUILDS/fex/$archive" "$STAGE/lib/"
+done
+# The public headers are FEX's own install set, the generated IR and
+# configuration tables included, and the headers they include.
+mkdir -p -- "$STAGE/include/FEXCore" "$STAGE/include/fmt" \
+	"$STAGE/include/ankerl"
+$RSYNC -a "$SOURCES/fex/FEXCore/include/FEXCore/" "$STAGE/include/FEXCore/"
+$RSYNC -a "$BUILDS/fex/include/FEXCore/" "$STAGE/include/FEXCore/"
+$RSYNC -a "$SOURCES/fmt/include/fmt/" "$STAGE/include/fmt/"
+$RSYNC -a "$SOURCES/unordered-dense/include/ankerl/" "$STAGE/include/ankerl/"
+$INSTALL -p -m 0644 "$SOURCES/xxhash/xxhash.h" "$STAGE/include/"
+
 # The emulator imports exact archives and headers rather than upstream CMake
 # packages.  Remove unused exports because they can serialize build-only paths
 # to staged dependencies (for example an imported zlib archive).

@@ -1,9 +1,10 @@
 # FEX instruction conformance corpus
 
 The x86 gadget conformance campaign consumes the handwritten x86-64 and i386
-assembly tests from the pinned `x86-conformance` dependency. FEX is a test
-input only; no FEX source or runtime library is linked into an emulator
-product.
+assembly tests from the pinned `x86-conformance` dependency, for which FEX is
+a test input only. The macOS dependency prefix builds FEXCore from the same
+row for the macOS-only x86-64 JIT; see
+[`dependencies/README.md`](../../dependencies/README.md).
 
 Prepare the exact upstream source with:
 
