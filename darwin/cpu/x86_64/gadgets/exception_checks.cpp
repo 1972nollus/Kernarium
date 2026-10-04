@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "exception_checks.hpp"
 
+#include <SoftFloat-3e/platform.h>
+
+extern "C" {
+#include <SoftFloat-3e/softfloat.h>
+}
+
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <span>
 
@@ -639,6 +646,143 @@ struct FmaOperands final {
 	return false;
 }
 
+/* x86 detects underflow after rounding: a result is tiny when, rounded to
+ * full precision as if the exponent were unbounded, it lies below the
+ * smallest normal, where the host detects it before rounding. The two
+ * differ for a result the host rounds up to exactly the smallest normal.
+ * SoftFloat rounds as x86 does, from a binary128 value that holds the exact
+ * result rounded to odd: truncated, with its lowest bit set when that lost
+ * anything. A single or double keeps at most 53 of the 113 bits, so
+ * rounding it again rounds as the exact result would. A product of two
+ * lanes is exact in binary128. */
+
+[[nodiscard]] std::uint8_t soft_rounding(unsigned control) noexcept
+{
+	switch (control & 3U) {
+	case 1: return softfloat_round_min;
+	case 2: return softfloat_round_max;
+	case 3: return softfloat_round_minMag;
+	default: return softfloat_round_near_even;
+	}
+}
+
+/* A lane's value, exactly. */
+[[nodiscard]] float128_t soft_wide(bool dbl, std::uint64_t x) noexcept
+{
+	softfloat_state state{};
+	if (!dbl)
+		return f32_to_f128(&state,
+			float32_t{static_cast<std::uint32_t>(x)});
+	return extF80_to_f128(&state, f64_to_extF80(&state, float64_t{x}));
+}
+
+template <typename Operation>
+[[nodiscard]] float128_t soft_odd(Operation operation) noexcept
+{
+	softfloat_state state{};
+	state.roundingMode = softfloat_round_minMag;
+	auto result = operation(state);
+	if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
+		result.v[0] |= 1U;
+	return result;
+}
+
+/* Whether a result is tiny after rounding, and whether it is inexact. */
+struct SoftRounding final {
+	bool tiny{};
+	bool inexact{};
+};
+
+/* `value` rounded to a single or a double in rounding mode `control`. */
+[[nodiscard]] SoftRounding soft_round(float128_t value, bool dbl,
+	unsigned control) noexcept
+{
+	softfloat_state state{};
+	state.detectTininess = softfloat_tininess_afterRounding;
+	state.roundingMode = soft_rounding(control);
+	const FloatFormat f{dbl};
+	const bool denormal = f.denormal(dbl ? f128_to_f64(&state, value).v :
+		f128_to_f32(&state, value).v);
+	/* SoftFloat raises underflow for a tiny inexact result; an exact one
+	 * is a denormal. */
+	return {(state.exceptionFlags & softfloat_flag_underflow) != 0 ||
+			denormal,
+		(state.exceptionFlags & softfloat_flag_inexact) != 0};
+}
+
+/* The single `x` rounded to a half, which SoftFloat here lacks. Just below
+ * the smallest normal half, 2^-14, eleven bits step by 2^-25: rounding to
+ * nearest reaches it from within 2^-26 and rounding away from zero from
+ * within 2^-25. The halves delivered there step by 2^-24. A double holds
+ * the single exactly, and these bounds and scalings too. */
+[[nodiscard]] SoftRounding half_round(std::uint32_t x,
+	unsigned control) noexcept
+{
+	float single{};
+	std::memcpy(&single, &x, sizeof single);
+	const double magnitude = std::fabs(static_cast<double>(single));
+	if (!(magnitude < 0x1p-14) || magnitude == 0)
+		return {};
+	const bool negative = (x >> 31U) != 0;
+	bool rounds_up{};
+	switch (control & 3U) {
+	case 0:
+		rounds_up = magnitude >= 0x1p-14 - 0x1p-26;
+		break;
+	case 1:
+	case 2:
+		/* Down and up round away from zero for one sign. */
+		rounds_up = ((control & 3U) == 1) == negative &&
+			magnitude > 0x1p-14 - 0x1p-25;
+		break;
+	default:
+		break;
+	}
+	const double steps = magnitude * 0x1p24;
+	return {!rounds_up, steps != std::floor(steps)};
+}
+
+/* x86's underflow and precision flags for the results an instruction
+ * rounds. A tiny result raises underflow when it is inexact, or regardless
+ * while MXCSR unmasks underflow. While it masks underflow, FTZ flushes a
+ * tiny result to zero, which raises underflow and precision even when it
+ * was exact. */
+struct UnderflowModel final {
+	static constexpr std::uint32_t underflow = 0x10U;
+	static constexpr std::uint32_t precision = 0x20U;
+
+	bool unmasked{};
+	bool flush{};
+	std::uint32_t raised{};
+
+	UnderflowModel(std::uint32_t mxcsr, bool flushes) noexcept :
+		unmasked{(mxcsr & (underflow << 7U)) == 0},
+		flush{flushes && !unmasked &&
+			(mxcsr & mxcsr_flush_to_zero) != 0}
+	{
+	}
+
+	/* Whether FTZ flushes the result. */
+	bool record(const SoftRounding &result) noexcept
+	{
+		if (!result.tiny)
+			return false;
+		if (flush) {
+			raised |= underflow | precision;
+			return true;
+		}
+		if (unmasked || result.inexact)
+			raised |= underflow;
+		return false;
+	}
+
+	[[nodiscard]] HostFlagCorrection correction(
+		std::uint32_t decided = 0, std::uint32_t also = 0) const noexcept
+	{
+		return {decided | underflow, raised | also};
+	}
+};
+
 } // namespace
 
 std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
@@ -778,9 +922,42 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const auto &instruction = gadget.instruction;
 	const bool denormals_are_zero =
 		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
+	const unsigned rounding = cpu.mxcsr >> 13U;
+	const auto read = [&](const Operand &operand, VectorValue &value) {
+		return operand_value(cpu, gadget, operand, memory, value);
+	};
 	switch (instruction.operation) {
 	case Operation::vector_alu: {
-		if (instruction.vector_opcode != 0xc2)
+		const auto opcode = instruction.vector_opcode;
+		if (opcode == 0x59 || opcode == 0x5e) {
+			/* MULPS, MULPD, MULSS and MULSD, and the divisions, with
+			 * none, 66, F3 and F2. A quotient never lies close enough
+			 * below the smallest normal to round up to it, but may be
+			 * tiny and exact. */
+			const auto prefix = instruction.vector_prefix;
+			const bool dbl = prefix == 1 || prefix == 3;
+			const FloatFormat f{dbl};
+			const std::size_t lanes = prefix >= 2 ? 1U :
+				vector_lanes(instruction.destination, dbl);
+			VectorValue first{};
+			VectorValue second{};
+			if (!read(instruction.source, first) ||
+				!read(instruction.auxiliary, second))
+				return {};
+			UnderflowModel model{cpu.mxcsr, true};
+			for (std::size_t index = 0; index < lanes; ++index) {
+				const auto a = soft_wide(dbl, f.input(
+					value_lane(first, dbl, index), denormals_are_zero));
+				const auto b = soft_wide(dbl, f.input(
+					value_lane(second, dbl, index), denormals_are_zero));
+				model.record(soft_round(soft_odd([&](auto &state) {
+					return opcode == 0x59 ? f128_mul(&state, a, b) :
+						f128_div(&state, a, b);
+				}), dbl, rounding));
+			}
+			return model.correction();
+		}
+		if (opcode != 0xc2)
 			return {};
 		/* CMPPS, CMPPD, CMPSS and CMPSD raise invalid operation for a
 		 * signalling NaN, and under a signalling predicate for a quiet one
@@ -821,7 +998,8 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 		if (!read_fma_operands(cpu, gadget, memory, fma))
 			return {};
 		const FloatFormat f{fma.dbl};
-		HostFlagCorrection correction{.decided = invalid};
+		std::uint32_t raised{};
+		UnderflowModel model{cpu.mxcsr, true};
 		for (std::size_t index = 0; index < fma.lanes; ++index) {
 			const auto a = f.input(value_lane(fma.a, fma.dbl, index),
 				denormals_are_zero);
@@ -835,9 +1013,52 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 				f.negative(c) != fma.negate_addend(index);
 			if (fma_lane_invalid(f, a, b, c, product_negative,
 					addend_negative))
-				correction.raised |= invalid;
+				raised |= invalid;
+			const auto x = soft_wide(fma.dbl,
+				fma.negate_product() ? a ^ f.sign() : a);
+			const auto y = soft_wide(fma.dbl, b);
+			const auto z = soft_wide(fma.dbl,
+				fma.negate_addend(index) ? c ^ f.sign() : c);
+			model.record(soft_round(soft_odd([&](auto &state) {
+				return f128_add(&state, f128_mul(&state, x, y), z);
+			}), fma.dbl, rounding));
 		}
-		return correction;
+		return model.correction(invalid, raised);
+	}
+	case Operation::vector_convert: {
+		/* CVTPD2PS and CVTSD2SS narrow doubles, with 66 and F2. */
+		const auto prefix = instruction.vector_prefix;
+		if (instruction.vector_opcode != 0x5a || (prefix != 1 && prefix != 3))
+			return {};
+		VectorValue source{};
+		if (!read(instruction.auxiliary, source))
+			return {};
+		const std::size_t lanes = prefix == 3 ? 1U :
+			vector_lanes(instruction.auxiliary, true);
+		UnderflowModel model{cpu.mxcsr, true};
+		for (std::size_t index = 0; index < lanes; ++index)
+			model.record(soft_round(soft_wide(true, FloatFormat{true}.input(
+					value_lane(source, true, index), denormals_are_zero)),
+				false, rounding));
+		return model.correction();
+	}
+	case Operation::vector_integer_map3: {
+		/* VCVTPS2PH narrows singles, in the rounding mode its immediate
+		 * names unless its bit 2 defers to MXCSR's. FTZ does not apply. */
+		if (instruction.vector_opcode != 0x1d)
+			return {};
+		VectorValue source{};
+		if (!read(instruction.source, source))
+			return {};
+		const unsigned control = instruction.vector_control;
+		const auto lanes = vector_lanes(instruction.source, false);
+		UnderflowModel model{cpu.mxcsr, false};
+		for (std::size_t index = 0; index < lanes; ++index)
+			model.record(half_round(static_cast<std::uint32_t>(
+					FloatFormat{false}.input(value_lane(source, false, index),
+						denormals_are_zero)),
+				(control & 4U) != 0 ? rounding : control));
+		return model.correction();
 	}
 	default:
 		return {};

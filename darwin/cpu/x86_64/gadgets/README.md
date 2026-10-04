@@ -406,12 +406,17 @@ checks, and runs every other block, linked, as `execute` does:
   also in a product or sum added. A flag the host raises otherwise than x86 is
   decided from the sources too (`host_flag_correction`): an FMA's invalid
   operation, which x86 does not raise for infinity times zero plus a quiet
-  NaN, and a comparison's, which a quiet NaN raises under the signalling
+  NaN; a comparison's, which a quiet NaN raises under the signalling
   predicates alone, VEX's 16 to 31 included, and a signalling NaN under
-  every predicate. An unmasked exception restores the state from
-  before it, a memory destination included, and faults; MXCSR then holds only
-  the flags checked before the computation when one of those was unmasked, and
-  no precision flag when underflow was. Masked flags accumulate.
+  every predicate; and the underflow of a product, quotient, FMA or
+  narrowing to a single or half, which SoftFloat rounds as x86 does. x86
+  detects tininess after rounding, so a result rounded up to the smallest
+  normal is not tiny, and an exact tiny result raises underflow while it is
+  unmasked, and precision too when FTZ flushes it. An unmasked exception
+  restores the state from before it, a memory destination included, and
+  faults; MXCSR then holds only the flags checked before the computation when
+  one of those was unmasked, and no precision flag when underflow was. Masked
+  flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags. An
   unmasked invalid operation, denormal or division by zero, or an unmasked
   overflow or underflow of a store, restores the registers, the stack and
@@ -431,11 +436,12 @@ A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. The host does not detect an exact tiny result, so #XM misses that
-underflow; it reports precision for an unmasked overflow whose result is exact
-but for its exponent, where x86 does not; and an x87 overflow or underflow
-unmasked for a register destination leaves the masked result rather than x87's
-rebiased one.
+its speed. The host does not detect an exact tiny sum, difference or dot
+product, so #XM misses that underflow, and FTZ flushing one raises neither
+underflow nor precision; it reports precision for an unmasked overflow whose
+result is exact but for its exponent, where x86 does not; and an x87 overflow
+or underflow unmasked for a register destination leaves the masked result
+rather than x87's rebiased one.
 
 ## Code pages
 

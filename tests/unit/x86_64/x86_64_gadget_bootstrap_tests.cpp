@@ -6416,10 +6416,11 @@ struct InvalidOperationCase {
 }
 
 /* A SIMD instruction with xmm0, xmm1 and xmm2 (low quadword first) as its
- * registers, run singly and checked under `mxcsr`, which masks every
- * exception: it must leave `result` in the low quadword of xmm0 and MXCSR
- * as `after`, the flags x86 raises for it, which an Intel Xeon 8581C
- * confirmed. */
+ * registers, run singly and checked under `mxcsr`: it must leave `result`
+ * in the low quadword of xmm0 and MXCSR as `after`, the flags x86 raises
+ * for it, which an Intel Xeon 8581C confirmed -- or, when `mxcsr` unmasks
+ * one of those flags, fault with #XM, keep xmm0 and leave MXCSR as `after`,
+ * the fault's flags. */
 struct FlagCase {
 	std::string_view name;
 	std::vector<std::uint8_t> bytes;
@@ -6451,9 +6452,15 @@ struct FlagCase {
 		gadgets::ExecuteResult{};
 	std::uint64_t low{};
 	std::memcpy(&low, cpu.vectors[0].data(), sizeof(low));
-	if (result.event == uml::cpu::EngineEvent::continued &&
-		result.retired_instructions == 1 && cpu.mxcsr == test.after &&
-		low == test.result)
+	const bool faults = (test.after & ~(test.mxcsr >> 7U) & 0x3fU) != 0;
+	if (faults ?
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+				result.vector == 19 && result.error == test.after &&
+				cpu.mxcsr == test.after && cpu.rip == 0 &&
+				low == test.registers[0][0] :
+			result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1 &&
+				cpu.mxcsr == test.after && low == test.result)
 		return true;
 	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d mxcsr "
 		"%#x (x86 %#x) xmm0 %#llx (x86 %#llx)\n",
@@ -6487,6 +6494,70 @@ struct FlagCase {
 		 {0xf2, 0x0f, 0x7d, 0xc1},
 		 {{{0xf300'0000'7f7f'ffffULL, ones}, {ones, ones}, {}}},
 		 0x3f80, 0x3fa0, 0x8000'0000'7f7f'ffffULL},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* x86 detects underflow after rounding, where the host detects it before:
+ * a product, an FMA or a narrowing whose exact result lies just below the
+ * smallest normal and rounds up to it is not tiny, and raises precision
+ * alone, in rounding to nearest and rounding up alike, while underflow is
+ * unmasked too. A tiny result that is exact raises underflow while it is
+ * unmasked, and, flushed by FTZ, underflow and precision. */
+[[nodiscard]] bool checked_underflow_follows_x86()
+{
+	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t below_one = 0x3f80'0000'3f7f'fffeULL;
+	constexpr std::uint64_t above_least_normal = 0x3f80'0000'0080'0001ULL;
+	constexpr std::uint64_t half = 0x3f80'0000'3f00'0000ULL;
+	constexpr std::uint64_t least_normal = 0x3f80'0000'0080'0000ULL;
+	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
+	const std::vector<std::uint8_t> mulss{0xf3, 0x0f, 0x59, 0xc1};
+	/* VFMADD231SS xmm0, xmm1, xmm2 is xmm1 * xmm2 + xmm0; VFNMADD213PD
+	 * xmm0, xmm1, xmm2 is -(xmm1 * xmm0) + xmm2. */
+	const std::vector<FlagCase> cases{
+		{"MULSS just below the smallest normal", mulss,
+		 {{{below_one, one}, {above_least_normal, one}, {}}}, 0x1f80,
+		 0x1fa0, least_normal},
+		{"MULSD just below the smallest normal", {0xf2, 0x0f, 0x59, 0xc1},
+		 {{{0x3fef'ffff'ffff'fffeULL, one_double},
+		   {0x0010'0000'0000'0001ULL, one_double}, {}}},
+		 0x1f80, 0x1fa0, 0x0010'0000'0000'0000ULL},
+		{"MULSS rounding up just below the smallest normal", mulss,
+		 {{{below_one, one}, {above_least_normal, one}, {}}}, 0x5f80,
+		 0x5fa0, least_normal},
+		{"VFMADD231SS just below the smallest normal",
+		 {0xc4, 0xe2, 0x71, 0xb9, 0xc2},
+		 {{{0x3f80'0000'0000'0000ULL, one}, {below_one, one},
+		   {above_least_normal, one}}},
+		 0x1f80, 0x1fa0, least_normal},
+		{"VFNMADD213PD just below the smallest normal in lane 1",
+		 {0xc4, 0xe2, 0xf1, 0xac, 0xc2},
+		 {{{one_double, 0x3fef'ffff'ffff'fffeULL},
+		   {one_double, 0x0010'0000'0000'0001ULL},
+		   {0xbff0'0000'0000'0000ULL, 0}}},
+		 0x1f80, 0x1fa0, 0xc000'0000'0000'0000ULL},
+		{"CVTSD2SS just below the smallest normal single",
+		 {0xf2, 0x0f, 0x5a, 0xc1},
+		 {{{one, one}, {0x380f'ffff'f800'0000ULL, 0}, {}}}, 0x1f80,
+		 0x1fa0, least_normal},
+		{"VCVTPS2PH just below the smallest normal half",
+		 {0xc4, 0xe3, 0x79, 0x1d, 0xc8, 0x00},
+		 {{{}, {0x387f'f800ULL, 0}, {}}}, 0x1f80, 0x1fa0, 0x0400},
+		{"MULSS just below the smallest normal, underflow unmasked",
+		 mulss, {{{below_one, one}, {above_least_normal, one}, {}}},
+		 0x1780, 0x17a0, least_normal},
+		{"MULSS of an exact tiny result, underflow unmasked", mulss,
+		 {{{half, one}, {least_normal, one}, {}}}, 0x1780, 0x1790, 0},
+		{"MULSS of an exact tiny result under FTZ", mulss,
+		 {{{half, one}, {least_normal, one}, {}}}, 0x9f80, 0x9fb0,
+		 0x3f80'0000'0000'0000ULL},
+		{"MULSS of an exact tiny result under FTZ, precision unmasked",
+		 mulss, {{{half, one}, {least_normal, one}, {}}}, 0x8f80, 0x8fb0,
+		 0},
 	};
 	for (const auto &test : cases)
 		if (!flags_follow_x86(test))
@@ -8579,6 +8650,7 @@ int main()
 		checked_fma_invalid_operations_follow_x86() &&
 		checked_comparison_invalid_operations_follow_x86() &&
 		checked_horizontal_flags_follow_x86() &&
+		checked_underflow_follows_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&
