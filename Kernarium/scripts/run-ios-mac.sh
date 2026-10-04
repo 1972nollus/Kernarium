@@ -147,7 +147,7 @@ else
 	PACKAGE_OPTION=
 fi
 
-cd "$ROOT_DIR"
+CDPATH= cd -- "$ROOT_DIR"
 if [ "$SKIP_BUILD" -eq 0 ]; then
 	cmake --preset "$PRESET" \
 		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_16K"

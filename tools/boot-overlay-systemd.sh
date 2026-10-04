@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-repo_root="$(cd "${script_dir}/.." && pwd -P)"
+script_dir="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(CDPATH= cd -- "${script_dir}/.." && pwd -P)"
 ramdisk="${repo_root}/tools/rootfs/boot-ramdisk"
 
 emulator="${UML_EMULATOR:-${repo_root}/.build/presets/macos-integration/bin/uml-darwin}"

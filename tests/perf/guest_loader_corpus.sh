@@ -21,7 +21,7 @@ only=${CORPUS_ONLY:-}
 work=${CORPUS_DIR:-/tmp/loader-corpus}
 lib=/usr/lib/aarch64-linux-gnu
 
-mkdir -p "$work" && cd "$work" || exit 1
+mkdir -p "$work" && CDPATH= cd -- "$work" || exit 1
 now() { cut -d' ' -f1 /proc/uptime | tr -d . | sed 's/^0*//; s/^$/0/'; }
 wanted() {
 	[ -z "$only" ] && return 0

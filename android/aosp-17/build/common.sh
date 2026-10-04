@@ -26,7 +26,7 @@ absolute_path()
 dirty_repo_projects()
 {
 	(
-		cd "$1"
+		CDPATH= cd -- "$1"
 		repo forall -c '
 			if test -n "$(git status --porcelain)"; then
 				printf "%s\n" "$REPO_PATH"

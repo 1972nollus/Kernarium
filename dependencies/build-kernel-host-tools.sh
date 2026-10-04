@@ -224,7 +224,7 @@ copy_source()
 # gawk generates elfutils' DWARF name tables. It is a build-only tool.
 copy_source "$SOURCE_ROOT/gawk" "$TEMP_ROOT/src/gawk"
 (
-	cd "$TEMP_ROOT/src/gawk"
+	CDPATH= cd -- "$TEMP_ROOT/src/gawk"
 	logged gawk private_env ./configure --prefix="$BOOTSTRAP" --disable-nls \
 		--disable-extensions --disable-pma
 	logged gawk private_env "$MAKE" -j "$JOBS"
@@ -239,7 +239,7 @@ logged argp-standalone private_env "$NINJA" -C "$TEMP_ROOT/build/argp" install
 
 copy_source "$SOURCE_ROOT/musl-obstack" "$TEMP_ROOT/src/musl-obstack"
 (
-	cd "$TEMP_ROOT/src/musl-obstack"
+	CDPATH= cd -- "$TEMP_ROOT/src/musl-obstack"
 	logged musl-obstack private_env "$AUTORECONF" -fi
 	logged musl-obstack private_env ./configure --prefix="$PRIVATE" --disable-shared \
 		--enable-static
@@ -249,7 +249,7 @@ copy_source "$SOURCE_ROOT/musl-obstack" "$TEMP_ROOT/src/musl-obstack"
 # The standalone libbpf that pahole embeds includes Linux UAPI headers. Take
 # them from the pinned Debian linux-libc-dev package, with the arm64 asm tree.
 (
-	cd "$TEMP_ROOT/linux-uapi"
+	CDPATH= cd -- "$TEMP_ROOT/linux-uapi"
 	"$TAR" -xf "$UAPI_ARCHIVE" data.tar.xz
 	"$TAR" -xf data.tar.xz ./usr/include/linux ./usr/include/asm-generic \
 		./usr/lib/linux/uapi/arm64/asm
@@ -265,12 +265,12 @@ mv "$TEMP_ROOT/linux-uapi/usr/lib/linux/uapi/arm64/asm" "$UAPI_INCLUDE/asm"
 # __thread, and Mach-O has no build-id, -z defs, or -z relro.
 copy_source "$SOURCE_ROOT/elfutils" "$TEMP_ROOT/src/elfutils"
 (
-	cd "$TEMP_ROOT/src/elfutils"
+	CDPATH= cd -- "$TEMP_ROOT/src/elfutils"
 	logged elfutils private_env "$AUTORECONF" -fi
 )
 mkdir -p -- "$TEMP_ROOT/build/elfutils"
 (
-	cd "$TEMP_ROOT/build/elfutils"
+	CDPATH= cd -- "$TEMP_ROOT/build/elfutils"
 	logged elfutils private_env "$TEMP_ROOT/src/elfutils/configure" \
 		--prefix="$PRIVATE" \
 		--enable-maintainer-mode \
