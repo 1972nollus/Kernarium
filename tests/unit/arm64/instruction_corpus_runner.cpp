@@ -184,6 +184,7 @@ constexpr std::array<std::string_view, 9> event_names{
   case ExitReason::interrupt:
     return Event::instruction_budget;
   case ExitReason::single_step:
+  case ExitReason::sme_access:
   case ExitReason::fatal:
     return Event::fatal;
   }

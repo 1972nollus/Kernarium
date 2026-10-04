@@ -3,7 +3,10 @@
  * host prober, the virtual CPU's SME profile, the SVL-sized storage layout,
  * the SVCR write rules and the lazy state transfer. */
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/execution_types.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "platform/apple/host_features.hpp"
 #include "require.hpp"
@@ -412,6 +415,20 @@ void svcr_writes_apply_to_state()
 		require(bare.cpu.write_svcr(arm64::svcr_mask, 0));
 	}
 }
+
+/* SME stays unadvertised by default until both engines implement all of it,
+ * and the exit for a task without SME storage retires nothing. */
+void defaults_follow_engine_support()
+{
+	using arm64::SmeSupport;
+	if (arm64::gadgets::sme_support != SmeSupport::complete ||
+	    arm64::jit::sme_support != SmeSupport::complete)
+		require(apple::parse_guest_sme_policy(nullptr) ==
+				apple::GuestSmePolicy::off,
+			"SME is on by default before both engines are complete");
+	require(::uml::cpu::terminal_does_not_retire(
+		::uml::cpu::EngineEvent::sme_access));
+}
 } // namespace
 
 int main()
@@ -424,5 +441,6 @@ int main()
 	svcr_writes_follow_the_architecture();
 	lazy_transfer_round_trips();
 	svcr_writes_apply_to_state();
+	defaults_follow_engine_support();
 	return 0;
 }

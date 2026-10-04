@@ -634,6 +634,7 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	case uml::cpu::ExitReason::instruction_budget: return "instruction_budget";
 	case uml::cpu::ExitReason::single_step: return "single_step";
 	case uml::cpu::ExitReason::fatal: return "fatal";
+	case uml::cpu::ExitReason::sme_access: return "sme_access";
 	}
 	return "unknown";
 }
@@ -707,6 +708,7 @@ constexpr std::uint32_t vector_general_protection = 13;
 	case uml::cpu::EngineEvent::trap_flag: return "trap_flag";
 	case uml::cpu::EngineEvent::debug_trap: return "debug_trap";
 	case uml::cpu::EngineEvent::bound_range: return "bound_range";
+	case uml::cpu::EngineEvent::sme_access: return "sme_access";
 	}
 	return "unknown";
 }

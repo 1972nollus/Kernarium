@@ -372,6 +372,7 @@ template<typename Run>
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
 	case uml::cpu::ExitReason::pc_alignment:
+	case uml::cpu::ExitReason::sme_access:
 	case uml::cpu::ExitReason::fatal:
 		break;
 	}
@@ -591,6 +592,9 @@ int run_common_guest(
 		mutable_registers.fault.trap_number = 0;
 		event = DARWIN_UML_EVENT_PC_ALIGNMENT;
 		break;
+	case uml::cpu::ExitReason::sme_access:
+		/* No kernel allocates SME storage before the bridge carries it,
+		 * and no engine reports this before then. */
 	case uml::cpu::ExitReason::fatal:
 		event = DARWIN_UML_EVENT_FATAL;
 		break;

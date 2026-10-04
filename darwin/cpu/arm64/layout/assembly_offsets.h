@@ -99,6 +99,7 @@
 #define UML_GADGET_EVENT_INTERRUPT 3
 #define UML_GADGET_EVENT_ILLEGAL 4
 #define UML_GADGET_EVENT_BREAKPOINT 5
+#define UML_GADGET_EVENT_SME_ACCESS 14
 
 /* FPCR bits a guest can set, and the trap enables among them. FIZ, AH and
  * NEP join them where the virtual CPU implements FEAT_AFP. */
