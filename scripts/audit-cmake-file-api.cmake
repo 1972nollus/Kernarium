@@ -28,6 +28,28 @@ if(CONFIGURATION_COUNT LESS 1)
 endif()
 string(JSON SOURCE_ROOT GET "${CODEMODEL_JSON}" paths source)
 
+string(JSON CACHE_FILE ERROR_VARIABLE CACHE_ERROR
+    GET "${INDEX_JSON}" reply cache-v2 jsonFile)
+if(CACHE_ERROR)
+    message(FATAL_ERROR
+        "CMake File API cache reply is unavailable: ${CACHE_ERROR}; "
+        "reconfigure first")
+endif()
+file(READ "${REPLY_ROOT}/${CACHE_FILE}" CACHE_JSON)
+# A tree that names no platform is held to the iOS rules.
+set(APPLE_PLATFORM "unset")
+string(JSON CACHE_ENTRY_COUNT LENGTH "${CACHE_JSON}" entries)
+foreach(INDEX RANGE 0 ${CACHE_ENTRY_COUNT})
+    if(INDEX EQUAL CACHE_ENTRY_COUNT)
+        break()
+    endif()
+    string(JSON CACHE_ENTRY_NAME GET "${CACHE_JSON}" entries ${INDEX} name)
+    if(CACHE_ENTRY_NAME STREQUAL "UML_APPLE_PLATFORM")
+        string(JSON APPLE_PLATFORM GET "${CACHE_JSON}" entries ${INDEX} value)
+        break()
+    endif()
+endforeach()
+
 if(NOT EXISTS "${ARCHITECTURE_MANIFEST}")
     message(FATAL_ERROR
         "Architecture target manifest is missing: ${ARCHITECTURE_MANIFEST}")
@@ -276,12 +298,88 @@ foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
     endif()
 endforeach()
 
+# The x86-64 JIT embeds FEXCore and is a macOS product only. Outside a macOS
+# configuration no target may be the engine, compile its sources or the
+# runtime seam, compile a source that includes the engine, or link FEXCore.
+# The source-tree audit lets nothing but the engine and the seam include the
+# engine's headers, so these rules keep it out of every iOS product.
+function(uml_audit_macos_only_x86_jit TARGET_NAME TARGET_JSON)
+    set(PREFIX
+        "macOS-only x86-64 JIT in a UML_APPLE_PLATFORM=${APPLE_PLATFORM} configuration:")
+    if(TARGET_NAME STREQUAL "uml_x86_64_jit")
+        message(FATAL_ERROR "${PREFIX} target ${TARGET_NAME}")
+    endif()
+    string(JSON SOURCE_COUNT ERROR_VARIABLE SOURCE_ERROR
+        LENGTH "${TARGET_JSON}" sources)
+    if(SOURCE_ERROR)
+        set(SOURCE_COUNT 0)
+    endif()
+    foreach(SOURCE_INDEX RANGE 0 ${SOURCE_COUNT})
+        if(SOURCE_INDEX EQUAL SOURCE_COUNT)
+            break()
+        endif()
+        string(JSON COMPILE_GROUP ERROR_VARIABLE COMPILE_GROUP_ERROR
+            GET "${TARGET_JSON}" sources ${SOURCE_INDEX} compileGroupIndex)
+        if(COMPILE_GROUP_ERROR)
+            continue()
+        endif()
+        string(JSON SOURCE_PATH GET "${TARGET_JSON}"
+            sources ${SOURCE_INDEX} path)
+        cmake_path(ABSOLUTE_PATH SOURCE_PATH BASE_DIRECTORY "${SOURCE_ROOT}"
+            NORMALIZE OUTPUT_VARIABLE SOURCE_FILE)
+        cmake_path(IS_PREFIX SOURCE_ROOT "${SOURCE_FILE}" NORMALIZE
+            SOURCE_IN_TREE)
+        if(SOURCE_IN_TREE)
+            file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${SOURCE_FILE}")
+            if(SOURCE_PATH MATCHES
+               "^darwin/(cpu/x86_64/jit/|runtime/x86_jit_runtime\\.cpp$)")
+                message(FATAL_ERROR
+                    "${PREFIX} ${TARGET_NAME} compiles ${SOURCE_PATH}")
+            endif()
+        endif()
+        if(NOT EXISTS "${SOURCE_FILE}")
+            continue()
+        endif()
+        file(READ "${SOURCE_FILE}" SOURCE_TEXT)
+        string(REGEX MATCH
+            "(^|\n)[ \t]*#[ \t]*(include|import)[ \t]*[<\"][^>\"\n]*cpu/x86_64/jit/"
+            JIT_INCLUDE "${SOURCE_TEXT}")
+        if(JIT_INCLUDE)
+            message(FATAL_ERROR
+                "${PREFIX} ${TARGET_NAME} compiles ${SOURCE_PATH}, which "
+                "includes cpu/x86_64/jit/")
+        endif()
+    endforeach()
+    # Only executables and shared libraries carry link fragments; a static
+    # slice is covered by the source rules and the packaged-product check.
+    string(JSON FRAGMENT_COUNT ERROR_VARIABLE FRAGMENT_ERROR
+        LENGTH "${TARGET_JSON}" link commandFragments)
+    if(FRAGMENT_ERROR)
+        return()
+    endif()
+    foreach(FRAGMENT_INDEX RANGE 0 ${FRAGMENT_COUNT})
+        if(FRAGMENT_INDEX EQUAL FRAGMENT_COUNT)
+            break()
+        endif()
+        string(JSON FRAGMENT GET "${TARGET_JSON}"
+            link commandFragments ${FRAGMENT_INDEX} fragment)
+        if(FRAGMENT MATCHES "FEXCore")
+            message(FATAL_ERROR
+                "${PREFIX} ${TARGET_NAME} links FEXCore: ${FRAGMENT}")
+        endif()
+    endforeach()
+endfunction()
+
 foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(INDEX EQUAL TARGET_COUNT)
         break()
     endif()
     list(GET TARGET_FILES ${INDEX} TARGET_FILE)
     file(READ "${REPLY_ROOT}/${TARGET_FILE}" TARGET_JSON)
+    if(NOT APPLE_PLATFORM STREQUAL "macos")
+        list(GET TARGET_NAMES ${INDEX} AUDITED_TARGET_NAME)
+        uml_audit_macos_only_x86_jit("${AUDITED_TARGET_NAME}" "${TARGET_JSON}")
+    endif()
     string(JSON DEPENDENCY_COUNT ERROR_VARIABLE DEPENDENCY_ERROR
         LENGTH "${TARGET_JSON}" dependencies)
     if(NOT DEPENDENCY_ERROR)
@@ -319,4 +417,4 @@ list(LENGTH ARCHITECTURE_TARGETS ARCHITECTURE_TARGET_TOTAL)
 message(STATUS
     "CMake File API architecture audit passed: ${TARGET_COUNT} targets, "
     "${ARCHITECTURE_TARGET_TOTAL} layered targets, no forbidden edges or "
-    "cycles")
+    "cycles, platform ${APPLE_PLATFORM}")

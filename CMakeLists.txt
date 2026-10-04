@@ -20,10 +20,11 @@ include(UmlArchitecture)
 
 uml_verify_generated_abi()
 
-# Request the codemodel for this configure invocation. Unlike creating a
-# query file while configuration is already in progress, cmake_file_api()
-# guarantees that a fresh build tree has its reply at generation time.
-cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
+# Request the codemodel and the cache for this configure invocation. Unlike
+# creating a query file while configuration is already in progress,
+# cmake_file_api() guarantees that a fresh build tree has its reply at
+# generation time. The architecture audit reads the cache for the platform.
+cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2)
 
 set(UML_APPLE_PLATFORM "macos" CACHE STRING
     "Apple target platform: macos, ios, or ios-simulator")
