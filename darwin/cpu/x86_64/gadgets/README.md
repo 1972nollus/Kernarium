@@ -4,10 +4,10 @@ The engine executes x86-64 userspace as data-only streams of pointers to
 handwritten arm64 gadgets (`engine.S` and `engine/*.inc`). `native_builder.cpp`
 turns decoded instructions into those streams, `executor.cpp` owns the
 translation cache, and `native_memory.cpp` is the C++ side of the software
-TLB. The guest CPU state, the decoder, CPUID, the software TLB entry and the
-code-page registry are not the engine's own: they are `uml_x86_64_target` in
-the parent directory, which every x86 engine links. This file records the
-contracts that are not obvious from the code.
+TLB. The guest CPU state, the decoder, CPUID, the software TLB entry, the
+code-page registry and the split-operand lock are not the engine's own: they
+are `uml_x86_64_target` in the parent directory, which every x86 engine links.
+This file records the contracts that are not obvious from the code.
 
 Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
@@ -290,9 +290,10 @@ unaligned ones, in packed structures above all.
   fault in between releases the lock in the fault tail.
 
 The lock makes such an operand atomic against every other operand on that
-path, which covers the same instruction running on the other vCPUs. It is not
-atomic against an exclusive loop or a plain store that overlaps it; nothing the
-host offers covers two granules at once.
+path, which covers the same instruction running on the other vCPUs. It is
+`split_operand_lock` in `../split_operand_lock.hpp`, one lock for every x86
+engine. It is not atomic against an exclusive loop or a plain store that
+overlaps it; nothing the host offers covers two granules at once.
 
 ## Floating-point environment
 
