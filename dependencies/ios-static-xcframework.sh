@@ -88,7 +88,13 @@ find_tool XCODEBUILD xcodebuild
 find_tool XCRUN xcrun
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
-mkdir -p -- "$OUTPUT_PARENT"
+# Verification writes nothing, not even the parent of an absent prefix.
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+	[ -e "$OUTPUT" ] || [ -L "$OUTPUT" ] ||
+		fail "prefix to verify does not exist: $OUTPUT"
+else
+	mkdir -p -- "$OUTPUT_PARENT"
+fi
 OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
 OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
 

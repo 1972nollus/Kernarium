@@ -111,7 +111,13 @@ fi
 [ -r "$RECEIPT" ] || fail "platform receipt is unavailable: $RECEIPT"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
-mkdir -p -- "$PREFIX_PARENT"
+# Verification writes nothing, not even the parent of an absent prefix.
+if [ "$VERIFY_ONLY" -eq 1 ]; then
+	[ -e "$PREFIX" ] || [ -L "$PREFIX" ] ||
+		fail "prefix to verify does not exist: $PREFIX"
+else
+	mkdir -p -- "$PREFIX_PARENT"
+fi
 PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
 PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 
