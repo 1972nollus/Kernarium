@@ -86,24 +86,24 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 145208,
+  "cases": 173222,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 28016,
+    "illegal-instruction": 34094,
     "instruction-budget": 186,
-    "memory-fault": 9271,
-    "system-call": 107639
+    "memory-fault": 10486,
+    "system-call": 128360
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 89992,
+    "16k+4k": 118006,
     "4k": 27601
   },
   "coverage": {
     "entries": 2291,
-    "entries_with_cases": 747,
-    "entries_with_illegal_cases": 2165,
+    "entries_with_cases": 1723,
+    "entries_with_illegal_cases": 2169,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -159,17 +159,39 @@
     "script": "tools/arm64-tests/lse2-alignment-corpus.py",
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
-  "memory_blobs": 3352,
-  "pack_bytes": 13387693,
-  "pack_sha256": "ede34f217d4c3dcb190ecfa7d3bd79e8e48e64887d84e121808f42a8ede3a26d",
+  "memory_blobs": 3355,
+  "pack_bytes": 14686386,
+  "pack_sha256": "1a5f13c6e2a216755e9ce29b417f5dbf3c306828e849eb929559ac2eac18af2d",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 128873,
-  "records": 1092,
+  "programs": 144253,
+  "records": 1098,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
+  "sme_native": {
+    "cases": 28014,
+    "events": {
+      "illegal-instruction": 6078,
+      "memory-fault": 1215,
+      "system-call": 20721
+    },
+    "host_features": [
+      "FEAT_SME",
+      "FEAT_SME2",
+      "FEAT_SME_F64F64",
+      "FEAT_SME_I16I64"
+    ],
+    "request_sha256": "a56f72c7bfeb3fa61925cb15cd8c844cf13cdb3a5b33186afc0c6ca76a0f97f2",
+    "script": "tools/arm64-tests/sme-native-corpus.py",
+    "sha256": "4fe6367b5a775d012f2f5b0c9a8d95342cd55845cb1b25de23bd032cfc7f9533",
+    "svl": 64,
+    "table": {
+      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
+      "sha256": "cae3c1ed342d42fa8356f8d9e7b6850ff48b6b46d9e530d0816ac201a57221c3"
+    }
+  },
   "state_minimization": {
-    "full": 3849,
+    "full": 31863,
     "narrow": 141359
   },
   "validator_cases": {

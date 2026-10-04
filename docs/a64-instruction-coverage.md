@@ -6,7 +6,8 @@ The catalog contains 2,291 A64 entries: 516 Base, 467 FP/SIMD, 955 SVE, and
 through the gadget and JIT engines. Each Base and FP/SIMD case passed the
 interpreter and gadget lanes, and the JIT lane where the export host implements
 its features, before it was exported; the SVE and SME cases are generated from
-the encoding table below. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each entry,
+the encoding table below, and their native results were recorded on an SME
+host. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each entry,
 and the corpus check fails if an entry has none. In
 `tests/unit/arm64/a64_instruction_inventory.tsv`, 1,762 entries are marked
 `verified`: 786 Base and FP/SIMD entries and the 976 SVE and SME entries with
@@ -119,7 +120,12 @@ FEAT_SME_I16I64, and the profile's FEAT_BF16 and FEAT_I8MM forms), and so are
 SMSTART and SMSTOP. Where the virtual CPU lacks SME, which today is every host,
 because no engine implements it and SME stays unadvertised, the corpus pins
 SMSTART, SMSTOP, the SVCR accesses, and one word of every profile encoding and
-alias UNDEFINED. MOVT between ZT0 and a general register executes only in Debug state, so
+alias UNDEFINED. The `arm64-sme-native` records hold the results the M4 host
+gives for the profile's encodings at its streaming vector length, 64 bytes,
+and say so; they run where an engine implements SME at that length. The
+records confirm the FP&SIMD classification in streaming mode: UMOV and SMOV of
+element 0 and the scalar FRECPE, FRECPS, FRSQRTE, FRSQRTS, and FMULX execute
+there. MOVT between ZT0 and a general register executes only in Debug state, so
 it has no table row and is UNDEFINED in every mode.
 
 That status is not exhaustive variant proof. No inventory entry has an
