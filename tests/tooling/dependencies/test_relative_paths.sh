@@ -89,14 +89,14 @@ chmod +x "$RUN/sources/gawk/configure" "$RUN/sources/musl-obstack/configure" \
 # A builder's tool override may name a tool by a relative path, which still
 # runs after a change of directory.
 (
-	cd "$RUN"
+	CDPATH= cd -- "$RUN"
 	. "$ROOT_DIR/dependencies/build-common.sh"
 	find_tool RELATIVE_TOOL tools/gmake
 	cd /
 	"$RELATIVE_TOOL"
 ) || fail "a build tool named by a relative path did not run in another directory"
 
-cd "$RUN"
+CDPATH= cd -- "$RUN"
 expect_diagnostic 'elfutils failed' env PATH="$RUN/tools:$PATH" \
 	../root/dependencies/build-kernel-host-tools.sh \
 	--source-root sources --cache cache --output out/kernel-host-tools \

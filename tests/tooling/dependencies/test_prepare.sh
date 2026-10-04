@@ -221,6 +221,20 @@ expect_failure "unlisted dependency patch" \
 		"$PREPARE" --validate-manifest-only
 rm "$METADATA/patches/unlisted.patch"
 
+# An exported CDPATH neither redirects a relative metadata root to a decoy
+# with another inventory nor prints into the inventory the preparer compares.
+CDPATH_DECOY="$TEST_ROOT/cdpath-decoy"
+mkdir -p "$CDPATH_DECOY/metadata/patches/decoy"
+printf 'decoy\n' >"$CDPATH_DECOY/metadata/patches/decoy/series.tsv"
+CDPATH_OUTPUT=$(
+	CDPATH= cd -- "$TEST_ROOT" &&
+		CDPATH="$CDPATH_DECOY" UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+		UML_DEPENDENCY_PATCH_ROOT=metadata \
+		"$PREPARE" --validate-manifest-only
+) || fail "an exported CDPATH redirected a relative metadata root"
+[ "$CDPATH_OUTPUT" = "validated dependency manifest: $MANIFEST" ] ||
+	fail "an exported CDPATH changed the preparer's output: $CDPATH_OUTPUT"
+
 prepare "$PREPARED" >/dev/null
 verify "$PREPARED" >/dev/null
 # Verification does not refresh a prepared index whose stat data is stale.

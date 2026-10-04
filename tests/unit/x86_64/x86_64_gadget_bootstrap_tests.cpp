@@ -6225,6 +6225,570 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 	return result;
 }
 
+/* A SIMD instruction with xmm0, xmm1 and xmm2 (low quadword first) as its
+ * registers, which raises invalid operation or else leaves `result` in the
+ * low quadword of xmm0. */
+struct InvalidOperationCase {
+	std::string_view name;
+	std::vector<std::uint8_t> bytes;
+	std::array<std::array<std::uint64_t, 2>, 3> registers;
+	bool denormals_are_zero;
+	bool invalid;
+	std::uint64_t result;
+};
+
+/* Runs `test` singly and checked while MXCSR unmasks invalid operation
+ * alone, and as the runtime runs it while MXCSR also unmasks division by
+ * zero and overflow, where the gadget checks its values and leaves for the
+ * runtime to run it again checked. Either faults with #XM and keeps xmm0 if
+ * x86 raises invalid operation, and otherwise returns x86's result without a
+ * flag. */
+[[nodiscard]] bool invalid_operation_follows_x86(
+	const InvalidOperationCase &test)
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	std::vector<std::byte> code(test.bytes.size() + 2U);
+	std::memcpy(code.data(), test.bytes.data(), test.bytes.size());
+	code[test.bytes.size()] = std::byte{0x0f};
+	code[test.bytes.size() + 1U] = std::byte{0x05};
+	memory.fill(0, code);
+	const std::uint32_t daz = test.denormals_are_zero ? 0x40U : 0U;
+	const auto start = [&](std::uint32_t mxcsr) {
+		CpuState cpu{};
+		cpu.mxcsr = mxcsr | daz;
+		for (std::size_t index = 0; index < 3; ++index)
+			std::memcpy(cpu.vectors[index].data(),
+				test.registers[index].data(), 16);
+		return cpu;
+	};
+	const auto trapped = [&](const gadgets::ExecuteResult &result,
+		const CpuState &cpu, std::uint32_t mxcsr) {
+		return result.event == uml::cpu::EngineEvent::floating_point_trap &&
+			result.vector == 19 && cpu.rip == 0 &&
+			result.error == (mxcsr | daz | 0x1U) &&
+			std::memcmp(cpu.vectors[0].data(), test.registers[0].data(),
+				16) == 0;
+	};
+	const auto returned = [&](const CpuState &cpu, std::uint32_t mxcsr) {
+		std::uint64_t low{};
+		std::memcpy(&low, cpu.vectors[0].data(), sizeof(low));
+		return cpu.mxcsr == (mxcsr | daz) && low == test.result;
+	};
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 64,
+		{}, gadgets::check_simd);
+	auto checked = start(0x1f00);
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	const auto alone = built.status == gadgets::BuildStatus::built ?
+		gadgets::execute_checked(built.program, checked, memory, executor,
+			64, {}, false, gadgets::check_simd) :
+		gadgets::ExecuteResult{};
+	auto runtime = start(0x1900);
+	const auto linked = run_until_event(memory, runtime);
+	const bool right = test.invalid ?
+		trapped(alone, checked, 0x1f00) && trapped(linked, runtime, 0x1900) :
+		alone.event == uml::cpu::EngineEvent::continued &&
+			returned(checked, 0x1f00) &&
+			linked.event == uml::cpu::EngineEvent::system_call &&
+			returned(runtime, 0x1900);
+	if (right)
+		return true;
+	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: checked event %d "
+		"error %#llx mxcsr %#x, runtime event %d error %#llx mxcsr %#x\n",
+		static_cast<int>(test.name.size()), test.name.data(),
+		static_cast<int>(alone.event),
+		static_cast<unsigned long long>(alone.error), checked.mxcsr,
+		static_cast<int>(linked.event),
+		static_cast<unsigned long long>(linked.error), runtime.mxcsr);
+	return expect(false, test.invalid ?
+		"a SIMD instruction did not raise invalid operation" :
+		"a SIMD instruction raised invalid operation x86 does not");
+}
+
+/* An FMA raises invalid operation where x86 does: for a signalling NaN, for
+ * infinity times zero plus anything but a quiet NaN, and for infinities of
+ * opposite signs added -- but not for infinity times zero plus a quiet NaN,
+ * which it returns, where the host raises it. MXCSR.DAZ makes a denormal
+ * factor zero first. */
+[[nodiscard]] bool checked_fma_invalid_operations_follow_x86()
+{
+	/* Singles: lane 1 is 1.0 unless named high. */
+	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t infinity = 0x3f80'0000'7f80'0000ULL;
+	constexpr std::uint64_t zero = 0x3f80'0000'0000'0000ULL;
+	constexpr std::uint64_t least = 0x3f80'0000'0000'0001ULL;
+	constexpr std::uint64_t quiet = 0x3f80'0000'7fc0'0000ULL;
+	constexpr std::uint64_t signalling = 0x3f80'0000'7fa0'0000ULL;
+	constexpr std::uint64_t infinity_high = 0x7f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t zero_high = 0x0000'0000'3f80'0000ULL;
+	constexpr std::uint64_t quiet_high = 0x7fc0'0000'3f80'0000ULL;
+	constexpr std::uint64_t infinity_double = 0x7ff0'0000'0000'0000ULL;
+	constexpr std::uint64_t quiet_double = 0xfff8'0000'0001'2345ULL;
+	/* VFMADD231SS xmm0, xmm1, xmm2 is xmm1 * xmm2 + xmm0; VFNMSUB213SD
+	 * xmm0, xmm1, xmm2 is -(xmm1 * xmm0) - xmm2; VFMADDSUB231PS xmm0, xmm1,
+	 * xmm2 adds in its odd lanes. */
+	const std::vector<std::uint8_t> fmadd231ss{0xc4, 0xe2, 0x71, 0xb9, 0xc2};
+	const std::vector<std::uint8_t> fnmsub213sd{0xc4, 0xe2, 0xf1, 0xaf, 0xc2};
+	const std::vector<std::uint8_t> fmaddsub231ps{0xc4, 0xe2, 0x71, 0xb6,
+		0xc2};
+	const std::vector<InvalidOperationCase> cases{
+		{"VFMADD231SS of infinity times zero plus a quiet NaN", fmadd231ss,
+		 {{{quiet, one}, {infinity, one}, {zero, one}}}, false, false,
+		 quiet},
+		{"VFMADD231SS of zero times infinity plus a quiet NaN", fmadd231ss,
+		 {{{quiet, one}, {zero, one}, {infinity, one}}}, false, false,
+		 quiet},
+		{"VFNMSUB213SD of infinity times zero plus a quiet NaN",
+		 fnmsub213sd,
+		 {{{0, one}, {infinity_double, one}, {quiet_double, one}}}, false,
+		 false, quiet_double},
+		{"VFMADD231SS of infinity times a denormal plus a quiet NaN under "
+		 "DAZ", fmadd231ss,
+		 {{{quiet, one}, {infinity, one}, {least, one}}}, true, false,
+		 quiet},
+		{"VFMADDSUB231PS of infinity times zero plus a quiet NaN in lane 1",
+		 fmaddsub231ps,
+		 {{{quiet_high, one}, {infinity_high, one}, {zero_high, one}}},
+		 false, false, 0x7fc0'0000'0000'0000ULL},
+		{"VFMADD231SS of infinity times zero plus one", fmadd231ss,
+		 {{{one, one}, {infinity, one}, {zero, one}}}, false, true, 0},
+		{"VFMADD231SS of infinity times zero plus a signalling NaN",
+		 fmadd231ss, {{{signalling, one}, {infinity, one}, {zero, one}}},
+		 false, true, 0},
+		{"VFMADD231SS of infinity times a denormal plus one under DAZ",
+		 fmadd231ss, {{{one, one}, {infinity, one}, {least, one}}},
+		 true, true, 0},
+	};
+	for (const auto &test : cases)
+		if (!invalid_operation_follows_x86(test))
+			return false;
+	return true;
+}
+
+/* A VEX comparison raises invalid operation for a quiet NaN only under a
+ * signalling predicate, which bit 4 of the immediate makes of a quiet one in
+ * the low four bits and the reverse, and for a signalling NaN under every
+ * predicate, false and true included, which compare nothing. */
+[[nodiscard]] bool checked_comparison_invalid_operations_follow_x86()
+{
+	/* Singles: lane 1 is 1.0 unless named high. */
+	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t quiet = 0x3f80'0000'7fc0'0000ULL;
+	constexpr std::uint64_t quiet_high = 0x7fc0'0000'3f80'0000ULL;
+	constexpr std::uint64_t signalling_high = 0x7fa0'0000'3f80'0000ULL;
+	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
+	constexpr std::uint64_t quiet_double = 0x7ff8'0000'0000'0000ULL;
+	/* VCMPSS, VCMPPS and VCMPPD xmm0, xmm0, xmm1, predicate. */
+	const auto compare = [](std::uint8_t prefix, std::uint8_t predicate) {
+		return std::vector<std::uint8_t>{0xc5, prefix, 0xc2, 0xc1,
+			predicate};
+	};
+	constexpr std::uint8_t ss = 0xfa;
+	constexpr std::uint8_t ps = 0xf8;
+	constexpr std::uint8_t pd = 0xf9;
+	const std::vector<InvalidOperationCase> cases{
+		{"VCMPSS less than, ordered and quiet (17), of a quiet NaN",
+		 compare(ss, 17), {{{quiet, one}, {one, one}, {}}}, false, false,
+		 0x3f80'0000'0000'0000ULL},
+		{"VCMPPS greater than, ordered and quiet (30), of a quiet NaN in "
+		 "lane 1", compare(ps, 30), {{{quiet_high, one}, {one, one}, {}}},
+		 false, false, 0},
+		{"VCMPSS true, unordered and quiet (15), of a quiet NaN",
+		 compare(ss, 15), {{{quiet, one}, {one, one}, {}}}, false, false,
+		 0x3f80'0000'ffff'ffffULL},
+		{"VCMPSS equal, ordered and signalling (16), of a quiet NaN",
+		 compare(ss, 16), {{{quiet, one}, {one, one}, {}}}, false, true, 0},
+		{"VCMPPD not equal, ordered and signalling (28), of a quiet NaN in "
+		 "lane 1", compare(pd, 28),
+		 {{{one_double, quiet_double}, {one_double, one_double}, {}}},
+		 false, true, 0},
+		{"VCMPSS false, ordered and signalling (27), of a quiet NaN",
+		 compare(ss, 27), {{{quiet, one}, {one, one}, {}}}, false, true, 0},
+		{"VCMPPS true, unordered and quiet (15), of a signalling NaN in "
+		 "lane 1", compare(ps, 15),
+		 {{{signalling_high, one}, {one, one}, {}}}, false, true, 0},
+	};
+	for (const auto &test : cases)
+		if (!invalid_operation_follows_x86(test))
+			return false;
+	return true;
+}
+
+/* A SIMD instruction with xmm0, xmm1 and xmm2 (low quadword first) as its
+ * registers, run singly and checked under `mxcsr`: it must leave `result`
+ * in the low quadword of xmm0 and MXCSR as `after`, the flags x86 raises
+ * for it, which an Intel Xeon 8581C confirmed -- or, when `mxcsr` unmasks
+ * one of those flags, fault with #XM, keep xmm0 and leave MXCSR as `after`,
+ * the fault's flags. */
+struct FlagCase {
+	std::string_view name;
+	std::vector<std::uint8_t> bytes;
+	std::array<std::array<std::uint64_t, 2>, 3> registers;
+	std::uint32_t mxcsr;
+	std::uint32_t after;
+	std::uint64_t result;
+};
+
+[[nodiscard]] bool flags_follow_x86(const FlagCase &test)
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	std::vector<std::byte> code(test.bytes.size());
+	std::memcpy(code.data(), test.bytes.data(), code.size());
+	memory.fill(0, code);
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 64,
+		{}, gadgets::check_simd);
+	CpuState cpu{};
+	cpu.mxcsr = test.mxcsr;
+	for (std::size_t index = 0; index < 3; ++index)
+		std::memcpy(cpu.vectors[index].data(), test.registers[index].data(),
+			16);
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	const auto result = built.status == gadgets::BuildStatus::built ?
+		gadgets::execute_checked(built.program, cpu, memory, executor, 1,
+			{}, false, gadgets::check_simd) :
+		gadgets::ExecuteResult{};
+	std::uint64_t low{};
+	std::memcpy(&low, cpu.vectors[0].data(), sizeof(low));
+	const bool faults = (test.after & ~(test.mxcsr >> 7U) & 0x3fU) != 0;
+	if (faults ?
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+				result.vector == 19 && result.error == test.after &&
+				cpu.mxcsr == test.after && cpu.rip == 0 &&
+				low == test.registers[0][0] :
+			result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1 &&
+				cpu.mxcsr == test.after && low == test.result)
+		return true;
+	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d mxcsr "
+		"%#x (x86 %#x) xmm0 %#llx (x86 %#llx)\n",
+		static_cast<int>(test.name.size()), test.name.data(),
+		static_cast<int>(result.event), cpu.mxcsr, test.after,
+		static_cast<unsigned long long>(low),
+		static_cast<unsigned long long>(test.result));
+	return expect(false, "a checked SIMD instruction raised other flags "
+		"than x86");
+}
+
+/* HSUBPS and ADDSUB compute only the lanes x86 does, so a checked run sees
+ * no flag from the operation x86 skips: ADDSUBPS adds two infinities in
+ * lane 3 without subtracting them, ADDSUBPD subtracts the largest double
+ * from itself without adding it, and HSUBPS rounding down subtracts a
+ * small negative from the largest single without overflowing the other
+ * way. */
+[[nodiscard]] bool checked_horizontal_flags_follow_x86()
+{
+	constexpr std::uint64_t ones = 0x3f80'0000'3f80'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ADDSUBPS of infinities in lane 3", {0xf2, 0x0f, 0xd0, 0xc1},
+		 {{{ones, 0x7f80'0000'3f80'0000ULL},
+		   {ones, 0x7f80'0000'3f80'0000ULL}, {}}},
+		 0x1f80, 0x1f80, 0x4000'0000'0000'0000ULL},
+		{"ADDSUBPD of the largest double", {0x66, 0x0f, 0xd0, 0xc1},
+		 {{{0x7fef'ffff'ffff'ffffULL, 0x3ff0'0000'0000'0000ULL},
+		   {0x7fef'ffff'ffff'ffffULL, 0x3ff0'0000'0000'0000ULL}, {}}},
+		 0x1f80, 0x1f80, 0},
+		{"HSUBPS rounding down near the largest single",
+		 {0xf2, 0x0f, 0x7d, 0xc1},
+		 {{{0xf300'0000'7f7f'ffffULL, ones}, {ones, ones}, {}}},
+		 0x3f80, 0x3fa0, 0x8000'0000'7f7f'ffffULL},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* x86 detects underflow after rounding, where the host detects it before:
+ * a product, an FMA or a narrowing whose exact result lies just below the
+ * smallest normal and rounds up to it is not tiny, and raises precision
+ * alone, in rounding to nearest and rounding up alike, while underflow is
+ * unmasked too. A tiny result that is exact raises underflow while it is
+ * unmasked, and, flushed by FTZ, underflow and precision. */
+[[nodiscard]] bool checked_underflow_follows_x86()
+{
+	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t below_one = 0x3f80'0000'3f7f'fffeULL;
+	constexpr std::uint64_t above_least_normal = 0x3f80'0000'0080'0001ULL;
+	constexpr std::uint64_t half = 0x3f80'0000'3f00'0000ULL;
+	constexpr std::uint64_t least_normal = 0x3f80'0000'0080'0000ULL;
+	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
+	const std::vector<std::uint8_t> mulss{0xf3, 0x0f, 0x59, 0xc1};
+	/* VFMADD231SS xmm0, xmm1, xmm2 is xmm1 * xmm2 + xmm0; VFNMADD213PD
+	 * xmm0, xmm1, xmm2 is -(xmm1 * xmm0) + xmm2. */
+	const std::vector<FlagCase> cases{
+		{"MULSS just below the smallest normal", mulss,
+		 {{{below_one, one}, {above_least_normal, one}, {}}}, 0x1f80,
+		 0x1fa0, least_normal},
+		{"MULSD just below the smallest normal", {0xf2, 0x0f, 0x59, 0xc1},
+		 {{{0x3fef'ffff'ffff'fffeULL, one_double},
+		   {0x0010'0000'0000'0001ULL, one_double}, {}}},
+		 0x1f80, 0x1fa0, 0x0010'0000'0000'0000ULL},
+		{"MULSS rounding up just below the smallest normal", mulss,
+		 {{{below_one, one}, {above_least_normal, one}, {}}}, 0x5f80,
+		 0x5fa0, least_normal},
+		{"VFMADD231SS just below the smallest normal",
+		 {0xc4, 0xe2, 0x71, 0xb9, 0xc2},
+		 {{{0x3f80'0000'0000'0000ULL, one}, {below_one, one},
+		   {above_least_normal, one}}},
+		 0x1f80, 0x1fa0, least_normal},
+		{"VFNMADD213PD just below the smallest normal in lane 1",
+		 {0xc4, 0xe2, 0xf1, 0xac, 0xc2},
+		 {{{one_double, 0x3fef'ffff'ffff'fffeULL},
+		   {one_double, 0x0010'0000'0000'0001ULL},
+		   {0xbff0'0000'0000'0000ULL, 0}}},
+		 0x1f80, 0x1fa0, 0xc000'0000'0000'0000ULL},
+		{"CVTSD2SS just below the smallest normal single",
+		 {0xf2, 0x0f, 0x5a, 0xc1},
+		 {{{one, one}, {0x380f'ffff'f800'0000ULL, 0}, {}}}, 0x1f80,
+		 0x1fa0, least_normal},
+		{"VCVTPS2PH just below the smallest normal half",
+		 {0xc4, 0xe3, 0x79, 0x1d, 0xc8, 0x00},
+		 {{{}, {0x387f'f800ULL, 0}, {}}}, 0x1f80, 0x1fa0, 0x0400},
+		{"MULSS just below the smallest normal, underflow unmasked",
+		 mulss, {{{below_one, one}, {above_least_normal, one}, {}}},
+		 0x1780, 0x17a0, least_normal},
+		{"MULSS of an exact tiny result, underflow unmasked", mulss,
+		 {{{half, one}, {least_normal, one}, {}}}, 0x1780, 0x1790, 0},
+		{"MULSS of an exact tiny result under FTZ", mulss,
+		 {{{half, one}, {least_normal, one}, {}}}, 0x9f80, 0x9fb0,
+		 0x3f80'0000'0000'0000ULL},
+		{"MULSS of an exact tiny result under FTZ, precision unmasked",
+		 mulss, {{{half, one}, {least_normal, one}, {}}}, 0x8f80, 0x8fb0,
+		 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* DPPS and DPPD raise flags step by step, as x86 does: the products, then
+ * their sums in pairs, then for DPPS the sum of those. Each step detects
+ * underflow after rounding, so that a product rounded up to the smallest
+ * normal is not tiny, and FTZ flushing an exact tiny sum raises underflow
+ * and precision. A step that raises an unmasked exception faults, and the
+ * steps after it raise nothing, a denormal product added included -- unless
+ * the exception is invalid operation or a denormal operand, raised before
+ * the step computes, which raises nothing else of its step. */
+[[nodiscard]] bool checked_dot_product_flags_follow_x86()
+{
+	/* DPPS and DPPD xmm0, xmm1, 0x31: the products of lanes 0 and 1,
+	 * summed into lane 0; DPPS 0xf1 sums all four. */
+	const std::vector<std::uint8_t> dpps{0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x31};
+	const std::vector<std::uint8_t> dppd{0x66, 0x0f, 0x3a, 0x41, 0xc1, 0x31};
+	const std::vector<std::uint8_t> dpps_all{0x66, 0x0f, 0x3a, 0x40, 0xc1,
+		0xf1};
+	constexpr std::uint64_t below_one = 0x3f7f'fffeULL;
+	constexpr std::uint64_t above_least_normal = 0x0080'0001ULL;
+	constexpr std::uint64_t least_normal = 0x0080'0000ULL;
+	constexpr std::uint64_t half = 0x3f00'0000ULL;
+	/* 0.75 + 2^-24: times above_least_normal, an inexact tiny product;
+	 * times itself, an inexact normal one. */
+	constexpr std::uint64_t three_quarters = 0x3f40'0001ULL;
+	/* Products 1, 2^-24 and an exact denormal: the first pair sum is
+	 * inexact, and the second adds a denormal. */
+	const std::array<std::uint64_t, 2> pair_sums_left{
+		0x3380'0000'3f80'0000ULL, 0x3f00'0000ULL};
+	const std::array<std::uint64_t, 2> pair_sums_right{
+		0x3f80'0000'3f80'0000ULL, 0x0080'0000ULL};
+	const std::vector<FlagCase> cases{
+		{"DPPS of a product just below the smallest normal", dpps,
+		 {{{below_one, 0}, {above_least_normal, 0}, {}}}, 0x1f80, 0x1fa0,
+		 least_normal},
+		{"DPPS of a product just below the smallest normal, underflow "
+		 "unmasked", dpps,
+		 {{{below_one, 0}, {above_least_normal, 0}, {}}}, 0x1780, 0x17a0,
+		 least_normal},
+		{"DPPS of an exact tiny sum under FTZ", dpps,
+		 {{{0xbf80'0000'3fc0'0000ULL, 0},
+		   {0x0080'0000'0080'0000ULL, 0}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"DPPD of a product just below the smallest normal", dppd,
+		 {{{0x3fef'ffff'ffff'fffeULL, 0}, {0x0010'0000'0000'0001ULL, 0},
+		   {}}},
+		 0x1f80, 0x1fa0, 0x0010'0000'0000'0000ULL},
+		{"DPPS of an exact tiny product, underflow unmasked", dpps,
+		 {{{half, 0}, {least_normal, 0}, {}}}, 0x1780, 0x1790, 0},
+		{"DPPS of an exact tiny product, denormal operand unmasked", dpps,
+		 {{{half, 0}, {least_normal, 0}, {}}}, 0x1e80, 0x1e82, 0},
+		{"DPPS of an exact tiny product, underflow and denormal operand "
+		 "unmasked", dpps, {{{half, 0}, {least_normal, 0}, {}}}, 0x1680,
+		 0x1690, 0},
+		{"DPPS of an inexact tiny product, denormal operand unmasked",
+		 dpps, {{{three_quarters, 0}, {above_least_normal, 0}, {}}},
+		 0x1e80, 0x1eb2, 0},
+		{"DPPS of an inexact tiny product, precision unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x0f80,
+		 0x0fb0, 0},
+		{"DPPS of an inexact tiny product, underflow unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1780,
+		 0x17b0, 0},
+		{"DPPS of an inexact tiny product, underflow and denormal operand "
+		 "unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1680,
+		 0x16b0, 0},
+		{"DPPS of an inexact tiny product under FTZ, denormal operand "
+		 "unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x9e80,
+		 0x9eb0, 0},
+		{"DPPS of an inexact normal product, precision unmasked", dpps,
+		 {{{three_quarters, 0}, {three_quarters, 0}, {}}}, 0x0f80, 0x0fa0,
+		 0},
+		{"DPPS of an inexact pair sum beside a denormal one, denormal "
+		 "operand unmasked", dpps_all,
+		 {{pair_sums_left, pair_sums_right, {}}}, 0x1e80, 0x1e82, 0},
+		{"DPPS of an inexact pair sum beside a denormal one, precision "
+		 "unmasked", dpps_all, {{pair_sums_left, pair_sums_right, {}}},
+		 0x0f80, 0x0fa2, 0},
+		{"DPPS of an exact tiny final sum, underflow unmasked", dpps_all,
+		 {{{0x3f80'0000ULL, 0xbfc0'0000ULL},
+		   {0x0100'0000ULL, 0x00c0'0000ULL}, {}}},
+		 0x1780, 0x1790, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* Beside an unmasked underflow or overflow, which faults, x86 raises
+ * precision as the result's significand rounds, as if the exponent were
+ * unbounded: an inexact tiny product raises it, and a tiny or overflowing
+ * result whose significand is exact does not, however its delivery would
+ * round -- except a half narrowed from a denormal single, which does. */
+[[nodiscard]] bool checked_unmasked_precision_follows_x86()
+{
+	const std::vector<std::uint8_t> mulss{0xf3, 0x0f, 0x59, 0xc1};
+	/* VCVTPS2PH xmm0, xmm1, rounding as MXCSR does. */
+	const std::vector<std::uint8_t> vcvtps2ph{0xc4, 0xe3, 0x79, 0x1d, 0xc8,
+		0x04};
+	constexpr std::uint64_t three_quarters = 0x3f40'0001ULL;
+	constexpr std::uint64_t above_least_normal = 0x0080'0001ULL;
+	constexpr std::uint64_t largest = 0x7f7f'ffffULL;
+	const std::vector<FlagCase> cases{
+		{"MULSS of an inexact tiny product, underflow unmasked", mulss,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1780,
+		 0x17b0, 0},
+		{"MULSS of an inexact tiny product, underflow and precision "
+		 "unmasked", mulss,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x0780,
+		 0x07b0, 0},
+		{"MULSS overflowing with an exact significand, overflow unmasked",
+		 mulss, {{{largest, 0}, {0x4000'0000ULL, 0}, {}}}, 0x1380, 0x1388,
+		 0},
+		{"MULSS overflowing with an inexact significand, overflow "
+		 "unmasked", mulss, {{{largest, 0}, {0x3fc0'0000ULL, 0}, {}}},
+		 0x1380, 0x13a8, 0},
+		{"DPPS of a tiny product with an exact significand, underflow "
+		 "unmasked", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x31},
+		 {{{above_least_normal, 0}, {0x3f00'0000ULL, 0}, {}}}, 0x1780,
+		 0x1790, 0},
+		{"CVTSD2SS of the least denormal double, underflow unmasked",
+		 {0xf2, 0x0f, 0x5a, 0xc1}, {{{}, {1, 0}, {}}}, 0x1780, 0x1792, 0},
+		{"CVTSD2SS overflowing with an exact significand, overflow "
+		 "unmasked", {0xf2, 0x0f, 0x5a, 0xc1},
+		 {{{}, {0x4c78'0000'0000'0000ULL, 0}, {}}}, 0x1380, 0x1388, 0},
+		{"VFMADD231SD overflowing with an exact significand, overflow "
+		 "unmasked", {0xc4, 0xe2, 0xf1, 0xb9, 0xc2},
+		 {{{}, {0x6578'0000'0000'0000ULL, 0},
+		   {0x5f30'0000'0000'0000ULL, 0}}},
+		 0x1380, 0x1388, 0},
+		{"VCVTPS2PH of a denormal single, underflow unmasked", vcvtps2ph,
+		 {{{}, {0x0000'0002ULL, 0}, {}}}, 0x1780, 0x17b2, 0},
+		{"VCVTPS2PH of a tiny single with an exact significand, underflow "
+		 "unmasked", vcvtps2ph, {{{}, {0x33c0'0000ULL, 0}, {}}}, 0x1780,
+		 0x1790, 0},
+		{"VCVTPS2PH overflowing with an exact significand, overflow "
+		 "unmasked", vcvtps2ph, {{{}, {0x49c0'0000ULL, 0}, {}}}, 0x1380,
+		 0x1388, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* A sum or difference that small is exact, yet tiny: FTZ flushing it raises
+ * underflow and precision, in a horizontal or alternating one too, and it
+ * raises underflow while that is unmasked. Beside an unmasked overflow, it
+ * raises precision as its significand rounds. */
+[[nodiscard]] bool checked_sum_flags_follow_x86()
+{
+	const std::vector<std::uint8_t> addss{0xf3, 0x0f, 0x58, 0xc1};
+	constexpr std::uint64_t one = 0x3f80'0000'0000'0000ULL;
+	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ADDPS of an exact tiny sum under FTZ", {0x0f, 0x58, 0xc1},
+		 {{{one | 0x0080'0001ULL, 0}, {one | 0x8080'0000ULL, 0}, {}}},
+		 0x9f80, 0x9fb0, 0x4000'0000'0000'0000ULL},
+		{"HSUBPS of an exact tiny difference under FTZ",
+		 {0xf2, 0x0f, 0x7d, 0xc1},
+		 {{{0x0080'0000'0080'0001ULL, 0x3f80'0000'3f80'0000ULL}, {}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"ADDSUBPD of an exact tiny difference under FTZ",
+		 {0x66, 0x0f, 0xd0, 0xc1},
+		 {{{0x0010'0000'0000'0001ULL, one_double},
+		   {0x0010'0000'0000'0000ULL, one_double}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"ADDSS of an exact tiny sum, underflow unmasked", addss,
+		 {{{0x0080'0001ULL, 0}, {0x8080'0000ULL, 0}, {}}}, 0x1780, 0x1790,
+		 0},
+		{"ADDSS overflowing with an exact significand, overflow unmasked",
+		 addss, {{{0x7f40'0000ULL, 0}, {0x7f40'0000ULL, 0}, {}}}, 0x1380,
+		 0x1388, 0},
+		{"ADDSS overflowing with an inexact significand, overflow "
+		 "unmasked", addss, {{{0x7f40'0001ULL, 0}, {0x7f40'0000ULL, 0}, {}}},
+		 0x1380, 0x13a8, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
+/* ROUND raises precision for a lane that is not an integer, unless bit 3 of
+ * its immediate suppresses it, and a conversion to an integer for one that
+ * converts in range, where an out-of-range one raises invalid operation
+ * alone; MXCSR.DAZ makes a denormal zero first. */
+[[nodiscard]] bool checked_integer_rounding_precision_follows_x86()
+{
+	constexpr std::uint64_t one_and_a_half_two = 0x4000'0000'3fc0'0000ULL;
+	constexpr std::uint64_t two_twos = 0x4000'0000'4000'0000ULL;
+	/* 2147483647.5: truncated in range, rounded to nearest out of it. */
+	constexpr std::uint64_t past_int32 = 0x41df'ffff'ffe0'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ROUNDPS of 1.5 as MXCSR rounds", {0x66, 0x0f, 0x3a, 0x08, 0xc1,
+		 0x04}, {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80, 0x1fa0,
+		 two_twos},
+		{"ROUNDPS of 1.5 with precision suppressed", {0x66, 0x0f, 0x3a,
+		 0x08, 0xc1, 0x0c}, {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80,
+		 0x1f80, two_twos},
+		{"ROUNDSD down of the least denormal", {0x66, 0x0f, 0x3a, 0x0b,
+		 0xc1, 0x01}, {{{}, {1, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"ROUNDSD down of the least denormal under DAZ", {0x66, 0x0f, 0x3a,
+		 0x0b, 0xc1, 0x01}, {{{}, {1, 0}, {}}}, 0x1fc0, 0x1fc0, 0},
+		{"CVTTSD2SI truncating 2147483647.5", {0xf2, 0x0f, 0x2c, 0xc1},
+		 {{{}, {past_int32, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"CVTSD2SI rounding 2147483647.5 out of range",
+		 {0xf2, 0x0f, 0x2d, 0xc1}, {{{}, {past_int32, 0}, {}}}, 0x1f80,
+		 0x1f81, 0},
+		{"CVTPS2DQ of 2.5, precision unmasked", {0x66, 0x0f, 0x5b, 0xc1},
+		 {{{}, {0x3f80'0000'4020'0000ULL, 0}, {}}}, 0x0f80, 0x0fa0, 0},
+		{"CVTTPS2PI of 1.5", {0x0f, 0x2c, 0xc1},
+		 {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"CVTSS2SI of 2^63 to 64 bits, invalid operation unmasked",
+		 {0xf3, 0x48, 0x0f, 0x2d, 0xc1}, {{{}, {0x5f00'0000ULL, 0}, {}}},
+		 0x1f00, 0x1f01, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8307,6 +8871,14 @@ int main()
 		checked_simd_exceptions_fault_before_the_result() &&
 		checked_simd_denormal_operands_follow_x86() &&
 		checked_simd_invalid_operations_follow_x86() &&
+		checked_fma_invalid_operations_follow_x86() &&
+		checked_comparison_invalid_operations_follow_x86() &&
+		checked_horizontal_flags_follow_x86() &&
+		checked_underflow_follows_x86() &&
+		checked_dot_product_flags_follow_x86() &&
+		checked_unmasked_precision_follows_x86() &&
+		checked_sum_flags_follow_x86() &&
+		checked_integer_rounding_precision_follows_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

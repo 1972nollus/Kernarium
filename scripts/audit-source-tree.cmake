@@ -98,7 +98,8 @@ function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
-# First-party CMake files and Xcode projects are each read once for two rules.
+# First-party CMake files and Xcode projects are each read once for three
+# rules.
 #
 # A darwin/ implementation source is compiled only by the CMake owner beneath
 # darwin/ that lists it. Any other target reaches it through a product that
@@ -114,6 +115,13 @@ endfunction()
 # normalized before matching. A command starts its line, and CMake refuses a
 # newline or comment before its parenthesis, so a commented-out registration
 # never matches.
+#
+# A compile definition, or a -D compile option, that names a source or build
+# directory puts this checkout's absolute path into a binary, which then fails
+# wherever the checkout is absent, as in a relocated test bundle. A test takes
+# a data path as a registration argument instead. The definitions are scanned
+# without CMake lists, which would split a command at its semicolons and
+# brackets.
 function(uml_audit_build_files ROOT OUT_VIOLATIONS)
     set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
     set(_violations)
@@ -146,6 +154,22 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
             list(APPEND _violations
                 "${_path}: raw add_test bypasses the centralized suite helpers")
         endif()
+        string(REGEX REPLACE "#[^\n]*" "" _definition_code "${_normalized_text}")
+        string(REGEX REPLACE "[][;]" " " _definition_code "${_definition_code}")
+        string(REGEX MATCHALL
+            "(^|[\r\n])[ \t]*(target_compile_definitions|add_compile_definitions|add_definitions|target_compile_options|add_compile_options)[ \t\r]*\\([^)]*"
+            _definition_commands "${_definition_code}")
+        foreach(_command IN LISTS _definition_commands)
+            set(_definition "")
+            if(_command MATCHES "_options[ \t\r]*\\(")
+                set(_definition "-d[a-z0-9_]+=[^ \t\r\n]*")
+            endif()
+            if(_command MATCHES
+               "${_definition}(\\$\\{[a-z0-9_]*_(source|binary|list)_dir\\}|\\$<target_(file|bundle|linker_file)_dir:)")
+                list(APPEND _violations
+                    "${_path}: a compile definition names a source or build directory")
+            endif()
+        endforeach()
     endforeach()
     file(GLOB_RECURSE _projects LIST_DIRECTORIES false
         "${ROOT}/Kernarium/*.pbxproj")
@@ -158,6 +182,59 @@ function(uml_audit_build_files ROOT OUT_VIOLATIONS)
             list(APPEND _violations
                 "${_path}: an Xcode target compiles ${_name}, which only its darwin/ owner may build")
         endforeach()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
+# A shell searches an exported CDPATH before the working directory for a cd
+# operand that does not start with / or a . component, and prints the
+# directory it finds there, so a decoy replaces the intended directory and its
+# path lands in captured output. A first-party shell script therefore writes
+# every cd as CDPATH= cd -- unless its operand is a literal absolute path. A
+# variable operand takes the form even when its value is absolute, so the rule
+# needs neither data flow nor an exemption. Comments are ignored, and the text
+# is scanned without CMake lists, which would split at its semicolons and
+# brackets.
+function(uml_audit_shell_cd ROOT OUT_VIOLATIONS)
+    set(_globs)
+    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium
+            scripts tests tools)
+        list(APPEND _globs "${ROOT}/${_scope}/*.sh")
+    endforeach()
+    file(GLOB_RECURSE _scripts LIST_DIRECTORIES false ${_globs})
+    # A cd command word, its operand and the character that ends it.
+    set(_cd "[\n \t;&|(){}!`'\"]cd([ \t][^\n;&|)]*)?[\n;&|)]")
+    set(_violations)
+    foreach(_path IN LISTS _scripts)
+        file(READ "${_path}" _text)
+        string(REPLACE "CDPATH= cd -- " "CDPATH=@cd-- " _code "\n${_text}\n")
+        string(REGEX REPLACE "\n[ \t]*#[^\n]*" "\n" _code "${_code}")
+        string(REGEX REPLACE "[ \t]#[^\n]*" "" _code "${_code}")
+        set(_offset 0)
+        set(_rest "${_code}")
+        while(TRUE)
+            if(NOT _rest MATCHES "${_cd}")
+                break()
+            endif()
+            set(_match "${CMAKE_MATCH_0}")
+            string(FIND "${_rest}" "${_match}" _at)
+            string(LENGTH "${_match}" _length)
+            if(NOT _match MATCHES "^.cd[ \t]+(--[ \t]+)?[\"']?/")
+                math(EXPR _end "${_offset} + ${_at} + 1")
+                string(SUBSTRING "${_code}" 0 ${_end} _before)
+                string(REGEX MATCHALL "\n" _newlines "${_before}")
+                list(LENGTH _newlines _line)
+                math(EXPR _command_length "${_length} - 2")
+                string(SUBSTRING "${_match}" 1 ${_command_length} _command)
+                string(STRIP "${_command}" _command)
+                list(APPEND _violations
+                    "${_path}:${_line}: ${_command} needs CDPATH= cd -- unless it names a literal absolute directory")
+            endif()
+            # The character that ended this cd may begin the next one.
+            math(EXPR _next "${_at} + ${_length} - 1")
+            math(EXPR _offset "${_offset} + ${_next}")
+            string(SUBSTRING "${_rest}" ${_next} -1 _rest)
+        endwhile()
     endforeach()
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
@@ -244,12 +321,15 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     endif()
     # Engines do not include one another and shared CPU code includes neither.
     # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
-    # x86_64/, and the engine factory is the one source that composes both.
+    # x86_64/gadgets/, the rest of x86_64/ is what the x86 engines share, and
+    # the engine factory is the one source that composes both.
     set(FOREIGN_ENGINE_INCLUDE "")
     if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/gadgets|x86_64)/")
-    elseif(SOURCE_PATH MATCHES "^darwin/cpu/(arm64/gadgets|x86_64)/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/(arm64|x86_64)/gadgets/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/arm64/jit/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/x86_64/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64/gadgets)/")
     elseif(SOURCE_PATH MATCHES "^darwin/cpu/" AND
            NOT SOURCE_PATH MATCHES "^darwin/cpu/engine_factory\\.cpp$")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64)/")
@@ -301,6 +381,9 @@ list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
 
 uml_audit_build_files("${SOURCE_ROOT}" BUILD_FILE_VIOLATIONS)
 list(APPEND VIOLATIONS ${BUILD_FILE_VIOLATIONS})
+
+uml_audit_shell_cd("${SOURCE_ROOT}" SHELL_CD_VIOLATIONS)
+list(APPEND VIOLATIONS ${SHELL_CD_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source

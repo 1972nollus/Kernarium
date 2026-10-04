@@ -337,6 +337,10 @@ page, which keeps publication precise where READ_IMPLIES_EXEC makes every
 readable page executable. The banks, the host-flag fusion rules and the
 registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
+What any x86 engine shares with the gadget engine is not part of it: the guest
+CPU state, the decoder, CPUID, the software TLB entry, the code-page registry
+and the split-operand lock form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a
+`shared` CPU target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,
@@ -617,9 +621,13 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Ownership
 includes that only a darwin/ source's owner compiles it: no other CMake file
-and no Xcode project names one. It does not
-prove performance, generated code shape, a kernel boot, or guest behavior;
-those require their owning validation.
+and no Xcode project names one. A first-party shell script writes each `cd`
+as `CDPATH= cd --` unless it names a literal absolute directory, so an
+exported `CDPATH` can neither redirect it nor print into captured output.
+No compile definition names a source or build directory, so no binary needs
+the checkout it was built from at run time. The audit does not prove
+performance, generated code shape, a kernel boot, or guest behavior; those
+require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

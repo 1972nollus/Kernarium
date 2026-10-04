@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_entry.hpp"
-#include "code_page_registry.hpp"
+#include "cpu/x86_64/code_page_registry.hpp"
+#include "cpu/x86_64/split_operand_lock.hpp"
 #include "executor.hpp"
 
 #include <algorithm>
@@ -9,7 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <mutex>
 #include <span>
 
 namespace uml::cpu::x86_64::gadgets {
@@ -21,12 +21,6 @@ constexpr std::uint64_t write_code_tag = UML_X86_64_TLB_WRITE_CODE;
 constexpr std::uint64_t write_cached_code_tag =
 	UML_X86_64_TLB_WRITE_CACHED_CODE;
 constexpr std::uint8_t write_code_published = UML_X86_64_WRITE_CODE_PUBLISHED;
-
-/* Serializes every locked operand that no exclusive access can cover: one
- * that crosses a 16-byte granule. Such operands are rare enough that one lock
- * for the process does not contend. */
-std::mutex split_operand_lock;
-
 
 void record_fault(NativeExecutionContext &context, std::uint64_t address,
 	::uml::memory::MemoryAccess access) noexcept

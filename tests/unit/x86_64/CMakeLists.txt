@@ -3,6 +3,7 @@
 add_executable(uml_x86_64_gadget_bootstrap_tests
     x86_64_gadget_bootstrap_tests.cpp)
 target_link_libraries(uml_x86_64_gadget_bootstrap_tests PRIVATE
+    uml_x86_64_target
     uml_x86_64_gadgets
     UML::CpuContract)
 target_include_directories(uml_x86_64_gadget_bootstrap_tests PRIVATE
@@ -15,6 +16,7 @@ uml_add_unit_test(
 add_executable(uml_x86_64_sse_exactness_tests
     x86_64_sse_exactness_tests.cpp)
 target_link_libraries(uml_x86_64_sse_exactness_tests PRIVATE
+    uml_x86_64_target
     uml_x86_64_gadgets
     UML::CpuContract)
 target_include_directories(uml_x86_64_sse_exactness_tests PRIVATE
@@ -27,7 +29,7 @@ uml_add_unit_test(
 add_executable(uml_x86_64_code_page_registry_tests
     code_page_registry_tests.cpp)
 target_link_libraries(uml_x86_64_code_page_registry_tests PRIVATE
-    uml_x86_64_gadgets
+    uml_x86_64_target
     UML::CpuContract)
 target_include_directories(uml_x86_64_code_page_registry_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
@@ -49,6 +51,7 @@ endif()
 add_executable(uml_x86_64_fex_asm_runner
     fex_asm_runner.cpp)
 target_link_libraries(uml_x86_64_fex_asm_runner PRIVATE
+    uml_x86_64_target
     uml_x86_64_gadgets
     UML::CpuContract)
 target_include_directories(uml_x86_64_fex_asm_runner PRIVATE

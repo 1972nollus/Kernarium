@@ -11,18 +11,29 @@
 #include <string>
 
 namespace {
+std::string fixtureDirectory;
+
 std::vector<std::uint8_t> read(const std::string& name)
 {
-    std::ifstream file(std::string(UML_VIDEO_FIXTURE_DIR) + "/" + name, std::ios::binary);
-    if (!file) throw std::runtime_error("missing video fixture: " + name);
+    const auto path = fixtureDirectory + "/" + name;
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::runtime_error("missing video fixture: " + path);
     return {std::istreambuf_iterator<char>(file), {}};
 }
 using uml::testing::require;
 }
 
-int main()
+int main(int argc, char** argv)
 {
     using namespace uml::platform;
+    /* The registration names the fixture directory, so the binary carries no
+     * source path and runs wherever a copy of the fixtures is. */
+    if (argc != 2) {
+        std::fprintf(stderr, "usage: uml_video_decoder_tests FIXTURE_DIRECTORY\n"
+                             "  FIXTURE_DIRECTORY holds a copy of tests/support/video\n");
+        return 2;
+    }
+    fixtureDirectory = argv[1];
     try {
         const auto capabilities = videoDecodeCapabilities();
         require(!capabilities.empty(), "no hardware video decoder available");

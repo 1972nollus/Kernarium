@@ -4,7 +4,10 @@ The engine executes x86-64 userspace as data-only streams of pointers to
 handwritten arm64 gadgets (`engine.S` and `engine/*.inc`). `native_builder.cpp`
 turns decoded instructions into those streams, `executor.cpp` owns the
 translation cache, and `native_memory.cpp` is the C++ side of the software
-TLB. This file records the contracts that are not obvious from the code.
+TLB. The guest CPU state, the decoder, CPUID, the software TLB entry, the
+code-page registry and the split-operand lock are not the engine's own: they
+are `uml_x86_64_target` in the parent directory, which every x86 engine links.
+This file records the contracts that are not obvious from the code.
 
 Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
@@ -230,9 +233,10 @@ cover. The whole table is cleared only when the address space cannot describe
 the span, when the span covers more than a quarter of the entries, or when the
 memory or the generation changed. The table is direct-mapped with 32768
 entries, 1 MiB, indexed by the page number folded once at that width;
-`native_tlb_entry_count` is the one constant, and the three assembly copies of
-the index (`translate` and `translate_plain` in engine/common.inc, and the
-baked entries' translation in engine/generate_baked.py) must change with it.
+`native_tlb_entry_count` in `../software_tlb.hpp` is the one constant, and the
+three assembly copies of the index (`translate` and `translate_plain` in
+engine/common.inc, and the baked entries' translation in
+engine/generate_baked.py) must change with it.
 
 A translation may miss, and a miss is a call. Nothing saves the host vector
 registers around it, so a gadget may not hold a guest value in one across its
@@ -286,9 +290,10 @@ unaligned ones, in packed structures above all.
   fault in between releases the lock in the fault tail.
 
 The lock makes such an operand atomic against every other operand on that
-path, which covers the same instruction running on the other vCPUs. It is not
-atomic against an exclusive loop or a plain store that overlaps it; nothing the
-host offers covers two granules at once.
+path, which covers the same instruction running on the other vCPUs. It is
+`split_operand_lock` in `../split_operand_lock.hpp`, one lock for every x86
+engine. It is not atomic against an exclusive loop or a plain store that
+overlaps it; nothing the host offers covers two granules at once.
 
 ## Floating-point environment
 
@@ -392,15 +397,34 @@ checks, and runs every other block, linked, as `execute` does:
   gathers and the extended-state images are exempt, as on x86.
 - #XM, run checked: the host's cumulative exception flags are cleared around
   the instruction and read back as MXCSR's; a scalar instruction's host code
-  computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
-  integer out of range raises the host's invalid-operation flag. A denormal
-  operand, which no host flag shows, is found in the sources before the
-  instruction runs, where x86 raises it: not under DAZ, nor in a lane holding a
-  NaN or raising invalid operation or division by zero, and for DPPS and DPPD
-  also in a product or sum added. An unmasked exception restores the state from
+  computes lane 0 alone, HSUB and ADDSUB compute only the operation x86 does
+  in each lane, COMIS compares with FCMPE, and a conversion to an integer out
+  of range raises the host's invalid-operation flag. A denormal operand, which
+  no host flag shows, is found in the sources before the instruction runs,
+  where x86 raises it: not under DAZ, nor in a lane holding a NaN or raising
+  invalid operation or division by zero. A flag the host raises otherwise than
+  x86 is decided from the sources too (`host_flag_correction`): an FMA's
+  invalid operation, which x86 does not raise for infinity times zero plus a
+  quiet NaN; a comparison's, which a quiet NaN raises under the signalling
+  predicates alone, VEX's 16 to 31 included, and a signalling NaN under every
+  predicate; the precision of ROUND and conversions to integers, which x86
+  raises for a lane that is not an integer unless ROUND's immediate
+  suppresses it or the conversion is out of range, and the host does not;
+  and the underflow of a sum, difference, product, quotient, FMA or
+  narrowing to a single or half, which SoftFloat rounds as x86 does. x86
+  detects tininess after rounding, so a result rounded up to the smallest
+  normal is not tiny, and an exact tiny result raises underflow while it is
+  unmasked, and precision too when FTZ flushes it. Beside an unmasked
+  underflow or overflow of these, x86 raises precision as the significand
+  rounds, as if the exponent were unbounded, and for a half narrowed from a
+  denormal single. DPPS and DPPD take every flag from SoftFloat, raised step
+  by step as x86 does -- the products, their sums in pairs, then for DPPS the
+  sum of those -- with a denormal product or sum added raising a denormal
+  operand; the first step that raises an unmasked exception faults, and the
+  steps after it raise nothing. An unmasked exception restores the state from
   before it, a memory destination included, and faults; MXCSR then holds only
-  the flags checked before the computation when one of those was unmasked, and
-  no precision flag when underflow was. Masked flags accumulate.
+  the flags checked before the computation when one of those was unmasked.
+  Masked flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags. An
   unmasked invalid operation, denormal or division by zero, or an unmasked
   overflow or underflow of a store, restores the registers, the stack and
@@ -420,19 +444,18 @@ A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. The host does not detect an exact tiny result, so #XM misses that
-underflow; it reports precision for an unmasked overflow whose result is exact
-but for its exponent, where x86 does not; and an x87 overflow or underflow
-unmasked for a register destination leaves the masked result rather than x87's
-rebiased one.
+its speed. An x87 overflow or underflow unmasked for a register destination
+leaves the masked result rather than x87's rebiased one.
 
 ## Code pages
 
-`code_page_registry.hpp` keeps, per address-space generation, the set of pages
-in which any executor of that generation holds a cached translation. A store
-publishes a code change only when its page is in that set, which is what
+`../code_page_registry.hpp` keeps, per address-space generation, the set of
+pages in which any executor of that generation holds a cached translation. A
+store publishes a code change only when its page is in that set, which is what
 makes publication precise under READ_IMPLIES_EXEC, where every readable page
-is executable. The registry guarantees:
+is executable. A participant's write translations are a table of
+`NativeTlbEntry` indexed by `native_tlb_index`, which is what a registration
+retires. The registry guarantees:
 
 - membership is exact. A bit per hashed page answers "no" with one load, and
   a set bit is confirmed against a count per page, because the hash keeps

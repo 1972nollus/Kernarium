@@ -423,7 +423,7 @@ env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 env -i PATH="$MESA_TOOL_PATH" TMPDIR="$APPLE_GPU_TEMP_DIR" \
 	"$MESON" test -C "$VENUS_PROTOCOL_BUILD" --print-errorlogs
 VENUS_PROTOCOL_GENERATED_SHA256=$(
-	cd "$VENUS_PROTOCOL_BUILD"
+	CDPATH= cd -- "$VENUS_PROTOCOL_BUILD"
 	shasum -a 256 vn_protocol_driver*.h vn_protocol_renderer*.h |
 		shasum -a 256 | awk '{print $1}'
 )

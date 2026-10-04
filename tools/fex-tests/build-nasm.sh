@@ -43,8 +43,8 @@ trap cleanup EXIT HUP INT TERM
 build_source="$work/source"
 mkdir -p "$build_source"
 git -C "$source" archive HEAD | tar -xf - -C "$build_source"
-(cd "$build_source" && sh autogen.sh)
-(cd "$build_source" && ./configure --prefix="$stage")
+(CDPATH= cd -- "$build_source" && sh autogen.sh)
+(CDPATH= cd -- "$build_source" && ./configure --prefix="$stage")
 make -C "$build_source" \
 	-j"$(sysctl -n hw.logicalcpu 2>/dev/null || printf 4)" nasm
 mkdir -p "$stage/bin"

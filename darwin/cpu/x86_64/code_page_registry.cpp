@@ -8,7 +8,7 @@
 #include <thread>
 #include <unordered_map>
 
-namespace uml::cpu::x86_64::gadgets {
+namespace uml::cpu::x86_64 {
 namespace {
 
 /* Never destroyed, so a registry released during process teardown still
@@ -191,4 +191,4 @@ void CodePageRegistry::remove(std::uint64_t page) noexcept
 	retire_write_translations(page);
 }
 
-} // namespace uml::cpu::x86_64::gadgets
+} // namespace uml::cpu::x86_64

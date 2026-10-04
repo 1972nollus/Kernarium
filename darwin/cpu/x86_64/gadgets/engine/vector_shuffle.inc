@@ -5,7 +5,10 @@
  * vector_float.inc). Their first operand is the lower element of each
  * pair, or the first source for ADDSUB, as x86 hardware chooses between two
  * NaNs; the SDM ranks only distinct source operands. A sum or difference
- * that is tiny is exact, so FTZ flushes denormal results alone. */
+ * that is tiny is exact, so FTZ flushes denormal results alone. Each
+ * computes only the lanes x86 does, whose host flags a checked run reads:
+ * HSUB subtracts the odd elements from the even ones, and ADDSUB adds the
+ * second source with its even lanes negated, a - b being a + -b. */
 .macro vector_horizontal_inputs element, width
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_horizontal_inputs_ready\@
@@ -22,6 +25,21 @@ Lx86_vector_horizontal_inputs_ready\@:
 .macro vector_horizontal_nan operation, element, output, left, right
 	.ifc \operation,addsub
 	simd_x86_nan \element, \output, \left, \right, 1, 0
+	/* ADDSUB's even lanes add the second source negated, which the host
+	 * returns negated where it is the only NaN: x86 returns it quieted. */
+	.if \element == 32
+	fcmeq v16.4s, v\left\().4s, v\left\().4s
+	fcmeq v17.4s, v\right\().4s, v\right\().4s
+	movi v18.4s, #0x40, lsl #16
+	.else
+	fcmeq v16.2d, v\left\().2d, v\left\().2d
+	fcmeq v17.2d, v\right\().2d, v\right\().2d
+	mov x14, #0x0008000000000000
+	dup v18.2d, x14
+	.endif
+	bic v16.16b, v16.16b, v17.16b
+	orr v18.16b, v\right\().16b, v18.16b
+	bit v\output\().16b, v18.16b, v16.16b
 	.else
 	.if \element == 32
 	uzp1 v21.4s, v\left\().4s, v\right\().4s
@@ -82,17 +100,13 @@ Lx86_vector_horizontal_repair\@:
 	.endif
 	.ifc \operation,hsub
 	.if \element == 32
-	rev64 v6.4s, v0.4s
-	fsub v6.4s, v0.4s, v6.4s
-	rev64 v7.4s, v1.4s
-	fsub v7.4s, v1.4s, v7.4s
-	uzp1 v4.4s, v6.4s, v7.4s
+	uzp1 v6.4s, v0.4s, v1.4s
+	uzp2 v7.4s, v0.4s, v1.4s
+	fsub v4.4s, v6.4s, v7.4s
 	.if \width == 256
-	rev64 v6.4s, v2.4s
-	fsub v6.4s, v2.4s, v6.4s
-	rev64 v7.4s, v3.4s
-	fsub v7.4s, v3.4s, v7.4s
-	uzp1 v5.4s, v6.4s, v7.4s
+	uzp1 v6.4s, v2.4s, v3.4s
+	uzp2 v7.4s, v2.4s, v3.4s
+	fsub v5.4s, v6.4s, v7.4s
 	.endif
 	.else
 	ext v6.16b, v0.16b, v0.16b, #8
@@ -111,24 +125,22 @@ Lx86_vector_horizontal_repair\@:
 	.endif
 	.ifc \operation,addsub
 	.if \element == 32
-	fsub v4.4s, v0.4s, v1.4s
-	fadd v6.4s, v0.4s, v1.4s
-	mov v4.s[1], v6.s[1]
-	mov v4.s[3], v6.s[3]
+	movi v6.4s, #0x80, lsl #24
+	ushr v6.2d, v6.2d, #32
 	.if \width == 256
-	fsub v5.4s, v2.4s, v3.4s
-	fadd v6.4s, v2.4s, v3.4s
-	mov v5.s[1], v6.s[1]
-	mov v5.s[3], v6.s[3]
+	eor v7.16b, v3.16b, v6.16b
+	fadd v5.4s, v2.4s, v7.4s
 	.endif
+	eor v6.16b, v1.16b, v6.16b
+	fadd v4.4s, v0.4s, v6.4s
 	.else
-	fsub v4.2d, v0.2d, v1.2d
-	fadd v6.2d, v0.2d, v1.2d
-	mov v4.d[1], v6.d[1]
+	fneg d6, d1
+	mov v6.d[1], v1.d[1]
+	fadd v4.2d, v0.2d, v6.2d
 	.if \width == 256
-	fsub v5.2d, v2.2d, v3.2d
-	fadd v6.2d, v2.2d, v3.2d
-	mov v5.d[1], v6.d[1]
+	fneg d7, d3
+	mov v7.d[1], v3.d[1]
+	fadd v5.2d, v2.2d, v7.2d
 	.endif
 	.endif
 	.endif

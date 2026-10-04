@@ -111,7 +111,7 @@ source_symlink=$(find "$SOURCE_FRAMEWORKS" -type l -print -quit)
 	fail "source Apple GPU frameworks contain a symbolic link: $source_symlink"
 
 embedded_frameworks=$(
-	cd "$FRAMEWORK_DIRECTORY"
+	CDPATH= cd -- "$FRAMEWORK_DIRECTORY"
 	find . -mindepth 1 -maxdepth 1 -print | LC_ALL=C sort
 )
 frameworks="$GL_FRAMEWORKS KosmicKrisp"
@@ -129,11 +129,11 @@ for framework in $frameworks; do
 	[ -d "$source" ] && [ -d "$embedded" ] ||
 		fail "$framework.framework is missing from the source or runtime"
 	source_payload=$(
-		cd "$source"
+		CDPATH= cd -- "$source"
 		find . -mindepth 1 -print | LC_ALL=C sort
 	)
 	embedded_payload=$(
-		cd "$embedded"
+		CDPATH= cd -- "$embedded"
 		find . -mindepth 1 -print | LC_ALL=C sort
 	)
 	[ "$source_payload" = "$embedded_payload" ] ||

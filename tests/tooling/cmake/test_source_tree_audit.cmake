@@ -101,10 +101,10 @@ if(OWNER_PRODUCT_VIOLATIONS)
 endif()
 
 # The layer, engine-ownership, executable-memory, implementation-include,
-# CPU-header and test-registration rules read the whole tree, so the audit
-# itself runs over a fixture tree that breaks each rule beside a file the rule
-# accepts. Every fixture starts on its second line, so a rule cannot pass by
-# matching only at the start of a file.
+# CPU-header, test-registration, compile-definition and shell cd rules read the
+# whole tree, so the audit itself runs over a fixture tree that breaks each
+# rule beside a file the rule accepts. Every fixture starts on its second line, so a rule cannot
+# pass by matching only at the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
 file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
@@ -180,11 +180,23 @@ uml_write_audit_fixture(darwin/cpu/shared_fixture.cpp
     "#include \"cpu/x86_64/fixture.hpp\"")
 uml_write_audit_fixture(darwin/cpu/engine_factory.cpp
     "#include \"cpu/arm64/jit/fixture.hpp\"\n#include \"cpu/x86_64/fixture.hpp\"")
+# The shared x86 code includes no x86 engine; the x86 gadget engine includes
+# the shared x86 code and no JIT.
+uml_write_audit_fixture(darwin/cpu/x86_64/x86_shared_fixture.cpp
+    "#include \"cpu/x86_64/gadgets/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_gadget_fixture.cpp
+    "#include \"cpu/x86_64/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_gadget_jit_fixture.cpp
+    "#include \"cpu/arm64/jit/fixture.hpp\"")
 list(APPEND REJECTED
     "jit_fixture\\.cpp: CPU source includes an engine implementation"
     "x86_fixture\\.cpp: CPU source includes an engine implementation"
-    "shared_fixture\\.cpp: CPU source includes an engine implementation")
-list(APPEND ACCEPTED "engine_factory\\.cpp: CPU source includes")
+    "shared_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_shared_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_gadget_jit_fixture\\.cpp: CPU source includes an engine implementation")
+list(APPEND ACCEPTED
+    "engine_factory\\.cpp: CPU source includes"
+    "x86_gadget_fixture\\.cpp: CPU source includes")
 
 uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_owner.cpp
     "#include \"cpu/jit_memory/executable_memory.hpp\"")
@@ -252,6 +264,83 @@ list(APPEND ACCEPTED
 uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
     "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
 list(APPEND ACCEPTED "darwin/fixture/CMakeLists\\.txt: compiles")
+
+# A definition command or a -D option that names a source or build directory,
+# as a variable or a generator expression, is rejected. A path passed as a
+# test argument, a plain value, an option that defines nothing and a comment
+# are accepted, and a later command is not part of the definition before it.
+uml_write_audit_fixture(tests/fixture/SourceDefinition.cmake
+    "target_compile_definitions(fixture PRIVATE\n    A=1\n    FIXTURE_DIR=\"\${PROJECT_SOURCE_DIR}/tests/support/fixture\")")
+uml_write_audit_fixture(tools/fixture/BinaryDefinition.cmake
+    "ADD_COMPILE_DEFINITIONS(FIXTURE_OUTPUT=\"\${CMAKE_CURRENT_BINARY_DIR}\")")
+uml_write_audit_fixture(darwin/fixture/OptionDefinition.cmake
+    "target_compile_options(fixture PRIVATE -Wall\n    -DFIXTURE_ROOT=\${CMAKE_CURRENT_LIST_DIR})")
+uml_write_audit_fixture(kernel/fixture/TargetDefinition.cmake
+    "add_definitions(-DFIXTURE_TOOL=\"\$<TARGET_FILE_DIR:fixture>\")")
+list(APPEND REJECTED
+    "SourceDefinition\\.cmake: a compile definition names a source or build directory"
+    "BinaryDefinition\\.cmake: a compile definition names"
+    "OptionDefinition\\.cmake: a compile definition names"
+    "TargetDefinition\\.cmake: a compile definition names")
+uml_write_audit_fixture(tests/fixture/ArgumentPath.cmake
+    "uml_add_unit_test(NAME fixture COMMAND fixture\n    \${PROJECT_SOURCE_DIR}/tests/support/fixture)")
+uml_write_audit_fixture(tests/fixture/ValueDefinition.cmake
+    "target_compile_definitions(fixture PRIVATE\n    FIXTURE_PAGES=\${UML_GUEST_PAGE_SIZE})\ntarget_include_directories(fixture PRIVATE\n    \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE})")
+uml_write_audit_fixture(tests/fixture/PrefixMap.cmake
+    "target_compile_options(fixture PRIVATE\n    -fmacro-prefix-map=\${PROJECT_SOURCE_DIR}=.)")
+uml_write_audit_fixture(tests/fixture/CommentedDefinition.cmake
+    "# target_compile_definitions(fixture PRIVATE ROOT=\"\${PROJECT_SOURCE_DIR}\")")
+list(APPEND ACCEPTED
+    "ArgumentPath\\.cmake: a compile definition"
+    "ValueDefinition\\.cmake: a compile definition"
+    "PrefixMap\\.cmake: a compile definition"
+    "CommentedDefinition\\.cmake: a compile definition")
+
+# A first-party shell script's cd clears CDPATH unless its operand is a
+# literal absolute path: each report names the line and the command it found,
+# including a second cd on the line of an accepted one.
+uml_write_audit_fixture(tools/fixture/variable_cd.sh "cd \"\$work\"")
+uml_write_audit_fixture(android/fixture/script_directory.sh
+    "here=\$(cd -- \"\$(dirname -- \"\$0\")\" && pwd)")
+uml_write_audit_fixture(dependencies/fixture/subshell_cd.sh
+    "(cd \"\$source\" && find .)")
+uml_write_audit_fixture(Kernarium/fixture/uncleared_option.sh
+    "root=\$(CDPATH= cd \"\$root\" && pwd -P)")
+uml_write_audit_fixture(scripts/fixture/chained_cd.sh
+    "CDPATH= cd -- \"\$a\" && cd \"\$b\"")
+uml_write_audit_fixture(kernel/fixture/separated_cd.sh
+    "sh -c 'cd /usr/src; cd src && make'")
+uml_write_audit_fixture(tests/fixture/nested_cd.sh
+    "if true\nthen\n\tcd build\nfi")
+uml_write_audit_fixture(cmake/fixture/bare_cd.sh "cd")
+list(APPEND REJECTED
+    "variable_cd\\.sh:2: cd \".work\" needs CDPATH= cd --"
+    "script_directory\\.sh:2: cd -- \".\\(dirname -- \".0\" needs CDPATH= cd --"
+    "subshell_cd\\.sh:2: cd \".source\" needs CDPATH= cd --"
+    "uncleared_option\\.sh:2: cd \".root\" needs CDPATH= cd --"
+    "chained_cd\\.sh:2: cd \".b\" needs CDPATH= cd --"
+    "separated_cd\\.sh:2: cd src needs CDPATH= cd --"
+    "nested_cd\\.sh:4: cd build needs CDPATH= cd --"
+    "bare_cd\\.sh:2: cd needs CDPATH= cd --")
+uml_write_audit_fixture(tools/fixture/cleared_cd.sh
+    "root=\$(CDPATH= cd -- \"\$root\" && pwd -P)\n(CDPATH= cd -- \"\$x\" && make)")
+uml_write_audit_fixture(tools/fixture/absolute_cd.sh
+    "cd /usr/src/ltp\nsh -c 'cd /splash; cmake -B /build'\ncd -- \"/opt\"")
+uml_write_audit_fixture(tools/fixture/commented_cd.sh
+    "# cd \"\$work\" first\nmake  # then cd build")
+uml_write_audit_fixture(tools/fixture/cd_words.sh
+    "cdrom=1\nprintf '%s\\n' abcd cd-image --cd")
+uml_write_audit_fixture(tools/fixture/cd_in_python.py
+    "subprocess.run('cd build', shell=True)")
+# Third-party sources live outside the first-party directories.
+uml_write_audit_fixture(external/fixture/vendored.sh "cd \"\$work\"")
+list(APPEND ACCEPTED
+    "cleared_cd\\.sh:"
+    "absolute_cd\\.sh:"
+    "commented_cd\\.sh:"
+    "cd_words\\.sh:"
+    "cd_in_python\\.py:"
+    "vendored\\.sh:")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"
