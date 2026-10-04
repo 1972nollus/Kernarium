@@ -626,6 +626,8 @@ def build(source: Path, work: Path, output_dir: Path, toolchain: Path) -> None:
     if work.exists() or output_dir.exists():
         fail("the build and output directories must not exist yet")
     output_dir.mkdir(parents=True)
+    # The compiler runs in the source directory.
+    output_dir = output_dir.resolve()
     source = source.resolve()
     environment = clean_environment()
     run(["meson", "setup", str(work), str(source), *MESON_OPTIONS], env=environment,

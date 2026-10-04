@@ -186,11 +186,7 @@ find_tool PKG_CONFIG pkg-config
 find_tool XCRUN xcrun
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
-if [ -n "${UML_MESA_PYTHON:-}" ]; then
-	PYTHON=$UML_MESA_PYTHON
-else
-	find_tool PYTHON python3
-fi
+find_tool PYTHON "${UML_MESA_PYTHON:-python3}"
 find_tool NINJA ninja
 "$PYTHON" -c 'import mako, packaging, yaml' >/dev/null 2>&1 ||
 	fail "KosmicKrisp requires Python modules mako, packaging, and yaml"
