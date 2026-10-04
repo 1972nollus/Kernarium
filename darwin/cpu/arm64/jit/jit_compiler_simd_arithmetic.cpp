@@ -368,24 +368,18 @@ JitCompilerFamilies::emit_simd_rdm(std::uint32_t instruction) {
       (decoded.width == 16U && !host_capabilities().fp16))
     return false;
 
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-
-  auto native = instruction & ~(31U << 5);
-  native |= native_left.host << 5;
-  if (!decoded.zero) {
-    const auto native_right =
-        right == left ? native_left : read_native_vector(right, 1U);
-    native &= ~(31U << 16);
-    native |= native_right.host << 16;
+  if (decoded.zero) {
+    const unsigned destination = instruction & 31U;
+    const unsigned left = (instruction >> 5) & 31U;
+    const auto native_left = read_native_vector(left, 0U);
+    const auto native_destination =
+        write_native_vector(destination, false, 2U);
+    emit((instruction & ~0x3ffU) | (native_left.host << 5) |
+         native_destination.host);
+    commit_native_vector(native_destination, destination);
+  } else {
+    emit_native_vector_binary(instruction, false);
   }
-  const auto native_destination =
-      write_native_vector(destination, false, 2U);
-  native = (native & ~31U) | native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
   mark_native_fp();
   return true;
 }

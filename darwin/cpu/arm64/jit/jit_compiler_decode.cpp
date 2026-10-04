@@ -692,8 +692,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return reject();
     if (arm64::detail::reserved_half_fused_long(instruction))
       return reject();
-    if (emit_simd_integer_float_convert(instruction))
-      return Action::keep_going;
     if (const auto fused_floating =
             arm64::detail::decode_fused_floating_arithmetic(instruction);
         fused_floating.recognized) {
