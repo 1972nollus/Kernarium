@@ -46,11 +46,38 @@ def sha256_file(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def verify_checkout(source: pathlib.Path, commit: str, name: str) -> None:
-    """Require SOURCE to be a clean Git checkout of COMMIT."""
+# The FEX files the corpus producers read. The macOS prefix builds FEXCore
+# from the same manifest row with its maintained series applied, which never
+# touches these, so a prepared checkout carrying that series yields the pinned
+# corpus byte for byte.
+FEX_CORPUS_INPUTS = ("LICENSE", "Scripts", "unittests")
+
+
+def verify_checkout(
+    source: pathlib.Path,
+    commit: str,
+    name: str,
+    inputs: tuple[str, ...] = (),
+) -> None:
+    """Require SOURCE to be a clean Git checkout of COMMIT.
+
+    With INPUTS, SOURCE may instead be a later commit based on COMMIT, such as
+    a prepared source with its patch series applied, provided no file below
+    INPUTS differs from COMMIT.
+    """
     if not (source / ".git").exists():
         raise ValueError(f"{name} source is not a Git checkout: {source}")
     if git_output(source, "rev-parse", "HEAD") != commit:
-        raise ValueError(f"{name} source is not at the dependency-manifest commit")
+        if not inputs:
+            raise ValueError(f"{name} source is not at the dependency-manifest commit")
+        based = subprocess.run(
+            ["git", "-C", str(source), "merge-base", "--is-ancestor", commit, "HEAD"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if based.returncode != 0:
+            raise ValueError(f"{name} source is not based on the dependency-manifest commit")
+        if git_output(source, "diff", "--name-only", commit, "HEAD", "--", *inputs):
+            raise ValueError(f"{name} source changes pinned corpus inputs")
     if git_output(source, "status", "--porcelain", "--untracked-files=all"):
         raise ValueError(f"{name} source checkout is dirty")

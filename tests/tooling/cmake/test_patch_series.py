@@ -274,6 +274,19 @@ def run(scratch: Path) -> None:
     wrong = subprocess.run(verify + ["--expect-tree", base], capture_output=True, check=False)
     assert wrong.returncode == 1 and b"expected" in wrong.stderr, wrong.stderr
 
+    # Command-line paths are relative to the caller's directory, although Git
+    # runs in the repository.
+    relative = [sys.executable, "-B", str(TOOL), "verify", "--series-dir", "series",
+                "--repo", "source", "--base", base]
+    checked = subprocess.run(relative, cwd=scratch, capture_output=True, check=False)
+    assert checked.returncode == 0, checked.stderr
+    git(scratch, "clone", "-q", "--no-hardlinks", str(source), str(scratch / "relative"))
+    git(scratch / "relative", "checkout", "-q", "-b", "relative", base)
+    relative = [sys.executable, "-B", str(TOOL), "apply", "--series-dir", "series",
+                "--repo", "relative"]
+    applied = subprocess.run(relative, cwd=scratch, capture_output=True, check=False)
+    assert applied.returncode == 0 and applied.stdout.decode() == head_tree + "\n", applied
+
     # recorded-tree checks every layer and prints the last one's tree.
     recorded = [sys.executable, "-B", str(TOOL), "recorded-tree",
                 "--series-dir", str(common), "--series-dir", str(overlay)]

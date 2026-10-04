@@ -64,8 +64,10 @@ device -> memory / platform
   the sole `.ipp` exception; assembly `.inc` contracts are separate.
 - Host-project C implementation is forbidden except the external package
   consumer at `tests/consumer/apple/main.c`.
-- The gadget engine remains data-only. Executable allocation and
-  publication belong only to `darwin/cpu/arm64/jit/jit_arena.cpp`.
+- The gadget engines remain data-only. Executable allocation and
+  publication belong only to `darwin/cpu/jit_memory/executable_memory.cpp`;
+  the arm64 JIT arena and the macOS-only x86-64 JIT (through FEXCore's
+  executable-memory hooks) reach executable memory only through it.
 - Keep generated ABI copies, kernel patches, and dependency patches under
   their documented generators. Never edit generated output directly.
 

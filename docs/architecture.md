@@ -164,9 +164,16 @@ call, which discards such a mapping and leaves an absent or equal one alone,
 and the next access replays the PTE. An absent page is always sound.
 
 Gadget streams, MMU backing, and shadow mappings are data.
-Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
-publish RW pages as RX, control JIT write protection, or publish the instruction
-cache.
+Only `darwin/cpu/jit_memory/executable_memory.cpp` may allocate executable
+memory, publish RW pages as RX, control JIT write protection, or publish the
+instruction cache. JIT engines reach executable memory only through it; the
+arm64 JIT's arena maps and publishes its blocks with it. Its target's `native`
+engine kind and the source audit keep the gadget engines and shared CPU code
+from linking or including it. FEXCore, which the macOS-only x86-64 JIT embeds,
+has no executable-memory path of its own: its maintained series routes
+allocation, release, and the write window through hooks the embedder installs,
+and prefix verification rejects a FEXCore archive that toggles JIT write
+protection.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
@@ -597,7 +604,9 @@ Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
 `/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
-runs that have exited. An iOS device uses its application temporary directory
+runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
+sockets left by exited runs of older builds, which bound the console loose in
+`/tmp`. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it
@@ -612,9 +621,11 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `architecture-audit` checks the CMake File API graph, dependency cycles,
 implementation includes, source ownership, and test registration. Ownership
 includes that only a darwin/ source's owner compiles it: no other CMake file
-and no Xcode project names one. It does not
-prove performance, generated code shape, a kernel boot, or guest behavior;
-those require their owning validation.
+and no Xcode project names one. A first-party shell script writes each `cd`
+as `CDPATH= cd --` unless it names a literal absolute directory, so an
+exported `CDPATH` can neither redirect it nor print into captured output.
+It does not prove performance, generated code shape, a kernel boot, or guest
+behavior; those require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

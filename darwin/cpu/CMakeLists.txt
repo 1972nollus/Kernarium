@@ -8,6 +8,9 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::PlatformContract
     UML::GuestPageConfiguration)
 
+# Executable memory has one owner, which the JIT engines share.
+add_subdirectory(jit_memory)
+
 # A private cache holds one translation per slot, so the slot count is the
 # working set an executor can keep. Counted on Geekbench 6 Clang, the workload
 # with the largest code footprint, one executor reaches about 194,000 distinct
@@ -195,7 +198,8 @@ add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
 uml_declare_architecture_target(uml_arm64_jit cpu native)
 target_link_libraries(uml_arm64_jit PRIVATE
     UML::BridgeAbi
-    UML::CpuContract)
+    UML::CpuContract
+    uml_cpu_executable_memory)
 target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
@@ -345,6 +349,7 @@ target_link_libraries(uml_cpu_jit_component INTERFACE
     UML::MemoryComponent)
 target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
+    $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -364,6 +369,7 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_gadget_engine>
     $<TARGET_OBJECTS:uml_arm64_gadget_executor>
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
+    $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>

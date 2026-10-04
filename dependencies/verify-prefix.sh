@@ -58,6 +58,8 @@ XCRUN_OTOOL=$(xcrun --find otool)
 [ -x "$XCRUN_OTOOL" ] || fail "xcrun returned an invalid otool build tool"
 XCRUN_LIPO=$(xcrun --find lipo)
 [ -x "$XCRUN_LIPO" ] || fail "xcrun returned an invalid lipo build tool"
+XCRUN_NM=$(xcrun --find nm)
+[ -x "$XCRUN_NM" ] || fail "xcrun returned an invalid nm build tool"
 
 RECEIPT="$PREFIX/share/uml-dependencies/receipt.tsv"
 [ -f "$RECEIPT" ] || fail "build receipt is missing: $RECEIPT"
@@ -161,6 +163,13 @@ include/rfb/rfbclient.h
 include/SoftFloat-3e/softfloat.h
 include/SoftFloat-3e/softfloat_types.h
 include/cephes_128bit.h
+include/FEXCore/Core/Context.h
+include/FEXCore/Utils/AllocatorHooks.h
+include/FEXCore/Config/ConfigValues.inl
+include/FEXCore/IR/IRDefines.inc
+include/fmt/format.h
+include/xxhash.h
+include/ankerl/unordered_dense.h
 lib/libz.a
 lib/libpcre2-8.a
 lib/libffi.a
@@ -172,7 +181,12 @@ lib/libslirp.a
 lib/libvncserver.a
 lib/libvncclient.a
 lib/libsoftfloat_3e.a
-lib/libcephes_128bit.a'
+lib/libcephes_128bit.a
+lib/libFEXCore.a
+lib/libFEXCore_Base.a
+lib/libJemallocDummy.a
+lib/libfmt.a
+lib/libxxhash.a'
 printf '%s\n' "$required_files" | while IFS= read -r relative; do
 	[ -z "$relative" ] && continue
 	[ -f "$PREFIX/$relative" ] || fail "required prefix file is missing: $relative"
@@ -206,6 +220,7 @@ while IFS= read -r archive; do
 	libz.a|libpcre2-8.a|libffi.a|libcharset.a|libiconv.a|libintl.a|\
 	libglib-2.0.a|libslirp.a|libvncserver.a|libvncclient.a|\
 	libsoftfloat_3e.a|libcephes_128bit.a|\
+	libFEXCore.a|libFEXCore_Base.a|libJemallocDummy.a|libfmt.a|libxxhash.a|\
 	libgio-2.0.a|libgirepository-2.0.a|\
 	libgmodule-2.0.a|libgobject-2.0.a|libgthread-2.0.a|libpcre2-posix.a)
 		;;
@@ -216,6 +231,19 @@ while IFS= read -r archive; do
 	architectures=$("$XCRUN_LIPO" -archs "$archive" 2>/dev/null || true)
 	[ "$architectures" = arm64 ] ||
 		fail "$archive_name has unexpected architectures: $architectures"
+done
+
+# The first-party executable-memory owner is the only code that may write
+# MAP_JIT memory. FEXCore reaches it through its embedder's hooks, so no
+# FEXCore archive may toggle the JIT write protection itself.
+for archive in libFEXCore.a libFEXCore_Base.a libJemallocDummy.a; do
+	jit_imports=$("$XCRUN_NM" -u "$PREFIX/lib/$archive" 2>/dev/null) ||
+		fail "could not list the symbols $archive imports"
+	case "$jit_imports" in
+	*_pthread_jit_write_protect_np*)
+		fail "$archive writes JIT memory outside the executable-memory owner"
+		;;
+	esac
 done
 
 printf '%s\n' "verified source-built dependency prefix: $PREFIX"

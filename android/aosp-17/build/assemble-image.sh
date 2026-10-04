@@ -3,8 +3,8 @@
 # Assemble the verified static Android partition images into one raw UBD disk.
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 DISK_TOOL="$ANDROID_ROOT/tools/ubd-disk.py"

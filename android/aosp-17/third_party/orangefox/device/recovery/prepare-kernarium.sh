@@ -7,7 +7,7 @@ root=${1:?recovery root is required}
 	printf '%s\n' "prepare-kernarium.sh: recovery root does not exist: $root" >&2
 	exit 1
 }
-root=$(CDPATH= cd "$root" && pwd -P)
+root=$(CDPATH= cd -- "$root" && pwd -P)
 case "$root" in
 */target/product/darwin/recovery/root) ;;
 *)
@@ -80,6 +80,6 @@ for relative in $boot_control_libraries; do
 	grep -Fqx -- "$relative" "$files" || printf '%s\n' "$relative" >> "$files"
 	sed "\\#./$relative\$#d" "$hashes" > "$hashes.kernarium"
 	mv -- "$hashes.kernarium" "$hashes"
-	(cd "$root" && sha256sum "./$relative") >> "$hashes"
+	(CDPATH= cd -- "$root" && sha256sum "./$relative") >> "$hashes"
 done
 printf '%s\n' "prepared 16 KiB-compatible Kernarium OrangeFox ramdisk"

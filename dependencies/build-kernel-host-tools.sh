@@ -103,9 +103,14 @@ find_tool CMAKE cmake
 find_tool XCRUN xcrun
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
-mkdir -p -- "$OUTPUT_PARENT"
-OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
-OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
+# Verification writes nothing, not even the parent of an absent prefix, and a
+# build creates that parent only once its inputs have verified.
+if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
+	OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+	OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
+elif [ "$VERIFY_ONLY" -eq 1 ]; then
+	fail "prefix to verify does not exist: $OUTPUT"
+fi
 
 verify_output()
 {
@@ -140,6 +145,9 @@ find_tool PYTHON python3
 	--root "$SOURCE_ROOT" --verify
 "$ROOT_DIR/dependencies/prepare.sh" --archive-manifest "$ARCHIVE_MANIFEST" \
 	--cache "$CACHE_ROOT" --verify
+# Steps below run in other directories, so the verified roots become absolute.
+SOURCE_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT" && pwd -P)
+CACHE_ROOT=$(CDPATH= cd -- "$CACHE_ROOT" && pwd -P)
 UAPI_ARCHIVE=$(awk -F '\t' -v name="$UAPI_ARCHIVE_NAME" \
 	'$1 == name { print $3 "-" $1 }' "$ARCHIVE_MANIFEST")
 [ -n "$UAPI_ARCHIVE" ] || fail "$UAPI_ARCHIVE_NAME is absent from $ARCHIVE_MANIFEST"
@@ -150,8 +158,10 @@ CC=$("$XCRUN" --sdk macosx --find clang)
 AR=$("$XCRUN" --sdk macosx --find ar)
 RANLIB=$("$XCRUN" --sdk macosx --find ranlib)
 
-mkdir -p -- "$WORK_ROOT"
+mkdir -p -- "$WORK_ROOT" "$OUTPUT_PARENT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$OUTPUT_PARENT/.kernel-host-tools.XXXXXX")
 cleanup()
@@ -214,7 +224,7 @@ copy_source()
 # gawk generates elfutils' DWARF name tables. It is a build-only tool.
 copy_source "$SOURCE_ROOT/gawk" "$TEMP_ROOT/src/gawk"
 (
-	cd "$TEMP_ROOT/src/gawk"
+	CDPATH= cd -- "$TEMP_ROOT/src/gawk"
 	logged gawk private_env ./configure --prefix="$BOOTSTRAP" --disable-nls \
 		--disable-extensions --disable-pma
 	logged gawk private_env "$MAKE" -j "$JOBS"
@@ -229,7 +239,7 @@ logged argp-standalone private_env "$NINJA" -C "$TEMP_ROOT/build/argp" install
 
 copy_source "$SOURCE_ROOT/musl-obstack" "$TEMP_ROOT/src/musl-obstack"
 (
-	cd "$TEMP_ROOT/src/musl-obstack"
+	CDPATH= cd -- "$TEMP_ROOT/src/musl-obstack"
 	logged musl-obstack private_env "$AUTORECONF" -fi
 	logged musl-obstack private_env ./configure --prefix="$PRIVATE" --disable-shared \
 		--enable-static
@@ -239,7 +249,7 @@ copy_source "$SOURCE_ROOT/musl-obstack" "$TEMP_ROOT/src/musl-obstack"
 # The standalone libbpf that pahole embeds includes Linux UAPI headers. Take
 # them from the pinned Debian linux-libc-dev package, with the arm64 asm tree.
 (
-	cd "$TEMP_ROOT/linux-uapi"
+	CDPATH= cd -- "$TEMP_ROOT/linux-uapi"
 	"$TAR" -xf "$UAPI_ARCHIVE" data.tar.xz
 	"$TAR" -xf data.tar.xz ./usr/include/linux ./usr/include/asm-generic \
 		./usr/lib/linux/uapi/arm64/asm
@@ -255,12 +265,12 @@ mv "$TEMP_ROOT/linux-uapi/usr/lib/linux/uapi/arm64/asm" "$UAPI_INCLUDE/asm"
 # __thread, and Mach-O has no build-id, -z defs, or -z relro.
 copy_source "$SOURCE_ROOT/elfutils" "$TEMP_ROOT/src/elfutils"
 (
-	cd "$TEMP_ROOT/src/elfutils"
+	CDPATH= cd -- "$TEMP_ROOT/src/elfutils"
 	logged elfutils private_env "$AUTORECONF" -fi
 )
 mkdir -p -- "$TEMP_ROOT/build/elfutils"
 (
-	cd "$TEMP_ROOT/build/elfutils"
+	CDPATH= cd -- "$TEMP_ROOT/build/elfutils"
 	logged elfutils private_env "$TEMP_ROOT/src/elfutils/configure" \
 		--prefix="$PRIVATE" \
 		--enable-maintainer-mode \

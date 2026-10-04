@@ -174,7 +174,7 @@ if [ -n "$(git -C "$ACK_WORKSPACE/common" status --porcelain)" ]; then
 fi
 
 (
-	cd "$AOSP_SOURCE"
+	CDPATH= cd -- "$AOSP_SOURCE"
 	repo init -u "$ANDROID17_MANIFEST_REPOSITORY" \
 		-b "$ANDROID17_MANIFEST_TAG" --manifest-depth=1 \
 		--repo-rev=stable --no-repo-verify --no-clone-bundle

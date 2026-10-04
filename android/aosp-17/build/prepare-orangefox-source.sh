@@ -122,7 +122,7 @@ fi
 
 if [ ! -d "$ORANGEFOX_SOURCE/.repo" ]; then
 	(
-		cd "$ORANGEFOX_SOURCE"
+		CDPATH= cd -- "$ORANGEFOX_SOURCE"
 		repo init -u "$ORANGEFOX_MANIFEST_REPOSITORY" \
 			-b "$ORANGEFOX_MANIFEST_BRANCH" --manifest-depth=1 \
 			--repo-rev=stable --no-repo-verify --no-clone-bundle
@@ -133,13 +133,13 @@ git -C "$ORANGEFOX_SOURCE/.repo/manifests" fetch --no-tags origin \
 git -C "$ORANGEFOX_SOURCE/.repo/manifests" checkout --detach \
 	"$ORANGEFOX_MANIFEST_COMMIT"
 (
-	cd "$ORANGEFOX_SOURCE"
+	CDPATH= cd -- "$ORANGEFOX_SOURCE"
 	repo sync -c --detach -j "$JOBS"
 )
 
 MANIFEST_OUTPUT=$(mktemp)
 (
-	cd "$ORANGEFOX_SOURCE"
+	CDPATH= cd -- "$ORANGEFOX_SOURCE"
 	repo manifest -r
 ) > "$MANIFEST_OUTPUT"
 cmp -s "$MANIFEST_OUTPUT" "$BASE_MANIFEST" ||

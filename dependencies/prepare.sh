@@ -549,7 +549,7 @@ validate_patch_inventory()
 		}
 	' "$MANIFEST" | LC_ALL=C sort -u)
 	directory_series=$(
-		cd "$PATCH_ROOT"
+		CDPATH= cd -- "$PATCH_ROOT"
 		find patches -type f -name series.tsv -print 2>/dev/null | LC_ALL=C sort
 	)
 	[ "$directory_series" = "$manifest_series" ] ||
@@ -563,7 +563,7 @@ validate_patch_inventory()
 		done | LC_ALL=C sort
 	)
 	directory_patches=$(
-		cd "$PATCH_ROOT"
+		CDPATH= cd -- "$PATCH_ROOT"
 		find patches -type f -name '*.patch' -print | LC_ALL=C sort
 	)
 	[ "$directory_patches" = "$manifest_patches" ] ||
@@ -655,7 +655,10 @@ check_repository()
 		REPOSITORY_PROBLEM="$name prepared repository retains a network remote"
 		return 1
 	}
-	[ -z "$(git -C "$repository_directory" status --porcelain --untracked-files=all)" ] || {
+	# Without optional locks, status does not write a refreshed index, so
+	# verification leaves the repository untouched.
+	[ -z "$(git --no-optional-locks -C "$repository_directory" status \
+		--porcelain --untracked-files=all)" ] || {
 		REPOSITORY_PROBLEM="$name prepared repository is dirty"
 		return 1
 	}

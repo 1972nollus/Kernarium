@@ -626,6 +626,8 @@ def build(source: Path, work: Path, output_dir: Path, toolchain: Path) -> None:
     if work.exists() or output_dir.exists():
         fail("the build and output directories must not exist yet")
     output_dir.mkdir(parents=True)
+    # The compiler runs in the source directory.
+    output_dir = output_dir.resolve()
     source = source.resolve()
     environment = clean_environment()
     run(["meson", "setup", str(work), str(source), *MESON_OPTIONS], env=environment,
@@ -691,7 +693,7 @@ def compile_remotely(checkout: Path, host: str, remote_root: str, keep: bool,
     run_dir = remote(
         host,
         f"mkdir -p {shlex.quote(remote_root)} && "
-        f"cd {shlex.quote(remote_root)} && mktemp -d \"$PWD/run.XXXXXX\"",
+        f"CDPATH= cd -- {shlex.quote(remote_root)} && mktemp -d \"$PWD/run.XXXXXX\"",
     ).strip()
     if not run_dir.startswith("/"):
         fail(f"{host}: could not create a run directory")

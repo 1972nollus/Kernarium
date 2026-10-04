@@ -10,8 +10,8 @@
 
 namespace uml::cpu::arm64::jit::detail {
 
-/* The only first-party owner of writable JIT mappings and code publication.
- * Gadget builds do not include or call this interface.
+/* The arm64 JIT's block store, link tables and literal patching, over memory
+ * from cpu/jit_memory. The gadget engines do not include or call this.
  */
 class ExecutableArena final {
 public:

@@ -426,15 +426,20 @@ def _differences(directory: Path, staging: Path, exported: Series) -> list[str]:
     return differences
 
 
+def _path(text: str) -> Path:
+    """A command-line path, made absolute because Git runs elsewhere."""
+    return Path(text).absolute()
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
     export = commands.add_parser("export", help="write a series from base..head")
-    export.add_argument("--source", type=Path, required=True)
+    export.add_argument("--source", type=_path, required=True)
     export.add_argument("--base", required=True)
     export.add_argument("--head", default="HEAD")
-    export.add_argument("--series-dir", type=Path, required=True)
+    export.add_argument("--series-dir", type=_path, required=True)
     export.add_argument("--tree", action="store_true", help="record the tree row")
     export.add_argument("--license", dest="license_id")
     export.add_argument("--check", action="store_true",
@@ -443,20 +448,20 @@ def _parser() -> argparse.ArgumentParser:
     for name, text in (("tree", "print the tree the series produce, without a checkout"),
                        ("verify", "check series files and, with --repo, their tree")):
         command = commands.add_parser(name, help=text)
-        command.add_argument("--series-dir", type=Path, action="append", required=True)
-        command.add_argument("--repo", type=Path, required=name == "tree")
+        command.add_argument("--series-dir", type=_path, action="append", required=True)
+        command.add_argument("--repo", type=_path, required=name == "tree")
         command.add_argument("--base", required=name == "tree")
         if name == "verify":
             command.add_argument("--expect-tree")
 
     apply = commands.add_parser("apply", help="git am the series onto a clean checkout")
-    apply.add_argument("--repo", type=Path, required=True)
-    apply.add_argument("--series-dir", type=Path, action="append", required=True)
+    apply.add_argument("--repo", type=_path, required=True)
+    apply.add_argument("--series-dir", type=_path, action="append", required=True)
     apply.add_argument("--expect-tree")
 
     recorded = commands.add_parser(
         "recorded-tree", help="check series files and print the last one's tree row")
-    recorded.add_argument("--series-dir", type=Path, action="append", required=True)
+    recorded.add_argument("--series-dir", type=_path, action="append", required=True)
     return parser
 
 

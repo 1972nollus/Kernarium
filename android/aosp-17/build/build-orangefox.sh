@@ -3,8 +3,8 @@
 # Build the kernel-less OrangeFox recovery partition for Darwin UML.
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/third_party/orangefox/metadata.env"
 SOURCE_VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
 IMAGE_VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-recovery.py"
@@ -119,7 +119,7 @@ export PATH="$OUT_DIR_ABSOLUTE/kernarium-tools:$PATH"
 export LC_ALL=C
 export FOX_BUILD_DEVICE=darwin
 
-cd "$ORANGEFOX_SOURCE"
+CDPATH= cd -- "$ORANGEFOX_SOURCE"
 # shellcheck disable=SC1091
 set +u
 source build/envsetup.sh
