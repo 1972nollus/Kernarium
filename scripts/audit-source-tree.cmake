@@ -259,17 +259,25 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND VIOLATIONS
             "${PATH}: CPU source includes an engine implementation it does not own")
     endif()
+    # The gadget engines and shared CPU code stay data-only, so only a JIT
+    # engine includes the executable-memory owner.
+    if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/(arm64/jit|jit_memory)/" AND
+       NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/jit_memory/")
+        list(APPEND VIOLATIONS
+            "${PATH}: only a JIT engine may include the executable-memory owner")
+    endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and
-    # publication primitives confined to the JIT arena; merely avoiding a
-    # simultaneous W+X mapping is not sufficient because an RW-to-RX
-    # transition is also dynamic code publication.
+    # publication primitives confined to the executable-memory owner;
+    # merely avoiding a simultaneous W+X mapping is not sufficient because an
+    # RW-to-RX transition is also dynamic code publication.
     if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
-       NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\\.cpp$" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/jit_memory/executable_memory\\.cpp$" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
         list(APPEND VIOLATIONS
-            "${PATH}: only the JIT arena may use executable-memory or code-publication primitives")
+            "${PATH}: only the executable-memory owner may use executable-memory or code-publication primitives")
     endif()
 endforeach()
 
