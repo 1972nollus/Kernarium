@@ -155,7 +155,7 @@ if(APPLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/gadget_region.order)
     set(_uml_gadget_region_options)
     foreach(_uml_gadget_region_part IN ITEMS
-            bank forward vforward cold afp veneer)
+            bank forward vforward cold afp veneer sme)
         list(APPEND _uml_gadget_region_options
             "LINKER:-rename_section,__TEXT,__a64_${_uml_gadget_region_part},__TEXT,__text")
     endforeach()
