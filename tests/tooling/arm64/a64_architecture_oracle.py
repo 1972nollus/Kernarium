@@ -793,7 +793,6 @@ class ArchitectureCatalog:
         ]
         identities = {
             (
-                variant.encoding,
                 variant.mask,
                 variant.value,
                 variant.constraints,
@@ -807,6 +806,10 @@ class ArchitectureCatalog:
                 f"{section} {form}: {word:08x} ambiguously matches Arm XML "
                 f"encodings {names}"
             )
+        # Encodings that only an alias condition outside the encoding boxes
+        # tells apart, such as the two of SVE MOV (SIMD&FP scalar,
+        # unpredicated), decode the same words under the same features; the
+        # first in XML order stands for them.
         return matches[0]
 
 

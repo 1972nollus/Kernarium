@@ -188,6 +188,9 @@ def format_alternatives(alternatives: set[frozenset[str]]) -> str:
     return "|".join(sorted(terms))
 
 
+NEIGHBOR_BATCH_WORDS = 16_384
+
+
 def decoder_masks(
     tool: Path,
     words: list[int],
@@ -195,7 +198,14 @@ def decoder_masks(
     runner: Callable[..., object],
 ) -> list[tuple[int, int]]:
     neighbors = [word ^ (1 << bit) for word in words for bit in range(32)]
-    decoded_neighbors = decoder_opcodes(tool, neighbors, runner=runner)
+    # One LLVM MC run per batch keeps each run's output under the bounded
+    # runner's log cap.
+    batch = NEIGHBOR_BATCH_WORDS
+    decoded_neighbors: list[str | None] = []
+    for start in range(0, len(neighbors), batch):
+        decoded_neighbors += decoder_opcodes(
+            tool, neighbors[start : start + batch], runner=runner
+        )
     result: list[tuple[int, int]] = []
     for row_index, (word, opcode) in enumerate(zip(words, opcodes)):
         mask = 0

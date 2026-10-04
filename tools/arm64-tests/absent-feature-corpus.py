@@ -43,8 +43,9 @@ cases observed on such a host.
 The producer's SME model is retired, so its SME cases and its one-byte
 PSTATE.SM and ZA state are dropped and stripped as for an absent feature, but
 the arm64-absent-sme record carries the without_sme option: it pins SMSTART,
-SMSTOP, MRS and MSR SVCR, and one word of every encoding of the SME profile in
-the generated encoding table (darwin/cpu/arm64/detail/sme_encodings.hpp)
+SMSTOP, MRS and MSR SVCR, one word of every encoding of the SME profile in
+the generated encoding table (darwin/cpu/arm64/detail/sme_encodings.hpp), and
+the evidence-binding witness of each SVE or SME entry without a table row
 UNDEFINED where the virtual CPU lacks SME, which the runner translates for on
 every host. The arm64-absent-sve record expects one word of every table
 encoding outside the profile to be undefined, with or without SME.
@@ -813,10 +814,27 @@ def without_afp_record(item: dict, cases: list[dict]) -> dict:
 
 @functools.cache
 def table_words(in_profile: bool) -> tuple[tuple[str, int], ...]:
-    return tuple((f"{row.stable_id} {row.encoding} {row.witness:08x}",
-                  row.witness)
-                 for row in sme_table.load().rows
-                 if row.in_profile == in_profile)
+    table = sme_table.load()
+    words = [(f"{row.stable_id} {row.encoding} {row.witness:08x}",
+              row.witness)
+             for row in table.rows if row.in_profile == in_profile]
+    # The evidence-binding witness of each SVE or SME entry without a row:
+    # an alias, which its base instruction's row decodes, or a form only
+    # Debug state executes (MOVT between ZT0 and a general register), which
+    # needs FEAT_SME2.
+    rows = {row.stable_id for row in table.rows}
+    with corpus.BINDINGS.open(encoding="utf-8", newline="") as source:
+        for binding in csv.DictReader(source, delimiter="\t"):
+            if binding["section"] not in ("SVE", "SME") or \
+                    binding["stable_id"] in rows:
+                continue
+            word = int(binding["encoding"], 16)
+            row = table.row_for(word)
+            if (row is None or row.in_profile) == in_profile:
+                words.append((f"{binding['stable_id']} "
+                              f"{binding['architectural_form']} {word:08x}",
+                              word))
+    return tuple(words)
 
 
 def undefined_record(feature: str) -> dict | None:
