@@ -157,14 +157,14 @@ struct HostFlagCorrection final {
  * raises for infinity times zero plus a quiet NaN and x86 does not, and so
  * does a comparison, whose VEX predicates 16 to 31 raise it for a quiet NaN
  * where 0 to 15 do not and the reverse, and whose false and true predicates
- * still raise it for a signalling NaN. A product, quotient, FMA or
- * narrowing to a single or half decides underflow, which x86 detects after
- * rounding and the host before, and which x86 raises for an exact tiny
- * result while underflow is unmasked or FTZ flushes it, with precision
- * then; beside an unmasked underflow or overflow, it decides precision
- * too, which x86 raises as the significand rounds. DPPS and DPPD settle
- * their flags, which x86 raises step by step, faulting at the first step
- * that raises an unmasked exception. Nothing when a memory source is
+ * still raise it for a signalling NaN. A sum, difference, product,
+ * quotient, FMA or narrowing to a single or half decides underflow, which
+ * x86 detects after rounding and the host before, and which x86 raises for
+ * an exact tiny result while underflow is unmasked or FTZ flushes it, with
+ * precision then; beside an unmasked underflow or overflow, it decides
+ * precision too, which x86 raises as the significand rounds. DPPS and DPPD
+ * settle their flags, which x86 raises step by step, faulting at the first
+ * step that raises an unmasked exception. Nothing when a memory source is
  * unreadable, which the instruction then faults on. */
 [[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);

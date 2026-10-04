@@ -6711,6 +6711,44 @@ struct FlagCase {
 	return true;
 }
 
+/* A sum or difference that small is exact, yet tiny: FTZ flushing it raises
+ * underflow and precision, in a horizontal or alternating one too, and it
+ * raises underflow while that is unmasked. Beside an unmasked overflow, it
+ * raises precision as its significand rounds. */
+[[nodiscard]] bool checked_sum_flags_follow_x86()
+{
+	const std::vector<std::uint8_t> addss{0xf3, 0x0f, 0x58, 0xc1};
+	constexpr std::uint64_t one = 0x3f80'0000'0000'0000ULL;
+	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ADDPS of an exact tiny sum under FTZ", {0x0f, 0x58, 0xc1},
+		 {{{one | 0x0080'0001ULL, 0}, {one | 0x8080'0000ULL, 0}, {}}},
+		 0x9f80, 0x9fb0, 0x4000'0000'0000'0000ULL},
+		{"HSUBPS of an exact tiny difference under FTZ",
+		 {0xf2, 0x0f, 0x7d, 0xc1},
+		 {{{0x0080'0000'0080'0001ULL, 0x3f80'0000'3f80'0000ULL}, {}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"ADDSUBPD of an exact tiny difference under FTZ",
+		 {0x66, 0x0f, 0xd0, 0xc1},
+		 {{{0x0010'0000'0000'0001ULL, one_double},
+		   {0x0010'0000'0000'0000ULL, one_double}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"ADDSS of an exact tiny sum, underflow unmasked", addss,
+		 {{{0x0080'0001ULL, 0}, {0x8080'0000ULL, 0}, {}}}, 0x1780, 0x1790,
+		 0},
+		{"ADDSS overflowing with an exact significand, overflow unmasked",
+		 addss, {{{0x7f40'0000ULL, 0}, {0x7f40'0000ULL, 0}, {}}}, 0x1380,
+		 0x1388, 0},
+		{"ADDSS overflowing with an inexact significand, overflow "
+		 "unmasked", addss, {{{0x7f40'0001ULL, 0}, {0x7f40'0000ULL, 0}, {}}},
+		 0x1380, 0x13a8, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8799,6 +8837,7 @@ int main()
 		checked_underflow_follows_x86() &&
 		checked_dot_product_flags_follow_x86() &&
 		checked_unmasked_precision_follows_x86() &&
+		checked_sum_flags_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

@@ -407,13 +407,14 @@ checks, and runs every other block, linked, as `execute` does:
   invalid operation, which x86 does not raise for infinity times zero plus a
   quiet NaN; a comparison's, which a quiet NaN raises under the signalling
   predicates alone, VEX's 16 to 31 included, and a signalling NaN under every
-  predicate; and the underflow of a product, quotient, FMA or narrowing to a
-  single or half, which SoftFloat rounds as x86 does. x86 detects tininess
-  after rounding, so a result rounded up to the smallest normal is not tiny,
-  and an exact tiny result raises underflow while it is unmasked, and
-  precision too when FTZ flushes it. Beside an unmasked underflow or overflow
-  of these, x86 raises precision as the significand rounds, as if the
-  exponent were unbounded, and for a half narrowed from a denormal single.
+  predicate; and the underflow of a sum, difference, product, quotient, FMA
+  or narrowing to a single or half, which SoftFloat rounds as x86 does. x86
+  detects tininess after rounding, so a result rounded up to the smallest
+  normal is not tiny, and an exact tiny result raises underflow while it is
+  unmasked, and precision too when FTZ flushes it. Beside an unmasked
+  underflow or overflow of these, x86 raises precision as the significand
+  rounds, as if the exponent were unbounded, and for a half narrowed from a
+  denormal single.
   DPPS and DPPD take every flag from SoftFloat, raised step by step as x86
   does -- the products, their sums in pairs, then for DPPS the sum of those --
   with a denormal product or sum added raising a denormal operand; the first
@@ -441,12 +442,8 @@ A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. The host does not detect an exact tiny sum or difference, so #XM
-misses that underflow, and FTZ flushing one raises neither underflow nor
-precision; it reports precision for an unmasked overflow of a sum or
-difference whose result is exact but for its exponent, where x86 does not;
-and an x87 overflow or underflow unmasked for a register destination leaves
-the masked result rather than x87's rebiased one.
+its speed. An x87 overflow or underflow unmasked for a register destination
+leaves the masked result rather than x87's rebiased one.
 
 ## Code pages
 

@@ -971,15 +971,22 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	switch (instruction.operation) {
 	case Operation::vector_alu: {
 		const auto opcode = instruction.vector_opcode;
-		if (opcode == 0x59 || opcode == 0x5e) {
-			/* MULPS, MULPD, MULSS and MULSD, and the divisions, with
-			 * none, 66, F3 and F2. A quotient never lies close enough
-			 * below the smallest normal to round up to it, but may be
-			 * tiny and exact. */
+		const bool horizontal = opcode == 0x7c || opcode == 0x7d ||
+			opcode == 0xd0;
+		if (horizontal || opcode == 0x58 || opcode == 0x59 ||
+			opcode == 0x5c || opcode == 0x5e) {
+			/* ADD, MUL, SUB and DIV, PS, PD, SS and SD with none, 66, F3
+			 * and F2; HADD and HSUB, which add or subtract adjacent pairs
+			 * of either source, and ADDSUB, which subtracts in its even
+			 * lanes, PD with 66 and PS with F2. A quotient never lies close
+			 * enough below the smallest normal to round up to it, nor a
+			 * sum, which is exact that small, but either may be tiny and
+			 * exact. */
 			const auto prefix = instruction.vector_prefix;
-			const bool dbl = prefix == 1 || prefix == 3;
+			const bool dbl = horizontal ? prefix == 1 :
+				prefix == 1 || prefix == 3;
 			const FloatFormat f{dbl};
-			const std::size_t lanes = prefix >= 2 ? 1U :
+			const std::size_t lanes = !horizontal && prefix >= 2 ? 1U :
 				vector_lanes(instruction.destination, dbl);
 			VectorValue first{};
 			VectorValue second{};
@@ -987,15 +994,28 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 				!read(instruction.auxiliary, second))
 				return {};
 			UnderflowModel model{cpu.mxcsr, true};
-			for (std::size_t index = 0; index < lanes; ++index) {
-				const auto a = soft_wide(dbl, f.input(
-					value_lane(first, dbl, index), denormals_are_zero));
+			const auto compute = [&](std::uint64_t x, std::uint64_t y,
+				bool subtract) {
+				const auto a = soft_wide(dbl, f.input(x, denormals_are_zero));
 				const auto b = soft_wide(dbl, f.input(
-					value_lane(second, dbl, index), denormals_are_zero));
+					subtract ? y ^ f.sign() : y, denormals_are_zero));
 				model.record(soft_round(soft_odd([&](auto &state) {
 					return opcode == 0x59 ? f128_mul(&state, a, b) :
-						f128_div(&state, a, b);
+						opcode == 0x5e ? f128_div(&state, a, b) :
+						f128_add(&state, a, b);
 				}), dbl, rounding));
+			};
+			if (opcode == 0x7c || opcode == 0x7d) {
+				for (const auto *source : {&first, &second})
+					for (std::size_t pair = 0; pair < lanes; pair += 2)
+						compute(value_lane(*source, dbl, pair),
+							value_lane(*source, dbl, pair + 1U),
+							opcode == 0x7d);
+			} else {
+				for (std::size_t index = 0; index < lanes; ++index)
+					compute(value_lane(first, dbl, index),
+						value_lane(second, dbl, index), opcode == 0x5c ||
+							(opcode == 0xd0 && (index & 1U) == 0));
 			}
 			return model.correction();
 		}
