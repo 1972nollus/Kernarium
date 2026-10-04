@@ -104,64 +104,6 @@ fex/VEX/vpgather_qq_256bit_4xdisp_overflow.asm	vex-gather
 fex/VEX/vpgather_qq_256bit_8xdisp.asm	vex-gather
 fex/VEX/vpgather_qq_256bit_8xdisp_overflow.asm	vex-gather
 
-# split-locked-operand (53): an atomic operand that crosses a 16-byte granule
-# (LOCK forms, XCHG, and CMPXCHG, which FEXCore always performs atomically)
-# has no single-copy-atomic host access, so the engine stops the run as
-# unsupported.
-fex/Atomics/adc_atomic16.asm	split-locked-operand
-fex/Atomics/adc_atomic32.asm	split-locked-operand
-fex/Atomics/adc_atomic64.asm	split-locked-operand
-fex/Atomics/neg_atomic16.asm	split-locked-operand
-fex/Atomics/neg_atomic32.asm	split-locked-operand
-fex/Atomics/neg_atomic64.asm	split-locked-operand
-fex/Atomics/not_atomic16.asm	split-locked-operand
-fex/Atomics/not_atomic32.asm	split-locked-operand
-fex/Atomics/not_atomic64.asm	split-locked-operand
-fex/Atomics/sbb_atomic16.asm	split-locked-operand
-fex/Atomics/sbb_atomic32.asm	split-locked-operand
-fex/Atomics/sbb_atomic64.asm	split-locked-operand
-fex/Primary/Primary_01_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_01_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_01_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_09_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_09_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_09_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_23_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_23_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_23_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_29_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_29_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_29_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_31_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_31_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_31_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_87_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_87_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_87_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_FF_0_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_FF_0_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_FF_0_Atomic64.asm	split-locked-operand
-fex/Primary/Primary_FF_1_Atomic16.asm	split-locked-operand
-fex/Primary/Primary_FF_1_Atomic32.asm	split-locked-operand
-fex/Primary/Primary_FF_1_Atomic64.asm	split-locked-operand
-fex/PrimaryGroup/3_F7_02_3.asm	split-locked-operand
-fex/PrimaryGroup/3_F7_03_2.asm	split-locked-operand
-fex/Secondary/09_XX_01_12.asm	split-locked-operand
-fex/Secondary/09_XX_01_13.asm	split-locked-operand
-fex/Secondary/09_XX_01_15.asm	split-locked-operand
-fex/Secondary/09_XX_01_18.asm	split-locked-operand
-fex/Secondary/09_XX_01_19.asm	split-locked-operand
-fex/Secondary/09_XX_01_8.asm	split-locked-operand
-fex/Secondary/09_XX_01_9.asm	split-locked-operand
-fex/TwoByte/0F_B0_3.asm	split-locked-operand
-fex/TwoByte/0F_B0_4.asm	split-locked-operand
-fex/TwoByte/0F_B0_5.asm	split-locked-operand
-fex/TwoByte/0F_B0_6.asm	split-locked-operand
-fex/TwoByte/0F_B0_7.asm	split-locked-operand
-fex/TwoByte/0F_C0_Atomic16.asm	split-locked-operand
-fex/TwoByte/0F_C0_Atomic32.asm	split-locked-operand
-fex/TwoByte/0F_C0_Atomic64.asm	split-locked-operand
-
 # sse-nan-rules (5): SSE, FMA and SQRT results follow arm64 NaN rules: the
 # default NaN is positive and the propagated NaN is not the first source's.
 k/single-instruction-tests/sqrt	sse-nan-rules

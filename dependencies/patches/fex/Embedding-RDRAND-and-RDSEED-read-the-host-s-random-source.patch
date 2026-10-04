@@ -66,10 +66,10 @@ index 9173c141fb1133145f40e8d238d58e4c9a5fab69..73576a58df71c7f6c924192341fe5ee9
      UnimplementedOp(Op);
      return;
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index e956e679888f9f2ec70f5f5c823e2ad57b673c88..4963cc6701a625734f5ed39030edcc36b9f8dd4e 100644
+index 68802e6d5b40b7cf3394905a1449d908d9548b0b..16a1ef45cbcc4cdea3c2eb63ceba1e84b6c4ecbe 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -424,6 +424,8 @@ struct JITPointers {
+@@ -428,6 +428,8 @@ struct JITPointers {
    uint64_t EmbedderTLBMissHelper {};
    // uint64_t (*)(CpuStateFrame*, const EmbedderStringOp*): 0 on success, else the state is spilled and the fault recorded.
    uint64_t EmbedderStringHelper {};

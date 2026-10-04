@@ -4,6 +4,7 @@
 #include "cpu/jit_memory/executable_memory.hpp"
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
+#include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
 #include <FEXCore/Core/Context.h>
@@ -284,6 +285,10 @@ struct Space final {
 	CodePageRegistry::Participant participant;
 	/* The pages this space counted in the registry. */
 	std::unordered_set<std::uint64_t> code_pages;
+	/* The locked operand across a granule whose copy the bounce buffer
+	 * holds while this thread holds the split-operand lock. */
+	std::uint64_t split_address{};
+	std::size_t split_size{};
 
 	Space() = default;
 	Space(const Space &) = delete;
@@ -536,6 +541,59 @@ void record_code_write(Core::CpuStateFrame &frame, ExitAt at) noexcept
 	record_exit(frame, at);
 }
 
+/* A locked operand across a 16-byte granule, which no exclusive access
+ * covers: as in the gadget engine, an ordinary load and store under the
+ * process-wide split-operand lock, which makes it atomic against every other
+ * such operand on any vCPU, in either engine. The first call loads the
+ * operand into the bounce buffer, checks it for the store, and returns the
+ * copy with the lock held; the op runs on the copy, and the COMMIT call stores
+ * it back and unlocks. A fault in the first call leaves memory unchanged. */
+uintptr_t split_operand(Core::CpuStateFrame &frame, Space &space, GuestAddressSpace &memory,
+	std::uint64_t address, std::size_t size, std::uint64_t info, ExitAt at)
+{
+	auto *bounce = reinterpret_cast<std::byte *>(frame.Embedder.Bounce);
+	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0) {
+		const auto stored = space.split_address;
+		const auto length = space.split_size;
+		/* The run holds the address space's execution gate, so the mapping
+		 * checked for this store has not changed. */
+		const bool written = memory.write(stored, std::span<const std::byte>{bounce, length});
+		if (written)
+			for (auto page = stored & guest_page_mask; page < stored + length; page += guest_page_size)
+				if (space.stores_publish(memory, page))
+					space.engine->publish_code_write(space, std::max(page, stored),
+						std::min<std::uint64_t>(page + guest_page_size, stored + length) - std::max(page, stored));
+		split_operand_lock.unlock();
+		if (!written) {
+			record_fault(frame, memory, stored, MemoryAccess::write, at);
+			return 0;
+		}
+		return 1;
+	}
+	if (size > sizeof(frame.Embedder.Bounce)) {
+		record_unsupported(frame, address, at);
+		return 0;
+	}
+	if (store_ends_unit(space, memory, address, size)) {
+		record_code_write(frame, at);
+		return 0;
+	}
+	split_operand_lock.lock();
+	if (!memory.read(address, std::span<std::byte>{bounce, size})) {
+		split_operand_lock.unlock();
+		record_fault(frame, memory, address, MemoryAccess::read, at);
+		return 0;
+	}
+	if (!memory.validate_access(address, size, MemoryAccess::write)) {
+		split_operand_lock.unlock();
+		record_fault(frame, memory, address, MemoryAccess::write, at);
+		return 0;
+	}
+	space.split_address = address;
+	space.split_size = size;
+	return reinterpret_cast<uintptr_t>(bounce);
+}
+
 /* The TLB-miss helper the backend's shared stub calls. Returns the host
  * address of the access, or 0 after recording why the dispatch must end. */
 uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
@@ -553,12 +611,10 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	const auto access = writes ? MemoryAccess::write : MemoryAccess::read;
 	const ExitAt at{frame->Embedder.AccessRIP, info >> Core::EMBEDDER_ACCESS_UNRETIRED_SHIFT};
 
-	if (atomic && granule_split) {
-		/* A locked operand crossing a 16-byte granule has no
-		 * single-copy-atomic host access. */
-		record_unsupported(*frame, address, at);
-		return 0;
-	}
+	/* The COMMIT call passes the bounce address, which is no guest
+	 * address; it is recognised by its flag alone. */
+	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0 || (atomic && granule_split))
+		return split_operand(*frame, space, memory, address, size, info, at);
 
 	/* An ordered (TSO) access across a granule completes through the bounce
 	 * buffer: x86 makes no single-copy promise for it, and LDAPR/STLR would
