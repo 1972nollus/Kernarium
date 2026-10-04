@@ -73,6 +73,19 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME dependency-verify-read-only
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_read_only.sh
+    LABELS dependency
+    # Six refused builds each validate the dependency manifest first.
+    TIMEOUT 120)
+
+uml_add_tooling_test(
+    NAME dependency-relative-paths
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_relative_paths.sh
+    LABELS dependency
+    TIMEOUT 60)
+
+uml_add_tooling_test(
     NAME dependency-kosmickrisp-spirv
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_kosmickrisp_spirv.py

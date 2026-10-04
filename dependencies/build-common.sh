@@ -5,7 +5,8 @@
 # publishes.
 
 # find_tool VARIABLE CANDIDATE...: set VARIABLE to the path of the first
-# candidate on PATH.
+# candidate on PATH. A tool found through a relative path is made absolute,
+# because builders run their tools in other directories.
 find_tool()
 {
 	variable=$1
@@ -13,6 +14,10 @@ find_tool()
 	for candidate in "$@"; do
 		tool_path=$(command -v "$candidate" 2>/dev/null || true)
 		if [ -n "$tool_path" ]; then
+			case $tool_path in
+			/*) ;;
+			*/*) tool_path="$PWD/$tool_path" ;;
+			esac
 			eval "$variable=\$tool_path"
 			return
 		fi

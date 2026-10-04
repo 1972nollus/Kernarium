@@ -223,6 +223,12 @@ rm "$METADATA/patches/unlisted.patch"
 
 prepare "$PREPARED" >/dev/null
 verify "$PREPARED" >/dev/null
+# Verification does not refresh a prepared index whose stat data is stale.
+touch "$PREPARED/clean/payload.txt"
+INDEX_TIME=$(stat -f '%Fm' "$PREPARED/clean/.git/index")
+verify "$PREPARED" >/dev/null
+[ "$(stat -f '%Fm' "$PREPARED/clean/.git/index")" = "$INDEX_TIME" ] ||
+	fail "source verification rewrote a prepared repository's index"
 [ "$(cat "$PREPARED/clean/payload.txt")" = baseline ] ||
 	fail "unpatched dependency did not use the pinned commit"
 [ "$(cat "$PREPARED/patched/payload.txt")" = patched ] ||

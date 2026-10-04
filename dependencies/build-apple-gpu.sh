@@ -135,9 +135,14 @@ MESA_VERSION=$(awk -F'\t' '$1 == "mesa" { print $2 }' "$MANIFEST")
 	WORK_ROOT="$ROOT_DIR/.build/dependency-build/$PRODUCT/$PLATFORM"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
-mkdir -p -- "$PREFIX_PARENT"
-PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
-PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
+# Verification writes nothing, not even the parent of an absent prefix, and a
+# build creates that parent only once its inputs have verified.
+if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
+	PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
+	PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
+elif [ "$VERIFY_ONLY" -eq 1 ]; then
+	fail "prefix to verify does not exist: $PREFIX"
+fi
 
 verify_prefix()
 {
@@ -181,11 +186,7 @@ find_tool PKG_CONFIG pkg-config
 find_tool XCRUN xcrun
 find_tool INSTALL_NAME_TOOL install_name_tool
 find_tool PLUTIL plutil
-if [ -n "${UML_MESA_PYTHON:-}" ]; then
-	PYTHON=$UML_MESA_PYTHON
-else
-	find_tool PYTHON python3
-fi
+find_tool PYTHON "${UML_MESA_PYTHON:-python3}"
 find_tool NINJA ninja
 "$PYTHON" -c 'import mako, packaging, yaml' >/dev/null 2>&1 ||
 	fail "KosmicKrisp requires Python modules mako, packaging, and yaml"
@@ -210,8 +211,10 @@ NATIVE_TARGET=arm64-apple-macos26.0
 NATIVE_CC=$($XCRUN --sdk macosx --find clang)
 NATIVE_CXX=$($XCRUN --sdk macosx --find clang++)
 
-mkdir -p -- "$WORK_ROOT"
+mkdir -p -- "$WORK_ROOT" "$PREFIX_PARENT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
+PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$PREFIX_PARENT/.apple-gpu-prefix.XXXXXX")
 cleanup()

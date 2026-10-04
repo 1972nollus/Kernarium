@@ -88,9 +88,14 @@ find_tool XCODEBUILD xcodebuild
 find_tool XCRUN xcrun
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
-mkdir -p -- "$OUTPUT_PARENT"
-OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
-OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
+# Verification writes nothing, not even the parent of an absent prefix, and a
+# build creates that parent only once its inputs have verified.
+if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
+	OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+	OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
+elif [ "$VERIFY_ONLY" -eq 1 ]; then
+	fail "prefix to verify does not exist: $OUTPUT"
+fi
 
 verify_output()
 {
@@ -116,8 +121,10 @@ find_tool PYTHON python3
 SOURCE="$SOURCE_ROOT/$SOURCE_NAME"
 check_source
 
-mkdir -p -- "$WORK_ROOT"
+mkdir -p -- "$WORK_ROOT" "$OUTPUT_PARENT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$OUTPUT_PARENT/.ios-$LABEL-prefix.XXXXXX")
 cleanup()
