@@ -103,15 +103,14 @@ find_tool CMAKE cmake
 find_tool XCRUN xcrun
 
 OUTPUT_PARENT=$(dirname -- "$OUTPUT")
-# Verification writes nothing, not even the parent of an absent prefix.
-if [ "$VERIFY_ONLY" -eq 1 ]; then
-	[ -e "$OUTPUT" ] || [ -L "$OUTPUT" ] ||
-		fail "prefix to verify does not exist: $OUTPUT"
-else
-	mkdir -p -- "$OUTPUT_PARENT"
+# Verification writes nothing, not even the parent of an absent prefix, and a
+# build creates that parent only once its inputs have verified.
+if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
+	OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+	OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
+elif [ "$VERIFY_ONLY" -eq 1 ]; then
+	fail "prefix to verify does not exist: $OUTPUT"
 fi
-OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
-OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
 
 verify_output()
 {
@@ -156,8 +155,10 @@ CC=$("$XCRUN" --sdk macosx --find clang)
 AR=$("$XCRUN" --sdk macosx --find ar)
 RANLIB=$("$XCRUN" --sdk macosx --find ranlib)
 
-mkdir -p -- "$WORK_ROOT"
+mkdir -p -- "$WORK_ROOT" "$OUTPUT_PARENT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+OUTPUT_PARENT=$(CDPATH= cd -- "$OUTPUT_PARENT" && pwd -P)
+OUTPUT="$OUTPUT_PARENT/$(basename -- "$OUTPUT")"
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$OUTPUT_PARENT/.kernel-host-tools.XXXXXX")
 cleanup()

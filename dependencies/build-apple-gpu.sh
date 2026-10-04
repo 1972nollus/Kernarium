@@ -135,15 +135,14 @@ MESA_VERSION=$(awk -F'\t' '$1 == "mesa" { print $2 }' "$MANIFEST")
 	WORK_ROOT="$ROOT_DIR/.build/dependency-build/$PRODUCT/$PLATFORM"
 
 PREFIX_PARENT=$(dirname -- "$PREFIX")
-# Verification writes nothing, not even the parent of an absent prefix.
-if [ "$VERIFY_ONLY" -eq 1 ]; then
-	[ -e "$PREFIX" ] || [ -L "$PREFIX" ] ||
-		fail "prefix to verify does not exist: $PREFIX"
-else
-	mkdir -p -- "$PREFIX_PARENT"
+# Verification writes nothing, not even the parent of an absent prefix, and a
+# build creates that parent only once its inputs have verified.
+if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
+	PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
+	PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
+elif [ "$VERIFY_ONLY" -eq 1 ]; then
+	fail "prefix to verify does not exist: $PREFIX"
 fi
-PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
-PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 
 verify_prefix()
 {
@@ -216,8 +215,10 @@ NATIVE_TARGET=arm64-apple-macos26.0
 NATIVE_CC=$($XCRUN --sdk macosx --find clang)
 NATIVE_CXX=$($XCRUN --sdk macosx --find clang++)
 
-mkdir -p -- "$WORK_ROOT"
+mkdir -p -- "$WORK_ROOT" "$PREFIX_PARENT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
+PREFIX_PARENT=$(CDPATH= cd -- "$PREFIX_PARENT" && pwd -P)
+PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 TEMP_ROOT=$(mktemp -d "$WORK_ROOT/source-build.XXXXXX")
 STAGE=$(mktemp -d "$PREFIX_PARENT/.apple-gpu-prefix.XXXXXX")
 cleanup()

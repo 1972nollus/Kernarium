@@ -134,7 +134,9 @@ dependencies/prepare.sh --product x86-conformance
 ```
 
 Use `--no-fetch` for offline preparation and `--verify` or `--verify-only` for
-read-only checks. Each script's `--help` owns non-default paths and options.
+read-only checks. A build verifies its inputs before it creates the prefix's
+parent or its work root, so a build that rejects them writes nothing. Each
+script's `--help` owns non-default paths and options.
 
 Series replay commits as whoever Git resolves for the caller, and export
 refuses a topic whose author is a placeholder. See
