@@ -17,6 +17,7 @@ investigation date.
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
 | Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
 | x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |
+| macOS-only x86-64 JIT contracts | [`../darwin/cpu/x86_64/jit/README.md`](../darwin/cpu/x86_64/jit/README.md) |
 | External dependencies | [`../dependencies/README.md`](../dependencies/README.md) |
 | Kernel families | [`../kernel/README.md`](../kernel/README.md) |
 | Shared kernel contracts | [`../kernel/common/README.md`](../kernel/common/README.md) |

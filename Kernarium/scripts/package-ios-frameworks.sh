@@ -180,6 +180,10 @@ for platform in ios-arm64 ios-arm64-simulator; do
 	[ -f "$binary" ] || fail "missing packaged zstd decompressor: $binary"
 done
 
+# The x86-64 JIT and the FEXCore it embeds are macOS-only.
+"$PYTHON" -B "$ROOT_DIR/scripts/check-no-fexcore.py" "$STAGE" ||
+	fail "a packaged iOS framework carries FEXCore"
+
 # Publish with one atomic rename, so the XCFrameworks are never absent and a
 # concurrent run is never moved below another's tree: the first publish is an
 # exclusive rename, and a later one swaps the new tree in, which leaves the

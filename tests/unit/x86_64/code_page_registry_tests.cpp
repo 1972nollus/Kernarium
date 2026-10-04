@@ -109,6 +109,38 @@ void test_membership_retires_write_translations()
 		"a participant that left was still retired");
 }
 
+/* A participant whose software TLB has its own layout retires its own
+ * entries: the registry calls it for every page that gains or loses code, and
+ * never once it has left.
+ */
+void test_participant_retires_its_own_translations()
+{
+	struct OwnTlb final {
+		std::vector<std::uint64_t> retired;
+	};
+	CodePageRegistry registry;
+	OwnTlb tlb;
+	CodePageRegistry::Participant participant;
+	registry.join(participant, [](void *context, std::uint64_t page) noexcept {
+		static_cast<OwnTlb *>(context)->retired.push_back(page);
+	}, &tlb);
+	const auto page = page_at(11);
+	registry.add(page, &participant);
+	require(tlb.retired.size() == 1 && tlb.retired[0] == page,
+		"a page gained code without retiring the participant's entry");
+	registry.add(page, nullptr);
+	require(tlb.retired.size() == 1,
+		"a second holder retired the participant's entry again");
+	registry.remove(page);
+	registry.remove(page);
+	require(tlb.retired.size() == 2 && tlb.retired[1] == page,
+		"a page lost its code without retiring the participant's entry");
+	registry.leave(participant);
+	registry.add(page, nullptr);
+	require(tlb.retired.size() == 2,
+		"a participant that left was still retired");
+}
+
 /* Every executor of an address space counts pages in and out at once. The
  * counts stay exact across stripes, a page one holder never releases stays
  * held throughout, and nothing is left behind.
@@ -192,6 +224,7 @@ int main()
 	test_membership_is_counted();
 	test_membership_is_exact_behind_a_shared_bit();
 	test_membership_retires_write_translations();
+	test_participant_retires_its_own_translations();
 	test_concurrent_holders_stay_exact();
 	test_acquired_registries_are_released();
 	return 0;

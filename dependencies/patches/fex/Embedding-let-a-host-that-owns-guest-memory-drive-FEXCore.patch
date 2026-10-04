@@ -10,10 +10,13 @@ a shared dispatcher stub, block entries spend an instruction budget,
 SYSCALL/INT 0x80 and guest exceptions leave the dispatch, the decoder
 reads guest code through host pointers, CPUID is never folded, and
 x87 state and the register cache are precise at every instruction.
+A compile checks every write against its buffer's end and restarts
+with a larger buffer, so growth never depends on a guard page.
 Darwin: executable memory, its release and its write window come only
 from hooks the host must install, so FEXCore maps no executable memory
 itself; x18 stays reserved, and VirtualDontNeed zeroes.
 ---
+ CodeEmitter/CodeEmitter/Buffer.h              |  25 ++
  FEXCore/Source/CMakeLists.txt                 |   1 +
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
@@ -26,8 +29,8 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../Source/Interface/Core/JIT/AtomicOps.cpp   |  66 +++
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
  .../Interface/Core/JIT/EmbedderMemory.cpp     | 211 ++++++++++
- FEXCore/Source/Interface/Core/JIT/JIT.cpp     |  41 +-
- FEXCore/Source/Interface/Core/JIT/JITClass.h  |  63 +++
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     |  78 +++-
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |  65 +++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 390 +++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |   1 +
  .../Interface/Core/OpcodeDispatcher.cpp       |  48 ++-
@@ -36,15 +39,85 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
  FEXCore/Source/Interface/IR/Passes.h          |   2 +-
  .../IR/Passes/RegisterAllocationPass.cpp      |   4 +-
- .../IR/Passes/x87StackOptimizationPass.cpp    |  34 +-
+ .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
- FEXCore/include/FEXCore/Core/CoreState.h      |  80 ++++
+ FEXCore/include/FEXCore/Core/CoreState.h      |  86 ++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 28 files changed, 1259 insertions(+), 66 deletions(-)
+ 29 files changed, 1336 insertions(+), 65 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
+diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
+index 602eeb67472509e0287343f6958a1bcf09b490e1..6688c9efdb1b0a2bce0a4000bedd3cceb720263e 100644
+--- a/CodeEmitter/CodeEmitter/Buffer.h
++++ b/CodeEmitter/CodeEmitter/Buffer.h
+@@ -22,9 +22,26 @@ public:
+     Size = BaseSize;
+   }
+ 
++  // Called instead of writing when an emission would pass the end of the
++  // buffer. It must not return: its owner restarts the emission with a
++  // larger buffer. Without one the buffer is unchecked.
++  using OverflowHandler = void (*)(void* Data);
++  void SetOverflowHandler(OverflowHandler Handler, void* Data) {
++    Overflow = Handler;
++    OverflowData = Data;
++  }
++
++  // Makes sure Bytes more fit at the cursor before they are written.
++  void EnsureSpace(size_t Bytes) {
++    if (Overflow && Bytes > static_cast<size_t>(BufferBase + Size - CurrentOffset)) [[unlikely]] {
++      Overflow(OverflowData);
++    }
++  }
++
+   template<typename T>
+   requires (std::is_trivially_copyable_v<T>)
+   void dcn(const T& Data) {
++    EnsureSpace(sizeof(Data));
+     std::memcpy(CurrentOffset, &Data, sizeof(Data));
+     CurrentOffset += sizeof(Data);
+   }
+@@ -43,6 +60,7 @@ public:
+ 
+   void EmitString(const char* String) {
+     const auto StringLength = strlen(String);
++    EnsureSpace(StringLength);
+     memcpy(CurrentOffset, String, StringLength);
+     CurrentOffset += StringLength;
+   }
+@@ -53,6 +71,7 @@ public:
+     if (!CurrentAlignment) {
+       return;
+     }
++    EnsureSpace(Size - CurrentAlignment);
+     std::memset(CurrentOffset, 0, Size - CurrentAlignment);
+     CurrentOffset += Size - CurrentAlignment;
+   }
+@@ -75,10 +94,14 @@ public:
+   }
+ 
+   void CursorIncrement(size_t Size) {
++    EnsureSpace(Size);
+     CurrentOffset += Size;
+   }
+ 
+   void SetCursorOffset(size_t Offset) {
++    if (Overflow && Offset > Size) [[unlikely]] {
++      Overflow(OverflowData);
++    }
+     CurrentOffset = BufferBase + Offset;
+   }
+ 
+@@ -96,5 +119,7 @@ protected:
+   uint8_t* BufferBase;
+   uint8_t* CurrentOffset;
+   uint64_t Size;
++  OverflowHandler Overflow {};
++  void* OverflowData {};
+ };
+ } // namespace ARMEmitter
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
 index ad2186989742add441c53e94a511917a3656d596..e144d0fe4e8995e7df4e3e9d8637c0001d259b3e 100644
 --- a/FEXCore/Source/CMakeLists.txt
@@ -806,18 +879,26 @@ index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab1
 +
 +} // namespace FEXCore::CPU
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8cd5bf3051 100644
+index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2fc78f7a57 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -498,6 +498,7 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+@@ -497,7 +497,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+   }
  }
  
++// A unit outgrew its temporary buffer: restart it with a larger one, before
++// the write that would have passed the end.
++void Arm64JITCore::RestartWithLargerBuffer(void* Thread) {
++  FEXCore::UncheckedLongJump::LongJump(static_cast<FEXCore::Core::InternalThreadState*>(Thread)->RestartJump,
++                                       FEXCore::ToUnderlying(RestartOptions::Control::NeedsLargerJITSpace));
++}
++
  static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record, bool Call) {
 +  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
    auto BranchOffset = JumpThunkStartAddress / 4 - CallerAddress / 4;
-@@ -516,6 +517,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+@@ -516,6 +524,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
  }
  
  static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -825,7 +906,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uint32_t BranchInst = 0;
    ARMEmitter::Emitter BranchEmit(reinterpret_cast<uint8_t*>(&BranchInst), 4);
-@@ -529,6 +531,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -529,6 +538,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
  }
  
  uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -833,7 +914,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    auto Thread = Frame->Thread;
    bool TFSet = Thread->CurrentFrame->State.flags[X86State::RFLAG_TF_RAW_LOC];
    uintptr_t HostCode {};
-@@ -797,10 +800,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+@@ -797,10 +807,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
    adr_OrRestart(TMP1, &HeaderLabel);
    str(TMP1, STATE, offsetof(FEXCore::Core::CPUState, InlineJITBlockHeader));
  
@@ -850,18 +931,31 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    if (SpillSlots) {
      const auto TotalSpillSlotsSize = SpillSlots * MaxSpillSlotSize;
  
-@@ -825,7 +834,8 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -825,7 +841,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    this->DebugData = DebugData;
    this->IR = IR;
    RequiresFarARM64Jumps = false;
--  SSANodeMultiplier = 24;
 +  // Embedded code adds an inline TLB lookup and an out-of-line miss site per access.
-+  SSANodeMultiplier = Embedded() ? 128 : 24;
++  // The host may start lower to exercise the growth below.
+   SSANodeMultiplier = 24;
++  if (Embedded()) {
++    const auto PerNode = ThreadState->CurrentFrame->Embedder.CodeSizePerNode;
++    SSANodeMultiplier = PerNode ? PerNode : 128;
++  }
  
    // Prepare restart via long jump in case branch encoding fails.
    // This uses UncheckedLongJump since we don't implement std::longjmp in WoA setups
-@@ -843,10 +853,16 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -838,15 +860,25 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+     // Get rid of the claimed buffer immediately, we can't fit in it at all.
+     TempCodeBufferAllocator.UnclaimBuffer();
+     SSANodeMultiplier *= 2;
++    ++ThreadState->CurrentFrame->Embedder.CodeBufferRestarts;
+     break;
+   default: LOGMAN_MSG_A_FMT("Unhandled Arm64 restart condition!");
    }
++  // A restarted attempt describes its code afresh.
++  DebugData->GuestOpcodes.clear();
++  DebugData->Subblocks.clear();
  
    uint32_t SSACount = IR->GetSSACount();
 +  EmbedderColdSites.clear();
@@ -877,7 +971,17 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    Relocations.resize(PrevNumAllocations, FEXCore::CPU::Relocation::Default()); // Discard any relocations generated from a previous attempt
  
    CodeData.EntryPoints.clear();
-@@ -917,7 +933,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -862,6 +894,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
+ 
+   SetBuffer(TempCodeBuffer, UsableBufferRange);
++  // Every write checks the end, so growth never depends on the guard page,
++  // which an embedding host has no signal handler for.
++  SetOverflowHandler(RestartWithLargerBuffer, ThreadState);
+ 
+   ThreadState->JITGuardPage = reinterpret_cast<uintptr_t>(TempCodeBuffer) + UsableBufferRange;
+   ThreadState->JITGuardOverflowArgument = FEXCore::ToUnderlying(RestartOptions::Control::NeedsLargerJITSpace);
+@@ -917,7 +952,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          if (PendingTargetLabel->Backward.Location) {
            EmitSuspendInterruptCheck();
          }
@@ -890,7 +994,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
          PendingTargetLabel = nullptr;
        }
  
-@@ -938,6 +958,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -938,6 +977,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          CodeData.EntryPoints.emplace(BlockStartRIP, GetCursorAddress<uint8_t*>());
          DebugData->GuestOpcodes.push_back({BlockIROp->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
  
@@ -903,7 +1007,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
          EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
        }
  
-@@ -973,10 +999,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -973,10 +1018,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      if (PendingTargetLabel->Backward.Location) {
        EmitSuspendInterruptCheck();
      }
@@ -923,7 +1027,28 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    ARMEmitter::ForwardLabel l_ExitLink;
    for (auto& PendingJumpThunk : PendingJumpThunks) {
      // Align as 64-bit atomics are used on the HostCode field.
-@@ -1071,6 +1105,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1035,6 +1088,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   const auto JITRIPEntriesBegin = JITBlockTailLocation + sizeof(JITBlockTail);
+   auto JITRIPEntriesLocation = JITRIPEntriesBegin;
+ 
++  {
++    // The tail and its entries are written below the cursor; make room first.
++    size_t RIPEntriesSize = 0;
++    uintptr_t SizedRIPOffset = 0;
++    uint64_t SizedPCOffset = 0;
++    for (const auto& GuestOpcode : DebugData->GuestOpcodes) {
++      RIPEntriesSize += FEXCore::Utils::vl64pair::EncodedSize(GuestOpcode.HostEntryOffset - SizedPCOffset,
++                                                              GuestOpcode.GuestEntryOffset - SizedRIPOffset);
++      SizedPCOffset = GuestOpcode.HostEntryOffset;
++      SizedRIPOffset = GuestOpcode.GuestEntryOffset;
++    }
++    EnsureSpace(sizeof(JITBlockTail) + RIPEntriesSize);
++  }
++
+   {
+     // Store the RIP entries.
+     JITBlockTail.NumberOfRIPEntries = DebugData->GuestOpcodes.size();
+@@ -1071,6 +1138,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
  
    // Migrate the compile output from temporary storage to the actual CodeBuffer.
    // This can block progress in other compiling threads, so the duration of the lock should be as small as possible.
@@ -931,11 +1056,39 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8c
    {
      auto CodeBufferLock = std::unique_lock {SharedCodeBuffers.CodeBufferWriteMutex};
  
+@@ -1088,12 +1156,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+       }
+ 
+       // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
++      SetOverflowHandler(nullptr, nullptr);
+       SetBuffer(CurrentCodeBuffer->Ptr, CurrentCodeBuffer->AllocatedSize);
+       SetCursorOffset(SharedCodeBuffers.LatestOffset);
+       Align16B();
+       if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
+         CTX->ClearCodeCache(ThreadState);
+       }
++      if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
++        // The code buffer's guard page may be missing (MAP_JIT memory cannot
++        // be protected), so never copy past its end.
++        ERROR_AND_DIE_FMT("JIT unit of {} bytes does not fit an empty code buffer", TempSize);
++      }
+ 
+       SharedCodeBuffers.LatestOffset = GetCursorOffset();
+     }
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..8ba1d34459ce9cbfdba640df69ee33bd7f180115 100644
+index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..20f7cbe3ed901ccc706d40a5cbea5f2d551bf4c3 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -109,6 +109,69 @@ private:
+@@ -78,6 +78,8 @@ private:
+   // FEXCore makes assumptions in the JIT about certain conditions being true.
+   // In the rare case when those assumptions are broken, FEX needs to safely restart the JIT.
+   RestartOptions RestartControl {};
++  // The temporary buffer's overflow handler; the thread state is its data.
++  [[noreturn]] static void RestartWithLargerBuffer(void* Thread);
+   bool RequiresFarARM64Jumps {};
+   // Default to 6 instructions per SSA node.
+   uint32_t SSANodeMultiplier {24};
+@@ -109,6 +111,69 @@ private:
  
    static uint64_t ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record);
  
@@ -1836,7 +1989,7 @@ index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1e
      // can only handle constant functions, not constant leafs. This could be
      // lifted if we generalized at a (significant) complexity cost.
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c339708537c91930 100644
+index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272cc65ab03 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -151,6 +151,9 @@ private:
@@ -1904,7 +2057,20 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c3397085
        // store
        FlushValuesPending[i] = false;
      }
-@@ -1235,7 +1253,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1222,6 +1240,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+ 
+       default: LOGMAN_THROW_A_FMT(false, "IROp was expected to be lowered");
+       }
++      if (Embedded) {
++        // The embedding host leaves a block in the middle, at a system call,
++        // a fault or a TLB miss it cannot satisfy, so commit every pending
++        // stack write before the next operation can exit.
++        FlushCachedRegs();
++      }
+       IREmit->Remove(CodeNode);
+     }
+ 
+@@ -1235,7 +1259,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
    }
  }
  
@@ -1999,7 +2165,7 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..e72993a6a281f8d04435536ba9eaecf21272cc18 100644
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..14fa3dbb23b28e8b3c0a506b9df4b5c6f0236b19 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -334,6 +334,54 @@ struct FallbackABIInfo {
@@ -2076,7 +2242,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..e72993a6a281f8d04435536ba9eaecf2
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +492,26 @@ struct CpuStateFrame {
+@@ -432,6 +492,32 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  
@@ -2096,6 +2262,12 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..e72993a6a281f8d04435536ba9eaecf2
 +    uint64_t AccessRIP {};
 +    // Opaque host pointer for the helpers.
 +    uint64_t HostContext {};
++    // Bytes of host code a compile first reserves per IR node, 0 for the
++    // default. A unit that outgrows its reservation restarts with twice as
++    // much; a host lowers this only to exercise that growth.
++    uint32_t CodeSizePerNode {};
++    // Compiles on this thread that restarted for a larger buffer.
++    uint32_t CodeBufferRestarts {};
 +    // Bounce buffer for accesses that cross a guest page.
 +    alignas(16) uint8_t Bounce[64] {};
 +  } Embedder;

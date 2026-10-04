@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the pure x86-64 smoke rootfs on the 4 KiB gadget runtime."""
+"""Boot the pure x86-64 smoke rootfs on the 4 KiB x86-64 runtime."""
 
 from __future__ import annotations
 
@@ -39,7 +39,9 @@ def terminate(process: subprocess.Popen[bytes]) -> None:
     remove_emulator_run_directories(process.pid)
 
 
-def boot(emulator: pathlib.Path, rootfs: pathlib.Path, timeout: int) -> bytes:
+def boot(
+    emulator: pathlib.Path, rootfs: pathlib.Path, engine: str, timeout: int
+) -> bytes:
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     try:
@@ -54,7 +56,7 @@ def boot(emulator: pathlib.Path, rootfs: pathlib.Path, timeout: int) -> bytes:
                     "panic=1",
                 ),
                 init_path="/init",
-                engine="gadgets",
+                engine=engine,
             ),
             stdin=slave,
             stdout=slave,
@@ -111,6 +113,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
+    parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
     parser.add_argument("--timeout", type=int, default=180)
     arguments = parser.parse_args()
 
@@ -124,7 +127,9 @@ def main() -> int:
         parser.error("timeout must be positive")
 
     try:
-        transcript = boot(emulator, rootfs, arguments.timeout)
+        transcript = boot(
+            emulator, rootfs, arguments.engine, arguments.timeout
+        )
         if SUCCESS not in transcript:
             raise RuntimeError("x86-64 smoke success marker is missing")
     except BaseException:
@@ -133,7 +138,7 @@ def main() -> int:
         raise
 
     print(
-        "PASS engine=gadgets userspace-slice=x86_64 "
+        f"PASS engine={arguments.engine} userspace-slice=x86_64 "
         "kernel-mode=arm64 page-size=4k"
     )
     return 0
