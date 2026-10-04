@@ -113,7 +113,13 @@ std::atomic_uint32_t nextClientId;
 #endif
 }
 
-/* The pid a run directory's name records, if `name` is one. */
+/* Builds before the run directory bound the console loose in /tmp, as
+ * uml-kern<pid>-mconsole, and an emulator killed outright left it there.
+ * Bisects and same-day controls still run such builds. */
+constexpr std::string_view legacyConsoleDirectory = "/tmp";
+constexpr std::string_view legacyConsoleSuffix = "-mconsole";
+
+/* The pid a run's name, uml-kern<pid>, records, if `name` is one. */
 [[nodiscard]] std::optional<pid_t> runDirectoryOwner(std::string_view name)
 {
 	if (!name.starts_with(runDirectoryPrefix))
@@ -132,24 +138,30 @@ std::atomic_uint32_t nextClientId;
 }
 
 /*
- * A run killed outright leaves its directory behind, so each run removes the
- * directories of runs that have exited: those this user owns, named
- * uml-kern<pid>, whose process no longer exists. A live process, or one this
- * user may not signal, keeps its directory, and nothing else is touched.
+ * A run killed outright leaves what it made behind, so each run removes what
+ * runs that have exited left in `parent`: entries of file type `type` named
+ * uml-kern<pid> followed by `suffix`, that this user owns, whose process no
+ * longer exists. A live process, or one this user may not signal, keeps its
+ * entry, and nothing else is touched.
  */
-void removeAbandonedRunDirectories(const std::filesystem::path &parent)
+void removeAbandonedRunEntries(const std::filesystem::path &parent,
+	std::string_view suffix, mode_t type)
 {
 	std::error_code error;
 	for (std::filesystem::directory_iterator entry {parent, error};
 	     !error && entry != std::filesystem::directory_iterator {};
 	     entry.increment(error)) {
-		const auto owner =
-			runDirectoryOwner(entry->path().filename().native());
+		std::string_view name = entry->path().filename().native();
+		if (!name.ends_with(suffix))
+			continue;
+		name.remove_suffix(suffix.size());
+		const auto owner = runDirectoryOwner(name);
 		if (!owner || *owner == ::getpid())
 			continue;
 		struct stat details {};
 		if (::lstat(entry->path().c_str(), &details) != 0 ||
-		    !S_ISDIR(details.st_mode) || details.st_uid != ::geteuid())
+		    (details.st_mode & S_IFMT) != type ||
+		    details.st_uid != ::geteuid())
 			continue;
 		if (::kill(*owner, 0) == 0 || errno != ESRCH)
 			continue;
@@ -525,7 +537,9 @@ GuestConsoleRun::GuestConsoleRun(bool active) noexcept
 		}
 		runDirectoryGuard.reset();
 		const std::filesystem::path directory {location->directory};
-		removeAbandonedRunDirectories(directory.parent_path());
+		removeAbandonedRunEntries(directory.parent_path(), {}, S_IFDIR);
+		removeAbandonedRunEntries(legacyConsoleDirectory,
+			legacyConsoleSuffix, S_IFSOCK);
 		if (!createRunDirectory(location->directory)) {
 			std::fprintf(stderr,
 				"Guest management console: cannot create %s: %s; "

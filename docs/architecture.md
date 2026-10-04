@@ -169,7 +169,11 @@ memory, publish RW pages as RX, control JIT write protection, or publish the
 instruction cache. JIT engines reach executable memory only through it; the
 arm64 JIT's arena maps and publishes its blocks with it. Its target's `native`
 engine kind and the source audit keep the gadget engines and shared CPU code
-from linking or including it.
+from linking or including it. FEXCore, which the macOS-only x86-64 JIT embeds,
+has no executable-memory path of its own: its maintained series routes
+allocation, release, and the write window through hooks the embedder installs,
+and prefix verification rejects a FEXCore archive that toggles JIT write
+protection.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
@@ -596,7 +600,9 @@ Simulator both are its application's `tmp`, too long for `sun_path`, so it uses
 `/tmp/uml-kern<pid>`. The run removes it when it returns, and every terminating
 signal and kernel-driven exit the process observes removes it too; only a
 process killed outright leaves it, and the next run removes the directories of
-runs that have exited. An iOS device uses its application temporary directory
+runs that have exited. It also removes the `/tmp/uml-kern<pid>-mconsole`
+sockets left by exited runs of older builds, which bound the console loose in
+`/tmp`. An iOS device uses its application temporary directory
 itself and removes a socket left there before booting. Every such path must
 fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
 rather than truncated or moved. The guest prints the console's path when it

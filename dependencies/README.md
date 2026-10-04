@@ -69,6 +69,28 @@ answering window probes. Upstream master at 62b29862 has none of them; drop a
 topic when a libslirp update absorbs it. The user-network contract they
 provide is in [`../darwin/README.md`](../darwin/README.md).
 
+The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
+`fex` row applies one patch-managed series,
+[`patches/fex`](patches/fex/series.tsv), and the `fmt`, `xxhash`, and
+`unordered-dense` rows pin the three submodules FEXCore needs at the commits
+FEX-2608 records; no iOS product names any of them. The series' topics build
+only FEXCore for an embedding Darwin host, make its utilities portable to
+Darwin, and add an embedding mode in which a host that owns guest memory
+drives FEXCore. The series touches nothing the `x86-conformance` corpus
+producers read, so one prepared FEX source serves both products and still
+yields the pinned corpus.
+
+The prefix installs FEXCore's static archives (`libFEXCore.a`,
+`libFEXCore_Base.a`, and `libJemallocDummy.a`, its allocator entry points over
+the C library's), `libfmt.a`, `libxxhash.a`, FEXCore's public and generated
+headers, and the fmt, xxHash, and unordered_dense headers they include.
+`UML::ThirdPartyFEXCore` links them with the definitions FEXCore's headers
+were compiled with. FEXCore calls the prefix's SoftFloat, so both are built
+without the `preserve_all` ABI. On Apple, FEXCore maps, frees, and
+write-enables executable memory only through hooks its embedder must install;
+it has no `MAP_JIT` path of its own, and prefix verification rejects a FEXCore
+archive that toggles JIT write protection.
+
 Kernarium's serial console uses the `GhosttyTerminal` product of
 [libghostty-spm](https://github.com/Lakr233/libghostty-spm), an Xcode Swift
 Package that the Kernarium project pins to exactly `1.6.20260922`. Its
