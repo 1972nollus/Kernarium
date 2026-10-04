@@ -1726,8 +1726,9 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 	if (single_step_ || (!streaming && (cpu.effective_fpcr() &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U))
 		return run_trap_enabled_instruction(cpu, memory, executed);
-	/* Streaming execution arrives with the streaming entry. */
-	if (streaming)
+	/* A streaming program runs natively in streaming mode; an injected
+	 * profile without the hardware cannot run one. */
+	if (streaming && !build_options_.host_capabilities.sme_hardware)
 		return ::uml::cpu::EngineEvent::fatal;
 	auto &state = sme_caches_[mode - 1U];
 	if (!state.programs)
@@ -1784,9 +1785,20 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 	}
 	cpu.access_sme_state();
 	cpu.gadget_target_tier = programs.target_tier();
+	if (!streaming) {
+		const auto event =
+			arm64::gadgets::execute_preserving_native_fp_environment(
+				built.program, cpu, tlb_, executed);
+		return finish_block(programs, built, event, cpu, executed);
+	}
+	/* Streaming programs carry no FP link entry; the FP state they can
+	 * reach is loaded here, once, for every program they link to. */
+	cpu.access_fp_state();
 	const auto event =
-		arm64::gadgets::execute_preserving_native_fp_environment(
-			built.program, cpu, tlb_, executed);
+		arm64::gadgets::execute_streaming_preserving_native_fp_environment(
+			built.program, cpu, tlb_, executed,
+			arm64::sme_profile(build_options_.host_capabilities) ==
+				arm64::SmeProfile::sme2);
 	return finish_block(programs, built, event, cpu, executed);
 }
 
@@ -1823,10 +1835,26 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
 	if (options.svcr != 0U) {
-		/* Streaming execution arrives with the streaming entry. */
-		if ((options.svcr & arm64::svcr_sm) != 0U)
-			return ::uml::cpu::EngineEvent::fatal;
 		cpu.access_sme_state();
+		if ((options.svcr & arm64::svcr_sm) != 0U) {
+			/* Floating-point exceptions never trap in streaming
+			 * mode, so there is no transaction to run. */
+			if (!build_options_.host_capabilities.sme_hardware)
+				return ::uml::cpu::EngineEvent::fatal;
+			cpu.access_fp_state();
+			const auto event = arm64::gadgets::
+				execute_streaming_preserving_native_fp_environment(
+					built.program, cpu, tlb_, executed,
+					arm64::sme_profile(
+						build_options_.host_capabilities) ==
+						arm64::SmeProfile::sme2);
+			arm64::gadgets::restore_native_fp_environment(cpu);
+			correct_terminal_instruction_count(
+				built.program, event, cpu.pc, executed);
+			cpu.gadget_indirect_miss = nullptr;
+			return event == ::uml::cpu::EngineEvent::interrupt ?
+				::uml::cpu::EngineEvent::continued : event;
+		}
 	}
 
 	const bool transactional =

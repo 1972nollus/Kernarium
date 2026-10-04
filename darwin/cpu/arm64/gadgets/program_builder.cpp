@@ -90,10 +90,19 @@ BuildResult Builder::build(
 	 * suffix to sixteen bits. */
 	const auto window = instructions.first(std::min(instructions.size(),
 		std::size_t{1} << 16));
+	/* A program for SVCR.SM = 1 selects only entries that are safe in
+	 * streaming mode; forwarding contracts do not reach into them, and its
+	 * executor loads the FP state before it enters, so it needs no FP link
+	 * entry. */
+	const bool streaming = (options.svcr & svcr_sm) != 0U;
+	if (streaming) [[unlikely]] {
+		options.scalar_forwarding = false;
+		options.vector_forwarding = false;
+	}
 	const auto finish = [&](std::size_t retired) {
 		resolve_inline_suffixes(words, suffixes, retired);
 		return Program{guest_address, retired, std::move(words),
-			program_accesses_fp_state};
+			program_accesses_fp_state && !streaming};
 	};
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	const void *previous_gadget = nullptr;
@@ -184,6 +193,17 @@ BuildResult Builder::build(
 		previous_scalar = current_scalar.destination;
 		if (vector_mask != 0 && options.vector_forwarding)
 			words[emitted_start] = current_vector.contract->entries[vector_mask];
+		if (streaming && words.size() > emitted_start &&
+		    !streaming_entry(words[emitted_start])) [[unlikely]] {
+			/* No streaming form yet: the block ends at the illegal
+			 * exit instead, as for any unimplemented word. */
+			words.truncate(emitted_start);
+			while (suffixes.count != 0 &&
+			       suffixes.word[suffixes.count - 1] >= emitted_start)
+				--suffixes.count;
+			compiled = compiled_before;
+			decoded = illegal_instruction(context);
+		}
 #if UML_GADGET_EXECUTION_HISTOGRAM
 		/* The entry is final only after forwarding selection above. */
 		if (words.size() > emitted_start) {

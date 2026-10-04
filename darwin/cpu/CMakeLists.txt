@@ -104,13 +104,15 @@ target_compile_definitions(uml_gadget_histogram_configuration INTERFACE
 target_link_libraries(uml_cpu_contract INTERFACE
     UML::GadgetHistogramConfiguration)
 
-# Gadget-engine SME sources, owned by SME lane S5 and empty until it lands:
-# the streaming parts' selection and executor sources. The streaming gadget
-# bodies it generates at build time from the shared SVE/SME encoding table
-# (cpu/arm64/detail/sme_encodings.inc) are declared in this block too, with
-# their custom command and the OBJECT_DEPENDS of engine.S. The JIT's block
-# below is disjoint, so the two lanes never edit the same lines.
-set(_uml_arm64_gadget_sme_sources)
+# Gadget-engine SME sources, owned by SME lane S5: the SME part's selection
+# and helper sources. The streaming gadget bodies it generates at build time
+# from the shared SVE/SME encoding table (cpu/arm64/detail/sme_encodings.inc)
+# are declared in this block too, with their custom command and the
+# OBJECT_DEPENDS of engine.S. The JIT's block below is disjoint, so the two
+# lanes never edit the same lines.
+set(_uml_arm64_gadget_sme_sources
+    arm64/gadgets/program_builder_sme.cpp
+    arm64/gadgets/sme_helpers.cpp)
 
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.

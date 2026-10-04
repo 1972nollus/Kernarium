@@ -138,5 +138,7 @@ Lveneer_\symbol:
 /* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
  * of their conditional branches, so no established gadget moves for them. */
 #include "engine/lse2_alignment.inc"
+/* Only into the SME part, after every base part's code. */
+#include "engine/sme.inc"
 	afp_twin_table_end
 	gadget_bank_bounds end
