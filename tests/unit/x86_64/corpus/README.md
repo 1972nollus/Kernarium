@@ -6,7 +6,10 @@ derived from the pinned K x86-64 semantics tests, complementary handwritten
 FEX assembly programs, and the repository's own cases in `cases/`. CMake,
 CTest, and the test executable do not need either upstream checkout, an
 assembler, Python, or a network connection. The x86-64 guest exists only in
-4 KiB builds, so the test runs in the 4 KiB unit tree.
+4 KiB builds, so the test runs in the 4 KiB unit tree. There the same pack
+also runs through the macOS-only x86-64 JIT, as `x86-64-jit-instruction-corpus`
+and `x86-64-jit-code-buffer-growth`, against the classed exclusion list
+`../jit_corpus_exclusions.tsv`.
 
 The profile is portable x86-64-v3 userspace plus the AES, PCLMUL, XSAVE,
 FSGSBASE, and ADX extensions already owned by the product contract. Intel-only

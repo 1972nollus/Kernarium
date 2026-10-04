@@ -17,6 +17,15 @@ start and is 0.5 MB. The assembler rejects a larger addend, and a named local
 symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
 a `.L` symbol in the engine object.
 
+## Engine selection
+
+This engine is the x86-64 product's default, by name, and the only engine of
+every other product that runs x86 code. On macOS, `--execution-engine jit`
+sends long64 tasks to the [x86-64 JIT](../jit/README.md) instead; compat32
+tasks run here under either selection. The runtime chooses per dispatch from
+the selection and the task's execution mode, so neither engine depends on the
+other.
+
 ## Gadget banks
 
 Two banks implement the scalar integer instructions.
