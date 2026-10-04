@@ -45,6 +45,11 @@ for the management console's run directory. Each registration owns
 may not fit `sun_path`. Tests remove what they create, so a leftover file
 names the test that leaked it.
 
+A unit test that reads checked-in data, such as an instruction corpus or the
+video fixtures, takes its path as a registration argument rather than a
+compiled-in source or build path. A copy of the binary then runs wherever its
+data is copied, and a binary run without the argument prints its usage.
+
 Unit tests assert with `require`, `fail` and `requireThrows` from
 `tests/unit/require/require.hpp`, which every unit binary links. A failure
 prints the caller's `file:line` and its message, then aborts, so no `catch` in
