@@ -27,6 +27,12 @@ public:
 
   void set_table_list_planning_enabled(bool enabled) noexcept;
 
+  /* Compiles for the guest SVCR mode `mode` (svcr_sm, svcr_za): the mode
+   * the translation's key carries (translation_key()), and so the mode its
+   * code runs in. Mode 0, the default, is the translation without SME
+   * state. */
+  void set_sme_mode(std::uint8_t mode) noexcept;
+
   struct Result final {
     std::span<const std::uint32_t> words;
     /* Where this translation emitted executor-owned link operands. Shared

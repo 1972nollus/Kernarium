@@ -13,6 +13,7 @@
 #include <semaphore>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace uml::cpu::arm64 {
@@ -656,6 +657,45 @@ CompiledCode compile_block(
     std::span<const std::uint32_t> instructions) {
   JitCompiler compiler{};
   return copied_code(compiler.compile(pc, instructions));
+}
+
+ModeCompilation compile_block_in_mode(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::uint8_t mode, LinkShape shape) {
+  struct Context final {
+    JitBlockLink empty{.guest_pc = 1};
+    JitBlockLink direct{};
+    JitIndirectLink site{};
+    ModeCompilation result;
+  } context;
+  for (auto &entry : context.site.entries) {
+    entry.guest_pc = 1;
+    entry.link = &context.empty;
+  }
+  const auto direct = +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.result.direct_keys.push_back(key);
+    resolved.direct.guest_pc = key;
+    return &resolved.direct;
+  };
+  const auto indirect =
+      +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.result.indirect_keys.push_back(key);
+    resolved.site.source_pc = key;
+    return &resolved.site;
+  };
+  JitCompiler compiler{
+      shape == LinkShape::tracked ? nullptr : &context,
+      shape == LinkShape::direct ? direct : nullptr,
+      shape == LinkShape::tracked,
+      shape == LinkShape::indirect ? indirect : nullptr};
+  compiler.set_sme_mode(mode);
+  const auto compiled = compiler.compile(pc, instructions);
+  context.result.code = copied_code(compiled);
+  for (const auto &relocation : compiled.relocations)
+    context.result.relocation_keys.push_back(relocation.key);
+  return std::move(context.result);
 }
 
 CompiledCode compile_block_without_table_list_planning(

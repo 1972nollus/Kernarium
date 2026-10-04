@@ -25,6 +25,33 @@ inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::size_t maximum_chain_instructions = 4096;
 
+/* A translation's key: its guest PC with the guest SVCR mode (svcr_sm and
+ * svcr_za) it was compiled for in the two low bits, which every PC that
+ * reaches a translation leaves clear. The block cache, the shared cache,
+ * every link record and every indirect site use it, so code compiled for
+ * one mode only ever runs, links or chains in that mode. A mode-0 key is
+ * its PC.
+ */
+[[nodiscard]] constexpr std::uint64_t
+translation_key(std::uint64_t pc, std::uint8_t mode) noexcept {
+  return pc | (mode & svcr_mask);
+}
+
+[[nodiscard]] constexpr std::uint64_t
+translation_key_pc(std::uint64_t key) noexcept {
+  return key & ~std::uint64_t{svcr_mask};
+}
+
+[[nodiscard]] constexpr std::uint8_t
+translation_key_mode(std::uint64_t key) noexcept {
+  return static_cast<std::uint8_t>(key & svcr_mask);
+}
+
+static_assert(translation_key(0x4000'1000U, 0) == 0x4000'1000U);
+static_assert(translation_key_pc(translation_key(0x4000'1000U, 3)) ==
+              0x4000'1000U);
+static_assert(translation_key_mode(translation_key(0x4000'1000U, 2)) == 2);
+
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {
   const auto op0 = (instruction >> 25U) & 15U;
@@ -113,8 +140,8 @@ enum class JitRelocationKind : std::uint8_t {
 struct JitRelocation final {
   /* Index of the low half of the 64-bit literal pool slot. */
   std::size_t word{};
-  /* Guest PC the pointer is resolved from: the branch target for a direct
-   * link, the branch source for an indirect one.
+  /* Translation key (translation_key()) the pointer is resolved from: the
+   * branch target for a direct link, the branch source for an indirect one.
    */
   std::uint64_t key{};
   JitRelocationKind kind{};
@@ -145,6 +172,7 @@ struct JitChainState final {
    * deferred and means that no instruction is pending.
    */
   std::uint32_t deferred_exclusive_instruction{};
+  /* The translation key of the indirect site that missed. */
   std::uint64_t indirect_source_pc{};
 };
 

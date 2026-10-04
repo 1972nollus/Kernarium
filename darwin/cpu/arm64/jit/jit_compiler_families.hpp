@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 
 #include <array>
@@ -38,6 +39,16 @@ protected:
   [[nodiscard]] std::size_t indirect_link_refusals() const noexcept;
   void attach_indirect_link_resolver(
       void *context, IndirectLinkResolver resolver) noexcept;
+
+  /* The guest SVCR mode (svcr_sm, svcr_za) the translation is compiled
+   * for. Its links and indirect sites use translation_key() with it. */
+  void set_sme_mode(std::uint8_t mode) noexcept {
+    sme_mode_ = static_cast<std::uint8_t>(mode & svcr_mask);
+  }
+  [[nodiscard]] std::uint8_t sme_mode() const noexcept { return sme_mode_; }
+  [[nodiscard]] bool streaming_translation() const noexcept {
+    return (sme_mode_ & svcr_sm) != 0U;
+  }
 
   void emit(std::uint32_t instruction);
   [[nodiscard]] Label make_label();
@@ -339,6 +350,7 @@ private:
   void *indirect_link_context_{};
   IndirectLinkResolver indirect_link_resolver_{};
   std::size_t indirect_link_refusals_{};
+  std::uint8_t sme_mode_{};
 };
 
 } // namespace uml::cpu::arm64::jit

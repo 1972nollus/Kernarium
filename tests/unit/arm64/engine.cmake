@@ -231,6 +231,12 @@
     uml_add_arm64_unit_test(jit_fp_link_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+    # The JIT's SME support (cpu/arm64/jit, sme_support).
+    uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+    target_compile_definitions(uml_arm64_jit_sme_mode_tests PRIVATE
+        UML_JIT_RUNTIME_DIAGNOSTICS=1)
+
     uml_add_arm64_unit_test(counter_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 

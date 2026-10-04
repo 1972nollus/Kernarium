@@ -48,6 +48,10 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
     table_list_planning_enabled_ = enabled;
   }
 
+void JitCompiler::set_sme_mode(std::uint8_t mode) noexcept {
+    JitCompilerFamilies::set_sme_mode(mode);
+  }
+
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
     return compile_once(guest_pc, instructions);

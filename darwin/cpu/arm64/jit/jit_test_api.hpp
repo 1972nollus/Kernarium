@@ -29,6 +29,31 @@ struct CompiledCode final {
 compile_block(std::uint64_t pc,
               std::span<const std::uint32_t> instructions);
 
+/* How compile_block_in_mode() wires the compiler's link operands. */
+enum class LinkShape {
+  unlinked,
+  direct,
+  indirect,
+  tracked,
+};
+
+struct ModeCompilation final {
+  CompiledCode code;
+  /* The keys the direct and indirect link resolvers were asked for, and
+   * those the translation's relocations record. */
+  std::vector<std::uint64_t> direct_keys;
+  std::vector<std::uint64_t> indirect_keys;
+  std::vector<std::uint64_t> relocation_keys;
+};
+
+/* Compiles for the guest SVCR mode `mode` on the scoped host profile
+ * (HostCapabilitiesScope). */
+[[nodiscard]] ModeCompilation
+compile_block_in_mode(std::uint64_t pc,
+                      std::span<const std::uint32_t> instructions,
+                      std::uint8_t mode,
+                      LinkShape shape = LinkShape::unlinked);
+
 [[nodiscard]] CompiledCode
 compile_block_without_table_list_planning(
     std::uint64_t pc, std::span<const std::uint32_t> instructions);

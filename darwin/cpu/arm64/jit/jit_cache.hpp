@@ -37,6 +37,9 @@ struct CompiledBlock final {
   bool link_target_safe{};
   bool native_fp{};
   bool guest_illegal{};
+  /* The guest SVCR mode the block was compiled for; with pc it forms the
+   * block's translation_key(), which also selects its cache set. */
+  std::uint8_t mode{};
 };
 
 struct CacheSet final {

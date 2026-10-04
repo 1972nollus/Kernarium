@@ -46,10 +46,12 @@ JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
   return site;
 }
 
-void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
+void JitExecutor::Implementation::train_indirect(std::uint64_t source_key,
                     const CompiledBlock &target) {
-  auto *site = indirect_links_.find(source_pc, link_generation_);
+  auto *site = indirect_links_.find(source_key, link_generation_);
+  /* A site only ever branches to code of its own mode. */
   if (site == nullptr || target.link == nullptr ||
+      target.mode != translation_key_mode(source_key) ||
       target.link_epoch != link_epoch_ || !target.link_target_safe) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     ++indirect_link_diagnostics_.unsafe_target_refusals;
@@ -150,14 +152,17 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
 }
 
 void JitExecutor::Implementation::refresh_cached_link_target(
-    std::uint64_t pc) {
+    std::uint64_t key) {
   if (link_generation_ == 0)
     return;
   auto &set = (*block_cache_)[cache_index(
-      link_generation_, pc, geometry_.cache_sets)];
+      link_generation_, key, geometry_.cache_sets)];
+  const auto pc = translation_key_pc(key);
+  const auto mode = translation_key_mode(key);
   for (auto &block : set.ways) {
     if (block.function == nullptr || block.generation != link_generation_ ||
-        block.code_changes != link_code_changes_ || block.pc != pc)
+        block.code_changes != link_code_changes_ || block.pc != pc ||
+        block.mode != mode)
       continue;
     refresh_link(block);
     return;

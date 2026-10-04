@@ -149,7 +149,7 @@ static_assert(sizeof(SharedTranslationCache) + allocation_allowance <=
 
 bool SharedTranslationCache::CodegenProfile::operator==(
     const CodegenProfile &other) const noexcept {
-  return capabilities == other.capabilities;
+  return capabilities == other.capabilities && sme_mode == other.sme_mode;
 }
 
 SharedTranslationCache::Shard *SharedTranslationCache::allocated_shard(
