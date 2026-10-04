@@ -195,11 +195,6 @@ repository/sse-reciprocal-estimates-special-inputs.s	sse-estimates
 k/single-instruction-tests/shldw_m16_r16_imm8	shld16-overcount
 k/single-instruction-tests/shldw_r16_r16_imm8	shld16-overcount
 
-# iret-flags (2): IRETQ at CPL 3 loads IF, IOPL and RF verbatim, and PUSHF
-# stores the RF it loaded.
-repository/iret-loads-user-flags.s	iret-flags
-repository/pushf-stores-no-resume-flag.s	iret-flags
-
 # smc-same-block (1): a store into the block being executed does not change
 # the instructions that block runs next.
 fex/SelfModifyingCode/SameBlock.asm	smc-same-block

@@ -11,7 +11,8 @@
  * but a fault saves the flags with RF set and a trap saves them as they are,
  * and an interrupt between the elements of a repeated string instruction
  * saves RF too. TF that IRET sets raises SIGTRAP after the instruction IRET
- * returns to.
+ * returns to. IRET at CPL 3 loads only the flags a task may change, plus RF,
+ * and PUSHF never stores RF.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
@@ -546,6 +547,52 @@ bool resume_flag_clears_at_next_instruction()
 	return resume_cleared("kill() right after sigreturn", before, 2,
 			      saved) && ok;
 }
+
+#if defined(__x86_64__)
+/* PUSHFQ right after an IRETQ that loads `image`, then a POPFQ of 0x202.
+ * The image may set AC, so every stack access stays aligned until then. */
+word iret_then_read_flags(word image)
+{
+	word flags;
+	__asm__ volatile(PROBE_IRET_TO_NEXT
+			 "pushfq\n\t"
+			 "popq %[flags]\n\t"
+			 "pushq $0x202\n\t"
+			 "popfq"
+			 : [flags] "=&r"(flags)
+			 : [image] "r"(image)
+			 : "rcx", "memory", "cc");
+	return flags;
+}
+
+bool flags_read(const char *what, word flags, word expected)
+{
+	if (flags == expected)
+		return true;
+	put("  ");
+	put(what);
+	put(": read ");
+	put_hex(flags);
+	put(", expected ");
+	put_hex(expected);
+	put("\n");
+	return false;
+}
+
+/* At CPL 3 IRET loads only CF, PF, AF, ZF, SF, TF, DF, OF, NT, RF, AC and
+ * ID: IF, IOPL, VM, VIF and VIP keep their values. PUSHF stores RF and VM
+ * as zero. TF stays clear, for it would trap after the next instruction. */
+bool user_flag_loads()
+{
+	bool ok = flags_read("PUSHFQ after IRETQ of every flag but TF and RF",
+			     iret_then_read_flags(0xfffffffffffefeffUL),
+			     0x244ed7);
+	ok &= flags_read("PUSHFQ after IRETQ of RF",
+			 iret_then_read_flags(initial_flags | flag_rf),
+			 initial_flags);
+	return ok;
+}
+#endif
 
 constexpr word flag_tf = 1UL << 8;
 constexpr long trap_signal = 5;
@@ -1148,6 +1195,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "resume"));
 	report("x86-64 TF set by IRET traps after one instruction",
 	       in_child(self, "step"));
+	report("x86-64 IRET loads only user flags and PUSHF stores no RF",
+	       in_child(self, "user-loads"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
 	report("x86-64 a REP string interrupted between elements shows RF",
@@ -1207,6 +1256,8 @@ extern "C" int probe_main(word *stack)
 		return 1;
 	}
 #if defined(__x86_64__)
+	if (count == 2 && equal(arguments[1], "user-loads"))
+		return user_flag_loads() ? 0 : 1;
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
 	put("usage: rflags-probe I386_PROBE\n");
