@@ -2221,6 +2221,22 @@ bool gathers()
 	"	pop %rbp\n"                                                  \
 	"	pop %rbx\n"                                                  \
 	"	ret\n"
+/* A repeated compare whose third element meets the unmapped page has run
+ * two or three: the setup runs those elements alone, so the expected state
+ * is theirs, and the restart moves the pointers and count back and sets
+ * every arithmetic flag, which the elements' own flags must replace. The
+ * REPE elements compare equal quadwords, the REPNE ones unequal bytes, the
+ * last 0x80 with 0. */
+#define CMPS_MIDWAY_REPE                                                     \
+	"movq $0x33, -12(%r9); movq $0x246, -4(%r9); leaq -12(%r9), %rsi; "  \
+	"leaq -16(%r10), %rdi; movl $5, %ecx; cmpsq; cmpsq; "                \
+	"leaq -2(%rcx), %rcx"
+#define CMPS_MIDWAY_REPNE                                                    \
+	"movl $0x00800201, (%r9); movq %r9, %rsi; leaq -3(%r10), %rdi; "     \
+	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx"
+#define CMPS_MIDWAY_RESTART(bytes, elements)                                 \
+	"leaq -" #bytes "(%rsi), %rsi; leaq -" #bytes "(%rdi), %rdi; "        \
+	"leaq " #elements "(%rcx), %rcx; pushq $0x8d5; popfq"
 #define STATE_CASES(X)                                                       \
 	X(adc, "", "", "adcq %rbx, (%r8)")                                   \
 	X(adc_across, "", "", "adcq %rbx, (%r9)")                            \
@@ -2248,6 +2264,10 @@ bool gathers()
 	  "rep movsb")                                                       \
 	X(repe_cmps, "movq %r8, %rsi; movq %r10, %rdi; movl $5, %ecx", "",   \
 	  "repe cmpsb")                                                      \
+	X(repe_cmps_midway, CMPS_MIDWAY_REPE, CMPS_MIDWAY_RESTART(16, 2),     \
+	  "repe cmpsq")                                                      \
+	X(repne_cmps_midway, CMPS_MIDWAY_REPNE, CMPS_MIDWAY_RESTART(3, 3),    \
+	  "repne cmpsb")                                                     \
 	X(cmpxchg_equal, "movq (%r8), %rax", "", "cmpxchgq %rcx, (%r8)")     \
 	X(cmpxchg_unequal, "", "", "cmpxchgq %rcx, (%r8)")                   \
 	X(cmpxchg8b, "", "", "cmpxchg8b (%r8)")                              \
@@ -2346,7 +2366,8 @@ alignas(4096) unsigned char state_pages[3 * page_bytes];
  * nothing: the frame shows every register, RFLAGS, the x87 stack and
  * control word, MXCSR and XMM0 as the instruction found them, and RIP at
  * it, whatever the instruction computed before, so the guest that resolves
- * the fault runs it again from scratch. */
+ * the fault runs it again from scratch. A repeated string instruction has
+ * done the elements before the faulting one, with their flags. */
 bool fault_state()
 {
 	unsigned char *const read_only = state_pages + page_bytes;

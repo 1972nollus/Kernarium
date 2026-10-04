@@ -33,7 +33,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Core/JIT/JITClass.h  | 102 +++++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 409 ++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |  12 +
- .../Interface/Core/OpcodeDispatcher.cpp       |  48 +-
+ .../Interface/Core/OpcodeDispatcher.cpp       | 116 ++++-
  .../Source/Interface/Core/OpcodeDispatcher.h  |  39 +-
  .../Core/SharedCodeBufferManager.cpp          |   2 +-
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
@@ -45,7 +45,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/include/FEXCore/Core/CoreState.h      | 114 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1842 insertions(+), 227 deletions(-)
+ 29 files changed, 1910 insertions(+), 227 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -2474,7 +2474,7 @@ index b03ed7db8b89c288c796021827d58324e3fb1981..0635b6f1143fda41f10fd2ef36551818
    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, SynchronousFaultData));
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b37c4ed9a 100644
+index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2fb537072 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -69,6 +69,29 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
@@ -2525,7 +2525,82 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b
  
      // Store the new stack pointer
      StoreGPRRegister(X86State::REG_RSP, NewSP);
-@@ -4195,6 +4218,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
+@@ -3353,6 +3376,74 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
+     } else {
+       StoreGPRRegister(X86State::REG_RSI, Dest_RSI, AddrSize);
+     }
++  } else if (CTX->Embedded) {
++    // An embedding host stops the loop between elements, for its budget or
++    // for a fault, and reads the flags there, so each element leaves the
++    // flags of its own compare, as the SCAS loop does.
++    CalculateDeferredFlags();
++
++    const bool REPE = Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_REP_PREFIX;
++
++    ForeachDirection([this, Op, Size, AddrSize, REPE](int32_t PtrDir) {
++      auto JumpStart = Jump();
++      auto LoopStart = CreateNewCodeBlockAfter(GetCurrentBlock());
++      SetJumpTarget(JumpStart, LoopStart);
++      SetCurrentCodeBlock(LoopStart);
++      StartNewBlock();
++
++      // Leave when RCX is 0.
++      Ref Counter = LoadGPRRegister(X86State::REG_RCX);
++      auto CounterJump = CondJump(Counter, CondClass::EQ);
++      IRPair<IROp_CondJump> InnerJump;
++
++      auto LoopTail = CreateNewCodeBlockAfter(LoopStart);
++      SetFalseJumpTarget(CounterJump, LoopTail);
++      SetCurrentCodeBlock(LoopTail);
++      StartNewBlock();
++
++      {
++        Ref Src_RSI = LoadGPRRegister(X86State::REG_RSI, AddrSize);
++        Ref Src_RDI = LoadGPRRegister(X86State::REG_RDI, AddrSize);
++
++        Ref Dest_RSI = AppendSegmentOffset(Src_RSI, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX);
++        Ref Dest_RDI = AppendSegmentOffset(Src_RDI, 0, X86Tables::DecodeFlags::FLAG_ES_PREFIX, true);
++
++        auto Src1 = _LoadMemGPRAutoTSO(Size, Dest_RDI, Size);
++        auto Src2 = _LoadMemGPR(Size, Dest_RSI, Size);
++
++        CalculateFlags_SUB(Size, Src2, Src1);
++        CalculateDeferredFlags();
++
++        Ref TailCounter = Sub(OpSize::i64Bit, LoadGPRRegister(X86State::REG_RCX), 1);
++        StoreGPRRegister(X86State::REG_RCX, TailCounter);
++
++        Dest_RDI = Add(AddrSize, Src_RDI, PtrDir * static_cast<int32_t>(IR::OpSizeToSize(Size)));
++        if (Is64BitMode && AddrSize == OpSize::i32Bit) {
++          Dest_RDI = _Bfe(OpSize::i64Bit, 32, 0, Dest_RDI);
++          StoreGPRRegister(X86State::REG_RDI, Dest_RDI);
++        } else {
++          StoreGPRRegister(X86State::REG_RDI, Dest_RDI, AddrSize);
++        }
++
++        Dest_RSI = Add(AddrSize, Src_RSI, PtrDir * static_cast<int32_t>(IR::OpSizeToSize(Size)));
++        if (Is64BitMode && AddrSize == OpSize::i32Bit) {
++          Dest_RSI = _Bfe(OpSize::i64Bit, 32, 0, Dest_RSI);
++          StoreGPRRegister(X86State::REG_RSI, Dest_RSI);
++        } else {
++          StoreGPRRegister(X86State::REG_RSI, Dest_RSI, AddrSize);
++        }
++
++        CalculateDeferredFlags();
++        InnerJump = CondJumpNZCV(REPE ? CondClass::EQ : CondClass::NEQ);
++        SetTrueJumpTarget(InnerJump, LoopStart);
++      }
++
++      auto LoopEnd = CreateNewCodeBlockAfter(LoopTail);
++      SetTrueJumpTarget(CounterJump, LoopEnd);
++      SetFalseJumpTarget(InnerJump, LoopEnd);
++      SetCurrentCodeBlock(LoopEnd);
++      StartNewBlock();
++    });
+   } else {
+     // Calculate flags early.
+     CalculateDeferredFlags();
+@@ -4195,6 +4286,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
  }
  
  void OpDispatchBuilder::UpdatePrefixFromSegment(Ref Segment, uint32_t SegmentReg) {
@@ -2538,7 +2613,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b
    // Use BFE to extract the selector index in bits [15,3] of the segment register.
    // In some cases the upper 16-bits of the 32-bit GPR contain garbage to ignore.
    auto GDT = _Bfe(OpSize::i32Bit, 1, 2, Segment);
-@@ -4780,7 +4809,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4780,7 +4877,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
      if (CTX->HostFeatures.HostType == FEXCore::HostFeatures::HostTypeEnum::Linux) {
        constexpr uint8_t SYSCALL_LITERAL = 0x80;
        if (Literal == SYSCALL_LITERAL) {
@@ -2549,7 +2624,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b
            LogMan::Msg::EFmt("[Unsupported] Trying to execute 32-bit syscall from a 64-bit process.");
            UnhandledOp(Op);
            return;
-@@ -4808,6 +4839,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4808,6 +4907,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
        }
      }
  

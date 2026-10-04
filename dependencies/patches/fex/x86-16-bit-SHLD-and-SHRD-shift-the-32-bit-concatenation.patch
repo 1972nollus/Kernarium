@@ -14,7 +14,7 @@ the last bit shifted out.
  1 file changed, 44 insertions(+), 26 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 71f734532beb084431783a6cbf5195c2bc9dada8..9173c141fb1133145f40e8d238d58e4c9a5fab69 100644
+index 3a4a115cd36aabd33f7ce1f2138a8fb69a1663cc..3babbe39520497dbf0bcc53a139842de31ded929 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -1505,14 +1505,23 @@ void OpDispatchBuilder::SHLDOp(OpcodeArgs) {

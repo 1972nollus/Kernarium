@@ -15,7 +15,7 @@ SetPackedRFLAG takes the mask of the flags it writes.
  3 files changed, 23 insertions(+), 12 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..7ba3cafc6ab2fcdfb8a766b8308454d0b8990cd8 100644
+index 1e0ce543fa2a76b351d82beb43461af2fb537072..3c296bf0d290411b749b06be7b352bde37eff503 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -217,8 +217,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
@@ -30,7 +30,7 @@ index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..7ba3cafc6ab2fcdfb8a766b8308454d0
  
    if (Is64BitMode) {
      // RSP and SS only happen in 64-bit mode or if this is a CPL mode jump!
-@@ -3689,20 +3690,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
+@@ -3757,20 +3758,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
  void OpDispatchBuilder::PUSHFOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  

@@ -83,6 +83,8 @@ dispatch also:
 REP MOVS and REP STOS run element by element in page-bounded chunks, spend the
 budget as they go and stop between elements, with RF, when it is spent or an
 interrupt is pending. A fault leaves RCX, RSI and RDI with the progress made.
+Repeated CMPS and SCAS compute each element's flags as it completes, so a
+stop between elements shows the flags of the last compare.
 
 A dispatch reports as retired only the instructions that completed, as the
 gadget engine does: a fault, `#UD` or `#DE` retires nothing of its instruction,

@@ -45,10 +45,10 @@ index 0635b6f1143fda41f10fd2ef36551818349cc6f2..f2fcc127a65c18e66f53d4dac1d1749f
  }
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 9173c141fb1133145f40e8d238d58e4c9a5fab69..73576a58df71c7f6c924192341fe5ee9f2ee519c 100644
+index 3babbe39520497dbf0bcc53a139842de31ded929..2274726101e1ec5d7023b96ef3e4057989c827db 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -5143,6 +5143,16 @@ void OpDispatchBuilder::CRC32(OpcodeArgs) {
+@@ -5211,6 +5211,16 @@ void OpDispatchBuilder::CRC32(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::RDRANDOp(OpcodeArgs, bool Reseed) {

@@ -190,7 +190,7 @@ index f4f029a1fdff5e5da6f2e416bd068fc3e0e43016..fd15aa6db5245409e0673a1a71d868b8
        const auto Dst = GetReg(Node);
        switch (OpSize) {
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 73576a58df71c7f6c924192341fe5ee9f2ee519c..bb8c46cc44637ca9ed386212d6a22dfc73406f64 100644
+index 2274726101e1ec5d7023b96ef3e4057989c827db..8a03ce58e3d72ae23d32c64f2986c99c66ae6056 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -209,6 +209,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
