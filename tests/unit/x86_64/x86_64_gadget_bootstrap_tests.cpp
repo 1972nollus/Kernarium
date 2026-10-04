@@ -6415,6 +6415,85 @@ struct InvalidOperationCase {
 	return true;
 }
 
+/* A SIMD instruction with xmm0, xmm1 and xmm2 (low quadword first) as its
+ * registers, run singly and checked under `mxcsr`, which masks every
+ * exception: it must leave `result` in the low quadword of xmm0 and MXCSR
+ * as `after`, the flags x86 raises for it, which an Intel Xeon 8581C
+ * confirmed. */
+struct FlagCase {
+	std::string_view name;
+	std::vector<std::uint8_t> bytes;
+	std::array<std::array<std::uint64_t, 2>, 3> registers;
+	std::uint32_t mxcsr;
+	std::uint32_t after;
+	std::uint64_t result;
+};
+
+[[nodiscard]] bool flags_follow_x86(const FlagCase &test)
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	std::vector<std::byte> code(test.bytes.size());
+	std::memcpy(code.data(), test.bytes.data(), code.size());
+	memory.fill(0, code);
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 64,
+		{}, gadgets::check_simd);
+	CpuState cpu{};
+	cpu.mxcsr = test.mxcsr;
+	for (std::size_t index = 0; index < 3; ++index)
+		std::memcpy(cpu.vectors[index].data(), test.registers[index].data(),
+			16);
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	const auto result = built.status == gadgets::BuildStatus::built ?
+		gadgets::execute_checked(built.program, cpu, memory, executor, 1,
+			{}, false, gadgets::check_simd) :
+		gadgets::ExecuteResult{};
+	std::uint64_t low{};
+	std::memcpy(&low, cpu.vectors[0].data(), sizeof(low));
+	if (result.event == uml::cpu::EngineEvent::continued &&
+		result.retired_instructions == 1 && cpu.mxcsr == test.after &&
+		low == test.result)
+		return true;
+	std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d mxcsr "
+		"%#x (x86 %#x) xmm0 %#llx (x86 %#llx)\n",
+		static_cast<int>(test.name.size()), test.name.data(),
+		static_cast<int>(result.event), cpu.mxcsr, test.after,
+		static_cast<unsigned long long>(low),
+		static_cast<unsigned long long>(test.result));
+	return expect(false, "a checked SIMD instruction raised other flags "
+		"than x86");
+}
+
+/* HSUBPS and ADDSUB compute only the lanes x86 does, so a checked run sees
+ * no flag from the operation x86 skips: ADDSUBPS adds two infinities in
+ * lane 3 without subtracting them, ADDSUBPD subtracts the largest double
+ * from itself without adding it, and HSUBPS rounding down subtracts a
+ * small negative from the largest single without overflowing the other
+ * way. */
+[[nodiscard]] bool checked_horizontal_flags_follow_x86()
+{
+	constexpr std::uint64_t ones = 0x3f80'0000'3f80'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ADDSUBPS of infinities in lane 3", {0xf2, 0x0f, 0xd0, 0xc1},
+		 {{{ones, 0x7f80'0000'3f80'0000ULL},
+		   {ones, 0x7f80'0000'3f80'0000ULL}, {}}},
+		 0x1f80, 0x1f80, 0x4000'0000'0000'0000ULL},
+		{"ADDSUBPD of the largest double", {0x66, 0x0f, 0xd0, 0xc1},
+		 {{{0x7fef'ffff'ffff'ffffULL, 0x3ff0'0000'0000'0000ULL},
+		   {0x7fef'ffff'ffff'ffffULL, 0x3ff0'0000'0000'0000ULL}, {}}},
+		 0x1f80, 0x1f80, 0},
+		{"HSUBPS rounding down near the largest single",
+		 {0xf2, 0x0f, 0x7d, 0xc1},
+		 {{{0xf300'0000'7f7f'ffffULL, ones}, {ones, ones}, {}}},
+		 0x3f80, 0x3fa0, 0x8000'0000'7f7f'ffffULL},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8499,6 +8578,7 @@ int main()
 		checked_simd_invalid_operations_follow_x86() &&
 		checked_fma_invalid_operations_follow_x86() &&
 		checked_comparison_invalid_operations_follow_x86() &&
+		checked_horizontal_flags_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

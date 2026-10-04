@@ -397,7 +397,8 @@ checks, and runs every other block, linked, as `execute` does:
   gathers and the extended-state images are exempt, as on x86.
 - #XM, run checked: the host's cumulative exception flags are cleared around
   the instruction and read back as MXCSR's; a scalar instruction's host code
-  computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
+  computes lane 0 alone, HSUB and ADDSUB compute only the operation x86 does
+  in each lane, COMIS compares with FCMPE, and a conversion to an
   integer out of range raises the host's invalid-operation flag. A denormal
   operand, which no host flag shows, is found in the sources before the
   instruction runs, where x86 raises it: not under DAZ, nor in a lane holding a
