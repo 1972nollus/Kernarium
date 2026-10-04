@@ -3,13 +3,16 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 01:55:26 +0900
 Subject: [PATCH] cmake: build only FEXCore for an embedding Darwin host
 
+With FEXCORE_EMBEDDED, configure on Apple, skip the frontends under
+Source/ and the range-v3 only they use, and spell link-time garbage
+collection for ld64.
 ---
- CMakeLists.txt            | 5 ++++-
+ CMakeLists.txt            | 8 +++++++-
  Data/CMake/LinkerGC.cmake | 7 ++++++-
- 2 files changed, 10 insertions(+), 2 deletions(-)
+ 2 files changed, 13 insertions(+), 2 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 63f75f100bb15ec6128e4852cbf9ff3644b6c1d5..c5cae3ec96595601bf45e739fd2c5fa08dc538b2 100644
+index 63f75f100bb15ec6128e4852cbf9ff3644b6c1d5..8feed3afbcc08e3f23d6359bc9672b79e4e2d5ff 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -36,6 +36,7 @@ set_property(CACHE FEXCORE_PROFILER_BACKEND PROPERTY STRINGS gpuvis tracy)
@@ -29,7 +32,22 @@ index 63f75f100bb15ec6128e4852cbf9ff3644b6c1d5..c5cae3ec96595601bf45e739fd2c5fa0
    message(FATAL_ERROR "Unsupported system type ${CMAKE_SYSTEM_NAME}."
      " FEX only supports Linux and Windows."
      " If you believe this is in error, file an issue.")
-@@ -604,6 +605,7 @@ add_subdirectory(FEXHeaderUtils/)
+@@ -435,11 +436,14 @@ if (NOT fmt_FOUND)
+   add_subdirectory(External/fmt/)
+ endif()
+ 
++# Only the frontends under Source/ use range-v3.
++if (NOT FEXCORE_EMBEDDED)
+ find_package(range-v3 QUIET)
+ if (NOT range-v3_FOUND)
+   add_subdirectory(External/range-v3/)
+   target_compile_definitions(range-v3 INTERFACE RANGES_DISABLE_DEPRECATED_WARNINGS)
+ endif()
++endif()
+ 
+ add_subdirectory(External/tiny-json/)
+ 
+@@ -604,6 +608,7 @@ add_subdirectory(FEXHeaderUtils/)
  add_subdirectory(CodeEmitter/)
  add_subdirectory(FEXCore/)
  
@@ -37,7 +55,7 @@ index 63f75f100bb15ec6128e4852cbf9ff3644b6c1d5..c5cae3ec96595601bf45e739fd2c5fa0
  if (ARCHITECTURE_arm64 AND NOT MINGW AND NOT BUILD_STEAM_SUPPORT)
    # Binfmt_misc files must be installed prior to Source/ installs
    add_subdirectory(Data/binfmts/)
-@@ -614,6 +616,7 @@ add_subdirectory(Source/)
+@@ -614,6 +619,7 @@ add_subdirectory(Source/)
  if (NOT BUILD_STEAM_SUPPORT)
    add_subdirectory(Data/AppConfig/)
  endif()

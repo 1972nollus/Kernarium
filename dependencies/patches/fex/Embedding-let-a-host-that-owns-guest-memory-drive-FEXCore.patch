@@ -10,14 +10,15 @@ a shared dispatcher stub, block entries spend an instruction budget,
 SYSCALL/INT 0x80 and guest exceptions leave the dispatch, the decoder
 reads guest code through host pointers, CPUID is never folded, and
 x87 state and the register cache are precise at every instruction.
-Darwin: executable memory and its write window come from host hooks,
-x18 stays reserved, and VirtualDontNeed zeroes.
+Darwin: executable memory, its release and its write window come only
+from hooks the host must install, so FEXCore maps no executable memory
+itself; x18 stays reserved, and VirtualDontNeed zeroes.
 ---
  FEXCore/Source/CMakeLists.txt                 |   1 +
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
  FEXCore/Source/Interface/Core/Core.cpp        |  13 +-
- .../Interface/Core/Dispatcher/Dispatcher.cpp  |  63 ++-
+ .../Interface/Core/Dispatcher/Dispatcher.cpp  |  65 ++-
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
  FEXCore/Source/Interface/Core/Frontend.h      |   4 +
@@ -31,16 +32,17 @@ x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |   1 +
  .../Interface/Core/OpcodeDispatcher.cpp       |  48 ++-
  .../Source/Interface/Core/OpcodeDispatcher.h  |  35 +-
+ .../Core/SharedCodeBufferManager.cpp          |   2 +-
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
  FEXCore/Source/Interface/IR/Passes.h          |   2 +-
  .../IR/Passes/RegisterAllocationPass.cpp      |   4 +-
  .../IR/Passes/x87StackOptimizationPass.cpp    |  34 +-
- FEXCore/Source/Utils/Allocator.cpp            |  41 ++
+ FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
  FEXCore/include/FEXCore/Core/CoreState.h      |  80 ++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
- .../include/FEXCore/Utils/AllocatorHooks.h    |  67 +++
- 27 files changed, 1251 insertions(+), 64 deletions(-)
+ .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
+ 28 files changed, 1259 insertions(+), 66 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
@@ -154,7 +156,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..39f790f2fe061a3cc6bd9a54f14bb3e2
          }
  
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..fce955f12cdaabc5efc5d7bbaa226ab047660942 100644
+index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..8454d7f4ff1f00869ec8903d013decb81b345620 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -34,11 +34,12 @@ static void SleepThread(FEXCore::Context::ContextImpl* CTX, FEXCore::Core::CpuSt
@@ -171,6 +173,15 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..fce955f12cdaabc5efc5d7bbaa226ab0
    EmitDispatcher();
  
    FEXCore::Allocator::VirtualName("FEXMem_Misc", reinterpret_cast<void*>(GetBufferBase()), MAX_DISPATCHER_CODE_SIZE);
+@@ -47,7 +48,7 @@ Dispatcher::Dispatcher(FEXCore::Context::ContextImpl* ctx)
+ Dispatcher::~Dispatcher() {
+   auto BufferSize = GetBufferSize();
+   if (BufferSize) {
+-    FEXCore::Allocator::VirtualFree(GetBufferBase(), BufferSize);
++    FEXCore::Allocator::VirtualFreeExecutable(GetBufferBase(), BufferSize);
+   }
+ }
+ 
 @@ -432,6 +433,56 @@ void Dispatcher::EmitDispatcher() {
      }
    }
@@ -1757,6 +1768,19 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..302246f6f58c1ac19a79e1b2fcad6161
      StoreGPRRegister(X86State::REG_RSP, NewSP);
      FlushRegisterCache();
    }
+diff --git a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
+index f3171d4ebfce38ae8978f6a822f0a2966488ba75..e479e0c919f11876380ff3d2bb664b4f7967987e 100644
+--- a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
++++ b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
+@@ -37,7 +37,7 @@ CodeBuffer::CodeBuffer(size_t Size)
+ }
+ 
+ CodeBuffer::~CodeBuffer() {
+-  FEXCore::Allocator::VirtualFree(Ptr, AllocatedSize);
++  FEXCore::Allocator::VirtualFreeExecutable(Ptr, AllocatedSize);
+ }
+ 
+ fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::AllocateNew(size_t Size) {
 diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
 index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f6d55435c0ca0779861386eab3a9993d78af7da 100644
 --- a/FEXCore/Source/Interface/IR/PassManager.cpp
@@ -1893,42 +1917,34 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c3397085
  }
  } // namespace FEXCore::IR
 diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
-index 2060f269cf94978fcbdd7cca32e161763284aa57..1ad53fce959bd81d75fa7ab1afc70e6eafed7ae6 100644
+index 2060f269cf94978fcbdd7cca32e161763284aa57..fd7178d302f72851726df468d10a74ccfde3934e 100644
 --- a/FEXCore/Source/Utils/Allocator.cpp
 +++ b/FEXCore/Source/Utils/Allocator.cpp
-@@ -23,7 +23,11 @@
+@@ -23,8 +23,10 @@
  #include <fcntl.h>
  #ifndef _WIN32
  #include <sys/mman.h>
 +#ifndef __APPLE__
  #include <sys/user.h>
-+#else
-+#include <pthread.h>
-+#endif
  #endif
++#endif
  
  namespace fextl::pmr {
-@@ -34,6 +38,43 @@ std::pmr::memory_resource* get_default_resource() {
+ static fextl::pmr::default_resource FEXDefaultResource;
+@@ -34,6 +36,36 @@ std::pmr::memory_resource* get_default_resource() {
  } // namespace fextl::pmr
  
  namespace FEXCore::Allocator {
 +#ifdef __APPLE__
 +namespace {
-+  void* DefaultAllocateExecutable(size_t Size) {
-+    void* Ptr = ::mmap(nullptr, Size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
-+    return Ptr == MAP_FAILED ? nullptr : Ptr;
-+  }
-+  void DefaultFreeExecutable(void* Ptr, size_t Size) {
-+    ::munmap(Ptr, Size);
-+  }
-+  void DefaultSetWritable(bool Writable) {
-+    pthread_jit_write_protect_np(Writable ? 0 : 1);
-+  }
-+  ExecutableMemoryHooks ExecutableHooks {DefaultAllocateExecutable, DefaultFreeExecutable, DefaultSetWritable};
++  ExecutableMemoryHooks ExecutableHooks {};
 +  thread_local uint32_t ExecutableWriteDepth {};
 +} // namespace
 +
 +void SetExecutableMemoryHooks(const ExecutableMemoryHooks& Hooks) {
++  if (!Hooks.Allocate || !Hooks.Free || !Hooks.SetWritable) {
++    ERROR_AND_DIE_FMT("Executable-memory hooks must set every member");
++  }
 +  ExecutableHooks = Hooks;
 +}
 +
@@ -2102,7 +2118,7 @@ index d1f4decd75f0ae61432c7a4ae4b90386e472ea46..bc397bb363fec5cde2c6940301c0e4f0
  
  class SyscallHandler;
 diff --git a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
-index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993320c2023 100644
+index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..fb202288513215a2915e33dccdfc8aa172c863d1 100644
 --- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
 +++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
 @@ -8,6 +8,8 @@
@@ -2114,16 +2130,16 @@ index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993
  #else
  #include <malloc.h>
  #endif
-@@ -130,11 +132,59 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
+@@ -130,11 +132,65 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
  
  // All commit parameters are ignored here, they are unnecessary as Linux supports overcommit
  
 +#ifdef __APPLE__
 +/* Darwin forbids writable-and-executable mappings for a hardened process and
 + * gives JIT memory per-thread write protection instead. An embedding host owns
-+ * that memory: it supplies the allocator and the write window, so FEXCore never
-+ * maps executable memory itself. The defaults below are only for a host that
-+ * installs nothing. */
++ * that memory: it installs these hooks before it creates a context, and
++ * FEXCore never maps, unmaps or write-enables executable memory itself. There
++ * are no defaults: without the hooks an executable allocation is fatal. */
 +struct ExecutableMemoryHooks {
 +  void* (*Allocate)(size_t Size);
 +  void (*Free)(void* Ptr, size_t Size);
@@ -2131,6 +2147,7 @@ index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993
 +   * executable allocation. Calls do not nest; FEXCore counts them. */
 +  void (*SetWritable)(bool Writable);
 +};
++/* Every member must be set. */
 +FEX_DEFAULT_VISIBILITY void SetExecutableMemoryHooks(const ExecutableMemoryHooks& Hooks);
 +FEX_DEFAULT_VISIBILITY const ExecutableMemoryHooks& GetExecutableMemoryHooks();
 +FEX_DEFAULT_VISIBILITY void BeginExecutableWrite();
@@ -2158,7 +2175,11 @@ index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993
  inline void* VirtualAlloc(size_t Size, bool Execute = false, bool Commit = true) {
 +#ifdef __APPLE__
 +  if (Execute) {
-+    void* Ptr = GetExecutableMemoryHooks().Allocate(Size);
++    const ExecutableMemoryHooks& Hooks = GetExecutableMemoryHooks();
++    if (!Hooks.Allocate) {
++      ERROR_AND_DIE_FMT("FEXCore needs executable memory, but its embedder installed no hooks");
++    }
++    void* Ptr = Hooks.Allocate(Size);
 +    return Ptr ? Ptr : MAP_FAILED;
 +  }
 +#endif
@@ -2167,14 +2188,15 @@ index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993
  
  inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Commit = true) {
 +#ifdef __APPLE__
-+  if (Execute && Base == nullptr) {
-+    return VirtualAlloc(Size, true, Commit);
++  if (Execute) {
++    // The embedder's allocator places executable memory, never FEXCore.
++    return Base == nullptr ? VirtualAlloc(Size, true, Commit) : MAP_FAILED;
 +  }
 +#endif
    return FEXCore::Allocator::mmap(Base, Size, PROT_READ | PROT_WRITE | (Execute ? PROT_EXEC : 0), MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
  }
  
-@@ -142,7 +192,24 @@ inline void VirtualFree(void* Ptr, size_t Size) {
+@@ -142,7 +198,24 @@ inline void VirtualFree(void* Ptr, size_t Size) {
    FEXCore::Allocator::munmap(Ptr, Size);
  }
  inline void VirtualDontNeed(void* Ptr, size_t Size, bool Recommit = true) {
@@ -2199,3 +2221,19 @@ index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993
  }
  inline bool VirtualProtect(void* Ptr, size_t Size, ProtectOptions options) {
    int prot {PROT_NONE};
+@@ -172,6 +245,15 @@ inline void VirtualTHPControl(const void* Ptr, size_t Size, THPControl Control)
+ 
+ #endif
+ 
++/* Frees memory that VirtualAlloc returned with Execute set. */
++inline void VirtualFreeExecutable(void* Ptr, size_t Size) {
++#ifdef __APPLE__
++  GetExecutableMemoryHooks().Free(Ptr, Size);
++#else
++  VirtualFree(Ptr, Size);
++#endif
++}
++
+ // Memory allocation routines to be defined externally.
+ // This allows to use jemalloc for emulation while using the normal allocator
+ // for host tools without building FEXCore twice.
