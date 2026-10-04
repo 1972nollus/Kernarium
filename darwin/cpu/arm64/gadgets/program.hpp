@@ -314,6 +314,9 @@ struct BuildOptions final {
 	 */
 	bool force_software_dotprod{};
 	bool force_software_i8mm{};
+	/* The guest SVCR mode the program runs in (svcr_sm, svcr_za), which
+	 * decides what each SME and floating-point word may compile to. */
+	std::uint8_t svcr{};
 	::uml::cpu::HostCapabilities host_capabilities{
 		::uml::cpu::host_capabilities()};
 };
