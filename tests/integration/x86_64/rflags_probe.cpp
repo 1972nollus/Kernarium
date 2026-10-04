@@ -12,7 +12,8 @@
  * and an interrupt between the elements of a repeated string instruction
  * saves RF too. TF that IRET sets raises SIGTRAP after the instruction IRET
  * returns to. POPF at CPL 3 loads only the flags a task may change, IRET
- * those and RF, and PUSHF never stores RF.
+ * those and RF, and PUSHF never stores RF. IRET without REX.W pops a 32-bit
+ * frame in 64-bit mode.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
@@ -629,6 +630,44 @@ bool user_flag_loads()
 			 initial_flags);
 	return ok;
 }
+
+/* IRET without REX.W in 64-bit mode pops 32-bit EIP, CS, EFLAGS, ESP and
+ * SS, each zero-extended. Its frame and the stack it returns to sit below
+ * 4 GiB, in the static image. */
+alignas(16) u32 iretl_frame[8];
+alignas(16) word iretl_stack[8];
+word iretl_saved_sp;
+
+bool iretl_pops_a_32_bit_frame()
+{
+	word flags;
+	word sp;
+	__asm__ volatile("movq %%rsp, %[saved]\n\t"
+			 "leaq %[frame], %%rsp\n\t"
+			 "leaq 1f(%%rip), %%rcx\n\t"
+			 "movl %%ecx, (%%rsp)\n\t"
+			 "movl $0x33, 4(%%rsp)\n\t"
+			 "movl $0xfffefeff, 8(%%rsp)\n\t"
+			 "leaq %[stack], %%rcx\n\t"
+			 "movl %%ecx, 12(%%rsp)\n\t"
+			 "movl $0x2b, 16(%%rsp)\n\t"
+			 "iretl\n"
+			 "1:\tpushfq\n\t"
+			 "popq %[flags]\n\t"
+			 "movq %%rsp, %[sp]\n\t"
+			 "movq %[saved], %%rsp\n\t"
+			 "pushq $0x202\n\t"
+			 "popfq"
+			 : [flags] "=&r"(flags), [sp] "=&r"(sp),
+			   [saved] "=m"(iretl_saved_sp), [frame] "+m"(iretl_frame)
+			 : [stack] "m"(iretl_stack[4])
+			 : "rcx", "memory", "cc");
+	bool ok = flags_read("PUSHFQ after IRETL of every flag but TF and RF",
+			     flags, 0x244ed7);
+	ok &= flags_read("RSP after IRETL",
+			 sp, reinterpret_cast<word>(&iretl_stack[4]));
+	return ok;
+}
 #endif
 
 constexpr word flag_tf = 1UL << 8;
@@ -1234,6 +1273,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "step"));
 	report("x86-64 POPF and IRET load only user flags, PUSHF no RF",
 	       in_child(self, "user-loads"));
+	report("x86-64 IRET without REX.W pops a 32-bit frame",
+	       in_child(self, "iretl"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
 	report("x86-64 a REP string interrupted between elements shows RF",
@@ -1295,6 +1336,8 @@ extern "C" int probe_main(word *stack)
 #if defined(__x86_64__)
 	if (count == 2 && equal(arguments[1], "user-loads"))
 		return user_flag_loads() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "iretl"))
+		return iretl_pops_a_32_bit_frame() ? 0 : 1;
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
 	put("usage: rflags-probe I386_PROBE\n");
