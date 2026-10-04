@@ -10,8 +10,15 @@ a shared dispatcher stub, block entries spend an instruction budget,
 SYSCALL/INT 0x80 and guest exceptions leave the dispatch, the decoder
 reads guest code through host pointers, CPUID is never folded, and
 x87 state and the register cache are precise at every instruction.
-A compile checks every write against its buffer's end and restarts
-with a larger buffer, so growth never depends on a guard page.
+An exit reports only the instructions that completed, a store into
+the code of the unit running it ends that unit first, and DIV and
+IDIV raise #DE before they write. Gathers and masked moves translate
+each element, a locked operand that crosses a 16-byte granule runs
+on a host copy under the host's lock and is written back with
+EMBEDDER_ACCESS_COMMIT, and a repeated CMPS leaves each element's
+flags. A compile checks every write against its buffer's end and
+restarts with a larger buffer, so growth never depends on a guard
+page.
 Darwin: executable memory, its release and its write window come only
 from hooks the host must install, so FEXCore maps no executable memory
 itself; x18 stays reserved, and VirtualDontNeed zeroes.
