@@ -57,6 +57,12 @@ endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
 
+# The guest-SME policy, the host prober, the SME state every SME lane
+# shares and the identification registers, through the guest selector's
+# entry points.
+uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
+    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
 uml_add_arm64_unit_test(base_bit_allocation)

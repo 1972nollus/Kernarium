@@ -20,10 +20,13 @@ The cases cover, for each record:
   state, MSR SVCR, MRS SVCR, and the TPIDR2_EL0 accesses;
 - classify: one witness word per table row in each mode it needs and in each
   mode that lacks one of them (SM=0, ZA=0), the rows outside the profile in
-  both modes, and the evidence-binding witness of each SVE or SME alias,
-  which has no row of its own;
+  both modes, and the evidence-binding witness of each SVE or SME entry
+  without a row of its own: an alias, which its base instruction's row
+  decodes, or a form the architecture executes only in Debug state (MOVT
+  between ZT0 and a general register), which is UNDEFINED in every mode;
 - fpsimd: the witness of every FP&SIMD class in streaming mode, where
-  AdvSIMD traps and the scalar FP forms execute;
+  AdvSIMD traps and the scalar FP forms execute, except the classes of
+  inventory entries the virtual CPU omits;
 - operands: each operand field of each profile row at the lowest and highest
   register its alignment allows, with the other operands distinct; every
   value of each short immediate or size field and both extremes of a wider
@@ -731,7 +734,8 @@ def control_drafts() -> list[Draft]:
 def alias_witnesses(table) -> list[tuple[str, str, int]]:
     """The evidence-binding witnesses of the SVE and SME inventory entries
     without a table row of their own: aliases, whose words their base
-    instruction's rows decode."""
+    instruction's rows decode, and Debug-state-only forms, whose words no
+    row decodes."""
     rows = {row.stable_id for row in table.rows}
     with corpus.BINDINGS.open(encoding="utf-8", newline="") as source:
         return [(row["stable_id"], row["architectural_form"],
@@ -746,7 +750,16 @@ def classify_drafts(table) -> list[Draft]:
     index = RowIndex(table)
     for stable_id, form, word in alias_witnesses(table):
         row = index.row_for(word)
-        if row is None or not row.in_profile:
+        if row is None:
+            for svcr in (0, SM | ZA):
+                drafts.append(Draft(
+                    group="classify",
+                    name=f"{stable_id} {form} {word:08x} outside Debug "
+                         f"state, {svcr_name(svcr)}",
+                    words=(word,), svcr=svcr, expect="illegal",
+                    invalid=True))
+            continue
+        if not row.in_profile:
             raise SystemExit(f"{stable_id} {word:08x}: an alias witness "
                              "outside the profile's rows")
         need = mode_svcr(row)
@@ -791,10 +804,28 @@ def load_store(word: int) -> bool:
     return (word >> 25 & 5) == 4
 
 
+def absent_entries() -> set[str]:
+    """The inventory entries whose features the virtual CPU omits; the host
+    may implement them, but the guest's result is UNDEFINED, which the
+    absent-feature records already expect."""
+    with corpus.INVENTORY.open(encoding="utf-8", newline="") as source:
+        return {row["stable_id"]
+                for row in csv.DictReader(source, delimiter="\t")
+                if row["engine_status"] == "absent"}
+
+
 def fpsimd_drafts(table) -> list[Draft]:
     drafts = []
+    absent = absent_entries()
     for row in table.fp_simd:
+        if row.stable_id in absent:
+            continue
         word = row.witness
+        if word & 0x3C40_0000 == 0x2C40_0000 and \
+                word >> 10 & 31 == word & 31:
+            # A SIMD&FP load pair with Rt == Rt2 is CONSTRAINED
+            # UNPREDICTABLE, and the host makes it UNDEFINED.
+            word = word & ~(31 << 10) | ((word & 31) + 1) % 32 << 10
         words: tuple[int, ...] = (word,)
         draft = Draft(group="fpsimd",
                       name=f"{row.stable_id} {row.encoding} {word:08x} "
@@ -1143,6 +1174,18 @@ def write_dump(path: pathlib.Path, header: dict, lines: list[str],
                blobs: dict[str, bytes], records: list[dict]) -> None:
     known = {json.loads(line)["blob"] for line in lines if '"blob"' in
              line[:12]}
+    # A dump exported before the SME profile tokens lacks those the native
+    # records name; they go after its own, which keep their indices.
+    platform = corpus.feature_tokens()
+    used = {token for record in records for case in record["cases"]
+            for token in case["native"]}
+    if not used <= set(platform):
+        raise SystemExit("sme-native-corpus: unknown native features " +
+                         ", ".join(sorted(used - set(platform))))
+    tokens = list(header["feature_tokens"])
+    header["feature_tokens"] = tokens + [token for token in platform
+                                         if token in used and
+                                         token not in tokens]
     with path.open("w", encoding="utf-8") as sink:
         sink.write(json.dumps(header, sort_keys=True) + "\n")
         for line in lines:

@@ -30,6 +30,10 @@ enum class EngineEvent : int {
 	/* x86 BOUND found its index outside the bounds: #BR, a fault. RIP names
 	 * the BOUND. */
 	bound_range = 13,
+	/* arm64: an instruction would set PSTATE.SM or PSTATE.ZA for a task
+	 * with no SME storage. It did not retire; the kernel allocates the
+	 * storage and enters the task again at the same PC. */
+	sme_access = 14,
 };
 
 /* An exit of one of these kinds reports the instruction that raised it rather
@@ -42,6 +46,7 @@ enum class EngineEvent : int {
 	case EngineEvent::memory_fault:
 	case EngineEvent::illegal_instruction:
 	case EngineEvent::floating_point_trap:
+	case EngineEvent::sme_access:
 		return true;
 	default:
 		return false;
@@ -60,6 +65,8 @@ enum class ExitReason {
 	/* A requested single step retired one instruction and had no other exit. */
 	single_step,
 	fatal,
+	/* EngineEvent::sme_access. */
+	sme_access,
 };
 
 using InterruptPoll = bool (*)(void *) noexcept;

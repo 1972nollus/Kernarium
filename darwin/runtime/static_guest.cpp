@@ -9,6 +9,7 @@
 #endif
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/floating_controls.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
 #include "runtime/context.hpp"
@@ -372,6 +373,7 @@ template<typename Run>
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
 	case uml::cpu::ExitReason::pc_alignment:
+	case uml::cpu::ExitReason::sme_access:
 	case uml::cpu::ExitReason::fatal:
 		break;
 	}
@@ -470,6 +472,16 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	return prepare_signal_return(cpu);
 }
 
+/* Debug builds: the host is never in streaming mode, nor has ZA on, where
+ * the runtime enters an engine or an engine returns to it. */
+void debug_check_host_streaming_state() noexcept
+{
+#ifndef NDEBUG
+	arm64::debug_check_host_streaming_state(
+		::uml::platform::apple::probed_host_capabilities());
+#endif
+}
+
 template<uml::cpu::EngineKind Kind>
 int run_common_guest(
 	void *register_pointer, void *fp_pointer,
@@ -532,7 +544,9 @@ int run_common_guest(
 		.single_step = (mutable_registers.pstate & pstate_ss) != 0,
 	};
 	int event = DARWIN_UML_EVENT_FATAL;
+	debug_check_host_streaming_state();
 	const auto result = engine->run(request);
+	debug_check_host_streaming_state();
 	save_cpu(cpu, mutable_registers, fp, *tls);
 
 	switch (result.reason) {
@@ -591,6 +605,9 @@ int run_common_guest(
 		mutable_registers.fault.trap_number = 0;
 		event = DARWIN_UML_EVENT_PC_ALIGNMENT;
 		break;
+	case uml::cpu::ExitReason::sme_access:
+		/* No kernel allocates SME storage before the bridge carries it,
+		 * and no engine reports this before then. */
 	case uml::cpu::ExitReason::fatal:
 		event = DARWIN_UML_EVENT_FATAL;
 		break;

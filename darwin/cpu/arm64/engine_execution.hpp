@@ -136,6 +136,8 @@ template<bool PollCallback, typename Executor>
 				return finish(ExitReason::pc_alignment, retired,
 					request.cpu.pc,
 					::uml::memory::MemoryAccess::execute);
+			case EngineEvent::sme_access:
+				return finish(ExitReason::sme_access, retired);
 			case EngineEvent::overflow:
 			case EngineEvent::general_protection:
 			case EngineEvent::trap_flag:

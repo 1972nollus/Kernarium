@@ -476,6 +476,15 @@ not exhaustive variant proof.
 [`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
 inventory tables and that completeness boundary.
 
+The `arm64-sme-native` records hold SME results observed on the M4 at its
+streaming vector length, 64 bytes, and run only where an engine implements
+SME at that length; until then they are skipped, and the `arm64-absent-sme`
+record pins every SME profile encoding UNDEFINED on every host. The
+`arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
+their generator, and `arm64-sme-native-oracle` drives the native oracle with
+base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
+the corpus README describes it.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`
@@ -499,6 +508,16 @@ advertises, and with the corpus cases of the touched families built into one
 static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
 that needs one of these features runs only on an M4 or newer Mac.
+
+## Guest SME policy
+
+Unit binaries take the guest-SME policy from their environment, like any
+run, so the suites hold with it off, the default, on every host.
+`arm64-sme-foundation` checks the prober against the host's own sysctls under
+either policy, and the identification registers and HWCAP2 against arm64
+Linux's table with injected SME hosts at every SVL from 16 to 256 bytes. On
+an SME host, an M4 Mac, also run it and `arm64-advertised-features` with
+`DARWIN_UML_GUEST_SME=1`.
 
 ## x86 instruction conformance
 

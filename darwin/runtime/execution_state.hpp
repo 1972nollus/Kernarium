@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 #if DARWIN_UML_X86_64_GUEST
 #include "cpu/x86_64/cpu_state.hpp"
@@ -10,6 +11,7 @@
 #include "runtime/x86_jit_runtime.hpp"
 #endif
 #include "memory/static_guest_memory.hpp"
+#include "platform/apple/host_features.hpp"
 
 #include <array>
 #include <cstddef>
@@ -72,7 +74,22 @@ private:
 };
 
 struct ThreadExecutionState final {
+	/* The register file is sized once, for the host's streaming vector
+	 * length, when the run implements SME; otherwise it is empty and costs
+	 * nothing. */
+	ThreadExecutionState()
+	{
+		cpu.bind_sme_registers(sme_registers);
+	}
+
 	::uml::cpu::arm64::CpuState cpu{};
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	::uml::cpu::arm64::SmeRegisterFile sme_registers;
+#else
+	::uml::cpu::arm64::SmeRegisterFile sme_registers{
+		::uml::cpu::arm64::SmeRegisterFile::for_host(
+			::uml::platform::apple::probed_host_capabilities())};
+#endif
 #if DARWIN_UML_X86_64_GUEST
 	::uml::cpu::x86_64::CpuState x86_cpu{};
 	::uml::cpu::x86_64::gadgets::Executor x86_executor{};

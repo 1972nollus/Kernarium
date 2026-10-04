@@ -495,15 +495,17 @@ void JitCompilerFamilies::emit_native_vector_unary(
 }
 
 void JitCompilerFamilies::emit_native_vector_binary(
-    std::uint32_t instruction, bool reads_destination) {
+    std::uint32_t instruction, bool reads_destination,
+    BinaryFallbacks fallbacks) {
   const unsigned destination = instruction & 31U;
   const unsigned left = (instruction >> 5) & 31U;
   const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, reads_destination, 2U);
+  const auto native_left = read_native_vector(left, fallbacks.left);
+  const auto native_right = right == left
+                                ? native_left
+                                : read_native_vector(right, fallbacks.right);
+  const auto native_destination = write_native_vector(
+      destination, reads_destination, fallbacks.destination);
   emit((instruction & ~0x001f'03ffU) |
        (native_right.host << 16) | (native_left.host << 5) |
        native_destination.host);
