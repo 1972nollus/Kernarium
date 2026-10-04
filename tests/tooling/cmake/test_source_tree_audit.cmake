@@ -186,6 +186,24 @@ list(APPEND REJECTED
     "shared_fixture\\.cpp: CPU source includes an engine implementation")
 list(APPEND ACCEPTED "engine_factory\\.cpp: CPU source includes")
 
+uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_owner.cpp
+    "#include \"cpu/jit_memory/executable_memory.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_owner.cpp
+    "#include \"cpu/jit_memory/executable_memory.hpp\"")
+uml_write_audit_fixture(darwin/cpu/shared_owner.cpp
+    "#include \"darwin/cpu/jit_memory/executable_memory.hpp\"")
+uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_owner.cpp
+    "#include \"cpu/jit_memory/executable_memory.hpp\"")
+uml_write_audit_fixture(darwin/cpu/jit_memory/owner_include.cpp
+    "#include \"cpu/jit_memory/executable_memory.hpp\"")
+list(APPEND REJECTED
+    "gadget_owner\\.cpp: only a JIT engine may include"
+    "x86_owner\\.cpp: only a JIT engine may include"
+    "shared_owner\\.cpp: only a JIT engine may include")
+list(APPEND ACCEPTED
+    "jit_owner\\.cpp: only a JIT engine"
+    "owner_include\\.cpp: only a JIT engine")
+
 uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_exec.cpp
     "int publish() { return mprotect(nullptr, 0, 0); }")
 uml_write_audit_fixture(darwin/cpu/fixture/cpu_exec.cpp

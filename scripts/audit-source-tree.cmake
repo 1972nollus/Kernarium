@@ -259,6 +259,14 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND VIOLATIONS
             "${PATH}: CPU source includes an engine implementation it does not own")
     endif()
+    # The gadget engines and shared CPU code stay data-only, so only a JIT
+    # engine includes the executable-memory owner.
+    if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/(arm64/jit|jit_memory)/" AND
+       NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/jit_memory/")
+        list(APPEND VIOLATIONS
+            "${PATH}: only a JIT engine may include the executable-memory owner")
+    endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and
     # publication primitives confined to the executable-memory owner;

@@ -168,7 +168,8 @@ Only `darwin/cpu/jit_memory/executable_memory.cpp` may allocate executable
 memory, publish RW pages as RX, control JIT write protection, or publish the
 instruction cache. JIT engines reach executable memory only through it; the
 arm64 JIT's arena maps and publishes its blocks with it. Its target's `native`
-engine kind keeps the gadget engines and shared CPU code from linking it.
+engine kind and the source audit keep the gadget engines and shared CPU code
+from linking or including it.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
