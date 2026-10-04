@@ -61,6 +61,11 @@ public:
 		/* Odd while the participant is inside the engine. */
 		std::atomic<std::uint64_t> engine_epoch{0};
 	};
+	/* Retires the write translation a participant whose software TLB has
+	 * another layout holds for `page`, if it holds one. Any thread may call
+	 * it, while the participant runs. */
+	using RetireWriteTranslation = void (*)(
+		void *context, std::uint64_t page) noexcept;
 
 	/* One registry per guest address-space generation, shared for as long as
 	 * any executor holds it. */
@@ -73,6 +78,10 @@ public:
 	CodePageRegistry &operator=(const CodePageRegistry &) = delete;
 
 	void join(Participant &participant);
+	/* A participant that leaves `write_translations` null retires its own
+	 * entries through `retire`. */
+	void join(Participant &participant, RetireWriteTranslation retire,
+		void *context);
 	void leave(Participant &participant) noexcept;
 
 	[[nodiscard]] bool holds(std::uint64_t address) const noexcept
@@ -139,6 +148,14 @@ private:
 	/* The generation whose shared table entry this registry owns; empty for
 	 * a registry constructed directly. */
 	std::optional<std::uint64_t> generation_;
+	/* The participants that retire their own entries, guarded by
+	 * participants_mutex_ like the list above. */
+	struct Retirer final {
+		Participant *participant{};
+		RetireWriteTranslation retire{};
+		void *context{};
+	};
+	std::vector<Retirer> retirers_;
 };
 
 } // namespace uml::cpu::x86_64

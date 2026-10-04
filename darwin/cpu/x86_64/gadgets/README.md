@@ -453,9 +453,11 @@ leaves the masked result rather than x87's rebiased one.
 pages in which any executor of that generation holds a cached translation. A
 store publishes a code change only when its page is in that set, which is what
 makes publication precise under READ_IMPLIES_EXEC, where every readable page
-is executable. A participant's write translations are a table of
+is executable. A gadget executor's write translations are a table of
 `NativeTlbEntry` indexed by `native_tlb_index`, which is what a registration
-retires. The registry guarantees:
+retires; a participant with another TLB layout, such as the x86-64 JIT, joins
+with a function that retires its own entry for a page. The registry
+guarantees:
 
 - membership is exact. A bit per hashed page answers "no" with one load, and
   a set bit is confirmed against a count per page, because the hash keeps
