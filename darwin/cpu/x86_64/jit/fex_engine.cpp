@@ -470,8 +470,22 @@ FEXCore::HLE::ExecutableRangeInfo EmbeddedSyscallHandler::QueryGuestExecutableRa
 	return {page, guest_page_size, false, reinterpret_cast<const uint8_t *>(host)};
 }
 
+/* An exit from inside a unit: RIP names the instruction it stopped at, and
+ * that instruction and the rest of its unit, whose entry charged the budget
+ * for them, have not retired. */
+struct ExitAt final {
+	std::uint64_t rip;
+	std::uint64_t unretired;
+};
+
+void record_exit(Core::CpuStateFrame &frame, ExitAt at) noexcept
+{
+	frame.State.rip = at.rip;
+	frame.Embedder.Unretired += static_cast<std::int64_t>(at.unretired);
+}
+
 void record_fault(Core::CpuStateFrame &frame, GuestAddressSpace &memory,
-	std::uint64_t address, MemoryAccess access, std::uint64_t rip) noexcept
+	std::uint64_t address, MemoryAccess access, ExitAt at) noexcept
 {
 	if (memory.has_fault()) {
 		const auto fault = memory.last_fault();
@@ -481,14 +495,14 @@ void record_fault(Core::CpuStateFrame &frame, GuestAddressSpace &memory,
 	frame.Embedder.FaultAddress = address;
 	frame.Embedder.FaultAccess = static_cast<std::uint32_t>(access);
 	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_MEMORY_FAULT;
-	frame.State.rip = rip;
+	record_exit(frame, at);
 }
 
-void record_unsupported(Core::CpuStateFrame &frame, std::uint64_t address, std::uint64_t rip) noexcept
+void record_unsupported(Core::CpuStateFrame &frame, std::uint64_t address, ExitAt at) noexcept
 {
 	frame.Embedder.FaultAddress = address;
 	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_UNSUPPORTED;
-	frame.State.rip = rip;
+	record_exit(frame, at);
 }
 
 /* The TLB-miss helper the backend's shared stub calls. Returns the host
@@ -506,12 +520,12 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	const bool ordered = (info & Core::EMBEDDER_ACCESS_ORDERED) != 0;
 	const bool granule_split = (address & 15U) + size > 16U;
 	const auto access = writes ? MemoryAccess::write : MemoryAccess::read;
-	const auto rip = frame->Embedder.AccessRIP;
+	const ExitAt at{frame->Embedder.AccessRIP, info >> Core::EMBEDDER_ACCESS_UNRETIRED_SHIFT};
 
 	if (atomic && granule_split) {
 		/* A locked operand crossing a 16-byte granule has no
 		 * single-copy-atomic host access. */
-		record_unsupported(*frame, address, rip);
+		record_unsupported(*frame, address, at);
 		return 0;
 	}
 
@@ -522,7 +536,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	if (!ordered_split && (address & ~guest_page_mask) + size <= guest_page_size) {
 		auto *pointer = memory.atomic_pointer(address, size, access);
 		if (pointer == nullptr) {
-			record_fault(*frame, memory, address, access, rip);
+			record_fault(*frame, memory, address, access, at);
 			return 0;
 		}
 		const auto page = address >> 12U;
@@ -558,7 +572,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	/* A plain access across two guest pages completes through the bounce
 	 * buffer, with the address space's own fault order. */
 	if (atomic || (info & Core::EMBEDDER_ACCESS_READ_WRITE) != 0 || size > sizeof(frame->Embedder.Bounce)) {
-		record_unsupported(*frame, address, rip);
+		record_unsupported(*frame, address, at);
 		return 0;
 	}
 	auto *bounce = reinterpret_cast<std::byte *>(frame->Embedder.Bounce);
@@ -566,7 +580,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 	if (store) {
 		if (!memory.write(address, std::span<const std::byte>{bounce, size})) {
-			record_fault(*frame, memory, address, MemoryAccess::write, rip);
+			record_fault(*frame, memory, address, MemoryAccess::write, at);
 			return 0;
 		}
 		for (auto page = address & guest_page_mask; page < address + size; page += guest_page_size)
@@ -574,7 +588,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 				engine.publish_code_write(space, std::max(page, address),
 					std::min<std::uint64_t>(page + guest_page_size, address + size) - std::max(page, address));
 	} else if (!memory.read(address, std::span<std::byte>{bounce, size})) {
-		record_fault(*frame, memory, address, MemoryAccess::read, rip);
+		record_fault(*frame, memory, address, MemoryAccess::read, at);
 		return 0;
 	}
 	if (ordered)
@@ -601,8 +615,9 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		if (copy)
 			frame->State.gregs[X86State::REG_RSI] = op.Src;
 	};
+	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
-		record_fault(*frame, memory, address, access, op.GuestRIP);
+		record_fault(*frame, memory, address, access, at);
 		save_progress();
 		return std::uint64_t{1};
 	};
@@ -610,18 +625,21 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	std::array<std::byte, 8> value{};
 	std::memcpy(value.data(), &op.Value, sizeof(op.Value));
 	/* Work between checks, in bytes. A long string spends the dispatch
-	 * budget as it goes and stops between elements, with RF, when the budget
-	 * is gone or the kernel has an interrupt for this vCPU. */
+	 * budget as it goes, though it retires once, and stops between elements,
+	 * with RF, when the budget is gone or the kernel has an interrupt for
+	 * this vCPU. */
 	const std::uint64_t check_bytes = engine.stepping ? element : 64 * 1024;
+	const auto charge = static_cast<std::int64_t>(std::max<std::uint64_t>(check_bytes / 64, 1));
 	std::uint64_t since_check = 0;
 	while (op.Count != 0) {
 		if (since_check >= check_bytes) {
 			since_check = 0;
-			frame->Embedder.Budget -= static_cast<std::int64_t>(std::max<std::uint64_t>(check_bytes / 64, 1));
+			frame->Embedder.Budget -= charge;
+			frame->Embedder.Unretired += charge;
 			const bool interrupted = engine.interrupt != nullptr && engine.interrupt->state_pending();
 			if (engine.stepping || interrupted || frame->Embedder.Budget <= 0) {
 				frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_YIELD;
-				frame->State.rip = op.GuestRIP;
+				record_exit(*frame, at);
 				save_progress();
 				return 1;
 			}
@@ -1008,6 +1026,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		std::clamp<std::int64_t>(static_cast<std::int64_t>(request.instruction_budget), 1,
 			maximum_dispatch_budget);
 	frame->Embedder.Budget = budget;
+	frame->Embedder.Unretired = 0;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_NONE;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
@@ -1023,7 +1042,11 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 
-	result.retired_instructions = static_cast<std::size_t>(budget - std::max<std::int64_t>(frame->Embedder.Budget, 0));
+	/* Only instructions that completed retire: not the elements of a
+	 * repeated string instruction, nor the instructions of a unit an exit
+	 * left, from the one it stopped at, though both spent budget. */
+	result.retired_instructions = static_cast<std::size_t>(std::max<std::int64_t>(
+		budget - frame->Embedder.Budget - frame->Embedder.Unretired, 0));
 	save_state(*space, cpu);
 	impl_->memory = nullptr;
 

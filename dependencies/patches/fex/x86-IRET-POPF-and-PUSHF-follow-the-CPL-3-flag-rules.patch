@@ -59,10 +59,10 @@ index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..7ba3cafc6ab2fcdfb8a766b8308454d0
    auto NewRIP = GetRelocatedPC(Op);
    ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 302246f6f58c1ac19a79e1b2fcad616122e65e59..4ae668d7eea79765ef263813ec9df16dd6b50e6b 100644
+index 8beba9d145cb78910acabc131131c3e95abf768e..54effd17a51db5edb020cf2d01ec8a3b24e431e5 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1119,7 +1119,14 @@ public:
+@@ -1123,7 +1123,14 @@ public:
    void InvalidOp(OpcodeArgs);
    void NoExecOp(OpcodeArgs);
  

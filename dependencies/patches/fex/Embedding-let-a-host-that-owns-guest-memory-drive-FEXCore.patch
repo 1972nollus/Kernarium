@@ -20,7 +20,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/CMakeLists.txt                 |   1 +
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
- FEXCore/Source/Interface/Core/Core.cpp        |  13 +-
+ FEXCore/Source/Interface/Core/Core.cpp        |  19 +-
  .../Interface/Core/Dispatcher/Dispatcher.cpp  |  66 ++-
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
@@ -28,13 +28,13 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |  12 +
  .../Source/Interface/Core/JIT/AtomicOps.cpp   |  66 +++
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
- .../Interface/Core/JIT/EmbedderMemory.cpp     | 351 ++++++++++++++++
- FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 114 ++++-
- FEXCore/Source/Interface/Core/JIT/JITClass.h  |  66 +++
- .../Source/Interface/Core/JIT/MemoryOps.cpp   | 390 +++++++++++++++++-
- FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |   1 +
+ .../Interface/Core/JIT/EmbedderMemory.cpp     | 380 +++++++++++++++++
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 130 +++++-
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |  81 ++++
+ .../Source/Interface/Core/JIT/MemoryOps.cpp   | 393 +++++++++++++++++-
+ FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |  12 +
  .../Interface/Core/OpcodeDispatcher.cpp       |  48 ++-
- .../Source/Interface/Core/OpcodeDispatcher.h  |  35 +-
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  39 +-
  .../Core/SharedCodeBufferManager.cpp          |   2 +-
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
  FEXCore/Source/Interface/IR/Passes.h          |   2 +-
@@ -42,10 +42,10 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
- FEXCore/include/FEXCore/Core/CoreState.h      |  89 ++++
+ FEXCore/include/FEXCore/Core/CoreState.h      | 100 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1519 insertions(+), 67 deletions(-)
+ 29 files changed, 1614 insertions(+), 67 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -197,7 +197,7 @@ index 729aa63aba645b1d70650d301bbf50a4c42798dc..5467ba7beb6a8063e02fa7c164d27c82
    // All are caller saved
    constexpr std::array<ARMEmitter::VRegister, 16> SRAFPR = {
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..39f790f2fe061a3cc6bd9a54f14bb3e233d13cda 100644
+index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..32ab9b3c4bae04995940360cc5daa7ac54e76a6e 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -380,6 +380,12 @@ void ContextImpl::HandleCallback(FEXCore::Core::InternalThreadState* Thread, uin
@@ -228,6 +228,19 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..39f790f2fe061a3cc6bd9a54f14bb3e2
            Thread->OpDispatcher->_GuestOpcode(InstAddress - GuestRIP);
          }
  
+@@ -747,6 +756,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+     }
+ #endif
+ 
++    // An embedding host charges a unit for the instructions it runs, not for
++    // one it decoded only to end the unit before.
++    if (Embedded) {
++      Thread->OpDispatcher->SetInstructionCount(TotalInstructions);
++    }
++
+     Thread->OpDispatcher->Finalize();
+ 
+     Thread->FrontendDecoder->DelayedDisownBuffer();
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b8b82c778 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
@@ -668,10 +681,10 @@ index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4
    PendingTargetLabel = JumpTarget(Op->FalseBlock);
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101de61bf952
+index 0000000000000000000000000000000000000000..d8b84fe723b8e94e42c4506151d318f8e33f892b
 --- /dev/null
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-@@ -0,0 +1,351 @@
+@@ -0,0 +1,380 @@
 +// SPDX-License-Identifier: MIT
 +/*
 +$info$
@@ -696,6 +709,24 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +  return CTX->Embedded;
 +}
 +
++uint32_t Arm64JITCore::EmbedderUnretired(bool Retired) const {
++  const auto Offset = static_cast<uint32_t>(EmbedderCurrentRIP - Entry);
++  const auto Index = static_cast<uint32_t>(std::lower_bound(EmbedderInstructionOffsets.begin(), EmbedderInstructionOffsets.end(), Offset) -
++                                           EmbedderInstructionOffsets.begin());
++  const uint32_t Done = Index + (Retired ? 1 : 0);
++  return Done < EmbedderBlockInstructions ? EmbedderBlockInstructions - Done : 0;
++}
++
++void Arm64JITCore::EmitEmbedderUnretired(uint32_t Count) {
++  // No NZCV writes: guest flags may be live.
++  if (Count == 0) {
++    return;
++  }
++  ldr(TMP2, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Unretired));
++  add(ARMEmitter::Size::i64Bit, TMP2, TMP2, Count);
++  str(TMP2, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Unretired));
++}
++
 +ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Address, uint32_t Size, uint64_t Flags,
 +                                                     std::function<void(ARMEmitter::Register)> PreStore) {
 +  LOGMAN_THROW_A_FMT(Address != TMP1 && Address != TMP2 && Address != TMP3, "Translation temporaries would clobber the address");
@@ -703,7 +734,7 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +
 +  auto Site = fextl::make_unique<EmbedderColdSite>();
 +  Site->Address = Address;
-+  Site->Info = Size | Flags;
++  Site->Info = Size | Flags | (static_cast<uint64_t>(EmbedderUnretired(false)) << Core::EMBEDDER_ACCESS_UNRETIRED_SHIFT);
 +  Site->GuestRIP = EmbedderCurrentRIP;
 +  Site->PreStore = std::move(PreStore);
 +
@@ -781,6 +812,7 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +    // A block too large for a short branch to reach its cold code is
 +    // compiled again with far branches.
 +    BindOrRestart(&Site->Entry);
++    EmitEmbedderUnretired(Site->Unretired);
 +    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->GuestRIP);
 +    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
 +    if (Site->FaultData) {
@@ -800,12 +832,17 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +    // compiled again with far branches.
 +    BindOrRestart(&Site->Entry);
 +    ARMEmitter::ForwardLabel Exhausted;
++    const bool Internal = Site->ExitReason == Core::EMBEDDER_EXIT_YIELD;
 +    ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
-+    sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, 1);
++    sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, Internal ? 1 : EmbedderBlockInstructions);
 +    (void)tbnz(TMP1, 63, &Exhausted);
 +    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
++    if (Internal) {
++      EmitEmbedderUnretired(1);
++    }
 +    b_OrRestart(Site->Target);
 +    (void)Bind(&Exhausted);
++    EmitEmbedderUnretired(Site->Unretired);
 +    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->GuestRIP);
 +    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
 +    LoadConstant(ARMEmitter::Size::i32Bit, TMP1, Site->ExitReason);
@@ -824,10 +861,14 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +  Site->Target = Target;
 +  Site->GuestRIP = EmbedderCurrentRIP;
 +  Site->ExitReason = Core::EMBEDDER_EXIT_YIELD;
++  Site->Unretired = EmbedderUnretired(false);
 +  if (Target >= JumpTargets.data() && Target < JumpTargets.data() + JumpTargets.size()) {
 +    if (const auto TargetRIP = EmbedderBlockRIPs[Target - JumpTargets.data()]) {
++      // Multiblock is off, so the target is the unit's entry, and every
++      // instruction of the unit has run once more.
 +      Site->GuestRIP = TargetRIP;
 +      Site->ExitReason = Core::EMBEDDER_EXIT_BUDGET;
++      Site->Unretired = 0;
 +    }
 +  }
 +  auto* Result = Site.get();
@@ -841,9 +882,8 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +  auto Site = fextl::make_unique<EmbedderBudgetSite>();
 +  Site->GuestRIP = GuestRIP;
 +  Site->ExitReason = Core::EMBEDDER_EXIT_BUDGET;
-+  const uint32_t Cost = std::clamp<uint32_t>(EmbedderBlockInstructions, 1, 4095);
 +  ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
-+  sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, Cost);
++  sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, EmbedderBlockInstructions);
 +  if (RequiresFarARM64Jumps) {
 +    lsr(ARMEmitter::Size::i64Bit, TMP2, TMP1, 63);
 +    cbnz_OrRestart(ARMEmitter::Size::i64Bit, TMP2, &Site->Entry);
@@ -867,6 +907,7 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +  auto Site = fextl::make_unique<EmbedderBudgetSite>();
 +  Site->GuestRIP = EmbedderCurrentRIP;
 +  Site->ExitReason = Core::EMBEDDER_EXIT_BREAK;
++  Site->Unretired = EmbedderUnretired(false);
 +  Core::CpuStateFrame::SynchronousFaultDataStruct Fault = {
 +    .FaultToTopAndGeneratedException = 1,
 +    .Signal = Core::EMBEDDER_SIGNAL_DIVIDE,
@@ -1014,6 +1055,7 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +  // Reaching an operation the embedded backend cannot run leaves the dispatch
 +  // at the instruction, reported to the host, instead of touching host memory.
 +  LogMan::Msg::EFmt("Embedded JIT: unsupported {} at RIP {:#x}", What, EmbedderCurrentRIP);
++  EmitEmbedderUnretired(EmbedderUnretired(false));
 +  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, EmbedderCurrentRIP);
 +  str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
 +  LoadConstant(ARMEmitter::Size::i32Bit, TMP1, Core::EMBEDDER_EXIT_UNSUPPORTED);
@@ -1024,10 +1066,18 @@ index 0000000000000000000000000000000000000000..6e6d572c43948e412d3fb30175cf101d
 +
 +} // namespace FEXCore::CPU
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b063a591b 100644
+index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..d852df4c9c57d094de71d041c15d01fd70ac8aa9 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -63,6 +63,38 @@ LDIV(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
+@@ -34,6 +34,7 @@ $end_info$
+ #include <FEXCore/Utils/TypeDefines.h>
+ #include <FEXCore/HLE/SyscallHandler.h>
+ 
++#include <algorithm>
+ #include <cstdio>
+ #include <cstring>
+ #include <unistd.h>
+@@ -63,6 +64,38 @@ LDIV(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
    };
  }
  
@@ -1066,7 +1116,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
  static void
  PrintValue(uint64_t Value) {
    LogMan::Msg::DFmt("Value: 0x{:x}", Value);
-@@ -497,7 +529,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+@@ -497,7 +530,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
    }
  }
  
@@ -1082,7 +1132,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
    auto BranchOffset = JumpThunkStartAddress / 4 - CallerAddress / 4;
-@@ -516,6 +556,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+@@ -516,6 +557,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
  }
  
  static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -1090,7 +1140,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uint32_t BranchInst = 0;
    ARMEmitter::Emitter BranchEmit(reinterpret_cast<uint8_t*>(&BranchInst), 4);
-@@ -529,6 +570,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -529,6 +571,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
  }
  
  uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -1098,7 +1148,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    auto Thread = Frame->Thread;
    bool TFSet = Thread->CurrentFrame->State.flags[X86State::RFLAG_TF_RAW_LOC];
    uintptr_t HostCode {};
-@@ -662,8 +704,8 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
+@@ -662,8 +705,8 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
        Ptrs.SyscallHandlerFunc = PMF.GetVTableEntry(CTX->SyscallHandler);
      }
      Ptrs.ExitFunctionLink = reinterpret_cast<uintptr_t>(&Arm64JITCore::ExitFunctionLink);
@@ -1109,7 +1159,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    }
  
    CurrentCodeBuffer = SharedCodeBuffers.GetLatest();
-@@ -797,10 +839,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+@@ -797,10 +840,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
    adr_OrRestart(TMP1, &HeaderLabel);
    str(TMP1, STATE, offsetof(FEXCore::Core::CPUState, InlineJITBlockHeader));
  
@@ -1126,7 +1176,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    if (SpillSlots) {
      const auto TotalSpillSlotsSize = SpillSlots * MaxSpillSlotSize;
  
-@@ -825,7 +873,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -825,7 +874,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    this->DebugData = DebugData;
    this->IR = IR;
    RequiresFarARM64Jumps = false;
@@ -1140,7 +1190,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
  
    // Prepare restart via long jump in case branch encoding fails.
    // This uses UncheckedLongJump since we don't implement std::longjmp in WoA setups
-@@ -838,15 +892,25 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -838,15 +893,40 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      // Get rid of the claimed buffer immediately, we can't fit in it at all.
      TempCodeBufferAllocator.UnclaimBuffer();
      SSANodeMultiplier *= 2;
@@ -1157,7 +1207,22 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
 +  EmbedderBudgetSites.clear();
 +  EmbedderLoopSites.clear();
 +  EmbedderCurrentRIP = Entry;
-+  EmbedderBlockInstructions = IR->GetHeader()->NumHostInstructions;
++  // A unit that runs no instruction still costs one, so a dispatch always
++  // ends; 4095 bounds the cost to an immediate, above any unit's length.
++  EmbedderBlockInstructions = std::clamp<uint32_t>(IR->GetHeader()->NumHostInstructions, 1, 4095);
++  EmbedderInstructionOffsets.clear();
++  if (Embedded()) {
++    for (auto [BlockNode, BlockHeader] : IR->GetBlocks()) {
++      for (auto [CodeNode, IROp] : IR->GetCode(BlockNode)) {
++        if (IROp->Op == IR::OP_GUESTOPCODE) {
++          EmbedderInstructionOffsets.push_back(IROp->C<IR::IROp_GuestOpcode>()->GuestEntryOffset);
++        }
++      }
++    }
++    std::sort(EmbedderInstructionOffsets.begin(), EmbedderInstructionOffsets.end());
++    EmbedderInstructionOffsets.erase(std::unique(EmbedderInstructionOffsets.begin(), EmbedderInstructionOffsets.end()),
++                                     EmbedderInstructionOffsets.end());
++  }
    JumpTargets.clear();
    CallReturnTargets.clear();
    PendingJumpThunks.clear();
@@ -1166,7 +1231,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    Relocations.resize(PrevNumAllocations, FEXCore::CPU::Relocation::Default()); // Discard any relocations generated from a previous attempt
  
    CodeData.EntryPoints.clear();
-@@ -862,6 +926,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -862,6 +942,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
  
    SetBuffer(TempCodeBuffer, UsableBufferRange);
@@ -1176,7 +1241,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
  
    ThreadState->JITGuardPage = reinterpret_cast<uintptr_t>(TempCodeBuffer) + UsableBufferRange;
    ThreadState->JITGuardOverflowArgument = FEXCore::ToUnderlying(RestartOptions::Control::NeedsLargerJITSpace);
-@@ -917,7 +984,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -917,7 +1000,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          if (PendingTargetLabel->Backward.Location) {
            EmitSuspendInterruptCheck();
          }
@@ -1189,7 +1254,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
          PendingTargetLabel = nullptr;
        }
  
-@@ -938,6 +1009,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -938,6 +1025,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          CodeData.EntryPoints.emplace(BlockStartRIP, GetCursorAddress<uint8_t*>());
          DebugData->GuestOpcodes.push_back({BlockIROp->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
  
@@ -1202,7 +1267,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
          EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
        }
  
-@@ -973,10 +1050,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -973,10 +1066,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      if (PendingTargetLabel->Backward.Location) {
        EmitSuspendInterruptCheck();
      }
@@ -1222,7 +1287,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    ARMEmitter::ForwardLabel l_ExitLink;
    for (auto& PendingJumpThunk : PendingJumpThunks) {
      // Align as 64-bit atomics are used on the HostCode field.
-@@ -1035,6 +1120,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1035,6 +1136,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const auto JITRIPEntriesBegin = JITBlockTailLocation + sizeof(JITBlockTail);
    auto JITRIPEntriesLocation = JITRIPEntriesBegin;
  
@@ -1243,7 +1308,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    {
      // Store the RIP entries.
      JITBlockTail.NumberOfRIPEntries = DebugData->GuestOpcodes.size();
-@@ -1071,6 +1170,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1071,6 +1186,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
  
    // Migrate the compile output from temporary storage to the actual CodeBuffer.
    // This can block progress in other compiling threads, so the duration of the lock should be as small as possible.
@@ -1251,7 +1316,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
    {
      auto CodeBufferLock = std::unique_lock {SharedCodeBuffers.CodeBufferWriteMutex};
  
-@@ -1088,12 +1188,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1088,12 +1204,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        }
  
        // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
@@ -1271,7 +1336,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b
        SharedCodeBuffers.LatestOffset = GetCursorOffset();
      }
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc62a5206d2 100644
+index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..7e8f8317e7695f6cbffb5c7c84db81b43034a22b 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
 @@ -78,6 +78,8 @@ private:
@@ -1283,7 +1348,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc6
    bool RequiresFarARM64Jumps {};
    // Default to 6 instructions per SSA node.
    uint32_t SSANodeMultiplier {24};
-@@ -109,6 +111,70 @@ private:
+@@ -109,6 +111,85 @@ private:
  
    static uint64_t ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record);
  
@@ -1308,17 +1373,22 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc6
 +    uint64_t GuestRIP {};
 +    uint32_t ExitReason {};
 +    uint64_t FaultData {};
++    // Instructions of the unit the exit leaves unretired.
++    uint32_t Unretired {};
 +  };
 +  fextl::vector<fextl::unique_ptr<EmbedderBudgetSite>> EmbedderBudgetSites;
-+  // A backward branch spends one budget unit and leaves the dispatch when the
-+  // budget is gone, so the host can take an interrupt: inside one guest
-+  // instruction (a repeated compare, scan or load) at that instruction, and
-+  // to an entry point (a guest loop within one compiled unit) at the target.
++  // A backward branch spends budget and leaves the dispatch when the budget is
++  // gone, so the host can take an interrupt. One inside a guest instruction (a
++  // repeated compare, scan or load) spends a unit that retires nothing and
++  // stops at that instruction; one to an entry point (a guest loop within one
++  // compiled unit) spends the unit's instructions again and stops at the
++  // target.
 +  struct EmbedderLoopSite {
 +    ARMEmitter::ForwardLabel Entry;
 +    ARMEmitter::BiDirectionalLabel* Target {};
 +    uint64_t GuestRIP {};
 +    uint32_t ExitReason {};
++    uint32_t Unretired {};
 +  };
 +  fextl::vector<fextl::unique_ptr<EmbedderLoopSite>> EmbedderLoopSites;
 +  // The guest RIP of each entry-point block by block ID, else zero: a branch
@@ -1329,7 +1399,17 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc6
 +  void EmitEmbedderDivide(bool Signed, IR::OpSize OpSize, ARMEmitter::Register Lower, std::optional<ARMEmitter::Register> Upper,
 +                          ARMEmitter::Register Divisor, ARMEmitter::Register Quotient, ARMEmitter::Register Remainder);
 +  uint64_t EmbedderCurrentRIP {};
++  // The instructions the unit runs from its entry to its end, which its entry
++  // charges the budget for, and their offsets from the entry in order.
 +  uint32_t EmbedderBlockInstructions {};
++  fextl::vector<uint32_t> EmbedderInstructionOffsets;
++  // The instructions of the unit an exit at the current instruction leaves
++  // unretired: that one and those after it, less that one when it retired, as
++  // a trap's instruction has.
++  [[nodiscard]]
++  uint32_t EmbedderUnretired(bool Retired) const;
++  // Adds Count to the dispatch's unretired charge. Clobbers TMP2.
++  void EmitEmbedderUnretired(uint32_t Count);
 +  uint64_t EmbedderPendingBudgetRIP {};
 +  void EmitEmbedderBudgetCheck(uint64_t GuestRIP);
 +
@@ -1355,7 +1435,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc6
    ARMEmitter::Register GetReg(IR::PhysicalRegister Reg) const {
      const auto RegClass = Reg.AsRegClass();
 diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
-index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770aaaba4a9b 100644
+index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..55c95b3b2fe138ba5b9449bbdbc7118f78212c27 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 @@ -706,7 +706,12 @@ DEF_OP(LoadMem) {
@@ -1778,7 +1858,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
    if (Op->Class == IR::RegClass::GPR) {
      LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
      LOGMAN_THROW_A_FMT(Op->OffsetScale == 1, "unexpected offset scale");
-@@ -1848,8 +2109,71 @@ DEF_OP(StoreMemTSO) {
+@@ -1848,8 +2109,74 @@ DEF_OP(StoreMemTSO) {
    }
  }
  
@@ -1802,7 +1882,10 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
 +  } else {
 +    str(GetReg(Direction).X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Direction));
 +  }
-+  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, ElementSize | (static_cast<uint64_t>(IsCopy) << 32));
++  static_assert(offsetof(Core::EmbedderStringOp, IsCopy) == offsetof(Core::EmbedderStringOp, ElementSize) + 4);
++  static_assert(offsetof(Core::EmbedderStringOp, Unretired) == offsetof(Core::EmbedderStringOp, ElementSize) + 6);
++  LoadConstant(ARMEmitter::Size::i64Bit, TMP1,
++               ElementSize | (static_cast<uint64_t>(IsCopy) << 32) | (static_cast<uint64_t>(EmbedderUnretired(false)) << 48));
 +  str(TMP1, ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, ElementSize));
 +  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, EmbedderCurrentRIP);
 +  str(TMP1, ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, GuestRIP));
@@ -1850,7 +1933,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
  
    const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
    const auto Size = IR::OpSizeToSize(Op->Size);
-@@ -2085,6 +2409,11 @@ DEF_OP(MemSet) {
+@@ -2085,6 +2412,11 @@ DEF_OP(MemSet) {
  
  DEF_OP(MemCpy) {
    const auto Op = IROp->C<IR::IROp_MemCpy>();
@@ -1862,7 +1945,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
  
    const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
    const auto Size = IR::OpSizeToSize(Op->Size);
-@@ -2389,7 +2718,7 @@ DEF_OP(MemCpy) {
+@@ -2389,7 +2721,7 @@ DEF_OP(MemCpy) {
  }
  
  DEF_OP(CacheLineClear) {
@@ -1871,7 +1954,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
      dmb(ARMEmitter::BarrierScope::SY);
      return;
    }
-@@ -2419,7 +2748,7 @@ DEF_OP(CacheLineClear) {
+@@ -2419,7 +2751,7 @@ DEF_OP(CacheLineClear) {
  }
  
  DEF_OP(CacheLineClean) {
@@ -1880,7 +1963,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
      dmb(ARMEmitter::BarrierScope::ST);
      return;
    }
-@@ -2447,6 +2776,15 @@ DEF_OP(CacheLineZero) {
+@@ -2447,6 +2779,15 @@ DEF_OP(CacheLineZero) {
  
    auto MemReg = GetReg(Op->Addr);
  
@@ -1896,7 +1979,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
    if (CTX->HostFeatures.SupportsCLZERO) {
      // We can use this instruction directly
      dc(ARMEmitter::DataCacheOperation::ZVA, MemReg);
-@@ -2464,6 +2802,10 @@ DEF_OP(CacheLineZero) {
+@@ -2464,6 +2805,10 @@ DEF_OP(CacheLineZero) {
  }
  
  DEF_OP(Prefetch) {
@@ -1907,7 +1990,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
    auto Op = IROp->C<IR::IROp_Prefetch>();
    const auto MemReg = GetReg(Op->Addr);
  
-@@ -2513,6 +2855,15 @@ DEF_OP(VStoreNonTemporal) {
+@@ -2513,6 +2858,15 @@ DEF_OP(VStoreNonTemporal) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -1923,7 +2006,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
    if (Is256Bit) {
      const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
      const auto OffsetScaled = Offset / 32;
-@@ -2540,6 +2891,15 @@ DEF_OP(VStoreNonTemporalPair) {
+@@ -2540,6 +2894,15 @@ DEF_OP(VStoreNonTemporalPair) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -1939,7 +2022,7 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
    stnp(ValueLow.Q(), ValueHigh.Q(), MemReg, Offset);
  }
  
-@@ -2555,6 +2915,12 @@ DEF_OP(VLoadNonTemporal) {
+@@ -2555,6 +2918,12 @@ DEF_OP(VLoadNonTemporal) {
    const auto MemReg = GetReg(Op->Addr);
    const auto Offset = Op->Offset;
  
@@ -1953,10 +2036,18 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770a
      const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
      const auto OffsetScaled = Offset / 32;
 diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
-index b03ed7db8b89c288c796021827d58324e3fb1981..0b614049bec379539ddbd1e20bef4843cdf31e19 100644
+index b03ed7db8b89c288c796021827d58324e3fb1981..0635b6f1143fda41f10fd2ef36551818349cc6f2 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
-@@ -43,6 +43,7 @@ DEF_OP(GuestOpcode) {
+@@ -14,6 +14,7 @@ $end_info$
+ #include "Interface/Core/JIT/JITClass.h"
+ 
+ #include <FEXCore/Core/SignalDelegator.h>
++#include <FEXCore/Core/X86Enums.h>
+ #include <FEXCore/Debug/InternalThreadState.h>
+ #include <FEXCore/Utils/EnumUtils.h>
+ 
+@@ -43,6 +44,7 @@ DEF_OP(GuestOpcode) {
    auto Op = IROp->C<IR::IROp_GuestOpcode>();
    // metadata
    DebugData->GuestOpcodes.push_back({Op->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
@@ -1964,6 +2055,23 @@ index b03ed7db8b89c288c796021827d58324e3fb1981..0b614049bec379539ddbd1e20bef4843
  }
  
  DEF_OP(Fence) {
+@@ -73,6 +75,16 @@ DEF_OP(Break) {
+   uint64_t Constant {};
+   memcpy(&Constant, &State, sizeof(State));
+ 
++  if (Embedded()) {
++    // A trap retires its instruction, leaving RIP after it: a system call,
++    // and #DB, #BP or #OF from INT1 or INT n. The rest are faults.
++    const auto TrapNumber = Op->Reason.TrapNumber;
++    const bool Trap = Op->Reason.Signal == Core::EMBEDDER_SIGNAL_SYSCALL ||
++                      ((Op->Reason.Signal == Core::FAULT_SIGTRAP || Op->Reason.Signal == Core::FAULT_SIGSEGV) &&
++                       (TrapNumber == X86State::X86_TRAPNO_DB || TrapNumber == X86State::X86_TRAPNO_BP || TrapNumber == X86State::X86_TRAPNO_OF));
++    EmitEmbedderUnretired(EmbedderUnretired(Trap));
++  }
++
+   LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Constant);
+   str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, SynchronousFaultData));
+ 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b37c4ed9a 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
@@ -2059,10 +2167,21 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b
      Reason.Signal = Core::FAULT_SIGSEGV;
      // GP is raised when task-gate isn't setup to be valid
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..302246f6f58c1ac19a79e1b2fcad616122e65e59 100644
+index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..8beba9d145cb78910acabc131131c3e95abf768e 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -2566,13 +2566,44 @@ private:
+@@ -342,6 +342,10 @@ public:
+   void BeginFunction(uint64_t RIP, const fextl::vector<FEXCore::Frontend::Decoder::DecodedBlocks>* Blocks, uint32_t NumInstructions,
+                      bool Is64BitMode, bool MonoBackpatcherBlock);
+   void Finalize();
++  // The guest instructions the unit runs from its entry to its end.
++  void SetInstructionCount(uint32_t Count) {
++    CurrentHeader->NumHostInstructions = Count;
++  }
+ 
+   // Dispatch builder functions
+ #define OpcodeArgs [[maybe_unused]] FEXCore::X86Tables::DecodedOp Op
+@@ -2566,13 +2570,44 @@ private:
      return _StoreMemPairAutoTSO(RegClass::FPR, Size, A, Value1, Value2, Align);
    }
  
@@ -2108,7 +2227,7 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..302246f6f58c1ac19a79e1b2fcad6161
      Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
      Ref Value = _AllocateGPR(false);
  
-@@ -2592,7 +2623,7 @@ private:
+@@ -2592,7 +2627,7 @@ private:
  
    void Push(IR::OpSize Size, Ref Value) {
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);
@@ -2361,10 +2480,10 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb70ed3c4dd 100644
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..9b10abcf17d08fb06785dceac25c3702063d69e2 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -334,6 +334,54 @@ struct FallbackABIInfo {
+@@ -334,6 +334,60 @@ struct FallbackABIInfo {
    uint64_t Func;
  };
  
@@ -2398,6 +2517,9 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb7
 +constexpr uint64_t EMBEDDER_ACCESS_READ_WRITE = 1ULL << 10;
 +// An ordered (acquire/release) access, kept inside one 16-byte granule.
 +constexpr uint64_t EMBEDDER_ACCESS_ORDERED = 1ULL << 11;
++// Bits 32 and up: the instructions a fault at this access leaves unretired
++// of those its unit charged the budget for.
++constexpr uint32_t EMBEDDER_ACCESS_UNRETIRED_SHIFT = 32;
 +
 +// FAULT_* signal value the embedded frontend uses for SYSCALL and INT 0x80.
 +constexpr uint8_t EMBEDDER_SIGNAL_SYSCALL = 0xFE;
@@ -2412,14 +2534,17 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb7
 +  uint64_t Value;
 +  int64_t Direction; // +1 or -1
 +  uint32_t ElementSize;
-+  uint32_t IsCopy;
++  uint16_t IsCopy;
++  // The instructions a fault or a stop between elements leaves unretired of
++  // those the unit charged the budget for.
++  uint16_t Unretired;
 +  uint64_t GuestRIP;
 +};
 +
  struct JITPointers {
  
    // Process specific
-@@ -355,6 +403,18 @@ struct JITPointers {
+@@ -355,6 +409,18 @@ struct JITPointers {
    // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
    uint64_t ExitFunctionEC {};
  
@@ -2438,7 +2563,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb7
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +492,35 @@ struct CpuStateFrame {
+@@ -432,6 +498,40 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  
@@ -2450,6 +2575,11 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..6709139647f1458ad2575aaa61890eb7
 +    // Guest instructions this dispatch may still start. A block whose entry
 +    // would take it below zero exits instead, with RIP at the block.
 +    int64_t Budget {};
++    // What the dispatch charged the budget for that retired no instruction:
++    // the elements of repeated string instructions, and the instructions of
++    // the unit an exit left, from the one it stopped at on. The host takes it
++    // out of the budget spent to count the instructions retired.
++    int64_t Unretired {};
 +    // Why the last dispatch returned (EmbedderExitReason).
 +    uint32_t ExitReason {};
 +    uint32_t FaultAccess {};

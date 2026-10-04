@@ -68,6 +68,15 @@ REP MOVS and REP STOS run element by element in page-bounded chunks, spend the
 budget as they go and stop between elements, with RF, when it is spent or an
 interrupt is pending. A fault leaves RCX, RSI and RDI with the progress made.
 
+A dispatch reports as retired only the instructions that completed, as the
+gadget engine does: a fault, `#UD` or `#DE` retires nothing of its instruction,
+a trap or system call retires it, and a repeated string instruction retires
+once however many elements spent the budget. A unit's entry, and a loop back
+to it, spend the budget for every instruction the unit runs; an exit from
+inside the unit hands back the ones it did not reach, and a repeated element
+spends a unit that retires nothing. The `--retirement` cases of the corpus
+runners hold both engines to the same counts.
+
 A signal handler without SA_RESTORER returns to the sigreturn trampoline,
 `DARWIN_UML_SIGRETURN_TRAMPOLINE`, which no guest page backs on the x86-64
 slice. The seam turns the fetch fault the engine stops with there into
