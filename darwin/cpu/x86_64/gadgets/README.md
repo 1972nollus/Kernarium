@@ -402,7 +402,10 @@ checks, and runs every other block, linked, as `execute` does:
   operand, which no host flag shows, is found in the sources before the
   instruction runs, where x86 raises it: not under DAZ, nor in a lane holding a
   NaN or raising invalid operation or division by zero, and for DPPS and DPPD
-  also in a product or sum added. An unmasked exception restores the state from
+  also in a product or sum added. A flag the host raises otherwise than x86 is
+  decided from the sources too (`host_flag_correction`): an FMA's invalid
+  operation, which x86 does not raise for infinity times zero plus a quiet
+  NaN. An unmasked exception restores the state from
   before it, a memory destination included, and faults; MXCSR then holds only
   the flags checked before the computation when one of those was unmasked, and
   no precision flag when underflow was. Masked flags accumulate.

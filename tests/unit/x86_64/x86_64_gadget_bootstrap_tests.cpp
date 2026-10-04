@@ -6225,6 +6225,139 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 	return result;
 }
 
+/* An FMA raises invalid operation where x86 does: for a signalling NaN, for
+ * infinity times zero plus anything but a quiet NaN, and for infinities of
+ * opposite signs added -- but not for infinity times zero plus a quiet NaN,
+ * which it returns, where the host raises it. MXCSR.DAZ makes a denormal
+ * factor zero first. Run singly and checked while MXCSR unmasks invalid
+ * operation alone, and as the runtime runs it while MXCSR also unmasks
+ * division by zero and overflow, where the gadget leaves for its special
+ * result and runs again checked. */
+[[nodiscard]] bool checked_fma_invalid_operations_follow_x86()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::string_view name;
+		std::vector<std::uint8_t> bytes;
+		/* xmm0, xmm1 and xmm2, low quadword first. */
+		std::array<std::array<std::uint64_t, 2>, 3> registers;
+		bool denormals_are_zero;
+		bool invalid;
+		std::uint64_t result;
+	};
+	/* Singles: lane 1 is 1.0 unless named high. */
+	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t infinity = 0x3f80'0000'7f80'0000ULL;
+	constexpr std::uint64_t zero = 0x3f80'0000'0000'0000ULL;
+	constexpr std::uint64_t least = 0x3f80'0000'0000'0001ULL;
+	constexpr std::uint64_t quiet = 0x3f80'0000'7fc0'0000ULL;
+	constexpr std::uint64_t signalling = 0x3f80'0000'7fa0'0000ULL;
+	constexpr std::uint64_t infinity_high = 0x7f80'0000'3f80'0000ULL;
+	constexpr std::uint64_t zero_high = 0x0000'0000'3f80'0000ULL;
+	constexpr std::uint64_t quiet_high = 0x7fc0'0000'3f80'0000ULL;
+	constexpr std::uint64_t infinity_double = 0x7ff0'0000'0000'0000ULL;
+	constexpr std::uint64_t quiet_double = 0xfff8'0000'0001'2345ULL;
+	/* VFMADD231SS xmm0, xmm1, xmm2 is xmm1 * xmm2 + xmm0; VFNMSUB213SD
+	 * xmm0, xmm1, xmm2 is -(xmm1 * xmm0) - xmm2; VFMADDSUB231PS xmm0, xmm1,
+	 * xmm2 adds in its odd lanes. */
+	const std::vector<std::uint8_t> fmadd231ss{0xc4, 0xe2, 0x71, 0xb9, 0xc2};
+	const std::vector<std::uint8_t> fnmsub213sd{0xc4, 0xe2, 0xf1, 0xaf, 0xc2};
+	const std::vector<std::uint8_t> fmaddsub231ps{0xc4, 0xe2, 0x71, 0xb6,
+		0xc2};
+	const std::vector<Case> cases{
+		{"VFMADD231SS of infinity times zero plus a quiet NaN", fmadd231ss,
+		 {{{quiet, one}, {infinity, one}, {zero, one}}}, false, false,
+		 quiet},
+		{"VFMADD231SS of zero times infinity plus a quiet NaN", fmadd231ss,
+		 {{{quiet, one}, {zero, one}, {infinity, one}}}, false, false,
+		 quiet},
+		{"VFNMSUB213SD of infinity times zero plus a quiet NaN",
+		 fnmsub213sd,
+		 {{{0, one}, {infinity_double, one}, {quiet_double, one}}}, false,
+		 false, quiet_double},
+		{"VFMADD231SS of infinity times a denormal plus a quiet NaN under "
+		 "DAZ", fmadd231ss,
+		 {{{quiet, one}, {infinity, one}, {least, one}}}, true, false,
+		 quiet},
+		{"VFMADDSUB231PS of infinity times zero plus a quiet NaN in lane 1",
+		 fmaddsub231ps,
+		 {{{quiet_high, one}, {infinity_high, one}, {zero_high, one}}},
+		 false, false, 0x7fc0'0000'0000'0000ULL},
+		{"VFMADD231SS of infinity times zero plus one", fmadd231ss,
+		 {{{one, one}, {infinity, one}, {zero, one}}}, false, true, 0},
+		{"VFMADD231SS of infinity times zero plus a signalling NaN",
+		 fmadd231ss, {{{signalling, one}, {infinity, one}, {zero, one}}},
+		 false, true, 0},
+		{"VFMADD231SS of infinity times a denormal plus one under DAZ",
+		 fmadd231ss, {{{one, one}, {infinity, one}, {least, one}}},
+		 true, true, 0},
+	};
+	for (const auto &test : cases) {
+		TestMemory memory;
+		std::vector<std::byte> code(test.bytes.size() + 2U);
+		std::memcpy(code.data(), test.bytes.data(), test.bytes.size());
+		code[test.bytes.size()] = std::byte{0x0f};
+		code[test.bytes.size() + 1U] = std::byte{0x05};
+		memory.fill(0, code);
+		const std::uint32_t daz = test.denormals_are_zero ? 0x40U : 0U;
+		const auto start = [&](std::uint32_t mxcsr) {
+			CpuState cpu{};
+			cpu.mxcsr = mxcsr | daz;
+			for (std::size_t index = 0; index < 3; ++index)
+				std::memcpy(cpu.vectors[index].data(),
+					test.registers[index].data(), 16);
+			return cpu;
+		};
+		const auto trapped = [&](const gadgets::ExecuteResult &result,
+			const CpuState &cpu, std::uint32_t mxcsr) {
+			return result.event ==
+					uml::cpu::EngineEvent::floating_point_trap &&
+				result.vector == 19 && cpu.rip == 0 &&
+				result.error == (mxcsr | daz | 0x1U) &&
+				std::memcmp(cpu.vectors[0].data(),
+					test.registers[0].data(), 16) == 0;
+		};
+		const auto returned = [&](const CpuState &cpu, std::uint32_t mxcsr) {
+			std::uint64_t low{};
+			std::memcpy(&low, cpu.vectors[0].data(), sizeof(low));
+			return cpu.mxcsr == (mxcsr | daz) && low == test.result;
+		};
+		/* Singly and checked, invalid operation alone unmasked. */
+		const auto built = gadgets::build(memory, 0, ExecutionMode::long64,
+			64, {}, gadgets::check_simd);
+		auto checked = start(0x1f00);
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		const auto alone = built.status == gadgets::BuildStatus::built ?
+			gadgets::execute_checked(built.program, checked, memory,
+				executor, 64, {}, false, gadgets::check_simd) :
+			gadgets::ExecuteResult{};
+		/* As the runtime runs it: the gadgets check invalid operation. */
+		auto runtime = start(0x1900);
+		const auto linked = run_until_event(memory, runtime);
+		const bool right = test.invalid ?
+			trapped(alone, checked, 0x1f00) &&
+				trapped(linked, runtime, 0x1900) :
+			alone.event == uml::cpu::EngineEvent::continued &&
+				returned(checked, 0x1f00) &&
+				linked.event == uml::cpu::EngineEvent::system_call &&
+				returned(runtime, 0x1900);
+		if (right)
+			continue;
+		std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: checked event "
+			"%d error %#llx mxcsr %#x, runtime event %d error %#llx mxcsr "
+			"%#x\n", static_cast<int>(test.name.size()), test.name.data(),
+			static_cast<int>(alone.event),
+			static_cast<unsigned long long>(alone.error), checked.mxcsr,
+			static_cast<int>(linked.event),
+			static_cast<unsigned long long>(linked.error), runtime.mxcsr);
+		return expect(false, test.invalid ?
+			"an FMA did not raise invalid operation" :
+			"an FMA raised invalid operation x86 does not");
+	}
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8307,6 +8440,7 @@ int main()
 		checked_simd_exceptions_fault_before_the_result() &&
 		checked_simd_denormal_operands_follow_x86() &&
 		checked_simd_invalid_operations_follow_x86() &&
+		checked_fma_invalid_operations_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

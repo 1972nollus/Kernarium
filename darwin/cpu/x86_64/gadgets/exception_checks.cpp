@@ -415,6 +415,16 @@ struct FloatFormat final {
 	{
 		return (x & sign()) != 0;
 	}
+	[[nodiscard]] bool signalling(std::uint64_t x) const noexcept
+	{
+		return nan(x) && (x & (dbl ? 1ULL << 51U : 1ULL << 22U)) == 0;
+	}
+	/* `x` as MXCSR.DAZ reads it: a denormal is a zero of its sign. */
+	[[nodiscard]] std::uint64_t input(std::uint64_t x,
+		bool denormals_are_zero) const noexcept
+	{
+		return denormals_are_zero && denormal(x) ? x & sign() : x;
+	}
 	/* A lane of a two-source operation that raises a denormal operand,
 	 * which a NaN in it overrides. */
 	[[nodiscard]] bool denormal_pair(std::uint64_t a,
@@ -462,6 +472,79 @@ using VectorValue = std::array<std::byte, 32>;
 	bool dbl) noexcept
 {
 	return static_cast<std::size_t>(operand.width) / (dbl ? 8U : 4U);
+}
+
+/* An FMA's x86 a, b and c of a * b + c, and the signs its lanes give the
+ * product and the addend. */
+struct FmaOperands final {
+	VectorValue a{};
+	VectorValue b{};
+	VectorValue c{};
+	bool dbl{};
+	std::size_t lanes{};
+	unsigned operation{};
+
+	[[nodiscard]] bool negate_product() const noexcept
+	{
+		return operation >= 0xcU;
+	}
+	/* FMADDSUB subtracts in its even lanes and FMSUBADD in its odd ones. */
+	[[nodiscard]] bool negate_addend(std::size_t index) const noexcept
+	{
+		if (operation == 6U)
+			return (index & 1U) == 0;
+		if (operation == 7U)
+			return (index & 1U) != 0;
+		return operation == 0xaU || operation == 0xbU ||
+			operation == 0xeU || operation == 0xfU;
+	}
+};
+
+/* False when a memory source is unreadable. */
+[[nodiscard]] bool read_fma_operands(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory,
+	FmaOperands &operands)
+{
+	const auto &instruction = gadget.instruction;
+	VectorValue destination{};
+	VectorValue vvvv{};
+	VectorValue rm{};
+	if (!operand_value(cpu, gadget, instruction.destination, memory,
+			destination) ||
+		!operand_value(cpu, gadget, instruction.source, memory, vvvv) ||
+		!operand_value(cpu, gadget, instruction.auxiliary, memory, rm))
+		return false;
+	operands.dbl = instruction.vector_group != 0;
+	operands.operation = instruction.vector_opcode & 0x0fU;
+	const bool scalar = operands.operation >= 9U &&
+		(operands.operation & 1U) != 0;
+	operands.lanes = scalar ? 1U :
+		vector_lanes(instruction.destination, operands.dbl);
+	/* 132 is destination * r/m + vvvv, 213 vvvv * destination + r/m, and
+	 * 231 vvvv * r/m + destination. */
+	const unsigned form = instruction.vector_opcode >> 4U;
+	operands.a = form == 0x9U ? destination : vvvv;
+	operands.b = form == 0xaU ? destination : rm;
+	operands.c = form == 0x9U ? vvvv : form == 0xaU ? rm : destination;
+	return true;
+}
+
+/* Whether an FMA lane raises invalid operation on x86: for a signalling
+ * NaN, for infinity times zero plus anything but a quiet NaN, and for
+ * infinities of opposite signs added. The host raises it for infinity times
+ * zero plus a quiet NaN too. */
+[[nodiscard]] bool fma_lane_invalid(const FloatFormat &f, std::uint64_t a,
+	std::uint64_t b, std::uint64_t c, bool product_negative,
+	bool addend_negative) noexcept
+{
+	if (f.signalling(a) || f.signalling(b) || f.signalling(c))
+		return true;
+	if ((f.zero(a) && f.infinite(b)) || (f.infinite(a) && f.zero(b)))
+		return !f.nan(c);
+	if (f.nan(a) || f.nan(b) || f.nan(c))
+		return false;
+	return (f.infinite(a) || f.infinite(b)) && f.infinite(c) &&
+		product_negative != addend_negative;
 }
 
 /* a * b or a + b, correctly rounded in MXCSR's rounding mode, which FPCR
@@ -639,48 +722,25 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 		return 0;
 	}
 	case Operation::vector_fma: {
-		const bool dbl = instruction.vector_group != 0;
-		const FloatFormat f{dbl};
-		const unsigned operation = opcode & 0x0fU;
-		const bool scalar = operation >= 9U && (operation & 1U) != 0;
-		const std::size_t lanes = scalar ? 1U :
-			vector_lanes(instruction.destination, dbl);
-		VectorValue destination{};
-		if (!read(instruction.destination, destination) ||
-			!read(instruction.source, first) ||
-			!read(instruction.auxiliary, second))
+		FmaOperands fma{};
+		if (!read_fma_operands(cpu, gadget, memory, fma))
 			return 0;
-		/* x86's a * b + c: 132 is destination * r/m + vvvv, 213 vvvv *
-		 * destination + r/m, and 231 vvvv * r/m + destination. */
-		const unsigned form = opcode >> 4U;
-		const auto &a = form == 0x9U ? destination : first;
-		const auto &b = form == 0xaU ? destination : second;
-		const auto &c = form == 0x9U ? first :
-			form == 0xaU ? second : destination;
-		const bool negate_product = operation >= 0xcU;
-		for (std::size_t index = 0; index < lanes; ++index) {
-			const auto x = value_lane(a, dbl, index);
-			const auto y = value_lane(b, dbl, index);
-			const auto z = value_lane(c, dbl, index);
+		const FloatFormat f{fma.dbl};
+		for (std::size_t index = 0; index < fma.lanes; ++index) {
+			const auto x = value_lane(fma.a, fma.dbl, index);
+			const auto y = value_lane(fma.b, fma.dbl, index);
+			const auto z = value_lane(fma.c, fma.dbl, index);
 			if (f.nan(x) || f.nan(y) || f.nan(z) ||
 				!(f.denormal(x) || f.denormal(y) || f.denormal(z)))
 				continue;
 			/* An invalid operation takes precedence: zero times
 			 * infinity, or infinities of opposite signs added. */
-			if ((f.zero(x) && f.infinite(y)) ||
-				(f.infinite(x) && f.zero(y)))
-				continue;
-			bool negate_addend = operation == 0xaU || operation == 0xbU ||
-				operation == 0xeU || operation == 0xfU;
-			if (operation == 6U)
-				negate_addend = (index & 1U) == 0;
-			else if (operation == 7U)
-				negate_addend = (index & 1U) != 0;
 			const bool product_negative =
-				(f.negative(x) != f.negative(y)) != negate_product;
-			const bool addend_negative = f.negative(z) != negate_addend;
-			if ((f.infinite(x) || f.infinite(y)) && f.infinite(z) &&
-				product_negative != addend_negative)
+				(f.negative(x) != f.negative(y)) != fma.negate_product();
+			const bool addend_negative =
+				f.negative(z) != fma.negate_addend(index);
+			if (fma_lane_invalid(f, x, y, z, product_negative,
+					addend_negative))
 				continue;
 			return raised;
 		}
@@ -708,6 +768,41 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 			first, second) ? raised : 0U;
 	default:
 		return 0;
+	}
+}
+
+HostFlagCorrection host_flag_correction(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory)
+{
+	constexpr std::uint32_t invalid = 0x01U;
+	const bool denormals_are_zero =
+		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
+	switch (gadget.instruction.operation) {
+	case Operation::vector_fma: {
+		FmaOperands fma{};
+		if (!read_fma_operands(cpu, gadget, memory, fma))
+			return {};
+		const FloatFormat f{fma.dbl};
+		HostFlagCorrection correction{.decided = invalid};
+		for (std::size_t index = 0; index < fma.lanes; ++index) {
+			const auto a = f.input(value_lane(fma.a, fma.dbl, index),
+				denormals_are_zero);
+			const auto b = f.input(value_lane(fma.b, fma.dbl, index),
+				denormals_are_zero);
+			const auto c = f.input(value_lane(fma.c, fma.dbl, index),
+				denormals_are_zero);
+			const bool product_negative =
+				(f.negative(a) != f.negative(b)) != fma.negate_product();
+			const bool addend_negative =
+				f.negative(c) != fma.negate_addend(index);
+			if (fma_lane_invalid(f, a, b, c, product_negative,
+					addend_negative))
+				correction.raised |= invalid;
+		}
+		return correction;
+	}
+	default:
+		return {};
 	}
 }
 

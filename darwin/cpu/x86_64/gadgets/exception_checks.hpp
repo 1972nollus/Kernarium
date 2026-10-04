@@ -141,6 +141,22 @@ inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 [[nodiscard]] std::uint32_t denormal_operand(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
+/* MXCSR flags the host's floating-point operations raise differently from
+ * x86 for an instruction run checked: the flags in `decided` take their
+ * values from `raised` rather than from the host. */
+struct HostFlagCorrection final {
+	std::uint32_t decided{};
+	std::uint32_t raised{};
+};
+
+/* The correction for the SIMD floating-point instruction `gadget`, from the
+ * state before it runs. An FMA decides invalid operation, which the host
+ * raises for infinity times zero plus a quiet NaN and x86 does not. Nothing
+ * when a memory source is unreadable, which the instruction then faults
+ * on. */
+[[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
+
 /* The host's cumulative floating-point exception flags, as the MXCSR flags
  * they correspond to. */
 void clear_host_floating_exceptions() noexcept;
