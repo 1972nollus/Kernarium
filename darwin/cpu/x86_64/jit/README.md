@@ -92,6 +92,8 @@ pairs of 128-bit operations on hosts without 256-bit SVE. x87 is the full
 80-bit format. Stores are totally ordered for every address space: FEXCore
 emulates TSO with acquire loads and release stores, and `space_orders_stores()`
 is the one place a per-address-space decision will key it.
+DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
+destination before they write either destination.
 
 The engine does not deliver unmasked SSE or x87 exceptions as `#XM` or `#MF`,
 because FEXCore keeps no MXCSR or x87 exception flags, and has no
@@ -107,5 +109,5 @@ names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The classes are VEX gathers through the software TLB,
 split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules,
-divide overflow, IRET flags, masked-store lanes, 16-bit SHLD over-counts and a
-store into its own block.
+IRET flags, masked-store lanes, 16-bit SHLD over-counts and a store into its
+own block.

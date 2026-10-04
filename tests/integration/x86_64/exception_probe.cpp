@@ -1394,7 +1394,6 @@ bool signal_keeps_ax()
 	return ok;
 }
 
-#if defined(__i386__)
 /* Runs `work`, resuming after `end` if it faults, and checks that it raised
  * nothing. */
 bool delivers_nothing(const char *what, void (*work)(), word end)
@@ -1412,6 +1411,8 @@ bool delivers_nothing(const char *what, void (*work)(), word end)
 	put("\n");
 	return false;
 }
+
+#if defined(__i386__)
 
 extern "C" void probe_into(word value);
 extern "C" char probe_into_end[];
@@ -1641,6 +1642,143 @@ bool noncanonical_faults()
 				    {one.signal, si_kernel, 0,
 				     address_of(one.insn), one.vector, true,
 				     0});
+	return ok;
+}
+#endif
+
+#if defined(__x86_64__)
+/* Each divide loads RAX, RDX and RCX from (state)[0..2], divides, and
+ * stores RAX, RDX and RCX to (state)[3..5]; a memory divisor is
+ * (state)[2]. */
+#define PROBE_DIVIDE(name, insn)                                          \
+	".global probe_de_" name "\n"                                     \
+	"probe_de_" name ":\n"                                            \
+	"	movq (%rdi), %rax\n"                                      \
+	"	movq 8(%rdi), %rdx\n"                                     \
+	"	movq 16(%rdi), %rcx\n"                                    \
+	".global probe_de_" name "_insn\n"                                \
+	"probe_de_" name "_insn:\n"                                       \
+	"	" insn "\n"                                               \
+	".global probe_de_" name "_end\n"                                 \
+	"probe_de_" name "_end:\n"                                        \
+	"	movq %rax, 24(%rdi)\n"                                    \
+	"	movq %rdx, 32(%rdi)\n"                                    \
+	"	movq %rcx, 40(%rdi)\n"                                    \
+	"	ret\n"
+
+__asm__(".text\n"
+	PROBE_DIVIDE("div8", "divb %cl")
+	PROBE_DIVIDE("idiv8", "idivb %cl")
+	PROBE_DIVIDE("div16", "divw %cx")
+	PROBE_DIVIDE("idiv16", "idivw %cx")
+	PROBE_DIVIDE("div32", "divl %ecx")
+	PROBE_DIVIDE("idiv32", "idivl %ecx")
+	PROBE_DIVIDE("div32m", "divl 16(%rdi)")
+	PROBE_DIVIDE("div64", "divq %rcx")
+	PROBE_DIVIDE("idiv64", "idivq %rcx")
+	PROBE_DIVIDE("idiv64m", "idivq 16(%rdi)"));
+
+#define PROBE_DIVIDE_DECLARE(name)                                        \
+	extern "C" void probe_de_##name(word *state);                     \
+	extern "C" char probe_de_##name##_insn[];                         \
+	extern "C" char probe_de_##name##_end[];                          \
+	void de_##name() { probe_de_##name(divide_state); }
+
+word divide_state[6];
+
+PROBE_DIVIDE_DECLARE(div8)
+PROBE_DIVIDE_DECLARE(idiv8)
+PROBE_DIVIDE_DECLARE(div16)
+PROBE_DIVIDE_DECLARE(idiv16)
+PROBE_DIVIDE_DECLARE(div32)
+PROBE_DIVIDE_DECLARE(idiv32)
+PROBE_DIVIDE_DECLARE(div32m)
+PROBE_DIVIDE_DECLARE(div64)
+PROBE_DIVIDE_DECLARE(idiv64)
+PROBE_DIVIDE_DECLARE(idiv64m)
+
+constexpr long fpe_intdiv = 1;
+
+/* A zero divisor or a quotient too wide for its destination raises #DE, a
+ * fault: SIGFPE with FPE_INTDIV at the instruction, which has written
+ * nothing. A quotient at the edge of its range does not fault. */
+bool divide_errors()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		word in[3];
+		bool faults;
+		word out[2];
+	};
+#define PROBE_DIVIDE_CASE(name) de_##name, probe_de_##name##_insn,        \
+		probe_de_##name##_end
+	const Case cases[] = {
+		{"DIV r8 overflow", PROBE_DIVIDE_CASE(div8),
+		 {0x1234, 0x5a5a5a5a5a5a5a5a, 0x10}, true, {}},
+		{"DIV r8 by zero", PROBE_DIVIDE_CASE(div8),
+		 {5, 0, 0x100}, true, {}},
+		{"IDIV r8 overflow", PROBE_DIVIDE_CASE(idiv8),
+		 {0xff80, 0, 0xff}, true, {}},
+		{"DIV r16 overflow", PROBE_DIVIDE_CASE(div16),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r16 overflow", PROBE_DIVIDE_CASE(idiv16),
+		 {0x8000, 0xffff, 0xffff}, true, {}},
+		{"DIV r32 overflow", PROBE_DIVIDE_CASE(div32),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r32 overflow", PROBE_DIVIDE_CASE(idiv32),
+		 {0x80000000, 0xffffffff, 0xffffffff}, true, {}},
+		{"DIV m32 by zero", PROBE_DIVIDE_CASE(div32m),
+		 {1, 0, 0}, true, {}},
+		{"DIV r64 overflow", PROBE_DIVIDE_CASE(div64),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r64 of INT64_MIN by -1", PROBE_DIVIDE_CASE(idiv64),
+		 {0x8000000000000000, ~0UL, ~0UL}, true, {}},
+		{"IDIV r64 of 2^64 by 2", PROBE_DIVIDE_CASE(idiv64),
+		 {0, 1, 2}, true, {}},
+		{"IDIV m64 of -2^65 by 2", PROBE_DIVIDE_CASE(idiv64m),
+		 {0, 0xfffffffffffffffe, 2}, true, {}},
+		{"DIV r8 to 0xff", PROBE_DIVIDE_CASE(div8),
+		 {0x77000000000001fe, 3, 2}, false,
+		 {0x77000000000000ff, 3}},
+		{"IDIV r16 to -32768", PROBE_DIVIDE_CASE(idiv16),
+		 {0x1111111111110000, 0x222222222222ffff, 2}, false,
+		 {0x1111111111118000, 0x2222222222220000}},
+		{"IDIV r32 to INT32_MIN", PROBE_DIVIDE_CASE(idiv32),
+		 {0x1111111100000000, 0xffffffff, 2}, false,
+		 {0x80000000, 0}},
+		{"IDIV r64 to INT64_MIN", PROBE_DIVIDE_CASE(idiv64),
+		 {0, ~0UL, 2}, false, {0x8000000000000000, 0}},
+	};
+#undef PROBE_DIVIDE_CASE
+	bool ok = install_fault_handlers() && install(sigfpe, record_fault);
+	for (const Case &one : cases) {
+		for (unsigned index = 0; index < 3; ++index) {
+			divide_state[index] = one.in[index];
+			divide_state[index + 3] = 0;
+		}
+		const word insn = address_of(one.insn);
+		const bool delivered =
+			one.faults ? delivers(one.what, one.work,
+					      address_of(one.end),
+					      {sigfpe, fpe_intdiv, insn, insn,
+					       0, true, 0})
+				   : delivers_nothing(one.what, one.work,
+						      address_of(one.end));
+		const word rax = one.faults ? one.in[0] : one.out[0];
+		const word rdx = one.faults ? one.in[1] : one.out[1];
+		bool kept = expect("RAX", divide_state[3], rax);
+		kept &= expect("RDX", divide_state[4], rdx);
+		kept &= expect("RCX", divide_state[5], one.in[2]);
+		if (!kept) {
+			put("  after ");
+			put(one.what);
+			put("\n");
+		}
+		ok &= delivered && kept;
+	}
 	return ok;
 }
 #endif
@@ -2700,6 +2838,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "int-n"));
 	report("x86-64 a non-canonical address raises #GP or #SS",
 	       in_child(self, "noncanonical"));
+	report("x86-64 DIV and IDIV raise #DE and write nothing",
+	       in_child(self, "divide-error"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -2766,6 +2906,8 @@ extern "C" int probe_main(word *stack)
 #else
 		if (equal(mode, "noncanonical"))
 			return noncanonical_faults() ? 0 : 1;
+		if (equal(mode, "divide-error"))
+			return divide_errors() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

@@ -162,14 +162,6 @@ fex/TwoByte/0F_C0_Atomic16.asm	split-locked-operand
 fex/TwoByte/0F_C0_Atomic32.asm	split-locked-operand
 fex/TwoByte/0F_C0_Atomic64.asm	split-locked-operand
 
-# divide-overflow (5): DIV and IDIV whose quotient overflows the destination
-# complete instead of raising #DE; only a zero divisor raises it.
-k/mcsema-unit-tests/binary/div	divide-overflow
-k/mcsema-unit-tests/binary/idiv	divide-overflow
-k/single-instruction-tests/div	divide-overflow
-k/single-instruction-tests/idiv	divide-overflow
-k/single-instruction-tests/idiv_quotient_rem	divide-overflow
-
 # x87-signed-zero (4): x87 FPREM, FSIN and FSINCOS lose the sign of a zero
 # result.
 fex/X87_F64/fprem_exact_quotient_F64.asm	x87-signed-zero

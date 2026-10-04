@@ -25,12 +25,12 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
  FEXCore/Source/Interface/Core/Frontend.h      |   4 +
- FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |   8 +
+ FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |  12 +
  .../Source/Interface/Core/JIT/AtomicOps.cpp   |  66 +++
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
- .../Interface/Core/JIT/EmbedderMemory.cpp     | 211 ++++++++++
- FEXCore/Source/Interface/Core/JIT/JIT.cpp     |  78 +++-
- FEXCore/Source/Interface/Core/JIT/JITClass.h  |  65 +++
+ .../Interface/Core/JIT/EmbedderMemory.cpp     | 349 ++++++++++++++++
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 114 ++++-
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |  66 +++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 390 +++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |   1 +
  .../Interface/Core/OpcodeDispatcher.cpp       |  48 ++-
@@ -45,7 +45,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/include/FEXCore/Core/CoreState.h      |  86 ++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1336 insertions(+), 65 deletions(-)
+ 29 files changed, 1513 insertions(+), 67 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -422,26 +422,30 @@ index f668d2b9c77998abccef1e6a9093894962ab828d..69f3328216e6af4c45f1bd9897ab429c
    bool HitBadRelocation {};
  
 diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-index 7946ccdd2f90506ebd0ca2117aea6eb4ad022893..622f9b18f1a17850460b60f2678f286c28372e70 100644
+index 7946ccdd2f90506ebd0ca2117aea6eb4ad022893..ae25e0c32dcdbffed2f8dc9dc7efee5f66ada212 100644
 --- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
-@@ -858,6 +858,10 @@ DEF_OP(Div) {
+@@ -858,6 +858,12 @@ DEF_OP(Div) {
    auto Lower = GetReg(Op->Lower);
    auto Divisor = GetReg(Op->Divisor);
  
 +  if (Embedded()) {
-+    EmitEmbedderDivideCheck(Divisor, OpSize);
++    EmitEmbedderDivide(true, OpSize, Lower, Op->Upper.IsInvalid() ? std::nullopt : std::make_optional(GetReg(Op->Upper)), Divisor,
++                       Quotient, Remainder);
++    return;
 +  }
 +
    if (Op->Upper.IsInvalid()) {
      const auto EmitSize = ConvertSize(IROp);
  
-@@ -958,6 +962,10 @@ DEF_OP(UDiv) {
+@@ -958,6 +964,12 @@ DEF_OP(UDiv) {
    const auto Lower = GetReg(Op->Lower);
    const auto Divisor = GetReg(Op->Divisor);
  
 +  if (Embedded()) {
-+    EmitEmbedderDivideCheck(Divisor, OpSize);
++    EmitEmbedderDivide(false, OpSize, Lower, Op->Upper.IsInvalid() ? std::nullopt : std::make_optional(GetReg(Op->Upper)), Divisor,
++                       Quotient, Remainder);
++    return;
 +  }
 +
    // Each source is OpSize in size
@@ -663,10 +667,10 @@ index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4
    PendingTargetLabel = JumpTarget(Op->FalseBlock);
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab15e3196e6
+index 0000000000000000000000000000000000000000..937af92ed33466d9b7a285cadb4235a34f2ffb2c
 --- /dev/null
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,349 @@
 +// SPDX-License-Identifier: MIT
 +/*
 +$info$
@@ -847,9 +851,16 @@ index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab1
 +  EmbedderBudgetSites.push_back(std::move(Site));
 +}
 +
-+void Arm64JITCore::EmitEmbedderDivideCheck(ARMEmitter::Register Divisor, IR::OpSize Size) {
-+  // x86 raises #DE for a zero divisor before writing anything; the static
-+  // registers still hold the instruction's inputs here.
++void Arm64JITCore::EmitEmbedderDivide(bool Signed, IR::OpSize OpSize, ARMEmitter::Register Lower, std::optional<ARMEmitter::Register> Upper,
++                                      ARMEmitter::Register Divisor, ARMEmitter::Register Quotient, ARMEmitter::Register Remainder) {
++  // x86 DIV and IDIV raise #DE, before writing anything, for a zero divisor
++  // and for a quotient that does not fit the destination. The frontend emits
++  // these forms only for them and for AAM, whose quotient always fits: DIV
++  // r/m8 as a 16-bit UDiv and IDIV r/m8 as a 64-bit Div, both without Upper,
++  // and the wider forms with Upper. The quotient is formed and checked in a
++  // temporary, because the register allocator may give an output the
++  // architectural register the exit would report.
++  using ARMEmitter::Size;
 +  auto Site = fextl::make_unique<EmbedderBudgetSite>();
 +  Site->GuestRIP = EmbedderCurrentRIP;
 +  Site->ExitReason = Core::EMBEDDER_EXIT_BREAK;
@@ -861,8 +872,139 @@ index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab1
 +    .err_code = 0,
 +  };
 +  memcpy(&Site->FaultData, &Fault, sizeof(Fault));
-+  cbz_OrRestart(Size == IR::OpSize::i64Bit ? ARMEmitter::Size::i64Bit : ARMEmitter::Size::i32Bit, Divisor, &Site->Entry);
++  auto* DivideError = &Site->Entry;
 +  EmbedderBudgetSites.push_back(std::move(Site));
++
++  cbz_OrRestart(OpSize == IR::OpSize::i64Bit ? Size::i64Bit : Size::i32Bit, Divisor, DivideError);
++
++  // Checks the quotient in TMP1 against Bits signed or unsigned bits.
++  const auto CheckQuotient = [&](Size EmitSize, unsigned Bits) {
++    if (Signed) {
++      sbfx(EmitSize, TMP2, TMP1, 0, Bits);
++      eor(EmitSize, TMP2, TMP2, TMP1);
++    } else {
++      lsr(EmitSize, TMP2, TMP1, Bits);
++    }
++    cbnz_OrRestart(EmitSize, TMP2, DivideError);
++  };
++  // TMP1 holds the quotient; Dividend and DivisorReg are what it came from.
++  const auto Finish = [&](Size EmitSize, ARMEmitter::Register Dividend, ARMEmitter::Register DivisorReg) {
++    msub(EmitSize, Remainder, TMP1, DivisorReg, Dividend);
++    mov(Size::i64Bit, Quotient, TMP1);
++  };
++
++  if (!Upper) {
++    if (!Signed && OpSize == IR::OpSize::i16Bit) {
++      // DIV r/m8: AX by the zero-extended divisor into AL and AH.
++      udiv(Size::i32Bit, TMP1, Lower, Divisor);
++      CheckQuotient(Size::i32Bit, 8);
++      Finish(Size::i32Bit, Lower, Divisor);
++    } else if (Signed && OpSize == IR::OpSize::i64Bit) {
++      // IDIV r/m8: the sign-extended AX by the sign-extended divisor.
++      sdiv(Size::i64Bit, TMP1, Lower, Divisor);
++      CheckQuotient(Size::i64Bit, 8);
++      Finish(Size::i64Bit, Lower, Divisor);
++    } else {
++      // AAM, and any other form whose quotient fits its size.
++      const auto EmitSize = OpSize == IR::OpSize::i64Bit ? Size::i64Bit : Size::i32Bit;
++      ARMEmitter::Register Dividend = Lower;
++      ARMEmitter::Register DivisorReg = Divisor;
++      if (Signed && OpSize == IR::OpSize::i8Bit) {
++        sxtb(EmitSize, TMP3, Lower);
++        sxtb(EmitSize, TMP4, Divisor);
++        Dividend = TMP3;
++        DivisorReg = TMP4;
++      } else if (Signed && OpSize == IR::OpSize::i16Bit) {
++        sxth(EmitSize, TMP3, Lower);
++        sxth(EmitSize, TMP4, Divisor);
++        Dividend = TMP3;
++        DivisorReg = TMP4;
++      }
++      if (Signed) {
++        sdiv(EmitSize, TMP1, Dividend, DivisorReg);
++      } else {
++        udiv(EmitSize, TMP1, Dividend, DivisorReg);
++      }
++      Finish(EmitSize, Dividend, DivisorReg);
++    }
++    return;
++  }
++
++  switch (OpSize) {
++  case IR::OpSize::i16Bit: {
++    // DX:AX by a 16-bit divisor, in 32 bits.
++    uxth(Size::i32Bit, TMP3, Lower);
++    bfi(Size::i32Bit, TMP3, *Upper, 16, 16);
++    if (Signed) {
++      sxth(Size::i32Bit, TMP4, Divisor);
++      sdiv(Size::i32Bit, TMP1, TMP3, TMP4);
++    } else {
++      uxth(Size::i32Bit, TMP4, Divisor);
++      udiv(Size::i32Bit, TMP1, TMP3, TMP4);
++    }
++    CheckQuotient(Size::i32Bit, 16);
++    Finish(Size::i32Bit, TMP3, TMP4);
++    break;
++  }
++  case IR::OpSize::i32Bit: {
++    // EDX:EAX by a 32-bit divisor, in 64 bits.
++    mov(Size::i64Bit, TMP3, Lower);
++    bfi(Size::i64Bit, TMP3, *Upper, 32, 32);
++    if (Signed) {
++      sxtw(TMP4, Divisor.W());
++      sdiv(Size::i64Bit, TMP1, TMP3, TMP4);
++    } else {
++      mov(Size::i32Bit, TMP4, Divisor);
++      udiv(Size::i64Bit, TMP1, TMP3, TMP4);
++    }
++    CheckQuotient(Size::i64Bit, 32);
++    Finish(Size::i64Bit, TMP3, TMP4);
++    break;
++  }
++  case IR::OpSize::i64Bit: {
++    ARMEmitter::ForwardLabel Only64Bit {};
++    ARMEmitter::ForwardLabel Done {};
++    if (Signed) {
++      // A dividend that is the sign extension of RAX divides in 64 bits.
++      sbfx(Size::i64Bit, TMP1, Lower, 63, 1);
++      eor(Size::i64Bit, TMP1, TMP1, *Upper);
++      (void)cbz(Size::i64Bit, TMP1, &Only64Bit);
++    } else {
++      (void)cbz(Size::i64Bit, *Upper, &Only64Bit);
++    }
++
++    // The long divide's helper returns the divisor as the remainder, which
++    // no division can, when the quotient does not fit 64 bits.
++    mov(Size::i64Bit, TMP1, *Upper);
++    mov(Size::i64Bit, TMP2, Lower);
++    mov(Size::i64Bit, TMP3, Divisor);
++    ldr(TMP4, STATE,
++        Signed ? offsetof(FEXCore::Core::CpuStateFrame, Pointers.LDIVHandler) : offsetof(FEXCore::Core::CpuStateFrame, Pointers.LUDIVHandler));
++    str<ARMEmitter::IndexType::PRE>(ARMEmitter::XReg::lr, ARMEmitter::Reg::rsp, -16);
++    blr(TMP4);
++    ldr<ARMEmitter::IndexType::POST>(ARMEmitter::XReg::lr, ARMEmitter::Reg::rsp, 16);
++    eor(Size::i64Bit, TMP3, TMP2, Divisor);
++    cbz_OrRestart(Size::i64Bit, TMP3, DivideError);
++    mov(Size::i64Bit, Quotient, TMP1);
++    mov(Size::i64Bit, Remainder, TMP2);
++    (void)b(&Done);
++
++    (void)Bind(&Only64Bit);
++    if (Signed) {
++      // INT64_MIN / -1 is the one 64-bit quotient that does not fit.
++      eor(Size::i64Bit, TMP1, Lower, 0x8000'0000'0000'0000ULL);
++      orn(Size::i64Bit, TMP1, TMP1, Divisor);
++      cbz_OrRestart(Size::i64Bit, TMP1, DivideError);
++      sdiv(Size::i64Bit, TMP1, Lower, Divisor);
++    } else {
++      udiv(Size::i64Bit, TMP1, Lower, Divisor);
++    }
++    Finish(Size::i64Bit, Lower, Divisor);
++    (void)Bind(&Done);
++    break;
++  }
++  default: LOGMAN_MSG_A_FMT("Unknown embedded divide size: {}", OpSize); break;
++  }
 +}
 +
 +void Arm64JITCore::EmitEmbedderUnsupported(const char* What) {
@@ -879,10 +1021,49 @@ index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab1
 +
 +} // namespace FEXCore::CPU
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2fc78f7a57 100644
+index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..74b40b630b788003205466417d26ff2b063a591b 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -497,7 +497,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+@@ -63,6 +63,38 @@ LDIV(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
+   };
+ }
+ 
++// An embedding host raises #DE for a quotient that does not fit 64 bits. The
++// embedded divide reads that from a remainder equal to the divisor, which no
++// division leaves.
++static struct DivRem LUDIVChecked(uint64_t SrcHigh, uint64_t SrcLow, uint64_t Divisor) {
++  if (SrcHigh >= Divisor) {
++    return {.Quotient = 0, .Remainder = Divisor};
++  }
++  return LUDIV(SrcHigh, SrcLow, Divisor);
++}
++
++static struct DivRem LDIVChecked(uint64_t SrcHigh, uint64_t SrcLow, int64_t Divisor) {
++  const auto Source = static_cast<__int128_t>((static_cast<__uint128_t>(SrcHigh) << 64) | SrcLow);
++  constexpr auto Minimum = -(static_cast<__int128_t>(1) << 63);
++  constexpr auto Maximum = (static_cast<__int128_t>(1) << 63) - 1;
++  const auto Overflow = DivRem {.Quotient = 0, .Remainder = static_cast<uint64_t>(Divisor)};
++  if (Divisor == -1) {
++    // Negating the minimum 128-bit dividend would overflow __int128 itself.
++    if (Source < -Maximum || Source > -Minimum) {
++      return Overflow;
++    }
++    return {.Quotient = static_cast<uint64_t>(-Source), .Remainder = 0};
++  }
++  const __int128_t Quotient = Source / Divisor;
++  if (Quotient < Minimum || Quotient > Maximum) {
++    return Overflow;
++  }
++  return {
++    .Quotient = static_cast<uint64_t>(Quotient),
++    .Remainder = static_cast<uint64_t>(Source % Divisor),
++  };
++}
++
+ static void
+ PrintValue(uint64_t Value) {
+   LogMan::Msg::DFmt("Value: 0x{:x}", Value);
+@@ -497,7 +529,15 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
    }
  }
  
@@ -898,7 +1079,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
    auto BranchOffset = JumpThunkStartAddress / 4 - CallerAddress / 4;
-@@ -516,6 +524,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+@@ -516,6 +556,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
  }
  
  static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -906,7 +1087,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
    uint32_t BranchInst = 0;
    ARMEmitter::Emitter BranchEmit(reinterpret_cast<uint8_t*>(&BranchInst), 4);
-@@ -529,6 +538,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+@@ -529,6 +570,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
  }
  
  uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
@@ -914,7 +1095,18 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    auto Thread = Frame->Thread;
    bool TFSet = Thread->CurrentFrame->State.flags[X86State::RFLAG_TF_RAW_LOC];
    uintptr_t HostCode {};
-@@ -797,10 +807,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+@@ -662,8 +704,8 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
+       Ptrs.SyscallHandlerFunc = PMF.GetVTableEntry(CTX->SyscallHandler);
+     }
+     Ptrs.ExitFunctionLink = reinterpret_cast<uintptr_t>(&Arm64JITCore::ExitFunctionLink);
+-    Ptrs.LUDIV = reinterpret_cast<uint64_t>(LUDIV);
+-    Ptrs.LDIV = reinterpret_cast<uint64_t>(LDIV);
++    Ptrs.LUDIV = reinterpret_cast<uint64_t>(CTX->Embedded ? LUDIVChecked : LUDIV);
++    Ptrs.LDIV = reinterpret_cast<uint64_t>(CTX->Embedded ? LDIVChecked : LDIV);
+   }
+ 
+   CurrentCodeBuffer = SharedCodeBuffers.GetLatest();
+@@ -797,10 +839,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
    adr_OrRestart(TMP1, &HeaderLabel);
    str(TMP1, STATE, offsetof(FEXCore::Core::CPUState, InlineJITBlockHeader));
  
@@ -931,7 +1123,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    if (SpillSlots) {
      const auto TotalSpillSlotsSize = SpillSlots * MaxSpillSlotSize;
  
-@@ -825,7 +841,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -825,7 +873,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    this->DebugData = DebugData;
    this->IR = IR;
    RequiresFarARM64Jumps = false;
@@ -945,7 +1137,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
  
    // Prepare restart via long jump in case branch encoding fails.
    // This uses UncheckedLongJump since we don't implement std::longjmp in WoA setups
-@@ -838,15 +860,25 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -838,15 +892,25 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      // Get rid of the claimed buffer immediately, we can't fit in it at all.
      TempCodeBufferAllocator.UnclaimBuffer();
      SSANodeMultiplier *= 2;
@@ -971,7 +1163,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    Relocations.resize(PrevNumAllocations, FEXCore::CPU::Relocation::Default()); // Discard any relocations generated from a previous attempt
  
    CodeData.EntryPoints.clear();
-@@ -862,6 +894,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -862,6 +926,9 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
  
    SetBuffer(TempCodeBuffer, UsableBufferRange);
@@ -981,7 +1173,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
  
    ThreadState->JITGuardPage = reinterpret_cast<uintptr_t>(TempCodeBuffer) + UsableBufferRange;
    ThreadState->JITGuardOverflowArgument = FEXCore::ToUnderlying(RestartOptions::Control::NeedsLargerJITSpace);
-@@ -917,7 +952,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -917,7 +984,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          if (PendingTargetLabel->Backward.Location) {
            EmitSuspendInterruptCheck();
          }
@@ -994,7 +1186,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
          PendingTargetLabel = nullptr;
        }
  
-@@ -938,6 +977,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -938,6 +1009,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
          CodeData.EntryPoints.emplace(BlockStartRIP, GetCursorAddress<uint8_t*>());
          DebugData->GuestOpcodes.push_back({BlockIROp->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
  
@@ -1007,7 +1199,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
          EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
        }
  
-@@ -973,10 +1018,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -973,10 +1050,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
      if (PendingTargetLabel->Backward.Location) {
        EmitSuspendInterruptCheck();
      }
@@ -1027,7 +1219,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    ARMEmitter::ForwardLabel l_ExitLink;
    for (auto& PendingJumpThunk : PendingJumpThunks) {
      // Align as 64-bit atomics are used on the HostCode field.
-@@ -1035,6 +1088,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1035,6 +1120,20 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
    const auto JITRIPEntriesBegin = JITBlockTailLocation + sizeof(JITBlockTail);
    auto JITRIPEntriesLocation = JITRIPEntriesBegin;
  
@@ -1048,7 +1240,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    {
      // Store the RIP entries.
      JITBlockTail.NumberOfRIPEntries = DebugData->GuestOpcodes.size();
-@@ -1071,6 +1138,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1071,6 +1170,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
  
    // Migrate the compile output from temporary storage to the actual CodeBuffer.
    // This can block progress in other compiling threads, so the duration of the lock should be as small as possible.
@@ -1056,7 +1248,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
    {
      auto CodeBufferLock = std::unique_lock {SharedCodeBuffers.CodeBufferWriteMutex};
  
-@@ -1088,12 +1156,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+@@ -1088,12 +1188,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
        }
  
        // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
@@ -1076,7 +1268,7 @@ index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..ada943f1e4068ee7b8fe7e33b577bc2f
        SharedCodeBuffers.LatestOffset = GetCursorOffset();
      }
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..20f7cbe3ed901ccc706d40a5cbea5f2d551bf4c3 100644
+index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..a09863ef67c918a61cdf5f7b0dc61fc62a5206d2 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
 @@ -78,6 +78,8 @@ private:
@@ -1088,7 +1280,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..20f7cbe3ed901ccc706d40a5cbea5f2d
    bool RequiresFarARM64Jumps {};
    // Default to 6 instructions per SSA node.
    uint32_t SSANodeMultiplier {24};
-@@ -109,6 +111,69 @@ private:
+@@ -109,6 +111,70 @@ private:
  
    static uint64_t ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record);
  
@@ -1131,7 +1323,8 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..20f7cbe3ed901ccc706d40a5cbea5f2d
 +  fextl::vector<uint64_t> EmbedderBlockRIPs;
 +  // The site to branch to instead of Target, or null when the branch needs none.
 +  EmbedderLoopSite* EmbedderLoopBranch(ARMEmitter::BiDirectionalLabel* Target);
-+  void EmitEmbedderDivideCheck(ARMEmitter::Register Divisor, IR::OpSize Size);
++  void EmitEmbedderDivide(bool Signed, IR::OpSize OpSize, ARMEmitter::Register Lower, std::optional<ARMEmitter::Register> Upper,
++                          ARMEmitter::Register Divisor, ARMEmitter::Register Quotient, ARMEmitter::Register Remainder);
 +  uint64_t EmbedderCurrentRIP {};
 +  uint32_t EmbedderBlockInstructions {};
 +  uint64_t EmbedderPendingBudgetRIP {};

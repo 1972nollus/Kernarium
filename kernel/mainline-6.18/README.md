@@ -138,7 +138,9 @@ repeated string instruction between elements; a trap's show it clear.
 x86 exceptions reach the task with x86 Linux's signal, code, trap number and
 error code. ICEBP delivers `SIGTRAP` with `TRAP_BRKPT` after itself, and a
 single step of a repeated string instruction traps after each iteration. `#UD`
-is `SIGILL` with `ILL_ILLOPN`. `#OF` from INT 4 or INTO, `#BR` from an i386
+is `SIGILL` with `ILL_ILLOPN`, and `#DE`, from a zero divisor or a quotient
+too wide for its destination, `SIGFPE` with `FPE_INTDIV` at the instruction,
+which has written nothing. `#OF` from INT 4 or INTO, `#BR` from an i386
 BOUND outside its bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL`
 and no address, `#OF` after the instruction and the two faults at it; INT n of
 a vector user mode may not use names that vector's IDT entry, `(n << 3) | 2`,
