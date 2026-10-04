@@ -101,32 +101,6 @@ JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
   return true;
 }
 
-[[nodiscard]] bool JitCompilerFamilies::emit_simd_integer_float_convert(
-    std::uint32_t instruction) {
-  /* Vector forms leave Q free; scalar forms are op0 01x1. */
-  const auto vector_operation = instruction & 0xbfbf'fc00U;
-  const auto scalar_operation = instruction & 0xffbf'fc00U;
-  const bool vector = vector_operation == 0x0e21'd800U ||
-                      vector_operation == 0x2e21'd800U ||
-                      vector_operation == 0x0ea1'b800U ||
-                      vector_operation == 0x2ea1'b800U;
-  const bool scalar = scalar_operation == 0x5e21'd800U ||
-                      scalar_operation == 0x7e21'd800U ||
-                      scalar_operation == 0x5ea1'b800U ||
-                      scalar_operation == 0x7ea1'b800U;
-  if (!vector && !scalar)
-    return false;
-  const bool is_double = (instruction & 0x0040'0000U) != 0;
-  const bool q = (instruction & 0x4000'0000U) != 0;
-  if ((is_double && !q && !scalar) || !host_capabilities().floating_point ||
-      !host_capabilities().advanced_simd)
-    return false;
-  emit_native_vector_unary(instruction,
-                           scalar && nep_merges_into_destination());
-  mark_native_fp();
-  return true;
-}
-
 [[nodiscard]] bool
 JitCompilerFamilies::emit_integer_to_floating(std::uint32_t instruction) {
   const auto decoded = arm64::detail::decode_integer_to_floating(instruction);
