@@ -681,6 +681,22 @@ struct SoftRounding final {
 	return result;
 }
 
+/* Whether the finite lane `x` is an integer. */
+[[nodiscard]] bool integral(const FloatFormat &f, std::uint64_t x) noexcept
+{
+	if (f.zero(x))
+		return true;
+	const unsigned fraction = f.dbl ? 52U : 23U;
+	const unsigned bias = f.dbl ? 1023U : 127U;
+	const auto exponent =
+		static_cast<unsigned>((x & f.exponent()) >> fraction);
+	if (exponent >= bias + fraction)
+		return true;
+	if (exponent < bias)
+		return false;
+	return (x & ((1ULL << (bias + fraction - exponent)) - 1U)) == 0;
+}
+
 /* x86's underflow and precision flags for the results an instruction
  * rounds. A tiny result raises underflow when it is inexact, or regardless
  * while MXCSR unmasks underflow. While it masks underflow, FTZ flushes a
@@ -829,6 +845,44 @@ struct UnderflowModel final {
 		sums = step(false, count, left, right);
 	}
 	return {0x3fU, total, true};
+}
+
+/* Precision for a conversion of `gadget`'s auxiliary lanes, singles or
+ * doubles, to 32- or 64-bit integers, truncated or rounded as MXCSR does:
+ * x86 raises it for a lane that is not an integer and converts in range,
+ * and only invalid operation for one out of range, which the host raises.
+ * Its conversions do not raise it. */
+[[nodiscard]] HostFlagCorrection integer_conversion_precision(
+	const CpuState &cpu, const Gadget &gadget,
+	::uml::memory::GuestAddressSpace &memory, bool dbl, bool truncate,
+	bool wide)
+{
+	const auto &instruction = gadget.instruction;
+	const FloatFormat f{dbl};
+	VectorValue source{};
+	if (!operand_value(cpu, gadget, instruction.auxiliary, memory, source))
+		return {};
+	const auto lanes = vector_lanes(instruction.auxiliary, dbl);
+	const bool denormals_are_zero =
+		(cpu.mxcsr & mxcsr_denormals_are_zero) != 0;
+	const auto mode = truncate ? std::uint8_t{softfloat_round_minMag} :
+		soft_rounding(cpu.mxcsr >> 13U);
+	std::uint32_t raised{};
+	for (std::size_t index = 0; index < lanes; ++index) {
+		const auto x = f.input(value_lane(source, dbl, index),
+			denormals_are_zero);
+		if (f.nan(x) || f.infinite(x))
+			continue;
+		softfloat_state state{};
+		const auto value = soft_wide(dbl, x);
+		if (wide)
+			(void)f128_to_i64(&state, value, mode, true);
+		else
+			(void)f128_to_i32(&state, value, mode, true);
+		if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
+			raised = UnderflowModel::precision;
+	}
+	return {UnderflowModel::precision, raised};
 }
 
 } // namespace
@@ -1088,9 +1142,17 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 		return model.correction(invalid, raised);
 	}
 	case Operation::vector_convert: {
-		/* CVTPD2PS and CVTSD2SS narrow doubles, with 66 and F2. */
 		const auto prefix = instruction.vector_prefix;
-		if (instruction.vector_opcode != 0x5a || (prefix != 1 && prefix != 3))
+		const auto opcode = instruction.vector_opcode;
+		/* CVTPS2DQ and CVTTPS2DQ with 66 and F3, and CVTTPD2DQ and
+		 * CVTPD2DQ with 66 and F2, convert to integers. */
+		if ((opcode == 0x5b && (prefix == 1 || prefix == 2)) ||
+			(opcode == 0xe6 && (prefix == 1 || prefix == 3)))
+			return integer_conversion_precision(cpu, gadget, memory,
+				opcode == 0xe6, prefix == 2 || (opcode == 0xe6 && prefix == 1),
+				false);
+		/* CVTPD2PS and CVTSD2SS narrow doubles, with 66 and F2. */
+		if (opcode != 0x5a || (prefix != 1 && prefix != 3))
 			return {};
 		VectorValue source{};
 		if (!read(instruction.auxiliary, source))
@@ -1104,9 +1166,42 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 				false, rounding));
 		return model.correction();
 	}
+	case Operation::vector_scalar_convert: {
+		/* CVTTPS2PI, CVTTPD2PI, CVTTSS2SI and CVTTSD2SI truncate, and
+		 * the CVT forms round as MXCSR does, with none, 66, F3 and F2. */
+		const auto opcode = instruction.vector_opcode;
+		const auto prefix = instruction.vector_prefix;
+		if (opcode != 0x2c && opcode != 0x2d)
+			return {};
+		return integer_conversion_precision(cpu, gadget, memory,
+			prefix == 1 || prefix == 3, opcode == 0x2c, prefix >= 2 &&
+				instruction.destination.width == OperandWidth::qword);
+	}
 	case Operation::vector_integer_map3: {
 		const auto opcode = instruction.vector_opcode;
 		const unsigned control = instruction.vector_control;
+		if (opcode >= 0x08 && opcode <= 0x0b) {
+			/* ROUNDPS, ROUNDPD, ROUNDSS and ROUNDSD raise precision for a
+			 * lane that is not an integer, unless bit 3 of the immediate
+			 * suppresses it, whatever the rounding mode. FRINT does not
+			 * raise it. */
+			const bool dbl = (opcode & 1U) != 0;
+			const FloatFormat f{dbl};
+			VectorValue source{};
+			if (!read(instruction.auxiliary, source))
+				return {};
+			const std::size_t lanes = opcode >= 0x0a ? 1U :
+				vector_lanes(instruction.destination, dbl);
+			std::uint32_t raised{};
+			for (std::size_t index = 0; index < lanes; ++index) {
+				const auto x = f.input(value_lane(source, dbl, index),
+					denormals_are_zero);
+				if ((control & 8U) == 0 && !f.nan(x) && !f.infinite(x) &&
+					!integral(f, x))
+					raised = UnderflowModel::precision;
+			}
+			return {UnderflowModel::precision, raised};
+		}
 		if (opcode == 0x40 || opcode == 0x41) {
 			VectorValue first{};
 			VectorValue second{};

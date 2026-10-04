@@ -6749,6 +6749,46 @@ struct FlagCase {
 	return true;
 }
 
+/* ROUND raises precision for a lane that is not an integer, unless bit 3 of
+ * its immediate suppresses it, and a conversion to an integer for one that
+ * converts in range, where an out-of-range one raises invalid operation
+ * alone; MXCSR.DAZ makes a denormal zero first. */
+[[nodiscard]] bool checked_integer_rounding_precision_follows_x86()
+{
+	constexpr std::uint64_t one_and_a_half_two = 0x4000'0000'3fc0'0000ULL;
+	constexpr std::uint64_t two_twos = 0x4000'0000'4000'0000ULL;
+	/* 2147483647.5: truncated in range, rounded to nearest out of it. */
+	constexpr std::uint64_t past_int32 = 0x41df'ffff'ffe0'0000ULL;
+	const std::vector<FlagCase> cases{
+		{"ROUNDPS of 1.5 as MXCSR rounds", {0x66, 0x0f, 0x3a, 0x08, 0xc1,
+		 0x04}, {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80, 0x1fa0,
+		 two_twos},
+		{"ROUNDPS of 1.5 with precision suppressed", {0x66, 0x0f, 0x3a,
+		 0x08, 0xc1, 0x0c}, {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80,
+		 0x1f80, two_twos},
+		{"ROUNDSD down of the least denormal", {0x66, 0x0f, 0x3a, 0x0b,
+		 0xc1, 0x01}, {{{}, {1, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"ROUNDSD down of the least denormal under DAZ", {0x66, 0x0f, 0x3a,
+		 0x0b, 0xc1, 0x01}, {{{}, {1, 0}, {}}}, 0x1fc0, 0x1fc0, 0},
+		{"CVTTSD2SI truncating 2147483647.5", {0xf2, 0x0f, 0x2c, 0xc1},
+		 {{{}, {past_int32, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"CVTSD2SI rounding 2147483647.5 out of range",
+		 {0xf2, 0x0f, 0x2d, 0xc1}, {{{}, {past_int32, 0}, {}}}, 0x1f80,
+		 0x1f81, 0},
+		{"CVTPS2DQ of 2.5, precision unmasked", {0x66, 0x0f, 0x5b, 0xc1},
+		 {{{}, {0x3f80'0000'4020'0000ULL, 0}, {}}}, 0x0f80, 0x0fa0, 0},
+		{"CVTTPS2PI of 1.5", {0x0f, 0x2c, 0xc1},
+		 {{{}, {one_and_a_half_two, 0}, {}}}, 0x1f80, 0x1fa0, 0},
+		{"CVTSS2SI of 2^63 to 64 bits, invalid operation unmasked",
+		 {0xf3, 0x48, 0x0f, 0x2d, 0xc1}, {{{}, {0x5f00'0000ULL, 0}, {}}},
+		 0x1f00, 0x1f01, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8838,6 +8878,7 @@ int main()
 		checked_dot_product_flags_follow_x86() &&
 		checked_unmasked_precision_follows_x86() &&
 		checked_sum_flags_follow_x86() &&
+		checked_integer_rounding_precision_follows_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&
