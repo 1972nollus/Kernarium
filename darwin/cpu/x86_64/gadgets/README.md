@@ -397,15 +397,34 @@ checks, and runs every other block, linked, as `execute` does:
   gathers and the extended-state images are exempt, as on x86.
 - #XM, run checked: the host's cumulative exception flags are cleared around
   the instruction and read back as MXCSR's; a scalar instruction's host code
-  computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
-  integer out of range raises the host's invalid-operation flag. A denormal
-  operand, which no host flag shows, is found in the sources before the
-  instruction runs, where x86 raises it: not under DAZ, nor in a lane holding a
-  NaN or raising invalid operation or division by zero, and for DPPS and DPPD
-  also in a product or sum added. An unmasked exception restores the state from
+  computes lane 0 alone, HSUB and ADDSUB compute only the operation x86 does
+  in each lane, COMIS compares with FCMPE, and a conversion to an integer out
+  of range raises the host's invalid-operation flag. A denormal operand, which
+  no host flag shows, is found in the sources before the instruction runs,
+  where x86 raises it: not under DAZ, nor in a lane holding a NaN or raising
+  invalid operation or division by zero. A flag the host raises otherwise than
+  x86 is decided from the sources too (`host_flag_correction`): an FMA's
+  invalid operation, which x86 does not raise for infinity times zero plus a
+  quiet NaN; a comparison's, which a quiet NaN raises under the signalling
+  predicates alone, VEX's 16 to 31 included, and a signalling NaN under every
+  predicate; the precision of ROUND and conversions to integers, which x86
+  raises for a lane that is not an integer unless ROUND's immediate
+  suppresses it or the conversion is out of range, and the host does not;
+  and the underflow of a sum, difference, product, quotient, FMA or
+  narrowing to a single or half, which SoftFloat rounds as x86 does. x86
+  detects tininess after rounding, so a result rounded up to the smallest
+  normal is not tiny, and an exact tiny result raises underflow while it is
+  unmasked, and precision too when FTZ flushes it. Beside an unmasked
+  underflow or overflow of these, x86 raises precision as the significand
+  rounds, as if the exponent were unbounded, and for a half narrowed from a
+  denormal single. DPPS and DPPD take every flag from SoftFloat, raised step
+  by step as x86 does -- the products, their sums in pairs, then for DPPS the
+  sum of those -- with a denormal product or sum added raising a denormal
+  operand; the first step that raises an unmasked exception faults, and the
+  steps after it raise nothing. An unmasked exception restores the state from
   before it, a memory destination included, and faults; MXCSR then holds only
-  the flags checked before the computation when one of those was unmasked, and
-  no precision flag when underflow was. Masked flags accumulate.
+  the flags checked before the computation when one of those was unmasked.
+  Masked flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags. An
   unmasked invalid operation, denormal or division by zero, or an unmasked
   overflow or underflow of a store, restores the registers, the stack and
@@ -425,11 +444,8 @@ A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. The host does not detect an exact tiny result, so #XM misses that
-underflow; it reports precision for an unmasked overflow whose result is exact
-but for its exponent, where x86 does not; and an x87 overflow or underflow
-unmasked for a register destination leaves the masked result rather than x87's
-rebiased one.
+its speed. An x87 overflow or underflow unmasked for a register destination
+leaves the masked result rather than x87's rebiased one.
 
 ## Code pages
 

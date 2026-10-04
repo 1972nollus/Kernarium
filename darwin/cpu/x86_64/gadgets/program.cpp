@@ -551,8 +551,6 @@ void restore_store(const SavedStore &saved,
  * zero. An unmasked one leaves the destination alone. */
 constexpr std::uint32_t precomputation_exceptions = 0x07U;
 constexpr std::uint32_t overflow_underflow = 0x18U;
-constexpr std::uint32_t underflow_exception = 0x10U;
-constexpr std::uint32_t precision_exception = 0x20U;
 constexpr std::uint8_t x87_error_vector = 16;
 constexpr std::uint8_t simd_error_vector = 19;
 /* The x87 status word's C0, C2, C3 and TOP, which an instruction that
@@ -611,6 +609,9 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 	/* x86 raises a denormal operand before it computes, which no host
 	 * flag shows. */
 	const auto denormal = simd ? denormal_operand(cpu, first, memory) : 0U;
+	/* And it raises some flags otherwise than the host does. */
+	const auto correction = simd ? host_flag_correction(cpu, first, memory) :
+		HostFlagCorrection{};
 	std::uint32_t raised{};
 	const auto result = simd ?
 		run_stream<true, true>(program, cpu, memory, executor, stream, 1,
@@ -623,19 +624,18 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 	if (simd) {
 		/* #XM is a fault: an unmasked exception leaves the instruction's
 		 * destination and RIP as they were, with MXCSR's flags for it.
-		 * One raised before the computation reports only those, and an
-		 * unmasked underflow reports no precision exception, as x86
-		 * does. */
-		auto flags = raised | denormal;
+		 * One raised before the computation reports only those, as x86
+		 * does, which settled flags hold already. */
+		auto flags = correction.settled ? correction.raised :
+			(raised & ~correction.decided) | correction.raised | denormal;
 		const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
 		if (unmasked == 0) {
 			cpu.mxcsr |= flags;
 			return result;
 		}
-		if ((unmasked & precomputation_exceptions) != 0)
+		if (!correction.settled &&
+			(unmasked & precomputation_exceptions) != 0)
 			flags &= precomputation_exceptions;
-		else if ((unmasked & underflow_exception) != 0)
-			flags &= ~precision_exception;
 		cpu = before;
 		restore_store(saved, memory);
 		cpu.mxcsr |= flags;

@@ -2511,7 +2511,11 @@ enum class VectorFloatKind {
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
 	NativeEntry entry{};
 	if (instruction.vector_opcode == 0xc2) {
-		entry = vector_float_compare_entry(instruction.vector_control,
+		/* The legacy encoding reads the immediate's low three bits, as x86
+		 * hardware does, and VEX its low five; bit 4 changes only which
+		 * NaNs raise invalid operation. */
+		entry = vector_float_compare_entry(instruction.vex ?
+				instruction.vector_control : instruction.vector_control & 7U,
 			element, instruction.destination.width, scalar, memory);
 	} else {
 		VectorFloatKind kind{};
