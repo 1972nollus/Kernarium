@@ -2151,9 +2151,8 @@ bool gathers()
  * every register, RFLAGS, the x87 status and control words, MXCSR and XMM0
  * as they stand before the instruction, switches to its own stack if it
  * names one, and runs the instruction, whose store meets a read-only page
- * or whose later load meets an unmapped one. The fault
- * handler records the frame and resumes after the instruction on the
- * case's own stack. */
+ * or whose load meets an unmapped one. The fault handler records the frame
+ * and resumes after the instruction on the case's own stack. */
 #define PROBE_STATE(name, setup, stack, instruction)                         \
 	".global probe_state_" #name "\n"                                    \
 	"probe_state_" #name ":\n"                                           \
@@ -2288,7 +2287,28 @@ bool gathers()
 	X(xrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax; "      \
 	  "xorl %edx, %edx", "", "xrstor -768(%r10)")                        \
 	X(iretq, "", "leaq -24(%r10), %rsp", "iretq")                        \
-	X(leave, "movq %r10, %rbp", "", "leave")
+	X(leave, "movq %r10, %rbp", "", "leave")                             \
+	X(ret, "", "movq %r10, %rsp", "ret")                                 \
+	X(ret_imm, "", "movq %r10, %rsp", "ret $16")                         \
+	X(lret, "", "movq %r10, %rsp", "lretq")                              \
+	X(pop, "", "movq %r10, %rsp", "popq %rbx")                           \
+	X(popf, "", "movq %r10, %rsp", "popfq")                              \
+	X(push_load, "", "", "pushq (%r10)")                                 \
+	X(lods, "movq %r10, %rsi", "", "lodsq")                              \
+	X(rep_lods, "movq %r10, %rsi; movl $5, %ecx", "", "rep lodsb")       \
+	X(scas, "movq %r10, %rdi", "", "scasq")                              \
+	X(repne_scas, "movq %r10, %rdi; movl $5, %ecx", "", "repne scasb")   \
+	X(xlat, "movq %r10, %rbx", "", "xlatb")                              \
+	X(cmpxchg16b, "", "", "cmpxchg16b (%r8)")                            \
+	X(adc_load, "", "", "adcq (%r10), %rbx")                             \
+	X(div_load, "", "", "divq (%r10)")                                   \
+	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
+	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
+	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
+	X(fbld, "fninit; fld1", "", "fbld (%r10)")                           \
+	X(fadd_load, "fninit; fld1", "", "faddl (%r10)")                     \
+	X(fldcw, "fninit; fld1", "", "fldcw (%r10)")                         \
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")
 
 #define EMIT_STATE(name, setup, stack, instruction)                          \
 	PROBE_STATE(name, setup, stack, instruction)
@@ -2362,12 +2382,12 @@ constexpr long prot_read = 1;
 /* A writable page, a read-only one and an unmapped one. */
 alignas(4096) unsigned char state_pages[3 * page_bytes];
 
-/* An instruction whose store, or a load after its first, faults has done
- * nothing: the frame shows every register, RFLAGS, the x87 stack and
- * control word, MXCSR and XMM0 as the instruction found them, and RIP at
- * it, whatever the instruction computed before, so the guest that resolves
- * the fault runs it again from scratch. A repeated string instruction has
- * done the elements before the faulting one, with their flags. */
+/* An instruction whose store or load faults has done nothing: the frame
+ * shows every register, RFLAGS, the x87 stack and control word, MXCSR and
+ * XMM0 as the instruction found them, and RIP at it, whatever the
+ * instruction computed before, so the guest that resolves the fault runs it
+ * again from scratch. A repeated string instruction has done the elements
+ * before the faulting one, with their flags. */
 bool fault_state()
 {
 	unsigned char *const read_only = state_pages + page_bytes;
@@ -3603,7 +3623,7 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "masked-moves"));
 	report("x86-64 AVX2 gathers complete the elements before a fault",
 	       in_child(self, "gathers"));
-	report("x86-64 a faulting store leaves the state as the instruction found it",
+	report("x86-64 a faulting access leaves the state as the instruction found it",
 	       in_child(self, "fault-state"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
