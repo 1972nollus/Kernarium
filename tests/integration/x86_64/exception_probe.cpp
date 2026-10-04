@@ -1648,15 +1648,16 @@ bool noncanonical_faults()
 #endif
 
 #if defined(__x86_64__)
-/* Each divide loads RAX, RDX and RCX from (state)[0..2], divides, and
- * stores RAX, RDX and RCX to (state)[3..5]; a memory divisor is
- * (state)[2]. */
-#define PROBE_DIVIDE(name, insn)                                          \
+/* Each divide loads RAX, RDX and RCX from (state)[0..2], runs the sign or
+ * zero extension it names right before it, divides, and stores RAX, RDX
+ * and RCX to (state)[3..5]; a memory divisor is (state)[2]. */
+#define PROBE_DIVIDE_AFTER(name, extend, insn)                            \
 	".global probe_de_" name "\n"                                     \
 	"probe_de_" name ":\n"                                            \
 	"	movq (%rdi), %rax\n"                                      \
 	"	movq 8(%rdi), %rdx\n"                                     \
 	"	movq 16(%rdi), %rcx\n"                                    \
+	"	" extend "\n"                                             \
 	".global probe_de_" name "_insn\n"                                \
 	"probe_de_" name "_insn:\n"                                       \
 	"	" insn "\n"                                               \
@@ -1666,6 +1667,7 @@ bool noncanonical_faults()
 	"	movq %rdx, 32(%rdi)\n"                                    \
 	"	movq %rcx, 40(%rdi)\n"                                    \
 	"	ret\n"
+#define PROBE_DIVIDE(name, insn) PROBE_DIVIDE_AFTER(name, "", insn)
 
 __asm__(".text\n"
 	PROBE_DIVIDE("div8", "divb %cl")
@@ -1677,7 +1679,11 @@ __asm__(".text\n"
 	PROBE_DIVIDE("div32m", "divl 16(%rdi)")
 	PROBE_DIVIDE("div64", "divq %rcx")
 	PROBE_DIVIDE("idiv64", "idivq %rcx")
-	PROBE_DIVIDE("idiv64m", "idivq 16(%rdi)"));
+	PROBE_DIVIDE("idiv64m", "idivq 16(%rdi)")
+	PROBE_DIVIDE_AFTER("cqo_idiv64", "cqto", "idivq %rcx")
+	PROBE_DIVIDE_AFTER("cdq_idiv32", "cltd", "idivl %ecx")
+	PROBE_DIVIDE_AFTER("xor_div64", "xorl %edx, %edx", "divq %rcx")
+	PROBE_DIVIDE_AFTER("xor_div32", "xorl %edx, %edx", "divl %ecx"));
 
 #define PROBE_DIVIDE_DECLARE(name)                                        \
 	extern "C" void probe_de_##name(word *state);                     \
@@ -1697,12 +1703,18 @@ PROBE_DIVIDE_DECLARE(div32m)
 PROBE_DIVIDE_DECLARE(div64)
 PROBE_DIVIDE_DECLARE(idiv64)
 PROBE_DIVIDE_DECLARE(idiv64m)
+PROBE_DIVIDE_DECLARE(cqo_idiv64)
+PROBE_DIVIDE_DECLARE(cdq_idiv32)
+PROBE_DIVIDE_DECLARE(xor_div64)
+PROBE_DIVIDE_DECLARE(xor_div32)
 
 constexpr long fpe_intdiv = 1;
 
 /* A zero divisor or a quotient too wide for its destination raises #DE, a
  * fault: SIGFPE with FPE_INTDIV at the instruction, which has written
- * nothing. A quotient at the edge of its range does not fault. */
+ * nothing. A quotient at the edge of its range does not fault, and neither
+ * does a wide one from a dividend that CQO, CDQ or a zeroed RDX just
+ * extended. */
 bool divide_errors()
 {
 	struct Case {
@@ -1752,6 +1764,24 @@ bool divide_errors()
 		 {0x80000000, 0}},
 		{"IDIV r64 to INT64_MIN", PROBE_DIVIDE_CASE(idiv64),
 		 {0, ~0UL, 2}, false, {0x8000000000000000, 0}},
+		{"IDIV r64 after CQO to a wide quotient",
+		 PROBE_DIVIDE_CASE(cqo_idiv64), {399960001, 0x5a5a5a5a5a5a5a5a, 97},
+		 false, {0x3eeaa2, 0x5f}},
+		{"IDIV r64 after CQO of INT64_MIN by -1",
+		 PROBE_DIVIDE_CASE(cqo_idiv64), {0x8000000000000000, ~0UL, ~0UL},
+		 true, {}},
+		{"IDIV r32 after CDQ to a wide quotient",
+		 PROBE_DIVIDE_CASE(cdq_idiv32), {399960001, 0x5a5a5a5a5a5a5a5a, 97},
+		 false, {0x3eeaa2, 0x5f}},
+		{"IDIV r32 after CDQ of INT32_MIN by -1",
+		 PROBE_DIVIDE_CASE(cdq_idiv32), {0x80000000, 0xffffffff, 0xffffffff},
+		 true, {}},
+		{"DIV r64 after zeroing RDX to a wide quotient",
+		 PROBE_DIVIDE_CASE(xor_div64), {0xfffffffffffffff0, 0x5a5a, 16},
+		 false, {0x0fffffffffffffff, 0}},
+		{"DIV r32 after zeroing EDX to a wide quotient",
+		 PROBE_DIVIDE_CASE(xor_div32), {0x77777777fffffff0, 0x5a5a, 16},
+		 false, {0x0fffffff, 0}},
 	};
 #undef PROBE_DIVIDE_CASE
 	bool ok = install_fault_handlers() && install(sigfpe, record_fault);

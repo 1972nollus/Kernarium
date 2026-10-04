@@ -35,7 +35,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |  12 +
  .../Source/Interface/Core/JIT/AtomicOps.cpp   | 363 ++++++++-------
  .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
- .../Interface/Core/JIT/EmbedderMemory.cpp     | 415 ++++++++++++++++++
+ .../Interface/Core/JIT/EmbedderMemory.cpp     | 416 ++++++++++++++++++
  FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 130 +++++-
  FEXCore/Source/Interface/Core/JIT/JITClass.h  | 102 +++++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 409 ++++++++++++++++-
@@ -44,15 +44,15 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../Source/Interface/Core/OpcodeDispatcher.h  |  39 +-
  .../Core/SharedCodeBufferManager.cpp          |   2 +-
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
- FEXCore/Source/Interface/IR/Passes.h          |   2 +-
- .../IR/Passes/RegisterAllocationPass.cpp      |   4 +-
+ FEXCore/Source/Interface/IR/Passes.h          |   4 +-
+ .../IR/Passes/RegisterAllocationPass.cpp      |  18 +-
  .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
  FEXCore/include/FEXCore/Core/CoreState.h      | 114 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1910 insertions(+), 227 deletions(-)
+ 29 files changed, 1921 insertions(+), 233 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -1002,10 +1002,10 @@ index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4
    PendingTargetLabel = JumpTarget(Op->FalseBlock);
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..98c7c9795c4ba057ab8a730a9a7d8ecb3885ab9c
+index 0000000000000000000000000000000000000000..853e48bcef68b7d31a0c431dd60b8026e5c3d2f9
 --- /dev/null
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,416 @@
 +// SPDX-License-Identifier: MIT
 +/*
 +$info$
@@ -1256,9 +1256,10 @@ index 0000000000000000000000000000000000000000..98c7c9795c4ba057ab8a730a9a7d8ecb
 +  // and for a quotient that does not fit the destination. The frontend emits
 +  // these forms only for them and for AAM, whose quotient always fits: DIV
 +  // r/m8 as a 16-bit UDiv and IDIV r/m8 as a 64-bit Div, both without Upper,
-+  // and the wider forms with Upper. The quotient is formed and checked in a
-+  // temporary, because the register allocator may give an output the
-+  // architectural register the exit would report.
++  // and the wider forms with Upper, which the register allocator keeps when
++  // embedded. The quotient is formed and checked in a temporary, because the
++  // register allocator may give an output the architectural register the exit
++  // would report.
 +  using ARMEmitter::Size;
 +  auto Site = fextl::make_unique<EmbedderBudgetSite>();
 +  Site->GuestRIP = EmbedderCurrentRIP;
@@ -2733,7 +2734,7 @@ index f3171d4ebfce38ae8978f6a822f0a2966488ba75..e479e0c919f11876380ff3d2bb664b4f
  
  fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::AllocateNew(size_t Size) {
 diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
-index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f6d55435c0ca0779861386eab3a9993d78af7da 100644
+index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f289a2fcdd0ae7b5ea7aa828213692c78174ab5 100644
 --- a/FEXCore/Source/Interface/IR/PassManager.cpp
 +++ b/FEXCore/Source/Interface/IR/PassManager.cpp
 @@ -73,11 +73,12 @@ void PassManager::AddDefaultPasses(Context::ContextImpl* ctx) {
@@ -2747,28 +2748,62 @@ index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f6d55435c0ca0779861386eab3a9993
  
 -  InsertPass(IR::CreateRegisterAllocationPass(&ctx->CPUID), "RA");
 +  // An embedding host answers CPUID itself, so its results are never folded.
-+  InsertPass(IR::CreateRegisterAllocationPass(ctx->Embedded ? nullptr : &ctx->CPUID), "RA");
++  InsertPass(IR::CreateRegisterAllocationPass(ctx->Embedded ? nullptr : &ctx->CPUID, ctx->Embedded), "RA");
  
  #if defined(ASSERTIONS_ENABLED) && ASSERTIONS_ENABLED
    InsertValidationPass(Validation::CreateIRValidation(), "IRValidation");
 diff --git a/FEXCore/Source/Interface/IR/Passes.h b/FEXCore/Source/Interface/IR/Passes.h
-index 213967a092da0f34c3afadcd8746f3305927e1f5..8a0a0d386cdca811332634883537989945a5dc3f 100644
+index 213967a092da0f34c3afadcd8746f3305927e1f5..bb319307c81e2b31da47b0bfb5b5bbd88195e238 100644
 --- a/FEXCore/Source/Interface/IR/Passes.h
 +++ b/FEXCore/Source/Interface/IR/Passes.h
-@@ -13,7 +13,7 @@ class Pass;
+@@ -12,8 +12,8 @@ namespace FEXCore::IR {
+ class Pass;
  
  fextl::unique_ptr<Pass> CreateDeadFlagCalculationEliminination();
- fextl::unique_ptr<Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID);
+-fextl::unique_ptr<Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID);
 -fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures&, OpSize GPROpSize);
++fextl::unique_ptr<Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID, bool Embedded);
 +fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures&, OpSize GPROpSize, bool Embedded = false);
  
  namespace Validation {
    fextl::unique_ptr<Pass> CreateIRValidation();
 diff --git a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
-index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1ec85ce05c 100644
+index c47998aec874f8696c71c5acb618cb1f3d0ebef0..503fe3fb933182c51c55e20e1086ddbc406091ce 100644
 --- a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
-@@ -515,7 +515,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+@@ -59,8 +59,9 @@ void RegisterAllocationPass::SetNumPairRegs(uint32_t NumRegs) {
+ 
+ class ConstrainedRAPass final : public RegisterAllocationPass {
+ public:
+-  explicit ConstrainedRAPass(const FEXCore::CPUIDEmu* CPUID)
+-    : CPUID {CPUID} {}
++  ConstrainedRAPass(const FEXCore::CPUIDEmu* CPUID, bool Embedded)
++    : CPUID {CPUID}
++    , Embedded {Embedded} {}
+   void Run(IREmitter* IREmit) override;
+   void AddRegisters(IR::RegClass Class, uint32_t RegisterCount) override;
+   bool TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header* IROp);
+@@ -71,6 +72,7 @@ private:
+   IREmitter* IREmit {};
+   IRListView* IR {};
+   const FEXCore::CPUIDEmu* CPUID {};
++  bool Embedded {};
+ 
+   // Map of nodes to their preferred register, to coalesce load/store reg.
+   fextl::vector<PhysicalRegister> PreferredReg;
+@@ -506,8 +508,10 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+       IREmit->RemovePostRA(CodeNode);
+       return true;
+     }
+-  } else if ((IROp->Op == OP_DIV || IROp->Op == OP_UDIV) && IROp->Size >= OpSize::i32Bit) {
++  } else if (!Embedded && (IROp->Op == OP_DIV || IROp->Op == OP_UDIV) && IROp->Size >= OpSize::i32Bit) {
+     // If Upper came from a sign/zero extension, we only need a 64-bit division.
++    // Embedded, a division keeps its upper half: the backend raises #DE from
++    // the whole dividend, and a 64-bit Div without one is IDIV r/m8.
+     auto Op = IROp->CW<IR::IROp_Div>();
+     if (!Op->Upper.IsInvalid() && PhysicalRegister(Op->Upper) == PhysicalRegister(LastNode)) {
+       if (IROp->Op == OP_DIV ? IsSignext(LastOp, Op->Lower, IROp->Size) : IsZero(LastOp)) {
+@@ -515,7 +519,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
          return PhysicalRegister(LastNode) == PhysicalRegister(Op->OutRemainder);
        }
      }
@@ -2777,7 +2812,7 @@ index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1e
      // Try to constant fold
      uint64_t ConstantFunction = LastOp->C<IROp_Constant>()->Constant;
      auto Op = IROp->CW<IR::IROp_XGetBV>();
-@@ -527,7 +527,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+@@ -527,7 +531,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
        IREmit->RemovePostRA(CodeNode);
        return false;
      }
@@ -2786,6 +2821,16 @@ index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1e
      // Try to constant fold. As a limitation of merging only 2 instructions, we
      // can only handle constant functions, not constant leafs. This could be
      // lifted if we generalized at a (significant) complexity cost.
+@@ -789,7 +793,7 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+   IR->GetHeader()->PostRA = true;
+ }
+ 
+-fextl::unique_ptr<IR::Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID) {
+-  return fextl::make_unique<ConstrainedRAPass>(CPUID);
++fextl::unique_ptr<IR::Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID, bool Embedded) {
++  return fextl::make_unique<ConstrainedRAPass>(CPUID, Embedded);
+ }
+ } // namespace FEXCore::IR
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272cc65ab03 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp

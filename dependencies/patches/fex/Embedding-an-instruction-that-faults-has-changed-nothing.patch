@@ -33,7 +33,7 @@ instructions changed state before their last access could fault:
  9 files changed, 144 insertions(+), 2 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-index 98c7c9795c4ba057ab8a730a9a7d8ecb3885ab9c..4b0f3ceebdabae4caffc1cbfdcb386f38fd4274b 100644
+index 853e48bcef68b7d31a0c431dd60b8026e5c3d2f9..00e22d532f1fbb8d3aed2368a5db256122ce246b 100644
 --- a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 @@ -84,6 +84,86 @@ ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Addres
