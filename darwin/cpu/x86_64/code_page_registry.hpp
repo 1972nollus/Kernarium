@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "native_entry.hpp"
-
+#include "cpu/x86_64/software_tlb.hpp"
 #include "memory/mmu/word_shared_mutex.hpp"
 
 #include <array>
@@ -15,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace uml::cpu::x86_64::gadgets {
+namespace uml::cpu::x86_64 {
 
 /* Which guest pages hold a cached translation in any executor of one address
  * space.
@@ -142,4 +141,4 @@ private:
 	std::optional<std::uint64_t> generation_;
 };
 
-} // namespace uml::cpu::x86_64::gadgets
+} // namespace uml::cpu::x86_64

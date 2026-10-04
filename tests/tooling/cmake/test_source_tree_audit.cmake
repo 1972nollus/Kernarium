@@ -180,11 +180,23 @@ uml_write_audit_fixture(darwin/cpu/shared_fixture.cpp
     "#include \"cpu/x86_64/fixture.hpp\"")
 uml_write_audit_fixture(darwin/cpu/engine_factory.cpp
     "#include \"cpu/arm64/jit/fixture.hpp\"\n#include \"cpu/x86_64/fixture.hpp\"")
+# The shared x86 code includes no x86 engine; the x86 gadget engine includes
+# the shared x86 code and no JIT.
+uml_write_audit_fixture(darwin/cpu/x86_64/x86_shared_fixture.cpp
+    "#include \"cpu/x86_64/gadgets/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_gadget_fixture.cpp
+    "#include \"cpu/x86_64/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_gadget_jit_fixture.cpp
+    "#include \"cpu/arm64/jit/fixture.hpp\"")
 list(APPEND REJECTED
     "jit_fixture\\.cpp: CPU source includes an engine implementation"
     "x86_fixture\\.cpp: CPU source includes an engine implementation"
-    "shared_fixture\\.cpp: CPU source includes an engine implementation")
-list(APPEND ACCEPTED "engine_factory\\.cpp: CPU source includes")
+    "shared_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_shared_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_gadget_jit_fixture\\.cpp: CPU source includes an engine implementation")
+list(APPEND ACCEPTED
+    "engine_factory\\.cpp: CPU source includes"
+    "x86_gadget_fixture\\.cpp: CPU source includes")
 
 uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_owner.cpp
     "#include \"cpu/jit_memory/executable_memory.hpp\"")

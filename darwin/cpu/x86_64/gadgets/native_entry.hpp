@@ -3,37 +3,21 @@
 
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/software_tlb.hpp"
 #include "memory/guest_address_space.hpp"
 #include "cpu/x86_64/layout/assembly_offsets.h"
 
 #include <cstddef>
 #include <cstdint>
 
+namespace uml::cpu::x86_64 {
+class CodePageRegistry;
+}
+
 namespace uml::cpu::x86_64::gadgets {
 
 struct IndirectLink;
 struct TargetLinkEntry;
-class CodePageRegistry;
-
-struct alignas(32) NativeTlbEntry final {
-	std::uint64_t read_page{1};
-	std::uintptr_t read_data_minus_address{};
-	std::uint64_t write_page{1};
-	std::uintptr_t write_data_minus_address{};
-};
-
-inline constexpr std::size_t native_tlb_entry_count = 1U << 15U;
-
-/* The executor retires a write translation when a page gains cached code, so
- * it needs the same index the miss handler fills.
- */
-[[nodiscard]] inline constexpr std::size_t native_tlb_index(
-	std::uint64_t address) noexcept
-{
-	const auto page = address >> 12U;
-	return static_cast<std::size_t>(
-		(page ^ (page >> 15U)) & (native_tlb_entry_count - 1U));
-}
 
 struct NativeExecutionContext final {
 	::uml::memory::GuestAddressSpace *memory{};
@@ -74,15 +58,6 @@ struct NativeExecutionContext final {
 	const std::uintptr_t *exception_stream{};
 };
 
-static_assert(sizeof(NativeTlbEntry) == 32);
-static_assert(offsetof(NativeTlbEntry, read_page) ==
-	UML_X86_64_TLB_READ_PAGE);
-static_assert(offsetof(NativeTlbEntry, read_data_minus_address) ==
-	UML_X86_64_TLB_READ_DATA_MINUS_ADDRESS);
-static_assert(offsetof(NativeTlbEntry, write_page) ==
-	UML_X86_64_TLB_WRITE_PAGE);
-static_assert(offsetof(NativeTlbEntry, write_data_minus_address) ==
-	UML_X86_64_TLB_WRITE_DATA_MINUS_ADDRESS);
 static_assert(offsetof(NativeExecutionContext, memory) ==
 	UML_X86_64_CONTEXT_MEMORY);
 static_assert(offsetof(NativeExecutionContext, tlb_entries) ==

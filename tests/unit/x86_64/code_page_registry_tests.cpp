@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "cpu/x86_64/gadgets/code_page_registry.hpp"
-#include "cpu/x86_64/gadgets/native_entry.hpp"
+#include "cpu/x86_64/code_page_registry.hpp"
+#include "cpu/x86_64/software_tlb.hpp"
 
 #include <malloc/malloc.h>
 
@@ -15,10 +15,10 @@
 
 namespace {
 
-using uml::cpu::x86_64::gadgets::CodePageRegistry;
-using uml::cpu::x86_64::gadgets::NativeTlbEntry;
-using uml::cpu::x86_64::gadgets::native_tlb_entry_count;
-using uml::cpu::x86_64::gadgets::native_tlb_index;
+using uml::cpu::x86_64::CodePageRegistry;
+using uml::cpu::x86_64::NativeTlbEntry;
+using uml::cpu::x86_64::native_tlb_entry_count;
+using uml::cpu::x86_64::native_tlb_index;
 
 void require(bool condition, const char *message)
 {

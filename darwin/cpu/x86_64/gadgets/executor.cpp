@@ -3,8 +3,8 @@
 
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
+#include "cpu/x86_64/code_page_registry.hpp"
 
-#include "code_page_registry.hpp"
 #include "native_entry.hpp"
 #include "native_symbols.hpp"
 
