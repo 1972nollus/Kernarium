@@ -10,8 +10,10 @@ from IRET or sigreturn is gone by the next instruction's system call, fault
 frames and a REP string interrupted between elements show RF while trap frames
 do not, and TF set by IRET traps after the instruction IRET returns to. POPF
 at CPL 3 loads only the flags a task may change, IRET those and RF, and PUSHF
-stores no RF; IRET without REX.W pops a 32-bit frame. The REP case signals
-from another CPU, which the guest's default vCPUs provide.
+stores no RF; IRET without REX.W pops a 32-bit frame. RDRAND and RDSEED,
+which CPUID advertises, succeed and leave only CF of the status flags set.
+The REP case signals from another CPU, which the guest's default vCPUs
+provide.
 """
 
 from __future__ import annotations

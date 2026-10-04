@@ -180,6 +180,16 @@ void initialize_fex_once()
 	return function == 0 ? cpuid(13, 0).eax : 0;
 }
 
+/* RDRAND and RDSEED, which CPUID advertises: the host CSPRNG's output, as
+ * the gadget engine gives, which carries nothing of the host's own state into
+ * the guest and never fails. */
+[[nodiscard]] std::uint64_t guest_random() noexcept
+{
+	std::uint64_t value{};
+	arc4random_buf(&value, sizeof(value));
+	return value;
+}
+
 /* A physical-order x87 register's full tag, from its contents: valid, zero,
  * or special (NaN, infinity, denormal, unnormal). */
 [[nodiscard]] constexpr std::uint16_t x87_tag_for(const X87Register &value) noexcept
@@ -918,6 +928,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	pointers.XCRFunction = reinterpret_cast<uint64_t>(&guest_xgetbv);
 	pointers.EmbedderTLBMissHelper = reinterpret_cast<uint64_t>(&embedder_tlb_miss);
 	pointers.EmbedderStringHelper = reinterpret_cast<uint64_t>(&embedder_string);
+	pointers.EmbedderRandomHelper = reinterpret_cast<uint64_t>(&guest_random);
 	frame->Embedder.TLB = reinterpret_cast<uint64_t>(space->tlb.get());
 	frame->Embedder.HostContext = reinterpret_cast<uint64_t>(space.get());
 	frame->Embedder.CodeSizePerNode = code_bytes_per_node;

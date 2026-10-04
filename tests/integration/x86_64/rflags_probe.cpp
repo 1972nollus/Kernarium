@@ -668,6 +668,79 @@ bool iretl_pops_a_32_bit_frame()
 			 sp, reinterpret_cast<word>(&iretl_stack[4]));
 	return ok;
 }
+
+/* RDRAND and RDSEED, which CPUID advertises, always succeed here: CF set
+ * and OF, SF, ZF, AF and PF clear, whatever they held. A 16-bit destination
+ * keeps the register's upper bits and a 32-bit one is zero-extended; two
+ * 64-bit reads differ. */
+bool random_reads()
+{
+	u32 leaf1 = 1;
+	u32 leaf1_ecx;
+	u32 leaf7 = 7;
+	u32 leaf7_ebx;
+	u32 subleaf = 0;
+	__asm__ volatile("cpuid"
+			 : "+a"(leaf1), "=c"(leaf1_ecx)
+			 :
+			 : "ebx", "edx");
+	__asm__ volatile("cpuid"
+			 : "+a"(leaf7), "=b"(leaf7_ebx), "+c"(subleaf)
+			 :
+			 : "edx");
+	bool ok = flags_read("CPUID.1:ECX.RDRAND", (leaf1_ecx >> 30) & 1, 1);
+	ok &= flags_read("CPUID.7.0:EBX.RDSEED", (leaf7_ebx >> 18) & 1, 1);
+	for (int seed = 0; seed < 2; ++seed) {
+		word flags;
+		word first;
+		word second;
+		word narrow = 0x1111111122223333UL;
+		word middle = ~0UL;
+		if (seed != 0)
+			__asm__ volatile("pushq $0xad6\n\t"
+					 "popfq\n\t"
+					 "rdseed %[first]\n\t"
+					 "pushfq\n\t"
+					 "popq %[flags]\n\t"
+					 "rdseed %w[narrow]\n\t"
+					 "rdseed %k[middle]\n\t"
+					 "rdseed %[second]\n\t"
+					 "pushq $0x202\n\t"
+					 "popfq"
+					 : [flags] "=&r"(flags), [first] "=&r"(first),
+					   [second] "=&r"(second), [narrow] "+r"(narrow),
+					   [middle] "+r"(middle)
+					 :
+					 : "memory", "cc");
+		else
+			__asm__ volatile("pushq $0xad6\n\t"
+					 "popfq\n\t"
+					 "rdrand %[first]\n\t"
+					 "pushfq\n\t"
+					 "popq %[flags]\n\t"
+					 "rdrand %w[narrow]\n\t"
+					 "rdrand %k[middle]\n\t"
+					 "rdrand %[second]\n\t"
+					 "pushq $0x202\n\t"
+					 "popfq"
+					 : [flags] "=&r"(flags), [first] "=&r"(first),
+					   [second] "=&r"(second), [narrow] "+r"(narrow),
+					   [middle] "+r"(middle)
+					 :
+					 : "memory", "cc");
+		bool reads = flags_read("RFLAGS after it", flags, 0x203);
+		reads &= flags_read("upper bits of a 16-bit destination",
+				    narrow >> 16, 0x111111112222UL);
+		reads &= flags_read("upper half of a 32-bit destination",
+				    middle >> 32, 0);
+		reads &= flags_read("two 64-bit reads differ", first != second, 1);
+		if (!reads) {
+			put(seed != 0 ? "  in RDSEED\n" : "  in RDRAND\n");
+			ok = false;
+		}
+	}
+	return ok;
+}
 #endif
 
 constexpr word flag_tf = 1UL << 8;
@@ -1275,6 +1348,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "user-loads"));
 	report("x86-64 IRET without REX.W pops a 32-bit frame",
 	       in_child(self, "iretl"));
+	report("x86-64 RDRAND and RDSEED succeed and set only CF",
+	       in_child(self, "random"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
 	report("x86-64 a REP string interrupted between elements shows RF",
@@ -1338,6 +1413,8 @@ extern "C" int probe_main(word *stack)
 		return user_flag_loads() ? 0 : 1;
 	if (count == 2 && equal(arguments[1], "iretl"))
 		return iretl_pops_a_32_bit_frame() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "random"))
+		return random_reads() ? 0 : 1;
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
 	put("usage: rflags-probe I386_PROBE\n");

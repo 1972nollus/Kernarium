@@ -103,13 +103,15 @@ pairs of 128-bit operations on hosts without 256-bit SVE. x87 is the full
 emulates TSO with acquire loads and release stores, and `space_orders_stores()`
 is the one place a per-address-space decision will key it.
 DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
-destination before they write either destination.
+destination before they write either destination. RDRAND and RDSEED read the
+host CSPRNG through a helper, as the gadget engine does, and always succeed.
 
 The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending. The engine does not deliver unmasked SSE or
 x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
-flags and raises nothing from the x87 ones, and has no alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
-exactly those two x86-64 cases.
+flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
+`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two x86-64
+cases.
 
 ## Instruction corpus
 
