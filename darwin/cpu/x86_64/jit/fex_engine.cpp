@@ -515,6 +515,27 @@ void record_unsupported(Core::CpuStateFrame &frame, std::uint64_t address, ExitA
 	record_exit(frame, at);
 }
 
+/* A publishing store into the guest code of the unit running now, unless
+ * that unit is one instruction: the unit would go on to run what the store
+ * replaces, or run it again after a loop back to its entry. The store has
+ * not happened; run() runs its instruction again as a unit of its own, after
+ * which the dispatch fetches afresh. */
+[[nodiscard]] bool store_ends_unit(Space &space, GuestAddressSpace &memory,
+	std::uint64_t address, std::size_t size)
+{
+	bool publishes = false;
+	for (auto page = address & guest_page_mask; page < address + size; page += guest_page_size)
+		publishes = publishes || space.stores_publish(memory, page);
+	return publishes && space.context->IsAddressInCurrentBlock(space.thread, address, size) &&
+		!space.context->IsCurrentBlockSingleInst(space.thread);
+}
+
+void record_code_write(Core::CpuStateFrame &frame, ExitAt at) noexcept
+{
+	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_CODE_WRITE;
+	record_exit(frame, at);
+}
+
 /* The TLB-miss helper the backend's shared stub calls. Returns the host
  * address of the access, or 0 after recording why the dispatch must end. */
 uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
@@ -567,6 +588,10 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 		for (;;) {
 			const auto changes = space.code_changes();
 			if (space.stores_publish(memory, address)) {
+				if (store_ends_unit(space, memory, address, size)) {
+					record_code_write(*frame, at);
+					return 0;
+				}
 				engine.publish_code_write(space, address, size);
 				return reinterpret_cast<uintptr_t>(pointer);
 			}
@@ -589,6 +614,10 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	if (ordered)
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 	if (store) {
+		if (store_ends_unit(space, memory, address, size)) {
+			record_code_write(*frame, at);
+			return 0;
+		}
 		if (!memory.write(address, std::span<const std::byte>{bounce, size})) {
 			record_fault(*frame, memory, address, MemoryAccess::write, at);
 			return 0;
@@ -628,6 +657,13 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
 		record_fault(*frame, memory, address, access, at);
+		save_progress();
+		return std::uint64_t{1};
+	};
+	/* Stops before elements that would store into the running unit's code,
+	 * with the progress made, as between elements. */
+	const auto code_write = [&] {
+		record_code_write(*frame, at);
 		save_progress();
 		return std::uint64_t{1};
 	};
@@ -672,6 +708,8 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 			std::array<std::byte, 8> bytes{};
 			if (copy && !memory.read(op.Src, std::span{bytes.data(), element}))
 				return fail(op.Src, MemoryAccess::read);
+			if (store_ends_unit(space, memory, op.Dest, element))
+				return code_write();
 			if (!memory.write(op.Dest, std::span<const std::byte>{copy ? bytes.data() : value.data(), element}))
 				return fail(op.Dest, MemoryAccess::write);
 			if (space.stores_publish(memory, op.Dest))
@@ -689,6 +727,8 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		auto *dest = memory.atomic_pointer(low_dest, bytes, MemoryAccess::write);
 		if (dest == nullptr)
 			return fail(backward ? op.Dest : low_dest, MemoryAccess::write);
+		if (store_ends_unit(space, memory, low_dest, bytes))
+			return code_write();
 		if (space.stores_publish(memory, low_dest))
 			engine.publish_code_write(space, low_dest, bytes);
 		if (copy) {
@@ -1050,6 +1090,11 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
 	space->context->ExecuteEmbedded(thread, false);
+	/* A store into the running unit's own code left before it stored. Its
+	 * instruction runs again as a unit of its own, whose store publishes,
+	 * and the dispatch goes on from freshly fetched code. */
+	while (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE)
+		space->context->ExecuteEmbedded(thread, true);
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 

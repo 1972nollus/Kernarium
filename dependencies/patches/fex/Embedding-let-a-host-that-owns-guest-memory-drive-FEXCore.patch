@@ -42,10 +42,10 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
- FEXCore/include/FEXCore/Core/CoreState.h      | 100 +++++
+ FEXCore/include/FEXCore/Core/CoreState.h      | 104 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1614 insertions(+), 67 deletions(-)
+ 29 files changed, 1618 insertions(+), 67 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -2480,10 +2480,10 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..9b10abcf17d08fb06785dceac25c3702063d69e2 100644
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..e956e679888f9f2ec70f5f5c823e2ad57b673c88 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -334,6 +334,60 @@ struct FallbackABIInfo {
+@@ -334,6 +334,64 @@ struct FallbackABIInfo {
    uint64_t Func;
  };
  
@@ -2508,6 +2508,10 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..9b10abcf17d08fb06785dceac25c3702
 +  EMBEDDER_EXIT_UNSUPPORTED = 4,
 +  // A host string helper stopped between elements; RIP names the instruction.
 +  EMBEDDER_EXIT_YIELD = 5,
++  // A store into the guest code of the running unit, which would go on to
++  // run what the store replaces: RIP names the storing instruction, which
++  // has done nothing yet and runs again as a unit of its own.
++  EMBEDDER_EXIT_CODE_WRITE = 6,
 +};
 +
 +// Access info passed to the TLB-miss stub.
@@ -2544,7 +2548,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..9b10abcf17d08fb06785dceac25c3702
  struct JITPointers {
  
    // Process specific
-@@ -355,6 +409,18 @@ struct JITPointers {
+@@ -355,6 +413,18 @@ struct JITPointers {
    // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
    uint64_t ExitFunctionEC {};
  
@@ -2563,7 +2567,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..9b10abcf17d08fb06785dceac25c3702
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +498,40 @@ struct CpuStateFrame {
+@@ -432,6 +502,40 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  

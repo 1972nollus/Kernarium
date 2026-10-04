@@ -46,7 +46,10 @@ The engine joins the code-page registry with a function that retires its own
 TLB entry for a page. It counts a page in before the decoder reads the page's
 bytes, so a store another vCPU translated lands first and every later store
 publishes. The guest runs READ_IMPLIES_EXEC, so only a store to a page the
-registry holds publishes a code change.
+registry holds publishes a code change. A publishing store into the code of
+the unit running it, which would go on to run the bytes it replaces, stops
+that unit before it stores; its instruction runs again as a unit of its own,
+and the dispatch goes on from freshly fetched code.
 
 ## State at every exit
 
@@ -121,5 +124,4 @@ engine in the unit suite.
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The classes are VEX gathers through the software TLB,
-split locked operands, SSE NaN, denormal and estimate rules and a store into
-its own block.
+split locked operands, and SSE NaN, denormal and estimate rules.

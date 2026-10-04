@@ -24,6 +24,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <span>
 #include <sstream>
@@ -1555,7 +1556,9 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
  * run these cases against the same counts, the gadget engine's: a fault or
  * #UD retires nothing of its instruction, a trap or system call retires it,
  * a repeated string instruction retires once however many elements it moves
- * and a loop retires every pass, across dispatches when it outlasts one. */
+ * and a loop retires every pass, across dispatches when it outlasts one. A
+ * store into the code of the block running it stops that block too, and a
+ * case that names RAX checks that the run went on with the new code. */
 struct RetirementCase final {
 	std::string_view name;
 	std::vector<std::uint8_t> code;
@@ -1563,6 +1566,7 @@ struct RetirementCase final {
 	std::string_view status;
 	std::size_t retired{};
 	std::uint64_t address{};
+	std::optional<std::uint64_t> rax{};
 };
 
 [[nodiscard]] std::vector<RetirementCase> retirement_cases()
@@ -1576,6 +1580,20 @@ struct RetirementCase final {
 		     {2, 0xf6}, {3, 0x0f}, {0xffc, 0x90}, {0xffd, 0x90},
 		     {0xffe, 0x48}, {0xfff, 0xb8}})
 		straddle[offset] = byte;
+	/* mov $0x20, %eax; movabs $0x9090909090909090, %rbx; jmp to 0xff6:
+	 * mov %rbx, 1f(%rip), a store across the page boundary into the
+	 * instruction after it; 1: mov $0x11111111, %eax; nop; nop; nop;
+	 * hlt. */
+	std::vector<std::uint8_t> crossing(page_size + 6, 0);
+	for (const auto &[offset, byte] : std::initializer_list<
+		     std::pair<std::size_t, std::uint8_t>>{{0, 0xb8}, {1, 0x20},
+		     {5, 0x48}, {6, 0xbb}, {0xf, 0xe9}, {0x10, 0xe2}, {0x11, 0x0f},
+		     {0xff6, 0x48}, {0xff7, 0x89}, {0xff8, 0x1d}, {0xffd, 0xb8},
+		     {0xffe, 0x11}, {0xfff, 0x11}, {0x1000, 0x11}, {0x1001, 0x11},
+		     {0x1002, 0x90}, {0x1003, 0x90}, {0x1004, 0x90},
+		     {0x1005, 0xf4}})
+		crossing[offset] = byte;
+	std::fill(crossing.begin() + 7, crossing.begin() + 0xf, 0x90);
 	return {
 		/* nop; nop; mov $0x30000000, %rbx; mov (%rbx), %rax; nop; hlt */
 		{"load-fault", {0x90, 0x90, 0x48, 0xc7, 0xc3, 0x00, 0x00, 0x00, 0x30,
@@ -1633,6 +1651,31 @@ struct RetirementCase final {
 			{{data, data + 0x1000}}, "memory_fault", 4, code_address + 15},
 		{"fetch-fault", std::move(straddle), {}, "memory_fault", 4,
 			code_address + 0xffe},
+		/* movb $0x90, 1f(%rip); movb $0x90, 1f+1(%rip); 1: inc %eax; hlt:
+		 * each store rewrites the block it runs in. */
+		{"code-write", {0xc6, 0x05, 0x07, 0x00, 0x00, 0x00, 0x90, 0xc6, 0x05,
+			0x01, 0x00, 0x00, 0x00, 0x90, 0xff, 0xc0, 0xf4}, {}, "passed", 4,
+			code_address + 16, 0},
+		/* lea 1f(%rip), %rdi; mov $0x90909090, %eax; mov $10, %ecx; cld;
+		 * rep stosb; 1: movabs $0xfabcfabcfabc0123, %rax; hlt */
+		{"code-write-rep-stosb", {0x48, 0x8d, 0x3d, 0x0d, 0x00, 0x00, 0x00,
+			0xb8, 0x90, 0x90, 0x90, 0x90, 0xb9, 0x0a, 0x00, 0x00, 0x00, 0xfc,
+			0xf3, 0xaa, 0x48, 0xb8, 0x23, 0x01, 0xbc, 0xfa, 0xbc, 0xfa, 0xbc,
+			0xfa, 0xf4}, {}, "passed", 15, code_address + 30, 0x90909090},
+		/* lock xorb $2, 1f+1(%rip); 1: mov $0x30, %al; hlt, after
+		 * mov $0x20, %eax */
+		{"code-write-locked", {0xb8, 0x20, 0x00, 0x00, 0x00, 0xf0, 0x80,
+			0x35, 0x01, 0x00, 0x00, 0x00, 0x02, 0xb0, 0x30, 0xf4}, {},
+			"passed", 3, code_address + 15, 0x32},
+		/* mov $2, %ecx; jmp 1f; 1: mov $1, %eax; movb $2, 1b+1(%rip);
+		 * dec %ecx; jnz 1b; hlt: a loop that rewrites its own first
+		 * instruction and runs it again. */
+		{"code-write-loop", {0xb9, 0x02, 0x00, 0x00, 0x00, 0xeb, 0x00, 0xb8,
+			0x01, 0x00, 0x00, 0x00, 0xc6, 0x05, 0xf5, 0xff, 0xff, 0xff, 0x02,
+			0xff, 0xc9, 0x75, 0xf0, 0xf4}, {}, "passed", 10,
+			code_address + 23, 2},
+		{"code-write-across-pages", std::move(crossing), {}, "passed", 12,
+			code_address + 0x1005, 0x20},
 	};
 }
 
@@ -1646,6 +1689,10 @@ struct RetirementCase final {
 			[](std::uint8_t byte) { return std::byte{byte}; });
 		Configuration configuration;
 		configuration.memory_regions = test.regions;
+		if (test.rax) {
+			/* Expectation keys: bit 0 names RIP, bit 1 RAX. */
+			configuration.registers.push_back({1U << 1U, {*test.rax}});
+		}
 		capture_results = true;
 		reported = {};
 		(void)run_configured_case(code, configuration, test.name, false,
