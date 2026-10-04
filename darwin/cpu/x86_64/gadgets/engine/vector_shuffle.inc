@@ -1,6 +1,165 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Packed floating-point unpack, shuffle, horizontal, and add/sub layouts. */
 
+/* HADD, HSUB and ADDSUB follow x86's NaN, DAZ and FTZ rules (see
+ * vector_float.inc). Their first operand is the lower element of each
+ * pair, or the first source for ADDSUB, as x86 hardware chooses between two
+ * NaNs; the SDM ranks only distinct source operands. A sum or difference
+ * that is tiny is exact, so FTZ flushes denormal results alone. */
+.macro vector_horizontal_inputs element, width
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_horizontal_inputs_ready\@
+	.if \width == 256
+	simd_flush_denormals_each \element, 0, 1, 2, 3
+	.else
+	simd_flush_denormals_each \element, 0, 1
+	.endif
+Lx86_vector_horizontal_inputs_ready\@:
+.endm
+
+/* Repair the NaN results of v`output` from the pairs of v`left` and
+ * v`right`. Uses v16 to v22 and x14. */
+.macro vector_horizontal_nan operation, element, output, left, right
+	.ifc \operation,addsub
+	simd_x86_nan \element, \output, \left, \right, 1, 0
+	.else
+	.if \element == 32
+	uzp1 v21.4s, v\left\().4s, v\right\().4s
+	uzp2 v22.4s, v\left\().4s, v\right\().4s
+	.else
+	uzp1 v21.2d, v\left\().2d, v\right\().2d
+	uzp2 v22.2d, v\left\().2d, v\right\().2d
+	.endif
+	simd_x86_nan \element, \output, 21, 22, 1, 0
+	.endif
+.endm
+
+.macro vector_horizontal_results operation, element, width
+	simd_special_lanes \element, 4
+	.if \width == 256
+	cbnz w14, Lx86_vector_horizontal_special\@
+	simd_special_lanes \element, 5
+	.endif
+	cbz w14, Lx86_vector_horizontal_nan_ready\@
+Lx86_vector_horizontal_special\@:
+	b Lx86_vector_horizontal_repair\@
+Lx86_vector_horizontal_nan_ready\@:
+	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
+	.if \width == 256
+	simd_flush_denormals_each \element, 4, 5
+	.else
+	simd_flush_denormals 4, \element
+	.endif
+Lx86_vector_horizontal_ftz_ready\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_horizontal_repair\@:
+	simd_leave_if_checking
+	vector_horizontal_nan \operation, \element, 4, 0, 1
+	.if \width == 256
+	vector_horizontal_nan \operation, \element, 5, 2, 3
+	.endif
+	b Lx86_vector_horizontal_nan_ready\@
+	.popsection
+.endm
+
+.macro vector_horizontal_operation operation, element, width
+	.ifc \operation,hadd
+	.if \element == 32
+	faddp v4.4s, v0.4s, v1.4s
+	.if \width == 256
+	faddp v5.4s, v2.4s, v3.4s
+	.endif
+	.else
+	faddp d4, v0.2d
+	faddp d6, v1.2d
+	mov v4.d[1], v6.d[0]
+	.if \width == 256
+	faddp d5, v2.2d
+	faddp d6, v3.2d
+	mov v5.d[1], v6.d[0]
+	.endif
+	.endif
+	.endif
+	.ifc \operation,hsub
+	.if \element == 32
+	rev64 v6.4s, v0.4s
+	fsub v6.4s, v0.4s, v6.4s
+	rev64 v7.4s, v1.4s
+	fsub v7.4s, v1.4s, v7.4s
+	uzp1 v4.4s, v6.4s, v7.4s
+	.if \width == 256
+	rev64 v6.4s, v2.4s
+	fsub v6.4s, v2.4s, v6.4s
+	rev64 v7.4s, v3.4s
+	fsub v7.4s, v3.4s, v7.4s
+	uzp1 v5.4s, v6.4s, v7.4s
+	.endif
+	.else
+	ext v6.16b, v0.16b, v0.16b, #8
+	fsub d4, d0, d6
+	ext v6.16b, v1.16b, v1.16b, #8
+	fsub d6, d1, d6
+	mov v4.d[1], v6.d[0]
+	.if \width == 256
+	ext v6.16b, v2.16b, v2.16b, #8
+	fsub d5, d2, d6
+	ext v6.16b, v3.16b, v3.16b, #8
+	fsub d6, d3, d6
+	mov v5.d[1], v6.d[0]
+	.endif
+	.endif
+	.endif
+	.ifc \operation,addsub
+	.if \element == 32
+	fsub v4.4s, v0.4s, v1.4s
+	fadd v6.4s, v0.4s, v1.4s
+	mov v4.s[1], v6.s[1]
+	mov v4.s[3], v6.s[3]
+	.if \width == 256
+	fsub v5.4s, v2.4s, v3.4s
+	fadd v6.4s, v2.4s, v3.4s
+	mov v5.s[1], v6.s[1]
+	mov v5.s[3], v6.s[3]
+	.endif
+	.else
+	fsub v4.2d, v0.2d, v1.2d
+	fadd v6.2d, v0.2d, v1.2d
+	mov v4.d[1], v6.d[1]
+	.if \width == 256
+	fsub v5.2d, v2.2d, v3.2d
+	fadd v6.2d, v2.2d, v3.2d
+	mov v5.d[1], v6.d[1]
+	.endif
+	.endif
+	.endif
+.endm
+
+/* The common path repairs a NaN result alone; the exact path
+ * (`simd_exact_branch`) applies DAZ and FTZ and the SIMD checks too. */
+.macro vector_horizontal_body operation, element, width
+	simd_exact_branch Lx86_vector_horizontal_common\@
+	vector_horizontal_inputs \element, \width
+	vector_horizontal_operation \operation, \element, \width
+	vector_horizontal_results \operation, \element, \width
+	b Lx86_vector_horizontal_done\@
+Lx86_vector_horizontal_common\@:
+	vector_horizontal_operation \operation, \element, \width
+	.if \width == 256
+	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4, 5
+	.else
+	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4
+	.endif
+Lx86_vector_horizontal_done\@:
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_horizontal_nan\@:
+	vector_horizontal_nan \operation, \element, 4, 0, 1
+	.if \width == 256
+	vector_horizontal_nan \operation, \element, 5, 2, 3
+	.endif
+	b Lx86_vector_horizontal_done\@
+	.popsection
+.endm
+
 .macro vector_shuffle_ps_index lane, shift, right
 	lsr w16, w13, #\shift
 	and w16, w16, #3
@@ -84,76 +243,13 @@ Lx86_vector_shuffle_pd_upper_right_done\@:
 	.endif
 	.endif
 	.ifc \operation,hadd
-	.if \element == 32
-	faddp v4.4s, v0.4s, v1.4s
-	.if \width == 256
-	faddp v5.4s, v2.4s, v3.4s
-	.endif
-	.else
-	faddp d4, v0.2d
-	faddp d6, v1.2d
-	mov v4.d[1], v6.d[0]
-	.if \width == 256
-	faddp d5, v2.2d
-	faddp d6, v3.2d
-	mov v5.d[1], v6.d[0]
-	.endif
-	.endif
-	simd_check_result \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 	.ifc \operation,hsub
-	.if \element == 32
-	rev64 v6.4s, v0.4s
-	fsub v6.4s, v0.4s, v6.4s
-	rev64 v7.4s, v1.4s
-	fsub v7.4s, v1.4s, v7.4s
-	uzp1 v4.4s, v6.4s, v7.4s
-	.if \width == 256
-	rev64 v6.4s, v2.4s
-	fsub v6.4s, v2.4s, v6.4s
-	rev64 v7.4s, v3.4s
-	fsub v7.4s, v3.4s, v7.4s
-	uzp1 v5.4s, v6.4s, v7.4s
-	.endif
-	.else
-	ext v6.16b, v0.16b, v0.16b, #8
-	fsub d4, d0, d6
-	ext v6.16b, v1.16b, v1.16b, #8
-	fsub d6, d1, d6
-	mov v4.d[1], v6.d[0]
-	.if \width == 256
-	ext v6.16b, v2.16b, v2.16b, #8
-	fsub d5, d2, d6
-	ext v6.16b, v3.16b, v3.16b, #8
-	fsub d6, d3, d6
-	mov v5.d[1], v6.d[0]
-	.endif
-	.endif
-	simd_check_result \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 	.ifc \operation,addsub
-	.if \element == 32
-	fsub v4.4s, v0.4s, v1.4s
-	fadd v6.4s, v0.4s, v1.4s
-	mov v4.s[1], v6.s[1]
-	mov v4.s[3], v6.s[3]
-	.if \width == 256
-	fsub v5.4s, v2.4s, v3.4s
-	fadd v6.4s, v2.4s, v3.4s
-	mov v5.s[1], v6.s[1]
-	mov v5.s[3], v6.s[3]
-	.endif
-	.else
-	fsub v4.2d, v0.2d, v1.2d
-	fadd v6.2d, v0.2d, v1.2d
-	mov v4.d[1], v6.d[1]
-	.if \width == 256
-	fsub v5.2d, v2.2d, v3.2d
-	fadd v6.2d, v2.2d, v3.2d
-	mov v5.d[1], v6.d[1]
-	.endif
-	.endif
-	simd_check_result \element, \width
+	vector_horizontal_body \operation, \element, \width
 	.endif
 .endm
 
@@ -246,4 +342,9 @@ vector_shuffle_family addsub, 64, 256
 .purgem vector_shuffle_memory
 .purgem vector_shuffle_register
 .purgem vector_shuffle_body
+.purgem vector_horizontal_body
+.purgem vector_horizontal_operation
+.purgem vector_horizontal_results
+.purgem vector_horizontal_nan
+.purgem vector_horizontal_inputs
 .purgem vector_shuffle_ps_index

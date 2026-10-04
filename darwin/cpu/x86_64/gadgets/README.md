@@ -10,7 +10,7 @@ Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
 distance past the nearest named symbol before it as a signed 24-bit addend, so
 such a target must lie within 8 MiB of one; the cold section names only its
-start and is 0.3 MB. The assembler rejects a larger addend, and a named local
+start and is 0.5 MB. The assembler rejects a larger addend, and a named local
 symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
 a `.L` symbol in the engine object.
 
@@ -299,6 +299,38 @@ change, which for a guest that never leaves round-to-nearest is never. The
 rounding gadgets therefore round with the host's current mode instead of
 branching on MXCSR, and the arithmetic honours the guest's mode as well.
 
+SSE and AVX arithmetic and FMA return x86's values where the host's differ. A
+NaN result is the first source quieted when that is a NaN, else the second,
+else the negative indefinite; for an FMA the first of a, b and c in x86's
+a * b + c, with its own sign whatever the form negates. Where the elements come
+from one source, x86 hardware's order decides, as the SDM ranks only distinct
+sources: HADD and HSUB return a pair's lower NaN, and each DPPS or DPPD result
+lane sums in its own order, DPPS lane i p[i ^ 1] + p[i] and then the other
+pair, DPPD lane i p[i] + p[i ^ 1]. MXCSR.DAZ flushes denormal inputs, those of
+comparisons, rounding and conversions included, and a dot product's
+intermediates; MXCSR.FTZ flushes a result that is tiny after rounding: below
+the smallest normal when rounded as if the exponent were unbounded, which a
+product, quotient, fused result or narrowed double the host rounds up to the
+smallest normal may be, so that one is run again scaled into the normal range.
+MIN and MAX return a source unchanged. RCP and RSQRT ignore MXCSR, take a
+denormal input as zero and return zero for RCP's tiny results; elsewhere the
+host's exact quotient lies within x86's estimate error. These repairs live in
+the cold section, which a gadget enters only for a special result, an
+estimate's special input, or under FTZ a result no larger than the smallest
+normal. Conversions, rounding, F16C's narrowing, HADD, HSUB, ADDSUB, DPPS,
+DPPD and FMA instead keep a common path that assumes DAZ and FTZ clear and no
+SIMD check, and run an exact path while `exception_checks` holds
+`exception_check_simd_exact`: with `exception_check_simd`, or while DAZ or FTZ
+is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One load
+and branch thus serve all three, as the check alone did before, and the common
+path adds only a NaN test where x86's NaN differs from the host's.
+Applications set DAZ and FTZ for good as often as not -- Geekbench's image
+workloads and embree do -- so the exact path is a common path too: it follows
+the gadget inline (FMA's after the gadget's tail), and only its repairs, and
+DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
+denormal input passes the value through two dependent instructions, as scalar
+code waits on it.
+
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
@@ -314,8 +346,9 @@ C++Builder program runs with its default control word $1332 and MXCSR $1900,
 which unmask invalid operation, division by zero and overflow.
 
 The gadgets check themselves for x87 exceptions, and for SIMD ones while MXCSR
-masks underflow and precision. While the guest unmasks such an exception, each
-run sets `exception_checks` in CpuState (`gadget_checks`), and:
+masks underflow, precision and a denormal operand. While the guest unmasks such
+an exception, each run sets `exception_checks` in CpuState (`gadget_checks`),
+and:
 
 - x87: a softfloat helper that raises an unmasked exception records it in
   `exception_raised` instead of the status word, and the gadget tests that
@@ -326,7 +359,8 @@ run sets `exception_checks` in CpuState (`gadget_checks`), and:
   NaN, an infinity, or the largest finite value an overflow rounds to), a NaN
   input to a comparison, minimum or maximum, or a conversion to an integer out
   of its range. A dot product, whose intermediate results no test of its
-  result sees, always leaves.
+  result sees, always leaves. These tests sit on the exact path where a
+  gadget has one.
 
 Either leaves before it stores anything, with
 `UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position. The runtime finds
@@ -342,12 +376,12 @@ accumulate only for the instructions the runtime runs checked, as they never
 do while MXCSR masks every exception.
 
 The other checks split blocks. While `checked_exceptions` finds one enabled --
-RFLAGS.AC, MXCSR unmasking underflow or precision, which no value shows, or an
-unmasked x87 exception pending -- the runtime dispatches through an executor
-built for that set, whose blocks end before every instruction that could raise
-one. Such an instruction is a block of its own, a check head, that no link
-enters; `execute_checked` runs it alone, with its checks, and runs every other
-block, linked, as `execute` does:
+RFLAGS.AC, MXCSR unmasking underflow, precision or a denormal operand, which no
+value shows, or an unmasked x87 exception pending -- the runtime dispatches
+through an executor built for that set, whose blocks end before every
+instruction that could raise one. Such an instruction is a block of its own, a
+check head, that no link enters; `execute_checked` runs it alone, with its
+checks, and runs every other block, linked, as `execute` does:
 
 - #MF: a waiting instruction -- every x87 instruction but FNINIT, FNCLEX,
   FNSTSW, FNSTCW, FNSTENV and FNSAVE, and FWAIT, EMMS and every MMX
@@ -359,11 +393,14 @@ block, linked, as `execute` does:
 - #XM, run checked: the host's cumulative exception flags are cleared around
   the instruction and read back as MXCSR's; a scalar instruction's host code
   computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
-  integer out of range raises the host's invalid-operation flag. An unmasked
-  exception restores the state from before it, a memory destination
-  included, and faults; MXCSR then holds only the flags checked before the
-  computation when one of those was unmasked, and no precision flag when
-  underflow was. Masked flags accumulate.
+  integer out of range raises the host's invalid-operation flag. A denormal
+  operand, which no host flag shows, is found in the sources before the
+  instruction runs, where x86 raises it: not under DAZ, nor in a lane holding a
+  NaN or raising invalid operation or division by zero, and for DPPS and DPPD
+  also in a product or sum added. An unmasked exception restores the state from
+  before it, a memory destination included, and faults; MXCSR then holds only
+  the flags checked before the computation when one of those was unmasked, and
+  no precision flag when underflow was. Masked flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags. An
   unmasked invalid operation, denormal or division by zero, or an unmasked
   overflow or underflow of a store, restores the registers, the stack and
@@ -373,21 +410,21 @@ block, linked, as `execute` does:
 An instruction that could change what a run checks retires and leaves the
 engine, so linked code never runs past it unchecked: POPF setting AC; LDMXCSR,
 FXRSTOR or XRSTOR unmasking a SIMD exception while the gadgets do not check
-them, or unmasking underflow or precision; and FLDCW, FLDENV, FRSTOR, FXRSTOR
-or XRSTOR unmasking an x87 exception while the gadgets are not checking or
-unmasking one whose flag is set. That costs POPF one branch and FLDCW and
-LDMXCSR three instructions when nothing is unmasked. LDMXCSR keeps the masks
-and flags the guest loads.
+them, or unmasking underflow, precision or a denormal operand; and FLDCW,
+FLDENV, FRSTOR, FXRSTOR or XRSTOR unmasking an x87 exception while the gadgets
+are not checking or unmasking one whose flag is set. That costs POPF one branch
+and FLDCW and LDMXCSR three instructions when nothing is unmasked. LDMXCSR
+keeps the masks and flags the guest loads.
 
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
-arithmetic runs about 25 times slower while MXCSR unmasks underflow or
-precision. Memory access while AC is set runs about 25 times slower too, and
-stays so: programs rarely set AC. Code without such instructions keeps its
-speed. The host detects neither a denormal operand nor an exact tiny result,
-so #XM misses those two; it reports precision for an unmasked overflow whose
-result is exact but for its exponent, where x86 does not; and an x87 overflow
-or underflow unmasked for a register destination leaves the masked result
-rather than x87's rebiased one.
+arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
+or a denormal operand. Memory access while AC is set runs about 25 times slower
+too, and stays so: programs rarely set AC. Code without such instructions keeps
+its speed. The host does not detect an exact tiny result, so #XM misses that
+underflow; it reports precision for an unmasked overflow whose result is exact
+but for its exponent, where x86 does not; and an x87 overflow or underflow
+unmasked for a register destination leaves the masked result rather than x87's
+rebiased one.
 
 ## Code pages
 

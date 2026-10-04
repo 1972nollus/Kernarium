@@ -22,8 +22,10 @@ forms, and case count. `coverage.tsv` is the merged form inventory and
 revision. FEX and native-Intel records are bit-exact. K-only NaN payload and
 sign choices are compared by IEEE NaN class only for the explicitly classified
 floating-point programs where Intel permits multiple quiet-NaN results; every
-other K trace remains bit-exact. Focused unit cases retain exact x86
-indefinite-NaN checks.
+other K trace remains bit-exact. K computes RCP and RSQRT as exact quotients;
+where one strays from the native estimate by more than the SDM's estimate
+error, as for a denormal input or a tiny result, the native value replaces it.
+Focused unit cases retain exact x86 indefinite-NaN checks.
 
 x87 is emulated only at full 80-bit precision. The producer drops FEX's
 `FEX_X87REDUCEDPRECISION` request, which only FEX's own translator honours,

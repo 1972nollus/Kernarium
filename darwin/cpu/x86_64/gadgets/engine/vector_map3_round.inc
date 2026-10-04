@@ -83,30 +83,68 @@ Lx86_vector_map3_round_done\@:
 	.endif
 .endm
 
+/* Rounding and F16C's narrowing have an exact path (`simd_exact_branch`),
+ * where MXCSR.DAZ makes a denormal input zero and the SIMD checks run;
+ * neither result can be tiny, and F16C ignores FTZ. */
+.macro vector_map3_round_inputs element, width
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_map3_round_inputs_ready\@
+	.if \width == 256
+	simd_flush_denormals_each \element, 1, 3
+	.else
+	simd_flush_denormals 1, \element
+	.endif
+Lx86_vector_map3_round_inputs_ready\@:
+.endm
+
 /* Rounding raises invalid operation only for a signalling NaN, which it
- * leaves a NaN. */
-.macro vector_map3_round_body opcode, width
+ * leaves a NaN. `exact` emits the exact path. */
+.macro vector_map3_round_compute opcode, width, exact
+	.if \exact
+	.if \opcode == 0x08 || \opcode == 0x0a
+	vector_map3_round_inputs 32, \width
+	.else
+	vector_map3_round_inputs 64, \width
+	.endif
+	.endif
 	.if \opcode == 0x08
 	vector_map3_round_apply 32, 4, 1, 0
 	.if \width == 256
 	vector_map3_round_apply 32, 5, 3, 0
 	.endif
+	.if \exact
 	simd_check_result 32, \width
+	.endif
 	.elseif \opcode == 0x09
 	vector_map3_round_apply 64, 4, 1, 0
 	.if \width == 256
 	vector_map3_round_apply 64, 5, 3, 0
 	.endif
+	.if \exact
 	simd_check_result 64, \width
+	.endif
 	.elseif \opcode == 0x0a
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 32, 4, 1, 1
+	.if \exact
 	simd_check_scalar 32, 4
+	.endif
 	.else
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 64, 4, 1, 1
+	.if \exact
 	simd_check_scalar 64, 4
 	.endif
+	.endif
+.endm
+
+.macro vector_map3_round_body opcode, width
+	simd_exact_branch Lx86_vector_map3_round_common\@
+	vector_map3_round_compute \opcode, \width, 1
+	b Lx86_vector_map3_round_done\@
+Lx86_vector_map3_round_common\@:
+	vector_map3_round_compute \opcode, \width, 0
+Lx86_vector_map3_round_done\@:
 .endm
 
 .macro vector_map3_round_register symbol, opcode, width
@@ -197,12 +235,17 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
 .purgem vector_map3_round_memory
 .purgem vector_map3_round_register
 .purgem vector_map3_round_body
+.purgem vector_map3_round_compute
 .purgem vector_map3_round_apply
 
 /* F16C uses its immediate (or MXCSR) rounding mode rather than the host
  * thread's FPCR. Save and restore FPCR around the native narrowing operation.
+ * `exact` emits the exact path.
  */
-.macro vector_map3_half_body width
+.macro vector_map3_half_compute width, exact
+	.if \exact
+	vector_map3_round_inputs 32, \width
+	.endif
 	and w14, w13, #3
 	tbz w13, #2, Lx86_vector_map3_half_mode_ready\@
 	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
@@ -225,7 +268,18 @@ Lx86_vector_map3_half_mode_ready\@:
 	mov v4.d[1], v5.d[0]
 	.endif
 	msr fpcr, x16
+	.if \exact
 	simd_check_packed 16, 4
+	.endif
+.endm
+
+.macro vector_map3_half_body width
+	simd_exact_branch Lx86_vector_map3_half_common\@
+	vector_map3_half_compute \width, 1
+	b Lx86_vector_map3_half_done\@
+Lx86_vector_map3_half_common\@:
+	vector_map3_half_compute \width, 0
+Lx86_vector_map3_half_done\@:
 .endm
 
 .macro vector_map3_half_register width
@@ -299,3 +353,5 @@ vector_map3_half_memory 256, 16
 .purgem vector_map3_half_memory
 .purgem vector_map3_half_register
 .purgem vector_map3_half_body
+.purgem vector_map3_half_compute
+.purgem vector_map3_round_inputs
