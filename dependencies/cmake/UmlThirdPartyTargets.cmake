@@ -125,4 +125,29 @@ function(uml_define_third_party_targets prefix)
         ALIAS UML::ThirdPartyCephes128
         INCLUDES "${_include}"
         LINKS UML::ThirdPartySoftFloat)
+
+    _uml_import_static_dependency(fmt "${_lib}/libfmt.a"
+        ALIAS UML::ThirdPartyFmt
+        INCLUDES "${_include}")
+
+    _uml_import_static_dependency(xxhash "${_lib}/libxxhash.a"
+        ALIAS UML::ThirdPartyXxHash
+        INCLUDES "${_include}")
+
+    # FEXCore for the macOS-only x86-64 JIT. Its public headers change layout
+    # with these definitions, which the prefix compiled it with. The embedder
+    # installs FEXCore's executable-memory hooks; libJemallocDummy supplies
+    # FEXCore's allocator entry points over the C library's.
+    _uml_import_static_dependency(fexcore "${_lib}/libFEXCore.a"
+        ALIAS UML::ThirdPartyFEXCore
+        INCLUDES "${_include}"
+        DEFINITIONS
+            ARCHITECTURE_arm64=1
+            FEX_DISABLE_TELEMETRY=1
+        LINKS
+            "${_lib}/libFEXCore_Base.a"
+            "${_lib}/libJemallocDummy.a"
+            UML::ThirdPartyFmt
+            UML::ThirdPartyXxHash
+            UML::ThirdPartyCephes128)
 endfunction()

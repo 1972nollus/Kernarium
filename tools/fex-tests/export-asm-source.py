@@ -14,7 +14,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pinned_source import manifest_identity, sha256_file, verify_checkout  # noqa: E402
+from pinned_source import (  # noqa: E402
+    FEX_CORPUS_INPUTS,
+    manifest_identity,
+    sha256_file,
+    verify_checkout,
+)
 
 
 FIXED_FILES = (
@@ -32,7 +37,7 @@ def fail(message: str) -> "NoReturn":
 def export(source: pathlib.Path, output: pathlib.Path) -> None:
     try:
         version, expected_commit = manifest_identity("fex")
-        verify_checkout(source, expected_commit, "FEX")
+        verify_checkout(source, expected_commit, "FEX", FEX_CORPUS_INPUTS)
     except ValueError as error:
         fail(str(error))
     if output.exists() or output.is_symlink():

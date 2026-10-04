@@ -1,9 +1,10 @@
 # FEX instruction conformance corpus
 
 The x86 gadget conformance campaign consumes the handwritten x86-64 and i386
-assembly tests from the pinned `x86-conformance` dependency. FEX is a test
-input only; no FEX source or runtime library is linked into an emulator
-product.
+assembly tests from the pinned `x86-conformance` dependency, for which FEX is
+a test input only. The macOS dependency prefix builds FEXCore from the same
+row for the macOS-only x86-64 JIT; see
+[`dependencies/README.md`](../../dependencies/README.md).
 
 Prepare the exact upstream source with:
 
@@ -45,9 +46,11 @@ reduced, content-verified export.
 
 The output is disposable build data. `corpus.json` records the pinned FEX
 commit, every source-relative test name, feature requirements, disabled-test
-status, and content hashes. The producer rejects a dirty or incorrectly pinned
-FEX checkout and publishes the output directory only after every source has
-assembled successfully.
+status, and content hashes. The producer rejects a dirty FEX checkout and one
+that is not based on the pinned commit or whose `LICENSE`, `Scripts`, or
+`unittests` differ from it, so a prepared source carrying a maintained patch
+series yields the pinned corpus. It publishes the output directory only after
+every source has assembled successfully.
 
 Build the test-only gadgets adapter from a 4 KiB unit configuration, then run
 both complete corpora with:

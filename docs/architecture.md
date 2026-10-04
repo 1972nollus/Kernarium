@@ -169,7 +169,11 @@ memory, publish RW pages as RX, control JIT write protection, or publish the
 instruction cache. JIT engines reach executable memory only through it; the
 arm64 JIT's arena maps and publishes its blocks with it. Its target's `native`
 engine kind and the source audit keep the gadget engines and shared CPU code
-from linking or including it.
+from linking or including it. FEXCore, which the macOS-only x86-64 JIT embeds,
+has no executable-memory path of its own: its maintained series routes
+allocation, release, and the write window through hooks the embedder installs,
+and prefix verification rejects a FEXCore archive that toggles JIT write
+protection.
 
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit

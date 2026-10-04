@@ -16,7 +16,12 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pinned_source import manifest_identity, sha256_file, verify_checkout  # noqa: E402
+from pinned_source import (  # noqa: E402
+    FEX_CORPUS_INPUTS,
+    manifest_identity,
+    sha256_file,
+    verify_checkout,
+)
 
 
 def fail(message: str) -> "NoReturn":
@@ -58,7 +63,7 @@ def verify_export(source: pathlib.Path, expected_commit: str) -> None:
 
 def verify_source(source: pathlib.Path, expected_commit: str) -> None:
     if (source / ".git").exists():
-        verify_checkout(source, expected_commit, "FEX")
+        verify_checkout(source, expected_commit, "FEX", FEX_CORPUS_INPUTS)
         return
     verify_export(source, expected_commit)
 

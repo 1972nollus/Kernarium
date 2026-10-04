@@ -47,6 +47,12 @@ PATCH="$PATCH_DIRECTORY/fixture-maintained-change.patch"
 BASE_PREFIX="$TEST_ROOT/prefix"
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
 	"$BASE_PREFIX/include/SoftFloat-3e" \
+	"$BASE_PREFIX/include/FEXCore/Core" \
+	"$BASE_PREFIX/include/FEXCore/Utils" \
+	"$BASE_PREFIX/include/FEXCore/Config" \
+	"$BASE_PREFIX/include/FEXCore/IR" \
+	"$BASE_PREFIX/include/fmt" \
+	"$BASE_PREFIX/include/ankerl" \
 	"$BASE_PREFIX/include/slirp" \
 	"$BASE_PREFIX/include/epoxy" \
 	"$BASE_PREFIX/include/rfb" \
@@ -87,7 +93,14 @@ include/rfb/rfb.h
 include/rfb/rfbclient.h
 include/SoftFloat-3e/softfloat.h
 include/SoftFloat-3e/softfloat_types.h
-include/cephes_128bit.h'
+include/cephes_128bit.h
+include/FEXCore/Core/Context.h
+include/FEXCore/Utils/AllocatorHooks.h
+include/FEXCore/Config/ConfigValues.inl
+include/FEXCore/IR/IRDefines.inc
+include/fmt/format.h
+include/xxhash.h
+include/ankerl/unordered_dense.h'
 printf '%s\n' "$required_headers" | while IFS= read -r relative; do
 	printf '%s\n' fixture >"$BASE_PREFIX/$relative"
 done
@@ -110,7 +123,12 @@ libslirp.a
 libvncserver.a
 libvncclient.a
 libsoftfloat_3e.a
-libcephes_128bit.a'
+libcephes_128bit.a
+libFEXCore.a
+libFEXCore_Base.a
+libJemallocDummy.a
+libfmt.a
+libxxhash.a'
 printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 	cp "$TEST_ROOT/fixture-arm64.a" "$BASE_PREFIX/lib/$archive"
 done
@@ -189,6 +207,19 @@ copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/lib/plugins"
 printf '%s\n' 'not an archive' >"$CASE_PREFIX/lib/plugins/hidden.a"
 expect_failure "nested invalid static archive" verify "$CASE_PREFIX"
+
+# Only the first-party executable-memory owner writes MAP_JIT memory.
+CASE_PREFIX="$TEST_ROOT/fexcore-jit-writer"
+copy_fixture "$CASE_PREFIX"
+printf '%s\n' '#include <pthread.h>' \
+	'void uml_dependency_jit_fixture(void) { pthread_jit_write_protect_np(0); }' \
+	>"$TEST_ROOT/jit-writer.c"
+xcrun --sdk macosx clang -arch arm64 \
+	-mmacosx-version-min="$DEPLOYMENT_TARGET" -c "$TEST_ROOT/jit-writer.c" \
+	-o "$TEST_ROOT/jit-writer.o"
+rm "$CASE_PREFIX/lib/libFEXCore_Base.a"
+xcrun ar rcs "$CASE_PREFIX/lib/libFEXCore_Base.a" "$TEST_ROOT/jit-writer.o"
+expect_failure "FEXCore archive that writes JIT memory itself" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/cmake-package-metadata"
 copy_fixture "$CASE_PREFIX"
