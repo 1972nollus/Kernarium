@@ -20,10 +20,11 @@ include(UmlArchitecture)
 
 uml_verify_generated_abi()
 
-# Request the codemodel for this configure invocation. Unlike creating a
-# query file while configuration is already in progress, cmake_file_api()
-# guarantees that a fresh build tree has its reply at generation time.
-cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2)
+# Request the codemodel and the cache for this configure invocation. Unlike
+# creating a query file while configuration is already in progress,
+# cmake_file_api() guarantees that a fresh build tree has its reply at
+# generation time. The architecture audit reads the cache for the platform.
+cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 CACHE 2)
 
 set(UML_APPLE_PLATFORM "macos" CACHE STRING
     "Apple target platform: macos, ios, or ios-simulator")
@@ -132,6 +133,31 @@ if(UML_X86_64_USERSPACE_ONLY AND NOT UML_BUILD_X86_64_GUEST)
     message(FATAL_ERROR
         "The fixed x86_64 userspace slice requires the x86_64 gadget backend")
 endif()
+# The x86-64 JIT embeds FEXCore, which only the macOS dependency prefix
+# carries. It is a macOS product by design: no iOS product, XCFramework slice
+# or Kernarium runtime may build it, and the architecture audit and the iOS
+# package checks prove that it does not.
+option(UML_BUILD_X86_64_JIT
+    "Build the macOS-only x86-64 JIT engine beside the x86-64 gadget engine"
+    ${UML_BUILD_X86_64_GUEST})
+if(UML_BUILD_X86_64_JIT AND NOT UML_TARGET_MACOS)
+    message(FATAL_ERROR
+        "The x86-64 JIT is macOS-only; UML_APPLE_PLATFORM="
+        "${UML_APPLE_PLATFORM} cannot build it")
+endif()
+if(UML_BUILD_X86_64_JIT AND NOT UML_BUILD_X86_64_GUEST)
+    message(FATAL_ERROR
+        "The x86-64 JIT runs the 4 KiB x86-64 guest, which this "
+        "configuration does not build")
+endif()
+# The x86-64 product dispatches x86 code to the JIT when it is selected. The
+# arm64 product's x86 test guest builds the engine for its unit tests only and
+# runs x86 code on the gadget engine.
+if(UML_BUILD_X86_64_JIT AND UML_X86_64_USERSPACE_ONLY)
+    set(UML_X86_64_JIT_RUNTIME ON)
+else()
+    set(UML_X86_64_JIT_RUNTIME OFF)
+endif()
 # Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
 # one sparse software guest-address contract. Device and Simulator top-pack the
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
@@ -179,6 +205,7 @@ add_library(UML::GuestPageConfiguration ALIAS
 target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_X86_64_GUEST=$<BOOL:${UML_BUILD_X86_64_GUEST}>
     DARWIN_UML_X86_64_USERSPACE_ONLY=$<BOOL:${UML_X86_64_USERSPACE_ONLY}>
+    DARWIN_UML_X86_64_JIT=$<BOOL:${UML_X86_64_JIT_RUNTIME}>
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
     DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT}
     DARWIN_UML_GUEST_ADDRESS_LIMIT=${UML_GUEST_ADDRESS_LIMIT}

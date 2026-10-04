@@ -123,6 +123,12 @@ verify_archive()
 		}
 	' "$audit_dir/global-symbols.txt" ||
 		fail "$platform archive does not carry every first-party object it references"
+
+	# The x86-64 JIT and the FEXCore it embeds are macOS-only.
+	if [ "$platform" != macos ]; then
+		python3 -B "$project_root/scripts/check-no-fexcore.py" "$archive" ||
+			fail "$platform archive carries FEXCore"
+	fi
 }
 
 # Configure and build the external consumers against the package the

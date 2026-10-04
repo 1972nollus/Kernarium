@@ -324,6 +324,17 @@ bool execution_engine_available(ExecutionEngine engine) noexcept
 {
 	if (engine == ExecutionEngine::automatic)
 		engine = resolve_automatic();
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	/* The x86-64 product runs no arm64 userspace, so the JIT it selects is
+	 * the x86-64 one, which only its macOS build carries. */
+	if (engine == ExecutionEngine::jit) {
+#if DARWIN_UML_X86_64_JIT
+		return x86_jit_available();
+#else
+		return false;
+#endif
+	}
+#endif
 	const auto kind = cpu_kind(engine);
 	return kind.has_value() && ::uml::cpu::cpu_engine_available(*kind);
 }

@@ -15,3 +15,6 @@ target_include_directories(uml_x86_64_target PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
 
 add_subdirectory(gadgets)
+if(UML_BUILD_X86_64_JIT)
+    add_subdirectory(jit)
+endif()

@@ -320,16 +320,19 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         endif()
     endif()
     # Engines do not include one another and shared CPU code includes neither.
-    # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
-    # x86_64/gadgets/, the rest of x86_64/ is what the x86 engines share, and
-    # the engine factory is the one source that composes both.
+    # The JITs own arm64/jit/ and x86_64/jit/, the gadget engines own
+    # arm64/gadgets/ and x86_64/gadgets/, the rest of x86_64/ is what the x86
+    # engines share, and the engine factory is the one source that composes
+    # the arm64 engines.
     set(FOREIGN_ENGINE_INCLUDE "")
     if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/gadgets|x86_64)/")
-    elseif(SOURCE_PATH MATCHES "^darwin/cpu/(arm64|x86_64)/gadgets/")
-        set(FOREIGN_ENGINE_INCLUDE "cpu/arm64/jit/")
-    elseif(SOURCE_PATH MATCHES "^darwin/cpu/x86_64/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/x86_64/jit/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64/gadgets)/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/(arm64|x86_64)/gadgets/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64|x86_64)/jit/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/x86_64/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64/gadgets|x86_64/jit)/")
     elseif(SOURCE_PATH MATCHES "^darwin/cpu/" AND
            NOT SOURCE_PATH MATCHES "^darwin/cpu/engine_factory\\.cpp$")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64)/")
@@ -342,10 +345,19 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     # The gadget engines and shared CPU code stay data-only, so only a JIT
     # engine includes the executable-memory owner.
     if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
-       NOT SOURCE_PATH MATCHES "^darwin/cpu/(arm64/jit|jit_memory)/" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/(arm64/jit|x86_64/jit|jit_memory)/" AND
        NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/jit_memory/")
         list(APPEND VIOLATIONS
             "${PATH}: only a JIT engine may include the executable-memory owner")
+    endif()
+    # The x86-64 JIT is macOS-only. Outside the engine, only the runtime
+    # seam that the macOS build alone compiles includes it, so no source
+    # an iOS product builds can reach it.
+    if(NOT SOURCE_PATH MATCHES "^darwin/cpu/x86_64/jit/" AND
+       NOT SOURCE_PATH MATCHES "^darwin/runtime/x86_jit_runtime\\.cpp$" AND
+       NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/x86_64/jit/")
+        list(APPEND VIOLATIONS
+            "${PATH}: only the macOS runtime seam may include the x86-64 JIT")
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and

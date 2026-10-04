@@ -77,6 +77,22 @@ void CodePageRegistry::join(Participant &participant)
 		participants_.push_back(&participant);
 }
 
+void CodePageRegistry::join(Participant &participant,
+	RetireWriteTranslation retire, void *context)
+{
+	const std::lock_guard lock{participants_mutex_};
+	if (std::find(participants_.begin(), participants_.end(),
+		    &participant) != participants_.end())
+		return;
+	retirers_.push_back({&participant, retire, context});
+	try {
+		participants_.push_back(&participant);
+	} catch (...) {
+		retirers_.pop_back();
+		throw;
+	}
+}
+
 void CodePageRegistry::leave(Participant &participant) noexcept
 {
 	const std::lock_guard lock{participants_mutex_};
@@ -84,6 +100,9 @@ void CodePageRegistry::leave(Participant &participant) noexcept
 		participants_.begin(), participants_.end(), &participant);
 	if (found != participants_.end())
 		participants_.erase(found);
+	std::erase_if(retirers_, [&](const Retirer &retirer) {
+		return retirer.participant == &participant;
+	});
 }
 
 void CodePageRegistry::retire_write_translations(std::uint64_t page) noexcept
@@ -97,6 +116,8 @@ void CodePageRegistry::retire_write_translations(std::uint64_t page) noexcept
 			participant->write_translations[index].write_page}
 			.store(1, std::memory_order_relaxed);
 	}
+	for (const auto &retirer : retirers_)
+		retirer.retire(retirer.context, page);
 }
 
 bool CodePageRegistry::holds_exactly(

@@ -198,6 +198,31 @@ list(APPEND ACCEPTED
     "engine_factory\\.cpp: CPU source includes"
     "x86_gadget_fixture\\.cpp: CPU source includes")
 
+# The x86-64 JIT includes the shared x86 code and neither gadget engine, no
+# gadget engine or shared x86 source includes it, and outside the engine only
+# the macOS runtime seam does.
+uml_write_audit_fixture(darwin/cpu/x86_64/jit/x86_jit_gadget_fixture.cpp
+    "#include \"cpu/x86_64/gadgets/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/jit/x86_jit_shared_fixture.cpp
+    "#include \"cpu/x86_64/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_gadget_x86_jit_fixture.cpp
+    "#include \"cpu/x86_64/jit/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/x86_shared_jit_fixture.cpp
+    "#include \"cpu/x86_64/jit/fixture.hpp\"")
+uml_write_audit_fixture(darwin/runtime/x86_jit_runtime.cpp
+    "#include \"cpu/x86_64/jit/fixture.hpp\"")
+uml_write_audit_fixture(darwin/runtime/runtime_x86_jit_fixture.cpp
+    "#include \"cpu/x86_64/jit/fixture.hpp\"")
+list(APPEND REJECTED
+    "x86_jit_gadget_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_gadget_x86_jit_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_gadget_x86_jit_fixture\\.cpp: only the macOS runtime seam"
+    "x86_shared_jit_fixture\\.cpp: CPU source includes an engine implementation"
+    "runtime_x86_jit_fixture\\.cpp: only the macOS runtime seam")
+list(APPEND ACCEPTED
+    "x86_jit_shared_fixture\\.cpp: CPU source includes"
+    "x86_jit_runtime\\.cpp: only the macOS runtime seam")
+
 uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_owner.cpp
     "#include \"cpu/jit_memory/executable_memory.hpp\"")
 uml_write_audit_fixture(darwin/cpu/x86_64/gadgets/x86_owner.cpp
@@ -208,12 +233,15 @@ uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_owner.cpp
     "#include \"cpu/jit_memory/executable_memory.hpp\"")
 uml_write_audit_fixture(darwin/cpu/jit_memory/owner_include.cpp
     "#include \"cpu/jit_memory/executable_memory.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/jit/x86_jit_owner.cpp
+    "#include \"cpu/jit_memory/executable_memory.hpp\"")
 list(APPEND REJECTED
     "gadget_owner\\.cpp: only a JIT engine may include"
     "x86_owner\\.cpp: only a JIT engine may include"
     "shared_owner\\.cpp: only a JIT engine may include")
 list(APPEND ACCEPTED
     "jit_owner\\.cpp: only a JIT engine"
+    "x86_jit_owner\\.cpp: only a JIT engine"
     "owner_include\\.cpp: only a JIT engine")
 
 uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_exec.cpp

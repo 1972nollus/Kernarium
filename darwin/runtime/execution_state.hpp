@@ -6,6 +6,9 @@
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #endif
+#if DARWIN_UML_X86_64_JIT
+#include "runtime/x86_jit_runtime.hpp"
+#endif
 #include "memory/static_guest_memory.hpp"
 
 #include <array>
@@ -81,6 +84,10 @@ struct ThreadExecutionState final {
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;
 	GuestInterruptSequence interrupt;
+#if DARWIN_UML_X86_64_JIT
+	/* Last, so the members the gadget path reads keep their offsets. */
+	X86JitEngine x86_jit;
+#endif
 };
 
 } // namespace uml::runtime

@@ -354,6 +354,21 @@ of an arbitrary distribution or complete Linux syscall compatibility. The
 normal mainline slices and Android remain arm64-userspace-only and contain
 none of the x86_64 kernel overlay.
 
+On macOS the x86_64 product can instead run long64 tasks on the x86-64 JIT,
+FEXCore embedded behind the static MMU, which `--execution-engine jit`
+selects. The product's default is the gadget engine, by name, and compat32
+tasks stay on the gadget engine under either selection. The
+[JIT README](../darwin/cpu/x86_64/jit/README.md) records its contracts and
+known gaps. The JIT is a macOS product only, and four independent checks keep
+it out of every iOS product: only the `macos` dependency prefix carries
+FEXCore; configuration refuses `UML_BUILD_X86_64_JIT` for any other platform;
+in a tree whose `UML_APPLE_PLATFORM` is not `macos`, `architecture-audit`
+rejects the `uml_x86_64_jit` target, a target compiling the engine or its
+runtime seam, a compiled source that includes `cpu/x86_64/jit/`, and a link
+fragment naming FEXCore; and `scripts/check-no-fexcore.py` fails the
+XCFramework, Kernarium framework and Kernarium app packaging on any FEXCore
+symbol or FEXCore's code-mapping names.
+
 The [Steam rootfs](../tools/rootfs/steam-x86_64/README.md) runs Valve's native
 x86-64 Linux client on this x86_64 userspace product; its producer owns the
 image, its persistent data disk and its startup contract.
@@ -625,9 +640,10 @@ and no Xcode project names one. A first-party shell script writes each `cd`
 as `CDPATH= cd --` unless it names a literal absolute directory, so an
 exported `CDPATH` can neither redirect it nor print into captured output.
 No compile definition names a source or build directory, so no binary needs
-the checkout it was built from at run time. The audit does not prove
-performance, generated code shape, a kernel boot, or guest behavior; those
-require their owning validation.
+the checkout it was built from at run time. Outside macOS the configured graph
+holds none of the macOS-only x86-64 JIT, as the x86 section above describes.
+The audit does not prove performance, generated code shape, a kernel boot, or
+guest behavior; those require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

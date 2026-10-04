@@ -326,7 +326,11 @@ with the x86-64 base and a `uml-initramfs`.
 `run_guest_x86_64_exceptions.py` cross-build freestanding x86-64 and i386
 probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
 exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
-against native x86 Linux's values.
+against native x86 Linux's values. The smoke, RFLAGS and exception runners
+take `--engine jit` to run long64 code on the macOS-only x86-64 JIT instead of
+the default gadget engine; run them on both engines when a change reaches
+either. The JIT fails exactly the two exception cases its
+[README](../darwin/cpu/x86_64/jit/README.md) names.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -500,7 +504,8 @@ that needs one of these features runs only on an M4 or newer Mac.
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
 from the pinned FEX `x86-conformance` dependency as its external instruction
-campaign. FEX remains a test input and is not linked into the runtime.
+campaign. For the gadget engine FEX is a test input only; FEXCore is linked
+into nothing but the macOS-only x86-64 JIT.
 Materialize each mode with the pinned NASM producer and
 `tools/fex-tests/build-asm-corpus.py`; generated corpus data stays outside the
 repository. Run every binary through the test-only gadgets adapter with
@@ -512,6 +517,15 @@ requires every applicable materialized case in both modes to pass with no
 decoder or semantic failures; each JSON report records the pinned source
 identity, mode, applicable count, upstream-disabled cases, and per-test
 result.
+
+The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus through the
+x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
+`tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
+engine is known to fail with its class and fail the test when the record passes
+or names nothing. `x86-64-jit-code-buffer-growth` repeats the run from one byte
+of host code per IR node, requires the code buffer to grow, and requires the
+same results. The `ios-products-carry-no-fexcore` tooling test checks the
+script the iOS packaging runs to keep FEXCore out of every iOS product.
 
 ## Performance and external campaigns
 

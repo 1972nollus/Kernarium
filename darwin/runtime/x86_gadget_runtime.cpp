@@ -5,6 +5,7 @@
 
 #include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
+#include "runtime/x86_runtime_support.hpp"
 #include "platform/apple/host_features.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -25,38 +26,6 @@ using ::uml::memory::StaticGuestMemory;
 
 /* The most instructions the builder puts in one block. */
 constexpr std::size_t block_instructions = 64;
-
-class X86StaticExecutionScope final {
-public:
-	X86StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
-		: context_{darwin_uml_static_vm_execution_context_create(generation)}
-	{
-		entered_ = context_ != nullptr &&
-			darwin_uml_static_vm_execution_context_begin(
-				context_, guest_pc) == 0;
-	}
-
-	~X86StaticExecutionScope()
-	{
-		if (entered_)
-			(void)darwin_uml_static_vm_execution_context_end(context_);
-		darwin_uml_static_vm_execution_context_destroy(context_);
-	}
-
-	X86StaticExecutionScope(const X86StaticExecutionScope &) = delete;
-	X86StaticExecutionScope &operator=(const X86StaticExecutionScope &) = delete;
-
-	[[nodiscard]] bool entered() const noexcept { return entered_; }
-	[[nodiscard]] void *context() const noexcept { return context_; }
-	[[nodiscard]] darwin_uml_static_sequences sequences() const noexcept
-	{
-		return darwin_uml_static_vm_execution_context_sequences(context_);
-	}
-
-private:
-	void *context_{};
-	bool entered_{};
-};
 
 bool execution_interrupt_boundary(void *context) noexcept
 {
@@ -150,18 +119,6 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	return supported;
 }
 
-/* x86 exception vectors the runtime reports as a breakpoint's syndrome. */
-constexpr std::uint32_t stack_segment_fault = 12;
-constexpr std::uint32_t general_protection = 13;
-
-/* Bits 63 to 47 all equal: an address of the 4-level paging x86-64 Linux
- * runs userspace under. */
-[[nodiscard]] constexpr bool canonical(std::uint64_t address) noexcept
-{
-	const auto high = static_cast<std::int64_t>(address) >> 47;
-	return high == 0 || high == -1;
-}
-
 /* The #GP error code of the instruction at RIP. INT n that user mode may
  * not use names its IDT entry, (n << 3) | 2, as the hardware pushes when
  * the gate refuses it; every other #GP the engine raises has none. */
@@ -176,54 +133,6 @@ constexpr std::uint32_t general_protection = 13;
 		instruction.vector_opcode != 0xcd)
 		return 0;
 	return static_cast<std::int32_t>((instruction.source.immediate << 3U) | 2U);
-}
-
-/* A non-canonical address raises #SS when the stack segment forms it --
- * an implicit stack access, or an operand based on RSP or RBP with no
- * segment override -- and #GP otherwise, neither with an error code. */
-[[nodiscard]] std::uint32_t noncanonical_vector(
-	StaticGuestMemory &memory, const x86_64::CpuState &cpu) noexcept
-{
-	const auto decoded = x86_64::decode(memory, cpu.rip, cpu.execution_mode);
-	if (decoded.status != x86_64::DecodeStatus::decoded)
-		return general_protection;
-	const auto &instruction = decoded.instruction;
-	using x86_64::Operation;
-	switch (instruction.operation) {
-	case Operation::push:
-	case Operation::pop:
-	case Operation::push_all:
-	case Operation::pop_all:
-	case Operation::push_flags:
-	case Operation::pop_flags:
-	case Operation::enter:
-	case Operation::call:
-	case Operation::call_indirect:
-	case Operation::far_call:
-	case Operation::ret:
-	case Operation::far_ret:
-	case Operation::interrupt_ret:
-	case Operation::segment_stack:
-		if (!canonical(cpu.gpr(x86_64::Register::rsp)))
-			return stack_segment_fault;
-		break;
-	case Operation::leave:
-		if (!canonical(cpu.gpr(x86_64::Register::rbp)))
-			return stack_segment_fault;
-		break;
-	default:
-		break;
-	}
-	for (const auto *operand : {&instruction.destination,
-		&instruction.source, &instruction.auxiliary}) {
-		const auto &memory_operand = operand->memory;
-		if (operand->kind == x86_64::OperandKind::memory &&
-			!memory_operand.rip_relative &&
-			memory_operand.segment == x86_64::Segment::none &&
-			(memory_operand.base == 4 || memory_operand.base == 5))
-			return stack_segment_fault;
-	}
-	return general_protection;
 }
 
 } // namespace
@@ -272,11 +181,11 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	 * at its target here rather than at the branch. */
 	const auto memory_fault = [&]() noexcept {
 		if (cpu.execution_mode == x86_64::ExecutionMode::long64 &&
-			!canonical(result.fault.address)) {
+			!x86_canonical(result.fault.address)) {
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
 			result.syndrome = result.fault.access ==
 				::uml::memory::MemoryAccess::execute ?
-				general_protection : noncanonical_vector(memory, cpu);
+				x86_general_protection : x86_noncanonical_vector(memory, cpu);
 			result.fault = {};
 			return;
 		}
@@ -432,7 +341,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		case ::uml::cpu::EngineEvent::general_protection:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = general_protection;
+			result.syndrome = x86_general_protection;
 			run.error_code = general_protection_error(memory, cpu);
 			return run;
 		case ::uml::cpu::EngineEvent::debug_trap:

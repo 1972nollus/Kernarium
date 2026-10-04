@@ -164,6 +164,10 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
 		-derivedDataPath "$DERIVED_DATA" \
 		-jobs "$JOBS" \
 		build
+	# The x86-64 JIT and the FEXCore it embeds are macOS-only.
+	python3 -B "$ROOT_DIR/scripts/check-no-fexcore.py" \
+		"$DERIVED_DATA/Build/Products" ||
+		fail "a built Kernarium product carries FEXCore"
 fi
 
 # An iOS application on macOS is sandboxed into a per-bundle data container and
