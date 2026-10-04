@@ -365,4 +365,7 @@ sibling record with the `without_afp` option. The pack encoder refuses a
 state that sets the controls without the native requirement. The
 single-precision FRECPE and FRSQRTE cases under FPCR.AH also need `rpres`:
 their producer models FEAT_RPRES with FEAT_AFP, as both engines do on hosts
-with both.
+with both. No case pins AH tininess for FADD, FMUL, FDIV, FSQRT, FMADD or
+vector FMLA: on an FEAT_AFP host both engines run them natively under the
+guest FPCR, so their AH behavior is the hardware's, and a native oracle run
+on such a host covers it.
