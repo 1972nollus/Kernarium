@@ -21,7 +21,8 @@ A case whose architecture permits several results names a validator relation
 instead of an exact state.
 
 - `manifest.tsv` has one row per record: a producer CTest, check site, harness
-  options, and page profiles, with program and case counts and hashes.
+  options, and page profiles, with program and case counts and hashes; the
+  code hash also covers a record's SVL.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
@@ -76,13 +77,13 @@ use of an existing one requires a runner change.
 
 ## Pack format
 
-All integers are little-endian. The file is `UMLA64C\0`, u32 version 1, u32 0,
+All integers are little-endian. The file is `UMLA64C\0`, u32 version 2, u32 0,
 and u64 body length, followed by the zlib-compressed body:
 
 ```text
 body     = meta:str32  tokens:u16*str16  native:u16*(u8*u16)
            validators:u16*str16  blobs:u32*(u32 size, bytes)  records:u32*record
-record   = name:str16 producer:str16 site:str16 profiles:u8 options:u16
+record   = name:str16 producer:str16 site:str16 profiles:u8 options:u16 svl:u16
            programs:u32*(entry:u16, u16*(offset:u16, word:u32))  cases:u32*case
 case     = program:u32 name:str16 ordinal_16k:u32 ordinal_4k:u32 event:u8
            flags:u8 retire [fault] [syndrome] native:u16 validator:u16
@@ -92,7 +93,12 @@ fault    = address:u64 access:u8        present when flags bit 1 is set
 syndrome = u32                          present for floating-point-trap
 state    = u32 mask, u64 per set bit (bit 31 is SP)
            u32 mask, 16 bytes per set vector
+           [sme]                                present when svl is not 0
            u8 count, (field id:u8, value) per field
+sme      = u32 mask, svl bytes per set Z register
+           u16 mask, svl/8 bytes per set P register
+           svl/8-byte mask, svl bytes per set ZA row (horizontal vector)
+           u8 0 | u8 1, 64 bytes                ZT0
 region   = address:u64 size:u32 flags:u8 blob:u32
            u16*(offset:u32, length:u16, bytes)   expected bytes
            u16 0  u16 0                          retired tag lists
@@ -105,15 +111,16 @@ bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
 2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
-gadget bodies, and bit 10 (`without_afp`) translates the record for a virtual
-CPU without FEAT_AFP on every host. Region flags are readable, writable,
+gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
+CPU without FEAT_AFP on every host, and bit 11 (`without_sme`) does the same
+for FEAT_SME. Region flags are readable, writable,
 executable, guest code, and guest writable. Events follow the harness order:
 system call, memory fault, reserved, illegal instruction, breakpoint,
 floating-point trap, PC alignment, instruction budget, fatal. The reserved
 option bits, event code 2, the field ids the table below omits, and non-empty
 tag lists held FEAT_PAuth,
-FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_LS64, FEAT_FP8, FEAT_SSBS, and FEAT_SME
-state (see
+FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_LS64, FEAT_FP8, and FEAT_SSBS state and
+the producer's one-byte PSTATE.SM and ZA (see
 [Absent-feature cases](#absent-feature-cases)); the runner rejects a pack
 that uses them.
 Validator `0xffff` means exact comparison; retirement maximum `0xffffffff` is
@@ -138,8 +145,30 @@ address is all ones, and every other field is zero. Field ids are:
 | 23 | `pstate_daif_access` u8 | | |
 | 24 | `pstate_daif` u8 | | |
 
+| 38 | `svcr` u8 | 39 | `tpidr2` u64 |
+
 Ids 5, 7, 9-18, 20-22, and 32-37 are reserved. A region's initial bytes are its
 blob, and its expected bytes are the blob with the runs applied.
+
+### SME state
+
+A record's `svl` is the streaming vector length in bytes that its cases' SME
+state is sized for and their expectations hold at, or 0 for a record without
+SME state. Only a record with an SVL holds Z, P, ZA, ZT0, `svcr` (PSTATE.SM in
+bit 0, PSTATE.ZA in bit 1), or `tpidr2`, and the runner runs its cases only
+where the virtual CPU implements FEAT_SME with that SVL, so no case assumes
+an SVL it does not name. Z and P exist only while a state's PSTATE.SM is set,
+and its V registers are then the low 16 bytes of the Z registers, so its
+vector mask is empty; ZA and ZT0 exist only while its PSTATE.ZA is set. The
+expected state's SVCR is the initial one unless it names its own, and the
+runner compares the SME state only where the expected SVCR makes it live.
+An expected part that the initial state does not hold, such as Z after
+SMSTART, is encoded against its base fill, and the V registers of an initial
+state in streaming mode are its Z registers' low bytes. Each byte of the SME base fill is `(n * 0x9e3779b1 mod 2^32) >> 24` for an
+index `n` that names the byte's position at the largest SVL: `256i + b` for
+byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
+`r`, and `0x30000 + b` of ZT0. A version 1 pack is a version 2 pack without
+SVLs; `build-unit-corpus.py` still reads one, and writes only version 2.
 
 ## Running
 
@@ -246,8 +275,8 @@ ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, or the SIMD&FP extensions
 FEAT_FP8 (with FP8DOT2, FP8DOT4, FP8FMA, F8F16MM, F8F32MM, and its FPMR state),
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_SME with its PSTATE.SM and ZA state, FEAT_XS, and FEAT_WFxT; every
-encoding they add is UNDEFINED. The producer harness
+FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
+profile; every encoding they add is UNDEFINED. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a
@@ -260,6 +289,19 @@ state. It then appends the `arm64-absent-<feature>` records, which expect at
 least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
+
+FEAT_SME is two-sided, like FEAT_AFP: the virtual CPU implements the SME
+profile only where the host does. The producer's SME model is retired, so the
+rewrite drops its SME cases and strips its one-byte PSTATE.SM and ZA fields as
+for an absent feature, but its `arm64-absent-sme` record carries the
+`without_sme` option, which the runner translates for on every host. That
+record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
+every profile encoding in the generated SVE/SME encoding table
+([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
+to be undefined. The `arm64-absent-sve` record expects the witness of every
+table encoding outside the profile to be undefined with or without SME. Each
+witness is checked against LLVM MC by the table's generator, and its case
+name gives the encoding's stable id, form, and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
@@ -278,8 +320,9 @@ load/store allocation that completes through a general-register base with a
 zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
 is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
-file's hash, and the drop, strip, host-gate, FEAT_AFP, and addition counts
-under `absent_features`, and `build-unit-corpus.py --check` verifies them. The
+file's and encoding table's hashes, and the drop, strip, host-gate, FEAT_AFP,
+and addition counts under `absent_features`, and `build-unit-corpus.py
+--check` verifies them. The
 `arm64-instruction-corpus-absent-features` tooling test checks the pack
 against the rewrite's rules: no kept case exercises a removed feature, holds
 one of its encodings without expecting the undefined-instruction trap, or
