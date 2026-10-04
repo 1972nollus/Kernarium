@@ -96,9 +96,10 @@ is the one place a per-address-space decision will key it.
 DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
 destination before they write either destination.
 
-The engine does not deliver unmasked SSE or x87 exceptions as `#XM` or `#MF`,
-because FEXCore keeps no MXCSR or x87 exception flags, and has no
-alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
+The x87 status word keeps every masked exception's sticky flag, and ES and B
+while an unmasked one is pending. The engine does not deliver unmasked SSE or
+x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
+flags and raises nothing from the x87 ones, and has no alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
 exactly those two x86-64 cases.
 
 ## Instruction corpus
@@ -109,5 +110,5 @@ engine in the unit suite.
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The classes are VEX gathers through the software TLB,
-split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules
-and a store into its own block.
+split locked operands, SSE NaN, denormal and estimate rules and a store into
+its own block.

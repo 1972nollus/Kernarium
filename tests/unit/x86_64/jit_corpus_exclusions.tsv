@@ -162,13 +162,6 @@ fex/TwoByte/0F_C0_Atomic16.asm	split-locked-operand
 fex/TwoByte/0F_C0_Atomic32.asm	split-locked-operand
 fex/TwoByte/0F_C0_Atomic64.asm	split-locked-operand
 
-# x87-signed-zero (4): x87 FPREM, FSIN and FSINCOS lose the sign of a zero
-# result.
-fex/X87_F64/fprem_exact_quotient_F64.asm	x87-signed-zero
-fex/X87_F64/fprem_signed_zero_F64.asm	x87-signed-zero
-fex/X87_F64/fsin_neg_zero_F64.asm	x87-signed-zero
-fex/X87_F64/fsincos_neg_zero_F64.asm	x87-signed-zero
-
 # sse-nan-rules (5): SSE, FMA and SQRT results follow arm64 NaN rules: the
 # default NaN is positive and the propagated NaN is not the first source's.
 k/single-instruction-tests/sqrt	sse-nan-rules

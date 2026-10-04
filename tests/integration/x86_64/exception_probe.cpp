@@ -2267,6 +2267,101 @@ void ac_load() { probe_ac_load(alignment_buffer); }
 void ac_word() { probe_ac_word(alignment_buffer); }
 void ac_byte() { probe_ac_byte(alignment_buffer); }
 void ac_x87() { probe_ac_x87(alignment_buffer); }
+/* An 80-bit x87 value as FSTP m80 stores it. */
+struct X87Value {
+	u64 significand;
+	u16 sign_exponent;
+} __attribute__((packed));
+
+const int x87_three = 3;
+const int x87_minus_six = -6;
+const int x87_out_of_short = 40000;
+const X87Value x87_largest = {0x8000000000000000ULL, 0x7ffe};
+const X87Value x87_quiet_nan = {0xc000000000000000ULL, 0x7fff};
+
+/* Masked x87 exceptions set their sticky status-word flags, which only
+ * FNCLEX and FNINIT clear; an operation that raises none leaves them. A zero
+ * result of FPREM, FSIN or FSINCOS keeps its sign. Each case starts from
+ * FNINIT, so FCW is 0x37f and TOP counts its pushes. */
+bool x87_status_flags()
+{
+	struct Case {
+		const char *what;
+		u16 status;
+		u16 expected;
+	};
+	u16 status[9] = {};
+	short stored = 0;
+	X87Value value[3] = {};
+	__asm__ volatile("fninit\n\tfldz\n\tfld1\n\tfdivp\n\t"
+			 "fnstsw %0\n\tfnclex\n\tfnstsw %1"
+			 : "=m"(status[0]), "=m"(status[1]) : : "memory");
+	__asm__ volatile("fninit\n\tfld1\n\tfidivl %1\n\tfnstsw %0"
+			 : "=m"(status[2]) : "m"(x87_three) : "memory");
+	__asm__ volatile("fninit\n\tfldt %1\n\tfadd %%st(0), %%st(0)\n\t"
+			 "fnstsw %0"
+			 : "=m"(status[3]) : "m"(x87_largest) : "memory");
+	__asm__ volatile("fninit\n\tfld1\n\tfchs\n\tfsqrt\n\tfnstsw %0\n\t"
+			 "fstp %%st(0)\n\tfld1\n\tfld1\n\tfcom %%st(1)\n\t"
+			 "fnstsw %1"
+			 : "=m"(status[4]), "=m"(status[5]) : : "memory");
+	__asm__ volatile("fninit\n\tfldt %1\n\tfld1\n\tfucom %%st(1)\n\t"
+			 "fnstsw %0"
+			 : "=m"(status[6]) : "m"(x87_quiet_nan) : "memory");
+	__asm__ volatile("fninit\n\tfildl %2\n\tfistps %1\n\tfnstsw %0"
+			 : "=m"(status[7]), "=m"(stored)
+			 : "m"(x87_out_of_short) : "memory");
+	__asm__ volatile("fninit\n\tfldpi\n\tfstps %1\n\tfnstsw %0"
+			 : "=m"(status[8]), "=m"(value[0].significand)
+			 : : "memory");
+	__asm__ volatile("fninit\n\tfldz\n\tfchs\n\tfsin\n\tfstpt %0\n\t"
+			 "fildl %3\n\tfildl %4\n\tfprem\n\tfstpt %1\n\t"
+			 "fninit\n\tfldz\n\tfchs\n\tfsincos\n\tfstp %%st(0)\n\t"
+			 "fstpt %2\n\tfninit"
+			 : "=m"(value[0]), "=m"(value[1]), "=m"(value[2])
+			 : "m"(x87_three), "m"(x87_minus_six)
+			 : "memory");
+	const Case cases[] = {
+		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
+		{"FNCLEX clears the flags", status[1], 0x3800},
+		{"FIDIV of 1 by 3 sets PE", status[2], 0x3820},
+		{"FADD overflow sets OE and PE", status[3], 0x3828},
+		{"FSQRT of -1 sets IE", status[4], 0x3801},
+		{"IE stays across an ordered FCOM", status[5], 0x7001},
+		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
+		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
+		{"FSTP m32 of pi sets PE", status[8], 0x0020},
+	};
+	bool ok = true;
+	for (const Case &one : cases) {
+		if (!expect("status word", one.status, one.expected)) {
+			put("  in ");
+			put(one.what);
+			put("\n");
+			ok = false;
+		}
+	}
+	ok &= expect("FISTP m16 out of range stores", static_cast<u16>(stored),
+		     0x8000);
+	const char *const zeros[] = {"FSIN of -0", "FPREM of -6 by 3",
+				     "FSINCOS of -0, its sine"};
+	for (unsigned index = 0; index < 3; ++index) {
+		const bool negative_zero = value[index].significand == 0 &&
+					   value[index].sign_exponent == 0x8000;
+		if (!negative_zero) {
+			put("  ");
+			put(zeros[index]);
+			put(" is not -0: ");
+			put_hex(value[index].sign_exponent);
+			put(" ");
+			put_hex(value[index].significand);
+			put("\n");
+			ok = false;
+		}
+	}
+	return ok;
+}
+
 void ac_sse() { probe_ac_sse(alignment_buffer); }
 void ac_movups() { probe_ac_movups(alignment_buffer); }
 void ac_push() { probe_ac_push(alignment_buffer); }
@@ -2973,6 +3068,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-check"));
 	report("i386 RFLAGS.AC checks alignment",
 	       in_child(i386_probe, "alignment-check"));
+	report("x86-64 masked x87 exceptions set sticky status flags",
+	       in_child(self, "x87-status"));
+	report("i386 masked x87 exceptions set sticky status flags",
+	       in_child(i386_probe, "x87-status"));
 	return failures;
 }
 #endif
@@ -3017,6 +3116,8 @@ extern "C" int probe_main(word *stack)
 			return floating_point_exceptions() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
+		if (equal(mode, "x87-status"))
+			return x87_status_flags() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
