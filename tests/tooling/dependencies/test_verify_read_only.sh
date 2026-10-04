@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Every dependency verification mode is read-only: verifying an absent prefix
-# fails with a diagnostic and leaves the filesystem exactly as it was.
+# fails with a diagnostic and leaves the filesystem exactly as it was. A build
+# verifies its inputs before it creates anything, so a build from an
+# unprepared source root fails the same way.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
@@ -15,12 +17,13 @@ TEST_NAME=test-verify-read-only.sh
 
 # Every path a verifier could resolve lies below SCRATCH, whose entries and
 # modification times are compared around each run, so a directory created
-# and removed again is also caught.
+# and removed again is also caught. SOURCES is an empty, unprepared source
+# root.
 SCRATCH="$TEST_ROOT/scratch"
 SOURCES="$SCRATCH/sources"
 CACHE="$SCRATCH/cache"
 WORK="$SCRATCH/work"
-mkdir -p "$SCRATCH/parent"
+mkdir -p "$SCRATCH/parent" "$SOURCES"
 
 snapshot()
 {
@@ -81,5 +84,44 @@ BEFORE=$(snapshot)
 	--prefix "$SCRATCH/absent-parent/prefix" --source-root "$SOURCES" \
 	--work-root "$WORK" >/dev/null || fail "the manifest check failed"
 expect_unchanged "$BEFORE" "the build manifest check"
+
+# expect_build_refused DESCRIPTION COMMAND...: COMMAND must reject the
+# unprepared source root and write nothing. The builders look up their build
+# tools first, so those must be on PATH.
+expect_build_refused()
+{
+	refused=$1
+	shift
+	before=$(snapshot)
+	expect_failure "$refused" "$@"
+	grep -F 'is not a prepared Git repository' \
+		"$TEST_ROOT/rejected-$FAILURE_NUMBER.err" >/dev/null || {
+		cat "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" >&2
+		fail "$refused failed before it verified its sources"
+	}
+	expect_unchanged "$before" "$refused"
+}
+
+# Neither the prefix's parent nor the work root may appear.
+PREFIX="$SCRATCH/absent-parent/prefix"
+expect_build_refused "macOS dependency build" \
+	"$DEPENDENCIES/build.sh" \
+	--prefix "$PREFIX" --source-root "$SOURCES" --work-root "$WORK"
+expect_build_refused "iOS network build" \
+	"$DEPENDENCIES/build-ios-network.sh" \
+	--prefix "$PREFIX" --source-root "$SOURCES" --work-root "$WORK"
+expect_build_refused "Apple GPU build" \
+	"$DEPENDENCIES/build-apple-gpu.sh" \
+	--prefix "$PREFIX" --source-root "$SOURCES" --work-root "$WORK"
+expect_build_refused "iOS storage build" \
+	"$DEPENDENCIES/build-ios-storage.sh" \
+	--output "$PREFIX" --source-root "$SOURCES" --work-root "$WORK"
+expect_build_refused "iOS zstd build" \
+	"$DEPENDENCIES/build-ios-zstd.sh" \
+	--output "$PREFIX" --source-root "$SOURCES" --work-root "$WORK"
+expect_build_refused "kernel host tools build" \
+	"$DEPENDENCIES/build-kernel-host-tools.sh" \
+	--output "$PREFIX" --source-root "$SOURCES" --cache "$CACHE" \
+	--work-root "$WORK"
 
 printf '%s\n' "dependency verification read-only tests passed"
