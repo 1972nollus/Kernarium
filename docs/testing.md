@@ -500,6 +500,16 @@ static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
 that needs one of these features runs only on an M4 or newer Mac.
 
+## Guest SME policy
+
+Unit binaries take the guest-SME policy from their environment, like any
+run, so the suites hold with it off, the default, on every host.
+`arm64-sme-foundation` checks the prober against the host's own sysctls under
+either policy, and the identification registers and HWCAP2 against arm64
+Linux's table with injected SME hosts at every SVL from 16 to 256 bytes. On
+an SME host, an M4 Mac, also run it and `arm64-advertised-features` with
+`DARWIN_UML_GUEST_SME=1`.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
