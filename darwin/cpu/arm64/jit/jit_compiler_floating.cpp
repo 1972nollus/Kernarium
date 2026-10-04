@@ -180,21 +180,18 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
       (!decoded.destination_gpr && !host.advanced_simd) ||
       (decoded.source_width == 16U && !host.fp16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned source = (instruction >> 5) & 31U;
-  const auto native_source = read_native_vector(source, 1);
   if (decoded.destination_gpr) {
+    const unsigned destination = instruction & 31U;
+    const unsigned source = (instruction >> 5) & 31U;
+    const auto native_source = read_native_vector(source, 1);
     const auto native_destination =
         write_native_gpr(destination, false, false, 8);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_gpr(native_destination, destination, false);
   } else {
-    const auto native_destination = write_native_vector(
-        destination, decoded.scalar && nep_merges_into_destination(), 0);
-    emit((instruction & ~0x3ffU) | (native_source.host << 5) |
-         native_destination.host);
-    commit_native_vector(native_destination, destination);
+    emit_native_vector_unary(
+        instruction, decoded.scalar && nep_merges_into_destination());
   }
   mark_native_fp();
   return true;
@@ -456,17 +453,14 @@ void JitCompilerFamilies::emit_floating_select(std::uint32_t instruction) {
 
 void JitCompilerFamilies::emit_floating_move(std::uint32_t instruction,
                                              bool immediate) {
-  const unsigned destination = instruction & 31U;
-  auto native = instruction & ~31U;
   if (!immediate) {
-    const unsigned source = (instruction >> 5) & 31U;
-    const auto native_source = read_native_vector(source, 1);
-    native = (native & ~(31U << 5)) | (native_source.host << 5);
+    emit_native_vector_unary(instruction, false);
+    return;
   }
+  const unsigned destination = instruction & 31U;
   const auto native_destination =
       write_native_vector(destination, false, 0);
-  native |= native_destination.host;
-  emit(native);
+  emit((instruction & ~31U) | native_destination.host);
   commit_native_vector(native_destination, destination);
 }
 
