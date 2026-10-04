@@ -1,0 +1,2201 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 02:39:22 +0900
+Subject: [PATCH] Embedding: let a host that owns guest memory drive FEXCore
+
+An embedding host (EnableEmbedding) keeps guest memory behind its own
+software TLB and runs every guest process in one host process. The
+backend translates each guest access inline with a cold miss path into
+a shared dispatcher stub, block entries spend an instruction budget,
+SYSCALL/INT 0x80 and guest exceptions leave the dispatch, the decoder
+reads guest code through host pointers, CPUID is never folded, and
+x87 state and the register cache are precise at every instruction.
+Darwin: executable memory and its write window come from host hooks,
+x18 stays reserved, and VirtualDontNeed zeroes.
+---
+ FEXCore/Source/CMakeLists.txt                 |   1 +
+ FEXCore/Source/Interface/Context/Context.h    |   7 +
+ .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
+ FEXCore/Source/Interface/Core/Core.cpp        |  13 +-
+ .../Interface/Core/Dispatcher/Dispatcher.cpp  |  63 ++-
+ .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
+ FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
+ FEXCore/Source/Interface/Core/Frontend.h      |   4 +
+ FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |   8 +
+ .../Source/Interface/Core/JIT/AtomicOps.cpp   |  66 +++
+ .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
+ .../Interface/Core/JIT/EmbedderMemory.cpp     | 211 ++++++++++
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     |  41 +-
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |  63 +++
+ .../Source/Interface/Core/JIT/MemoryOps.cpp   | 390 +++++++++++++++++-
+ FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |   1 +
+ .../Interface/Core/OpcodeDispatcher.cpp       |  48 ++-
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  35 +-
+ FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
+ FEXCore/Source/Interface/IR/Passes.h          |   2 +-
+ .../IR/Passes/RegisterAllocationPass.cpp      |   4 +-
+ .../IR/Passes/x87StackOptimizationPass.cpp    |  34 +-
+ FEXCore/Source/Utils/Allocator.cpp            |  41 ++
+ FEXCore/include/FEXCore/Core/Context.h        |  19 +
+ FEXCore/include/FEXCore/Core/CoreState.h      |  80 ++++
+ FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
+ .../include/FEXCore/Utils/AllocatorHooks.h    |  67 +++
+ 27 files changed, 1251 insertions(+), 64 deletions(-)
+ create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
+
+diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
+index ad2186989742add441c53e94a511917a3656d596..e144d0fe4e8995e7df4e3e9d8637c0001d259b3e 100644
+--- a/FEXCore/Source/CMakeLists.txt
++++ b/FEXCore/Source/CMakeLists.txt
+@@ -43,6 +43,7 @@ set(SRCS
+   Interface/Core/JIT/ConversionOps.cpp
+   Interface/Core/JIT/EncryptionOps.cpp
+   Interface/Core/JIT/MemoryOps.cpp
++  Interface/Core/JIT/EmbedderMemory.cpp
+   Interface/Core/JIT/MiscOps.cpp
+   Interface/Core/JIT/MoveOps.cpp
+   Interface/Core/JIT/VectorOps.cpp
+diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
+index b8b68b7c73aba9533fa58aa949aa6bb58aa4fdc4..4cb3dcc3ba2b8cf99b4c69c4db017b3b38186d60 100644
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -135,6 +135,10 @@ class ContextImpl final : public FEXCore::Context::Context, public CPU::SharedCo
+ public:
+   // Context base class implementation.
+   bool InitCore() override;
++  void EnableEmbedding() override {
++    Embedded = true;
++  }
++  void ExecuteEmbedded(FEXCore::Core::InternalThreadState* Thread, bool SingleInst) override;
+ 
+   void ExecuteThread(FEXCore::Core::InternalThreadState* Thread) override;
+ 
+@@ -366,6 +370,9 @@ public:
+ 
+   FEXCore::Utils::WritePriorityMutex::Mutex CodeInvalidationMutex {};
+ 
++  // Set by EnableEmbedding(): guest memory is behind the host's software TLB.
++  bool Embedded {false};
++
+   uint32_t StrictSplitLockMutex {};
+ 
+   FEXCore::HostFeatures HostFeatures;
+diff --git a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+index 729aa63aba645b1d70650d301bbf50a4c42798dc..5467ba7beb6a8063e02fa7c164d27c8244eb3e17 100644
+--- a/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
++++ b/FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp
+@@ -73,21 +73,35 @@ namespace x64 {
+     ARMEmitter::Reg::r8, ARMEmitter::Reg::r16, ARMEmitter::Reg::r17,
+   };
+ 
++#ifdef __APPLE__
++  // Darwin reserves x18 as the platform register.
++  constexpr std::array<ARMEmitter::Register, 6> RA = {
++    // All these callee saved
++    ARMEmitter::Reg::r20, ARMEmitter::Reg::r21, ARMEmitter::Reg::r22, ARMEmitter::Reg::r23, ARMEmitter::Reg::r24, ARMEmitter::Reg::r30,
++  };
++#else
+   constexpr std::array<ARMEmitter::Register, 7> RA = {
+     // All these callee saved
+     ARMEmitter::Reg::r20, ARMEmitter::Reg::r21, ARMEmitter::Reg::r22, ARMEmitter::Reg::r23,
+     ARMEmitter::Reg::r24, ARMEmitter::Reg::r30, ARMEmitter::Reg::r18,
+   };
++#endif
+ 
+   constexpr unsigned RAPairs = 4;
+ 
+   // Dynamic GPRs
++#ifdef __APPLE__
++  constexpr std::array<ARMEmitter::Register, 1> PreserveAll_Dynamic = {
++    ARMEmitter::Reg::r30,
++  };
++#else
+   constexpr std::array<ARMEmitter::Register, 2> PreserveAll_Dynamic = {
+     ARMEmitter::Reg::r18,
+     ARMEmitter::Reg::r30,
+   };
++#endif
+ 
+-  constexpr std::array<ARMEmitter::Register, 2> NotPreserved_Dynamic = PreserveAll_Dynamic;
++  constexpr auto NotPreserved_Dynamic = PreserveAll_Dynamic;
+ 
+   // All are caller saved
+   constexpr std::array<ARMEmitter::VRegister, 16> SRAFPR = {
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..39f790f2fe061a3cc6bd9a54f14bb3e233d13cda 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -380,6 +380,12 @@ void ContextImpl::HandleCallback(FEXCore::Core::InternalThreadState* Thread, uin
+   static_cast<ContextImpl*>(Thread->CTX)->Dispatcher->ExecuteJITCallback(Thread->CurrentFrame, RIP);
+ }
+ 
++void ContextImpl::ExecuteEmbedded(FEXCore::Core::InternalThreadState* Thread, bool SingleInst) {
++  LOGMAN_THROW_A_FMT(Embedded, "ExecuteEmbedded needs EnableEmbedding()");
++  Thread->CurrentFrame->Embedder.ExitReason = FEXCore::Core::EMBEDDER_EXIT_NONE;
++  Dispatcher->ExecuteDispatch(Thread->CurrentFrame, SingleInst);
++}
++
+ void ContextImpl::ExecuteThread(FEXCore::Core::InternalThreadState* Thread) {
+   // Update the thread pointer for Thunk return to the latest.
+   Thread->CurrentFrame->Pointers.ThunkCallbackRet = SignalDelegation->GetThunkCallbackRET();
+@@ -631,9 +637,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+         // It is potentially correctness bearing in that sense, but that is a
+         // side effect here and (if that behaviour is required) we should handle
+         // that more explicitly later.
+-        Thread->OpDispatcher->FlushRegisterCache(true);
++        // An embedding host reports guest exceptions with the state at the
++        // start of the faulting instruction, so nothing may stay cached across
++        // instructions and every instruction records its RIP.
++        Thread->OpDispatcher->FlushRegisterCache(!Embedded);
+ 
+-        if (ExtendedDebugInfo || Thread->OpDispatcher->CanHaveSideEffects(TableInfo, DecodedInfo)) {
++        if (ExtendedDebugInfo || Embedded || Thread->OpDispatcher->CanHaveSideEffects(TableInfo, DecodedInfo)) {
+           Thread->OpDispatcher->_GuestOpcode(InstAddress - GuestRIP);
+         }
+ 
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..fce955f12cdaabc5efc5d7bbaa226ab047660942 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -34,11 +34,12 @@ static void SleepThread(FEXCore::Context::ContextImpl* CTX, FEXCore::Core::CpuSt
+   CTX->SyscallHandler->SleepThread(CTX, Frame);
+ }
+ 
+-constexpr size_t MAX_DISPATCHER_CODE_SIZE = FEXCore::Utils::FEX_PAGE_SIZE * 4;
++constexpr size_t MAX_DISPATCHER_CODE_SIZE = FEXCore::Utils::FEX_PAGE_SIZE * 8;
+ 
+ Dispatcher::Dispatcher(FEXCore::Context::ContextImpl* ctx)
+   : Arm64Emitter(ctx, FEXCore::Allocator::VirtualAlloc(MAX_DISPATCHER_CODE_SIZE, true), MAX_DISPATCHER_CODE_SIZE)
+   , CTX {ctx} {
++  FEXCore::Allocator::ScopedExecutableWrite WriteScope;
+   EmitDispatcher();
+ 
+   FEXCore::Allocator::VirtualName("FEXMem_Misc", reinterpret_cast<void*>(GetBufferBase()), MAX_DISPATCHER_CODE_SIZE);
+@@ -432,6 +433,56 @@ void Dispatcher::EmitDispatcher() {
+     }
+   }
+ 
++  if (CTX->Embedded) {
++    // Embedder exits. Break ops (guest exceptions, SYSCALL and INT 0x80)
++    // arrive through the GuestSignal pointers with SynchronousFaultData and
++    // RIP stored; budget, fault and unsupported exits set their own reason.
++    EmbedderBreakAddress = GetCursorAddress<uint64_t>();
++    LoadConstant(ARMEmitter::Size::i32Bit, TMP1, FEXCore::Core::EMBEDDER_EXIT_BREAK);
++    str(TMP1.W(), STATE_PTR(CpuStateFrame, Embedder.ExitReason));
++
++    EmbedderExitAddress = GetCursorAddress<uint64_t>();
++    SpillStaticRegs(TMP1);
++
++    EmbedderExitNoSpillAddress = GetCursorAddress<uint64_t>();
++    ldr(ARMEmitter::XReg::x0, STATE_PTR(CpuStateFrame, ReturningStackLocation));
++    add(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::rsp, ARMEmitter::Reg::r0, 0);
++    PopCalleeSavedRegisters();
++    ret();
++
++    // Shared TLB-miss path. x0 = guest address, x1 = access info, x2 = resume.
++    // Returns to x2 with the host address in x0, or leaves the dispatch with
++    // the state spilled when the helper recorded a fault.
++    ARMEmitter::ForwardLabel l_Fault;
++    EmbedderTLBMissAddress = GetCursorAddress<uint64_t>();
++    stp<ARMEmitter::IndexType::PRE>(ARMEmitter::XReg::x2, ARMEmitter::XReg::x30, ARMEmitter::Reg::rsp, -16);
++    // The miss lands inside an op, where the register allocator may hold any
++    // 64-bit value in the PF and AF registers; the state spill keeps only
++    // their low halves.
++    stp<ARMEmitter::IndexType::PRE>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, -16);
++    PushDynamicRegs(TMP4);
++    SpillStaticRegs(TMP4);
++    mov(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r2, ARMEmitter::Reg::r1);
++    mov(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r1, ARMEmitter::Reg::r0);
++    mov(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r0, STATE.R());
++    ldr(ARMEmitter::XReg::x3, STATE_PTR(CpuStateFrame, Pointers.EmbedderTLBMissHelper));
++    blr(ARMEmitter::Reg::r3);
++    (void)cbz(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r0, &l_Fault);
++    FillStaticRegs();
++    PopDynamicRegs();
++    ldp<ARMEmitter::IndexType::POST>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, 16);
++    ldp<ARMEmitter::IndexType::POST>(ARMEmitter::XReg::x2, ARMEmitter::XReg::x30, ARMEmitter::Reg::rsp, 16);
++    br(ARMEmitter::Reg::r2);
++
++    (void)Bind(&l_Fault);
++    // The static registers were spilled above, so the state is the guest's at
++    // the start of the faulting instruction.
++    ldr(ARMEmitter::XReg::x0, STATE_PTR(CpuStateFrame, ReturningStackLocation));
++    add(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::rsp, ARMEmitter::Reg::r0, 0);
++    PopCalleeSavedRegisters();
++    ret();
++  }
++
+   {
+     ThreadPauseHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
+     SpillStaticRegs(TMP1);
+@@ -2623,6 +2674,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+     Ptrs.GuestSignal_SIGILL = GuestSignal_SIGILL;
+     Ptrs.GuestSignal_SIGTRAP = GuestSignal_SIGTRAP;
+     Ptrs.GuestSignal_SIGSEGV = GuestSignal_SIGSEGV;
++    if (CTX->Embedded) {
++      // Every guest exception leaves the dispatch; the host reads
++      // SynchronousFaultData.
++      Ptrs.GuestSignal_SIGILL = EmbedderBreakAddress;
++      Ptrs.GuestSignal_SIGTRAP = EmbedderBreakAddress;
++      Ptrs.GuestSignal_SIGSEGV = EmbedderBreakAddress;
++      Ptrs.EmbedderExit = EmbedderExitAddress;
++      Ptrs.EmbedderExitNoSpill = EmbedderExitNoSpillAddress;
++      Ptrs.EmbedderTLBMiss = EmbedderTLBMissAddress;
++    }
+     Ptrs.SignalReturnHandler = SignalHandlerReturnAddress;
+     Ptrs.SignalReturnHandlerRT = SignalHandlerReturnAddressRT;
+     Ptrs.LUDIVHandler = LUDIVHandlerAddress;
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+index b0f3d7a4700db3bb9a59819b151d5f51dc688232..dfef9d394280abdedef7f7bedb7e69ac41d61e2e 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+@@ -50,6 +50,10 @@ public:
+     DispatchPtr(Frame, false);
+   }
+ 
++  void ExecuteDispatch(FEXCore::Core::CpuStateFrame* Frame, bool SingleInst) {
++    DispatchPtr(Frame, SingleInst);
++  }
++
+   void ExecuteJITCallback(FEXCore::Core::CpuStateFrame* Frame, uint64_t RIP) {
+     CallbackPtr(Frame, RIP);
+   }
+@@ -87,6 +91,10 @@ private:
+   uint64_t GuestSignal_SIGILL {};
+   uint64_t GuestSignal_SIGTRAP {};
+   uint64_t GuestSignal_SIGSEGV {};
++  uint64_t EmbedderBreakAddress {};
++  uint64_t EmbedderExitAddress {};
++  uint64_t EmbedderExitNoSpillAddress {};
++  uint64_t EmbedderTLBMissAddress {};
+ 
+   uint64_t PauseReturnInstruction {};
+   std::array<uint64_t, FallbackABI::FABI_UNKNOWN> ABIPointers {};
+diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
+index b2e7ee1bddf41a95c17cf03b91a84d5b81f7efc8..9dc805151cbb4677b8010d73ce13f573ebc1a776 100644
+--- a/FEXCore/Source/Interface/Core/Frontend.cpp
++++ b/FEXCore/Source/Interface/Core/Frontend.cpp
+@@ -94,6 +94,7 @@ bool Decoder::CheckRangeExecutable(uint64_t Address, uint64_t Size) {
+     ExecutableRangeBase = RangeInfo.Base;
+     ExecutableRangeEnd = RangeInfo.Base + RangeInfo.Size;
+     ExecutableRangeWritable = RangeInfo.Writable;
++    ExecutableRangeHost = RangeInfo.HostBase;
+ 
+     if (RangeInfo.Size == 0) {
+       return false;
+@@ -123,8 +124,18 @@ uint8_t Decoder::ReadByte() {
+   return *Byte;
+ }
+ 
++std::optional<uint8_t> Decoder::ReadHostedCodeByte(uint64_t Address) {
++  if (!CheckRangeExecutable(Address, 1)) {
++    return std::nullopt;
++  }
++  return ExecutableRangeHost[Address - ExecutableRangeBase];
++}
++
+ std::optional<uint8_t> Decoder::PeekByte(uint8_t Offset) {
+   uint64_t ByteAddress = reinterpret_cast<uint64_t>(InstStream.InstStream + InstructionSize + Offset);
++  if (CTX->Embedded) {
++    return ReadHostedCodeByte(ByteAddress);
++  }
+   if (CheckRangeExecutable(ByteAddress, 1)) {
+     return InstStream.AdjustedInstStream[InstructionSize + Offset];
+   } else {
+@@ -137,7 +148,18 @@ std::pair<uint64_t, bool> Decoder::ReadData(uint8_t Size) {
+ 
+   uint64_t Res = 0;
+   uint64_t Address = reinterpret_cast<uint64_t>(InstStream.InstStream + InstructionSize);
+-  if (CheckRangeExecutable(Address, Size)) {
++  if (CTX->Embedded) {
++    // The bytes may sit on two guest pages with unrelated host addresses.
++    for (uint8_t i = 0; i < Size; ++i) {
++      auto Byte = ReadHostedCodeByte(Address + i);
++      if (!Byte) {
++        HitNonExecutableRange = true;
++        Res = 0;
++        break;
++      }
++      Res |= static_cast<uint64_t>(*Byte) << (i * 8);
++    }
++  } else if (CheckRangeExecutable(Address, Size)) {
+     std::memcpy(&Res, &InstStream.AdjustedInstStream[InstructionSize], Size);
+   } else {
+     HitNonExecutableRange = true;
+diff --git a/FEXCore/Source/Interface/Core/Frontend.h b/FEXCore/Source/Interface/Core/Frontend.h
+index f668d2b9c77998abccef1e6a9093894962ab828d..69f3328216e6af4c45f1bd9897ab429c525b8831 100644
+--- a/FEXCore/Source/Interface/Core/Frontend.h
++++ b/FEXCore/Source/Interface/Core/Frontend.h
+@@ -125,6 +125,10 @@ private:
+   uint64_t ExecutableRangeBase {};
+   uint64_t ExecutableRangeEnd {};
+   bool ExecutableRangeWritable {};
++  // Host address of ExecutableRangeBase when guest code is not at its guest
++  // address (an embedding host).
++  const uint8_t* ExecutableRangeHost {};
++  std::optional<uint8_t> ReadHostedCodeByte(uint64_t Address);
+   bool HitNonExecutableRange {};
+   bool HitBadRelocation {};
+ 
+diff --git a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+index 7946ccdd2f90506ebd0ca2117aea6eb4ad022893..622f9b18f1a17850460b60f2678f286c28372e70 100644
+--- a/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/ALUOps.cpp
+@@ -858,6 +858,10 @@ DEF_OP(Div) {
+   auto Lower = GetReg(Op->Lower);
+   auto Divisor = GetReg(Op->Divisor);
+ 
++  if (Embedded()) {
++    EmitEmbedderDivideCheck(Divisor, OpSize);
++  }
++
+   if (Op->Upper.IsInvalid()) {
+     const auto EmitSize = ConvertSize(IROp);
+ 
+@@ -958,6 +962,10 @@ DEF_OP(UDiv) {
+   const auto Lower = GetReg(Op->Lower);
+   const auto Divisor = GetReg(Op->Divisor);
+ 
++  if (Embedded()) {
++    EmitEmbedderDivideCheck(Divisor, OpSize);
++  }
++
+   // Each source is OpSize in size
+   // So you can have up to a 128bit divide from x86-64=
+   if (Op->Upper.IsInvalid()) {
+diff --git a/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp b/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
+index 014a8c690593e3db86d4abb59c4294a9c63e589b..b51b5087a6db66a0e29d2ca7dcd86b425459a60b 100644
+--- a/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp
+@@ -23,6 +23,45 @@ DEF_OP(CASPair) {
+   auto MemSrc = GetReg(Op->Addr);
+ 
+   const auto EmitSize = IROp->ElementSize == IR::OpSize::i64Bit ? ARMEmitter::Size::i64Bit : ARMEmitter::Size::i32Bit;
++  if (Embedded()) {
++    // The translated address lives in TMP1, so the pairing temporaries of the
++    // path below are not available; CASPAL is used only when the RA paired
++    // both register sets, an exclusive loop otherwise.
++    const auto PairBytes = 2 * IR::OpSizeToSize(IROp->ElementSize);
++    MemSrc = EmbedderTranslate(MemSrc, PairBytes, Core::EMBEDDER_ACCESS_ATOMIC);
++    const bool DesiredPaired = Desired1.Idx() == Desired0.Idx() + 1 && !(Desired0.Idx() & 1);
++    const bool DstPaired = Dst1.Idx() == Dst0.Idx() + 1 && !(Dst0.Idx() & 1);
++    if (CTX->HostFeatures.SupportsAtomics && DesiredPaired && DstPaired && Dst0 != Desired0 && Dst0 != Desired1 && Dst1 != Desired0 &&
++        Dst1 != Desired1) {
++      mov(ARMEmitter::Size::i64Bit, TMP2, Expected0);
++      mov(ARMEmitter::Size::i64Bit, TMP3, Expected1);
++      mov(ARMEmitter::Size::i64Bit, Dst0, TMP2);
++      mov(ARMEmitter::Size::i64Bit, Dst1, TMP3);
++      caspal(EmitSize, Dst0, Dst1, Desired0, Desired1, MemSrc);
++    } else {
++      mrs(TMP4, ARMEmitter::SystemRegister::NZCV);
++      ARMEmitter::BackwardLabel LoopTop;
++      ARMEmitter::ForwardLabel LoopNotExpected;
++      ARMEmitter::ForwardLabel LoopExpected;
++      (void)Bind(&LoopTop);
++      ldaxp(EmitSize, TMP2, TMP3, MemSrc);
++      cmp(EmitSize, TMP2, Expected0);
++      ccmp(EmitSize, TMP3, Expected1, ARMEmitter::StatusFlags::None, ARMEmitter::Condition::CC_EQ);
++      (void)b(ARMEmitter::Condition::CC_NE, &LoopNotExpected);
++      stlxp(EmitSize, TMP2, Desired0, Desired1, MemSrc);
++      (void)cbnz(EmitSize, TMP2, &LoopTop);
++      mov(EmitSize, Dst0, Expected0);
++      mov(EmitSize, Dst1, Expected1);
++      (void)b(&LoopExpected);
++      (void)Bind(&LoopNotExpected);
++      mov(EmitSize, Dst0, TMP2.R());
++      mov(EmitSize, Dst1, TMP3.R());
++      clrex();
++      (void)Bind(&LoopExpected);
++      msr(ARMEmitter::SystemRegister::NZCV, TMP4);
++    }
++    return;
++  }
+   if (CTX->HostFeatures.SupportsAtomics) {
+     // RA has heuristics to try to pair sources, but we need to handle the cases
+     // where they fail. We do so by moving to temporaries. Note we use 64-bit
+@@ -100,6 +139,9 @@ DEF_OP(CAS) {
+   auto Expected = GetReg(Op->Expected);
+   auto Desired = GetReg(Op->Desired);
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Dst = GetReg(Node);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -147,6 +189,9 @@ DEF_OP(AtomicSwap) {
+                                                                                                                                  "size");
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   const auto EmitSize = ConvertSize(IROp);
+@@ -173,6 +218,9 @@ DEF_OP(AtomicFetchAdd) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -194,6 +242,9 @@ DEF_OP(AtomicFetchSub) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -216,6 +267,9 @@ DEF_OP(AtomicFetchAnd) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -238,6 +292,9 @@ DEF_OP(AtomicFetchCLR) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -259,6 +316,9 @@ DEF_OP(AtomicFetchOr) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -280,6 +340,9 @@ DEF_OP(AtomicFetchXor) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+   auto Src = GetReg(Op->Value);
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+@@ -301,6 +364,9 @@ DEF_OP(AtomicFetchNeg) {
+   const auto SubEmitSize = ConvertSubRegSize8(IROp->Size);
+ 
+   auto MemSrc = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemSrc = EmbedderTranslate(MemSrc, IR::OpSizeToSize(IROp->Size), Core::EMBEDDER_ACCESS_ATOMIC);
++  }
+ 
+   if (CTX->HostFeatures.SupportsAtomics) {
+     // Use a CAS loop to avoid needing to emulate unaligned LLSC atomics
+diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4bd69ef92 100644
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -242,35 +242,42 @@ DEF_OP(Jump) {
+ DEF_OP(CondJump) {
+   auto Op = IROp->C<IR::IROp_CondJump>();
+ 
+-  auto TrueTargetLabel = JumpTarget(Op->TrueBlock);
+-
+-  if (Op->FromNZCV) {
+-    b_OrRestart(MapCC(Op->Cond), TrueTargetLabel);
+-  } else {
+-    uint64_t Const;
+-    const bool isConst = IsInlineConstant(Op->Cmp2, &Const);
+-
+-    auto Reg = GetReg(Op->Cmp1);
+-    const auto Size = Op->CompareSize == IR::OpSize::i32Bit ? ARMEmitter::Size::i32Bit : ARMEmitter::Size::i64Bit;
+-
+-    LOGMAN_THROW_A_FMT(IsGPR(Op->Cmp1), "CondJump: Expected GPR");
+-    LOGMAN_THROW_A_FMT(isConst, "CondJump: Expected constant source");
+-
+-    if (Op->Cond == IR::CondClass::EQ) {
+-      LOGMAN_THROW_A_FMT(Const == 0, "CondJump: Expected 0 source");
+-      cbz_OrRestart(Size, Reg, TrueTargetLabel);
+-    } else if (Op->Cond == IR::CondClass::NEQ) {
+-      LOGMAN_THROW_A_FMT(Const == 0, "CondJump: Expected 0 source");
+-      cbnz_OrRestart(Size, Reg, TrueTargetLabel);
+-    } else if (Op->Cond == IR::CondClass::TSTZ) {
+-      LOGMAN_THROW_A_FMT(Const < 64, "CondJump: Expected valid bit source");
+-      tbz_OrRestart(Reg, Const, TrueTargetLabel);
+-    } else if (Op->Cond == IR::CondClass::TSTNZ) {
+-      LOGMAN_THROW_A_FMT(Const < 64, "CondJump: Expected valid bit source");
+-      tbnz_OrRestart(Reg, Const, TrueTargetLabel);
++  auto Branch = [this, Op](auto* TrueTargetLabel) {
++    if (Op->FromNZCV) {
++      b_OrRestart(MapCC(Op->Cond), TrueTargetLabel);
+     } else {
+-      LOGMAN_THROW_A_FMT(false, "CondJump expected simple condition");
++      uint64_t Const;
++      const bool isConst = IsInlineConstant(Op->Cmp2, &Const);
++
++      auto Reg = GetReg(Op->Cmp1);
++      const auto Size = Op->CompareSize == IR::OpSize::i32Bit ? ARMEmitter::Size::i32Bit : ARMEmitter::Size::i64Bit;
++
++      LOGMAN_THROW_A_FMT(IsGPR(Op->Cmp1), "CondJump: Expected GPR");
++      LOGMAN_THROW_A_FMT(isConst, "CondJump: Expected constant source");
++
++      if (Op->Cond == IR::CondClass::EQ) {
++        LOGMAN_THROW_A_FMT(Const == 0, "CondJump: Expected 0 source");
++        cbz_OrRestart(Size, Reg, TrueTargetLabel);
++      } else if (Op->Cond == IR::CondClass::NEQ) {
++        LOGMAN_THROW_A_FMT(Const == 0, "CondJump: Expected 0 source");
++        cbnz_OrRestart(Size, Reg, TrueTargetLabel);
++      } else if (Op->Cond == IR::CondClass::TSTZ) {
++        LOGMAN_THROW_A_FMT(Const < 64, "CondJump: Expected valid bit source");
++        tbz_OrRestart(Reg, Const, TrueTargetLabel);
++      } else if (Op->Cond == IR::CondClass::TSTNZ) {
++        LOGMAN_THROW_A_FMT(Const < 64, "CondJump: Expected valid bit source");
++        tbnz_OrRestart(Reg, Const, TrueTargetLabel);
++      } else {
++        LOGMAN_THROW_A_FMT(false, "CondJump expected simple condition");
++      }
+     }
++  };
++
++  auto TrueTargetLabel = JumpTarget(Op->TrueBlock);
++  if (auto* Site = EmbedderLoopBranch(TrueTargetLabel)) {
++    Branch(&Site->Entry);
++  } else {
++    Branch(TrueTargetLabel);
+   }
+ 
+   PendingTargetLabel = JumpTarget(Op->FalseBlock);
+diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..029e867db98782fa8d6e4c93e66dfab15e3196e6
+--- /dev/null
++++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
+@@ -0,0 +1,211 @@
++// SPDX-License-Identifier: MIT
++/*
++$info$
++tags: backend|arm64
++desc: Guest memory access through an embedding host's software TLB
++$end_info$
++*/
++
++#include "Interface/Context/Context.h"
++#include "Interface/Core/JIT/JITClass.h"
++
++#include <FEXCore/Core/CoreState.h>
++#include <FEXCore/Core/X86Enums.h>
++#include <FEXCore/Utils/LongJump.h>
++
++#include <algorithm>
++#include <cstring>
++
++namespace FEXCore::CPU {
++
++bool Arm64JITCore::Embedded() const {
++  return CTX->Embedded;
++}
++
++ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Address, uint32_t Size, uint64_t Flags,
++                                                     std::function<void(ARMEmitter::Register)> PreStore) {
++  LOGMAN_THROW_A_FMT(Address != TMP1 && Address != TMP2 && Address != TMP3, "Translation temporaries would clobber the address");
++  LOGMAN_THROW_A_FMT(Size > 0 && Size <= 64, "Unexpected access size {}", Size);
++
++  auto Site = fextl::make_unique<EmbedderColdSite>();
++  Site->Address = Address;
++  Site->Info = Size | Flags;
++  Site->GuestRIP = EmbedderCurrentRIP;
++  Site->PreStore = std::move(PreStore);
++
++  constexpr uint32_t PageBits = 12;
++  const bool Write = (Flags & (Core::EMBEDDER_ACCESS_WRITE | Core::EMBEDDER_ACCESS_ATOMIC | Core::EMBEDDER_ACCESS_READ_WRITE)) != 0;
++
++  // An access that leaves its guest page always takes the host path. Atomic
++  // and ordered accesses must also stay in one 16-byte granule, which FEAT_LSE2
++  // makes single-copy atomic; the host reports one that does not.
++  const bool Granule = (Flags & (Core::EMBEDDER_ACCESS_ATOMIC | Core::EMBEDDER_ACCESS_ORDERED)) != 0;
++  const uint32_t BoundaryBits = Granule ? 4 : PageBits;
++  if (Size > 1) {
++    ubfx(ARMEmitter::Size::i64Bit, TMP2, Address, 0, BoundaryBits);
++    add(ARMEmitter::Size::i64Bit, TMP2, TMP2, Size - 1);
++    if (RequiresFarARM64Jumps) {
++      lsr(ARMEmitter::Size::i64Bit, TMP2, TMP2, BoundaryBits);
++      cbnz_OrRestart(ARMEmitter::Size::i64Bit, TMP2, &Site->Entry);
++    } else if (tbnz(TMP2, BoundaryBits, &Site->Entry) != ARMEmitter::BranchEncodeSucceeded::Success) {
++      FEXCore::UncheckedLongJump::LongJump(ThreadState->RestartJump, FEXCore::ToUnderlying(RestartOptions::Control::EnableFarARM64Jumps));
++    }
++  }
++
++  // Flags are live across every access, so nothing here may set NZCV.
++  ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.TLB));
++  ubfx(ARMEmitter::Size::i64Bit, TMP2, Address, PageBits, Core::EMBEDDER_TLB_BITS);
++  add(ARMEmitter::Size::i64Bit, TMP1, TMP1, TMP2, ARMEmitter::ShiftType::LSL, 5);
++  ldp<ARMEmitter::IndexType::OFFSET>(TMP2, TMP3, TMP1, Write ? 16 : 0);
++  eon(ARMEmitter::Size::i64Bit, TMP2, TMP2, Address, ARMEmitter::ShiftType::LSR, PageBits);
++  cbnz_OrRestart(ARMEmitter::Size::i64Bit, TMP2, &Site->Entry);
++  add(ARMEmitter::Size::i64Bit, TMP1, Address, TMP3);
++  (void)Bind(&Site->Resume);
++
++  EmbedderColdSites.push_back(std::move(Site));
++  return TMP1;
++}
++
++ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Base, IR::OrderedNodeWrapper Offset, IR::MemOffsetType OffsetType,
++                                                     uint8_t OffsetScale, IR::OpSize AccessSize, uint32_t Size, uint64_t Flags,
++                                                     std::function<void(ARMEmitter::Register)> PreStore) {
++  auto Address = ApplyMemOperand(AccessSize, Base, TMP4, Offset, OffsetType, OffsetScale);
++  return EmbedderTranslate(Address, Size, Flags, std::move(PreStore));
++}
++
++void Arm64JITCore::EmitEmbedderColdSites() {
++  const auto BounceOffset = offsetof(FEXCore::Core::CpuStateFrame, Embedder.Bounce);
++
++  for (auto& Site : EmbedderColdSites) {
++    // A block too large for a short branch to reach its cold code is
++    // compiled again with far branches.
++    BindOrRestart(&Site->Entry);
++
++    if (Site->PreStore) {
++      // Put the value where the host can complete a page-crossing store from.
++      LoadConstant(ARMEmitter::Size::i64Bit, TMP2, BounceOffset);
++      add(ARMEmitter::Size::i64Bit, TMP2, STATE, TMP2);
++      Site->PreStore(TMP2);
++    }
++
++    if (Site->Address != TMP1) {
++      mov(ARMEmitter::Size::i64Bit, TMP1, Site->Address);
++    }
++    LoadConstant(ARMEmitter::Size::i64Bit, TMP4, Site->GuestRIP);
++    str(TMP4, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.AccessRIP));
++    LoadConstant(ARMEmitter::Size::i64Bit, TMP2, Site->Info);
++    adr_OrRestart(TMP3, &Site->Resume);
++    ldr(TMP4, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderTLBMiss));
++    br(TMP4);
++  }
++
++  EmbedderColdSites.clear();
++
++  for (auto& Site : EmbedderBudgetSites) {
++    // A block too large for a short branch to reach its cold code is
++    // compiled again with far branches.
++    BindOrRestart(&Site->Entry);
++    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->GuestRIP);
++    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
++    if (Site->FaultData) {
++      LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->FaultData);
++      str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, SynchronousFaultData));
++    }
++    LoadConstant(ARMEmitter::Size::i32Bit, TMP1, Site->ExitReason);
++    str(TMP1.W(), STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.ExitReason));
++    ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderExit));
++    br(TMP1);
++  }
++  EmbedderBudgetSites.clear();
++
++  for (auto& Site : EmbedderLoopSites) {
++    // No NZCV writes: the loop's condition flags are live.
++    // A block too large for a short branch to reach its cold code is
++    // compiled again with far branches.
++    BindOrRestart(&Site->Entry);
++    ARMEmitter::ForwardLabel Exhausted;
++    ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
++    sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, 1);
++    (void)tbnz(TMP1, 63, &Exhausted);
++    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
++    b_OrRestart(Site->Target);
++    (void)Bind(&Exhausted);
++    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Site->GuestRIP);
++    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
++    LoadConstant(ARMEmitter::Size::i32Bit, TMP1, Site->ExitReason);
++    str(TMP1.W(), STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.ExitReason));
++    ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderExit));
++    br(TMP1);
++  }
++  EmbedderLoopSites.clear();
++}
++
++Arm64JITCore::EmbedderLoopSite* Arm64JITCore::EmbedderLoopBranch(ARMEmitter::BiDirectionalLabel* Target) {
++  if (!Embedded() || !Target->Backward.Location) {
++    return nullptr;
++  }
++  auto Site = fextl::make_unique<EmbedderLoopSite>();
++  Site->Target = Target;
++  Site->GuestRIP = EmbedderCurrentRIP;
++  Site->ExitReason = Core::EMBEDDER_EXIT_YIELD;
++  if (Target >= JumpTargets.data() && Target < JumpTargets.data() + JumpTargets.size()) {
++    if (const auto TargetRIP = EmbedderBlockRIPs[Target - JumpTargets.data()]) {
++      Site->GuestRIP = TargetRIP;
++      Site->ExitReason = Core::EMBEDDER_EXIT_BUDGET;
++    }
++  }
++  auto* Result = Site.get();
++  EmbedderLoopSites.push_back(std::move(Site));
++  return Result;
++}
++
++void Arm64JITCore::EmitEmbedderBudgetCheck(uint64_t GuestRIP) {
++  // Spend this block's instructions; a block the budget cannot cover is not
++  // started. No NZCV writes: guest flags are live here.
++  auto Site = fextl::make_unique<EmbedderBudgetSite>();
++  Site->GuestRIP = GuestRIP;
++  Site->ExitReason = Core::EMBEDDER_EXIT_BUDGET;
++  const uint32_t Cost = std::clamp<uint32_t>(EmbedderBlockInstructions, 1, 4095);
++  ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
++  sub(ARMEmitter::Size::i64Bit, TMP1, TMP1, Cost);
++  if (RequiresFarARM64Jumps) {
++    lsr(ARMEmitter::Size::i64Bit, TMP2, TMP1, 63);
++    cbnz_OrRestart(ARMEmitter::Size::i64Bit, TMP2, &Site->Entry);
++  } else if (tbnz(TMP1, 63, &Site->Entry) != ARMEmitter::BranchEncodeSucceeded::Success) {
++    FEXCore::UncheckedLongJump::LongJump(ThreadState->RestartJump, FEXCore::ToUnderlying(RestartOptions::Control::EnableFarARM64Jumps));
++  }
++  str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.Budget));
++  EmbedderBudgetSites.push_back(std::move(Site));
++}
++
++void Arm64JITCore::EmitEmbedderDivideCheck(ARMEmitter::Register Divisor, IR::OpSize Size) {
++  // x86 raises #DE for a zero divisor before writing anything; the static
++  // registers still hold the instruction's inputs here.
++  auto Site = fextl::make_unique<EmbedderBudgetSite>();
++  Site->GuestRIP = EmbedderCurrentRIP;
++  Site->ExitReason = Core::EMBEDDER_EXIT_BREAK;
++  Core::CpuStateFrame::SynchronousFaultDataStruct Fault = {
++    .FaultToTopAndGeneratedException = 1,
++    .Signal = Core::EMBEDDER_SIGNAL_DIVIDE,
++    .TrapNo = X86State::X86_TRAPNO_DE,
++    .si_code = 0,
++    .err_code = 0,
++  };
++  memcpy(&Site->FaultData, &Fault, sizeof(Fault));
++  cbz_OrRestart(Size == IR::OpSize::i64Bit ? ARMEmitter::Size::i64Bit : ARMEmitter::Size::i32Bit, Divisor, &Site->Entry);
++  EmbedderBudgetSites.push_back(std::move(Site));
++}
++
++void Arm64JITCore::EmitEmbedderUnsupported(const char* What) {
++  // Reaching an operation the embedded backend cannot run leaves the dispatch
++  // at the instruction, reported to the host, instead of touching host memory.
++  LogMan::Msg::EFmt("Embedded JIT: unsupported {} at RIP {:#x}", What, EmbedderCurrentRIP);
++  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, EmbedderCurrentRIP);
++  str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.rip));
++  LoadConstant(ARMEmitter::Size::i32Bit, TMP1, Core::EMBEDDER_EXIT_UNSUPPORTED);
++  str(TMP1.W(), STATE, offsetof(FEXCore::Core::CpuStateFrame, Embedder.ExitReason));
++  ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderExit));
++  br(TMP1);
++}
++
++} // namespace FEXCore::CPU
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+index 1e21d5b4a290e9b83eb1c96b8067c45ab315536b..83402391a0785674ba31e4200524dc8cd5bf3051 100644
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -498,6 +498,7 @@ void Arm64JITCore::Op_Unhandled(const IR::IROp_Header* IROp, IR::Ref Node) {
+ }
+ 
+ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record, bool Call) {
++  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
+   uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
+   uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
+   auto BranchOffset = JumpThunkStartAddress / 4 - CallerAddress / 4;
+@@ -516,6 +517,7 @@ static void DirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record,
+ }
+ 
+ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record) {
++  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
+   uintptr_t JumpThunkStartAddress = reinterpret_cast<uintptr_t>(Record) - 0x10;
+   uint32_t BranchInst = 0;
+   ARMEmitter::Emitter BranchEmit(reinterpret_cast<uint8_t*>(&BranchInst), 4);
+@@ -529,6 +531,7 @@ static void IndirectBlockDelinker(FEXCore::Context::ExitFunctionLinkData* Record
+ }
+ 
+ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record) {
++  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
+   auto Thread = Frame->Thread;
+   bool TFSet = Thread->CurrentFrame->State.flags[X86State::RFLAG_TF_RAW_LOC];
+   uintptr_t HostCode {};
+@@ -797,10 +800,16 @@ void Arm64JITCore::EmitEntryPoint(ARMEmitter::BackwardLabel& HeaderLabel, bool C
+   adr_OrRestart(TMP1, &HeaderLabel);
+   str(TMP1, STATE, offsetof(FEXCore::Core::CPUState, InlineJITBlockHeader));
+ 
++  // The trap of the previous instruction comes before the decision whether
++  // to start this one.
+   if (CheckTF) {
+     EmitTFCheck();
+   }
+ 
++  if (Embedded()) {
++    EmitEmbedderBudgetCheck(EmbedderPendingBudgetRIP);
++  }
++
+   if (SpillSlots) {
+     const auto TotalSpillSlotsSize = SpillSlots * MaxSpillSlotSize;
+ 
+@@ -825,7 +834,8 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   this->DebugData = DebugData;
+   this->IR = IR;
+   RequiresFarARM64Jumps = false;
+-  SSANodeMultiplier = 24;
++  // Embedded code adds an inline TLB lookup and an out-of-line miss site per access.
++  SSANodeMultiplier = Embedded() ? 128 : 24;
+ 
+   // Prepare restart via long jump in case branch encoding fails.
+   // This uses UncheckedLongJump since we don't implement std::longjmp in WoA setups
+@@ -843,10 +853,16 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+   }
+ 
+   uint32_t SSACount = IR->GetSSACount();
++  EmbedderColdSites.clear();
++  EmbedderBudgetSites.clear();
++  EmbedderLoopSites.clear();
++  EmbedderCurrentRIP = Entry;
++  EmbedderBlockInstructions = IR->GetHeader()->NumHostInstructions;
+   JumpTargets.clear();
+   CallReturnTargets.clear();
+   PendingJumpThunks.clear();
+   JumpTargets.resize(IR->GetHeader()->BlockCount, {});
++  EmbedderBlockRIPs.assign(IR->GetHeader()->BlockCount, 0);
+   Relocations.resize(PrevNumAllocations, FEXCore::CPU::Relocation::Default()); // Discard any relocations generated from a previous attempt
+ 
+   CodeData.EntryPoints.clear();
+@@ -917,7 +933,11 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+         if (PendingTargetLabel->Backward.Location) {
+           EmitSuspendInterruptCheck();
+         }
+-        b_OrRestart(PendingTargetLabel);
++        if (auto* Site = EmbedderLoopBranch(PendingTargetLabel)) {
++          b_OrRestart(&Site->Entry);
++        } else {
++          b_OrRestart(PendingTargetLabel);
++        }
+         PendingTargetLabel = nullptr;
+       }
+ 
+@@ -938,6 +958,12 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+         CodeData.EntryPoints.emplace(BlockStartRIP, GetCursorAddress<uint8_t*>());
+         DebugData->GuestOpcodes.push_back({BlockIROp->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
+ 
++        EmbedderCurrentRIP = BlockStartRIP;
++        if (Embedded()) {
++          // Store the header first so the host can map host PCs, then spend budget.
++          EmbedderPendingBudgetRIP = BlockStartRIP;
++          EmbedderBlockRIPs[BlockIROp->ID] = BlockStartRIP;
++        }
+         EmitEntryPoint(JITCodeHeaderLabel, CheckTF);
+       }
+ 
+@@ -973,10 +999,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+     if (PendingTargetLabel->Backward.Location) {
+       EmitSuspendInterruptCheck();
+     }
+-    b_OrRestart(PendingTargetLabel);
++    if (auto* Site = EmbedderLoopBranch(PendingTargetLabel)) {
++      b_OrRestart(&Site->Entry);
++    } else {
++      b_OrRestart(PendingTargetLabel);
++    }
+   }
+   PendingTargetLabel = nullptr;
+ 
++  if (Embedded()) {
++    EmitEmbedderColdSites();
++  }
++
+   ARMEmitter::ForwardLabel l_ExitLink;
+   for (auto& PendingJumpThunk : PendingJumpThunks) {
+     // Align as 64-bit atomics are used on the HostCode field.
+@@ -1071,6 +1105,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
+ 
+   // Migrate the compile output from temporary storage to the actual CodeBuffer.
+   // This can block progress in other compiling threads, so the duration of the lock should be as small as possible.
++  FEXCore::Allocator::ScopedExecutableWrite ExecutableWriteScope;
+   {
+     auto CodeBufferLock = std::unique_lock {SharedCodeBuffers.CodeBufferWriteMutex};
+ 
+diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..8ba1d34459ce9cbfdba640df69ee33bd7f180115 100644
+--- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
++++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
+@@ -109,6 +109,69 @@ private:
+ 
+   static uint64_t ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEXCore::Context::ExitFunctionLinkData* Record);
+ 
++  /* Embedding host: every guest access goes through the host's software TLB.
++   * The fast path is inline; a miss branches to a cold site emitted after the
++   * block, which enters the dispatcher's shared TLB-miss stub. */
++  struct EmbedderColdSite {
++    ARMEmitter::ForwardLabel Entry;
++    ARMEmitter::BackwardLabel Resume;
++    ARMEmitter::Register Address {ARMEmitter::Reg::r0};
++    uint64_t Info {};
++    uint64_t GuestRIP {};
++    // Emits the op's store with the given base register, so a store that
++    // crosses a guest page can be completed by the host from the bounce buffer.
++    std::function<void(ARMEmitter::Register)> PreStore;
++  };
++  fextl::vector<fextl::unique_ptr<EmbedderColdSite>> EmbedderColdSites;
++  // Out-of-line exits with RIP at a guest instruction: a block entry whose
++  // budget ran out, or an exception the embedded backend checks for.
++  struct EmbedderBudgetSite {
++    ARMEmitter::ForwardLabel Entry;
++    uint64_t GuestRIP {};
++    uint32_t ExitReason {};
++    uint64_t FaultData {};
++  };
++  fextl::vector<fextl::unique_ptr<EmbedderBudgetSite>> EmbedderBudgetSites;
++  // A backward branch spends one budget unit and leaves the dispatch when the
++  // budget is gone, so the host can take an interrupt: inside one guest
++  // instruction (a repeated compare, scan or load) at that instruction, and
++  // to an entry point (a guest loop within one compiled unit) at the target.
++  struct EmbedderLoopSite {
++    ARMEmitter::ForwardLabel Entry;
++    ARMEmitter::BiDirectionalLabel* Target {};
++    uint64_t GuestRIP {};
++    uint32_t ExitReason {};
++  };
++  fextl::vector<fextl::unique_ptr<EmbedderLoopSite>> EmbedderLoopSites;
++  // The guest RIP of each entry-point block by block ID, else zero: a branch
++  // back to one has completed its instruction and resumes at that RIP.
++  fextl::vector<uint64_t> EmbedderBlockRIPs;
++  // The site to branch to instead of Target, or null when the branch needs none.
++  EmbedderLoopSite* EmbedderLoopBranch(ARMEmitter::BiDirectionalLabel* Target);
++  void EmitEmbedderDivideCheck(ARMEmitter::Register Divisor, IR::OpSize Size);
++  uint64_t EmbedderCurrentRIP {};
++  uint32_t EmbedderBlockInstructions {};
++  uint64_t EmbedderPendingBudgetRIP {};
++  void EmitEmbedderBudgetCheck(uint64_t GuestRIP);
++
++  [[nodiscard]]
++  bool Embedded() const;
++
++  // Translates the guest address in Address (any register but TMP1-TMP3) for
++  // an access of Size bytes and returns TMP1 holding the host address.
++  // Clobbers TMP1-TMP3. Flags is a mask of Core::EMBEDDER_ACCESS_*.
++  ARMEmitter::Register EmbedderTranslate(ARMEmitter::Register Address, uint32_t Size, uint64_t Flags,
++                                         std::function<void(ARMEmitter::Register)> PreStore = {});
++  // As above for Base + Offset, the address formed in TMP4 when needed.
++  ARMEmitter::Register EmbedderTranslate(ARMEmitter::Register Base, IR::OrderedNodeWrapper Offset, IR::MemOffsetType OffsetType,
++                                         uint8_t OffsetScale, IR::OpSize AccessSize, uint32_t Size, uint64_t Flags,
++                                         std::function<void(ARMEmitter::Register)> PreStore = {});
++  void EmitEmbedderColdSites();
++  void EmitEmbedderString(bool IsCopy, uint32_t ElementSize, ARMEmitter::Register Dest, std::optional<ARMEmitter::Register> Src,
++                          ARMEmitter::Register Value, ARMEmitter::Register Length, IR::OrderedNodeWrapper Direction,
++                          ARMEmitter::Register OutDest, std::optional<ARMEmitter::Register> OutSrc);
++  void EmitEmbedderUnsupported(const char* What);
++
+   [[nodiscard]]
+   ARMEmitter::Register GetReg(IR::PhysicalRegister Reg) const {
+     const auto RegClass = Reg.AsRegClass();
+diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
+index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..d15ab955153211eed47ffecca70a770aaaba4a9b 100644
+--- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
+@@ -706,7 +706,12 @@ DEF_OP(LoadMem) {
+   const auto OpSize = IROp->Size;
+ 
+   const auto MemReg = GetReg(Op->Addr);
+-  const auto MemSrc = GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
++  const auto MemSrc =
++    Embedded() ?
++      ARMEmitter::ExtendedMemOperand(
++        EmbedderTranslate(MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale, OpSize, IR::OpSizeToSize(OpSize), 0).X(),
++        ARMEmitter::IndexType::OFFSET, 0) :
++      GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     const auto Dst = GetReg(Node);
+@@ -740,15 +745,26 @@ DEF_OP(LoadMem) {
+ 
+ DEF_OP(LoadMemPair) {
+   const auto Op = IROp->C<IR::IROp_LoadMemPair>();
+-  const auto Addr = GetReg(Op->Addr);
++  auto Addr = GetReg(Op->Addr);
++  auto PairOffset = Op->Offset;
++  if (Embedded()) {
++    if (PairOffset) {
++      // The IR carries the signed pair offset in a u32 field.
++      LoadConstant(ARMEmitter::Size::i64Bit, TMP4, static_cast<int64_t>(static_cast<int32_t>(PairOffset)));
++      add(ARMEmitter::Size::i64Bit, TMP4, Addr, TMP4);
++      Addr = TMP4;
++    }
++    Addr = EmbedderTranslate(Addr, 2 * IR::OpSizeToSize(IROp->Size), 0);
++    PairOffset = 0;
++  }
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+     const auto Dst1 = GetReg(Op->OutValue1);
+     const auto Dst2 = GetReg(Op->OutValue2);
+ 
+     switch (IROp->Size) {
+-    case IR::OpSize::i32Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.W(), Dst2.W(), Addr, Op->Offset); break;
+-    case IR::OpSize::i64Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.X(), Dst2.X(), Addr, Op->Offset); break;
++    case IR::OpSize::i32Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.W(), Dst2.W(), Addr, PairOffset); break;
++    case IR::OpSize::i64Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.X(), Dst2.X(), Addr, PairOffset); break;
+     default: LOGMAN_MSG_A_FMT("Unhandled LoadMemPair size: {}", IROp->Size); break;
+     }
+   } else {
+@@ -756,9 +772,9 @@ DEF_OP(LoadMemPair) {
+     const auto Dst2 = GetVReg(Op->OutValue2);
+ 
+     switch (IROp->Size) {
+-    case IR::OpSize::i32Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.S(), Dst2.S(), Addr, Op->Offset); break;
+-    case IR::OpSize::i64Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.D(), Dst2.D(), Addr, Op->Offset); break;
+-    case IR::OpSize::i128Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.Q(), Dst2.Q(), Addr, Op->Offset); break;
++    case IR::OpSize::i32Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.S(), Dst2.S(), Addr, PairOffset); break;
++    case IR::OpSize::i64Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.D(), Dst2.D(), Addr, PairOffset); break;
++    case IR::OpSize::i128Bit: ldp<ARMEmitter::IndexType::OFFSET>(Dst1.Q(), Dst2.Q(), Addr, PairOffset); break;
+     default: LOGMAN_MSG_A_FMT("Unhandled LoadMemPair size: {}", IROp->Size); break;
+     }
+   }
+@@ -770,6 +786,37 @@ DEF_OP(LoadMemTSO) {
+ 
+   const auto MemReg = GetReg(Op->Addr);
+ 
++  if (Embedded()) {
++    // Ordered accesses must stay inside one 16-byte granule (FEAT_LSE2); the
++    // host completes one that does not through the bounce buffer.
++    const auto Host = EmbedderTranslate(MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale, OpSize, IR::OpSizeToSize(OpSize),
++                                        Op->Class == IR::RegClass::GPR ? Core::EMBEDDER_ACCESS_ORDERED : 0);
++    if (Op->Class == IR::RegClass::GPR) {
++      const auto Dst = GetReg(Node);
++      switch (OpSize) {
++      case IR::OpSize::i8Bit: ldaprb(Dst.W(), Host); break;
++      case IR::OpSize::i16Bit: ldaprh(Dst.W(), Host); break;
++      case IR::OpSize::i32Bit: ldapr(Dst.W(), Host); break;
++      case IR::OpSize::i64Bit: ldapr(Dst.X(), Host); break;
++      default: LOGMAN_MSG_A_FMT("Unhandled LoadMemTSO size: {}", OpSize); break;
++      }
++    } else {
++      const auto Dst = GetVReg(Node);
++      switch (OpSize) {
++      case IR::OpSize::i8Bit: ldrb(Dst, Host); break;
++      case IR::OpSize::i16Bit: ldrh(Dst, Host); break;
++      case IR::OpSize::i32Bit: ldr(Dst.S(), Host); break;
++      case IR::OpSize::i64Bit: ldr(Dst.D(), Host); break;
++      case IR::OpSize::i128Bit: ldr(Dst.Q(), Host); break;
++      default: LOGMAN_MSG_A_FMT("Unhandled LoadMemTSO size: {}", OpSize); break;
++      }
++      if (CTX->IsVectorAtomicTSOEnabled()) {
++        dmb(ARMEmitter::BarrierScope::ISHLD);
++      }
++    }
++    return;
++  }
++
+   if (Op->Class == IR::RegClass::GPR) {
+     LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
+     LOGMAN_THROW_A_FMT(Op->OffsetScale == 1, "unexpected offset scale");
+@@ -868,6 +915,41 @@ DEF_OP(VLoadVectorMasked) {
+   const auto MaskReg = GetVReg(Op->Mask);
+   const auto MemReg = GetReg(Op->Addr);
+ 
++  if (Embedded()) {
++    // Each selected element is translated on its own: an element the mask
++    // clears never touches guest memory, so it can never fault.
++    LOGMAN_THROW_A_FMT(OpSize == IR::OpSize::i128Bit, "Only supports 128-bit without SVE256");
++    const auto ElementSize = IROp->ElementSize;
++    const auto ElementBytes = IR::OpSizeToSize(ElementSize);
++    const auto NumElements = IR::NumElements(IROp->Size, ElementSize);
++    const auto Base = ApplyMemOperand(OpSize, MemReg, TMP4, Op->Offset, Op->OffsetType, Op->OffsetScale);
++    if (Base != TMP4) {
++      mov(ARMEmitter::Size::i64Bit, TMP4, Base);
++    }
++    movi(ARMEmitter::SubRegSize::i64Bit, VTMP1.Q(), 0);
++    for (size_t i = 0; i < NumElements; ++i) {
++      ARMEmitter::ForwardLabel Skip {};
++      switch (ElementSize) {
++      case IR::OpSize::i32Bit: umov<ARMEmitter::SubRegSize::i32Bit>(TMP2, MaskReg, i); break;
++      case IR::OpSize::i64Bit: umov<ARMEmitter::SubRegSize::i64Bit>(TMP2, MaskReg, i); break;
++      default: LOGMAN_MSG_A_FMT("Unhandled masked element size: {}", ElementSize); break;
++      }
++      (void)tbz(TMP2, IR::OpSizeAsBits(ElementSize) - 1, &Skip);
++      const auto Host = EmbedderTranslate(TMP4, ElementBytes, 0);
++      switch (ElementSize) {
++      case IR::OpSize::i32Bit: ld1<ARMEmitter::SubRegSize::i32Bit>(VTMP1.Q(), i, Host); break;
++      case IR::OpSize::i64Bit: ld1<ARMEmitter::SubRegSize::i64Bit>(VTMP1.Q(), i, Host); break;
++      default: break;
++      }
++      (void)Bind(&Skip);
++      if (i + 1 != NumElements) {
++        add(ARMEmitter::Size::i64Bit, TMP4, TMP4, ElementBytes);
++      }
++    }
++    mov(Dst.Q(), VTMP1.Q());
++    return;
++  }
++
+   if (HostSupportsSVE128 || HostSupportsSVE256) {
+     const auto MemSrc = GenerateSVEMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+@@ -970,6 +1052,38 @@ DEF_OP(VStoreVectorMasked) {
+   const auto RegData = GetVReg(Op->Data);
+   const auto MaskReg = GetVReg(Op->Mask);
+   const auto MemReg = GetReg(Op->Addr);
++  if (Embedded()) {
++    LOGMAN_THROW_A_FMT(OpSize == IR::OpSize::i128Bit, "Only supports 128-bit without SVE256");
++    const auto ElementSize = IROp->ElementSize;
++    const auto ElementBytes = IR::OpSizeToSize(ElementSize);
++    const auto NumElements = IR::NumElements(IROp->Size, ElementSize);
++    const auto Base = ApplyMemOperand(OpSize, MemReg, TMP4, Op->Offset, Op->OffsetType, Op->OffsetScale);
++    if (Base != TMP4) {
++      mov(ARMEmitter::Size::i64Bit, TMP4, Base);
++    }
++    for (size_t i = 0; i < NumElements; ++i) {
++      ARMEmitter::ForwardLabel Skip {};
++      switch (ElementSize) {
++      case IR::OpSize::i32Bit: umov<ARMEmitter::SubRegSize::i32Bit>(TMP2, MaskReg, i); break;
++      case IR::OpSize::i64Bit: umov<ARMEmitter::SubRegSize::i64Bit>(TMP2, MaskReg, i); break;
++      default: LOGMAN_MSG_A_FMT("Unhandled masked element size: {}", ElementSize); break;
++      }
++      (void)tbz(TMP2, IR::OpSizeAsBits(ElementSize) - 1, &Skip);
++      auto StoreLane = [this, ElementSize, RegData, i](ARMEmitter::Register Host) {
++        switch (ElementSize) {
++        case IR::OpSize::i32Bit: st1<ARMEmitter::SubRegSize::i32Bit>(RegData.Q(), i, Host); break;
++        case IR::OpSize::i64Bit: st1<ARMEmitter::SubRegSize::i64Bit>(RegData.Q(), i, Host); break;
++        default: break;
++        }
++      };
++      StoreLane(EmbedderTranslate(TMP4, ElementBytes, Core::EMBEDDER_ACCESS_WRITE, StoreLane));
++      (void)Bind(&Skip);
++      if (i + 1 != NumElements) {
++        add(ARMEmitter::Size::i64Bit, TMP4, TMP4, ElementBytes);
++      }
++    }
++    return;
++  }
+   if (HostSupportsSVE128 || HostSupportsSVE256) {
+     const auto MemDst = GenerateSVEMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+@@ -1168,6 +1282,10 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
+ }
+ 
+ DEF_OP(VLoadVectorGatherMasked) {
++  if (Embedded()) {
++    EmitEmbedderUnsupported("vector gather");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_VLoadVectorGatherMasked>();
+   const auto OpSize = IROp->Size;
+ 
+@@ -1266,6 +1384,10 @@ DEF_OP(VLoadVectorGatherMasked) {
+ }
+ 
+ DEF_OP(VLoadVectorGatherMaskedQPS) {
++  if (Embedded()) {
++    EmitEmbedderUnsupported("vector gather");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_VLoadVectorGatherMaskedQPS>();
+ 
+   /// This instruction behaves similarly to the non-QPS version except for some STRICT limitations
+@@ -1355,7 +1477,10 @@ DEF_OP(VLoadVectorElement) {
+ 
+   const auto Dst = GetVReg(Node);
+   const auto DstSrc = GetVReg(Op->DstSrc);
+-  const auto MemReg = GetReg(Op->Addr);
++  auto MemReg = GetReg(Op->Addr);
++  if (Embedded()) {
++    MemReg = EmbedderTranslate(MemReg, IR::OpSizeToSize(IROp->ElementSize), 0);
++  }
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1392,7 +1517,7 @@ DEF_OP(VStoreVectorElement) {
+   const auto ElementSize = IROp->ElementSize;
+ 
+   const auto Value = GetVReg(Op->Value);
+-  const auto MemReg = GetReg(Op->Addr);
++  auto MemReg = GetReg(Op->Addr);
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1404,6 +1529,21 @@ DEF_OP(VStoreVectorElement) {
+     dmb(ARMEmitter::BarrierScope::ISH);
+   }
+ 
++  if (Embedded() && !Is256Bit) {
++    auto StoreElement = [this, ElementSize, Value, Index = Op->Index](ARMEmitter::Register Host) {
++      switch (ElementSize) {
++      case IR::OpSize::i8Bit: st1<ARMEmitter::SubRegSize::i8Bit>(Value.Q(), Index, Host); break;
++      case IR::OpSize::i16Bit: st1<ARMEmitter::SubRegSize::i16Bit>(Value.Q(), Index, Host); break;
++      case IR::OpSize::i32Bit: st1<ARMEmitter::SubRegSize::i32Bit>(Value.Q(), Index, Host); break;
++      case IR::OpSize::i64Bit: st1<ARMEmitter::SubRegSize::i64Bit>(Value.Q(), Index, Host); break;
++      case IR::OpSize::i128Bit: str(Value.Q(), Host); break;
++      default: break;
++      }
++    };
++    StoreElement(EmbedderTranslate(MemReg, IR::OpSizeToSize(ElementSize), Core::EMBEDDER_ACCESS_WRITE, StoreElement));
++    return;
++  }
++
+   if (Is256Bit) {
+     LOGMAN_MSG_A_FMT("Unsupported 256-bit {}", __func__);
+   } else {
+@@ -1427,7 +1567,10 @@ DEF_OP(VBroadcastFromMem) {
+   const auto ElementSize = IROp->ElementSize;
+ 
+   const auto Dst = GetVReg(Node);
+-  const auto MemReg = GetReg(Op->Address);
++  auto MemReg = GetReg(Op->Address);
++  if (Embedded()) {
++    MemReg = EmbedderTranslate(MemReg, IR::OpSizeToSize(ElementSize), 0);
++  }
+ 
+   LOGMAN_THROW_A_FMT(ElementSize == IR::OpSize::i8Bit || ElementSize == IR::OpSize::i16Bit || ElementSize == IR::OpSize::i32Bit ||
+                        ElementSize == IR::OpSize::i64Bit || ElementSize == IR::OpSize::i128Bit,
+@@ -1466,6 +1609,11 @@ DEF_OP(VBroadcastFromMem) {
+ }
+ 
+ DEF_OP(Push) {
++  if (Embedded()) {
++    LOGMAN_MSG_A_FMT("{} reached an embedded backend", __func__);
++    EmitEmbedderUnsupported("stack op");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_Push>();
+   const auto ValueSize = IR::OpSizeToSize(Op->ValueSize);
+   auto Src = GetReg(Op->Value);
+@@ -1551,6 +1699,11 @@ DEF_OP(Push) {
+ }
+ 
+ DEF_OP(PushTwo) {
++  if (Embedded()) {
++    LOGMAN_MSG_A_FMT("{} reached an embedded backend", __func__);
++    EmitEmbedderUnsupported("stack op");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_PushTwo>();
+   const auto ValueSize = IR::OpSizeToSize(Op->ValueSize);
+   auto Src1 = GetReg(Op->Value1);
+@@ -1574,6 +1727,11 @@ DEF_OP(PushTwo) {
+ }
+ 
+ DEF_OP(Pop) {
++  if (Embedded()) {
++    LOGMAN_MSG_A_FMT("{} reached an embedded backend", __func__);
++    EmitEmbedderUnsupported("stack op");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_Pop>();
+   const auto Size = IR::OpSizeToSize(Op->Size);
+   const auto Addr = GetReg(Op->InoutAddr);
+@@ -1606,6 +1764,11 @@ DEF_OP(Pop) {
+ }
+ 
+ DEF_OP(PopTwo) {
++  if (Embedded()) {
++    LOGMAN_MSG_A_FMT("{} reached an embedded backend", __func__);
++    EmitEmbedderUnsupported("stack op");
++    return;
++  }
+   const auto Op = IROp->C<IR::IROp_PopTwo>();
+   const auto Size = IR::OpSizeToSize(Op->Size);
+   const auto Addr = GetReg(Op->InoutAddr);
+@@ -1641,6 +1804,35 @@ DEF_OP(StoreMem) {
+   const auto OpSize = IROp->Size;
+ 
+   const auto MemReg = GetReg(Op->Addr);
++  if (Embedded()) {
++    LOGMAN_THROW_A_FMT(OpSize != IR::OpSize::i256Bit, "256-bit stores need SVE256");
++    auto EmitStore = [this, Op, OpSize](ARMEmitter::Register Host) {
++      const auto MemSrc = ARMEmitter::ExtendedMemOperand(Host.X(), ARMEmitter::IndexType::OFFSET, 0);
++      if (Op->Class == IR::RegClass::GPR) {
++        const auto Src = GetZeroableReg(Op->Value);
++        switch (OpSize) {
++        case IR::OpSize::i8Bit: strb(Src, MemSrc); break;
++        case IR::OpSize::i16Bit: strh(Src, MemSrc); break;
++        case IR::OpSize::i32Bit: str(Src.W(), MemSrc); break;
++        case IR::OpSize::i64Bit: str(Src.X(), MemSrc); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMem size: {}", OpSize); break;
++        }
++      } else {
++        const auto Src = GetVReg(Op->Value);
++        switch (OpSize) {
++        case IR::OpSize::i8Bit: strb(Src, MemSrc); break;
++        case IR::OpSize::i16Bit: strh(Src, MemSrc); break;
++        case IR::OpSize::i32Bit: str(Src.S(), MemSrc); break;
++        case IR::OpSize::i64Bit: str(Src.D(), MemSrc); break;
++        case IR::OpSize::i128Bit: str(Src.Q(), MemSrc); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMem size: {}", OpSize); break;
++        }
++      }
++    };
++    EmitStore(EmbedderTranslate(MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale, OpSize, IR::OpSizeToSize(OpSize),
++                                Core::EMBEDDER_ACCESS_WRITE, EmitStore));
++    return;
++  }
+   const auto MemSrc = GenerateMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
+ 
+   if (Op->Class == IR::RegClass::GPR) {
+@@ -1754,6 +1946,38 @@ DEF_OP(StoreMemPair) {
+   const auto OpSize = IROp->Size;
+   const auto Addr = GetReg(Op->Addr);
+ 
++  if (Embedded()) {
++    auto EmitStorePair = [this, Op, OpSize](ARMEmitter::Register Host) {
++      if (Op->Class == IR::RegClass::GPR) {
++        const auto Src1 = GetZeroableReg(Op->Value1);
++        const auto Src2 = GetZeroableReg(Op->Value2);
++        switch (OpSize) {
++        case IR::OpSize::i32Bit: stp<ARMEmitter::IndexType::OFFSET>(Src1.W(), Src2.W(), Host, 0); break;
++        case IR::OpSize::i64Bit: stp<ARMEmitter::IndexType::OFFSET>(Src1.X(), Src2.X(), Host, 0); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMem size: {}", OpSize); break;
++        }
++      } else {
++        const auto Src1 = GetVReg(Op->Value1);
++        const auto Src2 = GetVReg(Op->Value2);
++        switch (OpSize) {
++        case IR::OpSize::i32Bit: stp<ARMEmitter::IndexType::OFFSET>(Src1.S(), Src2.S(), Host, 0); break;
++        case IR::OpSize::i64Bit: stp<ARMEmitter::IndexType::OFFSET>(Src1.D(), Src2.D(), Host, 0); break;
++        case IR::OpSize::i128Bit: stp<ARMEmitter::IndexType::OFFSET>(Src1.Q(), Src2.Q(), Host, 0); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMemPair size: {}", OpSize); break;
++        }
++      }
++    };
++    auto EA = Addr;
++    if (Op->Offset) {
++      // The IR carries the signed pair offset in a u32 field.
++      LoadConstant(ARMEmitter::Size::i64Bit, TMP4, static_cast<int64_t>(static_cast<int32_t>(Op->Offset)));
++      add(ARMEmitter::Size::i64Bit, TMP4, Addr, TMP4);
++      EA = TMP4;
++    }
++    EmitStorePair(EmbedderTranslate(EA, 2 * IR::OpSizeToSize(OpSize), Core::EMBEDDER_ACCESS_WRITE, EmitStorePair));
++    return;
++  }
++
+   if (Op->Class == IR::RegClass::GPR) {
+     const auto Src1 = GetZeroableReg(Op->Value1);
+     const auto Src2 = GetZeroableReg(Op->Value2);
+@@ -1781,6 +2005,43 @@ DEF_OP(StoreMemTSO) {
+ 
+   const auto MemReg = GetReg(Op->Addr);
+ 
++  if (Embedded()) {
++    if (Op->Class == IR::RegClass::GPR) {
++      const auto Src = GetZeroableReg(Op->Value);
++      // A store across a 16-byte granule has no single-copy-atomic STLR; the
++      // host completes it from the bounce buffer between barriers.
++      auto EmitStore = [this, OpSize, Src](ARMEmitter::Register Host) {
++        switch (OpSize) {
++        case IR::OpSize::i8Bit: stlrb(Src, Host); break;
++        case IR::OpSize::i16Bit: stlrh(Src, Host); break;
++        case IR::OpSize::i32Bit: stlr(Src.W(), Host); break;
++        case IR::OpSize::i64Bit: stlr(Src.X(), Host); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMemTSO size: {}", OpSize); break;
++        }
++      };
++      EmitStore(EmbedderTranslate(MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale, OpSize, IR::OpSizeToSize(OpSize),
++                                  Core::EMBEDDER_ACCESS_WRITE | Core::EMBEDDER_ACCESS_ORDERED, EmitStore));
++    } else {
++      if (CTX->IsVectorAtomicTSOEnabled()) {
++        dmb(ARMEmitter::BarrierScope::ISH);
++      }
++      auto EmitStore = [this, Op, OpSize](ARMEmitter::Register Host) {
++        const auto Src = GetVReg(Op->Value);
++        switch (OpSize) {
++        case IR::OpSize::i8Bit: strb(Src, Host, 0); break;
++        case IR::OpSize::i16Bit: strh(Src, Host, 0); break;
++        case IR::OpSize::i32Bit: str(Src.S(), Host, 0); break;
++        case IR::OpSize::i64Bit: str(Src.D(), Host, 0); break;
++        case IR::OpSize::i128Bit: str(Src.Q(), Host, 0); break;
++        default: LOGMAN_MSG_A_FMT("Unhandled StoreMemTSO size: {}", OpSize); break;
++        }
++      };
++      EmitStore(EmbedderTranslate(MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale, OpSize, IR::OpSizeToSize(OpSize),
++                                  Core::EMBEDDER_ACCESS_WRITE, EmitStore));
++    }
++    return;
++  }
++
+   if (Op->Class == IR::RegClass::GPR) {
+     LOGMAN_THROW_A_FMT(Op->Offset.IsInvalid() || CTX->HostFeatures.SupportsTSOImm9, "unexpected offset");
+     LOGMAN_THROW_A_FMT(Op->OffsetScale == 1, "unexpected offset scale");
+@@ -1848,8 +2109,71 @@ DEF_OP(StoreMemTSO) {
+   }
+ }
+ 
++void Arm64JITCore::EmitEmbedderString(bool IsCopy, uint32_t ElementSize, ARMEmitter::Register Dest, std::optional<ARMEmitter::Register> Src,
++                                      ARMEmitter::Register Value, ARMEmitter::Register Length, IR::OrderedNodeWrapper Direction,
++                                      ARMEmitter::Register OutDest, std::optional<ARMEmitter::Register> OutSrc) {
++  // REP MOVS/STOS run in the host, which walks the guest pages and, on a
++  // fault, leaves RCX/RSI/RDI at the progress made, as the hardware does.
++  constexpr uint64_t StructSize = AlignUp(sizeof(Core::EmbedderStringOp), 16);
++  sub(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::rsp, ARMEmitter::Reg::rsp, StructSize);
++  str(Dest.X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Dest));
++  if (Src) {
++    str(Src->X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Src));
++  }
++  str(Value.X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Value));
++  str(Length.X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Count));
++  uint64_t DirectionConstant {};
++  if (IsInlineConstant(Direction, &DirectionConstant)) {
++    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, DirectionConstant);
++    str(TMP1, ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Direction));
++  } else {
++    str(GetReg(Direction).X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Direction));
++  }
++  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, ElementSize | (static_cast<uint64_t>(IsCopy) << 32));
++  str(TMP1, ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, ElementSize));
++  LoadConstant(ARMEmitter::Size::i64Bit, TMP1, EmbedderCurrentRIP);
++  str(TMP1, ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, GuestRIP));
++
++  // As the TLB-miss path: the state spill keeps only the low halves of the
++  // PF and AF registers, which may hold any value inside an op.
++  stp<ARMEmitter::IndexType::PRE>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, -16);
++  const auto PushedSize = PushDynamicRegs(TMP1) + 16;
++  SpillStaticRegs(TMP1);
++  mov(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r0, STATE.R());
++  add(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r1, ARMEmitter::Reg::rsp, PushedSize);
++  ldr(ARMEmitter::XReg::x2, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderStringHelper));
++  blr(ARMEmitter::Reg::r2);
++  ARMEmitter::ForwardLabel l_Done;
++  (void)cbz(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r0, &l_Done);
++  // Faulted: the host spilled nothing more than we did and set RIP.
++  ldr(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, Pointers.EmbedderExitNoSpill));
++  br(TMP1);
++  (void)Bind(&l_Done);
++  FillStaticRegs();
++  PopDynamicRegs();
++  ldp<ARMEmitter::IndexType::POST>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, 16);
++  ldr(OutDest.X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Dest));
++  if (OutSrc) {
++    ldr(OutSrc->X(), ARMEmitter::Reg::rsp, offsetof(Core::EmbedderStringOp, Src));
++  }
++  add(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::rsp, ARMEmitter::Reg::rsp, StructSize);
++}
++
+ DEF_OP(MemSet) {
+   const auto Op = IROp->C<IR::IROp_MemSet>();
++  if (Embedded()) {
++    auto Dest = GetReg(Op->Addr);
++    if (!Op->Prefix.IsInvalid()) {
++      add(ARMEmitter::Size::i64Bit, TMP4, Dest, GetReg(Op->Prefix));
++      Dest = TMP4;
++    }
++    EmitEmbedderString(false, IR::OpSizeToSize(Op->Size), Dest, std::nullopt, GetZeroableReg(Op->Value), GetReg(Op->Length), Op->Direction,
++                       GetReg(Node), std::nullopt);
++    if (!Op->Prefix.IsInvalid()) {
++      sub(ARMEmitter::Size::i64Bit, GetReg(Node), GetReg(Node), GetReg(Op->Prefix));
++    }
++    return;
++  }
+ 
+   const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
+   const auto Size = IR::OpSizeToSize(Op->Size);
+@@ -2085,6 +2409,11 @@ DEF_OP(MemSet) {
+ 
+ DEF_OP(MemCpy) {
+   const auto Op = IROp->C<IR::IROp_MemCpy>();
++  if (Embedded()) {
++    EmitEmbedderString(true, IR::OpSizeToSize(Op->Size), GetReg(Op->Dest), GetReg(Op->Src), ARMEmitter::Reg::zr, GetReg(Op->Length),
++                       Op->Direction, GetReg(Op->OutDstAddress), GetReg(Op->OutSrcAddress));
++    return;
++  }
+ 
+   const bool IsAtomic = CTX->IsMemcpyAtomicTSOEnabled();
+   const auto Size = IR::OpSizeToSize(Op->Size);
+@@ -2389,7 +2718,7 @@ DEF_OP(MemCpy) {
+ }
+ 
+ DEF_OP(CacheLineClear) {
+-  if (!CTX->HostFeatures.SupportsCacheMaintenanceOps) {
++  if (Embedded() || !CTX->HostFeatures.SupportsCacheMaintenanceOps) {
+     dmb(ARMEmitter::BarrierScope::SY);
+     return;
+   }
+@@ -2419,7 +2748,7 @@ DEF_OP(CacheLineClear) {
+ }
+ 
+ DEF_OP(CacheLineClean) {
+-  if (!CTX->HostFeatures.SupportsCacheMaintenanceOps) {
++  if (Embedded() || !CTX->HostFeatures.SupportsCacheMaintenanceOps) {
+     dmb(ARMEmitter::BarrierScope::ST);
+     return;
+   }
+@@ -2447,6 +2776,15 @@ DEF_OP(CacheLineZero) {
+ 
+   auto MemReg = GetReg(Op->Addr);
+ 
++  if (Embedded()) {
++    and_(ARMEmitter::Size::i64Bit, TMP4, MemReg, ~(CPUIDEmu::CACHELINE_SIZE - 1));
++    const auto Host = EmbedderTranslate(TMP4, CPUIDEmu::CACHELINE_SIZE, Core::EMBEDDER_ACCESS_WRITE);
++    for (size_t i = 0; i < CPUIDEmu::CACHELINE_SIZE; i += 16) {
++      stnp(ARMEmitter::XReg::zr, ARMEmitter::XReg::zr, Host, i);
++    }
++    return;
++  }
++
+   if (CTX->HostFeatures.SupportsCLZERO) {
+     // We can use this instruction directly
+     dc(ARMEmitter::DataCacheOperation::ZVA, MemReg);
+@@ -2464,6 +2802,10 @@ DEF_OP(CacheLineZero) {
+ }
+ 
+ DEF_OP(Prefetch) {
++  if (Embedded()) {
++    // A host prefetch of a guest address would only pollute the host cache.
++    return;
++  }
+   auto Op = IROp->C<IR::IROp_Prefetch>();
+   const auto MemReg = GetReg(Op->Addr);
+ 
+@@ -2513,6 +2855,15 @@ DEF_OP(VStoreNonTemporal) {
+   const auto MemReg = GetReg(Op->Addr);
+   const auto Offset = Op->Offset;
+ 
++  if (Embedded()) {
++    add(ARMEmitter::Size::i64Bit, TMP4, MemReg, Offset);
++    auto EmitStore = [this, Value](ARMEmitter::Register Host) {
++      str(Value.Q(), Host, 0);
++    };
++    EmitStore(EmbedderTranslate(TMP4, 16, Core::EMBEDDER_ACCESS_WRITE, EmitStore));
++    return;
++  }
++
+   if (Is256Bit) {
+     const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
+     const auto OffsetScaled = Offset / 32;
+@@ -2540,6 +2891,15 @@ DEF_OP(VStoreNonTemporalPair) {
+   const auto MemReg = GetReg(Op->Addr);
+   const auto Offset = Op->Offset;
+ 
++  if (Embedded()) {
++    add(ARMEmitter::Size::i64Bit, TMP4, MemReg, Offset);
++    auto EmitStore = [this, ValueLow, ValueHigh](ARMEmitter::Register Host) {
++      stp<ARMEmitter::IndexType::OFFSET>(ValueLow.Q(), ValueHigh.Q(), Host, 0);
++    };
++    EmitStore(EmbedderTranslate(TMP4, 32, Core::EMBEDDER_ACCESS_WRITE, EmitStore));
++    return;
++  }
++
+   stnp(ValueLow.Q(), ValueHigh.Q(), MemReg, Offset);
+ }
+ 
+@@ -2555,6 +2915,12 @@ DEF_OP(VLoadNonTemporal) {
+   const auto MemReg = GetReg(Op->Addr);
+   const auto Offset = Op->Offset;
+ 
++  if (Embedded()) {
++    add(ARMEmitter::Size::i64Bit, TMP4, MemReg, Offset);
++    ldr(Dst.Q(), EmbedderTranslate(TMP4, 16, 0), 0);
++    return;
++  }
++
+   if (Is256Bit) {
+     const auto GoverningPredicate = PRED_TMP_32B.Zeroing();
+     const auto OffsetScaled = Offset / 32;
+diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+index b03ed7db8b89c288c796021827d58324e3fb1981..0b614049bec379539ddbd1e20bef4843cdf31e19 100644
+--- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+@@ -43,6 +43,7 @@ DEF_OP(GuestOpcode) {
+   auto Op = IROp->C<IR::IROp_GuestOpcode>();
+   // metadata
+   DebugData->GuestOpcodes.push_back({Op->GuestEntryOffset, GetCursorAddress<uint8_t*>() - CodeData.BlockBegin});
++  EmbedderCurrentRIP = Entry + Op->GuestEntryOffset;
+ }
+ 
+ DEF_OP(Fence) {
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index 31f9eddc09274d28c74201068c0ba436f9fb069c..7074a2c1ad27f47753340ebecd90f23b37c4ed9a 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -69,6 +69,29 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
+   CalculateDeferredFlags();
+ 
+   const auto GPRSize = GetGPROpSize();
++
++  if (CTX->Embedded) {
++    // The host's kernel runs the call: leave the dispatch with RIP after the
++    // instruction, as the hardware leaves it, and RCX/R11 set for SYSCALL.
++    if (IsSyscallInst) {
++      // RF is gone once an instruction completes; SYSCALL saves no RF.
++      StoreGPRRegister(X86State::REG_R11, _And(OpSize::i64Bit, GetPackedRFLAG(), _Constant(~(1ULL << X86State::RFLAG_RF_LOC))),
++                       OpSize::i64Bit);
++      StoreGPRRegister(X86State::REG_RCX, GetRelocatedPC(Op), OpSize::i64Bit);
++    }
++    // The exit spills the static registers, so commit cached writes first.
++    FlushRegisterCache();
++    _StoreContextGPR(GPRSize, GetRelocatedPC(Op), offsetof(FEXCore::Core::CPUState, rip));
++    BlockSetRIP = true;
++    Break({
++      .ErrorRegister = 0,
++      .Signal = Core::EMBEDDER_SIGNAL_SYSCALL,
++      .TrapNumber = static_cast<uint8_t>(IsSyscallInst ? 0 : 0x80),
++      .si_code = 0,
++    });
++    return;
++  }
++
+   auto NewRIP = GetRelocatedPC(Op, -Op->InstSize);
+   _StoreContextGPR(GPRSize, NewRIP, offsetof(FEXCore::Core::CPUState, rip));
+ 
+@@ -498,7 +521,7 @@ void OpDispatchBuilder::LEAVEOp(OpcodeArgs) {
+   const auto OperandSize = (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_OPERAND_SIZE) ? OpSize::i16Bit : GPRSize;
+ 
+   // First we move RBP in to RSP and then behave effectively like a pop
+-  auto SP = _RMWHandle(LoadGPRRegister(X86State::REG_RBP));
++  Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RBP));
+   auto NewGPR = Pop(OperandSize, SP);
+ 
+   // Store the new stack pointer
+@@ -2992,7 +3015,7 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
+ 
+   const auto PushValue = [&](IR::OpSize Size, Ref Src) -> Ref {
+     auto OldSP = LoadGPRRegister(X86State::REG_RSP);
+-    auto NewSP = _Push(GPRSize, Size, Src, OldSP);
++    auto NewSP = CTX->Embedded ? EmbeddedPush(GPRSize, Size, Src, OldSP) : _Push(GPRSize, Size, Src, OldSP);
+ 
+     // Store the new stack pointer
+     StoreGPRRegister(X86State::REG_RSP, NewSP);
+@@ -4195,6 +4218,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
+ }
+ 
+ void OpDispatchBuilder::UpdatePrefixFromSegment(Ref Segment, uint32_t SegmentReg) {
++  if (CTX->Embedded && Is64BitMode) {
++    // The descriptor tables are host memory, which embedded code reaches only
++    // through the guest TLB. Long mode ignores the CS/SS/DS/ES bases and the
++    // host keeps FS/GS bases itself, so a selector load changes no base.
++    return;
++  }
+   // Use BFE to extract the selector index in bits [15,3] of the segment register.
+   // In some cases the upper 16-bits of the 32-bit GPR contain garbage to ignore.
+   auto GDT = _Bfe(OpSize::i32Bit, 1, 2, Segment);
+@@ -4780,7 +4809,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+     if (CTX->HostFeatures.HostType == FEXCore::HostFeatures::HostTypeEnum::Linux) {
+       constexpr uint8_t SYSCALL_LITERAL = 0x80;
+       if (Literal == SYSCALL_LITERAL) {
+-        if (Is64BitMode) [[unlikely]] {
++        // A 64-bit process may make 32-bit system calls through INT 0x80;
++        // an embedding host's kernel takes them.
++        if (Is64BitMode && !CTX->Embedded) [[unlikely]] {
+           LogMan::Msg::EFmt("[Unsupported] Trying to execute 32-bit syscall from a 64-bit process.");
+           UnhandledOp(Op);
+           return;
+@@ -4808,6 +4839,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+       }
+     }
+ 
++    if (CTX->Embedded && (Literal == X86State::X86_TRAPNO_BP || Literal == X86State::X86_TRAPNO_OF)) {
++      // Linux's IDT lets user code raise #BP and #OF with INT n; both trap,
++      // leaving RIP after the instruction.
++      Reason.ErrorRegister = 0;
++      Reason.Signal = Literal == X86State::X86_TRAPNO_BP ? Core::FAULT_SIGTRAP : Core::FAULT_SIGSEGV;
++      Reason.TrapNumber = Literal;
++      Reason.si_code = 0x80;
++      SetRIPToNext = true;
++      break;
++    }
++
+     Reason.ErrorRegister = Literal << 3 | (0b010);
+     Reason.Signal = Core::FAULT_SIGSEGV;
+     // GP is raised when task-gate isn't setup to be valid
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..302246f6f58c1ac19a79e1b2fcad616122e65e59 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -2566,13 +2566,44 @@ private:
+     return _StoreMemPairAutoTSO(RegClass::FPR, Size, A, Value1, Value2, Align);
+   }
+ 
+-  Ref Pop(IR::OpSize Size, Ref SP_RMW) {
++  // An embedded backend reaches guest memory through the host TLB, which a
++  // post-indexed host access cannot express; it pops with a load and an add.
++  Ref EmbeddedPop(IR::OpSize Size, Ref& SP) {
++    Ref Value = _LoadMem(RegClass::GPR, Size, SP, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    SP = Add(OpSize::i64Bit, SP, IR::OpSizeToSize(Size));
++    return Value;
++  }
++
++  // The store comes before the stack pointer's update: the register
++  // allocator may give the new stack pointer RSP's static register, and a
++  // faulting push must leave RSP as the instruction found it.
++  Ref EmbeddedPush(IR::OpSize AddrSize, IR::OpSize Size, Ref Value, Ref OldSP) {
++    const auto Bytes = static_cast<int64_t>(IR::OpSizeToSize(Size));
++    if (AddrSize == OpSize::i64Bit) {
++      _StoreMem(RegClass::GPR, Size, Value, OldSP, Constant(-Bytes), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++      return Sub(AddrSize, OldSP, Bytes);
++    }
++    Ref NewSP = Sub(AddrSize, OldSP, Bytes);
++    _StoreMem(RegClass::GPR, Size, Value, NewSP, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    return NewSP;
++  }
++
++  Ref Pop(IR::OpSize Size, Ref& SP_RMW) {
++    if (CTX->Embedded) {
++      return EmbeddedPop(Size, SP_RMW);
++    }
+     Ref Value = _AllocateGPR(false);
+     _Pop(Size, SP_RMW, Value);
+     return Value;
+   }
+ 
+   Ref Pop(IR::OpSize Size) {
++    if (CTX->Embedded) {
++      Ref SP = LoadGPRRegister(X86State::REG_RSP);
++      Ref Value = EmbeddedPop(Size, SP);
++      StoreGPRRegister(X86State::REG_RSP, SP);
++      return Value;
++    }
+     Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
+     Ref Value = _AllocateGPR(false);
+ 
+@@ -2592,7 +2623,7 @@ private:
+ 
+   void Push(IR::OpSize Size, Ref Value) {
+     auto OldSP = LoadGPRRegister(X86State::REG_RSP);
+-    auto NewSP = _Push(GetGPROpSize(), Size, Value, OldSP);
++    auto NewSP = CTX->Embedded ? EmbeddedPush(GetGPROpSize(), Size, Value, OldSP) : _Push(GetGPROpSize(), Size, Value, OldSP);
+     StoreGPRRegister(X86State::REG_RSP, NewSP);
+     FlushRegisterCache();
+   }
+diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
+index 5d3bcec8bc6427eaddf47a28dc9ee1bbff771789..0f6d55435c0ca0779861386eab3a9993d78af7da 100644
+--- a/FEXCore/Source/Interface/IR/PassManager.cpp
++++ b/FEXCore/Source/Interface/IR/PassManager.cpp
+@@ -73,11 +73,12 @@ void PassManager::AddDefaultPasses(Context::ContextImpl* ctx) {
+   // We only specifically disable optimization passes if desired, as IR output should
+   // still be well-formed regardless of the modifications made to it.
+   if (!DisablePasses()) {
+-    InsertPass(CreateX87StackOptimizationPass(ctx->HostFeatures, ctx->Config.Is64BitMode ? IR::OpSize::i64Bit : IR::OpSize::i32Bit));
++    InsertPass(CreateX87StackOptimizationPass(ctx->HostFeatures, ctx->Config.Is64BitMode ? IR::OpSize::i64Bit : IR::OpSize::i32Bit, ctx->Embedded));
+     InsertPass(CreateDeadFlagCalculationEliminination());
+   }
+ 
+-  InsertPass(IR::CreateRegisterAllocationPass(&ctx->CPUID), "RA");
++  // An embedding host answers CPUID itself, so its results are never folded.
++  InsertPass(IR::CreateRegisterAllocationPass(ctx->Embedded ? nullptr : &ctx->CPUID), "RA");
+ 
+ #if defined(ASSERTIONS_ENABLED) && ASSERTIONS_ENABLED
+   InsertValidationPass(Validation::CreateIRValidation(), "IRValidation");
+diff --git a/FEXCore/Source/Interface/IR/Passes.h b/FEXCore/Source/Interface/IR/Passes.h
+index 213967a092da0f34c3afadcd8746f3305927e1f5..8a0a0d386cdca811332634883537989945a5dc3f 100644
+--- a/FEXCore/Source/Interface/IR/Passes.h
++++ b/FEXCore/Source/Interface/IR/Passes.h
+@@ -13,7 +13,7 @@ class Pass;
+ 
+ fextl::unique_ptr<Pass> CreateDeadFlagCalculationEliminination();
+ fextl::unique_ptr<Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID);
+-fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures&, OpSize GPROpSize);
++fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures&, OpSize GPROpSize, bool Embedded = false);
+ 
+ namespace Validation {
+   fextl::unique_ptr<Pass> CreateIRValidation();
+diff --git a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
+index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1ec85ce05c 100644
+--- a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
+@@ -515,7 +515,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+         return PhysicalRegister(LastNode) == PhysicalRegister(Op->OutRemainder);
+       }
+     }
+-  } else if (IROp->Op == OP_XGETBV && PhysicalRegister(IROp->Args[0]) == PhysicalRegister(LastNode) && LastOp->Op == OP_CONSTANT) {
++  } else if (CPUID && IROp->Op == OP_XGETBV && PhysicalRegister(IROp->Args[0]) == PhysicalRegister(LastNode) && LastOp->Op == OP_CONSTANT) {
+     // Try to constant fold
+     uint64_t ConstantFunction = LastOp->C<IROp_Constant>()->Constant;
+     auto Op = IROp->CW<IR::IROp_XGetBV>();
+@@ -527,7 +527,7 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+       IREmit->RemovePostRA(CodeNode);
+       return false;
+     }
+-  } else if (IROp->Op == OP_CPUID && PhysicalRegister(IROp->Args[0]) == PhysicalRegister(LastNode) && LastOp->Op == OP_CONSTANT) {
++  } else if (CPUID && IROp->Op == OP_CPUID && PhysicalRegister(IROp->Args[0]) == PhysicalRegister(LastNode) && LastOp->Op == OP_CONSTANT) {
+     // Try to constant fold. As a limitation of merging only 2 instructions, we
+     // can only handle constant functions, not constant leafs. This could be
+     // lifted if we generalized at a (significant) complexity cost.
+diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c339708537c91930 100644
+--- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+@@ -151,6 +151,9 @@ private:
+ 
+ class X87StackOptimization final : public Pass {
+ public:
++  void SetEmbedded(bool Value) {
++    Embedded = Value;
++  }
+   X87StackOptimization(const FEXCore::HostFeatures& Features, OpSize GPROpSize)
+     : Features(Features)
+     , GPROpSize(GPROpSize) {
+@@ -355,6 +358,10 @@ private:
+   // On the slow path TopCache is always the last obtained version of top.
+   // TopOffset is ignored
+   bool SlowPath = false;
++  // For an embedding host, which translates every memory access as a guest
++  // one: the slow path is taken throughout and addresses the stack slots as
++  // CPU state.
++  bool Embedded = false;
+ 
+   // Keeping IREmitter not to pass arguments around
+   IREmitter* IREmit = nullptr;
+@@ -377,7 +384,9 @@ inline void X87StackOptimization::InvalidateCachedRegs() {
+ }
+ 
+ inline void X87StackOptimization::Reset() {
+-  SlowPath = false;
++  // With a precise stack every operation reads and writes the architectural
++  // x87 state, so a fault inside a block sees the state of its instruction.
++  SlowPath = Embedded;
+   StackData.clear();
+   InvalidateCaches();
+ }
+@@ -469,10 +478,15 @@ inline Ref X87StackOptimization::GetX87ValidTag_Slow(uint8_t Offset) {
+ }
+ 
+ inline Ref X87StackOptimization::LoadStackValueAtOffset_Slow(uint8_t Offset) {
+-  OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(Offset);
+   auto Size = ReducedPrecisionMode ? OpSize::i64Bit : OpSize::i128Bit;
+   if (!TopValueCache[Offset]) {
+-    TopValueCache[Offset] = IREmit->_LoadMemFPR(Size, TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++    if (Embedded) {
++      TopValueCache[Offset] = IREmit->_LoadContextFPRIndexed(GetOffsetTopWithCache_Slow(Offset), Size, MMBaseOffset(), 16);
++    } else {
++      OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(Offset);
++      TopValueCache[Offset] =
++        IREmit->_LoadMemFPR(Size, TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++    }
+   }
+   return TopValueCache[Offset];
+ }
+@@ -614,8 +628,12 @@ void X87StackOptimization::FlushCachedRegs() {
+   auto Size = ReducedPrecisionMode ? OpSize::i64Bit : OpSize::i128Bit;
+   for (size_t i = 0; i < FlushValuesPending.size(); i++) {
+     if (FlushValuesPending[i]) {
+-      OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(i);
+-      IREmit->_StoreMemFPR(Size, TopValueCache[i], TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++      if (Embedded) {
++        IREmit->_StoreContextFPRIndexed(TopValueCache[i], GetOffsetTopWithCache_Slow(i), Size, MMBaseOffset(), 16);
++      } else {
++        OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(i);
++        IREmit->_StoreMemFPR(Size, TopValueCache[i], TopOffsetAddress, IREmit->_InlineConstant(MMBaseOffset()), Size, MemOffsetType::SXTX, 1);
++      }
+       // store
+       FlushValuesPending[i] = false;
+     }
+@@ -1235,7 +1253,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+   }
+ }
+ 
+-fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures& Features, OpSize GPROpSize) {
+-  return fextl::make_unique<X87StackOptimization>(Features, GPROpSize);
++fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures& Features, OpSize GPROpSize, bool Embedded) {
++  auto Pass = fextl::make_unique<X87StackOptimization>(Features, GPROpSize);
++  Pass->SetEmbedded(Embedded);
++  return Pass;
+ }
+ } // namespace FEXCore::IR
+diff --git a/FEXCore/Source/Utils/Allocator.cpp b/FEXCore/Source/Utils/Allocator.cpp
+index 2060f269cf94978fcbdd7cca32e161763284aa57..1ad53fce959bd81d75fa7ab1afc70e6eafed7ae6 100644
+--- a/FEXCore/Source/Utils/Allocator.cpp
++++ b/FEXCore/Source/Utils/Allocator.cpp
+@@ -23,7 +23,11 @@
+ #include <fcntl.h>
+ #ifndef _WIN32
+ #include <sys/mman.h>
++#ifndef __APPLE__
+ #include <sys/user.h>
++#else
++#include <pthread.h>
++#endif
+ #endif
+ 
+ namespace fextl::pmr {
+@@ -34,6 +38,43 @@ std::pmr::memory_resource* get_default_resource() {
+ } // namespace fextl::pmr
+ 
+ namespace FEXCore::Allocator {
++#ifdef __APPLE__
++namespace {
++  void* DefaultAllocateExecutable(size_t Size) {
++    void* Ptr = ::mmap(nullptr, Size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT, -1, 0);
++    return Ptr == MAP_FAILED ? nullptr : Ptr;
++  }
++  void DefaultFreeExecutable(void* Ptr, size_t Size) {
++    ::munmap(Ptr, Size);
++  }
++  void DefaultSetWritable(bool Writable) {
++    pthread_jit_write_protect_np(Writable ? 0 : 1);
++  }
++  ExecutableMemoryHooks ExecutableHooks {DefaultAllocateExecutable, DefaultFreeExecutable, DefaultSetWritable};
++  thread_local uint32_t ExecutableWriteDepth {};
++} // namespace
++
++void SetExecutableMemoryHooks(const ExecutableMemoryHooks& Hooks) {
++  ExecutableHooks = Hooks;
++}
++
++const ExecutableMemoryHooks& GetExecutableMemoryHooks() {
++  return ExecutableHooks;
++}
++
++void BeginExecutableWrite() {
++  if (ExecutableWriteDepth++ == 0) {
++    ExecutableHooks.SetWritable(true);
++  }
++}
++
++void EndExecutableWrite() {
++  if (--ExecutableWriteDepth == 0) {
++    ExecutableHooks.SetWritable(false);
++  }
++}
++#endif
++
+ #ifndef _WIN32
+ MMAP_Hook mmap {::mmap};
+ MUNMAP_Hook munmap {::munmap};
+diff --git a/FEXCore/include/FEXCore/Core/Context.h b/FEXCore/include/FEXCore/Core/Context.h
+index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a59438db7 100644
+--- a/FEXCore/include/FEXCore/Core/Context.h
++++ b/FEXCore/include/FEXCore/Core/Context.h
+@@ -68,6 +68,25 @@ public:
+    */
+   FEX_DEFAULT_VISIBILITY virtual bool InitCore() = 0;
+ 
++  /**
++   * @brief Lets a host that owns guest memory drive this context. Call before InitCore.
++   *
++   * Guest memory is reached through the host's software TLB in each thread's
++   * CpuStateFrame::Embedder, not at host address == guest address. Every guest
++   * instruction records its RIP, SYSCALL and INT 0x80 end the dispatch, each
++   * block entry spends CpuStateFrame::Embedder::Budget, CPUID and XGETBV always
++   * call the thread's CPUID pointers, and FEXCore installs no signal handlers
++   * of its own. The host fills the Embedder pointers of each thread it creates.
++   */
++  FEX_DEFAULT_VISIBILITY virtual void EnableEmbedding() = 0;
++
++  /**
++   * @brief Runs a thread until it exits through an embedder exit.
++   *
++   * @param SingleInst compiles the first block as one instruction, uncached
++   */
++  FEX_DEFAULT_VISIBILITY virtual void ExecuteEmbedded(FEXCore::Core::InternalThreadState* Thread, bool SingleInst) = 0;
++
+   /**
+    * @brief Executes the supplied thread context on the current thread until a return is requested
+    */
+diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..e72993a6a281f8d04435536ba9eaecf21272cc18 100644
+--- a/FEXCore/include/FEXCore/Core/CoreState.h
++++ b/FEXCore/include/FEXCore/Core/CoreState.h
+@@ -334,6 +334,54 @@ struct FallbackABIInfo {
+   uint64_t Func;
+ };
+ 
++// One entry of an embedding host's software TLB. Tags hold the complement of
++// the guest page number, whose top bits are always set, so a zero tag never
++// matches; the host flushes entries to zero. A hit's host address is guest +
++// delta.
++struct EmbedderTLBEntry {
++  uint64_t ReadTag;
++  uint64_t ReadDelta;
++  uint64_t WriteTag;
++  uint64_t WriteDelta;
++};
++static_assert(sizeof(EmbedderTLBEntry) == 32);
++constexpr uint32_t EMBEDDER_TLB_BITS = 14;
++
++enum EmbedderExitReason : uint32_t {
++  EMBEDDER_EXIT_NONE = 0,
++  EMBEDDER_EXIT_BUDGET = 1,
++  EMBEDDER_EXIT_MEMORY_FAULT = 2,
++  EMBEDDER_EXIT_BREAK = 3,
++  EMBEDDER_EXIT_UNSUPPORTED = 4,
++  // A host string helper stopped between elements; RIP names the instruction.
++  EMBEDDER_EXIT_YIELD = 5,
++};
++
++// Access info passed to the TLB-miss stub.
++constexpr uint64_t EMBEDDER_ACCESS_SIZE_MASK = 0xFF;
++constexpr uint64_t EMBEDDER_ACCESS_WRITE = 1ULL << 8;
++constexpr uint64_t EMBEDDER_ACCESS_ATOMIC = 1ULL << 9;
++constexpr uint64_t EMBEDDER_ACCESS_READ_WRITE = 1ULL << 10;
++// An ordered (acquire/release) access, kept inside one 16-byte granule.
++constexpr uint64_t EMBEDDER_ACCESS_ORDERED = 1ULL << 11;
++
++// FAULT_* signal value the embedded frontend uses for SYSCALL and INT 0x80.
++constexpr uint8_t EMBEDDER_SIGNAL_SYSCALL = 0xFE;
++// ... and for integer divide errors (#DE).
++constexpr uint8_t EMBEDDER_SIGNAL_DIVIDE = 0xFD;
++
++// REP MOVS/STOS performed by the host on behalf of the JIT.
++struct EmbedderStringOp {
++  uint64_t Dest;
++  uint64_t Src;
++  uint64_t Count;
++  uint64_t Value;
++  int64_t Direction; // +1 or -1
++  uint32_t ElementSize;
++  uint32_t IsCopy;
++  uint64_t GuestRIP;
++};
++
+ struct JITPointers {
+ 
+   // Process specific
+@@ -355,6 +403,18 @@ struct JITPointers {
+   // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
+   uint64_t ExitFunctionEC {};
+ 
++  // Embedding host: guest memory is translated by the host's software TLB.
++  // EmbedderExit spills static registers and returns from the dispatch;
++  // EmbedderExitNoSpill returns with them already spilled.
++  uint64_t EmbedderExit {};
++  uint64_t EmbedderExitNoSpill {};
++  // Shared TLB-miss stub: x0 = guest address, x1 = access info, x2 = resume PC.
++  uint64_t EmbedderTLBMiss {};
++  // uintptr_t (*)(CpuStateFrame*, uint64_t Address, uint64_t Info): host address or 0 after recording a fault.
++  uint64_t EmbedderTLBMissHelper {};
++  // uint64_t (*)(CpuStateFrame*, const EmbedderStringOp*): 0 on success, else the state is spilled and the fault recorded.
++  uint64_t EmbedderStringHelper {};
++
+   FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
+   uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
+   uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
+@@ -432,6 +492,26 @@ struct CpuStateFrame {
+   uint32_t SuspendDoorbell {};
+ #endif
+ 
++  // State an embedding host shares with the code it runs. Only used when the
++  // context was created with embedding enabled.
++  struct alignas(16) EmbedderStateStruct {
++    // Host software TLB: EmbedderTLBEntry[1 << EMBEDDER_TLB_BITS].
++    uint64_t TLB {};
++    // Guest instructions this dispatch may still start. A block whose entry
++    // would take it below zero exits instead, with RIP at the block.
++    int64_t Budget {};
++    // Why the last dispatch returned (EmbedderExitReason).
++    uint32_t ExitReason {};
++    uint32_t FaultAccess {};
++    uint64_t FaultAddress {};
++    // Guest RIP of the instruction whose access missed, set by each miss site.
++    uint64_t AccessRIP {};
++    // Opaque host pointer for the helpers.
++    uint64_t HostContext {};
++    // Bounce buffer for accesses that cross a guest page.
++    alignas(16) uint8_t Bounce[64] {};
++  } Embedder;
++
+   // Pointers that the JIT needs to load to remove relocations
+   JITPointers Pointers;
+ };
+diff --git a/FEXCore/include/FEXCore/HLE/SyscallHandler.h b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
+index d1f4decd75f0ae61432c7a4ae4b90386e472ea46..bc397bb363fec5cde2c6940301c0e4f097da5d79 100644
+--- a/FEXCore/include/FEXCore/HLE/SyscallHandler.h
++++ b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
+@@ -44,6 +44,9 @@ struct ExecutableRangeInfo {
+   uint64_t Base;
+   uint64_t Size;
+   bool Writable;
++  // Host address of Base when guest code is not at host address == guest
++  // address (an embedding host); null otherwise.
++  const uint8_t* HostBase {};
+ };
+ 
+ class SyscallHandler;
+diff --git a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+index bddd53da56b81d69a3c9fdff770f6f8c03e77df2..7dea60911f01c58fca1bf2d52080a993320c2023 100644
+--- a/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
++++ b/FEXCore/include/FEXCore/Utils/AllocatorHooks.h
+@@ -8,6 +8,8 @@
+ #include <stdlib.h>
+ #ifdef __APPLE__
+ #include <malloc/malloc.h>
++#include <string.h>
++#include <unistd.h>
+ #else
+ #include <malloc.h>
+ #endif
+@@ -130,11 +132,59 @@ FEX_DEFAULT_VISIBILITY extern void VirtualName(const char* Name, void* Ptr, size
+ 
+ // All commit parameters are ignored here, they are unnecessary as Linux supports overcommit
+ 
++#ifdef __APPLE__
++/* Darwin forbids writable-and-executable mappings for a hardened process and
++ * gives JIT memory per-thread write protection instead. An embedding host owns
++ * that memory: it supplies the allocator and the write window, so FEXCore never
++ * maps executable memory itself. The defaults below are only for a host that
++ * installs nothing. */
++struct ExecutableMemoryHooks {
++  void* (*Allocate)(size_t Size);
++  void (*Free)(void* Ptr, size_t Size);
++  /* Opens (true) or closes (false) the calling thread's write window on every
++   * executable allocation. Calls do not nest; FEXCore counts them. */
++  void (*SetWritable)(bool Writable);
++};
++FEX_DEFAULT_VISIBILITY void SetExecutableMemoryHooks(const ExecutableMemoryHooks& Hooks);
++FEX_DEFAULT_VISIBILITY const ExecutableMemoryHooks& GetExecutableMemoryHooks();
++FEX_DEFAULT_VISIBILITY void BeginExecutableWrite();
++FEX_DEFAULT_VISIBILITY void EndExecutableWrite();
++#endif
++
++/* Brackets every write to executable memory. On Darwin it opens the thread's
++ * JIT write window for its lifetime; elsewhere it costs nothing. */
++class ScopedExecutableWrite final {
++public:
++  ScopedExecutableWrite() {
++#ifdef __APPLE__
++    BeginExecutableWrite();
++#endif
++  }
++  ~ScopedExecutableWrite() {
++#ifdef __APPLE__
++    EndExecutableWrite();
++#endif
++  }
++  ScopedExecutableWrite(const ScopedExecutableWrite&) = delete;
++  ScopedExecutableWrite& operator=(const ScopedExecutableWrite&) = delete;
++};
++
+ inline void* VirtualAlloc(size_t Size, bool Execute = false, bool Commit = true) {
++#ifdef __APPLE__
++  if (Execute) {
++    void* Ptr = GetExecutableMemoryHooks().Allocate(Size);
++    return Ptr ? Ptr : MAP_FAILED;
++  }
++#endif
+   return FEXCore::Allocator::mmap(nullptr, Size, PROT_READ | PROT_WRITE | (Execute ? PROT_EXEC : 0), MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+ }
+ 
+ inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Commit = true) {
++#ifdef __APPLE__
++  if (Execute && Base == nullptr) {
++    return VirtualAlloc(Size, true, Commit);
++  }
++#endif
+   return FEXCore::Allocator::mmap(Base, Size, PROT_READ | PROT_WRITE | (Execute ? PROT_EXEC : 0), MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+ }
+ 
+@@ -142,7 +192,24 @@ inline void VirtualFree(void* Ptr, size_t Size) {
+   FEXCore::Allocator::munmap(Ptr, Size);
+ }
+ inline void VirtualDontNeed(void* Ptr, size_t Size, bool Recommit = true) {
++#ifdef __APPLE__
++  /* Darwin's MADV_DONTNEED keeps the contents; callers rely on the range
++   * reading back as zero. Replace whole host pages, clear the partial ends. */
++  const uintptr_t PageSize = static_cast<uintptr_t>(::getpagesize());
++  const uintptr_t Begin = reinterpret_cast<uintptr_t>(Ptr);
++  const uintptr_t End = Begin + Size;
++  const uintptr_t AlignedBegin = (Begin + PageSize - 1) & ~(PageSize - 1);
++  const uintptr_t AlignedEnd = End & ~(PageSize - 1);
++  if (AlignedBegin >= AlignedEnd) {
++    ::memset(Ptr, 0, Size);
++    return;
++  }
++  ::memset(Ptr, 0, AlignedBegin - Begin);
++  ::memset(reinterpret_cast<void*>(AlignedEnd), 0, End - AlignedEnd);
++  ::mmap(reinterpret_cast<void*>(AlignedBegin), AlignedEnd - AlignedBegin, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++#else
+   ::madvise(reinterpret_cast<void*>(Ptr), Size, MADV_DONTNEED);
++#endif
+ }
+ inline bool VirtualProtect(void* Ptr, size_t Size, ProtectOptions options) {
+   int prot {PROT_NONE};

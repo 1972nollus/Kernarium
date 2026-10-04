@@ -25,7 +25,10 @@ glib|2.88.3
 gvdb|2b42fc7
 libslirp|4.9.5
 libvncserver|0.9.15
-fex|FEX-2608'
+fex|FEX-2608
+fmt|1be298e
+xxhash|e626a72
+unordered-dense|3234af2'
 
 fail()
 {
