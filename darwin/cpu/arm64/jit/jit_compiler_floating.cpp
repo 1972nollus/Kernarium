@@ -74,16 +74,14 @@ JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
       (!decoded.scalar && !host_capabilities().advanced_simd) ||
       (decoded.width == 16U && !host_capabilities().fp16))
     return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5) & 31U;
-  const unsigned right = (instruction >> 16) & 31U;
-  const auto native_left = read_native_vector(left, 0);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1);
-  auto native = instruction & ~((31U << 16) | (31U << 5) | 31U);
-  native |= (native_right.host << 16) | (native_left.host << 5);
   if (decoded.scalar) {
+    const unsigned destination = instruction & 31U;
+    const unsigned left = (instruction >> 5) & 31U;
+    const unsigned right = (instruction >> 16) & 31U;
     const unsigned addend = (instruction >> 10) & 31U;
+    const auto native_left = read_native_vector(left, 0);
+    const auto native_right =
+        right == left ? native_left : read_native_vector(right, 1);
     const auto native_addend =
         addend == left
             ? native_left
@@ -92,16 +90,12 @@ JitCompilerFamilies::emit_fused_floating(std::uint32_t instruction) {
                   : read_native_vector(addend, 2);
     const auto native_destination =
         write_native_vector(destination, false, 3);
-    native &= ~(31U << 10);
-    native |= (native_addend.host << 10) | native_destination.host;
-    emit(native);
+    emit((instruction & ~0x001f'7fffU) | (native_right.host << 16) |
+         (native_addend.host << 10) | (native_left.host << 5) |
+         native_destination.host);
     commit_native_vector(native_destination, destination);
   } else {
-    const auto native_destination =
-        write_native_vector(destination, true, 2);
-    native |= native_destination.host;
-    emit(native);
-    commit_native_vector(native_destination, destination);
+    emit_native_vector_binary(instruction, true);
   }
   mark_native_fp();
   return true;
