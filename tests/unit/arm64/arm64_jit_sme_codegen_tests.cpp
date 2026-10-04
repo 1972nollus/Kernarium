@@ -4,8 +4,9 @@
  * AdvSIMD or other FP&SIMD word reaches an SM=1 translation, the host enters
  * streaming mode only in the external prologue and leaves it before every
  * host call and return, and only SM=1 translations touch the host's
- * streaming state. Every witness word of the A64 evidence table is compiled
- * in every mode and link shape.
+ * streaming state. Every witness word of the A64 evidence table, which the
+ * registration passes as the only argument, is compiled in every mode and
+ * link shape.
  */
 #include "runtime_test_route.hpp"
 #include "require.hpp"
@@ -29,10 +30,6 @@
 #include <string>
 #include <vector>
 
-#ifndef UML_A64_EVIDENCE_BINDINGS
-#error "UML_A64_EVIDENCE_BINDINGS names the A64 evidence table"
-#endif
-
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
@@ -49,8 +46,8 @@ struct Witness final {
   std::uint32_t word{};
 };
 
-[[nodiscard]] std::vector<Witness> witnesses() {
-  std::ifstream table{UML_A64_EVIDENCE_BINDINGS};
+[[nodiscard]] std::vector<Witness> witnesses(const char *bindings) {
+  std::ifstream table{bindings};
   require(static_cast<bool>(table));
   std::vector<Witness> result;
   std::string line;
@@ -197,12 +194,12 @@ void check_program(std::uint64_t pc, std::span<const std::uint32_t> program,
           mode, label, checked);
 }
 
-void streaming_translations_hold_no_fp_simd_word() {
+void streaming_translations_hold_no_fp_simd_word(const char *bindings) {
   const auto host = sme_host(64);
   const uml::cpu::HostCapabilitiesScope scope{host};
   constexpr std::uint64_t pc = 0x4f00'0000U;
   Checked checked;
-  for (const auto &witness : witnesses()) {
+  for (const auto &witness : witnesses(bindings)) {
     const std::array alone{witness.word, system_call};
     const std::array after{add_x0_one, witness.word, system_call};
     check_program(pc, alone, witness.id, checked);
@@ -251,9 +248,10 @@ void population_count_needs_no_advanced_simd() {
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
   const uml::testing::RuntimeTestRoute runtime_route;
-  streaming_translations_hold_no_fp_simd_word();
+  require(argc == 2);
+  streaming_translations_hold_no_fp_simd_word(argv[1]);
   if (arm64::native_jit_available())
     population_count_needs_no_advanced_simd();
   return 0;

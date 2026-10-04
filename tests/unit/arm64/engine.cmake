@@ -237,9 +237,8 @@
     target_compile_definitions(uml_arm64_jit_sme_mode_tests PRIVATE
         UML_JIT_RUNTIME_DIAGNOSTICS=1)
     uml_add_arm64_unit_test(jit_sme_codegen WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
-    target_compile_definitions(uml_arm64_jit_sme_codegen_tests PRIVATE
-        UML_A64_EVIDENCE_BINDINGS="${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv")
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv)
 
     uml_add_arm64_unit_test(counter_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
