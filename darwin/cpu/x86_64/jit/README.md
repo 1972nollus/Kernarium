@@ -30,20 +30,23 @@ per address-space generation and execution mode, at most eight, and releases
 the least recently used, because FEXCore's block caches are keyed by guest RIP
 alone.
 
-FEXCore's generated code reaches guest memory through an inline software TLB.
-A miss calls the engine, which fills the entry from the static MMU or ends the
+FEXCore's generated code reaches guest memory through an inline software TLB. A
+miss calls the engine, which fills the entry from the static MMU or ends the
 dispatch with the guest's fault; the miss path preserves every register the
-access sequence holds, including the element address of a masked move. An access that crosses a
-guest page, or an ordered access that crosses a 16-byte granule, completes
-through a bounce buffer in the address space's own fault order. A locked
-operand that crosses a granule has no single-copy-atomic host access; as in the
-gadget engine, it is an ordinary load and store of the bounce buffer under the
-process-wide split-operand lock, faulting before anything is stored. FEXCore
-allocates and publishes code only through the executable-memory owner's hooks,
-and its call-return stack, which generated code addresses without a bounds
-check, sits in that owner's guarded data reservation, so running off it stops
-at a guard page. A dispatch starts at most 64 Ki instructions, which keeps
-unbalanced calls and returns inside that stack.
+access sequence holds, including the element address of a masked move and the
+backend's vector temporaries. An access that crosses a guest page, or an
+ordered access that crosses a 16-byte granule, completes through a bounce
+buffer in the address space's own fault order. A locked operand that crosses a
+granule has no single-copy-atomic host access; as in the gadget engine, it is
+an ordinary load and store of the bounce buffer under the process-wide
+split-operand lock, faulting before anything is stored. A VEX gather translates
+its elements one at a time into a temporary, so on a fault the engine itself
+gathers the elements before the faulting one into the guest state, as x86 does.
+FEXCore allocates and publishes code only through the executable-memory owner's
+hooks, and its call-return stack, which generated code addresses without a
+bounds check, sits in that owner's guarded data reservation, so running off it
+stops at a guard page. A dispatch starts at most 64 Ki instructions, which
+keeps unbalanced calls and returns inside that stack.
 
 The engine joins the code-page registry with a function that retires its own
 TLB entry for a page. It counts a page in before the decoder reads the page's
@@ -126,5 +129,4 @@ engine in the unit suite.
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The classes are VEX gathers through the software TLB
-and SSE NaN, denormal and estimate rules.
+in the same change. The classes are SSE NaN, denormal and estimate rules.

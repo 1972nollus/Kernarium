@@ -21,7 +21,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
  FEXCore/Source/Interface/Core/Core.cpp        |  19 +-
- .../Interface/Core/Dispatcher/Dispatcher.cpp  |  66 ++-
+ .../Interface/Core/Dispatcher/Dispatcher.cpp  |  71 ++-
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
  FEXCore/Source/Interface/Core/Frontend.h      |   4 +
@@ -31,7 +31,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../Interface/Core/JIT/EmbedderMemory.cpp     | 415 ++++++++++++++++++
  FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 130 +++++-
  FEXCore/Source/Interface/Core/JIT/JITClass.h  | 102 +++++
- .../Source/Interface/Core/JIT/MemoryOps.cpp   | 393 ++++++++++++++++-
+ .../Source/Interface/Core/JIT/MemoryOps.cpp   | 409 ++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |  12 +
  .../Interface/Core/OpcodeDispatcher.cpp       |  48 +-
  .../Source/Interface/Core/OpcodeDispatcher.h  |  39 +-
@@ -42,10 +42,10 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
- FEXCore/include/FEXCore/Core/CoreState.h      | 110 +++++
+ FEXCore/include/FEXCore/Core/CoreState.h      | 114 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1825 insertions(+), 219 deletions(-)
+ 29 files changed, 1842 insertions(+), 227 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -242,7 +242,7 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..32ab9b3c4bae04995940360cc5daa7ac
  
      Thread->FrontendDecoder->DelayedDisownBuffer();
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b8b82c778 100644
+index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..4af3408475a3d51239569a3503a3f5a11b871e54 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -34,11 +34,12 @@ static void SleepThread(FEXCore::Context::ContextImpl* CTX, FEXCore::Core::CpuSt
@@ -268,7 +268,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b
    }
  }
  
-@@ -432,6 +433,57 @@ void Dispatcher::EmitDispatcher() {
+@@ -432,6 +433,62 @@ void Dispatcher::EmitDispatcher() {
      }
    }
  
@@ -299,6 +299,10 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b
 +    // 64-bit value in the PF and AF registers; the state spill keeps only
 +    // their low halves.
 +    stp<ARMEmitter::IndexType::PRE>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, -16);
++    // So may the vector temporaries, which no register set covers: a gather
++    // builds its result in one. The embedding host has no SVE, so their
++    // low 128 bits are the whole register.
++    stp<ARMEmitter::IndexType::PRE>(VTMP1.Q(), VTMP2.Q(), ARMEmitter::Reg::rsp, -32);
 +    PushDynamicRegs(TMP4);
 +    SpillStaticRegs(TMP4);
 +    mov(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r2, ARMEmitter::Reg::r1);
@@ -309,6 +313,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b
 +    (void)cbz(ARMEmitter::Size::i64Bit, ARMEmitter::Reg::r0, &l_Fault);
 +    FillStaticRegs();
 +    PopDynamicRegs();
++    ldp<ARMEmitter::IndexType::POST>(VTMP1.Q(), VTMP2.Q(), ARMEmitter::Reg::rsp, 32);
 +    ldp<ARMEmitter::IndexType::POST>(REG_PF.X(), REG_AF.X(), ARMEmitter::Reg::rsp, 16);
 +    ldp<ARMEmitter::IndexType::POST>(ARMEmitter::XReg::x2, ARMEmitter::XReg::x30, ARMEmitter::Reg::rsp, 16);
 +    ldr(TMP4, STATE_PTR(CpuStateFrame, Embedder.MissSavedTMP4));
@@ -326,7 +331,7 @@ index b174dab3cec7e89b1d65978a5f615ad6bbedf1f1..e633dec4eea64e0f3ceb5ffa2621767b
    {
      ThreadPauseHandlerAddressSpillSRA = GetCursorAddress<uint64_t>();
      SpillStaticRegs(TMP1);
-@@ -2623,6 +2675,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2623,6 +2680,16 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
      Ptrs.GuestSignal_SIGILL = GuestSignal_SIGILL;
      Ptrs.GuestSignal_SIGTRAP = GuestSignal_SIGTRAP;
      Ptrs.GuestSignal_SIGSEGV = GuestSignal_SIGSEGV;
@@ -1800,7 +1805,7 @@ index 8879c928a10270ef8a38caf0e87b1e42c1687bdd..f8e8e09822b3bf99d05356c92415b5ad
    ARMEmitter::Register GetReg(IR::PhysicalRegister Reg) const {
      const auto RegClass = Reg.AsRegClass();
 diff --git a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
-index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..55c95b3b2fe138ba5b9449bbdbc7118f78212c27 100644
+index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..f4f029a1fdff5e5da6f2e416bd068fc3e0e43016 100644
 --- a/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp
 @@ -706,7 +706,12 @@ DEF_OP(LoadMem) {
@@ -1979,28 +1984,59 @@ index 849df0f2c2a5bbbc40cb31b9c5eef23cc4b3d19e..55c95b3b2fe138ba5b9449bbdbc7118f
    if (HostSupportsSVE128 || HostSupportsSVE256) {
      const auto MemDst = GenerateSVEMemOperand(OpSize, MemReg, Op->Offset, Op->OffsetType, Op->OffsetScale);
  
-@@ -1168,6 +1282,10 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
- }
+@@ -1107,7 +1221,9 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
+     ResultReg = VTMP1;
+   }
+   auto WorkingReg = TMP1;
+-  auto TempMemReg = TMP2;
++  // Embedded, the element address goes through the software TLB, which uses
++  // TMP1 to TMP3 and keeps TMP4.
++  auto TempMemReg = Embedded() ? TMP4 : TMP2;
+   const uint64_t ElementSizeInBits = IR::OpSizeToSize(ElementSize) * 8;
  
- DEF_OP(VLoadVectorGatherMasked) {
-+  if (Embedded()) {
-+    EmitEmbedderUnsupported("vector gather");
-+    return;
-+  }
-   const auto Op = IROp->C<IR::IROp_VLoadVectorGatherMasked>();
-   const auto OpSize = IROp->Size;
+   if (NeedsIncomingDestMove) {
+@@ -1149,12 +1265,16 @@ void Arm64JITCore::Emulate128BitGather(IR::OpSize Size, IR::OpSize ElementSize,
+     }
  
-@@ -1266,6 +1384,10 @@ DEF_OP(VLoadVectorGatherMasked) {
- }
+     // Now that the address is calculated. Do the load.
++    ARMEmitter::Register LoadReg = TempMemReg;
++    if (Embedded()) {
++      LoadReg = EmbedderTranslate(TempMemReg, IR::OpSizeToSize(ElementSize), Core::EMBEDDER_ACCESS_GATHER);
++    }
+     switch (ElementSize) {
+-    case IR::OpSize::i8Bit: ld1<ARMEmitter::SubRegSize::i8Bit>(ResultReg.Q(), i, TempMemReg); break;
+-    case IR::OpSize::i16Bit: ld1<ARMEmitter::SubRegSize::i16Bit>(ResultReg.Q(), i, TempMemReg); break;
+-    case IR::OpSize::i32Bit: ld1<ARMEmitter::SubRegSize::i32Bit>(ResultReg.Q(), i, TempMemReg); break;
+-    case IR::OpSize::i64Bit: ld1<ARMEmitter::SubRegSize::i64Bit>(ResultReg.Q(), i, TempMemReg); break;
+-    case IR::OpSize::i128Bit: ldr(ResultReg.Q(), TempMemReg, 0); break;
++    case IR::OpSize::i8Bit: ld1<ARMEmitter::SubRegSize::i8Bit>(ResultReg.Q(), i, LoadReg); break;
++    case IR::OpSize::i16Bit: ld1<ARMEmitter::SubRegSize::i16Bit>(ResultReg.Q(), i, LoadReg); break;
++    case IR::OpSize::i32Bit: ld1<ARMEmitter::SubRegSize::i32Bit>(ResultReg.Q(), i, LoadReg); break;
++    case IR::OpSize::i64Bit: ld1<ARMEmitter::SubRegSize::i64Bit>(ResultReg.Q(), i, LoadReg); break;
++    case IR::OpSize::i128Bit: ldr(ResultReg.Q(), LoadReg, 0); break;
+     default: LOGMAN_MSG_A_FMT("Unhandled {} size: {}", __func__, ElementSize); FEX_UNREACHABLE;
+     }
  
- DEF_OP(VLoadVectorGatherMaskedQPS) {
-+  if (Embedded()) {
-+    EmitEmbedderUnsupported("vector gather");
-+    return;
-+  }
-   const auto Op = IROp->C<IR::IROp_VLoadVectorGatherMaskedQPS>();
+@@ -1201,7 +1321,8 @@ DEF_OP(VLoadVectorGatherMasked) {
+     !Op->VectorIndexHigh.IsInvalid() ? std::make_optional(GetVReg(Op->VectorIndexHigh)) : std::nullopt;
  
-   /// This instruction behaves similarly to the non-QPS version except for some STRICT limitations
+   ///< If the host supports SVE and the offset scale matches SVE limitations then it can do an SVE style load.
+-  const bool SupportsSVELoad = (HostSupportsSVE128 || HostSupportsSVE256) &&
++  ///< Embedded, each element goes through the software TLB.
++  const bool SupportsSVELoad = !Embedded() && (HostSupportsSVE128 || HostSupportsSVE256) &&
+                                (OffsetScale == 1 || OffsetScale == IR::OpSizeToSize(VectorIndexSize)) &&
+                                VectorIndexSize == IROp->ElementSize && Op->AddrSize == IR::OpSize::i64Bit;
+ 
+@@ -1286,7 +1407,8 @@ DEF_OP(VLoadVectorGatherMaskedQPS) {
+     !Op->VectorIndexHigh.IsInvalid() ? std::make_optional(GetVReg(Op->VectorIndexHigh)) : std::nullopt;
+ 
+   ///< If the host supports SVE and the offset scale matches SVE limitations then it can do an SVE style load.
+-  const bool SupportsSVELoad = HostSupportsSVE128 && (OffsetScale == 1 || OffsetScale == 4) && Op->AddrSize == IR::OpSize::i64Bit;
++  const bool SupportsSVELoad =
++    !Embedded() && HostSupportsSVE128 && (OffsetScale == 1 || OffsetScale == 4) && Op->AddrSize == IR::OpSize::i64Bit;
+ 
+   if (SupportsSVELoad) {
+     ARMEmitter::SVEModType ModType = ARMEmitter::SVEModType::MOD_NONE;
 @@ -1355,7 +1477,10 @@ DEF_OP(VLoadVectorElement) {
  
    const auto Dst = GetVReg(Node);
@@ -2845,10 +2881,10 @@ index ec61b90bf82769e34b42bb229d7781ecb98d3853..b436d9b2d0523aa6af59ec0aa546b74a
     * @brief Executes the supplied thread context on the current thread until a return is requested
     */
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..68802e6d5b40b7cf3394905a1449d908d9548b0b 100644
+index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..1d996d1c2a1cc94845582ebf0c4bf68eb0f3a310 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -334,6 +334,68 @@ struct FallbackABIInfo {
+@@ -334,6 +334,72 @@ struct FallbackABIInfo {
    uint64_t Func;
  };
  
@@ -2890,6 +2926,10 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..68802e6d5b40b7cf3394905a1449d908
 +// the op ran on its copy in the bounce buffer: the host stores the copy and
 +// releases its split-operand lock.
 +constexpr uint64_t EMBEDDER_ACCESS_COMMIT = 1ULL << 12;
++// An element of a vector gather. On a fault the host completes the elements
++// before the faulting one, as x86 does, which the backend's loop does not
++// keep in the guest state.
++constexpr uint64_t EMBEDDER_ACCESS_GATHER = 1ULL << 13;
 +// Bits 32 and up: the instructions a fault at this access leaves unretired
 +// of those its unit charged the budget for.
 +constexpr uint32_t EMBEDDER_ACCESS_UNRETIRED_SHIFT = 32;
@@ -2917,7 +2957,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..68802e6d5b40b7cf3394905a1449d908
  struct JITPointers {
  
    // Process specific
-@@ -355,6 +417,18 @@ struct JITPointers {
+@@ -355,6 +421,18 @@ struct JITPointers {
    // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
    uint64_t ExitFunctionEC {};
  
@@ -2936,7 +2976,7 @@ index 7c64dd83c1f37b2e9e37045da088f494a02f9a90..68802e6d5b40b7cf3394905a1449d908
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
    uint64_t IndexedNamedVectorConstantPointers[FEXCore::IR::IndexNamedVectorConstant::INDEXED_NAMED_VECTOR_MAX];
-@@ -432,6 +506,42 @@ struct CpuStateFrame {
+@@ -432,6 +510,42 @@ struct CpuStateFrame {
    uint32_t SuspendDoorbell {};
  #endif
  

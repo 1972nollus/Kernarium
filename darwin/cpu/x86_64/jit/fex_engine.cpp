@@ -4,6 +4,7 @@
 #include "cpu/jit_memory/executable_memory.hpp"
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
+#include "cpu/x86_64/decoder.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
@@ -289,6 +290,8 @@ struct Space final {
 	 * holds while this thread holds the split-operand lock. */
 	std::uint64_t split_address{};
 	std::size_t split_size{};
+	/* The dispatch ended at a fault of a gather element. */
+	bool gather_fault{};
 
 	Space() = default;
 	Space(const Space &) = delete;
@@ -594,9 +597,9 @@ uintptr_t split_operand(Core::CpuStateFrame &frame, Space &space, GuestAddressSp
 	return reinterpret_cast<uintptr_t>(bounce);
 }
 
-/* The TLB-miss helper the backend's shared stub calls. Returns the host
- * address of the access, or 0 after recording why the dispatch must end. */
-uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
+/* Returns the host address of a guest access the software TLB missed, or 0
+ * after recording why the dispatch must end. */
+uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
 {
 	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
 	auto &engine = *space.engine;
@@ -689,6 +692,16 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	if (ordered)
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 	return reinterpret_cast<uintptr_t>(bounce);
+}
+
+/* The TLB-miss helper the backend's shared stub calls. */
+uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
+{
+	const auto host = translate_miss(frame, address, info);
+	if (host == 0 && (info & Core::EMBEDDER_ACCESS_GATHER) != 0 &&
+		frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_MEMORY_FAULT)
+		reinterpret_cast<Space *>(frame->Embedder.HostContext)->gather_fault = true;
+	return host;
 }
 
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
@@ -946,6 +959,67 @@ void save_state(Space &space, CpuState &cpu) noexcept
 	cpu.gs_base = state.gs_cached;
 }
 
+/* An AVX2 gather that faults has, on x86, gathered every enabled element
+ * before the faulting one, clearing its mask element, and zeroed the
+ * destination and mask above the elements it has; the guest restarts it
+ * with what remains. The backend gathers into a temporary and leaves the
+ * state as it was before the instruction, so the host redoes the elements
+ * in order up to the first that faults, as the gadget engine does, with the
+ * backend's address arithmetic: base plus displacement plus the scaled,
+ * sign-extended index, wrapped to the address size. If no element faults
+ * now, the state and the fault stay as the dispatch left them. */
+void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::FaultInfo &fault) noexcept
+{
+	const auto decoded = decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != DecodeStatus::decoded || decoded.instruction.operation != Operation::vector_gather)
+		return;
+	const auto &instruction = decoded.instruction;
+	const auto &operand = instruction.auxiliary.memory;
+	const std::size_t data = (instruction.vector_group & 1U) != 0 ? 8 : 4;
+	const std::size_t index = (instruction.vector_group & 2U) != 0 ? 8 : 4;
+	const std::size_t width = (instruction.vector_group & 4U) != 0 ? 32 : 16;
+	const std::size_t count = width / std::max(data, index);
+	auto &destination = cpu.vectors[instruction.destination.reg.index];
+	auto &mask = cpu.vectors[instruction.source.reg.index];
+	const auto &indices = cpu.vectors[operand.index];
+	const auto saved_destination = destination;
+	const auto saved_mask = mask;
+	std::uint64_t base = static_cast<std::uint64_t>(static_cast<std::int64_t>(operand.displacement));
+	if (operand.base != MemoryOperand::no_register)
+		base += cpu.registers[operand.base];
+	unsigned shift = 0;
+	while ((1U << shift) < operand.scale)
+		++shift;
+	for (std::size_t element = 0; element < count; ++element) {
+		if ((std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) == 0)
+			continue;
+		std::int64_t offset{};
+		if (index == 4) {
+			std::int32_t value{};
+			std::memcpy(&value, indices.data() + element * 4, 4);
+			offset = value;
+		} else {
+			std::memcpy(&offset, indices.data() + element * 8, 8);
+		}
+		std::uint64_t address = base + (static_cast<std::uint64_t>(offset) << shift);
+		if (operand.address_32)
+			address = static_cast<std::uint32_t>(address);
+		std::array<std::byte, 8> value{};
+		if (!memory.read(address, std::span<std::byte>{value.data(), data})) {
+			const auto gathered = static_cast<std::ptrdiff_t>(count * data);
+			std::fill(destination.begin() + gathered, destination.end(), std::byte{});
+			std::fill(mask.begin() + gathered, mask.end(), std::byte{});
+			fault.address = memory.has_fault() ? memory.last_fault().address : address;
+			fault.access = MemoryAccess::read;
+			return;
+		}
+		std::memcpy(destination.data() + element * data, value.data(), data);
+		std::memset(mask.data() + element * data, 0, data);
+	}
+	destination = saved_destination;
+	mask = saved_mask;
+}
+
 /* Linux's flat user descriptor: FEXCore takes the decode mode from the code
  * descriptor's L bit. */
 [[nodiscard]] Core::CPUState::gdt_segment flat_user_segment(bool code, bool long_mode) noexcept
@@ -1138,6 +1212,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
+	space->gather_fault = false;
 	frame->State.callret_sp = space->callret.middle();
 
 	const auto host_fpcr = read_fpcr();
@@ -1182,6 +1257,8 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		result.reason = ::uml::cpu::ExitReason::memory_fault;
 		result.fault.address = frame->Embedder.FaultAddress;
 		result.fault.access = static_cast<MemoryAccess>(frame->Embedder.FaultAccess);
+		if (space->gather_fault)
+			complete_gather(cpu, memory, result.fault);
 		return run;
 	case Core::EMBEDDER_EXIT_BREAK:
 		break;

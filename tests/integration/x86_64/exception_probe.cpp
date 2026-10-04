@@ -1900,6 +1900,217 @@ bool masked_moves()
 			address_of(probe_mask_load_insn), 14, true, 4});
 	return ok;
 }
+
+/* Each gather loads YMM0 (the destination) from (state)[8..11], YMM1 (the
+ * mask) from (state)[4..7] and YMM2 (the indices) from (state)[12..15],
+ * gathers from the base (state)[0] at scale 1, and leaves YMM0 in
+ * (state)[16..19] and YMM1 in (state)[20..23]. */
+#define PROBE_GATHER(name, instruction)                                      \
+	".global probe_gather_" #name "\n"                                   \
+	"probe_gather_" #name ":\n"                                          \
+	"	movq (%rdi), %rax\n"                                         \
+	"	vmovdqu 32(%rdi), %ymm1\n"                                   \
+	"	vmovdqu 64(%rdi), %ymm0\n"                                   \
+	"	vmovdqu 96(%rdi), %ymm2\n"                                   \
+	".global probe_gather_" #name "_insn\n"                              \
+	"probe_gather_" #name "_insn:\n"                                     \
+	"	" instruction "\n"                                           \
+	".global probe_gather_" #name "_end\n"                               \
+	"probe_gather_" #name "_end:\n"                                      \
+	"	vmovdqu %ymm0, 128(%rdi)\n"                                  \
+	"	vmovdqu %ymm1, 160(%rdi)\n"                                  \
+	"	vzeroupper\n"                                                \
+	"	ret\n"
+__asm__(".text\n"
+	PROBE_GATHER(dd256, "vpgatherdd %ymm1, (%rax,%ymm2,1), %ymm0")
+	PROBE_GATHER(dd128, "vpgatherdd %xmm1, (%rax,%xmm2,1), %xmm0")
+	PROBE_GATHER(qq256, "vpgatherqq %ymm1, (%rax,%ymm2,1), %ymm0")
+	PROBE_GATHER(qps128, "vgatherqps %xmm1, (%rax,%xmm2,1), %xmm0"));
+#undef PROBE_GATHER
+
+#define DECLARE_GATHER(name)                                                 \
+	extern "C" void probe_gather_##name(word *state);                    \
+	extern "C" char probe_gather_##name##_insn[];                        \
+	extern "C" char probe_gather_##name##_end[];
+DECLARE_GATHER(dd256)
+DECLARE_GATHER(dd128)
+DECLARE_GATHER(qq256)
+DECLARE_GATHER(qps128)
+#undef DECLARE_GATHER
+
+alignas(32) word gather_state[24];
+/* Three pages no other case touches: the first holds the pattern, the
+ * second stays untouched until a gather reads it, and the probe unmaps the
+ * third. */
+alignas(4096) unsigned char gather_pages[3 * page_bytes];
+
+void gather_dd256() { probe_gather_dd256(gather_state); }
+void gather_dd128() { probe_gather_dd128(gather_state); }
+void gather_qq256() { probe_gather_qq256(gather_state); }
+void gather_qps128() { probe_gather_qps128(gather_state); }
+
+/* The pattern dword at byte offset (offset) of the first page. */
+u32 gather_pattern(word offset) { return 0x5a000000U | static_cast<u32>(offset); }
+
+/* Fills the state for (lanes) elements of (size) bytes at the byte offsets
+ * (offsets) from the pages, the mask lanes in (enabled) set to the sign
+ * bit and those in (other) to a value without it; the destination starts
+ * as 0x11111111 times the lane number plus one. */
+void set_gather_state(unsigned size, unsigned lanes, const word *offsets,
+		      unsigned enabled, unsigned other = 0)
+{
+	for (unsigned index = 1; index < 24; ++index)
+		gather_state[index] = 0;
+	gather_state[0] = reinterpret_cast<word>(gather_pages);
+	auto *bytes = reinterpret_cast<unsigned char *>(gather_state);
+	for (unsigned lane = 0; lane < lanes; ++lane) {
+		const u64 top = size == 4 ? 0x80000000ULL : 0x8000000000000000ULL;
+		const u64 mask = (enabled >> lane) & 1U ? top :
+			(other >> lane) & 1U ? top - 1 : 0;
+		const u64 initial = 0x11111111ULL * (lane + 1);
+		for (unsigned byte = 0; byte < size; ++byte) {
+			bytes[32 + lane * size + byte] =
+				static_cast<unsigned char>(mask >> (8 * byte));
+			bytes[64 + lane * size + byte] =
+				static_cast<unsigned char>(initial >> (8 * byte));
+		}
+	}
+	/* Indices are dwords for the dd forms and qwords for the others. */
+	const unsigned index_size = size == 4 && lanes != 2 ? 4 : 8;
+	for (unsigned lane = 0; lane < lanes; ++lane)
+		for (unsigned byte = 0; byte < index_size; ++byte)
+			bytes[96 + lane * index_size + byte] =
+				static_cast<unsigned char>(offsets[lane] >> (8 * byte));
+}
+
+/* The element (lane) of (size) bytes that the gather left at (state)
+ * offset (base). */
+u64 gather_lane(unsigned base, unsigned size, unsigned lane)
+{
+	const auto *bytes = reinterpret_cast<const volatile unsigned char *>(gather_state);
+	u64 value = 0;
+	for (unsigned byte = 0; byte < size; ++byte)
+		value |= static_cast<u64>(bytes[base + lane * size + byte]) << (8 * byte);
+	return value;
+}
+
+/* Checks the first (lanes) elements after a gather: those in (done) hold
+ * (loaded) and have a zero mask; the others keep their destination and
+ * the sign of their mask. */
+bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
+		     const u64 *loaded, unsigned enabled)
+{
+	bool ok = true;
+	const unsigned sign = size * 8 - 1;
+	for (unsigned lane = 0; lane < lanes; ++lane) {
+		const u64 value = gather_lane(128, size, lane);
+		const u64 mask = gather_lane(160, size, lane);
+		if ((done >> lane) & 1U) {
+			ok &= expect("gathered element", value, loaded[lane]);
+			ok &= expect("its mask", mask, 0);
+		} else {
+			ok &= expect("element not gathered", value,
+				     0x11111111ULL * (lane + 1));
+			ok &= expect("its mask sign", (mask >> sign) & 1U,
+				     (enabled >> lane) & 1U);
+		}
+	}
+	return ok;
+}
+
+/* AVX2 gathers complete their elements in order: an element whose mask
+ * sign is clear is not read, an element on a page not yet touched
+ * completes, and an element on an unmapped page raises #PF at its address
+ * with every element before it gathered and its mask cleared, and the
+ * elements from it on untouched. */
+bool gathers()
+{
+	unsigned char *const first = gather_pages;
+	unsigned char *const unmapped = gather_pages + 2 * page_bytes;
+	if (raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  munmap failed\n");
+		return false;
+	}
+	for (word offset = 0; offset < page_bytes; offset += 4) {
+		const u32 value = gather_pattern(offset);
+		for (unsigned byte = 0; byte < 4; ++byte)
+			first[offset + byte] = static_cast<unsigned char>(value >> (8 * byte));
+	}
+	bool ok = install_fault_handlers();
+	const word away = 2 * page_bytes;
+	const auto pattern64 = [](word offset) {
+		return static_cast<u64>(gather_pattern(offset)) |
+			(static_cast<u64>(gather_pattern(offset + 4)) << 32);
+	};
+
+	{
+		const word offsets[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		u64 loaded[8];
+		for (unsigned lane = 0; lane < 8; ++lane)
+			loaded[lane] = gather_pattern(offsets[lane]);
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers_nothing("VPGATHERDD", gather_dd256,
+				       address_of(probe_gather_dd256_end));
+		ok &= expect_gathered(4, 8, 0xff, loaded, 0xff);
+	}
+	{
+		/* Lane 1 has its sign clear and points at the unmapped page;
+		 * lane 2 is on the untouched page; lane 3 faults. */
+		const word offsets[8] = {0x10, away, page_bytes + 0x30, away + 0x40,
+					 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), 0, 0, 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xfd, 0x02);
+		ok &= delivers("VPGATHERDD onto an unmapped page", gather_dd256,
+			       address_of(probe_gather_dd256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x40),
+				address_of(probe_gather_dd256_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x05, loaded, 0xf8);
+	}
+	{
+		/* An element that runs from the first page onto the unmapped
+		 * one faults at the unmapped page. */
+		const word offsets[8] = {0x10, away - 2, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), 0, 0, 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers("VPGATHERDD across onto an unmapped page", gather_dd256,
+			       address_of(probe_gather_dd256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+				address_of(probe_gather_dd256_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x01, loaded, 0xfe);
+	}
+	{
+		const word offsets[4] = {0x10, 0x20, away + 0x30, 0x40};
+		const u64 loaded[4] = {gather_pattern(0x10), gather_pattern(0x20), 0, 0};
+		set_gather_state(4, 4, offsets, 0x0f);
+		ok &= delivers("VPGATHERDD XMM onto an unmapped page", gather_dd128,
+			       address_of(probe_gather_dd128_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x30),
+				address_of(probe_gather_dd128_insn), 14, true, 4});
+		ok &= expect_gathered(4, 4, 0x03, loaded, 0x0c);
+	}
+	{
+		const word offsets[4] = {0x10, 0x28, away + 0x8, 0x40};
+		const u64 loaded[4] = {pattern64(0x10), pattern64(0x28), 0, 0};
+		set_gather_state(8, 4, offsets, 0x0f);
+		ok &= delivers("VPGATHERQQ onto an unmapped page", gather_qq256,
+			       address_of(probe_gather_qq256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x8),
+				address_of(probe_gather_qq256_insn), 14, true, 4});
+		ok &= expect_gathered(8, 4, 0x03, loaded, 0x0c);
+	}
+	{
+		const word offsets[2] = {0x18, away + 0x20};
+		const u64 loaded[2] = {gather_pattern(0x18), 0};
+		set_gather_state(4, 2, offsets, 0x03);
+		ok &= delivers("VGATHERQPS onto an unmapped page", gather_qps128,
+			       address_of(probe_gather_qps128_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x20),
+				address_of(probe_gather_qps128_insn), 14, true, 4});
+		ok &= expect_gathered(4, 2, 0x01, loaded, 0x02);
+	}
+	return ok;
+}
 #endif
 
 extern "C" void probe_xm_div();
@@ -3056,6 +3267,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "divide-error"));
 	report("x86-64 VMASKMOV and VPMASKMOV access only enabled lanes",
 	       in_child(self, "masked-moves"));
+	report("x86-64 AVX2 gathers complete the elements before a fault",
+	       in_child(self, "gathers"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -3132,6 +3345,8 @@ extern "C" int probe_main(word *stack)
 			return divide_errors() ? 0 : 1;
 		if (equal(mode, "masked-moves"))
 			return masked_moves() ? 0 : 1;
+		if (equal(mode, "gathers"))
+			return gathers() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}
