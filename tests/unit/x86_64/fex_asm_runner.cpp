@@ -1,8 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
+#if UML_FEX_ASM_JIT
+#include "cpu/x86_64/jit/fex_engine.hpp"
+#include "platform/apple/host_features.hpp"
+#else
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
+#endif
 #include "memory/guest_address_space.hpp"
 
 #include <algorithm>
@@ -17,6 +22,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string>
@@ -31,9 +37,11 @@ constexpr std::uint64_t code_address = 0x1'0000;
 constexpr std::uint64_t scratch_address = 0xe000'0000;
 constexpr std::uint64_t sib_address = 0xe800'0000;
 constexpr std::size_t instruction_limit = 1'000'000;
+#if !UML_FEX_ASM_JIT
 /* The address-space generation cached runs share their code-page registry
  * under; each case's executor releases it before the next case starts. */
 constexpr std::uint64_t cached_generation = 1;
+#endif
 
 struct Region final {
 	std::uint64_t begin{};
@@ -268,6 +276,7 @@ struct CodeSequences final {
 	std::uint64_t code_changes{1};
 };
 
+#if !UML_FEX_ASM_JIT
 [[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
 read_code_sequences(void *opaque) noexcept
 {
@@ -278,6 +287,7 @@ read_code_sequences(void *opaque) noexcept
 		.interrupted = false,
 	};
 }
+#endif
 
 struct RegisterExpectation final {
 	std::uint64_t key{};
@@ -482,6 +492,10 @@ template<std::unsigned_integral Value>
 	return output.str();
 }
 
+/* The known failure class of the record running now, when an exclusion
+ * list names it. */
+std::string_view excluded_class;
+
 void print_result(std::string_view status, std::size_t retired,
 	std::uint64_t address, std::span<const std::byte> opcode,
 	std::string_view detail, std::string_view test = {})
@@ -489,6 +503,8 @@ void print_result(std::string_view status, std::size_t retired,
 	std::cout << "status=" << status << '\t';
 	if (!test.empty())
 		std::cout << "test=" << test << '\t';
+	if (!excluded_class.empty())
+		std::cout << "class=" << excluded_class << '\t';
 	std::cout
 		<< "retired=" << retired << '\t'
 		<< "address=0x" << std::hex << address << std::dec << '\t'
@@ -560,7 +576,11 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 					sizeof(actual));
 				if (actual != expectation.values[lane]) {
 					status = "result_mismatch";
-					detail = "XMM" + std::to_string(vector_index);
+					std::ostringstream mismatch;
+					mismatch << "XMM" << vector_index << '[' << lane <<
+						"] expected=0x" << std::hex <<
+						expectation.values[lane] << " actual=0x" << actual;
+					detail = mismatch.str();
 					return false;
 				}
 			}
@@ -599,6 +619,69 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	return true;
 }
 
+#if UML_FEX_ASM_JIT
+[[nodiscard]] const char *reason_name(uml::cpu::ExitReason reason) noexcept
+{
+	switch (reason) {
+	case uml::cpu::ExitReason::system_call: return "system_call";
+	case uml::cpu::ExitReason::memory_fault: return "memory_fault";
+	case uml::cpu::ExitReason::interrupt: return "interrupt";
+	case uml::cpu::ExitReason::illegal_instruction: return "illegal_instruction";
+	case uml::cpu::ExitReason::breakpoint: return "breakpoint";
+	case uml::cpu::ExitReason::floating_point_trap: return "floating_point_trap";
+	case uml::cpu::ExitReason::pc_alignment: return "pc_alignment";
+	case uml::cpu::ExitReason::instruction_budget: return "instruction_budget";
+	case uml::cpu::ExitReason::single_step: return "single_step";
+	case uml::cpu::ExitReason::fatal: return "fatal";
+	}
+	return "unknown";
+}
+
+/* One engine serves the process, as one serves a vCPU thread. Every case
+ * runs in a fresh address-space generation, so no translation, software-TLB
+ * entry or code-page registration crosses cases. */
+struct JitHarness final {
+	uml::cpu::x86_64::jit::FexEngine engine{
+		uml::platform::apple::probed_host_capabilities()};
+	unsigned long generation{};
+	uml::cpu::InterruptToken interrupt{};
+
+	[[nodiscard]] unsigned long begin(uml::cpu::x86_64::ExecutionMode mode,
+		std::uint64_t code_sequence)
+	{
+		++generation;
+		engine.apply_changes(generation, mode, {
+			.mapping_sequence = 1,
+			.code_sequence = code_sequence,
+			.all_mappings = true,
+			.all_code = true,
+		});
+		return generation;
+	}
+
+	[[nodiscard]] uml::cpu::x86_64::jit::JitRunResult run(
+		uml::cpu::x86_64::CpuState &cpu, SparseMemory &memory,
+		unsigned long run_generation, std::size_t budget)
+	{
+		return engine.run(cpu, memory, {
+			.generation = run_generation,
+			.instruction_budget = budget,
+			.execution_context = nullptr,
+			.interrupt = &interrupt,
+		});
+	}
+};
+
+JitHarness &jit_harness()
+{
+	static JitHarness harness;
+	return harness;
+}
+
+constexpr std::uint64_t rflags_trap = 1ULL << 8U;
+constexpr std::uint64_t rflags_resume = 1ULL << 16U;
+constexpr std::uint32_t vector_general_protection = 13;
+#else
 [[nodiscard]] const char *event_name(uml::cpu::EngineEvent event) noexcept
 {
 	switch (event) {
@@ -620,6 +703,7 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	}
 	return "unknown";
 }
+#endif
 
 } // namespace
 
@@ -641,8 +725,15 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 
 	SparseMemory memory;
 	CodeSequences sequences;
+#if UML_FEX_ASM_JIT
+	/* The engine fetches through is_executable: every mapped page may hold
+	 * code, as in the product, and a publishing store moves the sequence. */
+	(void)dispatch;
+	memory.model_code_pages(&sequences.code_changes);
+#else
 	if (dispatch == Dispatch::cached)
 		memory.model_code_pages(&sequences.code_changes);
+#endif
 	const auto code_size = (binary.size() + page_size - 1U) &
 		~(page_size - 1U);
 	if (!memory.map(scratch_address, page_size * 10U) ||
@@ -672,6 +763,86 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	}
 
 	uml::cpu::x86_64::CpuState cpu{};
+#if UML_FEX_ASM_JIT
+	cpu.rip = code_address;
+	cpu.rflags = 0x202;
+	cpu.execution_mode = configuration.mode;
+	if (configuration.mode ==
+		uml::cpu::x86_64::ExecutionMode::compat32) {
+		print_result("unsupported_mode", 0, cpu.rip, {},
+			"the x86-64 JIT runs 64-bit code only", test);
+		return 1;
+	}
+	auto &harness = jit_harness();
+	const auto generation = harness.begin(configuration.mode,
+		sequences.code_changes);
+	std::size_t retired{};
+	while (retired < instruction_limit) {
+		const auto opcode = memory.snapshot(cpu.rip, 15);
+		if (!opcode.empty() && opcode.front() == std::byte{0xf4}) {
+			std::string status;
+			std::string detail;
+			const auto passed = compare_registers(
+				configuration, cpu, status, detail);
+			if (!passed || !quiet_success)
+				print_result(status, retired, cpu.rip, opcode, detail, test);
+			return passed ? 0 : 1;
+		}
+		const auto &result = harness.run(cpu, memory, generation,
+			instruction_limit - retired).execution;
+		retired += result.retired_instructions;
+		if (result.reason == uml::cpu::ExitReason::instruction_budget) {
+			cpu.rflags &= ~rflags_resume;
+			continue;
+		}
+		/* The same test-local system calls as the gadget loop below. */
+		if (result.reason == uml::cpu::ExitReason::system_call &&
+			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&
+			cpu.gpr(uml::cpu::x86_64::Register::rdi) == 0) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 1;
+			continue;
+		}
+		if (result.reason == uml::cpu::ExitReason::system_call &&
+			cpu.system_call_32bit &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 265U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
+			continue;
+		}
+		if (result.reason == uml::cpu::ExitReason::system_call &&
+			cpu.system_call_32bit &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rax)) == 355U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rbx)) == 0U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rcx)) == 0U &&
+			static_cast<std::uint32_t>(
+				cpu.gpr(uml::cpu::x86_64::Register::rdx)) == 0U) {
+			cpu.gpr(uml::cpu::x86_64::Register::rax) = 0;
+			continue;
+		}
+		/* HLT, the end marker, raises #GP at user privilege. */
+		if (result.reason == uml::cpu::ExitReason::breakpoint &&
+			result.syndrome == vector_general_protection) {
+			const auto marker = memory.snapshot(cpu.rip, 1);
+			if (!marker.empty() && marker.front() == std::byte{0xf4})
+				continue;
+		}
+		const auto status = result.reason ==
+			uml::cpu::ExitReason::memory_fault ? "memory_fault" :
+			result.reason == uml::cpu::ExitReason::illegal_instruction ?
+			"illegal_instruction" : "unexpected_event";
+		std::string detail = reason_name(result.reason);
+		if (result.reason == uml::cpu::ExitReason::breakpoint)
+			detail += " vector " + std::to_string(result.syndrome);
+		print_result(status, retired, cpu.rip,
+			memory.snapshot(cpu.rip, 15), detail, test);
+		return 1;
+	}
+#else
 	uml::cpu::x86_64::gadgets::Executor executor;
 	/* A cached run prepares the executor as the product's dispatch loop
 	 * does: again whenever the code-change sequence has moved past the one
@@ -804,6 +975,7 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 		if (result.instruction_budget_exhausted)
 			break;
 	}
+#endif
 	print_result("instruction_limit", retired, cpu.rip,
 		memory.snapshot(cpu.rip, 15), "instruction retirement limit reached",
 		test);
@@ -1107,8 +1279,15 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	}
 	uml::cpu::x86_64::CpuState cpu{};
 	initialize_k_cpu(cpu, expected, offsets);
+#if UML_FEX_ASM_JIT
+	std::uint64_t k_code_changes{1};
+	memory.model_code_pages(&k_code_changes);
+	auto &harness = jit_harness();
+	const auto generation = harness.begin(cpu.execution_mode, k_code_changes);
+#else
 	uml::cpu::x86_64::gadgets::Executor executor;
 	executor.prepare(memory);
+#endif
 	for (std::uint32_t state_index = 1; state_index < state_count;
 		++state_index) {
 		const auto address = cpu.rip;
@@ -1119,6 +1298,35 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 				error, test);
 			return 2;
 		}
+#if UML_FEX_ASM_JIT
+		/* One instruction per dispatch: the engine's single step. Under TF
+		 * a repeated string instruction traps after each iteration, with
+		 * RF set and RIP still on it; a K state follows the whole
+		 * instruction. */
+		auto result = uml::cpu::ExecutionResult{};
+		for (std::size_t iteration = 0; iteration < instruction_limit;
+			++iteration) {
+			cpu.rflags |= rflags_trap;
+			result = harness.run(cpu, memory, generation, 1).execution;
+			if (result.reason != uml::cpu::ExitReason::single_step ||
+				cpu.rip != address || (cpu.rflags & rflags_resume) == 0)
+				break;
+		}
+		cpu.rflags &= ~(rflags_trap | rflags_resume);
+		const auto expected_reason = expected.expected_event == 0 ?
+			uml::cpu::ExitReason::single_step :
+			uml::cpu::ExitReason::floating_point_trap;
+		if (result.reason != expected_reason) {
+			std::string detail = reason_name(result.reason);
+			if (result.reason == uml::cpu::ExitReason::breakpoint)
+				detail += " vector " + std::to_string(result.syndrome);
+			print_result(result.reason ==
+				uml::cpu::ExitReason::illegal_instruction ?
+				"illegal_instruction" : "unexpected_event",
+				state_index - 1U, address, opcode, detail, test);
+			return 1;
+		}
+#else
 		const auto built = uml::cpu::x86_64::gadgets::build(
 			memory, address, cpu.execution_mode);
 		if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built) {
@@ -1141,6 +1349,7 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 				event_name(result.event), test);
 			return 1;
 		}
+#endif
 		if (expected.expected_event != 0)
 			cpu.rip = code_address + offsets[expected.rip_index];
 		uml::cpu::x86_64::materialize_flags(cpu);
@@ -1160,7 +1369,40 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	return 0;
 }
 
-[[nodiscard]] int run_corpus(std::span<const std::byte> bytes)
+/* An engine's known failure classes. Each row names one record and its
+ * class: a failure of the record is expected, and a pass is a stale row,
+ * which fails the run until the list loses it. */
+using Exclusions = std::map<std::string, std::string, std::less<>>;
+
+[[nodiscard]] bool load_exclusions(const char *path, Exclusions &exclusions,
+	std::string &error)
+{
+	std::ifstream input{path};
+	if (!input) {
+		error = std::string{"cannot read exclusion list "} + path;
+		return false;
+	}
+	std::string line;
+	while (std::getline(input, line)) {
+		if (line.empty() || line.front() == '#')
+			continue;
+		const auto tab = line.find('\t');
+		if (tab == std::string::npos || tab == 0 || tab + 1 == line.size() ||
+			line.find('\t', tab + 1) != std::string::npos) {
+			error = "malformed exclusion: " + line;
+			return false;
+		}
+		if (!exclusions.emplace(line.substr(0, tab),
+			    line.substr(tab + 1)).second) {
+			error = "duplicate exclusion: " + line.substr(0, tab);
+			return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] int run_corpus(std::span<const std::byte> bytes,
+	const Exclusions &exclusions = {})
 {
 	ByteCursor cursor{bytes};
 	std::span<const std::byte> magic;
@@ -1175,6 +1417,8 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	}
 	std::uint64_t cases{};
 	std::uint32_t failures{};
+	std::map<std::string_view, std::uint32_t> expected;
+	std::set<std::string_view> named;
 	for (std::uint32_t record_index = 0; record_index < record_count;
 		++record_index) {
 		std::uint8_t kind{};
@@ -1213,14 +1457,35 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 		}
 		const std::string_view name{
 			reinterpret_cast<const char *>(name_bytes.data()), name_bytes.size()};
+		const auto exclusion = exclusions.find(name);
+		if (exclusion != exclusions.end()) {
+			excluded_class = exclusion->second;
+			named.insert(exclusion->first);
+		}
 		const auto result = kind == corpus_kind_k ?
 			run_k_trace(code, payload, case_count, name,
 				(flags & 2U) != 0) :
 			run_fex_case(code, payload, name, true,
 				kind == corpus_kind_repository ?
 					Dispatch::cached : Dispatch::fresh);
+		excluded_class = {};
 		cases += case_count;
-		failures += result != 0;
+		if (exclusion == exclusions.end() || result == 2) {
+			failures += result != 0;
+		} else if (result == 0) {
+			print_result("stale_exclusion", 0, 0, {},
+				"passes; remove it from the exclusion list", name);
+			++failures;
+		} else {
+			++expected[exclusion->second];
+		}
+	}
+	for (const auto &[name, failure_class] : exclusions) {
+		if (named.contains(name))
+			continue;
+		print_result("unknown_exclusion", 0, 0, {},
+			"names no record of the corpus", name);
+		++failures;
 	}
 	if (cursor.remaining() != 0) {
 		print_result("malformed_input", record_count, 0, {},
@@ -1229,7 +1494,19 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	}
 	std::cout << "status=" << (failures == 0 ? "passed" : "failed") << '\t'
 		<< "records=" << record_count << '\t' << "cases=" << cases << '\t'
-		<< "failures=" << failures << '\n';
+		<< "failures=" << failures;
+	if (!exclusions.empty()) {
+		std::uint32_t excluded{};
+		for (const auto &[failure_class, count] : expected)
+			excluded += count;
+		std::cout << '\t' << "excluded=" << excluded << '\t' << "classes=";
+		const char *separator = "";
+		for (const auto &[failure_class, count] : expected) {
+			std::cout << separator << failure_class << ':' << count;
+			separator = ",";
+		}
+	}
+	std::cout << '\n';
 	return failures == 0 ? 0 : 1;
 }
 
@@ -1246,6 +1523,15 @@ int main(int argc, char **argv)
 		}
 		return run_corpus(first);
 	}
+	if (argc == 4 && std::string_view{argv[1]} == "--exclusions") {
+		Exclusions exclusions;
+		if (!load_exclusions(argv[2], exclusions, error) ||
+			!load_file(argv[3], first, error)) {
+			print_result("malformed_input", 0, 0, {}, error);
+			return 2;
+		}
+		return run_corpus(first, exclusions);
+	}
 	const bool repository = argc == 4 &&
 		std::string_view{argv[1]} == "--repository";
 	if (argc == 3 || repository) {
@@ -1261,6 +1547,7 @@ int main(int argc, char **argv)
 			repository ? Dispatch::cached : Dispatch::fresh);
 	}
 	print_result("malformed_input", 0, 0, {},
-		"usage: runner CORPUS | runner [--repository] BINARY CONFIG");
+		"usage: runner [--exclusions LIST] CORPUS | "
+		"runner [--repository] BINARY CONFIG");
 	return 2;
 }

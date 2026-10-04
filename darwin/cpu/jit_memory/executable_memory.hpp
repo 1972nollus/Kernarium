@@ -38,4 +38,15 @@ void set_writable(bool writable);
  */
 void invalidate_instruction_cache(void *code, std::size_t size);
 
+/* Reserves size bytes of ordinary read-write data between two inaccessible
+ * guard regions, each one host page long, or returns nullptr. A JIT keeps
+ * data its generated code addresses unchecked there, so an engine fault that
+ * runs off either end stops at a guard instead of corrupting the heap. size
+ * must be a multiple of the host page size.
+ */
+[[nodiscard]] void *reserve_guarded(std::size_t size) noexcept;
+
+/* Releases a reservation reserve_guarded made of size bytes. */
+void release_guarded(void *data, std::size_t size);
+
 } // namespace uml::cpu::jit_memory

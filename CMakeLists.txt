@@ -132,6 +132,23 @@ if(UML_X86_64_USERSPACE_ONLY AND NOT UML_BUILD_X86_64_GUEST)
     message(FATAL_ERROR
         "The fixed x86_64 userspace slice requires the x86_64 gadget backend")
 endif()
+# The x86-64 JIT embeds FEXCore, which only the macOS dependency prefix
+# carries. It is a macOS product by design: no iOS product, XCFramework slice
+# or Kernarium runtime may build it, and the architecture audit and the iOS
+# package checks prove that it does not.
+option(UML_BUILD_X86_64_JIT
+    "Build the macOS-only x86-64 JIT engine beside the x86-64 gadget engine"
+    ${UML_BUILD_X86_64_GUEST})
+if(UML_BUILD_X86_64_JIT AND NOT UML_TARGET_MACOS)
+    message(FATAL_ERROR
+        "The x86-64 JIT is macOS-only; UML_APPLE_PLATFORM="
+        "${UML_APPLE_PLATFORM} cannot build it")
+endif()
+if(UML_BUILD_X86_64_JIT AND NOT UML_BUILD_X86_64_GUEST)
+    message(FATAL_ERROR
+        "The x86-64 JIT runs the 4 KiB x86-64 guest, which this "
+        "configuration does not build")
+endif()
 # Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
 # one sparse software guest-address contract. Device and Simulator top-pack the
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises

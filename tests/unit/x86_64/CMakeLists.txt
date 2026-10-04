@@ -63,3 +63,32 @@ uml_add_unit_test(
     COMMAND uml_x86_64_fex_asm_runner "${_uml_x86_64_instruction_corpus}"
     LABELS cpu;x86-64)
 set_tests_properties(x86-64-instruction-corpus PROPERTIES TIMEOUT 900)
+
+# The same corpus through the macOS-only x86-64 JIT. The engine does not yet
+# implement every instruction class the gadget engine does; each record it
+# fails names its known class in the exclusion list, and a record that starts
+# passing fails the run until its row is removed.
+if(TARGET uml_x86_64_jit)
+    add_executable(uml_x86_64_fex_asm_jit_runner
+        fex_asm_runner.cpp)
+    target_compile_definitions(uml_x86_64_fex_asm_jit_runner PRIVATE
+        UML_FEX_ASM_JIT=1)
+    target_link_libraries(uml_x86_64_fex_asm_jit_runner PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_fex_asm_jit_runner PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    set_target_properties(uml_x86_64_fex_asm_jit_runner PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+    uml_add_unit_test(
+        NAME x86-64-jit-instruction-corpus
+        COMMAND uml_x86_64_fex_asm_jit_runner
+            --exclusions "${CMAKE_CURRENT_SOURCE_DIR}/jit_corpus_exclusions.tsv"
+            "${_uml_x86_64_instruction_corpus}"
+        LABELS cpu;x86-64)
+    set_tests_properties(x86-64-jit-instruction-corpus PROPERTIES
+        TIMEOUT 300)
+endif()

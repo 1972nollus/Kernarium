@@ -1,0 +1,218 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Corpus records the x86-64 JIT is known to fail, one per line as
+# <record name><TAB><class>. Each class is a correctness gap of the engine,
+# not of the record; the JIT corpus test fails when a listed record passes,
+# so a fix removes its rows in the same change.
+
+# vex-gather (97): the embedded backend has no VEX gather through the software
+# TLB and stops the run as unsupported.
+fex/FEX_bugs/vgather_xmm4.asm	vex-gather
+fex/VEX/vgather_dpd_128bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_128bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_128bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_128bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_256bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_256bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_256bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_dpd_256bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_dps_128bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_dps_128bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_dps_128bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_dps_128bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_dps_256bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_dps_256bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_dps_256bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_dps_256bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_128bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_qpd_256bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_128bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_qps_128bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_128bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_qps_128bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_128bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_qps_128bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_128bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_qps_128bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_256bit_1xdisp.asm	vex-gather
+fex/VEX/vgather_qps_256bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_256bit_2xdisp.asm	vex-gather
+fex/VEX/vgather_qps_256bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_256bit_4xdisp.asm	vex-gather
+fex/VEX/vgather_qps_256bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vgather_qps_256bit_8xdisp.asm	vex-gather
+fex/VEX/vgather_qps_256bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_dd_128bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_128bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_128bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_128bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_256bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_256bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_256bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_dd_256bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_128bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_128bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_128bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_128bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_256bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_256bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_256bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_dq_256bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_128bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_qd_256bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_128bit_8xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_1xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_1xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_2xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_2xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_4xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_4xdisp_overflow.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_8xdisp.asm	vex-gather
+fex/VEX/vpgather_qq_256bit_8xdisp_overflow.asm	vex-gather
+
+# split-locked-operand (53): an atomic operand that crosses a 16-byte granule
+# (LOCK forms, XCHG, and CMPXCHG, which FEXCore always performs atomically)
+# has no single-copy-atomic host access, so the engine stops the run as
+# unsupported.
+fex/Atomics/adc_atomic16.asm	split-locked-operand
+fex/Atomics/adc_atomic32.asm	split-locked-operand
+fex/Atomics/adc_atomic64.asm	split-locked-operand
+fex/Atomics/neg_atomic16.asm	split-locked-operand
+fex/Atomics/neg_atomic32.asm	split-locked-operand
+fex/Atomics/neg_atomic64.asm	split-locked-operand
+fex/Atomics/not_atomic16.asm	split-locked-operand
+fex/Atomics/not_atomic32.asm	split-locked-operand
+fex/Atomics/not_atomic64.asm	split-locked-operand
+fex/Atomics/sbb_atomic16.asm	split-locked-operand
+fex/Atomics/sbb_atomic32.asm	split-locked-operand
+fex/Atomics/sbb_atomic64.asm	split-locked-operand
+fex/Primary/Primary_01_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_01_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_01_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_09_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_09_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_09_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_23_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_23_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_23_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_29_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_29_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_29_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_31_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_31_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_31_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_87_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_87_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_87_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_FF_0_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_FF_0_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_FF_0_Atomic64.asm	split-locked-operand
+fex/Primary/Primary_FF_1_Atomic16.asm	split-locked-operand
+fex/Primary/Primary_FF_1_Atomic32.asm	split-locked-operand
+fex/Primary/Primary_FF_1_Atomic64.asm	split-locked-operand
+fex/PrimaryGroup/3_F7_02_3.asm	split-locked-operand
+fex/PrimaryGroup/3_F7_03_2.asm	split-locked-operand
+fex/Secondary/09_XX_01_12.asm	split-locked-operand
+fex/Secondary/09_XX_01_13.asm	split-locked-operand
+fex/Secondary/09_XX_01_15.asm	split-locked-operand
+fex/Secondary/09_XX_01_18.asm	split-locked-operand
+fex/Secondary/09_XX_01_19.asm	split-locked-operand
+fex/Secondary/09_XX_01_8.asm	split-locked-operand
+fex/Secondary/09_XX_01_9.asm	split-locked-operand
+fex/TwoByte/0F_B0_3.asm	split-locked-operand
+fex/TwoByte/0F_B0_4.asm	split-locked-operand
+fex/TwoByte/0F_B0_5.asm	split-locked-operand
+fex/TwoByte/0F_B0_6.asm	split-locked-operand
+fex/TwoByte/0F_B0_7.asm	split-locked-operand
+fex/TwoByte/0F_C0_Atomic16.asm	split-locked-operand
+fex/TwoByte/0F_C0_Atomic32.asm	split-locked-operand
+fex/TwoByte/0F_C0_Atomic64.asm	split-locked-operand
+
+# divide-overflow (5): DIV and IDIV whose quotient overflows the destination
+# complete instead of raising #DE; only a zero divisor raises it.
+k/mcsema-unit-tests/binary/div	divide-overflow
+k/mcsema-unit-tests/binary/idiv	divide-overflow
+k/single-instruction-tests/div	divide-overflow
+k/single-instruction-tests/idiv	divide-overflow
+k/single-instruction-tests/idiv_quotient_rem	divide-overflow
+
+# x87-signed-zero (4): x87 FPREM, FSIN and FSINCOS lose the sign of a zero
+# result.
+fex/X87_F64/fprem_exact_quotient_F64.asm	x87-signed-zero
+fex/X87_F64/fprem_signed_zero_F64.asm	x87-signed-zero
+fex/X87_F64/fsin_neg_zero_F64.asm	x87-signed-zero
+fex/X87_F64/fsincos_neg_zero_F64.asm	x87-signed-zero
+
+# sse-nan-rules (5): SSE, FMA and SQRT results follow arm64 NaN rules: the
+# default NaN is positive and the propagated NaN is not the first source's.
+k/single-instruction-tests/sqrt	sse-nan-rules
+repository/fma-follows-x86-nan-and-flush-rules.s	sse-nan-rules
+repository/sse-dot-products-follow-x86-nan-and-flush-rules.s	sse-nan-rules
+repository/sse-horizontal-operations-follow-x86-nan-and-flush-rules.s	sse-nan-rules
+repository/sse-nan-operands-quiet-the-first-source.s	sse-nan-rules
+
+# sse-denormal-rules (4): DAZ and FTZ follow arm64 FPCR.FZ: inputs and min/max
+# results flush where x86 keeps them, and tininess is detected before
+# rounding.
+repository/sse-conversions-follow-daz-and-ftz.s	sse-denormal-rules
+repository/sse-daz-applies-to-compares-rounding-and-half-conversion.s	sse-denormal-rules
+repository/sse-flush-to-zero-tests-tininess-after-rounding.s	sse-denormal-rules
+repository/sse-min-max-keep-denormal-results-under-ftz.s	sse-denormal-rules
+
+# sse-estimates (3): RCPSS and RSQRTSS special inputs: the arm64 estimates
+# return a denormal or finite value where x86 returns zero or infinity.
+k/single-instruction-tests/rcp	sse-estimates
+k/single-instruction-tests/rsqrt	sse-estimates
+repository/sse-reciprocal-estimates-special-inputs.s	sse-estimates
+
+# masked-store-lanes (2): VMASKMOV and VPMASKMOV stores fault on a page that
+# only their masked-off lanes cover.
+fex/VEX/vmaskmovps_store.asm	masked-store-lanes
+fex/VEX/vpmaskmovd_store.asm	masked-store-lanes
+
+# shld16-overcount (2): 16-bit SHLD with a count above 15 leaves CF clear.
+k/single-instruction-tests/shldw_m16_r16_imm8	shld16-overcount
+k/single-instruction-tests/shldw_r16_r16_imm8	shld16-overcount
+
+# iret-flags (2): IRETQ at CPL 3 loads IF, IOPL and RF verbatim, and PUSHF
+# stores the RF it loaded.
+repository/iret-loads-user-flags.s	iret-flags
+repository/pushf-stores-no-resume-flag.s	iret-flags
+
+# smc-same-block (1): a store into the block being executed does not change
+# the instructions that block runs next.
+fex/SelfModifyingCode/SameBlock.asm	smc-same-block

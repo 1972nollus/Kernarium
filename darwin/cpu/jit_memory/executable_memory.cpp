@@ -5,6 +5,9 @@
 
 #include <libkern/OSCacheControl.h>
 #include <pthread.h>
+#include <unistd.h>
+
+#include <cstdint>
 
 namespace uml::cpu::jit_memory {
 namespace {
@@ -88,6 +91,29 @@ void set_writable(bool writable)
 void invalidate_instruction_cache(void *code, std::size_t size)
 {
 	sys_icache_invalidate(code, size);
+}
+
+void *reserve_guarded(std::size_t size) noexcept
+{
+	const auto guard = static_cast<std::size_t>(getpagesize());
+	if (size == 0 || size % guard != 0 || size > SIZE_MAX - 2 * guard)
+		return nullptr;
+	void *mapping = mmap(nullptr, size + 2 * guard, PROT_NONE,
+		MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (mapping == MAP_FAILED)
+		return nullptr;
+	auto *data = static_cast<std::byte *>(mapping) + guard;
+	if (mprotect(data, size, PROT_READ | PROT_WRITE) != 0) {
+		(void)munmap(mapping, size + 2 * guard);
+		return nullptr;
+	}
+	return data;
+}
+
+void release_guarded(void *data, std::size_t size)
+{
+	const auto guard = static_cast<std::size_t>(getpagesize());
+	(void)munmap(static_cast<std::byte *>(data) - guard, size + 2 * guard);
 }
 
 } // namespace uml::cpu::jit_memory
