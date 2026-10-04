@@ -101,10 +101,10 @@ if(OWNER_PRODUCT_VIOLATIONS)
 endif()
 
 # The layer, engine-ownership, executable-memory, implementation-include,
-# CPU-header and test-registration rules read the whole tree, so the audit
-# itself runs over a fixture tree that breaks each rule beside a file the rule
-# accepts. Every fixture starts on its second line, so a rule cannot pass by
-# matching only at the start of a file.
+# CPU-header, test-registration and shell cd rules read the whole tree, so the
+# audit itself runs over a fixture tree that breaks each rule beside a file
+# the rule accepts. Every fixture starts on its second line, so a rule cannot
+# pass by matching only at the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
 file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
@@ -252,6 +252,52 @@ list(APPEND ACCEPTED
 uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
     "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
 list(APPEND ACCEPTED "darwin/fixture/CMakeLists\\.txt: compiles")
+
+# A first-party shell script's cd clears CDPATH unless its operand is a
+# literal absolute path: each report names the line and the command it found,
+# including a second cd on the line of an accepted one.
+uml_write_audit_fixture(tools/fixture/variable_cd.sh "cd \"\$work\"")
+uml_write_audit_fixture(android/fixture/script_directory.sh
+    "here=\$(cd -- \"\$(dirname -- \"\$0\")\" && pwd)")
+uml_write_audit_fixture(dependencies/fixture/subshell_cd.sh
+    "(cd \"\$source\" && find .)")
+uml_write_audit_fixture(Kernarium/fixture/uncleared_option.sh
+    "root=\$(CDPATH= cd \"\$root\" && pwd -P)")
+uml_write_audit_fixture(scripts/fixture/chained_cd.sh
+    "CDPATH= cd -- \"\$a\" && cd \"\$b\"")
+uml_write_audit_fixture(kernel/fixture/separated_cd.sh
+    "sh -c 'cd /usr/src; cd src && make'")
+uml_write_audit_fixture(tests/fixture/nested_cd.sh
+    "if true\nthen\n\tcd build\nfi")
+uml_write_audit_fixture(cmake/fixture/bare_cd.sh "cd")
+list(APPEND REJECTED
+    "variable_cd\\.sh:2: cd \".work\" needs CDPATH= cd --"
+    "script_directory\\.sh:2: cd -- \".\\(dirname -- \".0\" needs CDPATH= cd --"
+    "subshell_cd\\.sh:2: cd \".source\" needs CDPATH= cd --"
+    "uncleared_option\\.sh:2: cd \".root\" needs CDPATH= cd --"
+    "chained_cd\\.sh:2: cd \".b\" needs CDPATH= cd --"
+    "separated_cd\\.sh:2: cd src needs CDPATH= cd --"
+    "nested_cd\\.sh:4: cd build needs CDPATH= cd --"
+    "bare_cd\\.sh:2: cd needs CDPATH= cd --")
+uml_write_audit_fixture(tools/fixture/cleared_cd.sh
+    "root=\$(CDPATH= cd -- \"\$root\" && pwd -P)\n(CDPATH= cd -- \"\$x\" && make)")
+uml_write_audit_fixture(tools/fixture/absolute_cd.sh
+    "cd /usr/src/ltp\nsh -c 'cd /splash; cmake -B /build'\ncd -- \"/opt\"")
+uml_write_audit_fixture(tools/fixture/commented_cd.sh
+    "# cd \"\$work\" first\nmake  # then cd build")
+uml_write_audit_fixture(tools/fixture/cd_words.sh
+    "cdrom=1\nprintf '%s\\n' abcd cd-image --cd")
+uml_write_audit_fixture(tools/fixture/cd_in_python.py
+    "subprocess.run('cd build', shell=True)")
+# Third-party sources live outside the first-party directories.
+uml_write_audit_fixture(external/fixture/vendored.sh "cd \"\$work\"")
+list(APPEND ACCEPTED
+    "cleared_cd\\.sh:"
+    "absolute_cd\\.sh:"
+    "commented_cd\\.sh:"
+    "cd_words\\.sh:"
+    "cd_in_python\\.py:"
+    "vendored\\.sh:")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"

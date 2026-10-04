@@ -693,7 +693,7 @@ def compile_remotely(checkout: Path, host: str, remote_root: str, keep: bool,
     run_dir = remote(
         host,
         f"mkdir -p {shlex.quote(remote_root)} && "
-        f"cd {shlex.quote(remote_root)} && mktemp -d \"$PWD/run.XXXXXX\"",
+        f"CDPATH= cd -- {shlex.quote(remote_root)} && mktemp -d \"$PWD/run.XXXXXX\"",
     ).strip()
     if not run_dir.startswith("/"):
         fail(f"{host}: could not create a run directory")

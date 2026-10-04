@@ -355,12 +355,12 @@ cmake_build_install "$BUILDS/pcre2"
 
 printf '%s\n' "building libffi 3.7.1"
 (
-	cd "$SOURCES/libffi"
+	CDPATH= cd -- "$SOURCES/libffi"
 	private_env ./autogen.sh
 )
 mkdir -p -- "$BUILDS/libffi"
 (
-	cd "$BUILDS/libffi"
+	CDPATH= cd -- "$BUILDS/libffi"
 	private_env "$SOURCES/libffi/configure" \
 		--prefix="$PREFIX" --libdir="$PREFIX/lib" \
 		--disable-shared --enable-static --disable-docs \
@@ -380,14 +380,14 @@ ln -s "$AUTOMAKE" "$AUTOMAKE_COMPAT/automake-1.17"
 ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.17"
 ln -s "$ACLOCAL" "$AUTOMAKE_COMPAT/aclocal-1.16"
 (
-	cd "$SOURCES/libiconv"
+	CDPATH= cd -- "$SOURCES/libiconv"
 	private_env env PATH="$AUTOMAKE_COMPAT:$PATH" \
 		MAKE="$MAKE" GNULIB_SRCDIR="$SOURCES/gnulib" \
 		./autogen.sh
 )
 mkdir -p -- "$BUILDS/libiconv"
 (
-	cd "$BUILDS/libiconv"
+	CDPATH= cd -- "$BUILDS/libiconv"
 	private_env "$SOURCES/libiconv/configure" \
 		--prefix="$PREFIX" --libdir="$PREFIX/lib" \
 		--disable-shared --enable-static --disable-nls

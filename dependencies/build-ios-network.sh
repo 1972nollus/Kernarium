@@ -222,12 +222,12 @@ printf '%s\n' "building PCRE2 10.48 for $PLATFORM"
 
 printf '%s\n' "building libffi 3.7.1 for $PLATFORM"
 (
-	cd "$LIBFFI_SOURCE"
+	CDPATH= cd -- "$LIBFFI_SOURCE"
 	./autogen.sh
 )
 mkdir -p -- "$BUILDS/libffi"
 (
-	cd "$BUILDS/libffi"
+	CDPATH= cd -- "$BUILDS/libffi"
 	env CC="$CC -target $TARGET -isysroot $SDK_ROOT" \
 		CXX="$CXX -target $TARGET -isysroot $SDK_ROOT" \
 		AR="$AR" NM="$NM" RANLIB="$RANLIB" \

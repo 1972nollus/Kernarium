@@ -3,15 +3,15 @@
 # Build the fixed AOSP 17 arm64-only page-agnostic UML product.
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ANDROID_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 METADATA="$ANDROID_ROOT/metadata/aosp.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
-OUTER_ROOT=$(cd -- "$ANDROID_ROOT/../.." && pwd)
+OUTER_ROOT=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 KERNEL_COMMON_ROOT="$OUTER_ROOT/kernel/common"
 KERNEL_ARTIFACT_VERIFIER="$KERNEL_COMMON_ROOT/artifacts/verify-kernel-artifact.py"
 
@@ -182,7 +182,7 @@ export SOONG_NINJA=ninja
 # that choice, and changing modes on a populated OUT_DIR invalidates otherwise
 # reusable intermediates.
 
-cd "$AOSP_SOURCE"
+CDPATH= cd -- "$AOSP_SOURCE"
 # shellcheck disable=SC1091
 source build/envsetup.sh
 lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIANT}"
