@@ -6375,8 +6375,8 @@ struct InvalidOperationCase {
 	/* Singles: lane 1 is 1.0 unless named high. */
 	constexpr std::uint64_t one = 0x3f80'0000'3f80'0000ULL;
 	constexpr std::uint64_t quiet = 0x3f80'0000'7fc0'0000ULL;
-	constexpr std::uint64_t signalling = 0x3f80'0000'7fa0'0000ULL;
 	constexpr std::uint64_t quiet_high = 0x7fc0'0000'3f80'0000ULL;
+	constexpr std::uint64_t signalling_high = 0x7fa0'0000'3f80'0000ULL;
 	constexpr std::uint64_t one_double = 0x3ff0'0000'0000'0000ULL;
 	constexpr std::uint64_t quiet_double = 0x7ff8'0000'0000'0000ULL;
 	/* VCMPSS, VCMPPS and VCMPPD xmm0, xmm0, xmm1, predicate. */
@@ -6405,9 +6405,9 @@ struct InvalidOperationCase {
 		 false, true, 0},
 		{"VCMPSS false, ordered and signalling (27), of a quiet NaN",
 		 compare(ss, 27), {{{quiet, one}, {one, one}, {}}}, false, true, 0},
-		{"VCMPSS true, unordered and quiet (15), of a signalling NaN",
-		 compare(ss, 15), {{{signalling, one}, {one, one}, {}}}, false,
-		 true, 0},
+		{"VCMPPS true, unordered and quiet (15), of a signalling NaN in "
+		 "lane 1", compare(ps, 15),
+		 {{{signalling_high, one}, {one, one}, {}}}, false, true, 0},
 	};
 	for (const auto &test : cases)
 		if (!invalid_operation_follows_x86(test))
