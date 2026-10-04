@@ -21,6 +21,20 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 300)
 
+# The native oracle records the SME corpus cases on an SME host; this test
+# drives its exception path and state transfer with base A64 cases.
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    add_executable(uml_sme_native_oracle
+        ${PROJECT_SOURCE_DIR}/tools/arm64-tests/sme_native_oracle.cpp)
+    uml_add_tooling_test(
+        NAME arm64-sme-native-oracle
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sme_native_oracle.py
+            $<TARGET_FILE:uml_sme_native_oracle>
+        LABELS cpu
+        TIMEOUT 60)
+endif()
+
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
     "Pinned Arm A64 XML archive for the A64 oracle and SME table freshness tests")

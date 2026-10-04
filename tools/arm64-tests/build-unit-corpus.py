@@ -34,7 +34,10 @@ FEATURES = REPOSITORY / "darwin" / "platform" / "host_capabilities.hpp"
 ABSENT_FEATURES_SCRIPT = "tools/arm64-tests/absent-feature-corpus.py"
 
 PACK_MAGIC = b"UMLA64C\0"
-PACK_VERSION = 1
+PACK_VERSION = 2
+# A version 1 pack or dump is a version 2 one without SVLs or SME state; the
+# encoder writes only version 2.
+READ_VERSIONS = (1, 2)
 EXPORT_MAGIC = b"A64CEXP1"
 CODE_BASE = 0x4F00_0000
 PROFILES = {16384: 1, 4096: 2}
@@ -55,6 +58,10 @@ OPTION_NAMES = (
     # cases that pin FPCR.FIZ, AH and NEP as RES0, and the runner then
     # translates them for a virtual CPU without FEAT_AFP on every host.
     "without_afp",
+    # The same for FEAT_SME: absent-feature-corpus.py sets it on the cases
+    # that pin SVE and SME encodings UNDEFINED where the virtual CPU lacks
+    # SME, and the runner translates them for such a CPU on every host.
+    "without_sme",
 )
 EVENTS = (
     "system-call",
@@ -105,7 +112,20 @@ STATE_FIELDS = (
     (29, "exclusive_version", "Q"),
     (30, "exclusive_size", "B"),
     (31, "fp_dirty", "B"),
+    # FEAT_SME: SVCR (PSTATE.SM in bit 0, PSTATE.ZA in bit 1) and TPIDR2_EL0,
+    # only in a record with an SVL.
+    (38, "svcr", "B"),
+    (39, "tpidr2", "Q"),
 )
+SME_FIELDS = frozenset({"svcr", "tpidr2"})
+SVCR_SM = 1
+SVCR_ZA = 2
+Z_REGISTERS = 32
+P_REGISTERS = 16
+ZT0_BYTES = 64
+# A state without Z, P, ZA, or ZT0 values: every state of a record without an
+# SVL, and the sparse remainder of most others.
+NO_SME = ((), (), (), None)
 
 # The virtual CPU implements no FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
 # FEAT_LS64, FEAT_FP8, FEAT_SSBS, or FEAT_SME. Producer exports and packs made
@@ -183,6 +203,7 @@ DEFAULT_STATE = {
     "gcs_implemented": 0, "gcs_push_enabled": 0, "gcs_store_enabled": 0,
     "pointer_auth_keys": struct.pack("<10Q", *DETERMINISTIC_KEYS),
     "pointer_authentication_enabled": 1,
+    "svcr": 0, "tpidr2": 0,
 }
 
 
@@ -203,6 +224,36 @@ def fill_vector(index: int) -> bytes:
 
 FILL_REGISTERS = tuple(fill_register(index) for index in range(32))
 FILL_VECTORS = tuple(fill_vector(index) for index in range(32))
+
+
+def valid_svl(svl: int) -> bool:
+    """A streaming vector length an SME implementation can have, in bytes."""
+    return 16 <= svl <= 256 and svl & (svl - 1) == 0
+
+
+def fill_hash(index: int) -> int:
+    """One byte of the SME base fill; shared with the runner and the
+    native oracle."""
+    return ((index * 0x9E37_79B1) & 0xFFFF_FFFF) >> 24
+
+
+# The SME base fill names every byte by its position at the largest SVL, so a
+# register's leading bytes are the same at every SVL.
+def fill_z(index: int, svl: int) -> bytes:
+    return bytes(fill_hash(index << 8 | byte) for byte in range(svl))
+
+
+def fill_p(index: int, svl: int) -> bytes:
+    return bytes(fill_hash(0x2000 | index << 5 | byte)
+                 for byte in range(svl // 8))
+
+
+def fill_za(row: int, svl: int) -> bytes:
+    return bytes(fill_hash(0x1_0000 | row << 8 | byte) for byte in range(svl))
+
+
+def fill_zt0() -> bytes:
+    return bytes(fill_hash(0x3_0000 | byte) for byte in range(ZT0_BYTES))
 
 
 def feature_tokens() -> tuple[str, ...]:
@@ -272,6 +323,9 @@ class Record:
         default_factory=list
     )
     cases: list[tuple[int, Case]] = field(default_factory=list)
+    # The streaming vector length in bytes that the cases' SME state is sized
+    # for and their expectations hold at; 0 for a record without SME state.
+    svl: int = 0
 
 
 @dataclass
@@ -329,7 +383,7 @@ def sparse_initial(state: dict, entry: int) -> tuple:
         for index in range(32)
         if state["vectors"][index] != FILL_VECTORS[index]
     )
-    return gprs, vectors, stored_fields(state, base_state(entry))
+    return gprs, vectors, stored_fields(state, base_state(entry)), NO_SME
 
 
 def sparse_expected(initial: dict, expected: dict) -> tuple:
@@ -343,17 +397,20 @@ def sparse_expected(initial: dict, expected: dict) -> tuple:
         for index in range(32)
         if expected["vectors"][index] != initial["vectors"][index]
     )
-    return gprs, vectors, stored_fields(expected, initial)
+    return gprs, vectors, stored_fields(expected, initial), NO_SME
 
 
 def apply_state(base: dict, sparse: tuple) -> dict:
-    """Decoding rule shared with the runner."""
+    """Decoding rule shared with the runner, for the export states, which
+    hold no SME state."""
     state = {
         "gpr": list(base["gpr"]),
         "vectors": list(base["vectors"]),
         **{name: base[name] for _i, name, _f in READ_FIELDS},
     }
-    gprs, vectors, others = sparse
+    gprs, vectors, others, sme = sparse
+    if sme != NO_SME:
+        fail("an export state holds SME state")
     for index, value in gprs:
         state["gpr"][index] = value
     for index, value in vectors:
@@ -759,8 +816,8 @@ class ByteWriter:
         return b"".join(self.parts)
 
 
-def encode_sparse(writer: ByteWriter, sparse: tuple) -> None:
-    gprs, vectors, others = sparse
+def encode_sparse(writer: ByteWriter, sparse: tuple, svl: int) -> None:
+    gprs, vectors, others, sme = sparse
     mask = 0
     for index, _value in gprs:
         mask |= 1 << index
@@ -773,18 +830,43 @@ def encode_sparse(writer: ByteWriter, sparse: tuple) -> None:
     writer.pack("I", mask)
     for _index, value in vectors:
         writer.raw(value)
+    if svl:
+        z, p, za, zt0 = sme
+        for items, mask_bytes in ((z, 4), (p, 2), (za, svl // 8)):
+            mask = 0
+            for index, _value in items:
+                mask |= 1 << index
+            writer.raw(mask.to_bytes(mask_bytes, "little"))
+            for _index, value in items:
+                writer.raw(value)
+        writer.pack("B", zt0 is not None)
+        if zt0 is not None:
+            writer.raw(zt0)
     writer.pack("B", len(others))
     for name, value in others:
         identifier, fmt = FIELD_BY_NAME[name]
         writer.pack("B" + fmt, identifier, value)
 
 
-def decode_sparse(reader: ByteReader) -> tuple:
+def decode_sparse(reader: ByteReader, svl: int) -> tuple:
     mask = reader.u32()
     gprs = tuple((index, reader.u64()) for index in range(32) if mask >> index & 1)
     mask = reader.u32()
     vectors = tuple((index, reader.take(16)) for index in range(32)
                     if mask >> index & 1)
+    sme = NO_SME
+    if svl:
+        parts = []
+        for count, mask_bytes, size in ((Z_REGISTERS, 4, svl),
+                                        (P_REGISTERS, 2, svl // 8),
+                                        (svl, svl // 8, svl)):
+            mask = int.from_bytes(reader.take(mask_bytes), "little")
+            parts.append(tuple((index, reader.take(size))
+                               for index in range(count) if mask >> index & 1))
+        flag = reader.u8()
+        if flag > 1:
+            fail("invalid ZT0 flag")
+        sme = (*parts, reader.take(ZT0_BYTES) if flag else None)
     others = []
     for _ in range(reader.u8()):
         identifier = reader.u8()
@@ -792,7 +874,7 @@ def decode_sparse(reader: ByteReader) -> tuple:
             fail(f"unknown state field {identifier}")
         name, fmt = FIELD_BY_ID[identifier]
         others.append((name, reader.unpack(fmt)[0]))
-    return gprs, vectors, tuple(others)
+    return gprs, vectors, tuple(others), sme
 
 
 def retired_use(record: Record, case: Case) -> str | None:
@@ -804,7 +886,7 @@ def retired_use(record: Record, case: Case) -> str | None:
         return f"event {case.event}"
     if case.validator in RETIRED_VALIDATORS:
         return f"validator {case.validator}"
-    for _gprs, _vectors, others in (case.initial, case.expected):
+    for _gprs, _vectors, others, _sme in (case.initial, case.expected):
         for name, value in others:
             if name in RETIRED_FIELD_NAMES:
                 return f"state field {name}"
@@ -818,6 +900,50 @@ def retired_use(record: Record, case: Case) -> str | None:
     return None
 
 
+def field_value(sparse: tuple, name: str, default: int) -> int:
+    return dict(sparse[2]).get(name, default)
+
+
+def invalid_sme_state(record: Record, case: Case) -> str | None:
+    """Names a way the case's SME state breaks the pack's rules, or None.
+
+    Only a record with an SVL holds SME state, sized for that SVL. Z and P
+    exist only while a state's PSTATE.SM is set, and its V registers are then
+    their low bytes, so the V mask is empty; ZA and ZT0 exist only while its
+    PSTATE.ZA is set. The expected state's SVCR is the initial one unless it
+    names its own."""
+    svl = record.svl
+    if not svl:
+        for state in (case.initial, case.expected):
+            if state[3] != NO_SME or SME_FIELDS & {name for name, _ in state[2]}:
+                return "SME state in a record without an SVL"
+        return None
+    if not valid_svl(svl):
+        return f"invalid SVL {svl}"
+    initial_svcr = field_value(case.initial, "svcr", 0)
+    for state, svcr in ((case.initial, initial_svcr),
+                        (case.expected,
+                         field_value(case.expected, "svcr", initial_svcr))):
+        _gprs, vectors, _others, (z, p, za, zt0) = state
+        if svcr & ~(SVCR_SM | SVCR_ZA):
+            return f"SVCR {svcr:#x} sets a reserved bit"
+        sizes = ((z, Z_REGISTERS, svl), (p, P_REGISTERS, svl // 8),
+                 (za, svl, svl))
+        for items, count, size in sizes:
+            for index, value in items:
+                if index >= count or len(value) != size:
+                    return "SME register of the wrong number or size"
+        if zt0 is not None and len(zt0) != ZT0_BYTES:
+            return "ZT0 of the wrong size"
+        if svcr & SVCR_SM and vectors:
+            return "V registers in streaming mode, where they are Z's"
+        if not svcr & SVCR_SM and (z or p):
+            return "Z or P registers outside streaming mode"
+        if not svcr & SVCR_ZA and (za or zt0 is not None):
+            return "ZA or ZT0 while PSTATE.ZA is clear"
+    return None
+
+
 def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
     native_sets: dict[tuple[str, ...], int] = {}
     validators: dict[str, int] = {}
@@ -827,6 +953,9 @@ def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
             if retired is not None:
                 fail(f"{record.name}: {case.name}: retired {retired}; "
                      "rewrite the dump with absent-feature-corpus.py")
+            invalid = invalid_sme_state(record, case)
+            if invalid is not None:
+                fail(f"{record.name}: {case.name}: {invalid}")
             native_sets.setdefault(case.native, len(native_sets))
             if case.validator is not None:
                 validators.setdefault(case.validator, len(validators))
@@ -856,7 +985,7 @@ def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
         body.string16(record.name)
         body.string16(record.producer)
         body.string16(record.site)
-        body.pack("BH", record.profiles, record.options)
+        body.pack("BHH", record.profiles, record.options, record.svl)
         body.pack("I", len(record.programs))
         for entry, words in record.programs:
             body.pack("HH", entry, len(words))
@@ -864,14 +993,16 @@ def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
                 body.pack("HI", offset, word)
         body.pack("I", len(record.cases))
         for program, case in record.cases:
-            encode_case(body, program, case, native_sets, validators, blob_index)
+            encode_case(body, program, case, native_sets, validators,
+                        blob_index, record.svl)
     payload = body.value()
     header = PACK_MAGIC + struct.pack("<IIQ", PACK_VERSION, 0, len(payload))
     return header + zlib.compress(payload, 9)
 
 
 def encode_case(writer: ByteWriter, program: int, case: Case,
-                native_sets: dict, validators: dict, blob_index: dict) -> None:
+                native_sets: dict, validators: dict, blob_index: dict,
+                svl: int) -> None:
     writer.pack("I", program)
     writer.string16(case.name)
     writer.pack("II", *case.ordinals)
@@ -892,8 +1023,8 @@ def encode_case(writer: ByteWriter, program: int, case: Case,
         writer.pack("I", case.syndrome)
     writer.pack("HH", native_sets[case.native],
                 NO_VALIDATOR if case.validator is None else validators[case.validator])
-    encode_sparse(writer, case.initial)
-    encode_sparse(writer, case.expected)
+    encode_sparse(writer, case.initial, svl)
+    encode_sparse(writer, case.expected, svl)
     writer.pack("B", len(case.memory))
     for region in case.memory:
         writer.pack("QIBI", region.address, region.size, region.flags,
@@ -912,7 +1043,7 @@ def decode_pack(data: bytes) -> tuple[Corpus, tuple[str, ...]]:
     if data[:8] != PACK_MAGIC:
         fail("not an A64 instruction corpus pack")
     version, reserved, size = struct.unpack_from("<IIQ", data, 8)
-    if version != PACK_VERSION or reserved != 0:
+    if version not in READ_VERSIONS or reserved != 0:
         fail("unsupported pack version")
     payload = zlib.decompress(data[24:])
     if len(payload) != size:
@@ -935,7 +1066,10 @@ def decode_pack(data: bytes) -> tuple[Corpus, tuple[str, ...]]:
     for _ in range(reader.u32()):
         record = Record(name=reader.string16(), producer=reader.string16(),
                         site=reader.string16(), options=0, profiles=0)
-        record.profiles, record.options = reader.unpack("BH")
+        if version == 1:
+            record.profiles, record.options = reader.unpack("BH")
+        else:
+            record.profiles, record.options, record.svl = reader.unpack("BHH")
         for _program in range(reader.u32()):
             entry, count = reader.unpack("HH")
             record.programs.append(
@@ -945,7 +1079,8 @@ def decode_pack(data: bytes) -> tuple[Corpus, tuple[str, ...]]:
             program = reader.u32()
             entry, words = record.programs[program]
             record.cases.append((program, decode_case(
-                reader, entry, words, native_sets, validators, blob_list)))
+                reader, entry, words, native_sets, validators, blob_list,
+                record.svl)))
         records.append(record)
     if not reader.done():
         fail("trailing pack data")
@@ -953,7 +1088,7 @@ def decode_pack(data: bytes) -> tuple[Corpus, tuple[str, ...]]:
 
 
 def decode_case(reader: ByteReader, entry: int, words: tuple, native_sets: list,
-                validators: list, blob_list: list) -> Case:
+                validators: list, blob_list: list, svl: int) -> Case:
     name = reader.string16()
     ordinals = reader.unpack("II")
     event_index, flags = reader.unpack("BB")
@@ -972,8 +1107,8 @@ def decode_case(reader: ByteReader, entry: int, words: tuple, native_sets: list,
     event = EVENTS[event_index]
     syndrome = reader.u32() if event == "floating-point-trap" else 0
     native_index, validator_index = reader.unpack("HH")
-    initial = decode_sparse(reader)
-    expected = decode_sparse(reader)
+    initial = decode_sparse(reader, svl)
+    expected = decode_sparse(reader, svl)
     memory = []
     for _ in range(reader.u8()):
         address, size, region_flags, blob = reader.unpack("QIBI")
@@ -1007,12 +1142,17 @@ def hex64(value: int) -> str:
 
 
 def dump_sparse(sparse: tuple) -> dict:
-    gprs, vectors, others = sparse
+    gprs, vectors, others, (z, p, za, zt0) = sparse
     result = {}
     for index, value in gprs:
         result["sp" if index == 31 else f"x{index}"] = hex64(value)
     for index, value in vectors:
         result[f"v{index}"] = value.hex()
+    for prefix, items in (("z", z), ("p", p), ("za", za)):
+        for index, value in items:
+            result[f"{prefix}{index}"] = value.hex()
+    if zt0 is not None:
+        result["zt0"] = zt0.hex()
     for name, value in others:
         result[name] = value.hex() if isinstance(value, bytes) else hex64(value)
     return result
@@ -1020,6 +1160,8 @@ def dump_sparse(sparse: tuple) -> dict:
 
 def load_sparse(values: dict) -> tuple:
     gprs, vectors, others = [], [], []
+    sme: dict[str, list] = {"z": [], "p": [], "za": []}
+    zt0 = None
     for key, text in values.items():
         if key == "sp":
             gprs.append((31, int(text, 16)))
@@ -1030,6 +1172,12 @@ def load_sparse(values: dict) -> tuple:
             if len(data) != 16:
                 fail(f"vector {key} is not sixteen bytes")
             vectors.append((int(key[1:]), data))
+        elif key == "zt0":
+            zt0 = bytes.fromhex(text)
+        elif key.startswith("za") and key[2:].isdigit():
+            sme["za"].append((int(key[2:]), bytes.fromhex(text)))
+        elif key[0] in "zp" and key[1:].isdigit():
+            sme[key[0]].append((int(key[1:]), bytes.fromhex(text)))
         elif key in FIELD_BY_NAME:
             _identifier, fmt = FIELD_BY_NAME[key]
             value = bytes.fromhex(text) if fmt.endswith("s") else int(text, 16)
@@ -1040,7 +1188,9 @@ def load_sparse(values: dict) -> tuple:
             fail(f"unknown state field {key}")
     order = {name: identifier for identifier, name, _fmt in READ_FIELDS}
     return (tuple(sorted(gprs)), tuple(sorted(vectors)),
-            tuple(sorted(others, key=lambda item: order[item[0]])))
+            tuple(sorted(others, key=lambda item: order[item[0]])),
+            (tuple(sorted(sme["z"])), tuple(sorted(sme["p"])),
+             tuple(sorted(sme["za"])), zt0))
 
 
 def dump_corpus(corpus: Corpus, tokens: tuple[str, ...]) -> Iterable[str]:
@@ -1051,7 +1201,7 @@ def dump_corpus(corpus: Corpus, tokens: tuple[str, ...]) -> Iterable[str]:
         yield json.dumps({"blob": digest,
                           "zlib": zlib.compress(data, 9).hex()}, sort_keys=True)
     for record in corpus.records:
-        yield json.dumps({
+        item = {
             "record": record.name, "producer": record.producer,
             "site": record.site,
             "profiles": PROFILE_NAMES[record.profiles].split("+"),
@@ -1061,7 +1211,10 @@ def dump_corpus(corpus: Corpus, tokens: tuple[str, ...]) -> Iterable[str]:
                           "words": [[offset, f"{word:08x}"] for offset, word in words]}
                          for entry, words in record.programs],
             "cases": [dump_case(program, case) for program, case in record.cases],
-        }, sort_keys=True)
+        }
+        if record.svl:
+            item["svl"] = record.svl
+        yield json.dumps(item, sort_keys=True)
 
 
 def dump_case(program: int, case: Case) -> dict:
@@ -1102,7 +1255,7 @@ def load_dump(lines: Iterable[str]) -> tuple[Corpus, tuple[str, ...]]:
     iterator = iter(lines)
     header = json.loads(next(iterator))
     if header.get("format") != "arm64-instruction-corpus" or \
-            header.get("version") != PACK_VERSION:
+            header.get("version") not in READ_VERSIONS:
         fail("unsupported corpus dump")
     tokens = tuple(header["feature_tokens"])
     blobs: dict[str, bytes] = {}
@@ -1120,7 +1273,8 @@ def load_dump(lines: Iterable[str]) -> tuple[Corpus, tuple[str, ...]]:
         profiles = sum({"16k": 1, "4k": 2}[name] for name in item["profiles"])
         options = sum(1 << OPTION_NAMES.index(name) for name in item["options"])
         record = Record(name=item["record"], producer=item["producer"],
-                        site=item["site"], options=options, profiles=profiles)
+                        site=item["site"], options=options, profiles=profiles,
+                        svl=item.get("svl", 0))
         for program in item["programs"]:
             record.programs.append((program["entry"], tuple(
                 (offset, int(word, 16)) for offset, word in program["words"])))
@@ -1317,11 +1471,15 @@ def sha256(data: bytes) -> str:
 
 
 def record_hashes(record: Record) -> tuple[str, str]:
+    """The record's code hash covers its programs and, when it has one, its
+    SVL; its payload hash covers its cases."""
     code = ByteWriter()
     for entry, words in record.programs:
         code.pack("HH", entry, len(words))
         for offset, word in words:
             code.pack("HI", offset, word)
+    if record.svl:
+        code.pack("H", record.svl)
     payload = ByteWriter()
     for program, case in record.cases:
         payload.raw(json.dumps(dump_case(program, case), sort_keys=True).encode())
@@ -1365,6 +1523,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "lse2_alignment" in corpus.meta else {}),
         **({"absent_features": corpus.meta["absent_features"]}
            if "absent_features" in corpus.meta else {}),
+        **({"sme_native": corpus.meta["sme_native"]}
+           if "sme_native" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],
@@ -1490,6 +1650,23 @@ def check(options: argparse.Namespace) -> int:
         if failing is None or sha256(
                 (REPOSITORY / failing["file"]).read_bytes()) != failing["sha256"]:
             stale.append("absent-feature failing list")
+        # Its SVE and SME words are the encoding table's witnesses.
+        table = step.get("sme_table")
+        if table is None or sha256(
+                (REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
+            stale.append("SVE/SME encoding table (changed since the rewrite)")
+    # The native SME records are the current script's, from the current
+    # encoding table; sme-native-corpus.py --carry refreshes the script hash
+    # when its request is unchanged.
+    native = corpus.meta.get("sme_native")
+    if native is not None:
+        if sha256((REPOSITORY / native["script"]).read_bytes()) != \
+                native["sha256"]:
+            stale.append(native["script"] + " (not the native records' script)")
+        table = native["table"]
+        if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
+            stale.append("SVE/SME encoding table (changed since the native "
+                         "records)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.

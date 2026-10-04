@@ -63,7 +63,7 @@ constexpr std::size_t execution_limit = 64;
 constexpr unsigned long generation = 0x10000;
 constexpr std::array<char, 8> pack_magic{'U', 'M', 'L', 'A',
                                          '6', '4', 'C', '\0'};
-constexpr std::uint32_t pack_version = 1;
+constexpr std::uint32_t pack_version = 2;
 constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
@@ -72,6 +72,18 @@ constexpr std::uint16_t retired_options = 3U;
 /* Option bit 10 runs a record on a virtual CPU without FEAT_AFP on any host:
  * its cases pin FPCR.FIZ, AH and NEP as RES0. */
 constexpr std::uint16_t without_afp_option = 0x400U;
+/* Option bit 11 does the same for FEAT_SME: its cases pin SVE and SME
+ * encodings UNDEFINED. */
+constexpr std::uint16_t without_sme_option = 0x800U;
+constexpr std::uint16_t known_options = 0xfffU;
+/* SME state: Z0-Z31, P0-P15 and the ZA rows are sized by a record's
+ * streaming vector length (SVL), ZT0 is 64 bytes. */
+constexpr std::size_t zt0_bytes = 64;
+
+[[nodiscard]] constexpr bool valid_svl(unsigned bytes) noexcept
+{
+  return bytes >= 16U && bytes <= 256U && (bytes & (bytes - 1U)) == 0U;
+}
 
 class CorpusError final : public std::runtime_error {
 public:
@@ -243,6 +255,9 @@ struct Record final {
   std::string_view site;
   std::uint8_t profiles{};
   std::uint16_t options{};
+  /* The SVL the cases' SME state is sized for and their expectations hold
+   * at, or 0 for a record without SME state. */
+  std::uint16_t svl{};
   std::vector<Program> programs;
   std::vector<CorpusCase> cases;
 };
@@ -250,8 +265,9 @@ struct Record final {
 /* Every encoded non-register state field; see the README field table. Ids
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
  * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, 5 the retired FEAT_FP8
- * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the retired FEAT_SME
- * PSTATE.SM and ZA; all stay reserved. */
+ * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the producer's one-byte
+ * PSTATE.SM and ZA; all stay reserved. SVCR and TPIDR2_EL0 appear only in a
+ * record with an SVL. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -269,6 +285,8 @@ enum class Field : std::uint8_t {
   exclusive_version,
   exclusive_size,
   fp_dirty,
+  svcr = 38,
+  tpidr2,
 };
 
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
@@ -280,6 +298,7 @@ enum class Field : std::uint8_t {
   case Field::exclusive_value:
   case Field::exclusive_value2:
   case Field::exclusive_version:
+  case Field::tpidr2:
     return 8;
   case Field::nzcv:
   case Field::fpcr:
@@ -291,19 +310,39 @@ enum class Field : std::uint8_t {
   case Field::pstate_daif:
   case Field::exclusive_size:
   case Field::fp_dirty:
+  case Field::svcr:
     return 1;
   }
   throw CorpusError{"unknown state field " + std::to_string(identifier)};
 }
 
+/* Skips one sparse state's SME sections: Z, P, ZA rows, ZT0. */
+void skip_sme_sections(Reader &reader, unsigned svl) {
+  const auto z = reader.u32();
+  (void)reader.bytes(svl * static_cast<std::size_t>(std::popcount(z)));
+  const auto p = reader.u16();
+  (void)reader.bytes(svl / 8U * static_cast<std::size_t>(std::popcount(p)));
+  std::size_t rows = 0;
+  for (const auto byte : reader.bytes(svl / 8U))
+    rows += static_cast<std::size_t>(
+        std::popcount(std::to_integer<unsigned>(byte)));
+  (void)reader.bytes(svl * rows);
+  const auto zt0 = reader.u8();
+  if (zt0 > 1U)
+    throw CorpusError{"invalid ZT0 flag"};
+  (void)reader.bytes(zt0 * zt0_bytes);
+}
+
 /* Returns the encoded span of one sparse state and validates its shape. */
 [[nodiscard]] std::span<const std::byte>
-sparse_state(Reader &reader, std::span<const std::byte> body) {
+sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl) {
   const auto begin = reader.offset();
   const auto registers = reader.u32();
   (void)reader.bytes(8U * static_cast<std::size_t>(std::popcount(registers)));
   const auto vectors = reader.u32();
   (void)reader.bytes(16U * static_cast<std::size_t>(std::popcount(vectors)));
+  if (svl != 0U)
+    skip_sme_sections(reader, svl);
   const auto fields = reader.u8();
   for (unsigned index = 0; index < fields; ++index)
     (void)reader.bytes(field_size(reader.u8()));
@@ -631,8 +670,13 @@ void validate_case(const Record &record, const CorpusCase &test_case,
     record.site = reader.string16();
     record.profiles = reader.u8();
     record.options = reader.u16();
+    record.svl = reader.u16();
     if ((record.options & retired_options) != 0U)
       throw CorpusError{std::string{record.name} + ": retired harness option"};
+    if ((record.options & ~known_options) != 0U)
+      throw CorpusError{std::string{record.name} + ": unknown harness option"};
+    if (record.svl != 0U && !valid_svl(record.svl))
+      throw CorpusError{std::string{record.name} + ": invalid SVL"};
     const auto program_count = reader.u32();
     record.programs.reserve(program_count);
     for (std::uint32_t program = 0; program < program_count; ++program) {
@@ -706,8 +750,8 @@ void validate_case(const Record &record, const CorpusCase &test_case,
         test_case.syndrome = reader.u32();
       test_case.native = reader.u16();
       test_case.validator = reader.u16();
-      test_case.initial = sparse_state(reader, body);
-      test_case.expected = sparse_state(reader, body);
+      test_case.initial = sparse_state(reader, body, record.svl);
+      test_case.expected = sparse_state(reader, body, record.svl);
       const auto regions = reader.u8();
       for (unsigned region_index = 0; region_index < regions; ++region_index) {
         auto &region = test_case.memory.emplace_back();
@@ -909,6 +953,8 @@ public:
       : host_{std::move(host)} {
     if ((options & without_afp_option) != 0U)
       host_.supported.reset(static_cast<std::size_t>(ArmFeature::afp));
+    if ((options & without_sme_option) != 0U)
+      host_.supported.reset(static_cast<std::size_t>(ArmFeature::sme));
     const ::uml::cpu::EngineConfiguration configuration{
         .host_capabilities = host_,
     };
@@ -1004,10 +1050,15 @@ struct Counts final {
 };
 
 /* The feature a case needs that the virtual CPU for `host` lacks although
- * the host may have it: FEAT_AFP or FEAT_RPRES outside their predicates. */
+ * the host may have it: FEAT_AFP or FEAT_RPRES outside their predicates, and
+ * FEAT_SME, which the runtime does not implement yet, for any case with SME
+ * state or an SME requirement. */
 [[nodiscard]] std::optional<ArmFeature>
-virtual_cpu_lacks(const ::uml::cpu::ArmFeatureSet &native,
+virtual_cpu_lacks(const Record &record,
+                  const ::uml::cpu::ArmFeatureSet &native,
                   const ::uml::platform::HostCapabilities &host) {
+  if (record.svl != 0U || native.test(static_cast<std::size_t>(ArmFeature::sme)))
+    return ArmFeature::sme;
   if (native.test(static_cast<std::size_t>(ArmFeature::afp)) &&
       !arm64::implements_afp(host))
     return ArmFeature::afp;
@@ -1121,23 +1172,18 @@ private:
     const auto &test_case = record.cases[index];
     const auto &program = record.programs[test_case.program];
     ++counts_.cases;
-    auto initial = base_state(program.entry);
-    apply_sparse(initial, test_case.initial);
-    auto expected = initial;
-    apply_sparse(expected, test_case.expected);
-
+    /* The states and regions are decoded and mapped for the first lane that
+     * runs the case: SME state decodes only where the virtual CPU has it. */
+    std::optional<arm64::CpuState> initial;
+    std::optional<arm64::CpuState> expected;
     std::vector<std::unique_ptr<CaseRegion>> regions;
-    regions.reserve(test_case.memory.size());
-    for (const auto &region : test_case.memory)
-      regions.push_back(std::make_unique<CaseRegion>(
-          region, corpus_.blobs[region.blob]));
 
     /* FEAT_AFP and FEAT_RPRES are implemented exactly where the virtual
      * CPU's predicates say so, and only the hardware's own floating-point
      * instructions honour them, so a case that needs either runs in neither
      * lane elsewhere. */
     const auto &native = corpus_.native_sets[test_case.native];
-    const auto lacking = virtual_cpu_lacks(native, engines.host());
+    const auto lacking = virtual_cpu_lacks(record, native, engines.host());
 
     for (const auto lane : {Lane::gadgets, Lane::jit}) {
       if (lane == Lane::gadgets) {
@@ -1187,12 +1233,22 @@ private:
           continue;
         }
       }
+      if (!initial.has_value()) {
+        initial = base_state(program.entry);
+        apply_sparse(*initial, test_case.initial);
+        expected = *initial;
+        apply_sparse(*expected, test_case.expected);
+        regions.reserve(test_case.memory.size());
+        for (const auto &region : test_case.memory)
+          regions.push_back(std::make_unique<CaseRegion>(
+              region, corpus_.blobs[region.blob]));
+      }
       for (const auto &region : regions)
         region->restore();
-      const auto outcome = engines.run(lane, initial, memory_);
+      const auto outcome = engines.run(lane, *initial, memory_);
       ++(lane == Lane::gadgets ? counts_.gadgets : counts_.jit);
-      if (auto failure = check(test_case, program, initial, expected, outcome,
-                               regions)) {
+      if (auto failure = check(test_case, program, *initial, *expected,
+                               outcome, regions)) {
         report(record, index, lane, *failure);
         if (++counts_.failures == options_.max_failures)
           return false;
