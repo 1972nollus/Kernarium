@@ -6654,6 +6654,63 @@ struct FlagCase {
 	return true;
 }
 
+/* Beside an unmasked underflow or overflow, which faults, x86 raises
+ * precision as the result's significand rounds, as if the exponent were
+ * unbounded: an inexact tiny product raises it, and a tiny or overflowing
+ * result whose significand is exact does not, however its delivery would
+ * round -- except a half narrowed from a denormal single, which does. */
+[[nodiscard]] bool checked_unmasked_precision_follows_x86()
+{
+	const std::vector<std::uint8_t> mulss{0xf3, 0x0f, 0x59, 0xc1};
+	/* VCVTPS2PH xmm0, xmm1, rounding as MXCSR does. */
+	const std::vector<std::uint8_t> vcvtps2ph{0xc4, 0xe3, 0x79, 0x1d, 0xc8,
+		0x04};
+	constexpr std::uint64_t three_quarters = 0x3f40'0001ULL;
+	constexpr std::uint64_t above_least_normal = 0x0080'0001ULL;
+	constexpr std::uint64_t largest = 0x7f7f'ffffULL;
+	const std::vector<FlagCase> cases{
+		{"MULSS of an inexact tiny product, underflow unmasked", mulss,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1780,
+		 0x17b0, 0},
+		{"MULSS of an inexact tiny product, underflow and precision "
+		 "unmasked", mulss,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x0780,
+		 0x07b0, 0},
+		{"MULSS overflowing with an exact significand, overflow unmasked",
+		 mulss, {{{largest, 0}, {0x4000'0000ULL, 0}, {}}}, 0x1380, 0x1388,
+		 0},
+		{"MULSS overflowing with an inexact significand, overflow "
+		 "unmasked", mulss, {{{largest, 0}, {0x3fc0'0000ULL, 0}, {}}},
+		 0x1380, 0x13a8, 0},
+		{"DPPS of a tiny product with an exact significand, underflow "
+		 "unmasked", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x31},
+		 {{{above_least_normal, 0}, {0x3f00'0000ULL, 0}, {}}}, 0x1780,
+		 0x1790, 0},
+		{"CVTSD2SS of the least denormal double, underflow unmasked",
+		 {0xf2, 0x0f, 0x5a, 0xc1}, {{{}, {1, 0}, {}}}, 0x1780, 0x1792, 0},
+		{"CVTSD2SS overflowing with an exact significand, overflow "
+		 "unmasked", {0xf2, 0x0f, 0x5a, 0xc1},
+		 {{{}, {0x4c78'0000'0000'0000ULL, 0}, {}}}, 0x1380, 0x1388, 0},
+		{"VFMADD231SD overflowing with an exact significand, overflow "
+		 "unmasked", {0xc4, 0xe2, 0xf1, 0xb9, 0xc2},
+		 {{{}, {0x6578'0000'0000'0000ULL, 0},
+		   {0x5f30'0000'0000'0000ULL, 0}}},
+		 0x1380, 0x1388, 0},
+		{"VCVTPS2PH of a denormal single, underflow unmasked", vcvtps2ph,
+		 {{{}, {0x0000'0002ULL, 0}, {}}}, 0x1780, 0x17b2, 0},
+		{"VCVTPS2PH of a tiny single with an exact significand, underflow "
+		 "unmasked", vcvtps2ph, {{{}, {0x33c0'0000ULL, 0}, {}}}, 0x1780,
+		 0x1790, 0},
+		{"VCVTPS2PH overflowing with an exact significand, overflow "
+		 "unmasked", vcvtps2ph, {{{}, {0x49c0'0000ULL, 0}, {}}}, 0x1380,
+		 0x1388, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8741,6 +8798,7 @@ int main()
 		checked_horizontal_flags_follow_x86() &&
 		checked_underflow_follows_x86() &&
 		checked_dot_product_flags_follow_x86() &&
+		checked_unmasked_precision_follows_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

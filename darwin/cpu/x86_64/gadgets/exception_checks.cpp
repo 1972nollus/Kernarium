@@ -599,79 +599,109 @@ template <typename Operation>
 	return result;
 }
 
-/* Whether a result is tiny after rounding, whether it is inexact and
- * whether it overflowed, and the result. */
+/* A result rounded as x86 does: whether it is tiny after rounding, whether
+ * it is inexact and whether it overflowed, and the result; and whether it
+ * is inexact rounded to full precision as if the exponent were unbounded,
+ * which is what an unmasked underflow or overflow reports as precision. */
 struct SoftRounding final {
 	bool tiny{};
 	bool inexact{};
 	bool overflow{};
+	bool significand_inexact{};
 	std::uint64_t bits{};
 };
 
-/* `value` rounded to a single or a double in rounding mode `control`. */
+/* `value` rounded to a single or a double in rounding mode `control`. Its
+ * significand rounds exactly when the binary128 fraction bits below the
+ * format's are clear; every value here is normal in binary128. */
 [[nodiscard]] SoftRounding soft_round(float128_t value, bool dbl,
 	unsigned control) noexcept
 {
 	softfloat_state state{};
 	state.detectTininess = softfloat_tininess_afterRounding;
 	state.roundingMode = soft_rounding(control);
-	const std::uint64_t bits = dbl ? f128_to_f64(&state, value).v :
+	SoftRounding result{};
+	result.bits = dbl ? f128_to_f64(&state, value).v :
 		f128_to_f32(&state, value).v;
 	/* SoftFloat raises underflow for a tiny inexact result; an exact one
 	 * is a denormal. */
-	return {(state.exceptionFlags & softfloat_flag_underflow) != 0 ||
-			FloatFormat{dbl}.denormal(bits),
-		(state.exceptionFlags & softfloat_flag_inexact) != 0,
-		(state.exceptionFlags & softfloat_flag_overflow) != 0, bits};
+	result.tiny = (state.exceptionFlags & softfloat_flag_underflow) != 0 ||
+		FloatFormat{dbl}.denormal(result.bits);
+	result.inexact = (state.exceptionFlags & softfloat_flag_inexact) != 0;
+	result.overflow = (state.exceptionFlags & softfloat_flag_overflow) != 0;
+	/* Of 112 fraction bits, a double keeps 52 and drops 60, and a single
+	 * keeps 23 and drops 89. */
+	result.significand_inexact = dbl ?
+		(value.v[0] & ((1ULL << 60U) - 1U)) != 0 :
+		value.v[0] != 0 || (value.v[1] & ((1ULL << 25U) - 1U)) != 0;
+	return result;
 }
 
 /* The single `x` rounded to a half, which SoftFloat here lacks. Just below
  * the smallest normal half, 2^-14, eleven bits step by 2^-25: rounding to
  * nearest reaches it from within 2^-26 and rounding away from zero from
- * within 2^-25. The halves delivered there step by 2^-24. A double holds
- * the single exactly, and these bounds and scalings too. */
+ * within 2^-25. The halves delivered there step by 2^-24. Just below 2^16,
+ * they step by 2^5, and the largest is 65504: rounding to nearest
+ * overflows from 65520, rounding away from zero above 65504, and rounding
+ * toward zero from 2^16. A double holds the single exactly, and these
+ * bounds and scalings too. */
 [[nodiscard]] SoftRounding half_round(std::uint32_t x,
 	unsigned control) noexcept
 {
 	float single{};
 	std::memcpy(&single, &x, sizeof single);
 	const double magnitude = std::fabs(static_cast<double>(single));
-	if (!(magnitude < 0x1p-14) || magnitude == 0)
+	if (!(magnitude < 0x1p128) || magnitude == 0)
 		return {};
 	const bool negative = (x >> 31U) != 0;
-	bool rounds_up{};
-	switch (control & 3U) {
-	case 0:
-		rounds_up = magnitude >= 0x1p-14 - 0x1p-26;
-		break;
-	case 1:
-	case 2:
-		/* Down and up round away from zero for one sign. */
-		rounds_up = ((control & 3U) == 1) == negative &&
-			magnitude > 0x1p-14 - 0x1p-25;
-		break;
-	default:
-		break;
+	/* Rounding to nearest, away from zero, or toward zero. */
+	const unsigned direction = (control & 3U) == 0 ? 0U :
+		(control & 3U) == 3U ? 2U :
+		((control & 3U) == 1U) == negative ? 1U : 2U;
+	int exponent{};
+	const double fraction = std::frexp(magnitude, &exponent);
+	SoftRounding result{};
+	/* x86 reports precision for an unmasked tiny half of a denormal single
+	 * too, as an Intel Xeon 8581C does. */
+	result.significand_inexact =
+		fraction * 0x1p11 != std::floor(fraction * 0x1p11) ||
+		FloatFormat{false}.denormal(x);
+	if (magnitude < 0x1p-14) {
+		const double bound = direction == 0 ? 0x1p-14 - 0x1p-26 :
+			0x1p-14 - 0x1p-25;
+		result.tiny = direction == 2 || (direction == 0 ?
+			magnitude < bound : !(magnitude > bound));
+		const double steps = magnitude * 0x1p24;
+		result.inexact = steps != std::floor(steps);
+		return result;
 	}
-	const double steps = magnitude * 0x1p24;
-	return {!rounds_up, steps != std::floor(steps)};
+	result.overflow = direction == 0 ? magnitude >= 65520.0 :
+		direction == 1 ? magnitude > 65504.0 : magnitude >= 0x1p16;
+	result.inexact = result.overflow || result.significand_inexact;
+	return result;
 }
 
 /* x86's underflow and precision flags for the results an instruction
  * rounds. A tiny result raises underflow when it is inexact, or regardless
  * while MXCSR unmasks underflow. While it masks underflow, FTZ flushes a
  * tiny result to zero, which raises underflow and precision even when it
- * was exact. */
+ * was exact. Beside an unmasked underflow or overflow, which faults, a
+ * result raises precision as its significand rounds, and the others as
+ * they do: the model then decides precision too. */
 struct UnderflowModel final {
 	static constexpr std::uint32_t underflow = 0x10U;
 	static constexpr std::uint32_t precision = 0x20U;
 
 	bool unmasked{};
+	bool overflow_unmasked{};
 	bool flush{};
+	bool faults{};
 	std::uint32_t raised{};
+	std::uint32_t precise{};
 
 	UnderflowModel(std::uint32_t mxcsr, bool flushes) noexcept :
 		unmasked{(mxcsr & (underflow << 7U)) == 0},
+		overflow_unmasked{(mxcsr & (0x08U << 7U)) == 0},
 		flush{flushes && !unmasked &&
 			(mxcsr & mxcsr_flush_to_zero) != 0}
 	{
@@ -680,21 +710,38 @@ struct UnderflowModel final {
 	/* Whether FTZ flushes the result. */
 	bool record(const SoftRounding &result) noexcept
 	{
-		if (!result.tiny)
-			return false;
-		if (flush) {
+		bool inexact = result.inexact;
+		bool flushed{};
+		if (result.tiny && flush) {
 			raised |= underflow | precision;
-			return true;
-		}
-		if (unmasked || result.inexact)
+			inexact = flushed = true;
+		} else if (result.tiny && unmasked) {
 			raised |= underflow;
-		return false;
+			inexact = result.significand_inexact;
+			faults = true;
+		} else if (result.tiny && result.inexact) {
+			raised |= underflow;
+		} else if (result.overflow && overflow_unmasked) {
+			inexact = result.significand_inexact;
+			faults = true;
+		}
+		if (inexact)
+			precise |= precision;
+		return flushed;
+	}
+
+	/* Precision as x86 raises it, which differs from the host's only beside
+	 * an unmasked underflow or overflow. */
+	[[nodiscard]] std::uint32_t precision_raised() const noexcept
+	{
+		return precise;
 	}
 
 	[[nodiscard]] HostFlagCorrection correction(
 		std::uint32_t decided = 0, std::uint32_t also = 0) const noexcept
 	{
-		return {decided | underflow, raised | also};
+		return {decided | underflow | (faults ? precision : 0U),
+			raised | also | (faults ? precise : 0U)};
 	}
 };
 
@@ -754,12 +801,10 @@ struct UnderflowModel final {
 			const auto result = soft_round(values[index], dbl, mxcsr >> 13U);
 			if (result.overflow)
 				after |= overflow;
-			if (result.inexact)
-				after |= UnderflowModel::precision;
 			results[index] = f.input(model.record(result) ?
 				result.bits & f.sign() : result.bits, denormals_are_zero);
 		}
-		after |= model.raised;
+		after |= model.raised | model.precision_raised();
 		total |= after;
 		faulted = (after & unmasked) != 0;
 		return results;
