@@ -1,20 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 22:38:54 +0900
-Subject: [PATCH] x86: IRET and PUSHF follow the CPL 3 flag rules
+Subject: [PATCH] x86: IRET, POPF and PUSHF follow the CPL 3 flag rules
 
-At CPL 3 IRET loads only the flags POPF may load, plus RF: IF, IOPL,
-VM, VIF and VIP keep their values whatever the popped image holds.
-PUSHF stores RF and VM as zero. SetPackedRFLAG takes the mask of the
-flags it writes.
+At CPL 3 POPF loads every status and control flag but IF, IOPL, RF,
+VM, VIF and VIP, and a 16-bit POPF only those in the low half; IRET
+loads the same flags plus RF. The others keep their values whatever
+the popped image holds. PUSHF stores RF and VM as zero.
+SetPackedRFLAG takes the mask of the flags it writes.
 ---
- FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp       | 8 +++++---
- FEXCore/Source/Interface/Core/OpcodeDispatcher.h         | 9 ++++++++-
- FEXCore/Source/Interface/Core/OpcodeDispatcher/Flags.cpp | 6 +++++-
- 3 files changed, 18 insertions(+), 5 deletions(-)
+ .../Interface/Core/OpcodeDispatcher.cpp       | 20 +++++++++----------
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  9 ++++++++-
+ .../Interface/Core/OpcodeDispatcher/Flags.cpp |  6 +++++-
+ 3 files changed, 23 insertions(+), 12 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..341d60c8e468d34372599d59b298e74e3b53a8b2 100644
+index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..7ba3cafc6ab2fcdfb8a766b8308454d0b8990cd8 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -217,8 +217,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
@@ -29,7 +30,7 @@ index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..341d60c8e468d34372599d59b298e74e
  
    if (Is64BitMode) {
      // RSP and SS only happen in 64-bit mode or if this is a CPL mode jump!
-@@ -3689,7 +3690,8 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
+@@ -3689,20 +3690,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
  void OpDispatchBuilder::PUSHFOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
@@ -39,6 +40,24 @@ index 7074a2c1ad27f47753340ebecd90f23b37c4ed9a..341d60c8e468d34372599d59b298e74e
  }
  
  void OpDispatchBuilder::POPFOp(OpcodeArgs) {
+   const auto Size = OpSizeFromSrc(Op);
+   Ref Src = Pop(Size);
+ 
+-  // Add back our flag constants
+-  // Bit 1 is always 1
+-  // Bit 9 is always 1 because we always have interrupts enabled
+-
+-  Src = _Or(OpSize::i64Bit, Src, Constant(0x202));
+-
+-  SetPackedRFLAG(false, Src);
++  // At CPL 3 with IOPL 0, POPF leaves IF, IOPL, VM, VIF and VIP alone and
++  // clears RF, which no instruction after this one sees; a 16-bit POPF
++  // loads only the low half.
++  const uint32_t Loaded = Size == OpSize::i16Bit ? (UserLoadableFlags & 0xffffU) : UserLoadableFlags;
++  SetPackedRFLAG(false, Src, Loaded);
+ 
+   auto NewRIP = GetRelocatedPC(Op);
+   ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 index 302246f6f58c1ac19a79e1b2fcad616122e65e59..4ae668d7eea79765ef263813ec9df16dd6b50e6b 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h

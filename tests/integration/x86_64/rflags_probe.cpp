@@ -11,8 +11,8 @@
  * but a fault saves the flags with RF set and a trap saves them as they are,
  * and an interrupt between the elements of a repeated string instruction
  * saves RF too. TF that IRET sets raises SIGTRAP after the instruction IRET
- * returns to. IRET at CPL 3 loads only the flags a task may change, plus RF,
- * and PUSHF never stores RF.
+ * returns to. POPF at CPL 3 loads only the flags a task may change, IRET
+ * those and RF, and PUSHF never stores RF.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
@@ -565,6 +565,36 @@ word iret_then_read_flags(word image)
 	return flags;
 }
 
+/* PUSHFQ after a POPFQ of `image`, or after a POPFQ of ID, IF and bit 1
+ * and a POPFW of `image`, then a POPFQ of 0x202. */
+word popf_then_read_flags(word image, bool narrow)
+{
+	word flags;
+	if (narrow)
+		__asm__ volatile("pushq $0x200202\n\t"
+				 "popfq\n\t"
+				 "pushw %w[image]\n\t"
+				 "popfw\n\t"
+				 "pushfq\n\t"
+				 "popq %[flags]\n\t"
+				 "pushq $0x202\n\t"
+				 "popfq"
+				 : [flags] "=&r"(flags)
+				 : [image] "r"(image)
+				 : "memory", "cc");
+	else
+		__asm__ volatile("pushq %[image]\n\t"
+				 "popfq\n\t"
+				 "pushfq\n\t"
+				 "popq %[flags]\n\t"
+				 "pushq $0x202\n\t"
+				 "popfq"
+				 : [flags] "=&r"(flags)
+				 : [image] "r"(image)
+				 : "memory", "cc");
+	return flags;
+}
+
 bool flags_read(const char *what, word flags, word expected)
 {
 	if (flags == expected)
@@ -579,14 +609,21 @@ bool flags_read(const char *what, word flags, word expected)
 	return false;
 }
 
-/* At CPL 3 IRET loads only CF, PF, AF, ZF, SF, TF, DF, OF, NT, RF, AC and
- * ID: IF, IOPL, VM, VIF and VIP keep their values. PUSHF stores RF and VM
- * as zero. TF stays clear, for it would trap after the next instruction. */
+/* At CPL 3 POPF loads only CF, PF, AF, ZF, SF, TF, DF, OF, NT, AC and ID,
+ * and a 16-bit POPF only those in the low half; IRET loads them and RF. IF,
+ * IOPL, VM, VIF and VIP keep their values. PUSHF stores RF and VM as zero.
+ * TF stays clear, for it would trap after the next instruction. */
 bool user_flag_loads()
 {
-	bool ok = flags_read("PUSHFQ after IRETQ of every flag but TF and RF",
-			     iret_then_read_flags(0xfffffffffffefeffUL),
-			     0x244ed7);
+	const word image = 0xfffffffffffefeffUL;
+	bool ok = flags_read("PUSHFQ after POPFQ of every flag but TF and RF",
+			     popf_then_read_flags(image, false), 0x244ed7);
+	ok &= flags_read("PUSHFQ after POPFQ of zero",
+			 popf_then_read_flags(0, false), initial_flags);
+	ok &= flags_read("PUSHFQ after POPFW of every flag but TF",
+			 popf_then_read_flags(image, true), 0x204ed7);
+	ok &= flags_read("PUSHFQ after IRETQ of every flag but TF and RF",
+			 iret_then_read_flags(image), 0x244ed7);
 	ok &= flags_read("PUSHFQ after IRETQ of RF",
 			 iret_then_read_flags(initial_flags | flag_rf),
 			 initial_flags);
@@ -1195,7 +1232,7 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "resume"));
 	report("x86-64 TF set by IRET traps after one instruction",
 	       in_child(self, "step"));
-	report("x86-64 IRET loads only user flags and PUSHF stores no RF",
+	report("x86-64 POPF and IRET load only user flags, PUSHF no RF",
 	       in_child(self, "user-loads"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
