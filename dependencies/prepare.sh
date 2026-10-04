@@ -655,7 +655,10 @@ check_repository()
 		REPOSITORY_PROBLEM="$name prepared repository retains a network remote"
 		return 1
 	}
-	[ -z "$(git -C "$repository_directory" status --porcelain --untracked-files=all)" ] || {
+	# Without optional locks, status does not write a refreshed index, so
+	# verification leaves the repository untouched.
+	[ -z "$(git --no-optional-locks -C "$repository_directory" status \
+		--porcelain --untracked-files=all)" ] || {
 		REPOSITORY_PROBLEM="$name prepared repository is dirty"
 		return 1
 	}
