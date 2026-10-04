@@ -36,13 +36,13 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
  FEXCore/Source/Interface/IR/Passes.h          |   2 +-
  .../IR/Passes/RegisterAllocationPass.cpp      |   4 +-
- .../IR/Passes/x87StackOptimizationPass.cpp    |  34 +-
+ .../IR/Passes/x87StackOptimizationPass.cpp    |  40 +-
  FEXCore/Source/Utils/Allocator.cpp            |  32 ++
  FEXCore/include/FEXCore/Core/Context.h        |  19 +
  FEXCore/include/FEXCore/Core/CoreState.h      |  80 ++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 28 files changed, 1259 insertions(+), 66 deletions(-)
+ 28 files changed, 1265 insertions(+), 66 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
@@ -1836,7 +1836,7 @@ index c47998aec874f8696c71c5acb618cb1f3d0ebef0..34ec011ddef685f2819d9409fea44c1e
      // can only handle constant functions, not constant leafs. This could be
      // lifted if we generalized at a (significant) complexity cost.
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c339708537c91930 100644
+index a53ce14e03851bf25fd4903bf453f3ef987edea8..c50612e2e53ad259b63d27f0be537272cc65ab03 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -151,6 +151,9 @@ private:
@@ -1904,7 +1904,20 @@ index a53ce14e03851bf25fd4903bf453f3ef987edea8..2a9f1a936fac681de03b5c82c3397085
        // store
        FlushValuesPending[i] = false;
      }
-@@ -1235,7 +1253,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1222,6 +1240,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+ 
+       default: LOGMAN_THROW_A_FMT(false, "IROp was expected to be lowered");
+       }
++      if (Embedded) {
++        // The embedding host leaves a block in the middle, at a system call,
++        // a fault or a TLB miss it cannot satisfy, so commit every pending
++        // stack write before the next operation can exit.
++        FlushCachedRegs();
++      }
+       IREmit->Remove(CodeNode);
+     }
+ 
+@@ -1235,7 +1259,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
    }
  }
  
