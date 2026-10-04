@@ -12,6 +12,18 @@ uml_add_unit_test(
     COMMAND uml_x86_64_gadget_bootstrap_tests
     LABELS cpu;x86-64)
 
+add_executable(uml_x86_64_sse_exactness_tests
+    x86_64_sse_exactness_tests.cpp)
+target_link_libraries(uml_x86_64_sse_exactness_tests PRIVATE
+    uml_x86_64_gadgets
+    UML::CpuContract)
+target_include_directories(uml_x86_64_sse_exactness_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-sse-exactness
+    COMMAND uml_x86_64_sse_exactness_tests
+    LABELS cpu;x86-64)
+
 add_executable(uml_x86_64_code_page_registry_tests
     code_page_registry_tests.cpp)
 target_link_libraries(uml_x86_64_code_page_registry_tests PRIVATE

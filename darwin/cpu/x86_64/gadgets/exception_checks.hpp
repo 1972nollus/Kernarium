@@ -14,11 +14,11 @@ namespace uml::cpu::x86_64::gadgets {
 /* Exceptions a guest that has not asked for them never sees: #MF while the
  * x87 control word unmasks an exception, #XM while MXCSR does, and #AC while
  * RFLAGS.AC is set. The gadgets check x87 exceptions themselves while one is
- * unmasked, and SIMD ones while MXCSR masks underflow and precision
- * (`gadget_checks`). For the others -- #AC, #XM while underflow or precision
- * is unmasked, and an x87 exception left pending for the next waiting
- * instruction -- the runtime runs the instructions that could raise one
- * singly, through `execute_checked` (`checked_exceptions`). */
+ * unmasked, and SIMD ones while MXCSR masks underflow, precision and a
+ * denormal operand (`gadget_checks`). For the others -- #AC, #XM while one of
+ * those three is unmasked, and an x87 exception left pending for the next
+ * waiting instruction -- the runtime runs the instructions that could raise
+ * one singly, through `execute_checked` (`checked_exceptions`). */
 enum CheckedException : unsigned {
 	check_x87 = 1U << 0U,
 	check_simd = 1U << 1U,
@@ -31,9 +31,11 @@ inline constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 inline constexpr std::uint16_t x87_status_pending = 0x8080U;
 inline constexpr std::uint16_t x87_exception_flags = 0x3fU;
 inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
-/* Underflow and precision: the gadgets cannot tell from a value whether an
- * instruction raised either. */
-inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1800U;
+/* Underflow, precision and a denormal operand: the gadgets cannot tell from
+ * a value whether an instruction raised any of them. */
+inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1900U;
+inline constexpr std::uint32_t mxcsr_denormals_are_zero = 0x40U;
+inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 
 /* The unmasked x87 exceptions pending in the status word. */
 [[nodiscard]] constexpr unsigned x87_pending(const CpuState &cpu) noexcept
@@ -56,9 +58,10 @@ inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1800U;
 }
 
 /* The exceptions whose instructions the runtime runs singly: an enabled #AC,
- * #XM while underflow or precision is unmasked, and #MF while an unmasked x87
- * exception is pending, which every waiting instruction raises before it
- * runs. An instruction that raises another checks it itself. */
+ * #XM while underflow, precision or a denormal operand is unmasked, and #MF
+ * while an unmasked x87 exception is pending, which every waiting
+ * instruction raises before it runs. An instruction that raises another
+ * checks it itself. */
 [[nodiscard]] constexpr unsigned checked_exceptions(
 	const CpuState &cpu) noexcept
 {
@@ -68,16 +71,29 @@ inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1800U;
 		(enabled_exceptions(cpu) & unsigned{check_alignment});
 }
 
+/* CpuState::exception_checks for an instruction the runtime runs checked:
+ * the gadgets check nothing, and take their exact path while MXCSR.DAZ or
+ * FTZ is set. */
+[[nodiscard]] constexpr std::uint8_t checked_run_checks(
+	const CpuState &cpu) noexcept
+{
+	return (cpu.mxcsr & (mxcsr_denormals_are_zero | mxcsr_flush_to_zero)) !=
+			0U ?
+		exception_check_simd_exact : std::uint8_t{};
+}
+
 /* What the gadgets check themselves, as CpuState::exception_checks. */
 [[nodiscard]] constexpr std::uint8_t gadget_checks(
 	const CpuState &cpu) noexcept
 {
+	const auto simd =
+		(cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks &&
+		(cpu.mxcsr & mxcsr_unchecked_masks) == mxcsr_unchecked_masks;
 	return static_cast<std::uint8_t>(
 		((cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
 			exception_check_x87 : 0U) |
-		((cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks &&
-			(cpu.mxcsr & mxcsr_unchecked_masks) == mxcsr_unchecked_masks ?
-			exception_check_simd : 0U));
+		(simd ? exception_check_simd | exception_check_simd_exact : 0U) |
+		checked_run_checks(cpu));
 }
 
 /* Whether `instruction` could raise an exception `checked` enables, so that
@@ -113,6 +129,17 @@ inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1800U;
  * which raises #AC while RFLAGS.AC is set. */
 [[nodiscard]] bool misaligned_access(const CpuState &cpu,
 	const Gadget &gadget) noexcept;
+
+/* MXCSR.DE for the SIMD floating-point instruction `gadget`, from the state
+ * before it runs, which the host's flags do not show: x86 raises it for a
+ * denormal source in a lane it computes, unless MXCSR.DAZ makes the source
+ * zero, or the lane holds a NaN or raises invalid operation or division by
+ * zero, which take precedence. DPPS and DPPD raise it too for a denormal
+ * product or sum they add. Rounding, RCP, RSQRT, VCVTPH2PS and conversions
+ * to integers raise none. Zero when a memory source is unreadable, which the
+ * instruction then faults on. */
+[[nodiscard]] std::uint32_t denormal_operand(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
 /* The host's cumulative floating-point exception flags, as the MXCSR flags
  * they correspond to. */

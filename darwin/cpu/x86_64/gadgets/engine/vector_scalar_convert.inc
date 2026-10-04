@@ -24,6 +24,14 @@
  * anyway, so that a checked run finds the host's invalid-operation flag set
  * as x86 sets MXCSR's. */
 .macro vector_scalar_fp_to_int input, element, width, truncate
+	/* MXCSR.DAZ makes a denormal input zero, which only a conversion that
+	 * rounds up or down away from zero would miss. */
+	.if !\truncate
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_scalar_input_ready\@
+	simd_flush_denormals \input, \element
+Lx86_vector_scalar_input_ready\@:
+	.endif
 	vector_scalar_round \input, 6, \element, \truncate
 	.if \element == 32
 	fcmp s6, s6

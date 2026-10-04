@@ -35,6 +35,14 @@ Lx86_vector_compare_done\@:
 	retire_and_next
 .endm
 
+/* MXCSR.DAZ compares a denormal input as zero. */
+.macro vector_compare_inputs element
+	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w12, #6, Lx86_vector_compare_inputs_ready\@
+	simd_flush_denormals_each \element, 0, 1
+Lx86_vector_compare_inputs_ready\@:
+.endm
+
 .macro vector_compare_register name, compare, width, fp_register
 gadget vector_\name\()_\width\()_rr
 	ldr x8, [_stream], #8
@@ -42,6 +50,7 @@ gadget vector_\name\()_\width\()_rr
 	ubfx x10, x8, #16, #16
 	ldr \fp_register\()0, [_cpu, x9]
 	ldr \fp_register\()1, [_cpu, x10]
+	vector_compare_inputs \width
 	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags
 .endm
@@ -60,6 +69,7 @@ Lx86_vector_compare_cross\@:
 Lx86_vector_compare_loaded\@:
 	and x8, x23, #0xffff
 	ldr \fp_register\()0, [_cpu, x8]
+	vector_compare_inputs \width
 	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags
 .endm
@@ -76,3 +86,4 @@ vector_compare_memory compare_signalling, fcmpe, 64, d, ldr, x
 .purgem vector_compare_memory
 .purgem vector_compare_register
 .purgem vector_compare_set_flags
+.purgem vector_compare_inputs
