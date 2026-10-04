@@ -999,16 +999,16 @@ void JitCompiler::emit_simd_duplicate_general(std::uint32_t instruction) {
       return false;
     if (!arm64::detail::decode_simd_lane_index((instruction >> 16) & 31U))
       return false;
+    if (from_element) {
+      emit_native_vector_unary(instruction, true);
+      return true;
+    }
     const unsigned destination = instruction & 31U;
     const unsigned source = (instruction >> 5) & 31U;
-    unsigned native_source{};
-    if (from_general)
-      native_source = read_native_gpr(source, false, 8).host;
-    else
-      native_source = read_native_vector(source, 1).host;
+    const auto native_source = read_native_gpr(source, false, 8);
     const auto native_destination =
         write_native_vector(destination, true, 0);
-    emitter_.emit((instruction & ~0x3ffU) | (native_source << 5) |
+    emitter_.emit((instruction & ~0x3ffU) | (native_source.host << 5) |
                   native_destination.host);
     commit_native_vector(native_destination, destination);
     return true;

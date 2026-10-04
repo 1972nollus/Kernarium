@@ -203,7 +203,6 @@ protected:
 
   [[nodiscard]] bool emit_basic_floating(std::uint32_t instruction);
   [[nodiscard]] bool emit_fused_floating(std::uint32_t instruction);
-  [[nodiscard]] bool emit_simd_integer_float_convert(std::uint32_t instruction);
   [[nodiscard]] bool emit_integer_to_floating(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_to_integer(std::uint32_t instruction);
   [[nodiscard]] bool
