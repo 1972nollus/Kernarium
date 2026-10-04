@@ -109,5 +109,5 @@ engine in the unit suite.
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The classes are VEX gathers through the software TLB,
-split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules,
-16-bit SHLD over-counts and a store into its own block.
+split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules
+and a store into its own block.
