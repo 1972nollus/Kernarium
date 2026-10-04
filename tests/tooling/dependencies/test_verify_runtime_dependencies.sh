@@ -125,6 +125,26 @@ verify_vulkan_runtime()
 }
 verify_vulkan_runtime >/dev/null
 
+# An exported CDPATH neither redirects a relative prefix to a decoy with
+# another payload nor prints into the payload listings the verifier compares.
+CDPATH_DECOY="$TEST_ROOT/cdpath-decoy"
+mkdir -p -- "$CDPATH_DECOY/prefix/Frameworks"
+for framework in KosmicKrisp MesaEGL MesaGallium; do
+	cp -R "$PREFIX/Frameworks/$framework.framework" \
+		"$CDPATH_DECOY/prefix/Frameworks/"
+	: >"$CDPATH_DECOY/prefix/Frameworks/$framework.framework/decoy"
+done
+CDPATH_OUTPUT=$(
+	CDPATH= cd -- "$TEST_ROOT" &&
+		CDPATH="$CDPATH_DECOY" "$VERIFIER" \
+		--binary vulkan-runtime/apple-gpu-vulkan-client \
+		--apple-gpu-prefix prefix \
+		--framework-directory vulkan-runtime/Frameworks
+) || fail "an exported CDPATH redirected a relative Apple GPU prefix"
+[ "$CDPATH_OUTPUT" = \
+	'verified production Apple GPU runtime closure: vulkan-runtime/apple-gpu-vulkan-client' ] ||
+	fail "an exported CDPATH changed the verifier's output: $CDPATH_OUTPUT"
+
 expect_diagnostic 'host GL provider marker' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
