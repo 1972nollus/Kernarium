@@ -310,35 +310,57 @@ pid_t exitedPid()
 	return child;
 }
 
-void aRunRemovesOnlyTheDirectoriesOfExitedRuns()
+void createFile(const std::filesystem::path &path)
+{
+	require(::close(::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY,
+		S_IRUSR | S_IWUSR)) == 0);
+}
+
+void aRunRemovesOnlyWhatExitedRunsLeft()
 {
 	const auto parent =
 		std::filesystem::path {processLocation().directory}.parent_path();
 	const auto dead = std::to_string(exitedPid());
+	const auto live = std::to_string(::getppid());
 	const auto abandoned = parent / ("uml-kern" + dead);
-	const auto live = parent / ("uml-kern" + std::to_string(::getppid()));
-	const auto legacy = parent / ("uml-kern" + dead + "-mconsole");
+	const auto liveRun = parent / ("uml-kern" + live);
 	const auto padded = parent / ("uml-kern0" + dead);
 	const auto file = parent / ("uml-kern" + std::to_string(exitedPid()));
-	for (const auto &directory : {abandoned, live, padded})
+	/* Older builds bound the console in /tmp itself, the path under test. */
+	const std::filesystem::path legacyDirectory {"/tmp"};
+	const auto legacy = legacyDirectory / ("uml-kern" + dead + "-mconsole");
+	const auto liveLegacy =
+		legacyDirectory / ("uml-kern" + live + "-mconsole");
+	const auto legacyFile = legacyDirectory /
+		("uml-kern" + std::to_string(exitedPid()) + "-mconsole");
+	const auto misplacedLegacy = parent / ("uml-kern" + dead + "-mconsole");
+	for (const auto &directory : {abandoned, liveRun, padded})
 		require(std::filesystem::create_directory(directory));
 	const int abandonedConsole = bindServer(abandoned / "mconsole");
 	const int legacyConsole = bindServer(legacy);
-	require(::close(::open(file.c_str(), O_CREAT | O_EXCL | O_WRONLY,
-		S_IRUSR | S_IWUSR)) == 0);
+	const int liveLegacyConsole = bindServer(liveLegacy);
+	const int misplacedConsole = bindServer(misplacedLegacy);
+	createFile(file);
+	createFile(legacyFile);
 
 	{
 		const ::uml::device::GuestConsoleRun run {true};
 	}
-	/* Only a directory named for an exited process goes; a live run's,
-	 * another program's names and anything not a directory stay. */
+	/* Only an exited process's run directory, and its loose console socket
+	 * in /tmp, go. A live run's entries, another program's names, anything
+	 * of another file type and a console name outside /tmp stay. */
 	require(!std::filesystem::exists(abandoned));
-	require(directoryExists(live) && directoryExists(padded) &&
-		socketExists(legacy) && std::filesystem::is_regular_file(file));
+	require(!std::filesystem::exists(legacy));
+	require(directoryExists(liveRun) && directoryExists(padded) &&
+		std::filesystem::is_regular_file(file));
+	require(socketExists(liveLegacy) && socketExists(misplacedLegacy) &&
+		std::filesystem::is_regular_file(legacyFile));
 
-	(void)::close(abandonedConsole);
-	(void)::close(legacyConsole);
-	for (const auto &path : {live, legacy, padded, file})
+	for (const int descriptor : {abandonedConsole, legacyConsole,
+		     liveLegacyConsole, misplacedConsole})
+		(void)::close(descriptor);
+	for (const auto &path :
+		{liveRun, padded, file, liveLegacy, legacyFile, misplacedLegacy})
 		std::filesystem::remove_all(path);
 }
 
@@ -359,7 +381,7 @@ int main(int argc, char **argv)
 		aRunOwnsItsDirectoryUntilItReturns();
 		theTerminationPathRemovesTheRunDirectory();
 		aDirectoryLeftByThisPidIsReplaced();
-		aRunRemovesOnlyTheDirectoriesOfExitedRuns();
+		aRunRemovesOnlyWhatExitedRunsLeft();
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {
