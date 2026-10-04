@@ -50,6 +50,8 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
 
 void JitCompiler::set_sme_mode(std::uint8_t mode) noexcept {
     JitCompilerFamilies::set_sme_mode(mode);
+    emitter_.set_sme_host_mode(jit::jit_sme_host_mode(
+        sme_mode(), sme_profile(host_capabilities()) == SmeProfile::sme2));
   }
 
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
@@ -60,15 +62,21 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions) {
     begin_link_observation();
-    select_constrained_vector_pins(instructions);
-    if (table_list_planning_enabled_)
-      select_consecutive_vector_lists(instructions);
+    /* A streaming translation never binds a host vector register: AdvSIMD
+     * is illegal there, and the guest's vectors stay in the host's own. */
+    const bool streaming = streaming_translation();
+    if (!streaming) {
+      select_constrained_vector_pins(instructions);
+      if (table_list_planning_enabled_)
+        select_consecutive_vector_lists(instructions);
+    }
     emitter_.prologue();
     const auto internal_entry_word = emitter_.size();
     while (count_ < instructions.size()) {
       const auto pc = guest_pc + count_ * sizeof(std::uint32_t);
-      if (const auto run = try_emit_simd_unsigned_run(
-              instructions.subspan(count_), pc);
+      if (const auto run = streaming ? std::size_t{0}
+                                     : try_emit_simd_unsigned_run(
+                                           instructions.subspan(count_), pc);
           run != 0) {
         accesses_fp_state_ = true;
         count_ += run;
@@ -88,8 +96,11 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       }
       if (try_emit_native_exclusive_run(instructions.subspan(count_), pc))
         continue;
-      if (const auto run = try_emit_memory_copy_set_sequence(
-              instructions.subspan(count_), pc);
+      /* The inline copy uses AdvSIMD; streaming code takes the helper. */
+      if (const auto run =
+              streaming ? std::size_t{0}
+                        : try_emit_memory_copy_set_sequence(
+                              instructions.subspan(count_), pc);
           run != 0) {
         count_ += run;
         continue;
@@ -206,6 +217,7 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto words = emitter_.finish();
     Result result{
         .words = words,
+        .executable_words = emitter_.executable_words(),
         .relocations = emitter_.relocations(),
         .relocatable = emitter_.relocatable(),
         .direct_link_refusals = direct_link_refusals(),

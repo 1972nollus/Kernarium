@@ -204,6 +204,9 @@ protected:
   void emit_conditional_select(std::uint32_t instruction);
   void emit_integer_min_max(std::uint32_t instruction, bool immediate);
   void emit_bit_reverse_count(std::uint32_t instruction);
+  /* CNT without FEAT_CSSC or AdvSIMD, for streaming translations. */
+  void emit_gpr_population_count(bool wide, unsigned source,
+                                 unsigned result);
   void emit_multiply_add(std::uint32_t instruction);
   [[nodiscard]] bool emit_flag_manipulation(std::uint32_t instruction);
   [[nodiscard]] static bool valid_move_wide(std::uint32_t instruction) noexcept;

@@ -5,6 +5,7 @@
 #include "jit_emitter.hpp"
 #include "jit_runtime_contract.hpp"
 #include "jit_semantic_memory.hpp"
+#include "jit_sme_transition.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,8 @@ public:
 
   struct Result final {
     std::span<const std::uint32_t> words;
+    /* The executable prefix of words, before the literal pool. */
+    std::size_t executable_words{};
     /* Where this translation emitted executor-owned link operands. Shared
      * publication zeros those cells and retains these neutral guest keys so
      * another executor can resolve its own direct-link records and PIC sites.

@@ -21,6 +21,25 @@
 
 namespace uml::cpu::arm64 {
 
+namespace {
+
+/* An FP&SIMD data-processing word, or a load or store of SIMD&FP
+ * registers (load/store class with V set). */
+[[nodiscard]] constexpr bool fp_simd_word(std::uint32_t instruction) noexcept {
+  return floating_or_vector_primary_class(instruction) ||
+         (instruction & 0x0e00'0000U) == 0x0c00'0000U;
+}
+
+static_assert(fp_simd_word(0x4ea1'1c20U));  // mov v0.16b, v1.16b
+static_assert(fp_simd_word(0x1e60'4020U));  // fmov d0, d1
+static_assert(fp_simd_word(0x3dc0'0020U));  // ldr q0, [x1]
+static_assert(fp_simd_word(0xad40'0440U));  // ldp q0, q1, [x2]
+static_assert(fp_simd_word(0x4c40'7020U));  // ld1 {v0.16b}, [x1]
+static_assert(!fp_simd_word(0xf940'0020U)); // ldr x0, [x1]
+static_assert(!fp_simd_word(0xd53b'4400U)); // mrs x0, fpcr
+
+} // namespace
+
 bool JitCompiler::emit_common_control_flow(std::uint32_t instruction, std::uint64_t pc,
                                 std::size_t resulting_count) {
     if ((instruction & 0x7c00'0000U) == 0x1400'0000U) {
@@ -76,6 +95,14 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      */
     if (arm64::detail::unallocated_simd_floating_class(instruction))
       return Action::unsupported;
+    /*
+     * A streaming translation implements no FP&SIMD word at the control
+     * core (jit::sme_support): AdvSIMD is illegal in streaming mode, and
+     * the streaming-legal scalar FP and SIMD&FP memory words wait for
+     * the register-only milestone. FPCR and FPSR stay native.
+     */
+    if (streaming_translation() && fp_simd_word(instruction))
+      return reject();
     if ((instruction & 0xffe0'001fU) == 0xd400'0001U) {
       store_pc(pc + 4);
       emitter_.return_constant(Event::system_call, resulting_count);

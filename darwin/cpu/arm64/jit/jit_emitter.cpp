@@ -2,6 +2,8 @@
 
 #include "jit_emitter.hpp"
 
+#include "jit_sme_transition.hpp"
+
 namespace uml::cpu::arm64 {
 
 Arm64Emitter::Arm64Emitter(std::size_t literal_range_words) noexcept
@@ -242,8 +244,18 @@ void Arm64Emitter::call(const void *function) {
     /* A host ABI call owns NZCV. Canonicalize guest flags at translation. */
     if (flag_clobber_ != nullptr)
       flag_clobber_(flag_context_);
+    /* Host code never runs in streaming mode. The leave sequence keeps
+     * x0-x8, so the helper's arguments survive it. */
+    if (sme_host_mode_ != 0U)
+      call_transition(
+          reinterpret_cast<const void *>(&uml_arm64_jit_sme_leave));
     load_stable_pointer(16, callable_address(function));
     emit(0xd63f'0200U);
+  }
+
+void Arm64Emitter::call_transition(const void *routine) {
+    load_stable_pointer(16, callable_address(routine));
+    emit(0xd63f'0200U); // blr x16
   }
 
 void Arm64Emitter::call_preserving_flags(const void *function) {
@@ -277,9 +289,23 @@ void Arm64Emitter::prologue() {
     static_assert(maximum_chain_instructions <= 0xffffU);
     load_constant(20, maximum_chain_instructions);
     load_b(21, 19, offsetof(JitChainState, link_selector));
+    /* Only the C++ dispatcher enters here: a linked predecessor of the same
+     * mode branches to the internal entry with the host already in it. */
+    if (sme_host_mode_ != 0U) {
+      load_constant(9, sme_host_mode_);
+      call_transition(
+          reinterpret_cast<const void *>(&uml_arm64_jit_sme_enter));
+    }
   }
 
 void Arm64Emitter::epilogue() {
+    /*
+     * Leave streaming mode before returning to C++; after a terminal
+     * helper's own leave this finds nothing to do. It keeps x0, the result.
+     */
+    if (sme_host_mode_ != 0U)
+      call_transition(
+          reinterpret_cast<const void *>(&uml_arm64_jit_sme_leave));
     /*
      * x20 contains the remaining budget before the current translated
      * block. Publish it exactly once when the outer generated invocation
@@ -353,6 +379,7 @@ void Arm64Emitter::return_dynamic(std::size_t instructions) {
       }
     }
 
+    executable_words_ = words_.size();
     if (literal_patches_.empty())
       return words_;
 
@@ -414,6 +441,7 @@ void Arm64Emitter::return_dynamic(std::size_t instructions) {
         return {};
       emit(resume);
     }
+    executable_words_ = words_.size();
     if (literal_count == 0)
       return words_;
 
