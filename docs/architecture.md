@@ -330,6 +330,10 @@ page, which keeps publication precise where READ_IMPLIES_EXEC makes every
 readable page executable. The banks, the host-flag fusion rules and the
 registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
+What any x86 engine shares with the gadget engine is not part of it: the guest
+CPU state, the decoder, CPUID, the software TLB entry and the code-page
+registry form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a `shared` CPU
+target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
 and x87/MMX, SSE through SSE4.2, AVX/AVX2,

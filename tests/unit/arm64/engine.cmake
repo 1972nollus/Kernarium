@@ -18,6 +18,7 @@
         $<TARGET_OBJECTS:uml_runtime_context>)
     if(TARGET uml_x86_64_gadgets)
         list(APPEND UML_STATIC_RUNTIME_TEST_BASE_OBJECTS
+            $<TARGET_OBJECTS:uml_x86_64_target>
             $<TARGET_OBJECTS:uml_x86_64_gadgets>)
         # Static-runtime test binaries compose production OBJECT carriers
         # directly, so carry the x87 archives that would otherwise propagate

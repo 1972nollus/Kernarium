@@ -8,10 +8,12 @@
 #include <cstdint>
 #include <memory>
 
-namespace uml::cpu::x86_64::gadgets {
-
+namespace uml::cpu::x86_64 {
 struct NativeTlbEntry;
 class CodePageRegistry;
+}
+
+namespace uml::cpu::x86_64::gadgets {
 
 struct ProgramSelection final {
 	BuildStatus status{BuildStatus::illegal_instruction};

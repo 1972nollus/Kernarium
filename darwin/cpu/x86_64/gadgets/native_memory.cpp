@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_entry.hpp"
-#include "code_page_registry.hpp"
+#include "cpu/x86_64/code_page_registry.hpp"
 #include "executor.hpp"
 
 #include <algorithm>

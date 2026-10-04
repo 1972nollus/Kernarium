@@ -4,7 +4,10 @@ The engine executes x86-64 userspace as data-only streams of pointers to
 handwritten arm64 gadgets (`engine.S` and `engine/*.inc`). `native_builder.cpp`
 turns decoded instructions into those streams, `executor.cpp` owns the
 translation cache, and `native_memory.cpp` is the C++ side of the software
-TLB. This file records the contracts that are not obvious from the code.
+TLB. The guest CPU state, the decoder, CPUID, the software TLB entry and the
+code-page registry are not the engine's own: they are `uml_x86_64_target` in
+the parent directory, which every x86 engine links. This file records the
+contracts that are not obvious from the code.
 
 Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
@@ -230,9 +233,10 @@ cover. The whole table is cleared only when the address space cannot describe
 the span, when the span covers more than a quarter of the entries, or when the
 memory or the generation changed. The table is direct-mapped with 32768
 entries, 1 MiB, indexed by the page number folded once at that width;
-`native_tlb_entry_count` is the one constant, and the three assembly copies of
-the index (`translate` and `translate_plain` in engine/common.inc, and the
-baked entries' translation in engine/generate_baked.py) must change with it.
+`native_tlb_entry_count` in `../software_tlb.hpp` is the one constant, and the
+three assembly copies of the index (`translate` and `translate_plain` in
+engine/common.inc, and the baked entries' translation in
+engine/generate_baked.py) must change with it.
 
 A translation may miss, and a miss is a call. Nothing saves the host vector
 registers around it, so a gadget may not hold a guest value in one across its
@@ -428,11 +432,13 @@ rebiased one.
 
 ## Code pages
 
-`code_page_registry.hpp` keeps, per address-space generation, the set of pages
-in which any executor of that generation holds a cached translation. A store
-publishes a code change only when its page is in that set, which is what
+`../code_page_registry.hpp` keeps, per address-space generation, the set of
+pages in which any executor of that generation holds a cached translation. A
+store publishes a code change only when its page is in that set, which is what
 makes publication precise under READ_IMPLIES_EXEC, where every readable page
-is executable. The registry guarantees:
+is executable. A participant's write translations are a table of
+`NativeTlbEntry` indexed by `native_tlb_index`, which is what a registration
+retires. The registry guarantees:
 
 - membership is exact. A bit per hashed page answers "no" with one load, and
   a set bit is confirmed against a count per page, because the hash keeps
