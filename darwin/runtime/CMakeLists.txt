@@ -13,6 +13,11 @@ add_library(uml_static_runtime OBJECT
     ${CMAKE_CURRENT_SOURCE_DIR}/static_guest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/x86_gadget_runtime.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/x86_runtime_support.cpp)
+# The seam to the macOS-only x86-64 JIT; no other product compiles it.
+if(UML_X86_64_JIT_RUNTIME)
+    target_sources(uml_static_runtime PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/x86_jit_runtime.cpp)
+endif()
 uml_declare_architecture_target(uml_static_runtime runtime)
 target_link_libraries(uml_static_runtime PRIVATE
     UML::RuntimeContract
@@ -36,8 +41,15 @@ target_include_directories(uml_runtime_context PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 # The Simulator can publish into a MAP_JIT arena and so could default to the
 # JIT, but measurement rejects it for the workloads that matter: see G157.
+# The x86-64 product defaults to the gadget engine until its JIT measures
+# ahead; `--execution-engine jit` selects the x86-64 JIT there.
+if(UML_TARGET_MACOS AND NOT UML_X86_64_USERSPACE_ONLY)
+    set(_uml_default_execution_engine_jit ON)
+else()
+    set(_uml_default_execution_engine_jit OFF)
+endif()
 target_compile_definitions(uml_runtime_context PRIVATE
-    UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${UML_TARGET_MACOS}>)
+    UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${_uml_default_execution_engine_jit}>)
 
 # Process signal state an embedded kernel image leaves behind; the loader
 # closes this scope before it releases the image.

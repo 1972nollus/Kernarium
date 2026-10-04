@@ -381,6 +381,14 @@ if(TARGET uml_x86_64_gadgets)
         $<TARGET_OBJECTS:uml_x86_64_target>
         $<TARGET_OBJECTS:uml_x86_64_gadgets>)
 endif()
+# The x86-64 product's runtime seam dispatches to the macOS-only x86-64 JIT;
+# the executable-memory owner it allocates through is already above.
+if(UML_X86_64_JIT_RUNTIME)
+    target_link_libraries(uml_cpu_engine_objects INTERFACE
+        UML::ThirdPartyFEXCore)
+    target_sources(uml_cpu_engine_objects INTERFACE
+        $<TARGET_OBJECTS:uml_x86_64_jit>)
+endif()
 
 add_library(uml_cpu_engine_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_engine_component cpu mixed)

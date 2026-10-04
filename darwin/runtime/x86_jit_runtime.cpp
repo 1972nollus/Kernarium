@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "runtime/x86_jit_runtime.hpp"
+
+#if DARWIN_UML_X86_64_JIT
+
+#include "cpu/x86_64/jit/fex_engine.hpp"
+#include "platform/apple/host_features.hpp"
+#include "runtime/x86_runtime_support.hpp"
+#include "uml_darwin_static_mmu.h"
+
+#include <array>
+#include <cstdio>
+#include <new>
+
+namespace uml::runtime {
+namespace {
+
+namespace x86_64 = ::uml::cpu::x86_64;
+using ::uml::memory::StaticGuestMemory;
+
+/* The most changes of either kind the engine is handed as ranges; a reader
+ * further behind retires everything instead. */
+constexpr std::size_t change_capacity = 128;
+
+/* Hands the engine what changed in the address space since it last ran in
+ * it: the ranges while the address space can still name them, everything
+ * once it cannot. */
+void sync_engine(x86_64::jit::FexEngine &engine,
+	const X86StaticExecutionScope &execution, unsigned long generation,
+	x86_64::ExecutionMode mode,
+	const darwin_uml_static_sequences &sequences) noexcept
+{
+	x86_64::jit::AddressSpaceChanges changes{};
+	changes.mapping_sequence = sequences.mapping_changes;
+	changes.code_sequence = sequences.code_changes;
+	std::uint64_t mapping_seen = 0;
+	std::uint64_t code_seen = 0;
+	if (!engine.consumed_sequences(generation, mode, mapping_seen,
+		code_seen)) {
+		engine.apply_changes(generation, mode, changes);
+		return;
+	}
+	if (mapping_seen == sequences.mapping_changes &&
+		code_seen == sequences.code_changes)
+		return;
+	std::array<darwin_uml_static_mapping_change, change_capacity> mapped{};
+	std::array<x86_64::jit::GuestRange, change_capacity> mapping_ranges{};
+	if (mapping_seen != sequences.mapping_changes) {
+		std::uint64_t current = sequences.mapping_changes;
+		const int count = darwin_uml_static_vm_mapping_changes(generation,
+			mapping_seen, mapped.data(), mapped.size(), &current);
+		if (count < 0) {
+			changes.all_mappings = true;
+		} else {
+			const auto ranges = static_cast<std::size_t>(count);
+			for (std::size_t index = 0; index < ranges; ++index)
+				mapping_ranges[index] = {
+					mapped[index].address, mapped[index].length};
+			changes.mapping_ranges = {mapping_ranges.data(), ranges};
+			changes.mapping_sequence = current;
+		}
+	}
+	std::array<darwin_uml_static_code_change, change_capacity> coded{};
+	std::array<x86_64::jit::GuestRange, change_capacity> code_ranges{};
+	if (code_seen != sequences.code_changes) {
+		std::uint64_t current = sequences.code_changes;
+		const int count =
+			darwin_uml_static_vm_execution_context_code_change_ranges(
+				execution.context(), code_seen, coded.data(),
+				coded.size(), &current);
+		if (count < 0) {
+			changes.all_code = true;
+		} else {
+			const auto ranges = static_cast<std::size_t>(count);
+			for (std::size_t index = 0; index < ranges; ++index)
+				code_ranges[index] = {
+					coded[index].address, coded[index].length};
+			changes.code_ranges = {code_ranges.data(), ranges};
+			changes.code_sequence = current;
+		}
+	}
+	engine.apply_changes(generation, mode, changes);
+}
+
+} // namespace
+
+void X86JitEngineDeleter::operator()(
+	x86_64::jit::FexEngine *engine) const noexcept
+{
+	delete engine;
+}
+
+bool x86_jit_available() noexcept
+{
+	static const bool available = x86_64::jit::fex_engine_available(
+		::uml::platform::apple::probed_host_capabilities());
+	return available;
+}
+
+X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
+	X86JitEngine &engine, unsigned long generation,
+	std::size_t instruction_budget,
+	const ::uml::cpu::InterruptToken &interrupt) noexcept
+{
+	X86JitRunResult run{};
+	auto &result = run.execution;
+	result.reason = ::uml::cpu::ExitReason::fatal;
+	if (!x86_jit_available()) {
+		std::fputs("Darwin x86 runtime: this host cannot run the "
+			"x86-64 JIT\n", stderr);
+		return run;
+	}
+	if (!engine) {
+		engine.reset(new (std::nothrow) x86_64::jit::FexEngine(
+			::uml::platform::apple::probed_host_capabilities()));
+		if (!engine)
+			return run;
+	}
+	X86StaticExecutionScope execution{generation, cpu.rip};
+	if (!execution.entered())
+		return run;
+	const auto sequences = execution.sequences();
+	if (sequences.execution_interrupt != 0 || interrupt.state_pending()) {
+		result.reason = ::uml::cpu::ExitReason::interrupt;
+		return run;
+	}
+	memory.prepare(generation, sequences.mapping_changes);
+	if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
+		cpu.gpr(x86_64::Register::rax) = 15;
+		cpu.system_call_32bit = false;
+		result.reason = ::uml::cpu::ExitReason::system_call;
+		return run;
+	}
+	sync_engine(*engine, execution, generation, cpu.execution_mode,
+		sequences);
+	const auto executed = engine->run(cpu, memory, {
+		.generation = generation,
+		.instruction_budget = instruction_budget,
+		.execution_context = execution.context(),
+		.interrupt = &interrupt,
+	});
+	result = executed.execution;
+	run.error_code = executed.error_code;
+	/* A handler without SA_RESTORER returns to the trampoline, which no
+	 * guest page backs on the x86-64 slice, so the engine stops there with
+	 * a fetch fault. Reaching it means rt_sigreturn, as at entry. */
+	if (result.reason == ::uml::cpu::ExitReason::memory_fault &&
+		result.fault.access == ::uml::memory::MemoryAccess::execute &&
+		cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
+		cpu.gpr(x86_64::Register::rax) = 15;
+		cpu.system_call_32bit = false;
+		result.reason = ::uml::cpu::ExitReason::system_call;
+		result.fault = {};
+		return run;
+	}
+	/* As in the gadget runtime: a long-mode access to a non-canonical
+	 * address raises #GP or #SS, not #PF. */
+	if (result.reason == ::uml::cpu::ExitReason::memory_fault &&
+		cpu.execution_mode == x86_64::ExecutionMode::long64 &&
+		!x86_canonical(result.fault.address)) {
+		result.reason = ::uml::cpu::ExitReason::breakpoint;
+		result.syndrome = result.fault.access ==
+			::uml::memory::MemoryAccess::execute ?
+			x86_general_protection : x86_noncanonical_vector(memory, cpu);
+		result.fault = {};
+		run.error_code = 0;
+	}
+	return run;
+}
+
+} // namespace uml::runtime
+
+#endif

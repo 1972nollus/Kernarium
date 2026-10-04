@@ -149,6 +149,14 @@ if(UML_BUILD_X86_64_JIT AND NOT UML_BUILD_X86_64_GUEST)
         "The x86-64 JIT runs the 4 KiB x86-64 guest, which this "
         "configuration does not build")
 endif()
+# The x86-64 product dispatches x86 code to the JIT when it is selected. The
+# arm64 product's x86 test guest builds the engine for its unit tests only and
+# runs x86 code on the gadget engine.
+if(UML_BUILD_X86_64_JIT AND UML_X86_64_USERSPACE_ONLY)
+    set(UML_X86_64_JIT_RUNTIME ON)
+else()
+    set(UML_X86_64_JIT_RUNTIME OFF)
+endif()
 # Every Apple product uses one relocatable ET_DYN kernel linked at 48 GiB and
 # one sparse software guest-address contract. Device and Simulator top-pack the
 # scalable native window below the physical-iOS 62 GiB ceiling. macOS exercises
@@ -196,6 +204,7 @@ add_library(UML::GuestPageConfiguration ALIAS
 target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_X86_64_GUEST=$<BOOL:${UML_BUILD_X86_64_GUEST}>
     DARWIN_UML_X86_64_USERSPACE_ONLY=$<BOOL:${UML_X86_64_USERSPACE_ONLY}>
+    DARWIN_UML_X86_64_JIT=$<BOOL:${UML_X86_64_JIT_RUNTIME}>
     DARWIN_UML_GUEST_PAGE_SIZE=${UML_GUEST_PAGE_SIZE}
     DARWIN_UML_GUEST_PAGE_SHIFT=${UML_GUEST_PAGE_SHIFT}
     DARWIN_UML_GUEST_ADDRESS_LIMIT=${UML_GUEST_ADDRESS_LIMIT}

@@ -4,6 +4,9 @@
 #if DARWIN_UML_X86_64_GUEST
 #include "runtime/x86_gadget_runtime.hpp"
 #endif
+#if DARWIN_UML_X86_64_JIT
+#include "runtime/x86_jit_runtime.hpp"
+#endif
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/engine.hpp"
@@ -291,28 +294,15 @@ void save_x86_fault_flags(darwin_uml_guest_registers &registers) noexcept
 	registers.x[x86_64_rflags_slot] |= x86_64::rflags_resume;
 }
 
-template<uml::cpu::EngineKind Kind>
-int run_x86_guest(darwin_uml_guest_registers &registers,
-	darwin_uml_guest_fp_registers &fp,
-	unsigned long generation, ::uml::runtime::Context &context,
-	::uml::runtime::ThreadExecutionState &runtime) noexcept
+/* The event a dispatch of x86 code leaves for the kernel. Either engine's
+ * result names an ExecutionResult and the error code of the #GP or #SS it
+ * ended in. Always inlined, so the gadget entry keeps its single body. */
+template<typename Run>
+[[gnu::always_inline]] inline int finish_x86_run(
+	darwin_uml_guest_registers &registers,
+	darwin_uml_guest_fp_registers &fp, ::uml::runtime::Context &context,
+	x86_64::CpuState &cpu, bool stepping, Run &run) noexcept
 {
-	(void)Kind;
-	auto &cpu = runtime.x86_cpu;
-	load_x86_cpu(cpu, registers, fp);
-	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
-	 * budget the executor retires exactly that many, so a budget of one is
-	 * a single step. */
-	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
-	const auto &registered_interrupt = runtime.interrupt;
-	auto run = ::uml::runtime::run_x86_gadgets(
-		cpu, runtime.memory, runtime.x86_executor,
-		runtime.x86_checked_executors, generation,
-		stepping ? 1 : dispatch_budget, stepping, {
-		.sequence = registered_interrupt.sequence,
-		.snapshot = registered_interrupt.snapshot,
-		.stop = context.stop_token(),
-	});
 	if (stepping &&
 		run.execution.reason == uml::cpu::ExitReason::instruction_budget)
 		run.execution.reason = uml::cpu::ExitReason::single_step;
@@ -386,6 +376,53 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		break;
 	}
 	return event;
+}
+
+template<uml::cpu::EngineKind Kind>
+int run_x86_guest(darwin_uml_guest_registers &registers,
+	darwin_uml_guest_fp_registers &fp,
+	unsigned long generation, ::uml::runtime::Context &context,
+	::uml::runtime::ThreadExecutionState &runtime) noexcept
+{
+	auto &cpu = runtime.x86_cpu;
+	load_x86_cpu(cpu, registers, fp);
+	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
+	 * budget the executor retires exactly that many, so a budget of one is
+	 * a single step. */
+	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
+	const auto &registered_interrupt = runtime.interrupt;
+#if DARWIN_UML_X86_64_JIT
+	/* The x86-64 product runs long64 code on the JIT when its selection
+	 * names it. compat32 code stays on the gadget engine under either
+	 * selection until the JIT runs it too. The gadget instantiation, the
+	 * product's default, compiles none of this. */
+	if constexpr (Kind == uml::cpu::EngineKind::jit) {
+		if (cpu.execution_mode == x86_64::ExecutionMode::long64) {
+			auto run = ::uml::runtime::run_x86_jit(cpu, runtime.memory,
+				runtime.x86_jit, generation,
+				stepping ? 1 : dispatch_budget, {
+				.sequence = registered_interrupt.sequence,
+				.snapshot = registered_interrupt.snapshot,
+				.stop = context.stop_token(),
+			});
+			return finish_x86_run(registers, fp, context, cpu, stepping,
+				run);
+		}
+	}
+#else
+	(void)Kind;
+#endif
+	/* Everything else runs on the gadget engine: the x86-64 product's
+	 * default, compat32 code, and the arm64 product's x86 test guest. */
+	auto run = ::uml::runtime::run_x86_gadgets(
+		cpu, runtime.memory, runtime.x86_executor,
+		runtime.x86_checked_executors, generation,
+		stepping ? 1 : dispatch_budget, stepping, {
+		.sequence = registered_interrupt.sequence,
+		.snapshot = registered_interrupt.snapshot,
+		.stop = context.stop_token(),
+	});
+	return finish_x86_run(registers, fp, context, cpu, stepping, run);
 }
 #endif
 
