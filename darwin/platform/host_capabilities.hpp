@@ -4,6 +4,7 @@
 #include <array>
 #include <bitset>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace uml::platform {
@@ -116,6 +117,13 @@ enum class ArmFeature : std::size_t {
 	vhe,
 	wfxt,
 	xs,
+	/* The SME profile beyond FEAT_SME itself: SME2 (ZT0, multi-vector and
+	 * predicate-as-counter forms) and the two optional outer-product
+	 * widths. The prober reports these, FEAT_SME and the streaming vector
+	 * length only where the guest-SME policy allows it. */
+	sme2,
+	sme_f64f64,
+	sme_i16i64,
 	inventory_count,
 	afp = inventory_count,
 	lse2,
@@ -182,9 +190,10 @@ inline constexpr std::array arm_feature_labels{
 	std::string_view{"TLBIW"}, std::string_view{"TRBE_EXC"},
 	std::string_view{"TRF"}, std::string_view{"UAO"},
 	std::string_view{"VHE"}, std::string_view{"WFxT"},
-	std::string_view{"XS"}, std::string_view{"AFP"},
-	std::string_view{"LSE2"}, std::string_view{"ECV"},
-	std::string_view{"RPRES"},
+	std::string_view{"XS"}, std::string_view{"SME2"},
+	std::string_view{"SME_F64F64"}, std::string_view{"SME_I16I64"},
+	std::string_view{"AFP"}, std::string_view{"LSE2"},
+	std::string_view{"ECV"}, std::string_view{"RPRES"},
 };
 
 /* Stable machine-readable names shared with the architectural instruction
@@ -244,16 +253,17 @@ inline constexpr std::array arm_feature_tokens{
 	std::string_view{"tlbiw"}, std::string_view{"trbe_exc"},
 	std::string_view{"trf"}, std::string_view{"uao"},
 	std::string_view{"vhe"}, std::string_view{"wfxt"},
-	std::string_view{"xs"}, std::string_view{"afp"},
-	std::string_view{"lse2"}, std::string_view{"ecv"},
-	std::string_view{"rpres"},
+	std::string_view{"xs"}, std::string_view{"sme2"},
+	std::string_view{"sme_f64f64"}, std::string_view{"sme_i16i64"},
+	std::string_view{"afp"}, std::string_view{"lse2"},
+	std::string_view{"ecv"}, std::string_view{"rpres"},
 };
 
 inline constexpr std::size_t arm_inventory_feature_count =
 	static_cast<std::size_t>(ArmFeature::inventory_count);
 inline constexpr std::size_t arm_feature_count =
 	static_cast<std::size_t>(ArmFeature::count);
-static_assert(arm_inventory_feature_count == 107);
+static_assert(arm_inventory_feature_count == 110);
 static_assert(arm_feature_labels.size() == arm_feature_count);
 static_assert(arm_feature_tokens.size() == arm_feature_count);
 
@@ -273,6 +283,14 @@ struct HostCapabilities final {
 	bool sha3{};
 	bool sha512{};
 	bool jscvt_subnormal_flags_correct{};
+	/* FEAT_SME in hardware, whatever the guest-SME policy: it only tells
+	 * host code that it may read SVCR, and is never a reason to advertise
+	 * or execute SME. The prober alone sets it, so a profile a test
+	 * builds by hand never claims it. */
+	bool sme_hardware{};
+	/* The streaming vector length in bytes (a power of two from 16 to
+	 * 256) when the SME tokens are reported, else 0. */
+	std::uint16_t sme_svl_bytes{};
 
 	[[nodiscard]] bool has(ArmFeature feature) const noexcept
 	{

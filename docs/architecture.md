@@ -318,6 +318,34 @@ period, 100 µs, without an SEV.
 `guest-gadgets-smoke` and `guest-jit-smoke` time a WFE loop against that
 period.
 
+The SME profile of the arm64 virtual CPU is FEAT_SME with FEAT_SME_F64F64 and
+FEAT_SME_I16I64, plus FEAT_SME2 where the host has it, at the host's streaming
+vector length (SVL), whatever that is: native execution needs the guest's SVL
+to equal the host's, and EL0 cannot change it.
+[`cpu/arm64/sme_profile.hpp`](../darwin/cpu/arm64/sme_profile.hpp) derives
+the profile, the register-file layout and the SVCR transition rules for both
+engines. The prober reports the profile only under the guest-SME policy,
+`DARWIN_UML_GUEST_SME=1`, which stays off by default until both engines
+implement SME; with it off, ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME
+HWCAP2 bits read zero on every host. Neither engine implements SME yet, so
+every SVE and SME word is the illegal-instruction exit.
+
+Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
+the size its SVL needs, made at start-up only when the run implements SME and
+reached through a `CpuState` pointer. An embedded block would have to carry
+the largest SVL's 64 KiB of ZA in every vCPU. The file has the kernel's task
+storage layout, Z, P, ZA, then ZT0, each part at a multiple of SVL, so Z and
+P offsets fit an engine's 16-bit operand at every SVL and a ZA row is its
+base plus the row times SVL. Reaching the file costs one pointer load per
+engine entry or exit that moves SME state; a run without SME carries only
+the null pointer. A write of SVCR that would set SM or ZA in a task without
+SME storage retires nothing and leaves through the `sme_access` exit, which
+the runtime treats as fatal until the kernel provides that storage. Debug
+builds trap when an engine is entered or returns with the host in streaming
+mode or with ZA on; only a host with FEAT_SME in hardware reads SVCR. Only
+the M4's SVL of 64 bytes has been checked on hardware, and the iOS SME path
+is unvalidated on hardware.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

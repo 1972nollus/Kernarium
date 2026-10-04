@@ -358,6 +358,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			run.error_code = static_cast<std::int32_t>(executed.error);
 			return run;
 		case ::uml::cpu::EngineEvent::pc_alignment:
+		case ::uml::cpu::EngineEvent::sme_access:
 		case ::uml::cpu::EngineEvent::fatal:
 			trace_fatal("execute", cpu, generation, 0,
 				result.retired_instructions);

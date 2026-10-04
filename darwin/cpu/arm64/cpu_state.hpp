@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/sme_profile.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -122,6 +124,27 @@ struct CpuState final {
 	 * lookup off. Like the ring, a stale or mismatched record can only fall
 	 * back to the ordinary miss path. */
 	const void *gadget_target_tier{};
+	/* SME state, appended so that no earlier offset moves. TPIDR2_EL0, then
+	 * SVCR (svcr_sm, svcr_za). sme_loaded marks the parts of the register
+	 * file access_sme_state() filled from the task in this entry, and
+	 * sme_dirty those write_back_sme_state() must store, with SVCR's bits:
+	 * Z/P for SM, ZA/ZT0 for ZA. sme_host_mode is engine-private host
+	 * state (sme_host_*). */
+	std::uint64_t tpidr2{};
+	std::uint8_t svcr{};
+	std::uint8_t sme_loaded{};
+	std::uint8_t sme_dirty{};
+	std::uint8_t sme_host_mode{};
+	/* The streaming vector length in bytes the register file is sized for,
+	 * 0 without one. */
+	std::uint32_t sme_svl{};
+	/* The task's SME storage, in the register file's layout, or null when
+	 * the task has none; the kernel owns it. */
+	std::byte *sme_task{};
+	/* This vCPU's register file (SmeRegisterFile), sme_storage_size(sme_svl)
+	 * bytes, or null when the run does not implement SME. While SM is set,
+	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
+	std::byte *sme_registers{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{
@@ -152,6 +175,123 @@ struct CpuState final {
 			fp_loaded = true;
 		}
 		fp_dirty = true;
+	}
+
+	/* Points this vCPU at its register file; see SmeRegisterFile. */
+	void bind_sme_registers(const SmeRegisterFile &file) noexcept
+	{
+		sme_registers = file.data();
+		sme_svl = file.svl();
+	}
+
+	/* Loads a task's SME state lazily, as defer_fp_load() loads its FP
+	 * state: SVCR and TPIDR2_EL0 now, Z/P and ZA/ZT0 only when
+	 * access_sme_state() needs them. */
+	void defer_sme_load(std::byte *task, std::uint8_t task_svcr,
+			    std::uint64_t task_tpidr2) noexcept
+	{
+		sme_task = task;
+		svcr = task_svcr & svcr_mask;
+		tpidr2 = task_tpidr2;
+		sme_loaded = 0;
+		sme_dirty = 0;
+	}
+
+	/* Makes the state SVCR makes live accessible in the register file and
+	 * marks it dirty, as access_fp_state() does for V: Z/P while SM is
+	 * set, with each Z's low 16 bytes taken from the FP image's V (so the
+	 * FP state is accessed first), and ZA/ZT0 while ZA is set. A task with
+	 * no storage contributes zeros, so no earlier task's state is ever
+	 * exposed. An engine calls it before it first runs code whose mode has
+	 * SM or ZA set. */
+	void access_sme_state() noexcept
+	{
+		if (sme_registers == nullptr)
+			return;
+		const auto copy_from_task = [this](std::byte *destination,
+			std::size_t offset, std::size_t size) noexcept {
+			if (sme_task != nullptr)
+				std::memcpy(destination, sme_task + offset, size);
+			else
+				std::memset(destination, 0, size);
+		};
+		const auto load = static_cast<std::uint8_t>(svcr & ~sme_loaded);
+		if ((load & svcr_sm) != 0U) {
+			access_fp_state();
+			for (unsigned n = 0; n < sme_z_registers; ++n) {
+				auto *z = sme_registers + sme_z_offset(sme_svl, n);
+				std::memcpy(z, vectors[n].bytes.data(), 16);
+				copy_from_task(z + 16, sme_z_offset(sme_svl, n) + 16,
+					sme_svl - 16U);
+			}
+			copy_from_task(sme_registers + sme_p_offset(sme_svl, 0),
+				sme_p_offset(sme_svl, 0),
+				sme_p_registers * (sme_svl / 8U));
+		}
+		if ((load & svcr_za) != 0U)
+			copy_from_task(sme_registers + sme_za_offset(sme_svl, 0),
+				sme_za_offset(sme_svl, 0),
+				sme_storage_size(sme_svl) -
+					sme_za_offset(sme_svl, 0));
+		sme_loaded |= svcr;
+		sme_dirty |= svcr;
+	}
+
+	/* Stores what access_sme_state() exposed, or a write of SVCR zeroed,
+	 * back into the task, as the runtime does for V before it exports the
+	 * task frame: Z/P while SM is set, copying each Z's low 16 bytes into
+	 * the FP image's V as well, and ZA/ZT0 while ZA is set. */
+	void write_back_sme_state() noexcept
+	{
+		if (sme_registers == nullptr || sme_task == nullptr)
+			return;
+		const auto store = static_cast<std::uint8_t>(sme_dirty & svcr);
+		if ((store & svcr_sm) != 0U) {
+			std::memcpy(sme_task, sme_registers,
+				sme_za_offset(sme_svl, 0));
+			access_fp_state();
+			for (unsigned n = 0; n < sme_z_registers; ++n)
+				std::memcpy(vectors[n].bytes.data(),
+					sme_registers + sme_z_offset(sme_svl, n),
+					16);
+		}
+		if ((store & svcr_za) != 0U)
+			std::memcpy(sme_task + sme_za_offset(sme_svl, 0),
+				sme_registers + sme_za_offset(sme_svl, 0),
+				sme_storage_size(sme_svl) -
+					sme_za_offset(sme_svl, 0));
+	}
+
+	/* Executes a guest write of SVCR by svcr_write()'s rules: the bits in
+	 * `mask` take their values from `value`. No native FP environment may
+	 * hold a newer guest FPSR than CpuState, and the register file must
+	 * exist. Returns false, changing nothing, when the task has no SME
+	 * storage and the write would set SM or ZA: the engine then exits with
+	 * sme_access without retiring the instruction. */
+	[[nodiscard]] bool write_svcr(std::uint8_t mask, std::uint8_t value) noexcept
+	{
+		const auto write = svcr_write(svcr, mask, value, sme_task != nullptr);
+		if (write.needs_storage)
+			return false;
+		if (write.reset_fpsr) {
+			access_fp_state();
+			fpsr = streaming_mode_change_fpsr;
+		}
+		if (write.zero_streaming)
+			std::memset(sme_registers, 0, sme_za_offset(sme_svl, 0));
+		if (write.zero_vectors)
+			vectors = {};
+		if (write.zero_za)
+			std::memset(sme_registers + sme_za_offset(sme_svl, 0), 0,
+				sme_storage_size(sme_svl) -
+					sme_za_offset(sme_svl, 0));
+		const auto zeroed = static_cast<std::uint8_t>(
+			(write.zero_streaming ? svcr_sm : 0U) |
+			(write.zero_za ? svcr_za : 0U));
+		sme_loaded |= zeroed;
+		sme_dirty |= zeroed;
+		svcr = write.svcr;
+		return true;
 	}
 
 	/* The guest FPCR, whether or not the deferred image is loaded yet. */

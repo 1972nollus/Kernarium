@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string_view>
 #include <sys/sysctl.h>
 
@@ -126,36 +128,96 @@ native_jscvt_subnormal_flags_correct() noexcept
 		HostCapabilityResult::supported;
 }
 
+/* Whether the virtual CPU may implement SME on a host that has the profile.
+ * Off by default until both engines implement it completely; setting
+ * DARWIN_UML_GUEST_SME to exactly "1" turns it on. It is a run policy, not a
+ * test hook, and it never enables anything the host lacks. */
+enum class GuestSmePolicy : std::uint8_t {
+	off,
+	on,
+};
+
+inline constexpr const char *guest_sme_policy_variable = "DARWIN_UML_GUEST_SME";
+
+[[nodiscard]] inline GuestSmePolicy parse_guest_sme_policy(
+	const char *value) noexcept
+{
+	return value != nullptr && std::strcmp(value, "1") == 0 ?
+		GuestSmePolicy::on : GuestSmePolicy::off;
+}
+
+/* Read once, so every engine, the identification registers and the kernel
+ * bridge see one answer for the whole process. */
+[[nodiscard]] inline GuestSmePolicy guest_sme_policy() noexcept
+{
+	static const GuestSmePolicy policy =
+		parse_guest_sme_policy(std::getenv(guest_sme_policy_variable));
+	return policy;
+}
+
+/* hw.optional.arm.sme_max_svl_b: the host's streaming vector length in
+ * bytes. Zero when the sysctl is missing, has an unexpected size, or holds
+ * a value no SME implementation can have (a power of two from 16 to 256). */
+[[nodiscard]] inline std::uint16_t query_host_sme_svl_bytes() noexcept
+{
+	std::uint64_t value = 0;
+	std::size_t size = sizeof(value);
+	/* An int today; either width fills the low bytes of the zeroed
+	 * little-endian value. */
+	if (sysctlbyname("hw.optional.arm.sme_max_svl_b", &value, &size,
+		    nullptr, 0) != 0 ||
+	    (size != sizeof(std::uint32_t) && size != sizeof(value)))
+		return 0;
+	if (value < 16 || value > 256 || (value & (value - 1)) != 0)
+		return 0;
+	return static_cast<std::uint16_t>(value);
+}
+
+/* The SME tokens, which only the guest-SME policy lets the prober report. */
+inline constexpr std::array sme_policy_features{ArmFeature::sme,
+	ArmFeature::sme2, ArmFeature::sme_f64f64, ArmFeature::sme_i16i64};
+
 /* Platform probing ends here. Runtime copies this immutable neutral profile
  * into EngineConfiguration; CPU translation code never depends on sysctl or
- * any Apple header.
+ * any Apple header. With the guest-SME policy off, or without a valid
+ * streaming vector length, no SME token is reported and sme_svl_bytes is 0;
+ * sme_hardware reports FEAT_SME either way.
  */
+[[nodiscard]] inline ::uml::platform::HostCapabilities probe_host_capabilities(
+	GuestSmePolicy sme_policy) noexcept
+{
+	::uml::platform::HostCapabilities result;
+	for (std::size_t index = 0; index < arm_feature_count; ++index)
+		result.supported.set(index, query_host_arm_feature(
+			static_cast<ArmFeature>(index)));
+	result.floating_point = result.has(ArmFeature::floating_point);
+	result.advanced_simd = result.has(ArmFeature::advanced_simd);
+	result.fp16 = result.has(ArmFeature::fp16);
+	result.cssc = result.has(ArmFeature::cssc);
+	result.aes = result.has(ArmFeature::aes);
+	result.pmull = result.has(ArmFeature::pmull);
+	result.sha1 = result.has(ArmFeature::sha1);
+	result.sha2 = result.has(ArmFeature::sha256);
+	result.crc32 = result.has(ArmFeature::crc32);
+	result.sha3 = result.has(ArmFeature::sha3);
+	result.sha512 = result.has(ArmFeature::sha512);
+	if (result.has(ArmFeature::jscvt))
+		result.jscvt_subnormal_flags_correct =
+			detail::native_jscvt_subnormal_flags_correct();
+	result.sme_hardware = result.has(ArmFeature::sme);
+	if (sme_policy == GuestSmePolicy::on && result.sme_hardware)
+		result.sme_svl_bytes = query_host_sme_svl_bytes();
+	if (result.sme_svl_bytes == 0)
+		for (const auto feature : sme_policy_features)
+			result.supported.reset(static_cast<std::size_t>(feature));
+	return result;
+}
+
 [[nodiscard]] inline const ::uml::platform::HostCapabilities &
 probed_host_capabilities() noexcept
 {
-	static const ::uml::platform::HostCapabilities features = [] {
-		::uml::platform::HostCapabilities result;
-		for (std::size_t index = 0; index < arm_feature_count; ++index)
-			result.supported.set(index, query_host_arm_feature(
-				static_cast<ArmFeature>(index)));
-		result.floating_point =
-			result.has(ArmFeature::floating_point);
-		result.advanced_simd =
-			result.has(ArmFeature::advanced_simd);
-		result.fp16 = result.has(ArmFeature::fp16);
-		result.cssc = result.has(ArmFeature::cssc);
-		result.aes = result.has(ArmFeature::aes);
-		result.pmull = result.has(ArmFeature::pmull);
-		result.sha1 = result.has(ArmFeature::sha1);
-		result.sha2 = result.has(ArmFeature::sha256);
-		result.crc32 = result.has(ArmFeature::crc32);
-		result.sha3 = result.has(ArmFeature::sha3);
-		result.sha512 = result.has(ArmFeature::sha512);
-		if (result.has(ArmFeature::jscvt))
-			result.jscvt_subnormal_flags_correct =
-				detail::native_jscvt_subnormal_flags_correct();
-		return result;
-	}();
+	static const ::uml::platform::HostCapabilities features =
+		probe_host_capabilities(guest_sme_policy());
 	return features;
 }
 
