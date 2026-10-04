@@ -23,6 +23,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -64,12 +65,28 @@ class SupervisorRecordTests(unittest.TestCase):
             process.wait(timeout=10)
 
     def spawn(self, *arguments: str) -> subprocess.Popen:
-        """A process-group leader of this test's own, as `start` makes one."""
+        """A process-group leader of this test's own, as `start` makes one.
+
+        Returns once `ps` shows its arguments. A framework Python's launcher
+        re-execs the interpreter, and until that exec completes `ps` shows
+        only "(python3.14)". `start` returns only after the host serves, so
+        `stop` and `status` never meet a supervisor that young."""
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)", *arguments],
             stdin=subprocess.DEVNULL, start_new_session=True)
         self.processes.append(process)
-        return process
+        expected = ["time.sleep(60)", *arguments]
+        deadline = time.monotonic() + 10
+        while True:
+            shown = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(process.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, timeout=10).stdout
+            if shown.split()[-len(expected):] == expected:
+                return process
+            if time.monotonic() > deadline:
+                self.fail(f"ps never showed the arguments of {process.pid}: {shown!r}")
+            time.sleep(0.01)
 
     def options(self, *command: str):
         return automation.parse(
