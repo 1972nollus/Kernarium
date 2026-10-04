@@ -628,17 +628,19 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 		 * destination and RIP as they were, with MXCSR's flags for it.
 		 * One raised before the computation reports only those, and an
 		 * unmasked underflow reports no precision exception, as x86
-		 * does. */
-		auto flags = (raised & ~correction.decided) | correction.raised |
-			denormal;
+		 * does. Settled flags hold that already. */
+		auto flags = correction.settled ? correction.raised :
+			(raised & ~correction.decided) | correction.raised | denormal;
 		const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
 		if (unmasked == 0) {
 			cpu.mxcsr |= flags;
 			return result;
 		}
-		if ((unmasked & precomputation_exceptions) != 0)
+		if (!correction.settled &&
+			(unmasked & precomputation_exceptions) != 0)
 			flags &= precomputation_exceptions;
-		else if ((unmasked & underflow_exception) != 0)
+		else if (!correction.settled &&
+			(unmasked & underflow_exception) != 0)
 			flags &= ~precision_exception;
 		cpu = before;
 		restore_store(saved, memory);

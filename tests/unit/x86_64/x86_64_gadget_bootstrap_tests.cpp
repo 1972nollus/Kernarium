@@ -6565,6 +6565,95 @@ struct FlagCase {
 	return true;
 }
 
+/* DPPS and DPPD raise flags step by step, as x86 does: the products, then
+ * their sums in pairs, then for DPPS the sum of those. Each step detects
+ * underflow after rounding, so that a product rounded up to the smallest
+ * normal is not tiny, and FTZ flushing an exact tiny sum raises underflow
+ * and precision. A step that raises an unmasked exception faults, and the
+ * steps after it raise nothing, a denormal product added included -- unless
+ * the exception is invalid operation or a denormal operand, raised before
+ * the step computes, which raises nothing else of its step. */
+[[nodiscard]] bool checked_dot_product_flags_follow_x86()
+{
+	/* DPPS and DPPD xmm0, xmm1, 0x31: the products of lanes 0 and 1,
+	 * summed into lane 0; DPPS 0xf1 sums all four. */
+	const std::vector<std::uint8_t> dpps{0x66, 0x0f, 0x3a, 0x40, 0xc1, 0x31};
+	const std::vector<std::uint8_t> dppd{0x66, 0x0f, 0x3a, 0x41, 0xc1, 0x31};
+	const std::vector<std::uint8_t> dpps_all{0x66, 0x0f, 0x3a, 0x40, 0xc1,
+		0xf1};
+	constexpr std::uint64_t below_one = 0x3f7f'fffeULL;
+	constexpr std::uint64_t above_least_normal = 0x0080'0001ULL;
+	constexpr std::uint64_t least_normal = 0x0080'0000ULL;
+	constexpr std::uint64_t half = 0x3f00'0000ULL;
+	/* 0.75 + 2^-24: times above_least_normal, an inexact tiny product;
+	 * times itself, an inexact normal one. */
+	constexpr std::uint64_t three_quarters = 0x3f40'0001ULL;
+	/* Products 1, 2^-24 and an exact denormal: the first pair sum is
+	 * inexact, and the second adds a denormal. */
+	const std::array<std::uint64_t, 2> pair_sums_left{
+		0x3380'0000'3f80'0000ULL, 0x3f00'0000ULL};
+	const std::array<std::uint64_t, 2> pair_sums_right{
+		0x3f80'0000'3f80'0000ULL, 0x0080'0000ULL};
+	const std::vector<FlagCase> cases{
+		{"DPPS of a product just below the smallest normal", dpps,
+		 {{{below_one, 0}, {above_least_normal, 0}, {}}}, 0x1f80, 0x1fa0,
+		 least_normal},
+		{"DPPS of a product just below the smallest normal, underflow "
+		 "unmasked", dpps,
+		 {{{below_one, 0}, {above_least_normal, 0}, {}}}, 0x1780, 0x17a0,
+		 least_normal},
+		{"DPPS of an exact tiny sum under FTZ", dpps,
+		 {{{0xbf80'0000'3fc0'0000ULL, 0},
+		   {0x0080'0000'0080'0000ULL, 0}, {}}},
+		 0x9f80, 0x9fb0, 0},
+		{"DPPD of a product just below the smallest normal", dppd,
+		 {{{0x3fef'ffff'ffff'fffeULL, 0}, {0x0010'0000'0000'0001ULL, 0},
+		   {}}},
+		 0x1f80, 0x1fa0, 0x0010'0000'0000'0000ULL},
+		{"DPPS of an exact tiny product, underflow unmasked", dpps,
+		 {{{half, 0}, {least_normal, 0}, {}}}, 0x1780, 0x1790, 0},
+		{"DPPS of an exact tiny product, denormal operand unmasked", dpps,
+		 {{{half, 0}, {least_normal, 0}, {}}}, 0x1e80, 0x1e82, 0},
+		{"DPPS of an exact tiny product, underflow and denormal operand "
+		 "unmasked", dpps, {{{half, 0}, {least_normal, 0}, {}}}, 0x1680,
+		 0x1690, 0},
+		{"DPPS of an inexact tiny product, denormal operand unmasked",
+		 dpps, {{{three_quarters, 0}, {above_least_normal, 0}, {}}},
+		 0x1e80, 0x1eb2, 0},
+		{"DPPS of an inexact tiny product, precision unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x0f80,
+		 0x0fb0, 0},
+		{"DPPS of an inexact tiny product, underflow unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1780,
+		 0x17b0, 0},
+		{"DPPS of an inexact tiny product, underflow and denormal operand "
+		 "unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x1680,
+		 0x16b0, 0},
+		{"DPPS of an inexact tiny product under FTZ, denormal operand "
+		 "unmasked", dpps,
+		 {{{three_quarters, 0}, {above_least_normal, 0}, {}}}, 0x9e80,
+		 0x9eb0, 0},
+		{"DPPS of an inexact normal product, precision unmasked", dpps,
+		 {{{three_quarters, 0}, {three_quarters, 0}, {}}}, 0x0f80, 0x0fa0,
+		 0},
+		{"DPPS of an inexact pair sum beside a denormal one, denormal "
+		 "operand unmasked", dpps_all,
+		 {{pair_sums_left, pair_sums_right, {}}}, 0x1e80, 0x1e82, 0},
+		{"DPPS of an inexact pair sum beside a denormal one, precision "
+		 "unmasked", dpps_all, {{pair_sums_left, pair_sums_right, {}}},
+		 0x0f80, 0x0fa2, 0},
+		{"DPPS of an exact tiny final sum, underflow unmasked", dpps_all,
+		 {{{0x3f80'0000ULL, 0xbfc0'0000ULL},
+		   {0x0100'0000ULL, 0x00c0'0000ULL}, {}}},
+		 0x1780, 0x1790, 0},
+	};
+	for (const auto &test : cases)
+		if (!flags_follow_x86(test))
+			return false;
+	return true;
+}
+
 /* An unmasked x87 exception leaves its operands, sets ES and B, and raises
  * #MF at the next waiting instruction. */
 [[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
@@ -8651,6 +8740,7 @@ int main()
 		checked_comparison_invalid_operations_follow_x86() &&
 		checked_horizontal_flags_follow_x86() &&
 		checked_underflow_follows_x86() &&
+		checked_dot_product_flags_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

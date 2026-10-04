@@ -134,19 +134,22 @@ inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
  * before it runs, which the host's flags do not show: x86 raises it for a
  * denormal source in a lane it computes, unless MXCSR.DAZ makes the source
  * zero, or the lane holds a NaN or raises invalid operation or division by
- * zero, which take precedence. DPPS and DPPD raise it too for a denormal
- * product or sum they add. Rounding, RCP, RSQRT, VCVTPH2PS and conversions
- * to integers raise none. Zero when a memory source is unreadable, which the
- * instruction then faults on. */
+ * zero, which take precedence. Rounding, RCP, RSQRT, VCVTPH2PS and
+ * conversions to integers raise none, and DPPS and DPPD leave it to
+ * `host_flag_correction`. Zero when a memory source is unreadable, which
+ * the instruction then faults on. */
 [[nodiscard]] std::uint32_t denormal_operand(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
 /* MXCSR flags the host's floating-point operations raise differently from
  * x86 for an instruction run checked: the flags in `decided` take their
- * values from `raised` rather than from the host. */
+ * values from `raised` rather than from the host. `settled` flags are all
+ * of x86's, the denormal operand and the precedence of an unmasked
+ * exception included. */
 struct HostFlagCorrection final {
 	std::uint32_t decided{};
 	std::uint32_t raised{};
+	bool settled{};
 };
 
 /* The correction for the SIMD floating-point instruction `gadget`, from the
@@ -158,8 +161,10 @@ struct HostFlagCorrection final {
  * narrowing to a single or half decides underflow, which x86 detects after
  * rounding and the host before, and which x86 raises for an exact tiny
  * result while underflow is unmasked or FTZ flushes it, with precision
- * then. Nothing when a memory source is unreadable, which the instruction
- * then faults on. */
+ * then. DPPS and DPPD settle their flags, which x86 raises step by step,
+ * faulting at the first step that raises an unmasked exception. Nothing
+ * when a memory source is unreadable, which the instruction then faults
+ * on. */
 [[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 

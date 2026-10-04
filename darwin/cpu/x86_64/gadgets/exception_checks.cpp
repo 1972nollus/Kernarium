@@ -554,98 +554,6 @@ struct FmaOperands final {
 		product_negative != addend_negative;
 }
 
-/* a * b or a + b, correctly rounded in MXCSR's rounding mode, which FPCR
- * numbers the other way round for the directed modes. */
-[[nodiscard]] std::uint64_t host_operation(bool dbl, bool multiply,
-	std::uint64_t a, std::uint64_t b, std::uint32_t mxcsr) noexcept
-{
-	static constexpr std::array<std::uint64_t, 4> rmode{0, 2, 1, 3};
-	const std::uint64_t mode = rmode[(mxcsr >> 13U) & 3U] << 22U;
-	std::uint64_t saved{};
-	std::uint64_t result{};
-	if (dbl && multiply)
-		__asm__ volatile("mrs %[saved], fpcr\n"
-			"bic x16, %[saved], #(3 << 22)\n"
-			"orr x16, x16, %[mode]\n"
-			"msr fpcr, x16\n"
-			"fmov d16, %[a]\n fmov d17, %[b]\n fmul d16, d16, d17\n"
-			"fmov %[result], d16\n"
-			"msr fpcr, %[saved]"
-			: [saved] "=&r"(saved), [result] "=&r"(result)
-			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
-			: "x16", "v16", "v17");
-	else if (dbl)
-		__asm__ volatile("mrs %[saved], fpcr\n"
-			"bic x16, %[saved], #(3 << 22)\n"
-			"orr x16, x16, %[mode]\n"
-			"msr fpcr, x16\n"
-			"fmov d16, %[a]\n fmov d17, %[b]\n fadd d16, d16, d17\n"
-			"fmov %[result], d16\n"
-			"msr fpcr, %[saved]"
-			: [saved] "=&r"(saved), [result] "=&r"(result)
-			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
-			: "x16", "v16", "v17");
-	else if (multiply)
-		__asm__ volatile("mrs %[saved], fpcr\n"
-			"bic x16, %[saved], #(3 << 22)\n"
-			"orr x16, x16, %[mode]\n"
-			"msr fpcr, x16\n"
-			"fmov s16, %w[a]\n fmov s17, %w[b]\n fmul s16, s16, s17\n"
-			"fmov %w[result], s16\n"
-			"msr fpcr, %[saved]"
-			: [saved] "=&r"(saved), [result] "=&r"(result)
-			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
-			: "x16", "v16", "v17");
-	else
-		__asm__ volatile("mrs %[saved], fpcr\n"
-			"bic x16, %[saved], #(3 << 22)\n"
-			"orr x16, x16, %[mode]\n"
-			"msr fpcr, x16\n"
-			"fmov s16, %w[a]\n fmov s17, %w[b]\n fadd s16, s16, s17\n"
-			"fmov %w[result], s16\n"
-			"msr fpcr, %[saved]"
-			: [saved] "=&r"(saved), [result] "=&r"(result)
-			: [mode] "r"(mode), [a] "r"(a), [b] "r"(b)
-			: "x16", "v16", "v17");
-	return result;
-}
-
-/* DPPS or DPPD: a selected product's denormal source, or, unless FTZ
- * flushes every tiny intermediate, a denormal product or pair sum added. */
-[[nodiscard]] bool dot_product_denormal(std::uint32_t mxcsr, bool dbl,
-	unsigned control, std::size_t halves, const VectorValue &first,
-	const VectorValue &second)
-{
-	const FloatFormat f{dbl};
-	const bool flush = (mxcsr & mxcsr_flush_to_zero) != 0;
-	const std::size_t per_half = dbl ? 2U : 4U;
-	for (std::size_t half = 0; half < halves; ++half) {
-		std::array<std::uint64_t, 4> products{};
-		for (std::size_t index = 0; index < per_half; ++index) {
-			if (((control >> (4U + index)) & 1U) == 0)
-				continue;
-			const auto a = value_lane(first, dbl, half * per_half + index);
-			const auto b = value_lane(second, dbl, half * per_half + index);
-			if (f.denormal_pair(a, b))
-				return true;
-			products[index] = host_operation(dbl, true, a, b, mxcsr);
-		}
-		if (flush)
-			continue;
-		if (f.denormal_pair(products[0], products[1]))
-			return true;
-		if (dbl)
-			continue;
-		if (f.denormal_pair(products[2], products[3]))
-			return true;
-		if (f.denormal_pair(
-				host_operation(false, false, products[0], products[1], mxcsr),
-				host_operation(false, false, products[2], products[3], mxcsr)))
-			return true;
-	}
-	return false;
-}
-
 /* x86 detects underflow after rounding: a result is tiny when, rounded to
  * full precision as if the exponent were unbounded, it lies below the
  * smallest normal, where the host detects it before rounding. The two
@@ -676,21 +584,28 @@ struct FmaOperands final {
 	return extF80_to_f128(&state, f64_to_extF80(&state, float64_t{x}));
 }
 
+/* `operation` rounded to odd, with SoftFloat's flags for it in `flags`. */
 template <typename Operation>
-[[nodiscard]] float128_t soft_odd(Operation operation) noexcept
+[[nodiscard]] float128_t soft_odd(Operation operation,
+	std::uint8_t *flags = nullptr) noexcept
 {
 	softfloat_state state{};
 	state.roundingMode = softfloat_round_minMag;
 	auto result = operation(state);
 	if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
 		result.v[0] |= 1U;
+	if (flags != nullptr)
+		*flags = state.exceptionFlags;
 	return result;
 }
 
-/* Whether a result is tiny after rounding, and whether it is inexact. */
+/* Whether a result is tiny after rounding, whether it is inexact and
+ * whether it overflowed, and the result. */
 struct SoftRounding final {
 	bool tiny{};
 	bool inexact{};
+	bool overflow{};
+	std::uint64_t bits{};
 };
 
 /* `value` rounded to a single or a double in rounding mode `control`. */
@@ -700,14 +615,14 @@ struct SoftRounding final {
 	softfloat_state state{};
 	state.detectTininess = softfloat_tininess_afterRounding;
 	state.roundingMode = soft_rounding(control);
-	const FloatFormat f{dbl};
-	const bool denormal = f.denormal(dbl ? f128_to_f64(&state, value).v :
-		f128_to_f32(&state, value).v);
+	const std::uint64_t bits = dbl ? f128_to_f64(&state, value).v :
+		f128_to_f32(&state, value).v;
 	/* SoftFloat raises underflow for a tiny inexact result; an exact one
 	 * is a denormal. */
 	return {(state.exceptionFlags & softfloat_flag_underflow) != 0 ||
-			denormal,
-		(state.exceptionFlags & softfloat_flag_inexact) != 0};
+			FloatFormat{dbl}.denormal(bits),
+		(state.exceptionFlags & softfloat_flag_inexact) != 0,
+		(state.exceptionFlags & softfloat_flag_overflow) != 0, bits};
 }
 
 /* The single `x` rounded to a half, which SoftFloat here lacks. Just below
@@ -782,6 +697,94 @@ struct UnderflowModel final {
 		return {decided | underflow, raised | also};
 	}
 };
+
+/* DPPS or DPPD as x86 computes it, in steps: the selected products, their
+ * sums in pairs, and for DPPS the sum of those, each step across both
+ * halves of a 256-bit DPPS. x86 raises each step's flags in turn and faults
+ * at the first that raises an unmasked exception -- before computing it,
+ * for invalid operation or a denormal operand -- so that later steps raise
+ * nothing. FTZ flushes each tiny result, and DAZ makes a denormal one zero
+ * as an input of the next step. An unselected product is zero and raises
+ * nothing. The flags are settled: precedence included, and no host flag. */
+[[nodiscard]] HostFlagCorrection dot_product_flags(std::uint32_t mxcsr,
+	bool dbl, unsigned control, std::size_t halves, const VectorValue &first,
+	const VectorValue &second)
+{
+	constexpr std::uint32_t invalid = 0x01U;
+	constexpr std::uint32_t denormal = 0x02U;
+	constexpr std::uint32_t overflow = 0x08U;
+	using Lanes = std::array<std::uint64_t, 8>;
+	const FloatFormat f{dbl};
+	const bool denormals_are_zero = (mxcsr & mxcsr_denormals_are_zero) != 0;
+	const std::uint32_t unmasked = ~(mxcsr >> 7U) & 0x3fU;
+	std::uint32_t total{};
+	bool faulted{};
+	/* One step's `count` operations of `left` and `right`, lane by lane. */
+	const auto step = [&](bool multiply, std::size_t count, const Lanes &left,
+		const Lanes &right) {
+		Lanes results{};
+		if (faulted)
+			return results;
+		std::array<float128_t, 8> values{};
+		std::uint32_t before{};
+		for (std::size_t index = 0; index < count; ++index) {
+			const auto a = left[index];
+			const auto b = right[index];
+			std::uint8_t flags{};
+			values[index] = soft_odd([&](auto &state) {
+				const auto x = soft_wide(dbl, a);
+				const auto y = soft_wide(dbl, b);
+				return multiply ? f128_mul(&state, x, y) :
+					f128_add(&state, x, y);
+			}, &flags);
+			if (f.signalling(a) || f.signalling(b) ||
+				(flags & softfloat_flag_invalid) != 0)
+				before |= invalid;
+			else if (f.denormal_pair(a, b))
+				before |= denormal;
+		}
+		total |= before;
+		if ((before & unmasked) != 0) {
+			faulted = true;
+			return results;
+		}
+		UnderflowModel model{mxcsr, true};
+		std::uint32_t after{};
+		for (std::size_t index = 0; index < count; ++index) {
+			const auto result = soft_round(values[index], dbl, mxcsr >> 13U);
+			if (result.overflow)
+				after |= overflow;
+			if (result.inexact)
+				after |= UnderflowModel::precision;
+			results[index] = f.input(model.record(result) ?
+				result.bits & f.sign() : result.bits, denormals_are_zero);
+		}
+		after |= model.raised;
+		total |= after;
+		faulted = (after & unmasked) != 0;
+		return results;
+	};
+	const std::size_t per_half = dbl ? 2U : 4U;
+	Lanes left{};
+	Lanes right{};
+	for (std::size_t lane = 0; lane < halves * per_half; ++lane) {
+		if (((control >> (4U + lane % per_half)) & 1U) == 0)
+			continue;
+		left[lane] = f.input(value_lane(first, dbl, lane), denormals_are_zero);
+		right[lane] = f.input(value_lane(second, dbl, lane),
+			denormals_are_zero);
+	}
+	auto sums = step(true, halves * per_half, left, right);
+	for (std::size_t steps = per_half; steps > 1; steps /= 2) {
+		const std::size_t count = halves * steps / 2U;
+		for (std::size_t index = 0; index < count; ++index) {
+			left[index] = sums[2U * index];
+			right[index] = sums[2U * index + 1U];
+		}
+		sums = step(false, count, left, right);
+	}
+	return {0x3fU, total, true};
+}
 
 } // namespace
 
@@ -902,14 +905,8 @@ std::uint32_t denormal_operand(const CpuState &cpu, const Gadget &gadget,
 					return raised;
 			return 0;
 		}
-		if ((opcode != 0x40 && opcode != 0x41) ||
-			!read(instruction.source, first) ||
-			!read(instruction.auxiliary, second))
-			return 0;
-		return dot_product_denormal(cpu.mxcsr, opcode == 0x41,
-			instruction.vector_control,
-			instruction.destination.width == OperandWidth::ymm ? 2U : 1U,
-			first, second) ? raised : 0U;
+		/* DPPS and DPPD settle every flag (`host_flag_correction`). */
+		return 0;
 	default:
 		return 0;
 	}
@@ -1043,14 +1040,25 @@ HostFlagCorrection host_flag_correction(const CpuState &cpu,
 		return model.correction();
 	}
 	case Operation::vector_integer_map3: {
+		const auto opcode = instruction.vector_opcode;
+		const unsigned control = instruction.vector_control;
+		if (opcode == 0x40 || opcode == 0x41) {
+			VectorValue first{};
+			VectorValue second{};
+			if (!read(instruction.source, first) ||
+				!read(instruction.auxiliary, second))
+				return {};
+			return dot_product_flags(cpu.mxcsr, opcode == 0x41, control,
+				instruction.destination.width == OperandWidth::ymm ? 2U : 1U,
+				first, second);
+		}
 		/* VCVTPS2PH narrows singles, in the rounding mode its immediate
 		 * names unless its bit 2 defers to MXCSR's. FTZ does not apply. */
-		if (instruction.vector_opcode != 0x1d)
+		if (opcode != 0x1d)
 			return {};
 		VectorValue source{};
 		if (!read(instruction.source, source))
 			return {};
-		const unsigned control = instruction.vector_control;
 		const auto lanes = vector_lanes(instruction.source, false);
 		UnderflowModel model{cpu.mxcsr, false};
 		for (std::size_t index = 0; index < lanes; ++index)
