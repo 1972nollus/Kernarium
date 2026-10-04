@@ -26,8 +26,73 @@ def load_builder():
     return module
 
 
+def sme_round_trip(builder) -> None:
+    """A version 2 record with every SME section and field must survive the
+    binary and text forms, and the encoder must refuse SME state that breaks
+    the pack's rules."""
+    svl = 64
+    z = lambda index: bytes((index * 7 + byte) & 0xFF for byte in range(svl))
+    streaming = builder.Case(
+        name="streaming", entry=0, words=((0, 0xC080_0000), (4, 0xD400_0001)),
+        event="system-call", invalid_encoding=False, minimization="full",
+        retired=("exact", 2), fault=None, syndrome=0, native=("sme",),
+        validator=None,
+        initial=((), (), (("svcr", 3), ("tpidr2", 0x1234)),
+                 (((0, z(0)), (31, z(31))),
+                  ((0, bytes(8)), (15, b"\xff" * 8)),
+                  ((0, z(1)), (63, z(2))), z(3)[:builder.ZT0_BYTES])),
+        expected=(((1, 7),), (), (("pc", builder.CODE_BASE + 8),),
+                  (((5, z(5)),), (), ((17, z(4)),), None)),
+        memory=(), ordinals=(0, 0))
+    za_only = builder.Case(
+        name="za only", entry=0, words=((0, 0xC080_0000), (4, 0xD400_0001)),
+        event="illegal-instruction", invalid_encoding=True,
+        minimization="full", retired=("exact", 0), fault=None, syndrome=0,
+        native=("sme",), validator=None,
+        initial=((), ((2, bytes(16)),), (("svcr", 2),),
+                 ((), (), ((5, z(6)),), None)),
+        expected=((), (), (), builder.NO_SME), memory=(), ordinals=(0, 0))
+    options = 1 << builder.OPTION_NAMES.index("without_sme")
+    record = builder.Record(
+        name="synthetic/sme", producer="synthetic", site="synthetic:1",
+        options=options, profiles=3, svl=svl,
+        programs=[(0, streaming.words)],
+        cases=[(0, streaming), (0, za_only)])
+    synthetic = builder.Corpus(meta={"producer_commit": "-"}, blobs={},
+                               records=[record])
+    tokens = builder.feature_tokens()
+    encoded = builder.encode_pack(synthetic, tokens)
+    decoded, decoded_tokens = builder.decode_pack(encoded)
+    if decoded.records != synthetic.records or \
+            builder.encode_pack(decoded, decoded_tokens) != encoded:
+        raise SystemExit("an SME record does not survive the pack")
+    reloaded, reloaded_tokens = builder.load_dump(
+        builder.dump_corpus(synthetic, tokens))
+    if reloaded.records != synthetic.records or \
+            builder.encode_pack(reloaded, reloaded_tokens) != encoded:
+        raise SystemExit("an SME record does not survive the text form")
+    broken = {
+        "V registers in streaming mode": dict(initial=(
+            (), ((0, bytes(16)),), (("svcr", 1),), builder.NO_SME)),
+        "Z outside streaming mode": dict(initial=(
+            (), (), (("svcr", 2),), (((0, z(0)),), (), (), None))),
+        "ZT0 while PSTATE.ZA is clear": dict(initial=(
+            (), (), (("svcr", 1),), ((), (), (), z(0)[:64]))),
+        "short Z": dict(initial=(
+            (), (), (("svcr", 1),), (((0, z(0)[:32]),), (), (), None))),
+    }
+    for reason, change in broken.items():
+        case = builder.dataclasses.replace(streaming, **change)
+        if builder.invalid_sme_state(record, case) is None:
+            raise SystemExit(f"the encoder accepts {reason}")
+    plain = builder.dataclasses.replace(record, svl=0)
+    if builder.invalid_sme_state(plain, streaming) is None:
+        raise SystemExit("the encoder accepts SME state without an SVL")
+
+
 def main() -> int:
     builder = load_builder()
+    sme_round_trip(builder)
     # Metadata and the canonical encoding must match the checked-in pack.
     builder.check(argparse.Namespace(output=builder.CORPUS))
 

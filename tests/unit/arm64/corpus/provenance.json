@@ -1,6 +1,6 @@
 {
   "absent_features": {
-    "added_cases": 448,
+    "added_cases": 3371,
     "afp": {
       "added_requirement": 419,
       "controls": 2617,
@@ -69,7 +69,8 @@
       "ssbs",
       "sme",
       "xs",
-      "wfxt"
+      "wfxt",
+      "sve"
     ],
     "host_gates": {
       "cssc": 968,
@@ -77,22 +78,26 @@
     },
     "input_sha256": "4506a830f604f87b3cef04c010a29cf57965f7630aaeb0dc2225f7eb7592f477",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "f7855e55c67ded573158ee6f6511a318ec2a82ba122a753459296e0adef43bee",
+    "sha256": "afaee7777e5299f92c634369c1b2aad9d47390b5901893efb4386ac4bbc66343",
+    "sme_table": {
+      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
+      "sha256": "cae3c1ed342d42fa8356f8d9e7b6850ff48b6b46d9e530d0816ac201a57221c3"
+    },
     "stripped_cases": 109416,
     "tbi_replacement_cases": 4284
   },
-  "cases": 142147,
+  "cases": 145070,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 25049,
+    "illegal-instruction": 27972,
     "instruction-budget": 186,
     "memory-fault": 9271,
     "system-call": 107545
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 86931,
+    "16k+4k": 89854,
     "4k": 27601
   },
   "coverage": {
@@ -155,16 +160,16 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13339885,
-  "pack_sha256": "d6adba55c82227d7d863b31a4aa86ffb665ea0a121c2e02b4a4fd5dfcb516a7b",
+  "pack_bytes": 13378272,
+  "pack_sha256": "8d783d8979a4aa5e9e1dfc51d7dced77f2edd02dc07e77e2d33c33e2e1c5982b",
   "producer_commit": "a9f8b26df84e4b8d11641951e85f4004ef7ee01d",
-  "programs": 125881,
-  "records": 1087,
+  "programs": 128804,
+  "records": 1088,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "full": 882,
+    "full": 3805,
     "narrow": 141265
   },
   "validator_cases": {
