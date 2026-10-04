@@ -1,6 +1,6 @@
 {
   "absent_features": {
-    "added_cases": 3371,
+    "added_cases": 3415,
     "afp": {
       "added_requirement": 419,
       "controls": 2661,
@@ -78,7 +78,7 @@
     },
     "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "afaee7777e5299f92c634369c1b2aad9d47390b5901893efb4386ac4bbc66343",
+    "sha256": "151cf8df26fb0c7b258a4ddb5feeae3ecbe2b5340ea1d3d8205c1e826bc0339d",
     "sme_table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
       "sha256": "cae3c1ed342d42fa8356f8d9e7b6850ff48b6b46d9e530d0816ac201a57221c3"
@@ -86,24 +86,24 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 145164,
+  "cases": 145208,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 27972,
+    "illegal-instruction": 28016,
     "instruction-budget": 186,
     "memory-fault": 9271,
     "system-call": 107639
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 89948,
+    "16k+4k": 89992,
     "4k": 27601
   },
   "coverage": {
-    "entries": 983,
+    "entries": 2291,
     "entries_with_cases": 747,
-    "entries_with_illegal_cases": 857,
+    "entries_with_illegal_cases": 2165,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -160,16 +160,16 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13386917,
-  "pack_sha256": "f7e79d9bd2bbd75fc9d4118847e30b2ff0fb1fdce1866e67ba26b40e0932b5d5",
+  "pack_bytes": 13387693,
+  "pack_sha256": "ede34f217d4c3dcb190ecfa7d3bd79e8e48e64887d84e121808f42a8ede3a26d",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 128829,
+  "programs": 128873,
   "records": 1092,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "full": 3805,
+    "full": 3849,
     "narrow": 141359
   },
   "validator_cases": {

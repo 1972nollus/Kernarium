@@ -1,20 +1,25 @@
 # A64 instruction coverage
 
-The catalog contains 983 A64 entries: 516 Base and 467 FP/SIMD. Every entry has
-representative cases in the checked-in
+The catalog contains 2,291 A64 entries: 516 Base, 467 FP/SIMD, 955 SVE, and
+353 SME. Every entry has representative cases in the checked-in
 [instruction corpus](../tests/unit/arm64/corpus/README.md), which runs them
-through the gadget and JIT engines. Each case passed the interpreter and gadget
-lanes, and the JIT lane where the export host implements its features, before
-it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry, and the corpus check fails if an entry has none. In
-`tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
-marked `verified`. The other 199 are marked `absent`: they need FEAT_MTE,
+through the gadget and JIT engines. Each Base and FP/SIMD case passed the
+interpreter and gadget lanes, and the JIT lane where the export host implements
+its features, before it was exported; the SVE and SME cases are generated from
+the encoding table below. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each entry,
+and the corpus check fails if an entry has none. In
+`tests/unit/arm64/a64_instruction_inventory.tsv`, 1,762 entries are marked
+`verified`: 786 Base and FP/SIMD entries and the 976 SVE and SME entries with
+an encoding in the SME profile. The other 529 are marked `absent`. The 197
+Base and FP/SIMD ones need FEAT_MTE,
 FEAT_GCS, FEAT_CPA, FEAT_PAuth, one of the memory extensions FEAT_LSE128,
 FEAT_THE, FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64, FEAT_LSFE, FEAT_LSUI,
 and FEAT_LOR, one of the SIMD&FP extensions FEAT_FP8 (with its dot-product,
 multiply-add, and matrix forms), FEAT_F16F32DOT, FEAT_F16MM, FEAT_F16F32MM,
 FEAT_LUT, FEAT_FAMINMAX, FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or one of
-FEAT_CMPBR, FEAT_HBC, FEAT_SME, and FEAT_WFxT, which the virtual CPU omits.
+FEAT_CMPBR, FEAT_HBC, and FEAT_WFxT, which the virtual CPU omits. The 332 SVE
+and SME ones need FEAT_SVE, which the SME profile lacks, or an SVE or SME
+extension outside the profile, such as FEAT_SVE2p1 or FEAT_SME2p1.
 Their non-hint encodings are UNDEFINED, and their hint-space forms (GCSB,
 PACIASP, AUTIASP, XPACLRI, and the other PAC and AUT hints) are NOPs. Their
 corpus cases expect exactly that. LDAPR and STLR stay `verified`: only their
@@ -108,10 +113,19 @@ UNDEFINED. `arm64-sme-encoding-table` checks the decoder against the table,
 and every row's LLVM MC witness against its row. The table is a header, not an
 `.inc` contract, because C++ sources may not include `.inc` files.
 
+FEAT_SME is two-sided. An SVE or SME entry is `verified` when one of its
+encodings needs only the SME profile (FEAT_SME, FEAT_SME2, FEAT_SME_F64F64,
+FEAT_SME_I16I64, and the profile's FEAT_BF16 and FEAT_I8MM forms), and so are
+SMSTART and SMSTOP. Where the virtual CPU lacks SME, which today is every host,
+because no engine implements it and SME stays unadvertised, the corpus pins
+SMSTART, SMSTOP, the SVCR accesses, and one word of every profile encoding and
+alias UNDEFINED. MOVT between ZT0 and a general register executes only in Debug state, so
+it has no table row and is UNDEFINED in every mode.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and
-operand combinations. The variant-complete count is therefore 0/983.
+operand combinations. The variant-complete count is therefore 0/2,291.
 
 ## Sources of truth
 
@@ -122,8 +136,7 @@ operand combinations. The variant-complete count is therefore 0/983.
   space. The corpus builder attributes every case to inventory entries through
   them. The architecture oracle numbers the forms of all four index sections,
   Base, FP&SIMD, SVE (`SVE-`) and SME (`SME-`), 2,291 in all, in index order,
-  so the decode partitions relate SVE and SME encodings to their forms; the
-  inventory holds the Base and FP&SIMD forms.
+  so the decode partitions relate SVE and SME encodings to their forms.
 - `darwin/cpu/arm64/detail/sme_encodings.hpp` maps the same release and LLVM
   MC to the SVE and SME decode both engines share. Its generator requires each
   row's witness to fall in its own encoding's decode partition, and the opt-in

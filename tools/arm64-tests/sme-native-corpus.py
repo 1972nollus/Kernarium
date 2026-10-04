@@ -20,8 +20,10 @@ The cases cover, for each record:
   state, MSR SVCR, MRS SVCR, and the TPIDR2_EL0 accesses;
 - classify: one witness word per table row in each mode it needs and in each
   mode that lacks one of them (SM=0, ZA=0), the rows outside the profile in
-  both modes, and the evidence-binding witness of each SVE or SME alias,
-  which has no row of its own;
+  both modes, and the evidence-binding witness of each SVE or SME entry
+  without a row of its own: an alias, which its base instruction's row
+  decodes, or a form the architecture executes only in Debug state (MOVT
+  between ZT0 and a general register), which is UNDEFINED in every mode;
 - fpsimd: the witness of every FP&SIMD class in streaming mode, where
   AdvSIMD traps and the scalar FP forms execute;
 - operands: each operand field of each profile row at the lowest and highest
@@ -731,7 +733,8 @@ def control_drafts() -> list[Draft]:
 def alias_witnesses(table) -> list[tuple[str, str, int]]:
     """The evidence-binding witnesses of the SVE and SME inventory entries
     without a table row of their own: aliases, whose words their base
-    instruction's rows decode."""
+    instruction's rows decode, and Debug-state-only forms, whose words no
+    row decodes."""
     rows = {row.stable_id for row in table.rows}
     with corpus.BINDINGS.open(encoding="utf-8", newline="") as source:
         return [(row["stable_id"], row["architectural_form"],
@@ -746,7 +749,16 @@ def classify_drafts(table) -> list[Draft]:
     index = RowIndex(table)
     for stable_id, form, word in alias_witnesses(table):
         row = index.row_for(word)
-        if row is None or not row.in_profile:
+        if row is None:
+            for svcr in (0, SM | ZA):
+                drafts.append(Draft(
+                    group="classify",
+                    name=f"{stable_id} {form} {word:08x} outside Debug "
+                         f"state, {svcr_name(svcr)}",
+                    words=(word,), svcr=svcr, expect="illegal",
+                    invalid=True))
+            continue
+        if not row.in_profile:
             raise SystemExit(f"{stable_id} {word:08x}: an alias witness "
                              "outside the profile's rows")
         need = mode_svcr(row)

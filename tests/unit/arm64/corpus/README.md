@@ -298,10 +298,14 @@ for an absent feature, but its `arm64-absent-sme` record carries the
 record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
 every profile encoding in the generated SVE/SME encoding table
 ([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
-to be undefined. The `arm64-absent-sve` record expects the witness of every
-table encoding outside the profile to be undefined with or without SME. Each
-witness is checked against LLVM MC by the table's generator, and its case
-name gives the encoding's stable id, form, and word.
+to be undefined, and so is the evidence-binding witness of each SVE or SME
+entry without a table row: an alias, which its base instruction's row
+decodes, or MOVT between ZT0 and a general register, which only Debug state
+executes. The `arm64-absent-sve` record expects the witness of every table
+encoding outside the profile to be undefined with or without SME. Each
+witness is checked against LLVM MC by the table's generator or the allocation
+generator, and its case name gives the entry's stable id, encoding or form,
+and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
