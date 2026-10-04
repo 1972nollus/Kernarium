@@ -47,6 +47,36 @@ static_assert(offsetof(CpuState, gadget_return_top) == UML_GADGET_CPU_RETURN_TOP
 static_assert(CpuState::return_stack_entries == UML_GADGET_RETURN_STACK_ENTRIES);
 static_assert(offsetof(CpuState, gadget_target_tier) == UML_GADGET_CPU_TARGET_TIER);
 static_assert(sizeof(CpuState::ReturnRecord) == 16);
+static_assert(offsetof(CpuState, tpidr2) == UML_ARM64_CPU_TPIDR2);
+static_assert(offsetof(CpuState, svcr) == UML_ARM64_CPU_SVCR);
+static_assert(offsetof(CpuState, sme_loaded) == UML_ARM64_CPU_SME_LOADED);
+static_assert(offsetof(CpuState, sme_dirty) == UML_ARM64_CPU_SME_DIRTY);
+static_assert(offsetof(CpuState, sme_host_mode) == UML_ARM64_CPU_SME_HOST_MODE);
+static_assert(offsetof(CpuState, sme_svl) == UML_ARM64_CPU_SME_SVL);
+static_assert(offsetof(CpuState, sme_task) == UML_ARM64_CPU_SME_TASK);
+static_assert(offsetof(CpuState, sme_registers) == UML_ARM64_CPU_SME_REGISTERS);
+static_assert(UML_ARM64_SVCR_SM == svcr_sm && UML_ARM64_SVCR_ZA == svcr_za);
+static_assert(UML_ARM64_SME_HOST_STREAMING == sme_host_streaming);
+static_assert(UML_ARM64_SME_HOST_ZA == sme_host_za);
+static_assert(UML_ARM64_SME_HOST_STREAMING_RESIDENT ==
+	sme_host_streaming_resident);
+static_assert(UML_ARM64_SME_HOST_ZA_RESIDENT == sme_host_za_resident);
+static_assert(UML_ARM64_SME_ZT0_BYTES == sme_zt0_bytes);
+/* The assembly-visible layout is the C++ one at every SVL. */
+[[nodiscard]] constexpr bool sme_layout_matches(std::size_t svl) noexcept
+{
+	return sme_z_offset(svl, 31) == 31 * svl &&
+		sme_p_offset(svl, 15) ==
+			UML_ARM64_SME_P_OFFSET_VL * svl + 15 * (svl / 8) &&
+		sme_za_offset(svl, 0) == UML_ARM64_SME_ZA_OFFSET_VL * svl &&
+		sme_zt0_offset(svl) ==
+			(UML_ARM64_SME_ZA_OFFSET_VL + svl) * svl &&
+		sme_storage_size(svl) ==
+			sme_zt0_offset(svl) + UML_ARM64_SME_ZT0_BYTES;
+}
+static_assert(sme_layout_matches(16) && sme_layout_matches(32) &&
+	sme_layout_matches(64) && sme_layout_matches(128) &&
+	sme_layout_matches(256));
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);
