@@ -112,10 +112,17 @@ protected:
    */
   void emit_native_vector_unary(std::uint32_t instruction,
                                 bool reads_destination);
-  /* Binary: Rn (v0), Rm in bits 16-20 (v1), then Rd (v2), whose old value
-   * is loaded when reads_destination is set. */
-  void emit_native_vector_binary(std::uint32_t instruction,
-                                 bool reads_destination);
+  /* Binary: Rn, Rm in bits 16-20, then Rd, whose old value is loaded when
+   * reads_destination is set. The fallbacks default to v0, v1 and v2; the
+   * floating forms, PMULL and three-register SHA3 pass v1, v2 and v0. */
+  struct BinaryFallbacks final {
+    unsigned left;
+    unsigned right;
+    unsigned destination;
+  };
+  void emit_native_vector_binary(
+      std::uint32_t instruction, bool reads_destination,
+      BinaryFallbacks fallbacks = {.left = 0U, .right = 1U, .destination = 2U});
   /* By element, with Rm in bits 16-19: Rm from the constrained v0-v15
    * bindings (v2), Rn (v1), then Rd, which is read (v0). */
   void emit_native_vector_by_element(std::uint32_t instruction);
