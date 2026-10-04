@@ -1,65 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_arena.hpp"
 
+#include "cpu/jit_memory/executable_memory.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <sys/mman.h>
-
-#include <libkern/OSCacheControl.h>
-#include <pthread.h>
 
 namespace uml::cpu::arm64::jit::detail {
-namespace {
-
-/* Publication route for the MAP_JIT arena.
- *
- * macOS declares pthread_jit_write_protect_np and calls it directly. No iOS
- * product has a publication route: a physical device cannot obtain the
- * entitlement, so the arena reports itself unavailable there rather than
- * mapping memory it could never publish into.
- *
- * The Simulator is deliberately held to the same answer even though it runs on
- * macOS and could reach the toggle dynamically. Letting it translate through a
- * path production devices cannot use would make the Simulator unrepresentative
- * of the product it exists to stand in for.
- */
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT) && \
-	!defined(__IPHONE_OS_VERSION_MAX_ALLOWED)
-void jit_write_protect(int enable) noexcept
-{
-	pthread_jit_write_protect_np(enable);
-}
-
-constexpr bool jit_publication_supported() noexcept
-{
-	return true;
-}
-#else
-constexpr void jit_write_protect(int) noexcept {}
-
-constexpr bool jit_publication_supported() noexcept
-{
-	return false;
-}
-#endif
-
-} // namespace
 
 ExecutableArena::ExecutableArena(std::size_t size) noexcept : size_{size}
 {
-	mapping_ = mmap(nullptr, size_, PROT_READ | PROT_WRITE | PROT_EXEC,
-		MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-	if (mapping_ == MAP_FAILED)
-		mapping_ = nullptr;
+	mapping_ = jit_memory::allocate(size_);
 }
 
 ExecutableArena::~ExecutableArena()
 {
 	if (mapping_ != nullptr)
-		(void)munmap(mapping_, size_);
+		jit_memory::release(mapping_, size_);
 }
 
 bool ExecutableArena::valid() const noexcept
@@ -76,10 +36,10 @@ void *ExecutableArena::store(
 	    bytes > size_ - aligned)
 		return nullptr;
 	auto *destination = static_cast<std::byte *>(mapping_) + aligned;
-	jit_write_protect(0);
+	jit_memory::set_writable(true);
 	std::memcpy(destination, words.data(), bytes);
-	jit_write_protect(1);
-	sys_icache_invalidate(destination, bytes);
+	jit_memory::set_writable(false);
+	jit_memory::invalidate_instruction_cache(destination, bytes);
 	used_ = aligned + bytes;
 	return destination;
 }
@@ -137,7 +97,7 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 	for (std::size_t index = 0; index < missing_count; ++index)
 		(void)links.find_or_create(missing_keys[index], generation);
 	auto *destination = static_cast<std::byte *>(mapping_) + aligned;
-	jit_write_protect(0);
+	jit_memory::set_writable(true);
 	std::memcpy(destination, words.data(), bytes);
 	auto *stored = reinterpret_cast<std::uint32_t *>(destination);
 	auto *target_link = links.find(pc, generation);
@@ -162,8 +122,8 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 		stored[relocation.word + 1U] =
 			static_cast<std::uint32_t>(value >> 32U);
 	}
-	jit_write_protect(1);
-	sys_icache_invalidate(destination, bytes);
+	jit_memory::set_writable(false);
+	jit_memory::invalidate_instruction_cache(destination, bytes);
 	used_ = code_end;
 	return {
 		.code = destination,
@@ -200,27 +160,7 @@ void ExecutableArena::reset() noexcept
 
 bool ExecutableArena::available() noexcept
 {
-	static const bool supported = [] {
-#if defined(__APPLE__) && defined(__aarch64__) && defined(MAP_JIT)
-		/* A successful MAP_JIT mapping is necessary but not sufficient:
-		 * without a W^X toggle the first store into it faults. Requiring
-		 * the publication route keeps this from promising an engine that
-		 * would abort on its first translated block.
-		 */
-		if (!jit_publication_supported())
-			return false;
-		void *mapping = mmap(nullptr, 16U * 1024U,
-			PROT_READ | PROT_WRITE | PROT_EXEC,
-			MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
-		if (mapping == MAP_FAILED)
-			return false;
-		(void)munmap(mapping, 16U * 1024U);
-		return true;
-#else
-		return false;
-#endif
-	}();
-	return supported;
+	return jit_memory::available();
 }
 
 } // namespace uml::cpu::arm64::jit::detail

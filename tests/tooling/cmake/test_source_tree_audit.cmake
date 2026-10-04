@@ -192,13 +192,19 @@ uml_write_audit_fixture(darwin/cpu/fixture/cpu_exec.cpp
     "int protection = PROT_EXEC;")
 uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_arena.cpp
     "int publish() { return mprotect(nullptr, 0, 0); }")
+uml_write_audit_fixture(darwin/cpu/jit_memory/executable_memory.hpp
+    "int protection = PROT_EXEC;")
+uml_write_audit_fixture(darwin/cpu/jit_memory/executable_memory.cpp
+    "int publish() { return mprotect(nullptr, 0, 0); }")
 uml_write_audit_fixture(darwin/memory/fixture/memory_exec.cpp
     "int protection = PROT_EXEC;")
 list(APPEND REJECTED
     "gadget_exec\\.cpp: [^\n]*executable-memory"
-    "cpu_exec\\.cpp: [^\n]*executable-memory")
-list(APPEND ACCEPTED
+    "cpu_exec\\.cpp: [^\n]*executable-memory"
     "jit_arena\\.cpp: [^\n]*executable-memory"
+    "executable_memory\\.hpp: [^\n]*executable-memory")
+list(APPEND ACCEPTED
+    "executable_memory\\.cpp: [^\n]*executable-memory"
     "memory_exec\\.cpp: [^\n]*executable-memory")
 
 uml_write_audit_fixture(tests/fixture/CMakeLists.txt
