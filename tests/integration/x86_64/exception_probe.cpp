@@ -142,6 +142,18 @@ __asm__(".text\n"
 	".global probe_pf_fetch_end\n"
 	"probe_pf_fetch_end:\n"
 	"	ret\n"
+	/* Returns to (address) after a return of its own, so the second
+	 * return finds no call of this dispatch to match. */
+	".global probe_pf_return\n"
+	"probe_pf_return:\n"
+	"	leaq 1f(%rip), %rax\n"
+	"	pushq %rax\n"
+	"	ret\n"
+	"1:	pushq %rdi\n"
+	"	ret\n"
+	".global probe_pf_return_end\n"
+	"probe_pf_return_end:\n"
+	"	ret\n"
 	/* One access through a non-canonical (address): a load and a store
 	 * through RAX, a load based on RBP and one indexed by it, MOVSB from
 	 * it, and a push with it as RSP. */
@@ -436,6 +448,81 @@ __asm__(".text\n"
 	"	jmp *%edx\n"
 	".global probe_pf_fetch_end\n"
 	"probe_pf_fetch_end:\n"
+	"	ret\n"
+	".global probe_pf_return\n"
+	"probe_pf_return:\n"
+	"	movl 4(%esp), %edx\n"
+	"	pushl $1f\n"
+	"	ret\n"
+	"1:	pushl %edx\n"
+	"	ret\n"
+	".global probe_pf_return_end\n"
+	"probe_pf_return_end:\n"
+	"	ret\n"
+	/* Loads the dword at (base) + (index) * 4. */
+	".global probe_wrap_index\n"
+	"probe_wrap_index:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movl 8(%esp), %ecx\n"
+	".global probe_wrap_index_insn\n"
+	"probe_wrap_index_insn:\n"
+	"	movl (%eax,%ecx,4), %eax\n"
+	".global probe_wrap_index_end\n"
+	"probe_wrap_index_end:\n"
+	"	ret\n"
+	/* Increments the dword at (base) + (index) and returns it. */
+	".global probe_wrap_sum\n"
+	"probe_wrap_sum:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movl 8(%esp), %ecx\n"
+	"	incl (%eax,%ecx)\n"
+	"	movl (%eax,%ecx), %eax\n"
+	"	ret\n"
+	/* Stores (value) at 0xe0000014 and returns it plus twice the dword at
+	 * 0xe0000010, through the absolute, based and offset forms. */
+	".global probe_wrap_absolute\n"
+	"probe_wrap_absolute:\n"
+	"	movl 4(%esp), %ecx\n"
+	"	movl %ecx, 0xe0000014\n"
+	"	movl 0xe0000014, %edx\n"
+	"	xorl %eax, %eax\n"
+	"	addl 0xe0000010(%eax), %edx\n"
+	"	movl 0xe0000010, %eax\n"
+	"	addl %edx, %eax\n"
+	"	ret\n"
+	".global probe_wrap_load\n"
+	"probe_wrap_load:\n"
+	"	movl 4(%esp), %eax\n"
+	".global probe_wrap_load_insn\n"
+	"probe_wrap_load_insn:\n"
+	"	movl -8(%eax), %eax\n"
+	".global probe_wrap_load_end\n"
+	"probe_wrap_load_end:\n"
+	"	ret\n"
+	/* A push with ESP 0. */
+	".global probe_wrap_push\n"
+	"probe_wrap_push:\n"
+	"	movl %esp, wrap_saved_sp\n"
+	"	xorl %esp, %esp\n"
+	".global probe_wrap_push_insn\n"
+	"probe_wrap_push_insn:\n"
+	"	pushl $1\n"
+	".global probe_wrap_push_end\n"
+	"probe_wrap_push_end:\n"
+	"	movl wrap_saved_sp, %esp\n"
+	"	ret\n"
+	/* REP STOSB of 4 bytes at (address). */
+	".global probe_wrap_stos\n"
+	"probe_wrap_stos:\n"
+	"	pushl %edi\n"
+	"	movl 8(%esp), %edi\n"
+	"	movl $4, %ecx\n"
+	".global probe_wrap_stos_insn\n"
+	"probe_wrap_stos_insn:\n"
+	"	rep stosb\n"
+	".global probe_wrap_stos_end\n"
+	"probe_wrap_stos_end:\n"
+	"	popl %edi\n"
 	"	ret\n"
 	/* Reads the word at GS:0 after loading GS with (selector). */
 	".global probe_gs_word\n"
@@ -983,6 +1070,41 @@ __asm__(".text\n"
 	"probe_ud2_end:\n"
 	"	ret\n");
 
+/* Encodings that decode alike in both modes and that hardware or the
+ * product leaves undefined, and SYSEXIT, which user mode may not run. */
+#define PROBE_BYTES(name, bytes)                                             \
+	".global probe_" #name "\n"                                          \
+	"probe_" #name ":\n"                                                 \
+	"	.byte " bytes "\n"                                           \
+	".global probe_" #name "_end\n"                                      \
+	"probe_" #name "_end:\n"                                             \
+	"	ret\n"
+#define UNDEFINED_CASES(X)                                                   \
+	X(lea_register, "0x8d, 0xc0")                                        \
+	X(lock_cmp, "0xf0, 0x83, 0x3c, 0x24, 0x00")                          \
+	X(lock_bt, "0xf0, 0x0f, 0xba, 0x24, 0x24, 0x00")                     \
+	X(movhps_register, "0x0f, 0x17, 0xc0")                               \
+	X(movntq_register, "0x0f, 0xe7, 0xc0")                               \
+	X(fxsave_register, "0x0f, 0xae, 0xc0")                               \
+	X(group1_82, "0x82, 0xc0, 0x01")                                     \
+	X(reserved_0f3e, "0x0f, 0x3e")                                       \
+	X(reserved_0f3f, "0x0f, 0x3f")
+#define EMIT_UNDEFINED(name, bytes) PROBE_BYTES(name, bytes)
+__asm__(".text\n" UNDEFINED_CASES(EMIT_UNDEFINED)
+	PROBE_BYTES(sysexit, "0x0f, 0x35")
+	/* MOV to CS from an unmapped address: #UD before the read. */
+	".global probe_mov_cs\n"
+	"probe_mov_cs:\n"
+	PROBE_ARG_AX
+	".global probe_mov_cs_insn\n"
+	"probe_mov_cs_insn:\n"
+	"	.byte 0x8e, 0x08\n"
+	".global probe_mov_cs_end\n"
+	"probe_mov_cs_end:\n"
+	"	ret\n");
+#undef EMIT_UNDEFINED
+#undef PROBE_BYTES
+
 constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
 constexpr word sa_restart = 0x10000000;
@@ -1038,14 +1160,35 @@ void put(const char *text)
 	raw_syscall(nr_write, 1, reinterpret_cast<long>(text), length);
 }
 
+struct Quotient {
+	u64 quotient;
+	u64 remainder;
+};
+
+/* Long division, bit by bit: a freestanding i386 build has no __udivdi3, and
+ * compilers differ in which constant divisors they expand inline. */
+Quotient divide(u64 dividend, u32 divisor)
+{
+	Quotient result = {};
+	for (int bit = 63; bit >= 0; --bit) {
+		result.remainder = result.remainder << 1 | ((dividend >> bit) & 1);
+		if (result.remainder >= divisor) {
+			result.remainder -= divisor;
+			result.quotient |= 1ULL << bit;
+		}
+	}
+	return result;
+}
+
 void put_decimal(u64 value)
 {
 	char text[21];
 	int position = 20;
 	text[position] = '\0';
 	do {
-		text[--position] = static_cast<char>('0' + value % 10);
-		value /= 10;
+		const Quotient digit = divide(value, 10);
+		text[--position] = static_cast<char>('0' + digit.remainder);
+		value = digit.quotient;
 	} while (value != 0);
 	put(text + position);
 }
@@ -1169,11 +1312,11 @@ bool timer_ticks_during(const char *what, void (*work)())
 	put(ok ? "  " : "  too few: ");
 	put(what);
 	put(" ran ");
-	put_decimal(elapsed / 1000000);
+	put_decimal(divide(elapsed, 1000000).quotient);
 	put(" ms with ");
 	put_decimal(ticks);
 	put(" SIGALRM, longest gap ");
-	put_decimal(longest_gap / 1000000);
+	put_decimal(divide(longest_gap, 1000000).quotient);
 	put(" ms\n");
 	return ok;
 }
@@ -1491,6 +1634,48 @@ bool ud2_faults()
 			{sigill, ill_illopn, insn, insn, 6, true, 0});
 }
 
+#define DECLARE_UNDEFINED(name, bytes)                                       \
+	extern "C" void probe_##name();                                      \
+	extern "C" char probe_##name##_end[];
+UNDEFINED_CASES(DECLARE_UNDEFINED)
+DECLARE_UNDEFINED(sysexit, "")
+#undef DECLARE_UNDEFINED
+extern "C" void probe_mov_cs(word address);
+extern "C" char probe_mov_cs_insn[];
+extern "C" char probe_mov_cs_end[];
+
+void mov_cs_unmapped() { probe_mov_cs(0); }
+
+/* Register forms of memory-only instructions, LOCK on an instruction that
+ * does not write memory, 0x82 in either mode and the 0F 3E and 0F 3F
+ * escapes raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
+ * outside ring 0 raises #GP. */
+bool undefined_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *end;
+	};
+#define UNDEFINED_ENTRY(name, bytes) {#name, probe_##name, probe_##name##_end},
+	const Case cases[] = {UNDEFINED_CASES(UNDEFINED_ENTRY)};
+#undef UNDEFINED_ENTRY
+	bool ok = install_fault_handlers();
+	for (const Case &one : cases) {
+		const word insn = reinterpret_cast<word>(one.work);
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {sigill, ill_illopn, insn, insn, 6, true, 0});
+	}
+	const word mov_cs = address_of(probe_mov_cs_insn);
+	ok = ok && delivers("MOV CS from memory", mov_cs_unmapped,
+			    address_of(probe_mov_cs_end),
+			    {sigill, ill_illopn, mov_cs, mov_cs, 6, true, 0});
+	const word sysexit = reinterpret_cast<word>(probe_sysexit);
+	return ok && delivers("SYSEXIT", probe_sysexit,
+			      address_of(probe_sysexit_end),
+			      {sigsegv, si_kernel, 0, sysexit, 13, true, 0});
+}
+
 extern "C" void probe_pf_read(word address);
 extern "C" char probe_pf_read_insn[];
 extern "C" char probe_pf_read_end[];
@@ -1499,17 +1684,28 @@ extern "C" char probe_pf_write_insn[];
 extern "C" char probe_pf_write_end[];
 extern "C" void probe_pf_fetch(word address);
 extern "C" char probe_pf_fetch_end[];
+extern "C" void probe_pf_return(word address);
+extern "C" char probe_pf_return_end[];
 
 void pf_read() { probe_pf_read(unmapped_page); }
 void pf_write() { probe_pf_write(unmapped_page); }
 void pf_fetch() { probe_pf_fetch(unmapped_page); }
+void pf_jump_null() { probe_pf_fetch(0); }
+void pf_return_null() { probe_pf_return(0); }
 
 /* A user access to an unmapped page raises #PF with the U bit, 4, in its
- * error code, and W, 2, for a write or I/D, 0x10, for a fetch. */
+ * error code, and W, 2, for a write or I/D, 0x10, for a fetch. A jump or a
+ * return to address 0, a null function pointer's call, fetches from it. */
 bool page_faults_are_user()
 {
 	const word page = unmapped_page;
 	bool ok = install_fault_handlers();
+	ok = ok && delivers("jump to 0", pf_jump_null,
+			    address_of(probe_pf_fetch_end),
+			    {sigsegv, segv_maperr, 0, 0, 14, true, 0x14});
+	ok = ok && delivers("return to 0", pf_return_null,
+			    address_of(probe_pf_return_end),
+			    {sigsegv, segv_maperr, 0, 0, 14, true, 0x14});
 	ok = ok && delivers("read", pf_read, address_of(probe_pf_read_end),
 			    {sigsegv, segv_maperr, page,
 			     address_of(probe_pf_read_insn), 14, true, 4});
@@ -2266,9 +2462,22 @@ bool gathers()
 #define CMPS_MIDWAY_RESTART(bytes, elements)                                 \
 	"leaq -" #bytes "(%rsi), %rsi; leaq -" #bytes "(%rdi), %rdi; "        \
 	"leaq " #elements "(%rcx), %rcx; pushq $0x8d5; popfq"
+/* REP MOVSB through FS, whose base the run sets to 0x1000, from the end of
+ * the read-only page into the writable one: its third element meets the
+ * unmapped page. The setup moves the first two alone, and the restart moves
+ * the pointers and count back. RSI is an offset from the FS base. */
+#define FS_MOVS_MIDWAY                                                       \
+	"leaq -0x1002(%r10), %rsi; leaq -64(%r9), %rdi; movl $5, %ecx; "     \
+	"movsb %fs:(%rsi), %es:(%rdi); movsb %fs:(%rsi), %es:(%rdi); "       \
+	"leaq -2(%rcx), %rcx"
+#define STRING_RESTART(elements)                                             \
+	"leaq -" #elements "(%rsi), %rsi; leaq -" #elements "(%rdi), %rdi; " \
+	"leaq " #elements "(%rcx), %rcx"
 #define STATE_CASES(X)                                                       \
 	X(adc, "", "", "adcq %rbx, (%r8)")                                   \
 	X(adc_across, "", "", "adcq %rbx, (%r9)")                            \
+	X(adc_indexed, "movl $0x40, %ecx", "",                               \
+	  "adcq %rbx, -0x100(%r8,%rcx,4)")                                   \
 	X(sbb, "", "", "sbbl $1, (%r8)")                                     \
 	X(rcl, "", "", "rclq $1, (%r8)")                                     \
 	X(rcr, "movl $3, %ecx", "", "rcrq %cl, (%r8)")                       \
@@ -2291,6 +2500,13 @@ bool gathers()
 	X(rep_stos, "movq %r8, %rdi; movl $5, %ecx", "", "rep stosb")        \
 	X(rep_movs, "leaq -64(%r9), %rsi; movq %r8, %rdi; movl $5, %ecx", "",\
 	  "rep movsb")                                                       \
+	X(rep_movs_fs, "leaq -0x1040(%r9), %rsi; movq %r8, %rdi; "           \
+	  "movl $5, %ecx", "", "rep movsb %fs:(%rsi), %es:(%rdi)")           \
+	X(lods_fs, "leaq -0x1000(%r10), %rsi", "", "lodsl %fs:(%rsi), %eax") \
+	X(rep_lods_fs, "leaq -0x1000(%r10), %rsi; movl $5, %ecx", "",        \
+	  "rep lodsb %fs:(%rsi), %al")                                       \
+	X(rep_movs_fs_midway, FS_MOVS_MIDWAY, STRING_RESTART(2),             \
+	  "rep movsb %fs:(%rsi), %es:(%rdi)")                                \
 	X(repe_cmps, "movq %r8, %rsi; movq %r10, %rdi; movl $5, %ecx", "",   \
 	  "repe cmpsb")                                                      \
 	X(repe_cmps_midway, CMPS_MIDWAY_REPE, CMPS_MIDWAY_RESTART(16, 2),     \
@@ -2332,6 +2548,17 @@ bool gathers()
 	X(cmpxchg16b, "", "", "cmpxchg16b (%r8)")                            \
 	X(adc_load, "", "", "adcq (%r10), %rbx")                             \
 	X(div_load, "", "", "divq (%r10)")                                   \
+	X(cmp_unread, "", "", "cmpq %rbx, (%r10); addq %rcx, %rcx")          \
+	X(test_unread, "", "", "testl %ebx, (%r10); addq %rcx, %rcx")        \
+	X(bt_unread, "", "", "btl $3, (%r10); addq %rcx, %rcx")              \
+	X(rcl_zero, "xorl %ecx, %ecx", "", "rclb %cl, (%r10)")               \
+	X(rcr_zero, "", "", "rcrw $0, (%r10)")                               \
+	X(push_unread, "", "movq %r8, %rsp", "pushq %rbx; addq %rcx, %rcx")  \
+	X(pop_unread, "", "movq %r10, %rsp", "popq %rbx; addq %rcx, %rcx")   \
+	X(movnt_unread, "", "", "movntps %xmm0, (%r8); addq %rcx, %rcx")     \
+	X(movntdqa_unread, "", "",                                           \
+	  "movntdqa (%r10), %xmm1; addq %rcx, %rcx")                         \
+	X(clzero_unread, "movq %r8, %rax", "", "clzero; addq %rcx, %rcx")    \
 	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
@@ -2454,6 +2681,11 @@ bool fault_state()
 		put("  sigaltstack or rt_sigaction failed\n");
 		return false;
 	}
+	/* The FS cases address their source through a base of 0x1000. */
+	if (raw_syscall(nr_arch_prctl, arch_set_fs, 0x1000) != 0) {
+		put("  arch_prctl failed\n");
+		return false;
+	}
 	word block[17];
 	for (unsigned index = 0; index < 16; ++index)
 		block[index] = 0x0f0e0d0c0b0a0908ULL + 0x0101010101010101ULL * index;
@@ -2493,6 +2725,465 @@ bool fault_state()
 		}
 		ok &= good;
 	}
+	return ok;
+}
+#endif
+
+#if defined(__i386__)
+/* Each i386 fault-state case loads EFLAGS from (block)[8] and the registers
+ * from (block)[0..7] in x86 order, skipping ESP, runs its setup, records
+ * every register, EFLAGS, the x87 status and control words, MXCSR and XMM0
+ * as they stand before the instruction, switches to its own stack if it
+ * names one, and runs the instruction. Its four pages are unmapped,
+ * writable, read-only and unmapped: EDX points into the read-only page, EBP
+ * 2 bytes below it, ESI at the last page and EDI 16 bytes into the
+ * writable one, so a stack there takes four dwords before a push faults.
+ * The fault handler records the frame and resumes after the instruction on
+ * the case's own stack. */
+#define PROBE_STATE(name, setup, stack, instruction)                         \
+	".global probe_state_" #name "\n"                                    \
+	"probe_state_" #name ":\n"                                           \
+	"	push %ebx\n"                                                 \
+	"	push %ebp\n"                                                 \
+	"	push %esi\n"                                                 \
+	"	push %edi\n"                                                 \
+	"	movl %esp, state_resume_sp\n"                                \
+	"	movl $9f, state_resume_ip\n"                                 \
+	"	movl 20(%esp), %eax\n"                                       \
+	"	pushl 32(%eax)\n"                                            \
+	"	popfl\n"                                                     \
+	"	movl 4(%eax), %ecx\n"                                        \
+	"	movl 8(%eax), %edx\n"                                        \
+	"	movl 12(%eax), %ebx\n"                                       \
+	"	movl 20(%eax), %ebp\n"                                       \
+	"	movl 24(%eax), %esi\n"                                       \
+	"	movl 28(%eax), %edi\n"                                       \
+	"	movl 0(%eax), %eax\n"                                        \
+	"	" setup "\n"                                                 \
+	"	movl %edi, state_expect+0\n"                                 \
+	"	movl %esi, state_expect+4\n"                                 \
+	"	movl %ebp, state_expect+8\n"                                 \
+	"	movl %ebx, state_expect+16\n"                                \
+	"	movl %edx, state_expect+20\n"                                \
+	"	movl %ecx, state_expect+24\n"                                \
+	"	movl %eax, state_expect+28\n"                                \
+	"	pushfl\n"                                                    \
+	"	popl state_expect+36\n"                                      \
+	"	fnstsw state_expect_fsw\n"                                   \
+	"	fnstcw state_expect_fcw\n"                                   \
+	"	stmxcsr state_expect_mxcsr\n"                                \
+	"	movq %xmm0, state_expect_xmm0\n"                             \
+	"	" stack "\n"                                                 \
+	"	movl %esp, state_expect+12\n"                                \
+	".global probe_state_" #name "_insn\n"                               \
+	"probe_state_" #name "_insn:\n"                                      \
+	"	" instruction "\n"                                           \
+	"9:\n"                                                               \
+	"	movl state_resume_sp, %esp\n"                                \
+	"	cld\n"                                                       \
+	"	fninit\n"                                                    \
+	"	pop %edi\n"                                                  \
+	"	pop %esi\n"                                                  \
+	"	pop %ebp\n"                                                  \
+	"	pop %ebx\n"                                                  \
+	"	ret\n"
+/* The stores meet the read-only page, or for a _midway case the unmapped
+ * one below the writable page after the instruction's first stores; the
+ * loads meet the last page, after the first loads for a multi-part one. */
+/* REP MOVSB through GS, whose TLS base the run sets to 0x1000, from the
+ * end of the read-only page into the writable one: its third element meets
+ * the unmapped page. ESI is an offset from the GS base. */
+#define GS_MOVS_MIDWAY                                                       \
+	"leal -0x1002(%esi), %esi; movl $5, %ecx; "                         \
+	"movsb %gs:(%esi), %es:(%edi); movsb %gs:(%esi), %es:(%edi); "       \
+	"leal -2(%ecx), %ecx"
+#define STRING_RESTART(elements)                                             \
+	"leal -" #elements "(%esi), %esi; leal -" #elements "(%edi), %edi; " \
+	"leal " #elements "(%ecx), %ecx"
+#define STATE_CASES(X)                                                       \
+	X(adc, "", "", "adcl %ebx, (%edx)")                                  \
+	X(adc_across, "", "", "adcl %ebx, (%ebp)")                           \
+	X(adc_absolute, "", "", "adcl %ebx, state_pages+0x2100")             \
+	X(sbb, "", "", "sbbl $1, (%edx)")                                    \
+	X(rcl, "", "", "rcll $1, (%edx)")                                    \
+	X(rcr, "movl $3, %ecx", "", "rcrl %cl, (%edx)")                      \
+	X(neg, "", "", "negl (%edx)")                                        \
+	X(shld, "movl $5, %ecx", "", "shldl %cl, %ebx, (%edx)")              \
+	X(bts, "movl $5, %ebx", "", "btsl %ebx, (%edx)")                     \
+	X(xadd, "", "", "xaddl %ebx, (%edx)")                                \
+	X(xchg, "", "", "xchgl %ebx, (%edx)")                                \
+	X(cmpxchg8b, "", "", "cmpxchg8b (%edx)")                             \
+	X(lock_adc, "", "", "lock adcl %ebx, (%edx)")                        \
+	X(pop_memory, "", "", "popl (%edx)")                                 \
+	X(pop_memory16, "", "", "popw (%edx)")                               \
+	X(push, "", "movl %edx, %esp", "pushl %ebx")                         \
+	X(push16, "", "movl %edx, %esp", "pushw %bx")                        \
+	X(push_immediate, "", "movl %edx, %esp", "pushl $0x12345678")        \
+	X(push_memory, "", "movl %edx, %esp", "pushl 8(%ebp)")               \
+	X(push_es, "", "movl %edx, %esp", "pushl %es")                       \
+	X(push_cs, "", "movl %edx, %esp", "pushl %cs")                       \
+	X(push_ss, "", "movl %edx, %esp", "pushl %ss")                       \
+	X(push_ds, "", "movl %edx, %esp", "pushl %ds")                       \
+	X(push_fs, "", "movl %edx, %esp", "pushl %fs")                       \
+	X(push_gs, "", "movl %edx, %esp", "pushl %gs")                       \
+	X(call, "", "movl %edx, %esp", "call 9f")                            \
+	X(call_memory, "", "movl %edx, %esp", "call *8(%ebp)")               \
+	X(call_far, "", "movl %edx, %esp", "lcall *(%edx)")                  \
+	X(call_far_midway, "", "leal -12(%edi), %esp", "lcall *(%edx)")      \
+	X(enter, "", "movl %edx, %esp", "enter $16, $0")                     \
+	X(enter_nested, "leal 64(%edx), %ebp", "movl %edx, %esp",            \
+	  "enter $16, $3")                                                   \
+	X(pushf, "", "movl %edx, %esp", "pushfl")                            \
+	X(pusha, "", "movl %edx, %esp", "pushal")                            \
+	X(pusha_midway, "", "movl %edi, %esp", "pushal")                     \
+	X(pushaw_midway, "", "leal -8(%edi), %esp", "pushaw")                \
+	X(movs, "movl %edx, %esi; leal 4(%edx), %edi", "", "movsl")          \
+	X(stos, "movl %edx, %edi", "", "stosl")                              \
+	X(rep_stos, "movl %edx, %edi; movl $5, %ecx", "", "rep stosb")       \
+	X(rep_movs, "leal -64(%ebp), %esi; movl %edx, %edi; movl $5, %ecx",  \
+	  "", "rep movsb")                                                   \
+	X(fstp, "fninit; fld1; fld1", "", "fstpl (%edx)")                    \
+	X(fistp, "fninit; fld1; fld1", "", "fistpl (%edx)")                  \
+	X(fstpt, "fninit; fld1; fld1", "", "fstpt (%edx)")                   \
+	X(fnstenv, "fninit; fld1", "", "fnstenv -12(%ebp)")                  \
+	X(fnsave, "fninit; fld1", "", "fnsave -12(%ebp)")                    \
+	X(frstor, "fninit; fld1", "", "frstor -60(%esi)")                    \
+	X(fldenv, "fninit; fld1", "", "fldenv -16(%esi)")                    \
+	X(fxrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",                 \
+	  "fxrstor -256(%esi)")                                              \
+	X(iret, "", "leal -8(%esi), %esp", "iretl")                          \
+	X(leave, "movl %esi, %ebp", "", "leave")                             \
+	X(ret, "", "movl %esi, %esp", "ret")                                 \
+	X(ret_imm, "", "movl %esi, %esp", "ret $16")                         \
+	X(lret, "", "leal -4(%esi), %esp", "lret")                           \
+	X(lret16, "", "leal -2(%esi), %esp", "lretw")                        \
+	X(pop, "", "movl %esi, %esp", "popl %ebx")                           \
+	X(popf, "", "movl %esi, %esp", "popfl")                              \
+	X(pop_es, "", "movl %esi, %esp", "popl %es")                         \
+	X(pop_ds, "", "movl %esi, %esp", "popl %ds")                         \
+	X(pop_fs, "", "movl %esi, %esp", "popl %fs")                         \
+	X(pop_gs, "", "movl %esi, %esp", "popl %gs")                         \
+	X(popa, "", "leal -16(%esi), %esp", "popal")                         \
+	X(popaw, "", "leal -8(%esi), %esp", "popaw")                         \
+	X(bound, "", "", "bound %eax, -4(%esi)")                             \
+	X(push_load, "", "", "pushl (%esi)")                                 \
+	X(lods, "", "", "lodsl")                                             \
+	X(rep_movs_gs, "leal -0xfd0(%edi), %esi; movl %edx, %edi; "         \
+	  "movl $5, %ecx", "", "rep movsb %gs:(%esi), %es:(%edi)")           \
+	X(lods_gs, "leal -0x1000(%esi), %esi", "", "lodsl %gs:(%esi), %eax") \
+	X(rep_lods_gs, "leal -0x1000(%esi), %esi; movl $5, %ecx", "",        \
+	  "rep lodsb %gs:(%esi), %al")                                       \
+	X(rep_movs_gs_midway, GS_MOVS_MIDWAY, STRING_RESTART(2),             \
+	  "rep movsb %gs:(%esi), %es:(%edi)")                                \
+	X(scas, "movl %esi, %edi", "", "scasl")                              \
+	X(xlat, "movl %esi, %ebx", "", "xlatb")                              \
+	X(adc_load, "", "", "adcl (%esi), %ebx")                             \
+	X(div_load, "", "", "divl (%esi)")                                   \
+	X(cmp_unread, "", "", "cmpl %ebx, (%esi); addl %ecx, %ecx")          \
+	X(test_unread, "", "", "testl %ebx, (%esi); addl %ecx, %ecx")        \
+	X(bt_unread, "", "", "btl $3, (%esi); addl %ecx, %ecx")              \
+	X(rcl_zero, "xorl %ecx, %ecx", "", "rclb %cl, (%esi)")               \
+	X(rcr_zero, "", "", "rcrw $0, (%esi)")                               \
+	X(push_unread, "", "movl %edx, %esp", "pushl %ebx; addl %ecx, %ecx") \
+	X(pop_unread, "", "movl %esi, %esp", "popl %ebx; addl %ecx, %ecx")   \
+	X(movnt_unread, "", "", "movntps %xmm0, (%edx); addl %ecx, %ecx")    \
+	X(movntdqa_unread, "", "",                                           \
+	  "movntdqa (%esi), %xmm1; addl %ecx, %ecx")                         \
+	X(clzero_unread, "movl %edx, %eax", "", "clzero; addl %ecx, %ecx")   \
+	X(fld, "fninit; fld1", "", "fldl (%esi)")                            \
+	X(fild, "fninit; fld1", "", "fildl (%esi)")                          \
+	X(fldt, "fninit; fld1", "", "fldt (%esi)")                           \
+	X(fldcw, "fninit; fld1", "", "fldcw (%esi)")                         \
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%esi)")
+
+#define EMIT_STATE(name, setup, stack, instruction)                          \
+	PROBE_STATE(name, setup, stack, instruction)
+__asm__(".text\n" STATE_CASES(EMIT_STATE));
+#undef EMIT_STATE
+#undef PROBE_STATE
+
+#define DECLARE_STATE(name, setup, stack, instruction)                       \
+	extern "C" void probe_state_##name(const word *block);               \
+	extern "C" char probe_state_##name##_insn[];
+STATE_CASES(DECLARE_STATE)
+#undef DECLARE_STATE
+
+/* Calls the routine (pointer)[0] names and pushes and pops (pointer)[1]:
+ * reads from a read-only page that must not fault. */
+__asm__(".text\n"
+	".global probe_read_only_reads\n"
+	"probe_read_only_reads:\n"
+	"	movl 4(%esp), %eax\n"
+	"	call *(%eax)\n"
+	"	pushl 4(%eax)\n"
+	"	popl %eax\n"
+	".global probe_read_only_reads_end\n"
+	"probe_read_only_reads_end:\n"
+	"	ret\n"
+	".global probe_return_only\n"
+	"probe_return_only:\n"
+	"	ret\n");
+extern "C" void probe_read_only_reads(const word *pointers);
+extern "C" char probe_read_only_reads_end[];
+extern "C" void probe_return_only();
+
+/* The state before the instruction, in the frame's register order. */
+extern "C" {
+volatile word state_resume_sp;
+volatile word state_resume_ip;
+word state_expect[10];
+u16 state_expect_fsw;
+u16 state_expect_fcw;
+u32 state_expect_mxcsr;
+u64 state_expect_xmm0;
+}
+
+/* The frame's EDI to EAX, EIP and EFLAGS, and x87 words. */
+constexpr unsigned frame_registers = 10;
+word state_frame[frame_registers];
+u16 state_frame_fsw;
+u16 state_frame_fcw;
+u32 state_frame_mxcsr;
+u64 state_frame_xmm0;
+const char *const frame_register_names[8] = {
+	"EDI", "ESI", "EBP", "ESP", "EBX", "EDX", "ECX", "EAX"};
+constexpr unsigned frame_edi_offset = 20 + 4 * 4;
+constexpr unsigned frame_esp_offset = 20 + 7 * 4;
+constexpr unsigned frame_fpstate_offset = 20 + 19 * 4;
+
+void record_state(int signal, void *info, void *context)
+{
+	resume_ip = 0;
+	record_fault(signal, info, context);
+	for (unsigned index = 0; index < 8; ++index)
+		state_frame[index] =
+			frame_word(context, frame_edi_offset + index * 4);
+	state_frame[8] = frame_word(context, frame_ip_offset);
+	state_frame[9] = frame_word(context, frame_flags_offset);
+	/* struct _fpstate_32: the FNSAVE environment, then the FXSAVE image
+	 * at 112, whose MXCSR is at 136 and XMM0 at 272. */
+	const auto *fpstate = reinterpret_cast<const unsigned char *>(
+		frame_word(context, frame_fpstate_offset));
+	if (fpstate != nullptr) {
+		state_frame_fcw = *reinterpret_cast<const u16 *>(fpstate);
+		state_frame_fsw = *reinterpret_cast<const u16 *>(fpstate + 4);
+		state_frame_mxcsr = *reinterpret_cast<const u32 *>(fpstate + 136);
+		state_frame_xmm0 = *reinterpret_cast<const u64 *>(fpstate + 272);
+	}
+	frame_word(context, frame_ip_offset) = state_resume_ip;
+	frame_word(context, frame_esp_offset) = state_resume_sp;
+}
+
+struct StateCase {
+	const char *name;
+	void (*probe)(const word *block);
+	const char *instruction;
+	bool x87;
+};
+
+#define STATE_ENTRY(name, setup, stack, instruction)                         \
+	{#name, probe_state_##name, probe_state_##name##_insn,               \
+	 (setup)[0] == 'f'},
+const StateCase state_cases[] = {STATE_CASES(STATE_ENTRY)};
+#undef STATE_ENTRY
+
+constexpr long nr_munmap = 91;
+constexpr long nr_mprotect = 125;
+constexpr long nr_sigaltstack = 186;
+constexpr long prot_read = 1;
+constexpr word page_bytes = 4096;
+constexpr word sa_onstack = 0x08000000;
+extern "C" {
+/* adc_absolute names a page by its address. */
+alignas(4096) unsigned char state_pages[4 * page_bytes];
+}
+alignas(16) unsigned char alternate_stack[16384];
+
+bool handle_on_alternate_stack(long signal,
+			       void (*handler)(int, void *, void *))
+{
+	const struct {
+		word sp;
+		long flags;
+		word size;
+	} stack = {reinterpret_cast<word>(alternate_stack), 0,
+		   sizeof(alternate_stack)};
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(handler);
+	action.flags = sa_siginfo | sa_restorer | sa_onstack;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	return raw_syscall(nr_sigaltstack, reinterpret_cast<long>(&stack), 0) ==
+		       0 &&
+	       raw_syscall(nr_rt_sigaction, signal,
+			   reinterpret_cast<long>(&action), 0, 8) == 0;
+}
+
+const word *read_only_pointers;
+void read_only_reads() { probe_read_only_reads(read_only_pointers); }
+
+/* An instruction whose store or load faults has done nothing, as on x86-64,
+ * through the forms only 32-bit code has: segment pushes and pops, PUSHA,
+ * POPA, BOUND, far CALL and RET, and absolute operands. A read of a
+ * read-only page by an instruction that also stores elsewhere succeeds. */
+bool fault_state()
+{
+	unsigned char *const below = state_pages;
+	unsigned char *const writable = state_pages + page_bytes;
+	unsigned char *const read_only = state_pages + 2 * page_bytes;
+	unsigned char *const unmapped = state_pages + 3 * page_bytes;
+	for (word offset = 0; offset < page_bytes; ++offset)
+		read_only[offset] = static_cast<unsigned char>(0x5a + offset);
+	auto *pointers = reinterpret_cast<word *>(read_only + 0x200);
+	pointers[0] = reinterpret_cast<word>(&probe_return_only);
+	pointers[1] = 0x1234;
+	read_only_pointers = pointers;
+	if (raw_syscall(nr_mprotect, reinterpret_cast<long>(read_only),
+			page_bytes, prot_read) != 0 ||
+	    raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0 ||
+	    raw_syscall(nr_munmap, reinterpret_cast<long>(below),
+			page_bytes) != 0) {
+		put("  mprotect or munmap failed\n");
+		return false;
+	}
+	bool ok = install_fault_handlers() &&
+		  delivers_nothing("reads of a read-only page", read_only_reads,
+				   address_of(probe_read_only_reads_end));
+	/* A push or call faults with ESP on the read-only page. */
+	if (!handle_on_alternate_stack(sigsegv, record_state) ||
+	    !handle_on_alternate_stack(sigbus, record_state)) {
+		put("  sigaltstack or rt_sigaction failed\n");
+		return false;
+	}
+	/* The GS cases address their source through a TLS base of 0x1000. */
+	struct {
+		u32 entry_number;
+		u32 base_addr;
+		u32 limit;
+		u32 flags;
+	} descriptor = {~0U, 0x1000, 0xfffff, 1U | 1U << 4 | 1U << 6};
+	if (raw_syscall(nr_set_thread_area,
+			reinterpret_cast<long>(&descriptor)) != 0) {
+		put("  set_thread_area failed\n");
+		return false;
+	}
+	const u32 selector = descriptor.entry_number << 3 | 3;
+	__asm__ volatile("movw %w0, %%gs" : : "r"(selector));
+	word block[9];
+	for (unsigned index = 0; index < 8; ++index)
+		block[index] = 0x0b0a0908UL + 0x01010101UL * index;
+	block[2] = reinterpret_cast<word>(read_only + 0x100);
+	block[5] = reinterpret_cast<word>(read_only - 2);
+	block[6] = reinterpret_cast<word>(unmapped);
+	block[7] = reinterpret_cast<word>(writable + 16);
+	/* CF, PF, AF, SF and OF set; ZF and DF clear. */
+	block[8] = 0x897;
+	for (const auto &test : state_cases) {
+		observed[observed_count] = 0;
+		test.probe(block);
+		bool good = expect("signals", observed[observed_count], 1);
+		good &= expect("signal", observed[observed_signal],
+			       static_cast<word>(sigsegv));
+		good &= expect("frame ip", state_frame[8],
+			       reinterpret_cast<word>(test.instruction));
+		for (unsigned index = 0; index < 8; ++index)
+			good &= expect(frame_register_names[index],
+				       state_frame[index], state_expect[index]);
+		good &= expect("EFLAGS", state_frame[9] & 0xcd5,
+			       state_expect[9] & 0xcd5);
+		if (test.x87) {
+			good &= expect("x87 TOP", state_frame_fsw & 0x3800U,
+				       state_expect_fsw & 0x3800U);
+			good &= expect("x87 control", state_frame_fcw,
+				       state_expect_fcw);
+			good &= expect("MXCSR", state_frame_mxcsr,
+				       state_expect_mxcsr);
+			good &= expect("XMM0", state_frame_xmm0,
+				       state_expect_xmm0);
+		}
+		if (!good) {
+			put("  in ");
+			put(test.name);
+			put("\n");
+		}
+		ok &= good;
+	}
+	return ok;
+}
+
+extern "C" word probe_wrap_index(word base, word index);
+extern "C" char probe_wrap_index_insn[];
+extern "C" char probe_wrap_index_end[];
+extern "C" word probe_wrap_sum(word base, word index);
+extern "C" word probe_wrap_absolute(word value);
+extern "C" word probe_wrap_load(word address);
+extern "C" char probe_wrap_load_insn[];
+extern "C" char probe_wrap_load_end[];
+extern "C" void probe_wrap_push();
+extern "C" char probe_wrap_push_insn[];
+extern "C" char probe_wrap_push_end[];
+extern "C" void probe_wrap_stos(word address);
+extern "C" char probe_wrap_stos_insn[];
+extern "C" char probe_wrap_stos_end[];
+extern "C" {
+volatile word wrap_saved_sp;
+}
+
+constexpr long nr_old_mmap = 90;
+constexpr word wrap_high_page = 0xe0000000;
+volatile word wrap_value = 0x600d;
+
+void wrap_index_fault() { (void)probe_wrap_index(0x10, 0x3ffffffe); }
+void wrap_load_fault() { (void)probe_wrap_load(4); }
+void wrap_stos_fault() { probe_wrap_stos(0xfffffffe); }
+
+/* A 32-bit effective address wraps at 4 GiB: base plus scaled index, an
+ * absolute operand at or above 2 GiB, the stack and a string's operands. An
+ * access through a wrapped address that reaches no mapping faults with the
+ * wrapped address. */
+bool addresses_wrap()
+{
+	const struct {
+		u32 address;
+		u32 length;
+		u32 prot;
+		u32 flags;
+		u32 fd;
+		u32 offset;
+	} high = {wrap_high_page, page_bytes, 3, 0x32, ~0U, 0};
+	if (static_cast<word>(raw_syscall(nr_old_mmap,
+		reinterpret_cast<long>(&high))) != wrap_high_page) {
+		put("  mmap at 0xe0000000 failed\n");
+		return false;
+	}
+	auto *const page = reinterpret_cast<volatile u32 *>(wrap_high_page);
+	page[4] = 0x1111;
+	const word value = reinterpret_cast<word>(&wrap_value);
+	bool ok = expect("(base, index * 4) past 4 GiB",
+			 probe_wrap_index(value, 0x40000000), 0x600d);
+	ok &= expect("INC (base, index) past 4 GiB",
+		     probe_wrap_sum(value + 0x80000000, 0x80000000), 0x600e);
+	ok &= expect("absolute operands at 0xe0000010",
+		     probe_wrap_absolute(0x2222), 0x2222 + 2 * 0x1111);
+	ok &= expect("the absolute store", page[5], 0x2222);
+	ok = ok && install_fault_handlers() &&
+	     handle_on_alternate_stack(sigsegv, record_fault);
+	ok = ok && delivers("a load indexed past 4 GiB", wrap_index_fault,
+			    address_of(probe_wrap_index_end),
+			    {sigsegv, segv_maperr, 8,
+			     address_of(probe_wrap_index_insn), 14, true, 4});
+	ok = ok && delivers("a load below 0", wrap_load_fault,
+			    address_of(probe_wrap_load_end),
+			    {sigsegv, segv_maperr, 0xfffffffc,
+			     address_of(probe_wrap_load_insn), 14, true, 4});
+	ok = ok && delivers("a push with ESP 0", probe_wrap_push,
+			    address_of(probe_wrap_push_end),
+			    {sigsegv, segv_maperr, 0xfffffffc,
+			     address_of(probe_wrap_push_insn), 14, true, 6});
+	ok = ok && delivers("REP STOSB across 4 GiB", wrap_stos_fault,
+			    address_of(probe_wrap_stos_end),
+			    {sigsegv, segv_maperr, 0xfffffffe,
+			     address_of(probe_wrap_stos_insn), 14, true, 6});
 	return ok;
 }
 #endif
@@ -3631,6 +4322,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "ud2"));
 	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
 	       in_child(i386_probe, "ud2"));
+	report("x86-64 undefined encodings raise #UD and SYSEXIT #GP",
+	       in_child(self, "undefined"));
+	report("i386 undefined encodings raise #UD and SYSEXIT #GP",
+	       in_child(i386_probe, "undefined"));
 	report("x86-64 #PF error codes carry the user bit",
 	       in_child(self, "page-fault"));
 	report("i386 #PF error codes carry the user bit",
@@ -3655,6 +4350,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "gathers"));
 	report("x86-64 a faulting access leaves the state as the instruction found it",
 	       in_child(self, "fault-state"));
+	report("i386 a faulting access leaves the state as the instruction found it",
+	       in_child(i386_probe, "fault-state"));
+	report("i386 effective addresses wrap at 4 GiB",
+	       in_child(i386_probe, "address-wrap"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -3703,6 +4402,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_changes_syscalls() ? 0 : 1;
 		if (equal(mode, "ud2"))
 			return ud2_faults() ? 0 : 1;
+		if (equal(mode, "undefined"))
+			return undefined_faults() ? 0 : 1;
 		if (equal(mode, "page-fault"))
 			return page_faults_are_user() ? 0 : 1;
 		if (equal(mode, "tracer-debug"))
@@ -3724,6 +4425,10 @@ extern "C" int probe_main(word *stack)
 			return bound_checks() ? 0 : 1;
 		if (equal(mode, "tls"))
 			return tls_entries() ? 0 : 1;
+		if (equal(mode, "fault-state"))
+			return fault_state() ? 0 : 1;
+		if (equal(mode, "address-wrap"))
+			return addresses_wrap() ? 0 : 1;
 #else
 		if (equal(mode, "noncanonical"))
 			return noncanonical_faults() ? 0 : 1;

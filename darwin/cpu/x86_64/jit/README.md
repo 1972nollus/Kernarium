@@ -18,17 +18,28 @@ records the contracts that are not obvious from the code.
 which is macOS only. On the x86-64 product, `--execution-engine jit` selects it
 and the default is the gadget engine, by name; selecting the JIT fails where the
 build or host cannot run it (JIT memory with a write window, FEAT_LSE and
-FEAT_LSE2). The JIT runs long64 tasks; compat32 tasks stay on the gadget engine
-under either selection, and the seam keeps that choice per dispatch so that the
-JIT can take compat32 later. The arm64 product's x86 test guest builds the
-engine for its unit tests only and runs x86 code on the gadget engine.
+FEAT_LSE2). The JIT runs both long64 and compat32 tasks. The arm64 product's
+x86 test guest builds the engine for its unit tests only and runs x86 code on
+the gadget engine.
 
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread
 per address-space generation and execution mode, at most eight, and releases
 the least recently used, because FEXCore's block caches are keyed by guest RIP
-alone.
+alone. A compat32 context decodes and computes as 32-bit code.
+
+A compat32 address wraps at 4 GiB, segment base and offset alike: the TLB holds
+only wrapped addresses, so the miss path wraps the 64-bit sum the backend
+forms, and the string helper wraps each element. The guest kernel's task size,
+0xffffe000, bounds the user range. CS is only data: a far transfer, IRET or
+selector load changes no decode mode. A load of FS or GS takes its base from
+the guest kernel's TLS descriptors, by GDT entry, and any other selector loads
+base 0; no selector load faults. These match the gadget engine. compat32 code
+makes system calls with INT 0x80; SYSCALL and SYSENTER raise `#UD` there, as
+they do in the gadget engine. A compat32 dispatch leaves the upper halves of
+the general registers it does not write as it found them, as the gadget engine
+does.
 
 FEXCore's generated code reaches guest memory through an inline software TLB. A
 miss calls the engine, which fills the entry from the static MMU or ends the
@@ -68,10 +79,14 @@ block's end. A fault leaves the state as its instruction found it, because
 the guest resolves the fault, a copy-on-write store among them, and runs the
 instruction again: a load whose bytes the same instruction then stores takes
 write permission, so a read-modify-write faults before it changes a register
-or a flag; POP to memory stores before it moves RSP; and FLDENV, FRSTOR,
-FXRSTOR, XRSTOR and IRET probe their whole operand before they load state from
-it. The exceptions probe's fault-state mode holds both engines to that. Each
-dispatch also:
+or a flag; POP to memory, PUSHA, a far CALL and ENTER store before they move
+RSP; POPA, FLDENV, FRSTOR, FXRSTOR, XRSTOR and IRET probe their whole operand
+before they load state from it; and register allocation never commits a value
+to a guest register before a later access of the same instruction, or an
+earlier instruction's value before such an access. A load whose value goes
+unused, such as a compare whose flags are dead, still faults, and so does a
+rotate through carry by zero. The exceptions probe's fault-state mode holds
+both engines to that. Each dispatch also:
 
 - decodes by the address space's execution mode, not by whatever CS holds;
 - starts from the host FPCR the guest's MXCSR implies, because FEXCore applies
@@ -128,13 +143,23 @@ The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending. The engine does not deliver unmasked SSE or
 x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
 flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
-`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two x86-64
-cases.
+`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two cases in
+each mode.
+
+An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
+failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
+undefined set follows hardware, except that compat32 code raises `#UD` for
+0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
+as it does on the gadget engine. Other encodings the gadget engine refuses
+although hardware runs them, such as LSL or a SETcc whose ModRM reg field is
+not 0, the JIT runs.
 
 ## Instruction corpus
 
 `x86-64-jit-instruction-corpus` runs the x86-64 instruction corpus through the
-engine in the unit suite.
+engine in the unit suite. The checked-in corpus has no compat32 records; the
+JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
+`--retirement` cases go through the engine too.
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows

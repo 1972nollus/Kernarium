@@ -434,28 +434,25 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
 	const auto &registered_interrupt = runtime.interrupt;
 #if DARWIN_UML_X86_64_JIT
-	/* The x86-64 product runs long64 code on the JIT when its selection
-	 * names it. compat32 code stays on the gadget engine under either
-	 * selection until the JIT runs it too. The gadget instantiation, the
-	 * product's default, compiles none of this. */
+	/* The x86-64 product runs long64 and compat32 code on the JIT when
+	 * its selection names it. The gadget instantiation, the product's
+	 * default, compiles none of this. */
 	if constexpr (Kind == uml::cpu::EngineKind::jit) {
-		if (cpu.execution_mode == x86_64::ExecutionMode::long64) {
-			auto run = ::uml::runtime::run_x86_jit(cpu, runtime.memory,
-				runtime.x86_jit, generation,
-				stepping ? 1 : dispatch_budget, {
-				.sequence = registered_interrupt.sequence,
-				.snapshot = registered_interrupt.snapshot,
-				.stop = context.stop_token(),
-			});
-			return finish_x86_run(registers, fp, context, cpu, stepping,
-				run);
-		}
+		auto run = ::uml::runtime::run_x86_jit(cpu, runtime.memory,
+			runtime.x86_jit, generation,
+			stepping ? 1 : dispatch_budget, {
+			.sequence = registered_interrupt.sequence,
+			.snapshot = registered_interrupt.snapshot,
+			.stop = context.stop_token(),
+		});
+		return finish_x86_run(registers, fp, context, cpu, stepping,
+			run);
 	}
 #else
 	(void)Kind;
 #endif
 	/* Everything else runs on the gadget engine: the x86-64 product's
-	 * default, compat32 code, and the arm64 product's x86 test guest. */
+	 * default and the arm64 product's x86 test guest. */
 	auto run = ::uml::runtime::run_x86_gadgets(
 		cpu, runtime.memory, runtime.x86_executor,
 		runtime.x86_checked_executors, generation,
