@@ -382,10 +382,10 @@ of an arbitrary distribution or complete Linux syscall compatibility. The
 normal mainline slices and Android remain arm64-userspace-only and contain
 none of the x86_64 kernel overlay.
 
-On macOS the x86_64 product can instead run long64 tasks on the x86-64 JIT,
-FEXCore embedded behind the static MMU, which `--execution-engine jit`
-selects. The product's default is the gadget engine, by name, and compat32
-tasks stay on the gadget engine under either selection. The
+On macOS the x86_64 product can instead run long64 and compat32 tasks on the
+x86-64 JIT, FEXCore embedded behind the static MMU, which
+`--execution-engine jit` selects. The product's default is the gadget engine,
+by name. The
 [JIT README](../darwin/cpu/x86_64/jit/README.md) records its contracts and
 known gaps. The JIT is a macOS product only, and four independent checks keep
 it out of every iOS product: only the `macos` dependency prefix carries
