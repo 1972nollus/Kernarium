@@ -329,7 +329,9 @@ exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
 against native x86 Linux's values. The smoke, RFLAGS and exception runners
 take `--engine jit` to run long64 code on the macOS-only x86-64 JIT instead of
 the default gadget engine; run them on both engines when a change reaches
-either. The JIT fails exactly the two exception cases its
+either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
+checks that the host sees an address space as shared only once a task
+starts a thread on it. The JIT fails exactly the two exception cases its
 [README](../darwin/cpu/x86_64/jit/README.md) names.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
@@ -519,6 +521,21 @@ Linux's table with injected SME hosts at every SVL from 16 to 256 bytes. On
 an SME host, an M4 Mac, also run it, `arm64-advertised-features` and
 `arm64-jit-sme-control` with `DARWIN_UML_GUEST_SME=1`. Elsewhere
 `arm64-jit-sme-control` runs only its SM=0 cases, on an injected profile.
+
+`guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
+under the policy on. Each skips, naming its reason, unless the host has SME
+and its engine's SME support is `control` or better. The freestanding
+`sme_probe.cpp` boots as `/init` and checks signal frames, invalid
+sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
+exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
+sigreturn and ptrace alone, then with SME executed by the engine; further
+boots send host signals and each terminating signal while a vCPU streams,
+and `glibc_za_probe.py` checks glibc's ZA lazy-save commits. The `kernel`,
+`spin` and `terminate` modes need no engine support; on an SME host they run
+by hand with
+`run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
+`guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
+that with the policy off the probe sees no SME.
 
 ## x86 instruction conformance
 

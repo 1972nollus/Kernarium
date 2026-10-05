@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "cpu/arm64/sme_profile.hpp"
+#include "platform/apple/host_features.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
@@ -12,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -30,7 +33,7 @@ using uml::testing::require;
 }
 
 int enter(darwin_uml_guest_registers &registers,
-	darwin_uml_guest_fp_registers &fp, unsigned long generation)
+	uml::testing::GuestFpTail &fp, unsigned long generation)
 {
 	unsigned long tls = 0x1234'5678UL;
 	return darwin_uml_static_enter_guest(
@@ -47,7 +50,7 @@ void fpmr_is_not_guest_state()
 	backing.put32(0, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.fpmr = 0x0000'003f'ff7f'c1ffULL;
 
@@ -56,11 +59,20 @@ void fpmr_is_not_guest_state()
 	require(registers.fpmr == 0);
 }
 
+/* The SVL of the register file each vCPU holds, or 0 when this run does
+ * not implement SME (the policy is off or the host lacks the profile). */
+[[nodiscard]] unsigned long sme_vector_length()
+{
+	return uml::cpu::arm64::SmeRegisterFile::for_host(
+		uml::platform::apple::probed_host_capabilities()).svl();
+}
+
 void pstate_survives_boundary()
 {
-	/* DIT is guest state. The virtual CPU implements neither FEAT_SSBS nor
-	 * FEAT_SME: MSR SSBS and SMSTART are undefined, the kernel's
-	 * PSTATE.SSBS passes through untouched, and SVCR comes back zero. */
+	/* DIT is guest state. The virtual CPU implements no FEAT_SSBS: MSR SSBS
+	 * is undefined and the kernel's PSTATE.SSBS passes through untouched.
+	 * No engine implements SME yet, so SMSTART is undefined whether or not
+	 * the run implements it; without SME, SVCR comes back zero. */
 	constexpr unsigned long generation = 201;
 	constexpr std::uint64_t base = 0x51'0000;
 	constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
@@ -73,10 +85,11 @@ void pstate_survives_boundary()
 	backing.put32(16, pstate(7, 3)); // smstart
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.pstate = pstate_ssbs;
-	registers.svcr = 3;
+	const bool sme = sme_vector_length() != 0;
+	registers.svcr = sme ? 0 : 3;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 12);
@@ -94,6 +107,103 @@ void pstate_survives_boundary()
 	require(registers.svcr == 0);
 }
 
+void arm64_tail_is_exact()
+{
+	/* An arm64 task hands over its FP registers and its SME registers,
+	 * DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE bytes; any other size is a
+	 * kernel built for another bridge. */
+	constexpr unsigned long generation = 205;
+	constexpr std::uint64_t base = 0x55'0000;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put32(0, 0xd400'0001U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	struct {
+		uml::testing::GuestFpTail tail;
+		std::uint8_t spare[16];
+	} fp{};
+	for (const unsigned long size : {
+		     DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE + 0UL,
+		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE - 8UL,
+		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE + 8UL}) {
+		darwin_uml_guest_registers registers{};
+		unsigned long tls = 0;
+		registers.pc = base;
+		require(darwin_uml_static_enter_guest(&registers, &fp, size,
+			generation, &tls) == DARWIN_UML_EVENT_FATAL);
+		require(registers.pc == base);
+	}
+	darwin_uml_guest_registers registers{};
+	registers.pc = base;
+	require(enter(registers, fp.tail, generation) ==
+		DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 4);
+}
+
+void sme_tail_crosses_boundary()
+{
+	/* With SME, SVCR, TPIDR2_EL0 and the storage the tail names are the
+	 * task's and come back as the kernel handed them, here unread by any
+	 * engine. SVCR may name SM or ZA only with storage, storage must be
+	 * sized for this run's vector length, and SVCR's other bits stay zero.
+	 * Without SME the tail is the kernel's alone: an engine neither reads
+	 * nor writes it, and SVCR comes back zero. */
+	constexpr unsigned long generation = 206;
+	constexpr std::uint64_t base = 0x56'0000;
+	constexpr std::uint64_t tpidr2 = 0x1234'5678'9abc'def0ULL;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put32(0, 0xd400'0001U); // svc #0
+	JitMapping mapping{generation, base, backing, 1};
+	const unsigned long svl = sme_vector_length();
+	const auto run = [&](std::uint64_t svcr, std::uint64_t state,
+		std::uint32_t storage_svl, std::uint64_t &out_svcr,
+		std::uint64_t &out_tpidr2) {
+		darwin_uml_guest_registers registers{};
+		uml::testing::GuestFpTail fp{};
+		registers.pc = base;
+		registers.svcr = svcr;
+		fp.sme.tpidr2 = tpidr2;
+		fp.sme.state = state;
+		fp.sme.svl = storage_svl;
+		const int event = enter(registers, fp, generation);
+		out_svcr = registers.svcr;
+		out_tpidr2 = fp.sme.tpidr2;
+		require(fp.sme.state == state && fp.sme.svl == storage_svl);
+		return event;
+	};
+	std::uint64_t svcr = 0;
+	std::uint64_t out_tpidr2 = 0;
+	if (svl == 0) {
+		require(run(3, 0, 0, svcr, out_tpidr2) ==
+			DARWIN_UML_EVENT_SYSCALL);
+		require(svcr == 0 && out_tpidr2 == tpidr2);
+		return;
+	}
+	std::vector<std::byte> storage(DARWIN_UML_GUEST_SME_STATE_SIZE(svl));
+	for (std::size_t index = 0; index < storage.size(); ++index)
+		storage[index] = static_cast<std::byte>(index * 7U);
+	/* The FP registers' V own each Z's low 16 bytes, all zero here, so an
+	 * engine that loads and stores Z hands back the same bytes. */
+	for (unsigned n = 0; n < 32; ++n)
+		std::memset(storage.data() + DARWIN_UML_GUEST_SME_Z_OFFSET(svl, n),
+			0, 16);
+	const auto copy = storage;
+	const auto address = reinterpret_cast<std::uint64_t>(storage.data());
+	const auto sized = static_cast<std::uint32_t>(svl);
+	for (const std::uint64_t mode : {0U, 1U, 2U, 3U}) {
+		require(run(mode, address, sized, svcr, out_tpidr2) ==
+			DARWIN_UML_EVENT_SYSCALL);
+		require(svcr == mode && out_tpidr2 == tpidr2);
+		require(storage == copy);
+	}
+	require(run(0, 0, 0, svcr, out_tpidr2) == DARWIN_UML_EVENT_SYSCALL);
+	require(svcr == 0 && out_tpidr2 == tpidr2);
+	require(run(2, 0, 0, svcr, out_tpidr2) == DARWIN_UML_EVENT_FATAL);
+	require(run(1, address, sized * 2U, svcr, out_tpidr2) ==
+		DARWIN_UML_EVENT_FATAL);
+	require(run(4, address, sized, svcr, out_tpidr2) ==
+		DARWIN_UML_EVENT_FATAL);
+}
+
 void exclusive_monitor_is_cleared_at_boundary()
 {
 	constexpr unsigned long generation = 202;
@@ -109,7 +219,7 @@ void exclusive_monitor_is_cleared_at_boundary()
 	backing.put64(0x800, original);
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[1] = data;
 	registers.x[3] = replacement;
@@ -131,7 +241,7 @@ void deferred_fp_source_is_refreshed_at_boundary()
 	backing.put32(8, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	std::memset(fp.vectors[31], 0xff, sizeof(fp.vectors[31]));
 
@@ -156,7 +266,7 @@ void deferred_fp_source_is_materialized_on_linked_target()
 	backing.put32(20, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 
 	/* Translate and activate the FP target before its integer predecessor. */
 	registers.pc = base + 16;
@@ -180,6 +290,8 @@ int main()
 	const uml::testing::RuntimeTestRoute runtime_route;
 	fpmr_is_not_guest_state();
 	pstate_survives_boundary();
+	arm64_tail_is_exact();
+	sme_tail_crosses_boundary();
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();
 	deferred_fp_source_is_materialized_on_linked_target();

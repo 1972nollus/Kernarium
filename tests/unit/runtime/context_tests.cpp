@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "allocation_failure.hpp"
 #include "cpu/engine.hpp"
+#include "guest_register_tail.hpp"
 #include "memory/domain_contract.hpp"
 #include "platform/run_routing.hpp"
 #include "require.hpp"
@@ -885,7 +886,7 @@ void test_next_run_cannot_enter_during_state_retirement()
 std::size_t enter_available_engines(uml::runtime::Context &context)
 {
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = 0x1000;
 	unsigned long tls = 0;
 	(void)darwin_uml_static_enter_guest(

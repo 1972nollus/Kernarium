@@ -13,6 +13,9 @@ int darwin_uml_enter_guest(void *registers, void *fp_registers,
 			   unsigned long *tls);
 unsigned long darwin_uml_guest_hwcap(void);
 unsigned long darwin_uml_guest_hwcap2(void);
+/* The streaming vector length in bytes when the virtual CPU implements SME
+ * for this run, else 0. Fixed for the life of the process. */
+unsigned long darwin_uml_guest_sme_vector_length(void);
 /* The virtual CPU's model name, for /proc/cpuinfo. Static storage owned by
  * the emulator, valid for the lifetime of the process, and identical for
  * every guest architecture the host presents. */

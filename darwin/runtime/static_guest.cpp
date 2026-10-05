@@ -3,6 +3,7 @@
 #include "cpu/engine_factory.hpp"
 #if DARWIN_UML_X86_64_GUEST
 #include "runtime/x86_gadget_runtime.hpp"
+#include "runtime/x86_runtime_support.hpp"
 #endif
 #if DARWIN_UML_X86_64_JIT
 #include "runtime/x86_jit_runtime.hpp"
@@ -86,6 +87,15 @@ static_assert(::uml::cpu::floating_point_status_exception_mask ==
 	      public_floating_point_flags);
 static_assert(::uml::cpu::floating_point_syndrome(0) ==
 	      DARWIN_UML_FLOATING_POINT_SYNDROME_BASE);
+/* The kernel's SME storage and a vCPU's register file share one layout. */
+static_assert(DARWIN_UML_GUEST_SME_P_OFFSET(64, 0) == arm64::sme_p_offset(64, 0));
+static_assert(DARWIN_UML_GUEST_SME_ZA_OFFSET(64, 0) ==
+	      arm64::sme_za_offset(64, 0));
+static_assert(DARWIN_UML_GUEST_SME_ZT0_SIZE == arm64::sme_zt0_bytes);
+static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(16) == arm64::sme_storage_size(16));
+static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(64) == arm64::sme_storage_size(64));
+static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(256) ==
+	      arm64::sme_storage_size(256));
 
 /* The FPCR fields a restored context may set: those of an MSR FPCR on this
  * host, decided once from the host the engines translate for. */
@@ -129,9 +139,26 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr, restored_fpcr_mask());
 }
 
+/* An arm64 task's SME tail, read only when the run implements SME, which is
+ * when the vCPU has a register file. SVCR may name SM or ZA only for a task
+ * with storage, and storage is sized for this run's streaming vector length:
+ * both are kernel invariants, so a tail that breaks them is fatal. */
+[[nodiscard]] bool load_sme(arm64::CpuState &cpu,
+	const darwin_uml_guest_registers &registers,
+	const darwin_uml_guest_sme_registers &sme) noexcept
+{
+	if ((registers.svcr & ~std::uint64_t{arm64::svcr_mask}) != 0 ||
+		(sme.state == 0 ? registers.svcr != 0 : sme.svl != cpu.sme_svl))
+		return false;
+	cpu.defer_sme_load(reinterpret_cast<std::byte *>(sme.state),
+		static_cast<std::uint8_t>(registers.svcr), sme.tpidr2);
+	return true;
+}
+
 void save_cpu(arm64::CpuState &cpu,
 	      darwin_uml_guest_registers &registers,
-	      darwin_uml_guest_fp_registers &fp, unsigned long &tls)
+	      darwin_uml_guest_fp_registers &fp,
+	      darwin_uml_guest_sme_registers &sme, unsigned long &tls)
 {
 	::uml::cpu::materialize_architectural_state(cpu);
 	std::copy_n(cpu.registers.begin(), 29, std::begin(registers.x));
@@ -139,8 +166,8 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.lr = cpu.registers[30];
 	registers.sp = cpu.sp;
 	registers.pc = cpu.pc;
-	/* The virtual CPU implements neither FEAT_SSBS nor FEAT_SME, so the
-	 * kernel's PSTATE.SSBS passes through untouched and SVCR is zero. */
+	/* The virtual CPU implements no FEAT_SSBS, so the kernel's
+	 * PSTATE.SSBS passes through untouched. */
 	registers.pstate =
 		(registers.pstate &
 		 ~(pstate_nzcv | pstate_dit | pstate_daif)) |
@@ -148,7 +175,16 @@ void save_cpu(arm64::CpuState &cpu,
 		(cpu.pstate_dit ? pstate_dit : 0U) |
 		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
 	registers.fpmr = 0;
-	registers.svcr = 0;
+	/* Without SME SVCR is zero and the tail is the kernel's alone. With
+	 * it, the task gets back its SVCR, TPIDR2 and, ahead of the V copy
+	 * below, whatever of its storage the engine exposed. */
+	if (cpu.sme_registers != nullptr) [[unlikely]] {
+		cpu.write_back_sme_state();
+		registers.svcr = cpu.svcr;
+		sme.tpidr2 = cpu.tpidr2;
+	} else {
+		registers.svcr = 0;
+	}
 	tls = static_cast<unsigned long>(cpu.tls);
 	/* Like a context switch on hardware, report the FPCR and FPSR the task
 	 * ran with: load_cpu masked them, and an untouched FP image still holds
@@ -388,6 +424,10 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 {
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
+	runtime.x86_mm_shared =
+		(registers.dispatch_flags & DARWIN_UML_DISPATCH_MM_SHARED) != 0;
+	if (runtime.x86_mm_shared) [[unlikely]]
+		::uml::runtime::note_x86_mm_shared(generation, cpu.rip);
 	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
 	 * budget the executor retires exactly that many, so a budget of one is
 	 * a single step. */
@@ -510,6 +550,13 @@ int run_common_guest(
 		if (!uml::cpu::cpu_engine_available(uml::cpu::EngineKind::jit))
 			return DARWIN_UML_EVENT_FATAL;
 	}
+	/* An arm64 task's tail is its FP registers and then its SME
+	 * registers, whether or not the run implements SME. */
+	if (fp_size != DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE)
+		return DARWIN_UML_EVENT_FATAL;
+	auto &sme = *reinterpret_cast<darwin_uml_guest_sme_registers *>(
+		static_cast<std::byte *>(fp_pointer) +
+		DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET);
 	const auto &registers = *static_cast<const darwin_uml_guest_registers *>(
 		register_pointer);
 	if (registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
@@ -522,6 +569,9 @@ int run_common_guest(
 	auto &cpu = runtime->cpu;
 	auto &memory = runtime->memory;
 	load_cpu(cpu, mutable_registers, fp, *tls, context->top_byte_ignore());
+	if (cpu.sme_registers != nullptr && !load_sme(cpu, mutable_registers, sme))
+		[[unlikely]]
+		return DARWIN_UML_EVENT_FATAL;
 	if constexpr (Kind != uml::cpu::EngineKind::gadgets)
 		cpu.access_fp_state();
 	auto *engine = common_engine<Kind>(*runtime);
@@ -547,7 +597,7 @@ int run_common_guest(
 	debug_check_host_streaming_state();
 	const auto result = engine->run(request);
 	debug_check_host_streaming_state();
-	save_cpu(cpu, mutable_registers, fp, *tls);
+	save_cpu(cpu, mutable_registers, fp, sme, *tls);
 
 	switch (result.reason) {
 	case uml::cpu::ExitReason::system_call:
@@ -606,8 +656,10 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_PC_ALIGNMENT;
 		break;
 	case uml::cpu::ExitReason::sme_access:
-		/* No kernel allocates SME storage before the bridge carries it,
-		 * and no engine reports this before then. */
+		/* Nothing retired: the kernel allocates the task's storage and
+		 * enters again at the same PC. */
+		event = DARWIN_UML_EVENT_SME_ACCESS;
+		break;
 	case uml::cpu::ExitReason::fatal:
 		event = DARWIN_UML_EVENT_FATAL;
 		break;
