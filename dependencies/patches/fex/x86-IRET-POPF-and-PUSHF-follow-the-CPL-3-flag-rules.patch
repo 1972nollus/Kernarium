@@ -15,10 +15,10 @@ SetPackedRFLAG takes the mask of the flags it writes.
  3 files changed, 23 insertions(+), 12 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 1e0ce543fa2a76b351d82beb43461af2fb537072..3c296bf0d290411b749b06be7b352bde37eff503 100644
+index 7f2fa97525301235e9f37524e4abae1370dec08c..0553d64745452cae5240bf51a49c59e371b0ebfc 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -217,8 +217,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -223,8 +223,9 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
    _StoreContextGPR(OpSize::i16Bit, NewSegmentCS, offsetof(FEXCore::Core::CPUState, cs_idx));
    UpdatePrefixFromSegment(NewSegmentCS, FEXCore::X86Tables::DecodeFlags::FLAG_CS_PREFIX);
  
@@ -30,7 +30,7 @@ index 1e0ce543fa2a76b351d82beb43461af2fb537072..3c296bf0d290411b749b06be7b352bde
  
    if (Is64BitMode) {
      // RSP and SS only happen in 64-bit mode or if this is a CPL mode jump!
-@@ -3757,20 +3758,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
+@@ -3775,20 +3776,19 @@ void OpDispatchBuilder::BSWAPOp(OpcodeArgs) {
  void OpDispatchBuilder::PUSHFOp(OpcodeArgs) {
    const auto Size = OpSizeFromSrc(Op);
  
@@ -59,7 +59,7 @@ index 1e0ce543fa2a76b351d82beb43461af2fb537072..3c296bf0d290411b749b06be7b352bde
    auto NewRIP = GetRelocatedPC(Op);
    ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 8beba9d145cb78910acabc131131c3e95abf768e..54effd17a51db5edb020cf2d01ec8a3b24e431e5 100644
+index ff317b73759503d524f8db0855f22d6a8b48f239..a047fe92dd6fd2eb8bf6822f7f85be24ad4a8e99 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 @@ -1123,7 +1123,14 @@ public:

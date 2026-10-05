@@ -14,10 +14,10 @@ the last bit shifted out.
  1 file changed, 44 insertions(+), 26 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 3a4a115cd36aabd33f7ce1f2138a8fb69a1663cc..3babbe39520497dbf0bcc53a139842de31ded929 100644
+index 17adca77f49c7b9b9828bf038694a622dd411a38..7249b6badb67e83d4deb714762738629d433ff3f 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1505,14 +1505,23 @@ void OpDispatchBuilder::SHLDOp(OpcodeArgs) {
+@@ -1523,14 +1523,23 @@ void OpDispatchBuilder::SHLDOp(OpcodeArgs) {
      Shift = _And(OpSize::i64Bit, Shift, _InlineConstant(0x1F));
    }
  
@@ -47,7 +47,7 @@ index 3a4a115cd36aabd33f7ce1f2138a8fb69a1663cc..3babbe39520497dbf0bcc53a139842de
  
    // If shift count was zero then output doesn't change
    // Needs to be checked for the 32bit operand case
-@@ -1538,19 +1547,20 @@ void OpDispatchBuilder::SHLDImmediateOp(OpcodeArgs) {
+@@ -1556,19 +1565,20 @@ void OpDispatchBuilder::SHLDImmediateOp(OpcodeArgs) {
    if (Shift != 0) {
      Ref Res {};
      if (Size < 32) {
@@ -75,7 +75,7 @@ index 3a4a115cd36aabd33f7ce1f2138a8fb69a1663cc..3babbe39520497dbf0bcc53a139842de
      CalculateDeferredFlags();
      StoreResultGPR(Op, Res);
    } else if (Shift == 0 && Size == 32) {
-@@ -1578,19 +1588,29 @@ void OpDispatchBuilder::SHRDOp(OpcodeArgs) {
+@@ -1596,19 +1606,29 @@ void OpDispatchBuilder::SHRDOp(OpcodeArgs) {
      Shift = _And(OpSize::i64Bit, Shift, _InlineConstant(0x1F));
    }
  
@@ -110,7 +110,7 @@ index 3a4a115cd36aabd33f7ce1f2138a8fb69a1663cc..3babbe39520497dbf0bcc53a139842de
  }
  
  void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
-@@ -1602,21 +1622,19 @@ void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
+@@ -1620,21 +1640,19 @@ void OpDispatchBuilder::SHRDImmediateOp(OpcodeArgs) {
  
    if (Shift != 0) {
      Ref Res {};

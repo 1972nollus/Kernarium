@@ -75,8 +75,9 @@ The `macos` product carries FEXCore for the macOS-only x86-64 JIT engine. The
 `unordered-dense` rows pin the three submodules FEXCore needs at the commits
 FEX-2608 records; no iOS product names any of them. The series' topics build
 only FEXCore for an embedding Darwin host, make its utilities portable to
-Darwin, and add an embedding mode in which a host that owns guest memory
-drives FEXCore. The series touches nothing the `x86-conformance` corpus
+Darwin, add an embedding mode in which a host that owns guest memory drives
+FEXCore, compat32 code included, and correct x86 semantics where FEXCore
+differs from hardware. The series touches nothing the `x86-conformance` corpus
 producers read, so one prepared FEX source serves both products and still
 yields the pinned corpus.
 

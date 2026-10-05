@@ -56,9 +56,6 @@ constexpr std::uint64_t user_rflags_mask = 0x0000'0000'003f'7fd5ULL;
 constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
 
-constexpr std::uint16_t linux_user_code32 = 0x23;
-constexpr std::uint16_t linux_user_code64 = 0x33;
-
 /* x86 orders every store before every later one. FEXCore emulates that with
  * acquire loads and release stores, which costs about 30% on memory-bound
  * code. Lane 6 keys it per address space, on once the mm gains a second
@@ -275,7 +272,6 @@ struct Space final {
 	std::unique_ptr<EmbeddedSyscallHandler> syscalls;
 	CallRetStack callret;
 	std::unique_ptr<Core::EmbedderTLBEntry[]> tlb;
-	std::array<Core::CPUState::gdt_segment, 32> gdt{};
 	fextl::unique_ptr<FEXCore::Context::Context> context;
 	Core::InternalThreadState *thread{};
 	/* The pages of this address space that any translator holds code for.
@@ -722,22 +718,27 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
  * fault RCX, RSI and RDI hold the progress made and RIP the instruction, so
- * the guest restarts it where it stopped, as on x86. */
+ * the guest restarts it where it stopped, as on x86. The backend passes each
+ * operand as segment base plus offset, and the spilled state still holds the
+ * offsets, so the registers take the progress without the bases. */
 std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderStringOp *op_pointer)
 {
 	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
 	auto &engine = *space.engine;
 	auto &memory = *engine.memory;
 	auto &op = *const_cast<Core::EmbedderStringOp *>(op_pointer);
+	auto &gregs = frame->State.gregs;
 	const std::size_t element = op.ElementSize;
 	const bool backward = (static_cast<std::uint64_t>(op.Direction) & 2U) != 0;
 	const bool copy = op.IsCopy != 0;
+	const auto dest_base = op.Dest - gregs[X86State::REG_RDI];
+	const auto src_base = copy ? op.Src - gregs[X86State::REG_RSI] : 0;
 
 	const auto save_progress = [&] {
-		frame->State.gregs[X86State::REG_RCX] = op.Count;
-		frame->State.gregs[X86State::REG_RDI] = op.Dest;
+		gregs[X86State::REG_RCX] = op.Count;
+		gregs[X86State::REG_RDI] = op.Dest - dest_base;
 		if (copy)
-			frame->State.gregs[X86State::REG_RSI] = op.Src;
+			gregs[X86State::REG_RSI] = op.Src - src_base;
 	};
 	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
@@ -913,10 +914,10 @@ void load_state(Space &space, const CpuState &cpu) noexcept
 	state.flags[X86State::X87FLAG_B_LOC] = (cpu.x87_status >> 15U) & 1U;
 	state.flags[X86State::X87FLAG_TOP_LOC] = cpu.x87_top & 7U;
 
+	/* Embedded FEXCore decodes by the space's execution mode, as the gadget
+	 * engine does, so CS is only data, which a far transfer or IRET loads. */
 	state.es_idx = cpu.segment_selectors[0];
-	/* FEXCore decodes by the CS descriptor's L bit; the space's mode, not
-	 * whatever the selector holds, decides it, as for the gadget engine. */
-	state.cs_idx = space.mode == ExecutionMode::long64 ? linux_user_code64 : linux_user_code32;
+	state.cs_idx = cpu.segment_selectors[1];
 	state.ss_idx = cpu.segment_selectors[2];
 	state.ds_idx = cpu.segment_selectors[3];
 	state.fs_idx = cpu.segment_selectors[4];
@@ -969,8 +970,7 @@ void save_state(Space &space, CpuState &cpu) noexcept
 	status = static_cast<std::uint16_t>(status | (cpu.x87_top << 11U));
 	cpu.x87_status = status;
 
-	cpu.segment_selectors = {state.es_idx, cpu.segment_selectors[1], state.ss_idx, state.ds_idx, state.fs_idx,
-		state.gs_idx};
+	cpu.segment_selectors = {state.es_idx, state.cs_idx, state.ss_idx, state.ds_idx, state.fs_idx, state.gs_idx};
 	cpu.fs_base = state.fs_cached;
 	cpu.gs_base = state.gs_cached;
 }
@@ -1040,22 +1040,6 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 	mask = saved_mask;
 }
 
-/* Linux's flat user descriptor: FEXCore takes the decode mode from the code
- * descriptor's L bit. */
-[[nodiscard]] Core::CPUState::gdt_segment flat_user_segment(bool code, bool long_mode) noexcept
-{
-	Core::CPUState::gdt_segment segment{};
-	Core::CPUState::SetGDTLimit(&segment, 0xfffffU);
-	segment.Type = code ? 0xbU : 0x3U;
-	segment.S = 1;
-	segment.DPL = 3;
-	segment.P = 1;
-	segment.L = long_mode ? 1U : 0U;
-	segment.D = long_mode ? 0U : 1U;
-	segment.G = 1;
-	return segment;
-}
-
 } // namespace
 
 Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noexcept
@@ -1107,11 +1091,6 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	auto *frame = space->thread->CurrentFrame;
 	space->thread->CallRetStackBase = space->callret.data();
 	frame->State.callret_sp = space->callret.middle();
-	space->gdt[4] = flat_user_segment(true, false);
-	space->gdt[5] = flat_user_segment(false, false);
-	space->gdt[6] = flat_user_segment(true, true);
-	frame->State.segment_arrays[Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = space->gdt.data();
-	frame->State.segment_arrays[Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = space->gdt.data();
 	auto &pointers = frame->Pointers;
 	pointers.CPUIDObj = 0;
 	pointers.CPUIDFunction = reinterpret_cast<uint64_t>(&guest_cpuid);

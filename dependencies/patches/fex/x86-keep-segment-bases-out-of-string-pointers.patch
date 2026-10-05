@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 13:13:44 +0900
+Subject: [PATCH] x86: keep segment bases out of string pointers
+
+A string instruction reads its source through DS, which a segment
+prefix may replace, and writes its destination through ES, and moves
+RSI and RDI by the element size. FEXCore moved MOVS's pointers from the
+addresses it had formed, so a source through FS or GS added that base
+to RSI and the destination's base to RDI, and LODS ignored the prefix
+and read through DS. MOVS now moves the registers themselves, and LODS
+reads through the prefix's segment.
+---
+ FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index ba7627260079bc6b058d14d5798a7004f7a6cbc9..4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -3494,11 +3494,9 @@ void OpDispatchBuilder::MOVSOp(OpcodeArgs) {
+       _StoreMem(RegClass::GPR, Size, Src, RDI, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
+     }
+ 
+-    RSI = OffsetByDir(RSI, IR::OpSizeToSize(Size));
+-    RDI = OffsetByDir(RDI, IR::OpSizeToSize(Size));
+-
+-    StoreGPRRegister(X86State::REG_RSI, RSI);
+-    StoreGPRRegister(X86State::REG_RDI, RDI);
++    // The pointers move without the segment bases the addresses added.
++    StoreGPRRegister(X86State::REG_RSI, OffsetByDir(LoadGPRRegister(X86State::REG_RSI), IR::OpSizeToSize(Size)));
++    StoreGPRRegister(X86State::REG_RDI, OffsetByDir(LoadGPRRegister(X86State::REG_RDI), IR::OpSizeToSize(Size)));
+   }
+ }
+ 
+@@ -3726,7 +3724,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
+ 
+   if (!Repeat) {
+     Ref Src_RSI = LoadGPRRegister(X86State::REG_RSI, AddrSize);
+-    Ref Dest_RSI = AppendSegmentOffset(Src_RSI, 0, X86Tables::DecodeFlags::FLAG_DS_PREFIX, true);
++    Ref Dest_RSI = AppendSegmentOffset(Src_RSI, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX);
+ 
+     auto Src = _LoadMemGPRAutoTSO(Size, Dest_RSI, Size);
+ 
+@@ -3773,7 +3771,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
+       // Working loop
+       {
+         Ref Src_RSI = LoadGPRRegister(X86State::REG_RSI, AddrSize);
+-        Ref Dest_RSI = AppendSegmentOffset(Src_RSI, 0, X86Tables::DecodeFlags::FLAG_DS_PREFIX, true);
++        Ref Dest_RSI = AppendSegmentOffset(Src_RSI, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX);
+ 
+         auto Src = _LoadMemGPRAutoTSO(Size, Dest_RSI, Size);
+ 

@@ -68,10 +68,14 @@ block's end. A fault leaves the state as its instruction found it, because
 the guest resolves the fault, a copy-on-write store among them, and runs the
 instruction again: a load whose bytes the same instruction then stores takes
 write permission, so a read-modify-write faults before it changes a register
-or a flag; POP to memory stores before it moves RSP; and FLDENV, FRSTOR,
-FXRSTOR, XRSTOR and IRET probe their whole operand before they load state from
-it. The exceptions probe's fault-state mode holds both engines to that. Each
-dispatch also:
+or a flag; POP to memory, PUSHA, a far CALL and ENTER store before they move
+RSP; POPA, FLDENV, FRSTOR, FXRSTOR, XRSTOR and IRET probe their whole operand
+before they load state from it; and register allocation never commits a value
+to a guest register before a later access of the same instruction, or an
+earlier instruction's value before such an access. A load whose value goes
+unused, such as a compare whose flags are dead, still faults, and so does a
+rotate through carry by zero. The exceptions probe's fault-state mode holds
+both engines to that. Each dispatch also:
 
 - decodes by the address space's execution mode, not by whatever CS holds;
 - starts from the host FPCR the guest's MXCSR implies, because FEXCore applies
@@ -130,6 +134,10 @@ x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
 flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
 `run_guest_x86_64_exceptions.py --engine jit` fails exactly those two x86-64
 cases.
+
+An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
+failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
+undefined set follows hardware where the gadget engine does.
 
 ## Instruction corpus
 
