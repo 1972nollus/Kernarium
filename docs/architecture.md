@@ -327,8 +327,26 @@ the profile, the register-file layout and the SVCR transition rules for both
 engines. The prober reports the profile only under the guest-SME policy,
 `DARWIN_UML_GUEST_SME=1`, which stays off by default until both engines
 implement SME; with it off, ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME
-HWCAP2 bits read zero on every host. Neither engine implements SME yet, so
-every SVE and SME word is the illegal-instruction exit.
+HWCAP2 bits read zero on every host. The JIT implements the control core:
+SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and
+ADDSPL, and LDR, STR and ZERO of ZA and ZT0. Every other SVE and SME word,
+and every FP&SIMD word in streaming mode, is its illegal-instruction exit;
+the gadget engine implements no SME yet, so there every SVE and SME word is.
+
+The JIT keys every translation, link and indirect site by the guest's SVCR
+mode as well as its PC, so a block runs only in the mode it was translated
+for; mode 0 translations are unchanged. A guest write of SVCR ends its
+block. An SM=1 translation keeps the guest's Z, P, ZA and ZT0 in the
+identically numbered host registers: its external prologue enters
+streaming mode and fills them from the register file, and every epilogue
+and host helper call first leaves streaming mode and spills them. Helpers
+are terminal, so no SM=1 code runs after one, and a TLB miss takes a
+streaming bridge that leaves and re-enters around the walker. The
+transitions preserve NZCV, FPCR and FPSR, and SM=1 code emits no AdvSIMD
+instruction of its own. SM=0 translations run with the host's SME off and
+hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
+with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
+`CpuState`, so no translation depends on it.
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and

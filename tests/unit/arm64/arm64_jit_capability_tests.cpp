@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 
 #include <array>
 #include <algorithm>
@@ -121,9 +122,12 @@ void stateful_system_instructions_are_translation_feature_gated()
 		require(compiled.words == reference.words);
 	}
 
-	/* The virtual CPU implements none of FEAT_SSBS, FEAT_SME, and FEAT_FP8:
-	 * MSR SSBS, SMSTART, SMSTOP, and MRS and MSR of FPMR compile to the same
-	 * illegal terminal as an unknown word, even on a host that has them. */
+	/* The virtual CPU implements neither FEAT_SSBS nor FEAT_FP8: MSR SSBS
+	 * and MRS and MSR of FPMR compile to the same illegal terminal as an
+	 * unknown word, even on a host that has them. It implements FEAT_SME
+	 * exactly when the host profile does (the guest-SME policy), whatever
+	 * the translation's features say; without it, SMSTART and SMSTOP are
+	 * that terminal too. */
 	const auto require_absent = [](std::uint32_t instruction,
 					  ArmFeature feature) {
 		const std::array unknown{0xffff'ffffU};
@@ -139,7 +143,10 @@ void stateful_system_instructions_are_translation_feature_gated()
 	};
 	for (unsigned immediate = 0; immediate < 16; ++immediate) {
 		require_absent(pstate_immediate(immediate, 1), ArmFeature::ssbs);
-		require_absent(pstate_immediate(immediate, 3), ArmFeature::sme);
+		if (!uml::cpu::arm64::implements_sme(
+			    uml::cpu::host_capabilities()))
+			require_absent(pstate_immediate(immediate, 3),
+				ArmFeature::sme);
 	}
 	for (unsigned transfer = 0; transfer < 32; ++transfer)
 		for (const std::uint32_t access : {0xd53b'4440U, 0xd51b'4440U})

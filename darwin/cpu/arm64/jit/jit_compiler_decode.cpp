@@ -18,6 +18,7 @@
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
+#include "cpu/arm64/detail/sme_decode.hpp"
 
 namespace uml::cpu::arm64 {
 
@@ -103,6 +104,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      */
     if (streaming_translation() && fp_simd_word(instruction))
       return reject();
+    /* Every SVE and SME word goes through the profile's table first
+     * (design 4.1.4). Without the profile each stays on the path that
+     * makes it the illegal exit, unchanged. */
+    if (arm64::detail::sme_encoding_space(instruction) &&
+        implements_sme(host_capabilities()))
+      return emit_sme_instruction(instruction, pc);
     if ((instruction & 0xffe0'001fU) == 0xd400'0001U) {
       store_pc(pc + 4);
       emitter_.return_constant(Event::system_call, resulting_count);
@@ -186,6 +193,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
          (instruction & 0x7ff0'0000U) != 0x11c0'0000U) ||
         (instruction & 0xff20'0000U) == 0xd920'0000U)
       return reject();
+    if (const auto action = emit_sme_system(instruction, pc))
+      return *action;
     if (emit_system_register(instruction)) {
       /*
        * A register-sourced FPCR write may enable precise guest exception

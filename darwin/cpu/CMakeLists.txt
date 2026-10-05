@@ -194,8 +194,10 @@ endif()
 # compiler's), executor-side sources in the second. The gadget engine's
 # block above is disjoint.
 set(_uml_cpu_jit_sme_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_sme_transition.S)
-set(_uml_cpu_jit_executor_sme_sources)
+set(_uml_cpu_jit_executor_sme_sources
+    arm64/jit/jit_semantic_sme.cpp)
 
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp
