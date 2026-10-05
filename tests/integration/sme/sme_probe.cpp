@@ -74,7 +74,6 @@ constexpr int sigstop = 19;
 constexpr u64 sa_siginfo = 4;
 constexpr u64 sa_onstack = 0x08000000;
 constexpr u64 sa_nodefer = 0x40000000;
-constexpr int ss_disable = 2;
 
 constexpr u64 clone_vm = 0x100;
 constexpr u64 clone_vfork = 0x4000;
@@ -148,8 +147,7 @@ constexpr u64 sve_context_size(u64 vq) { return vq ? sve_ffr_offset(vq) + vq * 2
 constexpr u64 za_context_size(u64 vq) { return 16 + vq * 16 * vq * 16; }
 constexpr u64 zt_context_size = 16 + 64;
 constexpr u64 sve_pt_fpsr_offset(u64 vq) { return round16(sve_ffr_offset(vq) + vq * 2); }
-constexpr u64 sve_pt_size_sve(u64 vq) { return sve_pt_fpsr_offset(vq) + 8; }
-constexpr u64 sve_pt_size_fpsimd = 16 + fpsimd_size;
+constexpr u64 sve_pt_size_sve(u64 vq) { return round16(sve_pt_fpsr_offset(vq) + 8); }
 constexpr u64 za_pt_size(u64 vq) { return 16 + vq * 16 * vq * 16; }
 constexpr u16 sve_pt_regs_fpsimd = 0;
 constexpr u16 sve_pt_regs_sve = 1;
@@ -559,8 +557,8 @@ void parse_frame(Capture &capture, u8 *frame, bool measure)
 		switch (magic) {
 		case fpsimd_magic:
 			memcpy(capture.vregs, head + 16, sizeof(capture.vregs));
-			capture.fpsr = load<u32>(head + 16 + 512);
-			capture.fpcr = load<u32>(head + 16 + 516);
+			capture.fpsr = load<u32>(head + 8);
+			capture.fpcr = load<u32>(head + 12);
 			break;
 		case sve_magic:
 			capture.has_sve = true;
@@ -703,7 +701,7 @@ Layout expected_layout(bool streaming, bool za, bool all = false)
 	layout_alloc(layout, fpsimd_magic, fpsimd_size);
 	layout_alloc(layout, sve_magic, sve_context_size(all || streaming ? svq : 0));
 	layout_alloc(layout, tpidr2_magic, 16);
-	layout_alloc(layout, za_magic, za_context_size(all || za ? svq : 0) - (all || za ? 0 : svq * 16 * svq * 16));
+	layout_alloc(layout, za_magic, za_context_size(all || za ? svq : 0));
 	if (sme2 && (all || za))
 		layout_alloc(layout, zt_magic, zt_context_size);
 	layout.limit += terminator_size;
@@ -722,11 +720,9 @@ void check_layout(const Capture &capture, bool streaming, bool za, const char *w
 	Line line;
 	bool same = capture.valid && capture.error == nullptr &&
 		capture.extra == layout.extra;
-	/* The parse skips the extra_context record itself. */
+	/* Both list an extra_context record where it lies. */
 	u64 compared = 0;
 	for (u64 index = 0; same && index < layout.count; index++) {
-		if (layout.magics[index] == extra_magic)
-			continue;
 		same = compared < capture.record_count &&
 			capture.magics[compared] == layout.magics[index] &&
 			capture.offsets[compared] == layout.offsets[index] &&
@@ -744,9 +740,13 @@ void check_layout(const Capture &capture, bool streaming, bool za, const char *w
 	if (capture.error != nullptr)
 		line.add(capture.error).add(" ");
 	line.add("records ").number(static_cast<long>(capture.record_count)).add(" expected ")
-		.number(static_cast<long>(layout.count - (layout.extra ? 1 : 0)))
+		.number(static_cast<long>(layout.count))
 		.add(" size ").number(static_cast<long>(capture.frame_size))
 		.add(" expected ").number(static_cast<long>(frame_size(layout)));
+	for (u64 index = 0; index < capture.record_count; index++)
+		line.add(" ").hex(capture.magics[index]).add(":")
+			.number(static_cast<long>(capture.sizes[index])).add("@")
+			.number(static_cast<long>(capture.offsets[index]));
 	line.print();
 }
 
@@ -763,7 +763,10 @@ struct FrameBuilder {
 	explicit FrameBuilder()
 	{
 		memset(frame_buffer, 0, sizeof(frame_buffer));
-		store<int>(frame + uc_stack_offset + 8, ss_disable);
+		/* Keep the alternate signal stack: sigreturn restores it. */
+		store<u64>(frame + uc_stack_offset, reinterpret_cast<u64>(altstack));
+		store<int>(frame + uc_stack_offset + 8, 0);
+		store<u64>(frame + uc_stack_offset + 16, sizeof(altstack));
 		store<u64>(frame + uc_sigmask_offset, 0);
 		store<u64>(frame + mc_pstate_offset, 0);
 		layout.size = reserved_offset;
@@ -789,8 +792,8 @@ struct FrameBuilder {
 		for (u64 reg = 0; reg < 32; reg++)
 			for (u64 byte = 0; byte < 16; byte++)
 				head[16 + reg * 16 + byte] = v_byte(reg, byte);
-		store<u32>(head + 16 + 512, fpsr);
-		store<u32>(head + 16 + 516, fpcr);
+		store<u32>(head + 8, fpsr);
+		store<u32>(head + 12, fpcr);
 		return head;
 	}
 
@@ -847,6 +850,8 @@ struct FrameBuilder {
 		if (layout.extra) {
 			u8 *extra = frame + extra_offset;
 			u8 *data = extra + extra_size + terminator_size;
+			store<u32>(extra, extra_magic);
+			store<u32>(extra + 4, static_cast<u32>(extra_size));
 			store<u64>(extra + 8, reinterpret_cast<u64>(data));
 			store<u32>(extra + 16, static_cast<u32>(frame + round16(layout.size) - data));
 		}
@@ -1490,7 +1495,7 @@ void test_regsets()
 	check_value(header.vl, svl, "NT_ARM_SSVE vl is the SVL");
 	check_value(header.max_vl, svl, "NT_ARM_SSVE max_vl is the SVL");
 	check_value(header.flags & 1, sve_pt_regs_fpsimd, "NT_ARM_SSVE is FPSIMD outside streaming mode");
-	check_value(header.size, sve_pt_size_fpsimd, "NT_ARM_SSVE size outside streaming mode");
+	check_value(header.size, 16, "NT_ARM_SSVE is a header outside streaming mode");
 	check_value(header.max_size, sve_pt_size_sve(svq), "NT_ARM_SSVE max_size");
 
 	length = get_regset(pid, nt_arm_za);
