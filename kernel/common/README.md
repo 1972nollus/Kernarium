@@ -116,6 +116,12 @@ register, even one of the -ERESTART* codes an interrupted call returns,
 reaches a signal handler and survives it unchanged. `guest-signal-restart`
 checks x0 on arm64 and the x86 exception probe checks RAX.
 
+A task's stack pointer is the task's own. A system call or a fault taken
+with it at zero or outside the task's address space returns, or delivers the
+signal, that native Linux does, however often it comes on one vCPU.
+`guest-stack-pointer` checks this on arm64 and the x86 exception probe on
+both x86 ABIs.
+
 When the host implements SME for a run,
 `darwin_uml_guest_sme_vector_length()` returns its streaming vector length
 (SVL) and an arm64 task gets what `arch/arm64/kernel/fpsimd.c` gives it on a

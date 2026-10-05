@@ -37,6 +37,7 @@ constexpr long nr_kill = 62;
 constexpr long nr_ptrace = 101;
 constexpr long nr_getppid = 110;
 constexpr long nr_sigaltstack = 131;
+constexpr long nr_sched_setaffinity = 203;
 constexpr long nr_clock_gettime = 228;
 constexpr long nr_exit_group = 231;
 
@@ -219,6 +220,18 @@ __asm__(".text\n"
 	"probe_nc_push_end:\n"
 	"	movq probe_nc_saved_sp(%rip), %rsp\n"
 	"	ret\n"
+	/* (count) getpid calls with (stack pointer) as RSP; returns the last
+	 * result. */
+	".global probe_getpid_on\n"
+	"probe_getpid_on:\n"
+	"	movq %rsp, probe_nc_saved_sp(%rip)\n"
+	"	movq %rdi, %rsp\n"
+	"1:	movl $39, %eax\n"
+	"	syscall\n"
+	"	decq %rsi\n"
+	"	jnz 1b\n"
+	"	movq probe_nc_saved_sp(%rip), %rsp\n"
+	"	ret\n"
 	".data\n"
 	".balign 8\n"
 	"probe_nc_saved_sp:\n"
@@ -304,6 +317,7 @@ constexpr long nr_getppid = 64;
 constexpr long nr_setitimer = 104;
 constexpr long nr_wait4 = 114;
 constexpr long nr_rt_sigaction = 174;
+constexpr long nr_sched_setaffinity = 241;
 constexpr long nr_set_thread_area = 243;
 constexpr long nr_get_thread_area = 244;
 constexpr long nr_exit_group = 252;
@@ -509,6 +523,20 @@ __asm__(".text\n"
 	"	pushl $1\n"
 	".global probe_wrap_push_end\n"
 	"probe_wrap_push_end:\n"
+	"	movl wrap_saved_sp, %esp\n"
+	"	ret\n"
+	/* (count) getpid calls with (stack pointer) as ESP; returns the last
+	 * result. */
+	".global probe_getpid_on\n"
+	"probe_getpid_on:\n"
+	"	movl 4(%esp), %edx\n"
+	"	movl 8(%esp), %ecx\n"
+	"	movl %esp, wrap_saved_sp\n"
+	"	movl %edx, %esp\n"
+	"1:	movl $20, %eax\n"
+	"	int $0x80\n"
+	"	decl %ecx\n"
+	"	jnz 1b\n"
 	"	movl wrap_saved_sp, %esp\n"
 	"	ret\n"
 	/* REP STOSB of 4 bytes at (address). */
@@ -1434,6 +1462,34 @@ bool delivers(const char *what, void (*work)(), word end,
 	return ok;
 }
 
+extern "C" word probe_getpid_on(word stack_pointer, word count);
+
+/* Each bad stack pointer case repeats its events this often. */
+constexpr word bad_stack_rounds = 16;
+
+/* Keeps the task on CPU 0, so that its events all reach one vCPU. */
+bool pin_to_one_cpu()
+{
+	const word mask = 1;
+	if (raw_syscall(nr_sched_setaffinity, 0, sizeof(mask),
+			reinterpret_cast<long>(&mask)) == 0)
+		return true;
+	put("  sched_setaffinity failed\n");
+	return false;
+}
+
+/* System calls made with (stack_pointer) as the stack pointer return. */
+bool calls_on(const char *what, word stack_pointer)
+{
+	const auto pid = static_cast<word>(raw_syscall(nr_getpid));
+	if (probe_getpid_on(stack_pointer, bad_stack_rounds) == pid)
+		return true;
+	put("  getpid with ");
+	put(what);
+	put(" failed\n");
+	return false;
+}
+
 extern "C" void probe_icebp();
 extern "C" char probe_icebp_end[];
 extern "C" void probe_int4();
@@ -1839,6 +1895,30 @@ bool noncanonical_faults()
 				    {one.signal, si_kernel, 0,
 				     address_of(one.insn), one.vector, true,
 				     0});
+	return ok;
+}
+
+void nc_push_unaligned() { probe_nc_push(noncanonical + 16); }
+
+/* A stack pointer of zero or outside the task's memory, 128 KiB aligned or
+ * not, serves a system call and faults a push with #SS however often it
+ * comes on one CPU. */
+bool bad_stack_pointers()
+{
+	const Delivery stack_fault = {sigbus, si_kernel, 0,
+				      address_of(probe_nc_push_insn), 12, true,
+				      0};
+	const word end = address_of(probe_nc_push_end);
+	bool ok = pin_to_one_cpu() && install_fault_handlers() &&
+		  handle_on_alternate_stack(sigbus);
+	for (word round = 0; ok && round < bad_stack_rounds; ++round)
+		ok = calls_on("RSP 0", 0) &&
+		     calls_on("RSP 0x8000000000000000", noncanonical) &&
+		     calls_on("RSP 0x8000000000000010", noncanonical + 16) &&
+		     delivers("a push with RSP 0x8000000000000000", nc_push,
+			      end, stack_fault) &&
+		     delivers("a push with RSP 0x8000000000000010",
+			      nc_push_unaligned, end, stack_fault);
 	return ok;
 }
 #endif
@@ -3186,6 +3266,21 @@ bool addresses_wrap()
 			     address_of(probe_wrap_stos_insn), 14, true, 6});
 	return ok;
 }
+
+/* ESP 0 serves a system call and faults a push with the wrapped address
+ * however often it comes on one CPU. */
+bool bad_stack_pointers()
+{
+	bool ok = pin_to_one_cpu() && install_fault_handlers() &&
+		  handle_on_alternate_stack(sigsegv, record_fault);
+	for (word round = 0; ok && round < bad_stack_rounds; ++round)
+		ok = calls_on("ESP 0", 0) &&
+		     delivers("a push with ESP 0", probe_wrap_push,
+			      address_of(probe_wrap_push_end),
+			      {sigsegv, segv_maperr, 0xfffffffc,
+			       address_of(probe_wrap_push_insn), 14, true, 6});
+	return ok;
+}
 #endif
 
 extern "C" void probe_xm_div();
@@ -4354,6 +4449,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "fault-state"));
 	report("i386 effective addresses wrap at 4 GiB",
 	       in_child(i386_probe, "address-wrap"));
+	report("x86-64 bad stack pointers call and fault on one CPU",
+	       in_child(self, "stack-pointers"));
+	report("i386 ESP 0 calls and faults on one CPU",
+	       in_child(i386_probe, "stack-pointers"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -4418,6 +4517,8 @@ extern "C" int probe_main(word *stack)
 			return alignment_checks() ? 0 : 1;
 		if (equal(mode, "x87-status"))
 			return x87_status_flags() ? 0 : 1;
+		if (equal(mode, "stack-pointers"))
+			return bad_stack_pointers() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
