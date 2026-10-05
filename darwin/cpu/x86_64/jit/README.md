@@ -148,9 +148,11 @@ each mode.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
-undefined set follows hardware where the gadget engine does; where the gadget
-engine refuses an encoding hardware accepts, as 0x82 outside 64-bit mode, the
-JIT refuses it too.
+undefined set follows hardware, except that compat32 code raises `#UD` for
+0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
+as it does on the gadget engine. Other encodings the gadget engine refuses
+although hardware runs them, such as LSL or a 0x66-prefixed MOVZX, the JIT
+runs.
 
 ## Instruction corpus
 
