@@ -15,9 +15,9 @@ runs, in order:
 - "engine" mode: the control core executed by the engine;
 - "engine-spin" mode: the section 4.5 signal test, with ZA loaded and stored
   by the engine around the signals;
-- a boot per process-directed terminating signal (SIGTERM, SIGINT, SIGHUP,
-  SIGQUIT) sent while a vCPU spins in streaming mode, which must end the
-  emulator cleanly;
+- a boot per process-directed terminating signal (SIGTERM, SIGINT, SIGHUP)
+  sent while a vCPU spins in streaming mode, which must end the emulator at
+  once with the status it has without SME;
 - glibc_za_probe.py on the image: glibc's __libc_arm_za_disable() commits a
   pending ZA lazy save before fork, posix_spawn and thread creation.
 
@@ -50,7 +50,12 @@ SUPPORT_LEVELS = ("none", "control", "complete")
 PROBE_MODES = ("kernel", "spin", "engine", "engine-spin")
 SME_MODES = (*PROBE_MODES, "terminate", "glibc")
 ENGINE_MODES = ("engine", "engine-spin", "glibc")
-TERMINATING_SIGNALS = ("SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT")
+# Each terminating signal and the emulator's status after it: the kernel's
+# fatal handlers exit 128 + n for SIGINT and SIGTERM, and SIGHUP takes its
+# default action. SIGQUIT is blocked on the carriers with them and takes the
+# same path as SIGHUP, but its default action dumps core, which the host
+# reports as a crash, so it is not sent.
+TERMINATING_SIGNALS = {"SIGTERM": 128 + 15, "SIGINT": 128 + 2, "SIGHUP": -1}
 SUMMARY = re.compile(
     rb"sme-probe: (?P<mode>[a-z-]+): (?P<failures>\d+) failure\(s\) in "
     rb"(?P<checks>\d+) check\(s\)"
@@ -102,12 +107,20 @@ def run_probe_boot(arguments: argparse.Namespace, mode: str,
             time.sleep(1)
             if terminating is not None:
                 os.kill(guest.process_id, getattr(signal, terminating))
-                if not guest.wait_for_exit(30):
+                if not guest.wait_for_exit(5):
                     raise RuntimeError(f"{terminating}: the emulator did not exit")
-                if HOST_CRASH.search(guest.output().encode()):
+                output = guest.output().encode()
+                if HOST_CRASH.search(output):
                     raise RuntimeError(f"{terminating}: the emulator crashed")
-                print(f"{terminating}: the emulator exited with status "
-                      f"{guest.return_code} while streaming")
+                # A probe that reached its summary outlived the signal.
+                expected = TERMINATING_SIGNALS[terminating]
+                if guest.return_code != expected or SUMMARY.search(output):
+                    raise RuntimeError(
+                        f"{terminating}: the emulator exited with status "
+                        f"{guest.return_code}, not {expected}, or after the "
+                        "probe finished")
+                print(f"PASS {terminating}: the emulator exited with status "
+                      f"{expected} while streaming")
                 return 0
             for _ in range(20):
                 for host_signal in (signal.SIGUSR1, signal.SIGCHLD):
@@ -197,6 +210,11 @@ def main() -> int:
             failures += run_probe_boot(arguments, mode)
         elif mode == "terminate":
             for terminating in TERMINATING_SIGNALS:
+                # The emulator inherits an ignored signal, as from nohup or
+                # a non-interactive shell's background job, and honours it.
+                number = getattr(signal, terminating)
+                if signal.getsignal(number) == signal.SIG_IGN:
+                    signal.signal(number, signal.SIG_DFL)
                 run_probe_boot(arguments, "spin", terminating)
         else:
             failures += run_glibc(arguments)
