@@ -188,9 +188,19 @@ denormal operand), and folding them in would give flags neither x86 nor the
 gadget engine gives.
 
 The x87 status word keeps every masked exception's sticky flag, and ES and B
-while an unmasked one is pending. The engine does not deliver unmasked SSE or
-x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
-flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
+while an unmasked one is pending, from the 80-bit helpers and from the inline
+conversion of a single or double, which raises invalid operation for a
+signaling NaN and a denormal operand for a denormal. The embedded stack follows
+the tag word: a read of an empty register is a stack underflow and a push onto
+a full one an overflow, each raising invalid operation with the stack-fault
+flag and going on with the QNaN indefinite, and FXAM classifies its operand
+from the 80-bit format. Two deviations from hardware remain, shared with the
+gadget engine: C1 stays clear when a result rounds up, and FPREM computes
+its remainder in one step, never reporting a partial one with C2.
+
+The engine does not deliver unmasked SSE or x87 exceptions as `#XM` or `#MF`,
+because FEXCore keeps no MXCSR exception flags and raises nothing from the x87
+ones, and has no alignment-check `#AC`.
 `run_guest_x86_64_exceptions.py --engine jit` fails exactly those two cases in
 each mode.
 

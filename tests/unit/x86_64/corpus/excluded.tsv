@@ -77,6 +77,7 @@ fex	VEX/vldmxcsr.asm	expects FEX's MXCSR, which drops the exception flags LDMXCS
 fex	X87/D9_F2.asm	upstream marks this source unsupported
 fex	X87/D9_F8.asm	upstream marks this source unsupported
 fex	X87/D9_F9.asm	upstream marks this source unsupported
+fex	X87/FXAM_Simple.asm	expects FEX's FXAM, which classifies zero as a normal number where x86 classifies it as zero; upstream lists it as a known failure on native hosts
 fex	X87/invalid_simple_test.asm	exact duplicate normalized case
 fex	X87_F64/D8_F0_2_F64.asm	exact duplicate normalized case
 fex	X87_F64/D9_05_F64.asm	exact duplicate normalized case

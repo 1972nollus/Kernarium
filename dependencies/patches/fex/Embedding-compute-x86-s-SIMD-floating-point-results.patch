@@ -106,7 +106,7 @@ index 4cb3dcc3ba2b8cf99b4c69c4db017b3b38186d60..4f5635ec1e5c75508dd46124bf9fb9ba
    uint32_t StrictSplitLockMutex {};
  
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 4af3408475a3d51239569a3503a3f5a11b871e54..b40ce4bec912ab16157ec8a85d0a6bb3f52d5875 100644
+index 9540452457951a1fcbc64db177511abde47669e2..8a01366b4514ffdc38448c85b220a227b9c06c57 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -487,6 +487,37 @@ void Dispatcher::EmitDispatcher() {
@@ -147,7 +147,7 @@ index 4af3408475a3d51239569a3503a3f5a11b871e54..b40ce4bec912ab16157ec8a85d0a6bb3
    }
  
    {
-@@ -2689,6 +2720,7 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
+@@ -2718,6 +2749,7 @@ void Dispatcher::InitThreadPointers(FEXCore::Core::InternalThreadState* Thread)
        Ptrs.EmbedderExit = EmbedderExitAddress;
        Ptrs.EmbedderExitNoSpill = EmbedderExitNoSpillAddress;
        Ptrs.EmbedderTLBMiss = EmbedderTLBMissAddress;
@@ -156,7 +156,7 @@ index 4af3408475a3d51239569a3503a3f5a11b871e54..b40ce4bec912ab16157ec8a85d0a6bb3
      Ptrs.SignalReturnHandler = SignalHandlerReturnAddress;
      Ptrs.SignalReturnHandlerRT = SignalHandlerReturnAddressRT;
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
-index dfef9d394280abdedef7f7bedb7e69ac41d61e2e..321975183a7c6370e2e845b32c14d3959590c961 100644
+index e537252a89a45d0abcc43437365b2e3ae78f58c0..6b710b57c230be307c1fe179afaa01b92982792f 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
 @@ -95,6 +95,7 @@ private:
