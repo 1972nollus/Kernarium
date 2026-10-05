@@ -127,18 +127,23 @@ path. User RFLAGS follow Linux x86 for both ABIs: `execve()` starts a task with
 0x202 (IF and bit 1), a signal return restores only `FIX_EFLAGS` (CF, PF, AF,
 ZF, SF, TF, DF, OF, RF and AC), and a tracer may change those bits and NT.
 IOPL, VM, VIF, VIP and ID stay the task's and IF stays set; the Darwin host
-also sets IF and bit 1 on every entry to the task. RF, which IRET at CPL 3 and
-a signal return may set, is gone when the next instruction starts, so a system
-call that instruction makes, and its signal frame, never show it. A fault's
-signal frame and a tracer's view at its stop show RF set, as the flags x86
-saves for a fault do, and so does the frame of a signal that interrupts a
-repeated string instruction between elements; a trap's show it clear.
+also sets IF and bit 1 on every entry to the task. POPF at CPL 3 loads only
+CF, PF, AF, ZF, SF, TF, DF, OF, NT, AC and ID, a 16-bit POPF only those in the
+low half, and IRET those and RF; PUSHF stores RF and VM as zero. RF, which
+IRET at CPL 3 and a signal return may set, is gone when the next instruction
+starts, so a system call that instruction makes, and its signal frame, never
+show it. A fault's signal frame and a tracer's view at its stop show RF set, as
+the flags x86 saves for a fault do, and so does the frame of a signal that
+interrupts a repeated string instruction between elements; a trap's show it
+clear.
 `tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this.
 
 x86 exceptions reach the task with x86 Linux's signal, code, trap number and
 error code. ICEBP delivers `SIGTRAP` with `TRAP_BRKPT` after itself, and a
 single step of a repeated string instruction traps after each iteration. `#UD`
-is `SIGILL` with `ILL_ILLOPN`. `#OF` from INT 4 or INTO, `#BR` from an i386
+is `SIGILL` with `ILL_ILLOPN`, and `#DE`, from a zero divisor or a quotient
+too wide for its destination, `SIGFPE` with `FPE_INTDIV` at the instruction,
+which has written nothing. `#OF` from INT 4 or INTO, `#BR` from an i386
 BOUND outside its bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL`
 and no address, `#OF` after the instruction and the two faults at it; INT n of
 a vector user mode may not use names that vector's IDT entry, `(n << 3) | 2`,

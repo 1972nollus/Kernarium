@@ -30,22 +30,32 @@ per address-space generation and execution mode, at most eight, and releases
 the least recently used, because FEXCore's block caches are keyed by guest RIP
 alone.
 
-FEXCore's generated code reaches guest memory through an inline software TLB.
-A miss calls the engine, which fills the entry from the static MMU or ends the
-dispatch with the guest's fault. An access that crosses a
-guest page, or an ordered access that crosses a 16-byte granule, completes
-through a bounce buffer in the address space's own fault order. FEXCore
-allocates and publishes code only through the executable-memory owner's hooks,
-and its call-return stack, which generated code addresses without a bounds
-check, sits in that owner's guarded data reservation, so running off it stops
-at a guard page. A dispatch starts at most 64 Ki instructions, which keeps
-unbalanced calls and returns inside that stack.
+FEXCore's generated code reaches guest memory through an inline software TLB. A
+miss calls the engine, which fills the entry from the static MMU or ends the
+dispatch with the guest's fault; the miss path preserves every register the
+access sequence holds, including the element address of a masked move and the
+backend's vector temporaries. An access that crosses a guest page, or an
+ordered access that crosses a 16-byte granule, completes through a bounce
+buffer in the address space's own fault order. A locked operand that crosses a
+granule has no single-copy-atomic host access; as in the gadget engine, it is
+an ordinary load and store of the bounce buffer under the process-wide
+split-operand lock, faulting before anything is stored. A VEX gather translates
+its elements one at a time into a temporary, so on a fault the engine itself
+gathers the elements before the faulting one into the guest state, as x86 does.
+FEXCore allocates and publishes code only through the executable-memory owner's
+hooks, and its call-return stack, which generated code addresses without a
+bounds check, sits in that owner's guarded data reservation, so running off it
+stops at a guard page. A dispatch starts at most 64 Ki instructions, which
+keeps unbalanced calls and returns inside that stack.
 
 The engine joins the code-page registry with a function that retires its own
 TLB entry for a page. It counts a page in before the decoder reads the page's
 bytes, so a store another vCPU translated lands first and every later store
 publishes. The guest runs READ_IMPLIES_EXEC, so only a store to a page the
-registry holds publishes a code change.
+registry holds publishes a code change. A publishing store into the code of
+the unit running it, which would go on to run the bytes it replaces, stops
+that unit before it stores; its instruction runs again as a unit of its own,
+and the dispatch goes on from freshly fetched code.
 
 ## State at every exit
 
@@ -54,7 +64,14 @@ must resolve, an exhausted budget or a pending interrupt, often in the middle
 of a block. At each of those exits the guest registers, RFLAGS, the vector
 registers and the x87 stack and TOP are precise: the embedded x87 pass writes
 its cached stack values back after every x87 operation instead of at the
-block's end. Each dispatch also:
+block's end. A fault leaves the state as its instruction found it, because
+the guest resolves the fault, a copy-on-write store among them, and runs the
+instruction again: a load whose bytes the same instruction then stores takes
+write permission, so a read-modify-write faults before it changes a register
+or a flag; POP to memory stores before it moves RSP; and FLDENV, FRSTOR,
+FXRSTOR, XRSTOR and IRET probe their whole operand before they load state from
+it. The exceptions probe's fault-state mode holds both engines to that. Each
+dispatch also:
 
 - decodes by the address space's execution mode, not by whatever CS holds;
 - starts from the host FPCR the guest's MXCSR implies, because FEXCore applies
@@ -66,6 +83,17 @@ block's end. Each dispatch also:
 REP MOVS and REP STOS run element by element in page-bounded chunks, spend the
 budget as they go and stop between elements, with RF, when it is spent or an
 interrupt is pending. A fault leaves RCX, RSI and RDI with the progress made.
+Repeated CMPS and SCAS compute each element's flags as it completes, so a
+stop between elements shows the flags of the last compare.
+
+A dispatch reports as retired only the instructions that completed, as the
+gadget engine does: a fault, `#UD` or `#DE` retires nothing of its instruction,
+a trap or system call retires it, and a repeated string instruction retires
+once however many elements spent the budget. A unit's entry, and a loop back
+to it, spend the budget for every instruction the unit runs; an exit from
+inside the unit hands back the ones it did not reach, and a repeated element
+spends a unit that retires nothing. The `--retirement` cases of the corpus
+runners hold both engines to the same counts.
 
 A signal handler without SA_RESTORER returns to the sigreturn trampoline,
 `DARWIN_UML_SIGRETURN_TRAMPOLINE`, which no guest page backs on the x86-64
@@ -92,11 +120,16 @@ pairs of 128-bit operations on hosts without 256-bit SVE. x87 is the full
 80-bit format. Stores are totally ordered for every address space: FEXCore
 emulates TSO with acquire loads and release stores, and `space_orders_stores()`
 is the one place a per-address-space decision will key it.
+DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
+destination before they write either destination. RDRAND and RDSEED read the
+host CSPRNG through a helper, as the gadget engine does, and always succeed.
 
-The engine does not deliver unmasked SSE or x87 exceptions as `#XM` or `#MF`,
-because FEXCore keeps no MXCSR or x87 exception flags, and has no
-alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
-exactly those two x86-64 cases.
+The x87 status word keeps every masked exception's sticky flag, and ES and B
+while an unmasked one is pending. The engine does not deliver unmasked SSE or
+x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
+flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
+`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two x86-64
+cases.
 
 ## Instruction corpus
 
@@ -105,7 +138,4 @@ engine in the unit suite.
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The classes are VEX gathers through the software TLB,
-split locked operands, x87 signed zeros, SSE NaN, denormal and estimate rules,
-divide overflow, IRET flags, masked-store lanes, 16-bit SHLD over-counts and a
-store into its own block.
+in the same change. The classes are SSE NaN, denormal and estimate rules.

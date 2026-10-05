@@ -1394,7 +1394,6 @@ bool signal_keeps_ax()
 	return ok;
 }
 
-#if defined(__i386__)
 /* Runs `work`, resuming after `end` if it faults, and checks that it raised
  * nothing. */
 bool delivers_nothing(const char *what, void (*work)(), word end)
@@ -1412,6 +1411,8 @@ bool delivers_nothing(const char *what, void (*work)(), word end)
 	put("\n");
 	return false;
 }
+
+#if defined(__i386__)
 
 extern "C" void probe_into(word value);
 extern "C" char probe_into_end[];
@@ -1590,7 +1591,8 @@ void nc_push() { probe_nc_push(noncanonical); }
 
 /* A push through a non-canonical RSP can deliver its signal only on an
  * alternate stack. */
-bool handle_on_alternate_stack(long signal)
+bool handle_on_alternate_stack(long signal,
+			       void (*handler)(int, void *, void *) = record_fault)
 {
 	const struct {
 		word sp;
@@ -1599,7 +1601,7 @@ bool handle_on_alternate_stack(long signal)
 	} stack = {reinterpret_cast<word>(alternate_stack), 0,
 		   sizeof(alternate_stack)};
 	KernelSigaction action = {};
-	action.handler = reinterpret_cast<word>(record_fault);
+	action.handler = reinterpret_cast<word>(handler);
 	action.flags = sa_siginfo | sa_restorer | sa_onstack;
 	action.restorer = reinterpret_cast<word>(&probe_restorer);
 	return raw_syscall(nr_sigaltstack, reinterpret_cast<long>(&stack), 0) ==
@@ -1641,6 +1643,856 @@ bool noncanonical_faults()
 				    {one.signal, si_kernel, 0,
 				     address_of(one.insn), one.vector, true,
 				     0});
+	return ok;
+}
+#endif
+
+#if defined(__x86_64__)
+/* Each divide loads RAX, RDX and RCX from (state)[0..2], runs the sign or
+ * zero extension it names right before it, divides, and stores RAX, RDX
+ * and RCX to (state)[3..5]; a memory divisor is (state)[2]. */
+#define PROBE_DIVIDE_AFTER(name, extend, insn)                            \
+	".global probe_de_" name "\n"                                     \
+	"probe_de_" name ":\n"                                            \
+	"	movq (%rdi), %rax\n"                                      \
+	"	movq 8(%rdi), %rdx\n"                                     \
+	"	movq 16(%rdi), %rcx\n"                                    \
+	"	" extend "\n"                                             \
+	".global probe_de_" name "_insn\n"                                \
+	"probe_de_" name "_insn:\n"                                       \
+	"	" insn "\n"                                               \
+	".global probe_de_" name "_end\n"                                 \
+	"probe_de_" name "_end:\n"                                        \
+	"	movq %rax, 24(%rdi)\n"                                    \
+	"	movq %rdx, 32(%rdi)\n"                                    \
+	"	movq %rcx, 40(%rdi)\n"                                    \
+	"	ret\n"
+#define PROBE_DIVIDE(name, insn) PROBE_DIVIDE_AFTER(name, "", insn)
+
+__asm__(".text\n"
+	PROBE_DIVIDE("div8", "divb %cl")
+	PROBE_DIVIDE("idiv8", "idivb %cl")
+	PROBE_DIVIDE("div16", "divw %cx")
+	PROBE_DIVIDE("idiv16", "idivw %cx")
+	PROBE_DIVIDE("div32", "divl %ecx")
+	PROBE_DIVIDE("idiv32", "idivl %ecx")
+	PROBE_DIVIDE("div32m", "divl 16(%rdi)")
+	PROBE_DIVIDE("div64", "divq %rcx")
+	PROBE_DIVIDE("idiv64", "idivq %rcx")
+	PROBE_DIVIDE("idiv64m", "idivq 16(%rdi)")
+	PROBE_DIVIDE_AFTER("cqo_idiv64", "cqto", "idivq %rcx")
+	PROBE_DIVIDE_AFTER("cdq_idiv32", "cltd", "idivl %ecx")
+	PROBE_DIVIDE_AFTER("xor_div64", "xorl %edx, %edx", "divq %rcx")
+	PROBE_DIVIDE_AFTER("xor_div32", "xorl %edx, %edx", "divl %ecx"));
+
+#define PROBE_DIVIDE_DECLARE(name)                                        \
+	extern "C" void probe_de_##name(word *state);                     \
+	extern "C" char probe_de_##name##_insn[];                         \
+	extern "C" char probe_de_##name##_end[];                          \
+	void de_##name() { probe_de_##name(divide_state); }
+
+word divide_state[6];
+
+PROBE_DIVIDE_DECLARE(div8)
+PROBE_DIVIDE_DECLARE(idiv8)
+PROBE_DIVIDE_DECLARE(div16)
+PROBE_DIVIDE_DECLARE(idiv16)
+PROBE_DIVIDE_DECLARE(div32)
+PROBE_DIVIDE_DECLARE(idiv32)
+PROBE_DIVIDE_DECLARE(div32m)
+PROBE_DIVIDE_DECLARE(div64)
+PROBE_DIVIDE_DECLARE(idiv64)
+PROBE_DIVIDE_DECLARE(idiv64m)
+PROBE_DIVIDE_DECLARE(cqo_idiv64)
+PROBE_DIVIDE_DECLARE(cdq_idiv32)
+PROBE_DIVIDE_DECLARE(xor_div64)
+PROBE_DIVIDE_DECLARE(xor_div32)
+
+constexpr long fpe_intdiv = 1;
+
+/* A zero divisor or a quotient too wide for its destination raises #DE, a
+ * fault: SIGFPE with FPE_INTDIV at the instruction, which has written
+ * nothing. A quotient at the edge of its range does not fault, and neither
+ * does a wide one from a dividend that CQO, CDQ or a zeroed RDX just
+ * extended. */
+bool divide_errors()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		word in[3];
+		bool faults;
+		word out[2];
+	};
+#define PROBE_DIVIDE_CASE(name) de_##name, probe_de_##name##_insn,        \
+		probe_de_##name##_end
+	const Case cases[] = {
+		{"DIV r8 overflow", PROBE_DIVIDE_CASE(div8),
+		 {0x1234, 0x5a5a5a5a5a5a5a5a, 0x10}, true, {}},
+		{"DIV r8 by zero", PROBE_DIVIDE_CASE(div8),
+		 {5, 0, 0x100}, true, {}},
+		{"IDIV r8 overflow", PROBE_DIVIDE_CASE(idiv8),
+		 {0xff80, 0, 0xff}, true, {}},
+		{"DIV r16 overflow", PROBE_DIVIDE_CASE(div16),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r16 overflow", PROBE_DIVIDE_CASE(idiv16),
+		 {0x8000, 0xffff, 0xffff}, true, {}},
+		{"DIV r32 overflow", PROBE_DIVIDE_CASE(div32),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r32 overflow", PROBE_DIVIDE_CASE(idiv32),
+		 {0x80000000, 0xffffffff, 0xffffffff}, true, {}},
+		{"DIV m32 by zero", PROBE_DIVIDE_CASE(div32m),
+		 {1, 0, 0}, true, {}},
+		{"DIV r64 overflow", PROBE_DIVIDE_CASE(div64),
+		 {0, 0x10, 0x10}, true, {}},
+		{"IDIV r64 of INT64_MIN by -1", PROBE_DIVIDE_CASE(idiv64),
+		 {0x8000000000000000, ~0UL, ~0UL}, true, {}},
+		{"IDIV r64 of 2^64 by 2", PROBE_DIVIDE_CASE(idiv64),
+		 {0, 1, 2}, true, {}},
+		{"IDIV m64 of -2^65 by 2", PROBE_DIVIDE_CASE(idiv64m),
+		 {0, 0xfffffffffffffffe, 2}, true, {}},
+		{"DIV r8 to 0xff", PROBE_DIVIDE_CASE(div8),
+		 {0x77000000000001fe, 3, 2}, false,
+		 {0x77000000000000ff, 3}},
+		{"IDIV r16 to -32768", PROBE_DIVIDE_CASE(idiv16),
+		 {0x1111111111110000, 0x222222222222ffff, 2}, false,
+		 {0x1111111111118000, 0x2222222222220000}},
+		{"IDIV r32 to INT32_MIN", PROBE_DIVIDE_CASE(idiv32),
+		 {0x1111111100000000, 0xffffffff, 2}, false,
+		 {0x80000000, 0}},
+		{"IDIV r64 to INT64_MIN", PROBE_DIVIDE_CASE(idiv64),
+		 {0, ~0UL, 2}, false, {0x8000000000000000, 0}},
+		{"IDIV r64 after CQO to a wide quotient",
+		 PROBE_DIVIDE_CASE(cqo_idiv64), {399960001, 0x5a5a5a5a5a5a5a5a, 97},
+		 false, {0x3eeaa2, 0x5f}},
+		{"IDIV r64 after CQO of INT64_MIN by -1",
+		 PROBE_DIVIDE_CASE(cqo_idiv64), {0x8000000000000000, ~0UL, ~0UL},
+		 true, {}},
+		{"IDIV r32 after CDQ to a wide quotient",
+		 PROBE_DIVIDE_CASE(cdq_idiv32), {399960001, 0x5a5a5a5a5a5a5a5a, 97},
+		 false, {0x3eeaa2, 0x5f}},
+		{"IDIV r32 after CDQ of INT32_MIN by -1",
+		 PROBE_DIVIDE_CASE(cdq_idiv32), {0x80000000, 0xffffffff, 0xffffffff},
+		 true, {}},
+		{"DIV r64 after zeroing RDX to a wide quotient",
+		 PROBE_DIVIDE_CASE(xor_div64), {0xfffffffffffffff0, 0x5a5a, 16},
+		 false, {0x0fffffffffffffff, 0}},
+		{"DIV r32 after zeroing EDX to a wide quotient",
+		 PROBE_DIVIDE_CASE(xor_div32), {0x77777777fffffff0, 0x5a5a, 16},
+		 false, {0x0fffffff, 0}},
+	};
+#undef PROBE_DIVIDE_CASE
+	bool ok = install_fault_handlers() && install(sigfpe, record_fault);
+	for (const Case &one : cases) {
+		for (unsigned index = 0; index < 3; ++index) {
+			divide_state[index] = one.in[index];
+			divide_state[index + 3] = 0;
+		}
+		const word insn = address_of(one.insn);
+		const bool delivered =
+			one.faults ? delivers(one.what, one.work,
+					      address_of(one.end),
+					      {sigfpe, fpe_intdiv, insn, insn,
+					       0, true, 0})
+				   : delivers_nothing(one.what, one.work,
+						      address_of(one.end));
+		const word rax = one.faults ? one.in[0] : one.out[0];
+		const word rdx = one.faults ? one.in[1] : one.out[1];
+		bool kept = expect("RAX", divide_state[3], rax);
+		kept &= expect("RDX", divide_state[4], rdx);
+		kept &= expect("RCX", divide_state[5], one.in[2]);
+		if (!kept) {
+			put("  after ");
+			put(one.what);
+			put("\n");
+		}
+		ok &= delivered && kept;
+	}
+	return ok;
+}
+#endif
+
+#if defined(__x86_64__)
+/* VPMASKMOVD and VMASKMOVPS of YMM0 at (state)[0] under the mask
+ * (state)[4..7]; YMM0 starts as (state)[8..11] and the load leaves it in
+ * (state)[12..15]. */
+__asm__(".text\n"
+	".global probe_mask_load\n"
+	"probe_mask_load:\n"
+	"	movq (%rdi), %rax\n"
+	"	vmovdqu 32(%rdi), %ymm1\n"
+	"	vmovdqu 64(%rdi), %ymm0\n"
+	".global probe_mask_load_insn\n"
+	"probe_mask_load_insn:\n"
+	"	vpmaskmovd (%rax), %ymm1, %ymm0\n"
+	".global probe_mask_load_end\n"
+	"probe_mask_load_end:\n"
+	"	vmovdqu %ymm0, 96(%rdi)\n"
+	"	vzeroupper\n"
+	"	ret\n"
+	".global probe_mask_store\n"
+	"probe_mask_store:\n"
+	"	movq (%rdi), %rax\n"
+	"	vmovdqu 32(%rdi), %ymm1\n"
+	"	vmovdqu 64(%rdi), %ymm0\n"
+	".global probe_mask_store_insn\n"
+	"probe_mask_store_insn:\n"
+	"	vmaskmovps %ymm0, %ymm1, (%rax)\n"
+	".global probe_mask_store_end\n"
+	"probe_mask_store_end:\n"
+	"	vzeroupper\n"
+	"	ret\n");
+
+extern "C" void probe_mask_load(word *state);
+extern "C" char probe_mask_load_insn[];
+extern "C" char probe_mask_load_end[];
+extern "C" void probe_mask_store(word *state);
+extern "C" char probe_mask_store_insn[];
+extern "C" char probe_mask_store_end[];
+
+constexpr long nr_munmap = 11;
+constexpr word page_bytes = 4096;
+
+alignas(32) word mask_state[16];
+/* Three pages no other case touches; the probe unmaps the last. */
+alignas(4096) unsigned char mask_pages[3 * page_bytes];
+
+void mask_load() { probe_mask_load(mask_state); }
+void mask_store() { probe_mask_store(mask_state); }
+
+void set_mask_state(const unsigned char *address, unsigned lanes)
+{
+	auto *values = reinterpret_cast<u32 *>(&mask_state[4]);
+	mask_state[0] = reinterpret_cast<word>(address);
+	for (unsigned lane = 0; lane < 8; ++lane) {
+		values[lane] = (lanes >> lane) & 1U ? 0x80000000U : 0;
+		values[lane + 8] = 0x11111111U * (lane + 1);
+		values[lane + 16] = 0;
+	}
+}
+
+/* Checks the first (count) lanes at (bytes): each in (lanes) holds its
+ * value and the others zero. */
+bool expect_lanes(const char *what, const unsigned char *bytes,
+		  unsigned lanes, unsigned count = 8)
+{
+	const auto *values = reinterpret_cast<const volatile u32 *>(bytes);
+	bool ok = true;
+	for (unsigned lane = 0; lane < count; ++lane)
+		ok &= expect(what, values[lane],
+			     (lanes >> lane) & 1U ? 0x11111111U * (lane + 1) : 0);
+	return ok;
+}
+
+/* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
+ * on an unmapped page does not fault and a load zeroes it, every enabled
+ * lane completes when the first one misses a cold page, and an enabled
+ * lane on an unmapped page raises #PF at its address. */
+bool masked_moves()
+{
+	unsigned char *const cold = mask_pages;
+	unsigned char *const unmapped = mask_pages + 2 * page_bytes;
+	unsigned char *const edge = unmapped - 16;
+	if (raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  munmap failed\n");
+		return false;
+	}
+	bool ok = install_fault_handlers();
+	const auto *loaded = reinterpret_cast<const unsigned char *>(
+		&mask_state[12]);
+
+	set_mask_state(cold, 0xff);
+	ok &= delivers_nothing("VPMASKMOVD from a cold page", mask_load,
+			       address_of(probe_mask_load_end));
+	ok &= expect_lanes("cold lane", loaded, 0);
+
+	set_mask_state(edge, 0x0f);
+	ok &= delivers_nothing("VMASKMOVPS beside an unmapped page", mask_store,
+			       address_of(probe_mask_store_end));
+	ok &= expect_lanes("stored lane", edge, 0x0f, 4);
+
+	set_mask_state(edge, 0x0f);
+	ok &= delivers_nothing("VPMASKMOVD beside an unmapped page", mask_load,
+			       address_of(probe_mask_load_end));
+	ok &= expect_lanes("loaded lane", loaded, 0x0f);
+
+	set_mask_state(edge, 0x1f);
+	ok &= delivers("VMASKMOVPS onto an unmapped page", mask_store,
+		       address_of(probe_mask_store_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_mask_store_insn), 14, true, 6});
+	set_mask_state(edge, 0x1f);
+	ok &= delivers("VPMASKMOVD from an unmapped page", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_mask_load_insn), 14, true, 4});
+	return ok;
+}
+
+/* Each gather loads YMM0 (the destination) from (state)[8..11], YMM1 (the
+ * mask) from (state)[4..7] and YMM2 (the indices) from (state)[12..15],
+ * gathers from the base (state)[0] at scale 1, and leaves YMM0 in
+ * (state)[16..19] and YMM1 in (state)[20..23]. */
+#define PROBE_GATHER(name, instruction)                                      \
+	".global probe_gather_" #name "\n"                                   \
+	"probe_gather_" #name ":\n"                                          \
+	"	movq (%rdi), %rax\n"                                         \
+	"	vmovdqu 32(%rdi), %ymm1\n"                                   \
+	"	vmovdqu 64(%rdi), %ymm0\n"                                   \
+	"	vmovdqu 96(%rdi), %ymm2\n"                                   \
+	".global probe_gather_" #name "_insn\n"                              \
+	"probe_gather_" #name "_insn:\n"                                     \
+	"	" instruction "\n"                                           \
+	".global probe_gather_" #name "_end\n"                               \
+	"probe_gather_" #name "_end:\n"                                      \
+	"	vmovdqu %ymm0, 128(%rdi)\n"                                  \
+	"	vmovdqu %ymm1, 160(%rdi)\n"                                  \
+	"	vzeroupper\n"                                                \
+	"	ret\n"
+__asm__(".text\n"
+	PROBE_GATHER(dd256, "vpgatherdd %ymm1, (%rax,%ymm2,1), %ymm0")
+	PROBE_GATHER(dd128, "vpgatherdd %xmm1, (%rax,%xmm2,1), %xmm0")
+	PROBE_GATHER(qq256, "vpgatherqq %ymm1, (%rax,%ymm2,1), %ymm0")
+	PROBE_GATHER(qps128, "vgatherqps %xmm1, (%rax,%xmm2,1), %xmm0")
+	PROBE_GATHER(fs, "vpgatherdd %ymm1, %fs:0(,%ymm2,1), %ymm0"));
+#undef PROBE_GATHER
+
+#define DECLARE_GATHER(name)                                                 \
+	extern "C" void probe_gather_##name(word *state);                    \
+	extern "C" char probe_gather_##name##_insn[];                        \
+	extern "C" char probe_gather_##name##_end[];
+DECLARE_GATHER(dd256)
+DECLARE_GATHER(dd128)
+DECLARE_GATHER(qq256)
+DECLARE_GATHER(qps128)
+DECLARE_GATHER(fs)
+#undef DECLARE_GATHER
+
+alignas(32) word gather_state[24];
+/* Three pages no other case touches: the first holds the pattern, the
+ * second stays untouched until a gather reads it, and the probe unmaps the
+ * third. */
+alignas(4096) unsigned char gather_pages[3 * page_bytes];
+
+void gather_dd256() { probe_gather_dd256(gather_state); }
+void gather_dd128() { probe_gather_dd128(gather_state); }
+void gather_qq256() { probe_gather_qq256(gather_state); }
+void gather_qps128() { probe_gather_qps128(gather_state); }
+void gather_fs() { probe_gather_fs(gather_state); }
+
+constexpr long nr_arch_prctl = 158;
+constexpr long arch_set_fs = 0x1002;
+
+/* The pattern dword at byte offset (offset) of the first page. */
+u32 gather_pattern(word offset) { return 0x5a000000U | static_cast<u32>(offset); }
+
+/* Fills the state for (lanes) elements of (size) bytes at the byte offsets
+ * (offsets) from the pages, the mask lanes in (enabled) set to the sign
+ * bit and those in (other) to a value without it; the destination starts
+ * as 0x11111111 times the lane number plus one. */
+void set_gather_state(unsigned size, unsigned lanes, const word *offsets,
+		      unsigned enabled, unsigned other = 0)
+{
+	for (unsigned index = 1; index < 24; ++index)
+		gather_state[index] = 0;
+	gather_state[0] = reinterpret_cast<word>(gather_pages);
+	auto *bytes = reinterpret_cast<unsigned char *>(gather_state);
+	for (unsigned lane = 0; lane < lanes; ++lane) {
+		const u64 top = size == 4 ? 0x80000000ULL : 0x8000000000000000ULL;
+		const u64 mask = (enabled >> lane) & 1U ? top :
+			(other >> lane) & 1U ? top - 1 : 0;
+		const u64 initial = 0x11111111ULL * (lane + 1);
+		for (unsigned byte = 0; byte < size; ++byte) {
+			bytes[32 + lane * size + byte] =
+				static_cast<unsigned char>(mask >> (8 * byte));
+			bytes[64 + lane * size + byte] =
+				static_cast<unsigned char>(initial >> (8 * byte));
+		}
+	}
+	/* Indices are dwords for the dd forms and qwords for the others. */
+	const unsigned index_size = size == 4 && lanes != 2 ? 4 : 8;
+	for (unsigned lane = 0; lane < lanes; ++lane)
+		for (unsigned byte = 0; byte < index_size; ++byte)
+			bytes[96 + lane * index_size + byte] =
+				static_cast<unsigned char>(offsets[lane] >> (8 * byte));
+}
+
+/* The element (lane) of (size) bytes that the gather left at (state)
+ * offset (base). */
+u64 gather_lane(unsigned base, unsigned size, unsigned lane)
+{
+	const auto *bytes = reinterpret_cast<const volatile unsigned char *>(gather_state);
+	u64 value = 0;
+	for (unsigned byte = 0; byte < size; ++byte)
+		value |= static_cast<u64>(bytes[base + lane * size + byte]) << (8 * byte);
+	return value;
+}
+
+/* Checks the first (lanes) elements after a gather: those in (done) hold
+ * (loaded) and have a zero mask; the others keep their destination and
+ * the sign of their mask. */
+bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
+		     const u64 *loaded, unsigned enabled)
+{
+	bool ok = true;
+	const unsigned sign = size * 8 - 1;
+	for (unsigned lane = 0; lane < lanes; ++lane) {
+		const u64 value = gather_lane(128, size, lane);
+		const u64 mask = gather_lane(160, size, lane);
+		if ((done >> lane) & 1U) {
+			ok &= expect("gathered element", value, loaded[lane]);
+			ok &= expect("its mask", mask, 0);
+		} else {
+			ok &= expect("element not gathered", value,
+				     0x11111111ULL * (lane + 1));
+			ok &= expect("its mask sign", (mask >> sign) & 1U,
+				     (enabled >> lane) & 1U);
+		}
+	}
+	return ok;
+}
+
+/* AVX2 gathers complete their elements in order: an element whose mask
+ * sign is clear is not read, an element on a page not yet touched
+ * completes, and an element on an unmapped page raises #PF at its address
+ * with every element before it gathered and its mask cleared, and the
+ * elements from it on untouched. An FS override adds the FS base. */
+bool gathers()
+{
+	unsigned char *const first = gather_pages;
+	unsigned char *const unmapped = gather_pages + 2 * page_bytes;
+	if (raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  munmap failed\n");
+		return false;
+	}
+	for (word offset = 0; offset < page_bytes; offset += 4) {
+		const u32 value = gather_pattern(offset);
+		for (unsigned byte = 0; byte < 4; ++byte)
+			first[offset + byte] = static_cast<unsigned char>(value >> (8 * byte));
+	}
+	bool ok = install_fault_handlers();
+	const word away = 2 * page_bytes;
+	const auto pattern64 = [](word offset) {
+		return static_cast<u64>(gather_pattern(offset)) |
+			(static_cast<u64>(gather_pattern(offset + 4)) << 32);
+	};
+
+	{
+		const word offsets[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		u64 loaded[8];
+		for (unsigned lane = 0; lane < 8; ++lane)
+			loaded[lane] = gather_pattern(offsets[lane]);
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers_nothing("VPGATHERDD", gather_dd256,
+				       address_of(probe_gather_dd256_end));
+		ok &= expect_gathered(4, 8, 0xff, loaded, 0xff);
+	}
+	{
+		/* Lane 1 has its sign clear and points at the unmapped page;
+		 * lane 2 is on the untouched page; lane 3 faults. */
+		const word offsets[8] = {0x10, away, page_bytes + 0x30, away + 0x40,
+					 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), 0, 0, 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xfd, 0x02);
+		ok &= delivers("VPGATHERDD onto an unmapped page", gather_dd256,
+			       address_of(probe_gather_dd256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x40),
+				address_of(probe_gather_dd256_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x05, loaded, 0xf8);
+	}
+	{
+		/* An element that runs from the first page onto the unmapped
+		 * one faults at the unmapped page. */
+		const word offsets[8] = {0x10, away - 2, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), 0, 0, 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers("VPGATHERDD across onto an unmapped page", gather_dd256,
+			       address_of(probe_gather_dd256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+				address_of(probe_gather_dd256_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x01, loaded, 0xfe);
+	}
+	{
+		const word offsets[4] = {0x10, 0x20, away + 0x30, 0x40};
+		const u64 loaded[4] = {gather_pattern(0x10), gather_pattern(0x20), 0, 0};
+		set_gather_state(4, 4, offsets, 0x0f);
+		ok &= delivers("VPGATHERDD XMM onto an unmapped page", gather_dd128,
+			       address_of(probe_gather_dd128_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x30),
+				address_of(probe_gather_dd128_insn), 14, true, 4});
+		ok &= expect_gathered(4, 4, 0x03, loaded, 0x0c);
+	}
+	{
+		const word offsets[4] = {0x10, 0x28, away + 0x8, 0x40};
+		const u64 loaded[4] = {pattern64(0x10), pattern64(0x28), 0, 0};
+		set_gather_state(8, 4, offsets, 0x0f);
+		ok &= delivers("VPGATHERQQ onto an unmapped page", gather_qq256,
+			       address_of(probe_gather_qq256_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x8),
+				address_of(probe_gather_qq256_insn), 14, true, 4});
+		ok &= expect_gathered(8, 4, 0x03, loaded, 0x0c);
+	}
+	{
+		const word offsets[2] = {0x18, away + 0x20};
+		const u64 loaded[2] = {gather_pattern(0x18), 0};
+		set_gather_state(4, 2, offsets, 0x03);
+		ok &= delivers("VGATHERQPS onto an unmapped page", gather_qps128,
+			       address_of(probe_gather_qps128_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x20),
+				address_of(probe_gather_qps128_insn), 14, true, 4});
+		ok &= expect_gathered(4, 2, 0x01, loaded, 0x02);
+	}
+	{
+		/* An FS override adds the FS base. */
+		const word offsets[8] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
+		u64 loaded[8];
+		for (unsigned lane = 0; lane < 8; ++lane)
+			loaded[lane] = gather_pattern(offsets[lane]);
+		set_gather_state(4, 8, offsets, 0xff);
+		if (raw_syscall(nr_arch_prctl, arch_set_fs,
+				reinterpret_cast<long>(gather_pages)) != 0) {
+			put("  arch_prctl failed\n");
+			return false;
+		}
+		ok &= delivers_nothing("VPGATHERDD with an FS override", gather_fs,
+				       address_of(probe_gather_fs_end));
+		ok &= expect_gathered(4, 8, 0xff, loaded, 0xff);
+	}
+	{
+		const word offsets[8] = {0x10, 0x20, 0x30, away + 0x40, 0x50, 0x60, 0x70, 0x80};
+		const u64 loaded[8] = {gather_pattern(0x10), gather_pattern(0x20),
+				       gather_pattern(0x30), 0, 0, 0, 0, 0};
+		set_gather_state(4, 8, offsets, 0xff);
+		ok &= delivers("VPGATHERDD with an FS override onto an unmapped page",
+			       gather_fs, address_of(probe_gather_fs_end),
+			       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped + 0x40),
+				address_of(probe_gather_fs_insn), 14, true, 4});
+		ok &= expect_gathered(4, 8, 0x07, loaded, 0xf8);
+	}
+	return ok;
+}
+
+/* Each fault-state case loads RFLAGS from (block)[16] and the registers
+ * from (block)[0..15] in x86 order, skipping RSP, runs its setup, records
+ * every register, RFLAGS, the x87 status and control words, MXCSR and XMM0
+ * as they stand before the instruction, switches to its own stack if it
+ * names one, and runs the instruction, whose store meets a read-only page
+ * or whose load meets an unmapped one. The fault handler records the frame
+ * and resumes after the instruction on the case's own stack. */
+#define PROBE_STATE(name, setup, stack, instruction)                         \
+	".global probe_state_" #name "\n"                                    \
+	"probe_state_" #name ":\n"                                           \
+	"	push %rbx\n"                                                 \
+	"	push %rbp\n"                                                 \
+	"	push %r12\n"                                                 \
+	"	push %r13\n"                                                 \
+	"	push %r14\n"                                                 \
+	"	push %r15\n"                                                 \
+	"	movq %rsp, state_resume_rsp(%rip)\n"                         \
+	"	leaq 9f(%rip), %rax\n"                                       \
+	"	movq %rax, state_resume_ip(%rip)\n"                          \
+	"	pushq 128(%rdi)\n"                                           \
+	"	popfq\n"                                                     \
+	"	movq 0(%rdi), %rax\n"                                        \
+	"	movq 8(%rdi), %rcx\n"                                        \
+	"	movq 16(%rdi), %rdx\n"                                       \
+	"	movq 24(%rdi), %rbx\n"                                       \
+	"	movq 40(%rdi), %rbp\n"                                       \
+	"	movq 48(%rdi), %rsi\n"                                       \
+	"	movq 64(%rdi), %r8\n"                                        \
+	"	movq 72(%rdi), %r9\n"                                        \
+	"	movq 80(%rdi), %r10\n"                                       \
+	"	movq 88(%rdi), %r11\n"                                       \
+	"	movq 96(%rdi), %r12\n"                                       \
+	"	movq 104(%rdi), %r13\n"                                      \
+	"	movq 112(%rdi), %r14\n"                                      \
+	"	movq 120(%rdi), %r15\n"                                      \
+	"	movq 56(%rdi), %rdi\n"                                       \
+	"	" setup "\n"                                                 \
+	"	movq %r8, state_expect+0(%rip)\n"                            \
+	"	movq %r9, state_expect+8(%rip)\n"                            \
+	"	movq %r10, state_expect+16(%rip)\n"                          \
+	"	movq %r11, state_expect+24(%rip)\n"                          \
+	"	movq %r12, state_expect+32(%rip)\n"                          \
+	"	movq %r13, state_expect+40(%rip)\n"                          \
+	"	movq %r14, state_expect+48(%rip)\n"                          \
+	"	movq %r15, state_expect+56(%rip)\n"                          \
+	"	movq %rdi, state_expect+64(%rip)\n"                          \
+	"	movq %rsi, state_expect+72(%rip)\n"                          \
+	"	movq %rbp, state_expect+80(%rip)\n"                          \
+	"	movq %rbx, state_expect+88(%rip)\n"                          \
+	"	movq %rdx, state_expect+96(%rip)\n"                          \
+	"	movq %rax, state_expect+104(%rip)\n"                         \
+	"	movq %rcx, state_expect+112(%rip)\n"                         \
+	"	pushfq\n"                                                    \
+	"	popq state_expect+136(%rip)\n"                               \
+	"	fnstsw state_expect_fsw(%rip)\n"                             \
+	"	fnstcw state_expect_fcw(%rip)\n"                             \
+	"	stmxcsr state_expect_mxcsr(%rip)\n"                          \
+	"	movq %xmm0, state_expect_xmm0(%rip)\n"                       \
+	"	" stack "\n"                                                 \
+	"	movq %rsp, state_expect+120(%rip)\n"                         \
+	".global probe_state_" #name "_insn\n"                               \
+	"probe_state_" #name "_insn:\n"                                      \
+	"	" instruction "\n"                                           \
+	"9:\n"                                                               \
+	"	movq state_resume_rsp(%rip), %rsp\n"                         \
+	"	cld\n"                                                       \
+	"	fninit\n"                                                    \
+	"	pop %r15\n"                                                  \
+	"	pop %r14\n"                                                  \
+	"	pop %r13\n"                                                  \
+	"	pop %r12\n"                                                  \
+	"	pop %rbp\n"                                                  \
+	"	pop %rbx\n"                                                  \
+	"	ret\n"
+/* A repeated compare whose third element meets the unmapped page has run
+ * two or three: the setup runs those elements alone, so the expected state
+ * is theirs, and the restart moves the pointers and count back and sets
+ * every arithmetic flag, which the elements' own flags must replace. The
+ * REPE elements compare equal quadwords, the REPNE ones unequal bytes, the
+ * last 0x80 with 0. */
+#define CMPS_MIDWAY_REPE                                                     \
+	"movq $0x33, -12(%r9); movq $0x246, -4(%r9); leaq -12(%r9), %rsi; "  \
+	"leaq -16(%r10), %rdi; movl $5, %ecx; cmpsq; cmpsq; "                \
+	"leaq -2(%rcx), %rcx"
+#define CMPS_MIDWAY_REPNE                                                    \
+	"movl $0x00800201, (%r9); movq %r9, %rsi; leaq -3(%r10), %rdi; "     \
+	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx"
+#define CMPS_MIDWAY_RESTART(bytes, elements)                                 \
+	"leaq -" #bytes "(%rsi), %rsi; leaq -" #bytes "(%rdi), %rdi; "        \
+	"leaq " #elements "(%rcx), %rcx; pushq $0x8d5; popfq"
+#define STATE_CASES(X)                                                       \
+	X(adc, "", "", "adcq %rbx, (%r8)")                                   \
+	X(adc_across, "", "", "adcq %rbx, (%r9)")                            \
+	X(sbb, "", "", "sbbl $1, (%r8)")                                     \
+	X(rcl, "", "", "rclq $1, (%r8)")                                     \
+	X(rcr, "movl $3, %ecx", "", "rcrq %cl, (%r8)")                       \
+	X(add, "", "", "addq %rbx, (%r8)")                                   \
+	X(inc, "", "", "incl (%r8)")                                         \
+	X(neg, "", "", "negq (%r8)")                                         \
+	X(shl, "", "", "shlq $3, (%r8)")                                     \
+	X(shld, "movl $5, %ecx", "", "shldq %cl, %rbx, (%r8)")               \
+	X(bts, "movl $5, %ebx", "", "btsq %rbx, (%r8)")                      \
+	X(pop_memory, "", "", "popq (%r8)")                                  \
+	X(push, "", "movq %r8, %rsp", "pushq %rbx")                          \
+	X(push_memory, "", "movq %r8, %rsp", "pushq 8(%r9)")                 \
+	X(call, "", "movq %r8, %rsp", "call 9f")                             \
+	X(call_memory, "", "movq %r8, %rsp", "call *8(%r9)")                 \
+	X(enter, "", "movq %r8, %rsp", "enter $16, $0")                      \
+	X(pushf, "", "movq %r8, %rsp", "pushfq")                             \
+	X(movs, "movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsq")            \
+	X(movs_down, "std; movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsb")  \
+	X(stos, "movq %r8, %rdi", "", "stosq")                               \
+	X(rep_stos, "movq %r8, %rdi; movl $5, %ecx", "", "rep stosb")        \
+	X(rep_movs, "leaq -64(%r9), %rsi; movq %r8, %rdi; movl $5, %ecx", "",\
+	  "rep movsb")                                                       \
+	X(repe_cmps, "movq %r8, %rsi; movq %r10, %rdi; movl $5, %ecx", "",   \
+	  "repe cmpsb")                                                      \
+	X(repe_cmps_midway, CMPS_MIDWAY_REPE, CMPS_MIDWAY_RESTART(16, 2),     \
+	  "repe cmpsq")                                                      \
+	X(repne_cmps_midway, CMPS_MIDWAY_REPNE, CMPS_MIDWAY_RESTART(3, 3),    \
+	  "repne cmpsb")                                                     \
+	X(cmpxchg_equal, "movq (%r8), %rax", "", "cmpxchgq %rcx, (%r8)")     \
+	X(cmpxchg_unequal, "", "", "cmpxchgq %rcx, (%r8)")                   \
+	X(cmpxchg8b, "", "", "cmpxchg8b (%r8)")                              \
+	X(xadd, "", "", "xaddq %rbx, (%r8)")                                 \
+	X(xchg, "", "", "xchgq %rbx, (%r8)")                                 \
+	X(lock_adc, "", "", "lock adcq %rbx, (%r8)")                         \
+	X(fstp, "fninit; fld1; fld1", "", "fstpl (%r8)")                     \
+	X(fistp, "fninit; fld1; fld1", "", "fistpl (%r8)")                   \
+	X(fisttp, "fninit; fld1; fld1", "", "fisttpl (%r8)")                 \
+	X(fstpt, "fninit; fld1; fld1", "", "fstpt (%r8)")                    \
+	X(fbstp, "fninit; fld1; fld1", "", "fbstp (%r8)")                    \
+	X(fnstenv, "fninit; fld1", "", "fnstenv -12(%r9)")                   \
+	X(fnsave, "fninit; fld1", "", "fnsave -12(%r9)")                     \
+	X(frstor, "fninit; fld1", "", "frstor -60(%r10)")                    \
+	X(fldenv, "fninit; fld1", "", "fldenv -16(%r10)")                    \
+	X(fxrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",                 \
+	  "fxrstor -256(%r10)")                                              \
+	X(xrstor, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax; "      \
+	  "xorl %edx, %edx", "", "xrstor -768(%r10)")                        \
+	X(iretq, "", "leaq -24(%r10), %rsp", "iretq")                        \
+	X(leave, "movq %r10, %rbp", "", "leave")                             \
+	X(ret, "", "movq %r10, %rsp", "ret")                                 \
+	X(ret_imm, "", "movq %r10, %rsp", "ret $16")                         \
+	X(lret, "", "movq %r10, %rsp", "lretq")                              \
+	X(pop, "", "movq %r10, %rsp", "popq %rbx")                           \
+	X(popf, "", "movq %r10, %rsp", "popfq")                              \
+	X(push_load, "", "", "pushq (%r10)")                                 \
+	X(lods, "movq %r10, %rsi", "", "lodsq")                              \
+	X(rep_lods, "movq %r10, %rsi; movl $5, %ecx", "", "rep lodsb")       \
+	X(scas, "movq %r10, %rdi", "", "scasq")                              \
+	X(repne_scas, "movq %r10, %rdi; movl $5, %ecx", "", "repne scasb")   \
+	X(xlat, "movq %r10, %rbx", "", "xlatb")                              \
+	X(cmpxchg16b, "", "", "cmpxchg16b (%r8)")                            \
+	X(adc_load, "", "", "adcq (%r10), %rbx")                             \
+	X(div_load, "", "", "divq (%r10)")                                   \
+	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
+	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
+	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
+	X(fbld, "fninit; fld1", "", "fbld (%r10)")                           \
+	X(fadd_load, "fninit; fld1", "", "faddl (%r10)")                     \
+	X(fldcw, "fninit; fld1", "", "fldcw (%r10)")                         \
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")
+
+#define EMIT_STATE(name, setup, stack, instruction)                          \
+	PROBE_STATE(name, setup, stack, instruction)
+__asm__(".text\n" STATE_CASES(EMIT_STATE));
+#undef EMIT_STATE
+#undef PROBE_STATE
+
+#define DECLARE_STATE(name, setup, stack, instruction)                       \
+	extern "C" void probe_state_##name(const word *block);               \
+	extern "C" char probe_state_##name##_insn[];
+STATE_CASES(DECLARE_STATE)
+#undef DECLARE_STATE
+
+/* The state before the instruction, in the frame's register order. */
+extern "C" {
+volatile word state_resume_rsp;
+volatile word state_resume_ip;
+word state_expect[18];
+u16 state_expect_fsw;
+u16 state_expect_fcw;
+u32 state_expect_mxcsr;
+u64 state_expect_xmm0;
+}
+
+/* The frame's general registers, R8 to RFLAGS, and x87 words. */
+constexpr unsigned frame_registers = 18;
+word state_frame[frame_registers];
+u16 state_frame_fsw;
+u16 state_frame_fcw;
+u32 state_frame_mxcsr;
+u64 state_frame_xmm0;
+const char *const frame_register_names[frame_registers] = {
+	"R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "RDI",
+	"RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP", "RIP", "RFLAGS"};
+constexpr unsigned frame_rsp_offset = 40 + 15 * 8;
+constexpr unsigned frame_fpstate_offset = 40 + 23 * 8;
+
+void record_state(int signal, void *info, void *context)
+{
+	resume_ip = 0;
+	record_fault(signal, info, context);
+	for (unsigned index = 0; index < frame_registers; ++index)
+		state_frame[index] = frame_word(context, 40 + index * 8);
+	const auto *fpstate = reinterpret_cast<const unsigned char *>(
+		frame_word(context, frame_fpstate_offset));
+	if (fpstate != nullptr) {
+		state_frame_fcw = *reinterpret_cast<const u16 *>(fpstate);
+		state_frame_fsw = *reinterpret_cast<const u16 *>(fpstate + 2);
+		state_frame_mxcsr = *reinterpret_cast<const u32 *>(fpstate + 24);
+		state_frame_xmm0 = *reinterpret_cast<const u64 *>(fpstate + 160);
+	}
+	frame_word(context, frame_ip_offset) = state_resume_ip;
+	frame_word(context, frame_rsp_offset) = state_resume_rsp;
+}
+
+struct StateCase {
+	const char *name;
+	void (*probe)(const word *block);
+	const char *instruction;
+	bool x87;
+};
+
+#define STATE_ENTRY(name, setup, stack, instruction)                         \
+	{#name, probe_state_##name, probe_state_##name##_insn,                \
+	 (setup)[0] == 'f'},
+const StateCase state_cases[] = {STATE_CASES(STATE_ENTRY)};
+#undef STATE_ENTRY
+
+constexpr long nr_mprotect = 10;
+constexpr long prot_read = 1;
+/* A writable page, a read-only one and an unmapped one. */
+alignas(4096) unsigned char state_pages[3 * page_bytes];
+
+/* An instruction whose store or load faults has done nothing: the frame
+ * shows every register, RFLAGS, the x87 stack and control word, MXCSR and
+ * XMM0 as the instruction found them, and RIP at it, whatever the
+ * instruction computed before, so the guest that resolves the fault runs it
+ * again from scratch. A repeated string instruction has done the elements
+ * before the faulting one, with their flags. */
+bool fault_state()
+{
+	unsigned char *const read_only = state_pages + page_bytes;
+	unsigned char *const unmapped = state_pages + 2 * page_bytes;
+	for (word offset = 0; offset < page_bytes; ++offset)
+		read_only[offset] = static_cast<unsigned char>(0x5a + offset);
+	/* An XSAVE image of x87, SSE and AVX state whose AVX part runs onto the
+	 * unmapped page, with FCW 0x27f, MXCSR 0x1f80 and zero registers. */
+	unsigned char *const image = unmapped - 768;
+	for (word offset = 0; offset < 768 - 24; ++offset)
+		image[offset] = 0;
+	image[0] = 0x7f;
+	image[1] = 0x02;
+	image[24] = 0x80;
+	image[25] = 0x1f;
+	image[512] = 7;
+	/* IRETQ's RIP, CS and RFLAGS slots, before its RSP on the unmapped
+	 * page. */
+	const word iret_frame[3] = {reinterpret_cast<word>(state_pages), 0x33,
+				    0x246};
+	for (unsigned byte = 0; byte < sizeof(iret_frame); ++byte)
+		(unmapped - sizeof(iret_frame))[byte] =
+			reinterpret_cast<const unsigned char *>(iret_frame)[byte];
+	if (raw_syscall(nr_mprotect, reinterpret_cast<long>(read_only),
+			page_bytes, prot_read) != 0 ||
+	    raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
+			page_bytes) != 0) {
+		put("  mprotect or munmap failed\n");
+		return false;
+	}
+	/* A push or call faults with RSP on the read-only page. */
+	if (!handle_on_alternate_stack(sigsegv, record_state) ||
+	    !handle_on_alternate_stack(sigbus, record_state)) {
+		put("  sigaltstack or rt_sigaction failed\n");
+		return false;
+	}
+	word block[17];
+	for (unsigned index = 0; index < 16; ++index)
+		block[index] = 0x0f0e0d0c0b0a0908ULL + 0x0101010101010101ULL * index;
+	block[8] = reinterpret_cast<word>(read_only + 0x100);
+	block[9] = reinterpret_cast<word>(read_only - 4);
+	block[10] = reinterpret_cast<word>(unmapped);
+	/* CF, PF, AF, SF and OF set; ZF and DF clear. */
+	block[16] = 0x897;
+	bool ok = true;
+	for (const auto &test : state_cases) {
+		observed[observed_count] = 0;
+		test.probe(block);
+		bool good = expect("signals", observed[observed_count], 1);
+		good &= expect("signal", observed[observed_signal],
+			       static_cast<word>(sigsegv));
+		good &= expect("frame ip", state_frame[16],
+			       reinterpret_cast<word>(test.instruction));
+		for (unsigned index = 0; index < 16; ++index)
+			good &= expect(frame_register_names[index],
+				       state_frame[index], state_expect[index]);
+		good &= expect("RFLAGS", state_frame[17] & 0xcd5,
+			       state_expect[17] & 0xcd5);
+		if (test.x87) {
+			good &= expect("x87 TOP", state_frame_fsw & 0x3800U,
+				       state_expect_fsw & 0x3800U);
+			good &= expect("x87 control", state_frame_fcw,
+				       state_expect_fcw);
+			good &= expect("MXCSR", state_frame_mxcsr,
+				       state_expect_mxcsr);
+			good &= expect("XMM0", state_frame_xmm0,
+				       state_expect_xmm0);
+		}
+		if (!good) {
+			put("  in ");
+			put(test.name);
+			put("\n");
+		}
+		ok &= good;
+	}
 	return ok;
 }
 #endif
@@ -2010,6 +2862,101 @@ void ac_load() { probe_ac_load(alignment_buffer); }
 void ac_word() { probe_ac_word(alignment_buffer); }
 void ac_byte() { probe_ac_byte(alignment_buffer); }
 void ac_x87() { probe_ac_x87(alignment_buffer); }
+/* An 80-bit x87 value as FSTP m80 stores it. */
+struct X87Value {
+	u64 significand;
+	u16 sign_exponent;
+} __attribute__((packed));
+
+const int x87_three = 3;
+const int x87_minus_six = -6;
+const int x87_out_of_short = 40000;
+const X87Value x87_largest = {0x8000000000000000ULL, 0x7ffe};
+const X87Value x87_quiet_nan = {0xc000000000000000ULL, 0x7fff};
+
+/* Masked x87 exceptions set their sticky status-word flags, which only
+ * FNCLEX and FNINIT clear; an operation that raises none leaves them. A zero
+ * result of FPREM, FSIN or FSINCOS keeps its sign. Each case starts from
+ * FNINIT, so FCW is 0x37f and TOP counts its pushes. */
+bool x87_status_flags()
+{
+	struct Case {
+		const char *what;
+		u16 status;
+		u16 expected;
+	};
+	u16 status[9] = {};
+	short stored = 0;
+	X87Value value[3] = {};
+	__asm__ volatile("fninit\n\tfldz\n\tfld1\n\tfdivp\n\t"
+			 "fnstsw %0\n\tfnclex\n\tfnstsw %1"
+			 : "=m"(status[0]), "=m"(status[1]) : : "memory");
+	__asm__ volatile("fninit\n\tfld1\n\tfidivl %1\n\tfnstsw %0"
+			 : "=m"(status[2]) : "m"(x87_three) : "memory");
+	__asm__ volatile("fninit\n\tfldt %1\n\tfadd %%st(0), %%st(0)\n\t"
+			 "fnstsw %0"
+			 : "=m"(status[3]) : "m"(x87_largest) : "memory");
+	__asm__ volatile("fninit\n\tfld1\n\tfchs\n\tfsqrt\n\tfnstsw %0\n\t"
+			 "fstp %%st(0)\n\tfld1\n\tfld1\n\tfcom %%st(1)\n\t"
+			 "fnstsw %1"
+			 : "=m"(status[4]), "=m"(status[5]) : : "memory");
+	__asm__ volatile("fninit\n\tfldt %1\n\tfld1\n\tfucom %%st(1)\n\t"
+			 "fnstsw %0"
+			 : "=m"(status[6]) : "m"(x87_quiet_nan) : "memory");
+	__asm__ volatile("fninit\n\tfildl %2\n\tfistps %1\n\tfnstsw %0"
+			 : "=m"(status[7]), "=m"(stored)
+			 : "m"(x87_out_of_short) : "memory");
+	__asm__ volatile("fninit\n\tfldpi\n\tfstps %1\n\tfnstsw %0"
+			 : "=m"(status[8]), "=m"(value[0].significand)
+			 : : "memory");
+	__asm__ volatile("fninit\n\tfldz\n\tfchs\n\tfsin\n\tfstpt %0\n\t"
+			 "fildl %3\n\tfildl %4\n\tfprem\n\tfstpt %1\n\t"
+			 "fninit\n\tfldz\n\tfchs\n\tfsincos\n\tfstp %%st(0)\n\t"
+			 "fstpt %2\n\tfninit"
+			 : "=m"(value[0]), "=m"(value[1]), "=m"(value[2])
+			 : "m"(x87_three), "m"(x87_minus_six)
+			 : "memory");
+	const Case cases[] = {
+		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
+		{"FNCLEX clears the flags", status[1], 0x3800},
+		{"FIDIV of 1 by 3 sets PE", status[2], 0x3820},
+		{"FADD overflow sets OE and PE", status[3], 0x3828},
+		{"FSQRT of -1 sets IE", status[4], 0x3801},
+		{"IE stays across an ordered FCOM", status[5], 0x7001},
+		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
+		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
+		{"FSTP m32 of pi sets PE", status[8], 0x0020},
+	};
+	bool ok = true;
+	for (const Case &one : cases) {
+		if (!expect("status word", one.status, one.expected)) {
+			put("  in ");
+			put(one.what);
+			put("\n");
+			ok = false;
+		}
+	}
+	ok &= expect("FISTP m16 out of range stores", static_cast<u16>(stored),
+		     0x8000);
+	const char *const zeros[] = {"FSIN of -0", "FPREM of -6 by 3",
+				     "FSINCOS of -0, its sine"};
+	for (unsigned index = 0; index < 3; ++index) {
+		const bool negative_zero = value[index].significand == 0 &&
+					   value[index].sign_exponent == 0x8000;
+		if (!negative_zero) {
+			put("  ");
+			put(zeros[index]);
+			put(" is not -0: ");
+			put_hex(value[index].sign_exponent);
+			put(" ");
+			put_hex(value[index].significand);
+			put("\n");
+			ok = false;
+		}
+	}
+	return ok;
+}
+
 void ac_sse() { probe_ac_sse(alignment_buffer); }
 void ac_movups() { probe_ac_movups(alignment_buffer); }
 void ac_push() { probe_ac_push(alignment_buffer); }
@@ -2700,6 +3647,14 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "int-n"));
 	report("x86-64 a non-canonical address raises #GP or #SS",
 	       in_child(self, "noncanonical"));
+	report("x86-64 DIV and IDIV raise #DE and write nothing",
+	       in_child(self, "divide-error"));
+	report("x86-64 VMASKMOV and VPMASKMOV access only enabled lanes",
+	       in_child(self, "masked-moves"));
+	report("x86-64 AVX2 gathers complete the elements before a fault",
+	       in_child(self, "gathers"));
+	report("x86-64 a faulting access leaves the state as the instruction found it",
+	       in_child(self, "fault-state"));
 	report("x86-64 a single step runs one iteration of a REP string",
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
@@ -2712,6 +3667,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-check"));
 	report("i386 RFLAGS.AC checks alignment",
 	       in_child(i386_probe, "alignment-check"));
+	report("x86-64 masked x87 exceptions set sticky status flags",
+	       in_child(self, "x87-status"));
+	report("i386 masked x87 exceptions set sticky status flags",
+	       in_child(i386_probe, "x87-status"));
 	return failures;
 }
 #endif
@@ -2756,6 +3715,8 @@ extern "C" int probe_main(word *stack)
 			return floating_point_exceptions() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
+		if (equal(mode, "x87-status"))
+			return x87_status_flags() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
@@ -2766,6 +3727,14 @@ extern "C" int probe_main(word *stack)
 #else
 		if (equal(mode, "noncanonical"))
 			return noncanonical_faults() ? 0 : 1;
+		if (equal(mode, "divide-error"))
+			return divide_errors() ? 0 : 1;
+		if (equal(mode, "masked-moves"))
+			return masked_moves() ? 0 : 1;
+		if (equal(mode, "gathers"))
+			return gathers() ? 0 : 1;
+		if (equal(mode, "fault-state"))
+			return fault_state() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

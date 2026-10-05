@@ -23,16 +23,25 @@ COLUMNS = [
     "engine_status",
 ]
 # Each section numbers its stable IDs under its own prefix.
-SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD"}
+SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD", "SVE": "SVE",
+                    "SME": "SME"}
 ENGINE_STATUSES = {"absent", "pending", "verified"}
 # Features the virtual CPU omits. An absent entry needs one of them in every
-# alternative; its corpus cases expect its encodings to be UNDEFINED.
+# alternative; its corpus cases expect its encodings to be UNDEFINED. FEAT_SVE
+# and every SVE or SME feature outside the SME profile are among them; they
+# have no runtime ArmFeature identity, so these names are valid requirement
+# tokens too.
 ABSENT_FEATURES = {
-    "cmpbr", "cpa", "d128", "f16f32dot", "f16f32mm", "f16mm", "f8f16mm",
-    "f8f32mm", "faminmax", "fp8", "fp8dot2", "fp8dot4", "fp8fma", "fprcvt",
-    "gcs", "hbc", "lor", "lrcpc3", "ls64", "ls64_accdata", "ls64_v", "lscp",
-    "lse128", "lsfe", "lsui", "lut", "mte", "mte2", "mtetc", "pauth", "sm3",
-    "sm4", "sme", "ssbs", "the", "wfxt", "xs",
+    "cmpbr", "cpa", "d128", "f16f32dot", "f16f32mm", "f16mm", "f32mm", "f64mm",
+    "f8f16mm", "f8f32mm", "faminmax", "fp8", "fp8dot2", "fp8dot4", "fp8fma",
+    "fprcvt", "gcs", "hbc", "lor", "lrcpc3", "ls64", "ls64_accdata", "ls64_v",
+    "lscp", "lse128", "lsfe", "lsui", "lut", "mte", "mte2", "mtetc", "pauth",
+    "sm3", "sm4", "sme2p1", "sme2p2", "sme2p3", "sme_b16b16", "sme_f16f16",
+    "sme_f8f16", "sme_f8f32", "sme_lutv2", "sme_mop4", "sme_tmop", "ssbs",
+    "ssve_fexpa", "ssve_fp8dot2", "ssve_fp8dot4", "ssve_fp8fma", "sve", "sve2",
+    "sve2p1", "sve2p2", "sve2p3", "sve_aes", "sve_aes2", "sve_b16b16",
+    "sve_b16mm", "sve_bfscale", "sve_bitperm", "sve_f16f32mm", "sve_pmull128",
+    "sve_sha3", "sve_sm4", "the", "wfxt", "xs",
 }
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
@@ -54,6 +63,18 @@ SUITE_VARIANT_MODELS = {
     },
     "shared-simd-memory": {
         "structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved",
+    },
+    "shared-sve-data-processing": {
+        "element-size+predication+register-alias+streaming-mode+reserved",
+    },
+    "shared-sve-memory": {
+        "element-size+predication+addressing-mode+page-crossing+fault-ordering+streaming-mode+reserved",
+    },
+    "shared-sme-data-processing": {
+        "tile+slice+element-size+predication+register-group+za-state+reserved",
+    },
+    "shared-sme-memory": {
+        "tile+slice+element-size+predication+addressing-mode+page-crossing+fault-ordering+za-state+reserved",
     },
 }
 def fail(message: str) -> None:
@@ -156,7 +177,9 @@ def main() -> int:
                 f"{row['engine_status']!r}"
             )
         validate_requirement(
-            row["native_feature_requirements"], row["stable_id"], enum_features
+            row["native_feature_requirements"],
+            row["stable_id"],
+            enum_features | ABSENT_FEATURES,
         )
         if row["engine_status"] == "absent":
             requirement = row["native_feature_requirements"]
@@ -173,13 +196,17 @@ def main() -> int:
     if ids != expected_ids:
         fail("stable IDs are not contiguous in section order")
 
+    sections = ", ".join(
+        f"{counts[section]} {section}" for section in SECTION_PREFIXES
+    )
+    verified = ", ".join(
+        f"{verified_sections[section]} {section}"
+        for section in SECTION_PREFIXES
+    )
     print(
         "A64 instruction inventory valid: "
-        f"{len(rows)} rows "
-        f"({counts['Base']} Base, {counts['FP&SIMD']} FP&SIMD); "
-        f"{status_counts['verified']} verified "
-        f"({verified_sections['Base']} Base, "
-        f"{verified_sections['FP&SIMD']} FP&SIMD), "
+        f"{len(rows)} rows ({sections}); "
+        f"{status_counts['verified']} verified ({verified}), "
         f"{status_counts['absent']} absent, "
         f"{status_counts['pending']} pending"
     )

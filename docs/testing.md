@@ -478,6 +478,15 @@ not exhaustive variant proof.
 [`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
 inventory tables and that completeness boundary.
 
+The `arm64-sme-native` records hold SME results observed on the M4 at its
+streaming vector length, 64 bytes, and run only where an engine implements
+SME at that length; until then they are skipped, and the `arm64-absent-sme`
+record pins every SME profile encoding UNDEFINED on every host. The
+`arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
+their generator, and `arm64-sme-native-oracle` drives the native oracle with
+base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
+the corpus README describes it.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`
@@ -551,8 +560,11 @@ x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 engine is known to fail with its class and fail the test when the record passes
 or names nothing. `x86-64-jit-code-buffer-growth` repeats the run from one byte
 of host code per IR node, requires the code buffer to grow, and requires the
-same results. The `ios-products-carry-no-fexcore` tooling test checks the
-script the iOS packaging runs to keep FEXCore out of every iOS product.
+same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
+engine and the JIT to the same count of retired instructions before each kind
+of stop, including a store into the code of the block running it. The
+`ios-products-carry-no-fexcore` tooling test checks the script the iOS
+packaging runs to keep FEXCore out of every iOS product.
 
 ## Performance and external campaigns
 

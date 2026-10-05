@@ -298,10 +298,14 @@ for an absent feature, but its `arm64-absent-sme` record carries the
 record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
 every profile encoding in the generated SVE/SME encoding table
 ([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
-to be undefined. The `arm64-absent-sve` record expects the witness of every
-table encoding outside the profile to be undefined with or without SME. Each
-witness is checked against LLVM MC by the table's generator, and its case
-name gives the encoding's stable id, form, and word.
+to be undefined, and so is the evidence-binding witness of each SVE or SME
+entry without a table row: an alias, which its base instruction's row
+decodes, or MOVT between ZT0 and a general register, which only Debug state
+executes. The `arm64-absent-sve` record expects the witness of every table
+encoding outside the profile to be undefined with or without SME. Each
+witness is checked against LLVM MC by the table's generator or the allocation
+generator, and its case name gives the entry's stable id, encoding or form,
+and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
@@ -348,6 +352,61 @@ page profiles with `--max-failures 0`, and pass both logs to
 `--source` and the current list as `--previous`. A case the current list
 names keeps its feature; a newly failing case is attributed to the newest
 feature whose state the rewrite stripped from it.
+
+## Native SME cases
+
+The producer had no SME model.
+[`tools/arm64-tests/sme-native-corpus.py`](../../../../tools/arm64-tests/sme-native-corpus.py)
+authors the `arm64-sme-native` records from the generated SVE/SME encoding
+table and appends them after the absent-feature step, and
+[`tools/arm64-tests/sme_native_oracle.cpp`](../../../../tools/arm64-tests/sme_native_oracle.cpp)
+observes their outcomes on an SME host. The script's docstring lists what
+each record covers and owns the oracle's request and response formats.
+
+Every native record has `svl` 64, the M4's streaming vector length and the
+only one with native expectations, and the runner runs its cases only where
+an engine's virtual CPU implements SME at that SVL. Each case names the
+profile features it needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`,
+`i8mm`). A case starts with X18 zero, because Darwin clears X18 whenever a
+thread returns to user mode, and forms only addresses with a zero top byte,
+because the host ignores the top byte and the guest's default state does
+not.
+
+The oracle catches a case's traps on a Mach exception port and reads its
+state there, without a signal frame, so streaming state reaches the response
+unchanged. Where the encoding table decides a
+case's legality (each row's witness in every mode it needs and in each mode
+that lacks one, the rows outside the profile, and every FP&SIMD class in
+streaming mode), the script refuses a response that disagrees, so a
+disagreement is a finding about the table, never an expectation. The FP&SIMD
+classes of `absent` inventory entries are left out: the host may implement
+their features (the M4 executes the FEAT_LRCPC3 forms), but the guest's
+result is UNDEFINED, which the absent-feature records expect. A witness the
+architecture leaves CONSTRAINED UNPREDICTABLE, a SIMD&FP load pair with
+`Rt == Rt2`, takes `Rt2 = Rt + 1` instead. The hardware
+decides everything else, including the fault address of a crossing access
+and what a faulting access leaves in its destination.
+
+Regenerate on an SME host, twice from clean directories (the M4 under its
+lease and workdir rules), and require identical responses:
+
+```sh
+python3 -B tools/arm64-tests/sme-native-corpus.py --request sme.request
+sme_native_oracle sme.request sme.response                # on the SME host
+python3 -B tools/arm64-tests/sme-native-corpus.py absent.jsonl native.jsonl \
+  --response sme.response --response sme.response2
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+A regeneration that leaves the request unchanged needs no SME host:
+`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+current native records instead of `--response`. `provenance.json` records the
+script, table, and request hashes and the outcome counts under `sme_native`,
+`build-unit-corpus.py --check` verifies the hashes, and the
+`arm64-instruction-corpus-sme-native` tooling test re-derives every case but
+its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
+with base A64 cases on any arm64 Mac.
 
 ## FEAT_AFP cases
 
