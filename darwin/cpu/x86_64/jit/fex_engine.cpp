@@ -732,8 +732,10 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	return host;
 }
 
-static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT,
-	"the model's kinds are FEXCore's");
+static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT &&
+	static_cast<unsigned>(FpKind::fma) == Core::EMBEDDER_FP_FMA &&
+	fp_fma_negate_odd_addends == Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS,
+	"the model's kinds and flags are FEXCore's");
 
 /* The cold path of an EmbedderFPCheck op: x86's result for the operation the
  * descriptor names, from the sources and host result in FPScratch. */

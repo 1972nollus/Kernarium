@@ -139,6 +139,23 @@ DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
 destination before they write either destination. RDRAND and RDSEED read the
 host CSPRNG through a helper, as the gadget engine does, and always succeed.
 
+SIMD floating point gives x86's results whatever the host's features. The
+maintained series follows each x86 SIMD floating-point operation, or each
+128-bit part of one, with an `EmbedderFPCheck` op that holds the x86 sources
+and tests the host's result in line for the cases where arm64 arithmetic can
+differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
+in integers and SoftFloat because it runs under the guest's FPCR. The model
+covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
+flags, so a check needs only to find the cases. Today they are:
+
+- a NaN result of an arithmetic, square root, horizontal, ADDSUB, DPPS, DPPD
+  or FMA operation: x86 propagates the first source's NaN, keeps the sign of
+  a NaN it subtracts or negates, and generates the negative indefinite;
+- RCPPS, RCPSS, RSQRTPS and RSQRTSS, which never use the host's estimates,
+  whose results depend on FEAT_RPRES: the op divides in line, which lies
+  within x86's error as the gadget engine's quotient does, and sends the
+  denormal, zero, huge and negative inputs to the model.
+
 The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending. The engine does not deliver unmasked SSE or
 x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
@@ -163,4 +180,4 @@ JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The classes are SSE NaN and denormal rules.
+in the same change. The one class left is SSE denormal rules.

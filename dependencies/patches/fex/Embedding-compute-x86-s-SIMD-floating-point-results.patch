@@ -16,6 +16,15 @@ helper returns x86's result there, or records an exit that leaves the
 dispatch before the instruction wrote anything. Register allocation
 treats the op as one that can leave the block.
 
+The arithmetic, square root, horizontal, ADDSUB, DPPS, DPPD and FMA
+operations, SSE and VEX, take the cold path for a NaN result: x86
+propagates the first source's NaN, keeps the sign of a NaN it
+subtracts or negates, and generates the negative indefinite, and a DPPS
+sums each lane in its own order, which picks among NaNs per lane. The
+op takes the x86 sources before FEXCore rearranges them: an FMA's a, b
+and c in x86's order, and ADDSUB's and FMADDSUB's addend before the
+sign flip.
+
 RCPPS, RCPSS, RSQRTPS and RSQRTSS, and their VEX forms, go through the
 op instead of FRECPE and FRSQRTE, whose results depend on FEAT_RPRES
 and differ from x86's: x86 takes a denormal input as zero, returns a
@@ -27,17 +36,17 @@ and sends the inputs needing more to the host.
  FEXCore/Source/CMakeLists.txt                 |   1 +
  .../Interface/Core/Dispatcher/Dispatcher.cpp  |  32 ++++
  .../Interface/Core/Dispatcher/Dispatcher.h    |   1 +
- .../Interface/Core/JIT/EmbedderFloat.cpp      | 154 ++++++++++++++++++
+ .../Interface/Core/JIT/EmbedderFloat.cpp      | 181 ++++++++++++++++++
  .../Interface/Core/JIT/EmbedderMemory.cpp     |   2 +
  FEXCore/Source/Interface/Core/JIT/JIT.cpp     |   1 +
- FEXCore/Source/Interface/Core/JIT/JITClass.h  |  17 ++
- .../Source/Interface/Core/OpcodeDispatcher.h  |  13 ++
- .../Core/OpcodeDispatcher/AVX_128.cpp         |  16 ++
- .../Core/OpcodeDispatcher/Vector.cpp          |  46 ++++++
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |  18 ++
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  19 ++
+ .../Core/OpcodeDispatcher/AVX_128.cpp         |  49 ++++-
+ .../Core/OpcodeDispatcher/Vector.cpp          | 129 ++++++++++++-
  FEXCore/Source/Interface/IR/IR.json           |  11 ++
  .../IR/Passes/RegisterAllocationPass.cpp      |   1 +
- FEXCore/include/FEXCore/Core/CoreState.h      |  46 ++++++
- 13 files changed, 341 insertions(+)
+ FEXCore/include/FEXCore/Core/CoreState.h      |  62 ++++++
+ 13 files changed, 490 insertions(+), 17 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderFloat.cpp
 
 diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
@@ -116,10 +125,10 @@ index dfef9d394280abdedef7f7bedb7e69ac41d61e2e..321975183a7c6370e2e845b32c14d395
    std::array<uint64_t, FallbackABI::FABI_UNKNOWN> ABIPointers {};
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderFloat.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderFloat.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..7bc36eedc47b07ba57f4ce7d602c587693c10d04
+index 0000000000000000000000000000000000000000..44c2d0da0a20fd312929daf0cd3336c30d84bab9
 --- /dev/null
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderFloat.cpp
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,181 @@
 +// SPDX-License-Identifier: MIT
 +/*
 +$info$
@@ -169,6 +178,28 @@ index 0000000000000000000000000000000000000000..7bc36eedc47b07ba57f4ce7d602c5876
 +  } else {
 +    fmov(ARMEmitter::Size::i32Bit, TMP1.W(), Mask.S());
 +    cbnz_OrRestart(ARMEmitter::Size::i32Bit, TMP1, Target);
++  }
++}
++
++// Branches to Target when any of the Bytes bytes of Value's lanes of
++// ElementBytes is a NaN: a scalar's one lane, or a whole vector. No NZCV
++// writes: guest flags may be live.
++void Arm64JITCore::EmbedderFPBranchIfNaN(ARMEmitter::VRegister Value, uint32_t ElementBytes, uint32_t Bytes,
++                                         ARMEmitter::ForwardLabel* Target) {
++  if (Bytes == 16) {
++    // All ones in the lanes that are not NaNs.
++    fcmeq(ElementBytes == 8 ? ARMEmitter::SubRegSize::i64Bit : ARMEmitter::SubRegSize::i32Bit, VTMP1.Q(), Value.Q(), Value.Q());
++    uminv(ARMEmitter::SubRegSize::i32Bit, VTMP1.Q(), VTMP1.Q());
++    fmov(ARMEmitter::Size::i32Bit, TMP1.W(), VTMP1.S());
++    cbz_OrRestart(ARMEmitter::Size::i32Bit, TMP1, Target);
++  } else if (ElementBytes == 8) {
++    fcmeq(ARMEmitter::ScalarRegSize::i64Bit, VTMP1, Value, Value);
++    fmov(ARMEmitter::Size::i64Bit, TMP1, VTMP1.D());
++    cbz_OrRestart(ARMEmitter::Size::i64Bit, TMP1, Target);
++  } else {
++    fcmeq(ARMEmitter::ScalarRegSize::i32Bit, VTMP1, Value, Value);
++    fmov(ARMEmitter::Size::i32Bit, TMP1.W(), VTMP1.S());
++    cbz_OrRestart(ARMEmitter::Size::i32Bit, TMP1, Target);
 +  }
 +}
 +
@@ -242,8 +273,13 @@ index 0000000000000000000000000000000000000000..7bc36eedc47b07ba57f4ce7d602c5876
 +    EmbedderFPEstimate(Desc.Kind() == Core::EMBEDDER_FP_RCP, Desc.Bytes(), Site->Dst, Site->Sources[0], Site->Result, &Site->Entry);
 +    break;
 +  default:
-+    LOGMAN_MSG_A_FMT("Unexpected EmbedderFPCheck kind {}", Desc.Raw & 0xFF);
-+    FEX_UNREACHABLE;
++    // The host differs from x86 only in the NaN it returns: which source's
++    // it propagates, a subtracted NaN's sign and the default NaN's sign.
++    EmbedderFPBranchIfNaN(Site->Result, Desc.ElementBytes(), Desc.Bytes(), &Site->Entry);
++    if (Site->Dst != Site->Result) {
++      mov(Site->Dst.Q(), Site->Result.Q());
++    }
++    break;
 +  }
 +  (void)Bind(&Site->Done);
 +  EmbedderFPSites.push_back(std::move(Site));
@@ -300,10 +336,10 @@ index dac3598a92868fe815ba53991658f76e8ef255f0..7d47a97de5c0b63e868aa34229e3771d
    // A unit that runs no instruction still costs one, so a dispatch always
    // ends; 4095 bounds the cost to an immediate, above any unit's length.
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index 44e4a3680e0f88da8602bc4aeaf30b80efc4b26a..bbbfb5491088b647fa5fc819ddbf3d2c14183d01 100644
+index 44e4a3680e0f88da8602bc4aeaf30b80efc4b26a..c4c68d1e815dded9f421291ddf8939725402f02e 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -163,6 +163,23 @@ private:
+@@ -163,6 +163,24 @@ private:
    EmbedderLoopSite* EmbedderLoopBranch(ARMEmitter::BiDirectionalLabel* Target);
    void EmitEmbedderDivide(bool Signed, IR::OpSize OpSize, ARMEmitter::Register Lower, std::optional<ARMEmitter::Register> Upper,
                            ARMEmitter::Register Divisor, ARMEmitter::Register Quotient, ARMEmitter::Register Remainder);
@@ -322,13 +358,14 @@ index 44e4a3680e0f88da8602bc4aeaf30b80efc4b26a..bbbfb5491088b647fa5fc819ddbf3d2c
 +  fextl::vector<fextl::unique_ptr<EmbedderFPSite>> EmbedderFPSites;
 +  void EmitEmbedderFPSites();
 +  void EmbedderFPBranchIfAny(ARMEmitter::VRegister Mask, uint32_t Bytes, ARMEmitter::ForwardLabel* Target);
++  void EmbedderFPBranchIfNaN(ARMEmitter::VRegister Value, uint32_t ElementBytes, uint32_t Bytes, ARMEmitter::ForwardLabel* Target);
 +  void EmbedderFPEstimate(bool Reciprocal, uint32_t Bytes, ARMEmitter::VRegister Dst, ARMEmitter::VRegister Source,
 +                          ARMEmitter::VRegister Result, ARMEmitter::ForwardLabel* Cold);
    uint64_t EmbedderCurrentRIP {};
    // The instructions the unit runs from its entry to its end, which its entry
    // charges the budget for, and their offsets from the entry in order.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..5b692976944ca269baee8bf42c366b893841569f 100644
+index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..60bfeb8709b51c1165be27e405ef3211f43d01e1 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 @@ -11,6 +11,7 @@
@@ -347,7 +384,15 @@ index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..5b692976944ca269baee8bf42c366b89
  #include <stddef.h>
  #include <utility>
  #include <xxhash.h>
-@@ -1458,6 +1460,17 @@ private:
+@@ -1378,6 +1380,7 @@ private:
+   Ref CVTGPR_To_FPRImpl(OpcodeArgs, IR::OpSize DstElementSize, const X86Tables::DecodedOperand& Src1Op, const X86Tables::DecodedOperand& Src2Op);
+ 
+   Ref DPPOpImpl(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t Mask, IR::OpSize ElementSize);
++  Ref DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t Mask, IR::OpSize ElementSize);
+ 
+   Ref VDPPSOpImpl(OpcodeArgs, const X86Tables::DecodedOperand& Src1, const X86Tables::DecodedOperand& Src2, const X86Tables::DecodedOperand& Imm);
+ 
+@@ -1458,6 +1461,22 @@ private:
    Ref VectorScalarInsertALUOpImpl(OpcodeArgs, IROps IROp, IR::OpSize DstSize, IR::OpSize ElementSize,
                                    const X86Tables::DecodedOperand& Src1Op, const X86Tables::DecodedOperand& Src2Op, bool ZeroUpperBits);
  
@@ -361,70 +406,207 @@ index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..5b692976944ca269baee8bf42c366b89
 +  // no check of it.
 +  Ref EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Source1, Ref Source2 = nullptr, Ref Source3 = nullptr);
 +  bool EmbedderFPChecks(Core::EmbedderFPKind Kind) const;
++  // The same for the result of a host IR op, IROp, of Size bytes: Source1
++  // and Source2 are the x86 sources; a unary operation's is Source2.
++  Ref EmbedderFPArith(IROps IROp, IR::OpSize ElementSize, IR::OpSize Size, Ref Result, Ref Source1, Ref Source2);
++  // An FMA's EMBEDDER_FP_FMA_* flags for its host IR op.
++  static uint32_t EmbedderFMAFlags(IROps IROp);
 +
    Ref VectorScalarUnaryInsertALUOpImpl(OpcodeArgs, IROps IROp, IR::OpSize DstSize, IR::OpSize ElementSize,
                                         const X86Tables::DecodedOperand& Src1Op, const X86Tables::DecodedOperand& Src2Op, bool ZeroUpperBits);
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-index cc04d380cf39dedcade929862a55f9c613d4926f..ff3838f1579a2599bbf94c47fe88d419033d57b4 100644
+index cc04d380cf39dedcade929862a55f9c613d4926f..c0bfa72e47596d1e9c6f7018a19029774390f537 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/AVX_128.cpp
-@@ -205,6 +205,14 @@ void OpDispatchBuilder::AVX128_VectorUnary(OpcodeArgs, IROps IROp, IR::OpSize El
+@@ -190,13 +190,15 @@ void OpDispatchBuilder::AVX128_VectorALU(OpcodeArgs, IROps IROp, IR::OpSize Elem
+   auto Src1 = AVX128_LoadSource_WithOpSize(Op, Op->Src[0], Op->Flags, !Is128Bit);
+   auto Src2 = AVX128_LoadSource_WithOpSize(Op, Op->Src[1], Op->Flags, !Is128Bit);
+   DeriveOp(Result_Low, IROp, _VAdd(OpSize::i128Bit, ElementSize, Src1.Low, Src2.Low));
++  Ref Low = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Result_Low, Src1.Low, Src2.Low);
+ 
+   if (Is128Bit) {
+     auto High = LoadZeroVector(OpSize::i128Bit);
+-    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = High});
++    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Low, .High = High});
+   } else {
+     DeriveOp(Result_High, IROp, _VAdd(OpSize::i128Bit, ElementSize, Src1.High, Src2.High));
+-    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = Result_High});
++    Ref High = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Result_High, Src1.High, Src2.High);
++    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Low, .High = High});
+   }
+ }
+ 
+@@ -205,14 +207,24 @@ void OpDispatchBuilder::AVX128_VectorUnary(OpcodeArgs, IROps IROp, IR::OpSize El
    const auto Is128Bit = SrcSize == Core::CPUState::XMM_SSE_REG_SIZE;
  
    auto Src = AVX128_LoadSource_WithOpSize(Op, Op->Src[0], Op->Flags, !Is128Bit);
 +  if (EmbedderFPEstimate(IROp)) {
 +    // The check computes x86's estimate itself, for each half.
-+    const auto Desc = Core::EmbedderFPDescriptor(*EmbedderFPKindOf(IROp), IR::OpSizeToSize(ElementSize), 16 / IR::OpSizeToSize(ElementSize));
-+    RefPair Result {.Low = EmbedderFPResult(Src.Low, Desc, Src.Low)};
-+    Result.High = Is128Bit ? LoadZeroVector(OpSize::i128Bit) : EmbedderFPResult(Src.High, Desc, Src.High);
++    RefPair Result {.Low = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Src.Low, Src.Low, Src.Low)};
++    Result.High =
++      Is128Bit ? LoadZeroVector(OpSize::i128Bit) : EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Src.High, Src.High, Src.High);
 +    AVX128_StoreResult_WithOpSize(Op, Op->Dest, Result);
 +    return;
 +  }
    DeriveOp(Result_Low, IROp, _VFSqrt(OpSize::i128Bit, ElementSize, Src.Low));
++  Ref Low = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Result_Low, Src.Low, Src.Low);
  
    if (Is128Bit) {
-@@ -666,6 +674,14 @@ void OpDispatchBuilder::AVX128_VectorScalarInsertALU(OpcodeArgs, FEXCore::IR::IR
+     auto High = LoadZeroVector(OpSize::i128Bit);
+-    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = High});
++    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Low, .High = High});
+   } else {
+     DeriveOp(Result_High, IROp, _VFSqrt(OpSize::i128Bit, ElementSize, Src.High));
+-    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = Result_High});
++    Ref High = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Result_High, Src.High, Src.High);
++    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Low, .High = High});
+   }
+ }
+ 
+@@ -666,10 +678,18 @@ void OpDispatchBuilder::AVX128_VectorScalarInsertALU(OpcodeArgs, FEXCore::IR::IR
      Src2.Low = LoadSourceFPR_WithOpSize(Op, Op->Src[1], SrcSize, Op->Flags);
    }
  
 +  if (EmbedderFPEstimate(IROp)) {
 +    // The check computes x86's estimate itself and merges it into Src1.
-+    auto Result_Low =
-+      EmbedderFPResult(Src1.Low, Core::EmbedderFPDescriptor(*EmbedderFPKindOf(IROp), IR::OpSizeToSize(ElementSize), 1), Src2.Low);
++    auto Result_Low = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Src1.Low, Src1.Low, Src2.Low);
 +    AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = LoadZeroVector(OpSize::i128Bit)});
 +    return;
 +  }
 +
    // If OpSize == ElementSize then it only does the lower scalar op
    DeriveOp(Result_Low, IROp, _VFAddScalarInsert(OpSize::i128Bit, ElementSize, Src1.Low, Src2.Low, false));
++  Ref Low = EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Result_Low, Src1.Low, Src2.Low);
    auto High = LoadZeroVector(OpSize::i128Bit);
+-  AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Result_Low, .High = High});
++  AVX128_StoreResult_WithOpSize(Op, Op->Dest, RefPair {.Low = Low, .High = High});
+ }
+ 
+ void OpDispatchBuilder::AVX128_VFCMP(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -1456,7 +1476,7 @@ void OpDispatchBuilder::AVX128_VPERMILImm(OpcodeArgs, IR::OpSize ElementSize) {
+ void OpDispatchBuilder::AVX128_VHADDP(OpcodeArgs, IROps IROp, IR::OpSize ElementSize) {
+   AVX128_VectorBinaryImpl(Op, OpSizeFromSrc(Op), ElementSize, [&](IR::OpSize ElementSize, Ref Src1, Ref Src2) {
+     DeriveOp(Res, IROp, _VFAddP(OpSize::i128Bit, ElementSize, Src1, Src2));
+-    return Res;
++    return EmbedderFPArith(IROp, ElementSize, OpSize::i128Bit, Res, Src1, Src2);
+   });
+ }
+ 
+@@ -1957,15 +1977,18 @@ void OpDispatchBuilder::AVX128_VFMAImpl(OpcodeArgs, IROps IROp, uint8_t Src1Idx,
+ 
+   RefPair Sources[3] = {Dest, Src1, Src2};
+ 
++  // x86 picks among NaNs in a * b + c order, and keeps a NaN's sign.
++  const auto Desc = Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_FMA, IR::OpSizeToSize(ElementSize), 16 / IR::OpSizeToSize(ElementSize), 0,
++                                               EmbedderFMAFlags(IROp));
+   RefPair Result {};
+   DeriveOp(Result_Low, IROp, _VFMLA(OpSize::i128Bit, ElementSize, Sources[Src1Idx - 1].Low, Sources[Src2Idx - 1].Low, Sources[AddendIdx - 1].Low));
+-  Result.Low = Result_Low;
++  Result.Low = EmbedderFPResult(Result_Low, Desc, Sources[Src1Idx - 1].Low, Sources[Src2Idx - 1].Low, Sources[AddendIdx - 1].Low);
+   if (Is128Bit) {
+     Result.High = LoadZeroVector(OpSize::i128Bit);
+   } else {
+     DeriveOp(Result_High, IROp,
+              _VFMLA(OpSize::i128Bit, ElementSize, Sources[Src1Idx - 1].High, Sources[Src2Idx - 1].High, Sources[AddendIdx - 1].High));
+-    Result.High = Result_High;
++    Result.High = EmbedderFPResult(Result_High, Desc, Sources[Src1Idx - 1].High, Sources[Src2Idx - 1].High, Sources[AddendIdx - 1].High);
+   }
+   AVX128_StoreResult_WithOpSize(Op, Op->Dest, Result);
+ }
+@@ -1986,7 +2009,9 @@ void OpDispatchBuilder::AVX128_VFMAScalarImpl(OpcodeArgs, IROps IROp, uint8_t Sr
+ 
+   DeriveOp(Result_Low, IROp,
+            _VFMLAScalarInsert(OpSize::i128Bit, ElementSize, Dest, Sources[Src1Idx - 1], Sources[Src2Idx - 1], Sources[AddendIdx - 1]));
+-  AVX128_StoreResult_WithOpSize(Op, Op->Dest, AVX128_Zext(Result_Low));
++  const auto Desc = Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_FMA, IR::OpSizeToSize(ElementSize), 1, 0, EmbedderFMAFlags(IROp));
++  Ref Result = EmbedderFPResult(Result_Low, Desc, Sources[Src1Idx - 1], Sources[Src2Idx - 1], Sources[AddendIdx - 1]);
++  AVX128_StoreResult_WithOpSize(Op, Op->Dest, AVX128_Zext(Result));
+ }
+ 
+ void OpDispatchBuilder::AVX128_VFMAddSubImpl(OpcodeArgs, bool AddSub, uint8_t Src1Idx, uint8_t Src2Idx, uint8_t AddendIdx) {
+@@ -2017,12 +2042,18 @@ void OpDispatchBuilder::AVX128_VFMAddSubImpl(OpcodeArgs, bool AddSub, uint8_t Sr
+   }
+   auto InvertedSourceLow = _VXor(OpSize::i128Bit, Sources[AddendIdx - 1].Low, ConstantEOR);
+ 
++  // The host negates a NaN addend it subtracts, which x86 does not.
++  const auto Desc =
++    Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_FMA, IR::OpSizeToSize(ElementSize), 16 / IR::OpSizeToSize(ElementSize), 0,
++                               AddSub ? Core::EMBEDDER_FP_FMA_NEGATE_EVEN_ADDENDS : Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS);
+   Result.Low = _VFMLA(OpSize::i128Bit, ElementSize, Sources[Src1Idx - 1].Low, Sources[Src2Idx - 1].Low, InvertedSourceLow);
++  Result.Low = EmbedderFPResult(Result.Low, Desc, Sources[Src1Idx - 1].Low, Sources[Src2Idx - 1].Low, Sources[AddendIdx - 1].Low);
+   if (Is128Bit) {
+     Result.High = LoadZeroVector(OpSize::i128Bit);
+   } else {
+     auto InvertedSourceHigh = _VXor(OpSize::i128Bit, Sources[AddendIdx - 1].High, ConstantEOR);
+     Result.High = _VFMLA(OpSize::i128Bit, ElementSize, Sources[Src1Idx - 1].High, Sources[Src2Idx - 1].High, InvertedSourceHigh);
++    Result.High = EmbedderFPResult(Result.High, Desc, Sources[Src1Idx - 1].High, Sources[Src2Idx - 1].High, Sources[AddendIdx - 1].High);
+   }
+   AVX128_StoreResult_WithOpSize(Op, Op->Dest, Result);
+ }
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-index 2034a1f3b6e759d565d1cadea6e0cff80bed1f44..5cbb62fba5c393979abc20381977c33f4542adac 100644
+index 2034a1f3b6e759d565d1cadea6e0cff80bed1f44..078521af3c23be93dd5d2aa38bf1edf253c2bb28 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
-@@ -359,6 +359,11 @@ Ref OpDispatchBuilder::VectorScalarUnaryInsertALUOpImpl(OpcodeArgs, IROps IROp,
+@@ -269,7 +269,7 @@ void OpDispatchBuilder::VectorALUOp(OpcodeArgs, IROps IROp, IR::OpSize ElementSi
+ 
+   DeriveOp(ALUOp, IROp, _VAdd(Size, ElementSize, Dest, Src));
+ 
+-  StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, ALUOp);
++  StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, EmbedderFPArith(IROp, ElementSize, Size, ALUOp, Dest, Src));
+ }
+ 
+ void OpDispatchBuilder::VectorXOROp(OpcodeArgs) {
+@@ -333,7 +333,7 @@ Ref OpDispatchBuilder::VectorScalarInsertALUOpImpl(OpcodeArgs, IROps IROp, IR::O
+ 
+   // If OpSize == ElementSize then it only does the lower scalar op
+   DeriveOp(ALUOp, IROp, _VFAddScalarInsert(DstSize, ElementSize, Src1, Src2, ZeroUpperBits));
+-  return ALUOp;
++  return EmbedderFPArith(IROp, ElementSize, DstSize, ALUOp, Src1, Src2);
+ }
+ 
+ void OpDispatchBuilder::VectorScalarInsertALUOp(OpcodeArgs, IROps IROp, IR::OpSize ElementSize) {
+@@ -359,9 +359,14 @@ Ref OpDispatchBuilder::VectorScalarUnaryInsertALUOpImpl(OpcodeArgs, IROps IROp,
    Ref Src1 = LoadSourceFPR_WithOpSize(Op, Src1Op, DstSize, Op->Flags);
    Ref Src2 = LoadSourceFPR_WithOpSize(Op, Src2Op, SrcSize, Op->Flags, {.AllowUpperGarbage = true});
  
 +  if (EmbedderFPEstimate(IROp)) {
 +    // The check computes x86's estimate itself and merges it into Src1.
-+    return EmbedderFPResult(Src1, Core::EmbedderFPDescriptor(*EmbedderFPKindOf(IROp), IR::OpSizeToSize(ElementSize), 1), Src2);
++    return EmbedderFPArith(IROp, ElementSize, DstSize, Src1, Src1, Src2);
 +  }
 +
    // If OpSize == ElementSize then it only does the lower scalar op
    DeriveOp(ALUOp, IROp, _VFSqrtScalarInsert(DstSize, ElementSize, Src1, Src2, ZeroUpperBits));
-   return ALUOp;
-@@ -657,6 +662,39 @@ void OpDispatchBuilder::RSqrt3DNowOp(OpcodeArgs, bool Duplicate) {
+-  return ALUOp;
++  return EmbedderFPArith(IROp, ElementSize, DstSize, ALUOp, Src1, Src2);
+ }
+ 
+ void OpDispatchBuilder::VectorScalarUnaryInsertALUOp(OpcodeArgs, IROps IROp, IR::OpSize ElementSize) {
+@@ -657,6 +662,81 @@ void OpDispatchBuilder::RSqrt3DNowOp(OpcodeArgs, bool Duplicate) {
    StoreResultFPR(Op, Result);
  }
  
 +std::optional<Core::EmbedderFPKind> OpDispatchBuilder::EmbedderFPKindOf(IROps IROp) {
 +  switch (IROp) {
++  case OP_VFADD:
++  case OP_VFADDSCALARINSERT: return Core::EMBEDDER_FP_ADD;
++  case OP_VFSUB:
++  case OP_VFSUBSCALARINSERT: return Core::EMBEDDER_FP_SUB;
++  case OP_VFMUL:
++  case OP_VFMULSCALARINSERT: return Core::EMBEDDER_FP_MUL;
++  case OP_VFDIV:
++  case OP_VFDIVSCALARINSERT: return Core::EMBEDDER_FP_DIV;
++  case OP_VFMIN:
++  case OP_VFMINSCALARINSERT: return Core::EMBEDDER_FP_MIN;
++  case OP_VFMAX:
++  case OP_VFMAXSCALARINSERT: return Core::EMBEDDER_FP_MAX;
++  case OP_VFSQRT:
++  case OP_VFSQRTSCALARINSERT: return Core::EMBEDDER_FP_SQRT;
 +  case OP_VFRECP:
 +  case OP_VFRECPSCALARINSERT: return Core::EMBEDDER_FP_RCP;
 +  case OP_VFRSQRT:
 +  case OP_VFRSQRTSCALARINSERT: return Core::EMBEDDER_FP_RSQRT;
++  case OP_VFADDP: return Core::EMBEDDER_FP_HADD;
 +  default: return std::nullopt;
 +  }
 +}
@@ -439,9 +621,9 @@ index 2034a1f3b6e759d565d1cadea6e0cff80bed1f44..5cbb62fba5c393979abc20381977c33f
 +    return false;
 +  }
 +  switch (Kind) {
-+  case Core::EMBEDDER_FP_RCP:
-+  case Core::EMBEDDER_FP_RSQRT: return true;
-+  default: return false;
++  case Core::EMBEDDER_FP_MIN:
++  case Core::EMBEDDER_FP_MAX: return false;
++  default: return true;
 +  }
 +}
 +
@@ -452,24 +634,119 @@ index 2034a1f3b6e759d565d1cadea6e0cff80bed1f44..5cbb62fba5c393979abc20381977c33f
 +  return _EmbedderFPCheck(Result, Source1, Source2 ? Source2 : Source1, Source3 ? Source3 : Source1, Descriptor);
 +}
 +
++Ref OpDispatchBuilder::EmbedderFPArith(IROps IROp, IR::OpSize ElementSize, IR::OpSize Size, Ref Result, Ref Source1, Ref Source2) {
++  const auto Kind = EmbedderFPKindOf(IROp);
++  // FEXCore's 256-bit operations need SVE256; an embedding host has none.
++  if (!Kind || Size > OpSize::i128Bit) {
++    return Result;
++  }
++  const bool Scalar = IROp == OP_VFADDSCALARINSERT || IROp == OP_VFSUBSCALARINSERT || IROp == OP_VFMULSCALARINSERT ||
++                      IROp == OP_VFDIVSCALARINSERT || IROp == OP_VFMINSCALARINSERT || IROp == OP_VFMAXSCALARINSERT ||
++                      IROp == OP_VFSQRTSCALARINSERT || IROp == OP_VFRECPSCALARINSERT || IROp == OP_VFRSQRTSCALARINSERT;
++  const bool Unary = *Kind == Core::EMBEDDER_FP_SQRT || *Kind == Core::EMBEDDER_FP_RCP || *Kind == Core::EMBEDDER_FP_RSQRT;
++  const auto Lanes = Scalar ? 1 : IR::OpSizeToSize(Size) / IR::OpSizeToSize(ElementSize);
++  const auto Desc = Core::EmbedderFPDescriptor(*Kind, IR::OpSizeToSize(ElementSize), Lanes);
++  return Unary ? EmbedderFPResult(Result, Desc, Source2) : EmbedderFPResult(Result, Desc, Source1, Source2);
++}
++
++uint32_t OpDispatchBuilder::EmbedderFMAFlags(IROps IROp) {
++  switch (IROp) {
++  case OP_VFMLS:
++  case OP_VFMLSSCALARINSERT: return Core::EMBEDDER_FP_FMA_NEGATE_ADDEND;
++  case OP_VFNMLA:
++  case OP_VFNMLASCALARINSERT: return Core::EMBEDDER_FP_FMA_NEGATE_PRODUCT;
++  case OP_VFNMLS:
++  case OP_VFNMLSSCALARINSERT: return Core::EMBEDDER_FP_FMA_NEGATE_PRODUCT | Core::EMBEDDER_FP_FMA_NEGATE_ADDEND;
++  default: return 0;
++  }
++}
++
  void OpDispatchBuilder::VectorUnaryOp(OpcodeArgs, IROps IROp, IR::OpSize ElementSize) {
    // In the event of a scalar operation and a vector source, then
    // we can specify the entire vector length in order to avoid
-@@ -665,6 +703,14 @@ void OpDispatchBuilder::VectorUnaryOp(OpcodeArgs, IROps IROp, IR::OpSize Element
+@@ -665,9 +745,15 @@ void OpDispatchBuilder::VectorUnaryOp(OpcodeArgs, IROps IROp, IR::OpSize Element
    const auto Size = OpSizeFromSrc(Op);
    Ref Src = LoadSourceFPR_WithOpSize(Op, Op->Src[0], Size, Op->Flags);
  
 +  if (EmbedderFPEstimate(IROp)) {
 +    // The check computes x86's estimate itself.
-+    const auto Desc = Core::EmbedderFPDescriptor(*EmbedderFPKindOf(IROp), IR::OpSizeToSize(ElementSize),
-+                                                 IR::OpSizeToSize(Size) / IR::OpSizeToSize(ElementSize));
-+    StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, EmbedderFPResult(Src, Desc, Src));
++    StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, EmbedderFPArith(IROp, ElementSize, Size, Src, Src, Src));
 +    return;
 +  }
 +
    DeriveOp(ALUOp, IROp, _VFSqrt(Size, ElementSize, Src));
  
-   StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, ALUOp);
+-  StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, ALUOp);
++  StoreResult_WithAVXInsert(VectorOpType::SSE, RegClass::FPR, Op, EmbedderFPArith(IROp, ElementSize, Size, ALUOp, Src, Src));
+ }
+ 
+ void OpDispatchBuilder::AVXVectorUnaryOp(OpcodeArgs, IROps IROp, IR::OpSize ElementSize) {
+@@ -3495,19 +3581,25 @@ void OpDispatchBuilder::MOVQ2DQ(OpcodeArgs, bool ToXMM) {
+ }
+ 
+ Ref OpDispatchBuilder::ADDSUBPOpImpl(OpSize Size, IR::OpSize ElementSize, Ref Src1, Ref Src2) {
++  // The host negates a NaN it subtracts, which x86 does not.
++  const auto Desc = Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_ADDSUB, IR::OpSizeToSize(ElementSize),
++                                               IR::OpSizeToSize(Size) / IR::OpSizeToSize(ElementSize));
++  const auto Check = [&](Ref Result) {
++    return Size > OpSize::i128Bit ? Result : EmbedderFPResult(Result, Desc, Src1, Src2);
++  };
+   if (CTX->HostFeatures.SupportsFCMA) {
+     if (ElementSize == OpSize::i32Bit) {
+       auto Swizzle = _VRev64(Size, OpSize::i32Bit, Src2);
+-      return _VFCADD(Size, ElementSize, Src1, Swizzle, 90);
++      return Check(_VFCADD(Size, ElementSize, Src1, Swizzle, 90));
+     } else {
+       auto Swizzle = _VExtr(Size, OpSize::i8Bit, Src2, Src2, 8);
+-      return _VFCADD(Size, ElementSize, Src1, Swizzle, 90);
++      return Check(_VFCADD(Size, ElementSize, Src1, Swizzle, 90));
+     }
+   } else {
+     auto ConstantEOR =
+       LoadAndCacheNamedVectorConstant(Size, ElementSize == OpSize::i32Bit ? NAMED_VECTOR_PADDSUBPS_INVERT : NAMED_VECTOR_PADDSUBPD_INVERT);
+     auto InvertedSource = _VXor(Size, Src2, ConstantEOR);
+-    return _VFAdd(Size, ElementSize, Src1, InvertedSource);
++    return Check(_VFAdd(Size, ElementSize, Src1, InvertedSource));
+   }
+ }
+ 
+@@ -3833,7 +3925,13 @@ void OpDispatchBuilder::VPMULHRSWOp(OpcodeArgs) {
+ Ref OpDispatchBuilder::HSUBPOpImpl(OpSize SrcSize, IR::OpSize ElementSize, Ref Src1, Ref Src2) {
+   auto Even = _VUnZip(SrcSize, ElementSize, Src1, Src2);
+   auto Odd = _VUnZip2(SrcSize, ElementSize, Src1, Src2);
+-  return _VFSub(SrcSize, ElementSize, Even, Odd);
++  Ref Result = _VFSub(SrcSize, ElementSize, Even, Odd);
++  if (SrcSize > OpSize::i128Bit) {
++    return Result;
++  }
++  return EmbedderFPResult(
++    Result, Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_HSUB, IR::OpSizeToSize(ElementSize), IR::OpSizeToSize(SrcSize) / IR::OpSizeToSize(ElementSize)),
++    Src1, Src2);
+ }
+ 
+ void OpDispatchBuilder::HSUBP(OpcodeArgs, IR::OpSize ElementSize) {
+@@ -4482,6 +4580,21 @@ void OpDispatchBuilder::AVXPHMINPOSUWOp(OpcodeArgs) {
+ }
+ 
+ Ref OpDispatchBuilder::DPPOpImpl(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t Mask, IR::OpSize ElementSize) {
++  Ref Result = DPPOpImplHost(DstSize, Src1, Src2, Mask, ElementSize);
++  // The host broadcasts one sum where x86 sums each lane in its own order,
++  // which picks among NaNs differently. With no product or no lane selected,
++  // the result is zero.
++  const uint8_t SizeMask = ElementSize == OpSize::i32Bit ? 0b1111 : 0b11;
++  if (DstSize > OpSize::i128Bit || ((Mask >> 4) & SizeMask) == 0 || (Mask & SizeMask) == 0) {
++    return Result;
++  }
++  return EmbedderFPResult(Result,
++                          Core::EmbedderFPDescriptor(Core::EMBEDDER_FP_DPP, IR::OpSizeToSize(ElementSize),
++                                                     IR::OpSizeToSize(DstSize) / IR::OpSizeToSize(ElementSize), Mask),
++                          Src1, Src2);
++}
++
++Ref OpDispatchBuilder::DPPOpImplHost(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t Mask, IR::OpSize ElementSize) {
+   const auto SizeMask = [ElementSize]() {
+     if (ElementSize == OpSize::i32Bit) {
+       return 0b1111;
 diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
 index 41d3ef24184df15817f813b9ed8c5addef024ed9..4e2c1ce4bfe08782dab921ca5cbd51d6d7b27055 100644
 --- a/FEXCore/Source/Interface/IR/IR.json
@@ -505,10 +782,10 @@ index 32a824116c1164ced7db716cbf36ad7ac1752ec3..526d47617cae8a6c01f031b39472a6ec
      case OP_VLOADNONTEMPORAL:
      case OP_VSTORENONTEMPORAL:
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 2f297326c44966ea191e01fb6187ede5a54e2fe5..41fdb140ab4334b7e6a1f3d7af41007679bf4076 100644
+index 2f297326c44966ea191e01fb6187ede5a54e2fe5..06e458fadd09e95ff86b82cc5741e0d0442d7ed6 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
-@@ -388,6 +388,43 @@ constexpr uint8_t EMBEDDER_SIGNAL_SYSCALL = 0xFE;
+@@ -388,6 +388,59 @@ constexpr uint8_t EMBEDDER_SIGNAL_SYSCALL = 0xFE;
  // ... and for integer divide errors (#DE).
  constexpr uint8_t EMBEDDER_SIGNAL_DIVIDE = 0xFD;
  
@@ -527,7 +804,23 @@ index 2f297326c44966ea191e01fb6187ede5a54e2fe5..41fdb140ab4334b7e6a1f3d7af410076
 +  EMBEDDER_FP_SQRT,
 +  EMBEDDER_FP_RCP,
 +  EMBEDDER_FP_RSQRT,
++  // HADDPS/PD and HSUBPS/PD: pairs of Source1, then of Source2.
++  EMBEDDER_FP_HADD,
++  EMBEDDER_FP_HSUB,
++  // ADDSUBPS/PD: even lanes subtract.
++  EMBEDDER_FP_ADDSUB,
++  // DPPS/DPPD, with the immediate.
++  EMBEDDER_FP_DPP,
++  // Source1 * Source2 + Source3, with EMBEDDER_FP_FMA_* flags.
++  EMBEDDER_FP_FMA,
 +};
++
++// An EMBEDDER_FP_FMA's signs: the product negated, and the addend negated
++// in every lane, in the even lanes or in the odd ones.
++constexpr uint32_t EMBEDDER_FP_FMA_NEGATE_PRODUCT = 1U << 0;
++constexpr uint32_t EMBEDDER_FP_FMA_NEGATE_ADDEND = 1U << 1;
++constexpr uint32_t EMBEDDER_FP_FMA_NEGATE_EVEN_ADDENDS = 2U << 1;
++constexpr uint32_t EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS = 3U << 1;
 +
 +// An EmbedderFPCheck descriptor. Bits 0-7: the kind. Bits 8-9: the element,
 +// log2 of its bytes minus one (0 half, 1 single, 2 double), of the source
@@ -552,7 +845,7 @@ index 2f297326c44966ea191e01fb6187ede5a54e2fe5..41fdb140ab4334b7e6a1f3d7af410076
  // REP MOVS/STOS performed by the host on behalf of the JIT.
  struct EmbedderStringOp {
    uint64_t Dest;
-@@ -437,6 +474,13 @@ struct JITPointers {
+@@ -437,6 +490,13 @@ struct JITPointers {
    uint64_t EmbedderStringHelper {};
    // uint64_t (*)(): a value from the host's random source for RDRAND and RDSEED.
    uint64_t EmbedderRandomHelper {};
@@ -566,7 +859,7 @@ index 2f297326c44966ea191e01fb6187ede5a54e2fe5..41fdb140ab4334b7e6a1f3d7af410076
  
    FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
    uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
-@@ -554,6 +598,8 @@ struct CpuStateFrame {
+@@ -554,6 +614,8 @@ struct CpuStateFrame {
      // access across a 16-byte granule, and the copy of a locked operand
      // across one.
      alignas(16) uint8_t Bounce[64] {};
