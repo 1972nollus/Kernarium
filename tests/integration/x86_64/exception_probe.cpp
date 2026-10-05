@@ -2558,6 +2558,7 @@ bool gathers()
 	X(movnt_unread, "", "", "movntps %xmm0, (%r8); addq %rcx, %rcx")     \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%r10), %xmm1; addq %rcx, %rcx")                         \
+	X(clzero_unread, "movq %r8, %rax", "", "clzero; addq %rcx, %rcx")    \
 	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
@@ -2888,6 +2889,7 @@ bool fault_state()
 	X(movnt_unread, "", "", "movntps %xmm0, (%edx); addl %ecx, %ecx")    \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%esi), %xmm1; addl %ecx, %ecx")                         \
+	X(clzero_unread, "movl %edx, %eax", "", "clzero; addl %ecx, %ecx")   \
 	X(fld, "fninit; fld1", "", "fldl (%esi)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%esi)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%esi)")                           \

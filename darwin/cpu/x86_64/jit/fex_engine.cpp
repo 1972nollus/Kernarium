@@ -153,6 +153,9 @@ void initialize_fex_once()
 	features.SupportsECV = host.has(ArmFeature::ecv);
 	features.SupportsWFXT = host.has(ArmFeature::wfxt);
 	features.SupportsMOPS = host.has(ArmFeature::mops);
+	/* CLZERO zeroes its line through the guest TLB, as the gadget engine
+	 * does, though CPUID does not report it. */
+	features.SupportsCLZERO = true;
 	/* The prefix builds FEXCore and its SoftFloat without preserve_all, so
 	 * fallbacks use the ordinary call ABI. */
 	features.SupportsPreserveAllABI = false;
