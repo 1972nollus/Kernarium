@@ -12,6 +12,8 @@ namespace uml::cpu::arm64::jit::testing {
 
 struct CompiledCode final {
   std::vector<std::uint32_t> words;
+  /* The executable prefix of words, before the literal pool. */
+  std::size_t executable_words{};
   std::size_t hot_words{};
   std::size_t direct_link_refusals{};
   std::size_t indirect_link_refusals{};
@@ -28,6 +30,31 @@ struct CompiledCode final {
 [[nodiscard]] CompiledCode
 compile_block(std::uint64_t pc,
               std::span<const std::uint32_t> instructions);
+
+/* How compile_block_in_mode() wires the compiler's link operands. */
+enum class LinkShape {
+  unlinked,
+  direct,
+  indirect,
+  tracked,
+};
+
+struct ModeCompilation final {
+  CompiledCode code;
+  /* The keys the direct and indirect link resolvers were asked for, and
+   * those the translation's relocations record. */
+  std::vector<std::uint64_t> direct_keys;
+  std::vector<std::uint64_t> indirect_keys;
+  std::vector<std::uint64_t> relocation_keys;
+};
+
+/* Compiles for the guest SVCR mode `mode` on the scoped host profile
+ * (HostCapabilitiesScope). */
+[[nodiscard]] ModeCompilation
+compile_block_in_mode(std::uint64_t pc,
+                      std::span<const std::uint32_t> instructions,
+                      std::uint8_t mode,
+                      LinkShape shape = LinkShape::unlinked);
 
 [[nodiscard]] CompiledCode
 compile_block_without_table_list_planning(
@@ -71,6 +98,11 @@ compile_two_stable_pointer_loads_for_testing(
 
 [[nodiscard]] std::vector<std::uint32_t>
 materialize_constant_for_testing(unsigned destination, std::uint64_t value);
+
+/* Runs the AdvSIMD-free CNT sequence of streaming translations on value,
+ * as CNT Xd (wide) or CNT Wd. */
+[[nodiscard]] std::uint64_t
+gpr_population_count_for_testing(bool wide, std::uint64_t value);
 
 [[nodiscard]] std::vector<std::uint32_t>
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb);

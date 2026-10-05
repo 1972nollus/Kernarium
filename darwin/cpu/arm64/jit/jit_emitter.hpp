@@ -111,9 +111,22 @@ public:
             unsigned mask);
   void compare_register(unsigned left, unsigned right);
   void emit_internal_flag_clobber(std::uint32_t instruction);
+  /* A host ABI call. In a streaming translation it first leaves streaming
+   * mode, spilling the guest's vector state; every caller is a terminal
+   * helper whose return reaches the epilogue. */
   void call(const void *function);
   void call_preserving_flags(const void *function);
   void branch_register(unsigned reg);
+  /* The CpuState::sme_host_mode the translation runs in
+   * (jit::jit_sme_host_mode()). A nonzero mode puts the enter sequence at
+   * the end of the external prologue, before the internal entry, and the
+   * leave sequence before every host call and in the epilogue. */
+  void set_sme_host_mode(std::uint8_t mode) noexcept {
+    sme_host_mode_ = mode;
+  }
+  [[nodiscard]] std::uint8_t sme_host_mode() const noexcept {
+    return sme_host_mode_;
+  }
   void prologue();
   void epilogue();
   void return_constant(Event event, std::size_t instructions);
@@ -136,11 +149,19 @@ public:
    */
   [[nodiscard]] bool relocatable() const noexcept { return relocatable_; }
 
+  /* Valid after finish(): the words before the literal pool's padding and
+   * data, which no branch reaches. */
+  [[nodiscard]] std::size_t executable_words() const noexcept {
+    return executable_words_;
+  }
+
 private:
   static constexpr std::size_t unbound =
       std::numeric_limits<std::size_t>::max();
 
   void patch(Label label, BranchKind kind, std::uint32_t instruction);
+  /* Calls a jit_sme_transition.S routine, which preserves NZCV. */
+  void call_transition(const void *routine);
 
   std::vector<std::uint32_t> words_;
   std::vector<std::size_t> labels_;
@@ -148,12 +169,14 @@ private:
   std::vector<StablePointerPatch> literal_patches_;
   std::vector<JitRelocation> relocations_;
   bool relocatable_{true};
+  std::size_t executable_words_{};
   std::size_t literal_range_words_{};
   bool valid_{true};
   void *exit_context_{};
   ExitFlush exit_flush_{};
   void *flag_context_{};
   FlagClobber flag_clobber_{};
+  std::uint8_t sme_host_mode_{};
 };
 
 [[nodiscard]] constexpr std::size_t

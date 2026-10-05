@@ -165,6 +165,8 @@ public:
    */
   struct CodegenProfile final {
     ::uml::cpu::HostCapabilities capabilities{};
+    /* The guest SVCR mode the translation was compiled for. */
+    std::uint8_t sme_mode{};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.

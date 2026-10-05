@@ -4,6 +4,7 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 
 #include <array>
 #include <cstddef>
@@ -99,11 +100,13 @@ void valid_contract_unavailable_is_guest_illegal() {
   constexpr std::uint64_t guarded_base = 0x4fb1'0000;
   require_undefined_compilation(guarded_base, guarded_pop);
   first_word_illegal(855, guarded_base, guarded_pop);
-  // Nor does it implement FEAT_SSBS, FEAT_SME, FEAT_HBC, FEAT_CMPBR,
-  // FEAT_XS, or FEAT_WFxT.
+  // Nor does it implement FEAT_SSBS, FEAT_HBC, FEAT_CMPBR, FEAT_XS, or
+  // FEAT_WFxT, or FEAT_SME without the host's SME profile.
+  if (!uml::cpu::arm64::implements_sme(uml::cpu::host_capabilities()))
+    require_undefined_compilation(guarded_base + 0x1000,
+                                  0xd503'477fU); // smstart
   for (const std::uint32_t instruction : {
            0xd503'413fU, // msr ssbs, #1
-           0xd503'477fU, // smstart
            0x5400'0030U, // bc.eq .+4
            0x7400'0022U, // cbgt w2, w0, .+4
            0xd503'323fU, // dsb oshnxs

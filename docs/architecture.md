@@ -374,6 +374,28 @@ every listed entry in the images each tree links and fails on an AdvSIMD
 word executed in streaming mode, a helper called there, or an indirect
 call.
 
+The JIT implements the same control core (`sme_support` is `control`):
+SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and
+ADDSPL, and LDR, STR and ZERO of ZA and ZT0. Every other SVE and SME word,
+and every FP&SIMD word in streaming mode, is its illegal-instruction exit.
+It keys every translation, link and indirect site by the guest's SVCR mode
+as well as its PC, so a block runs only in the mode it was translated for;
+mode 0 translations are unchanged. A guest write of SVCR ends its block. An
+SM=1 translation keeps the guest's Z, P, ZA and ZT0 in the identically
+numbered host registers: its external prologue enters streaming mode and
+fills them from the register file, and every epilogue and host helper call
+first leaves streaming mode and spills them. Helpers are terminal, so no
+SM=1 code runs after one, and a TLB miss takes a streaming bridge that
+leaves and re-enters around the walker. The transitions preserve NZCV and
+FPCR, and SM=1 code emits no AdvSIMD instruction of its own. XNU resets
+FPSR on every kernel entry while a thread is in streaming mode, so SM=1
+code keeps the guest's FPCR and FPSR in `CpuState`, never in the host's
+registers. SM=0
+translations run with the host's SME off and hold no SVE or SME
+instruction: they reach ZA and ZT0 in the register file with GPR copies.
+SM=1 code reads SVL with RDSVL and SM=0 code from `CpuState`, so no
+translation depends on it.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

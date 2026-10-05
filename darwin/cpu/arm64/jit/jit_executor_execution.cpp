@@ -14,6 +14,15 @@
 
 namespace uml::cpu::arm64 {
 
+namespace {
+
+/* The SVCR mode of the translation cpu's next block runs. */
+[[nodiscard]] std::uint8_t guest_translation_mode(const CpuState &cpu) noexcept {
+  return static_cast<std::uint8_t>(cpu.svcr & svcr_mask);
+}
+
+} // namespace
+
 [[nodiscard]] Event JitExecutor::Implementation::run_block(CpuState &cpu, StaticGuestMemory &memory,
                               unsigned long generation,
                               std::size_t &executed) {
@@ -48,9 +57,29 @@ namespace uml::cpu::arm64 {
     mapping_changes_ = sequences.mapping_changes;
   }
   prepare_links(generation, sequences.code_changes);
-  const auto block_pc = cpu.pc;
+  /*
+   * The guest SVCR mode selects the translation (translation_key()). Only
+   * a run that implements SME can be in a nonzero mode, and the state that
+   * mode makes live is accessible before any of its code runs. Nothing
+   * here changes SVCR before the block runs, so each use reads it from
+   * CpuState rather than keeping it live across this dispatch path.
+   */
+  if (guest_translation_mode(cpu) != 0U) [[unlikely]] {
+    if (cpu.sme_registers == nullptr || !implements_sme(host_capabilities_))
+      return Event::fatal;
+    if ((cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U)
+      return Event::pc_alignment;
+    cpu.access_sme_state();
+    /* XNU resets FPSR on every kernel entry while a thread is in streaming
+     * mode, so SM=1 code keeps the guest's FPCR and FPSR in CpuState and
+     * never runs with the native environment active. */
+    if ((cpu.svcr & svcr_sm) != 0U)
+      arm64::restore_native_fp_environment(cpu);
+  }
+  const auto block_key =
+      translation_key(cpu.pc, guest_translation_mode(cpu));
   const auto pending_source = consume_pending_indirect(
-      cpu, generation, sequences.code_changes, block_pc);
+      cpu, generation, sequences.code_changes, block_key);
 
   /*
    * Enabled guest exception traps and single steps are rare.  Keep them
@@ -61,8 +90,10 @@ namespace uml::cpu::arm64 {
    * register-only FP/SIMD operation can be committed transactionally.
    */
   const auto guest_fpcr = cpu.effective_fpcr();
+  /* Streaming mode never traps a floating-point exception. */
   if (single_step_ ||
-      arm64::detail::enabled_exception_flags(guest_fpcr) != 0U) {
+      (arm64::detail::enabled_exception_flags(guest_fpcr) != 0U &&
+       (cpu.svcr & svcr_sm) == 0U)) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     indirect_link_diagnostics_.unsafe_target_refusals +=
         pending_source.has_value();
@@ -70,9 +101,10 @@ namespace uml::cpu::arm64 {
     return run_floating_exception_mode(cpu, memory, executed);
   }
 
-  auto *block =
-      find(generation, sequences.code_changes, cpu.pc, memory);
+  auto *block = find(generation, sequences.code_changes, block_key, memory);
   if (block == nullptr) {
+    const auto mode = guest_translation_mode(cpu);
+    const auto key = translation_key(cpu.pc, mode);
     std::array<std::uint32_t, maximum_block_instructions> instructions{};
     std::size_t count = 0;
     while (count < instructions.size()) {
@@ -114,7 +146,7 @@ namespace uml::cpu::arm64 {
      */
     const auto fetched = std::span{instructions}.first(count);
     auto *shared = install_shared_translation(
-        generation, sequences.code_changes, cpu.pc, fetched);
+        generation, sequences.code_changes, cpu.pc, mode, fetched);
     if (shared != nullptr) {
       block = shared;
     } else {
@@ -122,6 +154,7 @@ namespace uml::cpu::arm64 {
           this, &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
       };
+      compiler.set_sme_mode(mode);
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
       const auto compiled = compiler.compile(cpu.pc, fetched);
@@ -150,7 +183,7 @@ namespace uml::cpu::arm64 {
                   ? std::shared_ptr<const std::uint32_t[]>{}
                   : translation->guest_words;
           return &store_native(
-              generation, sequences.code_changes, cpu.pc,
+              generation, sequences.code_changes, key,
               sign_jit_function<JitFunction>(stored.code), internal_entry,
               stored.target_link, candidate.relocations,
               stored.direct_link_refusals,
@@ -172,10 +205,11 @@ namespace uml::cpu::arm64 {
         jit::detail::ExecutableArena::StoredBlock stored{.links_exhausted = true};
         if (compiled.indirect_link_refusals == 0 || indirect_links_.size() == 0)
           stored = arena_.store_block(
-              cpu.pc, compiled.words, compiled.relocations, {}, links_,
-              empty_link_, generation);
+              key, compiled.words,
+              compiled.relocations, {}, links_, empty_link_, generation);
         if (stored) {
-          auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
+          auto shared =
+              publish_shared_translation(cpu.pc, mode, fetched, compiled);
           block = install_compilation(compiled, stored, shared);
         } else {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -197,6 +231,7 @@ namespace uml::cpu::arm64 {
               this, &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
+          retry_compiler.set_sme_mode(mode);
           const auto retry_compiled = retry_compiler.compile(
               cpu.pc, std::span{instructions}.first(count));
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -208,12 +243,13 @@ namespace uml::cpu::arm64 {
           if (!valid_compilation(retry_compiled))
             return run_single_instruction(cpu, instructions[0], executed);
           stored = arena_.store_block(
-              cpu.pc, retry_compiled.words, retry_compiled.relocations, {},
-              links_, empty_link_, generation);
+              key, retry_compiled.words,
+              retry_compiled.relocations, {}, links_, empty_link_,
+              generation);
           if (!stored)
             return run_single_instruction(cpu, instructions[0], executed);
-          auto shared =
-              publish_shared_translation(cpu.pc, fetched, retry_compiled);
+          auto shared = publish_shared_translation(cpu.pc, mode, fetched,
+                                                   retry_compiled);
           block = install_compilation(retry_compiled, stored, shared);
         }
       }
@@ -245,6 +281,7 @@ namespace uml::cpu::arm64 {
     }
     chain.link_selector = checked_link_selector(link_capabilities);
     const auto result = function(&cpu, &tlb_, &chain);
+    debug_check_host_streaming_state(host_capabilities_);
     if (tracked_stores)
       jit::semantic::invalidate_store_ranges(
           std::span<const JitStoreRange>{tracked_store_ranges_}.first(
@@ -312,13 +349,15 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
   std::array<std::uint32_t, maximum_block_instructions> instructions{};
   for (std::size_t index = 0; index < block.instruction_count; ++index) {
     if (!memory.fetch(
-            block.pc + index * sizeof(std::uint32_t),
+            translation_key_pc(block.key) + index * sizeof(std::uint32_t),
             std::as_writable_bytes(std::span{&instructions[index], 1})))
       return nullptr;
   }
   JitCompiler compiler{nullptr, nullptr, true};
+  compiler.set_sme_mode(translation_key_mode(block.key));
   const auto compiled = compiler.compile(
-      block.pc, std::span{instructions}.first(block.instruction_count));
+      translation_key_pc(block.key),
+      std::span{instructions}.first(block.instruction_count));
   if (compiled.words.empty() ||
       compiled.guest_instructions != block.instruction_count ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
@@ -351,8 +390,11 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   if (!fetch_instruction(memory, cpu.pc, instruction))
     return Event::memory_fault;
 
+  /* The transaction below runs on a copy of CpuState, which would alias
+   * the SME register file; streaming mode needs none, as it never traps. */
   const auto guest_fpcr = cpu.effective_fpcr();
-  if (!arm64::detail::needs_floating_exception_transaction(guest_fpcr,
+  if ((cpu.svcr & svcr_sm) != 0U ||
+      !arm64::detail::needs_floating_exception_transaction(guest_fpcr,
                                                            instruction))
     return run_single_instruction(cpu, instruction, executed);
 
@@ -363,7 +405,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   arm64::restore_native_fp_environment(cpu);
   cpu.access_fp_state();
   const auto translation =
-      translate_single_instruction(cpu.pc, instruction, false);
+      translate_single_instruction(cpu.pc, instruction, false, cpu.svcr);
   /*
    * The transactional class is register-only FP/SIMD data processing. A
    * translation that could not be built, or that would write memory the
@@ -414,8 +456,10 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
 [[nodiscard]] std::optional<
     JitExecutor::Implementation::SingleInstructionTranslation>
 JitExecutor::Implementation::translate_single_instruction(
-    std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
+    std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores,
+    std::uint8_t mode) {
   JitCompiler compiler{nullptr, nullptr, track_direct_stores};
+  compiler.set_sme_mode(mode);
   const auto compiled =
       compiler.compile(pc, std::span{&instruction, std::size_t{1}});
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||
@@ -480,7 +524,7 @@ JitExecutor::Implementation::translate_single_instruction(
     CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
   executed = 0;
   const auto translation =
-      translate_single_instruction(cpu.pc, instruction, false);
+      translate_single_instruction(cpu.pc, instruction, false, cpu.svcr);
   if (!translation)
     return Event::fatal;
   std::uint32_t deferred_exclusive = 0;
@@ -495,7 +539,7 @@ JitExecutor::Implementation::translate_single_instruction(
                                         executed, deferred_exclusive);
     } else {
       const auto tracked =
-          translate_single_instruction(cpu.pc, instruction, true);
+          translate_single_instruction(cpu.pc, instruction, true, cpu.svcr);
       if (!tracked || tracked->direct_memory_write_mask !=
                           translation->direct_memory_write_mask)
         return Event::fatal;
@@ -580,7 +624,8 @@ void JitExecutor::Implementation::record_pending_indirect(void *pointer, std::ui
   }
   pending_indirect_ = {
       .source_pc = source_pc,
-      .target_pc = cpu.pc,
+      .target_key =
+          translation_key(cpu.pc, translation_key_mode(source_pc)),
       .cpu = &cpu,
       .generation = generation,
       .code_changes = changes,
@@ -595,14 +640,14 @@ void JitExecutor::Implementation::record_pending_indirect(void *pointer, std::ui
 [[nodiscard]] std::optional<std::uint64_t>
 JitExecutor::Implementation::consume_pending_indirect(CpuState &cpu, unsigned long generation,
                          std::uint64_t changes,
-                         std::uint64_t target_pc) noexcept {
+                         std::uint64_t target_key) noexcept {
   const auto pending = pending_indirect_;
   pending_indirect_ = {};
   if (!pending.valid || pending.cpu != &cpu ||
       pending.generation != generation ||
       pending.code_changes != changes ||
       pending.link_epoch != link_epoch_ ||
-      pending.target_pc != target_pc) {
+      pending.target_key != target_key) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     indirect_link_diagnostics_.scope_rejections += pending.valid;
 #endif

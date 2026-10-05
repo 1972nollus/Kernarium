@@ -33,5 +33,12 @@ uml_arm64_jit_execute_ordered(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_simd_structure(CpuState *, Tlb *,
                                      std::uint32_t) noexcept;
+/* SME (jit_semantic_sme.cpp): a guest write of SVCR (MSR SVCR, SMSTART,
+ * SMSTOP), and the slow path of the control core's ZA and ZT0 forms. Both
+ * run on the register file, which the leave sequence has filled. */
+extern "C" std::uint64_t
+uml_arm64_jit_write_svcr(CpuState *, Tlb *, std::uint32_t) noexcept;
+extern "C" std::uint64_t
+uml_arm64_jit_execute_sme(CpuState *, Tlb *, std::uint32_t) noexcept;
 
 } // namespace uml::cpu::arm64

@@ -48,6 +48,12 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
     table_list_planning_enabled_ = enabled;
   }
 
+void JitCompiler::set_sme_mode(std::uint8_t mode) noexcept {
+    JitCompilerFamilies::set_sme_mode(mode);
+    emitter_.set_sme_host_mode(jit::jit_sme_host_mode(
+        sme_mode(), sme_profile(host_capabilities()) == SmeProfile::sme2));
+  }
+
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
     return compile_once(guest_pc, instructions);
@@ -56,15 +62,21 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions) {
     begin_link_observation();
-    select_constrained_vector_pins(instructions);
-    if (table_list_planning_enabled_)
-      select_consecutive_vector_lists(instructions);
+    /* A streaming translation never binds a host vector register: AdvSIMD
+     * is illegal there, and the guest's vectors stay in the host's own. */
+    const bool streaming = streaming_translation();
+    if (!streaming) {
+      select_constrained_vector_pins(instructions);
+      if (table_list_planning_enabled_)
+        select_consecutive_vector_lists(instructions);
+    }
     emitter_.prologue();
     const auto internal_entry_word = emitter_.size();
     while (count_ < instructions.size()) {
       const auto pc = guest_pc + count_ * sizeof(std::uint32_t);
-      if (const auto run = try_emit_simd_unsigned_run(
-              instructions.subspan(count_), pc);
+      if (const auto run = streaming ? std::size_t{0}
+                                     : try_emit_simd_unsigned_run(
+                                           instructions.subspan(count_), pc);
           run != 0) {
         accesses_fp_state_ = true;
         count_ += run;
@@ -84,8 +96,11 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       }
       if (try_emit_native_exclusive_run(instructions.subspan(count_), pc))
         continue;
-      if (const auto run = try_emit_memory_copy_set_sequence(
-              instructions.subspan(count_), pc);
+      /* The inline copy uses AdvSIMD; streaming code takes the helper. */
+      if (const auto run =
+              streaming ? std::size_t{0}
+                        : try_emit_memory_copy_set_sequence(
+                              instructions.subspan(count_), pc);
           run != 0) {
         count_ += run;
         continue;
@@ -192,6 +207,10 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         emit_memory_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::memory_copy_set_slow) {
         emit_memory_copy_set(cold.instruction, cold.pc, cold.count, 3U);
+      } else if (cold.action == ColdPath::Action::sme_slow) {
+        emit_terminal_helper(
+            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sme),
+            cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
         emitter_.emit(0xd503'3f5fU); // clrex
         clear_local_exclusive_monitor();
@@ -202,6 +221,7 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto words = emitter_.finish();
     Result result{
         .words = words,
+        .executable_words = emitter_.executable_words(),
         .relocations = emitter_.relocations(),
         .relocatable = emitter_.relocatable(),
         .direct_link_refusals = direct_link_refusals(),
@@ -453,6 +473,12 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       copy_source_to_scratch();
       mask_register(8, fpcr_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpcr));
+      /* A streaming translation keeps the guest's FPCR and FPSR in
+       * CpuState and never takes the native environment: XNU resets FPSR
+       * on every kernel entry while a thread is in streaming mode, and no
+       * FP instruction runs there at the control core. */
+      if (streaming_translation())
+        return true;
       mask_register(
           8, fpcr_mask & ~arm64::detail::fpcr_exception_enable_mask, false);
       emitter_.emit(0xd51b'4408U); // msr fpcr, x8
@@ -460,15 +486,20 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       return true;
     case 0xd53b'4420U:             // FPSR
       write_destination([&](unsigned destination) {
-        emitter_.emit(0xd53b'4420U | destination);
+        if (streaming_translation())
+          emitter_.load_w(destination, 15, offsetof(CpuState, fpsr));
+        else
+          emitter_.emit(0xd53b'4420U | destination);
         mask_register(destination, arm64::fpsr_writable_mask, false);
       });
-      native_fp_ = true;
+      native_fp_ = native_fp_ || !streaming_translation();
       return true;
     case 0xd51b'4420U:
       copy_source_to_scratch();
       mask_register(8, arm64::fpsr_writable_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpsr));
+      if (streaming_translation())
+        return true;
       emitter_.emit(0xd51b'4428U); // msr fpsr, x8
       native_fp_ = true;
       return true;

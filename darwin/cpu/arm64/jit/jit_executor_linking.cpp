@@ -46,9 +46,11 @@ JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
   return site;
 }
 
-void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
+void JitExecutor::Implementation::train_indirect(std::uint64_t source_key,
                     const CompiledBlock &target) {
-  auto *site = indirect_links_.find(source_pc, link_generation_);
+  /* consume_pending_indirect() matched the target with the key of the
+   * site's own mode, so the site never links to code of another mode. */
+  auto *site = indirect_links_.find(source_key, link_generation_);
   if (site == nullptr || target.link == nullptr ||
       target.link_epoch != link_epoch_ || !target.link_target_safe) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -62,9 +64,11 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
     site->next_active = link_context_->active_indirect_links;
     link_context_->active_indirect_links = site;
   }
+  /* Generated code compares a cell with the guest's branch target. */
+  const auto target_pc = translation_key_pc(target.key);
   for (std::size_t index = 0; index < site->entries.size(); ++index) {
     auto &entry = site->entries[index];
-    if (entry.guest_pc != target.pc)
+    if (entry.guest_pc != target_pc)
       continue;
     entry.link = target.link;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -80,7 +84,7 @@ void JitExecutor::Implementation::train_indirect(std::uint64_t source_pc,
    * key from ever exposing an uninitialized pointer during diagnostics.
    */
   entry.link = target.link;
-  entry.guest_pc = target.pc;
+  entry.guest_pc = target_pc;
   site->next_replacement ^= 1U;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   ++indirect_link_diagnostics_.trains;
@@ -150,14 +154,14 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
 }
 
 void JitExecutor::Implementation::refresh_cached_link_target(
-    std::uint64_t pc) {
+    std::uint64_t key) {
   if (link_generation_ == 0)
     return;
   auto &set = (*block_cache_)[cache_index(
-      link_generation_, pc, geometry_.cache_sets)];
+      link_generation_, key, geometry_.cache_sets)];
   for (auto &block : set.ways) {
     if (block.function == nullptr || block.generation != link_generation_ ||
-        block.code_changes != link_code_changes_ || block.pc != pc)
+        block.code_changes != link_code_changes_ || block.key != key)
       continue;
     refresh_link(block);
     return;
