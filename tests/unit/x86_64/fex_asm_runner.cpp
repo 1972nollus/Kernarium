@@ -781,9 +781,8 @@ constexpr std::uint32_t vector_general_protection = 13;
 	cpu.execution_mode = configuration.mode;
 	if (configuration.mode ==
 		uml::cpu::x86_64::ExecutionMode::compat32) {
-		print_result("unsupported_mode", 0, cpu.rip, {},
-			"the x86-64 JIT runs 64-bit code only", test);
-		return 1;
+		cpu.segment_selectors[1] = 0x23;
+		cpu.segment_selectors[2] = 0x2b;
 	}
 	auto &harness = jit_harness();
 	const auto generation = harness.begin(configuration.mode,
@@ -1560,7 +1559,8 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
  * a repeated string instruction retires once however many elements it moves
  * and a loop retires every pass, across dispatches when it outlasts one. A
  * store into the code of the block running it stops that block too, and a
- * case that names RAX checks that the run went on with the new code. */
+ * case that names RAX checks that the run went on with the new code. The
+ * compat32 cases hold 32-bit code to the same rules. */
 struct RetirementCase final {
 	std::string_view name;
 	std::vector<std::uint8_t> code;
@@ -1569,6 +1569,8 @@ struct RetirementCase final {
 	std::size_t retired{};
 	std::uint64_t address{};
 	std::optional<std::uint64_t> rax{};
+	uml::cpu::x86_64::ExecutionMode mode{
+		uml::cpu::x86_64::ExecutionMode::long64};
 };
 
 [[nodiscard]] std::vector<RetirementCase> retirement_cases()
@@ -1596,6 +1598,28 @@ struct RetirementCase final {
 		     {0x1005, 0xf4}})
 		crossing[offset] = byte;
 	std::fill(crossing.begin() + 7, crossing.begin() + 0xf, 0x90);
+	constexpr auto compat32 = uml::cpu::x86_64::ExecutionMode::compat32;
+	const auto le32 = [](std::uint64_t value) {
+		return std::array<std::uint8_t, 4>{
+			static_cast<std::uint8_t>(value),
+			static_cast<std::uint8_t>(value >> 8U),
+			static_cast<std::uint8_t>(value >> 16U),
+			static_cast<std::uint8_t>(value >> 24U)};
+	};
+	/* movb $0x90, 1f; movb $0x90, 1f+1; 1: inc %eax; hlt, through
+	 * absolute addresses. */
+	const auto first = le32(code_address + 14);
+	const auto second = le32(code_address + 15);
+	const std::vector<std::uint8_t> code_write32{0xc6, 0x05, first[0],
+		first[1], first[2], first[3], 0x90, 0xc6, 0x05, second[0],
+		second[1], second[2], second[3], 0x90, 0xff, 0xc0, 0xf4};
+	/* mov $data, %edx; movl $1f, (%edx); movw $0x23, 4(%edx);
+	 * mov $data+0x800, %esp; lcall *(%edx); hlt; 1: lret */
+	const auto target = le32(code_address + 25);
+	const std::vector<std::uint8_t> far_call32{0xba, 0x00, 0x00, 0x00,
+		0x20, 0xc7, 0x02, target[0], target[1], target[2], target[3], 0x66,
+		0xc7, 0x42, 0x04, 0x23, 0x00, 0xbc, 0x00, 0x08, 0x00, 0x20, 0xff,
+		0x1a, 0xf4, 0xcb};
 	return {
 		/* nop; nop; mov $0x30000000, %rbx; mov (%rbx), %rax; nop; hlt */
 		{"load-fault", {0x90, 0x90, 0x48, 0xc7, 0xc3, 0x00, 0x00, 0x00, 0x30,
@@ -1711,6 +1735,53 @@ struct RetirementCase final {
 			0x08, 0x00, 0x20, 0x00, 0x00, 0xc5, 0xfa, 0x6f, 0x17, 0xc5, 0xf1,
 			0x76, 0xc9, 0xc4, 0xe2, 0xf1, 0x91, 0x04, 0x17, 0x90, 0xf4},
 			{{data, data + 0x1000}}, "memory_fault", 4, code_address + 22},
+		/* nop; nop; mov $0x30000000, %ebx; mov (%ebx), %eax; nop; hlt */
+		{"compat32-load-fault", {0x90, 0x90, 0xbb, 0x00, 0x00, 0x00, 0x30,
+			0x8b, 0x03, 0x90, 0xf4}, {}, "memory_fault", 3, code_address + 7,
+			{}, compat32},
+		/* nop; nop; ud2; nop; hlt */
+		{"compat32-ud2", {0x90, 0x90, 0x0f, 0x0b, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2, {}, compat32},
+		/* nop; nop; SYSCALL, undefined outside 64-bit mode; nop; hlt */
+		{"compat32-syscall", {0x90, 0x90, 0x0f, 0x05, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2, {}, compat32},
+		/* nop; nop; SYSENTER; nop; hlt */
+		{"compat32-sysenter", {0x90, 0x90, 0x0f, 0x34, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2, {}, compat32},
+		/* nop; nop; les (%edx), %eax; nop; hlt */
+		{"compat32-les", {0x90, 0x90, 0xc4, 0x02, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2, {}, compat32},
+		/* nop; mov $265, %eax; xor %ebx, %ebx; int $0x80; nop; hlt */
+		{"compat32-int-0x80", {0x90, 0xb8, 0x09, 0x01, 0x00, 0x00, 0x31,
+			0xdb, 0xcd, 0x80, 0x90, 0xf4}, {}, "passed", 5, code_address + 11,
+			{}, compat32},
+		/* mov $0x7fffffff, %eax; add $1, %eax; into; nop; hlt */
+		{"compat32-into", {0xb8, 0xff, 0xff, 0xff, 0x7f, 0x83, 0xc0, 0x01,
+			0xce, 0x90, 0xf4}, {}, "unexpected_event", 3, code_address + 9,
+			{}, compat32},
+		/* mov $data, %edx; mov $7, %eax; bound %eax, (%edx), whose bounds
+		 * are 0 and 0; nop; hlt */
+		{"compat32-bound", {0xba, 0x00, 0x00, 0x00, 0x20, 0xb8, 0x07, 0x00,
+			0x00, 0x00, 0x62, 0x02, 0x90, 0xf4}, {{data, data + 0x1000}},
+			"unexpected_event", 2, code_address + 10, {}, compat32},
+		/* mov $data+0x10, %esp; pusha, whose stores run below the data;
+		 * nop; hlt */
+		{"compat32-pusha-fault", {0xbc, 0x10, 0x00, 0x00, 0x20, 0x60, 0x90,
+			0xf4}, {{data, data + 0x1000}}, "memory_fault", 1,
+			code_address + 5, {}, compat32},
+		/* mov $10, %ecx; 1: nop; dec %ecx; jnz 1b; hlt: DEC is one byte. */
+		{"compat32-loop", {0xb9, 0x0a, 0x00, 0x00, 0x00, 0x90, 0x49, 0x75,
+			0xfc, 0xf4}, {}, "passed", 31, code_address + 9, {}, compat32},
+		/* mov $data+0xff0, %edi; mov $100, %ecx; xor %eax, %eax; cld;
+		 * rep stosb, which runs off its page; nop; hlt */
+		{"compat32-rep-stosb-fault", {0xbf, 0xf0, 0x0f, 0x00, 0x20, 0xb9,
+			0x64, 0x00, 0x00, 0x00, 0x31, 0xc0, 0xfc, 0xf3, 0xaa, 0x90, 0xf4},
+			{{data, data + 0x1000}}, "memory_fault", 4, code_address + 13, {},
+			compat32},
+		{"compat32-far-call", far_call32, {{data, data + 0x1000}}, "passed",
+			6, code_address + 24, {}, compat32},
+		{"compat32-code-write", code_write32, {}, "passed", 4,
+			code_address + 16, 0, compat32},
 	};
 }
 
@@ -1724,6 +1795,7 @@ struct RetirementCase final {
 			[](std::uint8_t byte) { return std::byte{byte}; });
 		Configuration configuration;
 		configuration.memory_regions = test.regions;
+		configuration.mode = test.mode;
 		if (test.rax) {
 			/* Expectation keys: bit 0 names RIP, bit 1 RAX. */
 			configuration.registers.push_back({1U << 1U, {*test.rax}});

@@ -19,6 +19,12 @@ EMBEDDER_ACCESS_COMMIT, and a repeated CMPS leaves each element's
 flags. A compile checks every write against its buffer's end and
 restarts with a larger buffer, so growth never depends on a guard
 page.
+The host has no other translator to hand an instruction to: one the
+dispatcher refuses, and FEXCore's reserved escapes 0F 3E and 0F 3F,
+raise #UD. A branch or return to guest address 0 finds no lookup
+entry, as for any other address without code. A 32-bit push stores
+before ESP changes. In 64-bit mode MOV to
+FS or GS changes the selector and keeps the base the host set.
 Darwin: executable memory, its release and its write window come only
 from hooks the host must install, so FEXCore maps no executable memory
 itself; x18 stays reserved, and VirtualDontNeed zeroes.
@@ -27,21 +33,23 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/Source/CMakeLists.txt                 |   1 +
  FEXCore/Source/Interface/Context/Context.h    |   7 +
  .../Core/ArchHelpers/Arm64Emitter.cpp         |  16 +-
- FEXCore/Source/Interface/Core/Core.cpp        |  19 +-
+ FEXCore/Source/Interface/Core/Core.cpp        |  32 +-
  .../Interface/Core/Dispatcher/Dispatcher.cpp  |  71 ++-
  .../Interface/Core/Dispatcher/Dispatcher.h    |   8 +
  FEXCore/Source/Interface/Core/Frontend.cpp    |  24 +-
  FEXCore/Source/Interface/Core/Frontend.h      |   4 +
  FEXCore/Source/Interface/Core/JIT/ALUOps.cpp  |  12 +
  .../Source/Interface/Core/JIT/AtomicOps.cpp   | 363 ++++++++-------
- .../Source/Interface/Core/JIT/BranchOps.cpp   |  61 +--
+ .../Source/Interface/Core/JIT/BranchOps.cpp   |  74 ++--
  .../Interface/Core/JIT/EmbedderMemory.cpp     | 416 ++++++++++++++++++
  FEXCore/Source/Interface/Core/JIT/JIT.cpp     | 130 +++++-
  FEXCore/Source/Interface/Core/JIT/JITClass.h  | 102 +++++
  .../Source/Interface/Core/JIT/MemoryOps.cpp   | 409 ++++++++++++++++-
  FEXCore/Source/Interface/Core/JIT/MiscOps.cpp |  12 +
- .../Interface/Core/OpcodeDispatcher.cpp       | 116 ++++-
- .../Source/Interface/Core/OpcodeDispatcher.h  |  39 +-
+ FEXCore/Source/Interface/Core/LookupCache.cpp |   2 +
+ FEXCore/Source/Interface/Core/LookupCache.h   |  11 +-
+ .../Interface/Core/OpcodeDispatcher.cpp       | 134 +++++-
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  42 +-
  .../Core/SharedCodeBufferManager.cpp          |   2 +-
  FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +-
  FEXCore/Source/Interface/IR/Passes.h          |   4 +-
@@ -52,7 +60,7 @@ itself; x18 stays reserved, and VirtualDontNeed zeroes.
  FEXCore/include/FEXCore/Core/CoreState.h      | 114 +++++
  FEXCore/include/FEXCore/HLE/SyscallHandler.h  |   3 +
  .../include/FEXCore/Utils/AllocatorHooks.h    |  82 ++++
- 29 files changed, 1921 insertions(+), 233 deletions(-)
+ 31 files changed, 1979 insertions(+), 235 deletions(-)
  create mode 100644 FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 
 diff --git a/CodeEmitter/CodeEmitter/Buffer.h b/CodeEmitter/CodeEmitter/Buffer.h
@@ -204,7 +212,7 @@ index 729aa63aba645b1d70650d301bbf50a4c42798dc..5467ba7beb6a8063e02fa7c164d27c82
    // All are caller saved
    constexpr std::array<ARMEmitter::VRegister, 16> SRAFPR = {
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..32ab9b3c4bae04995940360cc5daa7ac54e76a6e 100644
+index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..41a0730345621207b69276805b6926b08a5eeb03 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -380,6 +380,12 @@ void ContextImpl::HandleCallback(FEXCore::Core::InternalThreadState* Thread, uin
@@ -220,7 +228,15 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..32ab9b3c4bae04995940360cc5daa7ac
  void ContextImpl::ExecuteThread(FEXCore::Core::InternalThreadState* Thread) {
    // Update the thread pointer for Thunk return to the latest.
    Thread->CurrentFrame->Pointers.ThunkCallbackRet = SignalDelegation->GetThunkCallbackRET();
-@@ -631,9 +637,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -618,6 +624,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+ #endif
+ 
+         bool IsLocked = DecodedInfo->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_LOCK;
++        bool Refused = false;
+ 
+         // Do a partial register cache flush before every instruction. This
+         // prevents cross-instruction static register caching, while allowing
+@@ -631,9 +638,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
          // It is potentially correctness bearing in that sense, but that is a
          // side effect here and (if that behaviour is required) we should handle
          // that more explicitly later.
@@ -235,7 +251,33 @@ index a39c9a130b0ea158a5c085c4d104ea180e41b5f1..32ab9b3c4bae04995940360cc5daa7ac
            Thread->OpDispatcher->_GuestOpcode(InstAddress - GuestRIP);
          }
  
-@@ -747,6 +756,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -681,6 +691,7 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+           std::invoke(Fn, Thread->OpDispatcher, DecodedInfo);
+           if (Thread->OpDispatcher->HadDecodeFailure()) {
+             HadDispatchError = true;
++            Refused = true;
+           } else {
+             if (Thread->OpDispatcher->HasHandledLock() != IsLocked) {
+               HadDispatchError = true;
+@@ -717,6 +728,17 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+           HadInvalidInst = true;
+         }
+ 
++        if (Embedded && Refused && TotalInstructions == 0) {
++          // An embedding host has no other translator to hand the
++          // instruction to: one the dispatcher refuses, which it does before
++          // emitting any of it, is undefined to the guest, as an encoding
++          // the decoder rejects is.
++          Thread->OpDispatcher->ResetDecodeFailure();
++          Thread->OpDispatcher->UnimplementedOp(DecodedInfo);
++          HadDispatchError = false;
++          HadInvalidInst = true;
++        }
++
+         const bool NeedsBlockEnd = (HadDispatchError && TotalInstructions > 0) ||
+                                    (Thread->OpDispatcher->NeedsBlockEnder() && i + 1 == InstsInBlock) || HadInvalidInst;
+ 
+@@ -747,6 +769,12 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
      }
  #endif
  
@@ -927,10 +969,30 @@ index 014a8c690593e3db86d4abb59c4294a9c63e589b..46400f94ddffc4b0fa166d795d4234dd
  
  DEF_OP(TelemetrySetValue) {
 diff --git a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-index d555e0648a8e854a412f961491049a924692955e..09f54d1c8ef1da9654ae84f87f1933e4bd69ef92 100644
+index d555e0648a8e854a412f961491049a924692955e..f63eb08d9e336ab688f5f9d568ab2819721acbd2 100644
 --- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
-@@ -242,35 +242,42 @@ DEF_OP(Jump) {
+@@ -193,7 +193,18 @@ DEF_OP(ExitFunction) {
+       // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
+       ldp<ARMEmitter::IndexType::POST>(TMP1, TMP2, REG_CALLRET_SP, 0x10);
+       sub(TMP1, TMP1, RipReg.X());
+-      (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipFullLookup);
++      if (Embedded()) {
++        // An empty entry, pushed by a call without a return block, zeroed
++        // by an invalidation or never written above the dispatch's first
++        // entry, holds no host code but matches a return to guest address
++        // 0, which must fault in the guest.
++        ARMEmitter::ForwardLabel FullLookup;
++        (void)cbnz(ARMEmitter::Size::i64Bit, TMP1, &FullLookup);
++        (void)cbnz(ARMEmitter::Size::i64Bit, TMP2, &SkipFullLookup);
++        (void)Bind(&FullLookup);
++      } else {
++        (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipFullLookup);
++      }
+     }
+ 
+     // L1 Cache
+@@ -242,35 +253,42 @@ DEF_OP(Jump) {
  DEF_OP(CondJump) {
    auto Op = IROp->C<IR::IROp_CondJump>();
  
@@ -2481,8 +2543,57 @@ index b03ed7db8b89c288c796021827d58324e3fb1981..0635b6f1143fda41f10fd2ef36551818
    LoadConstant(ARMEmitter::Size::i64Bit, TMP1, Constant);
    str(TMP1, STATE, offsetof(FEXCore::Core::CpuStateFrame, SynchronousFaultData));
  
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
+index 0b230306f038539587cf7ca1e390fa516a520829..e7af8fa1bf8ed74c72e2ccfe8b66f99e31292c7b 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -68,6 +68,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+     // Start at maximum instead.
+     L1PointerMask = MAX_L1_ENTRIES - 1;
+   }
++  ResetFirstL1Entry();
+ }
+ 
+ LookupCache::~LookupCache() {
+@@ -90,6 +91,7 @@ void LookupCache::ClearThreadLocalCaches(const LookupCacheWriteLockToken&) {
+   // TODO: Preserve code cache entries?
+   // Clear L1 and L2 by clearing the full cache.
+   FEXCore::Allocator::VirtualDontNeed(reinterpret_cast<void*>(PagePointer), TotalCacheSize, false);
++  ResetFirstL1Entry();
+ 
+   // TODO: Rename this member to avoid confusion with code caching
+   CachedCodePages.clear();
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
+index bf958d80beb5beaf33e34d5cb0cf60051dab254f..eeb3eb17a450127e468b6763528e9904bae3c8e1 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -303,7 +303,7 @@ public:
+     // Do L1
+     auto& L1Entry = reinterpret_cast<LookupCacheEntry*>(L1Pointer)[Address & L1PointerMask];
+     if (L1Entry.GuestCode == Address) {
+-      L1Entry.GuestCode = 0;
++      L1Entry.GuestCode = (Address & L1PointerMask) == 0 ? EmptyFirstL1Key : 0;
+       // Leave L1Entry.HostCode as is, so that concurrent lookups won't read a null pointer
+       // This is a soft guarantee for cross thread invalidation, as atomics are not used
+       // and it hasn't been thoroughly tested
+@@ -445,6 +445,15 @@ private:
+   uintptr_t L1Pointer;
+   uintptr_t L1PointerMask;
+ 
++  // An empty L1 entry's key. Zero, which a cleared entry holds, is no
++  // address that indexes an entry other than the first; the first holds
++  // 1, which indexes the second, so a branch to guest address 0 never
++  // takes an empty entry's host code.
++  constexpr static uint64_t EmptyFirstL1Key = 1;
++  void ResetFirstL1Entry() {
++    reinterpret_cast<LookupCacheEntry*>(L1Pointer)[0].GuestCode = EmptyFirstL1Key;
++  }
++
+   size_t TotalCacheSize;
+ 
+   // Start with 8k entries in L1 to give 128KB of L1 cache to each thread.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2fb537072 100644
+index 31f9eddc09274d28c74201068c0ba436f9fb069c..7f2fa97525301235e9f37524e4abae1370dec08c 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -69,6 +69,29 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
@@ -2515,7 +2626,31 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
    auto NewRIP = GetRelocatedPC(Op, -Op->InstSize);
    _StoreContextGPR(GPRSize, NewRIP, offsetof(FEXCore::Core::CPUState, rip));
  
-@@ -498,7 +521,7 @@ void OpDispatchBuilder::LEAVEOp(OpcodeArgs) {
+@@ -109,6 +132,12 @@ void OpDispatchBuilder::SyscallOp(OpcodeArgs, bool IsSyscallInst) {
+ }
+ 
+ void OpDispatchBuilder::ThunkOp(OpcodeArgs) {
++  // FEX's reserved encodings name host services an embedding host does
++  // not offer; to its guest they are undefined, as on hardware.
++  if (CTX->Embedded) {
++    UnimplementedOp(Op);
++    return;
++  }
+   const auto GPRSize = GetGPROpSize();
+   uint8_t* sha256 = (uint8_t*)(Op->PC + 2);
+ 
+@@ -216,6 +245,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+ }
+ 
+ void OpDispatchBuilder::CallbackReturnOp(OpcodeArgs) {
++  if (CTX->Embedded) {
++    UnimplementedOp(Op);
++    return;
++  }
+   const auto GPRSize = GetGPROpSize();
+   // Store the new RIP
+   _CallbackReturn();
+@@ -498,7 +531,7 @@ void OpDispatchBuilder::LEAVEOp(OpcodeArgs) {
    const auto OperandSize = (Op->Flags & FEXCore::X86Tables::DecodeFlags::FLAG_OPERAND_SIZE) ? OpSize::i16Bit : GPRSize;
  
    // First we move RBP in to RSP and then behave effectively like a pop
@@ -2524,7 +2659,29 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
    auto NewGPR = Pop(OperandSize, SP);
  
    // Store the new stack pointer
-@@ -2992,7 +3015,7 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
+@@ -1287,6 +1320,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+       if (!Is64BitMode) {
+         _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, gs_idx));
+         UpdatePrefixFromSegment(Src, FEXCore::X86Tables::DecodeFlags::FLAG_GS_PREFIX);
++      } else if (CTX->Embedded) {
++        // An embedding host keeps the base arch_prctl set; only the
++        // selector changes.
++        _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, gs_idx));
+       } else {
+         LogMan::Msg::EFmt("We don't support modifying GS selector in 64bit mode!");
+         DecodeFailure = true;
+@@ -1297,6 +1334,10 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+       if (!Is64BitMode) {
+         _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, fs_idx));
+         UpdatePrefixFromSegment(Src, FEXCore::X86Tables::DecodeFlags::FLAG_FS_PREFIX);
++      } else if (CTX->Embedded) {
++        // An embedding host keeps the base arch_prctl set; only the
++        // selector changes.
++        _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, fs_idx));
+       } else {
+         LogMan::Msg::EFmt("We don't support modifying FS selector in 64bit mode!");
+         DecodeFailure = true;
+@@ -2992,7 +3033,7 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
  
    const auto PushValue = [&](IR::OpSize Size, Ref Src) -> Ref {
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);
@@ -2533,7 +2690,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
  
      // Store the new stack pointer
      StoreGPRRegister(X86State::REG_RSP, NewSP);
-@@ -3353,6 +3376,74 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
+@@ -3353,6 +3394,74 @@ void OpDispatchBuilder::CMPSOp(OpcodeArgs) {
      } else {
        StoreGPRRegister(X86State::REG_RSI, Dest_RSI, AddrSize);
      }
@@ -2608,7 +2765,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
    } else {
      // Calculate flags early.
      CalculateDeferredFlags();
-@@ -4195,6 +4286,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
+@@ -4195,6 +4304,12 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
  }
  
  void OpDispatchBuilder::UpdatePrefixFromSegment(Ref Segment, uint32_t SegmentReg) {
@@ -2621,7 +2778,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
    // Use BFE to extract the selector index in bits [15,3] of the segment register.
    // In some cases the upper 16-bits of the 32-bit GPR contain garbage to ignore.
    auto GDT = _Bfe(OpSize::i32Bit, 1, 2, Segment);
-@@ -4780,7 +4877,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4780,7 +4895,9 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
      if (CTX->HostFeatures.HostType == FEXCore::HostFeatures::HostTypeEnum::Linux) {
        constexpr uint8_t SYSCALL_LITERAL = 0x80;
        if (Literal == SYSCALL_LITERAL) {
@@ -2632,7 +2789,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
            LogMan::Msg::EFmt("[Unsupported] Trying to execute 32-bit syscall from a 64-bit process.");
            UnhandledOp(Op);
            return;
-@@ -4808,6 +4907,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
+@@ -4808,6 +4925,17 @@ void OpDispatchBuilder::INTOp(OpcodeArgs) {
        }
      }
  
@@ -2651,7 +2808,7 @@ index 31f9eddc09274d28c74201068c0ba436f9fb069c..1e0ce543fa2a76b351d82beb43461af2
      Reason.Signal = Core::FAULT_SIGSEGV;
      // GP is raised when task-gate isn't setup to be valid
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..8beba9d145cb78910acabc131131c3e95abf768e 100644
+index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..ff317b73759503d524f8db0855f22d6a8b48f239 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 @@ -342,6 +342,10 @@ public:
@@ -2665,7 +2822,7 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..8beba9d145cb78910acabc131131c3e9
  
    // Dispatch builder functions
  #define OpcodeArgs [[maybe_unused]] FEXCore::X86Tables::DecodedOp Op
-@@ -2566,13 +2570,44 @@ private:
+@@ -2566,13 +2570,47 @@ private:
      return _StoreMemPairAutoTSO(RegClass::FPR, Size, A, Value1, Value2, Align);
    }
  
@@ -2687,9 +2844,12 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..8beba9d145cb78910acabc131131c3e9
 +      _StoreMem(RegClass::GPR, Size, Value, OldSP, Constant(-Bytes), OpSize::i8Bit, MemOffsetType::SXTX, 1);
 +      return Sub(AddrSize, OldSP, Bytes);
 +    }
-+    Ref NewSP = Sub(AddrSize, OldSP, Bytes);
-+    _StoreMem(RegClass::GPR, Size, Value, NewSP, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
-+    return NewSP;
++    // A 32-bit address wraps at 4 GiB, so it is a subtraction of its own:
++    // a node RSP is not written from, which the allocator never places in
++    // RSP's static register.
++    Ref Address = Sub(AddrSize, OldSP, Bytes);
++    _StoreMem(RegClass::GPR, Size, Value, Address, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    return Sub(AddrSize, OldSP, Bytes);
 +  }
 +
 +  Ref Pop(IR::OpSize Size, Ref& SP_RMW) {
@@ -2711,7 +2871,7 @@ index e2239ae0ed3ae550a0c2ff6cc8efc268e6d25c83..8beba9d145cb78910acabc131131c3e9
      Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
      Ref Value = _AllocateGPR(false);
  
-@@ -2592,7 +2627,7 @@ private:
+@@ -2592,7 +2630,7 @@ private:
  
    void Push(IR::OpSize Size, Ref Value) {
      auto OldSP = LoadGPRRegister(X86State::REG_RSP);

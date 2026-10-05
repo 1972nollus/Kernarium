@@ -10,103 +10,67 @@ instructions changed state before their last access could fault:
 
 - A read-modify-write wrote the flags before its store found the page
   read-only, so ADC, SBB, RCL and RCR ran again with the carry they
-  had computed. The backend now finds each load whose bytes a store of
-  the same instruction writes and translates it with
-  EMBEDDER_ACCESS_READ_WRITE, so the write fault, or the end of a unit
-  that stores into its own code, comes at the load.
+  had computed. A pass before register allocation now finds each load
+  whose bytes a store of the same instruction writes, and the backend
+  translates it with EMBEDDER_ACCESS_READ_WRITE, so the write fault,
+  or the end of a unit that stores into its own code, comes at the
+  load.
 - POP to memory updated RSP before its store. The store now comes
-  first, its address formed from a node of its own.
+  first, its address formed from a node of its own. PUSHA, a far CALL
+  and ENTER store from the old stack pointer before they change it,
+  a 16-bit ENTER changing BP alone, and POPA probes its whole frame
+  first.
 - FLDENV, FRSTOR, FXRSTOR, XRSTOR and IRET loaded state from the first
   part of their operand before a later part faulted, and FLDENV did
   not read all of it. A new EmbedderProbe op faults as a load of the
   whole operand would, and each of them probes its operand first.
+- Register allocation coalesced a value with the static register a
+  later store wrote, so the register took the value where it was
+  computed, before an access between there and the store could fault:
+  a constant shared with an earlier instruction's address changed AF
+  before that instruction's load faulted. Embedded, a value is not
+  coalesced when an operation that can leave the block, a guest
+  access or a divide that raises #DE, lies between it and its store.
 ---
- .../Interface/Core/JIT/EmbedderMemory.cpp     | 80 +++++++++++++++++++
- FEXCore/Source/Interface/Core/JIT/JIT.cpp     |  5 ++
- FEXCore/Source/Interface/Core/JIT/JITClass.h  | 11 +++
- .../Source/Interface/Core/JIT/MemoryOps.cpp   |  4 +-
- .../Interface/Core/OpcodeDispatcher.cpp       | 18 +++++
- .../Core/OpcodeDispatcher/Vector.cpp          |  9 +++
- .../Interface/Core/OpcodeDispatcher/X87.cpp   |  8 ++
- FEXCore/Source/Interface/IR/IR.json           |  8 ++
- FEXCore/include/FEXCore/Core/CoreState.h      |  3 +
- 9 files changed, 144 insertions(+), 2 deletions(-)
+ FEXCore/Source/CMakeLists.txt                 |   1 +
+ .../Interface/Core/JIT/EmbedderMemory.cpp     |  13 ++
+ FEXCore/Source/Interface/Core/JIT/JIT.cpp     |   1 +
+ FEXCore/Source/Interface/Core/JIT/JITClass.h  |   7 +
+ .../Source/Interface/Core/JIT/MemoryOps.cpp   |   4 +-
+ .../Interface/Core/OpcodeDispatcher.cpp       |  86 +++++++++++-
+ .../Core/OpcodeDispatcher/Vector.cpp          |   9 ++
+ .../Interface/Core/OpcodeDispatcher/X87.cpp   |   8 ++
+ FEXCore/Source/Interface/IR/IR.json           |   8 ++
+ FEXCore/Source/Interface/IR/PassManager.cpp   |   5 +
+ FEXCore/Source/Interface/IR/Passes.h          |   1 +
+ .../IR/Passes/EmbedderReadsForWritePass.cpp   | 124 ++++++++++++++++++
+ .../IR/Passes/EmbedderReadsForWritePass.h     |  35 +++++
+ .../IR/Passes/RegisterAllocationPass.cpp      |  73 ++++++++++-
+ FEXCore/include/FEXCore/Core/CoreState.h      |   3 +
+ 15 files changed, 371 insertions(+), 7 deletions(-)
+ create mode 100644 FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.cpp
+ create mode 100644 FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h
 
+diff --git a/FEXCore/Source/CMakeLists.txt b/FEXCore/Source/CMakeLists.txt
+index e144d0fe4e8995e7df4e3e9d8637c0001d259b3e..b2760ec61dd3318ac402ddd16cdc730737c3d5fc 100644
+--- a/FEXCore/Source/CMakeLists.txt
++++ b/FEXCore/Source/CMakeLists.txt
+@@ -62,6 +62,7 @@ set(SRCS
+   Interface/IR/IRDumper.cpp
+   Interface/IR/IREmitter.cpp
+   Interface/IR/PassManager.cpp
++  Interface/IR/Passes/EmbedderReadsForWritePass.cpp
+   Interface/IR/Passes/IRDumperPass.cpp
+   Interface/IR/Passes/IRValidation.cpp
+   Interface/IR/Passes/RedundantFlagCalculationElimination.cpp
 diff --git a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-index 853e48bcef68b7d31a0c431dd60b8026e5c3d2f9..00e22d532f1fbb8d3aed2368a5db256122ce246b 100644
+index 853e48bcef68b7d31a0c431dd60b8026e5c3d2f9..21cfb9810212da76b15258068d55891e1c06e225 100644
 --- a/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/EmbedderMemory.cpp
-@@ -84,6 +84,86 @@ ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Addres
+@@ -84,6 +84,19 @@ ARMEmitter::Register Arm64JITCore::EmbedderTranslate(ARMEmitter::Register Addres
    return TMP1;
  }
  
-+bool Arm64JITCore::EmbedderSameValue(IR::OrderedNodeWrapper A, IR::OrderedNodeWrapper B, unsigned Depth) const {
-+  if (A.ID() == B.ID()) {
-+    return true;
-+  }
-+  if (A.IsInvalid() || B.IsInvalid() || A.IsImmediate() || B.IsImmediate()) {
-+    return false;
-+  }
-+  // The dispatcher forms an operand's address afresh for its load and its
-+  // store, so the two may be equal values in distinct nodes. Only the pure
-+  // operations an address is built from are compared.
-+  const auto* OA = IR->GetOp<IR::IROp_Header>(A);
-+  const auto* OB = IR->GetOp<IR::IROp_Header>(B);
-+  if (OA->Op != OB->Op || OA->Size != OB->Size) {
-+    return false;
-+  }
-+  switch (OA->Op) {
-+  case IR::OP_CONSTANT: return OA->C<IR::IROp_Constant>()->Constant == OB->C<IR::IROp_Constant>()->Constant;
-+  case IR::OP_INLINECONSTANT: return OA->C<IR::IROp_InlineConstant>()->Constant == OB->C<IR::IROp_InlineConstant>()->Constant;
-+  case IR::OP_ENTRYPOINTOFFSET: return OA->C<IR::IROp_EntrypointOffset>()->Offset == OB->C<IR::IROp_EntrypointOffset>()->Offset;
-+  case IR::OP_INLINEENTRYPOINTOFFSET:
-+    return OA->C<IR::IROp_InlineEntrypointOffset>()->Offset == OB->C<IR::IROp_InlineEntrypointOffset>()->Offset;
-+  case IR::OP_LOADCONTEXT: {
-+    // A segment base, which no instruction that also stores memory changes.
-+    const auto* CA = OA->C<IR::IROp_LoadContext>();
-+    const auto* CB = OB->C<IR::IROp_LoadContext>();
-+    return CA->Class == CB->Class && CA->Offset == CB->Offset;
-+  }
-+  case IR::OP_ADD:
-+  case IR::OP_SUB:
-+  case IR::OP_LSHL:
-+    return Depth != 0 && EmbedderSameValue(OA->Args[0], OB->Args[0], Depth - 1) && EmbedderSameValue(OA->Args[1], OB->Args[1], Depth - 1);
-+  case IR::OP_ADDSHIFT: {
-+    const auto* SA = OA->C<IR::IROp_AddShift>();
-+    const auto* SB = OB->C<IR::IROp_AddShift>();
-+    return Depth != 0 && SA->Shift == SB->Shift && SA->ShiftAmount == SB->ShiftAmount &&
-+           EmbedderSameValue(SA->Src1, SB->Src1, Depth - 1) && EmbedderSameValue(SA->Src2, SB->Src2, Depth - 1);
-+  }
-+  default: return false;
-+  }
-+}
-+
-+void Arm64JITCore::EmbedderFindReadsForWrite(IR::Ref CodeNode, const IR::IROp_Header* IROp, fextl::vector<IR::Ref>& Loads) {
-+  // The loads and stores of one instruction; the caller clears the loads
-+  // at each instruction.
-+  if (IROp->Op == IR::OP_LOADMEM || IROp->Op == IR::OP_LOADMEMTSO) {
-+    Loads.push_back(CodeNode);
-+    return;
-+  }
-+  if (IROp->Op != IR::OP_STOREMEM && IROp->Op != IR::OP_STOREMEMTSO) {
-+    return;
-+  }
-+  // LoadMem and LoadMemTSO, and StoreMem and StoreMemTSO, share a layout.
-+  static_assert(offsetof(IR::IROp_LoadMem, Addr) == offsetof(IR::IROp_LoadMemTSO, Addr));
-+  static_assert(offsetof(IR::IROp_LoadMem, OffsetScale) == offsetof(IR::IROp_LoadMemTSO, OffsetScale));
-+  static_assert(offsetof(IR::IROp_StoreMem, Addr) == offsetof(IR::IROp_StoreMemTSO, Addr));
-+  static_assert(offsetof(IR::IROp_StoreMem, OffsetScale) == offsetof(IR::IROp_StoreMemTSO, OffsetScale));
-+  const auto* Store = IROp->C<IR::IROp_StoreMem>();
-+  for (auto Load : Loads) {
-+    const auto* LoadHeader = IR->GetOp<IR::IROp_Header>(Load);
-+    const auto* Op = LoadHeader->C<IR::IROp_LoadMem>();
-+    if (LoadHeader->Size == IROp->Size && Op->OffsetType == Store->OffsetType && Op->OffsetScale == Store->OffsetScale &&
-+        EmbedderSameValue(Op->Addr, Store->Addr, 3) && EmbedderSameValue(Op->Offset, Store->Offset, 3)) {
-+      EmbedderReadsForWrite[IR->GetID(Load).Value] = true;
-+    }
-+  }
-+}
-+
 +DEF_OP(EmbedderProbe) {
 +  const auto Op = IROp->C<IR::IROp_EmbedderProbe>();
 +  const auto Addr = GetReg(Op->Addr);
@@ -124,45 +88,38 @@ index 853e48bcef68b7d31a0c431dd60b8026e5c3d2f9..00e22d532f1fbb8d3aed2368a5db2561
    const auto Host = EmbedderTranslate(Address, Size, Core::EMBEDDER_ACCESS_ATOMIC);
    auto* Site = EmbedderColdSites.back().get();
 diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-index d852df4c9c57d094de71d041c15d01fd70ac8aa9..a5ab4f19743433c1ef64c27c4d5788edd4362e99 100644
+index d852df4c9c57d094de71d041c15d01fd70ac8aa9..dac3598a92868fe815ba53991658f76e8ef255f0 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
 +++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
-@@ -910,12 +910,17 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
-   // ends; 4095 bounds the cost to an immediate, above any unit's length.
-   EmbedderBlockInstructions = std::clamp<uint32_t>(IR->GetHeader()->NumHostInstructions, 1, 4095);
-   EmbedderInstructionOffsets.clear();
-+  EmbedderReadsForWrite.assign(SSACount, false);
-   if (Embedded()) {
-+    fextl::vector<IR::Ref> Loads;
-     for (auto [BlockNode, BlockHeader] : IR->GetBlocks()) {
-+      Loads.clear();
-       for (auto [CodeNode, IROp] : IR->GetCode(BlockNode)) {
-         if (IROp->Op == IR::OP_GUESTOPCODE) {
-           EmbedderInstructionOffsets.push_back(IROp->C<IR::IROp_GuestOpcode>()->GuestEntryOffset);
-+          Loads.clear();
-         }
-+        EmbedderFindReadsForWrite(CodeNode, IROp, Loads);
-       }
-     }
-     std::sort(EmbedderInstructionOffsets.begin(), EmbedderInstructionOffsets.end());
+@@ -668,6 +668,7 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
+   , TempCodeBufferAllocator(ctx->CPUBackendAllocator, 0) {
+ 
+   RAPass = Thread->PassManager->GetPass<IR::RegisterAllocationPass>("RA");
++  ReadsForWritePass = Thread->PassManager->GetPass<IR::EmbedderReadsForWritePass>("EmbedderReadsForWrite");
+ 
+   RAPass->AddRegisters(IR::RegClass::GPR, GeneralRegisters.size());
+   RAPass->AddRegisters(IR::RegClass::GPRFixed, StaticRegisters.size());
 diff --git a/FEXCore/Source/Interface/Core/JIT/JITClass.h b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-index f8e8e09822b3bf99d05356c92415b5ad14b0d6f5..5f576fae220681973eb600f2064dc739c563e55b 100644
+index f8e8e09822b3bf99d05356c92415b5ad14b0d6f5..44e4a3680e0f88da8602bc4aeaf30b80efc4b26a 100644
 --- a/FEXCore/Source/Interface/Core/JIT/JITClass.h
 +++ b/FEXCore/Source/Interface/Core/JIT/JITClass.h
-@@ -167,6 +167,17 @@ private:
+@@ -13,6 +13,7 @@ $end_info$
+ #include "Interface/Core/JIT/Relocations.h"
+ #include "Interface/IR/IR.h"
+ #include "Interface/IR/IntrusiveIRList.h"
++#include "Interface/IR/Passes/EmbedderReadsForWritePass.h"
+ #include "Interface/IR/RegisterAllocationData.h"
+ 
+ #include <FEXCore/Config/Config.h>
+@@ -167,6 +168,12 @@ private:
    // charges the budget for, and their offsets from the entry in order.
    uint32_t EmbedderBlockInstructions {};
    fextl::vector<uint32_t> EmbedderInstructionOffsets;
-+  // By node ID, the loads of the unit that read what a store of the same
-+  // instruction then writes. They take write permission, so a fault of the
-+  // read-modify-write, a copy-on-write page among them, comes before the
-+  // instruction has changed a register or a flag.
-+  fextl::vector<bool> EmbedderReadsForWrite;
-+  void EmbedderFindReadsForWrite(IR::Ref CodeNode, const IR::IROp_Header* IROp, fextl::vector<IR::Ref>& Loads);
-+  bool EmbedderSameValue(IR::OrderedNodeWrapper A, IR::OrderedNodeWrapper B, unsigned Depth) const;
++  // The loads of the unit that read what a store of the same instruction
++  // then writes, which take write permission.
++  const IR::EmbedderReadsForWritePass* ReadsForWritePass {};
 +  uint64_t EmbedderLoadFlags(IR::Ref Node) const {
-+    const auto ID = IR->GetID(Node).Value;
-+    return ID < EmbedderReadsForWrite.size() && EmbedderReadsForWrite[ID] ? Core::EMBEDDER_ACCESS_READ_WRITE : 0;
++    return ReadsForWritePass && ReadsForWritePass->ReadsForWrite(IR->GetID(Node).Value) ? Core::EMBEDDER_ACCESS_READ_WRITE : 0;
 +  }
    // The instructions of the unit an exit at the current instruction leaves
    // unretired: that one and those after it, less that one when it retired, as
@@ -190,10 +147,10 @@ index f4f029a1fdff5e5da6f2e416bd068fc3e0e43016..fd15aa6db5245409e0673a1a71d868b8
        const auto Dst = GetReg(Node);
        switch (OpSize) {
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 2274726101e1ec5d7023b96ef3e4057989c827db..8a03ce58e3d72ae23d32c64f2986c99c66ae6056 100644
+index 272f638e40a8b7cbb69c91545d7c90bcb686c19f..76959bbeb676af0d6536f1e1e45d496f6918fcef 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -209,6 +209,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
+@@ -215,6 +215,10 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
    const uint32_t Loaded = (UserLoadableFlags | (1U << X86State::RFLAG_RF_LOC)) & (GPRSize == OpSize::i16Bit ? 0xffffU : ~0U);
  
    Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
@@ -204,7 +161,34 @@ index 2274726101e1ec5d7023b96ef3e4057989c827db..8a03ce58e3d72ae23d32c64f2986c99c
  
    // RIP (64/32/16 bits)
    auto NewRIP = Pop(GPRSize, SP);
-@@ -458,6 +462,20 @@ void OpDispatchBuilder::PUSHSegmentOp(OpcodeArgs, uint32_t SegmentReg) {
+@@ -394,6 +398,26 @@ void OpDispatchBuilder::PUSHAOp(OpcodeArgs) {
+ 
+   Ref OldSP = _Copy(LoadGPRRegister(X86State::REG_RSP));
+ 
++  if (CTX->Embedded) {
++    // Every store addresses the stack from the old ESP, lowest first, and
++    // ESP takes a node defined after the last of them: a store that faults
++    // leaves ESP as the instruction found it.
++    const auto Bytes = IR::OpSizeToSize(Size);
++    const Ref Values[] = {
++      LoadGPRRegister(X86State::REG_RDI), LoadGPRRegister(X86State::REG_RSI), LoadGPRRegister(X86State::REG_RBP),
++      OldSP,
++      LoadGPRRegister(X86State::REG_RBX), LoadGPRRegister(X86State::REG_RDX), LoadGPRRegister(X86State::REG_RCX),
++      LoadGPRRegister(X86State::REG_RAX),
++    };
++    constexpr size_t Count = std::size(Values);
++    for (size_t Slot = 0; Slot < Count; ++Slot) {
++      Ref Address = Sub(OpSize::i32Bit, OldSP, Bytes * (Count - Slot));
++      _StoreMem(RegClass::GPR, Size, Values[Slot], Address, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    }
++    StoreGPRRegister(X86State::REG_RSP, Sub(OpSize::i32Bit, OldSP, Bytes * Count));
++    return;
++  }
++
+   Push(Size, LoadGPRRegister(X86State::REG_RAX));
+   Push(Size, LoadGPRRegister(X86State::REG_RCX));
+   Push(Size, LoadGPRRegister(X86State::REG_RDX));
+@@ -468,6 +492,20 @@ void OpDispatchBuilder::PUSHSegmentOp(OpcodeArgs, uint32_t SegmentReg) {
  }
  
  void OpDispatchBuilder::POPOp(OpcodeArgs) {
@@ -225,6 +209,76 @@ index 2274726101e1ec5d7023b96ef3e4057989c827db..8a03ce58e3d72ae23d32c64f2986c99c
    Ref Value = Pop(OpSizeFromSrc(Op));
    StoreResultGPR(Op, Value);
  }
+@@ -477,6 +515,10 @@ void OpDispatchBuilder::POPAOp(OpcodeArgs) {
+   const auto Size = OpSizeFromSrc(Op);
+ 
+   Ref SP = _RMWHandle(LoadGPRRegister(X86State::REG_RSP));
++  if (CTX->Embedded) {
++    // The whole frame is read before any register is loaded from it.
++    _EmbedderProbe(SP, 8 * IR::OpSizeToSize(Size));
++  }
+ 
+   StoreGPRRegister(X86State::REG_RDI, Pop(Size, SP), Size);
+   StoreGPRRegister(X86State::REG_RSI, Pop(Size, SP), Size);
+@@ -998,11 +1040,23 @@ void OpDispatchBuilder::CALLFARIndirectOp(OpcodeArgs) {
+ 
+   auto NewRIP = GetRelocatedPC(Op);
+ 
+-  // Push the current CS
+-  Push(SrcSize, CurrentCS);
++  if (CTX->Embedded) {
++    // Both stores address the stack from the old RSP, which takes a node
++    // defined after them: a store that faults leaves RSP as the
++    // instruction found it.
++    const auto GPRSize = GetGPROpSize();
++    const auto Bytes = IR::OpSizeToSize(SrcSize);
++    Ref OldSP = LoadGPRRegister(X86State::REG_RSP);
++    _StoreMem(RegClass::GPR, SrcSize, NewRIP, Sub(GPRSize, OldSP, 2 * Bytes), Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    _StoreMem(RegClass::GPR, SrcSize, CurrentCS, Sub(GPRSize, OldSP, Bytes), Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    StoreGPRRegister(X86State::REG_RSP, Sub(GPRSize, OldSP, 2 * Bytes));
++  } else {
++    // Push the current CS
++    Push(SrcSize, CurrentCS);
+ 
+-  // Push the return address.
+-  Push(SrcSize, NewRIP);
++    // Push the return address.
++    Push(SrcSize, NewRIP);
++  }
+ 
+   // Set up the new CSSegment.
+   _StoreContextGPR(OpSize::i16Bit, NewSegmentCS, offsetof(FEXCore::Core::CPUState, cs_idx));
+@@ -3050,6 +3104,30 @@ void OpDispatchBuilder::EnterOp(OpcodeArgs) {
+   const uint16_t AllocSpace = Value & 0xFFFF;
+   const uint8_t Level = (Value >> 16) & 0x1F;
+ 
++  if (CTX->Embedded) {
++    // Every store addresses the stack from the old RSP, and RSP and RBP
++    // take nodes defined after the last of them: an access that faults
++    // leaves both as the instruction found them. A 16-bit frame writes BP
++    // alone.
++    const auto Bytes = IR::OpSizeToSize(OperandSize);
++    Ref OldSP = LoadGPRRegister(X86State::REG_RSP);
++    Ref OldBP = LoadGPRRegister(X86State::REG_RBP);
++    const auto StoreSlot = [&](uint64_t Slot, Ref Src) {
++      _StoreMem(RegClass::GPR, OperandSize, Src, Sub(GPRSize, OldSP, Slot * Bytes), Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
++    };
++    StoreSlot(1, OldBP);
++    uint64_t Slots = 1;
++    if (Level > 0) {
++      for (uint8_t i = 1; i < Level; ++i) {
++        StoreSlot(++Slots, _LoadMemGPR(OperandSize, Sub(GPRSize, OldBP, i * Bytes), OperandSize));
++      }
++      StoreSlot(++Slots, Sub(GPRSize, OldSP, Bytes));
++    }
++    StoreGPRRegister(X86State::REG_RSP, Sub(GPRSize, OldSP, Slots * Bytes + AllocSpace));
++    StoreGPRRegister(X86State::REG_RBP, Sub(GPRSize, OldSP, Bytes), OperandSize == OpSize::i16Bit ? OpSize::i16Bit : GPRSize);
++    return;
++  }
++
+   const auto PushValue = [&](IR::OpSize Size, Ref Src) -> Ref {
+     auto OldSP = LoadGPRRegister(X86State::REG_RSP);
+     auto NewSP = CTX->Embedded ? EmbeddedPush(GPRSize, Size, Src, OldSP) : _Push(GPRSize, Size, Src, OldSP);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
 index 1bc61a6760d6fd23bf7e4324677acdf4729f3358..2034a1f3b6e759d565d1cadea6e0cff80bed1f44 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
@@ -297,6 +351,321 @@ index 5d46bdf5724292922fce2d9dd15f98fe9f13292e..41d3ef24184df15817f813b9ed8c5add
        "CacheLineClear GPR:$Addr, i1:$Serialize": {
          "Desc": ["Does a 64 byte cacheline clear at the address specified",
                   "Only clears the data cachelines. Doesn't do any zeroing",
+diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
+index 0f289a2fcdd0ae7b5ea7aa828213692c78174ab5..aaedcc4142dcf8d4f6c8f7d9c8e22b9fece16f8a 100644
+--- a/FEXCore/Source/Interface/IR/PassManager.cpp
++++ b/FEXCore/Source/Interface/IR/PassManager.cpp
+@@ -77,6 +77,11 @@ void PassManager::AddDefaultPasses(Context::ContextImpl* ctx) {
+     InsertPass(CreateDeadFlagCalculationEliminination());
+   }
+ 
++  // Its analysis needs the arguments that register allocation replaces.
++  if (ctx->Embedded) {
++    InsertPass(CreateEmbedderReadsForWritePass(), "EmbedderReadsForWrite");
++  }
++
+   // An embedding host answers CPUID itself, so its results are never folded.
+   InsertPass(IR::CreateRegisterAllocationPass(ctx->Embedded ? nullptr : &ctx->CPUID, ctx->Embedded), "RA");
+ 
+diff --git a/FEXCore/Source/Interface/IR/Passes.h b/FEXCore/Source/Interface/IR/Passes.h
+index bb319307c81e2b31da47b0bfb5b5bbd88195e238..f0d98842499c517ed6a38ff5d23d79cbed6312df 100644
+--- a/FEXCore/Source/Interface/IR/Passes.h
++++ b/FEXCore/Source/Interface/IR/Passes.h
+@@ -12,6 +12,7 @@ namespace FEXCore::IR {
+ class Pass;
+ 
+ fextl::unique_ptr<Pass> CreateDeadFlagCalculationEliminination();
++fextl::unique_ptr<Pass> CreateEmbedderReadsForWritePass();
+ fextl::unique_ptr<Pass> CreateRegisterAllocationPass(const CPUIDEmu* CPUID, bool Embedded);
+ fextl::unique_ptr<Pass> CreateX87StackOptimizationPass(const HostFeatures&, OpSize GPROpSize, bool Embedded = false);
+ 
+diff --git a/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.cpp b/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..5412cb7bf47f31f7b578b8c851bc298cfbe97bf9
+--- /dev/null
++++ b/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.cpp
+@@ -0,0 +1,124 @@
++// SPDX-License-Identifier: MIT
++/*
++$info$
++tags: ir|opts
++desc: Finds the loads an embedded backend translates for writing
++$end_info$
++*/
++
++#include "Interface/IR/IR.h"
++#include "Interface/IR/IREmitter.h"
++#include "Interface/IR/Passes.h"
++#include "Interface/IR/Passes/EmbedderReadsForWritePass.h"
++
++#include <FEXCore/IR/IR.h>
++#include <FEXCore/Utils/Profiler.h>
++#include <FEXCore/fextl/vector.h>
++
++#include <cstddef>
++
++namespace FEXCore::IR {
++namespace {
++  // LoadMem and LoadMemTSO, and StoreMem and StoreMemTSO, share a layout.
++  static_assert(offsetof(IROp_LoadMem, Addr) == offsetof(IROp_LoadMemTSO, Addr));
++  static_assert(offsetof(IROp_LoadMem, Offset) == offsetof(IROp_LoadMemTSO, Offset));
++  static_assert(offsetof(IROp_LoadMem, OffsetType) == offsetof(IROp_LoadMemTSO, OffsetType));
++  static_assert(offsetof(IROp_LoadMem, OffsetScale) == offsetof(IROp_LoadMemTSO, OffsetScale));
++  static_assert(offsetof(IROp_StoreMem, Addr) == offsetof(IROp_StoreMemTSO, Addr));
++  static_assert(offsetof(IROp_StoreMem, Offset) == offsetof(IROp_StoreMemTSO, Offset));
++  static_assert(offsetof(IROp_StoreMem, OffsetType) == offsetof(IROp_StoreMemTSO, OffsetType));
++  static_assert(offsetof(IROp_StoreMem, OffsetScale) == offsetof(IROp_StoreMemTSO, OffsetScale));
++
++  class ReadsForWrite final : public EmbedderReadsForWritePass {
++  public:
++    void Run(IREmitter* IREmit) override;
++
++  private:
++    // Runs before register allocation, while every argument names the node
++    // that computes it.
++    bool SameValue(const IRListView& IR, OrderedNodeWrapper A, OrderedNodeWrapper B, unsigned Depth) const;
++    fextl::vector<Ref> Loads;
++  };
++
++  bool ReadsForWrite::SameValue(const IRListView& IR, OrderedNodeWrapper A, OrderedNodeWrapper B, unsigned Depth) const {
++    if (A.IsInvalid() || B.IsInvalid()) {
++      return A.IsInvalid() && B.IsInvalid();
++    }
++    if (A.ID() == B.ID()) {
++      return true;
++    }
++    if (A.IsImmediate() || B.IsImmediate()) {
++      return false;
++    }
++    // The dispatcher forms an operand's address afresh for its load and its
++    // store, so the two may be equal values in distinct nodes. Only the pure
++    // operations an address is built from are compared.
++    const auto* OA = IR.GetOp<IROp_Header>(A);
++    const auto* OB = IR.GetOp<IROp_Header>(B);
++    if (OA->Op != OB->Op || OA->Size != OB->Size) {
++      return false;
++    }
++    switch (OA->Op) {
++    case OP_CONSTANT: return OA->C<IROp_Constant>()->Constant == OB->C<IROp_Constant>()->Constant;
++    case OP_INLINECONSTANT: return OA->C<IROp_InlineConstant>()->Constant == OB->C<IROp_InlineConstant>()->Constant;
++    case OP_ENTRYPOINTOFFSET: return OA->C<IROp_EntrypointOffset>()->Offset == OB->C<IROp_EntrypointOffset>()->Offset;
++    case OP_INLINEENTRYPOINTOFFSET: return OA->C<IROp_InlineEntrypointOffset>()->Offset == OB->C<IROp_InlineEntrypointOffset>()->Offset;
++    case OP_LOADCONTEXT: {
++      // A segment base, which no instruction that also stores memory changes.
++      const auto* CA = OA->C<IROp_LoadContext>();
++      const auto* CB = OB->C<IROp_LoadContext>();
++      return CA->Class == CB->Class && CA->Offset == CB->Offset;
++    }
++    case OP_ADD:
++    case OP_SUB:
++    case OP_LSHL:
++      return Depth != 0 && SameValue(IR, OA->Args[0], OB->Args[0], Depth - 1) && SameValue(IR, OA->Args[1], OB->Args[1], Depth - 1);
++    case OP_ADDSHIFT: {
++      const auto* SA = OA->C<IROp_AddShift>();
++      const auto* SB = OB->C<IROp_AddShift>();
++      return Depth != 0 && SA->Shift == SB->Shift && SA->ShiftAmount == SB->ShiftAmount && SameValue(IR, SA->Src1, SB->Src1, Depth - 1) &&
++             SameValue(IR, SA->Src2, SB->Src2, Depth - 1);
++    }
++    default: return false;
++    }
++  }
++
++  void ReadsForWrite::Run(IREmitter* IREmit) {
++    FEXCORE_PROFILE_SCOPED("PassManager::EmbedderReadsForWrite");
++
++    const auto IR = IREmit->ViewIR();
++    Marked.assign(IR.GetSSACount(), false);
++    for (auto [BlockNode, BlockHeader] : IR.GetBlocks()) {
++      Loads.clear();
++      for (auto [CodeNode, IROp] : IR.GetCode(BlockNode)) {
++        // The loads and stores of one instruction.
++        if (IROp->Op == OP_GUESTOPCODE) {
++          Loads.clear();
++          continue;
++        }
++        if (IROp->Op == OP_LOADMEM || IROp->Op == OP_LOADMEMTSO) {
++          Loads.push_back(CodeNode);
++          continue;
++        }
++        if (IROp->Op != OP_STOREMEM && IROp->Op != OP_STOREMEMTSO) {
++          continue;
++        }
++        const auto* Store = IROp->C<IROp_StoreMem>();
++        for (auto Load : Loads) {
++          const auto* LoadHeader = IR.GetOp<IROp_Header>(Load);
++          const auto* Op = LoadHeader->C<IROp_LoadMem>();
++          if (LoadHeader->Size == IROp->Size && Op->OffsetType == Store->OffsetType && Op->OffsetScale == Store->OffsetScale &&
++              SameValue(IR, Op->Addr, Store->Addr, 3) && SameValue(IR, Op->Offset, Store->Offset, 3)) {
++            Marked[IR.GetID(Load).Value] = true;
++          }
++        }
++      }
++    }
++  }
++} // namespace
++
++fextl::unique_ptr<Pass> CreateEmbedderReadsForWritePass() {
++  return fextl::make_unique<ReadsForWrite>();
++}
++
++} // namespace FEXCore::IR
+diff --git a/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h b/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..64984b7ef8ef4e704fd03db10be8fe7b765fb7bc
+--- /dev/null
++++ b/FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h
+@@ -0,0 +1,35 @@
++// SPDX-License-Identifier: MIT
++/*
++$info$
++tags: ir|opts
++$end_info$
++*/
++
++#pragma once
++
++#include "Interface/IR/PassManager.h"
++
++#include <FEXCore/fextl/vector.h>
++
++#include <cstdint>
++
++namespace FEXCore::IR {
++
++// Embedded only, the last pass before register allocation: finds the loads
++// of each guest instruction that read what a store of the same instruction
++// then writes. The backend translates them for writing, so a fault of the
++// read-modify-write, a copy-on-write page among them, comes before the
++// instruction has changed a register or a flag.
++class EmbedderReadsForWritePass : public Pass {
++public:
++  // Node IDs survive register allocation, which adds nodes but neither
++  // moves nor renumbers a load.
++  bool ReadsForWrite(uint32_t ID) const {
++    return ID < Marked.size() && Marked[ID];
++  }
++
++protected:
++  fextl::vector<bool> Marked;
++};
++
++} // namespace FEXCore::IR
+diff --git a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
+index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7ac1752ec3 100644
+--- a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
+@@ -77,6 +77,63 @@ private:
+   // Map of nodes to their preferred register, to coalesce load/store reg.
+   fextl::vector<PhysicalRegister> PreferredReg;
+ 
++  // Embedded: the count of operations that can leave the block, walking
++  // backwards, when each node's preferred register was recorded. A value
++  // computed before such an operation and stored to a static register after
++  // it must not be coalesced, or the register changes before the operation
++  // faults.
++  fextl::vector<uint32_t> PreferredExits;
++  uint32_t Exits {};
++
++  static bool CanLeaveBlock(IROps Op) {
++    switch (Op) {
++    case OP_LOADMEM:
++    case OP_LOADMEMTSO:
++    case OP_LOADMEMPAIR:
++    case OP_LOADMEMX87SVEOPTPREDICATE:
++    case OP_STOREMEM:
++    case OP_STOREMEMTSO:
++    case OP_STOREMEMPAIR:
++    case OP_STOREMEMX87SVEOPTPREDICATE:
++    case OP_STORESTACKMEM:
++    case OP_PUSH:
++    case OP_PUSHTWO:
++    case OP_POP:
++    case OP_POPTWO:
++    case OP_EMBEDDERPROBE:
++    case OP_CACHELINEZERO:
++    case OP_VLOADNONTEMPORAL:
++    case OP_VSTORENONTEMPORAL:
++    case OP_VSTORENONTEMPORALPAIR:
++    case OP_VLOADVECTORMASKED:
++    case OP_VSTOREVECTORMASKED:
++    case OP_VLOADVECTORGATHERMASKED:
++    case OP_VLOADVECTORGATHERMASKEDQPS:
++    case OP_VLOADVECTORELEMENT:
++    case OP_VSTOREVECTORELEMENT:
++    case OP_VBROADCASTFROMMEM:
++    case OP_MEMSET:
++    case OP_MEMCPY:
++    case OP_CAS:
++    case OP_CASPAIR:
++    case OP_ATOMICSWAP:
++    case OP_ATOMICFETCHADD:
++    case OP_ATOMICFETCHSUB:
++    case OP_ATOMICFETCHAND:
++    case OP_ATOMICFETCHCLR:
++    case OP_ATOMICFETCHOR:
++    case OP_ATOMICFETCHXOR:
++    case OP_ATOMICFETCHNEG:
++    case OP_DIV:
++    case OP_UDIV:
++    case OP_BREAK:
++    case OP_SYSCALL:
++    case OP_THUNK:
++    case OP_CALLBACKRETURN: return true;
++    default: return false;
++    }
++  }
++
+   // Map of assigned registers. Does not grow beyond the initial set.
+   fextl::vector<PhysicalRegister> SSAToReg;
+ 
+@@ -584,6 +641,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+   IR = &IR_;
+ 
+   PreferredReg.resize(IR->GetSSACount(), PhysicalRegister::Invalid());
++  if (Embedded) {
++    PreferredExits.resize(IR->GetSSACount(), 0);
++  }
+   SSAToReg.resize(IR->GetSSACount(), PhysicalRegister::Invalid());
+   Seen.resize(IR->GetSSACount(), false);
+ 
+@@ -617,6 +677,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+ 
+           PreferredReg[IR->GetID(Node).Value] = Reg;
+           GetClass(Reg)->RegToSSA[Reg.Reg] = CodeNode;
++          if (Embedded) {
++            PreferredExits[IR->GetID(Node).Value] = Exits;
++          }
+         }
+ 
+         // Coalescing an SRA store is equivalent to hoisting the store,
+@@ -632,11 +695,18 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+           auto Node = GetClass(Reg)->RegToSSA[Reg.Reg];
+           IROp_Header* Header = IR->GetOp<IROp_Header>(Node);
+ 
+-          if (CodeNode != DecodeSRANode(Header, Node)) {
++          if (CodeNode != DecodeSRANode(Header, Node) ||
++              (Embedded && PreferredExits[IR->GetID(CodeNode).Value] != Exits)) {
+             PreferredReg[IR->GetID(CodeNode).Value] = PhysicalRegister::Invalid();
+           }
+         }
+ 
++        // Counted after the check: a node that leaves the block writes its
++        // result only if it does not.
++        if (Embedded && CanLeaveBlock(IROp->Op)) {
++          ++Exits;
++        }
++
+         const int NumArgs = IR::GetRAArgs(IROp->Op);
+         for (int i = NumArgs - 1; i >= 0; --i) {
+           const auto& Arg = IROp->Args[i];
+@@ -785,6 +855,7 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+   }
+ 
+   PreferredReg.clear();
++  PreferredExits.clear();
+   SSAToReg.clear();
+   SpillSlots.clear();
+   NextUses.clear();
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
 index 133c95f1ccae5d287119fd1b4741102bec6b8adb..2a174b9052d61895ba12586c4b4c2a60a542e407 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h

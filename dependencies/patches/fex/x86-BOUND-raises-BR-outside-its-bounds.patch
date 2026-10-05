@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 12:50:25 +0900
+Subject: [PATCH] x86: BOUND raises #BR outside its bounds
+
+Outside 64-bit mode 0x62 with a memory operand is BOUND, which FEXCore
+decoded only as an EVEX prefix and so refused. It now reads the pair
+of bounds in one access and compares the signed index with both,
+raising #BR, a fault that leaves RIP naming the instruction, when the
+index lies outside them. A register operand is still undefined, and
+64-bit mode still decodes the byte as EVEX.
+---
+ .../Interface/Core/OpcodeDispatcher.cpp       | 36 +++++++++++++++++++
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  1 +
+ .../Interface/Core/X86Tables/BaseTables.cpp   |  8 ++++-
+ 3 files changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index 09e0be8efb4aec4b622578272ffb47202d1ff195..ba7627260079bc6b058d14d5798a7004f7a6cbc9 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -1173,6 +1173,42 @@ void OpDispatchBuilder::ARPLOp(OpcodeArgs) {
+   StoreResultGPR_WithOpSize(Op, Op->Dest, FinalDest, Size);
+ }
+ 
++void OpDispatchBuilder::BOUNDOp(OpcodeArgs) {
++  // BOUND r, m: the signed index in the register lies within the pair of
++  // bounds at the memory operand, lower then upper, or the instruction
++  // raises #BR, a fault. The pair is read in one access, so either half
++  // faulting is a fault of the instruction.
++  const auto Size = OpSizeFromDst(Op);
++  const auto Bits = IR::OpSizeAsBits(Size);
++  Ref Index = _Sbfe(OpSize::i64Bit, Bits, 0, LoadSourceGPR(Op, Op->Dest, Op->Flags, {.AllowUpperGarbage = true}));
++  Ref Pair = _LoadMemGPRAutoTSO(Size == OpSize::i16Bit ? OpSize::i32Bit : OpSize::i64Bit, MakeSegmentAddress(Op, Op->Src[0]), OpSize::i8Bit);
++  Ref Lower = _Sbfe(OpSize::i64Bit, Bits, 0, Pair);
++  Ref Upper = _Sbfe(OpSize::i64Bit, Bits, Bits, Pair);
++  // Bit 63 is set when the index is below the lower bound or above the
++  // upper one; neither difference of sign-extended values overflows.
++  Ref Outside = _Or(OpSize::i64Bit, _Sub(OpSize::i64Bit, Index, Lower), _Sub(OpSize::i64Bit, Upper, Index));
++
++  CalculateDeferredFlags();
++  auto CondJump_ = CondJumpBit(Outside, 63, false);
++  auto FalseBlock = CreateNewCodeBlockAfter(GetCurrentBlock());
++  SetFalseJumpTarget(CondJump_, FalseBlock);
++  SetCurrentCodeBlock(FalseBlock);
++  StartNewBlock();
++
++  _StoreContextGPR(GetGPROpSize(), GetRelocatedPC(Op, -Op->InstSize), offsetof(FEXCore::Core::CPUState, rip));
++  Break({
++    .ErrorRegister = 0,
++    .Signal = Core::FAULT_SIGSEGV,
++    .TrapNumber = X86State::X86_TRAPNO_BR,
++    .si_code = 0x80,
++  });
++
++  auto JumpTarget = CreateNewCodeBlockAfter(FalseBlock);
++  SetTrueJumpTarget(CondJump_, JumpTarget);
++  SetCurrentCodeBlock(JumpTarget);
++  StartNewBlock();
++}
++
+ void OpDispatchBuilder::MOVSXDOp(OpcodeArgs) {
+   // This instruction is a bit special
+   // if SrcSize == 2
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index b917619848e0bd4f8b8638cdd641dc74072215ad..2cea184df873f132cbdb19523d9a51814f2d0155 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -400,6 +400,7 @@ public:
+   void RETFARIndirectOp(OpcodeArgs);
+   void TESTOp(OpcodeArgs, uint32_t SrcIndex);
+   void ARPLOp(OpcodeArgs);
++  void BOUNDOp(OpcodeArgs);
+   void MOVSXDOp(OpcodeArgs);
+   void MOVSXOp(OpcodeArgs);
+   void MOVZXOp(OpcodeArgs);
+diff --git a/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp b/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
+index 53ae7e273a16f76980df4ee192de7b6db0b68d7c..9866670fa34d3f9f6f1d443bcc5ed1c21719de69 100644
+--- a/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
++++ b/FEXCore/Source/Interface/Core/X86Tables/BaseTables.cpp
+@@ -31,6 +31,7 @@ enum Primary_LUT {
+   ENTRY_48,
+   ENTRY_60,
+   ENTRY_61,
++  ENTRY_62,
+   ENTRY_63,
+   ENTRY_9A,
+   ENTRY_A0,
+@@ -122,6 +123,11 @@ constexpr std::array<X86InstInfo[2], ENTRY_MAX> Primary_ArchSelect_LUT = {{
+     {"POPA",   TYPE_INST, FLAGS_DEBUG_MEM_ACCESS, 0, { .OpDispatch = &IR::OpDispatchBuilder::POPAOp } },
+     {"", TYPE_INVALID, FLAGS_NONE, 0, { .OpDispatch = nullptr } },
+   },
++  // ENTRY_62
++  {
++    {"BOUND",  TYPE_INST, FLAGS_MODRM | FLAGS_SF_MOD_MEM_ONLY | FLAGS_DEBUG_MEM_ACCESS, 0, { .OpDispatch = &IR::OpDispatchBuilder::BOUNDOp } },
++    {"",       TYPE_GROUP_EVEX, FLAGS_NONE, 0, { .OpDispatch = nullptr } },
++  },
+   // ENTRY_63
+   {
+     {"ARPL",   TYPE_INST, GenFlagsSameSize(SIZE_16BIT) | FLAGS_MODRM | FLAGS_SF_MOD_DST, 0, { .OpDispatch = &IR::OpDispatchBuilder::ARPLOp } },
+@@ -277,7 +283,7 @@ const std::array<X86InstInfo, MAX_PRIMARY_TABLE_SIZE> BaseOps = []() consteval {
+ 
+     {0x60, 1, X86InstInfo{"", TYPE_ARCH_DISPATCHER, FLAGS_NONE, 0, { .Indirect = Primary_ArchSelect_LUT[ENTRY_60] }}},
+     {0x61, 1, X86InstInfo{"", TYPE_ARCH_DISPATCHER, FLAGS_NONE, 0, { .Indirect = Primary_ArchSelect_LUT[ENTRY_61] }}},
+-    {0x62, 1, X86InstInfo{"",       TYPE_GROUP_EVEX, FLAGS_NONE,                                                                           0}},
++    {0x62, 1, X86InstInfo{"", TYPE_ARCH_DISPATCHER, FLAGS_NONE, 0, { .Indirect = Primary_ArchSelect_LUT[ENTRY_62] }}},
+     {0x63, 1, X86InstInfo{"", TYPE_ARCH_DISPATCHER, FLAGS_NONE, 0, { .Indirect = Primary_ArchSelect_LUT[ENTRY_63] }}},
+ 
+     {0x68, 1, X86InstInfo{"PUSH",   TYPE_INST, GenFlagsSameSize(SIZE_64BITDEF) | FLAGS_DEBUG_MEM_ACCESS | FLAGS_DISPLACE_SIZE_DIV_2 | FLAGS_SRC_SEXT, 4}},

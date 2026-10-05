@@ -327,12 +327,12 @@ with the x86-64 base and a `uml-initramfs`.
 probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
 exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
 against native x86 Linux's values. The smoke, RFLAGS and exception runners
-take `--engine jit` to run long64 code on the macOS-only x86-64 JIT instead of
-the default gadget engine; run them on both engines when a change reaches
-either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
+take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
+instead of the default gadget engine; run them on both engines when a change
+reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
 checks that the host sees an address space as shared only once a task
-starts a thread on it. The JIT fails exactly the two exception cases its
-[README](../darwin/cpu/x86_64/jit/README.md) names.
+starts a thread on it. The JIT fails exactly the exception cases its
+[README](../darwin/cpu/x86_64/jit/README.md) names, two in each mode.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -555,15 +555,18 @@ decoder or semantic failures; each JSON report records the pinned source
 identity, mode, applicable count, upstream-disabled cases, and per-test
 result.
 
-The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus through the
-x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
+The x86-64 JIT takes the same campaign: give `run-asm-corpus.py`
+`uml_x86_64_fex_asm_jit_runner`, which runs i386 binaries in a compat32
+context. The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus
+through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
 or names nothing. `x86-64-jit-code-buffer-growth` repeats the run from one byte
 of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
-of stop, including a store into the code of the block running it. The
+of stop, in long64 and compat32, including a store into the code of the block
+running it. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 
