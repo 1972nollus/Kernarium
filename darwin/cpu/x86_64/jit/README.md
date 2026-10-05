@@ -178,6 +178,15 @@ The checks take:
 Comparisons, conversions to integers, widening, rounding and half-precision
 conversions take DAZ from FPCR.FZ and need no check.
 
+MXCSR keeps every bit LDMXCSR, FXRSTOR and XRSTOR load, the exception flags
+included, and FXSAVE and XSAVE store an MXCSR_MASK of 0xFFFF, as the gadget
+engine does. Like the gadget engine, the JIT accumulates no flags while MXCSR
+masks every exception: the host's cumulative flags are not x86's (FPCR.FZ
+raises no precision for a flush and detects tininess before rounding, the
+estimates' in-line division raises precision, and no host flag shows a
+denormal operand), and folding them in would give flags neither x86 nor the
+gadget engine gives.
+
 The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending. The engine does not deliver unmasked SSE or
 x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
