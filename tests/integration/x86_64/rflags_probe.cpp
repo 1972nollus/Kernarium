@@ -11,7 +11,9 @@
  * but a fault saves the flags with RF set and a trap saves them as they are,
  * and an interrupt between the elements of a repeated string instruction
  * saves RF too. TF that IRET sets raises SIGTRAP after the instruction IRET
- * returns to.
+ * returns to. POPF at CPL 3 loads only the flags a task may change, IRET
+ * those and RF, and PUSHF never stores RF. IRET without REX.W pops a 32-bit
+ * frame in 64-bit mode.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
@@ -546,6 +548,200 @@ bool resume_flag_clears_at_next_instruction()
 	return resume_cleared("kill() right after sigreturn", before, 2,
 			      saved) && ok;
 }
+
+#if defined(__x86_64__)
+/* PUSHFQ right after an IRETQ that loads `image`, then a POPFQ of 0x202.
+ * The image may set AC, so every stack access stays aligned until then. */
+word iret_then_read_flags(word image)
+{
+	word flags;
+	__asm__ volatile(PROBE_IRET_TO_NEXT
+			 "pushfq\n\t"
+			 "popq %[flags]\n\t"
+			 "pushq $0x202\n\t"
+			 "popfq"
+			 : [flags] "=&r"(flags)
+			 : [image] "r"(image)
+			 : "rcx", "memory", "cc");
+	return flags;
+}
+
+/* PUSHFQ after a POPFQ of `image`, or after a POPFQ of ID, IF and bit 1
+ * and a POPFW of `image`, then a POPFQ of 0x202. */
+word popf_then_read_flags(word image, bool narrow)
+{
+	word flags;
+	if (narrow)
+		__asm__ volatile("pushq $0x200202\n\t"
+				 "popfq\n\t"
+				 "pushw %w[image]\n\t"
+				 "popfw\n\t"
+				 "pushfq\n\t"
+				 "popq %[flags]\n\t"
+				 "pushq $0x202\n\t"
+				 "popfq"
+				 : [flags] "=&r"(flags)
+				 : [image] "r"(image)
+				 : "memory", "cc");
+	else
+		__asm__ volatile("pushq %[image]\n\t"
+				 "popfq\n\t"
+				 "pushfq\n\t"
+				 "popq %[flags]\n\t"
+				 "pushq $0x202\n\t"
+				 "popfq"
+				 : [flags] "=&r"(flags)
+				 : [image] "r"(image)
+				 : "memory", "cc");
+	return flags;
+}
+
+bool flags_read(const char *what, word flags, word expected)
+{
+	if (flags == expected)
+		return true;
+	put("  ");
+	put(what);
+	put(": read ");
+	put_hex(flags);
+	put(", expected ");
+	put_hex(expected);
+	put("\n");
+	return false;
+}
+
+/* At CPL 3 POPF loads only CF, PF, AF, ZF, SF, TF, DF, OF, NT, AC and ID,
+ * and a 16-bit POPF only those in the low half; IRET loads them and RF. IF,
+ * IOPL, VM, VIF and VIP keep their values. PUSHF stores RF and VM as zero.
+ * TF stays clear, for it would trap after the next instruction. */
+bool user_flag_loads()
+{
+	const word image = 0xfffffffffffefeffUL;
+	bool ok = flags_read("PUSHFQ after POPFQ of every flag but TF and RF",
+			     popf_then_read_flags(image, false), 0x244ed7);
+	ok &= flags_read("PUSHFQ after POPFQ of zero",
+			 popf_then_read_flags(0, false), initial_flags);
+	ok &= flags_read("PUSHFQ after POPFW of every flag but TF",
+			 popf_then_read_flags(image, true), 0x204ed7);
+	ok &= flags_read("PUSHFQ after IRETQ of every flag but TF and RF",
+			 iret_then_read_flags(image), 0x244ed7);
+	ok &= flags_read("PUSHFQ after IRETQ of RF",
+			 iret_then_read_flags(initial_flags | flag_rf),
+			 initial_flags);
+	return ok;
+}
+
+/* IRET without REX.W in 64-bit mode pops 32-bit EIP, CS, EFLAGS, ESP and
+ * SS, each zero-extended. Its frame and the stack it returns to sit below
+ * 4 GiB, in the static image. */
+alignas(16) u32 iretl_frame[8];
+alignas(16) word iretl_stack[8];
+word iretl_saved_sp;
+
+bool iretl_pops_a_32_bit_frame()
+{
+	word flags;
+	word sp;
+	__asm__ volatile("movq %%rsp, %[saved]\n\t"
+			 "leaq %[frame], %%rsp\n\t"
+			 "leaq 1f(%%rip), %%rcx\n\t"
+			 "movl %%ecx, (%%rsp)\n\t"
+			 "movl $0x33, 4(%%rsp)\n\t"
+			 "movl $0xfffefeff, 8(%%rsp)\n\t"
+			 "leaq %[stack], %%rcx\n\t"
+			 "movl %%ecx, 12(%%rsp)\n\t"
+			 "movl $0x2b, 16(%%rsp)\n\t"
+			 "iretl\n"
+			 "1:\tpushfq\n\t"
+			 "popq %[flags]\n\t"
+			 "movq %%rsp, %[sp]\n\t"
+			 "movq %[saved], %%rsp\n\t"
+			 "pushq $0x202\n\t"
+			 "popfq"
+			 : [flags] "=&r"(flags), [sp] "=&r"(sp),
+			   [saved] "=m"(iretl_saved_sp), [frame] "+m"(iretl_frame)
+			 : [stack] "m"(iretl_stack[4])
+			 : "rcx", "memory", "cc");
+	bool ok = flags_read("PUSHFQ after IRETL of every flag but TF and RF",
+			     flags, 0x244ed7);
+	ok &= flags_read("RSP after IRETL",
+			 sp, reinterpret_cast<word>(&iretl_stack[4]));
+	return ok;
+}
+
+/* RDRAND and RDSEED, which CPUID advertises, always succeed here: CF set
+ * and OF, SF, ZF, AF and PF clear, whatever they held. A 16-bit destination
+ * keeps the register's upper bits and a 32-bit one is zero-extended; two
+ * 64-bit reads differ. */
+bool random_reads()
+{
+	u32 leaf1 = 1;
+	u32 leaf1_ecx;
+	u32 leaf7 = 7;
+	u32 leaf7_ebx;
+	u32 subleaf = 0;
+	__asm__ volatile("cpuid"
+			 : "+a"(leaf1), "=c"(leaf1_ecx)
+			 :
+			 : "ebx", "edx");
+	__asm__ volatile("cpuid"
+			 : "+a"(leaf7), "=b"(leaf7_ebx), "+c"(subleaf)
+			 :
+			 : "edx");
+	bool ok = flags_read("CPUID.1:ECX.RDRAND", (leaf1_ecx >> 30) & 1, 1);
+	ok &= flags_read("CPUID.7.0:EBX.RDSEED", (leaf7_ebx >> 18) & 1, 1);
+	for (int seed = 0; seed < 2; ++seed) {
+		word flags;
+		word first;
+		word second;
+		word narrow = 0x1111111122223333UL;
+		word middle = ~0UL;
+		if (seed != 0)
+			__asm__ volatile("pushq $0xad6\n\t"
+					 "popfq\n\t"
+					 "rdseed %[first]\n\t"
+					 "pushfq\n\t"
+					 "popq %[flags]\n\t"
+					 "rdseed %w[narrow]\n\t"
+					 "rdseed %k[middle]\n\t"
+					 "rdseed %[second]\n\t"
+					 "pushq $0x202\n\t"
+					 "popfq"
+					 : [flags] "=&r"(flags), [first] "=&r"(first),
+					   [second] "=&r"(second), [narrow] "+r"(narrow),
+					   [middle] "+r"(middle)
+					 :
+					 : "memory", "cc");
+		else
+			__asm__ volatile("pushq $0xad6\n\t"
+					 "popfq\n\t"
+					 "rdrand %[first]\n\t"
+					 "pushfq\n\t"
+					 "popq %[flags]\n\t"
+					 "rdrand %w[narrow]\n\t"
+					 "rdrand %k[middle]\n\t"
+					 "rdrand %[second]\n\t"
+					 "pushq $0x202\n\t"
+					 "popfq"
+					 : [flags] "=&r"(flags), [first] "=&r"(first),
+					   [second] "=&r"(second), [narrow] "+r"(narrow),
+					   [middle] "+r"(middle)
+					 :
+					 : "memory", "cc");
+		bool reads = flags_read("RFLAGS after it", flags, 0x203);
+		reads &= flags_read("upper bits of a 16-bit destination",
+				    narrow >> 16, 0x111111112222UL);
+		reads &= flags_read("upper half of a 32-bit destination",
+				    middle >> 32, 0);
+		reads &= flags_read("two 64-bit reads differ", first != second, 1);
+		if (!reads) {
+			put(seed != 0 ? "  in RDSEED\n" : "  in RDRAND\n");
+			ok = false;
+		}
+	}
+	return ok;
+}
+#endif
 
 constexpr word flag_tf = 1UL << 8;
 constexpr long trap_signal = 5;
@@ -1148,6 +1344,12 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "resume"));
 	report("x86-64 TF set by IRET traps after one instruction",
 	       in_child(self, "step"));
+	report("x86-64 POPF and IRET load only user flags, PUSHF no RF",
+	       in_child(self, "user-loads"));
+	report("x86-64 IRET without REX.W pops a 32-bit frame",
+	       in_child(self, "iretl"));
+	report("x86-64 RDRAND and RDSEED succeed and set only CF",
+	       in_child(self, "random"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
 	report("x86-64 a REP string interrupted between elements shows RF",
@@ -1207,6 +1409,12 @@ extern "C" int probe_main(word *stack)
 		return 1;
 	}
 #if defined(__x86_64__)
+	if (count == 2 && equal(arguments[1], "user-loads"))
+		return user_flag_loads() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "iretl"))
+		return iretl_pops_a_32_bit_frame() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "random"))
+		return random_reads() ? 0 : 1;
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
 	put("usage: rflags-probe I386_PROBE\n");

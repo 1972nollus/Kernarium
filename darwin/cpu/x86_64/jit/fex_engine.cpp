@@ -4,6 +4,8 @@
 #include "cpu/jit_memory/executable_memory.hpp"
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
+#include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
 #include <FEXCore/Core/Context.h>
@@ -180,6 +182,16 @@ void initialize_fex_once()
 	return function == 0 ? cpuid(13, 0).eax : 0;
 }
 
+/* RDRAND and RDSEED, which CPUID advertises: the host CSPRNG's output, as
+ * the gadget engine gives, which carries nothing of the host's own state into
+ * the guest and never fails. */
+[[nodiscard]] std::uint64_t guest_random() noexcept
+{
+	std::uint64_t value{};
+	arc4random_buf(&value, sizeof(value));
+	return value;
+}
+
 /* A physical-order x87 register's full tag, from its contents: valid, zero,
  * or special (NaN, infinity, denormal, unnormal). */
 [[nodiscard]] constexpr std::uint16_t x87_tag_for(const X87Register &value) noexcept
@@ -274,6 +286,12 @@ struct Space final {
 	CodePageRegistry::Participant participant;
 	/* The pages this space counted in the registry. */
 	std::unordered_set<std::uint64_t> code_pages;
+	/* The locked operand across a granule whose copy the bounce buffer
+	 * holds while this thread holds the split-operand lock. */
+	std::uint64_t split_address{};
+	std::size_t split_size{};
+	/* The dispatch ended at a fault of a gather element. */
+	bool gather_fault{};
 
 	Space() = default;
 	Space(const Space &) = delete;
@@ -470,8 +488,22 @@ FEXCore::HLE::ExecutableRangeInfo EmbeddedSyscallHandler::QueryGuestExecutableRa
 	return {page, guest_page_size, false, reinterpret_cast<const uint8_t *>(host)};
 }
 
+/* An exit from inside a unit: RIP names the instruction it stopped at, and
+ * that instruction and the rest of its unit, whose entry charged the budget
+ * for them, have not retired. */
+struct ExitAt final {
+	std::uint64_t rip;
+	std::uint64_t unretired;
+};
+
+void record_exit(Core::CpuStateFrame &frame, ExitAt at) noexcept
+{
+	frame.State.rip = at.rip;
+	frame.Embedder.Unretired += static_cast<std::int64_t>(at.unretired);
+}
+
 void record_fault(Core::CpuStateFrame &frame, GuestAddressSpace &memory,
-	std::uint64_t address, MemoryAccess access, std::uint64_t rip) noexcept
+	std::uint64_t address, MemoryAccess access, ExitAt at) noexcept
 {
 	if (memory.has_fault()) {
 		const auto fault = memory.last_fault();
@@ -481,19 +513,93 @@ void record_fault(Core::CpuStateFrame &frame, GuestAddressSpace &memory,
 	frame.Embedder.FaultAddress = address;
 	frame.Embedder.FaultAccess = static_cast<std::uint32_t>(access);
 	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_MEMORY_FAULT;
-	frame.State.rip = rip;
+	record_exit(frame, at);
 }
 
-void record_unsupported(Core::CpuStateFrame &frame, std::uint64_t address, std::uint64_t rip) noexcept
+void record_unsupported(Core::CpuStateFrame &frame, std::uint64_t address, ExitAt at) noexcept
 {
 	frame.Embedder.FaultAddress = address;
 	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_UNSUPPORTED;
-	frame.State.rip = rip;
+	record_exit(frame, at);
 }
 
-/* The TLB-miss helper the backend's shared stub calls. Returns the host
- * address of the access, or 0 after recording why the dispatch must end. */
-uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
+/* A publishing store into the guest code of the unit running now, unless
+ * that unit is one instruction: the unit would go on to run what the store
+ * replaces, or run it again after a loop back to its entry. The store has
+ * not happened; run() runs its instruction again as a unit of its own, after
+ * which the dispatch fetches afresh. */
+[[nodiscard]] bool store_ends_unit(Space &space, GuestAddressSpace &memory,
+	std::uint64_t address, std::size_t size)
+{
+	bool publishes = false;
+	for (auto page = address & guest_page_mask; page < address + size; page += guest_page_size)
+		publishes = publishes || space.stores_publish(memory, page);
+	return publishes && space.context->IsAddressInCurrentBlock(space.thread, address, size) &&
+		!space.context->IsCurrentBlockSingleInst(space.thread);
+}
+
+void record_code_write(Core::CpuStateFrame &frame, ExitAt at) noexcept
+{
+	frame.Embedder.ExitReason = Core::EMBEDDER_EXIT_CODE_WRITE;
+	record_exit(frame, at);
+}
+
+/* A locked operand across a 16-byte granule, which no exclusive access
+ * covers: as in the gadget engine, an ordinary load and store under the
+ * process-wide split-operand lock, which makes it atomic against every other
+ * such operand on any vCPU, in either engine. The first call loads the
+ * operand into the bounce buffer, checks it for the store, and returns the
+ * copy with the lock held; the op runs on the copy, and the COMMIT call stores
+ * it back and unlocks. A fault in the first call leaves memory unchanged. */
+uintptr_t split_operand(Core::CpuStateFrame &frame, Space &space, GuestAddressSpace &memory,
+	std::uint64_t address, std::size_t size, std::uint64_t info, ExitAt at)
+{
+	auto *bounce = reinterpret_cast<std::byte *>(frame.Embedder.Bounce);
+	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0) {
+		const auto stored = space.split_address;
+		const auto length = space.split_size;
+		/* The run holds the address space's execution gate, so the mapping
+		 * checked for this store has not changed. */
+		const bool written = memory.write(stored, std::span<const std::byte>{bounce, length});
+		if (written)
+			for (auto page = stored & guest_page_mask; page < stored + length; page += guest_page_size)
+				if (space.stores_publish(memory, page))
+					space.engine->publish_code_write(space, std::max(page, stored),
+						std::min<std::uint64_t>(page + guest_page_size, stored + length) - std::max(page, stored));
+		split_operand_lock.unlock();
+		if (!written) {
+			record_fault(frame, memory, stored, MemoryAccess::write, at);
+			return 0;
+		}
+		return 1;
+	}
+	if (size > sizeof(frame.Embedder.Bounce)) {
+		record_unsupported(frame, address, at);
+		return 0;
+	}
+	if (store_ends_unit(space, memory, address, size)) {
+		record_code_write(frame, at);
+		return 0;
+	}
+	split_operand_lock.lock();
+	if (!memory.read(address, std::span<std::byte>{bounce, size})) {
+		split_operand_lock.unlock();
+		record_fault(frame, memory, address, MemoryAccess::read, at);
+		return 0;
+	}
+	if (!memory.validate_access(address, size, MemoryAccess::write)) {
+		split_operand_lock.unlock();
+		record_fault(frame, memory, address, MemoryAccess::write, at);
+		return 0;
+	}
+	space.split_address = address;
+	space.split_size = size;
+	return reinterpret_cast<uintptr_t>(bounce);
+}
+
+/* Returns the host address of a guest access the software TLB missed, or 0
+ * after recording why the dispatch must end. */
+uintptr_t translate_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
 {
 	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
 	auto &engine = *space.engine;
@@ -506,14 +612,12 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	const bool ordered = (info & Core::EMBEDDER_ACCESS_ORDERED) != 0;
 	const bool granule_split = (address & 15U) + size > 16U;
 	const auto access = writes ? MemoryAccess::write : MemoryAccess::read;
-	const auto rip = frame->Embedder.AccessRIP;
+	const ExitAt at{frame->Embedder.AccessRIP, info >> Core::EMBEDDER_ACCESS_UNRETIRED_SHIFT};
 
-	if (atomic && granule_split) {
-		/* A locked operand crossing a 16-byte granule has no
-		 * single-copy-atomic host access. */
-		record_unsupported(*frame, address, rip);
-		return 0;
-	}
+	/* The COMMIT call passes the bounce address, which is no guest
+	 * address; it is recognised by its flag alone. */
+	if ((info & Core::EMBEDDER_ACCESS_COMMIT) != 0 || (atomic && granule_split))
+		return split_operand(*frame, space, memory, address, size, info, at);
 
 	/* An ordered (TSO) access across a granule completes through the bounce
 	 * buffer: x86 makes no single-copy promise for it, and LDAPR/STLR would
@@ -522,7 +626,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	if (!ordered_split && (address & ~guest_page_mask) + size <= guest_page_size) {
 		auto *pointer = memory.atomic_pointer(address, size, access);
 		if (pointer == nullptr) {
-			record_fault(*frame, memory, address, access, rip);
+			record_fault(*frame, memory, address, access, at);
 			return 0;
 		}
 		const auto page = address >> 12U;
@@ -543,7 +647,14 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 		for (;;) {
 			const auto changes = space.code_changes();
 			if (space.stores_publish(memory, address)) {
-				engine.publish_code_write(space, address, size);
+				if (store_ends_unit(space, memory, address, size)) {
+					record_code_write(*frame, at);
+					return 0;
+				}
+				/* The load of a read-modify-write publishes nothing: its
+				 * store comes here again. */
+				if (store || atomic)
+					engine.publish_code_write(space, address, size);
 				return reinterpret_cast<uintptr_t>(pointer);
 			}
 			std::atomic_ref<std::uint64_t>{entry.WriteDelta}.store(delta, std::memory_order_relaxed);
@@ -557,29 +668,56 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 
 	/* A plain access across two guest pages completes through the bounce
 	 * buffer, with the address space's own fault order. */
-	if (atomic || (info & Core::EMBEDDER_ACCESS_READ_WRITE) != 0 || size > sizeof(frame->Embedder.Bounce)) {
-		record_unsupported(*frame, address, rip);
+	if (atomic || size > sizeof(frame->Embedder.Bounce)) {
+		record_unsupported(*frame, address, at);
 		return 0;
 	}
 	auto *bounce = reinterpret_cast<std::byte *>(frame->Embedder.Bounce);
 	if (ordered)
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 	if (store) {
+		if (store_ends_unit(space, memory, address, size)) {
+			record_code_write(*frame, at);
+			return 0;
+		}
 		if (!memory.write(address, std::span<const std::byte>{bounce, size})) {
-			record_fault(*frame, memory, address, MemoryAccess::write, rip);
+			record_fault(*frame, memory, address, MemoryAccess::write, at);
 			return 0;
 		}
 		for (auto page = address & guest_page_mask; page < address + size; page += guest_page_size)
 			if (space.stores_publish(memory, page))
 				engine.publish_code_write(space, std::max(page, address),
 					std::min<std::uint64_t>(page + guest_page_size, address + size) - std::max(page, address));
-	} else if (!memory.read(address, std::span<std::byte>{bounce, size})) {
-		record_fault(*frame, memory, address, MemoryAccess::read, rip);
-		return 0;
+	} else {
+		/* The load of a read-modify-write checks its store first. */
+		if ((info & Core::EMBEDDER_ACCESS_READ_WRITE) != 0) {
+			if (!memory.validate_access(address, size, MemoryAccess::write)) {
+				record_fault(*frame, memory, address, MemoryAccess::write, at);
+				return 0;
+			}
+			if (store_ends_unit(space, memory, address, size)) {
+				record_code_write(*frame, at);
+				return 0;
+			}
+		}
+		if (!memory.read(address, std::span<std::byte>{bounce, size})) {
+			record_fault(*frame, memory, address, MemoryAccess::read, at);
+			return 0;
+		}
 	}
 	if (ordered)
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 	return reinterpret_cast<uintptr_t>(bounce);
+}
+
+/* The TLB-miss helper the backend's shared stub calls. */
+uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, std::uint64_t info)
+{
+	const auto host = translate_miss(frame, address, info);
+	if (host == 0 && (info & Core::EMBEDDER_ACCESS_GATHER) != 0 &&
+		frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_MEMORY_FAULT)
+		reinterpret_cast<Space *>(frame->Embedder.HostContext)->gather_fault = true;
+	return host;
 }
 
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
@@ -601,8 +739,16 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		if (copy)
 			frame->State.gregs[X86State::REG_RSI] = op.Src;
 	};
+	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
-		record_fault(*frame, memory, address, access, op.GuestRIP);
+		record_fault(*frame, memory, address, access, at);
+		save_progress();
+		return std::uint64_t{1};
+	};
+	/* Stops before elements that would store into the running unit's code,
+	 * with the progress made, as between elements. */
+	const auto code_write = [&] {
+		record_code_write(*frame, at);
 		save_progress();
 		return std::uint64_t{1};
 	};
@@ -610,18 +756,21 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	std::array<std::byte, 8> value{};
 	std::memcpy(value.data(), &op.Value, sizeof(op.Value));
 	/* Work between checks, in bytes. A long string spends the dispatch
-	 * budget as it goes and stops between elements, with RF, when the budget
-	 * is gone or the kernel has an interrupt for this vCPU. */
+	 * budget as it goes, though it retires once, and stops between elements,
+	 * with RF, when the budget is gone or the kernel has an interrupt for
+	 * this vCPU. */
 	const std::uint64_t check_bytes = engine.stepping ? element : 64 * 1024;
+	const auto charge = static_cast<std::int64_t>(std::max<std::uint64_t>(check_bytes / 64, 1));
 	std::uint64_t since_check = 0;
 	while (op.Count != 0) {
 		if (since_check >= check_bytes) {
 			since_check = 0;
-			frame->Embedder.Budget -= static_cast<std::int64_t>(std::max<std::uint64_t>(check_bytes / 64, 1));
+			frame->Embedder.Budget -= charge;
+			frame->Embedder.Unretired += charge;
 			const bool interrupted = engine.interrupt != nullptr && engine.interrupt->state_pending();
 			if (engine.stepping || interrupted || frame->Embedder.Budget <= 0) {
 				frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_YIELD;
-				frame->State.rip = op.GuestRIP;
+				record_exit(*frame, at);
 				save_progress();
 				return 1;
 			}
@@ -644,6 +793,8 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 			std::array<std::byte, 8> bytes{};
 			if (copy && !memory.read(op.Src, std::span{bytes.data(), element}))
 				return fail(op.Src, MemoryAccess::read);
+			if (store_ends_unit(space, memory, op.Dest, element))
+				return code_write();
 			if (!memory.write(op.Dest, std::span<const std::byte>{copy ? bytes.data() : value.data(), element}))
 				return fail(op.Dest, MemoryAccess::write);
 			if (space.stores_publish(memory, op.Dest))
@@ -661,6 +812,8 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		auto *dest = memory.atomic_pointer(low_dest, bytes, MemoryAccess::write);
 		if (dest == nullptr)
 			return fail(backward ? op.Dest : low_dest, MemoryAccess::write);
+		if (store_ends_unit(space, memory, low_dest, bytes))
+			return code_write();
 		if (space.stores_publish(memory, low_dest))
 			engine.publish_code_write(space, low_dest, bytes);
 		if (copy) {
@@ -822,6 +975,71 @@ void save_state(Space &space, CpuState &cpu) noexcept
 	cpu.gs_base = state.gs_cached;
 }
 
+/* An AVX2 gather that faults has, on x86, gathered every enabled element
+ * before the faulting one, clearing its mask element, and zeroed the
+ * destination and mask above the elements it has; the guest restarts it
+ * with what remains. The backend gathers into a temporary and leaves the
+ * state as it was before the instruction, so the host redoes the elements
+ * in order up to the first that faults, as the gadget engine does, with the
+ * backend's address arithmetic: segment base plus base plus displacement plus
+ * the scaled, sign-extended index, wrapped to the address size. If no element faults
+ * now, the state and the fault stay as the dispatch left them. */
+void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::FaultInfo &fault) noexcept
+{
+	const auto decoded = decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != DecodeStatus::decoded || decoded.instruction.operation != Operation::vector_gather)
+		return;
+	const auto &instruction = decoded.instruction;
+	const auto &operand = instruction.auxiliary.memory;
+	const std::size_t data = (instruction.vector_group & 1U) != 0 ? 8 : 4;
+	const std::size_t index = (instruction.vector_group & 2U) != 0 ? 8 : 4;
+	const std::size_t width = (instruction.vector_group & 4U) != 0 ? 32 : 16;
+	const std::size_t count = width / std::max(data, index);
+	auto &destination = cpu.vectors[instruction.destination.reg.index];
+	auto &mask = cpu.vectors[instruction.source.reg.index];
+	const auto &indices = cpu.vectors[operand.index];
+	const auto saved_destination = destination;
+	const auto saved_mask = mask;
+	std::uint64_t base = static_cast<std::uint64_t>(static_cast<std::int64_t>(operand.displacement));
+	if (operand.base != MemoryOperand::no_register)
+		base += cpu.registers[operand.base];
+	if (operand.segment == Segment::fs)
+		base += cpu.fs_base;
+	else if (operand.segment == Segment::gs)
+		base += cpu.gs_base;
+	unsigned shift = 0;
+	while ((1U << shift) < operand.scale)
+		++shift;
+	for (std::size_t element = 0; element < count; ++element) {
+		if ((std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) == 0)
+			continue;
+		std::int64_t offset{};
+		if (index == 4) {
+			std::int32_t value{};
+			std::memcpy(&value, indices.data() + element * 4, 4);
+			offset = value;
+		} else {
+			std::memcpy(&offset, indices.data() + element * 8, 8);
+		}
+		std::uint64_t address = base + (static_cast<std::uint64_t>(offset) << shift);
+		if (operand.address_32)
+			address = static_cast<std::uint32_t>(address);
+		std::array<std::byte, 8> value{};
+		if (!memory.read(address, std::span<std::byte>{value.data(), data})) {
+			const auto gathered = static_cast<std::ptrdiff_t>(count * data);
+			std::fill(destination.begin() + gathered, destination.end(), std::byte{});
+			std::fill(mask.begin() + gathered, mask.end(), std::byte{});
+			fault.address = memory.has_fault() ? memory.last_fault().address : address;
+			fault.access = MemoryAccess::read;
+			return;
+		}
+		std::memcpy(destination.data() + element * data, value.data(), data);
+		std::memset(mask.data() + element * data, 0, data);
+	}
+	destination = saved_destination;
+	mask = saved_mask;
+}
+
 /* Linux's flat user descriptor: FEXCore takes the decode mode from the code
  * descriptor's L bit. */
 [[nodiscard]] Core::CPUState::gdt_segment flat_user_segment(bool code, bool long_mode) noexcept
@@ -900,6 +1118,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	pointers.XCRFunction = reinterpret_cast<uint64_t>(&guest_xgetbv);
 	pointers.EmbedderTLBMissHelper = reinterpret_cast<uint64_t>(&embedder_tlb_miss);
 	pointers.EmbedderStringHelper = reinterpret_cast<uint64_t>(&embedder_string);
+	pointers.EmbedderRandomHelper = reinterpret_cast<uint64_t>(&guest_random);
 	frame->Embedder.TLB = reinterpret_cast<uint64_t>(space->tlb.get());
 	frame->Embedder.HostContext = reinterpret_cast<uint64_t>(space.get());
 	frame->Embedder.CodeSizePerNode = code_bytes_per_node;
@@ -1008,10 +1227,12 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		std::clamp<std::int64_t>(static_cast<std::int64_t>(request.instruction_budget), 1,
 			maximum_dispatch_budget);
 	frame->Embedder.Budget = budget;
+	frame->Embedder.Unretired = 0;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_NONE;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
+	space->gather_fault = false;
 	frame->State.callret_sp = space->callret.middle();
 
 	const auto host_fpcr = read_fpcr();
@@ -1020,10 +1241,19 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
 	space->context->ExecuteEmbedded(thread, false);
+	/* A store into the running unit's own code left before it stored. Its
+	 * instruction runs again as a unit of its own, whose store publishes,
+	 * and the dispatch goes on from freshly fetched code. */
+	while (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE)
+		space->context->ExecuteEmbedded(thread, true);
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 
-	result.retired_instructions = static_cast<std::size_t>(budget - std::max<std::int64_t>(frame->Embedder.Budget, 0));
+	/* Only instructions that completed retire: not the elements of a
+	 * repeated string instruction, nor the instructions of a unit an exit
+	 * left, from the one it stopped at, though both spent budget. */
+	result.retired_instructions = static_cast<std::size_t>(std::max<std::int64_t>(
+		budget - frame->Embedder.Budget - frame->Embedder.Unretired, 0));
 	save_state(*space, cpu);
 	impl_->memory = nullptr;
 
@@ -1047,6 +1277,8 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		result.reason = ::uml::cpu::ExitReason::memory_fault;
 		result.fault.address = frame->Embedder.FaultAddress;
 		result.fault.access = static_cast<MemoryAccess>(frame->Embedder.FaultAccess);
+		if (space->gather_fault)
+			complete_gather(cpu, memory, result.fault);
 		return run;
 	case Core::EMBEDDER_EXIT_BREAK:
 		break;

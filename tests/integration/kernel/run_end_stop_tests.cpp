@@ -55,15 +55,19 @@ namespace {
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-/* Stop delays, measured from the start of the run. The first ones land while
- * the kernel is still bringing up its CPUs; the later ones stop a guest that
- * waits for its root device on every CPU. */
-constexpr unsigned int stop_delays_ms[]{20, 60, 150, 400, 1000};
+/* Stop delays, measured from the kernel's first call into this executable.
+ * A stop requested earlier, while the run is still queued at admission,
+ * cancels the run instead (uml/emulator.h), and a loaded host can take longer
+ * than the shortest delay to get there. The first ones land while the kernel
+ * is still bringing up its CPUs; the later ones stop a guest that waits for
+ * its root device on every CPU. */
+constexpr unsigned int stop_delays_ms[]{0, 20, 60, 150, 400, 1000};
 constexpr auto child_deadline = 30s;
 constexpr auto linger_after_run = 300ms;
 constexpr useconds_t widened_release_us = 50'000;
 
 std::atomic_bool stopping;
+std::atomic_bool kernel_called;
 thread_local bool broadcast_before_unlock;
 
 /* This executable's own code binds to the definitions below as well, so they
@@ -91,6 +95,14 @@ bool on_vcpu_carrier()
 		return false;
 	const std::string_view thread{name};
 	return thread.starts_with("uml-vcpu-") && thread.ends_with("-carrier");
+}
+
+/* The emulator's own code reaches these definitions too, so only a vCPU
+ * carrier's call shows that the run has passed admission into the kernel. */
+void note_kernel_call()
+{
+	if (!kernel_called.load(std::memory_order_relaxed) && on_vcpu_carrier())
+		kernel_called.store(true, std::memory_order_release);
 }
 
 std::size_t thread_count()
@@ -208,6 +220,9 @@ ForeignAlarm take_foreign_alarm(std::atomic_int &gate,
 		foreign_alarm = take_foreign_alarm(gate, returned);
 	}};
 	std::thread stopper{[&] {
+		while (!kernel_called.load(std::memory_order_acquire) &&
+		       !returned.load(std::memory_order_acquire))
+			std::this_thread::sleep_for(1ms);
 		std::this_thread::sleep_for(std::chrono::milliseconds{delay_ms});
 		int expected = gate_open;
 		if (!gate.compare_exchange_strong(expected, stop_claimed,
@@ -342,6 +357,7 @@ extern "C" int pthread_cond_broadcast(pthread_cond_t *condition)
 {
 	const int result = host_function(host_cond_broadcast,
 		"pthread_cond_broadcast")(condition);
+	note_kernel_call();
 	if (stopping.load(std::memory_order_acquire) && on_vcpu_carrier())
 		broadcast_before_unlock = true;
 	return result;
@@ -351,6 +367,7 @@ extern "C" int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
 	const int result = host_function(host_mutex_unlock,
 		"pthread_mutex_unlock")(mutex);
+	note_kernel_call();
 	if (broadcast_before_unlock) {
 		broadcast_before_unlock = false;
 		(void)::usleep(widened_release_us);

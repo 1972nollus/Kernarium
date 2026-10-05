@@ -19,10 +19,12 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <span>
 #include <sstream>
@@ -497,10 +499,23 @@ template<std::unsigned_integral Value>
  * list names it. */
 std::string_view excluded_class;
 
+/* The last result a case reported, which --retirement checks instead of
+ * printing. */
+struct ReportedResult final {
+	std::string status;
+	std::size_t retired{};
+	std::uint64_t address{};
+};
+ReportedResult reported;
+bool capture_results = false;
+
 void print_result(std::string_view status, std::size_t retired,
 	std::uint64_t address, std::span<const std::byte> opcode,
 	std::string_view detail, std::string_view test = {})
 {
+	reported = {std::string{status}, retired, address};
+	if (capture_results)
+		return;
 	std::cout << "status=" << status << '\t';
 	if (!test.empty())
 		std::cout << "test=" << test << '\t';
@@ -716,22 +731,10 @@ constexpr std::uint32_t vector_general_protection = 13;
 
 } // namespace
 
-[[nodiscard]] int run_fex_case(std::span<const std::byte> binary,
-	std::span<const std::byte> config_bytes, std::string_view test,
-	bool quiet_success = false, Dispatch dispatch = Dispatch::fresh)
+[[nodiscard]] int run_configured_case(std::span<const std::byte> binary,
+	const Configuration &configuration, std::string_view test,
+	bool quiet_success, Dispatch dispatch)
 {
-	std::string error;
-	if (binary.empty()) {
-		print_result("malformed_input", 0, 0, {},
-			"test binary is empty", test);
-		return 2;
-	}
-	Configuration configuration;
-	if (!parse_configuration(config_bytes, configuration, error)) {
-		print_result("malformed_input", 0, 0, {}, error, test);
-		return 2;
-	}
-
 	SparseMemory memory;
 	CodeSequences sequences;
 #if UML_FEX_ASM_JIT
@@ -989,6 +992,25 @@ constexpr std::uint32_t vector_general_protection = 13;
 		memory.snapshot(cpu.rip, 15), "instruction retirement limit reached",
 		test);
 	return 1;
+}
+
+[[nodiscard]] int run_fex_case(std::span<const std::byte> binary,
+	std::span<const std::byte> config_bytes, std::string_view test,
+	bool quiet_success = false, Dispatch dispatch = Dispatch::fresh)
+{
+	std::string error;
+	if (binary.empty()) {
+		print_result("malformed_input", 0, 0, {},
+			"test binary is empty", test);
+		return 2;
+	}
+	Configuration configuration;
+	if (!parse_configuration(config_bytes, configuration, error)) {
+		print_result("malformed_input", 0, 0, {}, error, test);
+		return 2;
+	}
+	return run_configured_case(binary, configuration, test, quiet_success,
+		dispatch);
 }
 
 namespace {
@@ -1530,10 +1552,213 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 	return failures == 0 ? 0 : 1;
 }
 
+/* --retirement: the instructions a run retires before each kind of stop.
+ * ExecutionResult.retired_instructions feeds the runtime's budget and timer
+ * accounting, so it counts only instructions that completed. Both engines
+ * run these cases against the same counts, the gadget engine's: a fault or
+ * #UD retires nothing of its instruction, a trap or system call retires it,
+ * a repeated string instruction retires once however many elements it moves
+ * and a loop retires every pass, across dispatches when it outlasts one. A
+ * store into the code of the block running it stops that block too, and a
+ * case that names RAX checks that the run went on with the new code. */
+struct RetirementCase final {
+	std::string_view name;
+	std::vector<std::uint8_t> code;
+	std::vector<Region> regions;
+	std::string_view status;
+	std::size_t retired{};
+	std::uint64_t address{};
+	std::optional<std::uint64_t> rax{};
+};
+
+[[nodiscard]] std::vector<RetirementCase> retirement_cases()
+{
+	constexpr std::uint64_t data = 0x2000'0000;
+	/* nop; jmp to the page's last four bytes: nop; nop; and a MOV whose
+	 * immediate lies in the unmapped page after. */
+	std::vector<std::uint8_t> straddle(page_size, 0);
+	for (const auto &[offset, byte] : std::initializer_list<
+		     std::pair<std::size_t, std::uint8_t>>{{0, 0x90}, {1, 0xe9},
+		     {2, 0xf6}, {3, 0x0f}, {0xffc, 0x90}, {0xffd, 0x90},
+		     {0xffe, 0x48}, {0xfff, 0xb8}})
+		straddle[offset] = byte;
+	/* mov $0x20, %eax; movabs $0x9090909090909090, %rbx; jmp to 0xff6:
+	 * mov %rbx, 1f(%rip), a store across the page boundary into the
+	 * instruction after it; 1: mov $0x11111111, %eax; nop; nop; nop;
+	 * hlt. */
+	std::vector<std::uint8_t> crossing(page_size + 6, 0);
+	for (const auto &[offset, byte] : std::initializer_list<
+		     std::pair<std::size_t, std::uint8_t>>{{0, 0xb8}, {1, 0x20},
+		     {5, 0x48}, {6, 0xbb}, {0xf, 0xe9}, {0x10, 0xe2}, {0x11, 0x0f},
+		     {0xff6, 0x48}, {0xff7, 0x89}, {0xff8, 0x1d}, {0xffd, 0xb8},
+		     {0xffe, 0x11}, {0xfff, 0x11}, {0x1000, 0x11}, {0x1001, 0x11},
+		     {0x1002, 0x90}, {0x1003, 0x90}, {0x1004, 0x90},
+		     {0x1005, 0xf4}})
+		crossing[offset] = byte;
+	std::fill(crossing.begin() + 7, crossing.begin() + 0xf, 0x90);
+	return {
+		/* nop; nop; mov $0x30000000, %rbx; mov (%rbx), %rax; nop; hlt */
+		{"load-fault", {0x90, 0x90, 0x48, 0xc7, 0xc3, 0x00, 0x00, 0x00, 0x30,
+			0x48, 0x8b, 0x03, 0x90, 0xf4}, {}, "memory_fault", 3,
+			code_address + 9},
+		/* nop; xor %ecx, %ecx; xor %edx, %edx; div %ecx; nop; hlt */
+		{"divide-error", {0x90, 0x31, 0xc9, 0x31, 0xd2, 0xf7, 0xf1, 0x90,
+			0xf4}, {}, "unexpected_event", 3, code_address + 5},
+		/* nop; nop; ud2; nop; hlt */
+		{"ud2", {0x90, 0x90, 0x0f, 0x0b, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2},
+		/* nop; nop; an opcode invalid in 64-bit mode (PUSH ES); nop; hlt */
+		{"invalid-opcode", {0x90, 0x90, 0x06, 0x90, 0xf4}, {},
+			"illegal_instruction", 2, code_address + 2},
+		/* nop; nop; int3; nop; hlt */
+		{"int3", {0x90, 0x90, 0xcc, 0x90, 0xf4}, {}, "unexpected_event", 3,
+			code_address + 3},
+		/* nop; nop; int $4; nop; hlt */
+		{"int-4", {0x90, 0x90, 0xcd, 0x04, 0x90, 0xf4}, {},
+			"unexpected_event", 3, code_address + 4},
+		/* nop; nop; int $0x21, a #GP; nop; hlt */
+		{"int-gp", {0x90, 0x90, 0xcd, 0x21, 0x90, 0xf4}, {},
+			"unexpected_event", 2, code_address + 2},
+		/* nop; mov $201, %eax; xor %edi, %edi; syscall; nop; hlt */
+		{"syscall", {0x90, 0xb8, 0xc9, 0x00, 0x00, 0x00, 0x31, 0xff, 0x0f,
+			0x05, 0x90, 0xf4}, {}, "passed", 5, code_address + 11},
+		/* nop; mov $265, %eax; xor %ebx, %ebx; int $0x80; nop; hlt */
+		{"int-0x80", {0x90, 0xb8, 0x09, 0x01, 0x00, 0x00, 0x31, 0xdb, 0xcd,
+			0x80, 0x90, 0xf4}, {}, "passed", 5, code_address + 11},
+		/* inc %eax; jmp 1f; nop; 1: inc %eax; jmp 2f; nop; 2: inc %eax;
+		 * hlt */
+		{"jumps", {0xff, 0xc0, 0xeb, 0x01, 0x90, 0xff, 0xc0, 0xeb, 0x01,
+			0x90, 0xff, 0xc0, 0xf4}, {}, "passed", 5, code_address + 12},
+		/* mov $10, %ecx; 1: nop; dec %ecx; jnz 1b; hlt */
+		{"loop", {0xb9, 0x0a, 0x00, 0x00, 0x00, 0x90, 0xff, 0xc9, 0x75,
+			0xfb, 0xf4}, {}, "passed", 31, code_address + 10},
+		/* The same for 200000 passes, more than one dispatch's budget. */
+		{"long-loop", {0xb9, 0x40, 0x0d, 0x03, 0x00, 0x90, 0xff, 0xc9, 0x75,
+			0xfb, 0xf4}, {}, "passed", 600'001, code_address + 10},
+		/* mov $data, %rdi; mov $data+0x1000, %rsi; mov $50, %ecx; cld;
+		 * repe cmpsb; nop; hlt */
+		{"repe-cmpsb", {0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x20, 0x48,
+			0xc7, 0xc6, 0x00, 0x10, 0x00, 0x20, 0xb9, 0x32, 0x00, 0x00, 0x00,
+			0xfc, 0xf3, 0xa6, 0x90, 0xf4}, {{data, data + 0x2000}},
+			"passed", 6, code_address + 23},
+		/* mov $data, %rdi; mov $0x100000, %ecx; xor %eax, %eax; cld;
+		 * rep stosb; nop; hlt */
+		{"long-rep-stosb", {0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x20, 0xb9,
+			0x00, 0x00, 0x10, 0x00, 0x31, 0xc0, 0xfc, 0xf3, 0xaa, 0x90, 0xf4},
+			{{data, data + 0x10'0000}}, "passed", 6, code_address + 18},
+		/* mov $data+0xff0, %rdi; mov $100, %ecx; xor %eax, %eax; cld;
+		 * rep stosb, which runs off its page; nop; hlt */
+		{"rep-stosb-fault", {0x48, 0xc7, 0xc7, 0xf0, 0x0f, 0x00, 0x20, 0xb9,
+			0x64, 0x00, 0x00, 0x00, 0x31, 0xc0, 0xfc, 0xf3, 0xaa, 0x90, 0xf4},
+			{{data, data + 0x1000}}, "memory_fault", 4, code_address + 15},
+		{"fetch-fault", std::move(straddle), {}, "memory_fault", 4,
+			code_address + 0xffe},
+		/* movb $0x90, 1f(%rip); movb $0x90, 1f+1(%rip); 1: inc %eax; hlt:
+		 * each store rewrites the block it runs in. */
+		{"code-write", {0xc6, 0x05, 0x07, 0x00, 0x00, 0x00, 0x90, 0xc6, 0x05,
+			0x01, 0x00, 0x00, 0x00, 0x90, 0xff, 0xc0, 0xf4}, {}, "passed", 4,
+			code_address + 16, 0},
+		/* lea 1f(%rip), %rdi; mov $0x90909090, %eax; mov $10, %ecx; cld;
+		 * rep stosb; 1: movabs $0xfabcfabcfabc0123, %rax; hlt */
+		{"code-write-rep-stosb", {0x48, 0x8d, 0x3d, 0x0d, 0x00, 0x00, 0x00,
+			0xb8, 0x90, 0x90, 0x90, 0x90, 0xb9, 0x0a, 0x00, 0x00, 0x00, 0xfc,
+			0xf3, 0xaa, 0x48, 0xb8, 0x23, 0x01, 0xbc, 0xfa, 0xbc, 0xfa, 0xbc,
+			0xfa, 0xf4}, {}, "passed", 15, code_address + 30, 0x90909090},
+		/* lock xorb $2, 1f+1(%rip); 1: mov $0x30, %al; hlt, after
+		 * mov $0x20, %eax */
+		{"code-write-locked", {0xb8, 0x20, 0x00, 0x00, 0x00, 0xf0, 0x80,
+			0x35, 0x01, 0x00, 0x00, 0x00, 0x02, 0xb0, 0x30, 0xf4}, {},
+			"passed", 3, code_address + 15, 0x32},
+		/* mov $2, %ecx; jmp 1f; 1: mov $1, %eax; movb $2, 1b+1(%rip);
+		 * dec %ecx; jnz 1b; hlt: a loop that rewrites its own first
+		 * instruction and runs it again. */
+		{"code-write-loop", {0xb9, 0x02, 0x00, 0x00, 0x00, 0xeb, 0x00, 0xb8,
+			0x01, 0x00, 0x00, 0x00, 0xc6, 0x05, 0xf5, 0xff, 0xff, 0xff, 0x02,
+			0xff, 0xc9, 0x75, 0xf0, 0xf4}, {}, "passed", 10,
+			code_address + 23, 2},
+		{"code-write-across-pages", std::move(crossing), {}, "passed", 12,
+			code_address + 0x1005, 0x20},
+		/* mov $data+0xc, %rdi; mov $5, %eax; lock xadd %rax, (%rdi);
+		 * lock xadd %rax, (%rdi); hlt: locked operands across a 16-byte
+		 * granule. */
+		{"split-locked", {0x48, 0xc7, 0xc7, 0x0c, 0x00, 0x00, 0x20, 0xb8,
+			0x05, 0x00, 0x00, 0x00, 0xf0, 0x48, 0x0f, 0xc1, 0x07, 0xf0, 0x48,
+			0x0f, 0xc1, 0x07, 0xf4}, {{data, data + 0x1000}}, "passed", 4,
+			code_address + 22, 5},
+		/* mov $data+0xffc, %rdi; nop; lock add %rax, (%rdi), whose
+		 * operand runs off its page; nop; hlt */
+		{"split-locked-fault", {0x48, 0xc7, 0xc7, 0xfc, 0x0f, 0x00, 0x20,
+			0x90, 0xf0, 0x48, 0x01, 0x07, 0x90, 0xf4}, {{data, data + 0x1000}},
+			"memory_fault", 2, code_address + 8},
+		/* mov $0x32, %eax; mov $0x11111123, %ebx; 8 x nop;
+		 * lock xor %rbx, 1f+1(%rip); 1: mov $0x11111111, %eax; hlt: a
+		 * locked operand across a granule rewrites the block it runs in. */
+		{"code-write-split-locked", {0xb8, 0x32, 0x00, 0x00, 0x00, 0xbb, 0x23,
+			0x11, 0x11, 0x11, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+			0xf0, 0x48, 0x31, 0x1d, 0x01, 0x00, 0x00, 0x00, 0xb8, 0x11, 0x11,
+			0x11, 0x11, 0xf4}, {}, "passed", 12, code_address + 31, 0x32},
+		/* mov $0x20, %eax; stc; adcb $0, 1f+1(%rip); 1: mov $0x30, %al;
+		 * hlt: a read-modify-write into the block it runs in, whose
+		 * carry in must survive the unit's end before it. */
+		{"code-write-adc", {0xb8, 0x20, 0x00, 0x00, 0x00, 0xf9, 0x80, 0x15,
+			0x01, 0x00, 0x00, 0x00, 0x00, 0xb0, 0x30, 0xf4}, {}, "passed", 4,
+			code_address + 15, 0x31},
+		/* mov $data, %rdi; movl $0x2000, 8(%rdi); vmovdqu (%rdi), %xmm2;
+		 * vpcmpeqd %xmm1, %xmm1, %xmm1; vpgatherqq %xmm1,
+		 * (%rdi,%xmm2,1), %xmm0, whose second element is off the data;
+		 * nop; hlt */
+		{"gather-fault", {0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x20, 0xc7, 0x47,
+			0x08, 0x00, 0x20, 0x00, 0x00, 0xc5, 0xfa, 0x6f, 0x17, 0xc5, 0xf1,
+			0x76, 0xc9, 0xc4, 0xe2, 0xf1, 0x91, 0x04, 0x17, 0x90, 0xf4},
+			{{data, data + 0x1000}}, "memory_fault", 4, code_address + 22},
+	};
+}
+
+[[nodiscard]] int run_retirement_cases()
+{
+	std::uint32_t failures{};
+	const auto cases = retirement_cases();
+	for (const auto &test : cases) {
+		std::vector<std::byte> code(test.code.size());
+		std::transform(test.code.begin(), test.code.end(), code.begin(),
+			[](std::uint8_t byte) { return std::byte{byte}; });
+		Configuration configuration;
+		configuration.memory_regions = test.regions;
+		if (test.rax) {
+			/* Expectation keys: bit 0 names RIP, bit 1 RAX. */
+			configuration.registers.push_back({1U << 1U, {*test.rax}});
+		}
+		capture_results = true;
+		reported = {};
+		(void)run_configured_case(code, configuration, test.name, false,
+			Dispatch::cached);
+		capture_results = false;
+		const bool passed = reported.status == test.status &&
+			reported.retired == test.retired &&
+			reported.address == test.address;
+		if (!passed)
+			++failures;
+		std::cout << "status=" << (passed ? "passed" : "failed") << '\t'
+			<< "test=" << test.name << '\t'
+			<< "stop=" << reported.status << '\t'
+			<< "retired=" << reported.retired << '\t'
+			<< "address=0x" << std::hex << reported.address << std::dec;
+		if (!passed)
+			std::cout << '\t' << "expected=" << test.status << ',' <<
+				test.retired << ",0x" << std::hex << test.address << std::dec;
+		std::cout << '\n';
+	}
+	std::cout << "status=" << (failures == 0 ? "passed" : "failed") << '\t'
+		<< "cases=" << cases.size() << '\t' << "failures=" << failures << '\n';
+	return failures == 0 ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
+	if (argc == 2 && std::string_view{argv[1]} == "--retirement")
+		return run_retirement_cases();
 	std::vector<std::byte> first;
 	std::string error;
 	/* Corpus options come before the corpus. */
@@ -1598,6 +1823,6 @@ int main(int argc, char **argv)
 #else
 		"usage: runner [--exclusions LIST] CORPUS | "
 #endif
-		"runner [--repository] BINARY CONFIG");
+		"runner [--repository] BINARY CONFIG | runner --retirement");
 	return 2;
 }
