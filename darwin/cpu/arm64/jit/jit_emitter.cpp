@@ -302,10 +302,14 @@ void Arm64Emitter::epilogue() {
     /*
      * Leave streaming mode before returning to C++; after a terminal
      * helper's own leave this finds nothing to do. It keeps x0, the result.
+     * A helper may have changed x15, which AAPCS64 does not preserve, so
+     * the vCPU pointer comes back from the prologue's frame first.
      */
-    if (sme_host_mode_ != 0U)
+    if (sme_host_mode_ != 0U) {
+      load_x(15, 31, 16); // ldr x15, [sp, #16]
       call_transition(
           reinterpret_cast<const void *>(&uml_arm64_jit_sme_leave));
+    }
     /*
      * x20 contains the remaining budget before the current translated
      * block. Publish it exactly once when the outer generated invocation

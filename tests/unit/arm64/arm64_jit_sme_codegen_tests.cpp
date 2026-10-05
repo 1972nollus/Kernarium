@@ -40,6 +40,7 @@ constexpr std::uint32_t system_call = 0xd400'0001U;
 constexpr std::uint32_t add_x0_one = 0x9100'0400U;
 constexpr std::uint32_t blr_x16 = 0xd63f'0200U;
 constexpr std::uint32_t ret = 0xd65f'03c0U;
+constexpr std::uint32_t reload_cpu = 0xf940'0befU; // ldr x15, [sp, #16]
 
 struct Witness final {
   std::string id;
@@ -148,9 +149,12 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
       require(false);
     }
     if (word == ret && streaming) {
-      /* Every epilogue leaves streaming mode before restoring the frame. */
-      require(index >= 6U && code.words[index - 5U] == blr_x16);
+      /* Every epilogue leaves streaming mode before restoring the frame,
+       * with the vCPU pointer reloaded, since a helper may have changed
+       * x15. */
+      require(index >= 7U && code.words[index - 5U] == blr_x16);
       require(callee(code, index - 5U) == Callee::leave);
+      require(code.words[index - 7U] == reload_cpu);
     }
     if (word != blr_x16)
       continue;
