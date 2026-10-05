@@ -564,6 +564,58 @@ void streaming_control_core()
 		require(equal(crossing.row(10), second));
 	}
 	{
+		/* Guest ZA survives SM changes while it is live: spilled when
+		 * SMSTOP SM leaves streaming mode, used from the register file
+		 * with SM = 0, and refilled when SMSTART SM re-enters it. */
+		const std::array code{
+			smstart,
+			za_vector(false, 0, 0, 0),  /* mode 3: native load */
+			smstop_sm,
+			za_vector(true, 0, 1, 0),   /* mode 2: helper store */
+			smstart_sm,
+			za_vector(true, 0, 2, 0),   /* mode 3: native store */
+			svc};
+		Machine machine{code, host};
+		const auto bytes = pattern(svl, 8);
+		machine.put_data(data_base, bytes);
+		machine.cpu.registers[0] = data_base;
+		machine.cpu.registers[1] = data_base + 1024;
+		machine.cpu.registers[2] = data_base + 2048;
+		machine.cpu.registers[12] = 5;
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.cpu.svcr == arm64::svcr_mask);
+		require(machine.data(data_base + 1024, svl) == bytes);
+		require(machine.data(data_base + 2048, svl) == bytes);
+		require(equal(machine.row(5), bytes));
+	}
+	{
+		/* SMSTART ZA in streaming mode enables a zeroed ZA there. */
+		const std::array code{
+			smstart_sm,
+			smstart_za,
+			za_vector(false, 0, 0, 0),  /* row 1 from x0 */
+			0xd53b'4243U,               /* mrs x3, svcr */
+			za_vector(true, 0, 1, 0),   /* row 1 to x1 */
+			za_vector(true, 1, 2, 0),   /* row 0 to x2 */
+			smstop,
+			svc};
+		Machine machine{code, host};
+		const auto bytes = pattern(svl, 3);
+		machine.put_data(data_base, bytes);
+		machine.put_data(data_base + 2048, pattern(svl, 9));
+		machine.cpu.registers[0] = data_base;
+		machine.cpu.registers[1] = data_base + 1024;
+		machine.cpu.registers[2] = data_base + 2048;
+		machine.cpu.registers[12] = 1;
+		machine.cpu.registers[13] = 0;
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.cpu.registers[3] == arm64::svcr_mask);
+		require(machine.cpu.svcr == 0);
+		require(machine.data(data_base + 1024, svl) == bytes);
+		require(machine.data(data_base + 2048, svl) ==
+			std::vector<std::byte>(svl));
+	}
+	{
 		/* AdvSIMD, and forms with no streaming twin yet, end the
 		 * block at the illegal exit in streaming mode. */
 		for (const auto word : {0x4ea2'8420U /* add v0.4s */,
