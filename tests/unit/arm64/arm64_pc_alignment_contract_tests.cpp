@@ -183,7 +183,7 @@ void bridge_contract(EngineKind kind, unsigned long generation)
 		PROT_READ | PROT_EXEC};
 	const auto enter = bridge_for(kind);
 	require(enter != nullptr, "engine bridge is unavailable");
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	unsigned long tls = 0;
 
 	darwin_uml_guest_registers registers{};
@@ -282,7 +282,7 @@ void data_alignment_contract(EngineKind kind, unsigned long generation)
 			"ordinary page fault inherited a stale alignment cause");
 	}
 	const auto enter = bridge_for(kind);
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	unsigned long tls = 0;
 	darwin_uml_guest_registers registers{};
 	registers.pc = code_base;

@@ -5,6 +5,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
 #include "runtime/execution_engine.hpp"
+#include "guest_register_tail.hpp"
 #include "scratch_backing.hpp"
 #include "require.hpp"
 
@@ -76,7 +77,7 @@ private:
 };
 
 inline int enter_jit(darwin_uml_guest_registers &registers,
-		     darwin_uml_guest_fp_registers &fp,
+		     uml::testing::GuestFpTail &fp,
 		     unsigned long generation)
 {
 	unsigned long tls = 0;

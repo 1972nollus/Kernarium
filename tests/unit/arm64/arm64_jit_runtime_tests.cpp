@@ -43,7 +43,7 @@ void inline_tlb_and_cross_page_fallback()
 	backing.put32(20, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 3};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[0] = base + page;
 	registers.x[1] = value;
@@ -68,7 +68,7 @@ void write_fault_is_precise()
 	JitMapping mapping{
 		generation, base, backing, 2, PROT_READ | PROT_EXEC};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[1] = base + page;
 
@@ -88,7 +88,7 @@ void guest_jit_code_invalidation()
 	backing.put32(4, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	require(enter_jit(registers, fp, generation) ==
 		DARWIN_UML_EVENT_SYSCALL);
@@ -117,7 +117,7 @@ void coherent_data_cache_maintenance_retires()
 	backing.put32(8, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[0] = 6;
 	registers.x[12] = 0x1234'5678;
@@ -146,7 +146,7 @@ void emulated_identification_registers_read_sanitized_values()
 	backing.put32(16, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[3] = untouched;
 
@@ -169,7 +169,7 @@ void unemulated_identification_register_is_illegal()
 	backing.put32(4, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 
 	require(enter_jit(registers, fp, generation) ==
@@ -191,7 +191,7 @@ void guest_code_synchronization_instruction_invalidates_jit()
 	backing.put32(invalidator_offset + 8, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 
 	registers.pc = base;
 	require(enter_jit(registers, fp, generation) ==
@@ -359,7 +359,7 @@ void pair_cross_page_slow_path_resumes_native_translation()
 	backing.put32(8, 0xd400'0001U);
 	JitMapping mapping{generation, base, backing, 3};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[2] = base + 2 * page - 8;
 	registers.x[3] = first;
@@ -382,7 +382,7 @@ void deferred_fp_source_is_materialized_and_refreshed()
 	backing.put32(4, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	std::memcpy(fp.vectors[0], &first, sizeof(first));
 

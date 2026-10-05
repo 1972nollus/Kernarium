@@ -170,6 +170,13 @@ void profile_needs_every_part()
 		(apple::guest_sme_policy() == apple::GuestSmePolicy::on &&
 		 arm64::implements_sme(apple::probe_host_capabilities(
 			 apple::GuestSmePolicy::on))));
+	/* The kernel sizes task state by the SVL the bridge reports, which
+	 * must be the one the register file holds. */
+	const auto &probed = apple::probed_host_capabilities();
+	require(darwin_uml_guest_sme_vector_length() ==
+		(arm64::implements_sme(probed) ? probed.sme_svl_bytes : 0));
+	require(darwin_uml_guest_sme_vector_length() ==
+		arm64::SmeRegisterFile::for_host(probed).svl());
 }
 
 /* Each token the encoding table names maps to its own bit and nothing

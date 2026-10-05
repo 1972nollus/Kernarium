@@ -66,6 +66,15 @@ private:
 	::uml::memory::StaticGuestMemory &memory,
 	const ::uml::cpu::x86_64::CpuState &cpu) noexcept;
 
+/* Called for each x86 dispatch whose mm is shared. Setting
+ * UML_X86_MM_SHARED_LOG to a writable path makes the runtime append one line
+ * the first time each address space (generation) dispatches that way, with
+ * the RIP it resumed at; tests/integration/x86_64/run_guest_x86_64_mm_shared.py
+ * reads it. It is a file rather than stderr because the emulator's stderr
+ * shares the guest console. Nothing is opened, locked or recorded when the
+ * variable is unset. */
+void note_x86_mm_shared(unsigned long generation, std::uint64_t rip) noexcept;
+
 } // namespace uml::runtime
 
 #endif

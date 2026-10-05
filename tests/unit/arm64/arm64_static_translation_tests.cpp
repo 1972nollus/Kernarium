@@ -18,7 +18,7 @@ using uml::testing::ScratchBacking;
 using uml::testing::require;
 
 int enter(darwin_uml_guest_registers &registers,
-	darwin_uml_guest_fp_registers &fp, unsigned long generation)
+	uml::testing::GuestFpTail &fp, unsigned long generation)
 {
 	unsigned long tls = 0;
 	return darwin_uml_static_enter_guest(
@@ -35,7 +35,7 @@ void translation_window_crosses_a_page()
 	backing.put32(page, 0xd400'0001U);     // svc #0
 	JitMapping mapping{generation, base, backing, 2};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base + page - 4;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
@@ -52,7 +52,7 @@ void translation_window_preserves_a_second_page_fault()
 	backing.put32(page - 4, 0xd280'0540U); // mov x0, #42
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base + page - 4;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_FAULT);

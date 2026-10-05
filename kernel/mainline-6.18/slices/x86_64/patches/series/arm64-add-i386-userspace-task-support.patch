@@ -73,10 +73,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 5ecda903ad20895c211be00c4ba8ea0d4ea1da61..38749c4c865f6fd7e9fa53facdc6d6909f74174a 100644
+index 77435502156f6d117ae0df9f412fa327c86548af..0242fc997406925a2a9a33c7e93f87a6f746ae0c 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -25,11 +25,22 @@ config UML_ARM64
+@@ -31,11 +31,22 @@ config UML_ARM64_SME
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -103,13 +103,13 @@ index 5ecda903ad20895c211be00c4ba8ea0d4ea1da61..38749c4c865f6fd7e9fa53facdc6d690
  config ARCH_MMAP_RND_BITS_MIN
  	int
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 476b8f2426167dd2d1c07c0f7b7d3a6075453492..ea7f7cb331aa9886b14387022a824763991dac83 100644
+index 2c4bfc313ba3ac50461ad94bd72d2044148ba6b0..f77144580797b906037c665199e4550c78898e96 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -3,22 +3,29 @@
- obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
+@@ -4,22 +4,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
  	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
  	x86_64_syscalls.o
+ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
 +obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
  obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
  
@@ -2701,10 +2701,10 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 7e78651adee5d71905da6b2cc3ecfe9315b71a46..d77afb778f43a72b464dc32c0d659cdef153e96b 100644
+index 8f60b0068b8524b7eaaad22142f4c0844dedaea0..ead445348f2c5b8836d41316ca28f522ee38a1ea 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -408,6 +408,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -458,6 +458,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

@@ -41,7 +41,7 @@ void public_boundary_reports_precise_metadata_for_every_engine()
 			continue;
 		select_execution_engine(engine);
 		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
+		uml::testing::GuestFpTail fp{};
 		unsigned long tls = 0;
 		registers.pc = base;
 		fp.fpcr = enable;
