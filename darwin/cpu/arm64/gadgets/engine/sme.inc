@@ -60,6 +60,7 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 #endif
 	streaming_row sme_streaming_begin, sme_streaming_end
 	streaming_row sm_twins_begin, sm_twins_end
+	streaming_row sm_generated_begin, sm_generated_end
 	.purgem streaming_row
 	.purgem streaming_entry
 .globl NAME(uml_arm64_gadget_streaming_rows_end)
@@ -730,6 +731,13 @@ NAME(uml_arm64_gadget_sm_twins_end):
 .globl NAME(uml_arm64_sme_twin_end)
 NAME(uml_arm64_sme_twin_end):
 .popsection
+
+/* The register-only SVE, SVE2 and SME forms and the FP&SIMD classes legal in
+ * streaming mode, which engine/generate_streaming.py writes at build time
+ * from the encoding table: gadgets between uml_arm64_gadget_sm_generated_begin
+ * and _end, in their own streaming row, and the table of their entries the
+ * builder selects from. */
+#include "streaming_generated.inc"
 
 .popsection
 

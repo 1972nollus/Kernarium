@@ -11,8 +11,13 @@
 #include <cstdint>
 #include <limits>
 #include <memory_resource>
+#include <optional>
 #include <span>
 #include <vector>
+
+namespace uml::cpu::arm64::detail {
+struct SmeEncoding;
+} // namespace uml::cpu::arm64::detail
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
 
@@ -174,6 +179,16 @@ enum class DecodeResult : std::uint8_t {
 [[nodiscard]] DecodeResult decode_sme_pstate(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_sme_system_register(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_sme_space(DecodeContext &context);
+
+/* The generated register-only streaming forms
+ * (program_builder_streaming.cpp). decode_streaming_sve() translates a word
+ * of an SVE, SVE2 or SME row for SVCR.SM = 1, or returns nothing for a row
+ * without a generated form; decode_streaming_fallback() translates a word
+ * whose base entries streaming mode cannot select: an FP&SIMD class legal in
+ * streaming mode, or else the illegal exit. */
+[[nodiscard]] std::optional<DecodeResult> decode_streaming_sve(
+	DecodeContext &context, const detail::SmeEncoding &row);
+[[nodiscard]] DecodeResult decode_streaming_fallback(DecodeContext &context);
 
 /* Whether a program translated for SVCR.SM = 1 may select `entry`: an entry
  * of the SME part's streaming half or of a base row engine/sme.inc lists. */

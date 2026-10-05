@@ -379,12 +379,27 @@ replaced by an FMOV; CSSC CNT's twin counts in GPRs. A table maps each base
 entry to its twin, and the builder selects the twin. Twins cover the integer
 loads, stores and pairs, atomics and exclusives, DC ZVA, IC IVAU, the MOPS
 forms and CSSC CNT, so their hot paths run in streaming mode unchanged and
-only a TLB miss, a page crossing or an alignment fault leaves it. The
-builder ends a block at the illegal-instruction exit on any other word, so
-every FP and SIMD form is the illegal-instruction exit in streaming mode for
-now. `arm64-gadget-streaming-safety` walks every listed entry in the images
-each tree links and fails on an AdvSIMD word executed in streaming mode, a
-helper called there, or an indirect call.
+only a TLB miss, a page crossing or an alignment fault leaves it. A
+streaming program also runs every register-only SVE, SVE2 and SME form of
+the SME1 profile, and every FP&SIMD data-processing class legal in streaming
+mode, from gadgets that `engine/generate_streaming.py` writes at build time
+from the encoding table, one per value of a form's bits that are not
+register numbers. Each loads the registers its instruction names from the
+register file at offsets the builder computes from the SVL, or from
+`CpuState` for general registers, into fixed host registers, runs the
+instruction on them and stores its destination back. A form whose
+immediates would take hundreds of gadgets runs an equivalent register form
+on an immediate, or a count from the SVL, that the builder computes. A
+gadget that may change NZCV runs with the guest's flags in the host's, and a
+floating-point one ORs the exceptions it raised into the guest's FPSR, and
+runs again if FPSR.QC shows that a kernel entry reset the host's. RDVL,
+ADDVL and ADDPL run as RDSVL, ADDSVL and ADDSPL. The builder ends a block at
+the illegal-instruction exit on any other word, so the memory forms and
+SME2 are the illegal-instruction exit in streaming mode for now.
+`arm64-gadget-streaming-safety` walks every listed entry, and every 16-byte
+boundary of the generated gadgets, in the images each tree links and fails
+on an AdvSIMD word executed in streaming mode, a helper called there, or an
+indirect call.
 
 The JIT implements the same control core (`sme_support` is `control`):
 SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and

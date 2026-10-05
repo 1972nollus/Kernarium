@@ -191,8 +191,10 @@ DecodeResult decode_sme_space(DecodeContext &context)
 	auto &words = context.words;
 	const unsigned rd = instruction & 31U;
 	const unsigned rn = (instruction >> 5) & 31U;
-	if ((instruction & 0xffff'f800U) == 0x04bf'5800U) {
-		/* RDSVL Xd, #imm */
+	/* RDVL, ADDVL and ADDPL reach here only in streaming mode, where the
+	 * vector length is the SVL: they are RDSVL, ADDSVL and ADDSPL. */
+	if ((instruction & 0xffff'f000U) == 0x04bf'5000U) {
+		/* RDSVL and RDVL Xd, #imm */
 		if (rd == 31U) {
 			emit(words, selection::uml_arm64_gadget_nop);
 			return DecodeResult::decoded;
@@ -202,9 +204,8 @@ DecodeResult decode_sme_space(DecodeContext &context)
 		emit(words, signed_immediate((instruction >> 5) & 63U, 6));
 		return DecodeResult::decoded;
 	}
-	if ((instruction & 0xffe0'f800U) == 0x0420'5800U ||
-	    (instruction & 0xffe0'f800U) == 0x0460'5800U) {
-		/* ADDSVL and ADDSPL Xd|SP, Xn|SP, #imm */
+	if ((instruction & 0xffa0'f000U) == 0x0420'5000U) {
+		/* ADDSVL, ADDSPL, ADDVL and ADDPL Xd|SP, Xn|SP, #imm */
 		const unsigned source = (instruction >> 16) & 31U;
 		emit(words, (instruction & 0x0040'0000U) != 0U ?
 			selection::Gadget{uml_arm64_gadget_sme_addspl} :
@@ -254,6 +255,9 @@ DecodeResult decode_sme_space(DecodeContext &context)
 		return emit_za_memory(context, nullptr, memory_descriptor(
 			UML_GADGET_SME_ZT0_ZERO, 0, 0, 0, 0));
 	}
+	if (streaming)
+		if (const auto result = decode_streaming_sve(context, *row))
+			return *result;
 	return implementation_gap(context);
 }
 
