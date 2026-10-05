@@ -174,7 +174,9 @@ as the tracer set it.
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
 guest qualification. Both normal arm64 profiles accept `EM_AARCH64` only.
-Android does not consume the x86_64 overlay.
+Android does not consume the x86_64 overlay. The slice's overlay turns off
+`UML_ARM64_SME`, so it builds none of the shared SME task state, which x86
+tasks do not have; the shared mm-shared mark stays, for the x86-64 JIT.
 
 The x86-family syscall dispatch is generated from the pinned Linux 6.18
 `syscall_64.tbl` and `syscall_32.tbl` files. Both ABIs retain every table slot

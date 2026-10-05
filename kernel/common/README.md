@@ -116,6 +116,43 @@ register, even one of the -ERESTART* codes an interrupted call returns,
 reaches a signal handler and survives it unchanged. `guest-signal-restart`
 checks x0 on arm64 and the x86 exception probe checks RAX.
 
+When the host implements SME for a run,
+`darwin_uml_guest_sme_vector_length()` returns its streaming vector length
+(SVL) and an arm64 task gets what `arch/arm64/kernel/fpsimd.c` gives it on a
+CPU whose only SME vector length is that SVL; when it returns zero, as on
+the x86_64-userspace slice, none of this is active. The task's SVCR, TPIDR2
+and a pointer to its SME storage (Z, P, ZA, then ZT0) follow the FP registers
+in the bridge tail; the storage is allocated on the host's first SME access
+event or when the kernel needs it, and freed at exec and task release. As on
+native arm64, a system call from streaming mode leaves it with ZA kept,
+signal frames carry `sve_context` with `SVE_SIG_FLAG_SM`, `tpidr2_context`,
+`za_context` and, with SME2 and ZA on, `zt_context`, moving into
+`extra_context` when they do not fit, a handler starts with SM and ZA off
+and TPIDR2 zero, and sigreturn rejects what `parse_user_sigframe()` rejects.
+`clone()` with `CLONE_VM` gives the child no ZA and a zero TPIDR2, a fork
+copies both, ptrace adds `NT_ARM_TLS`, `NT_ARM_SSVE`, `NT_ARM_ZA` and
+`NT_ARM_ZT`, and `PR_SME_SET_VL` and `abi.sme_default_vector_length` accept
+any length and settle on the SVL. Unlike native arm64, `AT_MINSIGSTKSZ`
+counts the ZA data a frame can carry, so a stack of that size holds every
+frame. `guest-sme-gadgets` and `guest-sme-jit` check the contract, and
+`guest-sme-off-gadgets` and `guest-sme-off-jit` that none of it shows
+without SME.
+
+XNU delivers a signal to a thread in streaming mode without leaving it, and
+returning from the handler loses the upper bits of the Z registers. With SME,
+a vCPU carrier therefore blocks the IPI wake signal SIGUSR1 outside its idle
+`pselect()` and blocks the process-directed SIGINT, SIGTERM, SIGHUP, SIGQUIT
+and SIGCHLD throughout, so the process takes those on a thread that runs no
+guest. Every other carrier wait polls the pending IPIs or does not depend on
+EINTR. Without SME no carrier blocks these signals.
+
+An mm is marked shared, sticky for its life, once `clone()` creates a task on
+it without `CLONE_VFORK`; each later guest entry of a task on it carries
+`DARWIN_UML_DISPATCH_MM_SHARED`, which the x86-64 JIT will use to keep x86's
+store ordering only where another task can observe it. The arm64 host
+ignores the flag. `tests/integration/x86_64/run_guest_x86_64_mm_shared.py`
+checks it.
+
 An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
 CPU has a block of `processor`, `BogoMIPS`, `Features`, `CPU implementer`,

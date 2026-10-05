@@ -340,7 +340,11 @@ base plus the row times SVL. Reaching the file costs one pointer load per
 engine entry or exit that moves SME state; a run without SME carries only
 the null pointer. A write of SVCR that would set SM or ZA in a task without
 SME storage retires nothing and leaves through the `sme_access` exit, which
-the runtime treats as fatal until the kernel provides that storage. Debug
+the runtime reports to the kernel as its SME access event; the kernel
+allocates the task's storage and enters again at the same PC. Each entry
+loads the task's SVCR, TPIDR2 and storage from the bridge tail, and each
+return writes them back, as the
+[shared kernel README](../kernel/common/README.md) describes. Debug
 builds trap when an engine is entered or returns with the host in streaming
 mode or with ZA on; only a host with FEAT_SME in hardware reads SVCR. Only
 the M4's SVL of 64 bytes has been checked on hardware, and the iOS SME path
