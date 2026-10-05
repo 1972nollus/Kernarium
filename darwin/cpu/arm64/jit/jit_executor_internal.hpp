@@ -68,9 +68,11 @@ public:
 
 private:
   struct PendingIndirect final {
-    /* The missing site's translation key. */
+    /* The missing site's translation key, and the key of its target in
+     * the site's own mode: the next block trains the site only when it
+     * is that translation, so a site never links to another mode. */
     std::uint64_t source_pc{};
-    std::uint64_t target_pc{};
+    std::uint64_t target_key{};
     CpuState *cpu{};
     unsigned long generation{};
     std::uint64_t code_changes{};
@@ -137,7 +139,7 @@ private:
   [[nodiscard]] std::optional<std::uint64_t>
   consume_pending_indirect(CpuState &cpu, unsigned long generation,
                            std::uint64_t changes,
-                           std::uint64_t target_pc) noexcept;
+                           std::uint64_t target_key) noexcept;
   void train_indirect(std::uint64_t source_key,
                       const CompiledBlock &target);
   void discard_links() noexcept;
@@ -175,15 +177,13 @@ private:
   /* The block cache keys a block by generation, code changes and its
    * translation_key(pc, mode). */
   [[nodiscard]] CompiledBlock *find(unsigned long generation,
-                                    std::uint64_t changes, std::uint64_t pc,
-                                    std::uint8_t mode,
+                                    std::uint64_t changes, std::uint64_t key,
                                     StaticGuestMemory &memory);
   [[nodiscard]] CacheSlot replacement(unsigned long generation,
                                       std::uint64_t changes,
-                                      std::uint64_t pc, std::uint8_t mode);
+                                      std::uint64_t key);
   CompiledBlock &store_native(unsigned long generation, std::uint64_t changes,
-                              std::uint64_t pc, std::uint8_t mode,
-                              JitFunction function,
+                              std::uint64_t key, JitFunction function,
                               std::uintptr_t internal_entry,
                               JitBlockLink *target_link,
                               std::span<const JitRelocation> relocations,

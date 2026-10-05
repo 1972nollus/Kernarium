@@ -34,7 +34,8 @@ JitExecutor::Implementation::validate_stale_block(
   GuestWordBuffer fetched{};
   std::size_t index = 0;
   while (index < block.instruction_count) {
-    const auto address = block.pc + index * sizeof(std::uint32_t);
+    const auto address =
+        translation_key_pc(block.key) + index * sizeof(std::uint32_t);
     const auto page_remaining =
         guest_page_size - (address & (guest_page_size - 1));
     auto run = std::min<std::size_t>(
@@ -80,24 +81,21 @@ JitExecutor::Implementation::validate_stale_block(
 }
 
 [[nodiscard]] CompiledBlock *JitExecutor::Implementation::find(unsigned long generation,
-                                  std::uint64_t changes, std::uint64_t pc,
-                                  std::uint8_t mode,
+                                  std::uint64_t changes, std::uint64_t key,
                                   StaticGuestMemory &memory) {
-  const auto set_index = cache_index(generation, translation_key(pc, mode),
-                                     geometry_.cache_sets);
+  const auto set_index = cache_index(generation, key, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
   CompiledBlock *stale{};
   for (std::size_t way = 0; way < set.ways.size(); ++way) {
     auto &block = set.ways[way];
     if (block.function != nullptr && block.generation == generation &&
-        block.code_changes == changes && block.pc == pc &&
-        block.mode == mode) {
+        block.code_changes == changes && block.key == key) {
       block.stamp = ++stamp_;
       activate_link(block);
       return &block;
     }
     if (block.function != nullptr && block.generation == generation &&
-        block.pc == pc && block.mode == mode &&
+        block.key == key &&
         (stale == nullptr || block.stamp > stale->stamp)) {
       stale = &block;
     }
@@ -144,10 +142,8 @@ JitExecutor::Implementation::validate_stale_block(
 }
 
 [[nodiscard]] CacheSlot JitExecutor::Implementation::replacement(
-    unsigned long generation, std::uint64_t changes, std::uint64_t pc,
-    std::uint8_t mode) {
-  const auto set_index = cache_index(generation, translation_key(pc, mode),
-                                     geometry_.cache_sets);
+    unsigned long generation, std::uint64_t changes, std::uint64_t key) {
+  const auto set_index = cache_index(generation, key, geometry_.cache_sets);
   auto &set = (*block_cache_)[set_index];
   std::size_t selected_way = 0;
   for (std::size_t way = 0; way < set.ways.size(); ++way)
@@ -162,8 +158,7 @@ JitExecutor::Implementation::validate_stale_block(
   *selected = {};
   selected->generation = generation;
   selected->code_changes = changes;
-  selected->pc = pc;
-  selected->mode = mode;
+  selected->key = key;
   selected->stamp = ++stamp_;
   return {
       .block = selected,
@@ -173,8 +168,7 @@ JitExecutor::Implementation::validate_stale_block(
 }
 
 CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generation, std::uint64_t changes,
-                            std::uint64_t pc, std::uint8_t mode,
-                            JitFunction function,
+                            std::uint64_t key, JitFunction function,
                             std::uintptr_t internal_entry,
                             JitBlockLink *target_link,
                             std::span<const JitRelocation> relocations,
@@ -191,7 +185,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
 #if !UML_JIT_RUNTIME_DIAGNOSTICS
   (void)direct_link_refusals;
 #endif
-  const auto selected = replacement(generation, changes, pc, mode);
+  const auto selected = replacement(generation, changes, key);
   auto &block = *selected.block;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   const bool shared_validation_words = saved_guest_words != nullptr;
@@ -336,7 +330,7 @@ JitExecutor::Implementation::install_shared_translation(
       reinterpret_cast<std::uintptr_t>(stored.code) +
       translation->internal_entry_word * sizeof(std::uint32_t);
   auto *block = &store_native(
-      generation, changes, pc, mode,
+      generation, changes, translation_key(pc, mode),
       sign_jit_function<JitFunction>(stored.code), internal_entry,
       stored.target_link, translation->relocations,
       stored.direct_link_refusals,

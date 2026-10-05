@@ -183,6 +183,36 @@ void indirect_fallback_restores_the_plain_target() {
   run.executor.end_execution();
 }
 
+void indirect_sites_train_only_their_mode() {
+  constexpr unsigned long generation = 9304;
+  constexpr std::uint64_t base = 0xd3'0000;
+  JitBacking backing{1};
+  backing.put32(0, add_x5_one);
+  backing.put32(4, branch_register(7));
+  backing.put32(12, add_x6_one);
+  backing.put32(16, system_call);
+  JitMapping mapping{generation, base, backing, 1};
+  SmeRun run;
+  require(run.executor.begin_execution(generation, base));
+  /* A mode-ZA site misses and records its target; the mode changes
+   * before the target runs, so the mode-0 block must not train it. */
+  run.set_mode(arm64::svcr_za);
+  run.cpu.pc = base;
+  run.cpu.registers[7] = base + 12U;
+  require(run.run(generation, Event::continued) == 2);
+  require(run.cpu.pc == base + 12U);
+  run.set_mode(0);
+  require(run.run(generation, Event::system_call) == 2);
+  require(run.executor.indirect_link_diagnostics().trains == 0);
+  /* In its own mode the same target trains the site. */
+  run.set_mode(arm64::svcr_za);
+  run.cpu.pc = base;
+  require(run.run(generation, Event::continued) == 2);
+  require(run.run(generation, Event::system_call) == 2);
+  require(run.executor.indirect_link_diagnostics().trains == 1);
+  run.executor.end_execution();
+}
+
 } // namespace
 
 int main() {
@@ -194,5 +224,6 @@ int main() {
   each_mode_has_its_own_translation();
   links_stay_within_their_mode();
   indirect_fallback_restores_the_plain_target();
+  indirect_sites_train_only_their_mode();
   return 0;
 }

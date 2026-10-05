@@ -16,7 +16,9 @@ namespace uml::cpu::arm64 {
 struct CompiledBlock final {
   unsigned long generation{};
   std::uint64_t code_changes{};
-  std::uint64_t pc{};
+  /* translation_key(): the guest PC with the SVCR mode the block was
+   * compiled for, which also selects its cache set. */
+  std::uint64_t key{};
   JitFunction function{};
   JitFunction tracked_function{};
   std::uintptr_t internal_entry{};
@@ -37,9 +39,6 @@ struct CompiledBlock final {
   bool link_target_safe{};
   bool native_fp{};
   bool guest_illegal{};
-  /* The guest SVCR mode the block was compiled for; with pc it forms the
-   * block's translation_key(), which also selects its cache set. */
-  std::uint8_t mode{};
 };
 
 struct CacheSet final {
