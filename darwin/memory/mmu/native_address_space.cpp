@@ -21,7 +21,6 @@
 #include <memory>
 #include <new>
 #include <optional>
-#include <pthread.h>
 #include <shared_mutex>
 #include <span>
 #include <sys/mman.h>
@@ -47,14 +46,6 @@ namespace {
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 constexpr std::uintptr_t guest_page_size = 4096;
-constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
-
-[[nodiscard]] std::uintptr_t current_carrier_id() noexcept
-{
-	return static_cast<std::uintptr_t>(
-		pthread_mach_thread_np(pthread_self()));
-}
-
 void snapshot_shadow_page(std::uintptr_t page,
 	std::array<std::byte, guest_page_size> &snapshot) noexcept
 {
@@ -1299,102 +1290,6 @@ int NativeAddressSpace::identify_backing(
 	return 0;
 }
 
-bool NativeAddressSpace::live_kernel_stack_slot_locked(
-	std::uintptr_t slot) const noexcept
-{
-	const auto contains = [slot](std::uintptr_t address) noexcept {
-		return address != 0 && slot >= address &&
-			slot - address < kernel_stack_size;
-	};
-	return std::ranges::any_of(active_kernel_stacks_,
-		[&](const auto &entry) noexcept {
-			return contains(entry.second.current) ||
-				(entry.second.transition &&
-				 contains(entry.second.staged));
-		});
-}
-
-int NativeAddressSpace::restore_inactive_stack_protections_locked(
-	std::uintptr_t address)
-{
-	if (address == 0)
-		return 0;
-	int saved_errno = 0;
-	for (auto slot = address; slot < address + kernel_stack_size;
-	     slot += host_page_size())
-		if (!live_kernel_stack_slot_locked(slot) &&
-		    update_slot_protection_locked(slot) < 0 && saved_errno == 0)
-			saved_errno = errno;
-	if (saved_errno == 0)
-		return 0;
-	errno = saved_errno;
-	return -1;
-}
-
-int NativeAddressSpace::stage_kernel_stack(std::uintptr_t address)
-{
-	if (address != 0 && (address & (kernel_stack_size - 1)) != 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	std::lock_guard lock{mutex_};
-	if (refuse_retired_locked())
-		return -1;
-	const auto carrier = current_carrier_id();
-	auto [found, inserted] = active_kernel_stacks_.try_emplace(carrier);
-	(void)inserted;
-	if (found->second.transition) {
-		errno = EBUSY;
-		return -1;
-	}
-	found->second.staged = address;
-	found->second.transition = true;
-	if (address == 0)
-		return 0;
-	for (auto slot = address; slot < address + kernel_stack_size;
-	     slot += host_page_size())
-		if (materialized_slots_.contains(slot) &&
-		    set_slot_protection_locked(
-			    slot, PROT_READ | PROT_WRITE) < 0) {
-			const int saved_errno = errno;
-			found->second.staged = 0;
-			found->second.transition = false;
-			(void)restore_inactive_stack_protections_locked(address);
-			if (found->second.current == 0)
-				active_kernel_stacks_.erase(found);
-			errno = saved_errno;
-			return -1;
-		}
-	return 0;
-}
-
-int NativeAddressSpace::finish_kernel_stack(std::uintptr_t address)
-{
-	if (address != 0 && (address & (kernel_stack_size - 1)) != 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	std::lock_guard lock{mutex_};
-	if (refuse_retired_locked())
-		return -1;
-	const auto carrier = current_carrier_id();
-	const auto found = active_kernel_stacks_.find(carrier);
-	if (found == active_kernel_stacks_.end() ||
-	    !found->second.transition || found->second.staged != address) {
-		errno = EINVAL;
-		return -1;
-	}
-	const auto previous = found->second.current;
-	found->second.current = address;
-	found->second.staged = 0;
-	found->second.transition = false;
-	const int result = previous == address ? 0 :
-		restore_inactive_stack_protections_locked(previous);
-	if (address == 0)
-		active_kernel_stacks_.erase(found);
-	return result;
-}
-
 int NativeAddressSpace::ensure_backing_index_locked()
 {
 	if (backing_index_ready_)
@@ -1427,8 +1322,6 @@ void NativeAddressSpace::erase_backing_index_entry_locked(
 
 int NativeAddressSpace::flush_page_locked(std::uintptr_t page)
 {
-	if (live_kernel_stack_slot_locked(slot_for(page)))
-		return 0;
 	auto found = mappings_.find(page);
 	if (found == mappings_.end() || !found->second.loaded)
 		return 0;
@@ -1515,8 +1408,6 @@ int NativeAddressSpace::flush_slot_locked(std::uintptr_t slot)
 
 int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
 {
-	if (live_kernel_stack_slot_locked(slot_for(page)))
-		return 0;
 	auto found = mappings_.find(page);
 	if (found == mappings_.end())
 		return 0;
@@ -1542,8 +1433,6 @@ int NativeAddressSpace::reconcile_page_locked(std::uintptr_t page)
 
 int NativeAddressSpace::load_page_locked(std::uintptr_t page)
 {
-	if (live_kernel_stack_slot_locked(slot_for(page)))
-		return 0;
 	auto found = mappings_.find(page);
 
 	if (found == mappings_.end())
@@ -1568,8 +1457,6 @@ int NativeAddressSpace::load_page_locked(std::uintptr_t page)
 
 int NativeAddressSpace::reload_page_from_backing_locked(std::uintptr_t page)
 {
-	if (live_kernel_stack_slot_locked(slot_for(page)))
-		return 0;
 	auto found = mappings_.find(page);
 	if (found == mappings_.end())
 		return 0;
@@ -1633,8 +1520,6 @@ int NativeAddressSpace::materialize_slot_locked(std::uintptr_t slot)
 int NativeAddressSpace::set_slot_protection_locked(
 	std::uintptr_t slot, int protection)
 {
-	if (live_kernel_stack_slot_locked(slot))
-		protection = PROT_READ | PROT_WRITE;
 	/* This is the sole protection transition for every tracked host slot.
 	 * Refuse W+X even if a future caller bypasses the normal RX/RW selection.
 	 */
@@ -1730,32 +1615,6 @@ int NativeAddressSpace::map(
 	 * both unnecessary and unsafe when a sibling quarter carries this call's
 	 * live kernel stack. */
 	const int required_protection = direct_data_protection(protection);
-	for (std::uint64_t position = 0; position < length;
-	     position += guest_page_size) {
-		const auto page = address + position;
-		if (!live_kernel_stack_slot_locked(slot_for(page)))
-			continue;
-		const auto direct = direct_mappings_.find(slot_for(page));
-		const auto existing = mappings_.find(page);
-		bool same_direct = false;
-		if (direct != direct_mappings_.end()) {
-			BackingIdentity direct_identity{};
-			same_direct =
-				identify_backing(direct->second.fd, direct_identity) == 0 &&
-				direct_identity == identity &&
-				direct->second.offset + (page - slot_for(page)) ==
-					offset + position &&
-				direct_data_protection(direct->second.protection) ==
-					required_protection;
-		}
-		const bool same_shadow = existing != mappings_.end() &&
-			existing->second.identity == identity &&
-			existing->second.offset == offset + position;
-		if (!same_shadow && !same_direct) {
-			errno = EBUSY;
-			return -1;
-		}
-	}
 	bool compatible_direct = true;
 	for (std::uint64_t position = 0; position < length;
 	     position += guest_page_size) {
@@ -2253,12 +2112,6 @@ int NativeAddressSpace::unmap(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	for (auto slot = slot_for(address); slot < address + length;
-	     slot += host_page_size())
-		if (live_kernel_stack_slot_locked(slot)) {
-			errno = EBUSY;
-			return -1;
-		}
 	DirectTransitionGuard transitions{*this,
 		static_cast<std::size_t>(
 			(slot_for(address + length - 1) - slot_for(address)) /
@@ -2455,7 +2308,6 @@ void NativeAddressSpace::retire() noexcept
 	if (retired_.exchange(true, std::memory_order_acq_rel))
 		return;
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	active_kernel_stacks_.clear();
 	for (const auto slot : materialized_slots_)
 		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
 			PROT_READ | PROT_WRITE);

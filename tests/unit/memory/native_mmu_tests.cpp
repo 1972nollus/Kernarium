@@ -492,63 +492,61 @@ void test_guest_stack_near_address_limit_skips_native_reconciliation()
 		"high guest stack finish entered native reconciliation");
 }
 
-void test_active_kernel_stack_defers_shadow_synchronization()
+/* After every guest event a 4 KiB kernel stages whatever the task holds as
+ * its stack pointer and finishes only what was staged. Nothing is: guest
+ * memory is translated at 4 KiB, so no stack quarter is ever implicit. A
+ * pointer of zero or outside guest memory, aligned or not, stages nothing on
+ * a carrier however often it comes, and leaves the kernel pages it names
+ * free to unmap. */
+void test_user_stack_pointer_stages_nothing()
 {
 	constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
-	constexpr std::size_t marker_offset = 91;
-	ScratchBacking backing{backing_name, 4 * guest_page_size};
+	ScratchBacking backing{backing_name, guest_page_size};
 	ReservedSlot arena{true, 16};
-	const auto stack = (arena.address() + kernel_stack_size - 1) &
+	const auto native = (arena.address() + kernel_stack_size - 1) &
 		~(kernel_stack_size - 1);
-	const auto address = stack + guest_page_size;
-	require(stack >= arena.address() &&
-		stack + kernel_stack_size <= arena.address() + arena.size(),
-		"active-stack fixture alignment escaped its reservation");
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
-		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
-		"active-stack fixture map failed");
-	auto *page = reinterpret_cast<volatile std::byte *>(address);
-	page[marker_offset] = std::byte{0x41};
-	require(darwin_uml_vm_stage_stack(stack) == 0 &&
-		darwin_uml_vm_finish_stack(stack) == 0,
-		"active-stack transition failed");
+	require(native + kernel_stack_size <= arena.address() + arena.size(),
+		"user-stack fixture alignment escaped its reservation");
+	const auto page = reinterpret_cast<void *>(native + guest_page_size);
 
-	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
-		guest_page_size) == 0 &&
-		backing.get_byte(guest_page_size + marker_offset) == std::byte{0},
-		"active stack was written back while its carrier could mutate it");
-	backing.put_byte(guest_page_size + marker_offset + 1,
-		std::byte{0x52});
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
-		guest_page_size, guest_page_size, PROT_READ, 0, 0) == 0 &&
-		page[marker_offset] == std::byte{0x41} &&
-		page[marker_offset + 1] == std::byte{0},
-		"active stack was reloaded from independently changed backing");
-	require((uml::testing::current_vm_protection(
-		reinterpret_cast<void *>(address)) & PROT_WRITE) != 0,
-		"active stack lost host write permission");
-	errno = 0;
-	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
-		guest_page_size) == -1 && errno == EBUSY,
-		"active stack was unmapped");
+	/* A fresh thread is a fresh carrier. */
+	int staged = -1;
+	int unmapped = -1;
+	int unmap_errno = 0;
+	std::thread carrier{[&] {
+		if (darwin_uml_vm_map(page, backing.descriptor(), 0,
+			guest_page_size, PROT_READ | PROT_WRITE, 0, 1) != 0)
+			return;
+		staged = darwin_uml_vm_stage_stack(native);
+		errno = 0;
+		unmapped = darwin_uml_vm_unmap(page, guest_page_size);
+		unmap_errno = errno;
+	}};
+	carrier.join();
+	require(staged == 0 && unmapped == 0,
+		"a user stack pointer in the native window pinned kernel pages (" +
+		std::to_string(unmap_errno) + ")");
 
-	require(darwin_uml_vm_stage_stack(0) == 0 &&
-		darwin_uml_vm_finish_stack(0) == 0,
-		"native-stack landing did not release the kernel stack");
-	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
-		guest_page_size) == 0 &&
-		darwin_uml_vm_sync_from_backing(address) == 0,
-		"inactive stack did not reconcile deferred shadow changes");
-	require(backing.get_byte(guest_page_size + marker_offset) ==
-			std::byte{0x41} &&
-		backing.get_byte(guest_page_size + marker_offset + 1) ==
-			std::byte{0x52} &&
-		page[marker_offset] == std::byte{0x41} &&
-		page[marker_offset + 1] == std::byte{0x52},
-		"inactive stack reconciliation lost disjoint changes");
-	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
-		guest_page_size) == 0,
-		"active-stack fixture cleanup failed");
+	const unsigned long pointers[] = {
+		0,
+		static_cast<unsigned long>(native),
+		static_cast<unsigned long>(native + 16),
+		0x8000'0000'0000'0000UL,
+		0x8000'0000'0000'0010UL,
+	};
+	for (int event = 0; event < 2; ++event)
+		for (const auto pointer : pointers) {
+			errno = 0;
+			const int result = darwin_uml_vm_stage_stack(pointer);
+			require(result == 0,
+				"user stack pointer " + std::to_string(pointer) +
+				" staged " + std::to_string(result) + " on event " +
+				std::to_string(event) + " (" +
+				std::to_string(errno) + ")");
+		}
+	for (const auto pointer : pointers)
+		require(darwin_uml_vm_finish_stack(pointer) == 0,
+			"finishing an unstaged user stack pointer failed");
 }
 
 void test_shadow_sync_publishes_stable_machine_words()
@@ -1312,7 +1310,7 @@ int main()
 		test_duplicate_map_reconciles_reused_backing_page();
 		test_prot_none_shadow_flush_and_release();
 		test_guest_stack_near_address_limit_skips_native_reconciliation();
-		test_active_kernel_stack_defers_shadow_synchronization();
+		test_user_stack_pointer_stages_nothing();
 		test_shadow_sync_publishes_stable_machine_words();
 		test_bridge_uses_direct_shared_mapping_for_aligned_ranges();
 		test_direct_retry_validates_ownership_mapping_and_permissions();
