@@ -399,18 +399,6 @@ extern "C" int darwin_uml_vm_discard_if_stale(unsigned long address, int fd,
 	return darwin_uml_static_vm_discard_if_stale(address, fd, offset);
 }
 
-/* A 4 KiB kernel offers each event's user stack pointer here. Guest memory
- * is translated at 4 KiB, so no stack quarter is ever implicit: nothing is
- * staged, and whatever the task holds there, it never fails. */
-extern "C" int darwin_uml_vm_stage_stack(unsigned long)
-{
-	return 0;
-}
-extern "C" int darwin_uml_vm_finish_stack(unsigned long)
-{
-	return 0;
-}
-
 extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write)
 {
 	if (ConfiguredAddressLayout::is_guest(address))

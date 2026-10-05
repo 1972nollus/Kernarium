@@ -41,8 +41,6 @@ int darwin_uml_vm_sync_from_buffer(unsigned long address,
  * and nothing is installed. Returns 0, or a negative value on failure. */
 int darwin_uml_vm_discard_if_stale(unsigned long address, int fd,
 				   unsigned long long offset);
-int darwin_uml_vm_stage_stack(unsigned long address);
-int darwin_uml_vm_finish_stack(unsigned long address);
 /* Returns 1 when the access can be retried, 0 when Linux must resolve the
  * fault, or a negative value on failure. */
 int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write);

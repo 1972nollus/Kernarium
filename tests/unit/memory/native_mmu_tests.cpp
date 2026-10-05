@@ -481,74 +481,6 @@ void test_prot_none_shadow_flush_and_release()
 		"PROT_NONE flush-error fixture retained its host slot");
 }
 
-void test_guest_stack_near_address_limit_skips_native_reconciliation()
-{
-	constexpr auto stack = static_cast<unsigned long>(
-		DARWIN_UML_GUEST_ADDRESS_LIMIT - 0x10400ULL);
-	static_assert(stack + 128 * 1024 > DARWIN_UML_GUEST_ADDRESS_LIMIT);
-	require(darwin_uml_vm_stage_stack(stack) == 0,
-		"high guest stack was rejected as a mixed native range");
-	require(darwin_uml_vm_finish_stack(stack) == 0,
-		"high guest stack finish entered native reconciliation");
-}
-
-/* After every guest event a 4 KiB kernel stages whatever the task holds as
- * its stack pointer and finishes only what was staged. Nothing is: guest
- * memory is translated at 4 KiB, so no stack quarter is ever implicit. A
- * pointer of zero or outside guest memory, aligned or not, stages nothing on
- * a carrier however often it comes, and leaves the kernel pages it names
- * free to unmap. */
-void test_user_stack_pointer_stages_nothing()
-{
-	constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
-	ScratchBacking backing{backing_name, guest_page_size};
-	ReservedSlot arena{true, 16};
-	const auto native = (arena.address() + kernel_stack_size - 1) &
-		~(kernel_stack_size - 1);
-	require(native + kernel_stack_size <= arena.address() + arena.size(),
-		"user-stack fixture alignment escaped its reservation");
-	const auto page = reinterpret_cast<void *>(native + guest_page_size);
-
-	/* A fresh thread is a fresh carrier. */
-	int staged = -1;
-	int unmapped = -1;
-	int unmap_errno = 0;
-	std::thread carrier{[&] {
-		if (darwin_uml_vm_map(page, backing.descriptor(), 0,
-			guest_page_size, PROT_READ | PROT_WRITE, 0, 1) != 0)
-			return;
-		staged = darwin_uml_vm_stage_stack(native);
-		errno = 0;
-		unmapped = darwin_uml_vm_unmap(page, guest_page_size);
-		unmap_errno = errno;
-	}};
-	carrier.join();
-	require(staged == 0 && unmapped == 0,
-		"a user stack pointer in the native window pinned kernel pages (" +
-		std::to_string(unmap_errno) + ")");
-
-	const unsigned long pointers[] = {
-		0,
-		static_cast<unsigned long>(native),
-		static_cast<unsigned long>(native + 16),
-		0x8000'0000'0000'0000UL,
-		0x8000'0000'0000'0010UL,
-	};
-	for (int event = 0; event < 2; ++event)
-		for (const auto pointer : pointers) {
-			errno = 0;
-			const int result = darwin_uml_vm_stage_stack(pointer);
-			require(result == 0,
-				"user stack pointer " + std::to_string(pointer) +
-				" staged " + std::to_string(result) + " on event " +
-				std::to_string(event) + " (" +
-				std::to_string(errno) + ")");
-		}
-	for (const auto pointer : pointers)
-		require(darwin_uml_vm_finish_stack(pointer) == 0,
-			"finishing an unstaged user stack pointer failed");
-}
-
 void test_shadow_sync_publishes_stable_machine_words()
 {
 	constexpr std::size_t marker_offset = 128;
@@ -1309,8 +1241,6 @@ int main()
 		test_authoritative_reload_discards_stale_shadow_bytes();
 		test_duplicate_map_reconciles_reused_backing_page();
 		test_prot_none_shadow_flush_and_release();
-		test_guest_stack_near_address_limit_skips_native_reconciliation();
-		test_user_stack_pointer_stages_nothing();
 		test_shadow_sync_publishes_stable_machine_words();
 		test_bridge_uses_direct_shared_mapping_for_aligned_ranges();
 		test_direct_retry_validates_ownership_mapping_and_permissions();
