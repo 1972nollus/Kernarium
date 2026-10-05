@@ -55,8 +55,6 @@ public:
 	int refresh(std::uintptr_t address, std::uint64_t length);
 	int reload_from_backing(std::uintptr_t address, std::uint64_t length);
 	int retry(std::uintptr_t address, bool execute, bool write);
-	int stage_kernel_stack(std::uintptr_t address);
-	int finish_kernel_stack(std::uintptr_t address);
 	/* Keep the class definition identical in production and allocation-test
 	 * translation units.  The definitions exist only in the separately built
 	 * test variant, so ordinary products still expose no test symbols or work. */
@@ -122,17 +120,8 @@ private:
 		std::vector<DirectTransition> transitions;
 		bool committed{};
 	};
-	struct ActiveKernelStack final {
-		std::uintptr_t current{};
-		std::uintptr_t staged{};
-		bool transition{};
-	};
 
 	static int identify_backing(int fd, BackingIdentity &identity) noexcept;
-	[[nodiscard]] bool live_kernel_stack_slot_locked(
-		std::uintptr_t slot) const noexcept;
-	int restore_inactive_stack_protections_locked(
-		std::uintptr_t address);
 	int convert_direct_slot_to_shadow_locked(std::uintptr_t slot);
 	int ensure_shadow_range_locked(
 		std::uintptr_t address, std::uint64_t length,
@@ -159,7 +148,6 @@ private:
 	PageAddressMap<int> slot_protections_;
 	PageAddressSet materialized_slots_;
 	PageAddressMap<DirectMapping> direct_mappings_;
-	PageAddressMap<ActiveKernelStack> active_kernel_stacks_;
 	bool backing_index_ready_{};
 
 	/* Every software mapping of a guest page publishes its backing first, and

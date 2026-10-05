@@ -5,11 +5,13 @@ Cross-builds the freestanding exception_probe.cpp for x86-64 and i386, boots an
 x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
 runs long repeated string instructions; ICEBP, BOUND, INT 4, INTO, INT n, UD2,
-DIV and IDIV, page faults, non-canonical addresses, misaligned accesses under
-RFLAGS.AC and unmasked SSE and x87 exceptions deliver Linux's signals, codes,
-trap numbers and error codes; VMASKMOV and VPMASKMOV access only their enabled
-lanes; AVX2 gathers complete the elements before a fault; a faulting store or
-load leaves the state its instruction found; masked x87 exceptions set
+DIV and IDIV, page faults, non-canonical addresses, pushes through a bad
+stack pointer again and again on one CPU, misaligned accesses under RFLAGS.AC
+and unmasked SSE and x87 exceptions deliver Linux's signals, codes, trap
+numbers and error codes; system calls with a bad stack pointer return;
+VMASKMOV and VPMASKMOV access only their enabled lanes; AVX2 gathers complete
+the elements before a fault; a faulting store or load leaves the state its
+instruction found; masked x87 exceptions set
 sticky status flags and FPREM, FSIN and FSINCOS keep a zero's sign; an x87
 stack survives a signal; a signal taken between two instructions leaves the
 accumulator alone; and a tracer of either ABI reads and writes registers, FP
