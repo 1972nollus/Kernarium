@@ -186,7 +186,10 @@ JitCompilerFamilies::allocate_gpr_slot(unsigned guest,
   stack_pointer = guest == 31U && stack_pointer;
   for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
     auto &slot = gpr_slots_[index];
-    if (slot.guest != unbound_guest)
+    /* A ZA slice index names W12-W15, so a streaming translation keeps
+     * x12 free for the guest index (design 4.2). */
+    if (slot.guest != unbound_guest ||
+        (streaming_translation() && resident_gpr_hosts[index] == 12U))
       continue;
     slot.guest = guest;
     slot.stack_pointer = stack_pointer;
@@ -769,11 +772,14 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   assume_flags_in_memory();
   set_exit_gpr_mask(0);
   set_exit_vector_mask(0);
+  /* The successor runs in this translation's mode: nothing in a block
+   * changes SVCR and then reaches a linked exit. */
+  const auto key = translation_key(target, sme_mode_);
   const auto *link =
       link_resolver_ == nullptr
           ? nullptr
           : static_cast<const JitBlockLink *>(
-                link_resolver_(link_context_, target));
+                link_resolver_(link_context_, key));
   if (link == nullptr) {
     /* No resolver deliberately selects fully unlinked code. A configured
      * resolver returning null means its stable table refused this target,
@@ -790,7 +796,7 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   const auto fallback = emitter.make_label();
   emitter.load_relocatable_pointer(
       12, reinterpret_cast<std::uintptr_t>(link),
-      JitRelocationKind::direct_link, target);
+      JitRelocationKind::direct_link, key);
   /*
    * Subtract the completed source while the descriptor pointer load is in
    * flight. Both a missing capability and a full fairness window take the
@@ -851,11 +857,14 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   set_exit_gpr_mask(0);
   set_exit_vector_mask(0);
 
+  /* The site and every target it trains belong to this translation's mode;
+   * its entries compare plain guest PCs with x8. */
+  const auto source_key = translation_key(source_pc, sme_mode_);
   const auto *site =
       indirect_link_resolver_ == nullptr
           ? nullptr
           : static_cast<const JitIndirectLink *>(
-                indirect_link_resolver_(indirect_link_context_, source_pc));
+                indirect_link_resolver_(indirect_link_context_, source_key));
   if (site == nullptr) {
     indirect_link_refusals_ += indirect_link_resolver_ != nullptr;
     emitter.store_x(8, 15, offsetof(CpuState, pc));
@@ -869,7 +878,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   const auto undo_and_return_to_cpp = emitter.make_label();
   emitter.load_relocatable_pointer(
       13, reinterpret_cast<std::uintptr_t>(site),
-      JitRelocationKind::indirect_link, source_pc);
+      JitRelocationKind::indirect_link, source_key);
   /*
    * Hide the independent budget update under the dependent PIC descriptor
    * load. Every miss or rejected matched entry rejoins at the one cold undo.
@@ -908,12 +917,14 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   emitter.bind(miss);
   emitter.store_x(8, 15, offsetof(CpuState, pc));
   emitter.store_x(13, 19, offsetof(JitChainState, indirect_miss));
-  emitter.load_literal_constant(9, source_pc);
+  emitter.load_literal_constant(9, source_key);
   emitter.store_x(9, 19, offsetof(JitChainState, indirect_source_pc));
   emitter.branch(undo_and_return_to_cpp);
 
   emitter.bind(fallback);
-  emitter.store_x(16, 15, offsetof(CpuState, pc));
+  /* x16 is the matched record's key, which equals the target PC in x8
+   * only in mode 0. */
+  emitter.store_x(sme_mode_ == 0U ? 16U : 8U, 15, offsetof(CpuState, pc));
   emitter.bind(undo_and_return_to_cpp);
   emitter.add_immediate(20, 20, static_cast<unsigned>(count));
   emitter.return_constant(Event::continued, count);

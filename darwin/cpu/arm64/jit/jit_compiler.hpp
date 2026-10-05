@@ -5,9 +5,11 @@
 #include "jit_emitter.hpp"
 #include "jit_runtime_contract.hpp"
 #include "jit_semantic_memory.hpp"
+#include "jit_sme_transition.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -27,8 +29,16 @@ public:
 
   void set_table_list_planning_enabled(bool enabled) noexcept;
 
+  /* Compiles for the guest SVCR mode `mode` (svcr_sm, svcr_za): the mode
+   * the translation's key carries (translation_key()), and so the mode its
+   * code runs in. Mode 0, the default, is the translation without SME
+   * state. */
+  void set_sme_mode(std::uint8_t mode) noexcept;
+
   struct Result final {
     std::span<const std::uint32_t> words;
+    /* The executable prefix of words, before the literal pool. */
+    std::size_t executable_words{};
     /* Where this translation emitted executor-owned link operands. Shared
      * publication zeros those cells and retains these neutral guest keys so
      * another executor can resolve its own direct-link records and PIC sites.
@@ -88,6 +98,7 @@ private:
       exclusive_compare_mismatch,
       memory_slow,
       memory_copy_set_slow,
+      sme_slow,
     };
 
     Arm64Emitter::Label label;
@@ -216,6 +227,25 @@ private:
   try_emit_memory_copy_set_sequence(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
 
+  /* The SME control core (jit_compiler_sme.cpp), on a host whose profile
+   * implements SME. A guest write of SVCR, an SME slow path, and the ZERO
+   * ZA of an SM=0 translation are terminal helper calls.
+   * emit_sme_system() takes SMSTART, SMSTOP, MRS and MSR SVCR and
+   * TPIDR2_EL0, and nothing for any other word. */
+  [[nodiscard]] std::optional<Action>
+  emit_sme_system(std::uint32_t instruction, std::uint64_t pc);
+  /* A word of the SVE or SME encoding space. */
+  [[nodiscard]] Action emit_sme_instruction(std::uint32_t instruction,
+                                            std::uint64_t pc);
+  void emit_sme_vector_length(std::uint32_t instruction, bool read);
+  void emit_sme_array_vector(std::uint32_t instruction, std::uint64_t pc,
+                             bool load);
+  void emit_sme_zt0_transfer(std::uint32_t instruction, std::uint64_t pc,
+                             bool load);
+  /* x9 = the register file's ZT0, from CpuState and the run-time SVL. */
+  void emit_sme_zt0_address();
+  void emit_terminal_helper(const void *helper, std::uint32_t instruction,
+                            std::uint64_t pc, std::size_t count);
 
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);

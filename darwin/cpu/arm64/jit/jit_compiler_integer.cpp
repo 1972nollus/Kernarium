@@ -467,6 +467,61 @@ void JitCompilerFamilies::emit_integer_min_max(std::uint32_t instruction,
   commit_native_gpr(native_destination, destination, false);
 }
 
+namespace {
+
+/* AND and ORR (immediate) with N:immr:imms = 0:000000:`imms`, the bit
+ * patterns the population count below needs. */
+[[nodiscard]] constexpr std::uint32_t
+logical_pattern(bool orr, bool wide, unsigned imms, unsigned source,
+                unsigned destination) noexcept {
+  return (orr ? 0x3200'0000U : 0x1200'0000U) | (wide ? 0x8000'0000U : 0U) |
+         (imms << 10) | (source << 5) | destination;
+}
+
+constexpr unsigned pattern_01 = 0x3cU;       // 0x5555...
+constexpr unsigned pattern_0011 = 0x39U;     // 0x3333...
+constexpr unsigned pattern_00001111 = 0x33U; // 0x0f0f...
+constexpr unsigned pattern_00000001 = 0x30U; // 0x0101...
+
+static_assert(arm64::detail::decode_logical_immediate(
+                  true, 0, 0, pattern_01) == 0x5555'5555'5555'5555ULL);
+static_assert(arm64::detail::decode_logical_immediate(
+                  true, 0, 0, pattern_0011) == 0x3333'3333'3333'3333ULL);
+static_assert(arm64::detail::decode_logical_immediate(
+                  true, 0, 0, pattern_00001111) ==
+              0x0f0f'0f0f'0f0f'0f0fULL);
+static_assert(arm64::detail::decode_logical_immediate(
+                  true, 0, 0, pattern_00000001) ==
+              0x0101'0101'0101'0101ULL);
+
+} // namespace
+
+void JitCompilerFamilies::emit_gpr_population_count(bool wide,
+                                                    unsigned source,
+                                                    unsigned result) {
+  /* The SWAR count in scratch x10 and x11, without NZCV or AdvSIMD. A W
+   * form's 32-bit operations ignore the source's upper half. */
+  const std::uint32_t sf = wide ? 0x8000'0000U : 0U;
+  const unsigned width = wide ? 64U : 32U;
+  const auto shift_right = [&](unsigned to, unsigned from, unsigned shift) {
+    emit((wide ? 0xd340'0000U : 0x5300'0000U) | (shift << 16) |
+         ((width - 1U) << 10) | (from << 5) | to); // lsr
+  };
+  shift_right(10, source, 1);
+  emit(logical_pattern(false, wide, pattern_01, 10, 10));
+  emit(0x4b00'0000U | sf | (10U << 16) | (source << 5) | 10U); // sub
+  shift_right(11, 10, 2);
+  emit(logical_pattern(false, wide, pattern_0011, 11, 11));
+  emit(logical_pattern(false, wide, pattern_0011, 10, 10));
+  emit(0x0b00'0000U | sf | (11U << 16) | (10U << 5) | 10U); // add
+  emit(0x0b40'0000U | sf | (10U << 16) | (4U << 10) | (10U << 5) |
+       10U); // add x10, x10, x10, lsr #4
+  emit(logical_pattern(false, wide, pattern_00001111, 10, 10));
+  emit(logical_pattern(true, wide, pattern_00000001, 31, 11)); // mov
+  emit(0x1b00'7c00U | sf | (11U << 16) | (10U << 5) | 10U);    // mul
+  shift_right(result, 10, width - 8U);
+}
+
 void JitCompilerFamilies::emit_bit_reverse_count(std::uint32_t instruction) {
   const unsigned operation = (instruction >> 10) & 31U;
   if (operation < 6U || host_capabilities().cssc) {
@@ -491,7 +546,12 @@ void JitCompilerFamilies::emit_bit_reverse_count(std::uint32_t instruction) {
     emit(0x5ac0'0000U | sf | (source << 5) | result); // rbit
     emit(0x5ac0'1000U | sf | (result << 5) | result); // clz
     break;
-  case 7: // CNT: count the bytes' bits in scratch v0, then sum them.
+  case 7: // CNT
+    if (streaming_translation()) {
+      emit_gpr_population_count(wide, source, result);
+      break;
+    }
+    /* Count the bytes' bits in scratch v0, then sum them. */
     emit((wide ? 0x9e67'0000U : 0x1e27'0000U) | (source << 5)); // fmov
     emit(0x0e20'5800U);                                        // cnt v0.8b
     emit(0x0e31'b800U);                                        // addv b0

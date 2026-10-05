@@ -38,9 +38,9 @@ public:
 	[[nodiscard]] bool valid() const noexcept;
 	[[nodiscard]] void *store(
 		std::span<const std::uint32_t> words) noexcept;
-	/* Stores an ordinary cached translation. Direct literals point at the
-	 * link table's unique anchor for their address space and guest target;
-	 * indirect literals
+	/* Stores an ordinary cached translation whose translation_key() is
+	 * `key`. Direct literals point at the link table's unique anchor for
+	 * their address space and target key; indirect literals
 	 * retain their compiler value for a local translation or use the supplied
 	 * executor-private value for a shared translation. Literal patching happens
 	 * in the same JIT write window as code publication. Records of exited
@@ -50,7 +50,7 @@ public:
 	 * exits.
 	 */
 	[[nodiscard]] StoredBlock store_block(
-		std::uint64_t pc,
+		std::uint64_t key,
 		std::span<const std::uint32_t> words,
 		std::span<const JitRelocation> relocations,
 		std::span<const std::uintptr_t> values,

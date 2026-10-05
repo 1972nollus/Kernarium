@@ -68,8 +68,11 @@ public:
 
 private:
   struct PendingIndirect final {
+    /* The missing site's translation key, and the key of its target in
+     * the site's own mode: the next block trains the site only when it
+     * is that translation, so a site never links to another mode. */
     std::uint64_t source_pc{};
-    std::uint64_t target_pc{};
+    std::uint64_t target_key{};
     CpuState *cpu{};
     unsigned long generation{};
     std::uint64_t code_changes{};
@@ -102,7 +105,7 @@ private:
    */
   [[nodiscard]] std::optional<SingleInstructionTranslation>
   translate_single_instruction(std::uint64_t pc, std::uint32_t instruction,
-                               bool track_direct_stores);
+                               bool track_direct_stores, std::uint8_t mode);
   [[nodiscard]] Event invoke_single_instruction(
       const SingleInstructionTranslation &translation, CpuState &target,
       bool tracked_stores, bool restore_environment, std::size_t &executed,
@@ -136,14 +139,14 @@ private:
   [[nodiscard]] std::optional<std::uint64_t>
   consume_pending_indirect(CpuState &cpu, unsigned long generation,
                            std::uint64_t changes,
-                           std::uint64_t target_pc) noexcept;
-  void train_indirect(std::uint64_t source_pc,
+                           std::uint64_t target_key) noexcept;
+  void train_indirect(std::uint64_t source_key,
                       const CompiledBlock &target);
   void discard_links() noexcept;
   void deactivate_links() noexcept;
   void deactivate_indirect_links() noexcept;
   void prepare_links(unsigned long generation, std::uint64_t changes);
-  void refresh_cached_link_target(std::uint64_t pc);
+  void refresh_cached_link_target(std::uint64_t key);
   [[gnu::noinline]] void refresh_link(CompiledBlock &block);
   [[gnu::always_inline]] void activate_link(CompiledBlock &block) {
     if (block.link_epoch != link_epoch_)
@@ -151,7 +154,7 @@ private:
   }
 
   [[nodiscard]] SharedTranslationCache::CodegenProfile
-  shared_codegen_profile() const noexcept;
+  shared_codegen_profile(std::uint8_t mode) const noexcept;
   /* Rewrites a shared translation's link pointers to this executor's tables.
    * False when a link record could not be obtained, in which case the
    * translation's code shape does not match what this executor can run and it
@@ -161,23 +164,26 @@ private:
   materialize_shared_translation(const SharedTranslation &translation);
   [[nodiscard]] CompiledBlock *install_shared_translation(
       unsigned long generation, std::uint64_t changes, std::uint64_t pc,
-      std::span<const std::uint32_t> guest_words);
+      std::uint8_t mode, std::span<const std::uint32_t> guest_words);
   [[nodiscard]] std::shared_ptr<const SharedTranslation>
   publish_shared_translation(
-      std::uint64_t pc, std::span<const std::uint32_t> guest_words,
+      std::uint64_t pc, std::uint8_t mode,
+      std::span<const std::uint32_t> guest_words,
       const JitCompiler::Result &compiled);
 
   [[nodiscard]] JitCacheValidationResult validate_stale_block(
       const CompiledBlock &block, std::uint64_t changes,
       StaticGuestMemory &memory);
+  /* The block cache keys a block by generation, code changes and its
+   * translation_key(pc, mode). */
   [[nodiscard]] CompiledBlock *find(unsigned long generation,
-                                    std::uint64_t changes, std::uint64_t pc,
+                                    std::uint64_t changes, std::uint64_t key,
                                     StaticGuestMemory &memory);
   [[nodiscard]] CacheSlot replacement(unsigned long generation,
                                       std::uint64_t changes,
-                                      std::uint64_t pc);
+                                      std::uint64_t key);
   CompiledBlock &store_native(unsigned long generation, std::uint64_t changes,
-                              std::uint64_t pc, JitFunction function,
+                              std::uint64_t key, JitFunction function,
                               std::uintptr_t internal_entry,
                               JitBlockLink *target_link,
                               std::span<const JitRelocation> relocations,

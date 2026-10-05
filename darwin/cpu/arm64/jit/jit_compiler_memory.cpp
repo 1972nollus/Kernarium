@@ -87,8 +87,15 @@ void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.move_x(1, path.address);
     emitter_.load_constant(
         2, path.access == Access::write ? 1U : 0U);
-    emitter_.call_preserving_flags(reinterpret_cast<const void *>(
-        &uml_arm64_jit_tlb_translate_preserving));
+    /* The preserving bridge saves 128-bit vector halves, which would lose
+     * a streaming translation's Z registers; its counterpart leaves and
+     * re-enters streaming mode around the walker instead. */
+    emitter_.call_preserving_flags(
+        streaming_translation()
+            ? reinterpret_cast<const void *>(
+                  &uml_arm64_jit_tlb_translate_streaming)
+            : reinterpret_cast<const void *>(
+                  &uml_arm64_jit_tlb_translate_preserving));
     emitter_.move_x(path.address, 0);
     emitter_.compare_zero(path.fault, path.address, true, false);
     emitter_.branch(path.continuation);

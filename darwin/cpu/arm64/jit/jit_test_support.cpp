@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "jit_arena.hpp"
 #include "jit_cache.hpp"
 #include "jit_publication.hpp"
 #include "jit_semantic_reservation.hpp"
@@ -13,6 +14,7 @@
 #include <semaphore>
 #include <span>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace uml::cpu::arm64 {
@@ -25,6 +27,7 @@ namespace {
   CompiledCode result{
       .words = std::vector<std::uint32_t>{compiled.words.begin(),
                                          compiled.words.end()},
+      .executable_words = compiled.executable_words,
       .hot_words = compiled.hot_words,
       .direct_link_refusals = compiled.direct_link_refusals,
       .indirect_link_refusals = compiled.indirect_link_refusals,
@@ -658,6 +661,45 @@ CompiledCode compile_block(
   return copied_code(compiler.compile(pc, instructions));
 }
 
+ModeCompilation compile_block_in_mode(
+    std::uint64_t pc, std::span<const std::uint32_t> instructions,
+    std::uint8_t mode, LinkShape shape) {
+  struct Context final {
+    JitBlockLink empty{.guest_pc = 1};
+    JitBlockLink direct{};
+    JitIndirectLink site{};
+    ModeCompilation result;
+  } context;
+  for (auto &entry : context.site.entries) {
+    entry.guest_pc = 1;
+    entry.link = &context.empty;
+  }
+  const auto direct = +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.result.direct_keys.push_back(key);
+    resolved.direct.guest_pc = key;
+    return &resolved.direct;
+  };
+  const auto indirect =
+      +[](void *opaque, std::uint64_t key) -> const void * {
+    auto &resolved = *static_cast<Context *>(opaque);
+    resolved.result.indirect_keys.push_back(key);
+    resolved.site.source_pc = key;
+    return &resolved.site;
+  };
+  JitCompiler compiler{
+      shape == LinkShape::tracked ? nullptr : &context,
+      shape == LinkShape::direct ? direct : nullptr,
+      shape == LinkShape::tracked,
+      shape == LinkShape::indirect ? indirect : nullptr};
+  compiler.set_sme_mode(mode);
+  const auto compiled = compiler.compile(pc, instructions);
+  context.result.code = copied_code(compiled);
+  for (const auto &relocation : compiled.relocations)
+    context.result.relocation_keys.push_back(relocation.key);
+  return std::move(context.result);
+}
+
 CompiledCode compile_block_without_table_list_planning(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
@@ -673,6 +715,34 @@ CompiledCode compile_block_with_feature_override(
   features.set(static_cast<std::size_t>(feature), available);
   JitCompiler compiler{features};
   return copied_code(compiler.compile(pc, instructions));
+}
+
+namespace {
+
+class PopulationCountProbe final : private JitCompilerFamilies {
+public:
+  [[nodiscard]] std::vector<std::uint32_t> build(bool wide) {
+    Arm64Emitter emitter;
+    bool native_fp = false;
+    attach_family_emitter(&emitter, &native_fp, false);
+    emit_gpr_population_count(wide, 0, 0);
+    emitter.emit(0xd65f'03c0U); // ret
+    const auto words = emitter.finish();
+    return {words.begin(), words.end()};
+  }
+};
+
+} // namespace
+
+std::uint64_t gpr_population_count_for_testing(bool wide,
+                                               std::uint64_t value) {
+  static detail::ExecutableArena arena{16U * 1024U};
+  static void *const code[2] = {
+      arena.store(PopulationCountProbe{}.build(false)),
+      arena.store(PopulationCountProbe{}.build(true)),
+  };
+  using Function = std::uint64_t (*)(std::uint64_t);
+  return sign_jit_function<Function>(code[wide ? 1 : 0])(value);
 }
 
 std::vector<std::uint32_t>

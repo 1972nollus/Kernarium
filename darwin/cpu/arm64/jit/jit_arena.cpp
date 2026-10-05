@@ -45,7 +45,7 @@ void *ExecutableArena::store(
 }
 
 ExecutableArena::StoredBlock ExecutableArena::store_block(
-	std::uint64_t pc,
+	std::uint64_t key,
 	std::span<const std::uint32_t> words,
 	std::span<const JitRelocation> relocations,
 	std::span<const std::uintptr_t> values,
@@ -60,18 +60,18 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 	std::array<std::uint64_t, maximum_block_instructions + 1U>
 		missing_keys{};
 	std::size_t missing_count = 0;
-	const auto add_missing = [&](std::uint64_t key) noexcept {
-		if (links.find(key, generation) != nullptr)
+	const auto add_missing = [&](std::uint64_t wanted) noexcept {
+		if (links.find(wanted, generation) != nullptr)
 			return true;
 		for (std::size_t index = 0; index < missing_count; ++index)
-			if (missing_keys[index] == key)
+			if (missing_keys[index] == wanted)
 				return true;
 		if (missing_count == missing_keys.size())
 			return false;
-		missing_keys[missing_count++] = key;
+		missing_keys[missing_count++] = wanted;
 		return true;
 	};
-	if (!add_missing(pc))
+	if (!add_missing(key))
 		return {};
 	for (const auto &relocation : relocations) {
 		if (relocation.word + 1U >= words.size())
@@ -100,7 +100,7 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 	jit_memory::set_writable(true);
 	std::memcpy(destination, words.data(), bytes);
 	auto *stored = reinterpret_cast<std::uint32_t *>(destination);
-	auto *target_link = links.find(pc, generation);
+	auto *target_link = links.find(key, generation);
 	std::size_t direct_refusals = 0;
 	for (std::size_t index = 0; index < relocations.size(); ++index) {
 		const auto &relocation = relocations[index];
