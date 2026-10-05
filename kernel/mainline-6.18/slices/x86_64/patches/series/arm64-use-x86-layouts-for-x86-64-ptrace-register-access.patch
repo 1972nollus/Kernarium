@@ -46,10 +46,10 @@ breakpoint.
  create mode 100644 arch/arm64/um/x86_fpstate.h
 
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index 7670607444d68b6a76bd5593fd032b0fa5cb81fb..2e23124ae289711b66d214e99197ffc15ba7fe3b 100644
+index 409d6747437a88e1fbf0da971dababf41e61f2bd..f40ab0fab3d3e88dc23c9fb83af8408ab4ba3f59 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -7,10 +7,31 @@
+@@ -7,6 +7,24 @@
  #include <linux/time-internal.h>
  #include <sysdep/faultinfo.h>
  
@@ -74,14 +74,17 @@ index 7670607444d68b6a76bd5593fd032b0fa5cb81fb..2e23124ae289711b66d214e99197ffc1
  struct arch_thread {
  	unsigned long tpidr_el0;
  	void *darwin_task;
- 	struct faultinfo faultinfo;
+@@ -15,6 +33,9 @@ struct arch_thread {
+ 	/* PR_SME_VL_INHERIT, which survives exec. */
+ 	bool sme_vl_inherit;
+ #endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +	struct uml_x86_64_debugregs debugregs;
 +#endif
  };
  
  #define INIT_ARCH_THREAD { .tpidr_el0 = 0, .darwin_task = NULL, \
-@@ -19,12 +40,25 @@ struct arch_thread {
+@@ -23,6 +44,11 @@ struct arch_thread {
  static inline void arch_flush_thread(struct arch_thread *thread)
  {
  	thread->tpidr_el0 = 0;
@@ -93,9 +96,10 @@ index 7670607444d68b6a76bd5593fd032b0fa5cb81fb..2e23124ae289711b66d214e99197ffc1
  }
  
  static inline void arch_copy_thread(struct arch_thread *from,
- 			    struct arch_thread *to)
- {
- 	to->tpidr_el0 = from->tpidr_el0;
+@@ -32,6 +58,14 @@ static inline void arch_copy_thread(struct arch_thread *from,
+ #ifdef CONFIG_UML_ARM64_SME
+ 	to->sme_vl_inherit = from->sme_vl_inherit;
+ #endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +	/* Like x86 copy_thread(): a child inherits DR6 and DR7 but none of
 +	 * the parent's breakpoints. */
@@ -106,7 +110,7 @@ index 7670607444d68b6a76bd5593fd032b0fa5cb81fb..2e23124ae289711b66d214e99197ffc1
 +#endif
  }
  
- #define current_sp() ({ void *sp; asm("mov %0, sp" : "=r"(sp)); sp; })
+ #ifdef CONFIG_UML_ARM64_SME
 diff --git a/arch/arm64/um/asm/ptrace-abi.h b/arch/arm64/um/asm/ptrace-abi.h
 index 3afa6ed84585b358f068303471d9b3d640f20421..7af74c93f494f76334b7b6610fbe1ad56c8a58ee 100644
 --- a/arch/arm64/um/asm/ptrace-abi.h

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory/mmu/execution_gate.hpp"
+#include "runtime/context.hpp"
+#include "runtime/execution_state.hpp"
+#include "guest_register_tail.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_host.h"
@@ -21,6 +24,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
+#include <string>
 #include <string_view>
 #include <sys/mman.h>
 #include <thread>
@@ -90,7 +95,7 @@ static void uml_static_entry_bridge()
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 		1, 1) == 0);
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.sp = base + 0x800;
 	unsigned long tls = 0x1234;
@@ -136,7 +141,7 @@ static void uml_static_x86_64_entry_bridge()
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.padding = 2;
 	registers.pc = base;
 	registers.x[16] = 2;
@@ -187,7 +192,7 @@ static void uml_static_x86_user_interrupt_flag()
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 			1, 1) == 0);
 		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
+		uml::testing::GuestFpTail fp{};
 		registers.padding = 2;
 		registers.pc = base;
 		registers.x[4] = stack; // rsp
@@ -234,7 +239,7 @@ static void uml_static_x86_compat32_entry_bridge()
 		1, 1) == 0);
 
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.padding = 2;
 	registers.pc = base;
 	registers.x[0] = 41;
@@ -276,7 +281,7 @@ static void uml_static_x86_exception_bridge()
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
 			1, 0) == 0);
 		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
+		uml::testing::GuestFpTail fp{};
 		registers.padding = 2;
 		registers.pc = base;
 		registers.x[0] = 42;
@@ -305,7 +310,7 @@ static void uml_static_x86_exception_bridge()
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
 			1, 0) == 0);
 		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
+		uml::testing::GuestFpTail fp{};
 		registers.padding = 2;
 		registers.pc = base;
 		registers.x[16] = 2 | (std::uint64_t{1} << 11);
@@ -338,7 +343,7 @@ static void uml_static_x86_64_signal_return_bridge()
 		1, 1) == 0);
 
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.padding = 2;
 	registers.pc = base;
 	registers.x[16] = 2;
@@ -382,12 +387,12 @@ static void uml_static_x86_64_x87_task_state()
 		1, 1) == 0);
 
 	darwin_uml_guest_registers first_registers{};
-	darwin_uml_guest_fp_registers first_fp{};
+	uml::testing::GuestFpTail first_fp{};
 	first_registers.padding = 2;
 	first_registers.pc = base;
 	first_registers.x[16] = 2;
 	darwin_uml_guest_registers second_registers{};
-	darwin_uml_guest_fp_registers second_fp{};
+	uml::testing::GuestFpTail second_fp{};
 	second_registers.padding = 2;
 	second_registers.pc = base + 0x100;
 	second_registers.x[16] = 2;
@@ -406,6 +411,63 @@ static void uml_static_x86_64_x87_task_state()
 	std::memcpy(&value, stored, sizeof(value));
 	require(value == 0x3ff0'0000'0000'0000ULL);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
+/* The kernel marks every dispatch of a task whose mm another task shares.
+ * The runtime keeps the mark of the current x86 dispatch for the x86 JIT,
+ * and UML_X86_MM_SHARED_LOG records the first marked dispatch of each
+ * address space. */
+static void uml_static_x86_mm_shared_dispatch()
+{
+	constexpr std::uint64_t base = 0x3'0000;
+	constexpr std::array program{
+		std::byte{0x0f}, std::byte{0x05}, // syscall
+	};
+	const char *temporary = std::getenv("TMPDIR");
+	std::string path = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	path += "/uml-mm-shared-log.XXXXXX";
+	const int descriptor = mkstemp(path.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	require(setenv("UML_X86_MM_SHARED_LOG", path.c_str(), 1) == 0);
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put(0, program);
+	auto *context = uml::runtime::current_context();
+	require(context != nullptr);
+	for (const unsigned long generation : {139UL, 140UL}) {
+		require(darwin_uml_static_vm_activate(generation) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(base), backing.descriptor(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
+		for (const std::uint32_t flags : {0U,
+			     unsigned{DARWIN_UML_DISPATCH_MM_SHARED},
+			     unsigned{DARWIN_UML_DISPATCH_MM_SHARED}}) {
+			darwin_uml_guest_registers registers{};
+			uml::testing::GuestFpTail fp{};
+			registers.padding = 2;
+			registers.pc = base;
+			registers.dispatch_flags = flags;
+			unsigned long tls = 0;
+			require(darwin_uml_static_enter_guest(&registers, &fp,
+				sizeof(fp), generation, &tls) ==
+				DARWIN_UML_EVENT_SYSCALL);
+			require(registers.dispatch_flags == flags);
+			require(context->thread_execution_state()->x86_mm_shared ==
+				(flags != 0));
+		}
+		require(darwin_uml_static_vm_destroy(generation) == 0);
+	}
+	require(unsetenv("UML_X86_MM_SHARED_LOG") == 0);
+	std::ifstream log{path};
+	std::vector<std::string> lines;
+	for (std::string line; std::getline(log, line);)
+		lines.push_back(line);
+	require(lines == std::vector<std::string>{
+		"uml-x86 mm-shared generation=139 rip=0x30000",
+		"uml-x86 mm-shared generation=140 rip=0x30000",
+	});
+	require(std::remove(path.c_str()) == 0);
 }
 #endif
 
@@ -525,7 +587,7 @@ static void uml_static_host_interrupt_sequence()
 		__atomic_fetch_add(&sequence, 1U, __ATOMIC_RELEASE);
 	}};
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
@@ -557,7 +619,7 @@ static void uml_static_signal_return_bridge()
 			DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ | PROT_EXEC, 1, 0) == 0);
 		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
+		uml::testing::GuestFpTail fp{};
 		registers.pc = base;
 		registers.lr = DARWIN_UML_SIGRETURN_TRAMPOLINE;
 		registers.x[0] = 4;
@@ -592,7 +654,7 @@ static void uml_static_permission_fault()
 		backing.descriptor(), DARWIN_UML_GUEST_PAGE_SIZE,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ, 0, 1) == 0);
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.x[1] = base + DARWIN_UML_GUEST_PAGE_SIZE;
 	unsigned long tls = 0;
@@ -618,7 +680,7 @@ static void uml_static_illegal_instruction()
 		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 	darwin_uml_guest_registers registers{};
-	darwin_uml_guest_fp_registers fp{};
+	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
@@ -1134,6 +1196,7 @@ int main()
 	uml_static_x86_exception_bridge();
 	uml_static_x86_64_signal_return_bridge();
 	uml_static_x86_64_x87_task_state();
+	uml_static_x86_mm_shared_dispatch();
 #endif
 	uml_static_descriptor_reuse_invalidation();
 	uml_static_inode_less_backings_remain_distinct();

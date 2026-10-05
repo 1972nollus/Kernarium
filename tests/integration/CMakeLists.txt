@@ -260,6 +260,7 @@ uml_add_guest_integration_test(
     CPUS 2)
 
 add_subdirectory(balloon)
+add_subdirectory(sme)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(

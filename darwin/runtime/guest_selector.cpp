@@ -2,6 +2,7 @@
 #include "uml_darwin_cpu.h"
 
 #include "cpu/arm64/id_registers.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 #include "cpu/guest_identity.hpp"
 #include "platform/apple/host_features.hpp"
 #include "runtime/context.hpp"
@@ -27,6 +28,17 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 {
 	return ::uml::cpu::arm64::detail::guest_hwcaps(
 		::uml::platform::apple::probed_host_capabilities())[1];
+}
+
+/* Matches the register file every thread's execution state sizes. */
+extern "C" unsigned long darwin_uml_guest_sme_vector_length(void)
+{
+#if DARWIN_UML_X86_64_USERSPACE_ONLY
+	return 0;
+#else
+	const auto &host = ::uml::platform::apple::probed_host_capabilities();
+	return ::uml::cpu::arm64::implements_sme(host) ? host.sme_svl_bytes : 0;
+#endif
 }
 
 extern "C" int darwin_uml_enter_guest(void *registers, void *fp_registers,
