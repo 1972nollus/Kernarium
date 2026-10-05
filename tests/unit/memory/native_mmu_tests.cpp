@@ -481,76 +481,6 @@ void test_prot_none_shadow_flush_and_release()
 		"PROT_NONE flush-error fixture retained its host slot");
 }
 
-void test_guest_stack_near_address_limit_skips_native_reconciliation()
-{
-	constexpr auto stack = static_cast<unsigned long>(
-		DARWIN_UML_GUEST_ADDRESS_LIMIT - 0x10400ULL);
-	static_assert(stack + 128 * 1024 > DARWIN_UML_GUEST_ADDRESS_LIMIT);
-	require(darwin_uml_vm_stage_stack(stack) == 0,
-		"high guest stack was rejected as a mixed native range");
-	require(darwin_uml_vm_finish_stack(stack) == 0,
-		"high guest stack finish entered native reconciliation");
-}
-
-void test_active_kernel_stack_defers_shadow_synchronization()
-{
-	constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
-	constexpr std::size_t marker_offset = 91;
-	ScratchBacking backing{backing_name, 4 * guest_page_size};
-	ReservedSlot arena{true, 16};
-	const auto stack = (arena.address() + kernel_stack_size - 1) &
-		~(kernel_stack_size - 1);
-	const auto address = stack + guest_page_size;
-	require(stack >= arena.address() &&
-		stack + kernel_stack_size <= arena.address() + arena.size(),
-		"active-stack fixture alignment escaped its reservation");
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
-		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
-		"active-stack fixture map failed");
-	auto *page = reinterpret_cast<volatile std::byte *>(address);
-	page[marker_offset] = std::byte{0x41};
-	require(darwin_uml_vm_stage_stack(stack) == 0 &&
-		darwin_uml_vm_finish_stack(stack) == 0,
-		"active-stack transition failed");
-
-	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
-		guest_page_size) == 0 &&
-		backing.get_byte(guest_page_size + marker_offset) == std::byte{0},
-		"active stack was written back while its carrier could mutate it");
-	backing.put_byte(guest_page_size + marker_offset + 1,
-		std::byte{0x52});
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
-		guest_page_size, guest_page_size, PROT_READ, 0, 0) == 0 &&
-		page[marker_offset] == std::byte{0x41} &&
-		page[marker_offset + 1] == std::byte{0},
-		"active stack was reloaded from independently changed backing");
-	require((uml::testing::current_vm_protection(
-		reinterpret_cast<void *>(address)) & PROT_WRITE) != 0,
-		"active stack lost host write permission");
-	errno = 0;
-	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
-		guest_page_size) == -1 && errno == EBUSY,
-		"active stack was unmapped");
-
-	require(darwin_uml_vm_stage_stack(0) == 0 &&
-		darwin_uml_vm_finish_stack(0) == 0,
-		"native-stack landing did not release the kernel stack");
-	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
-		guest_page_size) == 0 &&
-		darwin_uml_vm_sync_from_backing(address) == 0,
-		"inactive stack did not reconcile deferred shadow changes");
-	require(backing.get_byte(guest_page_size + marker_offset) ==
-			std::byte{0x41} &&
-		backing.get_byte(guest_page_size + marker_offset + 1) ==
-			std::byte{0x52} &&
-		page[marker_offset] == std::byte{0x41} &&
-		page[marker_offset + 1] == std::byte{0x52},
-		"inactive stack reconciliation lost disjoint changes");
-	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
-		guest_page_size) == 0,
-		"active-stack fixture cleanup failed");
-}
-
 void test_shadow_sync_publishes_stable_machine_words()
 {
 	constexpr std::size_t marker_offset = 128;
@@ -1311,8 +1241,6 @@ int main()
 		test_authoritative_reload_discards_stale_shadow_bytes();
 		test_duplicate_map_reconciles_reused_backing_page();
 		test_prot_none_shadow_flush_and_release();
-		test_guest_stack_near_address_limit_skips_native_reconciliation();
-		test_active_kernel_stack_defers_shadow_synchronization();
 		test_shadow_sync_publishes_stable_machine_words();
 		test_bridge_uses_direct_shared_mapping_for_aligned_ranges();
 		test_direct_retry_validates_ownership_mapping_and_permissions();

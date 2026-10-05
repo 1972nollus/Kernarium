@@ -372,6 +372,15 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# A system call or a fault taken with a bad stack pointer, again and again
+# on one vCPU, gets native arm64's result and never kills the task.
+uml_add_guest_integration_test(
+    NAME guest-stack-pointer
+    SCRIPT kernel/run_guest_stack_pointer.py
+    LABELS guest;kernel;smoke
+    TIMEOUT 420
+    CPUS 2)
+
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)

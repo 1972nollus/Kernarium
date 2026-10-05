@@ -2733,7 +2733,7 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c0844dedaea0 100644
+index 5ade4241beba84fe80de926063fbdf10c9d565c8..643dd43970108a219b7b8467feada04437a4a0f1 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -74,12 +74,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
@@ -2761,7 +2761,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  /* PSTATE.SS, and the ESR exception class of the software-step exception it
   * raises: the engine retires one instruction and reports that class. */
  #define DARWIN_GUEST_PSTATE_SS (1UL << 21)
-@@ -369,6 +381,39 @@ static int floating_point_signal_code(unsigned int syndrome)
+@@ -343,6 +355,39 @@ static int floating_point_signal_code(unsigned int syndrome)
  	return DARWIN_GUEST_FPE_FLTUNK;
  }
  
@@ -2801,7 +2801,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  void userspace(struct uml_pt_regs *registers)
  {
  	/* Deliver the host timer only at kernel/guest boundaries.  Allowing a
-@@ -482,7 +527,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -450,7 +495,7 @@ void userspace(struct uml_pt_regs *registers)
  			if (registers->svcr & UML_ARM64_SVCR_SM)
  				uml_arm64_sme_syscall_enter();
  #endif
@@ -2810,7 +2810,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -516,6 +561,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -484,6 +529,10 @@ void userspace(struct uml_pt_regs *registers)
  				if (retry > 0)
  					break;
  			}
@@ -2821,7 +2821,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
  			if (fault >= 4096 && uml_darwin_guest_range(fault, 1)) {
-@@ -552,13 +601,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -520,13 +569,24 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2846,7 +2846,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -579,10 +639,17 @@ void userspace(struct uml_pt_regs *registers)
+@@ -547,10 +607,17 @@ void userspace(struct uml_pt_regs *registers)
  			 */
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -2865,7 +2865,7 @@ index 874f52f56498e74ee4d233172ab993d6843a348e..8f60b0068b8524b7eaaad22142f4c084
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -642,16 +709,52 @@ void userspace(struct uml_pt_regs *registers)
+@@ -610,16 +677,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  

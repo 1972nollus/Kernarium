@@ -399,49 +399,6 @@ extern "C" int darwin_uml_vm_discard_if_stale(unsigned long address, int fd,
 	return darwin_uml_static_vm_discard_if_stale(address, fd, offset);
 }
 
-extern "C" int darwin_uml_vm_stage_stack(unsigned long address)
-{
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	constexpr std::uint64_t kernel_stack_size = 128 * 1024;
-	if (address != 0) {
-		if (ConfiguredAddressLayout::is_guest(address))
-			return 0;
-		const auto range = address_range(
-			reinterpret_cast<void *>(address), kernel_stack_size);
-		if (range == AddressDomain::invalid)
-			return invalid_address_range();
-	}
-	auto native_space = uml::memory::native_address_space();
-	return native_address_call(native_space, [&](auto &space) {
-		return space.stage_kernel_stack(address);
-	});
-#else
-	(void)address;
-	return 0;
-#endif
-}
-extern "C" int darwin_uml_vm_finish_stack(unsigned long address)
-{
-#if UML_MEMORY_HAS_NATIVE_VM && DARWIN_UML_GUEST_PAGE_SIZE == 4096
-	constexpr std::uint64_t kernel_stack_size = 128 * 1024;
-	if (address != 0) {
-		if (ConfiguredAddressLayout::is_guest(address))
-			return 0;
-		const auto range = address_range(
-			reinterpret_cast<void *>(address), kernel_stack_size);
-		if (range == AddressDomain::invalid)
-			return invalid_address_range();
-	}
-	auto native_space = uml::memory::native_address_space();
-	return native_address_call(native_space, [&](auto &space) {
-		return space.finish_kernel_stack(address);
-	});
-#else
-	(void)address;
-	return 0;
-#endif
-}
-
 extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int write)
 {
 	if (ConfiguredAddressLayout::is_guest(address))
