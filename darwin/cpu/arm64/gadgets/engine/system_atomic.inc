@@ -102,6 +102,12 @@ mops_epilogue copy_general
 mops_epilogue set_r
 mops_epilogue set_z
 
+/* engine/sme.inc assembles this file a second time with
+ * UML_GADGET_SME_TWIN set, as the streaming twins of its memory families.
+ * The system-register, PSTATE and barrier gadgets are shared by both modes
+ * and the SIMD&FP structure families have no such twin, so this block has
+ * none. */
+#if !UML_GADGET_SME_TWIN
 /* FEAT_ECV's self-synchronized virtual count, selected only on a host that
  * implements it. It occupies the head of the padding below, so no later
  * entry moves. */
@@ -1147,6 +1153,7 @@ simd_lane_counts d, 8
 .purgem simd_lane_fast
 .purgem simd_lane_transfer
 .purgem simd_lane_one
+#endif
 
 /* The alignment check of a single-copy-atomic access of \mask + 1 bytes at
  * x7: an LSE atomic, an exclusive, or a load-acquire/store-release form.
@@ -1737,3 +1744,8 @@ rcpc_store_modes x, stlr, x, 7
 
 .purgem rcpc_store_modes
 .purgem rcpc_store_gadget
+
+/* Purged only now, which lets engine/sme.inc define them again. */
+.purgem single_copy_alignment
+.purgem mops_epilogue
+.purgem mops_prologue

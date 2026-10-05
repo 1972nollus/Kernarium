@@ -179,4 +179,28 @@ enum class DecodeResult : std::uint8_t {
  * of the SME part's streaming half or of a base row engine/sme.inc lists. */
 [[nodiscard]] bool streaming_entry(std::uintptr_t entry) noexcept;
 
+/* One row of the streaming twin table engine/sme.inc emits, laid out as the
+ * FEAT_AFP twin table is: entries [base_begin, base_end) run as the entries
+ * at the same offsets from twin_begin in a program translated for
+ * SVCR.SM = 1. */
+struct StreamingTwin final {
+	std::uintptr_t base_begin;
+	std::uintptr_t base_end;
+	std::uintptr_t twin_begin;
+	std::uintptr_t twin_end;
+};
+static_assert(sizeof(StreamingTwin) == 32);
+
+[[nodiscard]] std::span<const StreamingTwin> streaming_twins() noexcept;
+
+/* The entry a program translated for SVCR.SM = 1 selects in place of base
+ * entry `entry`: its streaming twin, or `entry` itself when it has none. */
+[[nodiscard]] std::uintptr_t streaming_twin(std::uintptr_t entry);
+
+/* Selects the streaming forms of the entries one decode emitted for a
+ * program translated for SVCR.SM = 1: a base entry that calls helpers becomes
+ * its twin, and so does the entry an SP-alignment prefix dispatches after its
+ * check. Returns whether every entry may then be selected there. */
+[[nodiscard]] bool select_streaming_entries(std::span<std::uintptr_t> emitted);
+
 } // namespace uml::cpu::arm64::gadgets::builder_detail

@@ -194,7 +194,8 @@ BuildResult Builder::build(
 		if (vector_mask != 0 && options.vector_forwarding)
 			words[emitted_start] = current_vector.contract->entries[vector_mask];
 		if (streaming && words.size() > emitted_start &&
-		    !streaming_entry(words[emitted_start])) [[unlikely]] {
+		    !select_streaming_entries(std::span{words.data(),
+			    words.size()}.subspan(emitted_start))) [[unlikely]] {
 			/* No streaming form yet: the block ends at the illegal
 			 * exit instead, as for any unimplemented word. */
 			words.truncate(emitted_start);

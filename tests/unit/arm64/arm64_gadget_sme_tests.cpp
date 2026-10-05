@@ -6,7 +6,8 @@
  * through an injected SME profile, at several streaming vector lengths;
  * streaming programs need FEAT_SME in hardware and run at the host's SVL.
  * A sweep checks that no program translated for SVCR.SM = 1 selects an entry
- * outside the streaming set. */
+ * outside the streaming set, and the GPR memory instructions run the same
+ * through their streaming twins as through their base entries. */
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
@@ -48,6 +49,10 @@ void uml_arm64_gadget_sm_zt0_store();
 void uml_arm64_gadget_sm_zt0_zero();
 void uml_arm64_gadget_sm_za_zero_table();
 void uml_arm64_gadget_sm_za_zero_table_end();
+void uml_arm64_gadget_sm_twins_begin();
+void uml_arm64_gadget_sm_twins_end();
+void uml_arm64_gadget_sm_load64_unsigned_fast_r();
+void uml_arm64_gadget_sm_store32_unsigned_fast_r_sp();
 }
 
 namespace arm64 = uml::cpu::arm64;
@@ -619,7 +624,7 @@ void streaming_control_core()
 		/* AdvSIMD, and forms with no streaming twin yet, end the
 		 * block at the illegal exit in streaming mode. */
 		for (const auto word : {0x4ea2'8420U /* add v0.4s */,
-			     0xf940'0005U /* ldr x5, [x0] */}) {
+			     0xfd40'0000U /* ldr d0, [x0] */}) {
 			const std::array code{word, svc};
 			Machine machine{code, host};
 			machine.cpu.defer_sme_load(machine.cpu.sme_task,
@@ -628,6 +633,213 @@ void streaming_control_core()
 			require(machine.run() == EngineEvent::illegal_instruction);
 			require(machine.cpu.pc == code_base);
 			require(machine.retired == 0);
+		}
+	}
+}
+
+/* The streaming twin table: one row per base entry, each from an entry no
+ * streaming program may select to one in the twins' row, and the builder
+ * selects the twin. */
+void streaming_twin_table()
+{
+	namespace detail = gadgets::builder_detail;
+	const auto begin = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_twins_begin);
+	const auto end = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_twins_end);
+	std::set<std::uintptr_t> bases;
+	for (const auto &row : detail::streaming_twins()) {
+		require(row.base_end == row.base_begin + 4);
+		require(row.twin_end == row.twin_begin + 4);
+		require(!detail::streaming_entry(row.base_begin));
+		require(row.twin_begin >= begin && row.twin_begin < end);
+		require(detail::streaming_entry(row.twin_begin));
+		require(detail::streaming_twin(row.base_begin) ==
+			row.twin_begin);
+		require(bases.insert(row.base_begin).second);
+	}
+	require(bases.size() >= 1500);
+	/* A doubleword load of a register, and a word store of one with an
+	 * SP base: both bake the register in the bank, and share one twin. */
+	const auto twin_of = [](std::uint32_t word) {
+		gadgets::BlockLink link{};
+		gadgets::IndirectLink site{};
+		gadgets::BuildOptions options{.host_capabilities =
+			injected_host(64, true)};
+		options.svcr = arm64::svcr_sm;
+		const std::array window{word};
+		const auto built = gadgets::Builder{}.build(code_base, window,
+			[&](std::uint64_t) { return &link; },
+			std::pmr::get_default_resource(),
+			[&](std::uint64_t) { return &site; }, options);
+		require(built.program.instruction_count() == 1);
+		return built.program.words()[0];
+	};
+	for (const std::uint32_t rt : {0U, 5U, 30U}) {
+		require(twin_of(0xf940'0000U | rt) == reinterpret_cast<
+			std::uintptr_t>(uml_arm64_gadget_sm_load64_unsigned_fast_r));
+		require(twin_of(0xb900'03e0U | rt) == reinterpret_cast<
+			std::uintptr_t>(uml_arm64_gadget_sm_store32_unsigned_fast_r_sp));
+	}
+}
+
+/* One case for the twins: words ending in SVC, and the registers they need
+ * beyond the common setup below. */
+struct MemoryCase final {
+	const char *name;
+	std::vector<std::uint32_t> words;
+	std::vector<std::pair<unsigned, std::uint64_t>> registers{};
+	std::uint64_t sp = data_base + 2 * page - 64;
+};
+
+/* The architectural result of a run: what a twin must reproduce. */
+struct MemoryResult final {
+	EngineEvent event;
+	std::array<std::uint64_t, 31> registers;
+	std::uint64_t sp;
+	std::uint64_t pc;
+	std::uint32_t nzcv;
+	std::vector<std::byte> data;
+	std::uint64_t fault_address;
+	bool fault_alignment;
+	bool operator==(const MemoryResult &) const = default;
+};
+
+[[nodiscard]] MemoryResult run_memory_case(const MemoryCase &test,
+	std::uint8_t svcr)
+{
+	auto code = test.words;
+	code.push_back(svc);
+	Machine machine{code, native_host()};
+	machine.put_data(data_base, pattern(2 * page, 11));
+	for (unsigned n = 0; n < 31; ++n)
+		machine.cpu.registers[n] = 0x1111'1111'1111'1111ULL * (n % 15U);
+	/* Bases: an aligned line, an LSE2-block misalignment, page ends that
+	 * 2-, 4-, 8- and 16-byte accesses cross, and the unmapped page. */
+	machine.cpu.registers[0] = data_base + page - 64;
+	machine.cpu.registers[1] = data_base + page - 24;
+	machine.cpu.registers[2] = data_base + page + 8;
+	machine.cpu.registers[3] = data_base + 2 * page - 256;
+	machine.cpu.registers[5] = data_base + page - 62;
+	machine.cpu.registers[12] = data_base + 2 * page + 16;
+	machine.cpu.registers[13] = data_base + page - 6;
+	machine.cpu.registers[14] = data_base + page - 4;
+	machine.cpu.registers[15] = data_base + page - 2;
+	machine.cpu.registers[16] = 3;
+	machine.cpu.registers[17] = 0xffff'fffeULL;
+	machine.cpu.registers[18] = 5;
+	for (const auto &[number, value] : test.registers)
+		machine.cpu.registers[number] = value;
+	machine.cpu.sp = test.sp;
+	machine.cpu.defer_sme_load(machine.cpu.sme_task, svcr, 0);
+	std::vector<std::byte> za;
+	if ((svcr & arm64::svcr_za) != 0U) {
+		/* As if loaded already: the rows must come back unchanged
+		 * through every helper the twin leaves streaming mode for. */
+		machine.cpu.sme_loaded = arm64::svcr_za;
+		za = pattern(machine.svl() * machine.svl(), 23);
+		std::memcpy(machine.row(0), za.data(), za.size());
+	}
+	MemoryResult result{};
+	result.event = machine.run();
+	if (!za.empty())
+		require(equal(machine.row(0), za));
+	std::copy(machine.cpu.registers.begin(), machine.cpu.registers.end(),
+		result.registers.begin());
+	result.sp = machine.cpu.sp;
+	result.pc = machine.cpu.pc;
+	result.nzcv = machine.cpu.nzcv;
+	result.data = machine.data(data_base, 2 * page);
+	if (result.event == EngineEvent::memory_fault) {
+		result.fault_address = machine.executor().fault_address();
+		result.fault_alignment = machine.executor().fault_alignment();
+	}
+	return result;
+}
+
+/* Every GPR memory family runs through its streaming twin exactly as through
+ * its base entry: hot paths, TLB misses, page crossings, LSE2 and alignment
+ * checks, and faults, with ZA off and resident. So does CSSC CNT. */
+void streaming_twins()
+{
+	const std::uint64_t mops_size = 100;
+	const std::vector<MemoryCase> cases{
+		{"ldr x", {0xf940'0014U}},
+		{"ldr x crossing", {0xf940'01b4U}},
+		{"ldr w crossing", {0xb940'05b4U}},
+		{"ldrb", {0x3940'04b4U}},
+		{"ldrsb x", {0x3980'01d4U}},
+		{"ldrh", {0x7940'01f4U}},
+		{"ldursh x crossing", {0x7880'11f4U}},
+		{"ldrsw", {0xb980'01d4U}},
+		{"ldursw crossing", {0xb880'21d4U}},
+		{"str x crossing", {0xf900'01b5U}},
+		{"strb", {0x3900'05f5U}},
+		{"sturh crossing", {0x7800'11f5U}},
+		{"stur w crossing", {0xb800'21d5U}},
+		{"str w", {0xb900'05d5U}},
+		{"ldr pre-index", {0xf840'8c34U}},
+		{"ldr post-index", {0xf840'8434U}},
+		{"str pre-index", {0xf81f'8c55U}},
+		{"ldr register lsl", {0xf870'7814U}},
+		{"ldr register sxtw", {0xb871'd814U}},
+		{"strh register", {0x7832'6815U}},
+		{"ldp x crossing", {0xa940'55b4U}},
+		{"ldp w crossing", {0x2940'55b4U}},
+		{"ldpsw crossing", {0x6940'55b4U}},
+		{"stp x crossing", {0xa900'5db6U}},
+		{"stp w crossing", {0x2900'5db6U}},
+		{"ldp pre-index crossing", {0xa9c1'5434U}},
+		{"stp sp pre-index", {0xa9bf'5ff6U}},
+		{"ldp sp post-index", {0xa8c1'7bfdU}},
+		{"ldr sp", {0xf940'07f4U}},
+		{"str xzr crossing", {0xf900'01bfU}},
+		{"stp xzr crossing", {0xa900'5dbfU}},
+		/* The literal follows a branch over it. */
+		{"ldr literal", {0x5800'0054U, 0x1400'0003U, 0x8899'aabbU,
+			0xccdd'eeffU}},
+		{"ldrsw literal", {0x9800'0054U, 0x1400'0003U, 0x8899'aabbU,
+			0xccdd'eeffU}},
+		{"ldxr stxr", {0xc85f'7c14U, 0xc818'7c15U}},
+		{"ldaxr stlxr", {0x885f'fc14U, 0x8818'fc15U}},
+		{"ldxp stxp", {0xc87f'5414U, 0xc838'5c16U}},
+		{"ldadd", {0xf835'0014U}},
+		{"ldaddal", {0xb8f5'0014U}},
+		{"swp", {0xf835'8014U}},
+		{"cas", {0xc8b4'7c15U}},
+		{"casp", {0x4834'7c16U}},
+		{"ldar", {0xc8df'fc14U}},
+		{"stlr", {0xc89f'fc15U}},
+		{"ldapr", {0xf8bf'c014U}},
+		{"ldapur", {0xd940'8014U}},
+		{"stlur", {0x9900'4015U}},
+		{"ldadd w in an LSE2 block", {0xb835'00b4U}},
+		{"ldaddh in an LSE2 block", {0x7835'00b4U}},
+		{"prfm", {0xf980'0000U}},
+		{"dc zva", {0xd50b'7420U}},
+		{"set", {0x19c2'0420U, 0x19c2'4420U, 0x19c2'8420U},
+			{{1, mops_size}, {2, 0xab}}},
+		{"cpyf", {0x1903'0420U, 0x1943'0420U, 0x1983'0420U},
+			{{1, mops_size}}},
+		{"cnt w", {0x5ac0'1eb4U}},
+		{"cnt x", {0xdac0'1eb4U}},
+		{"ldr unmapped", {0xf940'0194U}},
+		{"str unmapped", {0xf900'0195U}},
+		{"ldr misaligned sp", {0xf940'03f4U}, {},
+			data_base + 2 * page - 56},
+		{"ldadd misaligned sp", {0xf835'03f4U}, {},
+			data_base + 2 * page - 56},
+		{"stp misaligned sp", {0xa9bf'5ff6U}, {},
+			data_base + 2 * page - 56},
+	};
+	for (const auto &test : cases) {
+		const auto base = run_memory_case(test, 0);
+		for (const std::uint8_t mode : {arm64::svcr_sm, arm64::svcr_mask}) {
+			if (run_memory_case(test, mode) == base)
+				continue;
+			std::fprintf(stderr, "%s: SVCR %u differs from the base "
+				"entry\n", test.name, mode);
+			require(false);
 		}
 	}
 }
@@ -859,8 +1071,10 @@ int main()
 	zt0_needs_sme2_and_works_with_za();
 	za_faults();
 	translations_are_keyed_by_mode();
+	streaming_twin_table();
 	if (streaming_hardware()) {
 		streaming_control_core();
+		streaming_twins();
 		std::printf("streaming programs ran at SVL %u\n",
 			native_host().sme_svl_bytes);
 	} else {

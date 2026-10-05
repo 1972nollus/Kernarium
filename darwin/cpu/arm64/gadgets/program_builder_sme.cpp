@@ -10,7 +10,9 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <vector>
 
 extern "C" {
 void uml_arm64_gadget_sme_svcr_read();
@@ -37,6 +39,10 @@ struct UmlArm64GadgetStreamingRow {
 };
 extern const UmlArm64GadgetStreamingRow uml_arm64_gadget_streaming_rows_begin[];
 extern const UmlArm64GadgetStreamingRow uml_arm64_gadget_streaming_rows_end[];
+extern const uml::cpu::arm64::gadgets::builder_detail::StreamingTwin
+	uml_arm64_sme_twin_begin[];
+extern const uml::cpu::arm64::gadgets::builder_detail::StreamingTwin
+	uml_arm64_sme_twin_end[];
 }
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -249,6 +255,68 @@ DecodeResult decode_sme_space(DecodeContext &context)
 			UML_GADGET_SME_ZT0_ZERO, 0, 0, 0, 0));
 	}
 	return implementation_gap(context);
+}
+
+namespace {
+
+/* The twin rows by base address, for a binary search per instruction of a
+ * streaming program. */
+class StreamingTwinIndex final {
+public:
+	StreamingTwinIndex()
+		: rows_{streaming_twins().begin(), streaming_twins().end()}
+	{
+		std::ranges::sort(rows_, {}, &StreamingTwin::base_begin);
+	}
+
+	[[nodiscard]] std::uintptr_t select(std::uintptr_t entry) const noexcept
+	{
+		const auto after = std::ranges::upper_bound(rows_, entry, {},
+			&StreamingTwin::base_begin);
+		if (after == rows_.begin())
+			return entry;
+		const auto &row = *(after - 1);
+		return entry < row.base_end ?
+			row.twin_begin + (entry - row.base_begin) : entry;
+	}
+
+private:
+	std::vector<StreamingTwin> rows_;
+};
+
+} // namespace
+
+std::span<const StreamingTwin> streaming_twins() noexcept
+{
+	return {uml_arm64_sme_twin_begin, uml_arm64_sme_twin_end};
+}
+
+/* Never destroyed, under the exit contract in docs/architecture.md, as the
+ * FEAT_AFP twin index is. */
+std::uintptr_t streaming_twin(std::uintptr_t entry)
+{
+	[[clang::no_destroy]] static const StreamingTwinIndex index;
+	return index.select(entry);
+}
+
+bool select_streaming_entries(std::span<std::uintptr_t> emitted)
+{
+	const auto first = emitted[0];
+	if (!streaming_entry(first))
+		emitted[0] = streaming_twin(first);
+	if (!streaming_entry(emitted[0]))
+		return false;
+	const bool prefix = first == reinterpret_cast<std::uintptr_t>(
+		selection::uml_arm64_gadget_atomic_sp_alignment_read) ||
+		first == reinterpret_cast<std::uintptr_t>(
+			selection::uml_arm64_gadget_atomic_sp_alignment_write);
+	if (!prefix)
+		return true;
+	if (emitted.size() < 2)
+		return false;
+	if (!streaming_entry(emitted[1]))
+		emitted[1] = streaming_twin(emitted[1]);
+	return streaming_entry(emitted[1]);
 }
 
 bool streaming_entry(std::uintptr_t entry) noexcept

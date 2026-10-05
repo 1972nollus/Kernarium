@@ -1,5 +1,11 @@
+/* engine/sme.inc assembles this file a second time with
+ * UML_GADGET_SME_TWIN set, as the streaming twins of its GPR families; the
+ * #if blocks below hold what has no twin there: the nop, which is shared,
+ * and the SIMD&FP families, whose registers streaming mode moves. */
+#if !UML_GADGET_SME_TWIN
 gadget nop
 	next_gadget
+#endif
 
 /* Literal form invariants are resolved while translating. Operand bits 15:0
  * are the CpuState destination byte offset; bits 63:16 are the signed PC
@@ -57,6 +63,7 @@ literal_integer_modes literal_load32_signed_fast, ldrsw, x, 4, 1
 .purgem literal_integer_modes
 .purgem literal_integer_fast
 
+#if !UML_GADGET_SME_TWIN
 .macro literal_vector_fast name, instruction, host_register, bytes
 gadget \name
 	ldr x8, [_stream]
@@ -85,6 +92,7 @@ literal_vector_fast literal_load_vector64_fast, ldr, d, 8
 literal_vector_fast literal_load_vector128_fast, ldr, q, 16
 
 .purgem literal_vector_fast
+#endif
 
 /* Production word/doubleword unsigned-immediate transfers.  The translator
  * converts both register numbers to CpuState byte offsets and folds XZR into
@@ -442,6 +450,7 @@ scalar_unsigned_store_narrow_modes store16_unsigned_fast, strh, 2
 .purgem scalar_unsigned_store_narrow_modes
 .purgem scalar_unsigned_store_narrow_fast
 
+#if !UML_GADGET_SME_TWIN
 /* All SIMD&FP unsigned-offset widths use a translated CpuState vector offset,
  * translated base offset, and scaled displacement. Width and direction are
  * fixed by the selected symbol. */
@@ -538,6 +547,7 @@ vector_unsigned_modes store128, 0, str, q, 16
 
 .purgem vector_unsigned_modes
 .purgem vector_unsigned_fast
+#endif
 
 /* Scalar unscaled/pre/post-indexed accesses. Operand: Rt CpuState offset in
  * bits 15:0, Rn offset in 31:16, signed imm9 in 63:32. Mode 0 is adjusted
@@ -929,6 +939,7 @@ scalar_other_register_all load64u, 1, ldr, x, 8, 0
 .purgem scalar_other_register_extension
 .purgem scalar_other_register_fast
 
+#if !UML_GADGET_SME_TWIN
 /* SIMD&FP unscaled/pre/post-indexed and register-offset forms use the same
  * translated address descriptors as scalar memory, with the V-register byte
  * offset in bits 15:0. */
@@ -1149,6 +1160,7 @@ vector_other_operation load128, 1, ldr, q, 16
 .purgem vector_other_register_fast
 .purgem vector_other_immediate_operation
 .purgem vector_other_immediate_fast
+#endif
 
 /* Translation-specialized integer pair transfers. The packed operand holds
  * the Rt and Rt2 CpuState byte offsets in two 9-bit fields, the signed,
@@ -1238,14 +1250,25 @@ Linteger_pair_cross\@:
 	transfer_slow 0, x19, (\bytes * 2), fault=uml_arm64_gadget_memory_fault_indexed
 		.if \bytes == 4
 	fmov w6, s0
+#if UML_GADGET_SME_TWIN
+	/* A lane move other than element 0 is AdvSIMD, which streaming
+	 * mode does not keep; FMOV is kept. */
+	fmov x7, d0
+	lsr x7, x7, #32
+#else
 	umov w7, v0.s[1]
+#endif
 			.if \sign_extend
 	sxtw x6, w6
 	sxtw x7, w7
 			.endif
 		.else
 	fmov x6, d0
+#if UML_GADGET_SME_TWIN
+	fmov x7, v0.d[1]
+#else
 	umov x7, v0.d[1]
+#endif
 		.endif
 		.if !\first_zero
 	str x6, [_cpu, x22]
@@ -1265,11 +1288,21 @@ Linteger_pair_cross\@:
 	ldr x7, [_cpu, x23]
 		.endif
 		.if \bytes == 4
+#if UML_GADGET_SME_TWIN
+	mov w9, w6
+	bfi x9, x7, #32, #32
+	fmov d0, x9
+#else
 	fmov s0, w6
 	mov v0.s[1], w7
+#endif
 		.else
 	fmov d0, x6
+#if UML_GADGET_SME_TWIN
+	fmov v0.d[1], x7
+#else
 	mov v0.d[1], x7
+#endif
 		.endif
 	transfer_slow 1, x19, (\bytes * 2), fault=uml_arm64_gadget_memory_fault_indexed
 	.endif
@@ -1325,6 +1358,7 @@ integer_pair_load_operation load64, ldp, x, 8, 0
 .purgem integer_pair_mode
 .purgem integer_pair_fast
 
+#if !UML_GADGET_SME_TWIN
 /* Translation-specialized SIMD&FP pairs. Operand fields match the integer
  * pair descriptor, but the first two offsets address VectorRegister slots.
  * Width, direction, address mode, and SP versus GPR base are fixed by the
@@ -1456,6 +1490,7 @@ vector_pair_operation load128, 1, ldp, q, 16
 
 .purgem vector_pair_operation
 .purgem vector_pair_fast
+#endif
 
 /* Only SP-specialized pair gadgets can reach these cold paths. GPR-base
  * gadgets contain no alignment test or branch. */

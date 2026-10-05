@@ -364,15 +364,22 @@ register file. One translated with SM = 1 runs with the host in streaming
 mode and, when ZA = 1, with guest ZA, and ZT0 under SME2, resident in the
 host's; a helper call leaves streaming mode around itself, spilling and
 refilling them, so no C++ runs in streaming mode. Such a program may select
-only the entries that `engine/sme.inc` lists: the control core and the base
-gadgets that execute no AdvSIMD instruction and call no helper. The builder
-ends a block at the illegal-instruction exit on any other word, so in
-streaming mode the integer loads and stores, every FP and SIMD form, atomics
-and exclusives, DC ZVA, IC IVAU, the MOPS forms and CSSC CNT are the
-illegal-instruction exit for now. `arm64-gadget-streaming-safety` walks
-every listed entry in the images each tree links and fails on an AdvSIMD
-word executed in streaming mode, a helper called there, or an indirect
-call.
+only the entries that `engine/sme.inc` lists: the control core, the base
+gadgets that execute no AdvSIMD instruction and call no helper, and the
+streaming twins of the base GPR gadgets that do. A twin is its base gadget
+assembled a second time from the same source, as `uml_arm64_gadget_sm_`
+plus the base name, with each helper call made through a trampoline that
+leaves streaming mode around it and each AdvSIMD word of a slow path
+replaced by an FMOV; CSSC CNT's twin counts in GPRs. A table maps each base
+entry to its twin, and the builder selects the twin. Twins cover the integer
+loads, stores and pairs, atomics and exclusives, DC ZVA, IC IVAU, the MOPS
+forms and CSSC CNT, so their hot paths run in streaming mode unchanged and
+only a TLB miss, a page crossing or an alignment fault leaves it. The
+builder ends a block at the illegal-instruction exit on any other word, so
+every FP and SIMD form is the illegal-instruction exit in streaming mode for
+now. `arm64-gadget-streaming-safety` walks every listed entry in the images
+each tree links and fails on an AdvSIMD word executed in streaming mode, a
+helper called there, or an indirect call.
 
 The JIT implements the same control core (`sme_support` is `control`):
 SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and
