@@ -105,6 +105,12 @@ struct ThreadExecutionState final {
 	/* Last, so the members the gadget path reads keep their offsets. */
 	X86JitEngine x86_jit;
 #endif
+#if DARWIN_UML_X86_64_GUEST
+	/* Whether the current x86 dispatch's mm is shared with another task
+	 * (DARWIN_UML_DISPATCH_MM_SHARED), for the x86 JIT's memory ordering.
+	 * After every other member, so none of their offsets moves. */
+	bool x86_mm_shared{};
+#endif
 };
 
 } // namespace uml::runtime

@@ -166,4 +166,17 @@ enum class DecodeResult : std::uint8_t {
 [[nodiscard]] DecodeResult decode_load_store(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_exception(DecodeContext &context);
 
+/* The SME instructions (program_builder_sme.cpp), which decode_branch_system
+ * reaches only where it would otherwise end the block: an MSR (immediate) no
+ * base PSTATE field claims, a system register it does not know, and a word
+ * no other decoder matched. Without SME on the virtual CPU each ends the
+ * block as that path always has. */
+[[nodiscard]] DecodeResult decode_sme_pstate(DecodeContext &context);
+[[nodiscard]] DecodeResult decode_sme_system_register(DecodeContext &context);
+[[nodiscard]] DecodeResult decode_sme_space(DecodeContext &context);
+
+/* Whether a program translated for SVCR.SM = 1 may select `entry`: an entry
+ * of the SME part's streaming half or of a base row engine/sme.inc lists. */
+[[nodiscard]] bool streaming_entry(std::uintptr_t entry) noexcept;
+
 } // namespace uml::cpu::arm64::gadgets::builder_detail

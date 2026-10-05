@@ -1437,6 +1437,9 @@ GadgetExecutor::~GadgetExecutor()
 		const std::lock_guard guard{census_mutex};
 		if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
 			programs_->census(out);
+			for (const auto &mode : sme_caches_)
+				if (mode.programs)
+					mode.programs->census(out);
 			std::fclose(out);
 		}
 	}
@@ -1522,7 +1525,12 @@ void GadgetExecutor::prepare_cache(
 bool GadgetExecutor::sample_block(const void *stream,
 	diagnostics::SampledBlock &block) const noexcept
 {
-	return programs_->sample_block(stream, block);
+	if (programs_->sample_block(stream, block))
+		return true;
+	for (const auto &mode : sme_caches_)
+		if (mode.programs && mode.programs->sample_block(stream, block))
+			return true;
+	return false;
 }
 
 std::optional<BuildResult> GadgetExecutor::find(
@@ -1552,6 +1560,76 @@ BuildResult GadgetExecutor::translate(
 	return programs_->store(pc, decoded, window, cache_changes_);
 }
 
+[[gnu::always_inline]] inline ::uml::cpu::EngineEvent
+GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
+	::uml::cpu::EngineEvent event, arm64::CpuState &cpu,
+	std::size_t &executed)
+{
+	const bool fpcr_enable_exit =
+		event == ::uml::cpu::EngineEvent::continued &&
+		(cpu.effective_fpcr() &
+		 arm64::detail::fpcr_exception_enable_mask) != 0U;
+	const bool count_exit =
+		terminal_does_not_retire(event) || fpcr_enable_exit;
+	if (count_exit) {
+		const auto *current_program = &built.program;
+		const auto *exit_stream = cpu.gadget_indirect_miss;
+		std::optional<BuildResult> exit_block;
+		if (!program_contains_stream(*current_program, exit_stream)) {
+			exit_block = programs.find_stream(exit_stream);
+			if (exit_block) {
+				current_program = &exit_block->program;
+				arm64::gadgets::resolve_fault_position(
+					*current_program, cpu.pc);
+			}
+		}
+		if (fpcr_enable_exit)
+			correct_fpcr_enable_instruction_count(
+				*current_program, event, cpu, executed);
+		else
+			correct_terminal_instruction_count(
+				*current_program, event, cpu.pc, executed);
+		cpu.gadget_indirect_miss = nullptr;
+	}
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	{
+		auto &d = cache_diagnostics_;
+		if (event == ::uml::cpu::EngineEvent::system_call)
+			++d.exits_syscall;
+		else if (event == ::uml::cpu::EngineEvent::memory_fault)
+			++d.exits_fault;
+		else if (event == ::uml::cpu::EngineEvent::interrupt)
+			++d.exits_interrupt;
+		else if (event != ::uml::cpu::EngineEvent::continued)
+			++d.exits_other;
+		else if (cpu.gadget_indirect_miss != nullptr) {
+			++d.exits_indirect_miss;
+			if (static_cast<const arm64::gadgets::IndirectLink *>(
+				    cpu.gadget_indirect_miss)->kind != 0)
+				++d.exits_indirect_miss_return;
+			if ((d.exits_indirect_miss & 4095) == 0)
+				d.miss_by_site_targets = programs.miss_distribution();
+		}
+		else if (executed >= 4096)
+			++d.exits_chain_limit;
+		else
+			++d.exits_unlinked;
+		diagnostics::execution_histogram_note_executor(&d);
+	}
+#endif
+	/* A stream pointer left by a non-retiring or FPCR-enable exit was
+	 * consumed and cleared above, so what remains is a cache cell. */
+	if (cpu.gadget_indirect_miss != nullptr &&
+	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
+		programs.learn_indirect(
+			*static_cast<arm64::gadgets::IndirectLink *>(
+				cpu.gadget_indirect_miss),
+			cpu.pc);
+	}
+	cpu.gadget_indirect_miss = nullptr;
+	return event;
+}
+
 ::uml::cpu::EngineEvent GadgetExecutor::run_block(
 	arm64::CpuState &cpu, StaticGuestMemory &memory, unsigned long generation,
 	std::size_t &executed)
@@ -1577,6 +1655,9 @@ BuildResult GadgetExecutor::translate(
 		mapping_changes_ = sequences.mapping_changes;
 	}
 	tlb_.tagged_addresses = cpu.tbi_enabled;
+	if (cpu.svcr != 0U) [[unlikely]]
+		return run_sme_block(cpu, memory, generation,
+			sequences.code_changes, executed);
 	/* CpuState::effective_fpcr(), open-coded: through the member this
 	 * block-entry test lowers to a word load and mask instead of a byte
 	 * test, and run_block inlines more around it. */
@@ -1622,69 +1703,103 @@ BuildResult GadgetExecutor::translate(
 	const auto event =
 		arm64::gadgets::execute_preserving_native_fp_environment(
 			built.program, cpu, tlb_, executed);
-	const bool fpcr_enable_exit =
-		event == ::uml::cpu::EngineEvent::continued &&
-		(cpu.effective_fpcr() &
-		 arm64::detail::fpcr_exception_enable_mask) != 0U;
-	const bool count_exit =
-		terminal_does_not_retire(event) || fpcr_enable_exit;
-	if (count_exit) {
-		const auto *current_program = &built.program;
-		const auto *exit_stream = cpu.gadget_indirect_miss;
-		std::optional<BuildResult> exit_block;
-		if (!program_contains_stream(*current_program, exit_stream)) {
-			exit_block = programs_->find_stream(exit_stream);
-			if (exit_block) {
-				current_program = &exit_block->program;
-				arm64::gadgets::resolve_fault_position(
-					*current_program, cpu.pc);
-			}
-		}
-		if (fpcr_enable_exit)
-			correct_fpcr_enable_instruction_count(
-				*current_program, event, cpu, executed);
-		else
-			correct_terminal_instruction_count(
-				*current_program, event, cpu.pc, executed);
-		cpu.gadget_indirect_miss = nullptr;
+	return finish_block(*programs_, built, event, cpu, executed);
+}
+
+/* The SME modes' run_block. Its cache, links and target table are the
+ * mode's own, so everything the program can reach was translated for the
+ * mode it runs in; a guest SVCR write ends its block, and the next run looks
+ * its successor up in the new mode. */
+[[gnu::noinline]] ::uml::cpu::EngineEvent GadgetExecutor::run_sme_block(
+	arm64::CpuState &cpu, StaticGuestMemory &memory,
+	unsigned long generation, std::uint64_t code_changes,
+	std::size_t &executed)
+{
+	const auto mode = static_cast<std::uint8_t>(cpu.svcr & arm64::svcr_mask);
+	/* SVCR leaves 0 only through an SME instruction or an SME task the
+	 * kernel loaded, and either needs the profile and a register file. */
+	if (mode != cpu.svcr || cpu.sme_registers == nullptr ||
+	    !arm64::implements_sme(build_options_.host_capabilities))
+		return ::uml::cpu::EngineEvent::fatal;
+	/* Floating-point exceptions never trap in streaming mode. */
+	const bool streaming = (mode & arm64::svcr_sm) != 0U;
+	if (single_step_ || (!streaming && (cpu.effective_fpcr() &
+	     arm64::detail::fpcr_exception_enable_mask) != 0U))
+		return run_trap_enabled_instruction(cpu, memory, executed);
+	/* A streaming program runs natively in streaming mode; an injected
+	 * profile without the hardware cannot run one. */
+	if (streaming && !build_options_.host_capabilities.sme_hardware)
+		return ::uml::cpu::EngineEvent::fatal;
+	auto &state = sme_caches_[mode - 1U];
+	if (!state.programs)
+		state.programs = std::make_unique<ProgramCache>();
+	auto &programs = *state.programs;
+	if (state.generation != generation) {
+		cpu.gadget_return_stack = {};
+		cpu.gadget_return_top = 0;
 	}
+	if (state.generation != generation || state.changes != code_changes) {
+		programs.prepare(generation, code_changes);
+		state.generation = generation;
+		state.changes = code_changes;
+	}
+	auto selected = programs.find(cpu.pc, code_changes, mapping_changes_,
+		memory, execution_context_, cache_diagnostics_);
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	{
-		auto &d = cache_diagnostics_;
-		if (event == ::uml::cpu::EngineEvent::system_call)
-			++d.exits_syscall;
-		else if (event == ::uml::cpu::EngineEvent::memory_fault)
-			++d.exits_fault;
-		else if (event == ::uml::cpu::EngineEvent::interrupt)
-			++d.exits_interrupt;
-		else if (event != ::uml::cpu::EngineEvent::continued)
-			++d.exits_other;
-		else if (cpu.gadget_indirect_miss != nullptr) {
-			++d.exits_indirect_miss;
-			if (static_cast<const arm64::gadgets::IndirectLink *>(
-				    cpu.gadget_indirect_miss)->kind != 0)
-				++d.exits_indirect_miss_return;
-			if ((d.exits_indirect_miss & 4095) == 0)
-				d.miss_by_site_targets = programs_->miss_distribution();
-		}
-		else if (executed >= 4096)
-			++d.exits_chain_limit;
-		else
-			++d.exits_unlinked;
-		diagnostics::execution_histogram_note_executor(&d);
-	}
+	++cache_diagnostics_.block_entries;
+	if (!selected)
+		++cache_diagnostics_.cache_misses;
 #endif
-	/* A stream pointer left by a non-retiring or FPCR-enable exit was
-	 * consumed and cleared above, so what remains is a cache cell. */
-	if (cpu.gadget_indirect_miss != nullptr &&
-	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
-		programs_->learn_indirect(
-			*static_cast<arm64::gadgets::IndirectLink *>(
-				cpu.gadget_indirect_miss),
-			cpu.pc);
+	if (!selected) {
+		std::array<std::uint32_t, block_instruction_count> instructions;
+		const auto count = fetch_instruction_window(
+			memory, cpu.pc, instructions);
+		if (count == 0) {
+			const auto fault = memory.last_fault();
+			tlb_.fault_address = fault.address;
+			tlb_.fault_access = ::uml::memory::translated_access(
+				fault.access);
+			return ::uml::cpu::EngineEvent::memory_fault;
+		}
+		const auto window = std::span{instructions}.first(count);
+		++cache_diagnostics_.translations;
+		auto options = build_options_;
+		options.svcr = mode;
+		const auto decoded = arm64::gadgets::Builder{}.build(
+			cpu.pc, window,
+			[&programs](std::uint64_t target) {
+				return programs.link(target);
+			},
+			programs.program_storage(),
+			[&programs](std::uint64_t source_pc) {
+				return programs.indirect_link(source_pc);
+			},
+			options);
+		selected.emplace(programs.store(cpu.pc, decoded, window,
+			code_changes));
 	}
-	cpu.gadget_indirect_miss = nullptr;
-	return event;
+	const auto &built = *selected;
+	if (built.program.instruction_count() == 0) {
+		cpu.pc = built.stop_address;
+		return ::uml::cpu::EngineEvent::illegal_instruction;
+	}
+	cpu.access_sme_state();
+	cpu.gadget_target_tier = programs.target_tier();
+	if (!streaming) {
+		const auto event =
+			arm64::gadgets::execute_preserving_native_fp_environment(
+				built.program, cpu, tlb_, executed);
+		return finish_block(programs, built, event, cpu, executed);
+	}
+	/* Streaming programs carry no FP link entry; the FP state they can
+	 * reach is loaded here, once, for every program they link to. */
+	cpu.access_fp_state();
+	const auto event =
+		arm64::gadgets::execute_streaming_preserving_native_fp_environment(
+			built.program, cpu, tlb_, executed,
+			arm64::sme_profile(build_options_.host_capabilities) ==
+				arm64::SmeProfile::sme2);
+	return finish_block(programs, built, event, cpu, executed);
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_trap_enabled_instruction(
@@ -1710,12 +1825,36 @@ BuildResult GadgetExecutor::translate(
 		return ::uml::cpu::EngineEvent::memory_fault;
 	}
 
+	auto options = build_options_;
+	options.svcr = static_cast<std::uint8_t>(cpu.svcr & arm64::svcr_mask);
 	auto built = arm64::gadgets::Builder{}.build(
 		cpu.pc, std::span{&instruction, 1}, {},
-		std::pmr::get_default_resource(), {}, build_options_);
+		std::pmr::get_default_resource(), {}, options);
 	if (!built.complete || built.program.instruction_count() != 1) {
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
+	}
+	if (options.svcr != 0U) {
+		cpu.access_sme_state();
+		if ((options.svcr & arm64::svcr_sm) != 0U) {
+			/* Floating-point exceptions never trap in streaming
+			 * mode, so there is no transaction to run. */
+			if (!build_options_.host_capabilities.sme_hardware)
+				return ::uml::cpu::EngineEvent::fatal;
+			cpu.access_fp_state();
+			const auto event = arm64::gadgets::
+				execute_streaming_preserving_native_fp_environment(
+					built.program, cpu, tlb_, executed,
+					arm64::sme_profile(
+						build_options_.host_capabilities) ==
+						arm64::SmeProfile::sme2);
+			arm64::gadgets::restore_native_fp_environment(cpu);
+			correct_terminal_instruction_count(
+				built.program, event, cpu.pc, executed);
+			cpu.gadget_indirect_miss = nullptr;
+			return event == ::uml::cpu::EngineEvent::interrupt ?
+				::uml::cpu::EngineEvent::continued : event;
+		}
 	}
 
 	const bool transactional =

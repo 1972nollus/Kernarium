@@ -531,7 +531,7 @@ void test_c_bridge_preserves_fault_direction_and_retry()
 			StaticGeneration state{generation};
 			state.map(base, code, PROT_READ);
 			darwin_uml_guest_registers registers{};
-			darwin_uml_guest_fp_registers fp{};
+			uml::testing::GuestFpTail fp{};
 			registers.pc = base;
 			registers.x[1] = base;
 			unsigned long tls = 0;
@@ -568,7 +568,7 @@ void test_c_bridge_preserves_fault_direction_and_retry()
 			state.map(base, code, PROT_READ | PROT_EXEC);
 			state.map(base + page, data, PROT_READ, false);
 			darwin_uml_guest_registers registers{};
-			darwin_uml_guest_fp_registers fp{};
+			uml::testing::GuestFpTail fp{};
 			registers.pc = base;
 			registers.x[0] = 0x1122'3344'5566'7788ULL;
 			registers.x[1] = base + page;

@@ -5,10 +5,65 @@
 
 #include "cpu/x86_64/decoder.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <unordered_set>
+
 namespace uml::runtime {
 
 namespace x86_64 = ::uml::cpu::x86_64;
 using ::uml::memory::StaticGuestMemory;
+
+namespace {
+
+class MmSharedLog final {
+public:
+	MmSharedLog()
+	{
+		const char *path = std::getenv("UML_X86_MM_SHARED_LOG");
+		if (path != nullptr && path[0] != '\0')
+			file_ = std::fopen(path, "ae");
+	}
+
+	~MmSharedLog()
+	{
+		if (file_ != nullptr)
+			std::fclose(file_);
+	}
+
+	MmSharedLog(const MmSharedLog &) = delete;
+	MmSharedLog &operator=(const MmSharedLog &) = delete;
+
+	void note(unsigned long generation, std::uint64_t rip) noexcept
+	{
+		if (file_ == nullptr)
+			return;
+		const std::lock_guard lock{mutex_};
+		try {
+			if (!generations_.insert(generation).second)
+				return;
+		} catch (...) {
+			return;
+		}
+		std::fprintf(file_, "uml-x86 mm-shared generation=%lu rip=%#llx\n",
+			generation, static_cast<unsigned long long>(rip));
+		std::fflush(file_);
+	}
+
+private:
+	std::FILE *file_{};
+	std::mutex mutex_;
+	std::unordered_set<unsigned long> generations_;
+};
+
+} // namespace
+
+void note_x86_mm_shared(unsigned long generation, std::uint64_t rip) noexcept
+{
+	static MmSharedLog log;
+	log.note(generation, rip);
+}
 
 std::uint32_t x86_noncanonical_vector(StaticGuestMemory &memory,
 	const x86_64::CpuState &cpu) noexcept

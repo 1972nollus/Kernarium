@@ -265,7 +265,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	} else if ((instruction & 0xfff8'f01fU) == 0xd500'401fU) {
 		const auto selected = pstate_immediate_gadget(instruction);
 		if (!selected.valid)
-			return illegal_instruction(context);
+			return decode_sme_pstate(context);
 		emit(words, selected.gadget);
 		if (selected.fault_address)
 			emit(words, address);
@@ -317,10 +317,11 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	} else if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
 		   (instruction & 0xffd0'0000U) == 0xd550'0000U ||
 		   (instruction & 0xfff8'0000U) == 0xd548'0000U) {
-		/* Every implemented EL0 register is selected above. Unknown 64-bit
-		 * registers plus FEAT_SYSREG128/SYSINSTR128 operations are
-		 * inaccessible in the current userspace architectural profile. */
-		return illegal_instruction(context);
+		/* Every implemented EL0 register is selected above, apart from
+		 * SME's. Unknown 64-bit registers plus FEAT_SYSREG128/SYSINSTR128
+		 * operations are inaccessible in the current userspace
+		 * architectural profile. */
+		return decode_sme_system_register(context);
 	} else if ((instruction & 0xfff8'0000U) == 0xd508'0000U ||
 		   (instruction & 0xfff8'0000U) == 0xd528'0000U) {
 		const auto operation = instruction & 0xffff'ffe0U;
@@ -377,7 +378,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		 * implement; DRPS and the ERET forms are not EL0 instructions. */
 		return illegal_instruction(context);
 	} else {
-		return implementation_gap(context);
+		return decode_sme_space(context);
 	}
 	return DecodeResult::decoded;
 }

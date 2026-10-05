@@ -2,19 +2,26 @@
 /* Keep one translation unit so shared macros and local labels remain cheap. */
 
 /* The gadget region: the bank, the sections its gadgets push forwarding
- * variants, cold paths and FEAT_AFP twins into, and the island of branches to
- * the helpers outside it, in that order. Every image that carries the engine
- * links UML::GadgetRegionLayout, which merges these sections into
- * __TEXT,__text and puts them first, so the region sits at one image offset
- * whatever else the image holds. The bank starts on a 16 KiB host page and
- * every later part on a 64-byte line plus its phase, so the region's bytes and
- * offsets depend on this file alone; docs/architecture.md has the contract.
+ * variants, cold paths and FEAT_AFP twins into, the island of branches to the
+ * helpers outside it, and the SME part, in that order. Every image that
+ * carries the engine links UML::GadgetRegionLayout, which merges these
+ * sections into __TEXT,__text and puts them first, so the region sits at one
+ * image offset whatever else the image holds. The bank starts on a 16 KiB
+ * host page and every later part on a 64-byte line plus its phase, so the
+ * region's bytes and offsets depend on this file alone; docs/architecture.md
+ * has the contract.
  *
  * The twins follow every base part: on a host with FEAT_AFP they replace base
  * entries on the hot path and need the same fixed placement, and elsewhere
- * they never run, so where they sit moves no base entry. The island goes last
- * because its words alone encode distances to code outside the region. The
- * names are the arm64 engine's own, so the x86-64 engine's sections never
+ * they never run, so where they sit moves no base entry. The island follows
+ * them because its words alone encode distances to code outside the region.
+ *
+ * The SME part runs only where the virtual CPU implements SME, so where it
+ * sits moves no base entry either. It follows the island rather than
+ * preceding it: every helper call in the base parts is a branch to its veneer
+ * in another section, so a part between them and the island would re-encode
+ * each one. Its own helper calls take veneers appended to the island's end.
+ * The names are the arm64 engine's own, so the x86-64 engine's sections never
  * interleave with them in an image that carries both. */
 #define GADGET_SECTION_BANK __TEXT,__a64_bank,regular,pure_instructions
 #define GADGET_SECTION_FORWARD __TEXT,__a64_forward,regular,pure_instructions
@@ -22,18 +29,21 @@
 #define GADGET_SECTION_COLD __TEXT,__a64_cold,regular,pure_instructions
 #define GADGET_SECTION_AFP __TEXT,__a64_afp,regular,pure_instructions
 #define GADGET_SECTION_VENEER __TEXT,__a64_veneer,regular,pure_instructions
+#define GADGET_SECTION_SME __TEXT,__a64_sme,regular,pure_instructions
 
 /* Unreachable bytes ahead of each part's first entry, which set the part's
  * 64-byte phase. The bank's phase is the one the iPad measured fastest with
  * the region pinned: at 16, scalar_mix ran in its slow mode in most launches.
  * The other parts keep the phases their sections had in the shipped
  * KRuntime_6_18_16K at 49a43648, where each began wherever the code before
- * it ended. No host with FEAT_AFP has measured the twins' phase. */
+ * it ended. No host with FEAT_AFP has measured the twins' phase, and no host
+ * with SME the SME part's. */
 #define GADGET_PHASE_BANK 48
 #define GADGET_PHASE_FORWARD 16
 #define GADGET_PHASE_VECTOR_FORWARD 48
 #define GADGET_PHASE_COLD 4
 #define GADGET_PHASE_AFP 0
+#define GADGET_PHASE_SME 0
 
 /* Zero-size bounds of each part, for the guest sampler's PC test. NAME() is
  * not defined until core_integer.inc. */
@@ -87,6 +97,12 @@ _uml_arm64_gadget_region_\part:
 	.endif
 	gadget_bank_bound uml_arm64_gadget_veneer_section_\edge
 	.popsection
+	.pushsection GADGET_SECTION_SME
+	.ifc \edge,begin
+	gadget_region_start sme, 6, GADGET_PHASE_SME
+	.endif
+	gadget_bank_bound uml_arm64_gadget_sme_section_\edge
+	.popsection
 .endm
 
 /* A call from the region to a helper outside it branches to the helper's
@@ -122,5 +138,7 @@ Lveneer_\symbol:
 /* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
  * of their conditional branches, so no established gadget moves for them. */
 #include "engine/lse2_alignment.inc"
+/* Only into the SME part, after every base part's code. */
+#include "engine/sme.inc"
 	afp_twin_table_end
 	gadget_bank_bounds end

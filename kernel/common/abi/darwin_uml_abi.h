@@ -46,7 +46,22 @@ enum darwin_uml_guest_event {
 	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
 	DARWIN_UML_EVENT_STOP = 9,
 	DARWIN_UML_EVENT_DATA_ALIGNMENT = 10,
+	/* The task has no SME storage and an instruction needs it: allocate
+	 * DARWIN_UML_GUEST_SME_STATE_SIZE(svl) zeroed bytes for the bridge's
+	 * streaming vector length, publish them in the task's
+	 * struct darwin_uml_guest_sme_registers and re-enter at the same PC,
+	 * which retired nothing. */
+	DARWIN_UML_EVENT_SME_ACCESS = 11,
 	DARWIN_UML_EVENT_FATAL = -1,
+};
+
+/* darwin_uml_guest_registers.dispatch_flags: facts about the task that hold
+ * for one entry. The kernel sets them before it enters the guest and clears
+ * them on return, so they never become part of the task's saved PSTATE. */
+enum {
+	/* clone(CLONE_VM) without CLONE_VFORK has shared the task's mm with
+	 * another task since the mm was created. */
+	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
 };
 
 enum {
@@ -90,13 +105,15 @@ struct darwin_uml_guest_registers {
 	darwin_uml_abi_u64 sp;
 	darwin_uml_abi_u64 pc;
 	darwin_uml_abi_u32 pstate;
-	darwin_uml_abi_u32 state_flags;
+	darwin_uml_abi_u32 dispatch_flags;
 	darwin_uml_abi_u64 original_x0;
 	struct darwin_uml_faultinfo fault;
 	long long syscall;
 	darwin_uml_abi_s32 is_user;
 	darwin_uml_abi_s32 padding;
 	darwin_uml_abi_u64 fpmr;
+	/* An arm64 task's PSTATE.SM in bit 0 and PSTATE.ZA in bit 1; the other
+	 * bits stay zero. */
 	darwin_uml_abi_u64 svcr;
 	/* The i386 TLS descriptors of an x86_64-userspace kernel's compat
 	 * task, one struct user_desc each; zero for every other task. */
@@ -110,8 +127,33 @@ struct darwin_uml_guest_fp_registers {
 	darwin_uml_abi_u32 reserved[2];
 };
 
+/* Every arm64 task's register tail holds this immediately after its
+ * struct darwin_uml_guest_fp_registers, whether or not the run implements
+ * SME; an x86_64-userspace task's tail ends after the FP registers. */
+struct darwin_uml_guest_sme_registers {
+	darwin_uml_abi_u64 tpidr2;   /* TPIDR2_EL0; 0 without SME */
+	darwin_uml_abi_u64 state;    /* address of the task's SME storage, or 0 */
+	darwin_uml_abi_u32 svl;      /* bytes per vector the storage holds, or 0 */
+	darwin_uml_abi_u32 reserved; /* 0 */
+};
+
+/* A task's SME storage, DARWIN_UML_GUEST_SME_STATE_SIZE(svl) bytes for a
+ * streaming vector length of svl bytes: Z0-Z31 of svl bytes, P0-P15 of
+ * svl / 8 bytes, ZA as its svl horizontal vectors of svl bytes, then the
+ * 64-byte ZT0, each part at a multiple of svl. Bytes 0-15 of each stored Z
+ * are a copy of the matching V in struct darwin_uml_guest_fp_registers,
+ * which owns them: the host ignores them on entry and writes them on exit. */
+#define DARWIN_UML_GUEST_SME_Z_OFFSET(svl, n) ((n) * (svl))
+#define DARWIN_UML_GUEST_SME_P_OFFSET(svl, n) (32 * (svl) + (n) * ((svl) / 8))
+#define DARWIN_UML_GUEST_SME_ZA_OFFSET(svl, row) (34 * (svl) + (row) * (svl))
+#define DARWIN_UML_GUEST_SME_ZT0_OFFSET(svl) (34 * (svl) + (svl) * (svl))
+#define DARWIN_UML_GUEST_SME_ZT0_SIZE 64
+#define DARWIN_UML_GUEST_SME_STATE_SIZE(svl) \
+	(DARWIN_UML_GUEST_SME_ZT0_OFFSET(svl) + DARWIN_UML_GUEST_SME_ZT0_SIZE)
+
 /* Layout constants make the native and kernel-side checks independent of a
  * compiler's spelling of the corresponding structures. */
+#define DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET 268U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET 272U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_FAULT_OFFSET 280U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET 304U
@@ -119,6 +161,10 @@ struct darwin_uml_guest_fp_registers {
 #define DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET 336U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 384U
 #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
+#define DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET 528U
+#define DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE 24U
+/* The fp_size an arm64 task passes to darwin_uml_enter_guest(). */
+#define DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE 552U
 
 #if defined(__cplusplus)
 #include <stddef.h>
@@ -126,11 +172,14 @@ static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
 static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
 static_assert(DARWIN_UML_EVENT_STOP == 9);
 static_assert(DARWIN_UML_EVENT_DATA_ALIGNMENT == 10);
+static_assert(DARWIN_UML_EVENT_SME_ACCESS == 11);
 static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096 ||
 		DARWIN_UML_GUEST_PAGE_SIZE == 16384);
+static_assert(offsetof(struct darwin_uml_guest_registers, dispatch_flags) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET);
 static_assert(offsetof(struct darwin_uml_guest_registers, original_x0) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET);
 static_assert(offsetof(struct darwin_uml_guest_registers, fault) ==
@@ -146,6 +195,14 @@ static_assert(sizeof(struct darwin_uml_guest_registers) ==
 static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);
 static_assert(sizeof(struct darwin_uml_guest_fp_registers) ==
 		DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE);
+static_assert(sizeof(struct darwin_uml_guest_sme_registers) ==
+		DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE);
+static_assert(DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET ==
+		DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE);
+static_assert(DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE ==
+		DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET +
+		DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE);
+static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(64) == 6336);
 #endif
 
 #endif
