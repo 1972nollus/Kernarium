@@ -11,8 +11,10 @@
  * no AdvSIMD instruction and calls no helper: a gadget that needs a helper
  * first leaves streaming mode through uml_arm64_gadget_sme_suspend, which
  * spills ZA and ZT0, and enters it again through uml_arm64_gadget_sme_resume.
- * Both keep the host FPSR, which holds the guest's while its floating-point
- * environment is active, across the SMSTART or SMSTOP that would reset it.
+ * Both keep the host FPSR across the SMSTART or SMSTOP that would reset it.
+ * The guest's FPSR is never in the host register in streaming mode, since
+ * XNU resets FPSR on every kernel entry while a thread is in streaming mode;
+ * its FPCR is (uml_arm64_gadget_enter_streaming).
  * The arm64-gadget-streaming-safety test walks everything a streaming
  * program can reach on every linked image.
  *
@@ -52,6 +54,7 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 	streaming_row svc, fp_link_entry
 	streaming_row branch, simd_destination_resident_load
 	streaming_row add_sub_immediate_inplace_w_add_n_0, simd_fused_inplace_fmla_4h_0
+	streaming_entry sysreg_fpcr_read_afp
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	streaming_entry execution_count
 #endif
@@ -163,17 +166,28 @@ uml_arm64_gadget_sme_suspend:
 
 /* uml_arm64_gadget_enter for a streaming program: the same arguments and
  * result. AAPCS64 keeps d8-d15 across a call, and SMSTART and SMSTOP zero
- * them, so they are saved here. */
+ * them, so they are saved here. The guest's FPCR, with its trap enables
+ * clear, is the host's while the program runs; FPCR survives every kernel
+ * entry. The guest's FPSR stays in CpuState, where the executor left it
+ * with the native FP environment inactive, and the host's own FPCR and FPSR
+ * are back when this returns. */
 .globl NAME(uml_arm64_gadget_enter_streaming)
 .p2align 4
 NAME(uml_arm64_gadget_enter_streaming):
-	stp x29, x30, [sp, #-0x60]!
+	stp x29, x30, [sp, #-0x70]!
 	mov x29, sp
 	stp x19, x20, [sp, #0x10]
 	stp d8, d9, [sp, #0x20]
 	stp d10, d11, [sp, #0x30]
 	stp d12, d13, [sp, #0x40]
 	stp d14, d15, [sp, #0x50]
+	mrs x9, fpcr
+	mrs x10, fpsr
+	stp x9, x10, [sp, #0x60]
+	ldr w11, [x1, #UML_GADGET_CPU_FPCR]
+	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
+	bic w11, w11, w12
+	msr fpcr, x11
 	mov x19, x1
 	bl uml_arm64_gadget_sme_resume
 	bl NAME(uml_arm64_gadget_enter)
@@ -181,12 +195,15 @@ NAME(uml_arm64_gadget_enter_streaming):
 	mov x1, x19
 	bl uml_arm64_gadget_sme_suspend
 	mov x1, x20
+	ldp x9, x10, [sp, #0x60]
+	msr fpcr, x9
+	msr fpsr, x10
 	ldp d14, d15, [sp, #0x50]
 	ldp d12, d13, [sp, #0x40]
 	ldp d10, d11, [sp, #0x30]
 	ldp d8, d9, [sp, #0x20]
 	ldp x19, x20, [sp, #0x10]
-	ldp x29, x30, [sp], #0x60
+	ldp x29, x30, [sp], #0x70
 	ret
 
 /* Translate the \bytes (a register; at most one guest page) at guest address
@@ -595,6 +612,34 @@ gadget bit_reverse_count_\suffix
 sme_population_count w_cnt, 0
 sme_population_count x_cnt, 1
 .purgem sme_population_count
+
+/* MSR FPCR. While a streaming program runs, the guest's FPCR is the host's
+ * too (uml_arm64_gadget_enter_streaming installs it) but its FPSR never is:
+ * XNU resets FPSR on every kernel entry while a thread is in streaming mode,
+ * so the guest's stays in CpuState. A write updates both copies of FPCR, and
+ * takes no exit for a trap enable, since floating-point exceptions never
+ * trap in streaming mode. Stream: as the base entries'. */
+.macro sme_fpcr_write name, mask
+gadget \name
+	ldp x8, x13, [_stream], #16
+	ldr w9, [_cpu, x8]
+	mov w10, #((\mask) & 0xffff)
+	movk w10, #((\mask) >> 16), lsl #16
+	and w9, w9, w10
+	str w9, [_cpu, #UML_GADGET_CPU_FPCR]
+	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
+	bic w10, w9, w12
+	msr fpcr, x10
+	next_gadget
+.endm
+sme_fpcr_write sysreg_fpcr_write_r, UML_ARM64_FPCR_WRITABLE
+sme_fpcr_write sysreg_fpcr_write_r_afp, (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPCR_AFP_CONTROLS)
+.purgem sme_fpcr_write
+
+gadget sysreg_fpcr_write_z
+	str wzr, [_cpu, #UML_GADGET_CPU_FPCR]
+	msr fpcr, xzr
+	next_gadget
 
 #define UML_GADGET_SME_TWIN 1
 #undef GADGET_SECTION_COLD

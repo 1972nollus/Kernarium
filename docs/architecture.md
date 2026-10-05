@@ -363,7 +363,12 @@ translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a helper on the
 register file. One translated with SM = 1 runs with the host in streaming
 mode and, when ZA = 1, with guest ZA, and ZT0 under SME2, resident in the
 host's; a helper call leaves streaming mode around itself, spilling and
-refilling them, so no C++ runs in streaming mode. Such a program may select
+refilling them, so no C++ runs in streaming mode. XNU resets FPSR on every
+kernel entry while a thread is in streaming mode, so a streaming program
+keeps the guest's FPSR in `CpuState` and never runs with the native FP
+environment active: only the guest's FPCR, with its trap enables clear, is
+the host's while it runs, and MSR FPCR runs as a twin that sets both
+copies. Such a program may select
 only the entries that `engine/sme.inc` lists: the control core, the base
 gadgets that execute no AdvSIMD instruction and call no helper, and the
 streaming twins of the base GPR gadgets that do. A twin is its base gadget

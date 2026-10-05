@@ -14,15 +14,19 @@
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program_builder_decode.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "platform/apple/host_features.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <compare>
 #include <crt_externs.h>
+#include <mach/mach.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -35,6 +39,7 @@
 #include <string>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -53,6 +58,11 @@ void uml_arm64_gadget_sm_twins_begin();
 void uml_arm64_gadget_sm_twins_end();
 void uml_arm64_gadget_sm_load64_unsigned_fast_r();
 void uml_arm64_gadget_sm_store32_unsigned_fast_r_sp();
+void uml_arm64_gadget_sysreg_fpcr_write_r();
+void uml_arm64_gadget_sysreg_fpcr_write_z();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_r();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_r_afp();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_z();
 }
 
 namespace arm64 = uml::cpu::arm64;
@@ -640,6 +650,72 @@ void streaming_control_core()
 /* The streaming twin table: one row per base entry, each from an entry no
  * streaming program may select to one in the twins' row, and the builder
  * selects the twin. */
+/*
+ * XNU resets FPSR to 0x0800009F on return from any kernel entry while a
+ * thread is in streaming mode. A streaming program therefore keeps the
+ * guest's FPSR in CpuState and only its FPCR in the host register: both
+ * survive a long streaming loop that another thread stops in the kernel
+ * again and again, read back unchanged there, and are the guest's after the
+ * run, which leaves the host's own FPCR in place.
+ */
+void fp_controls_survive_kernel_entries_in_streaming_mode()
+{
+	constexpr std::uint32_t written_fpsr = 0x0000'0011U; /* IXC, IOC */
+	constexpr std::uint32_t written_fpcr = 0x0080'0000U; /* RMode -inf */
+	const std::array code{
+		smstart_sm,
+		0xd51b'4421U, /* msr fpsr, x1 */
+		0xd51b'4404U, /* msr fpcr, x4 */
+		0xf100'0442U, /* subs x2, x2, #1 */
+		0x54ff'ffe1U, /* b.ne .-4 */
+		0xd53b'4423U, /* mrs x3, fpsr */
+		0xd53b'4405U, /* mrs x5, fpcr */
+		svc};
+	Machine machine{code, native_host()};
+	machine.cpu.registers[1] = written_fpsr;
+	machine.cpu.registers[2] = 20'000'000;
+	machine.cpu.registers[4] = written_fpcr;
+	const auto host_fpcr = __builtin_arm_rsr64("fpcr");
+	const auto target = mach_thread_self();
+	std::atomic<bool> running{true};
+	std::atomic<unsigned> stops{0};
+	std::thread interrupter{[&] {
+		while (running.load(std::memory_order_relaxed)) {
+			if (thread_suspend(target) == KERN_SUCCESS) {
+				/* Reading the state waits until the thread has
+				 * stopped, so it entered the kernel before it
+				 * resumes. */
+				arm_thread_state64_t state{};
+				mach_msg_type_number_t count =
+					ARM_THREAD_STATE64_COUNT;
+				if (thread_get_state(target, ARM_THREAD_STATE64,
+					    reinterpret_cast<thread_state_t>(
+						    &state),
+					    &count) == KERN_SUCCESS)
+					stops.fetch_add(1,
+						std::memory_order_relaxed);
+				thread_resume(target);
+			}
+			std::this_thread::sleep_for(
+				std::chrono::microseconds(200));
+		}
+	}};
+	const auto event = machine.run(1'000'000);
+	running.store(false, std::memory_order_relaxed);
+	interrupter.join();
+	mach_port_deallocate(mach_task_self(), target);
+	require(event == EngineEvent::system_call);
+	std::fprintf(stderr, "streaming loop stopped in the kernel %u times\n",
+		stops.load());
+	require(stops.load() >= 10U);
+	require(machine.cpu.svcr == arm64::svcr_sm);
+	require(machine.cpu.registers[3] == written_fpsr);
+	require(machine.cpu.registers[5] == written_fpcr);
+	require(machine.cpu.fpsr == written_fpsr);
+	require(machine.cpu.fpcr == written_fpcr);
+	require(__builtin_arm_rsr64("fpcr") == host_fpcr);
+}
+
 void streaming_twin_table()
 {
 	namespace detail = gadgets::builder_detail;
@@ -648,10 +724,18 @@ void streaming_twin_table()
 	const auto end = reinterpret_cast<std::uintptr_t>(
 		uml_arm64_gadget_sm_twins_end);
 	std::set<std::uintptr_t> bases;
+	/* The FPCR writes are safe in streaming mode but must also set the
+	 * host's FPCR there; every other base entry is unsafe. */
+	const std::set safe_bases{
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sysreg_fpcr_write_r),
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sysreg_fpcr_write_z)};
 	for (const auto &row : detail::streaming_twins()) {
 		require(row.base_end == row.base_begin + 4);
 		require(row.twin_end == row.twin_begin + 4);
-		require(!detail::streaming_entry(row.base_begin));
+		require(!detail::streaming_entry(row.base_begin) ||
+			safe_bases.contains(row.base_begin));
 		require(row.twin_begin >= begin && row.twin_begin < end);
 		require(detail::streaming_entry(row.twin_begin));
 		require(detail::streaming_twin(row.base_begin) ==
@@ -681,6 +765,14 @@ void streaming_twin_table()
 		require(twin_of(0xb900'03e0U | rt) == reinterpret_cast<
 			std::uintptr_t>(uml_arm64_gadget_sm_store32_unsigned_fast_r_sp));
 	}
+	/* MSR FPCR, whose base entry, or its FEAT_AFP twin, is safe in
+	 * streaming mode but leaves the host's FPCR alone there. */
+	const bool afp = arm64::implements_afp(injected_host(64, true));
+	require(twin_of(0xd51b'4404U) == reinterpret_cast<std::uintptr_t>(afp ?
+		uml_arm64_gadget_sm_sysreg_fpcr_write_r_afp :
+		uml_arm64_gadget_sm_sysreg_fpcr_write_r));
+	require(twin_of(0xd51b'441fU) == reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_sysreg_fpcr_write_z));
 }
 
 /* One case for the twins: words ending in SVC, and the registers they need
@@ -1075,6 +1167,7 @@ int main()
 	if (streaming_hardware()) {
 		streaming_control_core();
 		streaming_twins();
+		fp_controls_survive_kernel_entries_in_streaming_mode();
 		std::printf("streaming programs ran at SVL %u\n",
 			native_host().sme_svl_bytes);
 	} else {

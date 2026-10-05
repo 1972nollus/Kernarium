@@ -299,11 +299,12 @@ std::uintptr_t streaming_twin(std::uintptr_t entry)
 	return index.select(entry);
 }
 
+/* A twin replaces its base entry even where the base is safe in streaming
+ * mode, as the FPCR writes' twins do. */
 bool select_streaming_entries(std::span<std::uintptr_t> emitted)
 {
 	const auto first = emitted[0];
-	if (!streaming_entry(first))
-		emitted[0] = streaming_twin(first);
+	emitted[0] = streaming_twin(first);
 	if (!streaming_entry(emitted[0]))
 		return false;
 	const bool prefix = first == reinterpret_cast<std::uintptr_t>(
@@ -314,8 +315,7 @@ bool select_streaming_entries(std::span<std::uintptr_t> emitted)
 		return true;
 	if (emitted.size() < 2)
 		return false;
-	if (!streaming_entry(emitted[1]))
-		emitted[1] = streaming_twin(emitted[1]);
+	emitted[1] = streaming_twin(emitted[1]);
 	return streaming_entry(emitted[1]);
 }
 
