@@ -1038,14 +1038,35 @@ void put(const char *text)
 	raw_syscall(nr_write, 1, reinterpret_cast<long>(text), length);
 }
 
+struct Quotient {
+	u64 quotient;
+	u64 remainder;
+};
+
+/* Long division, bit by bit: a freestanding i386 build has no __udivdi3, and
+ * compilers differ in which constant divisors they expand inline. */
+Quotient divide(u64 dividend, u32 divisor)
+{
+	Quotient result = {};
+	for (int bit = 63; bit >= 0; --bit) {
+		result.remainder = result.remainder << 1 | ((dividend >> bit) & 1);
+		if (result.remainder >= divisor) {
+			result.remainder -= divisor;
+			result.quotient |= 1ULL << bit;
+		}
+	}
+	return result;
+}
+
 void put_decimal(u64 value)
 {
 	char text[21];
 	int position = 20;
 	text[position] = '\0';
 	do {
-		text[--position] = static_cast<char>('0' + value % 10);
-		value /= 10;
+		const Quotient digit = divide(value, 10);
+		text[--position] = static_cast<char>('0' + digit.remainder);
+		value = digit.quotient;
 	} while (value != 0);
 	put(text + position);
 }
@@ -1169,11 +1190,11 @@ bool timer_ticks_during(const char *what, void (*work)())
 	put(ok ? "  " : "  too few: ");
 	put(what);
 	put(" ran ");
-	put_decimal(elapsed / 1000000);
+	put_decimal(divide(elapsed, 1000000).quotient);
 	put(" ms with ");
 	put_decimal(ticks);
 	put(" SIGALRM, longest gap ");
-	put_decimal(longest_gap / 1000000);
+	put_decimal(divide(longest_gap, 1000000).quotient);
 	put(" ms\n");
 	return ok;
 }
