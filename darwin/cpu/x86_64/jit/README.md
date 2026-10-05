@@ -148,10 +148,13 @@ in integers and SoftFloat because it runs under the guest's FPCR. The model
 covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
 flags, so a check needs only to find the cases.
 
-A translation assumes its context's floating-point mode, MXCSR.DAZ and FTZ,
-and the dispatch selects the space for the guest's MXCSR. An LDMXCSR, FXRSTOR
-or XRSTOR that changes the mode ends the dispatch after itself, and the next
-one runs in the new mode's space; one that changes only the rounding stays.
+A translation assumes its context's floating-point mode: MXCSR.DAZ and FTZ,
+and which exceptions MXCSR unmasks, none, only some of invalid operation,
+division by zero and overflow (the special checks), or any other (all
+checks). The dispatch selects the space for the guest's MXCSR. An LDMXCSR,
+FXRSTOR or XRSTOR that changes the mode ends the dispatch after itself, and
+the next one runs in the new mode's space; one that changes only the
+rounding stays.
 FPCR.FZ is MXCSR.DAZ, which flushes inputs as x86 does but also flushes a
 result that is tiny before rounding, where x86 applies FTZ after rounding.
 The checks take:
@@ -175,8 +178,27 @@ The checks take:
   within x86's error as the gadget engine's quotient does, and sends the
   denormal, zero, huge and negative inputs to the model.
 
-Comparisons, conversions to integers, widening, rounding and half-precision
-conversions take DAZ from FPCR.FZ and need no check.
+Comparisons, conversions, rounding and half-precision conversions take DAZ
+from FPCR.FZ, and their results need no check.
+
+While MXCSR unmasks an exception, the checks also settle each instruction's
+exceptions, and every SIMD floating-point instruction has one. The special
+checks send the model a result whose exponent is all ones or one below, a
+NaN source of a comparison, MIN, MAX, rounding or widening, a source a
+conversion to an integer or to half precision cannot hold, and a DPPS or
+DPPD source large enough to overflow; a value that passes raises none of
+those three exceptions. All checks send every operation. The model gives
+x86's outcome: an unmasked exception faults with `#XM`, whose error code is
+MXCSR, leaving the destination alone, and invalid operation, a denormal
+operand and division by zero take precedence over the exceptions of the
+result. An instruction checked in two 128-bit parts settles after its last.
+Under the special checks a part that no test sent holds flags of masked
+exceptions too, so when the last part faults, the instruction runs again as
+a unit of its own with all checks, and its fault raises every part's flags.
+As in the gadget engine, only what a check sends to the model raises the
+flags of masked exceptions, though that is a part of an instruction here
+and the whole instruction there. Each such fault compiles its instruction
+once more, uncached.
 
 MXCSR keeps every bit LDMXCSR, FXRSTOR and XRSTOR load, the exception flags
 included, and FXSAVE and XSAVE store an MXCSR_MASK of 0xFFFF, as the gadget
@@ -198,11 +220,9 @@ from the 80-bit format. Two deviations from hardware remain, shared with the
 gadget engine: C1 stays clear when a result rounds up, and FPREM computes
 its remainder in one step, never reporting a partial one with C2.
 
-The engine does not deliver unmasked SSE or x87 exceptions as `#XM` or `#MF`,
-because FEXCore keeps no MXCSR exception flags and raises nothing from the x87
-ones, and has no alignment-check `#AC`.
-`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two cases in
-each mode.
+The engine does not deliver unmasked x87 exceptions as `#MF`, and has no
+alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
+exactly those two cases in each mode.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
@@ -223,4 +243,6 @@ names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
 in the same change. The list is empty. `x86-64-jit-sse-exactness` runs XE's
 differential harness through the engine, against the same x86 model as the
-gadget engine's `x86-64-sse-exactness`.
+gadget engine's `x86-64-sse-exactness`, with its pass that unmasks a
+denormal operand, and a third pass that holds the special checks to the
+outcome of all checks.

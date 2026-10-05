@@ -298,6 +298,15 @@ struct Space final {
 	std::size_t split_size{};
 	/* The dispatch ended at a fault of a gather element. */
 	bool gather_fault{};
+	/* The exceptions of an instruction's low part, which its high part
+	 * settles (Embedder.FPPending), and the #XM or #MF a dispatch ended
+	 * at: its vector and error code. */
+	FpSteps pending_fp;
+	std::uint8_t fp_fault_vector{};
+	std::uint32_t fp_fault_error{};
+	/* The dispatch runs an instruction again whose checks settle all its
+	 * exceptions (Core::EMBEDDER_EXIT_FP_RETRY). */
+	bool fp_retrying{};
 
 	/* A compat32 address wraps at 4 GiB, segment base and offset alike,
 	 * as the hardware forms it. */
@@ -744,12 +753,27 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 
 static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT &&
 	static_cast<unsigned>(FpKind::narrow) == Core::EMBEDDER_FP_NARROW &&
-	fp_fma_negate_odd_addends == Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS,
+	static_cast<unsigned>(FpKind::half_narrow) == Core::EMBEDDER_FP_HALF_NARROW &&
+	fp_fma_negate_odd_addends == Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS &&
+	fp_cmp_vex == Core::EMBEDDER_FP_CMP_VEX && fp_comis_quiet == Core::EMBEDDER_FP_COMIS_QUIET &&
+	fp_to_int_truncate == Core::EMBEDDER_FP_TO_INT_TRUNCATE && fp_to_int64 == Core::EMBEDDER_FP_TO_INT64 &&
+	fp_from_int64 == Core::EMBEDDER_FP_FROM_INT64,
 	"the model's kinds and flags are FEXCore's");
 
+constexpr std::uint8_t simd_error_vector = 19;
+/* MXCSR's exception masks. */
+constexpr std::uint32_t mxcsr_masks = 0x1f80U;
+
 /* The cold path of an EmbedderFPCheck op: x86's result for the operation the
- * descriptor names, from the sources and host result in FPScratch. */
-std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, std::uint64_t)
+ * descriptor names, from the sources and host result in FPScratch. While
+ * MXCSR unmasks an exception, the check settles the instruction's
+ * exceptions too, after its high part if it has two: it faults with #XM,
+ * leaving its destination alone, or raises the flags of the masked ones.
+ * As in the gadget engine, only the instructions a check sends here raise
+ * flags. Under the special checks a part that no test sent here holds
+ * flags of masked exceptions too: when its high part faults, the
+ * instruction runs again with checks that send every part here. */
+std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, std::uint64_t guest_rip)
 {
 	FpOperation operation{};
 	operation.kind = static_cast<FpKind>(descriptor & 0xffU);
@@ -761,9 +785,38 @@ std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, 
 	auto *scratch = frame->Embedder.FPScratch;
 	std::memcpy(values.sources.data(), scratch, sizeof(values.sources));
 	std::memcpy(values.result.data(), scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.size());
-	(void)x86_fp_compute(operation, frame->State.mxcsr, values);
+	const auto mxcsr = frame->State.mxcsr;
+	auto steps = x86_fp_compute(operation, mxcsr, values);
 	std::memcpy(scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.data(), values.result.size());
-	return 0;
+	if ((mxcsr & mxcsr_masks) == mxcsr_masks)
+		return 0;
+	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
+	if (frame->Embedder.FPPending != 0) {
+		steps |= space.pending_fp;
+		space.pending_fp = {};
+		frame->Embedder.FPPending = 0;
+	}
+	if ((descriptor & Core::EMBEDDER_FP_PART_LOW) != 0) {
+		space.pending_fp = steps;
+		frame->Embedder.FPPending = 1;
+		return 0;
+	}
+	const auto outcome = x86_fp_settle(steps, mxcsr);
+	const auto unmasked = ~(mxcsr >> 7U) & 0x3fU;
+	if (outcome.fault && (descriptor & Core::EMBEDDER_FP_PART_HIGH) != 0 && (unmasked & 0x32U) == 0 &&
+		!space.fp_retrying) {
+		frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_RETRY;
+		record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+		return 1;
+	}
+	frame->State.mxcsr = mxcsr | outcome.flags;
+	if (!outcome.fault)
+		return 0;
+	space.fp_fault_vector = simd_error_vector;
+	space.fp_fault_error = frame->State.mxcsr;
+	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_FAULT;
+	record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+	return 1;
 }
 
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
@@ -933,8 +986,13 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 /* The floating-point mode a translation for `cpu` assumes. */
 [[nodiscard]] std::uint32_t fp_mode_for(const CpuState &cpu) noexcept
 {
+	/* Unmasked: invalid operation, division by zero or overflow, which a
+	 * value shows, and a denormal operand, underflow or precision. */
+	const auto unmasked = ~(cpu.mxcsr >> 7U) & 0x3fU;
+	const auto checks = (unmasked & 0x32U) != 0 ? Core::EMBEDDER_FP_MODE_CHECK_ALL :
+		unmasked != 0 ? Core::EMBEDDER_FP_MODE_CHECK_SPECIAL : 0U;
 	return ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ? Core::EMBEDDER_FP_MODE_DAZ : 0U) |
-		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U);
+		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks;
 }
 
 [[nodiscard]] std::uint64_t read_fpcr() noexcept
@@ -1315,6 +1373,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	frame->Embedder.Budget = budget;
 	frame->Embedder.Unretired = 0;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_NONE;
+	frame->Embedder.FPPending = 0;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
@@ -1326,12 +1385,30 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	/* Registrations of a page by another vCPU wait for this one to leave
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
-	space->context->ExecuteEmbedded(thread, false);
-	/* A store into the running unit's own code left before it stored. Its
-	 * instruction runs again as a unit of its own, whose store publishes,
-	 * and the dispatch goes on from freshly fetched code. */
-	while (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE)
-		space->context->ExecuteEmbedded(thread, true);
+	space->context->ExecuteEmbedded(thread, false, 0);
+	for (;;) {
+		/* A store into the running unit's own code left before it
+		 * stored. Its instruction runs again as a unit of its own, whose
+		 * store publishes, and the dispatch goes on from freshly fetched
+		 * code. */
+		if (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE) {
+			space->context->ExecuteEmbedded(thread, true, 0);
+			continue;
+		}
+		/* A fault the special checks did not settle in full: the
+		 * instruction, which has not retired, runs again as a unit of its
+		 * own whose checks send every part to the helper. */
+		if (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_FP_RETRY) {
+			++frame->Embedder.Budget;
+			--frame->Embedder.Unretired;
+			space->fp_retrying = true;
+			space->context->ExecuteEmbedded(thread, true,
+				(fp_mode & ~Core::EMBEDDER_FP_MODE_CHECK_SPECIAL) | Core::EMBEDDER_FP_MODE_CHECK_ALL);
+			space->fp_retrying = false;
+			continue;
+		}
+		break;
+	}
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 
@@ -1360,6 +1437,12 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		cpu.rflags |= rflags_resume_flag;
 		result.reason = impl_->stepping ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
+		return run;
+	case Core::EMBEDDER_EXIT_FP_FAULT:
+		/* #XM or #MF, a fault at its instruction. */
+		result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+		result.syndrome = space->fp_fault_vector;
+		run.error_code = static_cast<std::int32_t>(space->fp_fault_error);
 		return run;
 	case Core::EMBEDDER_EXIT_MEMORY_FAULT:
 		result.reason = ::uml::cpu::ExitReason::memory_fault;

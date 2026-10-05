@@ -498,6 +498,226 @@ struct Lane final {
 	return steps;
 }
 
+/* A lane of `bytes` of the sources an exception-only kind reads: the first
+ * source's 16 bytes, then the second's. */
+[[nodiscard]] std::uint64_t packed_lane(const FpValues &values,
+	std::size_t bytes, std::size_t index) noexcept
+{
+	const auto offset = index * bytes;
+	std::uint64_t value{};
+	std::memcpy(&value, values.sources[offset < 16U ? 0U : 1U].data() +
+		offset % 16U, bytes);
+	return value;
+}
+
+/* Whether a comparison predicate signals for a quiet NaN: the legacy
+ * encoding's three bits, or VEX's five, whose bit 4 makes a quiet predicate
+ * of the low four bits signalling and the reverse. */
+[[nodiscard]] bool signalling_predicate(std::uint8_t predicate,
+	bool vex) noexcept
+{
+	constexpr std::uint32_t signalling_predicates = 0x6666U;
+	const unsigned value = vex ? predicate & 0x1fU : predicate & 7U;
+	return (((signalling_predicates >> (value & 0xfU)) & 1U) != 0) !=
+		((value & 0x10U) != 0);
+}
+
+/* A comparison raises invalid operation for a signalling NaN, and for a
+ * quiet one when it signals; without a NaN, a denormal operand raises its
+ * flag. */
+[[nodiscard]] std::uint32_t compare(const Format &f, bool signalling,
+	std::uint64_t a, std::uint64_t b, std::uint32_t mxcsr) noexcept
+{
+	if (f.signalling(a) || f.signalling(b) ||
+		(signalling && (f.nan(a) || f.nan(b))))
+		return invalid;
+	if (f.nan(a) || f.nan(b) || (mxcsr & mxcsr_denormals_are_zero) != 0)
+		return 0;
+	return f.denormal(a) || f.denormal(b) ? denormal : 0U;
+}
+
+/* A conversion to an integer: invalid operation for a NaN, an infinity or a
+ * value out of range, which gives the integer indefinite, and else
+ * precision for a value that is not an integer. */
+[[nodiscard]] Lane to_integer(const Format &f, std::uint64_t x, bool truncate,
+	bool wide, std::uint32_t mxcsr) noexcept
+{
+	if ((mxcsr & mxcsr_denormals_are_zero) != 0)
+		x = f.flush(x);
+	Lane result{};
+	if (f.nan(x) || f.infinite(x)) {
+		result.before = invalid;
+		return result;
+	}
+	softfloat_state state{};
+	const auto mode = truncate ? std::uint8_t{softfloat_round_minMag} :
+		soft_rounding(mxcsr);
+	const auto value = soft_wide(f.dbl, x);
+	if (wide)
+		(void)f128_to_i64(&state, value, mode, true);
+	else
+		(void)f128_to_i32(&state, value, mode, true);
+	if ((state.exceptionFlags & softfloat_flag_invalid) != 0)
+		result.before = invalid;
+	else if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
+		result.after = precision;
+	return result;
+}
+
+/* A conversion of an integer to a float, which raises precision when it
+ * rounds. */
+[[nodiscard]] std::uint32_t from_integer(bool dbl, std::uint64_t x, bool wide,
+	std::uint32_t mxcsr) noexcept
+{
+	/* Exact in binary128, then rounded. */
+	const auto integer = wide ? static_cast<std::int64_t>(x) :
+		static_cast<std::int64_t>(static_cast<std::int32_t>(x));
+	float128_t value{};
+	if (integer != 0) {
+		const bool negative = integer < 0;
+		const auto magnitude = negative ? 0 - static_cast<std::uint64_t>(integer) :
+			static_cast<std::uint64_t>(integer);
+		const int top = 63 - __builtin_clzll(magnitude);
+		/* The bits below the leading one, as the top of 112 fraction bits. */
+		const auto fraction = static_cast<unsigned __int128>(
+			magnitude & ~(1ULL << static_cast<unsigned>(top))) <<
+			static_cast<unsigned>(112 - top);
+		value.v[0] = static_cast<std::uint64_t>(fraction);
+		value.v[1] = static_cast<std::uint64_t>(fraction >> 64U) |
+			(static_cast<std::uint64_t>(16383 + top) << 48U) |
+			(negative ? 1ULL << 63U : 0U);
+	}
+	softfloat_state state{};
+	state.roundingMode = soft_rounding(mxcsr);
+	if (dbl)
+		(void)f128_to_f64(&state, value);
+	else
+		(void)f128_to_f32(&state, value);
+	return (state.exceptionFlags & softfloat_flag_inexact) != 0 ? precision :
+		0U;
+}
+
+/* Whether the finite lane `x` is an integer. */
+[[nodiscard]] bool integral(const Format &f, std::uint64_t x) noexcept
+{
+	if (f.zero(x))
+		return true;
+	const unsigned fraction = f.dbl ? 52U : 23U;
+	const unsigned bias = f.dbl ? 1023U : 127U;
+	const auto exponent =
+		static_cast<unsigned>((x & f.exponent()) >> fraction);
+	if (exponent >= bias + fraction)
+		return true;
+	if (exponent < bias)
+		return false;
+	return (x & ((1ULL << (bias + fraction - exponent)) - 1U)) == 0;
+}
+
+/* ROUNDPS to ROUNDSD: invalid operation for a signalling NaN, and precision
+ * for a lane that is not an integer unless bit 3 of the immediate suppresses
+ * it, whatever the rounding. */
+[[nodiscard]] Lane round_integral(const Format &f, std::uint64_t x,
+	std::uint8_t control, std::uint32_t mxcsr) noexcept
+{
+	if ((mxcsr & mxcsr_denormals_are_zero) != 0)
+		x = f.flush(x);
+	Lane result{};
+	if (f.nan(x)) {
+		result.before = f.signalling(x) ? invalid : 0U;
+		return result;
+	}
+	if ((control & 8U) == 0 && !f.infinite(x) && !integral(f, x))
+		result.after = precision;
+	return result;
+}
+
+/* The single `x`, neither zero, infinite nor a NaN, rounded to a half under
+ * MXCSR.RC-style `control`, in integers: `x` is m * 2^shift with an integer
+ * m of up to 24 bits. Halves have 11-bit significands down to 2^-14 and are
+ * multiples of 2^-24 below it; the largest is 65504. A result is tiny when,
+ * rounded to 11 bits as if the exponent were unbounded, it lies below
+ * 2^-14: rounding to nearest reaches 2^-14 from 2^-14 - 2^-26 up, rounding
+ * away from zero from above 2^-14 - 2^-25, and rounding toward zero never.
+ * Rounding to nearest overflows from 65520, away from zero above 65504, and
+ * toward zero from 2^16. */
+[[nodiscard]] Rounded half_round(std::uint32_t x, unsigned control) noexcept
+{
+	const bool negative = (x >> 31U) != 0;
+	const unsigned exponent = (x >> 23U) & 0xffU;
+	const std::uint64_t m = exponent == 0 ? x & 0x7fffffU :
+		(x & 0x7fffffU) | 0x800000U;
+	const int shift = exponent == 0 ? -149 : static_cast<int>(exponent) - 150;
+	/* Rounding to nearest, away from zero, or toward zero. */
+	const unsigned direction = (control & 3U) == 0 ? 0U :
+		(control & 3U) == 3U ? 2U :
+		((control & 3U) == 1U) == negative ? 1U : 2U;
+	/* m * 2^shift against k * 2^power, for a k below 2^12: -1, 0 or 1.
+	 * Scaled 2^40 apart, the larger side wins whatever m and k are. */
+	const auto versus = [&](std::uint64_t k, int power) {
+		std::uint64_t left = m;
+		std::uint64_t right = k;
+		if (shift >= power) {
+			if (shift - power >= 40)
+				return 1;
+			left <<= static_cast<unsigned>(shift - power);
+		} else {
+			if (power - shift >= 40)
+				return -1;
+			right <<= static_cast<unsigned>(power - shift);
+		}
+		return left < right ? -1 : left > right ? 1 : 0;
+	};
+	const int top = 63 - __builtin_clzll(m);
+	Rounded result{};
+	/* An unmasked tiny half of a denormal single raises precision too, as
+	 * an Intel Xeon 8581C does. */
+	result.significand_inexact = exponent == 0 || (top > 10 &&
+		(m & ((1ULL << static_cast<unsigned>(top - 10)) - 1U)) != 0);
+	if (top + shift < -14) {
+		result.tiny = direction == 2 ||
+			(direction == 0 ? versus(4095, -26) < 0 : versus(2047, -25) <= 0);
+		/* Halves step by 2^-24 there; a value below the least half has
+		 * every bit below that step. */
+		const int below = -(shift + 24);
+		result.inexact = below > top ||
+			(below > 0 &&
+				(m & ((1ULL << static_cast<unsigned>(below)) - 1U)) != 0);
+		return result;
+	}
+	if (top + shift >= 16) {
+		result.overflow = true;
+	} else if (top + shift == 15) {
+		result.overflow = direction == 0 ? versus(4095, 4) >= 0 :
+			direction == 1 ? versus(2047, 5) > 0 : false;
+	}
+	result.inexact = result.overflow || result.significand_inexact;
+	return result;
+}
+
+/* VCVTPS2PH: invalid operation for a signalling NaN, a denormal operand
+ * unless DAZ makes it a zero, then underflow, overflow and precision as the
+ * half rounds, in the rounding its immediate names unless bit 2 defers to
+ * MXCSR's. FTZ does not apply. */
+[[nodiscard]] Lane half_narrowing(std::uint64_t x, std::uint8_t control,
+	std::uint32_t mxcsr) noexcept
+{
+	const Format f{false};
+	if ((mxcsr & mxcsr_denormals_are_zero) != 0)
+		x = f.flush(x);
+	Lane result{};
+	if (f.nan(x)) {
+		result.before = f.signalling(x) ? invalid : 0U;
+		return result;
+	}
+	if (f.zero(x) || f.infinite(x))
+		return result;
+	if (f.denormal(x))
+		result.before = denormal;
+	const auto rounded = half_round(static_cast<std::uint32_t>(x),
+		(control & 4U) != 0 ? (mxcsr >> 13U) & 3U : control & 3U);
+	return finish(f, rounded, mxcsr & ~mxcsr_flush_to_zero, result.before);
+}
+
 } // namespace
 
 FpSteps &FpSteps::operator|=(const FpSteps &other) noexcept
@@ -513,9 +733,12 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 	FpValues &values) noexcept
 {
 	const Format f{operation.element_bytes == 8};
-	/* A conversion narrows up to four doubles from two sources. */
+	/* A conversion narrows up to four doubles from two sources, and an
+	 * exception-only kind reads up to 32 bytes. */
 	const auto lanes = std::min<std::size_t>(operation.lanes,
-		operation.kind == FpKind::narrow ? 4U : 16U / operation.element_bytes);
+		operation.kind == FpKind::narrow ? 4U :
+		operation.kind >= FpKind::cmp ? 32U / operation.element_bytes :
+		16U / operation.element_bytes);
 	const auto &first = values.sources[0];
 	const auto &second = values.sources[1];
 	FpSteps steps{};
@@ -600,6 +823,73 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 		}
 		break;
 	}
+	case FpKind::cmp:
+	case FpKind::comis: {
+		const bool signalling = operation.kind == FpKind::cmp ?
+			signalling_predicate(operation.immediate,
+				(operation.flags & fp_cmp_vex) != 0) :
+			(operation.flags & fp_comis_quiet) == 0;
+		const auto count = std::min<std::size_t>(lanes,
+			16U / operation.element_bytes);
+		for (std::size_t index = 0; index < count; ++index)
+			steps.before[0] |= compare(f, signalling,
+				lane(first, f.dbl, index), lane(second, f.dbl, index), mxcsr);
+		break;
+	}
+	case FpKind::to_int:
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto result = to_integer(f,
+				packed_lane(values, operation.element_bytes, index),
+				(operation.flags & fp_to_int_truncate) != 0,
+				(operation.flags & fp_to_int64) != 0, mxcsr);
+			steps.before[0] |= result.before;
+			steps.after[0] |= result.after;
+		}
+		break;
+	case FpKind::widen:
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const Format single{false};
+			const auto x = packed_lane(values, 4, index);
+			if (single.signalling(x))
+				steps.before[0] |= invalid;
+			else if ((mxcsr & mxcsr_denormals_are_zero) == 0 &&
+				single.denormal(x))
+				steps.before[0] |= denormal;
+		}
+		break;
+	case FpKind::from_int: {
+		const bool wide = (operation.flags & fp_from_int64) != 0;
+		const auto count = std::min<std::size_t>(lanes, wide ? 4U : 8U);
+		for (std::size_t index = 0; index < count; ++index)
+			steps.after[0] |= from_integer(f.dbl,
+				packed_lane(values, wide ? 8U : 4U, index), wide, mxcsr);
+		break;
+	}
+	case FpKind::round:
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto result = round_integral(f,
+				packed_lane(values, operation.element_bytes, index),
+				operation.immediate, mxcsr);
+			steps.before[0] |= result.before;
+			steps.after[0] |= result.after;
+		}
+		break;
+	case FpKind::half_widen:
+		/* A signalling NaN half is invalid. */
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto x = packed_lane(values, 2, index);
+			if ((x & 0x7fffU) > 0x7c00U && (x & 0x0200U) == 0)
+				steps.before[0] |= invalid;
+		}
+		break;
+	case FpKind::half_narrow:
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto result = half_narrowing(packed_lane(values, 4, index),
+				operation.immediate, mxcsr);
+			steps.before[0] |= result.before;
+			steps.after[0] |= result.after;
+		}
+		break;
 	}
 	return steps;
 }

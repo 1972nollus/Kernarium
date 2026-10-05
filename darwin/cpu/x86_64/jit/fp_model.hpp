@@ -39,6 +39,25 @@ enum class FpKind : std::uint8_t {
 	 * second, to singles. The element is the double, the lanes are the
 	 * singles. */
 	narrow,
+	/* The kinds below raise exceptions only: the host's result is x86's,
+	 * and the model leaves `result` alone. Lanes past the first source's
+	 * 16 bytes are the second source's. */
+	/* CMPPS to CMPSD and VCMP, with the predicate as the immediate. */
+	cmp,
+	/* COMISS and COMISD, or with `fp_comis_quiet` UCOMISS and UCOMISD. */
+	comis,
+	/* Floats to integers. */
+	to_int,
+	/* CVTSS2SD and CVTPS2PD. */
+	widen,
+	/* Integers to floats of the element. */
+	from_int,
+	/* ROUNDPS to ROUNDSD, with the immediate. */
+	round,
+	/* VCVTPH2PS; the element is the half. */
+	half_widen,
+	/* VCVTPS2PH, with the immediate. */
+	half_narrow,
 };
 
 /* An FMA's signs: the product negated, and the addend negated in every
@@ -47,6 +66,14 @@ constexpr std::uint8_t fp_fma_negate_product = 1U << 0U;
 constexpr std::uint8_t fp_fma_negate_addend = 1U << 1U;
 constexpr std::uint8_t fp_fma_negate_even_addends = 2U << 1U;
 constexpr std::uint8_t fp_fma_negate_odd_addends = 3U << 1U;
+/* A VEX comparison's five-bit predicate. */
+constexpr std::uint8_t fp_cmp_vex = 1U << 0U;
+constexpr std::uint8_t fp_comis_quiet = 1U << 0U;
+/* A conversion to integers that truncates, and one to 64-bit integers. */
+constexpr std::uint8_t fp_to_int_truncate = 1U << 0U;
+constexpr std::uint8_t fp_to_int64 = 1U << 1U;
+/* A conversion from 64-bit integers. */
+constexpr std::uint8_t fp_from_int64 = 1U << 0U;
 
 struct FpOperation final {
 	FpKind kind{};

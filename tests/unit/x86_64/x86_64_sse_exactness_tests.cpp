@@ -13,16 +13,22 @@
  * underflow threshold. A second pass runs every cell with MXCSR unmasking a
  * denormal operand, so that each instruction runs checked: one x86 raises
  * MXCSR.DE for must fault with #XM and keep its destination, and every other
- * must match the model. `--iterations N` and `--checked-iterations N` set
- * the loop counts per cell; the defaults keep the test short. */
+ * must match the model. The JIT runs a third pass against the gadget engine
+ * as its reference, under MXCSRs that unmask some exceptions, over these
+ * instructions and roundings, conversions from integers and half-precision
+ * conversions: each instruction must fault in both or in neither, with the
+ * same flags and its destination kept, or compute the same results, and
+ * raise the same flags while MXCSR unmasks a denormal operand, underflow or
+ * precision, which every check of both engines settles. `--iterations N`,
+ * `--checked-iterations N` and `--reference-iterations N` set the loop
+ * counts per cell; the defaults keep the test short. */
 #include "cpu/x86_64/cpu_state.hpp"
-#if UML_SSE_EXACTNESS_JIT
-#include "cpu/x86_64/jit/fex_engine.hpp"
-#include "platform/apple/host_features.hpp"
-#else
 #include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
+#if UML_SSE_EXACTNESS_JIT
+#include "cpu/x86_64/jit/fex_engine.hpp"
+#include "platform/apple/host_features.hpp"
 #endif
 #include "memory/guest_address_space.hpp"
 
@@ -150,9 +156,10 @@ private:
 	std::uint64_t saved_{};
 };
 
+/* `reference`: an instruction only the JIT's reference pass runs. */
 enum class Op : std::uint8_t {
 	add, sub, mul, div, sqrt, min, max, rcp, rsqrt, fma, convert,
-	hadd, hsub, addsub, dot, cmp, comis,
+	hadd, hsub, addsub, dot, cmp, comis, reference,
 };
 
 [[nodiscard]] std::uint64_t host32(Op op, std::uint32_t a, std::uint32_t b)
@@ -969,6 +976,57 @@ void add_compares(std::vector<Instruction> &list)
 	}
 }
 
+/* Roundings, conversions from integers, the second source's in memory,
+ * and half-precision conversions, for the reference pass. */
+void add_references(std::vector<Instruction> &list)
+{
+	struct Reference {
+		std::string_view name;
+		bool dbl;
+		Shape shape;
+		std::vector<std::uint8_t> bytes;
+	};
+	const std::vector<Reference> references{
+		{"roundss/0", false, Shape::sse_scalar,
+			{0x66, 0x0f, 0x3a, 0x0a, 0xc1, 0x00}},
+		{"roundsd/4", true, Shape::sse_scalar,
+			{0x66, 0x0f, 0x3a, 0x0b, 0xc1, 0x04}},
+		{"roundps/1", false, Shape::sse_packed,
+			{0x66, 0x0f, 0x3a, 0x08, 0xc1, 0x01}},
+		{"roundpd/b", true, Shape::sse_packed,
+			{0x66, 0x0f, 0x3a, 0x09, 0xc1, 0x0b}},
+		{"vroundss/c", false, Shape::vex_scalar,
+			{0xc4, 0xe3, 0x71, 0x0a, 0xc2, 0x0c}},
+		{"vroundps/2", false, Shape::vex256,
+			{0xc4, 0xe3, 0x7d, 0x08, 0xc1, 0x02}},
+		{"vroundpd/4", true, Shape::vex256,
+			{0xc4, 0xe3, 0x7d, 0x09, 0xc1, 0x04}},
+		{"cvtdq2ps", false, Shape::sse_packed, {0x0f, 0x5b, 0xc1}},
+		{"vcvtdq2ps", false, Shape::vex256, {0xc5, 0xfc, 0x5b, 0xc1}},
+		{"cvtsi2ss/m32", false, Shape::sse_scalar,
+			{0xf3, 0x0f, 0x2a, 0x46, 0x20}},
+		{"cvtsi2ss/m64", false, Shape::sse_scalar,
+			{0xf3, 0x48, 0x0f, 0x2a, 0x46, 0x20}},
+		{"cvtsi2sd/m64", true, Shape::sse_scalar,
+			{0xf2, 0x48, 0x0f, 0x2a, 0x46, 0x20}},
+		{"vcvtsi2ss/m64", false, Shape::vex_scalar,
+			{0xc4, 0xe1, 0xf2, 0x2a, 0x46, 0x20}},
+		{"vcvtsi2sd/m64", true, Shape::vex_scalar,
+			{0xc4, 0xe1, 0xf3, 0x2a, 0x46, 0x20}},
+		{"vcvtph2ps", false, Shape::vex128, {0xc4, 0xe2, 0x79, 0x13, 0xc1}},
+		{"vcvtph2ps", false, Shape::vex256, {0xc4, 0xe2, 0x7d, 0x13, 0xc1}},
+		{"vcvtps2ph/0", false, Shape::vex128,
+			{0xc4, 0xe3, 0x79, 0x1d, 0xc8, 0x00}},
+		{"vcvtps2ph/4", false, Shape::vex256,
+			{0xc4, 0xe3, 0x7d, 0x1d, 0xc8, 0x04}},
+		{"vcvtps2ph/3", false, Shape::vex256,
+			{0xc4, 0xe3, 0x7d, 0x1d, 0xc8, 0x03}},
+	};
+	for (const auto &reference : references)
+		list.push_back({std::string{reference.name}, Op::reference,
+			reference.dbl, reference.shape, reference.bytes});
+}
+
 [[nodiscard]] std::vector<Instruction> instructions()
 {
 	std::vector<Instruction> list;
@@ -978,6 +1036,7 @@ void add_compares(std::vector<Instruction> &list)
 	add_horizontal(list);
 	add_dot_products(list);
 	add_compares(list);
+	add_references(list);
 	return list;
 }
 
@@ -1132,7 +1191,8 @@ JitEngine &jit_engine()
 	}
 	return false;
 }
-#else
+#endif
+
 /* Runs the loop over `count` rows. A checked run's executor builds for
  * #XM, and an instruction that faults with it is marked in `trapped` and
  * skipped, so that the loop stores the destination it kept. */
@@ -1146,6 +1206,7 @@ JitEngine &jit_engine()
 	CpuState cpu{};
 	cpu.mxcsr = mxcsr;
 	cpu.rip = code_address;
+	cpu.rflags = 0x202;
 	cpu.gpr(Register::rsp) = stack_top;
 	cpu.gpr(Register::rsi) = input_address;
 	cpu.gpr(Register::rdi) = output_address;
@@ -1185,7 +1246,6 @@ JitEngine &jit_engine()
 	}
 	return false;
 }
-#endif
 
 struct Lanes final {
 	std::array<std::uint64_t, 8> value{};
@@ -1831,12 +1891,113 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 	return totals;
 }
 
+#if UML_SSE_EXACTNESS_JIT
+/* MXCSRs that unmask exceptions: some of invalid operation, division by zero
+ * and overflow, whose special checks test values in line, and others, which
+ * every check settles. */
+constexpr std::array<std::uint32_t, 5> reference_controls{
+	0x1900U, 0x1d80U, 0x1680U, 0x1380U, 0x0000U};
+
+/* The JIT against the gadget engine under each of `reference_controls`. An
+ * instruction faults in both or in neither: with the same flags and its
+ * destination kept, or with the same results. While MXCSR unmasks a
+ * denormal operand, underflow or precision, every check of both engines
+ * settles exceptions, and the flags match too; else only the instructions a
+ * check sends to the model raise flags, which the engines choose apart. */
+Totals run_reference_cell(const Instruction &instruction, bool daz,
+	bool ftz, unsigned rounding, std::size_t iterations, Shown &shown)
+{
+	FlatMemory memory{memory_size};
+	const auto code = loop_code(instruction.bytes);
+	(void)memory.write(code_address, code);
+	auto &jit = jit_engine();
+	const std::uint32_t modes = (daz ? 0x40U : 0U) | (ftz ? 0x8000U : 0U) |
+		(rounding << 13U);
+	Operands operands;
+	Totals totals;
+	std::vector<std::byte> reference(chunk * output_stride);
+	for (std::size_t done = 0; done < iterations;) {
+		const auto count = std::min(chunk, iterations - done);
+		for (std::size_t row = 0; row < count; ++row)
+			fill_input(instruction, operands,
+				memory.at(input_address + row * input_stride));
+		for (const auto masks : reference_controls) {
+			const auto mxcsr = masks | modes;
+			std::array<std::byte, 4> control{};
+			std::memcpy(control.data(), &mxcsr, 4);
+			(void)memory.write(control_address, control);
+			std::vector<std::uint8_t> trapped_gadgets(count);
+			std::vector<std::uint8_t> trapped_jit(count);
+			uml::cpu::x86_64::gadgets::Executor gadgets;
+			gadgets.check_exceptions(uml::cpu::x86_64::gadgets::check_simd);
+			gadgets.prepare(memory);
+			if (!run_engine(memory, gadgets, mxcsr, count, true,
+				instruction.bytes.size(), &trapped_gadgets)) {
+				totals.engine_failed = true;
+				return totals;
+			}
+			std::memcpy(reference.data(), memory.at(output_address),
+				count * output_stride);
+			if (!run_engine(memory, jit, mxcsr, count, true,
+				instruction.bytes.size(), &trapped_jit)) {
+				totals.engine_failed = true;
+				return totals;
+			}
+			/* Unmasked: a denormal operand, underflow or precision. */
+			const bool all_checks = (~(mxcsr >> 7U) & 0x32U) != 0;
+			for (std::size_t row = 0; row < count; ++row) {
+				const auto *input = memory.at(input_address +
+					row * input_stride);
+				const auto *actual = memory.at(output_address +
+					row * output_stride);
+				const auto *expected = reference.data() + row * output_stride;
+				std::uint32_t flags_jit{};
+				std::uint32_t flags_gadgets{};
+				std::memcpy(&flags_jit, actual + 48, 4);
+				std::memcpy(&flags_gadgets, expected + 48, 4);
+				const bool same_flags = (flags_jit & 0x3fU) ==
+					(flags_gadgets & 0x3fU);
+				const bool faulted = trapped_gadgets[row] != 0;
+				++totals.lanes;
+				const bool right = faulted != (trapped_jit[row] != 0) ? false :
+					faulted ? same_flags &&
+						std::memcmp(actual, input, 32) == 0 :
+					std::memcmp(actual, expected, 48) == 0 &&
+						(!all_checks || same_flags);
+				if (right)
+					continue;
+				++totals.differing;
+				if (shown.count < 12U) {
+					++shown.count;
+					std::fprintf(stderr, "  %s %s daz=%d ftz=%d rc=%u "
+						"reference mxcsr %#x: trapped %d/%d flags %#x/%#x "
+						"ymm0=%#llx ymm1=%#llx ymm2=%#llx\n",
+						instruction.name.c_str(),
+						shape_name(instruction.shape), daz ? 1 : 0,
+						ftz ? 1 : 0, rounding, mxcsr, trapped_jit[row],
+						trapped_gadgets[row], flags_jit, flags_gadgets,
+						static_cast<unsigned long long>(
+							lane(input, instruction.dbl, 0)),
+						static_cast<unsigned long long>(
+							lane(input + 32, instruction.dbl, 0)),
+						static_cast<unsigned long long>(
+							lane(input + 64, instruction.dbl, 0)));
+				}
+			}
+		}
+		done += count;
+	}
+	return totals;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char **argv)
 {
 	std::size_t iterations = 2000;
 	std::size_t checked_iterations = 200;
+	std::size_t reference_iterations = 100;
 	std::string_view only;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument{argv[index]};
@@ -1844,11 +2005,14 @@ int main(int argc, char **argv)
 			iterations = std::strtoull(argv[++index], nullptr, 10);
 		else if (argument == "--checked-iterations" && index + 1 < argc)
 			checked_iterations = std::strtoull(argv[++index], nullptr, 10);
+		else if (argument == "--reference-iterations" && index + 1 < argc)
+			reference_iterations = std::strtoull(argv[++index], nullptr, 10);
 		else if (argument == "--only" && index + 1 < argc)
 			only = argv[++index];
 		else {
 			std::fprintf(stderr, "usage: %s [--iterations N] "
-				"[--checked-iterations N] [--only TEXT]\n", argv[0]);
+				"[--checked-iterations N] [--reference-iterations N] "
+				"[--only TEXT]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -1858,16 +2022,34 @@ int main(int argc, char **argv)
 	bool failed = false;
 	Shown shown;
 	std::printf("instruction\tshape\tdaz\tftz\trc\tlanes\tdiffering\n");
-	for (const bool checked : {false, true})
+	/* Plain, checked, and for the JIT against the gadget engine. */
+#if UML_SSE_EXACTNESS_JIT
+	const unsigned passes = 3;
+#else
+	const unsigned passes = 2;
+#endif
+	for (unsigned pass = 0; pass < passes; ++pass)
 	for (const auto &instruction : instructions()) {
 		if (!only.empty() &&
 			instruction.name.find(only) == std::string::npos)
 			continue;
+		if (pass < 2 && instruction.op == Op::reference)
+			continue;
+		const bool checked = pass == 1;
 		for (const bool daz : {false, true})
 		for (const bool ftz : {false, true})
 		for (unsigned rounding = 0; rounding < 4; ++rounding) {
+#if UML_SSE_EXACTNESS_JIT
+			const auto totals = pass == 2 ?
+				run_reference_cell(instruction, daz, ftz, rounding,
+					reference_iterations, shown) :
+				run_cell(instruction, daz, ftz, rounding,
+					checked ? checked_iterations : iterations, shown, checked);
+#else
+			(void)reference_iterations;
 			const auto totals = run_cell(instruction, daz, ftz, rounding,
 				checked ? checked_iterations : iterations, shown, checked);
+#endif
 			if (totals.engine_failed) {
 				std::fprintf(stderr, "x86-64 SSE exactness: %s did not run "
 					"to its end\n", instruction.name.c_str());
@@ -1878,7 +2060,8 @@ int main(int argc, char **argv)
 			differing += totals.differing;
 			kept += totals.kept_differing;
 			std::printf("%s%s\t%s\t%d\t%d\t%u\t%llu\t%llu\n",
-				instruction.name.c_str(), checked ? "/checked" : "",
+				instruction.name.c_str(),
+				pass == 2 ? "/reference" : checked ? "/checked" : "",
 				shape_name(instruction.shape), daz ? 1 : 0, ftz ? 1 : 0,
 				rounding, static_cast<unsigned long long>(totals.lanes),
 				static_cast<unsigned long long>(totals.differing));
