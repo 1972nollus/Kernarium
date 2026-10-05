@@ -4,7 +4,10 @@
  * AdvSIMD or other FP&SIMD word reaches an SM=1 translation, the host enters
  * streaming mode only in the external prologue and leaves it before every
  * host call and return, and only SM=1 translations touch the host's
- * streaming state: no other translation holds an SVE or SME word. Every
+ * streaming state: no other translation holds an SVE or SME word. No SM=1
+ * translation reads or writes the host's FPCR or FPSR or takes the native FP
+ * environment, since XNU resets FPSR on any kernel entry in streaming mode.
+ * Every
  * witness word of the A64 evidence table, which the registration passes as
  * the only argument, is compiled in every mode and link shape.
  */
@@ -92,6 +95,19 @@ struct Witness final {
   return op0 == 7U || op0 == 15U || (word & 0x0e00'0000U) == 0x0c00'0000U;
 }
 
+/* MRS or MSR of FPCR or FPSR. */
+[[nodiscard]] constexpr bool fp_control_access(std::uint32_t word) noexcept {
+  switch (word & 0xffff'ffe0U) {
+  case 0xd53b'4400U:
+  case 0xd51b'4400U:
+  case 0xd53b'4420U:
+  case 0xd51b'4420U:
+    return true;
+  default:
+    return false;
+  }
+}
+
 enum class Callee {
   enter,
   leave,
@@ -146,6 +162,11 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
   require(code.executable_words != 0U &&
           code.executable_words <= code.words.size());
   const bool streaming = (mode & arm64::svcr_sm) != 0U;
+  if (streaming && code.native_fp) {
+    std::fprintf(stderr, "%s mode %u: takes the native FP environment\n",
+                 label.c_str(), mode);
+    require(false);
+  }
   std::size_t enters = 0;
   /* Translated code after a helper would run outside streaming mode with
    * the guest's state spilled, so every helper must be terminal: the next
@@ -158,8 +179,8 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
                    label.c_str(), mode, word, index);
       require(false);
     }
-    if (streaming && fp_simd_word(word)) {
-      std::fprintf(stderr, "%s mode %u: FP&SIMD word %08x at %zu\n",
+    if (streaming && (fp_simd_word(word) || fp_control_access(word))) {
+      std::fprintf(stderr, "%s mode %u: FP&SIMD, FPCR or FPSR word %08x at %zu\n",
                    label.c_str(), mode, word, index);
       require(false);
     }
@@ -240,6 +261,8 @@ void streaming_translations_hold_no_fp_simd_word(const char *bindings) {
       {0xf900'03e0U, 0xf900'07e1U, system_call},               // str sp run
       {0x3dc0'0020U, 0x3dc0'0421U, system_call},               // ldr q run
       {0xdac0'1c20U, 0x5ac0'1c20U, system_call},               // cnt x, w
+      {0xd51b'4421U, 0xd53b'4422U, system_call},               // fpsr
+      {0xd51b'4401U, 0xd53b'4402U, system_call},               // fpcr
   };
   for (const auto &sequence : sequences)
     check_program(pc, sequence, "sequence", checked);

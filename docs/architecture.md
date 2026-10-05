@@ -386,8 +386,11 @@ numbered host registers: its external prologue enters streaming mode and
 fills them from the register file, and every epilogue and host helper call
 first leaves streaming mode and spills them. Helpers are terminal, so no
 SM=1 code runs after one, and a TLB miss takes a streaming bridge that
-leaves and re-enters around the walker. The transitions preserve NZCV, FPCR
-and FPSR, and SM=1 code emits no AdvSIMD instruction of its own. SM=0
+leaves and re-enters around the walker. The transitions preserve NZCV and
+FPCR, and SM=1 code emits no AdvSIMD instruction of its own. XNU resets
+FPSR on every kernel entry while a thread is in streaming mode, so SM=1
+code keeps the guest's FPCR and FPSR in `CpuState`, never in the host's
+registers. SM=0
 translations run with the host's SME off and hold no SVE or SME
 instruction: they reach ZA and ZT0 in the register file with GPR copies.
 SM=1 code reads SVL with RDSVL and SM=0 code from `CpuState`, so no

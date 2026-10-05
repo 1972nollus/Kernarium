@@ -9,10 +9,13 @@
  *
  * Generated code calls these routines with x15 = CpuState. They change no
  * register but x9-x13 and x30 (x16 holds the routine's address at a call
- * from generated code), never NZCV or FPCR, and leave FPSR as they found it:
- * an engine SMSTART or SMSTOP resets FPSR to 0x0800009F, which only a guest
- * write of SVCR may expose. Every size and offset comes from the run-time
- * SVL (RDSVL, ADDSVL and VL-scaled addressing), never from a constant.
+ * from generated code), never NZCV or FPCR, and carry FPSR across their own
+ * SMSTART or SMSTOP, which reset it to 0x0800009F. That FPSR is the host's:
+ * XNU also resets FPSR on every kernel entry while a thread is in streaming
+ * mode, so an SM=1 translation keeps the guest's FPCR and FPSR in CpuState
+ * and never takes the native FP environment. Every size and offset comes
+ * from the run-time SVL (RDSVL, ADDSVL and VL-scaled addressing), never
+ * from a constant.
  *
  * The file is assembled for every Apple target; only an SME host executes
  * it, and only for a run whose profile implements SME.

@@ -60,6 +60,11 @@ namespace uml::cpu::arm64 {
     if ((cpu.pc & (alignof(std::uint32_t) - 1U)) != 0U)
       return Event::pc_alignment;
     cpu.access_sme_state();
+    /* XNU resets FPSR on every kernel entry while a thread is in streaming
+     * mode, so SM=1 code keeps the guest's FPCR and FPSR in CpuState and
+     * never runs with the native environment active. */
+    if ((mode & svcr_sm) != 0U)
+      arm64::restore_native_fp_environment(cpu);
   }
   const auto block_pc = cpu.pc;
   const auto pending_source = consume_pending_indirect(

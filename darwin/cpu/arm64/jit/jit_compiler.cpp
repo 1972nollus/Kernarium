@@ -473,6 +473,12 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       copy_source_to_scratch();
       mask_register(8, fpcr_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpcr));
+      /* A streaming translation keeps the guest's FPCR and FPSR in
+       * CpuState and never takes the native environment: XNU resets FPSR
+       * on every kernel entry while a thread is in streaming mode, and no
+       * FP instruction runs there at the control core. */
+      if (streaming_translation())
+        return true;
       mask_register(
           8, fpcr_mask & ~arm64::detail::fpcr_exception_enable_mask, false);
       emitter_.emit(0xd51b'4408U); // msr fpcr, x8
@@ -480,15 +486,20 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       return true;
     case 0xd53b'4420U:             // FPSR
       write_destination([&](unsigned destination) {
-        emitter_.emit(0xd53b'4420U | destination);
+        if (streaming_translation())
+          emitter_.load_w(destination, 15, offsetof(CpuState, fpsr));
+        else
+          emitter_.emit(0xd53b'4420U | destination);
         mask_register(destination, arm64::fpsr_writable_mask, false);
       });
-      native_fp_ = true;
+      native_fp_ = native_fp_ || !streaming_translation();
       return true;
     case 0xd51b'4420U:
       copy_source_to_scratch();
       mask_register(8, arm64::fpsr_writable_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpsr));
+      if (streaming_translation())
+        return true;
       emitter_.emit(0xd51b'4428U); // msr fpsr, x8
       native_fp_ = true;
       return true;

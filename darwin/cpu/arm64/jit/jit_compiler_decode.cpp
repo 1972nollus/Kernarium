@@ -100,7 +100,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      * A streaming translation implements no FP&SIMD word at the control
      * core (jit::sme_support): AdvSIMD is illegal in streaming mode, and
      * the streaming-legal scalar FP and SIMD&FP memory words wait for
-     * the register-only milestone. FPCR and FPSR stay native.
+     * the register-only milestone. MRS and MSR of FPCR and FPSR stay
+     * legal and use CpuState (emit_system_register).
      */
     if (streaming_translation() && fp_simd_word(instruction))
       return reject();

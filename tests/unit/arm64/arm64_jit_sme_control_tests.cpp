@@ -14,14 +14,19 @@
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
+#include <mach/mach.h>
+
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <span>
+#include <thread>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -579,6 +584,63 @@ void streaming_state_survives_helpers() {
   machine.require_preserved({0, 1, 2}, true);
 }
 
+/*
+ * XNU resets FPSR to 0x0800009F on return from any kernel entry while a
+ * thread is in streaming mode. An SM=1 translation therefore keeps the
+ * guest's FPCR and FPSR in CpuState: a status written there survives a
+ * long SM=1 loop that another thread repeatedly stops in the kernel, and
+ * reads back unchanged, in streaming mode and after the run.
+ */
+void fp_controls_survive_kernel_entries_in_streaming_mode() {
+  constexpr std::uint32_t written_fpsr = 0x0000'0011U; // IXC, IOC
+  constexpr std::uint32_t written_fpcr = 0x0080'0000U; // RMode -inf
+  Machine machine{9495, 0x700'0000, arm64::svcr_sm};
+  machine.code(0, {0xd51b'4421U,   // msr fpsr, x1
+                   0xd51b'4404U,   // msr fpcr, x4
+                   0xf100'0442U,   // subs x2, x2, #1
+                   0x54ff'ffe1U,   // b.ne .-4
+                   0xd53b'4423U,   // mrs x3, fpsr
+                   0xd53b'4405U,   // mrs x5, fpcr
+                   system_call});
+  machine.cpu.registers[1] = written_fpsr;
+  machine.cpu.registers[2] = 40'000'000;
+  machine.cpu.registers[4] = written_fpcr;
+  const auto target = mach_thread_self();
+  std::atomic<bool> running{true};
+  std::atomic<unsigned> stops{0};
+  std::thread interrupter{[&] {
+    while (running.load(std::memory_order_relaxed)) {
+      if (thread_suspend(target) == KERN_SUCCESS) {
+        /* Reading the state waits until the thread has stopped, so it
+         * has entered the kernel before it resumes. */
+        arm_thread_state64_t state{};
+        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+        if (thread_get_state(target, ARM_THREAD_STATE64,
+                             reinterpret_cast<thread_state_t>(&state),
+                             &count) == KERN_SUCCESS)
+          stops.fetch_add(1, std::memory_order_relaxed);
+        thread_resume(target);
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+  }};
+  std::size_t retired = 0;
+  const auto event = machine.run(retired, 1'000'000);
+  running.store(false, std::memory_order_relaxed);
+  interrupter.join();
+  mach_port_deallocate(mach_task_self(), target);
+  require(event == Event::system_call);
+  std::fprintf(stderr, "streaming loop stopped in the kernel %u times\n",
+               stops.load());
+  require(stops.load() >= 10U);
+  require(machine.cpu.svcr == arm64::svcr_sm);
+  require(machine.cpu.registers[3] == written_fpsr);
+  require(machine.cpu.registers[5] == written_fpcr);
+  require(machine.guest_fpsr() == written_fpsr);
+  arm64::restore_native_fp_environment(machine.cpu);
+  require(machine.cpu.effective_fpcr() == written_fpcr);
+}
+
 /* The host's own profile with the SME2 profile at SVL 64. It never claims
  * sme_hardware, so nothing reads the host's SVCR. */
 [[nodiscard]] uml::cpu::HostCapabilities injected_sme_host() {
@@ -606,6 +668,7 @@ void run_tests(bool hardware) {
   if (hardware) {
     streaming_state_survives_misses_and_links();
     streaming_state_survives_helpers();
+    fp_controls_survive_kernel_entries_in_streaming_mode();
   }
 }
 
