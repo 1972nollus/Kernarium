@@ -19,11 +19,23 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <compare>
+#include <crt_externs.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mach-o/dyld.h>
+#include <set>
+#include <spawn.h>
+#include <sstream>
+#include <string>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -590,10 +602,23 @@ void streaming_control_core()
 	return words;
 }
 
-/* No program translated for SVCR.SM = 1 names an entry outside the
- * streaming set, at any position of its stream; no program for SM = 0 names
- * a streaming-only one. */
-void streaming_programs_select_streaming_entries()
+/* A word of a translated program that names an entry it must not: for
+ * SVCR.SM = 1 one outside the streaming set, for SM = 0 a streaming-only
+ * one. The entry is its offset from the bank, which no address-space slide
+ * changes. */
+struct EntryFinding final {
+	unsigned mode;
+	std::uint32_t word;
+	std::size_t index;
+	std::uintptr_t offset;
+	auto operator<=>(const EntryFinding &) const = default;
+};
+
+/* Every such word of the programs translated from the sampled words in each
+ * SVCR mode. A program's words are untyped, so an operand word that happens
+ * to equal an entry's address under this process's slide is found too; such
+ * a coincidence names a different offset, or none, under another slide. */
+[[nodiscard]] std::set<EntryFinding> select_entries_outside_their_mode()
 {
 	const auto begin = reinterpret_cast<std::uintptr_t>(
 		uml_arm64_gadget_bank_begin);
@@ -613,11 +638,13 @@ void streaming_programs_select_streaming_entries()
 	gadgets::BlockLink link{};
 	gadgets::IndirectLink site{};
 	const auto words = sampled_words();
+	std::set<EntryFinding> findings;
 	std::size_t streaming_programs = 0;
 	for (const std::uint8_t mode : {0, 1, 2, 3}) {
 		gadgets::BuildOptions options{.host_capabilities =
 			injected_host(64, true)};
 		options.svcr = mode;
+		const bool streaming = (mode & arm64::svcr_sm) != 0U;
 		for (const auto word : words) {
 			const std::array window{word};
 			const auto built = gadgets::Builder{}.build(code_base,
@@ -626,28 +653,135 @@ void streaming_programs_select_streaming_entries()
 				[&](std::uint64_t) { return &site; }, options);
 			const auto stream = std::span{built.program.words().data(),
 				built.program.words().size()};
-			for (const auto entry : stream) {
+			for (std::size_t index = 0; index < stream.size(); ++index) {
+				const auto entry = stream[index];
 				if (entry < begin || entry >= end || (entry & 15U) != 0U)
 					continue;
-				if ((mode & arm64::svcr_sm) != 0U) {
-					if (!gadgets::builder_detail::streaming_entry(entry)) {
-						std::fprintf(stderr, "mode %u word %08x selects "
-							"%#lx outside the streaming set\n",
-							mode, word, static_cast<unsigned long>(
-								entry - begin));
-						require(false);
-					}
-				} else {
-					require(std::ranges::find(streaming_only, entry) ==
-						streaming_only.end());
-					require(entry < zero_begin || entry >= zero_end);
-				}
+				const bool outside = streaming ?
+					!gadgets::builder_detail::streaming_entry(entry) :
+					std::ranges::find(streaming_only, entry) !=
+							streaming_only.end() ||
+						(entry >= zero_begin && entry < zero_end);
+				if (outside)
+					findings.insert({mode, word, index, entry - begin});
 			}
-			if ((mode & arm64::svcr_sm) != 0U)
+			if (streaming)
 				++streaming_programs;
 		}
 	}
 	require(streaming_programs == 2 * words.size());
+	return findings;
+}
+
+constexpr const char *scan_variable = "UML_GADGET_SME_ENTRY_SCAN";
+
+/* The findings of this test binary run in a new process, which has its own
+ * address-space slide, and that slide's bank address. */
+[[nodiscard]] std::pair<std::set<EntryFinding>, std::uintptr_t>
+findings_in_another_process()
+{
+	std::array<char, 4096> path{};
+	auto size = static_cast<std::uint32_t>(path.size());
+	require(_NSGetExecutablePath(path.data(), &size) == 0);
+	std::array<int, 2> pipe_ends{};
+	require(pipe(pipe_ends.data()) == 0);
+	posix_spawn_file_actions_t actions;
+	require(posix_spawn_file_actions_init(&actions) == 0);
+	require(posix_spawn_file_actions_adddup2(&actions, pipe_ends[1],
+			STDOUT_FILENO) == 0);
+	require(posix_spawn_file_actions_addclose(&actions, pipe_ends[0]) == 0);
+	std::vector<std::string> variables;
+	for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+		variables.emplace_back(*entry);
+	variables.push_back(std::string{scan_variable} + "=1");
+	std::vector<char *> environment;
+	for (auto &variable : variables)
+		environment.push_back(variable.data());
+	environment.push_back(nullptr);
+	char *const arguments[] = {path.data(), nullptr};
+	pid_t child = 0;
+	require(posix_spawn(&child, path.data(), &actions, nullptr, arguments,
+			environment.data()) == 0);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipe_ends[1]);
+	std::string output;
+	std::array<char, 4096> buffer{};
+	for (ssize_t got; (got = read(pipe_ends[0], buffer.data(),
+				  buffer.size())) != 0;) {
+		if (got < 0 && errno == EINTR)
+			continue;
+		require(got > 0);
+		output.append(buffer.data(), static_cast<std::size_t>(got));
+	}
+	close(pipe_ends[0]);
+	int status = 0;
+	while (waitpid(child, &status, 0) < 0)
+		require(errno == EINTR);
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	std::set<EntryFinding> findings;
+	std::uintptr_t bank = 0;
+	std::istringstream lines{output};
+	for (std::string line; std::getline(lines, line);) {
+		unsigned long long a = 0, b = 0, c = 0, d = 0;
+		if (std::sscanf(line.c_str(), "bank %llx", &a) == 1)
+			bank = a;
+		else if (std::sscanf(line.c_str(), "finding %llu %llx %llu %llx",
+				 &a, &b, &c, &d) == 4)
+			findings.insert({static_cast<unsigned>(a),
+				static_cast<std::uint32_t>(b),
+				static_cast<std::size_t>(c),
+				static_cast<std::uintptr_t>(d)});
+	}
+	require(bank != 0);
+	return {findings, bank};
+}
+
+/* No program translated for SVCR.SM = 1 names an entry outside the
+ * streaming set, at any position of its stream; no program for SM = 0 names
+ * a streaming-only one. A finding counts only when a process with another
+ * slide makes it too: a real entry has the same offset under every slide. */
+void streaming_programs_select_streaming_entries()
+{
+	const auto findings = select_entries_outside_their_mode();
+	if (findings.empty())
+		return;
+	const auto bank = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_bank_begin);
+	for (int attempt = 0; attempt < 4; ++attempt) {
+		const auto [other, other_bank] = findings_in_another_process();
+		if (other_bank == bank)
+			continue;
+		bool failed = false;
+		for (const auto &finding : findings) {
+			if (!other.contains(finding))
+				continue;
+			std::fprintf(stderr, "mode %u word %08x selects %#lx at "
+				"word %zu, outside its mode's entries\n",
+				finding.mode, finding.word,
+				static_cast<unsigned long>(finding.offset),
+				finding.index);
+			failed = true;
+		}
+		require(!failed);
+		std::printf("%zu operand words matched entries under this "
+			"slide only\n", findings.size());
+		return;
+	}
+	std::fputs("no process with another slide\n", stderr);
+	require(false);
+}
+
+/* The sweep alone, for streaming_programs_select_streaming_entries() in the
+ * parent process. */
+int report_entry_findings()
+{
+	std::printf("bank %#lx\n", static_cast<unsigned long>(
+		reinterpret_cast<std::uintptr_t>(uml_arm64_gadget_bank_begin)));
+	for (const auto &finding : select_entries_outside_their_mode())
+		std::printf("finding %u %08x %zu %#lx\n", finding.mode,
+			finding.word, finding.index,
+			static_cast<unsigned long>(finding.offset));
+	return 0;
 }
 
 } // namespace
@@ -659,6 +793,8 @@ int main()
 		std::puts("gadget SME support: none; nothing to test");
 		return 0;
 	}
+	if (std::getenv(scan_variable) != nullptr)
+		return report_entry_findings();
 	sme_words_are_illegal_without_sme();
 	streaming_programs_select_streaming_entries();
 	for (const unsigned svl : {16U, 64U, 256U})
