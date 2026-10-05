@@ -163,4 +163,4 @@ JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The classes are SSE NaN, denormal and estimate rules.
+in the same change. The classes are SSE NaN and denormal rules.

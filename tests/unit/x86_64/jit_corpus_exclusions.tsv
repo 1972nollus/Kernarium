@@ -19,9 +19,3 @@ repository/sse-conversions-follow-daz-and-ftz.s	sse-denormal-rules
 repository/sse-daz-applies-to-compares-rounding-and-half-conversion.s	sse-denormal-rules
 repository/sse-flush-to-zero-tests-tininess-after-rounding.s	sse-denormal-rules
 repository/sse-min-max-keep-denormal-results-under-ftz.s	sse-denormal-rules
-
-# sse-estimates (3): RCPSS and RSQRTSS special inputs: the arm64 estimates
-# return a denormal or finite value where x86 returns zero or infinity.
-k/single-instruction-tests/rcp	sse-estimates
-k/single-instruction-tests/rsqrt	sse-estimates
-repository/sse-reciprocal-estimates-special-inputs.s	sse-estimates

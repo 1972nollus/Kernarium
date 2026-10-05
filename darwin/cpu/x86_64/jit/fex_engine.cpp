@@ -5,6 +5,7 @@
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/jit/fp_model.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
@@ -731,6 +732,28 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	return host;
 }
 
+static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT,
+	"the model's kinds are FEXCore's");
+
+/* The cold path of an EmbedderFPCheck op: x86's result for the operation the
+ * descriptor names, from the sources and host result in FPScratch. */
+std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, std::uint64_t)
+{
+	FpOperation operation{};
+	operation.kind = static_cast<FpKind>(descriptor & 0xffU);
+	operation.element_bytes = 2U << ((descriptor >> Core::EMBEDDER_FP_ELEMENT_SHIFT) & 3U);
+	operation.lanes = static_cast<std::uint32_t>((descriptor >> Core::EMBEDDER_FP_LANES_SHIFT) & 0xfU);
+	operation.immediate = static_cast<std::uint8_t>(descriptor >> Core::EMBEDDER_FP_IMM_SHIFT);
+	operation.flags = static_cast<std::uint8_t>(descriptor >> 24U);
+	FpValues values{};
+	auto *scratch = frame->Embedder.FPScratch;
+	std::memcpy(values.sources.data(), scratch, sizeof(values.sources));
+	std::memcpy(values.result.data(), scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.size());
+	(void)x86_fp_compute(operation, frame->State.mxcsr, values);
+	std::memcpy(scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.data(), values.result.size());
+	return 0;
+}
+
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
  * fault RCX, RSI and RDI hold the progress made and RIP the instruction, so
  * the guest restarts it where it stopped, as on x86. The backend passes each
@@ -1138,6 +1161,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	pointers.EmbedderTLBMissHelper = reinterpret_cast<uint64_t>(&embedder_tlb_miss);
 	pointers.EmbedderStringHelper = reinterpret_cast<uint64_t>(&embedder_string);
 	pointers.EmbedderRandomHelper = reinterpret_cast<uint64_t>(&guest_random);
+	pointers.EmbedderFPHelper = reinterpret_cast<uint64_t>(&embedder_fp);
 	frame->Embedder.TLB = reinterpret_cast<uint64_t>(space->tlb.get());
 	frame->Embedder.HostContext = reinterpret_cast<uint64_t>(space.get());
 	frame->Embedder.CodeSizePerNode = code_bytes_per_node;
