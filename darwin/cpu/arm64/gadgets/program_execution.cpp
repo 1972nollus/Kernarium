@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "gadget_entry.hpp"
 #include "program.hpp"
+#include "sme_layout.h"
 
 #include <algorithm>
 #include <utility>
@@ -61,6 +62,28 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 			, diagnostics::execution_counters()
 #endif
 			);
+	executed = result.executed;
+	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
+	resolve_entered_fault(program, cpu, event);
+	return event;
+}
+
+::uml::cpu::EngineEvent execute_streaming_preserving_native_fp_environment(
+	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
+	std::size_t &executed, bool zt0) noexcept
+{
+	executed = 0;
+	if (program.words().empty())
+		return ::uml::cpu::EngineEvent::fatal;
+	cpu.sme_host_mode = zt0 ? UML_GADGET_SME_HOST_ZT0 : 0U;
+	const auto result =
+		uml_arm64_gadget_enter_streaming(program.words().data(), &cpu,
+			&tlb, program.instruction_count()
+#if UML_GADGET_EXECUTION_HISTOGRAM
+			, diagnostics::execution_counters()
+#endif
+			);
+	cpu.sme_host_mode = 0;
 	executed = result.executed;
 	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
 	resolve_entered_fault(program, cpu, event);

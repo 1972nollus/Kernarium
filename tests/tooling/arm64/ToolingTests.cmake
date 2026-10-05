@@ -86,6 +86,15 @@ if(_uml_gadget_region_images AND APPLE)
             ${_uml_gadget_region_images}
         LABELS cpu
         TIMEOUT 120)
+    # Everything a program translated for streaming mode can reach runs no
+    # AdvSIMD instruction and calls no helper while the host streams.
+    uml_add_tooling_test(
+        NAME arm64-gadget-streaming-safety
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_gadget_streaming_safety.py
+            ${_uml_gadget_region_images}
+        LABELS cpu
+        TIMEOUT 300)
 endif()
 
 # Both gadget engines name their private labels with Mach-O's temporary L

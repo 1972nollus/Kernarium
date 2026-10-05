@@ -93,6 +93,19 @@ private:
 
 	class ProgramCache;
 
+	/* run_block for a guest SVCR other than 0, out of line so that the
+	 * mode-0 path stays as it was. */
+	[[nodiscard]] ::uml::cpu::EngineEvent run_sme_block(
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		unsigned long generation, std::uint64_t code_changes,
+		std::size_t &executed);
+	/* What both paths do once a program has run: correct a terminal
+	 * exit's retirement count and train the indirect site it missed. */
+	[[nodiscard]] ::uml::cpu::EngineEvent finish_block(
+		ProgramCache &programs, const BuildResult &built,
+		::uml::cpu::EngineEvent event, CpuState &cpu,
+		std::size_t &executed);
+
 	unsigned long cache_generation_{};
 	std::uint64_t cache_changes_{};
 	unsigned long mapping_generation_{};
@@ -109,6 +122,17 @@ private:
 	GadgetCacheDiagnostics cache_diagnostics_{};
 	/* Null unless DARWIN_UML_GUEST_SAMPLES is set. */
 	diagnostics::GuestSamplingSlot *sampling_{};
+	/* The translations of SVCR modes 1-3 (SM, ZA, both), each mode in a
+	 * cache of its own made on first use; programs_ holds mode 0. A
+	 * translation's legality depends on its mode, and keeping each mode's
+	 * links, indirect sites and target table apart means no program can
+	 * reach another mode's code. */
+	struct SmeModeCache final {
+		std::unique_ptr<ProgramCache> programs;
+		unsigned long generation{};
+		std::uint64_t changes{};
+	};
+	std::array<SmeModeCache, 3> sme_caches_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets

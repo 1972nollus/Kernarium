@@ -13,7 +13,9 @@ everything else. In every image given this checks that:
   only unreachable bytes in the region; and
 - every PC-relative reference in the code parts stays inside the region, so a
   call to a helper outside it goes through its veneer in the island, whose
-  words are all branches.
+  words are all branches; and
+- SVE and SME words appear only in the SME part, the one part that may run
+  in streaming mode.
 
 usage: test_gadget_region_layout.py IMAGE...
 """
@@ -43,8 +45,12 @@ BOUNDS = {
     "cold": "uml_arm64_gadget_cold_section",
     "afp": "uml_arm64_gadget_afp_section",
     "veneer": "uml_arm64_gadget_veneer_section",
+    "sme": "uml_arm64_gadget_sme_section",
 }
 ISLAND = "veneer"
+# The part the SME-only code goes in, after the island so that no base helper
+# call changes its distance to its veneer.
+STREAMING = "sme"
 
 
 @dataclass(frozen=True)
@@ -73,7 +79,9 @@ def engine_parts(engine: Path) -> list[Part]:
             r"gadget_region_start (\w+), (\d+), (\w+)", body):
         parts.append(Part(name, int(alignment),
                           int(phase) if phase.isdigit() else defines[phase]))
-    if not parts or parts[0].name != "bank" or parts[-1].name != ISLAND:
+    names = [part.name for part in parts]
+    if not parts or names[0] != "bank" or ISLAND not in names or \
+            STREAMING not in names or set(names) != set(BOUNDS):
         raise ValueError(f"{engine}: cannot read the region parts")
     return parts
 
@@ -149,6 +157,12 @@ class Image:
         return struct.unpack_from(f"<{(end - begin) // 4}I", self.data, start)
 
 
+def sve_or_sme(word: int) -> bool:
+    """Whether a word lies in the SVE (op1 0010) or SME (op0 1, op1 0000)
+    encoding space, as cpu/arm64/detail/sme_decode.hpp decides it."""
+    return word & 0x1E000000 == 0x04000000 or word & 0x9E000000 == 0x80000000
+
+
 def sign(value: int, bits: int) -> int:
     return value - (1 << bits) if value & (1 << (bits - 1)) else value
 
@@ -222,6 +236,10 @@ def check(image: Image, parts: list[Part]) -> list[str]:
                     errors.append(f"island word 0x{word:08x} at 0x{pc:x} is "
                                   f"not a branch")
                 continue
+            if part.name != STREAMING and sve_or_sme(word):
+                errors.append(f"{part.name} word 0x{word:08x} at 0x{pc:x} is "
+                              f"an SVE or SME instruction outside the "
+                              f"{STREAMING} part")
             destination = target(word, pc)
             if destination is not None and not region <= destination < region_end:
                 errors.append(f"{part.name} word 0x{word:08x} at 0x{pc:x} "
@@ -260,7 +278,7 @@ def main() -> int:
             failed = True
             continue
         region = image.symbol("uml_arm64_gadget_region_bank")
-        end = image.symbol(f"{BOUNDS[ISLAND]}_end")
+        end = image.symbol(f"{BOUNDS[parts[-1].name]}_end")
         print(f"{path}: region at image offset "
               f"0x{region - image.text_segment:x}, {end - region} bytes, "
               f"phases {[part.phase for part in parts]}")

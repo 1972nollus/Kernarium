@@ -138,6 +138,13 @@ public:
 	}
 	[[nodiscard]] std::size_t size() const noexcept { return size_; }
 	[[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+	/* Drop the words from `size` on, which a decode emitted and the builder
+	 * then rejected. */
+	void truncate(std::size_t size) noexcept
+	{
+		if (size < size_)
+			size_ = size;
+	}
 	[[nodiscard]] std::uintptr_t &operator[](std::size_t index) noexcept
 	{
 		return data()[index];
@@ -314,6 +321,9 @@ struct BuildOptions final {
 	 */
 	bool force_software_dotprod{};
 	bool force_software_i8mm{};
+	/* The guest SVCR mode the program runs in (svcr_sm, svcr_za), which
+	 * decides what each SME and floating-point word may compile to. */
+	std::uint8_t svcr{};
 	::uml::cpu::HostCapabilities host_capabilities{
 		::uml::cpu::host_capabilities()};
 };
@@ -400,6 +410,13 @@ public:
 execute_preserving_native_fp_environment(
 	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
 	std::size_t &executed) noexcept;
+/* execute_preserving_native_fp_environment for a program translated for
+ * SVCR.SM = 1, which runs with the host in streaming mode. The host must
+ * implement SME, and `zt0` says whether the guest has ZT0 to carry. */
+[[nodiscard]] ::uml::cpu::EngineEvent
+execute_streaming_preserving_native_fp_environment(
+	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
+	std::size_t &executed, bool zt0) noexcept;
 using ::uml::cpu::arm64::restore_native_fp_environment;
 
 } // namespace uml::cpu::arm64::gadgets
