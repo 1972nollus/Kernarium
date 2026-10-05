@@ -94,11 +94,16 @@ def check(native, records: list[dict], meta: dict) -> str:
                                  f"table expects it {draft.expect}")
             pc = int(case["expected"].get(
                 "pc", native.hex64(native.corpus.CODE_BASE)), 16)
-            completed = case["event"] == "system-call"
-            if case["retired"] != (pc - native.corpus.CODE_BASE) // 4 + \
-                    completed:
+            # Each instruction before the PC retired: a completed SVC
+            # leaves it after the SVC, a trap at the trapping word.
+            retired = (pc - native.corpus.CODE_BASE) // 4
+            if case["retired"] != retired:
                 raise SystemExit(f"{draft.name}: retired count and PC "
                                  "disagree")
+            if case["event"] == "system-call" and \
+                    words[retired - 1] != native.SVC:
+                raise SystemExit(f"{draft.name}: completes with the PC "
+                                 "not after an SVC")
             total += 1
     return (f"native SME records: {total} cases in {len(records)} records "
             f"re-derived from {native.SITE} at SVL {native.SVL}")

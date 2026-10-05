@@ -1084,10 +1084,13 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     final = initial.apply(result.state)
     item = case_skeleton(draft, case, program)
     item["event"] = result.event
+    # The oracle stops at the SVC's sentinel; a completed system call
+    # leaves the PC after the SVC, as Linux reports it.
+    pc_offset = result.pc_offset + (4 if completed else 0)
     item["expected"] = expected_fields(
-        initial, final, corpus.CODE_BASE + result.pc_offset,
+        initial, final, corpus.CODE_BASE + pc_offset,
         corpus.CODE_BASE + case.entry)
-    item["retired"] = result.pc_offset // 4 + (1 if completed else 0)
+    item["retired"] = pc_offset // 4
     if result.event == "memory-fault":
         if result.esr >> 26 == 0x26:
             access = "write" if draft.store else "read"
