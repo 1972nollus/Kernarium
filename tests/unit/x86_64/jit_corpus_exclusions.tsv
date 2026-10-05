@@ -3,14 +3,3 @@
 # <record name><TAB><class>. Each class is a correctness gap of the engine,
 # not of the record; the JIT corpus test fails when a listed record passes,
 # so a fix removes its rows in the same change.
-
-# sse-denormal-rules (7): DAZ and FTZ follow arm64 FPCR.FZ: inputs and min/max
-# results flush where x86 keeps them, and tininess is detected before
-# rounding.
-repository/fma-follows-x86-nan-and-flush-rules.s	sse-denormal-rules
-repository/sse-conversions-follow-daz-and-ftz.s	sse-denormal-rules
-repository/sse-daz-applies-to-compares-rounding-and-half-conversion.s	sse-denormal-rules
-repository/sse-dot-products-follow-x86-nan-and-flush-rules.s	sse-denormal-rules
-repository/sse-flush-to-zero-tests-tininess-after-rounding.s	sse-denormal-rules
-repository/sse-horizontal-operations-follow-x86-nan-and-flush-rules.s	sse-denormal-rules
-repository/sse-min-max-keep-denormal-results-under-ftz.s	sse-denormal-rules

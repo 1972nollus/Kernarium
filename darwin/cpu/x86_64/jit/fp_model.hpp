@@ -35,6 +35,10 @@ enum class FpKind : std::uint8_t {
 	dpp,
 	/* a * b + c, with the signs `flags` gives. */
 	fma,
+	/* CVTSD2SS and CVTPD2PS: the doubles of the first source, then of the
+	 * second, to singles. The element is the double, the lanes are the
+	 * singles. */
+	narrow,
 };
 
 /* An FMA's signs: the product negated, and the addend negated in every
@@ -46,7 +50,7 @@ constexpr std::uint8_t fp_fma_negate_odd_addends = 3U << 1U;
 
 struct FpOperation final {
 	FpKind kind{};
-	/* Of each lane: 4 or 8. */
+	/* Of each lane, or of a conversion's source lane: 4 or 8. */
 	std::uint32_t element_bytes{};
 	/* The lanes the operation computes, from lane 0. */
 	std::uint32_t lanes{};

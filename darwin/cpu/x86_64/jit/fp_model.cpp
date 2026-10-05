@@ -393,6 +393,28 @@ struct Lane final {
 	return finish(f, soft_round(value, f.dbl, mxcsr), mxcsr, result.before);
 }
 
+/* CVTSD2SS and CVTPD2PS. A NaN keeps its sign and the top of its payload,
+ * quieted. */
+[[nodiscard]] Lane narrow(std::uint64_t x, std::uint32_t mxcsr) noexcept
+{
+	const Format wide{true};
+	const Format single{false};
+	const bool daz = (mxcsr & mxcsr_denormals_are_zero) != 0;
+	if (daz)
+		x = wide.flush(x);
+	Lane result{};
+	if (wide.nan(x)) {
+		result.bits = ((x >> 32U) & 0x8000'0000U) | 0x7fc0'0000U |
+			((x >> 29U) & 0x003f'ffffU);
+		result.before = wide.signalling(x) ? invalid : 0U;
+		return result;
+	}
+	if (!daz && wide.denormal(x))
+		result.before = denormal;
+	return finish(single, soft_round(soft_wide(true, x), false, mxcsr), mxcsr,
+		result.before);
+}
+
 /* RCPPS, RCPSS, RSQRTPS and RSQRTSS, which ignore MXCSR but its rounding and
  * raise nothing: a denormal input is a zero, a reciprocal of 2^126 or more is
  * a zero of the input's sign, and the reciprocal square root of a negative
@@ -491,8 +513,9 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 	FpValues &values) noexcept
 {
 	const Format f{operation.element_bytes == 8};
+	/* A conversion narrows up to four doubles from two sources. */
 	const auto lanes = std::min<std::size_t>(operation.lanes,
-		16U / operation.element_bytes);
+		operation.kind == FpKind::narrow ? 4U : 16U / operation.element_bytes);
 	const auto &first = values.sources[0];
 	const auto &second = values.sources[1];
 	FpSteps steps{};
@@ -552,6 +575,15 @@ FpSteps x86_fp_compute(const FpOperation &operation, std::uint32_t mxcsr,
 	case FpKind::dpp:
 		steps = dot_product(f, operation.immediate, values, values.result,
 			mxcsr);
+		break;
+	case FpKind::narrow:
+		for (std::size_t index = 0; index < lanes; ++index) {
+			const auto result = narrow(lane(index < 2 ? first : second, true,
+				index % 2U), mxcsr);
+			set_lane(values.result, false, index, result.bits);
+			steps.before[0] |= result.before;
+			steps.after[0] |= result.after;
+		}
 		break;
 	case FpKind::fma: {
 		const bool negate_product =

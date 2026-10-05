@@ -16,9 +16,14 @@
  * must match the model. `--iterations N` and `--checked-iterations N` set
  * the loop counts per cell; the defaults keep the test short. */
 #include "cpu/x86_64/cpu_state.hpp"
+#if UML_SSE_EXACTNESS_JIT
+#include "cpu/x86_64/jit/fex_engine.hpp"
+#include "platform/apple/host_features.hpp"
+#else
 #include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
+#endif
 #include "memory/guest_address_space.hpp"
 
 #include <array>
@@ -89,6 +94,14 @@ public:
 	}
 
 	[[nodiscard]] bool has_fault() const noexcept override { return faulted_; }
+
+#if UML_SSE_EXACTNESS_JIT
+	/* The JIT fetches only from executable pages. */
+	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
+	{
+		return address < bytes_.size();
+	}
+#endif
 
 	[[nodiscard]] std::byte *at(std::uint64_t address) noexcept
 	{
@@ -1048,6 +1061,78 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	return bytes;
 }
 
+#if UML_SSE_EXACTNESS_JIT
+/* The x86-64 JIT, which serves the process as it serves a vCPU thread. Each
+ * run starts a fresh address-space generation, so no translation crosses
+ * cells. */
+struct JitEngine final {
+	uml::cpu::x86_64::jit::FexEngine engine{
+		uml::platform::apple::probed_host_capabilities()};
+	unsigned long generation{};
+	uml::cpu::InterruptToken interrupt{};
+};
+
+JitEngine &jit_engine()
+{
+	static JitEngine engine;
+	return engine;
+}
+
+/* The same through the JIT. An instruction that faults with #XM is marked
+ * in `trapped` and skipped, as for the gadget engine. */
+[[nodiscard]] bool run_engine(FlatMemory &memory, JitEngine &jit,
+	std::uint32_t mxcsr, std::size_t count, bool checked = false,
+	std::size_t instruction_length = 0,
+	std::vector<std::uint8_t> *trapped = nullptr)
+{
+	using namespace uml::cpu::x86_64;
+	CpuState cpu{};
+	cpu.mxcsr = mxcsr;
+	cpu.rip = code_address;
+	cpu.rflags = 0x202;
+	cpu.gpr(Register::rsp) = stack_top;
+	cpu.gpr(Register::rsi) = input_address;
+	cpu.gpr(Register::rdi) = output_address;
+	cpu.gpr(Register::rcx) = count;
+	cpu.gpr(Register::rbx) = control_address;
+	const auto generation = ++jit.generation;
+	jit.engine.apply_changes(generation, ExecutionMode::long64, {
+		.mapping_sequence = 1,
+		.code_sequence = 1,
+		.all_mappings = true,
+		.all_code = true,
+	});
+	for (std::size_t dispatch = 0; dispatch < count * 16U + 64U;
+		++dispatch) {
+		const auto result = jit.engine.run(cpu, memory, {
+			.generation = generation,
+			.instruction_budget = 1U << 16U,
+			.execution_context = nullptr,
+			.interrupt = &jit.interrupt,
+		}).execution;
+		if (result.reason == uml::cpu::ExitReason::system_call)
+			return cpu.gpr(Register::rsi) ==
+				input_address + count * input_stride;
+		if (result.reason == uml::cpu::ExitReason::instruction_budget) {
+			cpu.rflags &= ~(1ULL << 16U);
+			continue;
+		}
+		if (checked && trapped != nullptr &&
+			result.reason == uml::cpu::ExitReason::floating_point_trap &&
+			cpu.rip == code_address + instruction_offset) {
+			const auto row = (cpu.gpr(Register::rsi) - input_address) /
+				input_stride;
+			if (row >= trapped->size())
+				return false;
+			(*trapped)[row] = 1;
+			cpu.rip += instruction_length;
+			continue;
+		}
+		return false;
+	}
+	return false;
+}
+#else
 /* Runs the loop over `count` rows. A checked run's executor builds for
  * #XM, and an instruction that faults with it is marked in `trapped` and
  * skipped, so that the loop stores the destination it kept. */
@@ -1100,6 +1185,7 @@ constexpr std::size_t memory_size = output_address + chunk * output_stride;
 	}
 	return false;
 }
+#endif
 
 struct Lanes final {
 	std::array<std::uint64_t, 8> value{};
@@ -1605,7 +1691,11 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 	FlatMemory memory{memory_size};
 	const auto code = loop_code(instruction.bytes);
 	(void)memory.write(code_address, code);
+#if UML_SSE_EXACTNESS_JIT
+	auto &executor = jit_engine();
+#else
 	uml::cpu::x86_64::gadgets::Executor executor;
+#endif
 	/* Checked: MXCSR unmasks a denormal operand alone. */
 	const std::uint32_t mxcsr = (checked ? 0x1e80U : 0x1f80U) |
 		(daz ? 0x40U : 0U) | (ftz ? 0x8000U : 0U) | (rounding << 13U);
@@ -1614,9 +1704,11 @@ Totals run_cell(const Instruction &instruction, bool daz, bool ftz,
 		std::memcpy(control.data(), &mxcsr, 4);
 		(void)memory.write(control_address, control);
 	}
+#if !UML_SSE_EXACTNESS_JIT
 	if (checked)
 		executor.check_exceptions(uml::cpu::x86_64::gadgets::check_simd);
 	executor.prepare(memory);
+#endif
 	Operands operands;
 	Totals totals;
 	const std::size_t lanes = lane_count(instruction);

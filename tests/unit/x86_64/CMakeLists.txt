@@ -107,6 +107,25 @@ if(TARGET uml_x86_64_jit)
             --code-size-per-node 1 --require-growth
             "${_uml_x86_64_instruction_corpus}"
         LABELS cpu;x86-64)
+    # XE's differential harness through the JIT, against the gadget engine's
+    # oracle under every MXCSR rounding, DAZ and FTZ setting.
+    add_executable(uml_x86_64_sse_exactness_jit_tests
+        x86_64_sse_exactness_tests.cpp)
+    target_compile_definitions(uml_x86_64_sse_exactness_jit_tests PRIVATE
+        UML_SSE_EXACTNESS_JIT=1)
+    target_link_libraries(uml_x86_64_sse_exactness_jit_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_sse_exactness_jit_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    # The JIT delivers no #XM yet, so the checked pass does not run.
+    uml_add_unit_test(
+        NAME x86-64-jit-sse-exactness
+        COMMAND uml_x86_64_sse_exactness_jit_tests --checked-iterations 0
+        LABELS cpu;x86-64)
     set_tests_properties(x86-64-jit-code-buffer-growth PROPERTIES
         TIMEOUT 300)
     uml_add_unit_test(

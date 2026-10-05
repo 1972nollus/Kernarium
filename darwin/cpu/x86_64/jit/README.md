@@ -25,9 +25,9 @@ the gadget engine.
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread
-per address-space generation and execution mode, at most eight, and releases
-the least recently used, because FEXCore's block caches are keyed by guest RIP
-alone. A compat32 context decodes and computes as 32-bit code.
+per address-space generation, execution mode and floating-point mode, at most
+eight, and releases the least recently used, because FEXCore's block caches
+are keyed by guest RIP alone. A compat32 context decodes and computes as 32-bit code.
 
 A compat32 address wraps at 4 GiB, segment base and offset alike: the TLB holds
 only wrapped addresses, so the miss path wraps the 64-bit sum the backend
@@ -146,15 +146,37 @@ and tests the host's result in line for the cases where arm64 arithmetic can
 differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
 in integers and SoftFloat because it runs under the guest's FPCR. The model
 covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
-flags, so a check needs only to find the cases. Today they are:
+flags, so a check needs only to find the cases.
+
+A translation assumes its context's floating-point mode, MXCSR.DAZ and FTZ,
+and the dispatch selects the space for the guest's MXCSR. An LDMXCSR, FXRSTOR
+or XRSTOR that changes the mode ends the dispatch after itself, and the next
+one runs in the new mode's space; one that changes only the rounding stays.
+FPCR.FZ is MXCSR.DAZ, which flushes inputs as x86 does but also flushes a
+result that is tiny before rounding, where x86 applies FTZ after rounding.
+The checks take:
 
 - a NaN result of an arithmetic, square root, horizontal, ADDSUB, DPPS, DPPD
   or FMA operation: x86 propagates the first source's NaN, keeps the sign of
   a NaN it subtracts or negates, and generates the negative indefinite;
+- under DAZ and FTZ, a zero product, quotient, FMA or narrowed double from
+  nonzero inputs, which x86 may round up to the smallest normal; a sum tiny
+  enough to flush is exact, so the host flushes it as x86 does, and a DPPS or
+  DPPD checks its products too;
+- under FTZ alone, a result up to the smallest normal, which x86 flushes when
+  it is tiny after rounding;
+- under DAZ alone, a zero result, which may be a tiny one x86 keeps;
+- under DAZ, a denormal MIN or MAX result, which FPCR.FZ compares flushed but
+  returns as it was;
+- a DPPS or DPPD under DAZ or FTZ alone, which rounds in steps its result
+  does not show, always;
 - RCPPS, RCPSS, RSQRTPS and RSQRTSS, which never use the host's estimates,
   whose results depend on FEAT_RPRES: the op divides in line, which lies
   within x86's error as the gadget engine's quotient does, and sends the
   denormal, zero, huge and negative inputs to the model.
+
+Comparisons, conversions to integers, widening, rounding and half-precision
+conversions take DAZ from FPCR.FZ and need no check.
 
 The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending. The engine does not deliver unmasked SSE or
@@ -180,4 +202,6 @@ JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The one class left is SSE denormal rules.
+in the same change. The list is empty. `x86-64-jit-sse-exactness` runs XE's
+differential harness through the engine, against the same x86 model as the
+gadget engine's `x86-64-sse-exactness`.

@@ -50,10 +50,13 @@ constexpr std::int64_t maximum_dispatch_budget = 64 * 1024;
 constexpr std::size_t callret_size = Core::InternalThreadState::CALLRET_STACK_SIZE;
 static_assert(callret_size / 2 >= maximum_dispatch_budget * 16,
 	"a dispatch cannot leave the call-return stack");
-/* Address spaces one vCPU keeps translations for at once. */
+/* Address spaces one vCPU keeps translations for at once, in each
+ * floating-point mode it runs them in. */
 constexpr std::size_t maximum_spaces = 8;
 
 constexpr std::uint64_t user_rflags_mask = 0x0000'0000'003f'7fd5ULL;
+constexpr std::uint32_t mxcsr_denormals_are_zero = 1U << 6U;
+constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15U;
 constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
 
@@ -265,10 +268,13 @@ private:
 	void *data_{};
 };
 
-/* One guest address space in one execution mode, as this vCPU runs it. */
+/* One guest address space in one execution mode and floating-point mode, as
+ * this vCPU runs it. */
 struct Space final {
 	unsigned long generation{};
 	ExecutionMode mode{};
+	/* Core::EMBEDDER_FP_MODE_* bits every translation assumes. */
+	std::uint32_t fp_mode{};
 	std::uint64_t last_use{};
 	std::uint64_t mapping_sequence{};
 	std::uint64_t code_sequence{};
@@ -467,15 +473,19 @@ struct FexEngine::Impl final {
 		return space.thread != nullptr ? space.thread->CurrentFrame->Embedder.CodeBufferRestarts : 0;
 	}
 
-	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode) noexcept
+	/* The space for `generation` and `mode` in floating-point mode
+	 * `fp_mode`, or with `any_fp_mode` in any. */
+	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode,
+		bool any_fp_mode = false) noexcept
 	{
 		for (auto &space : spaces)
-			if (space->generation == generation && space->mode == mode)
+			if (space->generation == generation && space->mode == mode &&
+				(any_fp_mode || space->fp_mode == fp_mode))
 				return space.get();
 		return nullptr;
 	}
 
-	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode) noexcept;
+	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept;
 	void publish_code_write(Space &space, std::uint64_t address, std::size_t size) noexcept;
 };
 
@@ -733,7 +743,7 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 }
 
 static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT &&
-	static_cast<unsigned>(FpKind::fma) == Core::EMBEDDER_FP_FMA &&
+	static_cast<unsigned>(FpKind::narrow) == Core::EMBEDDER_FP_NARROW &&
 	fp_fma_negate_odd_addends == Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS,
 	"the model's kinds and flags are FEXCore's");
 
@@ -905,18 +915,26 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	return 0;
 }
 
-/* The host FPCR for a guest MXCSR: RC as RMode and FTZ as FZ, as FEXCore's
- * LDMXCSR sets it. FEXCore applies MXCSR only when the guest loads it, so a
- * dispatch must start from the guest's own value, not from whatever the
- * thread's last guest left behind. Without FEAT_AFP, FZ also flushes
- * denormal inputs and DAZ alone has no effect. */
+/* The host FPCR for a guest MXCSR: RC as RMode and DAZ as FZ, as the
+ * maintained series' LDMXCSR sets it when embedded. FZ flushes denormal
+ * inputs as DAZ does; the translations' checks apply FTZ, after rounding,
+ * and undo FZ's flush of a result x86 keeps. FEXCore applies MXCSR only when
+ * the guest loads it, so a dispatch must start from the guest's own value,
+ * not from whatever the thread's last guest left behind. */
 [[nodiscard]] std::uint64_t fpcr_for_mxcsr(std::uint32_t mxcsr) noexcept
 {
 	constexpr std::array<std::uint64_t, 4> rounding{0, 2, 1, 3};
 	auto value = rounding[(mxcsr >> 13U) & 3U] << 22U;
-	if ((mxcsr & (1U << 15U)) != 0)
+	if ((mxcsr & mxcsr_denormals_are_zero) != 0)
 		value |= 1ULL << 24U;
 	return value;
+}
+
+/* The floating-point mode a translation for `cpu` assumes. */
+[[nodiscard]] std::uint32_t fp_mode_for(const CpuState &cpu) noexcept
+{
+	return ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ? Core::EMBEDDER_FP_MODE_DAZ : 0U) |
+		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U);
 }
 
 [[nodiscard]] std::uint64_t read_fpcr() noexcept
@@ -1107,7 +1125,7 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 
 } // namespace
 
-Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noexcept
+Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept
 {
 	initialize_fex_once();
 	if (spaces.size() >= maximum_spaces) {
@@ -1127,6 +1145,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	}
 	space->generation = generation;
 	space->mode = mode;
+	space->fp_mode = fp_mode;
 	space->engine = this;
 	if (!space->callret.reserve())
 		return nullptr;
@@ -1146,6 +1165,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 		space->context->SetSignalDelegator(&signal_delegator);
 		space->context->SetSyscallHandler(space->syscalls.get());
 		space->context->EnableEmbedding();
+		space->context->SetEmbedderFPMode(fp_mode);
 		if (!space->context->InitCore())
 			return nullptr;
 		space->thread = space->context->CreateThread(0, 0, nullptr);
@@ -1207,7 +1227,7 @@ bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
 {
 	if (!impl_)
 		return false;
-	const auto *space = impl_->find(generation, mode);
+	const auto *space = impl_->find(generation, mode, 0, true);
 	if (space == nullptr)
 		return false;
 	mapping_sequence = space->mapping_sequence;
@@ -1220,13 +1240,13 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 {
 	if (!impl_)
 		return;
-	auto *space = impl_->find(generation, mode);
-	if (space == nullptr) {
-		/* A new space caches nothing yet. */
-		space = impl_->create(generation, mode);
-		if (space == nullptr)
-			return;
-	} else {
+	bool found = false;
+	/* Every floating-point mode's space translates the same memory. */
+	for (auto &held : impl_->spaces) {
+		auto *space = held.get();
+		if (space->generation != generation || space->mode != mode)
+			continue;
+		found = true;
 		if (changes.all_mappings) {
 			space->flush_tlb();
 			space->clear_code();
@@ -1242,7 +1262,15 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 			for (const auto &range : changes.code_ranges)
 				space->invalidate_code(range.address, range.length);
 		}
+		space->mapping_sequence = changes.mapping_sequence;
+		space->code_sequence = changes.code_sequence;
 	}
+	if (found)
+		return;
+	/* A new space caches nothing yet. */
+	auto *space = impl_->create(generation, mode, 0);
+	if (space == nullptr)
+		return;
 	space->mapping_sequence = changes.mapping_sequence;
 	space->code_sequence = changes.code_sequence;
 }
@@ -1254,9 +1282,22 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	result.reason = ::uml::cpu::ExitReason::fatal;
 	if (!impl_)
 		return run;
-	auto *space = impl_->find(request.generation, cpu.execution_mode);
-	if (space == nullptr)
-		return run;
+	const auto fp_mode = fp_mode_for(cpu);
+	auto *space = impl_->find(request.generation, cpu.execution_mode, fp_mode);
+	if (space == nullptr) {
+		/* The first dispatch in this floating-point mode: a new space,
+		 * which caches nothing, is as current as its siblings. */
+		const auto *sibling = impl_->find(request.generation, cpu.execution_mode, 0, true);
+		if (sibling == nullptr)
+			return run;
+		const auto mapping_sequence = sibling->mapping_sequence;
+		const auto code_sequence = sibling->code_sequence;
+		space = impl_->create(request.generation, cpu.execution_mode, fp_mode);
+		if (space == nullptr)
+			return run;
+		space->mapping_sequence = mapping_sequence;
+		space->code_sequence = code_sequence;
+	}
 	space->last_use = ++impl_->clock;
 	impl_->memory = &memory;
 	impl_->execution_context = request.execution_context;
@@ -1304,9 +1345,11 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 
 	switch (frame->Embedder.ExitReason) {
 	case Core::EMBEDDER_EXIT_BUDGET:
+	case Core::EMBEDDER_EXIT_MODE:
 		/* A step whose instruction branched back to a block it had
 		 * entered retired that instruction before the back edge ran out
-		 * of budget. */
+		 * of budget. An instruction that changed the floating-point mode
+		 * retired, and the next dispatch runs the space of the new mode. */
 		result.reason = impl_->stepping && result.retired_instructions != 0 ?
 			::uml::cpu::ExitReason::single_step : ::uml::cpu::ExitReason::instruction_budget;
 		return run;
