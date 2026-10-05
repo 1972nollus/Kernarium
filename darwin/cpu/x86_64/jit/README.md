@@ -151,8 +151,8 @@ failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
 undefined set follows hardware, except that compat32 code raises `#UD` for
 0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
 as it does on the gadget engine. Other encodings the gadget engine refuses
-although hardware runs them, such as LSL or a 0x66-prefixed MOVZX, the JIT
-runs.
+although hardware runs them, such as LSL or a SETcc whose ModRM reg field is
+not 0, the JIT runs.
 
 ## Instruction corpus
 
