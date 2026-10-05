@@ -63,6 +63,12 @@ uml_add_unit_test(
     COMMAND uml_x86_64_fex_asm_runner "${_uml_x86_64_instruction_corpus}"
     LABELS cpu;x86-64)
 set_tests_properties(x86-64-instruction-corpus PROPERTIES TIMEOUT 900)
+# The instructions a run retires before each kind of stop, which the JIT
+# runner checks against the same counts.
+uml_add_unit_test(
+    NAME x86-64-retirement
+    COMMAND uml_x86_64_fex_asm_runner --retirement
+    LABELS cpu;x86-64)
 
 # The same corpus through the macOS-only x86-64 JIT. The engine does not yet
 # implement every instruction class the gadget engine does; each record it
@@ -103,4 +109,8 @@ if(TARGET uml_x86_64_jit)
         LABELS cpu;x86-64)
     set_tests_properties(x86-64-jit-code-buffer-growth PROPERTIES
         TIMEOUT 300)
+    uml_add_unit_test(
+        NAME x86-64-jit-retirement
+        COMMAND uml_x86_64_fex_asm_jit_runner --retirement
+        LABELS cpu;x86-64)
 endif()
