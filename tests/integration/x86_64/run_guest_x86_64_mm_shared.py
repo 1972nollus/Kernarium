@@ -152,7 +152,6 @@ def main() -> int:
         probe = build_probe(arguments.compiler, pathlib.Path(directory))
         log = pathlib.Path(directory) / "mm-shared.log"
         os.environ["UML_X86_MM_SHARED_LOG"] = str(log)
-        os.environ.pop("UML_X86_JIT_ORDER", None)
         with Guest(
             emulator,
             rootfs,

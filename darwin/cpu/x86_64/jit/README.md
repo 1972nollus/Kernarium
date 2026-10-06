@@ -293,12 +293,14 @@ a local variable whose address another thread holds is reached through RSP
 by its owner. Pushes, pops, calls and returns stay plain: they reach only
 the slots at the top of the thread's own stack.
 
-`UML_X86_JIT_ORDER=all` orders every space, which only adds order;
-`UML_X86_JIT_ORDER=none` orders none, which breaks x86's model for shared
-memory and exists only as the litmus tests' negative control. With
+The mark alone decides; no setting overrides it. With
 `UML_X86_MM_SHARED_LOG` set, the runtime logs the first unordered and the
 first ordered dispatch of each address space, and every unordered dispatch
-after an ordered one.
+after an ordered one. The unit test `x86-64-jit-store-order` runs message
+passing between two engines on two host threads, with the data and flag
+reached through a general register or through RSP: an ordered space never
+shows the flag without the data, and an unordered one shows it, so the test
+would notice the order going missing.
 
 ## Instruction corpus
 

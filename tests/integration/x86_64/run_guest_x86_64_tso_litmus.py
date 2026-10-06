@@ -10,11 +10,10 @@ threads of one process and between processes that share SysV shm, a memfd
 mapped MAP_SHARED or inherited shared anonymous memory. No test may see an
 outcome x86 forbids.
 
-On the JIT, a second boot runs the thread and shm cases with
-UML_X86_JIT_ORDER=none, which keeps no order for any address space: message
-passing must then see forbidden outcomes, or the tests could not catch a
-policy that relaxed a shared address space. The gadget engine orders every
-access, so it has no such control.
+The negative control, which shows that message passing catches a space
+that keeps no order, is the unit test x86-64-jit-store-order: it drives the
+JIT engine directly, so the product carries no setting that relaxes a
+shared address space.
 """
 
 from __future__ import annotations
@@ -63,7 +62,6 @@ PROBES = {
     "tso-litmus-probe32": ("i386", ("--target=i686-unknown-linux-gnu", "-march=i686")),
 }
 CASES = ("thread", "shm", "memfd", "anon")
-CONTROL_CASES = ("thread", "shm")
 TESTS = {
     "thread": ("mp", "mp-stack-load", "mp-stack-store", "sb", "sb-mfence", "iriw"),
     "shm": ("mp", "sb", "sb-mfence", "iriw"),
@@ -150,8 +148,6 @@ def main() -> int:
     )
     parser.add_argument("--rounds", type=int, default=1_000_000,
                         help="rounds of each test in each case and ABI")
-    parser.add_argument("--control-rounds", type=int, default=100_000,
-                        help="rounds of each test in the JIT's unordered control")
     parser.add_argument("--timeout", type=int, default=180, help="boot timeout")
     parser.add_argument("--probe-timeout", type=int, default=900,
                         help="timeout of one case under one ABI")
@@ -162,12 +158,10 @@ def main() -> int:
         parser.error(f"emulator is not executable: {emulator}")
     if not arguments.rootfs.resolve().is_file():
         parser.error(f"rootfs is not a regular file: {arguments.rootfs}")
-    if min(arguments.rounds, arguments.control_rounds, arguments.timeout,
-           arguments.probe_timeout) <= 0:
+    if min(arguments.rounds, arguments.timeout, arguments.probe_timeout) <= 0:
         parser.error("rounds and timeouts must be positive")
 
     binaries = build_probes(arguments.compiler)
-    os.environ.pop("UML_X86_JIT_ORDER", None)
     failures = 0
     counts = run_cases(arguments, binaries, CASES, arguments.rounds)
     for (abi, case, test), count in sorted(counts.items()):
@@ -178,27 +172,6 @@ def main() -> int:
         print(f"{'PASS' if passed else 'FAIL'} {abi} {case} {test}: "
               f"{count} forbidden outcome(s) in {arguments.rounds} rounds")
 
-    if arguments.engine == "jit":
-        os.environ["UML_X86_JIT_ORDER"] = "none"
-        try:
-            control = run_cases(arguments, binaries, CONTROL_CASES,
-                                arguments.control_rounds)
-        finally:
-            os.environ.pop("UML_X86_JIT_ORDER", None)
-        for abi, _ in PROBES.values():
-            for case in CONTROL_CASES:
-                count = control[(abi, case, "mp")]
-                caught = count > 0
-                failures += not caught
-                print(f"{'PASS' if caught else 'FAIL'} control {abi} {case} mp: "
-                      f"{count} forbidden outcome(s) in {arguments.control_rounds} "
-                      "rounds with no order kept")
-                # The other tests' counts, for the record: a rarer outcome
-                # may stay unseen in a short control.
-                for test in TESTS[case]:
-                    if test not in ("mp", "sb"):
-                        print(f"INFO control {abi} {case} {test}: "
-                              f"{control[(abi, case, test)]} forbidden outcome(s)")
     if failures:
         raise RuntimeError(f"{failures} check(s) failed")
     return 0

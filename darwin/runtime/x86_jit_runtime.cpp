@@ -10,8 +10,6 @@
 
 #include <array>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <new>
 
 namespace uml::runtime {
@@ -85,41 +83,6 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 	engine.apply_changes(generation, mode, changes, orders_stores);
 }
 
-/* UML_X86_JIT_ORDER overrides the kernel's mm-shared mark: "all" orders the
- * stores of every address space, which can only add order; "none" orders
- * none, which breaks x86's memory model for every guest whose memory
- * another task or process observes and serves only as the litmus tests'
- * negative control. Anything else follows the mark. */
-enum class OrderingOverride { follow, all, none };
-
-[[nodiscard]] OrderingOverride ordering_override() noexcept
-{
-	static const auto value = [] {
-		const char *setting = std::getenv("UML_X86_JIT_ORDER");
-		if (setting == nullptr)
-			return OrderingOverride::follow;
-		if (std::strcmp(setting, "all") == 0)
-			return OrderingOverride::all;
-		if (std::strcmp(setting, "none") == 0)
-			return OrderingOverride::none;
-		return OrderingOverride::follow;
-	}();
-	return value;
-}
-
-[[nodiscard]] bool orders_stores(bool mm_shared) noexcept
-{
-	switch (ordering_override()) {
-	case OrderingOverride::all:
-		return true;
-	case OrderingOverride::none:
-		return false;
-	case OrderingOverride::follow:
-		break;
-	}
-	return mm_shared;
-}
-
 } // namespace
 
 void X86JitEngineDeleter::operator()(
@@ -169,7 +132,9 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 		result.reason = ::uml::cpu::ExitReason::system_call;
 		return run;
 	}
-	const bool ordered = orders_stores(mm_shared);
+	/* The kernel's mark alone decides: a space another agent may observe
+	 * keeps x86's store order. */
+	const bool ordered = mm_shared;
 	sync_engine(*engine, execution, generation, cpu.execution_mode,
 		sequences, ordered);
 	const auto start = cpu.rip;

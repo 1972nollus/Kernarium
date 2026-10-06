@@ -335,8 +335,9 @@ kernel's contract in the [common kernel README](../kernel/common/README.md)
 says so, and on the JIT that only shared ones run ordered code.
 `run_guest_x86_64_tso_litmus.py` runs x86 memory-order litmus tests on four
 vCPUs, between threads and between processes over shared memory, in both
-modes; on the JIT it also proves that the tests catch an engine that keeps no
-order. Both engines pass every exception case, unmasked
+modes. Its negative control is the unit test `x86-64-jit-store-order`, which
+shows message passing catching a JIT space that keeps no order. Both engines
+pass every exception case, unmasked
 `#XM`, `#MF` and `#AC` included, in both modes.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
