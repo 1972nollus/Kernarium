@@ -136,5 +136,10 @@ extern "C" std::uint32_t uml_x86_64_gadget_bulk_store(
 /* RDRAND and RDSEED: host CSPRNG output, which carries nothing of the host's
  * own state into the guest. */
 extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept;
+/* LSL of `selector`: sets ZF and writes the limit to the register whose
+ * CpuState offset is `destination`'s low byte, at the width its next byte
+ * names (1 a word, 2 a doubleword, 3 a quadword), or clears ZF. */
+extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
+	std::uint32_t selector, std::uint32_t destination) noexcept;
 
 } // namespace uml::cpu::x86_64::gadgets

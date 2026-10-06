@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* AVX2 vector-indexed gathers with architectural partial-fault updates. */
+/* AVX2 vector-indexed gathers with architectural partial-fault updates.
+ *
+ * x86 completes the elements in order and clears each one's mask element,
+ * selected or not, as it completes. A fault leaves the elements from the
+ * faulting one on with the mask x86 first widens each element's sign to:
+ * all ones where the sign is set, zero where it is clear. */
 
 .macro vector_gather_zero_upper data_bytes
 	.if \data_bytes == 8
@@ -37,10 +42,10 @@ Lx86_vector_gather_loop\@:
 	b.hs Lx86_vector_gather_done\@
 	.if \data == 4
 	ldr w14, [x24, x26, lsl #2]
-	tbz w14, #31, Lx86_vector_gather_next\@
+	tbz w14, #31, Lx86_vector_gather_skip\@
 	.else
 	ldr x14, [x24, x26, lsl #3]
-	tbz x14, #63, Lx86_vector_gather_next\@
+	tbz x14, #63, Lx86_vector_gather_skip\@
 	.endif
 	.if \index == 4
 	ldr w14, [x27, x26, lsl #2]
@@ -79,6 +84,13 @@ Lx86_vector_gather_cross\@:
 	str x0, [x19, x26, lsl #3]
 	str xzr, [x24, x26, lsl #3]
 	.endif
+	b Lx86_vector_gather_next\@
+Lx86_vector_gather_skip\@:
+	.if \data == 4
+	str wzr, [x24, x26, lsl #2]
+	.else
+	str xzr, [x24, x26, lsl #3]
+	.endif
 Lx86_vector_gather_next\@:
 	add x26, x26, #1
 	b Lx86_vector_gather_loop\@
@@ -86,6 +98,18 @@ Lx86_vector_gather_done\@:
 	vector_gather_zero_upper Lx86_vector_gather_data_bytes
 	retire_and_next
 Lx86_vector_gather_fault\@:
+	.if \data == 4
+	ldr w14, [x24, x26, lsl #2]
+	asr w14, w14, #31
+	str w14, [x24, x26, lsl #2]
+	.else
+	ldr x14, [x24, x26, lsl #3]
+	asr x14, x14, #63
+	str x14, [x24, x26, lsl #3]
+	.endif
+	add x26, x26, #1
+	cmp x26, #Lx86_vector_gather_count
+	b.lo Lx86_vector_gather_fault\@
 	vector_gather_zero_upper Lx86_vector_gather_data_bytes
 	b Lx86_memory_fault
 .endm

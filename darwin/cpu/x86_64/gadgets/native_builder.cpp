@@ -5105,6 +5105,9 @@ struct FlagState final {
 			entry = native::uml_x86_64_gadget_x87_store_bcd_pop;
 		} else if (opcode == 0xdf && group == 7) {
 			entry = native::uml_x86_64_gadget_x87_store_i64_pop;
+		} else if (opcode == 0xd9 || opcode == 0xdb || opcode == 0xdd) {
+			/* D9 /1, DB /4, DB /6 and DD /5 are undefined. */
+			return false;
 		} else {
 			const auto select = [group](NativeEntry add, NativeEntry multiply,
 				NativeEntry compare_keep, NativeEntry compare_pop,
@@ -5185,6 +5188,10 @@ struct FlagState final {
 		if (group == 0) {
 			entry = native::uml_x86_64_gadget_x87_load_register;
 			carries_index = true;
+		} else if (group == 3) {
+			/* D9 D8+i is an alias of FSTP ST(i). */
+			entry = native::uml_x86_64_gadget_x87_store_register_pop;
+			carries_index = true;
 		} else if (group == 1) {
 			entry = native::uml_x86_64_gadget_x87_exchange_register;
 			carries_index = true;
@@ -5264,7 +5271,11 @@ struct FlagState final {
 		entry = native::uml_x86_64_gadget_x87_clear_exceptions;
 	} else if (opcode == 0xdb && modrm == 0xe3) {
 		entry = native::uml_x86_64_gadget_x87_initialize;
-	} else if (opcode == 0xdb && (group == 5 || group == 6 || group == 7)) {
+	} else if (opcode == 0xdb &&
+		(modrm == 0xe0 || modrm == 0xe1 || modrm == 0xe4)) {
+		/* FNENI, FNDISI and FNSETPM do nothing since the 80387. */
+		entry = native::uml_x86_64_gadget_x87_nop;
+	} else if (opcode == 0xdb && (group == 5 || group == 6)) {
 		entry = native::uml_x86_64_gadget_x87_compare_integer_keep;
 		carries_index = true;
 	} else if (opcode == 0xdd || opcode == 0xdf) {
@@ -6796,9 +6807,40 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		const auto encoded = encode_memory(gadget, instruction.destination, 0);
 		if (!encoded)
 			return false;
-		append_memory_words(stream,
-			entry_address(native::uml_x86_64_gadget_store_gdtr),
-			*encoded, gadget);
+		const bool compat = mode == ExecutionMode::compat32;
+		const auto entry = instruction.vector_group == 1 ?
+			(compat ? native::uml_x86_64_gadget_store_idtr_32 :
+				native::uml_x86_64_gadget_store_idtr) :
+			(compat ? native::uml_x86_64_gadget_store_gdtr_32 :
+				native::uml_x86_64_gadget_store_gdtr);
+		append_memory_words(stream, entry_address(entry), *encoded, gadget);
+		return true;
+	}
+	case Operation::load_segment_limit: {
+		const auto destination = register_offset(instruction.destination);
+		if (!destination)
+			return false;
+		const auto width = instruction.destination.width;
+		const std::uint16_t target = static_cast<std::uint16_t>(*destination |
+			((width == OperandWidth::word ? 1U :
+				width == OperandWidth::dword ? 2U : 3U) << 8U));
+		if (instruction.source.kind == OperandKind::memory) {
+			const auto encoded = encode_memory(gadget, instruction.source,
+				target);
+			if (!encoded)
+				return false;
+			append_memory_words(stream, entry_address(
+				native::uml_x86_64_gadget_load_segment_limit_m),
+				*encoded, gadget);
+			return true;
+		}
+		const auto source = register_offset(instruction.source);
+		if (!source)
+			return false;
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_load_segment_limit_r));
+		stream.push_back(*source);
+		stream.push_back(target);
 		return true;
 	}
 	case Operation::mxcsr: {

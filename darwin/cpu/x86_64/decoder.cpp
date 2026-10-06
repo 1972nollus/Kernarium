@@ -662,7 +662,9 @@ private:
 		if (!rm_operand(modrm, width, instruction.destination))
 			return false;
 		switch (group) {
-		case 0: {
+		case 0:
+		case 1: {
+			/* /1 is an alias of TEST. */
 			const auto bytes = width == OperandWidth::byte ? 1U :
 				(width == OperandWidth::word ? 2U : 4U);
 			std::uint64_t immediate{};
@@ -938,6 +940,9 @@ private:
 			return false;
 		if (group == 7 && prefixes_.repeat == 0xf3) {
 			instruction.operation = Operation::read_processor_id;
+		} else if (prefixes_.repeat != 0) {
+			/* RDRAND and RDSEED take no F2 or F3 prefix. */
+			return false;
 		} else {
 			instruction.operation = Operation::random;
 			instruction.auxiliary = immediate_operand(
@@ -951,7 +956,12 @@ private:
 		std::uint8_t modrm{};
 		if (!read(modrm))
 			return false;
+		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+		const bool memory = (modrm >> 6U) != 3;
 		if (modrm == 0xd0) {
+			/* XGETBV takes no 66, F2 or F3 prefix. */
+			if (prefixes_.operand_size || prefixes_.repeat != 0)
+				return false;
 			instruction.operation = Operation::read_extended_control;
 			return true;
 		}
@@ -964,12 +974,28 @@ private:
 			instruction.operation = Operation::cache_zero;
 			return true;
 		}
-		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
-		if (group == 0) {
-			if ((modrm >> 6U) == 3 || !rm_operand(modrm,
-				OperandWidth::qword, instruction.destination))
+		/* LGDT, LIDT, LMSW, INVLPG, XSETBV and SWAPGS raise #GP at CPL 3
+		 * before they touch memory. SWAPGS is undefined outside 64-bit
+		 * mode. */
+		const bool xsetbv = modrm == 0xd1 && !prefixes_.operand_size &&
+			prefixes_.repeat == 0;
+		if ((memory && (group == 2 || group == 3 || group == 7)) ||
+			group == 6 || xsetbv || (modrm == 0xf8 &&
+				prefixes_.mode != ExecutionMode::compat32)) {
+			Operand ignored{};
+			if (memory && !rm_operand(modrm, OperandWidth::word, ignored))
+				return false;
+			instruction.operation = Operation::privileged;
+			return true;
+		}
+		if ((group == 0 || group == 1) && memory) {
+			/* SGDT and SIDT: the limit, then a base of the mode's
+			 * width. */
+			if (!rm_operand(modrm, OperandWidth::qword,
+				instruction.destination))
 				return false;
 			instruction.operation = Operation::store_gdtr;
+			instruction.vector_group = group;
 			return true;
 		}
 		if (group == 4) {
@@ -984,13 +1010,45 @@ private:
 		return false;
 	}
 
+	/* LLDT and LTR raise #GP at CPL 3 before they touch memory. */
+	[[nodiscard]] bool decode_0f00(Instruction &instruction)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm))
+			return false;
+		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
+		if (group != 2 && group != 3)
+			return false;
+		Operand ignored{};
+		if (!rm_operand(modrm, OperandWidth::word, ignored))
+			return false;
+		instruction.operation = Operation::privileged;
+		return true;
+	}
+
+	/* LSL: the limit of the segment a selector names, with ZF set, or ZF
+	 * clear and the destination as it was. */
+	[[nodiscard]] bool decode_segment_limit(Instruction &instruction)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm) || !rm_operand(modrm, OperandWidth::word,
+			instruction.source))
+			return false;
+		instruction.operation = Operation::load_segment_limit;
+		instruction.destination = reg_field(modrm, ordinary_width(prefixes_));
+		return true;
+	}
+
 	[[nodiscard]] bool decode_0fae(Instruction &instruction)
 	{
 		std::uint8_t modrm{};
 		if (!read(modrm))
 			return false;
 		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
-		if (prefixes_.repeat == 0xf3 && (modrm >> 6U) == 3 && group <= 3) {
+		/* RDFSBASE, RDGSBASE, WRFSBASE and WRGSBASE exist only in
+		 * 64-bit mode. */
+		if (prefixes_.repeat == 0xf3 && (modrm >> 6U) == 3 && group <= 3 &&
+			prefixes_.mode != ExecutionMode::compat32) {
 			const auto width = (prefixes_.rex & 8U) != 0 ?
 				OperandWidth::qword : OperandWidth::dword;
 			Operand operand{};
@@ -1009,7 +1067,11 @@ private:
 				instruction.source = operand;
 			return true;
 		}
-		if (modrm == 0xe8 || modrm == 0xf0 || modrm == 0xf8) {
+		/* LFENCE, MFENCE and SFENCE ignore ModRM.rm but take no 66,
+		 * F2 or F3 prefix. */
+		if ((modrm >> 6U) == 3 && group >= 5) {
+			if (prefixes_.operand_size || prefixes_.repeat != 0)
+				return false;
 			instruction.operation = Operation::memory_fence;
 			instruction.auxiliary = immediate_operand(
 				group, OperandWidth::byte);
@@ -1024,19 +1086,22 @@ private:
 			instruction.vector_group = group;
 			return true;
 		}
-		if ((group == 0 || group == 1 || group == 4 || group == 5) &&
+		/* XSAVEOPT may store what XSAVE stores. */
+		if ((group == 0 || group == 1 || group == 4 || group == 5 ||
+				group == 6) &&
 			(modrm >> 6U) != 3 && prefixes_.repeat == 0 &&
 			!prefixes_.operand_size) {
 			if (!rm_operand(modrm, OperandWidth::byte,
 				instruction.destination))
 				return false;
 			instruction.operation = Operation::extended_state;
-			instruction.vector_group = group;
+			instruction.vector_group = group == 6 ? 4U : group;
 			instruction.vector_prefix = static_cast<std::uint8_t>(
 				(prefixes_.rex & 8U) != 0);
 			return true;
 		}
-		if ((group == 6 || group == 7) && (modrm >> 6U) != 3) {
+		if ((group == 6 || group == 7) && (modrm >> 6U) != 3 &&
+			prefixes_.repeat == 0) {
 			if (!rm_operand(modrm, OperandWidth::byte,
 				instruction.destination))
 				return false;
@@ -1256,6 +1321,9 @@ private:
 				return false;
 			reg = vector_reg_field(modrm, width);
 		}
+		/* LDDQU reads only memory. */
+		if (opcode == 0xf0 && rm.kind != OperandKind::memory)
+			return false;
 		instruction.operation = scalar ?
 			Operation::vector_move_scalar : Operation::vector_move;
 		instruction.destination = load ? reg : rm;
@@ -1335,6 +1403,10 @@ private:
 			prefixes_.vex_long ? OperandWidth::ymm : OperandWidth::xmm;
 		std::uint8_t modrm{};
 		if (!read(modrm))
+			return false;
+		/* MOVLPD and MOVHPD have no register form. */
+		if (prefix == 1 && (opcode == 0x12 || opcode == 0x16) &&
+			(modrm >> 6U) == 3)
 			return false;
 		if (opcode == 0x13 || opcode == 0x17) {
 			if ((modrm >> 6U) == 3 || !rm_operand(
@@ -2531,8 +2603,9 @@ private:
 				ordinary_width(prefixes_), true);
 		}
 		if (opcode >= 0x90 && opcode <= 0x9f) {
+			/* SETcc ignores ModRM.reg. */
 			std::uint8_t modrm{};
-			if (!read(modrm) || ((modrm >> 3U) & 7U) != 0)
+			if (!read(modrm))
 				return false;
 			instruction.condition = static_cast<Condition>(opcode & 0xfU);
 			instruction.operation = Operation::set_condition;
@@ -2553,11 +2626,19 @@ private:
 			return decode_3dnow(instruction);
 		case 0x0e:
 		case 0x77:
+			/* EMMS takes no 66, F2 or F3 prefix. */
+			if (opcode == 0x77 &&
+				(prefixes_.operand_size || prefixes_.repeat != 0))
+				return false;
 			instruction.operation = Operation::x87;
 			instruction.vector_opcode = opcode;
 			return true;
+		case 0x00:
+			return decode_0f00(instruction);
 		case 0x01:
 			return decode_0f01(instruction);
+		case 0x03:
+			return decode_segment_limit(instruction);
 		case 0x06: case 0x07: case 0x08: case 0x09:
 		case 0x20: case 0x21: case 0x22: case 0x23:
 		case 0x30: case 0x32: case 0x33: case 0x35:
@@ -2602,9 +2683,9 @@ private:
 			std::uint8_t modrm{};
 			if (!read(modrm))
 				return false;
+			/* Every ModRM.reg of 0F 1F is a NOP. */
 			Operand ignored{};
-			if (((modrm >> 3U) & 7U) != 0 ||
-				!rm_operand(modrm, ordinary_width(prefixes_), ignored))
+			if (!rm_operand(modrm, ordinary_width(prefixes_), ignored))
 				return false;
 			instruction.operation = Operation::nop;
 			return true;
@@ -2680,6 +2761,10 @@ private:
 			instruction.destination = reg_field(
 				modrm, ordinary_width(prefixes_));
 			instruction.source = source;
+			/* From a word to a word, either is a move. */
+			if (source_width == OperandWidth::word &&
+				instruction.destination.width == OperandWidth::word)
+				instruction.operation = Operation::move;
 			return true;
 		}
 		case 0xba:
@@ -2705,6 +2790,9 @@ private:
 			return decode_binary(instruction, Operation::exchange_add,
 				ordinary_width(prefixes_), false);
 		case 0xc3: {
+			/* MOVNTI takes no 66, F2 or F3 prefix. */
+			if (prefixes_.operand_size || prefixes_.repeat != 0)
+				return false;
 			const auto move_width = (prefixes_.rex & 8U) != 0 ?
 				OperandWidth::qword : OperandWidth::dword;
 			std::uint8_t modrm{};

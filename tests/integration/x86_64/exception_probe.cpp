@@ -513,6 +513,25 @@ __asm__(".text\n"
 	".global probe_wrap_load_end\n"
 	"probe_wrap_load_end:\n"
 	"	ret\n"
+	/* Returns the dwords LODSL and an ordinary load read and the byte
+	 * XLATB reads at GS:(offset), summed, with GS's base 0xfffff000. */
+	".global probe_wrap_gs\n"
+	"probe_wrap_gs:\n"
+	"	pushl %esi\n"
+	"	pushl %ebx\n"
+	"	movl 12(%esp), %esi\n"
+	"	movl %esi, %ebx\n"
+	"	lodsl %gs:(%esi), %eax\n"
+	"	movl %eax, %edx\n"
+	"	xorl %eax, %eax\n"
+	"	.byte 0x65, 0xd7\n" /* XLATB through GS */
+	"	addl %eax, %edx\n"
+	"	movl 12(%esp), %eax\n"
+	"	addl %gs:(%eax), %edx\n"
+	"	movl %edx, %eax\n"
+	"	popl %ebx\n"
+	"	popl %esi\n"
+	"	ret\n"
 	/* A push with ESP 0. */
 	".global probe_wrap_push\n"
 	"probe_wrap_push:\n"
@@ -1099,7 +1118,8 @@ __asm__(".text\n"
 	"	ret\n");
 
 /* Encodings that decode alike in both modes and that hardware or the
- * product leaves undefined, and SYSEXIT, which user mode may not run. */
+ * product leaves undefined, and SYSEXIT and the system instructions that
+ * user mode may not run. */
 #define PROBE_BYTES(name, bytes)                                             \
 	".global probe_" #name "\n"                                          \
 	"probe_" #name ":\n"                                                 \
@@ -1117,8 +1137,29 @@ __asm__(".text\n"
 	X(group1_82, "0x82, 0xc0, 0x01")                                     \
 	X(reserved_0f3e, "0x0f, 0x3e")                                       \
 	X(reserved_0f3f, "0x0f, 0x3f")
+/* Each takes an unmapped address in AX, which they raise #GP before
+ * reading. */
+#define PRIVILEGED_CASES(X)                                                  \
+	X(ltr, "0x0f, 0x00, 0xd8")                                           \
+	X(lidt, "0x0f, 0x01, 0x18")                                          \
+	X(lmsw_register, "0x0f, 0x01, 0xf0")                                 \
+	X(lmsw_memory, "0x0f, 0x01, 0x30")                                   \
+	X(invlpg, "0x0f, 0x01, 0x38")                                        \
+	X(mov_to_cr0, "0x0f, 0x22, 0xc0")                                    \
+	X(mov_from_cr0, "0x0f, 0x20, 0xc0")
 #define EMIT_UNDEFINED(name, bytes) PROBE_BYTES(name, bytes)
+#define EMIT_PRIVILEGED(name, bytes)                                         \
+	".global probe_" #name "\n"                                          \
+	"probe_" #name ":\n"                                                 \
+	PROBE_ARG_AX                                                         \
+	".global probe_" #name "_insn\n"                                     \
+	"probe_" #name "_insn:\n"                                            \
+	"	.byte " bytes "\n"                                           \
+	".global probe_" #name "_end\n"                                      \
+	"probe_" #name "_end:\n"                                             \
+	"	ret\n"
 __asm__(".text\n" UNDEFINED_CASES(EMIT_UNDEFINED)
+	PRIVILEGED_CASES(EMIT_PRIVILEGED)
 	PROBE_BYTES(sysexit, "0x0f, 0x35")
 	/* MOV to CS from an unmapped address: #UD before the read. */
 	".global probe_mov_cs\n"
@@ -1131,6 +1172,7 @@ __asm__(".text\n" UNDEFINED_CASES(EMIT_UNDEFINED)
 	"probe_mov_cs_end:\n"
 	"	ret\n");
 #undef EMIT_UNDEFINED
+#undef EMIT_PRIVILEGED
 #undef PROBE_BYTES
 
 constexpr word sa_siginfo = 4;
@@ -1696,6 +1738,13 @@ bool ud2_faults()
 UNDEFINED_CASES(DECLARE_UNDEFINED)
 DECLARE_UNDEFINED(sysexit, "")
 #undef DECLARE_UNDEFINED
+#define DECLARE_PRIVILEGED(name, bytes)                                      \
+	extern "C" void probe_##name(word address);                         \
+	extern "C" char probe_##name##_insn[];                               \
+	extern "C" char probe_##name##_end[];                                \
+	void name##_unmapped() { probe_##name(0); }
+PRIVILEGED_CASES(DECLARE_PRIVILEGED)
+#undef DECLARE_PRIVILEGED
 extern "C" void probe_mov_cs(word address);
 extern "C" char probe_mov_cs_insn[];
 extern "C" char probe_mov_cs_end[];
@@ -1705,7 +1754,8 @@ void mov_cs_unmapped() { probe_mov_cs(0); }
 /* Register forms of memory-only instructions, LOCK on an instruction that
  * does not write memory, 0x82 in either mode and the 0F 3E and 0F 3F
  * escapes raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
- * outside ring 0 raises #GP. */
+ * and the system instructions LTR, LIDT, LMSW, INVLPG and MOV with CR0
+ * raise #GP(0) outside ring 0, before they read memory. */
 bool undefined_faults()
 {
 	struct Case {
@@ -1727,9 +1777,25 @@ bool undefined_faults()
 			    address_of(probe_mov_cs_end),
 			    {sigill, ill_illopn, mov_cs, mov_cs, 6, true, 0});
 	const word sysexit = reinterpret_cast<word>(probe_sysexit);
-	return ok && delivers("SYSEXIT", probe_sysexit,
-			      address_of(probe_sysexit_end),
-			      {sigsegv, si_kernel, 0, sysexit, 13, true, 0});
+	ok = ok && delivers("SYSEXIT", probe_sysexit,
+			    address_of(probe_sysexit_end),
+			    {sigsegv, si_kernel, 0, sysexit, 13, true, 0});
+	struct Privileged {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define PRIVILEGED_ENTRY(name, bytes)                                        \
+	{#name, name##_unmapped, probe_##name##_insn, probe_##name##_end},
+	const Privileged privileged[] = {PRIVILEGED_CASES(PRIVILEGED_ENTRY)};
+#undef PRIVILEGED_ENTRY
+	for (const Privileged &one : privileged) {
+		const word insn = address_of(one.insn);
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {sigsegv, si_kernel, 0, insn, 13, true, 0});
+	}
+	return ok;
 }
 
 extern "C" void probe_pf_read(word address);
@@ -2324,8 +2390,9 @@ bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
 		} else {
 			ok &= expect("element not gathered", value,
 				     0x11111111ULL * (lane + 1));
-			ok &= expect("its mask sign", (mask >> sign) & 1U,
-				     (enabled >> lane) & 1U);
+			ok &= expect("its mask", mask,
+				     (enabled >> lane) & 1U ?
+					     (2ULL << sign) - 1U : 0);
 		}
 	}
 	return ok;
@@ -2334,8 +2401,9 @@ bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
 /* AVX2 gathers complete their elements in order: an element whose mask
  * sign is clear is not read, an element on a page not yet touched
  * completes, and an element on an unmapped page raises #PF at its address
- * with every element before it gathered and its mask cleared, and the
- * elements from it on untouched. An FS override adds the FS base. */
+ * with every element before it gathered or skipped and its mask cleared,
+ * and the elements from it on unread, their masks widened from the sign to
+ * all ones or zero. An FS override adds the FS base. */
 bool gathers()
 {
 	unsigned char *const first = gather_pages;
@@ -2573,6 +2641,8 @@ bool gathers()
 	X(call, "", "movq %r8, %rsp", "call 9f")                             \
 	X(call_memory, "", "movq %r8, %rsp", "call *8(%r9)")                 \
 	X(enter, "", "movq %r8, %rsp", "enter $16, $0")                      \
+	X(enter_nested_load, "leaq 0x108(%r10), %rbp", "leaq -64(%r9), %rsp",\
+	  "enter $16, $3")                                                   \
 	X(pushf, "", "movq %r8, %rsp", "pushfq")                             \
 	X(movs, "movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsq")            \
 	X(movs_down, "std; movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsb")  \
@@ -2913,6 +2983,8 @@ bool fault_state()
 	X(enter, "", "movl %edx, %esp", "enter $16, $0")                     \
 	X(enter_nested, "leal 64(%edx), %ebp", "movl %edx, %esp",            \
 	  "enter $16, $3")                                                   \
+	X(enter_nested_load, "leal 0x108(%esi), %ebp", "movl %edi, %esp",    \
+	  "enter $16, $3")                                                   \
 	X(pushf, "", "movl %edx, %esp", "pushfl")                            \
 	X(pusha, "", "movl %edx, %esp", "pushal")                            \
 	X(pusha_midway, "", "movl %edi, %esp", "pushal")                     \
@@ -3196,6 +3268,7 @@ extern "C" char probe_wrap_index_insn[];
 extern "C" char probe_wrap_index_end[];
 extern "C" word probe_wrap_sum(word base, word index);
 extern "C" word probe_wrap_absolute(word value);
+extern "C" word probe_wrap_gs(word offset);
 extern "C" word probe_wrap_load(word address);
 extern "C" char probe_wrap_load_insn[];
 extern "C" char probe_wrap_load_end[];
@@ -3218,9 +3291,9 @@ void wrap_load_fault() { (void)probe_wrap_load(4); }
 void wrap_stos_fault() { probe_wrap_stos(0xfffffffe); }
 
 /* A 32-bit effective address wraps at 4 GiB: base plus scaled index, an
- * absolute operand at or above 2 GiB, the stack and a string's operands. An
- * access through a wrapped address that reaches no mapping faults with the
- * wrapped address. */
+ * absolute operand at or above 2 GiB, a segment base plus the offset, the
+ * stack and a string's operands. An access through a wrapped address that
+ * reaches no mapping faults with the wrapped address. */
 bool addresses_wrap()
 {
 	const struct {
@@ -3246,6 +3319,24 @@ bool addresses_wrap()
 	ok &= expect("absolute operands at 0xe0000010",
 		     probe_wrap_absolute(0x2222), 0x2222 + 2 * 0x1111);
 	ok &= expect("the absolute store", page[5], 0x2222);
+	/* A segment base plus an offset wraps too. */
+	struct {
+		u32 entry_number;
+		u32 base_addr;
+		u32 limit;
+		u32 flags;
+	} descriptor = {~0U, 0xfffff000, 0xfffff, 1U | 1U << 4 | 1U << 6};
+	if (raw_syscall(nr_set_thread_area,
+			reinterpret_cast<long>(&descriptor)) != 0) {
+		put("  set_thread_area failed\n");
+		return false;
+	}
+	const u32 selector = descriptor.entry_number << 3 | 3;
+	__asm__ volatile("movw %w0, %%gs" : : "r"(selector));
+	const word current = wrap_value;
+	ok &= expect("LODSL, XLATB and a load through GS past 4 GiB",
+		     probe_wrap_gs(value + 0x1000),
+		     2 * current + (current & 0xff));
 	ok = ok && install_fault_handlers() &&
 	     handle_on_alternate_stack(sigsegv, record_fault);
 	ok = ok && delivers("a load indexed past 4 GiB", wrap_index_fault,
@@ -4417,9 +4508,9 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "ud2"));
 	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
 	       in_child(i386_probe, "ud2"));
-	report("x86-64 undefined encodings raise #UD and SYSEXIT #GP",
+	report("x86-64 undefined encodings raise #UD, privileged ones #GP",
 	       in_child(self, "undefined"));
-	report("i386 undefined encodings raise #UD and SYSEXIT #GP",
+	report("i386 undefined encodings raise #UD, privileged ones #GP",
 	       in_child(i386_probe, "undefined"));
 	report("x86-64 #PF error codes carry the user bit",
 	       in_child(self, "page-fault"));

@@ -233,6 +233,50 @@ extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept
 	return value;
 }
 
+extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
+	std::uint32_t selector, std::uint32_t destination) noexcept
+{
+	/* The GDT entries Linux gives user code that LSL may read: the flat
+	 * 32-bit code, data and 64-bit code segments; the per-CPU segment,
+	 * whose limit is the processor number RDPID reads, which the gadgets
+	 * report as 1; and a present TLS entry, which the runtime records only
+	 * by its base and which the C libraries give a flat limit. Other
+	 * selectors, an LDT's included, read as unusable. */
+	constexpr std::uint64_t zero_flag = 1ULL << 6U;
+	const auto entry = (selector & 0xffffU) >> 3U;
+	const auto tls = entry - cpu->compat_tls_first;
+	std::uint64_t limit{};
+	if ((selector & 4U) != 0) {
+		limit = ~std::uint64_t{};
+	} else if (entry == 4 || entry == 5 || entry == 6) {
+		limit = 0xffffffffU;
+	} else if (entry == 15) {
+		limit = 1;
+	} else if (entry >= cpu->compat_tls_first && tls < 8 &&
+		((cpu->compat_tls_present >> tls) & 1U) != 0) {
+		limit = 0xffffffffU;
+	} else {
+		limit = ~std::uint64_t{};
+	}
+	if (limit == ~std::uint64_t{}) {
+		cpu->rflags &= ~zero_flag;
+		return;
+	}
+	cpu->rflags |= zero_flag;
+	auto &value = cpu->registers[(destination & 0xffU) / 8U];
+	switch ((destination >> 8U) & 3U) {
+	case 1:
+		value = (value & ~std::uint64_t{0xffff}) | (limit & 0xffffU);
+		break;
+	case 2:
+		value = static_cast<std::uint32_t>(limit);
+		break;
+	default:
+		value = limit;
+		break;
+	}
+}
+
 extern "C" void uml_x86_64_gadget_invalidate_code(
 	NativeExecutionContext *context, std::uint64_t address) noexcept
 {

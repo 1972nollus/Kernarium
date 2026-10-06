@@ -1160,9 +1160,10 @@ void save_state(Space &space, CpuState &cpu) noexcept
 }
 
 /* An AVX2 gather that faults has, on x86, gathered every enabled element
- * before the faulting one, clearing its mask element, and zeroed the
- * destination and mask above the elements it has; the guest restarts it
- * with what remains. The backend gathers into a temporary and leaves the
+ * before the faulting one, clearing the mask element of each element before
+ * it, enabled or not, widened the sign of each mask element from it on to
+ * the whole element, and zeroed the destination and mask above the elements
+ * it has; the guest restarts it with what remains. The backend gathers into a temporary and leaves the
  * state as it was before the instruction, so the host redoes the elements
  * in order up to the first that faults, as the gadget engine does, with the
  * backend's address arithmetic: segment base plus base plus displacement plus
@@ -1194,9 +1195,14 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 	unsigned shift = 0;
 	while ((1U << shift) < operand.scale)
 		++shift;
+	const auto enabled = [&](std::size_t element) {
+		return (std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) != 0;
+	};
 	for (std::size_t element = 0; element < count; ++element) {
-		if ((std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) == 0)
+		if (!enabled(element)) {
+			std::memset(mask.data() + element * data, 0, data);
 			continue;
+		}
 		std::int64_t offset{};
 		if (index == 4) {
 			std::int32_t value{};
@@ -1210,6 +1216,8 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 			address = static_cast<std::uint32_t>(address);
 		std::array<std::byte, 8> value{};
 		if (!memory.read(address, std::span<std::byte>{value.data(), data})) {
+			for (std::size_t rest = element; rest < count; ++rest)
+				std::memset(mask.data() + rest * data, enabled(rest) ? 0xff : 0, data);
 			const auto gathered = static_cast<std::ptrdiff_t>(count * data);
 			std::fill(destination.begin() + gathered, destination.end(), std::byte{});
 			std::fill(mask.begin() + gathered, mask.end(), std::byte{});
