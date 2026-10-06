@@ -229,6 +229,39 @@ void denormal_operand(softfloat_state &state,
 	return from_soft(f128_to_extF80(&state, value));
 }
 
+/* Which transcendental results are inexact, though a result's 128-bit
+ * value may round to the operand itself or to 1, as for a tiny operand. */
+enum class Inexact : std::uint8_t {
+	never,
+	always,
+	/* An arctangent: any but a zero, an infinity or a NaN. */
+	unless_zero,
+};
+
+/* Rounds a transcendental result to 80 bits, raising precision for it as
+ * `inexact` says, and underflow beside it for a denormal result, as x86
+ * does, then commits the exceptions. */
+[[nodiscard]] X87Register inexact_result(CpuState &cpu,
+	softfloat_state &state, float128_t value, Inexact inexact) noexcept
+{
+	const auto before = state.exceptionFlags;
+	state.exceptionFlags = static_cast<std::uint8_t>(
+		state.exceptionFlags & ~softfloat_flag_inexact);
+	const auto converted = from_float128(state, value);
+	const bool raise = inexact == Inexact::always ||
+		(inexact == Inexact::unless_zero && !is_zero(converted) &&
+			!is_nan(converted) && !is_infinity(converted));
+	if (raise && (state.exceptionFlags & softfloat_flag_inexact) == 0) {
+		state.exceptionFlags |= softfloat_flag_inexact;
+		if ((converted.sign_exponent & 0x7fffU) == 0 &&
+			converted.significand != 0)
+			state.exceptionFlags |= softfloat_flag_underflow;
+	}
+	state.exceptionFlags |= before;
+	commit_exceptions(cpu, state);
+	return converted;
+}
+
 enum class TranscendentalOperation : std::uint8_t {
 	sine,
 	cosine,
@@ -274,9 +307,10 @@ enum class TranscendentalOperation : std::uint8_t {
 		result = FEXCore::cephes_128bit::tanl(input);
 		break;
 	}
-	const auto converted = from_float128(state, result);
-	commit_exceptions(cpu, state);
-	return converted;
+	/* Every function of a finite nonzero operand is inexact. */
+	return inexact_result(cpu, state, result,
+		is_zero(value) || is_nan(value) ? Inexact::never :
+			Inexact::always);
 }
 
 [[nodiscard]] X87Register f2xm1(CpuState &cpu,
@@ -340,9 +374,7 @@ enum class TranscendentalOperation : std::uint8_t {
 	denormal_operand(state, x);
 	const auto result = FEXCore::cephes_128bit::atan2l(
 		to_float128(state, y), to_float128(state, x));
-	const auto converted = from_float128(state, result);
-	commit_exceptions(cpu, state);
-	return converted;
+	return inexact_result(cpu, state, result, Inexact::unless_zero);
 }
 
 /* FSCALE adds ST(1), truncated, to ST(0)'s exponent and rounds once

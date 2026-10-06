@@ -88,6 +88,14 @@ gadget x87_tangent
 Lx86_x87_tangent_unreduced:
 	retire_and_next
 
+Lx86_x87_two_result_overflow:
+	mov x9, #0xc000000000000000
+	mov w10, #0xffff
+	mov w13, #0
+	x87_store_stack w13, x9, w10
+	x87_push x9, w10
+	retire_and_next
+
 
 gadget x87_extract
 	x87_push_fault_check

@@ -359,7 +359,12 @@ x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
 the control word's rounding mode and precision. As on x86, C1 after a result
 says whether rounding increased its magnitude -- FPTAN reports the tangent's
 rounding and FSINCOS the cosine's -- and an invalid operation clears it.
-FIST, FISTP and FISTTP raise precision for a value they round. FPREM and
+FIST, FISTP and FISTTP raise precision for a value they round, and a sine,
+cosine, tangent or arctangent of a finite nonzero operand raises precision
+even where its 128-bit value rounds to the operand or to 1, and underflow for
+a denormal result. FPTAN, FSINCOS and FXTRACT check the register of their
+second result first: on a full stack they compute nothing and leave the QNaN
+indefinite in both registers, raising only the stack overflow. FPREM and
 FPREM1 divide the significands as integers (SoftFloat's `extF80_x87Rem`,
 which the JIT shares): operands whose exponents differ by 64 or more get a
 partial remainder and C2, as on an Intel host, and a complete remainder sets

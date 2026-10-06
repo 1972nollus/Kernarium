@@ -312,7 +312,7 @@ index 7b89324bf0a71957e5d39570920677a55a890c8b..55279aad259a499235dca46568a862f9
    bool EmbedderFPChecksExceptions() const;
    fextl::vector<IR::IROp_EmbedderFPCheck*> EmbedderFPInstructionChecks;
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index d7f066d03288a5f83e3c047353f9f67a71f46b82..0c010f72902c50298e061d1f9030aacc25d4ca4b 100644
+index c695ca757993cf65911a2a6fb5ff7a6b41c996a5..494f7fb021eeefbb58cdc92c63820fa35c3d85bb 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 @@ -83,6 +83,7 @@ void OpDispatchBuilder::FBLD(OpcodeArgs) {
@@ -528,7 +528,7 @@ index 51a9b26490bd1768e047e23131626557ff21a204..b8624c0c8bb7a64e12d3a0daec7e16e6
  namespace Validation {
    fextl::unique_ptr<Pass> CreateIRValidation();
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
-index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a9de9af91 100644
+index 03b4d967d84e1ebcdae02b288fe8f0b5763406cd..0c6af7f7d742aea6974b2efe1802e96dc94ac3ff 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 @@ -151,8 +151,9 @@ private:
@@ -562,7 +562,7 @@ index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a
        Store80BitToMem(Op, StackNode, AddrNode, Offset, Align, OffsetType, OffsetScale);
        break;
      }
-@@ -371,6 +380,18 @@ private:
+@@ -376,6 +385,18 @@ private:
    // one: the slow path is taken throughout and addresses the stack slots as
    // CPU state.
    bool Embedded = false;
@@ -581,7 +581,7 @@ index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a
  
    // Keeping IREmitter not to pass arguments around
    IREmitter* IREmit = nullptr;
-@@ -378,6 +399,34 @@ private:
+@@ -383,6 +404,34 @@ private:
  
  inline const X87StackOptimization::StackMemberInfo X87StackOptimization::StackMemberInfo::Invalid {nullptr};
  
@@ -616,7 +616,7 @@ index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a
  inline void X87StackOptimization::InvalidateCaches() {
    InvalidateCachedRegs();
    ConstantPool.fill(nullptr);
-@@ -528,6 +577,11 @@ inline Ref X87StackOptimization::X87StackFault(Ref Value, Ref Fault, bool Overfl
+@@ -533,6 +582,11 @@ inline Ref X87StackOptimization::X87StackFault(Ref Value, Ref Fault, bool Overfl
    Ref Unmasked = IREmit->_Andn(OpSize::i32Bit, Fault, FCW);
    X87FlagOr(FEXCore::X86State::X87FLAG_ES_LOC, Unmasked);
    X87FlagOr(FEXCore::X86State::X87FLAG_B_LOC, Unmasked);
@@ -628,7 +628,7 @@ index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a
  
    Ref Indefinite = IREmit->_VCastFromGPR(OpSize::i128Bit, OpSize::i64Bit, IREmit->_Constant(0xC000'0000'0000'0000ULL));
    Indefinite = IREmit->_VInsGPR(OpSize::i128Bit, OpSize::i64Bit, 1, Indefinite, IREmit->_Constant(0xFFFF));
-@@ -1296,6 +1350,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1328,6 +1382,12 @@ void X87StackOptimization::Run(IREmitter* Emit) {
        default: LOGMAN_THROW_A_FMT(false, "IROp was expected to be lowered");
        }
        if (Embedded) {
@@ -641,7 +641,7 @@ index f9a276c2984687fd15d90d1f934c32ad57b1d3e2..5eeae64f4eb071122bd75508e0b2ad3a
          // The embedding host leaves a block in the middle, at a system call,
          // a fault or a TLB miss it cannot satisfy, so commit every pending
          // stack write before the next operation can exit.
-@@ -1314,9 +1374,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+@@ -1346,9 +1406,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
    }
  }
  

@@ -347,7 +347,7 @@ index 43dd18ef4beeac25e1a79099504cf6b66fc340ce..8403bd88d1054d5673ec70724fae536e
      // The whole area, through the AVX state, is read before any of it is
      // loaded.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 0c010f72902c50298e061d1f9030aacc25d4ca4b..c62e159780bbd697f616c51a7fa21e8fb1d9027f 100644
+index 494f7fb021eeefbb58cdc92c63820fa35c3d85bb..386555c8c741dc4053bee43092b20406e46ab0f7 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 @@ -386,6 +386,8 @@ void OpDispatchBuilder::X87FNSTENV(OpcodeArgs) {

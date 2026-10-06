@@ -1,5 +1,5 @@
 {
-  "cases": 74407,
+  "cases": 74411,
   "excluded_records": 113,
   "fex_records": 2148,
   "inputs": {
@@ -13,15 +13,15 @@
     },
     "repository_oracle": {
       "cpuid_signature": "0x000c06f2",
-      "response_sha256": "d633b7083f6453a1ef0346f25defe230f7216c0fc25d2dc476d4011a7a46a469",
+      "response_sha256": "c896c5ea31acfe5913d46bfb03c93eac6f88c8b4084112d490dc44da210703be",
       "vendor": "GenuineIntel"
     },
     "sdm": "325462-092, June 2026"
   },
   "k_records": 188,
-  "pack_sha256": "d57f474f2752cc2310c3c04dff8738013c376217627edac4d0f416938bfe6e1e",
+  "pack_sha256": "e11a2ee91565ce8f17252276b2eb78a345f212bf010752ae2e050986b040ad72",
   "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, and ADX",
-  "records": 2370,
-  "repository_records": 34,
+  "records": 2374,
+  "repository_records": 38,
   "schema": 1
 }

@@ -20,7 +20,7 @@ the native host's known failures.
  1 file changed, 24 insertions(+), 1 deletion(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 85ea4f8f0848259dc99aca185f507916f00f096f..d7f066d03288a5f83e3c047353f9f67a71f46b82 100644
+index 41d2f4fdf5a20ba996104f306eb49e931311807f..c695ca757993cf65911a2a6fb5ff7a6b41c996a5 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 @@ -330,7 +330,30 @@ Ref OpDispatchBuilder::GetX87FTW_Helper() {

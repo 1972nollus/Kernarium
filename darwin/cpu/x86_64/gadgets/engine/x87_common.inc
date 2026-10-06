@@ -141,8 +141,10 @@ Lx86_x87_push_slot_ready\@:
 	x87_store_physical w14, \significand, \exponent
 .endm
 
-/* FPTAN, FSINCOS and FXTRACT store ST0 before they push, so while the
- * gadgets check x87 exceptions they test for the stack overflow first. */
+/* FPTAN, FSINCOS and FXTRACT check the register of their second result
+ * first: on a full stack x86 computes nothing, and masked, leaves the QNaN
+ * indefinite in ST0 and pushes another, raising only the stack overflow.
+ * While the gadgets check x87 exceptions an unmasked one leaves here. */
 .macro x87_push_fault_check
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
@@ -154,6 +156,7 @@ Lx86_x87_push_slot_ready\@:
 	cmp w16, #Lx86_x87_tag_empty
 	b.eq Lx86_x87_push_fault_none\@
 	x87_stack_fault_check
+	b Lx86_x87_two_result_overflow
 Lx86_x87_push_fault_none\@:
 .endm
 
