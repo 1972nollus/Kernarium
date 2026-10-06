@@ -412,10 +412,10 @@ index 7c9695b9355ece6bdeed3b6e64c5caefede2d07a..8f933869e2aea0948b3b19dd161a9090
  };
  
 diff --git a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
-index 24730dc28766e5687dafb1a6efc30e04046a295e..edd12a3b51650e01930341e08fb7bda1101efea1 100644
+index 40ee4587f7c917a8cb186815dcc528fd17cc5418..1903f541ad55092ddd8e8ce3ba8cc2581bf8e378 100644
 --- a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
 +++ b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
-@@ -92,10 +92,10 @@ constexpr std::array<DispatchTableEntry, 140> X87F64OpTable = {{
+@@ -92,10 +92,10 @@ constexpr std::array<DispatchTableEntry, 143> X87F64OpTable = {{
    {OPD(0xD9, 0xF2), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80PTANSTACK, true>},
    {OPD(0xD9, 0xF3), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80ATANSTACK, false>},
    {OPD(0xD9, 0xF4), 1, &OpDispatchBuilder::X87FXTRACTF64},
@@ -428,7 +428,7 @@ index 24730dc28766e5687dafb1a6efc30e04046a295e..edd12a3b51650e01930341e08fb7bda1
    {OPD(0xD9, 0xF9), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87FYL2X, true>},
    {OPD(0xD9, 0xFA), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80SQRTSTACK, false>},
    {OPD(0xD9, 0xFB), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80SINCOSSTACK, true>},
-@@ -362,10 +362,10 @@ constexpr std::array<DispatchTableEntry, 140> X87F80OpTable = {{
+@@ -362,10 +362,10 @@ constexpr std::array<DispatchTableEntry, 143> X87F80OpTable = {{
    {OPD(0xD9, 0xF2), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80PTANSTACK, true>},
    {OPD(0xD9, 0xF3), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87OpHelper, OP_F80ATANSTACK, false>},
    {OPD(0xD9, 0xF4), 1, &OpDispatchBuilder::X87FXTRACT},

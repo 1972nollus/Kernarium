@@ -523,7 +523,7 @@ index 3db968181d470bb28e9e6fe911f9dbad406d1e05..0ae6f62942afb963100d0323419919d0
    // The instructions the unit runs from its entry to its end, which its entry
    // charges the budget for, and their offsets from the entry in order.
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index c2787b0515d19c1180e2130347322a5bb2babc5a..7b89324bf0a71957e5d39570920677a55a890c8b 100644
+index 75559e4e9c740725b63c7d5a2d2c63e84b7178fa..006d7e77a7178f3c4e11d9d748cf18bb8067f0f5 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 @@ -320,6 +320,10 @@ public:
@@ -537,7 +537,7 @@ index c2787b0515d19c1180e2130347322a5bb2babc5a..7b89324bf0a71957e5d39570920677a5
    void ResetHandledLock() {
      HandledLock = false;
    }
-@@ -1477,6 +1481,15 @@ private:
+@@ -1481,6 +1485,15 @@ private:
    Ref EmbedderFPArith(IROps IROp, IR::OpSize ElementSize, IR::OpSize Size, Ref Result, Ref Source1, Ref Source2);
    // An FMA's EMBEDDER_FP_FMA_* flags for its host IR op.
    static uint32_t EmbedderFMAFlags(IROps IROp);

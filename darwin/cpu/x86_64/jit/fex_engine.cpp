@@ -1099,16 +1099,20 @@ void load_state(Space &space, const CpuState &cpu) noexcept
 	state.es_cached = state.cs_cached = state.ss_cached = state.ds_cached = 0;
 	state.fs_cached = cpu.fs_base;
 	state.gs_cached = cpu.gs_base;
-	/* The bases a compat32 FS or GS load finds: the kernel's TLS
-	 * descriptors, at the GDT entries it numbered, as the gadget engine
-	 * reads them. */
+	/* The bases a compat32 FS or GS load finds, and the entries LSL reads
+	 * as flat: the kernel's TLS descriptors, at the GDT entries it
+	 * numbered, as the gadget engine reads them. */
 	auto &bases = thread->CurrentFrame->Embedder.SegmentBases;
 	std::fill(std::begin(bases), std::end(bases), 0U);
+	std::uint32_t present{};
 	for (std::size_t index = 0; index < cpu.compat_tls_bases.size(); ++index) {
 		const auto entry = static_cast<std::size_t>(cpu.compat_tls_first) + index;
-		if (((cpu.compat_tls_present >> index) & 1U) != 0 && entry < std::size(bases))
+		if (((cpu.compat_tls_present >> index) & 1U) != 0 && entry < std::size(bases)) {
 			bases[entry] = cpu.compat_tls_bases[index];
+			present |= 1U << entry;
+		}
 	}
+	thread->CurrentFrame->Embedder.SegmentPresent = present;
 }
 
 void save_state(Space &space, CpuState &cpu) noexcept

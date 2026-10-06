@@ -84,10 +84,10 @@ index 324f6c07af7bb42cf32f417d27cadeb268c7d0e2..7aecfea40642aa1d5d848fbe6e2401ca
  
    bool ExitOnHLT = false;
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index e1a1f2313c9a14c77867bf298cac8169ff16c2ab..73d3118859f297027a5b1c3613aefb05be827030 100644
+index 0aa6a20c8c4de08feca8c8a633eeb279aebdf352..82e1725194a9ef7560046f53a02990491f333630 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1584,9 +1584,12 @@ private:
+@@ -1588,9 +1588,12 @@ private:
      return !(Load && (Operand.IsLiteral() || Operand.IsLiteralRelocation())) && !Operand.IsGPR();
    }
  

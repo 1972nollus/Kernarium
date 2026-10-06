@@ -1219,6 +1219,9 @@ private:
 		std::uint8_t modrm{};
 		if (!read(modrm))
 			return false;
+		/* MOVQ2DQ and MOVDQ2Q move between registers only. */
+		if (prefix != 1 && (modrm >> 6U) != 3)
+			return false;
 		instruction.operation = Operation::vector_move;
 		instruction.vex = prefixes_.vex;
 		instruction.vector_opcode = 0xd6;
@@ -2639,8 +2642,28 @@ private:
 			return decode_0f01(instruction);
 		case 0x03:
 			return decode_segment_limit(instruction);
-		case 0x06: case 0x07: case 0x08: case 0x09:
-		case 0x20: case 0x21: case 0x22: case 0x23:
+		case 0x07:
+			/* SYSRET is undefined outside 64-bit mode. */
+			if (prefixes_.mode == ExecutionMode::compat32)
+				return false;
+			instruction.operation = Operation::privileged;
+			return true;
+		case 0x20: case 0x22: {
+			/* A move with CR1, CR5 to CR7 or CR9 to CR15 is undefined,
+			 * which x86 checks before the privilege. */
+			std::uint8_t modrm{};
+			if (!read(modrm))
+				return false;
+			const auto control = ((modrm >> 3U) & 7U) |
+				((prefixes_.rex & 4U) != 0 ? 8U : 0U);
+			if (control != 0 && control != 2 && control != 3 &&
+				control != 4 && control != 8)
+				return false;
+			instruction.operation = Operation::privileged;
+			return true;
+		}
+		case 0x06: case 0x08: case 0x09:
+		case 0x21: case 0x23:
 		case 0x30: case 0x32: case 0x33: case 0x35:
 			instruction.operation = Operation::privileged;
 			return true;

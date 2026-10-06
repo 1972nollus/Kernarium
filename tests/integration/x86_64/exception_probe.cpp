@@ -1117,9 +1117,24 @@ __asm__(".text\n"
 	"probe_ud2_end:\n"
 	"	ret\n");
 
-/* Encodings that decode alike in both modes and that hardware or the
- * product leaves undefined, and SYSEXIT and the system instructions that
- * user mode may not run. */
+/* Encodings that hardware or the product leaves undefined, and SYSEXIT
+ * and the system instructions that user mode may not run. The first lists
+ * decode alike in both modes; SYSRET and SWAPGS are undefined outside
+ * 64-bit mode, and a REX prefix names CR8, which user mode may not move,
+ * and CR9 to CR15, which are undefined. */
+#if defined(__x86_64__)
+#define UNDEFINED_MODE_CASES(X)                                              \
+	X(mov_from_cr9, "0x44, 0x0f, 0x20, 0xc8")
+#define PRIVILEGED_MODE_CASES(X)                                             \
+	X(sysret, "0x0f, 0x07")                                              \
+	X(swapgs, "0x0f, 0x01, 0xf8")                                        \
+	X(mov_to_cr8, "0x44, 0x0f, 0x22, 0xc0")
+#else
+#define UNDEFINED_MODE_CASES(X)                                              \
+	X(sysret, "0x0f, 0x07")                                              \
+	X(swapgs, "0x0f, 0x01, 0xf8")
+#define PRIVILEGED_MODE_CASES(X)
+#endif
 #define PROBE_BYTES(name, bytes)                                             \
 	".global probe_" #name "\n"                                          \
 	"probe_" #name ":\n"                                                 \
@@ -1143,7 +1158,18 @@ __asm__(".text\n"
 	X(x87_d9_1, "0xd9, 0x08")                                            \
 	X(x87_db_4, "0xdb, 0x20")                                            \
 	X(x87_dd_5, "0xdd, 0x28")                                            \
-	X(x87_db_f8, "0xdb, 0xf8")
+	X(x87_db_f8, "0xdb, 0xf8")                                           \
+	X(xgetbv_66, "0x66, 0x0f, 0x01, 0xd0")                               \
+	X(xgetbv_f3, "0xf3, 0x0f, 0x01, 0xd0")                               \
+	X(xsetbv_66, "0x66, 0x0f, 0x01, 0xd1")                               \
+	X(mov_from_cr1, "0x0f, 0x20, 0xc8")                                  \
+	X(mov_to_cr5, "0x0f, 0x22, 0xe8")                                    \
+	X(mov_to_cr6, "0x0f, 0x22, 0xf0")                                    \
+	X(mov_from_cr7, "0x0f, 0x20, 0xf8")                                  \
+	X(movq2dq_memory, "0xf3, 0x0f, 0xd6, 0x00")                          \
+	X(movdq2q_memory, "0xf2, 0x0f, 0xd6, 0x00")                          \
+	X(clflushopt_register, "0x66, 0x0f, 0xae, 0xf8")                     \
+	UNDEFINED_MODE_CASES(X)
 /* Each takes an unmapped address in AX, which they raise #GP before
  * reading. */
 #define PRIVILEGED_CASES(X)                                                  \
@@ -1153,7 +1179,13 @@ __asm__(".text\n"
 	X(lmsw_memory, "0x0f, 0x01, 0x30")                                   \
 	X(invlpg, "0x0f, 0x01, 0x38")                                        \
 	X(mov_to_cr0, "0x0f, 0x22, 0xc0")                                    \
-	X(mov_from_cr0, "0x0f, 0x20, 0xc0")
+	X(mov_from_cr0, "0x0f, 0x20, 0xc0")                                  \
+	X(mov_to_cr4, "0x0f, 0x22, 0xe0")                                    \
+	X(lldt_register, "0x0f, 0x00, 0xd0")                                 \
+	X(lldt_memory, "0x0f, 0x00, 0x10")                                   \
+	X(lgdt, "0x0f, 0x01, 0x10")                                          \
+	X(xsetbv, "0x0f, 0x01, 0xd1")                                        \
+	PRIVILEGED_MODE_CASES(X)
 #define EMIT_UNDEFINED(name, bytes) PROBE_BYTES(name, bytes)
 #define EMIT_PRIVILEGED(name, bytes)                                         \
 	".global probe_" #name "\n"                                          \
@@ -1758,11 +1790,15 @@ extern "C" char probe_mov_cs_end[];
 
 void mov_cs_unmapped() { probe_mov_cs(0); }
 
-/* Register forms of memory-only instructions, LOCK on an instruction that
- * does not write memory, 0x82 in either mode, the 0F 3E and 0F 3F escapes,
- * EMMS with a mandatory prefix and the undefined x87 forms raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
- * and the system instructions LTR, LIDT, LMSW, INVLPG and MOV with CR0
- * raise #GP(0) outside ring 0, before they read memory. */
+/* Register forms of memory-only instructions, memory forms of
+ * register-only ones, LOCK on an instruction that does not write memory,
+ * 0x82 in either mode, the 0F 3E and 0F 3F escapes, EMMS, XGETBV and
+ * XSETBV with a mandatory prefix, the undefined x87 forms and a move with
+ * an undefined control register raise #UD; so does MOV to CS, before it
+ * reads its source. SYSEXIT and the system instructions LTR, LLDT, LGDT,
+ * LIDT, LMSW, INVLPG, XSETBV and MOV with a control register raise #GP(0)
+ * outside ring 0, before they read memory, and so do SYSRET and SWAPGS in
+ * 64-bit mode. */
 bool undefined_faults()
 {
 	struct Case {

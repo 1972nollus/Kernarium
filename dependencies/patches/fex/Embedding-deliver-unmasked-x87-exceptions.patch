@@ -291,10 +291,10 @@ index 0ae6f62942afb963100d0323419919d04226d463..f7820b0e4545384e3e20b9b241fcf4cc
    // charges the budget for, and their offsets from the entry in order.
    uint32_t EmbedderBlockInstructions {};
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 7b89324bf0a71957e5d39570920677a55a890c8b..55279aad259a499235dca46568a862f9476b37dc 100644
+index 006d7e77a7178f3c4e11d9d748cf18bb8067f0f5..e4afdfeb95effa1334fdd57069d896051cac4be3 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1487,6 +1487,16 @@ private:
+@@ -1491,6 +1491,16 @@ private:
    // reads them.
    void EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSize ElementSize, uint32_t Lanes, Ref Source1, Ref Source2 = nullptr,
                              uint32_t Imm = 0, uint32_t Flags = 0);

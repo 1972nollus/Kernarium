@@ -234,13 +234,15 @@ and a tracer therefore see what native Linux shows.
 ## System instructions
 
 User code sees the system instructions as it does under Linux at CPL 3 with
-UMIP. LTR, LLDT, LGDT, LIDT, LMSW, INVLPG, XSETBV, SWAPGS and MOV with a
-control register raise #GP before they touch memory. SGDT, SIDT and SMSW store
+UMIP. LTR, LLDT, LGDT, LIDT, LMSW, INVLPG, XSETBV, SWAPGS, SYSRET and MOV
+with a control register raise #GP before they touch memory; SWAPGS and SYSRET
+are undefined in compatibility mode, and so is a move with CR1, CR5 to CR7 or
+CR9 to CR15, before the privilege check. SGDT, SIDT and SMSW store
 the values Linux's UMIP emulation reports; SGDT and SIDT store six bytes in
 compatibility mode. LSL reads the flat user code and data entries, the per-CPU
 entry, whose limit is the processor number RDPID reports, and a present TLS
-entry, and reports every other selector unusable. SLDT, STR, LAR, VERR and
-VERW remain undefined, as on the JIT.
+entry, and reports every other selector unusable, as the JIT does. SLDT,
+STR, LAR, VERR and VERW remain undefined, as on the JIT.
 
 ## Software TLB
 

@@ -266,9 +266,12 @@ An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
 undefined set follows hardware, except that compat32 code raises `#UD` for
 0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
-as it does on the gadget engine. Other encodings the gadget engine refuses
-although hardware runs them, such as LSL or a SETcc whose ModRM reg field is
-not 0, the JIT runs.
+as it does on the gadget engine. The system instructions follow the gadget
+engine's [model](../gadgets/README.md#system-instructions) of Linux at CPL 3
+with UMIP: the privileged ones raise `#GP` before they touch memory, SIDT
+stores Linux's UMIP values, and LSL reads its selector, from memory too,
+and the flat user entries, the per-CPU entry and a TLS entry the host
+installed (`Embedder.SegmentPresent`).
 
 ## Memory order
 

@@ -13,10 +13,10 @@ Embedded, each now checks its address first and breaks with that fault.
  2 files changed, 33 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 73d3118859f297027a5b1c3613aefb05be827030..e481889592d4f2590448f406bbab8ac74a18756d 100644
+index 82e1725194a9ef7560046f53a02990491f333630..86ac1bb6079c4fba2fdff276db3ba1dc497f4873 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1489,6 +1489,10 @@ private:
+@@ -1493,6 +1493,10 @@ private:
                              uint32_t Imm = 0, uint32_t Flags = 0);
    // Embedded, while RFLAGS.AC is set: an EmbedderAlignmentCheck op.
    void EmbedderAlignmentCheck(Ref Addr, uint32_t Alignment, bool Exempt);

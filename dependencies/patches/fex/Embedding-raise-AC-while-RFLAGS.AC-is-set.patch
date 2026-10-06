@@ -208,7 +208,7 @@ index fd15aa6db5245409e0673a1a71d868b8142647d9..7c3d78ae8d5bf8b921326c749eb6ce12
    }
  
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 0ea6348574993a3438b16619dc7950f7c35aa13e..3a0d7bb16f962110414b605d4d33864842e7b2ee 100644
+index b056e20dc1dde5b82f699bd7a58a4abfc0b873e6..e6c772995a04584e0a15bc5cf4eabc61809f1999 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -223,6 +223,8 @@ void OpDispatchBuilder::IRETOp(OpcodeArgs) {
@@ -260,7 +260,7 @@ index 0ea6348574993a3438b16619dc7950f7c35aa13e..3a0d7bb16f962110414b605d4d338648
    AddressMode SrcCS = {.Base = Src, .Offset = static_cast<int64_t>(IR::OpSizeToSize(SrcSize)), .AddrSize = OpSize::i64Bit};
    auto RIPOffset = _LoadMemGPRAutoTSO(SrcSize, Src, OpSize::i8Bit);
    auto NewSegmentCS = _LoadMemGPRAutoTSO(OpSize::i16Bit, SrcCS, OpSize::i8Bit);
-@@ -2658,6 +2672,9 @@ void OpDispatchBuilder::BTOp(OpcodeArgs, uint32_t SrcIndex, BTAction Action) {
+@@ -2664,6 +2678,9 @@ void OpDispatchBuilder::BTOp(OpcodeArgs, uint32_t SrcIndex, BTAction Action) {
    } else {
      // Load the address to the memory location
      Ref Dest = MakeSegmentAddress(Op, Op->Dest);
@@ -270,7 +270,7 @@ index 0ea6348574993a3438b16619dc7950f7c35aa13e..3a0d7bb16f962110414b605d4d338648
      // Get the bit selection from the src
      auto BitSelect = Src.Bfe(0, 3);
  
-@@ -3947,6 +3964,12 @@ void OpDispatchBuilder::POPFOp(OpcodeArgs) {
+@@ -3953,6 +3970,12 @@ void OpDispatchBuilder::POPFOp(OpcodeArgs) {
    // loads only the low half.
    const uint32_t Loaded = Size == OpSize::i16Bit ? (UserLoadableFlags & 0xffffU) : UserLoadableFlags;
    SetPackedRFLAG(false, Src, Loaded);
@@ -284,10 +284,10 @@ index 0ea6348574993a3438b16619dc7950f7c35aa13e..3a0d7bb16f962110414b605d4d338648
    auto NewRIP = GetRelocatedPC(Op);
    ExitFunction(NewRIP, BranchHint::CheckTF);
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 55279aad259a499235dca46568a862f9476b37dc..e1a1f2313c9a14c77867bf298cac8169ff16c2ab 100644
+index e4afdfeb95effa1334fdd57069d896051cac4be3..0aa6a20c8c4de08feca8c8a633eeb279aebdf352 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1487,6 +1487,8 @@ private:
+@@ -1491,6 +1491,8 @@ private:
    // reads them.
    void EmbedderFPExceptions(Core::EmbedderFPKind Kind, IR::OpSize ElementSize, uint32_t Lanes, Ref Source1, Ref Source2 = nullptr,
                              uint32_t Imm = 0, uint32_t Flags = 0);
