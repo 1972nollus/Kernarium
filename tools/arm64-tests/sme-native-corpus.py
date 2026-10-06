@@ -92,6 +92,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import csv
+import dataclasses
 import functools
 import hashlib
 import importlib.util
@@ -125,6 +126,7 @@ REQUEST_MAGIC = b"UMLSMEQ\0"
 RESPONSE_MAGIC = b"UMLSMER\0"
 WIRE_VERSION = 1
 SVC = 0xD400_0001
+SENTINEL = 0xD420_00E0  # BRK #7: the oracle runs each SVC as this
 SM = corpus.SVCR_SM
 ZA = corpus.SVCR_ZA
 REGION_READABLE = 1
@@ -1063,6 +1065,33 @@ def case_skeleton(draft: Draft, case: WireCase, program: int) -> dict:
     return item
 
 
+def sentinel_reads(case: WireCase, final: Dense) -> Dense:
+    """The oracle runs each SVC of a program as BRK #7, so a literal load
+    that reads an SVC word of its own program reads BRK #7's encoding
+    there; an engine, and Linux, read the SVC. Put the SVC back in the
+    loaded register."""
+    word = case.words[case.entry // 4]
+    if not literal_load(word):
+        return final
+    size = 4 << (word >> 30)
+    offset = (word >> 5 & 0x7FFFF) << 2
+    if offset & 1 << 20:
+        offset -= 1 << 21
+    rt = word & 31
+    streaming = bool(final.svcr & SM)
+    data = bytearray(final.z[rt] if streaming else final.v[rt])
+    for slot in range(size // 4):
+        index = (case.entry + offset) // 4 + slot
+        if 0 <= index < len(case.words) and case.words[index] == SVC and \
+                data[slot * 4:slot * 4 + 4] == SENTINEL.to_bytes(4, "little"):
+            data[slot * 4:slot * 4 + 4] = SVC.to_bytes(4, "little")
+    registers = list(final.z if streaming else final.v)
+    registers[rt] = bytes(data)
+    if streaming:
+        return dataclasses.replace(final, z=registers)
+    return dataclasses.replace(final, v=registers)
+
+
 def record_case(draft: Draft, case: WireCase, result: WireResult,
                 program: int) -> dict:
     if result.event == "fatal" or result.event.startswith("event-"):
@@ -1081,7 +1110,7 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     if completed and case.words[result.pc_offset // 4] != SVC:
         raise Finding(f"{draft.name}: completed at a word that is not SVC")
     initial = Dense.base(SVL).apply(case.state)
-    final = initial.apply(result.state)
+    final = sentinel_reads(case, initial.apply(result.state))
     item = case_skeleton(draft, case, program)
     item["event"] = result.event
     # The oracle stops at the SVC's sentinel; a completed system call

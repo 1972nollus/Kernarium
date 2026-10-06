@@ -104,6 +104,17 @@ def check(native, records: list[dict], meta: dict) -> str:
                     words[retired - 1] != native.SVC:
                 raise SystemExit(f"{draft.name}: completes with the PC "
                                  "not after an SVC")
+            # A literal load of the program's own words loads them, SVCs
+            # included, not the oracle's sentinel in their place.
+            if native.literal_load(words[0]) and \
+                    case["event"] == "system-call":
+                size = 4 << (words[0] >> 30)
+                loaded = bytes.fromhex(case["expected"].get(
+                    f"z{words[0] & 31}", ""))[:size]
+                if loaded != b"".join(word.to_bytes(4, "little")
+                                      for word in words[:size // 4]):
+                    raise SystemExit(f"{draft.name}: the literal load "
+                                     "does not load its program")
             total += 1
     return (f"native SME records: {total} cases in {len(records)} records "
             f"re-derived from {native.SITE} at SVL {native.SVL}")
