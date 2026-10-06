@@ -1805,6 +1805,91 @@ bool undefined_faults()
 	return ok;
 }
 
+/* Each takes its operand's address in AX. The first group requires its
+ * image aligned to 16 bytes, or for XSAVE and XRSTOR 64, and raises #GP(0)
+ * when it is not; the second accepts any alignment. */
+#define ALIGNMENT_FAULT_CASES(X)                                             \
+	X(fxsave, "0x0f, 0xae, 0x00")                                        \
+	X(fxrstor, "0x0f, 0xae, 0x08")                                       \
+	X(xsave, "0x0f, 0xae, 0x20")                                         \
+	X(xrstor, "0x0f, 0xae, 0x28")
+#define ALIGNMENT_FREE_CASES(X)                                              \
+	X(movups_load, "0x0f, 0x10, 0x00")                                   \
+	X(lddqu, "0xf2, 0x0f, 0xf0, 0x00")                                   \
+	X(vaddps, "0xc5, 0xf8, 0x58, 0x00")
+#define EMIT_ALIGNMENT(name, bytes)                                          \
+	".global probe_align_" #name "\n"                                    \
+	"probe_align_" #name ":\n"                                           \
+	PROBE_ARG_AX                                                         \
+	".global probe_align_" #name "_insn\n"                               \
+	"probe_align_" #name "_insn:\n"                                      \
+	"	.byte " bytes "\n"                                           \
+	".global probe_align_" #name "_end\n"                                \
+	"probe_align_" #name "_end:\n"                                       \
+	"	ret\n"
+__asm__(".text\n" ALIGNMENT_FAULT_CASES(EMIT_ALIGNMENT)
+	ALIGNMENT_FREE_CASES(EMIT_ALIGNMENT));
+#undef EMIT_ALIGNMENT
+#define DECLARE_ALIGNMENT(name, bytes)                                       \
+	extern "C" void probe_align_##name(word address);                   \
+	extern "C" char probe_align_##name##_insn[];                         \
+	extern "C" char probe_align_##name##_end[];
+ALIGNMENT_FAULT_CASES(DECLARE_ALIGNMENT)
+ALIGNMENT_FREE_CASES(DECLARE_ALIGNMENT)
+#undef DECLARE_ALIGNMENT
+
+/* Zeroed but for FXRSTOR's and XRSTOR's MXCSR, so an operand at any offset
+ * restores a valid image. */
+alignas(64) unsigned char misaligned_buffer[1024];
+word alignment_address;
+#define ALIGNMENT_WORK(name, bytes)                                          \
+	void align_##name() { probe_align_##name(alignment_address); }
+ALIGNMENT_FAULT_CASES(ALIGNMENT_WORK)
+ALIGNMENT_FREE_CASES(ALIGNMENT_WORK)
+#undef ALIGNMENT_WORK
+
+/* FXSAVE, FXRSTOR, XSAVE and XRSTOR raise #GP(0) for a misaligned image
+ * before they access it; XSAVE and XRSTOR require 64 bytes, so 16 is
+ * misaligned for them. Unaligned SSE moves and VEX arithmetic accept any
+ * operand. */
+bool alignment_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define ALIGNMENT_ENTRY(name, bytes)                                         \
+	{#name, align_##name, probe_align_##name##_insn, probe_align_##name##_end},
+	const Case faulting[] = {ALIGNMENT_FAULT_CASES(ALIGNMENT_ENTRY)};
+	const Case unaligned[] = {ALIGNMENT_FREE_CASES(ALIGNMENT_ENTRY)};
+#undef ALIGNMENT_ENTRY
+	for (unsigned offset = 0; offset < sizeof(misaligned_buffer); ++offset)
+		misaligned_buffer[offset] = 0;
+	for (unsigned base = 0; base < 128; base += 8) {
+		misaligned_buffer[base + 24] = 0x80;
+		misaligned_buffer[base + 25] = 0x1f;
+	}
+	bool ok = install_fault_handlers();
+	const word buffer = reinterpret_cast<word>(misaligned_buffer);
+	for (word offset = 8; offset <= 16; offset += 8) {
+		alignment_address = buffer + offset;
+		for (const Case &one : faulting) {
+			const bool wide = one.what[0] == 'x';
+			if (offset == 16 && !wide)
+				continue;
+			const word insn = address_of(one.insn);
+			ok &= delivers(one.what, one.work, address_of(one.end),
+				       {sigsegv, si_kernel, 0, insn, 13, true, 0});
+		}
+	}
+	alignment_address = buffer + 8;
+	for (const Case &one : unaligned)
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	return ok;
+}
+
 extern "C" void probe_pf_read(word address);
 extern "C" char probe_pf_read_insn[];
 extern "C" char probe_pf_read_end[];
@@ -4609,6 +4694,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-check"));
 	report("i386 RFLAGS.AC checks alignment",
 	       in_child(i386_probe, "alignment-check"));
+	report("x86-64 a misaligned extended-state image raises #GP",
+	       in_child(self, "alignment-faults"));
+	report("i386 a misaligned extended-state image raises #GP",
+	       in_child(i386_probe, "alignment-faults"));
 	report("x86-64 masked x87 exceptions set sticky status flags",
 	       in_child(self, "x87-status"));
 	report("i386 masked x87 exceptions set sticky status flags",
@@ -4657,6 +4746,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_steps_repeats() ? 0 : 1;
 		if (equal(mode, "fp-exceptions"))
 			return floating_point_exceptions() ? 0 : 1;
+		if (equal(mode, "alignment-faults"))
+			return alignment_faults() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
 		if (equal(mode, "x87-status"))

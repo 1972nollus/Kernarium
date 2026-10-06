@@ -262,8 +262,18 @@ Lx86_extended_restore_avx_loop\@:
 Lx86_extended_restore_avx_done\@:
 .endm
 
+/* FXSAVE and FXRSTOR require their image aligned to 16 bytes, XSAVE and
+ * XRSTOR to 64, and raise #GP(0) at the instruction for one that is not,
+ * before any access. effective_address leaves the instruction's address in
+ * x22, which the #GP exit stores as RIP. */
+.macro extended_state_aligned mask
+	tst x7, #\mask
+	b.ne Lx86_extended_misaligned
+.endm
+
 gadget extended_state_fxsave
 	effective_address
+	extended_state_aligned 15
 	mov x25, x7
 	extended_state_load Lx86_extended_legacy_size
 	mov x24, #7
@@ -273,6 +283,7 @@ gadget extended_state_fxsave
 
 gadget extended_state_fxrstor
 	effective_address
+	extended_state_aligned 15
 	mov x25, x7
 	extended_state_load Lx86_extended_legacy_size
 	mov x24, #7
@@ -284,6 +295,7 @@ gadget extended_state_fxrstor
 
 gadget extended_state_xsave
 	effective_address
+	extended_state_aligned 63
 	mov x25, x7
 	extended_state_load Lx86_extended_size
 	extended_state_requested
@@ -300,6 +312,7 @@ gadget extended_state_xsave
 
 gadget extended_state_xrstor
 	effective_address
+	extended_state_aligned 63
 	mov x25, x7
 	extended_state_load Lx86_extended_size
 	extended_state_requested
@@ -311,6 +324,10 @@ gadget extended_state_xrstor
 	add sp, sp, #Lx86_extended_size
 	retire_unless_any_unchecked
 
+Lx86_extended_misaligned:
+	b Lx86_general_protection
+
+.purgem extended_state_aligned
 .purgem extended_state_restore_avx
 .purgem extended_state_restore_sse
 .purgem extended_state_restore_x87

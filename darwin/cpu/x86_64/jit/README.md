@@ -252,6 +252,9 @@ operands, masked vector moves, gathers, extended-state images and far
 transfers raise none. The gadget engine checks only an instruction's first
 access and the JIT every one, which differs only for an instruction whose
 later access is aligned differently, such as ENTER with a nesting level.
+Whatever RFLAGS.AC holds, FXSAVE and FXRSTOR raise `#GP` for an image not
+aligned to 16 bytes, and XSAVE, XSAVEOPT and XRSTOR for one not aligned to
+64, as on the gadget engine.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The

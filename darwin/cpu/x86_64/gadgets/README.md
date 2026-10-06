@@ -462,6 +462,12 @@ are not checking or unmasking one whose flag is set. That costs POPF one branch
 and FLDCW and LDMXCSR three instructions when nothing is unmasked. LDMXCSR
 keeps the masks and flags the guest loads.
 
+FXSAVE and FXRSTOR raise #GP for an image not aligned to 16 bytes, and XSAVE,
+XSAVEOPT and XRSTOR for one not aligned to 64, before they access it and
+whatever RFLAGS.AC holds, as the JIT does. Neither engine raises the #GP x86
+raises for a misaligned operand of an aligned SSE form, such as MOVAPS,
+MOVNTPS or a legacy SSE operation's 16-byte memory source.
+
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
