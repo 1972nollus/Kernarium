@@ -5,6 +5,9 @@
 #include "arm64_system_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
+#include "cpu/arm64/gadgets/sme_layout.h"
+#include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 
 #include <array>
 #include <cstddef>
@@ -195,6 +198,7 @@ UML_DECLARE_PSTATE_DAIF_IMMEDIATE(15)
 #undef UML_DECLARE_PSTATE_DAIF
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_svc();
+void uml_arm64_gadget_sme_svcr_write_immediate();
 }
 
 constexpr std::array<Gadget, 2> dit_gadgets{
@@ -241,6 +245,24 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 
 using uml::emulator::tests::address;
 
+[[nodiscard]] bool smstart_implemented()
+{
+	return gadgets::sme_support != arm64::SmeSupport::none &&
+		arm64::implements_sme(gadgets::BuildOptions{}.host_capabilities);
+}
+
+/* The SVCR mask and value SMSTART or SMSTOP writes. */
+[[nodiscard]] std::uintptr_t svcr_write(
+	const Decoded &decoded, unsigned immediate)
+{
+	const std::uintptr_t mask =
+		decoded.field == Field::streaming_mode ? arm64::svcr_sm :
+		decoded.field == Field::array_state ? arm64::svcr_za :
+		arm64::svcr_mask;
+	const std::uintptr_t value = (immediate & 1U) != 0U ? mask : 0U;
+	return mask | (value << UML_GADGET_SME_SVCR_VALUE_SHIFT);
+}
+
 [[nodiscard]] Gadget expected_gadget(
 	const Decoded &decoded, unsigned immediate)
 {
@@ -254,13 +276,19 @@ using uml::emulator::tests::address;
 		return daif_set_gadgets[immediate];
 	case Field::interrupt_mask_clear:
 		return daif_clear_gadgets[immediate];
-	case Field::ssbs:
 	case Field::streaming_mode:
 	case Field::array_state:
 	case Field::streaming_and_array_state:
+		/* SMSTART and SMSTOP exist when the run implements SME (the
+		 * guest-SME policy on a host with the profile) and the engine
+		 * implements its control core; UNDEFINED otherwise. */
+		if (smstart_implemented())
+			return uml_arm64_gadget_sme_svcr_write_immediate;
+		break;
+	case Field::ssbs:
 	case Field::tag_check_override:
-		/* The virtual CPU omits FEAT_SSBS, FEAT_SME, and FEAT_MTE, so
-		 * MSR SSBS, SMSTART, SMSTOP, and MSR TCO are UNDEFINED. */
+		/* The virtual CPU omits FEAT_SSBS and FEAT_MTE, so MSR SSBS
+		 * and MSR TCO are UNDEFINED. */
 	case Field::flag_alias:
 	case Field::reserved:
 	case Field::uao:
@@ -324,6 +352,22 @@ void exhaustive_translation()
 					arm64_system_test::require(
 						result.program.words()[1] ==
 							engine_test_code_base);
+					continue;
+				}
+				if (expected ==
+				    uml_arm64_gadget_sme_svcr_write_immediate) {
+					/* An SVCR write ends its block. */
+					const auto &words = result.program.words();
+					arm64_system_test::require(
+						result.program.instruction_count() ==
+							1U);
+					arm64_system_test::require(
+						words.size() == 3U);
+					arm64_system_test::require(
+						words[1] == svcr_write(
+							decoded, immediate));
+					arm64_system_test::require(
+						words[2] == engine_test_code_base);
 					continue;
 				}
 				const bool access_check =

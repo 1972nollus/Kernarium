@@ -105,18 +105,28 @@ _uml_arm64_gadget_region_\part:
 	.popsection
 .endm
 
+/* Nonzero while engine/sme.inc assembles the GPR memory families a second
+ * time, as their streaming twins; every base part is assembled with it 0. */
+.set Lsme_twin, 0
+
 /* A call from the region to a helper outside it branches to the helper's
  * veneer, one branch in the island defined at its first use, so no other word
  * of the region encodes a distance to code that moves with the rest of the
- * image. */
-.macro helper_call symbol
+ * image. A streaming twin calls the helper through sme_helper_call instead,
+ * which leaves streaming mode around the call; `cpu` is where the caller
+ * saved CpuState, as an offset from SP. */
+.macro helper_call symbol, cpu=0
 	.ifndef Lveneer_\symbol
 	.pushsection GADGET_SECTION_VENEER
 Lveneer_\symbol:
 	b _\symbol
 	.popsection
 	.endif
+	.if Lsme_twin
+	sme_helper_call \symbol, \cpu
+	.else
 	bl Lveneer_\symbol
+	.endif
 .endm
 
 	gadget_bank_bounds begin

@@ -2,38 +2,51 @@
 /* The gadget engine's SME control core (gadgets::sme_support = control):
  * the SVCR writes and reads, TPIDR2_EL0, RDSVL/ADDSVL/ADDSPL, and the ZA and
  * ZT0 loads, stores and zeroings, with the translation cache keyed by the
- * guest's SVCR mode. Everything outside streaming mode runs on any host
- * through an injected SME profile, at several streaming vector lengths;
- * streaming programs need FEAT_SME in hardware and run at the host's SVL.
- * A sweep checks that no program translated for SVCR.SM = 1 selects an entry
- * outside the streaming set. */
+ * guest's SVCR mode; and the generated register-only streaming forms.
+ * Everything outside streaming mode runs on any host through an injected
+ * SME profile, at several streaming vector lengths; streaming programs need
+ * FEAT_SME in hardware and run at the host's SVL. A sweep checks that no
+ * program translated for SVCR.SM = 1 selects an entry outside the streaming
+ * set, the GPR memory instructions run the same through their streaming
+ * twins as through their base entries, and every register-only form of the
+ * encoding table selects its generated gadget, which names the guest's
+ * registers in the guest's instruction. */
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program_builder_decode.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/floating_controls.hpp"
+#include "cpu/arm64/layout/assembly_offsets.h"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "platform/apple/host_features.hpp"
+#include "streaming_forms.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <compare>
 #include <crt_externs.h>
+#include <mach/mach.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mach-o/dyld.h>
+#include <optional>
 #include <set>
 #include <spawn.h>
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -48,6 +61,18 @@ void uml_arm64_gadget_sm_zt0_store();
 void uml_arm64_gadget_sm_zt0_zero();
 void uml_arm64_gadget_sm_za_zero_table();
 void uml_arm64_gadget_sm_za_zero_table_end();
+void uml_arm64_gadget_sm_twins_begin();
+void uml_arm64_gadget_sm_twins_end();
+void uml_arm64_gadget_sm_load64_unsigned_fast_r();
+void uml_arm64_gadget_sm_store32_unsigned_fast_r_sp();
+void uml_arm64_gadget_sysreg_fpcr_write_r();
+void uml_arm64_gadget_sysreg_fpcr_write_z();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_r();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_r_afp();
+void uml_arm64_gadget_sm_sysreg_fpcr_write_z();
+void uml_arm64_gadget_illegal();
+extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries[];
+extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries_end[];
 }
 
 namespace arm64 = uml::cpu::arm64;
@@ -619,7 +644,7 @@ void streaming_control_core()
 		/* AdvSIMD, and forms with no streaming twin yet, end the
 		 * block at the illegal exit in streaming mode. */
 		for (const auto word : {0x4ea2'8420U /* add v0.4s */,
-			     0xf940'0005U /* ldr x5, [x0] */}) {
+			     0xfd40'0000U /* ldr d0, [x0] */}) {
 			const std::array code{word, svc};
 			Machine machine{code, host};
 			machine.cpu.defer_sme_load(machine.cpu.sme_task,
@@ -630,6 +655,721 @@ void streaming_control_core()
 			require(machine.retired == 0);
 		}
 	}
+}
+
+/* Another thread that stops this one in the kernel every 200 us while it
+ * lives, as preemption does at random: each stop is a kernel entry. */
+class KernelStops final {
+public:
+	KernelStops()
+		: target_{mach_thread_self()}, thread_{[this] { interrupt(); }}
+	{
+	}
+
+	KernelStops(const KernelStops &) = delete;
+	KernelStops &operator=(const KernelStops &) = delete;
+
+	~KernelStops()
+	{
+		stop();
+		mach_port_deallocate(mach_task_self(), target_);
+	}
+
+	/* Ends the stops and returns how many there were. */
+	unsigned stop()
+	{
+		running_.store(false, std::memory_order_relaxed);
+		if (thread_.joinable())
+			thread_.join();
+		return stops_.load();
+	}
+
+private:
+	void interrupt()
+	{
+		while (running_.load(std::memory_order_relaxed)) {
+			if (thread_suspend(target_) == KERN_SUCCESS) {
+				/* Reading the state waits until the thread has
+				 * stopped, so it entered the kernel before it
+				 * resumes. */
+				arm_thread_state64_t state{};
+				mach_msg_type_number_t count =
+					ARM_THREAD_STATE64_COUNT;
+				if (thread_get_state(target_, ARM_THREAD_STATE64,
+					    reinterpret_cast<thread_state_t>(
+						    &state),
+					    &count) == KERN_SUCCESS)
+					stops_.fetch_add(1,
+						std::memory_order_relaxed);
+				thread_resume(target_);
+			}
+			std::this_thread::sleep_for(
+				std::chrono::microseconds(200));
+		}
+	}
+
+	mach_port_t target_;
+	std::atomic<bool> running_{true};
+	std::atomic<unsigned> stops_{0};
+	std::thread thread_;
+};
+
+/*
+ * XNU resets FPSR to 0x0800009F on return from any kernel entry while a
+ * thread is in streaming mode. A streaming program therefore keeps the
+ * guest's FPSR in CpuState and only its FPCR in the host register: both
+ * survive a long streaming loop that another thread stops in the kernel
+ * again and again, read back unchanged there, and are the guest's after the
+ * run, which leaves the host's own FPCR in place.
+ */
+void fp_controls_survive_kernel_entries_in_streaming_mode()
+{
+	constexpr std::uint32_t written_fpsr = 0x0000'0011U; /* IXC, IOC */
+	constexpr std::uint32_t written_fpcr = 0x0080'0000U; /* RMode -inf */
+	const std::array code{
+		smstart_sm,
+		0xd51b'4421U, /* msr fpsr, x1 */
+		0xd51b'4404U, /* msr fpcr, x4 */
+		0xf100'0442U, /* subs x2, x2, #1 */
+		0x54ff'ffe1U, /* b.ne .-4 */
+		0xd53b'4423U, /* mrs x3, fpsr */
+		0xd53b'4405U, /* mrs x5, fpcr */
+		svc};
+	Machine machine{code, native_host()};
+	machine.cpu.registers[1] = written_fpsr;
+	machine.cpu.registers[2] = 20'000'000;
+	machine.cpu.registers[4] = written_fpcr;
+	const auto host_fpcr = __builtin_arm_rsr64("fpcr");
+	KernelStops interrupter;
+	const auto event = machine.run(1'000'000);
+	const auto stops = interrupter.stop();
+	require(event == EngineEvent::system_call);
+	std::fprintf(stderr, "streaming loop stopped in the kernel %u times\n",
+		stops);
+	require(stops >= 10U);
+	require(machine.cpu.svcr == arm64::svcr_sm);
+	require(machine.cpu.registers[3] == written_fpsr);
+	require(machine.cpu.registers[5] == written_fpcr);
+	require(machine.cpu.fpsr == written_fpsr);
+	require(machine.cpu.fpcr == written_fpcr);
+	require(__builtin_arm_rsr64("fpcr") == host_fpcr);
+}
+
+/* The streaming twin table: one row per base entry, each from an entry no
+ * streaming program may select to one in the twins' row, and the builder
+ * selects the twin. */
+void streaming_twin_table()
+{
+	namespace detail = gadgets::builder_detail;
+	const auto begin = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_twins_begin);
+	const auto end = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_twins_end);
+	std::set<std::uintptr_t> bases;
+	/* The FPCR writes are safe in streaming mode but must also set the
+	 * host's FPCR there; every other base entry is unsafe. */
+	const std::set safe_bases{
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sysreg_fpcr_write_r),
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sysreg_fpcr_write_z)};
+	for (const auto &row : detail::streaming_twins()) {
+		require(row.base_end == row.base_begin + 4);
+		require(row.twin_end == row.twin_begin + 4);
+		require(!detail::streaming_entry(row.base_begin) ||
+			safe_bases.contains(row.base_begin));
+		require(row.twin_begin >= begin && row.twin_begin < end);
+		require(detail::streaming_entry(row.twin_begin));
+		require(detail::streaming_twin(row.base_begin) ==
+			row.twin_begin);
+		require(bases.insert(row.base_begin).second);
+	}
+	require(bases.size() >= 1500);
+	/* A doubleword load of a register, and a word store of one with an
+	 * SP base: both bake the register in the bank, and share one twin. */
+	const auto twin_of = [](std::uint32_t word) {
+		gadgets::BlockLink link{};
+		gadgets::IndirectLink site{};
+		gadgets::BuildOptions options{.host_capabilities =
+			injected_host(64, true)};
+		options.svcr = arm64::svcr_sm;
+		const std::array window{word};
+		const auto built = gadgets::Builder{}.build(code_base, window,
+			[&](std::uint64_t) { return &link; },
+			std::pmr::get_default_resource(),
+			[&](std::uint64_t) { return &site; }, options);
+		require(built.program.instruction_count() == 1);
+		return built.program.words()[0];
+	};
+	for (const std::uint32_t rt : {0U, 5U, 30U}) {
+		require(twin_of(0xf940'0000U | rt) == reinterpret_cast<
+			std::uintptr_t>(uml_arm64_gadget_sm_load64_unsigned_fast_r));
+		require(twin_of(0xb900'03e0U | rt) == reinterpret_cast<
+			std::uintptr_t>(uml_arm64_gadget_sm_store32_unsigned_fast_r_sp));
+	}
+	/* MSR FPCR, whose base entry, or its FEAT_AFP twin, is safe in
+	 * streaming mode but leaves the host's FPCR alone there. */
+	const bool afp = arm64::implements_afp(injected_host(64, true));
+	require(twin_of(0xd51b'4404U) == reinterpret_cast<std::uintptr_t>(afp ?
+		uml_arm64_gadget_sm_sysreg_fpcr_write_r_afp :
+		uml_arm64_gadget_sm_sysreg_fpcr_write_r));
+	require(twin_of(0xd51b'441fU) == reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sm_sysreg_fpcr_write_z));
+}
+
+/* One case for the twins: words ending in SVC, and the registers they need
+ * beyond the common setup below. */
+struct MemoryCase final {
+	const char *name;
+	std::vector<std::uint32_t> words;
+	std::vector<std::pair<unsigned, std::uint64_t>> registers{};
+	std::uint64_t sp = data_base + 2 * page - 64;
+};
+
+/* The architectural result of a run: what a twin must reproduce. */
+struct MemoryResult final {
+	EngineEvent event;
+	std::array<std::uint64_t, 31> registers;
+	std::uint64_t sp;
+	std::uint64_t pc;
+	std::uint32_t nzcv;
+	std::vector<std::byte> data;
+	std::uint64_t fault_address;
+	bool fault_alignment;
+	bool operator==(const MemoryResult &) const = default;
+};
+
+[[nodiscard]] MemoryResult run_memory_case(const MemoryCase &test,
+	std::uint8_t svcr)
+{
+	auto code = test.words;
+	code.push_back(svc);
+	Machine machine{code, native_host()};
+	machine.put_data(data_base, pattern(2 * page, 11));
+	for (unsigned n = 0; n < 31; ++n)
+		machine.cpu.registers[n] = 0x1111'1111'1111'1111ULL * (n % 15U);
+	/* Bases: an aligned line, an LSE2-block misalignment, page ends that
+	 * 2-, 4-, 8- and 16-byte accesses cross, and the unmapped page. */
+	machine.cpu.registers[0] = data_base + page - 64;
+	machine.cpu.registers[1] = data_base + page - 24;
+	machine.cpu.registers[2] = data_base + page + 8;
+	machine.cpu.registers[3] = data_base + 2 * page - 256;
+	machine.cpu.registers[5] = data_base + page - 62;
+	machine.cpu.registers[12] = data_base + 2 * page + 16;
+	machine.cpu.registers[13] = data_base + page - 6;
+	machine.cpu.registers[14] = data_base + page - 4;
+	machine.cpu.registers[15] = data_base + page - 2;
+	machine.cpu.registers[16] = 3;
+	machine.cpu.registers[17] = 0xffff'fffeULL;
+	machine.cpu.registers[18] = 5;
+	for (const auto &[number, value] : test.registers)
+		machine.cpu.registers[number] = value;
+	machine.cpu.sp = test.sp;
+	machine.cpu.defer_sme_load(machine.cpu.sme_task, svcr, 0);
+	std::vector<std::byte> za;
+	if ((svcr & arm64::svcr_za) != 0U) {
+		/* As if loaded already: the rows must come back unchanged
+		 * through every helper the twin leaves streaming mode for. */
+		machine.cpu.sme_loaded = arm64::svcr_za;
+		za = pattern(machine.svl() * machine.svl(), 23);
+		std::memcpy(machine.row(0), za.data(), za.size());
+	}
+	MemoryResult result{};
+	result.event = machine.run();
+	if (!za.empty())
+		require(equal(machine.row(0), za));
+	std::copy(machine.cpu.registers.begin(), machine.cpu.registers.end(),
+		result.registers.begin());
+	result.sp = machine.cpu.sp;
+	result.pc = machine.cpu.pc;
+	result.nzcv = machine.cpu.nzcv;
+	result.data = machine.data(data_base, 2 * page);
+	if (result.event == EngineEvent::memory_fault) {
+		result.fault_address = machine.executor().fault_address();
+		result.fault_alignment = machine.executor().fault_alignment();
+	}
+	return result;
+}
+
+/* Every GPR memory family runs through its streaming twin exactly as through
+ * its base entry: hot paths, TLB misses, page crossings, LSE2 and alignment
+ * checks, and faults, with ZA off and resident. So does CSSC CNT. */
+void streaming_twins()
+{
+	const std::uint64_t mops_size = 100;
+	const std::vector<MemoryCase> cases{
+		{"ldr x", {0xf940'0014U}},
+		{"ldr x crossing", {0xf940'01b4U}},
+		{"ldr w crossing", {0xb940'05b4U}},
+		{"ldrb", {0x3940'04b4U}},
+		{"ldrsb x", {0x3980'01d4U}},
+		{"ldrh", {0x7940'01f4U}},
+		{"ldursh x crossing", {0x7880'11f4U}},
+		{"ldrsw", {0xb980'01d4U}},
+		{"ldursw crossing", {0xb880'21d4U}},
+		{"str x crossing", {0xf900'01b5U}},
+		{"strb", {0x3900'05f5U}},
+		{"sturh crossing", {0x7800'11f5U}},
+		{"stur w crossing", {0xb800'21d5U}},
+		{"str w", {0xb900'05d5U}},
+		{"ldr pre-index", {0xf840'8c34U}},
+		{"ldr post-index", {0xf840'8434U}},
+		{"str pre-index", {0xf81f'8c55U}},
+		{"ldr register lsl", {0xf870'7814U}},
+		{"ldr register sxtw", {0xb871'd814U}},
+		{"strh register", {0x7832'6815U}},
+		{"ldp x crossing", {0xa940'55b4U}},
+		{"ldp w crossing", {0x2940'55b4U}},
+		{"ldpsw crossing", {0x6940'55b4U}},
+		{"stp x crossing", {0xa900'5db6U}},
+		{"stp w crossing", {0x2900'5db6U}},
+		{"ldp pre-index crossing", {0xa9c1'5434U}},
+		{"stp sp pre-index", {0xa9bf'5ff6U}},
+		{"ldp sp post-index", {0xa8c1'7bfdU}},
+		{"ldr sp", {0xf940'07f4U}},
+		{"str xzr crossing", {0xf900'01bfU}},
+		{"stp xzr crossing", {0xa900'5dbfU}},
+		/* The literal follows a branch over it. */
+		{"ldr literal", {0x5800'0054U, 0x1400'0003U, 0x8899'aabbU,
+			0xccdd'eeffU}},
+		{"ldrsw literal", {0x9800'0054U, 0x1400'0003U, 0x8899'aabbU,
+			0xccdd'eeffU}},
+		{"ldxr stxr", {0xc85f'7c14U, 0xc818'7c15U}},
+		{"ldaxr stlxr", {0x885f'fc14U, 0x8818'fc15U}},
+		{"ldxp stxp", {0xc87f'5414U, 0xc838'5c16U}},
+		{"ldadd", {0xf835'0014U}},
+		{"ldaddal", {0xb8f5'0014U}},
+		{"swp", {0xf835'8014U}},
+		{"cas", {0xc8b4'7c15U}},
+		{"casp", {0x4834'7c16U}},
+		{"ldar", {0xc8df'fc14U}},
+		{"stlr", {0xc89f'fc15U}},
+		{"ldapr", {0xf8bf'c014U}},
+		{"ldapur", {0xd940'8014U}},
+		{"stlur", {0x9900'4015U}},
+		{"ldadd w in an LSE2 block", {0xb835'00b4U}},
+		{"ldaddh in an LSE2 block", {0x7835'00b4U}},
+		{"prfm", {0xf980'0000U}},
+		{"dc zva", {0xd50b'7420U}},
+		{"set", {0x19c2'0420U, 0x19c2'4420U, 0x19c2'8420U},
+			{{1, mops_size}, {2, 0xab}}},
+		{"cpyf", {0x1903'0420U, 0x1943'0420U, 0x1983'0420U},
+			{{1, mops_size}}},
+		{"cnt w", {0x5ac0'1eb4U}},
+		{"cnt x", {0xdac0'1eb4U}},
+		{"ldr unmapped", {0xf940'0194U}},
+		{"str unmapped", {0xf900'0195U}},
+		{"ldr misaligned sp", {0xf940'03f4U}, {},
+			data_base + 2 * page - 56},
+		{"ldadd misaligned sp", {0xf835'03f4U}, {},
+			data_base + 2 * page - 56},
+		{"stp misaligned sp", {0xa9bf'5ff6U}, {},
+			data_base + 2 * page - 56},
+	};
+	for (const auto &test : cases) {
+		const auto base = run_memory_case(test, 0);
+		for (const std::uint8_t mode : {arm64::svcr_sm, arm64::svcr_mask}) {
+			if (run_memory_case(test, mode) == base)
+				continue;
+			std::fprintf(stderr, "%s: SVCR %u differs from the base "
+				"entry\n", test.name, mode);
+			require(false);
+		}
+	}
+}
+
+namespace streaming = gadgets::streaming;
+using arm64::detail::SmeOperand;
+using arm64::detail::SmeOperandKind;
+
+/* The program one word translates to for `svcr` on `host`. */
+[[nodiscard]] std::vector<std::uintptr_t> translate(std::uint32_t word,
+	const uml::platform::HostCapabilities &host, std::uint8_t svcr)
+{
+	gadgets::BlockLink link{};
+	gadgets::IndirectLink site{};
+	gadgets::BuildOptions options{.host_capabilities = host};
+	options.svcr = svcr;
+	const std::array window{word};
+	const auto built = gadgets::Builder{}.build(code_base, window,
+		[&](std::uint64_t) { return &link; },
+		std::pmr::get_default_resource(),
+		[&](std::uint64_t) { return &site; }, options);
+	const auto &words = built.program.words();
+	return {words.data(), words.data() + words.size()};
+}
+
+[[nodiscard]] std::uintptr_t illegal_entry() noexcept
+{
+	return reinterpret_cast<std::uintptr_t>(uml_arm64_gadget_illegal);
+}
+
+/* The offset a stream slot carries for register `number`: in the register
+ * file for Z, V and P, in CpuState for a general register. */
+[[nodiscard]] std::uint64_t slot_offset(SmeOperandKind kind, unsigned number,
+	unsigned svl) noexcept
+{
+	switch (kind) {
+	case SmeOperandKind::z:
+	case SmeOperandKind::v:
+		return arm64::sme_z_offset(svl, number);
+	case SmeOperandKind::p:
+		return arm64::sme_p_offset(svl, number);
+	case SmeOperandKind::gpr:
+		return number == 31U ? UML_GADGET_CPU_ZERO : number * 8U;
+	default:
+		return number * 8U;
+	}
+}
+
+/* A word's field bits that name registers, which a gadget replaces with its
+ * host registers'. */
+[[nodiscard]] std::uint32_t register_bits(const SmeOperand *operands,
+	unsigned count) noexcept
+{
+	std::uint32_t bits = 0;
+	for (unsigned index = 0; index < count; ++index) {
+		const auto &operand = operands[index];
+		if (operand.kind == SmeOperandKind::za_tile)
+			continue;
+		for (unsigned segment = 0; segment < operand.segment_count;
+		     ++segment) {
+			const auto &part = operand.segments[segment];
+			if (part.field)
+				bits |= ((1U << part.width) - 1U) << part.low;
+		}
+	}
+	return bits;
+}
+
+/*
+ * One word a generated form takes, translated for SVCR.SM = 1: it selects
+ * one of the form's entries. For a form that runs the guest's instruction
+ * itself, the stream names the guest's registers in the register file's
+ * layout at this SVL, and the gadget loads them, in stream order, into the
+ * host registers its instruction names in their place, which differs from
+ * the guest's word in no other bit. `ignored` bits are ones the instruction
+ * ignores.
+ */
+void check_generated_word(std::uint32_t word, const streaming::Form &form,
+	const SmeOperand *operands, const uml::platform::HostCapabilities &host,
+	std::uint8_t svcr, std::uint32_t ignored = 0)
+{
+	const unsigned svl = host.sme_svl_bytes;
+	const auto stream = translate(word, host, svcr);
+	const auto entries = std::span{uml_arm64_gadget_sm_generated_entries,
+		uml_arm64_gadget_sm_generated_entries_end};
+	require(entries.size() == streaming::entry_count);
+	const auto variants = entries.subspan(form.first_entry, form.variants);
+	if (std::ranges::find(variants, stream[0]) == variants.end()) {
+		std::fprintf(stderr, "word %08x at SVL %u selects %#lx, none of "
+			"its form's %u entries\n", word, svl,
+			static_cast<unsigned long>(stream[0]), form.variants);
+		require(false);
+	}
+	if (form.lowering != streaming::Lowering::none)
+		return;
+	std::vector<std::pair<const SmeOperand *, unsigned>> slots;
+	std::uint64_t offsets = 0;
+	for (unsigned index = 0; index < form.operand_count; ++index) {
+		const auto &operand = operands[index];
+		if (operand.kind == SmeOperandKind::za_tile)
+			continue;
+		const auto number = arm64::detail::sme_operand_number(operand,
+			word);
+		const unsigned registers =
+			operand.kind == SmeOperandKind::p ? 16U : 32U;
+		for (unsigned member = 0; member < operand.count; ++member) {
+			offsets |= slot_offset(operand.kind,
+				(number + member * operand.stride) % registers,
+				svl) << (16U * slots.size());
+			slots.emplace_back(&operand, member);
+		}
+	}
+	if (!slots.empty())
+		require(stream.size() > 1 && stream[1] == offsets);
+	const auto fields = register_bits(operands, form.operand_count) |
+		ignored;
+	const auto *code = reinterpret_cast<const std::uint32_t *>(stream[0]);
+	std::vector<unsigned> hosts;
+	std::optional<std::uint32_t> native;
+	for (unsigned index = 0; index < 128U && code[index] != 0xd61f'0100U;
+	     ++index) {
+		const auto instruction = code[index];
+		if ((instruction & 0xffc0'e000U) == 0x8580'4000U || /* ldr z */
+		    (instruction & 0xffc0'e010U) == 0x8580'0000U || /* ldr p */
+		    (instruction & 0xffe0'fc00U) == 0xf860'6800U)   /* ldr x */
+			hosts.push_back(instruction & 31U);
+		else if ((instruction & ~fields) == (word & ~fields))
+			native = instruction;
+	}
+	if (!native.has_value() || hosts.size() != slots.size()) {
+		std::fprintf(stderr, "word %08x: gadget %#lx has %s and %zu "
+			"loads for %zu registers\n", word,
+			static_cast<unsigned long>(stream[0]),
+			native ? "its instruction" : "no instruction",
+			hosts.size(), slots.size());
+		require(false);
+	}
+	for (std::size_t slot = 0; slot < slots.size(); ++slot) {
+		const auto [operand, member] = slots[slot];
+		const unsigned registers =
+			operand->kind == SmeOperandKind::p ? 16U : 32U;
+		const auto first = arm64::detail::sme_operand_number(*operand,
+			*native);
+		if (hosts[slot] == (first + member * operand->stride) %
+				registers)
+			continue;
+		std::fprintf(stderr, "word %08x: slot %zu loads host register "
+			"%u, its instruction %08x names another\n", word, slot,
+			hosts[slot], *native);
+		require(false);
+	}
+}
+
+/* Whether a word of a lowered form encodes a reserved immediate, which ends
+ * the block at the illegal exit. */
+[[nodiscard]] bool reserved_immediate(const streaming::Form &form,
+	std::uint32_t word) noexcept
+{
+	return form.lowering == streaming::Lowering::logical_immediate &&
+		!arm64::detail::decode_logical_immediate(true,
+			(word >> 17) & 1U, (word >> 11) & 63U, (word >> 5) & 63U);
+}
+
+/* The FP&SIMD class a word belongs to, the first that matches. */
+[[nodiscard]] std::size_t fp_simd_class(std::uint32_t word) noexcept
+{
+	namespace detail = arm64::detail;
+	const std::uint32_t bucket = word >> detail::sme_encoding_bucket_shift;
+	for (std::uint32_t slot = detail::fp_simd_streaming_buckets[bucket];
+	     slot < detail::fp_simd_streaming_buckets[bucket + 1U]; ++slot) {
+		const auto index = detail::fp_simd_streaming_bucket_rows[slot];
+		const auto &row = detail::fp_simd_streaming_classes[index];
+		if ((word & row.mask) == row.value)
+			return index;
+	}
+	return detail::fp_simd_streaming_classes.size();
+}
+
+/*
+ * Every register-only SVE, SVE2 and SME row of the SME1 profile that
+ * executes in streaming mode has a generated form, as does every FP&SIMD
+ * data-processing class that executes there, and each of its words selects
+ * that form's gadget at every SVL (check_generated_word). An FP&SIMD word
+ * the base decoder does not implement stays illegal, and one it implements
+ * with an entry streaming mode may run keeps it.
+ */
+void generated_forms_match_the_table()
+{
+	namespace detail = arm64::detail;
+	std::uint64_t state = 0x2545'f491'4f6c'dd1dULL;
+	const auto next = [&state] {
+		state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+		return static_cast<std::uint32_t>(state >> 32);
+	};
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = detail::sme_encodings[index];
+		const bool control_core =
+			(row.value & 0xffff'f000U) == 0x04bf'5000U ||
+			(row.value & 0xffa0'f000U) == 0x0420'5000U;
+		const bool register_only = row.requirement != 0U &&
+			(row.requirement & detail::sme_feature_sme2) == 0U &&
+			(row.mode & detail::sme_mode_streaming) != 0U &&
+			row.memory == 0U && !control_core;
+		require(register_only ==
+			(streaming::sve_row_forms[index] != streaming::no_form));
+		rows += register_only;
+	}
+	require(rows > 1000U);
+	std::size_t classes = 0;
+	for (std::size_t index = 0;
+	     index < detail::fp_simd_streaming_classes.size(); ++index) {
+		const auto &row = detail::fp_simd_streaming_classes[index];
+		const bool data_processing = !row.advsimd &&
+			(row.value & 0x0e00'0000U) == 0x0e00'0000U;
+		require(data_processing ==
+			(streaming::fp_class_forms[index] != streaming::no_form));
+		classes += data_processing;
+	}
+	require(classes > 500U);
+	std::size_t checked = 0;
+	for (const unsigned svl : {16U, 32U, 64U, 128U, 256U}) {
+		const auto host = injected_host(svl, false);
+		const auto features = arm64::implemented_sme_features(host);
+		for (std::size_t index = 0; index < detail::sme_encodings.size();
+		     ++index) {
+			if (streaming::sve_row_forms[index] == streaming::no_form)
+				continue;
+			const auto &row = detail::sme_encodings[index];
+			const auto &form = streaming::forms[
+				streaming::sve_row_forms[index]];
+			const std::uint8_t svcr = arm64::svcr_sm |
+				((row.mode & detail::sme_mode_za) != 0U ?
+					arm64::svcr_za : 0U);
+			for (int sample = 0; sample < 6; ++sample) {
+				const auto word = row.value | (next() & ~row.mask);
+				if (detail::decode_sme(word, features, svl) != &row)
+					continue;
+				if (reserved_immediate(form, word)) {
+					require(translate(word, host, svcr)[0] ==
+						illegal_entry());
+					continue;
+				}
+				check_generated_word(word, form,
+					detail::sme_encoding_operands_of(row), host,
+					svcr);
+				++checked;
+			}
+		}
+		for (std::size_t index = 0;
+		     index < detail::fp_simd_streaming_classes.size(); ++index) {
+			if (streaming::fp_class_forms[index] == streaming::no_form)
+				continue;
+			const auto &row = detail::fp_simd_streaming_classes[index];
+			const auto &form = streaming::forms[
+				streaming::fp_class_forms[index]];
+			const auto *operands = streaming::fp_operands.data() +
+				form.operand_begin;
+			/* FCMP and FCMPE with zero ignore their Rm field. */
+			const std::uint32_t ignored = form.operand_count == 1U &&
+				operands[0].segments[0].low == 5U ? 0x1f'0000U : 0U;
+			for (int sample = 0; sample < 6; ++sample) {
+				const auto word = row.value | (next() & ~row.mask);
+				if (fp_simd_class(word) != index)
+					continue;
+				/* A word the base decoder does not implement, or
+				 * implements with an entry streaming mode may run,
+				 * as it does a write of XZR, keeps that entry. */
+				const auto base = translate(word, host, 0)[0];
+				if (base == illegal_entry() ||
+				    gadgets::builder_detail::streaming_entry(
+					    gadgets::builder_detail::streaming_twin(
+						    base))) {
+					require(translate(word, host,
+						arm64::svcr_sm)[0] ==
+						gadgets::builder_detail::streaming_twin(
+							base));
+					continue;
+				}
+				check_generated_word(word, form, operands, host,
+					arm64::svcr_sm, ignored);
+				++checked;
+			}
+		}
+	}
+	std::printf("%zu generated-form words checked for %zu rows and %zu "
+		"FP&SIMD classes\n", checked, rows, classes);
+	require(checked > 30'000U);
+}
+
+/*
+ * Generated forms in a streaming program on the host: predicates,
+ * broadcasts, lowered immediates and counts from the run-time SVL,
+ * general-register results, NZCV written by SVE and FP comparisons and
+ * read by base conditional selects, and FCCMP.
+ */
+void generated_forms_run()
+{
+	const auto &host = native_host();
+	const unsigned svl = host.sme_svl_bytes;
+	const std::uint64_t lanes = svl / 4U;
+	const std::array code{
+		smstart_sm,
+		0x2598'e3e0U, /* ptrue p0.s */
+		0x04be'4064U, /* index z4.s, #3, #-2 */
+		0x25a0'd904U, /* add z4.s, z4.s, #200 */
+		0x047f'9485U, /* lsr z5.s, z4.s, #1 */
+		0x05a1'a08eU, /* lastb w14, p0, z4.s */
+		0x05a1'a0afU, /* lastb w15, p0, z5.s */
+		0x04a0'e3f0U, /* cntw x16 */
+		0x04b1'f3f1U, /* sqincw x17, all, mul #2 */
+		0x1e27'0020U, /* fmov s0, w1 */
+		0x1e27'0041U, /* fmov s1, w2 */
+		0x1e21'2000U, /* fcmp s0, s1 */
+		0x1a9f'57eaU, /* cset w10, mi */
+		0x1e20'4424U, /* fccmp s1, s0, #4, mi */
+		0x1a9f'd7ebU, /* cset w11, gt */
+		0x1e21'cc02U, /* fcsel s2, s0, s1, gt */
+		0x1e26'004cU, /* fmov w12, s2 */
+		0x25a3'1fe1U, /* whilelo p1.s, xzr, x3 */
+		0x1a9f'57edU, /* cset w13, mi */
+		svc};
+	Machine machine{code, host};
+	machine.cpu.registers[1] = 0x3f80'0000U; /* 1.0f */
+	machine.cpu.registers[2] = 0x4000'0000U; /* 2.0f */
+	machine.cpu.registers[3] = 2;
+	machine.cpu.registers[17] = 5;
+	require(machine.run() == EngineEvent::system_call);
+	const auto last = static_cast<std::uint32_t>(203U - 2U * (lanes - 1U));
+	require(machine.cpu.registers[14] == last);
+	require(machine.cpu.registers[15] == last >> 1);
+	require(machine.cpu.registers[16] == lanes);
+	require(machine.cpu.registers[17] == 5U + 2U * lanes);
+	require(machine.cpu.registers[10] == 1U);
+	require(machine.cpu.registers[11] == 1U);
+	require(machine.cpu.registers[12] == 0x3f80'0000U);
+	require(machine.cpu.registers[13] == 1U);
+	require(machine.cpu.svcr == arm64::svcr_sm);
+}
+
+/*
+ * A streaming program's floating-point exceptions accumulate in the
+ * guest's FPSR in CpuState, from SVE and scalar forms alike, and nothing
+ * else does: a long loop of an inexact division and an exact addition that
+ * another thread stops in the kernel again and again, each stop resetting
+ * the host's FPSR to 0x0800009F, raises IXC alone.
+ */
+void fp_exceptions_accumulate_in_streaming_mode()
+{
+	const auto &host = native_host();
+	{
+		const std::array code{
+			smstart_sm,
+			0xd51b'443fU, /* msr fpsr, xzr */
+			0x2598'e3e0U, /* ptrue p0.s */
+			0x05a0'3820U, /* mov z0.s, w1 */
+			0x05a0'3841U, /* mov z1.s, w2 */
+			0x658d'8020U, /* fdiv z0.s, p0/m, z0.s, z1.s */
+			0x05a1'a006U, /* lastb w6, p0, z0.s */
+			0xd53b'4427U, /* mrs x7, fpsr */
+			svc};
+		Machine machine{code, host};
+		machine.cpu.registers[1] = 0x3f80'0000U; /* 1.0f */
+		machine.cpu.registers[2] = 0;
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.cpu.registers[6] == 0x7f80'0000U); /* +inf */
+		require(machine.cpu.registers[7] == 0x2U); /* DZC */
+		require(machine.cpu.fpsr == 0x2U);
+	}
+	const std::array code{
+		smstart_sm,
+		0xd51b'443fU, /* msr fpsr, xzr */
+		0x1e27'0062U, /* fmov s2, w3 */
+		0x1e27'0083U, /* fmov s3, w4 */
+		0x1e23'1845U, /* fdiv s5, s2, s3 */
+		0x1e22'2846U, /* fadd s6, s2, s2 */
+		0xf100'0442U, /* subs x2, x2, #1 */
+		0x54ff'ffa1U, /* b.ne .-12 */
+		0x1e26'00a5U, /* fmov w5, s5 */
+		0xd53b'4427U, /* mrs x7, fpsr */
+		svc};
+	Machine machine{code, host};
+	machine.cpu.registers[2] = 3'000'000;
+	machine.cpu.registers[3] = 0x3f80'0000U; /* 1.0f */
+	machine.cpu.registers[4] = 0x4040'0000U; /* 3.0f */
+	KernelStops interrupter;
+	const auto event = machine.run(1'000'000);
+	const auto stops = interrupter.stop();
+	require(event == EngineEvent::system_call);
+	std::fprintf(stderr, "streaming FP loop stopped in the kernel %u "
+		"times\n", stops);
+	require(stops >= 10U);
+	require(machine.cpu.registers[5] == 0x3eaa'aaabU); /* 1/3 */
+	require(machine.cpu.registers[7] == 0x10U); /* IXC */
+	require(machine.cpu.fpsr == 0x10U);
 }
 
 /* Words to translate: uniformly sampled ones, which reach every decoder in
@@ -859,8 +1599,14 @@ int main()
 	zt0_needs_sme2_and_works_with_za();
 	za_faults();
 	translations_are_keyed_by_mode();
+	streaming_twin_table();
+	generated_forms_match_the_table();
 	if (streaming_hardware()) {
 		streaming_control_core();
+		streaming_twins();
+		fp_controls_survive_kernel_entries_in_streaming_mode();
+		generated_forms_run();
+		fp_exceptions_accumulate_in_streaming_mode();
 		std::printf("streaming programs ran at SVL %u\n",
 			native_host().sme_svl_bytes);
 	} else {

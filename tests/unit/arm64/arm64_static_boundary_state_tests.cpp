@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "platform/apple/host_features.hpp"
 #include "uml_darwin_guest.h"
@@ -71,8 +72,11 @@ void pstate_survives_boundary()
 {
 	/* DIT is guest state. The virtual CPU implements no FEAT_SSBS: MSR SSBS
 	 * is undefined and the kernel's PSTATE.SSBS passes through untouched.
-	 * No engine implements SME yet, so SMSTART is undefined whether or not
-	 * the run implements it; without SME, SVCR comes back zero. */
+	 * Without SME, SVCR comes back zero and SMSTART is undefined. When the
+	 * run implements SME (the policy on a host with the profile), the
+	 * static runtime's gadget engine runs SMSTART at sme_support control
+	 * and above: a task without SME storage asks for it and retires
+	 * nothing, and with storage the guest SVCR survives the boundary. */
 	constexpr unsigned long generation = 201;
 	constexpr std::uint64_t base = 0x51'0000;
 	constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
@@ -83,12 +87,16 @@ void pstate_survives_boundary()
 	backing.put32(8, 0xd400'0001U);  // svc #0
 	backing.put32(12, pstate(0, 1)); // msr ssbs, #0
 	backing.put32(16, pstate(7, 3)); // smstart
+	backing.put32(20, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	uml::testing::GuestFpTail fp{};
 	registers.pc = base;
 	registers.pstate = pstate_ssbs;
 	const bool sme = sme_vector_length() != 0;
+	const bool smstart = sme &&
+		uml::cpu::arm64::gadgets::sme_support !=
+			uml::cpu::arm64::SmeSupport::none;
 	registers.svcr = sme ? 0 : 3;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
@@ -101,10 +109,23 @@ void pstate_survives_boundary()
 	require(registers.pc == base + 12);
 	require((registers.pstate & pstate_ssbs) == pstate_ssbs);
 	registers.pc = base + 16;
-	require(enter(registers, fp, generation) ==
-		DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+	if (!smstart) {
+		require(enter(registers, fp, generation) ==
+			DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+		require(registers.pc == base + 16);
+		require(registers.svcr == 0);
+		return;
+	}
+	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SME_ACCESS);
 	require(registers.pc == base + 16);
 	require(registers.svcr == 0);
+	const auto svl = sme_vector_length();
+	std::vector<std::byte> storage(DARWIN_UML_GUEST_SME_STATE_SIZE(svl));
+	fp.sme.state = reinterpret_cast<std::uintptr_t>(storage.data());
+	fp.sme.svl = static_cast<std::uint32_t>(svl);
+	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 24);
+	require(registers.svcr == 3);
 }
 
 void arm64_tail_is_exact()

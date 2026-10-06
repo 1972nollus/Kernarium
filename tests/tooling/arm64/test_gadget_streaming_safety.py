@@ -5,11 +5,12 @@
 A program the arm64 gadget engine translates for SVCR.SM = 1 runs with the
 host in streaming mode, where an AdvSIMD instruction traps, and may select
 only the entries darwin/cpu/arm64/gadgets/engine/sme.inc lists: base rows
-whose gadgets are safe there, and the SME part's streaming half. In every
-image given this walks all code reachable from each of those entries, and
-from the streaming entry point, tracking whether the host is in streaming
-mode (SMSTART and SMSTOP, and the suspend and resume routines that leave and
-re-enter it around a helper), and fails where code reached in streaming mode
+whose gadgets are safe there, the SME part's streaming half, and the
+generated register-only gadgets. In every image given this walks all code
+reachable from each of those entries, and from the streaming entry point,
+tracking whether the host is in streaming mode (SMSTART and SMSTOP, and the
+suspend and resume routines that leave and re-enter it around a helper),
+and fails where code reached in streaming mode
 
 - executes an AdvSIMD word, as the shared SVE/SME encoding table classifies
   FP&SIMD words (cpu/arm64/detail/sme_encodings.hpp);
@@ -51,6 +52,7 @@ PREFIX = "uml_arm64_gadget_"
 SMSTART_SM = {0xD503437F, 0xD503477F}  # SMSTART SM, SMSTART
 SMSTOP_SM = {0xD503427F, 0xD503467F}   # SMSTOP SM, SMSTOP
 ZERO_STRIDE = 16
+GADGET_ALIGNMENT = 16
 
 
 def streaming_rows(source: Path) -> list[tuple[str, str | None]]:
@@ -180,6 +182,13 @@ def entries(image, rows: list[tuple[str, str | None]]) -> list[int]:
         raise ValueError("the ZERO { mask } table is not 256 entries of "
                          f"{ZERO_STRIDE} bytes")
     found.extend(range(table, table_end, ZERO_STRIDE))
+    # The generated gadgets carry no symbols: every 16-byte boundary of
+    # their range, which includes every entry.
+    generated = image.symbol(PREFIX + "sm_generated_begin")
+    generated_end = image.symbol(PREFIX + "sm_generated_end")
+    if generated_end <= generated:
+        raise ValueError("the generated streaming gadgets are empty")
+    found.extend(range(generated, generated_end, GADGET_ALIGNMENT))
     return sorted(set(found))
 
 

@@ -1792,7 +1792,12 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		return finish_block(programs, built, event, cpu, executed);
 	}
 	/* Streaming programs carry no FP link entry; the FP state they can
-	 * reach is loaded here, once, for every program they link to. */
+	 * reach is loaded here, once, for every program they link to. XNU
+	 * resets FPSR on every kernel entry while a thread is in streaming
+	 * mode, so the guest's FPSR must not be in the host register: leave
+	 * the native FP environment first, as the SVCR write that entered
+	 * streaming mode already did. */
+	arm64::gadgets::restore_native_fp_environment(cpu);
 	cpu.access_fp_state();
 	const auto event =
 		arm64::gadgets::execute_streaming_preserving_native_fp_environment(

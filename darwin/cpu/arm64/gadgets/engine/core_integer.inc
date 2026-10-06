@@ -129,7 +129,7 @@ NAME(uml_arm64_gadget_\name):
 	mov w2, #\access
 	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
-	.if \forward
+	.if \forward || Lsme_twin
 	/* Cross-section conditional relocations are not available on Mach-O.
 	 * Only the cold miss path needs this long-branch trampoline. */
 	cbnz x0, 94f
@@ -207,7 +207,8 @@ NAME(uml_arm64_gadget_\name):
 /* Second way, crossing, miss and fault handling for transfer_translate. */
 /* outofline=1 when the caller places this tail in a section of its own: a
  * conditional branch cannot leave its section, so the fault exit takes the
- * same trampoline the forwarding arm already uses. */
+ * same trampoline the forwarding arm already uses. So does a streaming twin,
+ * whose default fault exit is in the bank. */
 .macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, outofline=0, fault=uml_arm64_gadget_memory_fault
 \cold:
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
@@ -228,7 +229,7 @@ NAME(uml_arm64_gadget_\name):
 	mov w2, #\access
 	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
-	.if \forward || \outofline
+	.if \forward || \outofline || Lsme_twin
 	cbnz x0, 94f
 	b \fault
 94:
@@ -246,7 +247,9 @@ NAME(uml_arm64_gadget_\name):
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all
  * pages before stores, so a fault cannot leave a partially modified range.
- * q0/q1 carry up to 32 bytes to or from the helper.
+ * q0/q1 carry up to 32 bytes to or from the helper. A streaming twin clears
+ * them with FMOV, which streaming mode keeps, where the base gadget uses
+ * MOVI, which it does not.
  */
 .macro transfer_slow access, address, size, fault=uml_arm64_gadget_memory_fault
 	sub sp, sp, #48
@@ -254,8 +257,13 @@ NAME(uml_arm64_gadget_\name):
 	.if \access
 	stp q0, q1, [sp]
 	.else
+	.if Lsme_twin
+	fmov d0, xzr
+	fmov d1, xzr
+	.else
 	movi v0.16b, #0
 	movi v1.16b, #0
+	.endif
 	stp q0, q1, [sp]
 	.endif
 	mov x0, x2
@@ -263,7 +271,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, sp
 	mov x3, #\size
 	mov w4, #\access
-	helper_call uml_arm64_memory_transfer
+	helper_call uml_arm64_memory_transfer, 32
 	ldp x1, x2, [sp, #32]
 	cbz w0, 97f
 	.if !\access
