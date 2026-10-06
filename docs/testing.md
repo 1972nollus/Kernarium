@@ -331,8 +331,8 @@ take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
 instead of the default gadget engine; run them on both engines when a change
 reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
 checks that the host sees an address space as shared only once a task
-starts a thread on it. The JIT fails exactly the exception cases its
-[README](../darwin/cpu/x86_64/jit/README.md) names, two in each mode.
+starts a thread on it. Both engines pass every exception case, unmasked
+`#XM`, `#MF` and `#AC` included, in both modes.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
