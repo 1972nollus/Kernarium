@@ -228,8 +228,8 @@ more as it is, with C2 set, in a branch of their own. A sine, cosine,
 tangent or arctangent of a finite nonzero operand raises precision, and
 FXTRACT normalizes a denormal operand. FNSAVE and FNSTENV tag each full register from its
 value, as zero, special or valid, as an Intel host does at the store. C1
-says whether rounding increased a result's magnitude, as on the gadget
-engine, and FPREM and FPREM1 compute x87's exact remainders, partial ones
+says whether rounding increased a result's magnitude, and an instruction
+that rounds nothing clears or keeps it, as on the gadget engine, and FPREM and FPREM1 compute x87's exact remainders, partial ones
 with C2 and complete ones with the quotient's low bits in C0, C3 and C1. An
 overflow or underflow the control word unmasks rebiases a register result's
 exponent by 24576, as x86 does and the gadget engine does through the same

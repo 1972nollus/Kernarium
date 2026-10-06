@@ -412,7 +412,7 @@ index 7c9695b9355ece6bdeed3b6e64c5caefede2d07a..8f933869e2aea0948b3b19dd161a9090
  };
  
 diff --git a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
-index 40ee4587f7c917a8cb186815dcc528fd17cc5418..1903f541ad55092ddd8e8ce3ba8cc2581bf8e378 100644
+index c22b6e0d16a9cf2d39d4b81bdd8463c1b39e94a9..d26f99dda91a0298603c5b5794be034b3be4180f 100644
 --- a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
 +++ b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
 @@ -92,10 +92,10 @@ constexpr std::array<DispatchTableEntry, 143> X87F64OpTable = {{

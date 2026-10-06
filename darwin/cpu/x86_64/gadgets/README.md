@@ -360,7 +360,11 @@ code waits on it.
 x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
 the control word's rounding mode and precision. As on x86, C1 after a result
 says whether rounding increased its magnitude -- FPTAN reports the tangent's
-rounding and FSINCOS the cosine's -- and an invalid operation clears it.
+rounding and FSINCOS the cosine's -- and an invalid operation clears it. An
+instruction that rounds nothing clears C1: the loads, a store to a register or
+to an 80-bit operand, FXCH, FCHS, FABS, FFREE, FFREEP, the compares into the
+status word and the stack-pointer instructions; FCOMI, FUCOMI and their
+popping forms, FCMOVcc and FNOP keep it.
 FIST, FISTP and FISTTP raise precision for a value they round, and a sine,
 cosine, tangent or arctangent of a finite nonzero operand raises precision
 even where its 128-bit value rounds to the operand or to 1, and underflow for

@@ -693,12 +693,20 @@ UML_X86_64_DEFINE_X87_BINARY(subtract, subtract)
 UML_X86_64_DEFINE_X87_BINARY(divide, divide)
 #undef UML_X86_64_DEFINE_X87_BINARY
 
+/* Bit 0 of `flags` marks the quiet compares, bit 1 FCOMI and FUCOMI,
+ * which leave C1 as it was. */
 extern "C" std::uint32_t uml_x86_64_x87_compare(CpuState *cpu,
 	const X87Register *left, const X87Register *right,
-	std::uint32_t quiet) noexcept
+	std::uint32_t flags) noexcept
 {
-	return static_cast<std::uint32_t>(compare(*cpu, *left, *right,
-		(quiet & 1U) != 0));
+	const auto c1 = static_cast<std::uint16_t>(cpu->x87_status &
+		status_c1);
+	const auto result = static_cast<std::uint32_t>(compare(*cpu, *left,
+		*right, (flags & 1U) != 0));
+	if ((flags & 2U) != 0)
+		cpu->x87_status = static_cast<std::uint16_t>(
+			(cpu->x87_status & ~status_c1) | c1);
+	return result;
 }
 
 extern "C" void uml_x86_64_x87_f2xm1(CpuState *cpu,

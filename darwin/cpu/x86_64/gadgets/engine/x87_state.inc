@@ -82,6 +82,7 @@ gadget x87_change_sign
 	x87_load_stack w13, x9, w10
 	eor w10, w10, #0x8000
 	x87_store_stack w13, x9, w10
+	x87_clear_c1
 	retire_and_next
 
 gadget x87_absolute
@@ -89,6 +90,7 @@ gadget x87_absolute
 	x87_load_stack w13, x9, w10
 	and w10, w10, #0x7fff
 	x87_store_stack w13, x9, w10
+	x87_clear_c1
 	retire_and_next
 
 /* FXAM's class in C3, C2 and C0: 000 unsupported, 001 NaN, 010 normal,
@@ -181,6 +183,7 @@ gadget x87_free_\name
 	.if \pop
 	x87_pop
 	.endif
+	x87_clear_c1
 	retire_and_next
 .endm
 x87_free_entry register, 0
@@ -195,6 +198,7 @@ gadget x87_store_register_\name
 	.if \pop
 	x87_pop
 	.endif
+	x87_clear_c1
 	retire_and_next
 .endm
 x87_store_register_entry keep, 0

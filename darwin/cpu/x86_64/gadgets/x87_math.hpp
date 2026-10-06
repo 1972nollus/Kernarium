@@ -45,10 +45,10 @@ UML_X86_64_DECLARE_X87_BINARY(subtract)
 UML_X86_64_DECLARE_X87_BINARY(divide)
 #undef UML_X86_64_DECLARE_X87_BINARY
 
-/* FUCOM and FUCOMI pass `quiet` 1. */
+/* FUCOM and FUCOMI set bit 0 of `flags`, FCOMI and FUCOMI bit 1. */
 std::uint32_t uml_x86_64_x87_compare(CpuState *cpu,
 	const X87Register *left, const X87Register *right,
-	std::uint32_t quiet) noexcept;
+	std::uint32_t flags) noexcept;
 void uml_x86_64_x87_f2xm1(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
 void uml_x86_64_x87_fyl2x(CpuState *cpu, const X87Register *value,

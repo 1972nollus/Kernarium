@@ -138,6 +138,7 @@ gadget x87_store_f80_pop
 	x87_bulk_store 10, sp, Lx86_x87_store_f80_fault
 	add sp, sp, #16
 	x87_pop
+	x87_clear_c1
 	finish_store 10
 Lx86_x87_store_f80_fault:
 	add sp, sp, #16

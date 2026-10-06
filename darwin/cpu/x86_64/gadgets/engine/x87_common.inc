@@ -113,6 +113,16 @@ Lx86_x87_store_classified\@:
 	x87_store_physical w14, \significand, \exponent
 .endm
 
+/* An instruction that rounds nothing clears C1: a store to a register or
+ * to an 80-bit operand, FCHS, FABS, FFREE and FFREEP, as the loads, FXCH,
+ * the compares into the status word and the stack-pointer instructions
+ * do. FCOMI, FUCOMI and their popping forms keep it. */
+.macro x87_clear_c1
+	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	bic w15, w15, #Lx86_x87_status_c1
+	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+.endm
+
 /* A push clears C1 unless `keep_c1` says the value pushed is a rounded
  * result whose C1 the instruction reports, as FPTAN's and FSINCOS's are. */
 .macro x87_push significand, exponent, keep_c1=0

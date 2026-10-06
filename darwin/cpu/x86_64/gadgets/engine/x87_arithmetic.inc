@@ -81,8 +81,12 @@ gadget x87_compare_\name
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
-	/* Bit 8 of the register word marks FUCOM and FUCOMI. */
+	/* Bit 8 of the register word marks FUCOM and FUCOMI; bit 1 of the
+	 * helper's flags FCOMI and FUCOMI, which keep C1. */
 	lsr w3, w24, #8
+	.if \integer
+	orr w3, w3, #2
+	.endif
 	bl NAME(uml_x86_64_x87_compare)
 	x87_leave_if_raised
 	add sp, sp, #32

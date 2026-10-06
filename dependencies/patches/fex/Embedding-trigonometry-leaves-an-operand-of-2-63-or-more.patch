@@ -16,10 +16,10 @@ operation's own path.
  1 file changed, 33 insertions(+)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-index 386555c8c741dc4053bee43092b20406e46ab0f7..9f7db118e3b4d8cbb13331421d93a13215605d8d 100644
+index bb468975327223346c3a1526984d88b6a7bef488..0dac4a09da280dc274585b4ab84e22a2867471e9 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
-@@ -790,6 +790,39 @@ void OpDispatchBuilder::X87UpdatePending(Ref FSW, Ref FCW) {
+@@ -811,6 +811,39 @@ void OpDispatchBuilder::X87UpdatePending(Ref FSW, Ref FCW) {
  }
  
  void OpDispatchBuilder::X87OpHelper(OpcodeArgs, FEXCore::IR::IROps IROp, bool ZeroC2) {
