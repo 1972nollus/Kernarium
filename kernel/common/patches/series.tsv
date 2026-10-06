@@ -59,6 +59,6 @@ patch	uml-discard-a-stale-uaccess-mapping-with-one-bridge-call.patch
 patch	uml-retire-pointer-authentication-and-GCS-from-the-Darwin-bridge.patch
 patch	uml-describe-the-arm64-virtual-CPU-in-proc-cpuinfo-as-arm64-Linux-do.patch
 patch	arm64-um-implement-SME-task-state-for-Darwin-guests.patch
-patch	uml-tell-the-Darwin-host-when-a-task-s-mm-is-shared.patch
 patch	um-keep-asynchronous-host-signals-off-Darwin-SME-carriers.patch
 patch	uml-retire-the-Darwin-stack-quarter-bridge-entries.patch
+patch	uml-tell-the-Darwin-host-when-a-task-s-mm-is-shared.patch

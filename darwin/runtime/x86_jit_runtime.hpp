@@ -39,13 +39,16 @@ struct X86JitRunResult final {
 /* Whether this host can run the engine. Decided once. */
 [[nodiscard]] bool x86_jit_available() noexcept;
 
-/* One dispatch of 64-bit code. The result means what the gadget runtime's
- * does, so the caller reports it to Linux the same way. */
+/* One dispatch of x86 code. The result means what the gadget runtime's
+ * does, so the caller reports it to Linux the same way. `mm_shared` is the
+ * kernel's mark that another agent may observe the address space's memory
+ * (DARWIN_UML_DISPATCH_MM_SHARED): the dispatch then keeps x86's total
+ * store order. */
 [[nodiscard]] X86JitRunResult run_x86_jit(
 	::uml::cpu::x86_64::CpuState &cpu,
 	::uml::memory::StaticGuestMemory &memory, X86JitEngine &engine,
 	unsigned long generation, std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt) noexcept;
+	const ::uml::cpu::InterruptToken &interrupt, bool mm_shared) noexcept;
 
 } // namespace uml::runtime
 

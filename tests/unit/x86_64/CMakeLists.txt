@@ -134,4 +134,23 @@ if(TARGET uml_x86_64_jit)
         NAME x86-64-jit-retirement
         COMMAND uml_x86_64_fex_asm_jit_runner --retirement
         LABELS cpu;x86-64)
+    # Message passing between two engines on two host threads: a space that
+    # orders stores never shows the flag without the data, and one that
+    # does not shows it, so the check would see the order go missing.
+    add_executable(uml_x86_64_jit_store_order_tests
+        x86_64_jit_store_order_tests.cpp)
+    target_link_libraries(uml_x86_64_jit_store_order_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_jit_store_order_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(
+        NAME x86-64-jit-store-order
+        COMMAND uml_x86_64_jit_store_order_tests
+        LABELS cpu;x86-64
+        PROCESSORS 2
+        TIMEOUT 300)
 endif()

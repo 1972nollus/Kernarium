@@ -28,7 +28,8 @@ constexpr std::size_t change_capacity = 128;
 void sync_engine(x86_64::jit::FexEngine &engine,
 	const X86StaticExecutionScope &execution, unsigned long generation,
 	x86_64::ExecutionMode mode,
-	const darwin_uml_static_sequences &sequences) noexcept
+	const darwin_uml_static_sequences &sequences,
+	bool orders_stores) noexcept
 {
 	x86_64::jit::AddressSpaceChanges changes{};
 	changes.mapping_sequence = sequences.mapping_changes;
@@ -37,7 +38,7 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 	std::uint64_t code_seen = 0;
 	if (!engine.consumed_sequences(generation, mode, mapping_seen,
 		code_seen)) {
-		engine.apply_changes(generation, mode, changes);
+		engine.apply_changes(generation, mode, changes, orders_stores);
 		return;
 	}
 	if (mapping_seen == sequences.mapping_changes &&
@@ -79,7 +80,7 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 			changes.code_sequence = current;
 		}
 	}
-	engine.apply_changes(generation, mode, changes);
+	engine.apply_changes(generation, mode, changes, orders_stores);
 }
 
 } // namespace
@@ -100,7 +101,7 @@ bool x86_jit_available() noexcept
 X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	X86JitEngine &engine, unsigned long generation,
 	std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt) noexcept
+	const ::uml::cpu::InterruptToken &interrupt, bool mm_shared) noexcept
 {
 	X86JitRunResult run{};
 	auto &result = run.execution;
@@ -131,16 +132,23 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 		result.reason = ::uml::cpu::ExitReason::system_call;
 		return run;
 	}
+	/* The kernel's mark alone decides: a space another agent may observe
+	 * keeps x86's store order. */
+	const bool ordered = mm_shared;
 	sync_engine(*engine, execution, generation, cpu.execution_mode,
-		sequences);
+		sequences, ordered);
+	const auto start = cpu.rip;
 	const auto executed = engine->run(cpu, memory, {
 		.generation = generation,
 		.instruction_budget = instruction_budget,
 		.execution_context = execution.context(),
 		.interrupt = &interrupt,
+		.orders_stores = ordered,
 	});
 	result = executed.execution;
 	run.error_code = executed.error_code;
+	if (x86_mm_shared_logging()) [[unlikely]]
+		note_x86_jit_ordering(generation, executed.stores_ordered, start);
 	/* A handler without SA_RESTORER returns to the trampoline, which no
 	 * guest page backs on the x86-64 slice, so the engine stops there with
 	 * a fetch fault. Reaching it means rt_sigreturn, as at entry. */
