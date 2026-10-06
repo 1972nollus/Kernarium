@@ -6,9 +6,10 @@
  * the same for every SVL: with RDSVL and ADDSVL in SM=1 translations, from
  * CpuState::sme_svl in the others.
  *
- * SM=1 translations execute the ZA and ZT0 forms and the register-only
- * forms natively on the guest's resident state, with only their general
- * register fields re-encoded. SM=0 translations run with host SME off and
+ * SM=1 translations execute the ZA and ZT0 forms, the register-only forms
+ * and the memory forms (M3) natively on the guest's resident state, with
+ * only their general register fields re-encoded and a memory form's base
+ * rebased into the host page. SM=0 translations run with host SME off and
  * contain no SVE or SME instruction: they copy between guest memory and the
  * register file with GPRs (design 4.1.2).
  */
@@ -18,6 +19,7 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <optional>
 #include <utility>
 
@@ -192,9 +194,13 @@ JitCompiler::Action JitCompiler::emit_sme_instruction(std::uint32_t instruction,
   const bool streaming = streaming_translation();
   const auto form = row->form;
   if (!jit::implements_sme_form(form)) {
-    /* A register-only form: every one needs streaming mode. */
+    /* A register-only or memory form: every one needs streaming mode. */
     if (!streaming)
       return Action::unsupported;
+    if (row->memory != 0U)
+      return emit_streaming_memory(*row, instruction, pc)
+                 ? Action::keep_going
+                 : Action::unsupported;
     if (form == forms::movprfx || form == forms::movprfx_predicated) {
       emit_movprfx(instruction, form == forms::movprfx_predicated);
       return Action::keep_going;
@@ -688,6 +694,251 @@ void JitCompiler::emit_movprfx(std::uint32_t instruction, bool predicated) {
   emitter_.emit(instruction);
   emitter_.emit(0x0403'8000U | ((shift_size >> 2) << 22) | (governing << 10) |
                 ((shift_size & 3U) << 8) | destination);
+}
+
+void JitCompiler::emit_memory_span(const detail::SmeMemory &memory,
+                                   std::uint32_t instruction,
+                                   unsigned destination) {
+  /* Registers x SVL x msize / esize: RDSVL by the register count, then a
+   * shift by log2(esize / msize). */
+  using Shape = detail::SmeMemoryShape;
+  unsigned multiple = 1;
+  unsigned shift = 0;
+  if (memory.shape == Shape::contiguous || memory.shape == Shape::structure) {
+    multiple = memory.registers;
+    shift = static_cast<unsigned>(std::countr_zero(
+        jit::sme_memory_element_bytes(memory, instruction) /
+        (memory.msize / 8U)));
+  } else if (memory.shape == Shape::fill_p) {
+    shift = 3;
+  }
+  emitter_.emit(rdsvl(destination, multiple));
+  if (shift != 0U)
+    emitter_.ubfm(destination, destination, shift, 63U); // lsr
+}
+
+bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
+                                        std::uint32_t instruction,
+                                        std::uint64_t pc) {
+  /*
+   * Design 4.1.5: the guest address in x8; when every byte the access can
+   * span, whichever elements are active, lies in one guest page that the
+   * TLB holds, the guest's own word runs on the host address with its
+   * offset zeroed. A crossing, a miss, a misaligned SP base or a tagged
+   * base takes the helper, which alone knows which elements are active,
+   * so a failed translation goes there too rather than to a fault exit.
+   */
+  using Shape = detail::SmeMemoryShape;
+  const auto &memory = *detail::sme_encoding_memory_of(row);
+  /* A prefetch accesses nothing and cannot fault. */
+  if (memory.shape == Shape::prefetch)
+    return true;
+  const auto *operands = detail::sme_encoding_operands_of(row);
+  const auto &base_operand = operands[memory.base_operand];
+  const detail::SmeOperand *index_operand = nullptr;
+  if (memory.index_operand != detail::sme_no_operand)
+    index_operand = &operands[memory.index_operand];
+  if (!one_field(base_operand, 5) ||
+      (index_operand != nullptr && !one_field(*index_operand, 5)))
+    return false;
+  const bool za = memory.shape == Shape::za_slice;
+  /* A ZA slice's index register, W12-W15, runs in W12 as in M2. */
+  const detail::SmeOperand *slice_operand = nullptr;
+  for (unsigned index = 0; za && index < row.operand_count; ++index) {
+    const auto &operand = operands[index];
+    if (operand.kind == detail::SmeOperandKind::gpr &&
+        operand.segment_count == 2U && !operand.segments[0].field &&
+        operand.segments[1].field &&
+        (12U >> operand.segments[1].width) == operand.segments[0].constant)
+      slice_operand = &operand;
+  }
+  if (za && slice_operand == nullptr)
+    return false;
+  const bool store = memory.direction == detail::SmeMemoryDirection::store;
+  const auto access = store ? Access::write : Access::read;
+  const unsigned base = detail::sme_operand_number(base_operand, instruction);
+  /* LD1R and LD1RQ span a constant few bytes; every other shape a
+   * multiple of the SVL, read at run time. */
+  const bool constant_span =
+      memory.shape == Shape::replicate || memory.shape == Shape::replicate_quad;
+  const auto constant_bytes = jit::sme_memory_span(memory, instruction, 0);
+
+  if (store)
+    mark_direct_memory_write();
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sme_slow);
+  load_gpr(8, base, true);
+  if (base == 31U) {
+    emit_misalignment_check(8, 16, slow);
+  } else {
+    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+    emitter_.compare_zero(slow, 0, false, true);
+  }
+  if (!constant_span)
+    emit_memory_span(memory, instruction, 10);
+  switch (memory.offset) {
+  case detail::SmeAddressOffset::immediate_footprint:
+    if (const auto immediate = jit::sme_memory_immediate(memory, instruction);
+        immediate != 0) {
+      emitter_.load_constant(11, static_cast<std::uint64_t>(immediate));
+      emitter_.emit(multiply_add(8, 10, 11, 8));
+    }
+    break;
+  case detail::SmeAddressOffset::register_element: {
+    /* A ZA slice's XZR index adds nothing. */
+    const unsigned index =
+        detail::sme_operand_number(*index_operand, instruction);
+    if (index != 31U) {
+      const auto native = read_native_gpr(index, false, 9);
+      emitter_.add_shifted(
+          8, 8, native.host,
+          static_cast<unsigned>(std::countr_zero(memory.msize / 8U)));
+    }
+    break;
+  }
+  case detail::SmeAddressOffset::immediate_element:
+  case detail::SmeAddressOffset::immediate_16: {
+    /* At most 63 elements of 8 bytes, or 16 bytes times -8 to 7. */
+    const auto offset = static_cast<std::int64_t>(
+        jit::sme_memory_offset(memory, instruction, 0, 0));
+    if (offset > 0)
+      emitter_.add_immediate(8, 8, static_cast<unsigned>(offset));
+    else if (offset < 0)
+      emitter_.subtract_immediate(8, 8, static_cast<unsigned>(-offset));
+    break;
+  }
+  case detail::SmeAddressOffset::none:
+    break;
+  }
+  if (constant_span) {
+    emit_translate(8, access, slow, slow, constant_bytes);
+  } else {
+    /* The span lies below a page, so the page bit of (address & page
+     * mask) + span - 1 is the crossing test. */
+    emitter_.ubfm(0, 8, 0, page_shift - 1U);
+    emitter_.add_shifted(0, 0, 10, 0);
+    emitter_.subtract_immediate(0, 0, 1);
+    emitter_.test_zero(slow, 0, page_shift, true);
+    emit_translate(8, access, slow, slow, 1);
+  }
+  /* Only loads span a constant; a TLB miss bridge clobbers x10. */
+  if (store && track_direct_stores_) {
+    emit_memory_span(memory, instruction, 10);
+    track_direct_store_register(8, 10, count_);
+  }
+  auto word = instruction;
+  const auto place = [&word](unsigned low, unsigned width, unsigned value) {
+    const auto mask = ((1U << width) - 1U) << low;
+    word = (word & ~mask) | ((value << low) & mask);
+  };
+  place(base_operand.segments[0].low, 5, 8);
+  for (unsigned index = 0; index < memory.immediate_segment_count; ++index)
+    place(memory.immediate[index].low, memory.immediate[index].width, 0);
+  if (index_operand != nullptr) {
+    /* SVE's scalar-plus-scalar forms have no XZR index (their rows exclude
+     * Rm = 31), so they take a zeroed x9; a ZA slice's takes XZR. */
+    place(index_operand->segments[0].low, 5, za ? 31U : 9U);
+    if (!za)
+      emitter_.load_constant(9, 0);
+  }
+  if (slice_operand != nullptr) {
+    /* x12 holds no guest register in a streaming translation. */
+    load_gpr(12, detail::sme_operand_number(*slice_operand, instruction),
+             false);
+    place(slice_operand->segments[1].low, slice_operand->segments[1].width, 0);
+  }
+  emitter_.emit(word);
+  if (store)
+    clear_local_exclusive_monitor();
+  return true;
+}
+
+bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
+                                           std::uint64_t pc) {
+  /*
+   * A SIMD&FP load or store in a streaming translation, on the guest's
+   * resident Z registers: when the bytes it moves lie in one guest page
+   * the TLB holds, the unsigned-offset (or pair offset) form of the word
+   * runs on the host address in x8 and the guest's writeback follows. A
+   * crossing, a miss, a misaligned SP base or a tagged base takes the
+   * helper, as the vector memory forms do.
+   */
+  const auto decoded = jit::decode_streaming_fp_memory(instruction);
+  if (!decoded || detail::classify_fp_simd_streaming(instruction) !=
+                      detail::FpSimdStreaming::fp)
+    return false;
+  const auto &memory = *decoded;
+  using Mode = jit::FpMemoryMode;
+  const auto access = memory.load ? Access::read : Access::write;
+  const std::size_t bytes = std::size_t{memory.bytes} * memory.registers;
+  if (!memory.load)
+    mark_direct_memory_write();
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sme_slow);
+  if (memory.mode == Mode::literal) {
+    emitter_.load_constant(
+        8, pc + static_cast<std::uint64_t>(memory.immediate));
+  } else {
+    load_gpr(8, memory.base, true);
+    if (memory.base == 31U) {
+      emit_misalignment_check(8, 16, slow);
+    } else {
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+      emitter_.compare_zero(slow, 0, false, true);
+    }
+    if (memory.mode == Mode::register_offset) {
+      /* ADD x8, x8, Rm, <extend> #shift; XZR reads as zero. */
+      const auto index = read_native_gpr(memory.index, false, 9);
+      emitter_.emit(0x8b20'0000U | (index.host << 16) |
+                    (unsigned{memory.option} << 13) |
+                    (unsigned{memory.shift} << 10) | (8U << 5) | 8U);
+    } else if (memory.mode != Mode::post_index) {
+      /* LDR Q's unsigned offset reaches 65520: two 12-bit halves. */
+      const auto magnitude = static_cast<unsigned>(
+          memory.immediate < 0 ? -memory.immediate : memory.immediate);
+      for (const bool high : {false, true}) {
+        const unsigned part = high ? magnitude >> 12 : magnitude & 0xfffU;
+        if (part == 0U)
+          continue;
+        if (memory.immediate < 0)
+          emitter_.subtract_immediate(8, 8, part, high);
+        else
+          emitter_.add_immediate(8, 8, part, high);
+      }
+    }
+  }
+  emit_translate(8, access, slow, slow, bytes);
+  if (!memory.load)
+    track_direct_store(8, bytes);
+  const unsigned rt = memory.transfer;
+  std::uint32_t word;
+  if (memory.registers == 2U) {
+    const unsigned opc = memory.bytes == 4U ? 0U : memory.bytes == 8U ? 1U : 2U;
+    word = (opc << 30) |
+           (memory.nontemporal ? 0x2c00'0000U : 0x2d00'0000U) |
+           (memory.load ? 0x0040'0000U : 0U) |
+           (unsigned{memory.transfer2} << 10) | (8U << 5) | rt;
+  } else {
+    const unsigned size =
+        memory.bytes == 16U ? 0U
+                            : static_cast<unsigned>(std::countr_zero(
+                                  unsigned{memory.bytes}));
+    const unsigned opc = (memory.bytes == 16U ? 2U : 0U) | (memory.load ? 1U : 0U);
+    word = (size << 30) | 0x3d00'0000U | (opc << 22) | (8U << 5) | rt;
+  }
+  emitter_.emit(word);
+  if (!memory.load)
+    clear_local_exclusive_monitor();
+  if ((memory.mode == Mode::pre_index || memory.mode == Mode::post_index) &&
+      memory.immediate != 0) {
+    const auto base = write_native_gpr(memory.base, true, true, 9);
+    if (memory.immediate > 0)
+      emitter_.add_immediate(base.host, base.host,
+                             static_cast<unsigned>(memory.immediate));
+    else
+      emitter_.subtract_immediate(base.host, base.host,
+                                  static_cast<unsigned>(-memory.immediate));
+    commit_native_gpr(base, memory.base, true);
+  }
+  return true;
 }
 
 void JitCompiler::emit_terminal_helper(const void *helper,

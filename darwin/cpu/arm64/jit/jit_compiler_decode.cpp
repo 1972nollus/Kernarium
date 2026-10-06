@@ -99,11 +99,15 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     /*
      * A streaming translation runs the FP&SIMD data-processing words the
      * profile marks FP-legal natively, on the guest's resident vectors
-     * (jit::sme_support). AdvSIMD is illegal in streaming mode, and the
-     * SIMD&FP loads and stores wait for the memory forms. MRS and MSR of
-     * FPCR and FPSR stay legal (emit_system_register).
+     * (jit::sme_support), and the SIMD&FP loads and stores streaming mode
+     * keeps. AdvSIMD is illegal in streaming mode. MRS and MSR of FPCR and
+     * FPSR stay legal (emit_system_register).
      */
     if (streaming_translation() && fp_simd_word(instruction)) {
+      if ((instruction & 0x0a00'0000U) == 0x0800'0000U)
+        return emit_streaming_fp_memory(instruction, pc)
+                   ? Action::keep_going
+                   : Action::unsupported;
       const auto plan = plan_streaming_fp_simd(instruction);
       if (!plan)
         return Action::unsupported;

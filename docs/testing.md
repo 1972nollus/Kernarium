@@ -524,9 +524,10 @@ run, so the suites hold with it off, the default, on every host.
 either policy, and the identification registers and HWCAP2 against arm64
 Linux's table with injected SME hosts at every SVL from 16 to 256 bytes. On
 an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
-`arm64-jit-sme-control` and `arm64-jit-sme-register` with
-`DARWIN_UML_GUEST_SME=1`. Elsewhere `arm64-jit-sme-control` runs only its
-SM=0 cases, on an injected profile, and `arm64-jit-sme-register` skips.
+`arm64-jit-sme-control`, `arm64-jit-sme-register` and
+`arm64-jit-sme-memory` with `DARWIN_UML_GUEST_SME=1`. Elsewhere
+`arm64-jit-sme-control` runs only its SM=0 cases, on an injected profile,
+and the other two skip.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
 under the policy on. Each skips, naming its reason, unless the host has SME
