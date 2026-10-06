@@ -464,8 +464,8 @@ void enter_names_the_host_mode() {
 
 /* Every row of the shared table, by its first word, translates exactly in
  * the modes the profile implements it in: the control core's forms and,
- * in streaming mode, every register-only row of the SME1 profile. Every
- * other row (memory forms, SME2's, those outside the profile) is the
+ * in streaming mode, every register-only and memory row of the SME1
+ * profile. Every other row (SME2's and those outside the profile) is the
  * illegal exit. Each translation also passes check_translation(). */
 void rows_translate_exactly_where_implemented() {
   constexpr std::uint64_t pc = 0x4f50'0000U;
@@ -475,6 +475,7 @@ void rows_translate_exactly_where_implemented() {
     const auto features = arm64::implemented_sme_features(host);
     Checked checked;
     std::size_t streaming_rows = 0;
+    std::size_t memory_rows = 0;
     for (const auto &row : arm64::detail::sme_encodings) {
       const auto word = row.value;
       if (arm64::detail::find_sme_encoding(word) != &row)
@@ -495,23 +496,27 @@ void rows_translate_exactly_where_implemented() {
                        expected ? "a translation" : "the illegal exit");
           require(false);
         }
-        streaming_rows += expected && mode == arm64::svcr_mask &&
-                          !arm64::jit::implements_sme_form(row.form);
+        const bool counted = expected && mode == arm64::svcr_mask &&
+                             !arm64::jit::implements_sme_form(row.form);
+        streaming_rows += counted && row.memory == 0U;
+        memory_rows += counted && row.memory != 0U;
       }
       const std::array program{word, system_call};
       char label[32];
       std::snprintf(label, sizeof label, "row %08x", word);
       check_program(pc, program, label, checked);
     }
-    std::fprintf(stderr, "sme2 %d: %zu register-only rows translate at "
-                 "SM = ZA = 1\n", sme2, streaming_rows);
+    std::fprintf(stderr, "sme2 %d: %zu register-only and %zu memory rows "
+                 "translate at SM = ZA = 1\n", sme2, streaming_rows,
+                 memory_rows);
     require(streaming_rows > 900U);
+    require(memory_rows > 400U);
   }
 }
 
 /* Every FP&SIMD class, by its first word, translates in SM=1 exactly when
  * the profile marks it FP-legal and it processes data; AdvSIMD and the
- * SIMD&FP loads and stores (the memory forms) are the illegal exit. */
+ * SIMD&FP loads and stores are the illegal exit. */
 void fp_simd_classes_translate_where_streaming_runs_them() {
   constexpr std::uint64_t pc = 0x4f60'0000U;
   const auto host = sme_host(64);

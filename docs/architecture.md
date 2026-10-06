@@ -437,10 +437,17 @@ streaming entry installs the guest's FPCR with trap enables clear, which
 kernel entries keep, MSR FPCR writes both copies, and the exit restores the
 host's. A floating-point form runs on a cleared FPSR, ORs what it raised into
 the guest's, and restores its destination and runs again if FPSR.QC shows
-that a kernel entry reset the host's. The memory forms, SME2, the reserved
-bitmask immediates of ORR, EOR, AND and DUPM, every other SVE and SME word,
-and in streaming mode AdvSIMD and the SIMD&FP loads and stores are its
-illegal-instruction exit. SM=0 translations run with the host's SME off and
+that a kernel entry reset the host's. Every SVE and SME1 load and store
+runs as the guest's own word, its base renamed to the host address and its
+offset zeroed, when every byte it can span, whichever elements are active,
+lies in one guest page the TLB holds. A crossing, a TLB miss, a failed
+translation, a misaligned SP base or a tagged base takes a terminal helper
+that does the whole access on the register file: it touches only active
+elements, translates every page they lie in before it moves a byte, and
+reports a fault as the gadget engine does. SVE prefetches are NOPs. SME2,
+the reserved bitmask immediates of ORR, EOR, AND and DUPM, every other SVE
+and SME word, and in streaming mode AdvSIMD and the SIMD&FP loads and
+stores are its illegal-instruction exit. SM=0 translations run with the host's SME off and
 hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
 with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 `CpuState`, so no translation depends on it.
