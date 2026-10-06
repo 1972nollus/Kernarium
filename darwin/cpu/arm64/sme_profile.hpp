@@ -29,12 +29,14 @@ enum class SmeProfile : std::uint8_t {
 };
 
 /* How far an engine implements the profile: nothing yet (every SVE and SME
- * word is the illegal-instruction exit), the control core, or all of it.
- * SME is advertised only once both engines are complete. */
+ * word is the illegal-instruction exit), the control core, all of it but
+ * the SME2 forms, or all of it. SME is advertised only once both engines
+ * are complete, and SME2 only once both implement it too. */
 enum class SmeSupport : std::uint8_t {
 	none,
 	control,
 	complete,
+	sme2,
 };
 
 /* A streaming vector length an SME implementation can have, in bytes. */

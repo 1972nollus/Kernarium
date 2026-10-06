@@ -1137,14 +1137,16 @@ struct Counts final {
   std::size_t jit_unavailable{};
   std::size_t failures{};
   std::map<std::string_view, std::size_t> missing_features;
+  /* The features the gadget lane's virtual CPU lacks, by case. */
+  std::map<std::string_view, std::size_t> gadgets_missing_features;
 };
 
 /* The feature a case needs that a lane's virtual CPU for `host` lacks
  * although the host may have it: FEAT_AFP or FEAT_RPRES outside their
  * predicates; FEAT_SME for a case with SME state or an SME requirement
  * unless the virtual CPU implements the profile at the record's SVL and the
- * lane's engine implements all of it; and FEAT_SME2 outside the SME2
- * profile. */
+ * lane's engine is complete; and FEAT_SME2 outside the SME2 profile or for
+ * an engine without the SME2 forms. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
@@ -1156,10 +1158,11 @@ virtual_cpu_lacks(const Record &record,
       });
   if (sme_case) {
     if (!arm64::implements_sme(host) || record.svl != host.sme_svl_bytes ||
-        lane_sme_support(lane) != arm64::SmeSupport::complete)
+        lane_sme_support(lane) < arm64::SmeSupport::complete)
       return ArmFeature::sme;
     if (native.test(static_cast<std::size_t>(ArmFeature::sme2)) &&
-        arm64::sme_profile(host) != arm64::SmeProfile::sme2)
+        (arm64::sme_profile(host) != arm64::SmeProfile::sme2 ||
+         lane_sme_support(lane) < arm64::SmeSupport::sme2))
       return ArmFeature::sme2;
   }
   if (native.test(static_cast<std::size_t>(ArmFeature::afp)) &&
@@ -1300,6 +1303,9 @@ private:
           continue;
         if (lacking.has_value()) {
           ++counts_.gadgets_skipped_host_feature;
+          ++counts_.gadgets_missing_features
+                [::uml::platform::arm_feature_tokens
+                     [static_cast<std::size_t>(*lacking)]];
           continue;
         }
         /* The gadget engine emulates every other feature, but it completes
@@ -1655,6 +1661,13 @@ int main(int argc, char **argv) {
                 counts.jit_skipped_host_feature, counts.jit_unavailable,
                 counts.failures,
                 completed ? "" : " (stopped at the failure limit)", elapsed);
+    if (!counts.gadgets_missing_features.empty()) {
+      std::printf("gadgets host-feature skips:");
+      for (const auto &[feature, count] : counts.gadgets_missing_features)
+        std::printf(" %.*s=%zu", static_cast<int>(feature.size()),
+                    feature.data(), count);
+      std::printf("\n");
+    }
     if (!counts.missing_features.empty()) {
       std::printf("jit host-feature skips:");
       for (const auto &[feature, count] : counts.missing_features)

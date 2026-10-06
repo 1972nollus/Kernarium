@@ -479,9 +479,12 @@ not exhaustive variant proof.
 inventory tables and that completeness boundary.
 
 The `arm64-sme-native` records hold SME results observed on the M4 at its
-streaming vector length, 64 bytes, and run only where an engine implements
-SME at that length; until then they are skipped, and the `arm64-absent-sme`
-record pins every SME profile encoding UNDEFINED on every host. The
+streaming vector length, 64 bytes. They run for each engine whose
+`sme_support` is `complete` where the virtual CPU implements SME at that
+length, which needs an SME host and the guest-SME policy on, and a case
+that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
+skipped, and the `arm64-absent-sme` record pins every SME profile encoding
+UNDEFINED on every host. The
 `arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
 their generator, and `arm64-sme-native-oracle` drives the native oracle with
 base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;

@@ -328,8 +328,9 @@ engines. The prober reports the profile only under the guest-SME policy,
 `DARWIN_UML_GUEST_SME=1`, which stays off by default until both engines
 implement SME; with it off, ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME
 HWCAP2 bits read zero on every host. Each engine's `sme_support` names how
-much of the profile it implements, and an SVE or SME word it does not
-implement is the illegal-instruction exit.
+much of the profile it implements: the control core (`control`), all of it
+but the SME2 forms (`complete`), or all of it (`sme2`). An SVE or SME word
+it does not implement is the illegal-instruction exit.
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and
