@@ -3,14 +3,16 @@
 """Check the "mm is shared" dispatch flag of the x86_64-userspace slice.
 
 The kernel marks an address space shared once clone(CLONE_VM) without
-CLONE_VFORK gives it a second task, and the host reads the mark from each
-dispatch (DARWIN_UML_DISPATCH_MM_SHARED); the x86-64 JIT will order guest
-memory accesses for it. Cross-builds the freestanding mm_shared_probe.cpp,
-boots an x86-64 image on an emulator built with the macos-x86_64 preset with
-UML_X86_MM_SHARED_LOG set, and runs the probe in each mode. The host logs
-the first shared dispatch of each address space with its RIP: no line may
-fall in the probe's code for the single-threaded, fork and vfork modes, and
-exactly one must once the probe starts a thread.
+CLONE_VFORK gives it a second task, once it maps memory another address
+space may map too (MAP_SHARED of any kind, SysV shm), which a fork child
+inherits, or once io_uring keeps a ring in its memory. The host reads the
+mark from each dispatch (DARWIN_UML_DISPATCH_MM_SHARED) for the x86-64 JIT.
+Cross-builds the freestanding mm_shared_probe.cpp, boots an x86-64 image on
+an emulator built with the macos-x86_64 preset with UML_X86_MM_SHARED_LOG
+set, and runs the probe in each mode. The host logs the first shared
+dispatch of each address space with its RIP; in the probe's code there must
+be none for the modes that share nothing and one per shared address space
+for the others.
 """
 
 from __future__ import annotations
@@ -55,9 +57,22 @@ FLAGS = (
     "-Wl,-z,max-page-size=4096",
     "-Wl,-s",
 )
-# The thread mode last: its address space stays marked.
-MODES = ("single", "fork", "vfork", "thread")
-RANGE = re.compile(r"mm-shared-probe: mode=(\w+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+)")
+# Each mode with the number of address spaces it shares: the probe's own,
+# and for fork-shared its child's as well.
+MODES = {
+    "single": 0,
+    "fork": 0,
+    "vfork": 0,
+    "private-file": 0,
+    "thread": 1,
+    "shared-anon": 1,
+    "shared-ro": 1,
+    "shm": 1,
+    "uring-nommap": 1,
+    "fork-shared": 2,
+    "thread-fork": 1,
+}
+RANGE = re.compile(r"mm-shared-probe: mode=([\w-]+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+)")
 LOG_LINE = re.compile(r"uml-x86 mm-shared generation=(\d+) rip=(0x[0-9a-f]+|0)")
 BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 60
@@ -123,7 +138,7 @@ def main() -> int:
             payloads={GUEST_PROBE: GuestFile(probe, 0o755)},
         ) as guest:
             guest.boot_to_shell(arguments.timeout)
-            for mode in MODES:
+            for mode, shared in MODES.items():
                 before = len(logged(log))
                 result = guest.run_command(f"{GUEST_PROBE} {mode}",
                                            PROBE_TIMEOUT_SECONDS)
@@ -135,11 +150,10 @@ def main() -> int:
                 start, end = int(match.group(2), 16), int(match.group(3), 16)
                 hits = [entry for entry in logged(log)[before:]
                         if start <= entry[1] < end]
-                expected = 1 if mode == "thread" else 0
-                passed = len(hits) == expected
+                passed = len(hits) == shared
                 failures += not passed
                 print(f"{'PASS' if passed else 'FAIL'} {mode}: {len(hits)} shared "
-                      f"address space(s) in the probe, expected {expected}")
+                      f"address space(s) in the probe, expected {shared}")
     if failures:
         raise RuntimeError(f"{failures} mode(s) failed")
     return 0

@@ -152,12 +152,19 @@ and SIGCHLD throughout, so the process takes those on a thread that runs no
 guest. Every other carrier wait polls the pending IPIs or does not depend on
 EINTR. Without SME no carrier blocks these signals.
 
-An mm is marked shared, sticky for its life, once `clone()` creates a task on
-it without `CLONE_VFORK`; each later guest entry of a task on it carries
-`DARWIN_UML_DISPATCH_MM_SHARED`, which the x86-64 JIT will use to keep x86's
-store ordering only where another task can observe it. The arm64 host
-ignores the flag. `tests/integration/x86_64/run_guest_x86_64_mm_shared.py`
-checks it.
+An mm is marked shared, sticky for its life, once another agent may observe
+its memory: once `clone()` creates a task on it without `CLONE_VFORK`, once
+`mmap_region()` maps a `VM_MAYSHARE` vma into it (any `MAP_SHARED` mapping,
+read-only ones, SysV shm, memfd and kernel rings included), or once io_uring
+pins memory of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer rings),
+which completions and other rings' `IORING_OP_MSG_RING` write from other
+CPUs. A fork child inherits a mark that a mapping or a ring set, not one that
+a thread set. Each later guest entry of a task on the mm carries
+`DARWIN_UML_DISPATCH_MM_SHARED`, and a host may rely on that meaning.
+Writes through `ptrace()`, `process_vm_writev()` or `/proc/<pid>/mem`, and a
+`MAP_PRIVATE` view of a file that another process writes through
+`MAP_SHARED`, do not mark the mm. The arm64 host ignores the flag.
+`tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause.
 
 An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
