@@ -10,12 +10,12 @@
 namespace uml::cpu::arm64::jit {
 
 /* How much of the SME profile the JIT implements (design 5.3, S4): the
- * control core (M1) and the register-only SVE and SME forms (M2). SMSTART,
- * SMSTOP, MRS and MSR SVCR and TPIDR2_EL0 are base-space system
- * instructions; the table rows are those implements_sme_row() names, less
- * the reserved words sme_word_reserved() finds. Every other SVE and SME
- * word, and every FP&SIMD word in an SM=1 translation, is the
- * illegal-instruction exit. */
+ * control core (M1) and the register-only forms (M2). SMSTART, SMSTOP, MRS
+ * and MSR SVCR and TPIDR2_EL0 are base-space system instructions; the
+ * table rows are those implements_sme_row() names, less the reserved
+ * words sme_word_reserved() finds. Every other SVE and SME word, every
+ * AdvSIMD word and every SIMD&FP load or store in an SM=1 translation is
+ * the illegal-instruction exit. */
 inline constexpr SmeSupport sme_support = SmeSupport::control;
 
 namespace sme_forms {

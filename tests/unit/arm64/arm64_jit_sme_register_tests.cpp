@@ -362,6 +362,123 @@ void movprfx_is_a_move() {
   machine.require_preserved();
 }
 
+/* Scalar floating point, conversions and lane-0 moves in SM=1: general
+ * registers either way, NZCV from compares, the guest's FPCR, a scalar
+ * result zeroing the rest of its Z register, and the guest's FPSR. */
+void scalar_floating_point_runs_natively() {
+  Machine machine{9507, 0x270'0000, arm64::svcr_sm};
+  machine.code(0, {0x1e2e'1001U, // fmov s1, #1.0
+                   0x1e27'0082U, // fmov s2, w4
+                   0x1e22'2820U, // fadd s0, s1, s2
+                   0x1e22'2020U, // fcmp s1, s2
+                   mrs_nzcv(12),
+                   0x1e21'1423U, // fccmp s1, s1, #3, ne
+                   mrs_nzcv(13),
+                   0x1e22'0c23U, // fcsel s3, s1, s2, eq
+                   0x1e38'002eU, // fcvtzs w14, s1
+                   0x9e62'00a4U, // scvtf d4, x5
+                   0x9e66'0086U, // fmov x6, d4
+                   0x9e67'0128U, // fmov d8, x9
+                   0x0e04'3d0aU, // umov w10, v8.s[0]
+                   0x4e02'2d0bU, // smov x11, v8.h[0]
+                   0x9eaf'0208U, // fmov v8.d[1], x16
+                   0x1e27'03e9U, // fmov s9, wzr
+                   0x9eae'0111U, // fmov x17, v8.d[1]
+                   0x5ea1'd827U, // frecpe s7, s1
+                   mrs_fpsr(15), system_call});
+  auto &cpu = machine.cpu;
+  cpu.registers[4] = 1; // the smallest denormal
+  cpu.registers[5] = 3;
+  cpu.registers[9] = 0x1122'3344'5566'7788ULL;
+  cpu.registers[16] = 0xaabb'ccdd'0011'2233ULL;
+  std::size_t retired = 0;
+  require(machine.run(retired) == Event::system_call);
+  const auto file = machine.file();
+  const unsigned svl = machine.svl();
+  const auto bits = std::bit_cast<std::uint32_t>(one);
+  const auto only_low = [&](unsigned z, std::uint64_t low, std::uint64_t high) {
+    if (lane64(file, svl, z, 0) != low || lane64(file, svl, z, 1) != high)
+      return false;
+    for (unsigned lane = 2; lane < svl / 8U; ++lane)
+      if (lane64(file, svl, z, lane) != 0U)
+        return false;
+    return true;
+  };
+  /* RMode +inf (initial_fpcr) rounds the inexact sum up. */
+  require(only_low(0, bits + 1U, 0));
+  require(cpu.registers[12] == 0x2000'0000U); // greater: C
+  require(cpu.registers[13] == 0x6000'0000U); // equal: Z, C
+  require(only_low(3, bits, 0));
+  require(cpu.registers[14] == 1U);
+  require(cpu.registers[6] == std::bit_cast<std::uint64_t>(3.0));
+  require(cpu.registers[10] == 0x5566'7788U);
+  require(cpu.registers[11] == 0x7788U);
+  require(only_low(8, 0x1122'3344'5566'7788ULL, 0xaabb'ccdd'0011'2233ULL));
+  require(cpu.registers[17] == 0xaabb'ccdd'0011'2233ULL);
+  require(only_low(9, 0, 0));
+  require(only_low(7, 0x3f7f'8000U, 0)); // FRECPE(1.0) = 511/512
+  require(cpu.registers[15] == (initial_fpsr | 0x10U));
+  require(cpu.nzcv == 0x6000'0000U);
+  machine.require_preserved({6, 10, 11, 12, 13, 14, 15, 17}, true);
+}
+
+/* fp_flags_survive_kernel_entries() for scalar floating point: a
+ * destructive FMADD counts the iterations and FCVTZS of a NaN raises
+ * exactly IOC in each. */
+void scalar_fp_flags_survive_kernel_entries() {
+  constexpr std::uint64_t iterations = 4'000'000;
+  Machine machine{9508, 0x280'0000, arm64::svcr_sm};
+  machine.code(0, {0x1e27'03e5U, // fmov s5, wzr
+                   0x1e2e'1001U, // fmov s1, #1.0
+                   0x1e27'0086U, // fmov s6, w4
+                   /* loop: */
+                   msr_fpsr_zero,
+                   0x1f01'1425U, // fmadd s5, s1, s1, s5
+                   0x1e38'00d4U, // fcvtzs w20, s6
+                   0x1e26'14c0U, // fccmp s6, s6, #0, ne
+                   mrs_fpsr(20),
+                   0xf100'069fU, // cmp x20, #1
+                   0x9a95'06b5U, // cinc x21, x21, ne
+                   0xf100'0442U, // subs x2, x2, #1
+                   branch_not_equal(-8), mrs_fpsr(3), system_call});
+  auto &cpu = machine.cpu;
+  cpu.registers[2] = iterations;
+  cpu.registers[4] = 0x7fc0'0000U; // quiet NaN
+  cpu.registers[21] = 0;
+  const auto target = mach_thread_self();
+  std::atomic<bool> running{true};
+  std::atomic<unsigned> stops{0};
+  std::thread interrupter{[&] {
+    while (running.load(std::memory_order_relaxed)) {
+      if (thread_suspend(target) == KERN_SUCCESS) {
+        arm_thread_state64_t state{};
+        mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+        if (thread_get_state(target, ARM_THREAD_STATE64,
+                             reinterpret_cast<thread_state_t>(&state),
+                             &count) == KERN_SUCCESS)
+          stops.fetch_add(1, std::memory_order_relaxed);
+        thread_resume(target);
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+  }};
+  std::size_t retired = 0;
+  const auto event = machine.run(retired, 1'000'000);
+  running.store(false, std::memory_order_relaxed);
+  interrupter.join();
+  mach_port_deallocate(mach_task_self(), target);
+  require(event == Event::system_call);
+  std::fprintf(stderr, "scalar FP loop stopped in the kernel %u times, %llu "
+               "iterations miscounted their flags\n", stops.load(),
+               static_cast<unsigned long long>(cpu.registers[21]));
+  require(stops.load() >= 10U);
+  require(cpu.registers[21] == 0U);
+  require(cpu.registers[3] == 0x1U);
+  const auto file = machine.file();
+  require(lane32(file, machine.svl(), 5, 0) ==
+          std::bit_cast<std::uint32_t>(static_cast<float>(iterations)));
+}
+
 } // namespace
 
 int main() {
@@ -378,5 +495,7 @@ int main() {
   fpcr_controls_streaming_floating_point();
   fp_flags_survive_kernel_entries();
   movprfx_is_a_move();
+  scalar_floating_point_runs_natively();
+  scalar_fp_flags_survive_kernel_entries();
   return 0;
 }

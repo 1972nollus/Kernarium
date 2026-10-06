@@ -275,6 +275,10 @@ private:
   };
   [[nodiscard]] static std::optional<StreamingWord>
   plan_sme_row(const detail::SmeEncoding &row, std::uint32_t instruction);
+  /* An FP&SIMD data-processing word streaming mode runs: the classes the
+   * shared table marks FP-legal. */
+  [[nodiscard]] static std::optional<StreamingWord>
+  plan_streaming_fp_simd(std::uint32_t instruction);
   void emit_streaming_word(const StreamingWord &plan);
   void emit_movprfx(std::uint32_t instruction, bool predicated);
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,

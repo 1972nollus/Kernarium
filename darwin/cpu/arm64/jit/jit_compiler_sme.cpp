@@ -488,6 +488,93 @@ JitCompiler::plan_sme_row(const detail::SmeEncoding &row,
   return plan;
 }
 
+std::optional<JitCompiler::StreamingWord>
+JitCompiler::plan_streaming_fp_simd(std::uint32_t instruction) {
+  /* The SIMD&FP loads and stores wait for the memory forms. */
+  if (detail::classify_fp_simd_streaming(instruction) !=
+          detail::FpSimdStreaming::fp ||
+      !floating_or_vector_primary_class(instruction))
+    return std::nullopt;
+  StreamingWord plan{.word = instruction};
+  /* Which way a general register goes, if one does: Rd or Rn, where 31
+   * is the zero register. */
+  enum class General { none, destination, source };
+  auto general = General::none;
+  bool vector_destination = true;
+  plan.raises = true;
+  if ((instruction & 0x9fe0'8400U) == 0x0e00'0400U) {
+    /* SMOV and UMOV of element 0. */
+    general = General::destination;
+    plan.raises = false;
+  } else if ((instruction & 0x5f00'0000U) == 0x1e00'0000U) {
+    /* Scalar floating point and conversions (floatdp3 has bit 24). */
+    const unsigned opcode = (instruction >> 16) & 7U;
+    if ((instruction & 0x0020'0000U) == 0U) {
+      /* Fixed-point conversion: SCVTF and UCVTF read Rn. */
+      general = opcode == 2U || opcode == 3U ? General::source
+                                             : General::destination;
+    } else {
+      switch ((instruction >> 10) & 3U) {
+      case 1: // conditional compare
+        vector_destination = false;
+        plan.reads_flags = plan.writes_flags = true;
+        break;
+      case 2: // two sources
+        break;
+      case 3: // conditional select
+        plan.reads_flags = true;
+        plan.raises = false;
+        break;
+      default:
+        if ((instruction & 0x1c00U) == 0x1000U) {
+          plan.raises = false; // FMOV (scalar, immediate)
+        } else if ((instruction & 0x3c00U) == 0x2000U) {
+          vector_destination = false; // compare
+          plan.writes_flags = true;
+        } else if ((instruction & 0x7c00U) == 0x4000U) {
+          /* One source: FMOV, FABS and FNEG raise nothing. */
+          plan.raises = ((instruction >> 15) & 63U) > 2U;
+        } else if ((instruction & 0xfc00U) == 0U) {
+          /* Integer conversion; FMOV (general) raises nothing. */
+          general = opcode == 2U || opcode == 3U || opcode == 7U
+                        ? General::source
+                        : General::destination;
+          plan.raises = opcode < 6U;
+        } else {
+          return std::nullopt;
+        }
+      }
+    }
+  }
+  if (general == General::destination) {
+    plan.gprs[plan.gpr_count++] = {.low = 0,
+                                   .guest = static_cast<std::uint8_t>(
+                                       instruction & 31U),
+                                   .stack_pointer = false,
+                                   .destination = true};
+    vector_destination = false;
+  } else if (general == General::source) {
+    plan.gprs[plan.gpr_count++] = {.low = 5,
+                                   .guest = static_cast<std::uint8_t>(
+                                       (instruction >> 5) & 31U),
+                                   .stack_pointer = false,
+                                   .destination = false};
+  }
+  /* A rerun must see the sources the first run saw: save the destination
+   * when one of the register fields it can read names it (the fields at
+   * 5, 16 and 10; in a form where one is not a register, at worst an
+   * unneeded save). */
+  const unsigned destination = instruction & 31U;
+  if (plan.raises && vector_destination && general == General::none &&
+      (destination == ((instruction >> 5) & 31U) ||
+       destination == ((instruction >> 16) & 31U) ||
+       destination == ((instruction >> 10) & 31U))) {
+    plan.saved = StreamingWord::Saved::z;
+    plan.saved_register = static_cast<std::uint8_t>(destination);
+  }
+  return plan;
+}
+
 void JitCompiler::emit_streaming_word(const StreamingWord &plan) {
   using Saved = StreamingWord::Saved;
   auto word = plan.word;

@@ -97,14 +97,19 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if (arm64::detail::unallocated_simd_floating_class(instruction))
       return Action::unsupported;
     /*
-     * A streaming translation implements no FP&SIMD word at the control
-     * core (jit::sme_support): AdvSIMD is illegal in streaming mode, and
-     * the streaming-legal scalar FP and SIMD&FP memory words wait for
-     * the register-only milestone. MRS and MSR of FPCR and FPSR stay
-     * legal and use CpuState (emit_system_register).
+     * A streaming translation runs the FP&SIMD data-processing words the
+     * profile marks FP-legal natively, on the guest's resident vectors
+     * (jit::sme_support). AdvSIMD is illegal in streaming mode, and the
+     * SIMD&FP loads and stores wait for the memory forms. MRS and MSR of
+     * FPCR and FPSR stay legal (emit_system_register).
      */
-    if (streaming_translation() && fp_simd_word(instruction))
-      return reject();
+    if (streaming_translation() && fp_simd_word(instruction)) {
+      const auto plan = plan_streaming_fp_simd(instruction);
+      if (!plan)
+        return Action::unsupported;
+      emit_streaming_word(*plan);
+      return Action::keep_going;
+    }
     /* Every SVE and SME word goes through the profile's table first
      * (design 4.1.4). Without the profile each stays on the path that
      * makes it the illegal exit, unchanged. */

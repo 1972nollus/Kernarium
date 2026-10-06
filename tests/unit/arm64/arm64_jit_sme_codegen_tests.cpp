@@ -110,6 +110,13 @@ constexpr std::uint32_t write_fpcr_x8 = 0xd51b'4408U; // msr fpcr, x8
   return (word & 0xfff8'001fU) == 0x36d8'000bU;
 }
 
+/* An FP&SIMD word that runs in streaming mode, as guest words the
+ * profile marks FP-legal do. */
+[[nodiscard]] constexpr bool streaming_fp(std::uint32_t word) noexcept {
+  return arm64::detail::classify_fp_simd_streaming(word) ==
+         arm64::detail::FpSimdStreaming::fp;
+}
+
 /* MRS or MSR of FPCR or FPSR. */
 [[nodiscard]] constexpr bool fp_control_access(std::uint32_t word) noexcept {
   switch (word & 0xffff'ffe0U) {
@@ -224,7 +231,7 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
                    label.c_str(), mode, word, index);
       require(false);
     }
-    if (streaming && (fp_simd_word(word) ||
+    if (streaming && ((fp_simd_word(word) && !streaming_fp(word)) ||
                       (fp_control_access(word) &&
                        !streaming_fp_control(code, index)))) {
       std::fprintf(stderr, "%s mode %u: FP&SIMD, FPCR or FPSR word %08x at %zu\n",
@@ -502,6 +509,40 @@ void rows_translate_exactly_where_implemented() {
   }
 }
 
+/* Every FP&SIMD class, by its first word, translates in SM=1 exactly when
+ * the profile marks it FP-legal and it processes data; AdvSIMD and the
+ * SIMD&FP loads and stores (the memory forms) are the illegal exit. */
+void fp_simd_classes_translate_where_streaming_runs_them() {
+  constexpr std::uint64_t pc = 0x4f60'0000U;
+  const auto host = sme_host(64);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  Checked checked;
+  std::size_t translated = 0;
+  for (const auto &row : arm64::detail::fp_simd_streaming_classes) {
+    const auto word = row.value;
+    if (streaming_fp(word) == row.advsimd)
+      continue; // an earlier row claims the word
+    const bool expected =
+        !row.advsimd && (word & 0x0e00'0000U) != 0x0c00'0000U;
+    for (const std::uint8_t mode :
+         {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)})
+      if (illegal_in(word, mode) == expected) {
+        std::fprintf(stderr, "FP&SIMD class %u %08x mode %u: expected %s\n",
+                     row.form, word, mode,
+                     expected ? "a translation" : "the illegal exit");
+        require(false);
+      }
+    translated += expected;
+    const std::array program{word, system_call};
+    char label[32];
+    std::snprintf(label, sizeof label, "class %08x", word);
+    check_program(pc, program, label, checked);
+  }
+  std::fprintf(stderr, "%zu FP&SIMD classes translate in streaming mode\n",
+               translated);
+  require(translated > 500U);
+}
+
 /* The SVE words whose rows can raise a floating-point exception, and so
  * run with the FPSR capture, are exactly those named for floating point
  * but for the sign and move forms: a regenerated table cannot drop one. */
@@ -598,6 +639,7 @@ int main(int argc, char **argv) {
   translations_do_not_depend_on_the_svl(argv[1]);
   control_core_follows_profile_and_mode();
   rows_translate_exactly_where_implemented();
+  fp_simd_classes_translate_where_streaming_runs_them();
   fp_capture_follows_form_names(argv[1]);
   reserved_bitmask_immediates_are_illegal();
   enter_names_the_host_mode();
