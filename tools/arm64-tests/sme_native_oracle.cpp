@@ -17,12 +17,25 @@
 //   oracle_enter   saves the caller's registers, loads SVCR, ZA, ZT0, Z, P
 //                  or V, FPCR, FPSR, and TPIDR2 from the load bank, and
 //                  stops at BRK #0x10; the handler then loads X0-X30 and
-//                  NZCV and starts the case program;
+//                  NZCV and starts the case program through the prologue;
 //   the program    runs until it traps; its terminal SVC is replaced with
 //                  BRK #7, so a completed case also traps;
 //   oracle_store   stores the live SME and SIMD&FP state into the store bank
 //                  and stops at BRK #0x11; oracle_restore then leaves
 //                  streaming mode and returns to the caller.
+//
+// XNU sets FPSR to 0x0800009F on every kernel entry while a thread is in
+// streaming mode, interrupts included, so FPSR is set and read only in user
+// mode, with no trap between the instructions and either access. The last
+// words of the code page hold two stubs. The prologue, where the handler
+// starts every case, sets FPSR from X0, reloads the case's X0 from a literal,
+// and branches to the entry. A run that ends in streaming mode runs again
+// with the word it ended at replaced by a branch to the epilogue, which reads
+// FPSR into X0 before its own BRK; that value is the case's FPSR. Since an
+// interrupt can only leave 0x0800009F, a rerun that reads it runs again, up
+// to three more times, and any other value is final. Every rerun must leave
+// the state of the first run, but for X0 and a literal load of the replaced
+// word.
 //
 // Only an SME host executes an SME instruction of the template, so the
 // oracle also runs requests without SME state on any arm64 Mac, which the
@@ -36,6 +49,7 @@
 #include <sys/sysctl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <csignal>
@@ -53,7 +67,7 @@
 namespace {
 
 constexpr std::uint32_t request_version = 1;
-constexpr std::uint32_t response_version = 1;
+constexpr std::uint32_t response_version = 2;
 constexpr std::size_t code_page_size = 16384;
 constexpr std::size_t host_page_size = 16384;
 constexpr std::uint32_t sentinel = 0xd42000e0;  // BRK #7, in place of SVC #0
@@ -61,6 +75,20 @@ constexpr std::uint32_t supervisor_call = 0xd4000001;
 constexpr std::uint32_t fill_word = 0xd4200240;  // BRK #0x12
 constexpr std::uint32_t max_svl = 256;
 constexpr std::uint32_t zt0_bytes = 64;
+
+// The stubs at the end of the code page; no program reaches them.
+constexpr std::uint32_t stub_offset = code_page_size - 32;
+constexpr std::uint32_t prologue_offset = stub_offset;       // MSR FPSR, X0
+constexpr std::uint32_t epilogue_offset = stub_offset + 12;  // MRS X0, FPSR
+constexpr std::uint32_t epilogue_trap = stub_offset + 16;    // BRK #0x13
+constexpr std::uint32_t literal_offset = stub_offset + 24;   // the case's X0
+constexpr std::uint32_t write_fpsr = 0xd51b4420;             // MSR FPSR, X0
+constexpr std::uint32_t read_fpsr = 0xd53b4420;              // MRS X0, FPSR
+constexpr std::uint32_t load_literal = 0x58000000;           // LDR X0, label
+constexpr std::uint32_t branch = 0x14000000;                 // B label
+constexpr std::uint32_t epilogue_break = 0xd4200260;         // BRK #0x13
+constexpr std::uint32_t streaming_reset_fpsr = 0x0800009f;
+constexpr unsigned fpsr_reruns = 4;
 
 // Terminal events, numbered as the corpus pack numbers them.
 enum Event : std::uint32_t {
@@ -70,6 +98,7 @@ enum Event : std::uint32_t {
     breakpoint = 4,
     floating_point_trap = 5,
     fatal = 8,
+    epilogue = 0x100,  // a rerun's FPSR read; never in a response
 };
 
 // Region flags.
@@ -556,6 +585,7 @@ struct Run {
     std::uint32_t esr = 0;
     std::array<std::uint64_t, 32> x{};
     std::uint32_t nzcv = 0;
+    std::uint32_t fpsr = 0;  // the epilogue's read
 };
 
 Run run;
@@ -617,7 +647,9 @@ void handle(const ExceptionRequest &request)
         gpr.__lr = state.x[30];
         gpr.__sp = state.x[31];
         gpr.__cpsr = (gpr.__cpsr & ~0xf0000000U) | (state.nzcv & 0xf0000000U);
-        gpr.__pc = code + run.current->entry;
+        // The prologue sets FPSR from X0 and reloads X0 from its literal.
+        gpr.__x[0] = state.fpsr;
+        gpr.__pc = code + prologue_offset;
         run.stage = Stage::run;
         break;
     }
@@ -629,6 +661,9 @@ void handle(const ExceptionRequest &request)
         run.esr = exception.__esr;
         if (!inside)
             run.event = fatal;
+        else if (request.exception == EXC_BREAKPOINT &&
+                 pc == code + epilogue_trap)
+            run.event = epilogue;
         else if (request.exception == EXC_BREAKPOINT)
             run.event = run.code[(pc - code) / 4] == sentinel ? system_call
                                                                : breakpoint;
@@ -651,6 +686,7 @@ void handle(const ExceptionRequest &request)
         run.x[30] = gpr.__lr;
         run.x[31] = gpr.__sp;
         run.nzcv = gpr.__cpsr & 0xf0000000U;
+        run.fpsr = static_cast<std::uint32_t>(gpr.__x[0]);
         gpr.__x[0] = reinterpret_cast<std::uint64_t>(&run.context);
         gpr.__pc = reinterpret_cast<std::uint64_t>(oracle_store);
         run.stage = Stage::store;
@@ -792,8 +828,28 @@ void bind(Bank &bank, State &state)
     bank.zt0 = state.zt0.data();
 }
 
-void execute(const Case &item, const Host &host, std::uint32_t svl,
-             Writer &writer)
+std::uint32_t branch_to(std::uint32_t from, std::uint32_t to)
+{
+    const auto distance =
+        (static_cast<std::int32_t>(to) - static_cast<std::int32_t>(from)) / 4;
+    return branch | (static_cast<std::uint32_t>(distance) & 0x03ffffffU);
+}
+
+// What one run of a case left.
+struct Outcome {
+    std::uint32_t event = fatal;
+    std::uint32_t pc_offset = 0;
+    std::uint64_t far = 0;
+    std::uint32_t esr = 0;
+    std::uint32_t fpsr = 0;  // the epilogue's read
+    State state;
+    std::vector<std::vector<std::uint8_t>> regions;
+};
+
+// Runs a case once. With `rerun`, the word at that offset branches to the
+// epilogue.
+Outcome attempt(const Case &item, const Host &host, std::uint32_t svl,
+                const std::uint32_t *rerun)
 {
     // The template's buffers are sized for the host's SVL even when the
     // request has none, since a case may still enter streaming mode.
@@ -823,6 +879,16 @@ void execute(const Case &item, const Host &host, std::uint32_t svl,
         run.code[i] = fill_word;
     for (std::size_t i = 0; i < item.words.size(); ++i)
         run.code[i] = item.words[i] == supervisor_call ? sentinel : item.words[i];
+    if (rerun != nullptr)
+        run.code[*rerun / 4] = branch_to(*rerun, epilogue_offset);
+    run.code[prologue_offset / 4] = write_fpsr;
+    run.code[prologue_offset / 4 + 1] =
+        load_literal | (literal_offset - prologue_offset - 4) / 4 << 5;
+    run.code[prologue_offset / 4 + 2] =
+        branch_to(prologue_offset + 8, item.entry);
+    run.code[epilogue_offset / 4] = read_fpsr;
+    run.code[epilogue_trap / 4] = epilogue_break;
+    std::memcpy(&run.code[literal_offset / 4], &item.initial.x[0], 8);
     pthread_jit_write_protect_np(1);
     sys_icache_invalidate(run.code, code_page_size);
 
@@ -852,32 +918,128 @@ void execute(const Case &item, const Host &host, std::uint32_t svl,
     if (run.stage.load() != Stage::done)
         fail("the case returned without finishing");
 
-    State final_state = run.stored;
-    final_state.x = run.x;
-    final_state.nzcv = run.nzcv;
-    final_state.svcr = static_cast<std::uint8_t>(run.store.svcr);
-    final_state.fpcr = static_cast<std::uint32_t>(run.store.fpcr);
-    final_state.fpsr = static_cast<std::uint32_t>(run.store.fpsr);
-    final_state.tpidr2 = run.store.tpidr2;
-    if (svl == 0 && (final_state.svcr != 0 || final_state.tpidr2 != 0)) {
-        // A case without SME state that leaves streaming mode or ZA on
-        // cannot be described; report it as fatal.
-        run.event = fatal;
-        final_state.svcr = 0;
-        final_state.tpidr2 = 0;
-    }
-
-    writer.put(run.event);
-    writer.put(run.pc_offset);
-    writer.put(run.far);
-    writer.put(run.esr);
-    write_state(writer, final_state, run.loaded, svl);
+    Outcome outcome;
+    outcome.event = run.event;
+    outcome.pc_offset = run.pc_offset;
+    outcome.far = run.far;
+    outcome.esr = run.esr;
+    outcome.fpsr = run.fpsr;
+    outcome.state = run.stored;
+    outcome.state.x = run.x;
+    outcome.state.nzcv = run.nzcv;
+    outcome.state.svcr = static_cast<std::uint8_t>(run.store.svcr);
+    outcome.state.fpcr = static_cast<std::uint32_t>(run.store.fpcr);
+    outcome.state.fpsr = static_cast<std::uint32_t>(run.store.fpsr);
+    outcome.state.tpidr2 = run.store.tpidr2;
     for (const Region &region : item.regions) {
         const auto address = static_cast<mach_vm_address_t>(region.address);
         if (mach_vm_protect(mach_task_self(), address, region.size, false,
                             VM_PROT_READ) != KERN_SUCCESS)
             fail("cannot read back a region");
         const auto *bytes = reinterpret_cast<const std::uint8_t *>(address);
+        outcome.regions.emplace_back(bytes, bytes + region.size);
+        mach_vm_deallocate(mach_task_self(), address, region.size);
+    }
+    return outcome;
+}
+
+// Whether a rerun left the bytes of the first run, where a 4-byte chunk may
+// differ only by a literal load of the replaced word.
+bool same_bytes(const std::vector<std::uint8_t> &first,
+                const std::vector<std::uint8_t> &again, std::uint32_t replaced,
+                std::uint32_t substitute)
+{
+    if (first.size() != again.size())
+        return false;
+    for (std::size_t offset = 0; offset < first.size(); offset += 4) {
+        const std::size_t length =
+            std::min<std::size_t>(4, first.size() - offset);
+        if (std::memcmp(&first[offset], &again[offset], length) == 0)
+            continue;
+        std::uint32_t a = 0, b = 0;
+        if (length != 4)
+            return false;
+        std::memcpy(&a, &first[offset], 4);
+        std::memcpy(&b, &again[offset], 4);
+        if (a != replaced || b != substitute)
+            return false;
+    }
+    return true;
+}
+
+void check_rerun(const Outcome &first, const Outcome &again,
+                 std::uint32_t replaced, std::uint32_t substitute,
+                 std::uint32_t index)
+{
+    const auto bytes = [](const auto &value) {
+        std::vector<std::uint8_t> result(sizeof(value));
+        std::memcpy(result.data(), &value, sizeof(value));
+        return result;
+    };
+    const auto same = [&](const std::vector<std::uint8_t> &a,
+                          const std::vector<std::uint8_t> &b) {
+        return same_bytes(a, b, replaced, substitute);
+    };
+    const State &a = first.state;
+    const State &b = again.state;
+    bool equal = a.nzcv == b.nzcv && a.fpcr == b.fpcr && a.svcr == b.svcr &&
+                 a.tpidr2 == b.tpidr2 && same(a.v, b.v) && same(a.z, b.z) &&
+                 same(a.p, b.p) && same(a.za, b.za) && same(a.zt0, b.zt0) &&
+                 first.regions.size() == again.regions.size();
+    for (unsigned i = 1; i < 32 && equal; ++i)
+        equal = same(bytes(a.x[i]), bytes(b.x[i]));
+    for (std::size_t r = 0; r < first.regions.size() && equal; ++r)
+        equal = same(first.regions[r], again.regions[r]);
+    if (again.event != epilogue || !equal)
+        fail("case " + std::to_string(index) +
+             ": the run that reads FPSR left a different state");
+}
+
+void execute(const Case &item, const Host &host, std::uint32_t svl,
+             std::uint32_t index, Writer &writer)
+{
+    if (item.words.size() * 4 > stub_offset)
+        fail("a program reaches the oracle's stubs");
+    Outcome outcome = attempt(item, host, svl, nullptr);
+    // A run that ended in streaming mode reports the FPSR the epilogue
+    // reads where it ended.
+    if (outcome.event != fatal && (outcome.state.svcr & 1U) != 0U &&
+        outcome.pc_offset < stub_offset) {
+        const std::uint32_t at = outcome.pc_offset;
+        const std::uint32_t slot = at / 4;
+        const std::uint32_t replaced =
+            slot < item.words.size()
+                ? (item.words[slot] == supervisor_call ? sentinel
+                                                       : item.words[slot])
+                : fill_word;
+        for (unsigned attempt_index = 0; attempt_index < fpsr_reruns;
+             ++attempt_index) {
+            const Outcome again = attempt(item, host, svl, &at);
+            check_rerun(outcome, again, replaced,
+                        branch_to(at, epilogue_offset), index);
+            outcome.state.fpsr = again.fpsr;
+            if (again.fpsr != streaming_reset_fpsr)
+                break;
+        }
+    }
+
+    State &final_state = outcome.state;
+    if (svl == 0 && (final_state.svcr != 0 || final_state.tpidr2 != 0)) {
+        // A case without SME state that leaves streaming mode or ZA on
+        // cannot be described; report it as fatal.
+        outcome.event = fatal;
+        final_state.svcr = 0;
+        final_state.tpidr2 = 0;
+    }
+
+    writer.put(outcome.event);
+    writer.put(outcome.pc_offset);
+    writer.put(outcome.far);
+    writer.put(outcome.esr);
+    write_state(writer, final_state, run.loaded, svl);
+    for (std::size_t r = 0; r < item.regions.size(); ++r) {
+        const Region &region = item.regions[r];
+        const auto &bytes = outcome.regions[r];
         std::vector<std::pair<std::uint32_t, std::uint32_t>> runs;
         for (std::uint32_t b = 0; b < region.size;) {
             if (bytes[b] == region.initial[b]) {
@@ -894,9 +1056,8 @@ void execute(const Case &item, const Host &host, std::uint32_t svl,
         for (const auto &[offset, length] : runs) {
             writer.put(offset);
             writer.put(length);
-            writer.bytes(bytes + offset, length);
+            writer.bytes(bytes.data() + offset, length);
         }
-        mach_vm_deallocate(mach_task_self(), address, region.size);
     }
 }
 
@@ -958,7 +1119,7 @@ int main(int argc, char **argv)
     writer.put(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         const Case item = read_case(reader, svl);
-        execute(item, host, svl, writer);
+        execute(item, host, svl, i, writer);
     }
     if (!reader.done())
         fail("trailing bytes in the request");
