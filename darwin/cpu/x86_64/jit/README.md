@@ -146,7 +146,12 @@ and tests the host's result in line for the cases where arm64 arithmetic can
 differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
 in integers and SoftFloat because it runs under the guest's FPCR. The model
 covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
-flags, so a check needs only to find the cases.
+flags, so a check needs only to find the cases. The checks are the same on
+every host. FEXCore's FEAT_AFP path stays off: it sets FPCR.NEP with AH, and
+NEP gives a one-input scalar instruction a false dependency on its
+destination, while AH and FIZ would take over only the NaN and DAZ cases of
+plain arithmetic and the M1 has no FEAT_AFP
+([optimization history](../../../../docs/optimization-history.md#floating-point-control-features)).
 
 A translation assumes its context's floating-point mode: MXCSR.DAZ and FTZ,
 which exceptions MXCSR unmasks, none, only some of invalid operation,
