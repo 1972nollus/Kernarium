@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run the image-local Geekbench payload in a disposable overlay shell."""
+"""Run Geekbench in a disposable overlay shell, from the image or a payload."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import hashlib
 import pathlib
 import re
 import sys
@@ -22,6 +23,10 @@ WORKLOAD = pathlib.Path(__file__).resolve().parent / "guest" / "geekbench.sh"
 GUEST_WORKLOAD = "/usr/local/libexec/uml-test/geekbench"
 GUEST_PARAMETERS = "/etc/uml-geekbench.env"
 WORKLOAD_LIST = re.compile(r"[0-9]+(?:,[0-9]+)*")
+# A payload image attaches as the second disk, which the workload mounts.
+PAYLOAD_DISK = "ubd1rc"
+PAYLOAD_DEVICE = "/dev/ubdb"
+SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -35,6 +40,21 @@ def parse_arguments() -> argparse.Namespace:
             "run only these comma-separated single-core workload numbers "
             "instead of the full benchmark"
         ),
+    )
+    parser.add_argument(
+        "--payload",
+        metavar="IMAGE",
+        type=pathlib.Path,
+        help=(
+            "attach this read-only EROFS image, which holds a Geekbench 6 "
+            "release at its root, and run that release instead of the "
+            "rootfs's own payload; no x86-64 image carries one"
+        ),
+    )
+    parser.add_argument(
+        "--payload-sha256",
+        metavar="DIGEST",
+        help="the payload image's SHA-256, checked before the guest boots",
     )
     parser.add_argument(
         "--kernel-argument",
@@ -51,6 +71,22 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def verified_payload(
+    image: pathlib.Path, expected: str | None
+) -> pathlib.Path:
+    """Return the payload image's path once its SHA-256 matches."""
+    if expected is None or not SHA256.fullmatch(expected):
+        raise ValueError("--payload needs --payload-sha256, in lowercase hex")
+    path = image.resolve()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    if digest.hexdigest() != expected:
+        raise ValueError(f"{path} does not match --payload-sha256")
+    return path
+
+
 def main() -> int:
     arguments = parse_arguments()
     if arguments.cpus < 1 or arguments.cpus > 64:
@@ -58,12 +94,20 @@ def main() -> int:
     if arguments.timeout < 1:
         raise ValueError("--timeout must be positive")
     payloads = {GUEST_WORKLOAD: GuestFile(WORKLOAD.read_bytes(), 0o755)}
+    parameters = []
     if arguments.workloads is not None:
         if not WORKLOAD_LIST.fullmatch(arguments.workloads):
             raise ValueError("--workloads must be comma-separated numbers")
-        payloads[GUEST_PARAMETERS] = GuestFile(
-            f"UML_GEEKBENCH_WORKLOADS={arguments.workloads}\n".encode()
-        )
+        parameters.append(f"UML_GEEKBENCH_WORKLOADS={arguments.workloads}\n")
+    disks = ()
+    if arguments.payload is not None:
+        payload = verified_payload(arguments.payload, arguments.payload_sha256)
+        disks = (f"{PAYLOAD_DISK}={payload}",)
+        parameters.append(f"UML_GEEKBENCH_PAYLOAD={PAYLOAD_DEVICE}\n")
+    elif arguments.payload_sha256 is not None:
+        raise ValueError("--payload-sha256 needs --payload")
+    if parameters:
+        payloads[GUEST_PARAMETERS] = GuestFile("".join(parameters).encode())
 
     arguments.console_log.parent.mkdir(parents=True, exist_ok=True)
     with arguments.console_log.open("wb") as console_log, Guest(
@@ -73,6 +117,7 @@ def main() -> int:
         "tmpfs",
         (
             f"ncpus={arguments.cpus}",
+            *disks,
             *arguments.kernel_argument,
         ),
         overlay_shell=True,

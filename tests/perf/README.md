@@ -23,6 +23,20 @@ start systemd or background desktop services. See current options with:
 python3 tests/perf/run_guest_geekbench.py --help
 ```
 
+No x86-64 image carries Geekbench. For such an image, `--payload IMAGE`
+attaches a read-only EROFS image holding a Geekbench 6 release
+at its root, once it matches `--payload-sha256`; the workload mounts it and
+runs its `geekbench6`. The x86-64 product, built with the `macos-x86_64`
+preset, runs the same command line on either engine:
+
+```sh
+python3 tests/perf/run_guest_geekbench.py \
+  --emulator .build/presets/macos-x86_64/bin/uml-darwin \
+  --rootfs X86-64-ROOTFS.erofs --payload GEEKBENCH.erofs \
+  --payload-sha256 DIGEST --engine gadgets --workloads 102,201,101,104,401 \
+  --console-log console.log
+```
+
 On a physical device, `run_ios_device_workload.py` runs the same script, or
 any POSIX shell script with `--script` and the files it reads with `--file`,
 in Kernarium. The script and its files reach the guest as a boot payload,
