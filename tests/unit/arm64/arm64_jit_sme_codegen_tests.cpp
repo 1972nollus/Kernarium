@@ -327,6 +327,7 @@ void streaming_translations_hold_no_fp_simd_word(const char *bindings) {
    * and epilogue triples, exclusive pairs, unsigned-offset runs and CNT. */
   const std::vector<std::vector<std::uint32_t>> sequences{
       {0x1901'0440U, 0x1941'0440U, 0x1981'0440U, system_call}, // cpyfp/m/e
+      {0x1d01'0440U, 0x1d41'0440U, 0x1d81'0440U, system_call}, // cpyp/m/e
       {0x19c2'0420U, 0x19c2'4420U, 0x19c2'8420U, system_call}, // setp/m/e
       {0xc85f'7c20U, 0xc802'7c20U, system_call},               // ldxr/stxr
       {0xf940'0020U, 0xf940'0421U, 0xf940'0822U, system_call}, // ldr run
@@ -623,6 +624,35 @@ void fp_capture_follows_form_names(const char *bindings) {
  * N = 1 with imms all ones, N = 0 with at most one zero in imms. Those
  * are the illegal exit, where running the word would raise SIGILL in the
  * host. */
+/* FEAT_MOPS's CPY words set bit 26, as a SIMD&FP load or store does, but
+ * are no FP&SIMD instruction: every CPY, CPYF and SET word, in each size,
+ * stage and option, translates in streaming mode exactly where it does at
+ * SVCR 0. */
+void memory_copy_set_follows_mode_zero() {
+  const auto host = sme_host(64);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  std::size_t translated = 0;
+  for (std::uint32_t size = 0; size < 4U; ++size)
+    for (std::uint32_t general = 0; general < 2U; ++general)
+      for (std::uint32_t op1 = 0; op1 < 4U; ++op1)
+        for (std::uint32_t op2 = 0; op2 < 16U; ++op2) {
+          const auto word = (size << 30) | 0x1900'0400U | (general << 26) |
+                            (op1 << 22) | (1U << 16) | (op2 << 12) |
+                            (2U << 5);
+          const bool expected = illegal_in(word, 0);
+          translated += !expected;
+          for (const std::uint8_t mode :
+               {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)})
+            if (illegal_in(word, mode) != expected) {
+              std::fprintf(stderr, "MOPS %08x mode %u: expected %s\n", word,
+                           mode,
+                           expected ? "the illegal exit" : "a translation");
+              require(false);
+            }
+        }
+  require(translated != 0U);
+}
+
 void reserved_bitmask_immediates_are_illegal() {
   const auto host = sme_host(64);
   const uml::cpu::HostCapabilitiesScope scope{host};
@@ -682,6 +712,7 @@ int main(int argc, char **argv) {
   fp_simd_classes_translate_where_streaming_runs_them();
   fp_capture_follows_form_names(argv[1]);
   reserved_bitmask_immediates_are_illegal();
+  memory_copy_set_follows_mode_zero();
   enter_names_the_host_mode();
   if (arm64::native_jit_available())
     population_count_needs_no_advanced_simd();
