@@ -44,6 +44,9 @@ For an intentional bridge declaration change:
 3. rebuild and re-accept the four kernel artifacts (mainline arm64 16 KiB and
    4 KiB, mainline x86_64 4 KiB, and Android arm64 16 KiB).
 
+A change to what a bridge declaration promises, with no change to its form,
+takes the same three steps with a new version and the unchanged fingerprint.
+
 Each artifact descriptor records the bridge identity it was built with, and
 configure rejects an artifact whose identity differs from `identity.env`.
 
