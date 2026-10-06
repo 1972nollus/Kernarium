@@ -2,7 +2,9 @@
 /* The gadget engine's SME control core (gadgets::sme_support = control):
  * the SVCR writes and reads, TPIDR2_EL0, RDSVL/ADDSVL/ADDSPL, and the ZA and
  * ZT0 loads, stores and zeroings, with the translation cache keyed by the
- * guest's SVCR mode; and the generated register-only streaming forms.
+ * guest's SVCR mode; the generated register-only streaming forms; and the
+ * vector memory gadgets of the SVE and SME loads and stores and the SIMD&FP
+ * ones streaming mode keeps, with their page split and faults.
  * Everything outside streaming mode runs on any host through an injected
  * SME profile, at several streaming vector lengths; streaming programs need
  * FEAT_SME in hardware and run at the host's SVL. A sweep checks that no
@@ -20,6 +22,7 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
+#include "cpu/arm64/gadgets/sme_layout.h"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "platform/apple/host_features.hpp"
@@ -73,6 +76,8 @@ void uml_arm64_gadget_sm_sysreg_fpcr_write_z();
 void uml_arm64_gadget_illegal();
 extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries_end[];
+extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries[];
+extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries_end[];
 }
 
 namespace arm64 = uml::cpu::arm64;
@@ -212,6 +217,11 @@ public:
 	[[nodiscard]] std::byte *row(unsigned index) const noexcept
 	{
 		return file_.data() + arm64::sme_za_offset(file_.svl(), index);
+	}
+
+	[[nodiscard]] std::byte *z(unsigned index) const noexcept
+	{
+		return file_.data() + arm64::sme_z_offset(file_.svl(), index);
 	}
 
 	[[nodiscard]] std::byte *zt0_bytes() const noexcept
@@ -641,19 +651,24 @@ void streaming_control_core()
 			std::vector<std::byte>(svl));
 	}
 	{
-		/* AdvSIMD, and forms with no streaming twin yet, end the
-		 * block at the illegal exit in streaming mode. */
-		for (const auto word : {0x4ea2'8420U /* add v0.4s */,
-			     0xfd40'0000U /* ldr d0, [x0] */}) {
-			const std::array code{word, svc};
-			Machine machine{code, host};
-			machine.cpu.defer_sme_load(machine.cpu.sme_task,
-				arm64::svcr_sm, 0);
-			machine.cpu.registers[0] = data_base;
-			require(machine.run() == EngineEvent::illegal_instruction);
-			require(machine.cpu.pc == code_base);
-			require(machine.retired == 0);
-		}
+		/* AdvSIMD ends the block at the illegal exit in streaming
+		 * mode; a SIMD&FP load runs there. */
+		const std::array code{0x4ea2'8420U /* add v0.4s */, svc};
+		Machine machine{code, host};
+		machine.cpu.defer_sme_load(machine.cpu.sme_task, arm64::svcr_sm,
+			0);
+		require(machine.run() == EngineEvent::illegal_instruction);
+		require(machine.cpu.pc == code_base);
+		require(machine.retired == 0);
+		const std::array load{0xfd40'0000U /* ldr d0, [x0] */, svc};
+		Machine loading{load, host};
+		loading.cpu.defer_sme_load(loading.cpu.sme_task, arm64::svcr_sm,
+			0);
+		const auto bytes = pattern(8, 4);
+		loading.put_data(data_base, bytes);
+		loading.cpu.registers[0] = data_base;
+		require(loading.run() == EngineEvent::system_call);
+		require(equal(loading.z(0), bytes));
 	}
 }
 
@@ -1265,6 +1280,566 @@ void generated_forms_match_the_table()
 	require(checked > 30'000U);
 }
 
+[[nodiscard]] std::span<const std::uintptr_t> memory_entries() noexcept
+{
+	return {uml_arm64_gadget_sm_memory_entries,
+		uml_arm64_gadget_sm_memory_entries_end};
+}
+
+[[nodiscard]] std::uint64_t stream_field(std::uint64_t word,
+	unsigned field) noexcept
+{
+	return (word >> (16U * field)) & 0xffffU;
+}
+
+/* One word of an SVE or SME load or store row, translated for a streaming
+ * program at this SVL: the stream sme_layout.h describes, derived here
+ * from the table. */
+void check_memory_word(std::uint32_t word,
+	const arm64::detail::SmeEncoding &row,
+	const arm64::detail::SmeMemory &memory,
+	std::span<const std::uintptr_t> stream, unsigned svl)
+{
+	namespace detail = arm64::detail;
+	using Shape = detail::SmeMemoryShape;
+	const auto index = static_cast<std::size_t>(
+		&row - detail::sme_encodings.data());
+	const auto &form = streaming::memory_forms[
+		streaming::memory_row_forms[index]];
+	const auto *operands = detail::sme_encoding_operands_of(row);
+	const unsigned esize = detail::sme_memory_esize(memory, word) / 8U;
+	const unsigned msize = memory.msize / 8U;
+	unsigned tile = 0;
+	unsigned slice = 0;
+	unsigned predicate = 0;
+	std::vector<std::uint64_t> transfers;
+	for (unsigned operand = 0; operand < row.operand_count; ++operand) {
+		if (operand == memory.base_operand ||
+		    operand == memory.index_operand)
+			continue;
+		const auto &item = operands[operand];
+		const auto number = detail::sme_operand_number(item, word);
+		if (item.kind == SmeOperandKind::za_tile)
+			tile = number;
+		else if (item.kind == SmeOperandKind::gpr)
+			slice = number;
+		else if (item.kind == SmeOperandKind::p &&
+			 memory.shape != Shape::fill_p)
+			predicate = number;
+		else if (item.kind == SmeOperandKind::p)
+			transfers.push_back(arm64::sme_p_offset(svl, number));
+		else
+			for (unsigned member = 0; member < item.count; ++member)
+				transfers.push_back(arm64::sme_z_offset(svl,
+					(number + member * item.stride) % 32U));
+	}
+	const bool vertical = ((word >> 15) & 1U) != 0U;
+	unsigned variant = 0;
+	if (form.variant == streaming::MemoryVariant::element_size)
+		variant = detail::sme_segment_value(memory.esize_shift, word) -
+			form.base;
+	else if (form.variant == streaming::MemoryVariant::za_slice)
+		variant = tile * 2U + (vertical ? 1U : 0U);
+	require(variant < form.variants);
+	require(stream.size() >= 6U);
+	require(stream[0] == memory_entries()[form.first_entry + variant]);
+	require(stream[5] == code_base);
+	const std::uint64_t address = stream[1];
+	const std::uint64_t immediate = stream[2];
+	const std::uint64_t transfer = stream[3];
+	const std::uint64_t shape = stream[4];
+	const auto base = detail::sme_operand_number(
+		operands[memory.base_operand], word);
+	require((address & 0xffffU) == base * 8U);
+	require(((address >> UML_GADGET_SME_VM_BASE_SP_BIT) & 1U) ==
+		(base == 31U ? 1U : 0U));
+	std::uint64_t footprint = 0;
+	unsigned code = 0;
+	switch (memory.shape) {
+	case Shape::contiguous:
+		footprint = svl / esize * msize;
+		code = UML_GADGET_SME_VM_CONTIGUOUS;
+		break;
+	case Shape::structure:
+		footprint = std::uint64_t{memory.registers} * svl;
+		code = UML_GADGET_SME_VM_STRUCTURE;
+		break;
+	case Shape::replicate:
+		footprint = msize;
+		code = UML_GADGET_SME_VM_REPLICATE;
+		break;
+	case Shape::replicate_quad:
+		footprint = 16U;
+		code = UML_GADGET_SME_VM_REPLICATE_QUAD;
+		break;
+	case Shape::fill_z:
+		footprint = svl;
+		code = UML_GADGET_SME_VM_FILL_Z;
+		break;
+	case Shape::fill_p:
+		footprint = svl / 8U;
+		code = UML_GADGET_SME_VM_FILL_P;
+		break;
+	case Shape::za_slice:
+		footprint = svl;
+		code = UML_GADGET_SME_VM_ZA_SLICE;
+		break;
+	default:
+		require(false);
+	}
+	require(stream_field(address, 2) == footprint);
+	std::int64_t value = 0;
+	unsigned width = 0;
+	for (unsigned segment = 0; segment < memory.immediate_segment_count;
+	     ++segment) {
+		const auto &part = memory.immediate[segment];
+		value = (value << part.width) |
+			detail::sme_segment_value(part, word);
+		width += part.width;
+	}
+	if (memory.immediate_signed && width != 0U &&
+	    ((value >> (width - 1U)) & 1) != 0)
+		value -= std::int64_t{1} << width;
+	const bool indexed =
+		((address >> UML_GADGET_SME_VM_INDEX_BIT) & 1U) != 0U;
+	switch (memory.offset) {
+	case detail::SmeAddressOffset::register_element:
+		require(indexed && immediate == 0U);
+		require(stream_field(address, 1) ==
+			slot_offset(SmeOperandKind::gpr, detail::sme_operand_number(
+				operands[memory.index_operand], word), svl));
+		require(((address >> UML_GADGET_SME_VM_SHIFT_SHIFT) & 7U) ==
+			static_cast<unsigned>(std::countr_zero(msize)));
+		break;
+	case detail::SmeAddressOffset::immediate_footprint:
+		require(!indexed && immediate == static_cast<std::uint64_t>(
+			value * static_cast<std::int64_t>(footprint)));
+		break;
+	case detail::SmeAddressOffset::immediate_element:
+		require(!indexed && immediate == static_cast<std::uint64_t>(
+			value * msize));
+		break;
+	case detail::SmeAddressOffset::immediate_16:
+		require(!indexed && immediate == static_cast<std::uint64_t>(
+			value * 16));
+		break;
+	case detail::SmeAddressOffset::none:
+		require(false);
+	}
+	require((address >> 52) == (indexed ? 0x10U : 0U));
+	require(((shape >> UML_GADGET_SME_VM_SHAPE_SHIFT) & 0xfU) == code);
+	const bool store = memory.direction == detail::SmeMemoryDirection::store;
+	require(((shape >> UML_GADGET_SME_VM_STORE_BIT) & 1U) ==
+		(store ? 1U : 0U));
+	require(((shape >> UML_GADGET_SME_VM_MSIZE_SHIFT) & 7U) ==
+		static_cast<unsigned>(std::countr_zero(msize)));
+	require(((shape >> UML_GADGET_SME_VM_ESIZE_SHIFT) & 7U) ==
+		static_cast<unsigned>(std::countr_zero(esize)));
+	require(((shape >> UML_GADGET_SME_VM_SIGN_BIT) & 1U) ==
+		(memory.sign_extend ? 1U : 0U));
+	require(((shape >> UML_GADGET_SME_VM_REGISTERS_SHIFT) & 7U) ==
+		memory.registers);
+	if (memory.shape == Shape::za_slice) {
+		const unsigned offset_bits = 4U -
+			static_cast<unsigned>(std::countr_zero(esize));
+		require(stream_field(transfer, 0) == slice * 8U);
+		require(stream_field(transfer, 1) ==
+			(word & ((1U << offset_bits) - 1U)));
+		require(stream_field(transfer, 2) == tile);
+		require(stream_field(transfer, 3) == (vertical ? 1U : 0U));
+	} else {
+		for (unsigned field = 0; field < transfers.size(); ++field)
+			require(stream_field(transfer, field) ==
+				transfers[field]);
+	}
+	if (memory.shape != Shape::fill_z && memory.shape != Shape::fill_p)
+		require((shape & 0xffffU) ==
+			arm64::sme_p_offset(svl, predicate));
+}
+
+/*
+ * Every SVE and SME1 load and store row that executes in streaming mode
+ * has a vector memory form, and each of its words translates for a
+ * streaming program at every SVL to that form's entry with the stream the
+ * table describes (check_memory_word); a prefetch is a NOP. Every SIMD&FP
+ * load and store streaming mode keeps selects the entry for its size and
+ * direction, with its address mode in the stream, and one the base decoder
+ * rejects stays illegal.
+ */
+void memory_forms_match_the_table()
+{
+	namespace detail = arm64::detail;
+	using Shape = detail::SmeMemoryShape;
+	std::uint64_t state = 0x9e37'79b9'7f4a'7c15ULL;
+	const auto next = [&state] {
+		state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+		return static_cast<std::uint32_t>(state >> 32);
+	};
+	const auto sme1 = [](const detail::SmeEncoding &row) {
+		return row.requirement != 0U &&
+			(row.requirement & detail::sme_feature_sme2) == 0U;
+	};
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = detail::sme_encodings[index];
+		const auto *memory = detail::sme_encoding_memory_of(row);
+		const bool gadget = sme1(row) && memory != nullptr &&
+			memory->shape != Shape::prefetch &&
+			memory->shape != Shape::za_vector &&
+			memory->shape != Shape::zt0;
+		require(gadget == (streaming::memory_row_forms[index] !=
+			streaming::no_form));
+		rows += gadget;
+	}
+	require(rows > 400U);
+	require(memory_entries().size() == streaming::memory_entry_count);
+	const auto nop = reinterpret_cast<std::uintptr_t>(
+		gadgets::selection::uml_arm64_gadget_nop);
+	std::size_t checked = 0;
+	std::size_t fp_checked = 0;
+	for (const unsigned svl : {16U, 32U, 64U, 128U, 256U}) {
+		const auto host = injected_host(svl, false);
+		const auto features = arm64::implemented_sme_features(host);
+		for (const auto &row : detail::sme_encodings) {
+			const auto *memory = detail::sme_encoding_memory_of(row);
+			if (memory == nullptr || !sme1(row) ||
+			    memory->shape == Shape::za_vector ||
+			    memory->shape == Shape::zt0)
+				continue;
+			const std::uint8_t svcr = arm64::svcr_sm |
+				((row.mode & detail::sme_mode_za) != 0U ?
+					arm64::svcr_za : 0U);
+			for (int sample = 0; sample < 4; ++sample) {
+				const auto word = row.value | (next() & ~row.mask);
+				if (detail::decode_sme(word, features, svl) != &row)
+					continue;
+				const auto stream = translate(word, host, svcr);
+				if (memory->shape == Shape::prefetch)
+					require(stream[0] == nop);
+				else
+					check_memory_word(word, row, *memory, stream,
+						svl);
+				++checked;
+			}
+		}
+		for (std::size_t index = 0;
+		     index < detail::fp_simd_streaming_classes.size(); ++index) {
+			const auto &row = detail::fp_simd_streaming_classes[index];
+			if (row.advsimd || (row.value & 0x0a00'0000U) !=
+				    0x0800'0000U ||
+			    streaming::fp_class_forms[index] != streaming::no_form)
+				continue;
+			for (int sample = 0; sample < 6; ++sample) {
+				const auto word = row.value | (next() & ~row.mask);
+				if (fp_simd_class(word) != index)
+					continue;
+				const auto stream = translate(word, host,
+					arm64::svcr_sm);
+				if (translate(word, host, 0)[0] == illegal_entry()) {
+					require(stream[0] == illegal_entry());
+					continue;
+				}
+				const bool literal =
+					(word & 0x3f00'0000U) == 0x1c00'0000U;
+				const bool pair =
+					(word & 0x3e00'0000U) == 0x2c00'0000U;
+				const bool unsigned_offset = !literal && !pair &&
+					(word & 0x0100'0000U) != 0U;
+				const unsigned opc = (word >> 22) & 3U;
+				const unsigned size = literal || pair ?
+					2U + (word >> 30) :
+					(opc & 2U) != 0U ? 4U : word >> 30;
+				const bool store = !literal && (pair ?
+					((word >> 22) & 1U) == 0U :
+					(opc & 1U) == 0U);
+				const auto entry = pair ?
+					streaming::fp_memory_pair[
+						(size - 2U) * 2U + store] :
+					streaming::fp_memory_single[size * 2U + store];
+				require(stream.size() >= 6U);
+				require(stream[0] == memory_entries()[entry]);
+				require(stream[5] == code_base);
+				const std::uint64_t address = stream[1];
+				const std::uint64_t shape = stream[4];
+				require(((shape >> UML_GADGET_SME_VM_SHAPE_SHIFT) &
+					0xfU) == UML_GADGET_SME_VM_FP);
+				require(((shape >> UML_GADGET_SME_VM_MSIZE_SHIFT) &
+					7U) == size);
+				require(stream_field(address, 2) ==
+					(std::uint64_t{1} << size) * (pair ? 2U : 1U));
+				require(stream_field(stream[3], 0) ==
+					arm64::sme_z_offset(svl, word & 31U));
+				if (pair)
+					require(stream_field(stream[3], 1) ==
+						arm64::sme_z_offset(svl,
+							(word >> 10) & 31U));
+				/* Pre- and post-indexed forms write the base
+				 * back; post-indexed ones access the base. */
+				unsigned mode = 0;
+				if (pair)
+					mode = (word >> 23) & 3U;
+				else if (!literal && !unsigned_offset &&
+					 (word & 0x0020'0000U) == 0U)
+					mode = (word >> 10) & 3U;
+				const bool writeback = mode == 1U || mode == 3U;
+				require(((address >>
+					UML_GADGET_SME_VM_WRITEBACK_BIT) & 1U) ==
+					(writeback ? 1U : 0U));
+				require(((address >> UML_GADGET_SME_VM_POST_BIT) &
+					1U) == (mode == 1U ? 1U : 0U));
+				if (literal)
+					require((address & 0xffffU) ==
+						UML_GADGET_CPU_ZERO);
+				++fp_checked;
+			}
+		}
+	}
+	std::printf("%zu memory-form words checked for %zu rows, %zu SIMD&FP "
+		"load and store words\n", checked, rows, fp_checked);
+	require(checked > 5'000U);
+	require(fp_checked > 500U);
+}
+
+[[nodiscard]] std::vector<std::byte> slice(const std::vector<std::byte> &bytes,
+	std::size_t offset, std::size_t size)
+{
+	return {bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+		bytes.begin() + static_cast<std::ptrdiff_t>(offset + size)};
+}
+
+[[nodiscard]] bool zero(const std::byte *bytes, std::size_t size)
+{
+	return std::all_of(bytes, bytes + size,
+		[](std::byte value) { return value == std::byte{0}; });
+}
+
+/* LDR (literal, SIMD&FP) of Qt from `offset` bytes after itself. */
+[[nodiscard]] constexpr std::uint32_t ldr_q_literal(unsigned rt,
+	int offset) noexcept
+{
+	return 0x9c00'0000U |
+		((static_cast<unsigned>(offset / 4) & 0x7'ffffU) << 5) | rt;
+}
+
+/*
+ * Vector memory gadgets in a streaming program on the host: same-page
+ * accesses natively, page-crossing ones through the helper, every shape,
+ * extension, the register, immediate and MUL VL offsets, SIMD&FP loads
+ * and stores with their writeback and a literal, and ZA tile slices both
+ * ways, all at the host's SVL.
+ */
+void memory_forms_run()
+{
+	const auto &host = native_host();
+	const unsigned svl = host.sme_svl_bytes;
+	const auto image = pattern(2 * page, 9);
+	const auto offset = [](std::uint64_t address) {
+		return static_cast<std::size_t>(address - data_base);
+	};
+	const auto source = data_base + 64;
+	const auto crossing = data_base + page - svl / 2;
+	{
+		const auto pairs = data_base + 512;
+		const auto predicates = data_base + page + 256;
+		const auto post = data_base + page - 8;
+		std::vector<std::uint32_t> code{
+			smstart_sm,
+			0x2598'e3e0U, /* ptrue p0.s */
+			0x2518'e3e1U, /* ptrue p1.b */
+			0xa540'a001U, /* ld1w {z1.s}, p0/z, [x0] */
+			0xe540'e021U, /* st1w {z1.s}, p0, [x1] */
+			0xa540'a022U, /* ld1w {z2.s}, p0/z, [x1] */
+			0xa521'e004U, /* ld2w {z4.s, z5.s}, p0/z, [x0, #2, mul vl] */
+			0x8542'c006U, /* ld1rw {z6.s}, p0/z, [x0, #8] */
+			0xa501'2007U, /* ld1rqw {z7.s}, p0/z, [x0, #16] */
+			0x8580'4408U, /* ldr z8, [x0, #1, mul vl] */
+			0xe580'0441U, /* str p1, [x2, #1, mul vl] */
+			0xa405'440dU, /* ld1b {z13.b}, p1/z, [x0, x5] */
+			0xa5c0'a40eU, /* ld1sb {z14.h}, p1/z, [x0] */
+			0x3dc0'0409U, /* ldr q9, [x0, #16] */
+			0x6dc1'2c6aU, /* ldp d10, d11, [x3, #16]! */
+			0x3c82'0489U, /* str q9, [x4], #32 */
+			0x3ce5'd80fU, /* ldr q15, [x0, w5, sxtw #4] */
+			0x85c3'4000U, /* prfw pldl1keep, p0, [x0, #3, mul vl] */
+		};
+		code.push_back(ldr_q_literal(12,
+			-static_cast<int>(code.size() * 4U)));
+		code.push_back(svc);
+		Machine machine{code, host};
+		machine.put_data(data_base, image);
+		machine.cpu.registers[0] = source;
+		machine.cpu.registers[1] = crossing;
+		machine.cpu.registers[2] = predicates;
+		machine.cpu.registers[3] = pairs;
+		machine.cpu.registers[4] = post;
+		machine.cpu.registers[5] = 3;
+		require(machine.run() == EngineEvent::system_call);
+		const auto at = [&](std::uint64_t address, std::size_t size) {
+			return slice(image, offset(address), size);
+		};
+		require(equal(machine.z(1), at(source, svl)));
+		require(equal(machine.z(2), at(source, svl)));
+		const auto pairs_source = source + 2 * svl;
+		for (std::size_t lane = 0; lane < svl / 4; ++lane) {
+			require(equal(machine.z(4) + lane * 4,
+				at(pairs_source + lane * 8, 4)));
+			require(equal(machine.z(5) + lane * 4,
+				at(pairs_source + lane * 8 + 4, 4)));
+			require(equal(machine.z(6) + lane * 4, at(source + 8, 4)));
+		}
+		for (std::size_t quad = 0; quad < svl / 16; ++quad)
+			require(equal(machine.z(7) + quad * 16,
+				at(source + 16, 16)));
+		require(equal(machine.z(8), at(source + svl, svl)));
+		require(equal(machine.z(13), at(source + 3, svl)));
+		for (std::size_t lane = 0; lane < svl / 2; ++lane) {
+			const auto byte = std::to_integer<std::uint8_t>(
+				image[offset(source) + lane]);
+			const auto extended = static_cast<std::uint16_t>(
+				static_cast<std::int16_t>(
+					static_cast<std::int8_t>(byte)));
+			std::uint16_t got;
+			std::memcpy(&got, machine.z(14) + lane * 2, sizeof(got));
+			require(got == extended);
+		}
+		require(equal(machine.z(9), at(source + 16, 16)));
+		require(zero(machine.z(9) + 16, svl - 16));
+		require(equal(machine.z(10), at(pairs + 16, 8)));
+		require(zero(machine.z(10) + 8, svl - 8));
+		require(equal(machine.z(11), at(pairs + 24, 8)));
+		require(machine.cpu.registers[3] == pairs + 16);
+		require(machine.cpu.registers[4] == post + 32);
+		require(equal(machine.z(15), at(source + 48, 16)));
+		std::vector<std::byte> words(16);
+		std::memcpy(words.data(), code.data(), words.size());
+		require(equal(machine.z(12), words));
+		require(zero(machine.z(12) + 16, svl - 16));
+		auto expected = image;
+		std::memcpy(expected.data() + offset(crossing), machine.z(1), svl);
+		std::memset(expected.data() + offset(predicates + svl / 8), 0xff,
+			svl / 8);
+		std::memcpy(expected.data() + offset(post), machine.z(9), 16);
+		require(machine.data(data_base, 2 * page) == expected);
+	}
+	{
+		/* ZA tile slices: horizontal slice 2 of ZA1.S is array vector
+		 * 9; element i of vertical slice 1 of ZA2.S is element 1 of
+		 * array vector 4i + 2. */
+		const auto stored = data_base + page + 1024;
+		const std::array code{
+			smstart,
+			0x2598'e3e0U, /* ptrue p0.s */
+			0x5280'002cU, /* mov w12, #1 */
+			0xe09f'0005U, /* ld1w {za1h.s[w12, 1]}, p0/z, [x0] */
+			0xe09f'8028U, /* ld1w {za2v.s[w12, 0]}, p0/z, [x1] */
+			0xe0bf'00c5U, /* st1w {za1h.s[w12, 1]}, p0, [x6] */
+			svc};
+		Machine machine{code, host};
+		machine.put_data(data_base, image);
+		machine.cpu.registers[0] = source;
+		machine.cpu.registers[1] = crossing;
+		machine.cpu.registers[6] = stored;
+		require(machine.run() == EngineEvent::system_call);
+		require(equal(machine.row(9), slice(image, offset(source), svl)));
+		for (unsigned element = 0; element < svl / 4; ++element)
+			require(equal(machine.row(element * 4 + 2) + 4,
+				slice(image, offset(crossing) + element * 4, 4)));
+		require(machine.data(stored, svl) ==
+			slice(image, offset(source), svl));
+	}
+}
+
+/*
+ * Faults of vector memory gadgets, as M4 hardware reports them: a
+ * predicated access at its first faulting active byte rounded down to
+ * 4 KiB, an unpredicated one at that byte, an SP base that is not 16-byte
+ * aligned as an alignment fault; nothing is written and no register
+ * changes. Inactive elements over unmapped memory do not fault.
+ */
+void memory_faults()
+{
+	const auto &host = native_host();
+	const unsigned svl = host.sme_svl_bytes;
+	const auto end = data_base + 2 * page;
+	const auto below = code_base - svl / 2;
+	const auto fault = [&](std::span<const std::uint32_t> code,
+		const auto &setup, std::uint64_t address,
+		uml::memory::Access access) {
+		Machine machine{code, host};
+		setup(machine);
+		require(machine.run() == EngineEvent::memory_fault);
+		require(!machine.executor().fault_alignment());
+		require(machine.executor().fault_address() == address);
+		require(machine.executor().fault_access() == access);
+		require(machine.cpu.pc == code_base + 4 * (code.size() - 2));
+		require(zero(machine.z(0), svl));
+		return machine.cpu.registers[3];
+	};
+	using uml::memory::Access;
+	{
+		const std::array code{smstart_sm, 0x2598'e3e0U, /* ptrue p0.s */
+			0xa540'a000U, /* ld1w {z0.s}, p0/z, [x0] */ svc};
+		fault(code, [&](Machine &machine) {
+			machine.cpu.registers[0] = below;
+		}, below & ~std::uint64_t{0xfff}, Access::read);
+	}
+	{
+		const std::array code{smstart_sm,
+			0x8580'4000U, /* ldr z0, [x0] */ svc};
+		fault(code, [&](Machine &machine) {
+			machine.cpu.registers[0] = below;
+		}, below, Access::read);
+	}
+	{
+		const std::array code{smstart_sm, 0x3dc0'0000U, /* ldr q0, [x0] */
+			svc};
+		fault(code, [&](Machine &machine) {
+			machine.cpu.registers[0] = end - 8;
+		}, end, Access::read);
+	}
+	{
+		const std::array code{smstart_sm,
+			0x6dc1'2c6aU, /* ldp d10, d11, [x3, #16]! */ svc};
+		require(fault(code, [&](Machine &machine) {
+			machine.cpu.registers[3] = end - 24;
+		}, end, Access::read) == end - 24);
+	}
+	{
+		const std::array code{smstart_sm, 0x2598'e3e0U, /* ptrue p0.s */
+			0xe540'e000U, /* st1w {z0.s}, p0, [x0] */ svc};
+		Machine machine{code, host};
+		const auto before = machine.data(end - svl / 2, svl / 2);
+		machine.cpu.registers[0] = end - svl / 2;
+		require(machine.run() == EngineEvent::memory_fault);
+		require(machine.executor().fault_address() == end);
+		require(machine.executor().fault_access() == Access::write);
+		require(machine.data(end - svl / 2, svl / 2) == before);
+	}
+	{
+		const std::array code{smstart_sm, 0x2598'e3e0U, /* ptrue p0.s */
+			0xa540'a3e0U, /* ld1w {z0.s}, p0/z, [sp] */ svc};
+		Machine machine{code, host};
+		machine.cpu.sp = data_base + 8;
+		require(machine.run() == EngineEvent::memory_fault);
+		require(machine.executor().fault_alignment());
+		require(machine.executor().fault_address() == data_base + 8);
+	}
+	{
+		/* All inactive over unmapped memory: no fault, zeroed. */
+		const std::array code{smstart_sm,
+			0x8580'4000U, /* ldr z0, [x0] */
+			0x2518'e400U, /* pfalse p0.b */
+			0xa540'a020U, /* ld1w {z0.s}, p0/z, [x1] */ svc};
+		Machine machine{code, host};
+		machine.put_data(data_base, pattern(svl, 3));
+		machine.cpu.registers[0] = data_base;
+		machine.cpu.registers[1] = end;
+		require(machine.run() == EngineEvent::system_call);
+		require(zero(machine.z(0), svl));
+	}
+}
+
 /*
  * Generated forms in a streaming program on the host: predicates,
  * broadcasts, lowered immediates and counts from the run-time SVL,
@@ -1601,11 +2176,14 @@ int main()
 	translations_are_keyed_by_mode();
 	streaming_twin_table();
 	generated_forms_match_the_table();
+	memory_forms_match_the_table();
 	if (streaming_hardware()) {
 		streaming_control_core();
 		streaming_twins();
 		fp_controls_survive_kernel_entries_in_streaming_mode();
 		generated_forms_run();
+		memory_forms_run();
+		memory_faults();
 		fp_exceptions_accumulate_in_streaming_mode();
 		std::printf("streaming programs ran at SVL %u\n",
 			native_host().sme_svl_bytes);

@@ -393,9 +393,22 @@ on an immediate, or a count from the SVL, that the builder computes. A
 gadget that may change NZCV runs with the guest's flags in the host's, and a
 floating-point one ORs the exceptions it raised into the guest's FPSR, and
 runs again if FPSR.QC shows that a kernel entry reset the host's. RDVL,
-ADDVL and ADDPL run as RDSVL, ADDSVL and ADDSPL. The builder ends a block at
-the illegal-instruction exit on any other word, so the memory forms and
-SME2 are the illegal-instruction exit in streaming mode for now.
+ADDVL and ADDPL run as RDSVL, ADDSVL and ADDSPL. Every SVE and SME1 load and
+store, and every SIMD&FP load and store legal in streaming mode, runs from
+a generated vector memory gadget, one per instruction the host executes for
+it (shape, direction, sizes, extension, ZA tile and slice direction), with
+the address mode, registers and shape resolved by the builder into the
+stream `darwin/cpu/arm64/gadgets/sme_layout.h` describes. Its fast path
+forms the address, and when every byte the access spans lies in one guest
+page the TLB holds, runs the native instruction on registers loaded from the
+register file. Anything else takes a helper that does the whole access on
+the register file: it touches only active elements, translates every page
+they lie in before it moves a byte, and reports a fault as M4 hardware does,
+a predicated access at its first faulting active byte rounded down to
+4 KiB and an unpredicated one at that byte. SVE prefetches are NOPs. The
+builder ends a block at the
+illegal-instruction exit on any other word, so SME2 is the
+illegal-instruction exit in streaming mode for now.
 `arm64-gadget-streaming-safety` walks every listed entry, and every 16-byte
 boundary of the generated gadgets, in the images each tree links and fails
 on an AdvSIMD word executed in streaming mode, a helper called there, or an

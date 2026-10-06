@@ -36,8 +36,17 @@ builder computes the immediate (or a count from the run-time SVL) into the
 stream, and the gadget runs an equivalent register form. The builder takes
 everything else from the generated header, so the two cannot disagree.
 
+The memory forms get one gadget per instruction the host runs for them
+(--memory-assembly): each SVE and SME1 load and store shape, element size,
+extension and ZA tile slice, and each SIMD&FP register and pair size. The
+builder resolves the address mode into the stream (sme_layout.h), so a
+gadget runs its native instruction with a host base of x7, no offset and
+the transfer registers z0-z3 or p0, governed by p0, and leaves crossings,
+misses and faults to the helper engine/sme.inc's slow path calls.
+
 usage: generate_streaming.py --loader LOADER --table TABLE
-                             --assembly OUT.inc --header OUT.hpp
+                             --assembly OUT.inc --memory-assembly OUT.inc
+                             --header OUT.hpp
 """
 
 from __future__ import annotations
@@ -999,17 +1008,318 @@ def render_header(forms: list, table) -> str:
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------
+# Memory
+
+MEMORY_LETTERS = {8: "b", 16: "h", 32: "w", 64: "d", 128: "q"}
+ELEMENT_LETTERS = {8: "b", 16: "h", 32: "s", 64: "d", 128: "q"}
+FP_LETTERS = {8: "b", 16: "h", 32: "s", 64: "d", 128: "q"}
+# The shapes the vector memory gadgets take (sme_layout.h). Prefetches
+# need no gadget; LDR and STR of ZA and ZT0 are the control core's.
+MEMORY_SHAPES = {"contiguous": 0, "structure": 1, "replicate": 2,
+                 "replicate_quad": 3, "fill_z": 4, "fill_p": 5,
+                 "za_slice": 6}
+FP_SINGLE_SIZES = (8, 16, 32, 64, 128)
+FP_PAIR_SIZES = (32, 64, 128)
+
+
+@dataclass(frozen=True)
+class MemoryKind:
+    """One vector memory gadget: the instruction the host runs."""
+    shape: str
+    store: bool
+    msize: int
+    esize: int
+    sign: bool = False
+    registers: int = 1
+    nontemporal: bool = False
+    tile: int = 0
+    vertical: bool = False
+
+    @property
+    def name(self) -> str:
+        if self.shape == "fp":
+            pair = "p" if self.registers == 2 else "r"
+            return (f"mem_fp_{'st' if self.store else 'ld'}{pair}_"
+                    f"{FP_LETTERS[self.msize]}")
+        return "mem_" + self.native().split()[0].replace(".", "_") + (
+            "" if self.shape in ("fill_z", "fill_p", "za_slice") else
+            "_" + ELEMENT_LETTERS[self.esize]) + (
+            "_p" if self.shape == "fill_p" else "") + (
+            f"_za{self.tile}{'v' if self.vertical else 'h'}"
+            if self.shape == "za_slice" else "")
+
+    def native(self) -> str:
+        """The instruction on host registers: base x7, no offset."""
+        op = "st" if self.store else "ld"
+        letter = MEMORY_LETTERS[self.msize]
+        element = ELEMENT_LETTERS[self.esize]
+        governed = "p0" if self.store else "p0/z"
+        if self.shape == "fp":
+            reg = FP_LETTERS[self.msize]
+            if self.registers == 2:
+                return f"{op}p {reg}0, {reg}1, [x7]"
+            return f"{op}r {reg}0, [x7]"
+        if self.shape == "fill_z":
+            return f"{op}r z0, [x7]"
+        if self.shape == "fill_p":
+            return f"{op}r p0, [x7]"
+        if self.shape == "za_slice":
+            hv = "v" if self.vertical else "h"
+            return (f"{op}1{letter} {{za{self.tile}{hv}.{element}[w12, 0]}}, "
+                    f"{governed}, [x7]")
+        if self.shape == "contiguous":
+            mnemonic = f"{op}nt1{letter}" if self.nontemporal else \
+                f"{op}1{'s' if self.sign else ''}{letter}"
+        elif self.shape == "structure":
+            mnemonic = f"{op}{self.registers}{letter}"
+        elif self.shape == "replicate":
+            mnemonic = f"ld1r{'s' if self.sign else ''}{letter}"
+        else:
+            mnemonic = f"ld1rq{letter}"
+        group = ", ".join(f"z{k}.{element}" for k in range(self.registers))
+        return f"{mnemonic} {{{group}}}, {governed}, [x7]"
+
+    def transfers(self) -> list:
+        """Each transfer register and the stream field of its offset."""
+        if self.shape == "fill_p":
+            return [("p0", 0)]
+        if self.shape == "za_slice":
+            return []
+        return [(f"z{k}", k) for k in range(self.registers)]
+
+
+def stream_field(field: int, target: str = "x8") -> str:
+    if field == 0:
+        return f"and {target}, x16, #0xffff"
+    return f"ubfx {target}, x16, #{16 * field}, #16"
+
+
+def emit_memory(kind: MemoryKind) -> list:
+    body = []
+    if kind.shape == "za_slice":
+        body += [stream_field(0), "ldr w12, [_cpu, x8]", stream_field(1),
+                 "add w12, w12, w8"]
+    if kind.shape not in ("fill_z", "fill_p", "fp"):
+        body += ["and x8, x17, #0xffff", "add x8, x9, x8", "ldr p0, [x8]"]
+    if kind.store:
+        for register, field in kind.transfers():
+            body += [stream_field(field), "add x8, x9, x8",
+                     f"ldr {register}, [x8]"]
+    body.append(kind.native())
+    if not kind.store:
+        for register, field in kind.transfers():
+            body += [stream_field(field), "add x8, x9, x8",
+                     f"str {register}, [x8]"]
+    if kind.shape == "fp":
+        body.append("sm_vector_writeback")
+    out = [f"/* {kind.native()} */", f"gadget {kind.name}",
+           "\tldp x14, x15, [_stream]",
+           f"\tsm_vector_address {int(kind.store)}, 8f",
+           "\tldp x16, x17, [_stream, #16]",
+           "\tldr x9, [_cpu, #UML_ARM64_CPU_SME_REGISTERS]"]
+    out += ["\t" + line for line in body]
+    out += ["\tadd _stream, _stream, #40", "\tnext_gadget", "8:",
+            "\tsm_vector_slow"]
+    return out
+
+
+@dataclass
+class MemoryForm:
+    """A memory row's gadgets: entries [first, first + variants) of
+    uml_arm64_gadget_sm_memory_entries, selected by its element size
+    field (less base) or a ZA slice's tile and direction."""
+    name: str
+    first: int
+    variants: int
+    variant: str
+    base: int = 0
+
+
+def field_values(row, segment) -> list:
+    """The values of a field the row's words can hold."""
+    field_mask = ((1 << segment.width) - 1) << segment.low
+    return [value for value in range(1 << segment.width)
+            if ((value << segment.low) ^ row.value) & row.mask &
+            field_mask == 0]
+
+
+def memory_rows(table) -> list:
+    return [row for row in table.rows
+            if row.in_profile and row.memory is not None and
+            "sme2" not in row.requirement and
+            row.memory.shape in MEMORY_SHAPES and
+            not (row.memory.shape == "contiguous" and
+                 row.memory.registers != 1)]
+
+
+def row_esizes(row) -> list:
+    """The element sizes, in bits, the row's words can name."""
+    memory = row.memory
+    if memory.esize_shift is None:
+        return [memory.esize]
+    return [memory.esize << value
+            for value in field_values(row, memory.esize_shift)]
+
+
+def memory_kinds(table) -> tuple[list, dict, list, list]:
+    """Every gadget, each memory row's form, and the SIMD&FP single and
+    pair entries ([size][store]). The gadgets of one instruction family
+    (shape, direction, memory size, extension, registers) are adjacent, one
+    per element size from the smallest any row needs to the largest, so a
+    row whose size field selects among them takes field - base from its
+    first."""
+    kinds: list[MemoryKind] = []
+    family_esizes: dict[tuple, set] = {}
+    for row in memory_rows(table):
+        memory = row.memory
+        if memory.shape == "za_slice":
+            continue
+        key = (memory.shape, memory.direction == "store", memory.msize,
+               memory.sign_extend, memory.registers, memory.nontemporal)
+        family_esizes.setdefault(key, set()).update(row_esizes(row))
+    family_first: dict[tuple, int] = {}
+    for key, esizes in family_esizes.items():
+        family_first[key] = len(kinds)
+        shape, store, msize, sign, registers, nontemporal = key
+        esize = min(esizes)
+        while esize <= max(esizes):
+            kinds.append(MemoryKind(shape, store, msize, esize, sign,
+                                    registers, nontemporal))
+            esize *= 2
+    forms: dict[int, MemoryForm] = {}
+    slices: dict[tuple, int] = {}
+    for row in memory_rows(table):
+        memory = row.memory
+        store = memory.direction == "store"
+        if memory.shape == "za_slice":
+            key = (store, memory.msize)
+            if key not in slices:
+                slices[key] = len(kinds)
+                kinds.extend(MemoryKind("za_slice", store, memory.msize,
+                                        memory.esize, tile=tile,
+                                        vertical=bool(vertical))
+                             for tile in range(memory.esize // 8)
+                             for vertical in (0, 1))
+            forms[row.index] = MemoryForm(row.encoding, slices[key],
+                                          memory.esize // 4, "za_slice")
+            continue
+        key = (memory.shape, store, memory.msize, memory.sign_extend,
+               memory.registers, memory.nontemporal)
+        smallest = min(family_esizes[key])
+        esizes = row_esizes(row)
+        first = family_first[key] + (min(esizes) // smallest).bit_length() - 1
+        if memory.esize_shift is None:
+            forms[row.index] = MemoryForm(row.encoding, first, 1, "none")
+        else:
+            values = field_values(row, memory.esize_shift)
+            forms[row.index] = MemoryForm(row.encoding, first,
+                                          values[-1] - values[0] + 1,
+                                          "element_size", values[0])
+    single = []
+    for size in FP_SINGLE_SIZES:
+        for store in (False, True):
+            single.append(len(kinds))
+            kinds.append(MemoryKind("fp", store, size, size))
+    pair = []
+    for size in FP_PAIR_SIZES:
+        for store in (False, True):
+            pair.append(len(kinds))
+            kinds.append(MemoryKind("fp", store, size, size, registers=2))
+    names = [kind.name for kind in kinds]
+    if len(set(names)) != len(names):
+        raise GenerationError("two memory gadgets share a name")
+    return kinds, forms, single, pair
+
+
+def render_memory_assembly(kinds: list) -> str:
+    out = ["/* SPDX-License-Identifier: GPL-2.0-or-later */",
+           "/* Generated by darwin/cpu/arm64/gadgets/engine/"
+           "generate_streaming.py. Do not edit. */",
+           "\t.p2align 4",
+           "\t.globl NAME(uml_arm64_gadget_sm_memory_begin)",
+           "NAME(uml_arm64_gadget_sm_memory_begin):"]
+    for kind in kinds:
+        out.extend(emit_memory(kind))
+    out += ["\t.p2align 4",
+            "\t.globl NAME(uml_arm64_gadget_sm_memory_end)",
+            "NAME(uml_arm64_gadget_sm_memory_end):",
+            "",
+            ".pushsection __DATA_CONST,__gadget_sme",
+            "\t.p2align 3",
+            "\t.globl NAME(uml_arm64_gadget_sm_memory_entries)",
+            "NAME(uml_arm64_gadget_sm_memory_entries):"]
+    out.extend(f"\t.quad NAME(uml_arm64_gadget_sm_{kind.name})"
+               for kind in kinds)
+    out += ["\t.globl NAME(uml_arm64_gadget_sm_memory_entries_end)",
+            "NAME(uml_arm64_gadget_sm_memory_entries_end):",
+            ".popsection", ""]
+    return "\n".join(out)
+
+
+def render_memory_header(kinds: list, forms: dict, single: list,
+                         pair: list, table) -> list:
+    numbered = sorted(forms.items())
+    row_forms = ["0xffff"] * len(table.rows)
+    for number, (row_index, _form) in enumerate(numbered):
+        row_forms[row_index] = str(number)
+    out = ["/* A memory row's gadgets: entries [first_entry, first_entry +",
+           " * variants) of uml_arm64_gadget_sm_memory_entries, selected by",
+           " * the row's element size field less base, or by a ZA slice's",
+           " * tile x 2 + 1 for a vertical slice. */",
+           "enum class MemoryVariant : std::uint8_t {",
+           "\tnone,", "\telement_size,", "\tza_slice,", "};", "",
+           "struct MemoryForm final {",
+           "\tstd::uint16_t first_entry;",
+           "\tstd::uint8_t variants;",
+           "\tMemoryVariant variant;",
+           "\tstd::uint8_t base;",
+           "};", "",
+           f"inline constexpr std::uint32_t memory_entry_count = "
+           f"{len(kinds)};", "",
+           f"inline constexpr std::array<MemoryForm, {len(numbered)}> "
+           f"memory_forms{{{{"]
+    for _row_index, form in numbered:
+        out.append(f"\tMemoryForm{{{form.first}U, {form.variants}U, "
+                   f"MemoryVariant::{form.variant}, {form.base}U}}, "
+                   f"// {form.name}")
+    out += ["}};", ""]
+    out.append(f"inline constexpr std::array<std::uint16_t, "
+               f"{len(row_forms)}> memory_row_forms{{{{")
+    for start in range(0, len(row_forms), 12):
+        out.append("\t" + ", ".join(row_forms[start:start + 12]) + ",")
+    out += ["}};", "",
+            "/* The SIMD&FP entries, [size][store]: single registers of 1,",
+            " * 2, 4, 8 and 16 bytes, pairs of 4, 8 and 16. */",
+            f"inline constexpr std::array<std::uint16_t, {len(single)}> "
+            f"fp_memory_single{{{{" +
+            ", ".join(f"{value}U" for value in single) + "}};",
+            f"inline constexpr std::array<std::uint16_t, {len(pair)}> "
+            f"fp_memory_pair{{{{" +
+            ", ".join(f"{value}U" for value in pair) + "}};", ""]
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--loader", type=Path, required=True)
     parser.add_argument("--table", type=Path, required=True)
     parser.add_argument("--assembly", type=Path, required=True)
+    parser.add_argument("--memory-assembly", type=Path, required=True)
     parser.add_argument("--header", type=Path, required=True)
     arguments = parser.parse_args()
     table = load_table(arguments.loader, arguments.table)
     forms = sve_forms(table) + fp_forms(table)
+    kinds, memory_forms, single, pair = memory_kinds(table)
+    header = render_header(forms, table).replace(
+        "} // namespace uml::cpu::arm64::gadgets::streaming\n",
+        "\n".join(render_memory_header(kinds, memory_forms, single, pair,
+                                       table)) +
+        "\n} // namespace uml::cpu::arm64::gadgets::streaming\n")
     for path, text in ((arguments.assembly, render_assembly(forms)),
-                       (arguments.header, render_header(forms, table))):
+                       (arguments.memory_assembly,
+                        render_memory_assembly(kinds)),
+                       (arguments.header, header)):
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists() or path.read_text() != text:
             path.write_text(text)
