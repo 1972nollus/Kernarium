@@ -14,7 +14,9 @@ script writes now:
 - each case is the script's case in order: its name, program, native
   requirement, initial state, and data regions;
 - each outcome agrees with the table where the table decides legality, and
-  each retired count with its terminal PC.
+  each retired count with its terminal PC;
+- no case that stays in streaming mode expects the FPSR XNU leaves after a
+  kernel entry there, 0x0800009F, which only a change of PSTATE.SM sets.
 
 build-unit-corpus.py --check already refuses a pack whose recorded script or
 table hash is stale.
@@ -41,6 +43,15 @@ def load_generator():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+STREAMING_RESET = 0x0800_009F
+
+
+def changes_streaming_mode(word: int) -> bool:
+    """SMSTART, SMSTOP, the other MSR SVCRxx forms, or MSR SVCR, Xt."""
+    return (word & 0xFFFF_F0FF) == 0xD503_407F or \
+        (word & 0xFFFF_FFE0) == 0xD51B_4240
 
 
 def check(native, records: list[dict], meta: dict) -> str:
@@ -115,6 +126,18 @@ def check(native, records: list[dict], meta: dict) -> str:
                                       for word in words[:size // 4]):
                     raise SystemExit(f"{draft.name}: the literal load "
                                      "does not load its program")
+            # XNU sets FPSR to 0x0800009F on every kernel entry in
+            # streaming mode; the oracle reads FPSR before any, so a case
+            # that keeps PSTATE.SM set holds what its instructions left.
+            initial, final = case["initial"], case["expected"]
+            svcr = int(initial.get("svcr", "0"), 16)
+            fpsr = int(final.get("fpsr", initial.get("fpsr", "0")), 16)
+            if svcr & native.SM and \
+                    int(final.get("svcr", hex(svcr)), 16) & native.SM and \
+                    fpsr == STREAMING_RESET and \
+                    not any(map(changes_streaming_mode, words)):
+                raise SystemExit(f"{draft.name}: expects the FPSR a kernel "
+                                 "entry in streaming mode leaves")
             total += 1
     return (f"native SME records: {total} cases in {len(records)} records "
             f"re-derived from {native.SITE} at SVL {native.SVL}")

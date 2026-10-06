@@ -374,18 +374,26 @@ not.
 
 The oracle catches a case's traps on a Mach exception port and reads its
 state there, without a signal frame, so streaming state reaches the response
-unchanged. Where the encoding table decides a
-case's legality (each row's witness in every mode it needs and in each mode
-that lacks one, the rows outside the profile, and every FP&SIMD class in
-streaming mode), the script refuses a response that disagrees, so a
-disagreement is a finding about the table, never an expectation. The FP&SIMD
-classes of `absent` inventory entries are left out: the host may implement
-their features (the M4 executes the FEAT_LRCPC3 forms), but the guest's
-result is UNDEFINED, which the absent-feature records expect. A witness the
-architecture leaves CONSTRAINED UNPREDICTABLE, a SIMD&FP load pair with
-`Rt == Rt2`, takes `Rt2 = Rt + 1` instead. The hardware
-decides everything else, including the fault address of a crossing access
-and what a faulting access leaves in its destination.
+unchanged. XNU sets FPSR to 0x0800009F on every kernel entry in streaming
+mode, interrupts included, so the oracle sets a case's FPSR in user mode
+after its own last trap before the program. For a case that ends in
+streaming mode it runs the case again with the word it ended at replaced by
+a branch to an FPSR read, so the response holds the FPSR the instructions
+left. The script reads only these version 2 responses, and the
+`arm64-instruction-corpus-sme-native` test refuses a pack in which a case
+that keeps PSTATE.SM set expects the reset value.
+
+Where the encoding table decides a case's legality (each row's witness in
+every mode it needs and in each mode that lacks one, the rows outside the
+profile, and every FP&SIMD class in streaming mode), the script refuses a
+response that disagrees, so a disagreement is a finding about the table,
+never an expectation. The FP&SIMD classes of `absent` inventory entries are
+left out: the host may implement their features (the M4 executes the
+FEAT_LRCPC3 forms), but the guest's result is UNDEFINED, which the
+absent-feature records expect. A witness the architecture leaves CONSTRAINED
+UNPREDICTABLE, a SIMD&FP load pair with `Rt == Rt2`, takes `Rt2 = Rt + 1`
+instead. The hardware decides everything else, including the fault address
+of a crossing access and what a faulting access leaves in its destination.
 
 Regenerate on an SME host, twice from clean directories (the M4 under its
 lease and workdir rules), and require identical responses:

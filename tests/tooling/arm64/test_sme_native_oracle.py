@@ -7,7 +7,11 @@ on an SME host, which this host need not be. Its exception path, register
 transfer, and region handling are the same for every case, so this test
 runs a request without SME state through them: a completed case, an
 undefined instruction, a breakpoint, read and write faults with their
-addresses, NZCV, SP, and SIMD&FP results, and a store's region runs.
+addresses, NZCV, SP, and SIMD&FP results, an initial FPSR, and a store's
+region runs. On an SME host it also runs streaming cases, whose FPSR XNU
+resets on every kernel entry: the FPSR an instruction leaves must reach the
+response after a completed case, a fault and an undefined instruction, the
+initial FPSR must reach the program, and SMSTART's own reset must stay.
 """
 
 from __future__ import annotations
@@ -16,12 +20,70 @@ __import__("sys").dont_write_bytecode = True
 
 import importlib.util
 import pathlib
+import struct
 import subprocess
 import sys
 import tempfile
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 GENERATOR = REPOSITORY / "tools" / "arm64-tests" / "sme-native-corpus.py"
+
+FADD_SCALAR = 0x1E21_2802  # FADD S2, S0, S1
+FADD_VECTOR = 0x4E22_D420  # FADD V0.4S, V1.4S, V2.4S
+ONE = struct.pack("<I", 0x3F80_0000)  # 1.0
+TINY = struct.pack("<I", 0x3080_0000)  # 2^-30: 1.0 + TINY is inexact
+DZC, IXC = 0x02, 0x10
+STREAMING_RESET = 0x0800_009F
+
+
+def run_oracle(oracle: str, native, cases: list, svl: int):
+    with tempfile.TemporaryDirectory(prefix="sme-oracle-") as scratch:
+        request = pathlib.Path(scratch) / "request"
+        response = pathlib.Path(scratch) / "response"
+        request.write_bytes(native.write_request(cases, svl))
+        subprocess.run([oracle, str(request), str(response)], check=True,
+                       timeout=60)
+        return native.read_response(response.read_bytes(), cases, svl)
+
+
+def streaming_failures(oracle: str, native, svl: int) -> list[str]:
+    """Streaming cases: (case, event, pc offset, fault address, FPSR, SVCR)."""
+    State, Region, Case = native.WireState, native.WireRegion, native.WireCase
+    svc, data, page = native.SVC, native.DATA, native.PAGE
+    rw = native.REGION_READABLE | native.REGION_WRITABLE
+    operands = {0: ONE + bytes(svl - 4), 1: TINY + bytes(svl - 4)}
+
+    def streaming(**fields) -> State:
+        x = fields.pop("x", {})
+        return State(x={18: 0, **x}, svcr=native.SM, fpsr=DZC, z=operands,
+                     **fields)
+
+    checks = [
+        (Case((FADD_SCALAR, svc), 0, streaming()),
+         "system-call", 4, 0, DZC | IXC, native.SM),
+        (Case((FADD_SCALAR, 0xF940_0023, svc), 0,  # LDR X3, [X1]
+              streaming(x={1: data + page}),
+              (Region(data, page, rw, seed=1),)),
+         "memory-fault", 4, data + page, DZC | IXC, native.SM),
+        (Case((FADD_SCALAR, FADD_VECTOR, svc), 0, streaming()),
+         "illegal-instruction", 4, 0, DZC | IXC, native.SM),
+        (Case((svc,), 0, streaming()), "system-call", 0, 0, DZC, native.SM),
+        (Case((0xD503_437F, svc), 0,  # SMSTART SM
+              State(x={18: 0}, fpsr=DZC)),
+         "system-call", 4, 0, STREAMING_RESET, native.SM),
+    ]
+    _, results = run_oracle(oracle, native, [check[0] for check in checks],
+                            svl)
+    failures = []
+    for index, ((_, event, pc, fault, fpsr, svcr), result) in enumerate(
+            zip(checks, results)):
+        got = (result.event, result.pc_offset, result.fault_address,
+               result.state.fpsr, result.state.svcr)
+        want = (event, pc, fault, fpsr, svcr)
+        if got != want:
+            failures.append(f"streaming case {index}: got {got}, "
+                            f"expected {want}")
+    return failures
 
 
 def load_generator():
@@ -74,15 +136,12 @@ def main() -> int:
          "system-call", 4, 0, {}),
         (Case((0xD503_201F, svc, svc), 4, state()),  # entry past a NOP
          "system-call", 4, 0, {}),
+        (Case((FADD_SCALAR, svc), 0,
+              state(fpsr=DZC, v={0: ONE + bytes(12), 1: TINY + bytes(12)})),
+         "system-call", 4, 0, {}),
     ]
     cases = [check[0] for check in checks]
-    with tempfile.TemporaryDirectory(prefix="sme-oracle-") as scratch:
-        request = pathlib.Path(scratch) / "request"
-        response = pathlib.Path(scratch) / "response"
-        request.write_bytes(native.write_request(cases, 0))
-        subprocess.run([oracle, str(request), str(response)], check=True,
-                       timeout=60)
-        host, results = native.read_response(response.read_bytes(), cases, 0)
+    host, results = run_oracle(oracle, native, cases, 0)
     failures = []
     for index, ((case, event, pc, fault, x), result) in enumerate(
             zip(checks, results)):
@@ -99,10 +158,17 @@ def main() -> int:
         failures.append(f"STR: runs {results[5].runs}")
     if set(results[8].state.v) != {0} or results[8].state.fpsr == 0:
         failures.append("FADD: V0 and FPSR.IXC were not reported")
+    if results[10].state.fpsr != DZC | IXC:
+        failures.append(
+            f"FADD from FPSR.DZC: FPSR {results[10].state.fpsr:#x}")
+    if host["svl"]:
+        failures += streaming_failures(oracle, native, host["svl"])
     if failures:
         raise SystemExit("sme_native_oracle: " + "; ".join(failures))
-    print(f"sme_native_oracle: {len(cases)} base A64 cases on a host with "
-          f"SVL {host['svl']} and {host['features'] or 'no SME features'}")
+    streaming = " and 5 streaming cases" if host["svl"] else ""
+    print(f"sme_native_oracle: {len(cases)} base A64 cases{streaming} on a "
+          f"host with SVL {host['svl']} and "
+          f"{host['features'] or 'no SME features'}")
     return 0
 
 
