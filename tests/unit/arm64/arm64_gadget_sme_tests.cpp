@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* The gadget engine's SME control core (gadgets::sme_support = control):
- * the SVCR writes and reads, TPIDR2_EL0, RDSVL/ADDSVL/ADDSPL, and the ZA and
- * ZT0 loads, stores and zeroings, with the translation cache keyed by the
- * guest's SVCR mode; the generated register-only streaming forms; and the
- * vector memory gadgets of the SVE and SME loads and stores and the SIMD&FP
- * ones streaming mode keeps, with their page split and faults.
+/* The gadget engine's SME support (gadgets::sme_support = complete): the
+ * control core, that is the SVCR writes and reads, TPIDR2_EL0,
+ * RDSVL/ADDSVL/ADDSPL, and the ZA and ZT0 loads, stores and zeroings, with
+ * the translation cache keyed by the guest's SVCR mode; the generated
+ * register-only streaming forms; and the vector memory gadgets of the SVE
+ * and SME loads and stores and the SIMD&FP ones streaming mode keeps, with
+ * their page split and faults. The native corpus records check all of it
+ * against the M4.
  * Everything outside streaming mode runs on any host through an injected
  * SME profile, at several streaming vector lengths; streaming programs need
  * FEAT_SME in hardware and run at the host's SVL. A sweep checks that no

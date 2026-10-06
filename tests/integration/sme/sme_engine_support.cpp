@@ -19,6 +19,8 @@ const char *level(uml::cpu::arm64::SmeSupport support)
 		return "control";
 	case uml::cpu::arm64::SmeSupport::complete:
 		return "complete";
+	case uml::cpu::arm64::SmeSupport::sme2:
+		return "sme2";
 	}
 	return "unknown";
 }

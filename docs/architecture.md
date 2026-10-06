@@ -328,8 +328,9 @@ engines. The prober reports the profile only under the guest-SME policy,
 `DARWIN_UML_GUEST_SME=1`, which stays off by default until both engines
 implement SME; with it off, ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME
 HWCAP2 bits read zero on every host. Each engine's `sme_support` names how
-much of the profile it implements, and an SVE or SME word it does not
-implement is the illegal-instruction exit.
+much of the profile it implements: the control core (`control`), all of it
+but the SME2 forms (`complete`), or all of it (`sme2`). An SVE or SME word
+it does not implement is the illegal-instruction exit.
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and
@@ -351,12 +352,12 @@ mode or with ZA on; only a host with FEAT_SME in hardware reads SVCR. Only
 the M4's SVL of 64 bytes has been checked on hardware, and the iOS SME path
 is unvalidated on hardware.
 
-The gadget engine implements the SME control core (`sme_support` is
-`control`): SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL,
-ADDSVL and ADDSPL, LDR and STR of ZA and ZT0, and ZERO of ZA and ZT0, with
-every size read from the vCPU's SVL at run time. Its SME part follows the
-veneer island, so appending to it moves no base entry and re-encodes no
-veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
+The gadget engine implements all of the profile but the SME2 forms
+(`sme_support` is `complete`). Its control core is SMSTART and SMSTOP, MRS
+and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, LDR and STR of ZA
+and ZT0, and ZERO of ZA and ZT0, with every size read from the vCPU's SVL at
+run time. Its SME part follows the veneer island, so appending to it moves
+no base entry and re-encodes no veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
 PSTATE.ZA: each mode has its own program cache and links, an SVCR write
 ends its block, and a mode change empties the return ring. A program
 translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a helper on the
@@ -406,9 +407,10 @@ the register file: it touches only active elements, translates every page
 they lie in before it moves a byte, and reports a fault as M4 hardware does,
 a predicated access at its first faulting active byte rounded down to
 4 KiB and an unpredicated one at that byte. SVE prefetches are NOPs. The
-builder ends a block at the
-illegal-instruction exit on any other word, so SME2 is the
-illegal-instruction exit in streaming mode for now.
+builder ends a block at the illegal-instruction exit on any other word:
+AdvSIMD, a word outside the profile, or an SME2 form. On a host with
+FEAT_SME2 under the policy the guest therefore sees HWCAP2_SME2, and SME2
+code takes SIGILL, until the gadget engine implements the SME2 forms.
 `arm64-gadget-streaming-safety` walks every listed entry, and every 16-byte
 boundary of the generated gadgets, in the images each tree links and fails
 on an AdvSIMD word executed in streaming mode, a helper called there, or an
