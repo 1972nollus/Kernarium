@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 05:29:20 +0900
+Subject: [PATCH] x87: FFREEP frees its register and FXAM classifies its
+ operand
+
+FFREEP frees ST(i) and then pops, which leaves ST(0) empty too; it
+only moved TOP, so the registers stayed full.
+
+FXAM classifies the 80-bit operand: empty, zero, denormal
+(pseudo-denormals too), normal, infinity, NaN, or unsupported for
+unnormals, pseudo-NaNs and pseudo-infinities. It reported every
+operand but an empty one as normal. The reduced-precision mode keeps
+its approximation.
+---
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  1 +
+ .../Interface/Core/OpcodeDispatcher/X87.cpp   | 48 +++++++++++++++----
+ .../Interface/Core/X86Tables/X87Tables.cpp    |  8 +---
+ 3 files changed, 43 insertions(+), 14 deletions(-)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index 8528015aee38c892695758a74813555ec85dd0fc..c2787b0515d19c1180e2130347322a5bb2babc5a 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -744,6 +744,7 @@ public:
+   void X87EMMS(OpcodeArgs);
+   void X87FCMOV(OpcodeArgs);
+   void X87FFREE(OpcodeArgs);
++  void X87FFREEP(OpcodeArgs);
+   void X87FLDCW(OpcodeArgs);
+   void X87FNSAVE(OpcodeArgs);
+   void X87FNSTENV(OpcodeArgs);
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
+index 981639fd5815eea7a5369235721dc8c84557d622..ac93d5757847fcd5ca696bcece79186466297fad 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
+@@ -809,6 +809,12 @@ void OpDispatchBuilder::X87FFREE(OpcodeArgs) {
+   _InvalidateStack(Op->OP & 7);
+ }
+ 
++// FFREEP frees ST(i) and pops, which leaves ST(0) empty too.
++void OpDispatchBuilder::X87FFREEP(OpcodeArgs) {
++  _InvalidateStack(Op->OP & 7);
++  _PopStackDestroy();
++}
++
+ void OpDispatchBuilder::X87EMMS(OpcodeArgs) {
+   // Tags all get set to 0b11
+   _InvalidateStack(0xff);
+@@ -858,18 +864,44 @@ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
+     ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
+ 
+   // Extract the sign bit
+-  Result = ReducedPrecisionMode ? _Bfe(OpSize::i64Bit, 1, 63, Result) : _Bfe(OpSize::i64Bit, 1, 15, Result);
+-  SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Result);
++  Ref Sign = ReducedPrecisionMode ? _Bfe(OpSize::i64Bit, 1, 63, Result) : _Bfe(OpSize::i64Bit, 1, 15, Result);
++  SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Sign);
+ 
+-  // Claim this is a normal number
+-  // We don't support anything else
+   auto TopValid = _StackValidTag(0);
+ 
+-  // In the case of top being invalid then C3:C2:C0 is 0b101
+-  auto C3 = Select01(OpSize::i32Bit, CondClass::NEQ, TopValid, Constant(1));
++  if (ReducedPrecisionMode) {
++    // Claim this is a normal number
++    // We don't support anything else
++    // In the case of top being invalid then C3:C2:C0 is 0b101
++    auto C3 = Select01(OpSize::i32Bit, CondClass::NEQ, TopValid, Constant(1));
++
++    auto C2 = TopValid;
++    auto C0 = C3; // Mirror C3 until something other than zero is supported
++    SetRFLAG<FEXCore::X86State::X87FLAG_C0_LOC>(C0);
++    SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(C2);
++    SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(C3);
++    return;
++  }
+ 
+-  auto C2 = TopValid;
+-  auto C0 = C3; // Mirror C3 until something other than zero is supported
++  // C3:C2:C0 from the 80-bit format: 000 unsupported (an unnormal, a
++  // pseudo-NaN or a pseudo-infinity), 001 NaN, 010 normal, 011 infinity,
++  // 100 zero, 101 empty, 110 denormal (a pseudo-denormal too).
++  Ref Exponent = _Bfe(OpSize::i64Bit, 15, 0, Result);
++  Ref Mantissa = _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 0);
++  Ref Integer = _Bfe(OpSize::i64Bit, 1, 63, Mantissa);
++  Ref Empty = _Xor(OpSize::i32Bit, TopValid, Constant(1));
++  Ref ZeroExponent = Select01(OpSize::i32Bit, CondClass::EQ, Exponent, Constant(0));
++  Ref MaxExponent = Select01(OpSize::i32Bit, CondClass::EQ, Exponent, Constant(0x7fff));
++  Ref MantissaNonzero = Select01(OpSize::i64Bit, CondClass::NEQ, Mantissa, Constant(0));
++  Ref FractionZero = Select01(OpSize::i64Bit, CondClass::EQ, _Lshl(OpSize::i64Bit, Mantissa, Constant(1)), Constant(0));
++
++  // C2: a normal, an infinity or a denormal.
++  Ref Other = _Andn(OpSize::i32Bit, _Andn(OpSize::i32Bit, Integer, ZeroExponent), MaxExponent);
++  Ref Infinity = _And(OpSize::i32Bit, _And(OpSize::i32Bit, MaxExponent, Integer), FractionZero);
++  Ref Denormal = _And(OpSize::i32Bit, ZeroExponent, MantissaNonzero);
++  Ref C2 = _Andn(OpSize::i32Bit, _Or(OpSize::i32Bit, _Or(OpSize::i32Bit, Other, Infinity), Denormal), Empty);
++  Ref C3 = _Or(OpSize::i32Bit, ZeroExponent, Empty);
++  Ref C0 = _Or(OpSize::i32Bit, _And(OpSize::i32Bit, MaxExponent, Integer), Empty);
+   SetRFLAG<FEXCore::X86State::X87FLAG_C0_LOC>(C0);
+   SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(C2);
+   SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(C3);
+diff --git a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
+index 286f9f575161dc1e067e9135dd11ff8c2215dadd..24730dc28766e5687dafb1a6efc30e04046a295e 100644
+--- a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
++++ b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
+@@ -277,9 +277,7 @@ constexpr std::array<DispatchTableEntry, 140> X87F64OpTable = {{
+ 
+   {OPDReg(0xDF, 7) | 0x00, 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FISTF64, false>},
+ 
+-  // XXX: This should also set the x87 tag bits to empty
+-  // We don't support this currently, so just pop the stack
+-  {OPD(0xDF, 0xC0), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87ModifySTP, true>},
++  {OPD(0xDF, 0xC0), 8, &OpDispatchBuilder::X87FFREEP},
+   {OPD(0xDF, 0xC8), 8, &OpDispatchBuilder::FXCH},
+   {OPD(0xDF, 0xD0), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},
+   {OPD(0xDF, 0xD8), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},
+@@ -538,9 +536,7 @@ constexpr std::array<DispatchTableEntry, 140> X87F80OpTable = {{
+ 
+   {OPDReg(0xDF, 7) | 0x00, 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FIST, false>},
+ 
+-  // XXX: This should also set the x87 tag bits to empty
+-  // We don't support this currently, so just pop the stack
+-  {OPD(0xDF, 0xC0), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::X87ModifySTP, true>},
++  {OPD(0xDF, 0xC0), 8, &OpDispatchBuilder::X87FFREEP},
+   {OPD(0xDF, 0xC8), 8, &OpDispatchBuilder::FXCH},
+   {OPD(0xDF, 0xD0), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},
+   {OPD(0xDF, 0xD8), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},

@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 05:29:20 +0900
+Subject: [PATCH] Embedding: x87 stack faults raise invalid operation
+
+x87 marks each register empty or full, and an embedding host that runs
+x86 programs exactly needs what those tags decide. With the precise
+stack an embedding host uses, a read of an empty register is now a
+stack underflow and a push onto a full one a stack overflow: either
+raises invalid operation and the stack fault flag, sets C1 for an
+overflow and clears it for an underflow, sets ES and B while the
+control word unmasks invalid operation, and goes on with the QNaN
+indefinite. Every pop leaves its register empty. FXAM reads its
+operand without a stack fault, because it classifies an empty
+register.
+---
+ .../Interface/Core/OpcodeDispatcher/X87.cpp   |  3 +-
+ FEXCore/Source/Interface/IR/IR.json           |  5 +-
+ .../IR/Passes/x87StackOptimizationPass.cpp    | 69 +++++++++++++++++--
+ 3 files changed, 67 insertions(+), 10 deletions(-)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
+index ac93d5757847fcd5ca696bcece79186466297fad..85ea4f8f0848259dc99aca185f507916f00f096f 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp
+@@ -859,7 +859,8 @@ void OpDispatchBuilder::X87FCMOV(OpcodeArgs) {
+ }
+ 
+ void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
+-  auto a = _ReadStackValue(0);
++  // FXAM classifies an empty register too, so its read is no stack underflow.
++  auto a = _ReadStackValue(0, true);
+   Ref Result =
+     ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
+ 
+diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
+index 7e0935ae124a17a6e2261559ddd82848fe414b13..32d3c08affd7922d63c5c1fb234dcfbd0bcfc9cb 100644
+--- a/FEXCore/Source/Interface/IR/IR.json
++++ b/FEXCore/Source/Interface/IR/IR.json
+@@ -2937,9 +2937,10 @@
+         "HasSideEffects": true,
+         "X87": true
+       },
+-      "FPR = ReadStackValue u8:$StackLocation": {
++      "FPR = ReadStackValue u8:$StackLocation, i1:$Quiet{false}": {
+         "Desc": [
+-          "Reads a value off the stack at the offset"
++          "Reads a value off the stack at the offset.",
++          "Unless Quiet, reading an empty register is a stack underflow when embedded."
+         ],
+         "DestSize": "OpSize::i128Bit",
+         "X87": true
+diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+index c50612e2e53ad259b63d27f0be537272cc65ab03..f9a276c2984687fd15d90d1f934c32ad57b1d3e2 100644
+--- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
+@@ -272,8 +272,17 @@ private:
+   /// Set the valid tag for Value as valid (if Valid is true), or invalid (if Valid is false).
+   void SetX87ValidTag(uint8_t Offset, bool Valid);
+   // Generates slow code to load/store a value from an offset from the top of the stack
+-  Ref LoadStackValueAtOffset_Slow(uint8_t Offset = 0);
++  // Embedded, a load of an empty register is a stack underflow unless Quiet,
++  // which neither checks nor caches the value.
++  Ref LoadStackValueAtOffset_Slow(uint8_t Offset = 0, bool Quiet = false);
+   void StoreStackValueAtOffset_Slow(Ref Value, uint8_t Offset = 0, bool SetValid = true);
++  // The x87 stack fault of a value whose register is empty, for an underflow,
++  // or full, for an overflow: raises IE and SF, sets C1 for an overflow and
++  // clears it for an underflow, sets ES and B when the control word unmasks
++  // invalid operation, and returns the QNaN indefinite in place of Value.
++  // Fault is 1 for a fault and 0 otherwise.
++  Ref X87StackFault(Ref Value, Ref Fault, bool Overflow);
++  Ref X87FlagOr(uint32_t Flag, Ref Bit);
+   // Update Top value in slow path for a pop
+   void UpdateTopForPop_Slow();
+   void UpdateTopForPush_Slow();
+@@ -327,7 +336,7 @@ private:
+ 
+   // Path Migration helper management
+   std::optional<StackMemberInfo> MigrateToSlowPath_IfInvalid(uint8_t Offset = 0);
+-  Ref LoadStackValue(uint8_t Offset = 0);
++  Ref LoadStackValue(uint8_t Offset = 0, bool Quiet = false);
+   void StoreStackValue(Ref Value, uint8_t Offset = 0, bool SetValid = false);
+   void StackPop();
+ 
+@@ -477,11 +486,18 @@ inline Ref X87StackOptimization::GetX87ValidTag_Slow(uint8_t Offset) {
+   }
+ }
+ 
+-inline Ref X87StackOptimization::LoadStackValueAtOffset_Slow(uint8_t Offset) {
++inline Ref X87StackOptimization::LoadStackValueAtOffset_Slow(uint8_t Offset, bool Quiet) {
+   auto Size = ReducedPrecisionMode ? OpSize::i64Bit : OpSize::i128Bit;
+   if (!TopValueCache[Offset]) {
+     if (Embedded) {
+-      TopValueCache[Offset] = IREmit->_LoadContextFPRIndexed(GetOffsetTopWithCache_Slow(Offset), Size, MMBaseOffset(), 16);
++      Ref Value = IREmit->_LoadContextFPRIndexed(GetOffsetTopWithCache_Slow(Offset), Size, MMBaseOffset(), 16);
++      if (Quiet) {
++        return Value;
++      }
++      if (!ReducedPrecisionMode && TopValidCache[Offset] != StackSlot::VALID) {
++        Value = X87StackFault(Value, IREmit->_Xor(OpSize::i32Bit, GetX87ValidTag_Slow(Offset), GetConstant(1)), false);
++      }
++      TopValueCache[Offset] = Value;
+     } else {
+       OrderedNode* TopOffsetAddress = GetOffsetTopAddressWithCache_Slow(Offset);
+       TopValueCache[Offset] =
+@@ -491,6 +507,34 @@ inline Ref X87StackOptimization::LoadStackValueAtOffset_Slow(uint8_t Offset) {
+   return TopValueCache[Offset];
+ }
+ 
++inline Ref X87StackOptimization::X87FlagOr(uint32_t Flag, Ref Bit) {
++  const auto Offset = offsetof(FEXCore::Core::CPUState, flags) + Flag;
++  Ref Value = IREmit->_Or(OpSize::i32Bit, IREmit->_LoadContextGPR(OpSize::i8Bit, Offset), Bit);
++  IREmit->_StoreContextGPR(OpSize::i8Bit, Value, Offset);
++  return Value;
++}
++
++inline Ref X87StackOptimization::X87StackFault(Ref Value, Ref Fault, bool Overflow) {
++  // Branch-free and without NZCV, which holds the guest's flags.
++  X87FlagOr(FEXCore::X86State::X87FLAG_IE_LOC, Fault);
++  X87FlagOr(FEXCore::X86State::X87FLAG_SF_LOC, Fault);
++  if (Overflow) {
++    X87FlagOr(FEXCore::X86State::X87FLAG_C1_LOC, Fault);
++  } else {
++    const auto C1 = offsetof(FEXCore::Core::CPUState, flags) + FEXCore::X86State::X87FLAG_C1_LOC;
++    IREmit->_StoreContextGPR(OpSize::i8Bit, IREmit->_Andn(OpSize::i32Bit, IREmit->_LoadContextGPR(OpSize::i8Bit, C1), Fault), C1);
++  }
++  Ref FCW = IREmit->_LoadContextGPR(OpSize::i16Bit, offsetof(FEXCore::Core::CPUState, FCW));
++  Ref Unmasked = IREmit->_Andn(OpSize::i32Bit, Fault, FCW);
++  X87FlagOr(FEXCore::X86State::X87FLAG_ES_LOC, Unmasked);
++  X87FlagOr(FEXCore::X86State::X87FLAG_B_LOC, Unmasked);
++
++  Ref Indefinite = IREmit->_VCastFromGPR(OpSize::i128Bit, OpSize::i64Bit, IREmit->_Constant(0xC000'0000'0000'0000ULL));
++  Indefinite = IREmit->_VInsGPR(OpSize::i128Bit, OpSize::i64Bit, 1, Indefinite, IREmit->_Constant(0xFFFF));
++  Ref Mask = IREmit->_VDupFromGPR(OpSize::i128Bit, OpSize::i64Bit, IREmit->_Sub(OpSize::i64Bit, GetConstant(0), Fault));
++  return IREmit->_VBSL(OpSize::i128Bit, Mask, Indefinite, Value);
++}
++
+ inline void X87StackOptimization::StoreStackValueAtOffset_Slow(Ref Value, uint8_t Offset, bool SetValid) {
+   TopValueCache[Offset] = Value;
+   FlushValuesPending[Offset] = true;
+@@ -514,9 +558,9 @@ inline std::optional<X87StackOptimization::StackMemberInfo> X87StackOptimization
+   return {};
+ }
+ 
+-inline Ref X87StackOptimization::LoadStackValue(uint8_t Offset) {
++inline Ref X87StackOptimization::LoadStackValue(uint8_t Offset, bool Quiet) {
+   const auto& StackValue = MigrateToSlowPath_IfInvalid(Offset);
+-  return SlowPath ? LoadStackValueAtOffset_Slow(Offset) : StackValue->StackDataNode;
++  return SlowPath ? LoadStackValueAtOffset_Slow(Offset, Quiet) : StackValue->StackDataNode;
+ }
+ 
+ inline void X87StackOptimization::StoreStackValue(Ref Value, uint8_t Offset, bool SetValid) {
+@@ -529,6 +573,10 @@ inline void X87StackOptimization::StoreStackValue(Ref Value, uint8_t Offset, boo
+ 
+ inline void X87StackOptimization::StackPop() {
+   if (SlowPath) {
++    if (Embedded) {
++      // A pop leaves its register empty, which the stack fault checks see.
++      SetX87ValidTag(0, false);
++    }
+     UpdateTopForPop_Slow();
+   } else {
+     StackData.pop();
+@@ -956,6 +1004,10 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+ 
+         if (SlowPath) {
+           UpdateTopForPush_Slow();
++          if (Embedded && !ReducedPrecisionMode && TopValidCache[0] != StackSlot::INVALID) {
++            // A push onto a full register overflows.
++            SourceNode = X87StackFault(SourceNode, GetX87ValidTag_Slow(0), true);
++          }
+           StoreStackValueAtOffset_Slow(SourceNode);
+         } else {
+           if (Op->OriginalValue.IsInvalid()) {
+@@ -977,6 +1029,9 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+         if (SlowPath) {
+           Ref St0 = LoadStackValueAtOffset_Slow(Offset);
+           UpdateTopForPush_Slow();
++          if (Embedded && !ReducedPrecisionMode && TopValidCache[0] != StackSlot::INVALID) {
++            St0 = X87StackFault(St0, GetX87ValidTag_Slow(0), true);
++          }
+           StoreStackValueAtOffset_Slow(St0);
+         } else {
+           StackData.push(*Value);
+@@ -987,7 +1042,7 @@ void X87StackOptimization::Run(IREmitter* Emit) {
+       case OP_READSTACKVALUE: {
+         const auto* Op = IROp->C<IROp_ReadStackValue>();
+         auto Offset = Op->StackLocation;
+-        Ref NewValue = LoadStackValue(Offset);
++        Ref NewValue = LoadStackValue(Offset, Op->Quiet);
+ 
+         IREmit->ReplaceUsesWithAfter(CodeNode, NewValue, CodeNode);
+         break;
