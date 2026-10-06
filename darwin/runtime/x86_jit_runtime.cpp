@@ -148,7 +148,8 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	result = executed.execution;
 	run.error_code = executed.error_code;
 	if (x86_mm_shared_logging()) [[unlikely]]
-		note_x86_jit_ordering(generation, executed.stores_ordered, start);
+		note_x86_jit_ordering(generation, mm_shared,
+			executed.stores_ordered, start);
 	/* A handler without SA_RESTORER returns to the trampoline, which no
 	 * guest page backs on the x86-64 slice, so the engine stops there with
 	 * a fetch fault. Reaching it means rt_sigreturn, as at entry. */

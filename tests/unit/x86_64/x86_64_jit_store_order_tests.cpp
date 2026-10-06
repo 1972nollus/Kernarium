@@ -35,13 +35,20 @@
  *		inc %rcx; cmp %rsi,%rcx; jbe 1b
  *		xor %eax,%eax; syscall
  *
- * RDI holds the data page and RSI the rounds. */
+ * RDI holds the data page and RSI the rounds.
+ *
+ * mp-cycle runs MP on one address space and the same two engines four
+ * times, unordered, ordered, unordered and ordered, as the guest kernel's
+ * mark comes and goes with a sharer: each run must show what its ordering
+ * promises, so the engine runs relaxed code again once a space it ran
+ * ordered stops being shared. */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "memory/guest_address_space.hpp"
 #include "platform/apple/host_features.hpp"
 
+#include <barrier>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -174,6 +181,9 @@ public:
 		return value;
 	}
 
+	/* Clears the round counters and pairs for another run, between runs. */
+	void reset_data() noexcept { std::memset(data_, 0, sizeof(data_)); }
+
 private:
 	void load(std::uint64_t offset, std::span<const std::uint8_t> bytes) noexcept
 	{
@@ -197,9 +207,15 @@ private:
 	alignas(page_size) std::byte data_[data_pages * page_size];
 };
 
-/* One agent's program on its own engine, as one vCPU thread runs it. */
+/* One agent's program on its own engine, as one vCPU thread runs it; the
+ * engine keeps its spaces from one run to the next. */
 struct Agent final {
+	explicit Agent(std::uint64_t program) : entry{program} {}
+
 	std::uint64_t entry{};
+	x86_64::jit::FexEngine engine{
+		uml::platform::apple::probed_host_capabilities()};
+	bool synced{};
 	bool finished{};
 	bool stores_ordered{};
 	const char *failure{};
@@ -207,15 +223,19 @@ struct Agent final {
 	void run(LitmusMemory &memory, unsigned long generation, bool ordered,
 		std::chrono::steady_clock::time_point deadline) noexcept
 	{
-		x86_64::jit::FexEngine engine{
-			uml::platform::apple::probed_host_capabilities()};
 		uml::cpu::InterruptToken interrupt{};
-		engine.apply_changes(generation, x86_64::ExecutionMode::long64, {
-			.mapping_sequence = 1,
-			.code_sequence = 1,
-			.all_mappings = true,
-			.all_code = true,
-		}, ordered);
+		if (!synced) {
+			engine.apply_changes(generation,
+				x86_64::ExecutionMode::long64, {
+				.mapping_sequence = 1,
+				.code_sequence = 1,
+				.all_mappings = true,
+				.all_code = true,
+			}, ordered);
+			synced = true;
+		}
+		finished = false;
+		failure = nullptr;
 		x86_64::CpuState cpu{};
 		cpu.rip = code_address + entry;
 		cpu.rflags = 0x202;
@@ -253,19 +273,11 @@ struct Case final {
 	std::uint64_t writer_entry;
 };
 
-/* Runs one case in a fresh address space and returns 0 when it shows what
- * the ordering promises. */
-int run_case(const Case &test, bool ordered, unsigned long generation)
+/* Judges one run of the case and returns 0 when it shows what its ordering
+ * promises. */
+int judge(const Case &test, const LitmusMemory &memory, const Agent &reader,
+	const Agent &writer, bool ordered)
 {
-	LitmusMemory memory;
-	Agent reader{.entry = test.reader_entry};
-	Agent writer{.entry = test.writer_entry};
-	const auto deadline = std::chrono::steady_clock::now() + time_limit;
-	std::thread writer_thread{[&] {
-		writer.run(memory, generation, ordered, deadline);
-	}};
-	reader.run(memory, generation, ordered, deadline);
-	writer_thread.join();
 	const char *mode = ordered ? "ordered" : "unordered";
 	for (const auto *agent : {&reader, &writer}) {
 		if (!agent->finished) {
@@ -289,6 +301,37 @@ int run_case(const Case &test, bool ordered, unsigned long generation)
 	return passed ? 0 : 1;
 }
 
+/* Runs the case once per ordering in `orders` on one address space, each
+ * program on its own engine and host thread for every run, as a vCPU thread
+ * keeps its engine. */
+int run_case(const Case &test, std::initializer_list<bool> orders,
+	unsigned long generation)
+{
+	LitmusMemory memory;
+	Agent reader{test.reader_entry};
+	Agent writer{test.writer_entry};
+	std::barrier phase{2};
+	std::thread writer_thread{[&] {
+		for (const bool ordered : orders) {
+			phase.arrive_and_wait();
+			writer.run(memory, generation, ordered,
+				std::chrono::steady_clock::now() + time_limit);
+			phase.arrive_and_wait();
+		}
+	}};
+	int failures = 0;
+	for (const bool ordered : orders) {
+		memory.reset_data();
+		phase.arrive_and_wait();
+		reader.run(memory, generation, ordered,
+			std::chrono::steady_clock::now() + time_limit);
+		phase.arrive_and_wait();
+		failures += judge(test, memory, reader, writer, ordered);
+	}
+	writer_thread.join();
+	return failures;
+}
+
 } // namespace
 
 int main()
@@ -301,8 +344,10 @@ int main()
 	int failures = 0;
 	unsigned long generation = 0;
 	for (const auto &test : cases) {
-		failures += run_case(test, false, ++generation);
-		failures += run_case(test, true, ++generation);
+		failures += run_case(test, {false}, ++generation);
+		failures += run_case(test, {true}, ++generation);
 	}
+	failures += run_case({"mp-cycle", reader_plain_entry, writer_plain_entry},
+		{false, true, false, true}, ++generation);
 	return failures == 0 ? 0 : 1;
 }

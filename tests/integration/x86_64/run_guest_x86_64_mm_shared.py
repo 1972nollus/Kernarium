@@ -2,22 +2,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check the "mm is shared" dispatch flag of the x86_64-userspace slice.
 
-The kernel marks an address space shared once clone(CLONE_VM) without
-CLONE_VFORK gives it a second task, once it maps memory another address
-space may map too (MAP_SHARED of any kind, SysV shm), which a fork child
-inherits, or once io_uring keeps a ring in its memory. The host reads the
-mark from each dispatch (DARWIN_UML_DISPATCH_MM_SHARED), and the x86-64 JIT
-keeps x86's store order for a marked address space only. Cross-builds the
-freestanding mm_shared_probe.cpp, boots an x86-64 image on an emulator built
-with the macos-x86_64 preset with UML_X86_MM_SHARED_LOG set, and runs the
-probe in each mode. The host logs the first shared dispatch of each address
-space with its RIP; in the probe's code there must be none for the modes
-that share nothing and one per shared address space for the others.
+The kernel marks an entry of a task shared when another agent may observe
+its address space, as the common kernel README states: another task on it,
+memory another address space may map too (MAP_SHARED of any kind, SysV
+shm), or an io_uring ring in its memory. The host reads the mark from each
+dispatch (DARWIN_UML_DISPATCH_MM_SHARED), and the x86-64 JIT keeps x86's
+store order for a marked dispatch only. Cross-builds the freestanding
+mm_shared_probe.cpp, boots an x86-64 image on an emulator built with the
+macos-x86_64 preset with UML_X86_MM_SHARED_LOG set, and runs the probe in
+each mode. The host logs each change of an address space's mark with the
+RIP of the dispatch that saw it; in the probe's code each mode must mark the
+address spaces it shares and no other.
 
-On the JIT, the log also records the first dispatch of each address space
-that ran unordered code and the first that ran ordered code: an unshared
-probe must run only unordered code, a shared one must run ordered code, and
-no address space may run unordered code once it has run ordered code.
+On the JIT, the log also records each change of an address space's
+ordering: an unshared probe must run only unordered code, a shared one must
+run ordered code, and no dispatch the kernel marked shared may run
+unordered code.
 """
 
 from __future__ import annotations
@@ -32,12 +32,15 @@ import re
 import subprocess
 import sys
 import tempfile
+import typing
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
 from guest import Guest, GuestFile  # noqa: E402
+from mm_shared_log import (  # noqa: E402
+    MARK, ORDERING, UNORDERED_SHARED, Entry, changes, history, logged)
 
 
 PROBE = pathlib.Path(__file__).with_name("mm_shared_probe.cpp")
@@ -62,26 +65,31 @@ FLAGS = (
     "-Wl,-z,max-page-size=4096",
     "-Wl,-s",
 )
-# Each mode with the number of address spaces it shares: the probe's own,
-# and for fork-shared its child's as well.
+# Each mode: the number of address spaces it marks shared (the probe's own,
+# and for fork-shared its child's as well); whether the probe's sharing must
+# end again; and whether its start and its end come at the return of the
+# probe's sys_share() and sys_unshare() calls.
+class Expect(typing.NamedTuple):
+    shared: int
+    ends: bool = False
+    exact_share: bool = False
+    exact_unshare: bool = False
+
+
 MODES = {
-    "single": 0,
-    "fork": 0,
-    "vfork": 0,
-    "private-file": 0,
-    "thread": 1,
-    "shared-anon": 1,
-    "shared-ro": 1,
-    "shm": 1,
-    "uring-nommap": 1,
-    "fork-shared": 2,
-    "thread-fork": 1,
+    "single": Expect(0),
+    "fork": Expect(0),
+    "vfork": Expect(0),
+    "private-file": Expect(0),
+    "thread": Expect(1),
+    "shared-anon": Expect(1),
+    "shared-ro": Expect(1),
+    "shm": Expect(1),
+    "uring-nommap": Expect(1),
+    "fork-shared": Expect(2),
+    "thread-fork": Expect(1),
 }
 RANGE = re.compile(r"mm-shared-probe: mode=([\w-]+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+)")
-LOG_LINE = re.compile(
-    r"uml-x86 (mm-shared|jit-space|jit-regressed) generation=(\d+)"
-    r"(?: ordered=([01]))? rip=(0x[0-9a-f]+|0)"
-)
 BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 60
 
@@ -97,31 +105,56 @@ def build_probe(compiler: str, directory: pathlib.Path) -> bytes:
     return output.read_bytes()
 
 
-def logged(log: pathlib.Path) -> list[tuple[str, int, int | None, int]]:
-    """(event, generation, ordered, rip) for each line of the host's log."""
-    if not log.exists():
-        return []
-    entries = []
-    for line in log.read_text().splitlines():
-        match = LOG_LINE.fullmatch(line)
-        if match is None or (match.group(1) == "mm-shared") != (match.group(3) is None):
-            raise RuntimeError(f"unexpected log line: {line!r}")
-        ordered = None if match.group(3) is None else int(match.group(3))
-        entries.append((match.group(1), int(match.group(2)), ordered,
-                        int(match.group(4), 16)))
-    return entries
+def check_ending(expect: Expect, changed: list[Entry], share: int,
+                 unshare: int, name: str) -> str | None:
+    """Whether a shared generation's changes of `name` (1 shared or
+    ordered, 0 not) start and, where they must, end its sharing as the mode
+    says."""
+    states = [entry.state for entry in changed]
+    if 1 not in states:
+        return f"the probe's address space never {name}"
+    first = states.index(1)
+    if expect.exact_share and changed[first].rip != share:
+        return (f"the address space {name} first at {changed[first].rip:#x}, "
+                f"not at the share call's return {share:#x}")
+    if not expect.ends:
+        return None
+    if 0 not in states[first:]:
+        return f"the address space {name} until the probe ended"
+    if expect.exact_unshare:
+        if states[first:] != [1, 0] or changed[first + 1].rip != unshare:
+            return (f"the address space did not stop being {name} exactly at "
+                    f"the unshare call's return {unshare:#x}: {history(changed)}")
+    return None
 
 
-def check_jit(mode: str, shared: int, hits: list[tuple[str, int, int | None, int]]) -> str | None:
-    """The JIT's part of one mode's verdict, or None when it passes."""
-    unordered = {entry[1] for entry in hits if entry[0] == "jit-space" and entry[2] == 0}
-    ordered = {entry[1] for entry in hits if entry[0] == "jit-space" and entry[2] == 1}
-    if not unordered and not ordered:
+def check_mode(expect: Expect, hits: list[Entry], engine: str, share: int,
+               unshare: int) -> str | None:
+    """One mode's verdict, or None when it passes."""
+    marks = changes(hits, MARK)
+    marked = [generation for generation, history in marks.items()
+              if any(entry.state == 1 for entry in history)]
+    if len(marked) != expect.shared:
+        return (f"{len(marked)} shared address space(s) in the probe, "
+                f"expected {expect.shared}")
+    if expect.shared == 1:
+        problem = check_ending(expect, marks[marked[0]], share, unshare,
+                               "was marked shared")
+        if problem is not None:
+            return problem
+    if engine != "jit":
+        return None
+    orders = changes(hits, ORDERING)
+    if not orders:
         return "the JIT logged no dispatch in the probe"
-    if shared == 0 and ordered:
-        return "an unshared probe ran ordered code"
-    if shared and len(ordered) != shared:
-        return f"{len(ordered)} address space(s) ran ordered code, expected {shared}"
+    ordered = [generation for generation, history in orders.items()
+               if any(entry.state == 1 for entry in history)]
+    if sorted(ordered) != sorted(marked):
+        return (f"address spaces {sorted(ordered)} ran ordered code, but "
+                f"{sorted(marked)} were marked shared")
+    if expect.shared == 1:
+        return check_ending(expect, orders[marked[0]], share, unshare,
+                            "ran ordered code")
     return None
 
 
@@ -162,7 +195,7 @@ def main() -> int:
             payloads={GUEST_PROBE: GuestFile(probe, 0o755)},
         ) as guest:
             guest.boot_to_shell(arguments.timeout)
-            for mode, shared in MODES.items():
+            for mode, expect in MODES.items():
                 before = len(logged(log))
                 result = guest.run_command(f"{GUEST_PROBE} {mode}",
                                            PROBE_TIMEOUT_SECONDS)
@@ -172,23 +205,24 @@ def main() -> int:
                 if result.return_code != 0 or match is None or match.group(1) != mode:
                     raise RuntimeError(f"{mode}: the probe failed: {output!r}")
                 start, end = int(match.group(2), 16), int(match.group(3), 16)
+                share = unshare = 0
                 hits = [entry for entry in logged(log)[before:]
-                        if start <= entry[3] < end]
-                marked = sum(entry[0] == "mm-shared" for entry in hits)
-                problem = None
-                if marked != shared:
-                    problem = (f"{marked} shared address space(s) in the probe, "
-                               f"expected {shared}")
-                elif arguments.engine == "jit":
-                    problem = check_jit(mode, shared, hits)
+                        if start <= entry.rip < end]
+                problem = check_mode(expect, hits, arguments.engine, share, unshare)
                 failures += problem is not None
+                ending = ", ended again" if expect.ends else ""
+                for event, by_generation in ((MARK, changes(hits, MARK)),
+                                             (ORDERING, changes(hits, ORDERING))):
+                    for generation, changed in by_generation.items():
+                        print(f"  {event} generation={generation}: {history(changed)}")
                 print(f"FAIL {mode}: {problem}" if problem else
-                      f"PASS {mode}: {shared} shared address space(s)")
-        regressed = [entry for entry in logged(log) if entry[0] == "jit-regressed"]
-        for entry in regressed:
-            print(f"FAIL generation {entry[1]} ran unordered code at {entry[3]:#x} "
-                  "after ordered code")
-        failures += len(regressed)
+                      f"PASS {mode}: {expect.shared} shared address space(s){ending}")
+        unordered = [entry for entry in logged(log)
+                     if entry.event == UNORDERED_SHARED]
+        for entry in unordered:
+            print(f"FAIL generation {entry.generation} ran unordered code at "
+                  f"{entry.rip:#x} while marked shared")
+        failures += len(unordered)
     if failures:
         raise RuntimeError(f"{failures} mode(s) failed")
     return 0
