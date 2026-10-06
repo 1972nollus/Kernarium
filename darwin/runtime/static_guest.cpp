@@ -500,7 +500,10 @@ uml::cpu::CpuEngine *common_engine(
 		slot = uml::cpu::make_cpu_engine(Kind,
 			uml::cpu::EngineConfiguration{
 				.host_capabilities =
-					::uml::platform::apple::probed_host_capabilities(),
+					::uml::runtime::guest_host_capabilities(
+						Kind == uml::cpu::EngineKind::jit ?
+							::uml::runtime::ExecutionEngine::jit :
+							::uml::runtime::ExecutionEngine::gadgets),
 			});
 	return slot.get();
 }

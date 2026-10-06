@@ -101,9 +101,11 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      * profile marks FP-legal natively, on the guest's resident vectors
      * (jit::sme_support), and the SIMD&FP loads and stores streaming mode
      * keeps. AdvSIMD is illegal in streaming mode. MRS and MSR of FPCR and
-     * FPSR stay legal (emit_system_register).
+     * FPSR stay legal (emit_system_register), and so do FEAT_MOPS's CPY
+     * words, whose bit 26 only looks like a SIMD&FP load or store's.
      */
-    if (streaming_translation() && fp_simd_word(instruction)) {
+    if (streaming_translation() && fp_simd_word(instruction) &&
+        !arm64::detail::decode_mops(instruction).recognized) {
       if ((instruction & 0x0a00'0000U) == 0x0800'0000U)
         return emit_streaming_fp_memory(instruction, pc)
                    ? Action::keep_going

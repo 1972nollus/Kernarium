@@ -12,6 +12,13 @@ namespace uml::cpu {
 
 [[nodiscard]] bool cpu_engine_available(EngineKind kind) noexcept;
 
+/* The host an engine of `kind` presents the virtual CPU for: `host` less
+ * the parts of the SME profile the engine does not implement
+ * (arm64::sme_host_for_support). The runtime configures the engine and
+ * derives the guest's HWCAPs from it. */
+[[nodiscard]] HostCapabilities engine_host_capabilities(
+	EngineKind kind, HostCapabilities host) noexcept;
+
 /* Publishes the whole-process budget for translated-code caches and the
  * private per-executor cap. The first valid configuration owns process-wide
  * geometry; identical repeats succeed and incompatible later runs fail. See

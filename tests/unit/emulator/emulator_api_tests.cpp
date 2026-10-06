@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml/emulator.h"
 #include "allocation_failure.hpp"
+#include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/id_registers.hpp"
+#include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/sme_profile.hpp"
 #include "device/network/device.hpp"
 #include "native_window_test_support.hpp"
 #include "platform/apple/host_features.hpp"
@@ -423,9 +426,14 @@ void test_run_boundary()
 {
 	/* The guest kernel reads guest_hwcaps() of the probed host, the words
 	 * arm64-advertised-features pins, before and after a run selects an
-	 * engine. */
-	const auto expected = ::uml::cpu::arm64::detail::guest_hwcaps(
-		::uml::platform::apple::probed_host_capabilities());
+	 * engine: outside a run, as both engines present it
+	 * (sme_host_for_support). */
+	namespace arm64 = ::uml::cpu::arm64;
+	const auto expected = arm64::detail::guest_hwcaps(
+		arm64::sme_host_for_support(
+			::uml::platform::apple::probed_host_capabilities(),
+			std::min(arm64::gadgets::sme_support,
+				arm64::jit::sme_support)));
 	require(darwin_uml_guest_hwcap() == expected[0],
 		"guest HWCAP does not match the host-safe virtual CPU");
 	require(darwin_uml_guest_hwcap2() == expected[1],

@@ -2,8 +2,13 @@
 #include "engine_factory.hpp"
 
 #include "cpu/arm64/engine_adapters.hpp"
+#include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
+#include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/fp_environment.hpp"
+#include "cpu/arm64/sme_profile.hpp"
+
+#include <utility>
 
 namespace uml::cpu {
 
@@ -28,6 +33,14 @@ bool cpu_engine_available(EngineKind kind) noexcept
 		return arm64::detail::native_jit_engine_available();
 	}
 	return false;
+}
+
+HostCapabilities engine_host_capabilities(
+	EngineKind kind, HostCapabilities host) noexcept
+{
+	const auto support = kind == EngineKind::jit ?
+		arm64::jit::sme_support : arm64::gadgets::sme_support;
+	return arm64::sme_host_for_support(std::move(host), support);
 }
 
 void materialize_architectural_state(arm64::CpuState &cpu) noexcept
