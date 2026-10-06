@@ -416,9 +416,9 @@ boundary of the generated gadgets, in the images each tree links and fails
 on an AdvSIMD word executed in streaming mode, a helper called there, or an
 indirect call.
 
-The JIT implements the same control core (`sme_support` is `control`):
-SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and
-ADDSPL, and LDR, STR and ZERO of ZA and ZT0. It keys every translation, link
+The JIT is `complete` too. Its control core runs SMSTART and SMSTOP, MRS
+and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, and LDR, STR and
+ZERO of ZA and ZT0. It keys every translation, link
 and indirect site by the guest's SVCR mode as well as its PC, so a block runs
 only in the mode it was translated for; mode 0 translations are unchanged. A
 guest write of SVCR ends its block. An SM=1 translation keeps the guest's Z,
@@ -451,7 +451,8 @@ legal in streaming mode run the same way, with any writeback after the
 access. SVE prefetches are NOPs. SME2, the reserved bitmask immediates of
 ORR, EOR, AND and DUPM, every other SVE and SME word, and in streaming mode
 AdvSIMD and the FEAT_LSFE and FEAT_LSUI loads and stores are its
-illegal-instruction exit. SM=0 translations run with the host's SME off and
+illegal-instruction exit; every other instruction it runs at SVCR 0 runs in
+streaming mode too. SM=0 translations run with the host's SME off and
 hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
 with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 `CpuState`, so no translation depends on it.
