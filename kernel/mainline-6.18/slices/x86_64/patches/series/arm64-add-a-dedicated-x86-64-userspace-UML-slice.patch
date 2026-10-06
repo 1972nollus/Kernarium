@@ -30,7 +30,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 218 ++++---
+ arch/arm64/um/ptrace.c                | 253 ++++----
  arch/arm64/um/shared/sysdep/ptrace.h  | 150 ++++-
  arch/arm64/um/signal.c                | 616 +++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
@@ -47,7 +47,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 2000 insertions(+), 373 deletions(-)
+ 27 files changed, 1999 insertions(+), 409 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -558,10 +558,10 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
+index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -1,73 +1,111 @@
+@@ -1,78 +1,111 @@
  // SPDX-License-Identifier: GPL-2.0
  
 -#include <linux/bits.h>
@@ -574,8 +574,13 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
 -#ifdef CONFIG_UML_ARM64_SME
 -#include <asm/sigcontext.h>
 -#include <uapi/asm/ptrace.h>
--#include "sme.h"
 -#endif
+-#include "sme.h"
+-
+-/* Native arm64's third regset, after the two asm/ptrace.h names. */
+-enum {
+-	REGSET_TLS = REGSET_FP + 1,
+-};
  
  static int register_index(int regno)
  {
@@ -713,7 +718,7 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -97,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -102,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -726,14 +731,16 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -107,27 +147,21 @@ static int genregs_set(struct task_struct *target,
+@@ -112,27 +147,21 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
 -	unsigned long regs[sizeof(struct user_regs_struct) /
 -			   sizeof(unsigned long)];
 -	int ret;
--
++	struct user_regs_struct regs;
++	int error;
+ 
 -	memcpy(regs, target->thread.regs.regs.gp, sizeof(regs));
 -	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, regs, 0,
 -				 sizeof(regs));
@@ -743,9 +750,6 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
 -		return -EINVAL;
 -	memcpy(target->thread.regs.regs.gp, regs, sizeof(regs));
 -	return 0;
-+	struct user_regs_struct regs;
-+	int error;
-+
 +	get_user_regs(&target->thread.regs.regs, &regs);
 +	error = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
 +				   &regs, 0, sizeof(regs));
@@ -764,11 +768,43 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -137,10 +171,10 @@ static int fpregs_set(struct task_struct *target,
+@@ -142,42 +171,10 @@ static int fpregs_set(struct task_struct *target,
  		      const void *kbuf, const void __user *ubuf)
  {
  	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
 -		target->thread.regs.regs.fp, 0, sizeof(elf_fpregset_t));
+-}
+-
+-/* NT_ARM_TLS, as native: TPIDR_EL0, then TPIDR2_EL0, which reads as zero
+- * and ignores writes while the virtual CPU has no SME. */
+-static int tls_get(struct task_struct *target,
+-		   const struct user_regset *regset, struct membuf to)
+-{
+-	membuf_store(&to, target->thread.arch.tpidr_el0);
+-	if (uml_arm64_sme_vl)
+-		return membuf_store(&to,
+-				    uml_arm64_sme_registers(target)->tpidr2);
+-	return membuf_zero(&to, sizeof(u64));
+-}
+-
+-static int tls_set(struct task_struct *target,
+-		   const struct user_regset *regset, unsigned int pos,
+-		   unsigned int count, const void *kbuf,
+-		   const void __user *ubuf)
+-{
+-	unsigned long tls[2] = { target->thread.arch.tpidr_el0 };
+-	int error;
+-
+-	if (uml_arm64_sme_vl)
+-		tls[1] = uml_arm64_sme_registers(target)->tpidr2;
+-	error = user_regset_copyin(&pos, &count, &kbuf, &ubuf, tls, 0,
+-				   sizeof(tls));
+-	if (error)
+-		return error;
+-	target->thread.arch.tpidr_el0 = tls[0];
+-	if (uml_arm64_sme_vl)
+-		uml_arm64_sme_registers(target)->tpidr2 = tls[1];
+-	return 0;
 +		target->thread.regs.regs.fp, 0, host_fp_size);
  }
  
@@ -777,20 +813,20 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -157,69 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -194,69 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
  		.regset_get = fpregs_get,
  		.set = fpregs_set,
  	},
--#ifdef CONFIG_UML_ARM64_SME
--	/* Only the SME view below has these, as native arm64 with SME. */
--	{
+-	[REGSET_TLS] = {
 -		USER_REGSET_NOTE_TYPE(ARM_TLS),
 -		.n = 2,
 -		.size = sizeof(void *),
 -		.align = sizeof(void *),
--		.regset_get = uml_arm64_tls_get,
--		.set = uml_arm64_tls_set,
+-		.regset_get = tls_get,
+-		.set = tls_set,
 -	},
+-#ifdef CONFIG_UML_ARM64_SME
+-	/* Only the SME view below has these, as native arm64 with SME. */
 -	{
 -		USER_REGSET_NOTE_TYPE(ARM_SSVE),
 -		.n = DIV_ROUND_UP(SVE_PT_SIZE(UML_ARM64_SME_VQ_MAX,
@@ -826,7 +862,7 @@ index fb694dd05be0296ea9d65ed4c9b0c1c777acd44c..9b5193e03c41bc20f551bb236f9d96f7
 -	.name = "aarch64",
 -	.e_machine = EM_AARCH64,
 -	.regsets = uml_arm64_regsets,
--	.n = REGSET_FP + 1,
+-	.n = REGSET_TLS + 1,
  };
  
 -#ifdef CONFIG_UML_ARM64_SME
@@ -2639,10 +2675,10 @@ index 99689df74a6165ed4b4ae07580fb1c406fa72bb1..b715f3a0469094f84e6e60cc3348e770
  	       sizeof(current_pt_regs()->regs.compat_tls));
  #endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
-index 8fc2d68003bd0e43955a9393c6092deb3bf5cbaa..5e7a77289e95596a48ab4ae37b23e7b53c8523d1 100644
+index e04b03437b9a89c2f8e9edd02af04953a5e4d255..c251bca0f61ba33e9ff231206334ec6b38a9c6fe 100644
 --- a/arch/um/kernel/process.c
 +++ b/arch/um/kernel/process.c
-@@ -200,7 +200,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
+@@ -189,7 +189,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
  #endif
  		PT_REGS_SET_SYSCALL_RETURN(&p->thread.regs, 0);
  		if (sp != 0)
@@ -2733,7 +2769,7 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 5ade4241beba84fe80de926063fbdf10c9d565c8..643dd43970108a219b7b8467feada04437a4a0f1 100644
+index 54fc1be5a31fbc65f69ebfe45a70c4bc6619049d..12c9ace34d8dfac44ade2382b0a0c6ef9837a7ec 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -74,12 +74,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==

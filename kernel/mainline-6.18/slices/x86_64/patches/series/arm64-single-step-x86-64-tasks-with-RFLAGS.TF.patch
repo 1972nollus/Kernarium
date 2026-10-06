@@ -83,7 +83,7 @@ index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d1
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index a1509f6dd61fd55839427b27618a354a1e940bb0..a4d5099089232e60b6b2ea55901d96ee20866254 100644
+index bd0d1e6063aa2754b09fd24d9fffe4f14c09ac3b..f6fdca629df272b271cd0df64e5b2d840ae75b4c 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -104,6 +104,35 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==

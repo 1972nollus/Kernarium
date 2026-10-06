@@ -136,13 +136,13 @@ signal frames carry `sve_context` with `SVE_SIG_FLAG_SM`, `tpidr2_context`,
 `extra_context` when they do not fit, a handler starts with SM and ZA off
 and TPIDR2 zero, and sigreturn rejects what `parse_user_sigframe()` rejects.
 `clone()` with `CLONE_VM` gives the child no ZA and a zero TPIDR2, a fork
-copies both, ptrace adds `NT_ARM_TLS`, `NT_ARM_SSVE`, `NT_ARM_ZA` and
-`NT_ARM_ZT`, and `PR_SME_SET_VL` and `abi.sme_default_vector_length` accept
-any length and settle on the SVL. Unlike native arm64, `AT_MINSIGSTKSZ`
-counts the ZA data a frame can carry, so a stack of that size holds every
-frame. `guest-sme-gadgets` and `guest-sme-jit` check the contract, and
-`guest-sme-off-gadgets` and `guest-sme-off-jit` that none of it shows
-without SME.
+copies both, ptrace adds `NT_ARM_SSVE`, `NT_ARM_ZA`, `NT_ARM_ZT` and
+TPIDR2 in `NT_ARM_TLS`, and `PR_SME_SET_VL` and
+`abi.sme_default_vector_length` accept any length and settle on the SVL.
+Unlike native arm64, `AT_MINSIGSTKSZ` counts the ZA data a frame can carry,
+so a stack of that size holds every frame. `guest-sme-gadgets` and
+`guest-sme-jit` check the contract, and `guest-sme-off-gadgets` and
+`guest-sme-off-jit` that none of it shows without SME.
 
 XNU delivers a signal to a thread in streaming mode without leaving it, and
 returning from the handler loses the upper bits of the Z registers. With SME,
@@ -152,20 +152,32 @@ and SIGCHLD throughout, so the process takes those on a thread that runs no
 guest. Every other carrier wait polls the pending IPIs or does not depend on
 EINTR. Without SME no carrier blocks these signals.
 
-An mm is marked shared, sticky for its life, once another agent may observe
-its memory: once `clone()` creates a task on it without `CLONE_VFORK`, once
-`mmap_region()` maps a `VM_MAYSHARE` vma into it (any `MAP_SHARED` mapping,
-read-only ones, SysV shm, memfd and kernel rings included), or once io_uring
-pins memory of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer rings),
-which completions and other rings' `IORING_OP_MSG_RING` write from other
-CPUs. A fork child inherits a mark that a mapping or a ring set, not one that
-a thread set. Each later guest entry of a task on the mm carries
-`DARWIN_UML_DISPATCH_MM_SHARED`, and a host may rely on that meaning: the
-x86-64 JIT keeps x86's store order for marked mms only.
-Writes through `ptrace()`, `process_vm_writev()` or `/proc/<pid>/mem`, and a
-`MAP_PRIVATE` view of a file that another process writes through
-`MAP_SHARED`, do not mark the mm. The arm64 host ignores the flag.
+A guest entry is marked shared while another agent may observe the memory
+of the task's mm: while another task may run on it (`mm_users` beyond the
+entering task, where a vfork child does not count its waiting parent), while
+it maps a `VM_MAYSHARE` vma (any `MAP_SHARED` mapping, read-only ones, SysV
+shm, memfd and kernel rings included), or while io_uring holds pinned memory
+of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer rings), which
+completions and other rings' `IORING_OP_MSG_RING` write from other CPUs. The
+kernel works this out for every entry: `mmap_region()` sets the mapping
+condition, the unmap of a shared vma (`munmap()`, `mremap()`, `shmdt()`, a
+`MAP_FIXED` replacement) rescans the vmas, a fork child has it only if a
+shared vma came with it, and each pinned ring region counts on its mm until
+io_uring frees it. The entry carries `DARWIN_UML_DISPATCH_MM_SHARED`, and a
+host may rely on that meaning from bridge ABI 19: once the last condition
+ends, every store another agent made is visible to the first entry without
+the flag, since the entering task reads `mm_users` and the pin count with
+acquire loads that pair with `mmput()` and the unpin, and a new sharer always
+starts inside a system call of a task on the mm. The x86-64 JIT keeps x86's
+store order for marked entries only. Writes through `ptrace()`,
+`process_vm_writev()` or `/proc/<pid>/mem`, and a `MAP_PRIVATE` view of a
+file that another process writes through `MAP_SHARED`, do not mark the mm,
+and a temporary `mm_users` reference such as a `/proc` reader marks entries
+only while it lasts. The arm64 host ignores the flag.
 `tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause.
+
+Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
+which reads as zero and ignores writes unless the run has SME.
 
 An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
