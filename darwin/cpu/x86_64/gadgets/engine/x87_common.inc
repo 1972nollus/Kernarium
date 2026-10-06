@@ -113,9 +113,13 @@ Lx86_x87_store_classified\@:
 	x87_store_physical w14, \significand, \exponent
 .endm
 
-.macro x87_push significand, exponent
+/* A push clears C1 unless `keep_c1` says the value pushed is a rounded
+ * result whose C1 the instruction reports, as FPTAN's and FSINCOS's are. */
+.macro x87_push significand, exponent, keep_c1=0
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	.if \keep_c1 == 0
 	bic w15, w15, #Lx86_x87_status_c1
+	.endif
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
 	and w14, w14, #7

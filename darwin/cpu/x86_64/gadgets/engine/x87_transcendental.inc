@@ -84,9 +84,10 @@ gadget x87_tangent
 	tbnz w9, #10, Lx86_x87_tangent_unreduced
 	mov x9, #0x8000000000000000
 	mov w10, #0x3fff
-	x87_push x9, w10
+	x87_push x9, w10, 1
 Lx86_x87_tangent_unreduced:
 	retire_and_next
+
 
 gadget x87_extract
 	x87_push_fault_check
@@ -132,7 +133,7 @@ gadget x87_sincos
 	/* C2: an operand too large to reduce, which stays as it was. */
 	ldrh w11, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	tbnz w11, #10, Lx86_x87_sincos_unreduced
-	x87_push x9, w10
+	x87_push x9, w10, 1
 Lx86_x87_sincos_unreduced:
 	retire_and_next
 

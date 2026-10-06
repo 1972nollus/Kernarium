@@ -139,7 +139,7 @@ index 8a01366b4514ffdc38448c85b220a227b9c06c57..e78a19143d0c8f9751084d947628d95e
  }
  
 diff --git a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
-index 2cb97b3f7d614f421423768c86f66809b0552adc..d7ebf602c1fd07c2e339ff459819a1399df75bc9 100644
+index 43acaf1a7a160e4d49b736a37953a2a437cb41c1..57b7522125e59aad0ffc9c9840f6140e15ed037a 100644
 --- a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
 +++ b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
 @@ -42,8 +42,9 @@ constexpr uint_fast8_t X87DenormalFlag = 0x20;

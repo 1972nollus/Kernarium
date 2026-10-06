@@ -222,12 +222,12 @@ the tag word: a read of an empty register is a stack underflow and a push onto
 a full one an overflow, each raising invalid operation with the stack-fault
 flag and going on with the QNaN indefinite, and FXAM classifies its operand
 from the 80-bit format. FNSAVE and FNSTENV tag each full register from its
-value, as zero, special or valid, as an Intel host does at the store. Three
-deviations from hardware remain, shared with the gadget engine: C1 stays
-clear when a result rounds up, FPREM computes its remainder in one step,
-never reporting a partial one with C2, and an unmasked overflow or underflow
-of a register result leaves the masked result and precision, where x86
-rebiases the exponent.
+value, as zero, special or valid, as an Intel host does at the store. C1
+says whether rounding increased a result's magnitude, as on the gadget
+engine. Two deviations from hardware remain, shared with the gadget engine:
+FPREM computes its remainder in one step, never reporting a partial one with
+C2, and an unmasked overflow or underflow of a register result leaves the
+masked result and precision, where x86 rebiases the exponent.
 
 Under the x87 checks, every waiting instruction -- each x87 instruction but
 FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE and the no-ops FNENI, FNDISI

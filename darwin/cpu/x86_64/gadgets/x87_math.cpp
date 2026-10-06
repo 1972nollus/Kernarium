@@ -27,6 +27,7 @@ constexpr std::uint16_t status_error_summary = 1U << 7U;
 constexpr std::uint16_t status_exception_mask = 0x7fU;
 /* The six exceptions the control word masks. */
 constexpr std::uint16_t status_maskable_exceptions = 0x3fU;
+constexpr std::uint16_t status_c1 = 1U << 9U;
 constexpr std::uint16_t status_c2 = 1U << 10U;
 /* The denormal-operand exception, which SoftFloat has no flag for, in a
  * bit of softfloat_state::exceptionFlags that SoftFloat does not use. */
@@ -93,6 +94,12 @@ void commit_exceptions(CpuState &cpu,
 		return;
 	}
 	cpu.x87_status |= raised;
+	/* C1 says whether the result was rounded up, away from zero; an
+	 * invalid operation leaves no rounded result. */
+	cpu.x87_status &= static_cast<std::uint16_t>(~status_c1);
+	if ((state.exceptionFlags & softfloat_flag_roundedUp) != 0 &&
+		(raised & status_invalid) == 0)
+		cpu.x87_status |= status_c1;
 	const auto pending = static_cast<std::uint16_t>(
 		cpu.x87_status & status_exception_mask & ~cpu.x87_control);
 	if (pending != 0)
@@ -226,7 +233,8 @@ enum class TranscendentalOperation : std::uint8_t {
 {
 	if ((value.sign_exponent & 0x7fffU) >= 0x3fffU + 63U &&
 		!is_nan(value) && !is_infinity(value)) {
-		cpu.x87_status |= status_c2;
+		cpu.x87_status = static_cast<std::uint16_t>(
+			(cpu.x87_status | status_c2) & ~status_c1);
 		return false;
 	}
 	cpu.x87_status &= static_cast<std::uint16_t>(~status_c2);
@@ -591,6 +599,7 @@ extern "C" std::uint64_t uml_x86_64_x87_to_f64(CpuState *cpu,
 
 namespace {
 
+/* FIST, FISTP and FISTTP raise precision for a value they round. */
 [[nodiscard]] softfloat_state integer_store_state(
 	const CpuState &cpu, bool truncate) noexcept
 {
@@ -607,7 +616,7 @@ extern "C" std::uint32_t uml_x86_64_x87_to_i16(CpuState *cpu,
 {
 	auto state = integer_store_state(*cpu, truncate != 0);
 	auto converted = extF80_to_i32(&state, to_soft(*value),
-		state.roundingMode, false);
+		state.roundingMode, true);
 	if (converted < std::numeric_limits<std::int16_t>::min() ||
 		converted > std::numeric_limits<std::int16_t>::max()) {
 		state.exceptionFlags |= softfloat_flag_invalid;
@@ -622,7 +631,7 @@ extern "C" std::uint32_t uml_x86_64_x87_to_i32(CpuState *cpu,
 {
 	auto state = integer_store_state(*cpu, truncate != 0);
 	const auto converted = extF80_to_i32(&state, to_soft(*value),
-		state.roundingMode, false);
+		state.roundingMode, true);
 	commit_exceptions(*cpu, state);
 	return static_cast<std::uint32_t>(converted);
 }
@@ -632,7 +641,7 @@ extern "C" std::uint64_t uml_x86_64_x87_to_i64(CpuState *cpu,
 {
 	auto state = integer_store_state(*cpu, truncate != 0);
 	const auto converted = extF80_to_i64(&state, to_soft(*value),
-		state.roundingMode, false);
+		state.roundingMode, true);
 	commit_exceptions(*cpu, state);
 	return static_cast<std::uint64_t>(converted);
 }

@@ -28,15 +28,15 @@ negative operand, where cephes returned a finite value. FXTRACT of
 zero raises division by zero, and FRNDINT and FBSTP raise precision
 for an operand that is not an integer.
 ---
- FEXCore/Source/Common/SoftFloat.h             | 72 +++++++++++++--
+ FEXCore/Source/Common/SoftFloat.h             | 79 ++++++++++++---
  .../Interface/Core/Dispatcher/Dispatcher.cpp  | 29 ++++++
  .../Interface/Core/Dispatcher/Dispatcher.h    |  2 +
- .../Core/Interpreter/Fallbacks/F80Fallbacks.h | 89 +++++++++++++++++--
- .../Interface/Core/OpcodeDispatcher/X87.cpp   | 67 +++++++-------
- 5 files changed, 211 insertions(+), 48 deletions(-)
+ .../Core/Interpreter/Fallbacks/F80Fallbacks.h | 95 +++++++++++++++++--
+ .../Interface/Core/OpcodeDispatcher/X87.cpp   | 67 +++++++------
+ 5 files changed, 218 insertions(+), 54 deletions(-)
 
 diff --git a/FEXCore/Source/Common/SoftFloat.h b/FEXCore/Source/Common/SoftFloat.h
-index 0613b47a6bea8787125f84edbd9a990eb3e417b7..1629a3bbe9f7d66b6b5ee2007b0cefb5a1f84e48 100644
+index 0613b47a6bea8787125f84edbd9a990eb3e417b7..c212c5c1d5bdd2096f2c671492e17a018ed794ae 100644
 --- a/FEXCore/Source/Common/SoftFloat.h
 +++ b/FEXCore/Source/Common/SoftFloat.h
 @@ -205,9 +205,14 @@ struct FEX_PACKED X80SoftFloat {
@@ -153,9 +153,14 @@ index 0613b47a6bea8787125f84edbd9a990eb3e417b7..1629a3bbe9f7d66b6b5ee2007b0cefb5
  
      BIGFLOAT Src_d = lhs.ToFMax(state);
      Src_d = FEXCore::cephes_128bit::sinl(Src_d);
-@@ -552,7 +604,9 @@ struct FEX_PACKED X80SoftFloat {
+@@ -549,10 +601,13 @@ struct FEX_PACKED X80SoftFloat {
+ #endif
+   }
+ 
++  // x86 raises precision for a conversion to an integer that rounds.
    int16_t ToI16(softfloat_state* state) const {
-     auto rv = extF80_to_i32(state, *this, state->roundingMode, false);
+-    auto rv = extF80_to_i32(state, *this, state->roundingMode, false);
++    auto rv = extF80_to_i32(state, *this, state->roundingMode, true);
      if (rv > INT16_MAX || rv < INT16_MIN) {
 -      ///< Indefinite value for 16-bit conversions.
 +      ///< Indefinite value for 16-bit conversions, which raises only
@@ -164,6 +169,20 @@ index 0613b47a6bea8787125f84edbd9a990eb3e417b7..1629a3bbe9f7d66b6b5ee2007b0cefb5
        return INT16_MIN;
      } else {
        return rv;
+@@ -560,11 +615,11 @@ struct FEX_PACKED X80SoftFloat {
+   }
+ 
+   int32_t ToI32(softfloat_state* state) const {
+-    return extF80_to_i32(state, *this, state->roundingMode, false);
++    return extF80_to_i32(state, *this, state->roundingMode, true);
+   }
+ 
+   int64_t ToI64(softfloat_state* state) const {
+-    return extF80_to_i64(state, *this, state->roundingMode, false);
++    return extF80_to_i64(state, *this, state->roundingMode, true);
+   }
+ 
+   uint64_t ToUI64(softfloat_state* state) const {
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 index 4af3408475a3d51239569a3503a3f5a11b871e54..9540452457951a1fcbc64db177511abde47669e2 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
@@ -246,7 +265,7 @@ index dfef9d394280abdedef7f7bedb7e69ac41d61e2e..e537252a89a45d0abcc43437365b2e3a
    void EmitF64ToExtF80();
  
 diff --git a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
-index e7159d6e20e974850d0715377125fbdf455bf669..2cb97b3f7d614f421423768c86f66809b0552adc 100644
+index e7159d6e20e974850d0715377125fbdf455bf669..43acaf1a7a160e4d49b736a37953a2a437cb41c1 100644
 --- a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
 +++ b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
 @@ -36,10 +36,44 @@ FEXCORE_PRESERVE_ALL_ATTR static softfloat_state SoftFloatStateFromFCW(uint16_t
@@ -342,8 +361,12 @@ index e7159d6e20e974850d0715377125fbdf455bf669..2cb97b3f7d614f421423768c86f66809
      if (lt) {
        ResultFlags |= (1 << IR::FCMP_FLAG_LT);
      }
-@@ -145,7 +197,9 @@ struct OpHandlers<IR::OP_F80CVTINT> {
-     auto rv = extF80_to_i32(&State.State, X80SoftFloat(src), softfloat_round_minMag, false);
+@@ -142,10 +194,12 @@ struct OpHandlers<IR::OP_F80CVTINT> {
+   FEXCORE_PRESERVE_ALL_ATTR static int16_t handle2t(uint16_t FCW, VectorRegType src, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
+     ScopedSoftFloatState State {FCW, Frame};
+-    auto rv = extF80_to_i32(&State.State, X80SoftFloat(src), softfloat_round_minMag, false);
++    auto rv = extF80_to_i32(&State.State, X80SoftFloat(src), softfloat_round_minMag, true);
  
      if (rv > INT16_MAX || rv < INT16_MIN) {
 -      ///< Indefinite value for 16-bit conversions.
@@ -353,6 +376,22 @@ index e7159d6e20e974850d0715377125fbdf455bf669..2cb97b3f7d614f421423768c86f66809
        return INT16_MIN;
      } else {
        return rv;
+@@ -155,13 +209,13 @@ struct OpHandlers<IR::OP_F80CVTINT> {
+   FEXCORE_PRESERVE_ALL_ATTR static int32_t handle4t(uint16_t FCW, VectorRegType src, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
+     ScopedSoftFloatState State {FCW, Frame};
+-    return extF80_to_i32(&State.State, X80SoftFloat(src), softfloat_round_minMag, false);
++    return extF80_to_i32(&State.State, X80SoftFloat(src), softfloat_round_minMag, true);
+   }
+ 
+   FEXCORE_PRESERVE_ALL_ATTR static int64_t handle8t(uint16_t FCW, VectorRegType src, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
+     ScopedSoftFloatState State {FCW, Frame};
+-    return extF80_to_i64(&State.State, X80SoftFloat(src), softfloat_round_minMag, false);
++    return extF80_to_i64(&State.State, X80SoftFloat(src), softfloat_round_minMag, true);
+   }
+ };
+ 
 @@ -183,6 +237,7 @@ struct OpHandlers<IR::OP_F80ROUND> {
    FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, FEXCore::Core::CpuStateFrame* Frame) {
      FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);

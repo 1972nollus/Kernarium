@@ -3890,9 +3890,11 @@ const X87Value x87_largest = {0x8000000000000000ULL, 0x7ffe};
 const X87Value x87_quiet_nan = {0xc000000000000000ULL, 0x7fff};
 
 /* Masked x87 exceptions set their sticky status-word flags, which only
- * FNCLEX and FNINIT clear; an operation that raises none leaves them. A zero
- * result of FPREM, FSIN or FSINCOS keeps its sign. Each case starts from
- * FNINIT, so FCW is 0x37f and TOP counts its pushes. */
+ * FNCLEX and FNINIT clear; an operation that raises none leaves them. C1
+ * says a result was rounded up, as 1/3, an overflow to infinity and pi
+ * stored as a single are. A zero result of FPREM, FSIN or FSINCOS keeps
+ * its sign. Each case starts from FNINIT, so FCW is 0x37f and TOP counts
+ * its pushes. */
 bool x87_status_flags()
 {
 	struct Case {
@@ -3934,13 +3936,13 @@ bool x87_status_flags()
 	const Case cases[] = {
 		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
 		{"FNCLEX clears the flags", status[1], 0x3800},
-		{"FIDIV of 1 by 3 sets PE", status[2], 0x3820},
-		{"FADD overflow sets OE and PE", status[3], 0x3828},
+		{"FIDIV of 1 by 3 sets PE and C1", status[2], 0x3a20},
+		{"FADD overflow sets OE, PE and C1", status[3], 0x3a28},
 		{"FSQRT of -1 sets IE", status[4], 0x3801},
 		{"IE stays across an ordered FCOM", status[5], 0x7001},
 		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
 		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
-		{"FSTP m32 of pi sets PE", status[8], 0x0020},
+		{"FSTP m32 of pi sets PE and C1", status[8], 0x0220},
 	};
 	bool ok = true;
 	for (const Case &one : cases) {

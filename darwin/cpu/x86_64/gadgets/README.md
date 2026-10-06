@@ -355,6 +355,12 @@ DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
 denormal input passes the value through two dependent instructions, as scalar
 code waits on it.
 
+x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
+the control word's rounding mode and precision. As on x86, C1 after a result
+says whether rounding increased its magnitude -- FPTAN reports the tangent's
+rounding and FSINCOS the cosine's -- and an invalid operation clears it.
+FIST, FISTP and FISTTP raise precision for a value they round.
+
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
