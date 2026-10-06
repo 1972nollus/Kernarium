@@ -4,6 +4,7 @@
 #include "cpu/engine_factory.hpp"
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
+#include "platform/apple/host_features.hpp"
 #include "platform/descriptor.hpp"
 #include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
@@ -438,6 +439,38 @@ RunScope::~RunScope()
 Context *current_context() noexcept
 {
 	return static_cast<Context *>(::uml::routing::current_route().runtime);
+}
+
+const ::uml::platform::HostCapabilities &guest_host_capabilities(
+	ExecutionEngine engine) noexcept
+{
+	using ::uml::cpu::EngineKind;
+	using ::uml::cpu::engine_host_capabilities;
+	static const auto gadgets = engine_host_capabilities(EngineKind::gadgets,
+		::uml::platform::apple::probed_host_capabilities());
+	static const auto jit = engine_host_capabilities(EngineKind::jit,
+		::uml::platform::apple::probed_host_capabilities());
+	/* Each engine removes only what it lacks, so applying both leaves
+	 * what both implement. */
+	static const auto common =
+		engine_host_capabilities(EngineKind::gadgets, jit);
+	switch (engine) {
+	case ExecutionEngine::gadgets:
+		return gadgets;
+	case ExecutionEngine::jit:
+		return jit;
+	case ExecutionEngine::automatic:
+		break;
+	}
+	return common;
+}
+
+const ::uml::platform::HostCapabilities &
+current_guest_host_capabilities() noexcept
+{
+	const auto *context = current_context();
+	return guest_host_capabilities(context != nullptr ?
+		context->execution_engine() : ExecutionEngine::automatic);
 }
 
 namespace {

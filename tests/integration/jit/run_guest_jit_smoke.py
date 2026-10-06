@@ -12,6 +12,7 @@ import os
 import pathlib
 import re
 import shlex
+import subprocess
 import sys
 
 
@@ -142,7 +143,8 @@ REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
 # The virtual CPU's SME profile (darwin/cpu/arm64/sme_profile.hpp and the
 # ID_AA64SMFR0_EL1 it reports): SME with its base widths, F64F64 and I16I64
 # on a host that has those three, and SME2 with I16I32 and BI32I32 where
-# the host also has SME2. The host prober reports it only under the
+# the host also has SME2 and the running engine implements it (its
+# sme_support is sme2). The host prober reports it only under the
 # guest-SME policy and with a valid streaming vector length.
 GUEST_SME_POLICY_VARIABLE = "DARWIN_UML_GUEST_SME"
 SME_HOST_FEATURES = (
@@ -237,9 +239,26 @@ def host_feature(name: str) -> bool:
     return bool(host_sysctl_int(name))
 
 
-def expected_sme_hwcap2() -> int:
+def engine_sme_support(tool: pathlib.Path | None, engine: str) -> str:
+    """The engine's SME support level, which uml-sme-engine-support prints
+    as "gadgets=<level> jit=<level>"."""
+    if tool is None:
+        raise RuntimeError(
+            "the guest-SME policy is on and the host has FEAT_SME2: pass "
+            "--engine-support-tool, whose level for the engine decides "
+            "whether the guest sees SME2"
+        )
+    output = subprocess.run(
+        [str(tool)], capture_output=True, text=True, check=True,
+        stdin=subprocess.DEVNULL, timeout=30,
+    ).stdout
+    return dict(field.split("=", 1) for field in output.split())[engine]
+
+
+def expected_sme_hwcap2(tool: pathlib.Path | None, engine: str) -> int:
     """The SME bits this run's guest sees: the host prober's rule
-    (darwin/platform/apple/host_features.hpp) with sme_profile()'s."""
+    (darwin/platform/apple/host_features.hpp) with sme_profile()'s, and
+    SME2 only from an engine at sme2 (sme_host_for_support())."""
     if os.environ.get(GUEST_SME_POLICY_VARIABLE) != "1":
         return 0
     if not all(host_feature(name) for name in SME_HOST_FEATURES):
@@ -247,7 +266,8 @@ def expected_sme_hwcap2() -> int:
     svl = host_sysctl_int("hw.optional.arm.sme_max_svl_b") or 0
     if not 16 <= svl <= 256 or svl & (svl - 1):
         return 0
-    if host_feature("hw.optional.arm.FEAT_SME2"):
+    if (host_feature("hw.optional.arm.FEAT_SME2")
+            and engine_sme_support(tool, engine) == "sme2"):
         return SME_HWCAPS2 | SME2_HWCAPS2
     return SME_HWCAPS2
 
@@ -401,6 +421,7 @@ def main() -> int:
     parser.add_argument(
         "--hwcap-sanity-binary", type=pathlib.Path, required=True
     )
+    parser.add_argument("--engine-support-tool", type=pathlib.Path)
     arguments = parser.parse_args()
     hwcap_sanity = arguments.hwcap_sanity_binary.read_bytes()
 
@@ -438,7 +459,11 @@ def main() -> int:
                 f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
         expected2 = expected_hwcap(
-            OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2 | expected_sme_hwcap2()
+            OPTIONAL_HWCAPS2,
+            REQUIRED_HWCAPS2
+            | expected_sme_hwcap2(
+                arguments.engine_support_tool, arguments.engine
+            ),
         )
         if actual_hwcap2 != expected2:
             raise RuntimeError(

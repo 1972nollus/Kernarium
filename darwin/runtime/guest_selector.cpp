@@ -7,10 +7,12 @@
 #include "platform/apple/host_features.hpp"
 #include "runtime/context.hpp"
 
+/* The HWCAPs follow the running engine's profile (guest_host_capabilities),
+ * as its identification registers do. */
 extern "C" unsigned long darwin_uml_guest_hwcap(void)
 {
 	return ::uml::cpu::arm64::detail::guest_hwcaps(
-		::uml::platform::apple::probed_host_capabilities())[0];
+		::uml::runtime::current_guest_host_capabilities())[0];
 }
 
 extern "C" const char *darwin_uml_guest_cpu_model_name(void)
@@ -27,7 +29,7 @@ extern "C" const char *darwin_uml_guest_cpu_model_name(void)
 extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 {
 	return ::uml::cpu::arm64::detail::guest_hwcaps(
-		::uml::platform::apple::probed_host_capabilities())[1];
+		::uml::runtime::current_guest_host_capabilities())[1];
 }
 
 /* Matches the register file every thread's execution state sizes. */

@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -599,6 +600,45 @@ void fp_slow_path_matches_the_hardware() {
                "two\n", count);
 }
 
+/* FEAT_MOPS's CPY sets bit 26, as a SIMD&FP load or store does, but runs
+ * in streaming mode as at SVCR 0: here a memmove whose destination
+ * overlaps above its source. */
+void memory_copy_runs_in_streaming_mode() {
+  constexpr std::uint32_t cpyp = 0x1d01'0440U; // cpyp [x0]!, [x1]!, x2!
+  constexpr std::uint32_t cpym = 0x1d41'0440U;
+  constexpr std::uint32_t cpye = 0x1d81'0440U;
+  constexpr std::size_t length = 300;
+  constexpr std::size_t shift = 40;
+  std::vector<std::byte> windows[2];
+  std::array<std::uint64_t, 3> results[2]{};
+  for (unsigned run = 0; run < 2U; ++run) {
+    Machine machine{next_generation, next_base(),
+                    run == 0U ? std::uint8_t{0} : arm64::svcr_sm, true, 6, 6};
+    ++next_generation;
+    machine.code(0, {cpyp, cpym, cpye, system_call});
+    const auto source = machine.data(0x100);
+    machine.cpu.registers[0] = source + shift;
+    machine.cpu.registers[1] = source;
+    machine.cpu.registers[2] = length;
+    machine.put(source, bytes_of(length + shift, 33));
+    std::size_t retired = 0;
+    require(machine.run(retired) == Event::system_call);
+    require(retired == 4U);
+    windows[run] = machine.get(source, length + shift);
+    results[run] = {machine.cpu.registers[0] - source,
+                    machine.cpu.registers[1] - source,
+                    machine.cpu.registers[2]};
+    /* The prologue sets NZCV. */
+    machine.require_preserved({0, 1, 2}, true);
+  }
+  auto expected = bytes_of(length + shift, 33);
+  std::memmove(expected.data() + shift, expected.data(), length);
+  require(windows[1] == expected);
+  require(windows[0] == windows[1]);
+  require(results[0] == results[1]);
+  require(results[1][2] == 0U);
+}
+
 } // namespace
 
 int main() {
@@ -614,5 +654,6 @@ int main() {
   faults_follow_the_m4();
   stack_pointer_alignment();
   fp_slow_path_matches_the_hardware();
+  memory_copy_runs_in_streaming_mode();
   return 0;
 }
