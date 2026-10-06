@@ -444,7 +444,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 			.sequence = registered_interrupt.sequence,
 			.snapshot = registered_interrupt.snapshot,
 			.stop = context.stop_token(),
-		});
+		}, runtime.x86_mm_shared);
 		return finish_x86_run(registers, fp, context, cpu, stepping,
 			run);
 	}

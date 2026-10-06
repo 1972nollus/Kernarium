@@ -25,9 +25,9 @@ the gadget engine.
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread
-per address-space generation, execution mode and floating-point mode, at most
-eight, and releases the least recently used, because FEXCore's block caches
-are keyed by guest RIP alone. A compat32 context decodes and computes as 32-bit code.
+per address-space generation, execution mode, store order and floating-point
+mode, at most eight, and releases the least recently used, because FEXCore's
+block caches are keyed by guest RIP alone. A compat32 context decodes and computes as 32-bit code.
 
 A compat32 address wraps at 4 GiB, segment base and offset alike: the TLB holds
 only wrapped addresses, so the miss path wraps the 64-bit sum the backend
@@ -132,10 +132,7 @@ the process. `FexEngineOptions::code_bytes_per_node` lowers the estimate and
 
 CPUID comes from `../cpuid.hpp`, with nothing withheld; AVX and AVX2 run as
 pairs of 128-bit operations on hosts without 256-bit SVE. x87 is the full
-80-bit format. Stores are totally ordered for every address space: FEXCore
-emulates TSO with acquire loads and release stores, and `space_orders_stores()`
-is the one place a per-address-space decision will key it.
-DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
+80-bit format. DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
 destination before they write either destination. RDRAND and RDSEED read the
 host CSPRNG through a helper, as the gadget engine does, and always succeed.
 
@@ -262,6 +259,44 @@ undefined set follows hardware, except that compat32 code raises `#UD` for
 as it does on the gadget engine. Other encodings the gadget engine refuses
 although hardware runs them, such as LSL or a SETcc whose ModRM reg field is
 not 0, the JIT runs.
+
+## Memory order
+
+x86 keeps every store after the stores before it and every load after the
+loads before it. The JIT keeps that order for an address space the kernel
+marks shared (`DARWIN_UML_DISPATCH_MM_SHARED`, set as the
+[common kernel README](../../../../kernel/common/README.md) states) and
+drops it elsewhere, where no other agent can tell. The mark selects the
+space as the floating-point mode does: an ordered space is a FEXCore context
+with TSO on, which gives general-register accesses acquire loads and release
+stores and vector accesses barriers, and the engine puts a sequentially
+consistent fence on each side of a REP MOVS or STOS, whose host helper
+copies plainly. An unordered space uses plain loads and stores. MFENCE,
+locked instructions and XCHG stay full barriers in both.
+
+The mark is sticky, and it changes only inside a kernel entry of a task on
+the mm: the `clone()` that starts a second task, the `mmap()` or `shmat()`
+that maps shared memory, or the io_uring setup that pins a ring. While the
+mm has one task, no relaxed code of it runs on another vCPU at that moment,
+and a fork child is marked before its first instruction. A store before the
+`clone()` reaches the new task before its first load through the
+scheduler's release and acquire as the task starts, and from there every
+dispatch of every task on the mm carries the mark. The first ordered
+dispatch of a space drops the vCPU's unordered contexts of it; another
+vCPU's are never selected again. A dispatch request that asks for unordered
+code after ordered code for the same generation breaks that contract, and
+the runtime logs it (below).
+
+FEXCore treats an access through RSP as reaching only the thread's own
+stack, so ordered code still uses plain loads and stores for it: a local
+variable whose address another thread holds is not ordered.
+
+`UML_X86_JIT_ORDER=all` orders every space, which only adds order;
+`UML_X86_JIT_ORDER=none` orders none, which breaks x86's model for shared
+memory and exists only as the litmus tests' negative control. With
+`UML_X86_MM_SHARED_LOG` set, the runtime logs the first unordered and the
+first ordered dispatch of each address space, and every unordered dispatch
+after an ordered one.
 
 ## Instruction corpus
 

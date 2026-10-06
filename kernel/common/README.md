@@ -160,7 +160,8 @@ pins memory of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer rings),
 which completions and other rings' `IORING_OP_MSG_RING` write from other
 CPUs. A fork child inherits a mark that a mapping or a ring set, not one that
 a thread set. Each later guest entry of a task on the mm carries
-`DARWIN_UML_DISPATCH_MM_SHARED`, and a host may rely on that meaning.
+`DARWIN_UML_DISPATCH_MM_SHARED`, and a host may rely on that meaning: the
+x86-64 JIT keeps x86's store order for marked mms only.
 Writes through `ptrace()`, `process_vm_writev()` or `/proc/<pid>/mem`, and a
 `MAP_PRIVATE` view of a file that another process writes through
 `MAP_SHARED`, do not mark the mm. The arm64 host ignores the flag.
