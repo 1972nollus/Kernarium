@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import base64
 import ctypes
+import os
 import pathlib
 import re
 import shlex
@@ -54,7 +55,17 @@ HWCAP2_BF16 = 1 << 14
 HWCAP2_ECV = 1 << 19
 HWCAP2_AFP = 1 << 20
 HWCAP2_RPRES = 1 << 21
+HWCAP2_SME = 1 << 23
+HWCAP2_SME_I16I64 = 1 << 24
+HWCAP2_SME_F64F64 = 1 << 25
+HWCAP2_SME_I8I32 = 1 << 26
+HWCAP2_SME_F16F32 = 1 << 27
+HWCAP2_SME_B16F32 = 1 << 28
+HWCAP2_SME_F32F32 = 1 << 29
 HWCAP2_CSSC = 1 << 34
+HWCAP2_SME2 = 1 << 37
+HWCAP2_SME_I16I32 = 1 << 39
+HWCAP2_SME_BI32I32 = 1 << 40
 HWCAP2_MOPS = 1 << 43
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
@@ -128,6 +139,22 @@ HWCAP2_NAMES = (
 )
 # Advertised on every host.
 REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
+# The virtual CPU's SME profile (darwin/cpu/arm64/sme_profile.hpp and the
+# ID_AA64SMFR0_EL1 it reports): SME with its base widths, F64F64 and I16I64
+# on a host that has those three, and SME2 with I16I32 and BI32I32 where
+# the host also has SME2. The host prober reports it only under the
+# guest-SME policy and with a valid streaming vector length.
+GUEST_SME_POLICY_VARIABLE = "DARWIN_UML_GUEST_SME"
+SME_HOST_FEATURES = (
+    "hw.optional.arm.FEAT_SME",
+    "hw.optional.arm.FEAT_SME_F64F64",
+    "hw.optional.arm.FEAT_SME_I16I64",
+)
+SME_HWCAPS2 = (
+    HWCAP2_SME | HWCAP2_SME_I16I64 | HWCAP2_SME_F64F64 | HWCAP2_SME_I8I32
+    | HWCAP2_SME_F16F32 | HWCAP2_SME_B16F32 | HWCAP2_SME_F32F32
+)
+SME2_HWCAPS2 = HWCAP2_SME2 | HWCAP2_SME_I16I32 | HWCAP2_SME_BI32I32
 # The lines of the block arm64 Linux's c_show() (arch/arm64/kernel/cpuinfo.c)
 # prints for a 64-bit task, up to each value. It prints a model name only to
 # a 32-bit task. A blank line ends every block.
@@ -184,7 +211,9 @@ print(f"llvm={{features().decode()}}")
 """
 
 
-def host_feature(name: str) -> bool:
+def host_sysctl_int(name: str) -> int | None:
+    """An integer sysctl's value, 32 or 64 bits wide (the zeroed
+    little-endian buffer takes either), or None when it is missing."""
     sysctlbyname = ctypes.CDLL(None, use_errno=True).sysctlbyname
     sysctlbyname.argtypes = (
         ctypes.c_char_p,
@@ -194,16 +223,33 @@ def host_feature(name: str) -> bool:
         ctypes.c_size_t,
     )
     sysctlbyname.restype = ctypes.c_int
-    enabled = ctypes.c_int()
-    size = ctypes.c_size_t(ctypes.sizeof(enabled))
+    value = ctypes.c_uint64()
+    size = ctypes.c_size_t(ctypes.sizeof(value))
     status = sysctlbyname(
-        name.encode(), ctypes.byref(enabled), ctypes.byref(size), None, 0
+        name.encode(), ctypes.byref(value), ctypes.byref(size), None, 0
     )
-    return (
-        status == 0
-        and size.value == ctypes.sizeof(enabled)
-        and enabled.value != 0
-    )
+    if status != 0 or size.value not in (4, 8):
+        return None
+    return value.value
+
+
+def host_feature(name: str) -> bool:
+    return bool(host_sysctl_int(name))
+
+
+def expected_sme_hwcap2() -> int:
+    """The SME bits this run's guest sees: the host prober's rule
+    (darwin/platform/apple/host_features.hpp) with sme_profile()'s."""
+    if os.environ.get(GUEST_SME_POLICY_VARIABLE) != "1":
+        return 0
+    if not all(host_feature(name) for name in SME_HOST_FEATURES):
+        return 0
+    svl = host_sysctl_int("hw.optional.arm.sme_max_svl_b") or 0
+    if not 16 <= svl <= 256 or svl & (svl - 1):
+        return 0
+    if host_feature("hw.optional.arm.FEAT_SME2"):
+        return SME_HWCAPS2 | SME2_HWCAPS2
+    return SME_HWCAPS2
 
 
 def expected_hwcap(
@@ -391,7 +437,9 @@ def main() -> int:
                 "AT_HWCAP mismatch: "
                 f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
-        expected2 = expected_hwcap(OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2)
+        expected2 = expected_hwcap(
+            OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2 | expected_sme_hwcap2()
+        )
         if actual_hwcap2 != expected2:
             raise RuntimeError(
                 "AT_HWCAP2 mismatch: "

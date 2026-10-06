@@ -69,6 +69,10 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       select_constrained_vector_pins(instructions);
       if (table_list_planning_enabled_)
         select_consecutive_vector_lists(instructions);
+    } else {
+      /* The SME enter installs the guest's FPCR from CpuState, and the
+       * register-only forms accumulate its FPSR there. */
+      accesses_fp_state_ = true;
     }
     emitter_.prologue();
     const auto internal_entry_word = emitter_.size();
@@ -473,16 +477,15 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       copy_source_to_scratch();
       mask_register(8, fpcr_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpcr));
-      /* A streaming translation keeps the guest's FPCR and FPSR in
-       * CpuState and never takes the native environment: XNU resets FPSR
-       * on every kernel entry while a thread is in streaming mode, and no
-       * FP instruction runs there at the control core. */
-      if (streaming_translation())
-        return true;
       mask_register(
           8, fpcr_mask & ~arm64::detail::fpcr_exception_enable_mask, false);
       emitter_.emit(0xd51b'4408U); // msr fpcr, x8
-      native_fp_ = true;
+      /* A streaming translation runs with the guest's FPCR in the host's
+       * (uml_arm64_jit_sme_enter installs it), so the write goes to both,
+       * but keeps the guest's FPSR in CpuState and never takes the native
+       * environment: XNU resets FPSR on every kernel entry while a thread
+       * is in streaming mode. */
+      native_fp_ = native_fp_ || !streaming_translation();
       return true;
     case 0xd53b'4420U:             // FPSR
       write_destination([&](unsigned destination) {
