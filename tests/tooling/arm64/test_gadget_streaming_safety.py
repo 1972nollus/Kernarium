@@ -6,11 +6,12 @@ A program the arm64 gadget engine translates for SVCR.SM = 1 runs with the
 host in streaming mode, where an AdvSIMD instruction traps, and may select
 only the entries darwin/cpu/arm64/gadgets/engine/sme.inc lists: base rows
 whose gadgets are safe there, the SME part's streaming half, and the
-generated register-only gadgets. In every image given this walks all code
-reachable from each of those entries, and from the streaming entry point,
-tracking whether the host is in streaming mode (SMSTART and SMSTOP, and the
-suspend and resume routines that leave and re-enter it around a helper),
-and fails where code reached in streaming mode
+generated register-only and vector memory gadgets. In every image given
+this walks all code reachable from each of those entries, and from the
+streaming entry point, tracking whether the host is in streaming mode
+(SMSTART and SMSTOP, and the suspend and resume routines that leave and
+re-enter it around a helper), and fails where code reached in streaming
+mode
 
 - executes an AdvSIMD word, as the shared SVE/SME encoding table classifies
   FP&SIMD words (cpu/arm64/detail/sme_encodings.hpp);

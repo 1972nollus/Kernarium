@@ -61,6 +61,7 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 	streaming_row sme_streaming_begin, sme_streaming_end
 	streaming_row sm_twins_begin, sm_twins_end
 	streaming_row sm_generated_begin, sm_generated_end
+	streaming_row sm_memory_begin, sm_memory_end
 	.purgem streaming_row
 	.purgem streaming_entry
 .globl NAME(uml_arm64_gadget_streaming_rows_end)
@@ -738,6 +739,94 @@ NAME(uml_arm64_sme_twin_end):
  * and _end, in their own streaming row, and the table of their entries the
  * builder selects from. */
 #include "streaming_generated.inc"
+
+/* The vector memory gadgets: the SVE and SME loads and stores, and the
+ * SIMD&FP ones streaming mode keeps, also generated, one per instruction
+ * the host runs for them (streaming_memory.inc). Each takes the stream
+ * sme_layout.h describes. The fast path forms the address, checks that the
+ * bytes the access spans lie in one guest page the TLB holds for it, and
+ * runs the native instruction on host registers loaded from the register
+ * file. A crossing, a miss or a misaligned SP base takes the slow path,
+ * whose helper does the whole access on the register file: it reads the
+ * governing predicate, touches only the active elements, translates every
+ * page they lie in before it moves a byte, and reports a fault as the
+ * hardware does. */
+
+/* The guest address of the access in x7, translated through the TLB for
+ * \access, or a branch to \slow. x14 and x15 hold stream words 0 and 1.
+ * Scratch: x8-x13. */
+.macro sm_vector_address access, slow
+	and x9, x14, #0xffff
+	ldr x7, [_cpu, x9]
+	tbz x14, #UML_GADGET_SME_VM_BASE_SP_BIT, 1f
+	tst x7, #0xf
+	b.ne \slow
+1:
+	tbnz x14, #UML_GADGET_SME_VM_POST_BIT, 2f
+	add x7, x7, x15
+2:
+	tbz x14, #UML_GADGET_SME_VM_INDEX_BIT, 4f
+	ubfx x9, x14, #16, #16
+	ldr x10, [_cpu, x9]
+	tbz x14, #UML_GADGET_SME_VM_WORD_BIT, 3f
+	tbnz x14, #UML_GADGET_SME_VM_SIGNED_BIT, 5f
+	mov w10, w10
+	b 3f
+5:
+	sxtw x10, w10
+3:
+	ubfx x11, x14, #UML_GADGET_SME_VM_SHIFT_SHIFT, #3
+	lsl x10, x10, x11
+	add x7, x7, x10
+4:
+	tbnz x14, #UML_GADGET_SME_VM_BASE_SP_BIT, 6f
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
+	cbz w9, 6f
+	ubfx x7, x7, #0, #56
+6:
+	ubfx x13, x14, #UML_GADGET_SME_VM_FOOTPRINT_SHIFT, #16
+	sme_translate \access, x7, x13, \slow
+.endm
+
+/* The base written back with base + immediate, after the access. */
+.macro sm_vector_writeback
+	tbz x14, #UML_GADGET_SME_VM_WRITEBACK_BIT, 7f
+	and x9, x14, #0xffff
+	ldr x10, [_cpu, x9]
+	add x10, x10, x15
+	str x10, [_cpu, x9]
+7:
+.endm
+
+/* The slow path, with _stream at stream word 0: the helper does the access
+ * with the host out of streaming mode, then the gadget continues at the
+ * next instruction, or leaves through the memory-fault exit, whose PC word
+ * _stream then addresses. */
+.macro sm_vector_slow
+	add _stream, _stream, #32
+	bl uml_arm64_gadget_sme_suspend
+	mov x19, x1
+	mov x20, x2
+	mov x0, x1
+	mov x1, x2
+	sub x2, _stream, #32
+	helper_call uml_arm64_gadget_sme_vector_memory
+	mov x1, x19
+	mov x2, x20
+	cbz w0, 9f
+	bl uml_arm64_gadget_sme_resume
+	add _stream, _stream, #8
+	next_gadget
+9:
+	b uml_arm64_gadget_memory_fault
+.endm
+
+.set Lsme_twin_of_base, 0
+#include "streaming_memory.inc"
+.set Lsme_twin_of_base, 1
+.purgem sm_vector_slow
+.purgem sm_vector_writeback
+.purgem sm_vector_address
 
 .popsection
 
