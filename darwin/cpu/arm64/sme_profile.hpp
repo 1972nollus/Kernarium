@@ -30,8 +30,9 @@ enum class SmeProfile : std::uint8_t {
 
 /* How far an engine implements the profile: nothing yet (every SVE and SME
  * word is the illegal-instruction exit), the control core, all of it but
- * the SME2 forms, or all of it. SME is advertised only once both engines
- * are complete, and SME2 only once both implement it too. */
+ * the SME2 forms, or all of it. The guest-SME policy stays off by default
+ * until both engines are complete, and a guest sees FEAT_SME2 only from an
+ * engine at sme2 (sme_host_for_support). */
 enum class SmeSupport : std::uint8_t {
 	none,
 	control,
@@ -61,6 +62,19 @@ enum class SmeSupport : std::uint8_t {
 [[nodiscard]] inline bool implements_sme(const HostCapabilities &host) noexcept
 {
 	return sme_profile(host) != SmeProfile::none;
+}
+
+/* The host an engine at `support` presents the virtual CPU for: `host`
+ * less FEAT_SME2 below sme2, so its identification registers and the
+ * guest's HWCAPs, which derive from the profile, advertise no SME2 form
+ * the engine would take as illegal. A host without SME2, which includes
+ * every host while the guest-SME policy is off, comes back unchanged. */
+[[nodiscard]] inline HostCapabilities sme_host_for_support(
+	HostCapabilities host, SmeSupport support) noexcept
+{
+	if (support < SmeSupport::sme2)
+		host.supported.reset(static_cast<std::size_t>(ArmFeature::sme2));
+	return host;
 }
 
 /* The encoding table names its requirement bits after the ArmFeature

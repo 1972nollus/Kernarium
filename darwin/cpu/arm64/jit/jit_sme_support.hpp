@@ -11,16 +11,18 @@
 
 namespace uml::cpu::arm64::jit {
 
-/* How much of the SME profile the JIT implements (design 5.3, S4): the
- * control core (M1), the register-only forms (M2) and the SVE, SME1 and
- * SIMD&FP memory forms (M3). SMSTART, SMSTOP, MRS and MSR SVCR and
- * TPIDR2_EL0 are base-space system instructions; the table rows are those
- * implements_sme_row() names, less the reserved words sme_word_reserved()
- * finds, and the SIMD&FP loads and stores those
- * decode_streaming_fp_memory() accepts. Every other SVE and SME word and
- * every AdvSIMD word in an SM=1 translation is the illegal-instruction
- * exit. */
-inline constexpr SmeSupport sme_support = SmeSupport::control;
+/* How much of the SME profile the JIT implements (design 5.3, S4): all of
+ * it but the SME2 forms. The control core (M1), the register-only forms
+ * (M2) and the SVE, SME1 and SIMD&FP memory forms (M3) cover every row of
+ * the profile outside SME2, and every instruction the JIT runs at SVCR 0
+ * but AdvSIMD also runs in streaming mode. SMSTART, SMSTOP, MRS and MSR
+ * SVCR and TPIDR2_EL0 are base-space system instructions; the table rows
+ * are those implements_sme_row() names, less the reserved words
+ * sme_word_reserved() finds, and the SIMD&FP loads and stores those
+ * decode_streaming_fp_memory() accepts. An SME2 form, every other SVE and
+ * SME word and every AdvSIMD word in an SM=1 translation is the
+ * illegal-instruction exit. */
+inline constexpr SmeSupport sme_support = SmeSupport::complete;
 
 namespace sme_forms {
 

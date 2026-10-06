@@ -237,6 +237,7 @@ function(uml_add_guest_engine_smoke ENGINE)
         SCRIPT jit/run_guest_jit_smoke.py
         ARGS --engine ${ENGINE}
             --hwcap-sanity-binary ${UML_GUEST_HWCAP_SANITY}
+            --engine-support-tool $<TARGET_FILE:uml-sme-engine-support>
         LABELS ${_labels}
         TIMEOUT 420
         CPUS 2)
