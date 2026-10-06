@@ -67,7 +67,9 @@ enum {
 	 * so it clears again once none of these holds. Every store made by
 	 * another agent before the condition ended is visible to the entry
 	 * that first lacks the flag. A host may rely on this meaning from
-	 * bridge ABI 19. */
+	 * bridge ABI 19 in a kernel of the x86-64 userspace slice, the only
+	 * one that sets the flag; the arm64 kernels never set it, and the
+	 * arm64 host does not read it. */
 	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
 };
 

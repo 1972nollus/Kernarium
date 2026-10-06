@@ -152,31 +152,36 @@ and SIGCHLD throughout, so the process takes those on a thread that runs no
 guest. Every other carrier wait polls the pending IPIs or does not depend on
 EINTR. Without SME no carrier blocks these signals.
 
-A guest entry is marked shared while another agent may observe the memory
-of the task's mm: while another task may run on it (`mm_users` beyond the
-entering task, where a vfork child does not count its waiting parent), while
-it maps a `VM_MAYSHARE` vma (any `MAP_SHARED` mapping, read-only ones, SysV
-shm, memfd and kernel rings included), or while io_uring holds pinned memory
-of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer rings), which
-completions and other rings' `IORING_OP_MSG_RING` write from other CPUs. The
-kernel works this out for every entry: `mmap_region()` sets the mapping
-condition, the unmap of a shared vma (`munmap()`, `mremap()`, `shmdt()`, a
-`MAP_FIXED` replacement) rescans the vmas, a fork child has it only if a
-shared vma came with it, and each pinned ring region counts on its mm until
-io_uring frees it. The entry carries `DARWIN_UML_DISPATCH_MM_SHARED`, and a
-host may rely on that meaning from bridge ABI 19: once the last condition
-ends, every store another agent made is visible to the first entry without
-the flag, since the entering task reads `mm_users` and the pin count with
-acquire loads that pair with `mmput()` and the unpin, and a new sharer always
-starts inside a system call of a task on the mm. The x86-64 JIT keeps x86's
-store order for marked entries only. Writes through `ptrace()`,
-`process_vm_writev()` or `/proc/<pid>/mem`, and a `MAP_PRIVATE` view of a
-file that another process writes through `MAP_SHARED`, do not mark the mm,
-and a temporary `mm_users` reference such as a `/proc` reader marks entries
-only while it lasts. The arm64 host ignores the flag.
-`tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause
-and each way it ends, and `run_guest_x86_64_tso_litmus.py` that memory order
-holds through cycles of sharing.
+In the x86_64 slice, a guest entry is marked shared while another agent may
+observe the memory of the task's mm: while another task may run on it
+(`mm_users` beyond the entering task, where a vfork child does not count its
+waiting parent), while it maps a `VM_MAYSHARE` vma (any `MAP_SHARED` mapping,
+read-only ones, SysV shm, memfd and kernel rings included), or while io_uring
+holds pinned memory of it for a ring (`IORING_SETUP_NO_MMAP`, provided-buffer
+rings), which completions and other rings' `IORING_OP_MSG_RING` write from
+other CPUs. The kernel works this out for every entry: `mmap_region()` sets
+the mapping condition, the unmap of a shared vma (`munmap()`, `mremap()`,
+`shmdt()`, a `MAP_FIXED` replacement) rescans the vmas, a fork child has it
+only if a shared vma came with it, and each pinned ring region counts on its
+mm until io_uring frees it. The entry carries `DARWIN_UML_DISPATCH_MM_SHARED`,
+and a host may rely on that meaning from bridge ABI 19: once the last
+condition ends, every store another agent made is visible to the first entry
+without the flag, since the entering task reads `mm_users` and the pin count
+with acquire loads that pair with `mmput()` and the unpin, and a new sharer
+always starts inside a system call of a task on the mm. The x86-64 JIT keeps
+x86's store order for marked entries only. Writes through `ptrace()`,
+`process_vm_writev()` or `/proc/<pid>/mem`, and a `MAP_PRIVATE` view of a file
+that another process writes through `MAP_SHARED`, do not mark the mm, and a
+temporary `mm_users` reference such as a `/proc` reader marks entries only
+while it lasts. Only the x86-64 JIT reads the flag, so the work is under
+`UML_DARWIN_MM_SHARED`, which the x86_64 slice selects (it selects the generic
+`ARCH_HAS_MM_SHARED_HOOKS` that makes io_uring record the pinning mm). The
+arm64 kernels build none of it: their entries, mmaps, munmaps, forks and ring
+pins do no mm-shared work, and the flag stays clear there, where the arm64
+host does not read it.
+`tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause and
+each way it ends, and `run_guest_x86_64_tso_litmus.py` that memory order holds
+through cycles of sharing.
 
 Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
 which reads as zero and ignores writes unless the run has SME.

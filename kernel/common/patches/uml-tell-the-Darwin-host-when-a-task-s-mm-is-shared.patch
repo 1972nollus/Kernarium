@@ -43,40 +43,72 @@ no entry can miss it. A temporary mm_users reference (procfs, ptrace)
 marks entries only while it lasts. The flag describes one entry and is
 cleared after it returns, as PSTATE.SS is.
 
-The arm64 host ignores the flag.
+Only the x86-64 JIT reads the flag, and x86-64 tasks exist only in the
+x86-64 userspace slice, so all of this is under UML_DARWIN_MM_SHARED,
+which that slice selects. It selects ARCH_HAS_MM_SHARED_HOOKS, which
+makes io_uring record the pinning mm and lets the arch define the hooks.
+The arm64 kernels build none of it: their entries, mmaps, munmaps,
+forks and ring pins do no mm-shared work, and the flag stays clear
+there, where the arm64 host does not read it.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/um/include/asm/mm_hooks.h              | 17 ++--
- arch/um/include/asm/mmu.h                   | 10 +++
- arch/um/include/shared/skas/skas.h          |  1 +
- arch/um/kernel/skas/mmu_darwin.c            | 99 +++++++++++++++++++++
- arch/um/os-Darwin/skas/process.c            | 31 +++++++
- arch/um/os-Darwin/uml_darwin_abi.h          | 11 ++-
- arch/um/os-Darwin/uml_darwin_abi_identity.h |  2 +-
- include/linux/io_uring_types.h              |  2 +
- include/linux/mmu_context.h                 | 33 +++++++
- io_uring/memmap.c                           | 14 +++
- mm/vma.c                                    |  9 +-
- 11 files changed, 219 insertions(+), 10 deletions(-)
+ arch/um/Kconfig                             |   9 ++
+ arch/um/include/asm/mm_hooks.h              |  16 +++
+ arch/um/include/asm/mmu.h                   |  10 ++
+ arch/um/include/shared/skas/skas.h          |   3 +
+ arch/um/kernel/skas/mmu_darwin.c            | 103 ++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c            |  35 +++++++
+ arch/um/os-Darwin/uml_darwin_abi.h          |  13 ++-
+ arch/um/os-Darwin/uml_darwin_abi_identity.h |   2 +-
+ include/linux/io_uring_types.h              |   4 +
+ include/linux/mmu_context.h                 |  34 +++++++
+ io_uring/memmap.c                           |  18 ++++
+ mm/Kconfig                                  |   7 ++
+ mm/vma.c                                    |   9 +-
+ 13 files changed, 259 insertions(+), 4 deletions(-)
 
+diff --git a/arch/um/Kconfig b/arch/um/Kconfig
+index cab6992fdc2222474b6c8a68835da5b8715936ea..e8f3c741c85e86baea33526ff5413575fcf58458 100644
+--- a/arch/um/Kconfig
++++ b/arch/um/Kconfig
+@@ -92,6 +92,15 @@ config HZ
+ config UML_SUBARCH_SUPPORTS_SMP
+ 	bool
+ 
++# Whether every guest entry tells the Darwin host if an agent other than the
++# task can observe the memory of its mm (DARWIN_UML_DISPATCH_MM_SHARED), for a
++# host that relaxes x86's memory order while none can.  Only the x86-64 JIT
++# reads the flag, so only the x86-64 userspace slice selects this; elsewhere
++# the flag stays clear and no mm path does this work.
++config UML_DARWIN_MM_SHARED
++	bool
++	select ARCH_HAS_MM_SHARED_HOOKS
++
+ config SMP
+ 	bool "Symmetric multi-processing support"
+ 	default y
 diff --git a/arch/um/include/asm/mm_hooks.h b/arch/um/include/asm/mm_hooks.h
-index 0d33f7fd17a9cb58998978aa56eb469fb773a607..49efc54da499c9560341fa236f4cde85e0ea5d06 100644
+index 0d33f7fd17a9cb58998978aa56eb469fb773a607..2427d23ff06b608042a4b2eec8c8b4438a19a56a 100644
 --- a/arch/um/include/asm/mm_hooks.h
 +++ b/arch/um/include/asm/mm_hooks.h
-@@ -6,14 +6,19 @@
+@@ -6,14 +6,30 @@
  struct mm_struct;
  struct vm_area_struct;
  
--static inline int arch_dup_mmap(struct mm_struct *oldmm,
--				struct mm_struct *mm)
--{
--	return 0;
--}
--
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +int arch_dup_mmap(struct mm_struct *oldmm, struct mm_struct *mm);
++#else
+ static inline int arch_dup_mmap(struct mm_struct *oldmm,
+ 				struct mm_struct *mm)
+ {
+ 	return 0;
+ }
++#endif
+ 
  void arch_exit_mmap(struct mm_struct *mm);
  
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +/* See linux/mmu_context.h. */
 +void arch_mmap_shared(struct mm_struct *mm);
 +#define arch_mmap_shared arch_mmap_shared
@@ -86,19 +118,20 @@ index 0d33f7fd17a9cb58998978aa56eb469fb773a607..49efc54da499c9560341fa236f4cde85
 +#define arch_ring_pin arch_ring_pin
 +void arch_ring_unpin(struct mm_struct *mm);
 +#define arch_ring_unpin arch_ring_unpin
++#endif
 +
  static inline bool arch_vma_access_permitted(struct vm_area_struct *vma,
  		bool write, bool execute, bool foreign)
  {
 diff --git a/arch/um/include/asm/mmu.h b/arch/um/include/asm/mmu.h
-index 65bf0b3375992a9c1a3127e4215b1be127fa81f7..c1a1bd9525bf18890f7328dd748aacd34f08426a 100644
+index 65bf0b3375992a9c1a3127e4215b1be127fa81f7..498f7a55d9ab3ebfe76a017357039de196b08bdf 100644
 --- a/arch/um/include/asm/mmu.h
 +++ b/arch/um/include/asm/mmu.h
 @@ -17,6 +17,16 @@
  
  typedef struct mm_context {
  	struct mm_id id;
-+#ifdef UML_HOST_DARWIN
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +	/*
 +	 * What lets an agent other than the mm's own tasks see its memory,
 +	 * besides a second user, which current_mm_shared() reads at every
@@ -112,19 +145,21 @@ index 65bf0b3375992a9c1a3127e4215b1be127fa81f7..c1a1bd9525bf18890f7328dd748aacd3
  
  	struct list_head list;
 diff --git a/arch/um/include/shared/skas/skas.h b/arch/um/include/shared/skas/skas.h
-index 16a9b0f8f228fc0b0bac09d5b77aff057fb1a310..bd2cec813b0360138e9a2cf3651c8b5405b20dae 100644
+index 16a9b0f8f228fc0b0bac09d5b77aff057fb1a310..4d671e0632111ef1d0da38142c276613b79ec794 100644
 --- a/arch/um/include/shared/skas/skas.h
 +++ b/arch/um/include/shared/skas/skas.h
-@@ -14,6 +14,7 @@ extern void new_thread_handler(void);
+@@ -14,6 +14,9 @@ extern void new_thread_handler(void);
  extern void handle_syscall(struct uml_pt_regs *regs);
  extern unsigned long current_stub_stack(void);
  extern struct mm_id *current_mm_id(void);
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +extern int current_mm_shared(void);
++#endif
  extern unsigned long current_tls(void);
  extern void current_set_tls(unsigned long tls);
  extern void current_mm_sync(void);
 diff --git a/arch/um/kernel/skas/mmu_darwin.c b/arch/um/kernel/skas/mmu_darwin.c
-index 112d9734f69b3b87ca06288fab39279bf87e280a..1a74055c375e5b4606dea93f2b72d5b16b5357ac 100644
+index 112d9734f69b3b87ca06288fab39279bf87e280a..5cdb82ff3fe1baa7bd8343401e926945058a610c 100644
 --- a/arch/um/kernel/skas/mmu_darwin.c
 +++ b/arch/um/kernel/skas/mmu_darwin.c
 @@ -8,6 +8,7 @@
@@ -135,10 +170,11 @@ index 112d9734f69b3b87ca06288fab39279bf87e280a..1a74055c375e5b4606dea93f2b72d5b1
  
  static atomic_t darwin_mm_generation = ATOMIC_INIT(1);
  
-@@ -28,6 +29,102 @@ void arch_exit_mmap(struct mm_struct *mm)
+@@ -28,6 +29,104 @@ void arch_exit_mmap(struct mm_struct *mm)
  #endif
  }
  
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +/*
 + * Whether another agent may observe the memory of current's mm, read at every
 + * entry of the task into its guest code (DARWIN_UML_DISPATCH_MM_SHARED); the
@@ -234,24 +270,27 @@ index 112d9734f69b3b87ca06288fab39279bf87e280a..1a74055c375e5b4606dea93f2b72d5b1
 +		WRITE_ONCE(mm->context.darwin_maps_shared, 1);
 +	return 0;
 +}
++#endif
 +
  int arch_unmap_one(struct mm_struct *mm, struct vm_area_struct *vma,
  		   unsigned long addr, pte_t orig_pte)
  {
-@@ -53,6 +150,8 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
+@@ -53,6 +152,10 @@ int init_new_context(struct task_struct *task, struct mm_struct *mm)
  	id->pid = atomic_inc_return(&darwin_mm_generation);
  	id->darwin_generation = id->pid;
  	id->darwin_context = NULL;
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +	mm->context.darwin_maps_shared = 0;
 +	atomic_set(&mm->context.darwin_ring_pins, 0);
++#endif
  	id->stack = 0;
  	id->sock = -1;
  	id->syscall_data_len = 0;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..54fc1be5a31fbc65f69ebfe45a70c4bc6619049d 100644
+index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..8c1ab173f3850c7da37b8d048d0bdf5c05070b31 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -106,6 +106,34 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -106,6 +106,38 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
  
@@ -269,9 +308,12 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..54fc1be5a31fbc65f69ebfe45a70c4bc
 +		DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET);
 +	unsigned int set = 0;
 +
++#ifdef CONFIG_UML_DARWIN_MM_SHARED
 +	if (mm_id != NULL && current_mm_shared())
 +		set |= DARWIN_UML_DISPATCH_MM_SHARED;
-+	*flags |= set;
++#endif
++	if (set)
++		*flags |= set;
 +	return set;
 +}
 +
@@ -280,13 +322,14 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..54fc1be5a31fbc65f69ebfe45a70c4bc
 +	unsigned int *flags = (unsigned int *)((char *)regs +
 +		DARWIN_UML_ABI_GUEST_REGISTERS_DISPATCH_FLAGS_OFFSET);
 +
-+	*flags &= ~set;
++	if (set)
++		*flags &= ~set;
 +}
 +
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
  static int shutdown_mode = -1;
-@@ -331,6 +359,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -331,6 +363,7 @@ void userspace(struct uml_pt_regs *registers)
  		unsigned long guest_tls;
  		const unsigned int *guest_ipi_sequence;
  		unsigned int guest_ipi_snapshot;
@@ -294,7 +337,7 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..54fc1be5a31fbc65f69ebfe45a70c4bc
  		int event;
  		int stepping;
  
-@@ -376,12 +405,14 @@ void userspace(struct uml_pt_regs *registers)
+@@ -376,12 +409,14 @@ void userspace(struct uml_pt_regs *registers)
  			guest_ipi_sequence, guest_ipi_snapshot) < 0)
  			fatal_userspace(registers, "interrupt registration", -1);
  		stepping = begin_guest_step(registers);
@@ -310,10 +353,10 @@ index d069b6e05f2f0b35e27c7d9a89d61703f9bdfa2f..54fc1be5a31fbc65f69ebfe45a70c4bc
  		if (event == DARWIN_UML_EVENT_STOP)
  			darwin_host_stop();
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index fe293d21f68942523006048a8f322d099ddc5a0c..7a5aef6e24e96dc2382e81a975938812561267ec 100644
+index fe293d21f68942523006048a8f322d099ddc5a0c..48bd2b7b0c70dce2e8c1667f408000a5c8898a8a 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -59,8 +59,15 @@ enum darwin_uml_guest_event {
+@@ -59,8 +59,17 @@ enum darwin_uml_guest_event {
   * for one entry. The kernel sets them before it enters the guest and clears
   * them on return, so they never become part of the task's saved PSTATE. */
  enum {
@@ -327,7 +370,9 @@ index fe293d21f68942523006048a8f322d099ddc5a0c..7a5aef6e24e96dc2382e81a975938812
 +	 * so it clears again once none of these holds. Every store made by
 +	 * another agent before the condition ended is visible to the entry
 +	 * that first lacks the flag. A host may rely on this meaning from
-+	 * bridge ABI 19. */
++	 * bridge ABI 19 in a kernel of the x86-64 userspace slice, the only
++	 * one that sets the flag; the arm64 kernels never set it, and the
++	 * arm64 host does not read it. */
  	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
  };
  
@@ -345,23 +390,25 @@ index fc13ce83dcf8fbd119e4915d4a904089cd677c8e..da7d5a81db003f8572aafbaccc580c29
  
  #endif
 diff --git a/include/linux/io_uring_types.h b/include/linux/io_uring_types.h
-index 4f1607e00359b7213fffbed93a4c7ea0cc4dcfb8..bd5daf58f876e2f032eb08fdc6b7f670f7985b10 100644
+index 4f1607e00359b7213fffbed93a4c7ea0cc4dcfb8..ab9ee8ecf88fef31351e5c76b6057ba105ba52e1 100644
 --- a/include/linux/io_uring_types.h
 +++ b/include/linux/io_uring_types.h
-@@ -91,6 +91,8 @@ struct io_mapped_region {
+@@ -91,6 +91,10 @@ struct io_mapped_region {
  	void			*ptr;
  	unsigned		nr_pages;
  	unsigned		flags;
++#ifdef CONFIG_ARCH_HAS_MM_SHARED_HOOKS
 +	/* the mm whose pages a user-provided region pins */
 +	struct mm_struct	*mm;
++#endif
  };
  
  /*
 diff --git a/include/linux/mmu_context.h b/include/linux/mmu_context.h
-index ac01dc4eb2cecd71ed39bbb65df912b4734e9169..8376b9de52f5098ad5b504db1262d80723209ef4 100644
+index ac01dc4eb2cecd71ed39bbb65df912b4734e9169..cadd9b1de926b15238d58a8b0619da001a167f83 100644
 --- a/include/linux/mmu_context.h
 +++ b/include/linux/mmu_context.h
-@@ -36,6 +36,39 @@ static inline unsigned long mm_untag_mask(struct mm_struct *mm)
+@@ -36,6 +36,40 @@ static inline unsigned long mm_untag_mask(struct mm_struct *mm)
  }
  #endif
  
@@ -372,7 +419,8 @@ index ac01dc4eb2cecd71ed39bbb65df912b4734e9169..8376b9de52f5098ad5b504db1262d807
 + * arch_munmap_shared() once it has removed one, both with mmap_lock held.
 + * io_uring calls arch_ring_pin() when it pins user memory of @mm to keep a
 + * ring in, which other CPUs fill, and arch_ring_unpin() when it unpins it,
-+ * possibly from another task.  An architecture that must know defines them.
++ * possibly from another task.  An architecture that must know selects
++ * ARCH_HAS_MM_SHARED_HOOKS and defines them.
 + */
 +#ifndef arch_mmap_shared
 +static inline void arch_mmap_shared(struct mm_struct *mm)
@@ -402,7 +450,7 @@ index ac01dc4eb2cecd71ed39bbb65df912b4734e9169..8376b9de52f5098ad5b504db1262d807
  static inline bool arch_pgtable_dma_compat(struct mm_struct *mm)
  {
 diff --git a/io_uring/memmap.c b/io_uring/memmap.c
-index add03ca75cb90eb4040916b69731e40855a12da8..0742544502c74ba97e7cae074b159fbc85fe7959 100644
+index add03ca75cb90eb4040916b69731e40855a12da8..462872a716698309b5410e23599fb59aeb45ac5d 100644
 --- a/io_uring/memmap.c
 +++ b/io_uring/memmap.c
 @@ -8,6 +8,8 @@
@@ -414,22 +462,25 @@ index add03ca75cb90eb4040916b69731e40855a12da8..0742544502c74ba97e7cae074b159fbc
  #include <asm/shmparam.h>
  
  #include "memmap.h"
-@@ -103,6 +105,11 @@ void io_free_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr)
+@@ -103,6 +105,13 @@ void io_free_region(struct io_ring_ctx *ctx, struct io_mapped_region *mr)
  
  		kvfree(mr->pages);
  	}
++#ifdef CONFIG_ARCH_HAS_MM_SHARED_HOOKS
 +	if (mr->mm) {
 +		/* Nothing writes the ring any more. */
 +		arch_ring_unpin(mr->mm);
 +		mmdrop(mr->mm);
 +	}
++#endif
  	if ((mr->flags & IO_REGION_F_VMAP) && mr->ptr)
  		vunmap(mr->ptr);
  	if (mr->nr_pages && ctx->user)
-@@ -145,6 +152,13 @@ static int io_region_pin_pages(struct io_ring_ctx *ctx,
+@@ -145,6 +154,15 @@ static int io_region_pin_pages(struct io_ring_ctx *ctx,
  	if (WARN_ON_ONCE(nr_pages != mr->nr_pages))
  		return -EFAULT;
  
++#ifdef CONFIG_ARCH_HAS_MM_SHARED_HOOKS
 +	/*
 +	 * The ring now lives in the task's own memory, which other CPUs fill
 +	 * or read: a completion, or another ring's IORING_OP_MSG_RING.
@@ -437,9 +488,28 @@ index add03ca75cb90eb4040916b69731e40855a12da8..0742544502c74ba97e7cae074b159fbc
 +	mr->mm = current->mm;
 +	mmgrab(mr->mm);
 +	arch_ring_pin(mr->mm);
++#endif
  	mr->pages = pages;
  	mr->flags |= IO_REGION_F_USER_PROVIDED;
  	return 0;
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 76001e9ba04f1c116c92b3b76f43d45464a00f36..909561b73db0ee6d391c6e9a965bcd751e83127b 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -1097,6 +1097,13 @@ config IDLE_PAGE_TRACKING
+ 	  See Documentation/admin-guide/mm/idle_page_tracking.rst for
+ 	  more details.
+ 
++# The architecture defines arch_mmap_shared(), arch_munmap_shared(),
++# arch_ring_pin() and arch_ring_unpin() (linux/mmu_context.h) to learn when
++# memory of an mm becomes reachable by an agent other than its own tasks, and
++# io_uring records the mm whose pages a ring pins for it.
++config ARCH_HAS_MM_SHARED_HOOKS
++	bool
++
+ # Architectures which implement cpu_dcache_is_aliasing() to query
+ # whether the data caches are aliased (VIVT or VIPT with dcache
+ # aliasing) need to select this.
 diff --git a/mm/vma.c b/mm/vma.c
 index dcaa2d8998bfb1573da3d578d4e9b438320389f8..7f30fb6360b2579fc9ae14a60e2ada34d4399190 100644
 --- a/mm/vma.c
