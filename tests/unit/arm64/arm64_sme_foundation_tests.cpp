@@ -495,8 +495,8 @@ void svcr_writes_apply_to_state()
 void defaults_follow_engine_support()
 {
 	using arm64::SmeSupport;
-	if (arm64::gadgets::sme_support != SmeSupport::complete ||
-	    arm64::jit::sme_support != SmeSupport::complete)
+	if (arm64::gadgets::sme_support < SmeSupport::complete ||
+	    arm64::jit::sme_support < SmeSupport::complete)
 		require(apple::parse_guest_sme_policy(nullptr) ==
 				apple::GuestSmePolicy::off,
 			"SME is on by default before both engines are complete");

@@ -46,7 +46,7 @@ from guest import ConsoleProcess, Guest, GuestFile, emulator_arguments  # noqa: 
 
 
 SKIP = 77
-SUPPORT_LEVELS = ("none", "control", "complete")
+SUPPORT_LEVELS = ("none", "control", "complete", "sme2")
 PROBE_MODES = ("kernel", "spin", "engine", "engine-spin")
 SME_MODES = (*PROBE_MODES, "terminate", "glibc")
 ENGINE_MODES = ("engine", "engine-spin", "glibc")

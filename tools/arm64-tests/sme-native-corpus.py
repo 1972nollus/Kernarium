@@ -37,7 +37,11 @@ The cases cover, for each record:
 - memory: each profile memory form aligned and misaligned, crossing a 16 KiB
   page with both pages mapped, with only the first mapped and its elements
   active on the first page, with either page unmapped, inactive over an
-  unmapped page, and stores to a read-only page.
+  unmapped page, and stores to a read-only page;
+- fpsr: programs that start with FPSR's IXC, IOC, or QC set, in streaming
+  mode throughout (instructions that raise flags, raise none, read or write
+  FPSR, take a fault or trap, or leave PSTATE.SM as it is) and entering or
+  leaving it, where the change of PSTATE.SM sets FPSR to 0x0800009F.
 
 Every expectation is observed at the oracle host's streaming vector length,
 64 bytes, and a record's svl says so: the runner runs these cases only where
@@ -154,7 +158,8 @@ READ_WRITE = 0x13
 READ_ONLY = 0x01
 # DN, FZ, round towards zero, FZ16.
 FLUSH_FPCR = 0x03C8_0000
-GROUPS = ("control", "classify", "fpsimd", "operands", "za", "memory")
+GROUPS = ("control", "classify", "fpsimd", "operands", "za", "memory",
+          "fpsr")
 
 
 def fill_hash(index: int) -> int:
@@ -431,6 +436,7 @@ class Draft:
     x: dict[int, int] = field(default_factory=dict)
     nzcv: int = 0
     fpcr: int = 0
+    fpsr: int = 0
     tpidr2: int = 0
     v: dict[int, bytes] = field(default_factory=dict)
     z: dict[int, bytes] = field(default_factory=dict)
@@ -453,7 +459,8 @@ class Draft:
                 (not self.svcr & ZA and (self.za or self.zt0 is not None)):
             raise SystemExit(f"{self.name}: state outside its SVCR")
         state = WireState(x=x, nzcv=self.nzcv, fpcr=self.fpcr,
-                          svcr=self.svcr, tpidr2=self.tpidr2, v=self.v,
+                          fpsr=self.fpsr, svcr=self.svcr,
+                          tpidr2=self.tpidr2, v=self.v,
                           z=self.z, p=self.p, za=self.za, zt0=self.zt0)
         return WireCase(words=self.words + (SVC,), entry=0, state=state,
                         regions=self.regions)
@@ -1005,12 +1012,76 @@ def memory_drafts(table) -> list[Draft]:
     return drafts
 
 
+def fpsr_drafts() -> list[Draft]:
+    """Programs that start with cumulative FPSR flags set: in streaming
+    mode throughout, where the flags must reach every instruction and
+    survive the ones that raise none, and across SMSTART and SMSTOP, whose
+    change of PSTATE.SM replaces them with 0x0800009F."""
+    lanes = SVL // 4
+
+    def words32(value: int) -> bytes:
+        return value.to_bytes(4, "little") * lanes
+
+    one, tiny, snan = words32(0x3F80_0000), words32(0x3080_0000), \
+        words32(0x7FA0_0000)
+    fadd = 0x1E21_2802                  # FADD S2, S0, S1
+    inexact = {0: one, 1: tiny}         # 1 + 2^-30 is inexact
+    streaming = (
+        ("ADD X0, X1, X2", SM, (0x8B02_0020,), {}, {}),
+        ("MRS X3, FPSR", SM, (0xD53B_4423,), {}, {}),
+        ("MRS X3, FPSR", SM | ZA, (0xD53B_4423,), {}, {}),
+        ("FADD S2, S0, S1", SM, (fadd,), inexact, {}),
+        ("FADD Z2.S, Z0.S, Z1.S", SM | ZA, (0x6581_0002,), inexact, {}),
+        ("FCMP S0, S1 with a signalling NaN", SM, (0x1E21_2000,),
+         {0: one, 1: snan}, {}),
+        ("SQADD Z2.S, Z0.S, Z1.S saturating", SM, (0x04A1_1002,),
+         {0: words32(0x7FFF_FFFF), 1: words32(1)}, {}),
+        ("FMOPA ZA0.S, P0/M, P1/M, Z0.S, Z1.S", SM | ZA, (0x8081_2000,),
+         {0: one, 1: snan}, {}),
+        ("MSR FPSR, X1 (0); FADD S2, S0, S1", SM,
+         (0xD51B_4421, fadd), inexact, {1: 0}),
+        ("FADD S2, S0, S1; ADD V0.4S, V1.4S, V2.4S", SM,
+         (fadd, 0x4EA2_8420), inexact, {}),
+        ("FADD S2, S0, S1; PTRUE P0.S; LD1W {Z0.S}, P0/Z, [X0] unmapped",
+         SM, (fadd, 0x2598_E3E0, 0xA540_A000), inexact, {0: DATA}),
+        ("SMSTART ZA keeps PSTATE.SM", SM, (0xD503_457F,), {}, {}),
+        ("SMSTART SM keeps PSTATE.SM", SM, (0xD503_437F,), {}, {}),
+        ("SMSTOP ZA keeps PSTATE.SM", SM | ZA, (0xD503_447F,), {}, {}),
+    )
+    # SMSTART SM resets FPSR and zeroes Z, so FDIV 0/0 raises IOC.
+    entering = (
+        ("SMSTART SM (resets FPSR); MRS X3, FPSR", 0,
+         (0xD503_437F, 0xD53B_4423), {}),
+        ("SMSTART (resets FPSR); ADD X0, X1, X2", 0,
+         (0xD503_477F, 0x8B02_0020), {}),
+        ("SMSTART SM (resets FPSR); MSR FPSR, X1 (IXC); FDIV S2, S0, S1",
+         0, (0xD503_437F, 0xD51B_4421, 0x1E21_1802), {1: 0x10}),
+        ("SMSTOP SM (resets FPSR)", SM, (0xD503_427F,), {}),
+        ("SMSTART SM; SMSTOP SM; MRS X3, FPSR", 0,
+         (0xD503_437F, 0xD503_427F, 0xD53B_4423), {}),
+    )
+    drafts = []
+    # IXC, IOC, QC, and QC with IOC and IXC. No case in streaming mode
+    # throughout ends at 0x0800009F, which only a change of PSTATE.SM sets.
+    for fpsr in (0x10, 0x01, 0x0800_0000, 0x0800_0011):
+        for name, svcr, words, z, x in streaming:
+            drafts.append(Draft(
+                group="fpsr", name=f"FPSR {fpsr:#x} at {svcr_name(svcr)}: "
+                f"{name}", words=words, svcr=svcr, fpsr=fpsr, z=dict(z),
+                x=dict(x)))
+        for name, svcr, words, x in entering:
+            drafts.append(Draft(
+                group="fpsr", name=f"FPSR {fpsr:#x} at {svcr_name(svcr)}: "
+                f"{name}", words=words, svcr=svcr, fpsr=fpsr, x=dict(x)))
+    return drafts
+
+
 @functools.cache
 def drafts() -> tuple[Draft, ...]:
     table = sme_table.load()
     result = (control_drafts() + classify_drafts(table) +
               fpsimd_drafts(table) + operand_drafts(table) +
-              za_drafts(table) + memory_drafts(table))
+              za_drafts(table) + memory_drafts(table) + fpsr_drafts())
     return tuple(result)
 
 
