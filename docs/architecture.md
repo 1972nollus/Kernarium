@@ -403,25 +403,33 @@ indirect call.
 
 The JIT implements the same control core (`sme_support` is `control`):
 SMSTART and SMSTOP, MRS and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and
-ADDSPL, and LDR, STR and ZERO of ZA and ZT0. Every other SVE and SME word,
-and every FP&SIMD word in streaming mode, is its illegal-instruction exit.
-It keys every translation, link and indirect site by the guest's SVCR mode
-as well as its PC, so a block runs only in the mode it was translated for;
-mode 0 translations are unchanged. A guest write of SVCR ends its block. An
-SM=1 translation keeps the guest's Z, P, ZA and ZT0 in the identically
-numbered host registers: its external prologue enters streaming mode and
-fills them from the register file, and every epilogue and host helper call
-first leaves streaming mode and spills them. Helpers are terminal, so no
-SM=1 code runs after one, and a TLB miss takes a streaming bridge that
-leaves and re-enters around the walker. The transitions preserve NZCV and
-FPCR, and SM=1 code emits no AdvSIMD instruction of its own. XNU resets
-FPSR on every kernel entry while a thread is in streaming mode, so SM=1
-code keeps the guest's FPCR and FPSR in `CpuState`, never in the host's
-registers. SM=0
-translations run with the host's SME off and hold no SVE or SME
-instruction: they reach ZA and ZT0 in the register file with GPR copies.
-SM=1 code reads SVL with RDSVL and SM=0 code from `CpuState`, so no
-translation depends on it.
+ADDSPL, and LDR, STR and ZERO of ZA and ZT0. It keys every translation, link
+and indirect site by the guest's SVCR mode as well as its PC, so a block runs
+only in the mode it was translated for; mode 0 translations are unchanged. A
+guest write of SVCR ends its block. An SM=1 translation keeps the guest's Z,
+P, ZA and ZT0 in the identically numbered host registers: its external
+prologue enters streaming mode and fills them from the register file, and
+every epilogue and host helper call first leaves streaming mode and spills
+them. Helpers are terminal, so no SM=1 code runs after one, and a TLB miss
+takes a streaming bridge that leaves and re-enters around the walker. The
+transitions preserve NZCV, and SM=1 code emits no AdvSIMD instruction of its
+own. An SM=1 translation also runs every register-only SVE, SVE2 and SME form
+of the SME1 profile as the guest's own word, with each general register it
+names, and a ZA slice index, renamed to a host register that holds the
+guest's. MOVPRFX runs as a move of its own. A form that may change NZCV runs
+with the guest's flags in the host's. XNU resets FPSR on every kernel entry
+while a thread is in streaming mode, so the guest's FPSR stays in `CpuState`:
+the streaming entry installs the guest's FPCR with trap enables clear, which
+kernel entries keep, MSR FPCR writes both copies, and the exit restores the
+host's. A floating-point form runs on a cleared FPSR, ORs what it raised into
+the guest's, and restores its destination and runs again if FPSR.QC shows
+that a kernel entry reset the host's. The memory forms, SME2, the reserved
+bitmask immediates of ORR, EOR, AND and DUPM, every other SVE and SME word,
+and every FP&SIMD word in streaming mode are its illegal-instruction exit.
+SM=0 translations run with the host's SME off and hold no SVE or SME
+instruction: they reach ZA and ZT0 in the register file with GPR copies. SM=1
+code reads SVL with RDSVL and SM=0 code from `CpuState`, so no translation
+depends on it.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
