@@ -239,6 +239,31 @@ function(uml_audit_shell_cd ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
+# Darwin reserves x18 as the platform register and clears it when it
+# interrupts a thread, so an engine's assembly never keeps a value in it: a
+# preemption between the write and the read loses the value. The entry may
+# still save and restore it beside x19.
+function(uml_audit_platform_register ROOT OUT_VIOLATIONS)
+    set(_violations)
+    file(GLOB_RECURSE _sources LIST_DIRECTORIES false
+        "${ROOT}/darwin/cpu/x86_64/*.S"
+        "${ROOT}/darwin/cpu/x86_64/*.inc")
+    foreach(_path IN LISTS _sources)
+        file(STRINGS "${_path}" _lines
+            REGEX "(^|[^A-Za-z0-9_])[wx]18([^0-9]|$)")
+        foreach(_line IN LISTS _lines)
+            if(_line MATCHES "^[ \t]*(stp|ldp)[ \t]+x18,[ \t]*x19," OR
+               _line MATCHES "^[ \t]*(/\\*|\\*|//)")
+                continue()
+            endif()
+            list(APPEND _violations
+                "${_path}: assembly keeps a value in x18, which Darwin clears")
+            break()
+        endforeach()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -396,6 +421,9 @@ list(APPEND VIOLATIONS ${BUILD_FILE_VIOLATIONS})
 
 uml_audit_shell_cd("${SOURCE_ROOT}" SHELL_CD_VIOLATIONS)
 list(APPEND VIOLATIONS ${SHELL_CD_VIOLATIONS})
+
+uml_audit_platform_register("${SOURCE_ROOT}" PLATFORM_REGISTER_VIOLATIONS)
+list(APPEND VIOLATIONS ${PLATFORM_REGISTER_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source

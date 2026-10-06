@@ -387,7 +387,9 @@ scale.
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
-registers.
+registers. No gadget keeps a value in x18: Darwin clears that platform
+register when it interrupts the thread, so a value there is lost at a random
+preemption, and `architecture-audit` rejects one.
 
 ## Exceptions the guest enables
 

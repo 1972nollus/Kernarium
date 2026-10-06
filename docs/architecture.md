@@ -778,7 +778,9 @@ and no Xcode project names one. A first-party shell script writes each `cd`
 as `CDPATH= cd --` unless it names a literal absolute directory, so an
 exported `CDPATH` can neither redirect it nor print into captured output.
 No compile definition names a source or build directory, so no binary needs
-the checkout it was built from at run time. Outside macOS the configured graph
+the checkout it was built from at run time. The x86-64 gadget engine's
+assembly keeps no value in x18, which Darwin clears when it interrupts a
+thread. Outside macOS the configured graph
 holds none of the macOS-only x86-64 JIT, as the x86 section above describes.
 The audit does not prove performance, generated code shape, a kernel boot, or
 guest behavior; those require their owning validation.

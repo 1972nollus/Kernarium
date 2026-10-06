@@ -178,8 +178,8 @@ gadget x87_increment_top
 gadget x87_free_\name
 	ldr w13, [_stream], #8
 	x87_physical w13, w14
-	mov w18, #Lx86_x87_tag_empty
-	x87_set_tag w14, w18
+	mov w17, #Lx86_x87_tag_empty
+	x87_set_tag w14, w17
 	.if \pop
 	x87_pop
 	.endif

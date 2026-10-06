@@ -71,15 +71,15 @@ Lx86_x87_load_present\@:
 Lx86_x87_load_done\@:
 .endm
 
+/* Write the low two bits of `tag` as `physical`'s tag; uses w15 and w16.
+ * Rotating the entry to bit 0 and back needs no mask register. */
 .macro x87_set_tag physical, tag
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w16, \physical, #1
-	mov w17, #3
-	lsl w17, w17, w16
-	bic w15, w15, w17
-	and w17, \tag, #3
-	lsl w17, w17, w16
-	orr w15, w15, w17
+	ror w15, w15, w16
+	bfxil w15, \tag, #0, #2
+	neg w16, w16
+	ror w15, w15, w16
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 .endm
 
@@ -92,20 +92,20 @@ Lx86_x87_load_done\@:
 	str \significand, [x15, \physical, uxtw #3]
 
 	/* Recreate the x87 two-bit classification tag. */
-	mov w18, #2
+	mov w17, #2
 	and w15, \exponent, #0x7fff
 	cbz w15, Lx86_x87_store_zero_exp\@
-	mov w17, #0x7fff
-	cmp w15, w17
+	mov w16, #0x7fff
+	cmp w15, w16
 	b.eq Lx86_x87_store_classified\@
 	tbz \significand, #63, Lx86_x87_store_classified\@
-	mov w18, #0
+	mov w17, #0
 	b Lx86_x87_store_classified\@
 Lx86_x87_store_zero_exp\@:
 	cbnz \significand, Lx86_x87_store_classified\@
-	mov w18, #1
+	mov w17, #1
 Lx86_x87_store_classified\@:
-	x87_set_tag \physical, w18
+	x87_set_tag \physical, w17
 .endm
 
 .macro x87_store_stack logical, significand, exponent
@@ -172,8 +172,8 @@ Lx86_x87_push_fault_none\@:
 
 .macro x87_pop
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	mov w18, #Lx86_x87_tag_empty
-	x87_set_tag w14, w18
+	mov w17, #Lx86_x87_tag_empty
+	x87_set_tag w14, w17
 	add w14, w14, #1
 	and w14, w14, #7
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]

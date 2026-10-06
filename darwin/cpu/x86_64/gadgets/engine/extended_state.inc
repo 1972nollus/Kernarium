@@ -176,29 +176,29 @@ Lx86_extended_restore_x87_loop\@:
 	strh w17, [x15, #8]
 	add x15, _cpu, #UML_X86_64_CPU_MMX
 	str x16, [x15, x14, lsl #3]
-	lsrv w18, w26, w14
-	tbz w18, #0, Lx86_extended_restore_x87_next\@
+	lsrv w9, w26, w14
+	tbz w9, #0, Lx86_extended_restore_x87_next\@
 
 	/* Reconstruct the two-bit tag from the restored 80-bit payload. */
-	mov w18, #2
 	and w9, w17, #0x7fff
+	mov w17, #2
 	cbz w9, Lx86_extended_restore_x87_zero_exp\@
 	mov w15, #0x7fff
 	cmp w9, w15
 	b.eq Lx86_extended_restore_x87_classified\@
 	tbz x16, #63, Lx86_extended_restore_x87_classified\@
-	mov w18, #0
+	mov w17, #0
 	b Lx86_extended_restore_x87_classified\@
 Lx86_extended_restore_x87_zero_exp\@:
 	cbnz x16, Lx86_extended_restore_x87_classified\@
-	mov w18, #1
+	mov w17, #1
 Lx86_extended_restore_x87_classified\@:
 	lsl w9, w14, #1
 	mov w15, #3
 	lsl w15, w15, w9
 	bic w27, w27, w15
-	lsl w18, w18, w9
-	orr w27, w27, w18
+	lsl w17, w17, w9
+	orr w27, w27, w17
 Lx86_extended_restore_x87_next\@:
 	add x11, x11, #16
 	add w12, w12, #1
