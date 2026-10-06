@@ -983,6 +983,12 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	return value;
 }
 
+/* The x87 control word's exception masks, and the status word's ES and B,
+ * which show an unmasked exception pending. */
+constexpr std::uint16_t x87_exception_masks = 0x3fU;
+constexpr std::uint16_t x87_status_pending = 0x8080U;
+constexpr std::uint8_t x87_error_vector = 16;
+
 /* The floating-point mode a translation for `cpu` assumes. */
 [[nodiscard]] std::uint32_t fp_mode_for(const CpuState &cpu) noexcept
 {
@@ -991,8 +997,10 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	const auto unmasked = ~(cpu.mxcsr >> 7U) & 0x3fU;
 	const auto checks = (unmasked & 0x32U) != 0 ? Core::EMBEDDER_FP_MODE_CHECK_ALL :
 		unmasked != 0 ? Core::EMBEDDER_FP_MODE_CHECK_SPECIAL : 0U;
+	/* And the x87 control word unmasking any exception. */
+	const auto x87 = (~cpu.x87_control & x87_exception_masks) != 0 ? Core::EMBEDDER_FP_MODE_X87 : 0U;
 	return ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ? Core::EMBEDDER_FP_MODE_DAZ : 0U) |
-		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks;
+		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks | x87;
 }
 
 [[nodiscard]] std::uint64_t read_fpcr() noexcept
@@ -1374,6 +1382,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	frame->Embedder.Unretired = 0;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_NONE;
 	frame->Embedder.FPPending = 0;
+	frame->Embedder.X87Raised = 0;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
@@ -1421,12 +1430,23 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	impl_->memory = nullptr;
 
 	switch (frame->Embedder.ExitReason) {
-	case Core::EMBEDDER_EXIT_BUDGET:
 	case Core::EMBEDDER_EXIT_MODE:
+		/* A control word load in a context without x87 checks left ES
+		 * as it was: ES shows whether the new control word unmasks a
+		 * flag already set, which the next waiting instruction raises. */
+		if ((cpu.x87_status & ~cpu.x87_control & x87_exception_masks) != 0)
+			cpu.x87_status |= x87_status_pending;
+		else
+			cpu.x87_status &= static_cast<std::uint16_t>(~x87_status_pending);
+		[[fallthrough]];
+	case Core::EMBEDDER_EXIT_BUDGET:
+	case Core::EMBEDDER_EXIT_X87_EXCEPTION:
 		/* A step whose instruction branched back to a block it had
 		 * entered retired that instruction before the back edge ran out
 		 * of budget. An instruction that changed the floating-point mode
-		 * retired, and the next dispatch runs the space of the new mode. */
+		 * retired, and the next dispatch runs the space of the new mode;
+		 * so did an x87 instruction whose unmasked exception left all
+		 * but the status word alone. */
 		result.reason = impl_->stepping && result.retired_instructions != 0 ?
 			::uml::cpu::ExitReason::single_step : ::uml::cpu::ExitReason::instruction_budget;
 		return run;
@@ -1443,6 +1463,14 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		result.reason = ::uml::cpu::ExitReason::floating_point_trap;
 		result.syndrome = space->fp_fault_vector;
 		run.error_code = static_cast<std::int32_t>(space->fp_fault_error);
+		return run;
+	case Core::EMBEDDER_EXIT_X87_FAULT:
+		/* #MF at a waiting instruction, with the status and control words
+		 * as the gadget engine reports them. */
+		result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+		result.syndrome = x87_error_vector;
+		run.error_code = static_cast<std::int32_t>(cpu.x87_status |
+			(std::uint32_t{cpu.x87_control} << 16U));
 		return run;
 	case Core::EMBEDDER_EXIT_MEMORY_FAULT:
 		result.reason = ::uml::cpu::ExitReason::memory_fault;

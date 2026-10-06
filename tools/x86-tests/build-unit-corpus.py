@@ -168,6 +168,9 @@ EXCLUDED_FEX_SOURCES = {
     "X87/FXAM_Simple.asm": "expects FEX's FXAM, which classifies zero as a "
     "normal number where x86 classifies it as zero; upstream lists it as a "
     "known failure on native hosts",
+    "X87/X87MMXInteraction.asm": "expects FEX's tag word, which FNSAVE stores "
+    "as valid for every full register where x86 tags zeros and special "
+    "values; upstream lists it as a known failure on native hosts",
 }
 
 # HLT is the FEX test terminator and is not part of a case's userspace form.

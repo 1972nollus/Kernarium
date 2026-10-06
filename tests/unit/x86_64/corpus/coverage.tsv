@@ -80,7 +80,7 @@ andb:mem,r8	0	2	3
 andb:r8,mem	0	2	0
 andb:r8,r8	321	0	0
 andl:imm,mem	0	3	0
-andl:imm,r32	321	39	0
+andl:imm,r32	321	38	0
 andl:mem,r32	0	2	0
 andl:r32,mem	0	3	0
 andl:r32,r32	321	1	0
@@ -565,7 +565,7 @@ fisubll:mem	0	3	0
 fisubrll:mem	0	3	0
 fisubrs:mem	0	3	0
 fisubs:mem	0	3	0
-fld1:	0	79	2
+fld1:	0	78	2
 fld:st	0	6	1
 fldcww:mem	0	37	0
 fldenv:mem	0	7	0
@@ -574,7 +574,7 @@ fldl2t:	0	2	0
 fldlg2:	0	2	0
 fldll:mem	0	92	1
 fldln2:	0	2	0
-fldpi:	0	7	0
+fldpi:	0	6	0
 flds:mem	0	37	1
 fldt:mem	0	154	1
 fldz:	0	61	0
@@ -583,9 +583,9 @@ fmulll:mem	0	3	0
 fmulp:st,st	0	5	0
 fmuls:mem	0	3	0
 fnclex:	0	1	0
-fninit:	0	74	2
+fninit:	0	73	2
 fnop:	0	1	0
-fnsave:mem	0	7	0
+fnsave:mem	0	6	0
 fnstcww:mem	0	39	0
 fnstenv:mem	0	7	0
 fnstsww:mem	0	2	0
@@ -1671,7 +1671,7 @@ shrdww:imm,r16,r16	178	1	0
 shrdww:r8,r16,mem	296	2	0
 shrdww:r8,r16,r16	237	6	0
 shrl:imm,mem	0	1	0
-shrl:imm,r32	433	3	0
+shrl:imm,r32	433	2	0
 shrl:mem	0	2	0
 shrl:r32	433	0	0
 shrl:r8,mem	0	1	0
@@ -3178,7 +3178,7 @@ vxorps:xmm,xmm,xmm	0	2	1
 vxorps:ymm,ymm,ymm	0	3	0
 vzeroalll:	2450	1	0
 vzeroupper:	1	1	0
-wait:	0	90	0
+wait:	0	89	0
 wrfsbaseqq:r64	0	1	0
 wrgsbasell:r32	0	1	0
 wrgsbaseqq:r64	0	4	0

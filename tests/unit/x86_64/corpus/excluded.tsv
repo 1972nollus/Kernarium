@@ -78,6 +78,7 @@ fex	X87/D9_F2.asm	upstream marks this source unsupported
 fex	X87/D9_F8.asm	upstream marks this source unsupported
 fex	X87/D9_F9.asm	upstream marks this source unsupported
 fex	X87/FXAM_Simple.asm	expects FEX's FXAM, which classifies zero as a normal number where x86 classifies it as zero; upstream lists it as a known failure on native hosts
+fex	X87/X87MMXInteraction.asm	expects FEX's tag word, which FNSAVE stores as valid for every full register where x86 tags zeros and special values; upstream lists it as a known failure on native hosts
 fex	X87/invalid_simple_test.asm	exact duplicate normalized case
 fex	X87_F64/D8_F0_2_F64.asm	exact duplicate normalized case
 fex	X87_F64/D9_05_F64.asm	exact duplicate normalized case

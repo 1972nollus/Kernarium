@@ -149,12 +149,14 @@ covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
 flags, so a check needs only to find the cases.
 
 A translation assumes its context's floating-point mode: MXCSR.DAZ and FTZ,
-and which exceptions MXCSR unmasks, none, only some of invalid operation,
+which exceptions MXCSR unmasks, none, only some of invalid operation,
 division by zero and overflow (the special checks), or any other (all
-checks). The dispatch selects the space for the guest's MXCSR. An LDMXCSR,
-FXRSTOR or XRSTOR that changes the mode ends the dispatch after itself, and
-the next one runs in the new mode's space; one that changes only the
-rounding stays.
+checks), and whether the x87 control word unmasks any (the x87 checks). The
+dispatch selects the space for the guest's MXCSR and control word. An
+LDMXCSR, FLDCW, FLDENV, FRSTOR, FNINIT, FNSAVE, FXRSTOR or XRSTOR that
+changes the mode ends the dispatch after itself, and the next one runs in
+the new mode's space; one that changes only the rounding or the precision
+stays.
 FPCR.FZ is MXCSR.DAZ, which flushes inputs as x86 does but also flushes a
 result that is tiny before rounding, where x86 applies FTZ after rounding.
 The checks take:
@@ -216,13 +218,28 @@ signaling NaN and a denormal operand for a denormal. The embedded stack follows
 the tag word: a read of an empty register is a stack underflow and a push onto
 a full one an overflow, each raising invalid operation with the stack-fault
 flag and going on with the QNaN indefinite, and FXAM classifies its operand
-from the 80-bit format. Two deviations from hardware remain, shared with the
-gadget engine: C1 stays clear when a result rounds up, and FPREM computes
-its remainder in one step, never reporting a partial one with C2.
+from the 80-bit format. FNSAVE and FNSTENV tag each full register from its
+value, as zero, special or valid, as an Intel host does at the store. Three
+deviations from hardware remain, shared with the gadget engine: C1 stays
+clear when a result rounds up, FPREM computes its remainder in one step,
+never reporting a partial one with C2, and an unmasked overflow or underflow
+of a register result leaves the masked result and precision, where x86
+rebiases the exponent.
 
-The engine does not deliver unmasked x87 exceptions as `#MF`, and has no
-alignment-check `#AC`. `run_guest_x86_64_exceptions.py --engine jit` fails
-exactly those two cases in each mode.
+Under the x87 checks, every waiting instruction -- each x87 instruction but
+FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE and the no-ops FNENI, FNDISI
+and FNSETPM, and FWAIT, EMMS and any instruction with an MMX register
+operand -- raises `#MF` while ES shows an exception pending, before it does
+anything, with the status word and the control word, shifted left by 16, as
+the error code. An instruction that raises an unmasked invalid operation,
+denormal operand or division by zero, or whose store to memory overflows or
+underflows unmasked, retires with only its status word changed, except that
+a load completes beside a denormal operand and a comparison sets its
+condition codes but does not pop, as on an Intel host. Every load of the
+control word or the status word makes ES and B show whether a flag is
+unmasked. The engine has no alignment-check `#AC`;
+`run_guest_x86_64_exceptions.py --engine jit` fails exactly that case in
+each mode.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
