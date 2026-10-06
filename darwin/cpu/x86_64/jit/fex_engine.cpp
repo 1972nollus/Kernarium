@@ -59,6 +59,7 @@ constexpr std::uint32_t mxcsr_denormals_are_zero = 1U << 6U;
 constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15U;
 constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
+constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 
 /* x86 orders every store before every later one. FEXCore emulates that with
  * acquire loads and release stores, which costs about 30% on memory-bound
@@ -840,6 +841,15 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	const auto src_base = copy ? op.Src - gregs[X86State::REG_RSI] : 0;
 	if (compat32)
 		op.Count = static_cast<std::uint32_t>(op.Count);
+	const ExitAt at{op.GuestRIP, op.Unretired};
+	/* Under RFLAGS.AC a misaligned first element raises #AC before any
+	 * moves, as in the gadget engine; the rest keep its alignment. */
+	if ((space.fp_mode & Core::EMBEDDER_FP_MODE_ALIGNMENT) != 0 && op.Count != 0 &&
+		((space.linear(op.Dest) | (copy ? space.linear(op.Src) : 0U)) & (element - 1U)) != 0) {
+		frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_ALIGNMENT_FAULT;
+		record_exit(*frame, at);
+		return 1;
+	}
 	/* An operand's register, from its segment address. */
 	const auto offset = [&](std::uint64_t address, std::uint64_t base) {
 		const auto value = address - base;
@@ -852,7 +862,6 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		if (copy)
 			gregs[X86State::REG_RSI] = offset(op.Src, src_base);
 	};
-	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
 		record_fault(*frame, memory, address, access, at);
 		save_progress();
@@ -997,10 +1006,11 @@ constexpr std::uint8_t x87_error_vector = 16;
 	const auto unmasked = ~(cpu.mxcsr >> 7U) & 0x3fU;
 	const auto checks = (unmasked & 0x32U) != 0 ? Core::EMBEDDER_FP_MODE_CHECK_ALL :
 		unmasked != 0 ? Core::EMBEDDER_FP_MODE_CHECK_SPECIAL : 0U;
-	/* And the x87 control word unmasking any exception. */
+	/* And the x87 control word unmasking any exception, and RFLAGS.AC. */
 	const auto x87 = (~cpu.x87_control & x87_exception_masks) != 0 ? Core::EMBEDDER_FP_MODE_X87 : 0U;
+	const auto alignment = (cpu.rflags & rflags_alignment_check) != 0 ? Core::EMBEDDER_FP_MODE_ALIGNMENT : 0U;
 	return ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ? Core::EMBEDDER_FP_MODE_DAZ : 0U) |
-		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks | x87;
+		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks | x87 | alignment;
 }
 
 [[nodiscard]] std::uint64_t read_fpcr() noexcept
@@ -1471,6 +1481,13 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		result.syndrome = x87_error_vector;
 		run.error_code = static_cast<std::int32_t>(cpu.x87_status |
 			(std::uint32_t{cpu.x87_control} << 16U));
+		return run;
+	case Core::EMBEDDER_EXIT_ALIGNMENT_FAULT:
+		/* #AC, which reports no address. */
+		result.reason = ::uml::cpu::ExitReason::memory_fault;
+		result.fault.address = 0;
+		result.fault.access = MemoryAccess::read;
+		result.fault.alignment = true;
 		return run;
 	case Core::EMBEDDER_EXIT_MEMORY_FAULT:
 		result.reason = ::uml::cpu::ExitReason::memory_fault;

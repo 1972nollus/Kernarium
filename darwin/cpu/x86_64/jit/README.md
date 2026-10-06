@@ -151,12 +151,12 @@ flags, so a check needs only to find the cases.
 A translation assumes its context's floating-point mode: MXCSR.DAZ and FTZ,
 which exceptions MXCSR unmasks, none, only some of invalid operation,
 division by zero and overflow (the special checks), or any other (all
-checks), and whether the x87 control word unmasks any (the x87 checks). The
-dispatch selects the space for the guest's MXCSR and control word. An
-LDMXCSR, FLDCW, FLDENV, FRSTOR, FNINIT, FNSAVE, FXRSTOR or XRSTOR that
-changes the mode ends the dispatch after itself, and the next one runs in
-the new mode's space; one that changes only the rounding or the precision
-stays.
+checks), whether the x87 control word unmasks any (the x87 checks), and
+RFLAGS.AC (the alignment checks). The dispatch selects the space for the
+guest's MXCSR, control word and RFLAGS. An LDMXCSR, FLDCW, FLDENV, FRSTOR,
+FNINIT, FNSAVE, FXRSTOR, XRSTOR, POPF or IRET that changes the mode ends the
+dispatch after itself, and the next one runs in the new mode's space; one
+that changes only the rounding or the precision stays.
 FPCR.FZ is MXCSR.DAZ, which flushes inputs as x86 does but also flushes a
 result that is tiny before rounding, where x86 applies FTZ after rounding.
 The checks take:
@@ -237,9 +237,18 @@ underflows unmasked, retires with only its status word changed, except that
 a load completes beside a denormal operand and a comparison sets its
 condition codes but does not pop, as on an Intel host. Every load of the
 control word or the status word makes ES and B show whether a flag is
-unmasked. The engine has no alignment-check `#AC`;
-`run_guest_x86_64_exceptions.py --engine jit` fails exactly that case in
-each mode.
+unmasked.
+
+Under the alignment checks, an access of two, four or eight bytes whose
+address is not a multiple of its size raises `#AC` before the instruction
+does anything, as on the gadget engine: a load or store, an atomic, each
+element of a REP MOVS or STOS (whose first decides), and the operand of a
+bit test, whose byte the engine reads. An x87 80-bit operand wants eight
+bytes, an environment or state image the width of its fields. Wider vector
+operands, masked vector moves, gathers, extended-state images and far
+transfers raise none. The gadget engine checks only an instruction's first
+access and the JIT every one, which differs only for an instruction whose
+later access is aligned differently, such as ENTER with a nesting level.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
