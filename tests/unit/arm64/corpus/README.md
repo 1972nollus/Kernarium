@@ -365,14 +365,14 @@ each record covers and owns the oracle's request and response formats.
 
 Every native record has `svl` 64, the M4's streaming vector length and the
 only one with native expectations. The runner runs its cases only for an
-engine whose `sme_support` is `complete` where the virtual CPU implements
-SME at that SVL, and a case that needs `sme2` only for an engine at `sme2`
-where the virtual CPU has the SME2 profile; it counts every other case as
-skipped for the feature. Each case names the profile features it needs
-(`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). A case starts with X18 zero, because Darwin clears X18 whenever a
-thread returns to user mode, and forms only addresses with a zero top byte,
-because the host ignores the top byte and the guest's default state does
-not.
+engine whose `sme_support` is at least `complete` where the virtual CPU
+implements SME at that SVL, and a case that needs `sme2` only for an engine
+at `sme2` where the virtual CPU has the SME2 profile; it counts every other
+case as skipped for the feature. Each case names the profile features it
+needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). A case
+starts with X18 zero, because Darwin clears X18 whenever a thread returns
+to user mode, and forms only addresses with a zero top byte, because the
+host ignores the top byte and the guest's default state does not.
 
 The oracle catches a case's traps on a Mach exception port and reads its
 state there, without a signal frame, so streaming state reaches the response

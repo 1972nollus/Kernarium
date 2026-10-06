@@ -480,9 +480,9 @@ inventory tables and that completeness boundary.
 
 The `arm64-sme-native` records hold SME results observed on the M4 at its
 streaming vector length, 64 bytes. They run for each engine whose
-`sme_support` is `complete` where the virtual CPU implements SME at that
-length, which needs an SME host and the guest-SME policy on, and a case
-that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
+`sme_support` is at least `complete` where the virtual CPU implements SME
+at that length, which needs an SME host and the guest-SME policy on, and a
+case that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
 skipped, and the `arm64-absent-sme` record pins every SME profile encoding
 UNDEFINED on every host. The
 `arm64-instruction-corpus-sme-native` tooling test re-derives their cases from

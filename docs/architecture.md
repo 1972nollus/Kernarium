@@ -356,9 +356,8 @@ The gadget engine implements all of the profile but the SME2 forms
 (`sme_support` is `complete`). Its control core is SMSTART and SMSTOP, MRS
 and MSR of SVCR and TPIDR2_EL0, RDSVL, ADDSVL and ADDSPL, LDR and STR of ZA
 and ZT0, and ZERO of ZA and ZT0, with every size read from the vCPU's SVL at
-run time. Its SME part follows the
-veneer island, so appending to it moves no base entry and re-encodes no
-veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
+run time. Its SME part follows the veneer island, so appending to it moves
+no base entry and re-encodes no veneer call. A translation belongs to one SVCR mode, PSTATE.SM and
 PSTATE.ZA: each mode has its own program cache and links, an SVCR write
 ends its block, and a mode change empties the return ring. A program
 translated with SM = 0 and ZA = 1 reaches ZA and ZT0 through a helper on the
