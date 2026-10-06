@@ -79,9 +79,13 @@ gadget x87_tangent
 	add sp, sp, #32
 	mov w13, #0
 	x87_store_stack w13, x9, w10
+	/* C2: an operand too large to reduce, which stays as it was. */
+	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	tbnz w9, #10, Lx86_x87_tangent_unreduced
 	mov x9, #0x8000000000000000
 	mov w10, #0x3fff
 	x87_push x9, w10
+Lx86_x87_tangent_unreduced:
 	retire_and_next
 
 gadget x87_extract
@@ -90,10 +94,12 @@ gadget x87_extract
 	mov w13, #0
 	x87_load_stack w13, x9, w10
 	x87_store_value sp, x9, w10
-	mov x0, sp
-	add x1, sp, #16
-	add x2, sp, #32
+	mov x0, _cpu
+	mov x1, sp
+	add x2, sp, #16
+	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_extract)
+	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
 	mov w13, #0
@@ -123,7 +129,11 @@ gadget x87_sincos
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
+	/* C2: an operand too large to reduce, which stays as it was. */
+	ldrh w11, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	tbnz w11, #10, Lx86_x87_sincos_unreduced
 	x87_push x9, w10
+Lx86_x87_sincos_unreduced:
 	retire_and_next
 
 /* Current quotient-bit modeling intentionally clears C0/C1/C2/C3 after

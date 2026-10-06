@@ -433,11 +433,14 @@ checks, and runs every other block, linked, as `execute` does:
   before it, a memory destination included, and faults; MXCSR then holds only
   the flags checked before the computation when one of those was unmasked.
   Masked flags accumulate.
-- x87, run checked: the softfloat helpers set the status word's flags. An
-  unmasked invalid operation, denormal or division by zero, or an unmasked
-  overflow or underflow of a store, restores the registers, the stack and
-  memory, and any unmasked exception sets ES and B for the next waiting
-  instruction.
+- x87, run checked: the softfloat helpers set the status word's flags, a
+  denormal operand's included. An unmasked invalid operation, denormal
+  operand or division by zero restores the registers, the stack and memory
+  and drops the result's own exceptions, except that FLD of a single or
+  double completes beside a denormal operand and a comparison keeps its
+  condition codes or flags. An unmasked overflow or underflow of a store
+  stores nothing and raises no precision. Any unmasked exception sets ES and
+  B for the next waiting instruction.
 
 An instruction that could change what a run checks retires and leaves the
 engine, so linked code never runs past it unchecked: POPF setting AC; LDMXCSR,

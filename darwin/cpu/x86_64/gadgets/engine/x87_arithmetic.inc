@@ -81,6 +81,8 @@ gadget x87_compare_\name
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
+	/* Bit 8 of the register word marks FUCOM and FUCOMI. */
+	lsr w3, w24, #8
 	bl NAME(uml_x86_64_x87_compare)
 	x87_leave_if_raised
 	add sp, sp, #32
@@ -146,6 +148,7 @@ gadget x87_test_zero
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
+	mov w3, #0
 	bl NAME(uml_x86_64_x87_compare)
 	x87_leave_if_raised
 	add sp, sp, #32
@@ -235,6 +238,7 @@ gadget x87_memory_\type\()_compare_\pop
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
+	mov w3, #0
 	bl NAME(uml_x86_64_x87_compare)
 	x87_leave_if_raised
 	add sp, sp, #32

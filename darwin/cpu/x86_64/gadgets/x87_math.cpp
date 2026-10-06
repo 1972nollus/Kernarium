@@ -8,6 +8,7 @@ extern "C" {
 #include <SoftFloat-3e/softfloat.h>
 }
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -17,6 +18,7 @@ namespace uml::cpu::x86_64::gadgets {
 namespace {
 
 constexpr std::uint16_t status_invalid = 1U << 0U;
+constexpr std::uint16_t status_denormal = 1U << 1U;
 constexpr std::uint16_t status_zero_divide = 1U << 2U;
 constexpr std::uint16_t status_overflow = 1U << 3U;
 constexpr std::uint16_t status_underflow = 1U << 4U;
@@ -25,6 +27,10 @@ constexpr std::uint16_t status_error_summary = 1U << 7U;
 constexpr std::uint16_t status_exception_mask = 0x7fU;
 /* The six exceptions the control word masks. */
 constexpr std::uint16_t status_maskable_exceptions = 0x3fU;
+constexpr std::uint16_t status_c2 = 1U << 10U;
+/* The denormal-operand exception, which SoftFloat has no flag for, in a
+ * bit of softfloat_state::exceptionFlags that SoftFloat does not use. */
+constexpr std::uint_fast8_t flag_denormal = 0x20U;
 
 [[nodiscard]] constexpr extFloat80_t to_soft(
 	const X87Register &value) noexcept
@@ -65,8 +71,11 @@ void commit_exceptions(CpuState &cpu,
 	const softfloat_state &state) noexcept
 {
 	std::uint16_t raised{};
+	/* An invalid operation takes precedence over a denormal operand. */
 	if ((state.exceptionFlags & softfloat_flag_invalid) != 0)
 		raised |= status_invalid;
+	else if ((state.exceptionFlags & flag_denormal) != 0)
+		raised |= status_denormal;
 	if ((state.exceptionFlags & softfloat_flag_infinite) != 0)
 		raised |= status_zero_divide;
 	if ((state.exceptionFlags & softfloat_flag_overflow) != 0)
@@ -90,10 +99,21 @@ void commit_exceptions(CpuState &cpu,
 		cpu.x87_status |= status_error_summary;
 }
 
+/* Raises the denormal-operand exception for an operand that is denormal or
+ * pseudo-denormal. */
+void denormal_operand(softfloat_state &state,
+	const X87Register &value) noexcept
+{
+	if ((value.sign_exponent & 0x7fffU) == 0 && value.significand != 0)
+		state.exceptionFlags |= flag_denormal;
+}
+
 [[nodiscard]] X87Register from_float32(CpuState &cpu,
 	std::uint32_t bits) noexcept
 {
 	auto state = soft_state(cpu);
+	if ((bits & 0x7f800000U) == 0 && (bits & 0x007fffffU) != 0)
+		state.exceptionFlags |= flag_denormal;
 	const auto result = f32_to_extF80(&state, float32_t{bits});
 	commit_exceptions(cpu, state);
 	return from_soft(result);
@@ -103,6 +123,9 @@ void commit_exceptions(CpuState &cpu,
 	std::uint64_t bits) noexcept
 {
 	auto state = soft_state(cpu);
+	if ((bits & 0x7ff0000000000000ULL) == 0 &&
+		(bits & 0x000fffffffffffffULL) != 0)
+		state.exceptionFlags |= flag_denormal;
 	const auto result = f64_to_extF80(&state, float64_t{bits});
 	commit_exceptions(cpu, state);
 	return from_soft(result);
@@ -160,6 +183,11 @@ void commit_exceptions(CpuState &cpu,
 		(value.significand & 0x7fffffffffffffffULL) != 0;
 }
 
+[[nodiscard]] constexpr bool is_signaling(const X87Register &value) noexcept
+{
+	return is_nan(value) && (value.significand & 0x4000000000000000ULL) == 0;
+}
+
 [[nodiscard]] constexpr X87Register quiet_nan() noexcept
 {
 	return {0xc000000000000000ULL, 0x7fffU};
@@ -191,6 +219,20 @@ enum class TranscendentalOperation : std::uint8_t {
 	tangent,
 };
 
+/* FSIN, FCOS, FPTAN and FSINCOS reduce an operand of magnitude below 2^63
+ * and clear C2. One of 2^63 or more they leave as it is, and the stack
+ * too, and set C2. */
+[[nodiscard]] bool reducible(CpuState &cpu, const X87Register &value) noexcept
+{
+	if ((value.sign_exponent & 0x7fffU) >= 0x3fffU + 63U &&
+		!is_nan(value) && !is_infinity(value)) {
+		cpu.x87_status |= status_c2;
+		return false;
+	}
+	cpu.x87_status &= static_cast<std::uint16_t>(~status_c2);
+	return true;
+}
+
 [[nodiscard]] X87Register transcendental(CpuState &cpu,
 	TranscendentalOperation operation, X87Register value) noexcept
 {
@@ -201,6 +243,7 @@ enum class TranscendentalOperation : std::uint8_t {
 	if (is_zero(value) && operation != TranscendentalOperation::cosine)
 		return value;
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, value);
 	const auto input = to_float128(state, value);
 	float128_t result{};
 	switch (operation) {
@@ -223,6 +266,7 @@ enum class TranscendentalOperation : std::uint8_t {
 	X87Register value) noexcept
 {
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, value);
 	const float128_t one{0, 0x3fff000000000000ULL};
 	const auto result = f128_sub(&state,
 		FEXCore::cephes_128bit::exp2l(to_float128(state, value)), one);
@@ -235,6 +279,30 @@ enum class TranscendentalOperation : std::uint8_t {
 	X87Register multiplier, bool plus_one) noexcept
 {
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, value);
+	denormal_operand(state, multiplier);
+	/* log2 of zero is an infinity, of which a factor other than zero or
+	 * an infinity raises division by zero; a zero factor of it and the
+	 * logarithm of a number below zero are invalid. */
+	if (!plus_one && !is_nan(value) && !is_nan(multiplier)) {
+		const bool negative = (value.sign_exponent & 0x8000U) != 0;
+		const bool multiplier_negative =
+			(multiplier.sign_exponent & 0x8000U) != 0;
+		if ((is_zero(value) && is_zero(multiplier)) ||
+			(negative && !is_zero(value))) {
+			state.exceptionFlags |= softfloat_flag_invalid;
+			commit_exceptions(cpu, state);
+			return {0xc000000000000000ULL, 0xffffU};
+		}
+		if (is_zero(value)) {
+			if (!is_infinity(multiplier))
+				state.exceptionFlags |= softfloat_flag_infinite;
+			commit_exceptions(cpu, state);
+			return {0x8000000000000000ULL,
+				static_cast<std::uint16_t>(multiplier_negative ?
+					0x7fffU : 0xffffU)};
+		}
+	}
 	auto input = to_float128(state, value);
 	if (plus_one) {
 		const float128_t one{0, 0x3fff000000000000ULL};
@@ -251,6 +319,8 @@ enum class TranscendentalOperation : std::uint8_t {
 	X87Register x) noexcept
 {
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, y);
+	denormal_operand(state, x);
 	const auto result = FEXCore::cephes_128bit::atan2l(
 		to_float128(state, y), to_float128(state, x));
 	const auto converted = from_float128(state, result);
@@ -262,6 +332,8 @@ enum class TranscendentalOperation : std::uint8_t {
 	X87Register exponent) noexcept
 {
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, value);
+	denormal_operand(state, exponent);
 	const extFloat80_t zero{};
 	if (extF80_eq(&state, to_soft(value), zero)) {
 		if (is_infinity(exponent) &&
@@ -287,6 +359,8 @@ enum class TranscendentalOperation : std::uint8_t {
 	X87Register divisor, bool nearest) noexcept
 {
 	auto state = soft_state(cpu, true);
+	denormal_operand(state, dividend);
+	denormal_operand(state, divisor);
 	extFloat80_t result{};
 	if (nearest) {
 		result = extF80_rem(&state, to_soft(dividend), to_soft(divisor));
@@ -320,28 +394,53 @@ enum class TranscendentalOperation : std::uint8_t {
 	return from_soft(result);
 }
 
-[[nodiscard]] X87Register extract_significand(
-	X87Register value) noexcept
+/* FXTRACT: the exponent of ST(0)'s normalized value and its significand
+ * with the exponent of 1.0. Zero's exponent is negative infinity, which
+ * raises division by zero; an infinity's is positive infinity; a NaN
+ * comes back as both. */
+void extract(CpuState &cpu, X87Register value, X87Register &exponent_result,
+	X87Register &significand_result) noexcept
 {
+	auto state = soft_state(cpu, true);
+	const auto sign = static_cast<std::uint16_t>(value.sign_exponent & 0x8000U);
 	const auto exponent = value.sign_exponent & 0x7fffU;
-	if (exponent == 0 || exponent == 0x7fffU)
-		return value;
-	value.sign_exponent = static_cast<std::uint16_t>(
-		(value.sign_exponent & 0x8000U) | 0x3fffU);
-	return value;
-}
-
-[[nodiscard]] X87Register extract_exponent(X87Register value) noexcept
-{
-	const auto exponent = value.sign_exponent & 0x7fffU;
-	if (exponent == 0 && value.significand == 0)
-		return {0x8000000000000000ULL, 0xffffU};
-	if (exponent == 0x7fffU) {
-		if (is_infinity(value))
-			return {0x8000000000000000ULL, 0x7fffU};
-		return value;
+	if (is_nan(value)) {
+		if (is_signaling(value))
+			state.exceptionFlags |= softfloat_flag_invalid;
+		value.significand |= 0x4000000000000000ULL;
+		exponent_result = value;
+		significand_result = value;
+	} else if (is_infinity(value)) {
+		exponent_result = {0x8000000000000000ULL, 0x7fffU};
+		significand_result = value;
+	} else if (is_zero(value)) {
+		state.exceptionFlags |= softfloat_flag_infinite;
+		exponent_result = {0x8000000000000000ULL, 0xffffU};
+		significand_result = value;
+	} else if (exponent == 0x7fffU || (exponent != 0 &&
+		(value.significand >> 63U) == 0)) {
+		/* A pseudo-infinity, pseudo-NaN or unnormal is unsupported. */
+		state.exceptionFlags |= softfloat_flag_invalid;
+		exponent_result = quiet_nan();
+		exponent_result.sign_exponent |= 0x8000U;
+		significand_result = exponent_result;
+	} else {
+		auto significand = value.significand;
+		std::int32_t unbiased = static_cast<std::int32_t>(exponent) - 16383;
+		if (exponent == 0) {
+			denormal_operand(state, value);
+			/* A denormal's value is its significand times 2^-16445,
+			 * a pseudo-denormal's the same as with exponent 1. */
+			const auto shift = static_cast<std::int32_t>(
+				std::countl_zero(significand));
+			significand <<= shift;
+			unbiased = -16382 - shift;
+		}
+		exponent_result = from_i32(unbiased);
+		significand_result = {significand,
+			static_cast<std::uint16_t>(sign | 0x3fffU)};
 	}
-	return from_i32(static_cast<std::int32_t>(exponent) - 16383);
+	commit_exceptions(cpu, state);
 }
 
 enum class BinaryOperation : std::uint8_t {
@@ -355,6 +454,8 @@ enum class BinaryOperation : std::uint8_t {
 	X87Register left, X87Register right) noexcept
 {
 	auto state = soft_state(cpu);
+	denormal_operand(state, left);
+	denormal_operand(state, right);
 	extFloat80_t result{};
 	switch (operation) {
 	case BinaryOperation::add:
@@ -381,12 +482,21 @@ enum class CompareResult : std::uint8_t {
 	unordered,
 };
 
+/* FCOM, FICOM, FCOMI and FTST raise invalid operation for any NaN, and the
+ * quiet FUCOM and FUCOMI only for a signaling one; a NaN makes the compare
+ * unordered and takes precedence over a denormal operand. */
 [[nodiscard]] CompareResult compare(CpuState &cpu, X87Register left,
-	X87Register right) noexcept
+	X87Register right, bool quiet) noexcept
 {
-	if (is_nan(left) || is_nan(right))
-		return CompareResult::unordered;
 	auto state = soft_state(cpu);
+	if (is_nan(left) || is_nan(right)) {
+		if (!quiet || is_signaling(left) || is_signaling(right))
+			state.exceptionFlags |= softfloat_flag_invalid;
+		commit_exceptions(cpu, state);
+		return CompareResult::unordered;
+	}
+	denormal_operand(state, left);
+	denormal_operand(state, right);
 	const bool equal = extF80_eq(&state, to_soft(left), to_soft(right));
 	const bool less = !equal && extF80_lt(&state, to_soft(left), to_soft(right));
 	commit_exceptions(cpu, state);
@@ -548,9 +658,11 @@ UML_X86_64_DEFINE_X87_BINARY(divide, divide)
 #undef UML_X86_64_DEFINE_X87_BINARY
 
 extern "C" std::uint32_t uml_x86_64_x87_compare(CpuState *cpu,
-	const X87Register *left, const X87Register *right) noexcept
+	const X87Register *left, const X87Register *right,
+	std::uint32_t quiet) noexcept
 {
-	return static_cast<std::uint32_t>(compare(*cpu, *left, *right));
+	return static_cast<std::uint32_t>(compare(*cpu, *left, *right,
+		(quiet & 1U) != 0));
 }
 
 extern "C" void uml_x86_64_x87_f2xm1(CpuState *cpu,
@@ -576,7 +688,9 @@ extern "C" void uml_x86_64_x87_fyl2xp1(CpuState *cpu,
 extern "C" void uml_x86_64_x87_tangent(CpuState *cpu,
 	const X87Register *input, X87Register *result) noexcept
 {
-	*result = transcendental(*cpu, TranscendentalOperation::tangent, *input);
+	*result = reducible(*cpu, *input) ?
+		transcendental(*cpu, TranscendentalOperation::tangent, *input) :
+		*input;
 }
 
 extern "C" void uml_x86_64_x87_atan(CpuState *cpu,
@@ -586,11 +700,11 @@ extern "C" void uml_x86_64_x87_atan(CpuState *cpu,
 	*result = fpatan(*cpu, *y, *x);
 }
 
-extern "C" void uml_x86_64_x87_extract(const X87Register *input,
-	X87Register *exponent_result, X87Register *significand_result) noexcept
+extern "C" void uml_x86_64_x87_extract(CpuState *cpu,
+	const X87Register *input, X87Register *exponent_result,
+	X87Register *significand_result) noexcept
 {
-	*exponent_result = extract_exponent(*input);
-	*significand_result = extract_significand(*input);
+	extract(*cpu, *input, *exponent_result, *significand_result);
 }
 
 extern "C" void uml_x86_64_x87_fprem(CpuState *cpu,
@@ -611,6 +725,7 @@ extern "C" void uml_x86_64_x87_sqrt(CpuState *cpu,
 	const X87Register *input, X87Register *result) noexcept
 {
 	auto state = soft_state(*cpu);
+	denormal_operand(state, *input);
 	*result = from_soft(extF80_sqrt(&state, to_soft(*input)));
 	commit_exceptions(*cpu, state);
 }
@@ -619,6 +734,10 @@ extern "C" void uml_x86_64_x87_sincos(CpuState *cpu,
 	const X87Register *input, X87Register *sine_result,
 	X87Register *cosine_result) noexcept
 {
+	if (!reducible(*cpu, *input)) {
+		*sine_result = *input;
+		return;
+	}
 	*sine_result = transcendental(
 		*cpu, TranscendentalOperation::sine, *input);
 	*cosine_result = transcendental(
@@ -629,8 +748,10 @@ extern "C" void uml_x86_64_x87_round(CpuState *cpu,
 	const X87Register *input, X87Register *result) noexcept
 {
 	auto state = soft_state(*cpu);
+	denormal_operand(state, *input);
+	/* FRNDINT raises precision for an operand that is not an integer. */
 	*result = from_soft(extF80_roundToInt(&state, to_soft(*input),
-		state.roundingMode, false));
+		state.roundingMode, true));
 	commit_exceptions(*cpu, state);
 }
 
@@ -644,13 +765,17 @@ extern "C" void uml_x86_64_x87_scale(CpuState *cpu,
 extern "C" void uml_x86_64_x87_sine(CpuState *cpu,
 	const X87Register *input, X87Register *result) noexcept
 {
-	*result = transcendental(*cpu, TranscendentalOperation::sine, *input);
+	*result = reducible(*cpu, *input) ?
+		transcendental(*cpu, TranscendentalOperation::sine, *input) :
+		*input;
 }
 
 extern "C" void uml_x86_64_x87_cosine(CpuState *cpu,
 	const X87Register *input, X87Register *result) noexcept
 {
-	*result = transcendental(*cpu, TranscendentalOperation::cosine, *input);
+	*result = reducible(*cpu, *input) ?
+		transcendental(*cpu, TranscendentalOperation::cosine, *input) :
+		*input;
 }
 
 extern "C" std::uint32_t uml_x86_64_x87_image_tags(

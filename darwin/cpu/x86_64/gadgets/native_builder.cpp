@@ -5297,9 +5297,14 @@ struct FlagState final {
 	} else {
 		return false;
 	}
+	/* FUCOM, FUCOMP, FUCOMPP, FUCOMI and FUCOMIP, which raise invalid
+	 * operation only for a signaling NaN, mark the register word. */
+	const bool quiet_compare = (opcode == 0xdd && (group == 4 || group == 5)) ||
+		(opcode == 0xda && modrm == 0xe9) ||
+		((opcode == 0xdb || opcode == 0xdf) && group == 5);
 	stream.push_back(entry_address(entry));
 	if (carries_index)
-		stream.push_back(index);
+		stream.push_back(index | (quiet_compare ? 0x100U : 0U));
 	return true;
 }
 
