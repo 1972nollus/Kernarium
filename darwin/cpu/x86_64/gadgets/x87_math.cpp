@@ -67,6 +67,13 @@ constexpr std::uint_fast8_t flag_denormal = 0x20U;
 		default: state.roundingPrecision = 80; break;
 		}
 	}
+	/* While the control word unmasks overflow or underflow, an extended
+	 * result out of range is rebiased, as x87 delivers it to a register;
+	 * the runtime's checked run then commits it. */
+	if ((cpu.x87_control & status_overflow) == 0)
+		state.rebias |= softfloat_rebias_overflow;
+	if ((cpu.x87_control & status_underflow) == 0)
+		state.rebias |= softfloat_rebias_underflow;
 	return state;
 }
 
@@ -338,29 +345,34 @@ enum class TranscendentalOperation : std::uint8_t {
 	return converted;
 }
 
+/* FSCALE adds ST(1), truncated, to ST(0)'s exponent and rounds once
+ * (`extF80_scale`), whatever the exponent's size: a factor of 2^n itself
+ * overflows long before the result does. A NaN propagates as in a
+ * multiplication; 2^+inf is an infinity, which a zero makes invalid, and
+ * 2^-inf a zero, which an infinity makes invalid. */
 [[nodiscard]] X87Register scale(CpuState &cpu, X87Register value,
 	X87Register exponent) noexcept
 {
 	auto state = soft_state(cpu, true);
 	denormal_operand(state, value);
 	denormal_operand(state, exponent);
-	const extFloat80_t zero{};
-	if (extF80_eq(&state, to_soft(value), zero)) {
-		if (is_infinity(exponent) &&
-			(exponent.sign_exponent & 0x8000U) == 0) {
-			state.exceptionFlags |= softfloat_flag_invalid;
-			commit_exceptions(cpu, state);
-			return quiet_nan();
-		}
-		commit_exceptions(cpu, state);
-		return value;
+	extFloat80_t result{};
+	if (is_nan(value) || is_nan(exponent)) {
+		result = extF80_mul(&state, to_soft(value), to_soft(exponent));
+	} else if (is_infinity(exponent)) {
+		const X87Register infinity{0x8000000000000000ULL, 0x7fffU};
+		result = (exponent.sign_exponent & 0x8000U) == 0 ?
+			extF80_mul(&state, to_soft(value), to_soft(infinity)) :
+			extF80_div(&state, to_soft(value), to_soft(infinity));
+	} else {
+		/* Any n beyond 2^16 saturates the result. */
+		std::int32_t n = (exponent.sign_exponent & 0x8000U) != 0 ?
+			-0x10000 : 0x10000;
+		if ((exponent.sign_exponent & 0x7fffU) < 0x3fffU + 16U)
+			n = static_cast<std::int32_t>(extF80_to_i32(&state,
+				to_soft(exponent), softfloat_round_minMag, false));
+		result = extF80_scale(&state, to_soft(value), n);
 	}
-	const auto integer = extF80_roundToInt(&state, to_soft(exponent),
-		softfloat_round_minMag, false);
-	const auto power = FEXCore::cephes_128bit::exp2l(
-		extF80_to_f128(&state, integer));
-	const auto factor = f128_to_extF80(&state, power);
-	const auto result = extF80_mul(&state, to_soft(value), factor);
 	commit_exceptions(cpu, state);
 	return from_soft(result);
 }

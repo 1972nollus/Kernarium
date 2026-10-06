@@ -225,10 +225,10 @@ from the 80-bit format. FNSAVE and FNSTENV tag each full register from its
 value, as zero, special or valid, as an Intel host does at the store. C1
 says whether rounding increased a result's magnitude, as on the gadget
 engine, and FPREM and FPREM1 compute x87's exact remainders, partial ones
-with C2 and complete ones with the quotient's low bits in C0, C3 and C1. One
-deviation from hardware remains, shared with the gadget engine: an unmasked
-overflow or underflow of a register result leaves the masked result and
-precision, where x86 rebiases the exponent.
+with C2 and complete ones with the quotient's low bits in C0, C3 and C1. An
+overflow or underflow the control word unmasks rebiases a register result's
+exponent by 24576, as x86 does and the gadget engine does through the same
+SoftFloat state, and FSCALE scales across the whole exponent range.
 
 Under the x87 checks, every waiting instruction -- each x87 instruction but
 FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE and the no-ops FNENI, FNDISI

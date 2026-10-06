@@ -363,7 +363,15 @@ FIST, FISTP and FISTTP raise precision for a value they round. FPREM and
 FPREM1 divide the significands as integers (SoftFloat's `extF80_x87Rem`,
 which the JIT shares): operands whose exponents differ by 64 or more get a
 partial remainder and C2, as on an Intel host, and a complete remainder sets
-C0, C3 and C1 to the quotient's low three bits.
+C0, C3 and C1 to the quotient's low three bits. While the control word
+unmasks overflow or underflow, SoftFloat rebiases an extended result out of
+range (`softfloat_rebias_*`): its significand rounds as if the exponent were
+unbounded and the exponent moves back into range by 24576, as x87 delivers
+to a register; an exact tiny result raises an unmasked underflow too.
+Conversions to a single, double or integer never rebias, so a store still
+stores nothing. FSCALE adds the truncated scale to the exponent and rounds
+once (`extF80_scale`), so a result in range is exact however large the
+scale.
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
@@ -482,8 +490,7 @@ A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. An x87 overflow or underflow unmasked for a register destination
-leaves the masked result rather than x87's rebiased one.
+its speed.
 
 ## Code pages
 
