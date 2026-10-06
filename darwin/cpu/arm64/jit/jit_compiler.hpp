@@ -281,6 +281,14 @@ private:
   plan_streaming_fp_simd(std::uint32_t instruction);
   void emit_streaming_word(const StreamingWord &plan);
   void emit_movprfx(std::uint32_t instruction, bool predicated);
+  /* The SVE and SME1 memory forms in a streaming translation (M3). */
+  [[nodiscard]] bool emit_streaming_memory(const detail::SmeEncoding &row,
+                                           std::uint32_t instruction,
+                                           std::uint64_t pc);
+  void emit_memory_span(const detail::SmeMemory &memory,
+                        std::uint32_t instruction, unsigned destination);
+  [[nodiscard]] bool emit_streaming_fp_memory(std::uint32_t instruction,
+                                              std::uint64_t pc);
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,
                             std::uint64_t pc, std::size_t count);
 
