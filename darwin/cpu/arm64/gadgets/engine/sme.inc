@@ -11,16 +11,19 @@
  * no AdvSIMD instruction and calls no helper: a gadget that needs a helper
  * first leaves streaming mode through uml_arm64_gadget_sme_suspend, which
  * spills ZA and ZT0, and enters it again through uml_arm64_gadget_sme_resume.
- * Both keep the host FPSR, which holds the guest's while its floating-point
- * environment is active, across the SMSTART or SMSTOP that would reset it.
+ * Both keep the host FPSR across the SMSTART or SMSTOP that would reset it.
+ * The guest's FPSR is never in the host register in streaming mode, since
+ * XNU resets FPSR on every kernel entry while a thread is in streaming mode;
+ * its FPCR is (uml_arm64_gadget_enter_streaming).
  * The arm64-gadget-streaming-safety test walks everything a streaming
  * program can reach on every linked image.
  *
  * Names: sme_* gadgets run in every mode, sm_* only with SVCR.SM = 1, and
  * nsm_* only with SVCR.SM = 0. The sme_* and sm_* gadgets lie between
- * uml_arm64_gadget_sme_streaming_begin and _end, which the table of
- * streaming entries below names together with the base entries that are
- * safe in streaming mode. */
+ * uml_arm64_gadget_sme_streaming_begin and _end, and the streaming twins of
+ * base gadgets, also sm_*, between uml_arm64_gadget_sm_twins_begin and _end;
+ * the table of streaming entries below names both ranges together with the
+ * base entries that are safe in streaming mode. */
 #include "../sme_layout.h"
 
 .arch_extension sme
@@ -51,10 +54,13 @@ NAME(uml_arm64_gadget_streaming_rows_begin):
 	streaming_row svc, fp_link_entry
 	streaming_row branch, simd_destination_resident_load
 	streaming_row add_sub_immediate_inplace_w_add_n_0, simd_fused_inplace_fmla_4h_0
+	streaming_entry sysreg_fpcr_read_afp
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	streaming_entry execution_count
 #endif
 	streaming_row sme_streaming_begin, sme_streaming_end
+	streaming_row sm_twins_begin, sm_twins_end
+	streaming_row sm_generated_begin, sm_generated_end
 	.purgem streaming_row
 	.purgem streaming_entry
 .globl NAME(uml_arm64_gadget_streaming_rows_end)
@@ -161,17 +167,28 @@ uml_arm64_gadget_sme_suspend:
 
 /* uml_arm64_gadget_enter for a streaming program: the same arguments and
  * result. AAPCS64 keeps d8-d15 across a call, and SMSTART and SMSTOP zero
- * them, so they are saved here. */
+ * them, so they are saved here. The guest's FPCR, with its trap enables
+ * clear, is the host's while the program runs; FPCR survives every kernel
+ * entry. The guest's FPSR stays in CpuState, where the executor left it
+ * with the native FP environment inactive, and the host's own FPCR and FPSR
+ * are back when this returns. */
 .globl NAME(uml_arm64_gadget_enter_streaming)
 .p2align 4
 NAME(uml_arm64_gadget_enter_streaming):
-	stp x29, x30, [sp, #-0x60]!
+	stp x29, x30, [sp, #-0x70]!
 	mov x29, sp
 	stp x19, x20, [sp, #0x10]
 	stp d8, d9, [sp, #0x20]
 	stp d10, d11, [sp, #0x30]
 	stp d12, d13, [sp, #0x40]
 	stp d14, d15, [sp, #0x50]
+	mrs x9, fpcr
+	mrs x10, fpsr
+	stp x9, x10, [sp, #0x60]
+	ldr w11, [x1, #UML_GADGET_CPU_FPCR]
+	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
+	bic w11, w11, w12
+	msr fpcr, x11
 	mov x19, x1
 	bl uml_arm64_gadget_sme_resume
 	bl NAME(uml_arm64_gadget_enter)
@@ -179,12 +196,15 @@ NAME(uml_arm64_gadget_enter_streaming):
 	mov x1, x19
 	bl uml_arm64_gadget_sme_suspend
 	mov x1, x20
+	ldp x9, x10, [sp, #0x60]
+	msr fpcr, x9
+	msr fpsr, x10
 	ldp d14, d15, [sp, #0x50]
 	ldp d12, d13, [sp, #0x40]
 	ldp d10, d11, [sp, #0x30]
 	ldp d8, d9, [sp, #0x20]
 	ldp x19, x20, [sp, #0x10]
-	ldp x29, x30, [sp], #0x60
+	ldp x29, x30, [sp], #0x70
 	ret
 
 /* Translate the \bytes (a register; at most one guest page) at guest address
@@ -467,6 +487,257 @@ gadget nsm_za_memory
 	next_gadget
 3:
 	b uml_arm64_gadget_memory_fault
+
+/* Streaming twins of the base GPR gadgets that streaming mode cannot run:
+ * CSSC CNT's AdvSIMD count, and the memory gadgets. A base load, store, pair,
+ * exclusive, atomic, MOPS or cache gadget runs GPR-only code on its hot path
+ * but calls helpers on its TLB-miss, page-crossing and alignment paths, and
+ * a few of those paths use AdvSIMD, so a streaming program cannot select it.
+ * The files that hold those families are assembled here a second time with
+ * Lsme_twin and UML_GADGET_SME_TWIN set, which keeps every hot path and
+ * changes only:
+ * - the names: each twin is uml_arm64_gadget_sm_ plus its base entry's name,
+ *   with a row mapping one to the other, and the shared cold stubs become
+ *   local copies;
+ * - each helper call, which goes through a trampoline below that leaves
+ *   streaming mode around it, and the slow paths' AdvSIMD words, which
+ *   become FMOVs;
+ * - nothing else: no forwarding variants, scalar contracts or SIMD&FP
+ *   families are assembled again.
+ * The twins sit in their own streaming row, so the safety test walks them. */
+
+/* A helper call from a twin: CpuState is at SP + \cpu. */
+.macro sme_helper_call symbol, cpu
+	bl Lsme_trampoline_\cpu\()_\symbol
+.endm
+
+/* The trampoline of a helper, called where the twin's base gadget calls the
+ * helper's veneer, with the same arguments and results in x0-x7: it leaves
+ * streaming mode, spilling ZA and ZT0 when host ZA is on, calls the helper
+ * and enters the guest's mode again. A twin's helper call whose trampoline
+ * is missing here is an undefined label. */
+.macro sme_trampoline symbol, cpu=0
+Lsme_trampoline_\cpu\()_\symbol:
+	stp x1, x30, [sp, #-16]!
+	ldr x1, [sp, #(16 + \cpu)]
+	bl uml_arm64_gadget_sme_suspend
+	ldr x1, [sp]
+	bl Lveneer_\symbol
+	str x1, [sp]
+	ldr x1, [sp, #(16 + \cpu)]
+	bl uml_arm64_gadget_sme_resume
+	ldp x1, x30, [sp], #16
+	ret
+.endm
+
+	.p2align 4
+	sme_trampoline uml_arm64_tlb_miss
+	sme_trampoline uml_arm64_memory_transfer, 32
+	sme_trampoline uml_arm64_alignment_fault
+	sme_trampoline uml_arm64_guest_code_synchronize
+	sme_trampoline uml_arm64_gadget_mops_prologue_transfer_copy_forward
+	sme_trampoline uml_arm64_gadget_mops_prologue_transfer_copy_general
+	sme_trampoline uml_arm64_gadget_mops_prologue_transfer_set
+	sme_trampoline uml_arm64_gadget_mops_epilogue_transfer_copy_forward
+	sme_trampoline uml_arm64_gadget_mops_epilogue_transfer_copy_general
+	sme_trampoline uml_arm64_gadget_mops_epilogue_transfer_set_r
+	sme_trampoline uml_arm64_gadget_mops_epilogue_transfer_set_z
+.purgem sme_trampoline
+
+/* Twin rows: entries [base, base + 4) run as [twin, twin + 4), the layout
+ * of the FEAT_AFP twin table. */
+.macro sme_twin_row base, twin
+	.pushsection __DATA_CONST,__gadget_sme
+	.quad \base, \base + 4, \twin, \twin + 4
+	.popsection
+.endm
+
+.pushsection __DATA_CONST,__gadget_sme
+.p2align 3
+.globl NAME(uml_arm64_sme_twin_begin)
+NAME(uml_arm64_sme_twin_begin):
+.popsection
+
+/* 1 while a twin has a base entry of the same name. */
+.set Lsme_twin_of_base, 1
+
+.purgem gadget
+.macro gadget name
+	.globl NAME(uml_arm64_gadget_sm_\name)
+	.p2align 4
+NAME(uml_arm64_gadget_sm_\name):
+	.if Lsme_twin_of_base
+	sme_twin_row NAME(uml_arm64_gadget_\name), NAME(uml_arm64_gadget_sm_\name)
+	.endif
+.endm
+
+.purgem scalar_entry
+.macro scalar_entry name, forward, family, destination, first, second, third, words
+	gadget \name
+.endm
+
+.purgem scalar_variants
+.macro scalar_variants forward, first, second, third, generator, arguments:vararg
+.endm
+
+	.p2align 4
+	.globl NAME(uml_arm64_gadget_sm_twins_begin)
+NAME(uml_arm64_gadget_sm_twins_begin):
+
+/* CSSC CNT on a host without FEAT_CSSC: a GPR-only population count, where
+ * the base entry counts with AdvSIMD. Stream: as the base entry's. */
+.macro sme_population_count suffix, bits64
+gadget bit_reverse_count_\suffix
+	ldr x9, [_stream], #8
+	lsr x11, x9, #16
+	ubfx x10, x9, #0, #16
+	ldr x12, [_cpu, x10]
+	.if !\bits64
+	mov w12, w12
+	.endif
+	lsr x13, x12, #1
+	and x13, x13, #0x5555555555555555
+	sub x12, x12, x13
+	and x13, x12, #0x3333333333333333
+	lsr x12, x12, #2
+	and x12, x12, #0x3333333333333333
+	add x12, x12, x13
+	add x12, x12, x12, lsr #4
+	and x12, x12, #0x0f0f0f0f0f0f0f0f
+	mov x13, #0x0101010101010101
+	mul x12, x12, x13
+	lsr x0, x12, #56
+	str x0, [_cpu, x11]
+	next_gadget
+.endm
+sme_population_count w_cnt, 0
+sme_population_count x_cnt, 1
+.purgem sme_population_count
+
+/* MSR FPCR. While a streaming program runs, the guest's FPCR is the host's
+ * too (uml_arm64_gadget_enter_streaming installs it) but its FPSR never is:
+ * XNU resets FPSR on every kernel entry while a thread is in streaming mode,
+ * so the guest's stays in CpuState. A write updates both copies of FPCR, and
+ * takes no exit for a trap enable, since floating-point exceptions never
+ * trap in streaming mode. Stream: as the base entries'. */
+.macro sme_fpcr_write name, mask
+gadget \name
+	ldp x8, x13, [_stream], #16
+	ldr w9, [_cpu, x8]
+	mov w10, #((\mask) & 0xffff)
+	movk w10, #((\mask) >> 16), lsl #16
+	and w9, w9, w10
+	str w9, [_cpu, #UML_GADGET_CPU_FPCR]
+	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
+	bic w10, w9, w12
+	msr fpcr, x10
+	next_gadget
+.endm
+sme_fpcr_write sysreg_fpcr_write_r, UML_ARM64_FPCR_WRITABLE
+sme_fpcr_write sysreg_fpcr_write_r_afp, (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPCR_AFP_CONTROLS)
+.purgem sme_fpcr_write
+
+gadget sysreg_fpcr_write_z
+	str wzr, [_cpu, #UML_GADGET_CPU_FPCR]
+	msr fpcr, xzr
+	next_gadget
+
+#define UML_GADGET_SME_TWIN 1
+#undef GADGET_SECTION_COLD
+#define GADGET_SECTION_COLD GADGET_SECTION_SME
+#undef GADGET_SECTION_FORWARD
+#define GADGET_SECTION_FORWARD GADGET_SECTION_SME
+#define uml_arm64_gadget_memory_fault Lsm_memory_fault
+#define uml_arm64_gadget_memory_fault_indexed Lsm_memory_fault_indexed
+#define Lscalar_alignment_fault_read Lsm_scalar_alignment_fault_read
+#define Lscalar_alignment_fault_write Lsm_scalar_alignment_fault_write
+#define Lscalar_alignment_fault_read_indexed Lsm_scalar_alignment_fault_read_indexed
+#define Lscalar_alignment_fault_write_indexed Lsm_scalar_alignment_fault_write_indexed
+#define uml_arm64_gadget_pair_alignment_fault_read Lsm_pair_alignment_fault_read
+#define uml_arm64_gadget_pair_alignment_fault_write Lsm_pair_alignment_fault_write
+#define uml_arm64_gadget_pair_alignment_fault_read_indexed Lsm_pair_alignment_fault_read_indexed
+#define uml_arm64_gadget_pair_alignment_fault_write_indexed Lsm_pair_alignment_fault_write_indexed
+#define uml_arm64_gadget_atomic_alignment_fault_ Lsm_atomic_alignment_fault_
+#define uml_arm64_gadget_atomic_alignment_fault_read Lsm_atomic_alignment_fault_read
+#define uml_arm64_gadget_atomic_alignment_fault_write Lsm_atomic_alignment_fault_write
+#define uml_arm64_gadget_lse2_alignment_ Lsm_lse2_alignment_
+#define uml_arm64_gadget_lse2_alignment_read_ Lsm_lse2_alignment_read_
+#define uml_arm64_gadget_lse2_alignment_write_ Lsm_lse2_alignment_write_
+#define Llse2_stub_ Lsm_lse2_stub_
+#define Llse2_resume_ Lsm_lse2_resume_
+.set Lsme_twin, 1
+
+#include "system_atomic.inc"
+#include "load_store.inc"
+
+/* A word or doubleword transfer of a register runs in the base bank as the
+ * in-place entry that bakes the register, but its stream word names the
+ * register too, so all 31 of those entries share one unbaked twin. */
+.set Lsme_twin_of_base, 0
+scalar_unsigned_fast 0, 0, 0, 0, store32_unsigned_fast_r
+scalar_unsigned_fast 0, 0, 0, 1, store32_unsigned_fast_r_sp
+scalar_unsigned_fast 0, 1, 0, 0, store64_unsigned_fast_r
+scalar_unsigned_fast 0, 1, 0, 1, store64_unsigned_fast_r_sp
+scalar_unsigned_fast 1, 0, 0, 0, load32_unsigned_fast_r
+scalar_unsigned_fast 1, 0, 0, 1, load32_unsigned_fast_r_sp
+scalar_unsigned_fast 1, 1, 0, 0, load64_unsigned_fast_r
+scalar_unsigned_fast 1, 1, 0, 1, load64_unsigned_fast_r_sp
+.set Lsme_twin_of_base, 1
+.purgem scalar_unsigned_fast
+
+.macro sme_inplace_twins prefix, twin
+	.irp reg, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30
+	sme_twin_row NAME(uml_arm64_gadget_\prefix\()_r_\reg), NAME(uml_arm64_gadget_sm_\twin\()_r)
+	sme_twin_row NAME(uml_arm64_gadget_\prefix\()_r_sp_\reg), NAME(uml_arm64_gadget_sm_\twin\()_r_sp)
+	.endr
+.endm
+sme_inplace_twins store32_unsigned_inplace, store32_unsigned_fast
+sme_inplace_twins store64_unsigned_inplace, store64_unsigned_fast
+sme_inplace_twins load32_unsigned_inplace, load32_unsigned_fast
+sme_inplace_twins load64_unsigned_inplace, load64_unsigned_fast
+.purgem sme_inplace_twins
+
+#include "lse2_alignment.inc"
+
+.set Lsme_twin, 0
+#undef Llse2_resume_
+#undef Llse2_stub_
+#undef uml_arm64_gadget_lse2_alignment_write_
+#undef uml_arm64_gadget_lse2_alignment_read_
+#undef uml_arm64_gadget_lse2_alignment_
+#undef uml_arm64_gadget_atomic_alignment_fault_write
+#undef uml_arm64_gadget_atomic_alignment_fault_read
+#undef uml_arm64_gadget_atomic_alignment_fault_
+#undef uml_arm64_gadget_pair_alignment_fault_write_indexed
+#undef uml_arm64_gadget_pair_alignment_fault_read_indexed
+#undef uml_arm64_gadget_pair_alignment_fault_write
+#undef uml_arm64_gadget_pair_alignment_fault_read
+#undef Lscalar_alignment_fault_write_indexed
+#undef Lscalar_alignment_fault_read_indexed
+#undef Lscalar_alignment_fault_write
+#undef Lscalar_alignment_fault_read
+#undef uml_arm64_gadget_memory_fault_indexed
+#undef uml_arm64_gadget_memory_fault
+#undef GADGET_SECTION_FORWARD
+#define GADGET_SECTION_FORWARD __TEXT,__a64_forward,regular,pure_instructions
+#undef GADGET_SECTION_COLD
+#define GADGET_SECTION_COLD __TEXT,__a64_cold,regular,pure_instructions
+#undef UML_GADGET_SME_TWIN
+
+	.globl NAME(uml_arm64_gadget_sm_twins_end)
+NAME(uml_arm64_gadget_sm_twins_end):
+
+.pushsection __DATA_CONST,__gadget_sme
+.globl NAME(uml_arm64_sme_twin_end)
+NAME(uml_arm64_sme_twin_end):
+.popsection
+
+/* The register-only SVE, SVE2 and SME forms and the FP&SIMD classes legal in
+ * streaming mode, which engine/generate_streaming.py writes at build time
+ * from the encoding table: gadgets between uml_arm64_gadget_sm_generated_begin
+ * and _end, in their own streaming row, and the table of their entries the
+ * builder selects from. */
+#include "streaming_generated.inc"
 
 .popsection
 

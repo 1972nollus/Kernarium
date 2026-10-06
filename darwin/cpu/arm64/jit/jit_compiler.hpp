@@ -7,6 +7,9 @@
 #include "jit_semantic_memory.hpp"
 #include "jit_sme_transition.hpp"
 
+#include "cpu/arm64/detail/sme_encoding_types.hpp"
+
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -244,6 +247,40 @@ private:
                              bool load);
   /* x9 = the register file's ZT0, from CpuState and the run-time SVL. */
   void emit_sme_zt0_address();
+  /* A register-only word an SM=1 translation runs natively (M2): the
+   * guest word with its general-register fields re-encoded to host
+   * registers, and what it needs around it (jit_compiler_sme.cpp). */
+  struct StreamingWord final {
+    struct Gpr final {
+      std::uint8_t low;
+      std::uint8_t guest;
+      bool stack_pointer;
+      bool destination;
+    };
+    enum class Saved : std::uint8_t { none, z, p };
+    std::uint32_t word{};
+    std::array<Gpr, 3> gprs{};
+    std::uint8_t gpr_count{};
+    /* A ZA slice index Wv, one of W12-W15, which runs as W12. */
+    bool slice{};
+    std::uint8_t slice_low{};
+    std::uint8_t slice_width{};
+    std::uint8_t slice_guest{};
+    bool reads_flags{};
+    bool writes_flags{};
+    /* It can raise floating-point exceptions; a rerun needs `saved`. */
+    bool raises{};
+    Saved saved{Saved::none};
+    std::uint8_t saved_register{};
+  };
+  [[nodiscard]] static std::optional<StreamingWord>
+  plan_sme_row(const detail::SmeEncoding &row, std::uint32_t instruction);
+  /* An FP&SIMD data-processing word streaming mode runs: the classes the
+   * shared table marks FP-legal. */
+  [[nodiscard]] static std::optional<StreamingWord>
+  plan_streaming_fp_simd(std::uint32_t instruction);
+  void emit_streaming_word(const StreamingWord &plan);
+  void emit_movprfx(std::uint32_t instruction, bool predicated);
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,
                             std::uint64_t pc, std::size_t count);
 

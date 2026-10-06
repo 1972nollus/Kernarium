@@ -106,13 +106,45 @@ target_link_libraries(uml_cpu_contract INTERFACE
 
 # Gadget-engine SME sources, owned by SME lane S5: the SME part's selection
 # and helper sources. The streaming gadget bodies it generates at build time
-# from the shared SVE/SME encoding table (cpu/arm64/detail/sme_encodings.inc)
+# from the shared SVE/SME encoding table (cpu/arm64/detail/sme_encodings.hpp)
 # are declared in this block too, with their custom command and the
 # OBJECT_DEPENDS of engine.S. The JIT's block below is disjoint, so the two
 # lanes never edit the same lines.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(_uml_arm64_streaming_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_streaming)
+set(_uml_arm64_streaming_generator
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_streaming.py)
+set(_uml_arm64_streaming_loader
+    ${PROJECT_SOURCE_DIR}/tools/arm64-tests/sme_encoding_table.py)
+set(_uml_arm64_streaming_table
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/detail/sme_encodings.hpp)
+add_custom_command(
+    OUTPUT ${_uml_arm64_streaming_dir}/streaming_generated.inc
+        ${_uml_arm64_streaming_dir}/streaming_forms.hpp
+    COMMAND ${Python3_EXECUTABLE} -B ${_uml_arm64_streaming_generator}
+        --loader ${_uml_arm64_streaming_loader}
+        --table ${_uml_arm64_streaming_table}
+        --assembly ${_uml_arm64_streaming_dir}/streaming_generated.inc
+        --header ${_uml_arm64_streaming_dir}/streaming_forms.hpp
+    DEPENDS ${_uml_arm64_streaming_generator} ${_uml_arm64_streaming_loader}
+        ${_uml_arm64_streaming_table}
+    COMMENT "Generating the arm64 register-only streaming gadgets"
+    VERBATIM)
+set_source_files_properties(arm64/gadgets/engine.S PROPERTIES
+    OBJECT_DEPENDS ${_uml_arm64_streaming_dir}/streaming_generated.inc
+    INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})
+set_source_files_properties(arm64/gadgets/program_builder_streaming.cpp
+    PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})
+# The generated header for the tests that check the forms against the table.
+add_library(uml_arm64_streaming_forms INTERFACE)
+uml_declare_architecture_target(uml_arm64_streaming_forms cpu gadget)
+target_include_directories(uml_arm64_streaming_forms INTERFACE
+    ${_uml_arm64_streaming_dir})
 set(_uml_arm64_gadget_sme_sources
     arm64/gadgets/program_builder_sme.cpp
-    arm64/gadgets/sme_helpers.cpp)
+    arm64/gadgets/program_builder_streaming.cpp
+    arm64/gadgets/sme_helpers.cpp
+    ${_uml_arm64_streaming_dir}/streaming_forms.hpp)
 
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.

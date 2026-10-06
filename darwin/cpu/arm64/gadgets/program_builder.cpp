@@ -194,15 +194,18 @@ BuildResult Builder::build(
 		if (vector_mask != 0 && options.vector_forwarding)
 			words[emitted_start] = current_vector.contract->entries[vector_mask];
 		if (streaming && words.size() > emitted_start &&
-		    !streaming_entry(words[emitted_start])) [[unlikely]] {
-			/* No streaming form yet: the block ends at the illegal
-			 * exit instead, as for any unimplemented word. */
+		    !select_streaming_entries(std::span{words.data(),
+			    words.size()}.subspan(emitted_start))) [[unlikely]] {
+			/* The base entries are unsafe in streaming mode: an
+			 * FP&SIMD class legal there takes its generated form, and
+			 * any other word ends the block at the illegal exit, as
+			 * an unimplemented word does. */
 			words.truncate(emitted_start);
 			while (suffixes.count != 0 &&
 			       suffixes.word[suffixes.count - 1] >= emitted_start)
 				--suffixes.count;
 			compiled = compiled_before;
-			decoded = illegal_instruction(context);
+			decoded = decode_streaming_fallback(context);
 		}
 #if UML_GADGET_EXECUTION_HISTOGRAM
 		/* The entry is final only after forwarding selection above. */

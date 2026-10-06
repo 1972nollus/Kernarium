@@ -9,13 +9,17 @@
  *
  * Generated code calls these routines with x15 = CpuState. They change no
  * register but x9-x13 and x30 (x16 holds the routine's address at a call
- * from generated code), never NZCV or FPCR, and carry FPSR across their own
+ * from generated code), never NZCV, and carry FPSR across their own
  * SMSTART or SMSTOP, which reset it to 0x0800009F. That FPSR is the host's:
  * XNU also resets FPSR on every kernel entry while a thread is in streaming
- * mode, so an SM=1 translation keeps the guest's FPCR and FPSR in CpuState
- * and never takes the native FP environment. Every size and offset comes
- * from the run-time SVL (RDSVL, ADDSVL and VL-scaled addressing), never
- * from a constant.
+ * mode, so an SM=1 translation keeps the guest's FPSR in CpuState and never
+ * takes the native FP environment. FPCR survives kernel entries: enter
+ * installs the guest's (CpuState::fpcr with its trap enables clear, since
+ * streaming mode never traps a floating-point exception) for the SM=1 code
+ * and keeps the host's in CpuState::gadget_host_fpcr, which no one reads
+ * while gadget_fp_active is clear, as it stays while SM=1 code runs; leave
+ * puts the host's back. Every size and offset comes from the run-time SVL
+ * (RDSVL, ADDSVL and VL-scaled addressing), never from a constant.
  *
  * The file is assembled for every Apple target; only an SME host executes
  * it, and only for a run whose profile implements SME.
@@ -34,6 +38,9 @@
 .if UML_ARM64_CPU_HOST_FPCR != 888 || UML_ARM64_CPU_HOST_FPSR != 896
     .error "CpuState native FP layout changed"
 .endif
+.if UML_GADGET_CPU_FPCR != 784 || UML_ARM64_FPCR_TRAP_ENABLES != 0x9f00
+    .error "CpuState FPCR layout or trap enables changed"
+.endif
 
 /* The JIT-private sme_host_mode bit for a resident guest ZT0
  * (jit_sme_host_zt0_resident in jit_sme_transition.hpp). */
@@ -46,7 +53,8 @@
  * uml_arm64_jit_sme_enter: w9 = the sme_host_mode to establish
  * (jit_sme_host_mode()). Enters streaming mode, with ZA when the mode
  * names it, records the mode, and fills Z0-Z31 and P0-P15, then ZA and,
- * for an SME2 profile, ZT0, from the register file.
+ * for an SME2 profile, ZT0, from the register file; then installs the
+ * guest's FPCR.
  */
 	.p2align	2
 	.private_extern _uml_arm64_jit_sme_enter
@@ -141,13 +149,20 @@ _uml_arm64_jit_sme_enter:
 	tbz	w9, #JIT_SME_HOST_ZT0_BIT, 4f
 	ldr	zt0, [x11]
 4:
+	mrs	x11, fpcr
+	str	x11, [x15, #UML_ARM64_CPU_HOST_FPCR]
+	ldr	w11, [x15, #UML_GADGET_CPU_FPCR]
+	mov	w12, #UML_ARM64_FPCR_TRAP_ENABLES
+	bic	w11, w11, w12
+	msr	fpcr, x11
 	msr	fpsr, x10
 	ret
 
 /*
  * uml_arm64_jit_sme_leave: the mirror image of enter for the mode
- * CpuState::sme_host_mode records; nothing when it records none, so a
- * second leave on one exit path costs two instructions.
+ * CpuState::sme_host_mode records, the host's FPCR included; nothing when
+ * it records none, so a second leave on one exit path costs two
+ * instructions.
  */
 	.p2align	2
 	.private_extern _uml_arm64_jit_sme_leave
@@ -237,6 +252,8 @@ _uml_arm64_jit_sme_leave:
 3:
 	smstop
 	strb	wzr, [x15, #UML_ARM64_CPU_SME_HOST_MODE]
+	ldr	x11, [x15, #UML_ARM64_CPU_HOST_FPCR]
+	msr	fpcr, x11
 	msr	fpsr, x10
 4:
 	ret

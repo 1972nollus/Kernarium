@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Streaming JIT translations, checked as code on injected SME profiles: no
- * AdvSIMD or other FP&SIMD word reaches an SM=1 translation, the host enters
- * streaming mode only in the external prologue and leaves it before every
- * host call and return, and only SM=1 translations touch the host's
+ * AdvSIMD or other FP&SIMD word reaches an SM=1 translation, every SVE and
+ * SME word in one is a form the profile implements in its mode, the host
+ * enters streaming mode only in the external prologue and leaves it before
+ * every host call and return, and only SM=1 translations touch the host's
  * streaming state: no other translation holds an SVE or SME word. No SM=1
- * translation reads or writes the host's FPCR or FPSR or takes the native FP
- * environment, since XNU resets FPSR on any kernel entry in streaming mode.
- * Every
- * witness word of the A64 evidence table, which the registration passes as
- * the only argument, is compiled in every mode and link shape.
+ * translation takes the native FP environment or puts a guest FPSR in the
+ * host's, since XNU resets FPSR on any kernel entry in streaming mode: it
+ * only clears FPSR before a word that can raise an exception and reads it,
+ * checking QC, right after. Every witness word of the A64 evidence table,
+ * which the registration passes as the only argument, and every row of the
+ * shared encoding table, is compiled in every mode and link shape.
  */
 #include "runtime_test_route.hpp"
 #include "require.hpp"
 #include "cpu/arm64/jit/jit_emitter.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
+#include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/jit/jit_sme_transition.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
@@ -49,6 +52,8 @@ constexpr std::uint32_t reload_cpu = 0xf940'0befU; // ldr x15, [sp, #16]
 
 struct Witness final {
   std::string id;
+  std::string section;
+  std::string form;
   std::uint32_t word{};
 };
 
@@ -63,8 +68,9 @@ struct Witness final {
     std::array<std::string, 6> column;
     for (auto &field : column)
       require(static_cast<bool>(std::getline(fields, field, '\t')));
-    result.push_back({column[0], static_cast<std::uint32_t>(
-                                     std::stoul(column[5], nullptr, 16))});
+    result.push_back({column[0], column[1], column[2],
+                      static_cast<std::uint32_t>(
+                          std::stoul(column[5], nullptr, 16))});
   }
   require(result.size() > 2000U);
   return result;
@@ -93,6 +99,22 @@ struct Witness final {
 [[nodiscard]] constexpr bool fp_simd_word(std::uint32_t word) noexcept {
   const auto op0 = (word >> 25U) & 15U;
   return op0 == 7U || op0 == 15U || (word & 0x0e00'0000U) == 0x0c00'0000U;
+}
+
+constexpr std::uint32_t clear_fpsr = 0xd51b'443fU;    // msr fpsr, xzr
+constexpr std::uint32_t read_fpsr_x11 = 0xd53b'442bU; // mrs x11, fpsr
+constexpr std::uint32_t write_fpcr_x8 = 0xd51b'4408U; // msr fpcr, x8
+
+/* TBZ W11, #27 (FPSR.QC), to any label. */
+[[nodiscard]] constexpr bool qc_clear_branch(std::uint32_t word) noexcept {
+  return (word & 0xfff8'001fU) == 0x36d8'000bU;
+}
+
+/* An FP&SIMD word that runs in streaming mode, as guest words the
+ * profile marks FP-legal do. */
+[[nodiscard]] constexpr bool streaming_fp(std::uint32_t word) noexcept {
+  return arm64::detail::classify_fp_simd_streaming(word) ==
+         arm64::detail::FpSimdStreaming::fp;
 }
 
 /* MRS or MSR of FPCR or FPSR. */
@@ -155,6 +177,36 @@ struct Checked final {
   std::size_t helper_calls{};
 };
 
+/* Whether an SM=1 translation may hold this FPCR or FPSR access at
+ * `index`: MSR FPCR from x8, which writes the guest's FPCR to the host's
+ * too, and the FPSR capture around one word that can raise an exception:
+ * MSR FPSR, XZR; the word; MRS X11, FPSR; TBZ W11, #27. */
+[[nodiscard]] bool streaming_fp_control(const jit_test::CompiledCode &code,
+                                        std::size_t index) {
+  const auto word = code.words[index];
+  if (word == write_fpcr_x8)
+    return true;
+  if (word == clear_fpsr)
+    return index + 3U < code.executable_words &&
+           code.words[index + 2U] == read_fpsr_x11;
+  if (word == read_fpsr_x11)
+    return index >= 2U && code.words[index - 2U] == clear_fpsr &&
+           index + 1U < code.executable_words &&
+           qc_clear_branch(code.words[index + 1U]);
+  return false;
+}
+
+/* Whether an SVE or SME word can run on the host in this mode: the profile
+ * implements its row there. */
+[[nodiscard]] bool streaming_word_runs(std::uint32_t word, std::uint8_t mode) {
+  const auto &host = uml::cpu::host_capabilities();
+  const auto *row = arm64::detail::decode_sme(
+      word, arm64::implemented_sme_features(host), host.sme_svl_bytes);
+  return row != nullptr &&
+         arm64::detail::sme_mode_permits(*row, (mode & arm64::svcr_sm) != 0U,
+                                         (mode & arm64::svcr_za) != 0U);
+}
+
 void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
                        const std::string &label, Checked &checked) {
   if (code.words.empty())
@@ -162,9 +214,9 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
   require(code.executable_words != 0U &&
           code.executable_words <= code.words.size());
   const bool streaming = (mode & arm64::svcr_sm) != 0U;
-  if (streaming && code.native_fp) {
-    std::fprintf(stderr, "%s mode %u: takes the native FP environment\n",
-                 label.c_str(), mode);
+  if (streaming && (code.native_fp || !code.accesses_fp_state)) {
+    std::fprintf(stderr, "%s mode %u: native FP %d, FP state access %d\n",
+                 label.c_str(), mode, code.native_fp, code.accesses_fp_state);
     require(false);
   }
   std::size_t enters = 0;
@@ -179,10 +231,30 @@ void check_translation(const jit_test::CompiledCode &code, std::uint8_t mode,
                    label.c_str(), mode, word, index);
       require(false);
     }
-    if (streaming && (fp_simd_word(word) || fp_control_access(word))) {
+    if (streaming && ((fp_simd_word(word) && !streaming_fp(word)) ||
+                      (fp_control_access(word) &&
+                       !streaming_fp_control(code, index)))) {
       std::fprintf(stderr, "%s mode %u: FP&SIMD, FPCR or FPSR word %08x at %zu\n",
                    label.c_str(), mode, word, index);
       require(false);
+    }
+    if (streaming && arm64::detail::sme_encoding_space(word)) {
+      if (!streaming_word_runs(word, mode)) {
+        std::fprintf(stderr, "%s mode %u: SVE or SME word %08x at %zu does "
+                     "not run in this mode\n", label.c_str(), mode, word,
+                     index);
+        require(false);
+      }
+      /* A MOVPRFX is always completed by its prefixed word. */
+      const auto form = arm64::detail::find_sme_encoding(word)->form;
+      if ((form == arm64::jit::sme_forms::movprfx ||
+           form == arm64::jit::sme_forms::movprfx_predicated) &&
+          (index + 1U >= code.executable_words ||
+           !arm64::detail::sme_encoding_space(code.words[index + 1U]))) {
+        std::fprintf(stderr, "%s mode %u: MOVPRFX %08x at %zu ends\n",
+                     label.c_str(), mode, word, index);
+        require(false);
+      }
     }
     if (word == ret && streaming) {
       /* Every epilogue leaves streaming mode before restoring the frame,
@@ -390,6 +462,152 @@ void enter_names_the_host_mode() {
   }
 }
 
+/* Every row of the shared table, by its first word, translates exactly in
+ * the modes the profile implements it in: the control core's forms and,
+ * in streaming mode, every register-only row of the SME1 profile. Every
+ * other row (memory forms, SME2's, those outside the profile) is the
+ * illegal exit. Each translation also passes check_translation(). */
+void rows_translate_exactly_where_implemented() {
+  constexpr std::uint64_t pc = 0x4f50'0000U;
+  for (const bool sme2 : {true, false}) {
+    const auto host = sme_host(64, sme2);
+    const uml::cpu::HostCapabilitiesScope scope{host};
+    const auto features = arm64::implemented_sme_features(host);
+    Checked checked;
+    std::size_t streaming_rows = 0;
+    for (const auto &row : arm64::detail::sme_encodings) {
+      const auto word = row.value;
+      if (arm64::detail::find_sme_encoding(word) != &row)
+        continue;
+      const auto *decoded =
+          arm64::detail::decode_sme(word, features, host.sme_svl_bytes);
+      const bool implemented =
+          decoded != nullptr && arm64::jit::implements_sme_row(*decoded);
+      for (std::uint8_t mode = 0; mode <= arm64::svcr_mask; ++mode) {
+        const bool expected =
+            implemented &&
+            arm64::detail::sme_mode_permits(
+                *decoded, (mode & arm64::svcr_sm) != 0U,
+                (mode & arm64::svcr_za) != 0U);
+        if (illegal_in(word, mode) == expected) {
+          std::fprintf(stderr, "row %04x %08x mode %u sme2 %d: expected "
+                       "%s\n", row.form, word, mode, sme2,
+                       expected ? "a translation" : "the illegal exit");
+          require(false);
+        }
+        streaming_rows += expected && mode == arm64::svcr_mask &&
+                          !arm64::jit::implements_sme_form(row.form);
+      }
+      const std::array program{word, system_call};
+      char label[32];
+      std::snprintf(label, sizeof label, "row %08x", word);
+      check_program(pc, program, label, checked);
+    }
+    std::fprintf(stderr, "sme2 %d: %zu register-only rows translate at "
+                 "SM = ZA = 1\n", sme2, streaming_rows);
+    require(streaming_rows > 900U);
+  }
+}
+
+/* Every FP&SIMD class, by its first word, translates in SM=1 exactly when
+ * the profile marks it FP-legal and it processes data; AdvSIMD and the
+ * SIMD&FP loads and stores (the memory forms) are the illegal exit. */
+void fp_simd_classes_translate_where_streaming_runs_them() {
+  constexpr std::uint64_t pc = 0x4f60'0000U;
+  const auto host = sme_host(64);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  Checked checked;
+  std::size_t translated = 0;
+  for (const auto &row : arm64::detail::fp_simd_streaming_classes) {
+    const auto word = row.value;
+    if (streaming_fp(word) == row.advsimd)
+      continue; // an earlier row claims the word
+    const bool expected =
+        !row.advsimd && (word & 0x0e00'0000U) != 0x0c00'0000U;
+    for (const std::uint8_t mode :
+         {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)})
+      if (illegal_in(word, mode) == expected) {
+        std::fprintf(stderr, "FP&SIMD class %u %08x mode %u: expected %s\n",
+                     row.form, word, mode,
+                     expected ? "a translation" : "the illegal exit");
+        require(false);
+      }
+    translated += expected;
+    const std::array program{word, system_call};
+    char label[32];
+    std::snprintf(label, sizeof label, "class %08x", word);
+    check_program(pc, program, label, checked);
+  }
+  std::fprintf(stderr, "%zu FP&SIMD classes translate in streaming mode\n",
+               translated);
+  require(translated > 500U);
+}
+
+/* The SVE words whose rows can raise a floating-point exception, and so
+ * run with the FPSR capture, are exactly those named for floating point
+ * but for the sign and move forms: a regenerated table cannot drop one. */
+void fp_capture_follows_form_names(const char *bindings) {
+  const auto host = sme_host(64);
+  const auto features = arm64::implemented_sme_features(host);
+  std::size_t raising = 0;
+  for (const auto &witness : witnesses(bindings)) {
+    if (witness.section != "SVE")
+      continue;
+    const auto *row = arm64::detail::decode_sme(witness.word, features,
+                                                host.sme_svl_bytes);
+    if (row == nullptr || !arm64::jit::implements_sme_row(*row) ||
+        arm64::jit::implements_sme_form(row->form))
+      continue;
+    const auto &name = witness.form;
+    const auto starts = [&name](const char *prefix) {
+      return name.rfind(prefix, 0) == 0;
+    };
+    const bool named = (starts("F") || starts("BF") || starts("SCVTF") ||
+                        starts("UCVTF")) &&
+                       name != "FABS" && name != "FNEG" && name != "FCPY" &&
+                       name != "FDUP" && !starts("FMOV") &&
+                       !starts("FIRSTP");
+    if (named != arm64::jit::sve_raises_fp_exceptions(witness.word)) {
+      std::fprintf(stderr, "%s %s %08x: capture %d\n", witness.id.c_str(),
+                   name.c_str(), witness.word, !named);
+      require(false);
+    }
+    raising += named;
+  }
+  std::fprintf(stderr, "%zu SVE forms capture FPSR\n", raising);
+  require(raising > 60U);
+}
+
+/* ORR, EOR and AND (immediate) and DUPM translate in streaming mode for
+ * every bitmask immediate but the 512 per form DecodeBitMasks reserves:
+ * N = 1 with imms all ones, N = 0 with at most one zero in imms. Those
+ * are the illegal exit, where running the word would raise SIGILL in the
+ * host. */
+void reserved_bitmask_immediates_are_illegal() {
+  const auto host = sme_host(64);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  for (const std::uint32_t form :
+       {0x0500'0000U, 0x0540'0000U, 0x0580'0000U, 0x05c0'0000U}) {
+    std::size_t reserved = 0;
+    for (std::uint32_t immediate = 0; immediate < 0x2000U; ++immediate) {
+      const auto word = form | (immediate << 5) | (immediate % 31U);
+      const unsigned imms = immediate & 63U;
+      const bool expected = (immediate & 0x1000U) != 0U
+                                ? imms == 63U
+                                : std::popcount(imms) >= 5;
+      reserved += expected;
+      for (const std::uint8_t mode :
+           {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)})
+        if (illegal_in(word, mode) != expected) {
+          std::fprintf(stderr, "%08x mode %u: expected %s\n", word, mode,
+                       expected ? "the illegal exit" : "a translation");
+          require(false);
+        }
+    }
+    require(reserved == 512U);
+  }
+}
+
 void population_count_needs_no_advanced_simd() {
   for (const std::uint64_t value :
        {0ULL, 1ULL, 0x8000'0000'0000'0000ULL, ~0ULL, 0x5555'5555'5555'5555ULL,
@@ -420,6 +638,10 @@ int main(int argc, char **argv) {
   streaming_translations_hold_no_fp_simd_word(argv[1]);
   translations_do_not_depend_on_the_svl(argv[1]);
   control_core_follows_profile_and_mode();
+  rows_translate_exactly_where_implemented();
+  fp_simd_classes_translate_where_streaming_runs_them();
+  fp_capture_follows_form_names(argv[1]);
+  reserved_bitmask_immediates_are_illegal();
   enter_names_the_host_mode();
   if (arm64::native_jit_available())
     population_count_needs_no_advanced_simd();
