@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 13:28:47 +0900
+Subject: [PATCH] TSO: let a host order stack-pointer accesses too
+
+With TSO emulation on, FEXCore leaves an access whose address it forms
+from RSP plain, on the assumption that only the thread itself uses its
+stack. A local variable whose address another thread holds breaks that:
+its owner reaches it through RSP, the other thread through a pointer,
+and message passing through such a variable sees the data store after
+the flag store. A host that must keep x86's memory model can now set
+StackTSOEnabled, and with TSO on those accesses are ordered as any
+other. Pushes and pops stay plain: they reach only the thread's own
+slots at the top of its stack.
+---
+ FEXCore/Source/Interface/Config/Config.json.in   |  8 ++++++++
+ FEXCore/Source/Interface/Context/Context.h       | 10 ++++++++++
+ FEXCore/Source/Interface/Core/OpcodeDispatcher.h |  7 +++++--
+ 3 files changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/FEXCore/Source/Interface/Config/Config.json.in b/FEXCore/Source/Interface/Config/Config.json.in
+index fa56db44c204108bd48878cacbb86b91f9419089..642187829f6fb1b1f3442f7a92a470fb030a4ee8 100644
+--- a/FEXCore/Source/Interface/Config/Config.json.in
++++ b/FEXCore/Source/Interface/Config/Config.json.in
+@@ -451,6 +451,14 @@
+           "When TSO emulation is enabled, controls if vector loadstores should also be atomic."
+         ]
+       },
++      "StackTSOEnabled": {
++        "Type": "bool",
++        "Default": "false",
++        "Desc": [
++          "When TSO emulation is enabled, controls if loadstores addressed through the stack pointer should also be atomic.",
++          "Pushes and pops stay non-atomic: they touch only the thread's own stack."
++        ]
++      },
+       "MemcpySetTSOEnabled": {
+         "Type": "bool",
+         "Default": "false",
+diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
+index 324f6c07af7bb42cf32f417d27cadeb268c7d0e2..7aecfea40642aa1d5d848fbe6e2401cabf3d8de3 100644
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -362,6 +362,7 @@ public:
+     FEX_CONFIG_OPT(Is64BitMode, IS64BIT_MODE);
+     FEX_CONFIG_OPT(TSOEnabled, TSOENABLED);
+     FEX_CONFIG_OPT(VectorTSOEnabled, VECTORTSOENABLED);
++    FEX_CONFIG_OPT(StackTSOEnabled, STACKTSOENABLED);
+     FEX_CONFIG_OPT(MemcpySetTSOEnabled, MEMCPYSETTSOENABLED);
+     FEX_CONFIG_OPT(SMCChecks, SMCCHECKS);
+     FEX_CONFIG_OPT(MaxInstPerBlock, MAXINST);
+@@ -452,6 +453,12 @@ public:
+     return VectorAtomicTSOEmulationEnabled;
+   }
+ 
++  // If atomic-based TSO emulation is enabled for accesses addressed through
++  // the stack pointer.
++  bool IsStackAtomicTSOEnabled() const {
++    return StackAtomicTSOEmulationEnabled;
++  }
++
+   // If atomic-based TSO emulation is enabled for memcpy operations.
+   bool IsMemcpyAtomicTSOEnabled() const {
+     return MemcpyAtomicTSOEmulationEnabled;
+@@ -482,10 +489,12 @@ protected:
+       // If the hardware supports TSO then we don't need to emulate it through atomics.
+       AtomicTSOEmulationEnabled = false;
+       VectorAtomicTSOEmulationEnabled = false;
++      StackAtomicTSOEmulationEnabled = false;
+       MemcpyAtomicTSOEmulationEnabled = false;
+     } else {
+       AtomicTSOEmulationEnabled = Config.TSOEnabled;
+       VectorAtomicTSOEmulationEnabled = Config.TSOEnabled && Config.VectorTSOEnabled;
++      StackAtomicTSOEmulationEnabled = Config.TSOEnabled && Config.StackTSOEnabled;
+       MemcpyAtomicTSOEmulationEnabled = Config.TSOEnabled && Config.MemcpySetTSOEnabled;
+     }
+   }
+@@ -503,6 +512,7 @@ private:
+   bool SupportsHardwareTSO = false;
+   bool AtomicTSOEmulationEnabled = true;
+   bool VectorAtomicTSOEmulationEnabled = false;
++  bool StackAtomicTSOEmulationEnabled = false;
+   bool MemcpyAtomicTSOEmulationEnabled = false;
+ 
+   bool ExitOnHLT = false;
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index e1a1f2313c9a14c77867bf298cac8169ff16c2ab..73d3118859f297027a5b1c3613aefb05be827030 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -1584,9 +1584,12 @@ private:
+     return !(Load && (Operand.IsLiteral() || Operand.IsLiteralRelocation())) && !Operand.IsGPR();
+   }
+ 
++  // An access through the stack pointer is assumed to reach only the
++  // thread's own stack unless the host asks for those to keep TSO too: a
++  // local whose address another thread holds is reached through RSP.
+   [[nodiscard]]
+-  static bool IsNonTSOReg(MemoryAccessType Access, uint8_t Reg) {
+-    return Access == MemoryAccessType::DEFAULT && Reg == X86State::REG_RSP;
++  bool IsNonTSOReg(MemoryAccessType Access, uint8_t Reg) const {
++    return Access == MemoryAccessType::DEFAULT && Reg == X86State::REG_RSP && !CTX->IsStackAtomicTSOEnabled();
+   }
+ 
+   AddressMode DecodeAddress(const X86Tables::DecodedOp& Op, const X86Tables::DecodedOperand& Operand, MemoryAccessType AccessType, bool IsLoad);

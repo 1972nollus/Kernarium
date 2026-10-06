@@ -6,8 +6,9 @@
  * x86-64 guest builds it (UML_BUILD_X86_64_JIT); no iOS product links it.
  *
  * One engine belongs to one vCPU thread. It keeps a FEXCore context and
- * thread per guest address space and execution mode, because FEXCore's block
- * caches are keyed by guest RIP alone. */
+ * thread per guest address space, execution mode, store ordering and
+ * floating-point mode, because FEXCore's block caches are keyed by guest RIP
+ * alone. */
 
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
@@ -46,12 +47,18 @@ struct JitRunRequest final {
 	void *execution_context{};
 	/* Polled between chunks of a long repeated string instruction. */
 	const ::uml::cpu::InterruptToken *interrupt{};
+	/* Whether another agent may observe the address space's memory: the
+	 * run then keeps x86's total store order. Once a generation runs
+	 * ordered it must never run unordered again. */
+	bool orders_stores{true};
 };
 
 struct JitRunResult final {
 	::uml::cpu::ExecutionResult execution{};
 	/* The error code of a #GP the run ended in: for INT n, its IDT entry. */
 	std::int32_t error_code{};
+	/* Whether the code that ran kept x86's total store order. */
+	bool stores_ordered{};
 };
 
 struct FexEngineOptions final {
@@ -78,9 +85,11 @@ public:
 		std::uint64_t &code_sequence) const noexcept;
 
 	/* Retires software-TLB entries and translations the changes cover, and
-	 * makes the space's context on first use. */
+	 * makes the space's context on first use, ordering stores as the next
+	 * run will. */
 	void apply_changes(unsigned long generation, ExecutionMode mode,
-		const AddressSpaceChanges &changes) noexcept;
+		const AddressSpaceChanges &changes,
+		bool orders_stores = true) noexcept;
 
 	/* Runs 64-bit guest code until it exits. RFLAGS.TF set on entry makes
 	 * the run retire one instruction and report a single step. */

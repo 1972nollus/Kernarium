@@ -330,8 +330,14 @@ against native x86 Linux's values. The smoke, RFLAGS and exception runners
 take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
 instead of the default gadget engine; run them on both engines when a change
 reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
-checks that the host sees an address space as shared only once a task
-starts a thread on it. Both engines pass every exception case, unmasked
+checks that the host sees an address space as shared exactly when the
+kernel's contract in the [common kernel README](../kernel/common/README.md)
+says so, and on the JIT that only shared ones run ordered code.
+`run_guest_x86_64_tso_litmus.py` runs x86 memory-order litmus tests on four
+vCPUs, between threads and between processes over shared memory, in both
+modes. Its negative control is the unit test `x86-64-jit-store-order`, which
+shows message passing catching a JIT space that keeps no order. Both engines
+pass every exception case, unmasked
 `#XM`, `#MF` and `#AC` included, in both modes.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.

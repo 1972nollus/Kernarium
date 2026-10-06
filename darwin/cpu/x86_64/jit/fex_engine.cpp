@@ -50,8 +50,8 @@ constexpr std::int64_t maximum_dispatch_budget = 64 * 1024;
 constexpr std::size_t callret_size = Core::InternalThreadState::CALLRET_STACK_SIZE;
 static_assert(callret_size / 2 >= maximum_dispatch_budget * 16,
 	"a dispatch cannot leave the call-return stack");
-/* Address spaces one vCPU keeps translations for at once, in each
- * floating-point mode it runs them in. */
+/* Address spaces one vCPU keeps translations for at once, in each store
+ * ordering and floating-point mode it runs them in. */
 constexpr std::size_t maximum_spaces = 8;
 
 constexpr std::uint64_t user_rflags_mask = 0x0000'0000'003f'7fd5ULL;
@@ -60,16 +60,6 @@ constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15U;
 constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
 constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
-
-/* x86 orders every store before every later one. FEXCore emulates that with
- * acquire loads and release stores, which costs about 30% on memory-bound
- * code. Lane 6 keys it per address space, on once the mm gains a second
- * thread, which bridge ABI 16 reports to the host; until then every address
- * space emulates it. */
-[[nodiscard]] constexpr bool space_orders_stores(unsigned long) noexcept
-{
-	return true;
-}
 
 /* UML_X86_FATAL_TRACE, which the gadget runtime also reads, sends FEXCore's
  * own messages and every #UD to stderr. Diagnostic only: the guest console
@@ -269,11 +259,17 @@ private:
 	void *data_{};
 };
 
-/* One guest address space in one execution mode and floating-point mode, as
- * this vCPU runs it. */
+/* One guest address space in one execution mode, store ordering and
+ * floating-point mode, as this vCPU runs it. */
 struct Space final {
 	unsigned long generation{};
 	ExecutionMode mode{};
+	/* x86 orders every store before every later one and every load before
+	 * every later access. FEXCore emulates that with acquire loads and
+	 * release stores, at about 30% on memory-bound code, so a space orders
+	 * them only once another agent may observe its memory (the guest
+	 * kernel's mm-shared mark, sticky for the address space's life). */
+	bool orders_stores{};
 	/* Core::EMBEDDER_FP_MODE_* bits every translation assumes. */
 	std::uint32_t fp_mode{};
 	std::uint64_t last_use{};
@@ -483,19 +479,34 @@ struct FexEngine::Impl final {
 		return space.thread != nullptr ? space.thread->CurrentFrame->Embedder.CodeBufferRestarts : 0;
 	}
 
-	/* The space for `generation` and `mode` in floating-point mode
-	 * `fp_mode`, or with `any_fp_mode` in any. */
-	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode,
-		bool any_fp_mode = false) noexcept
+	/* The space for `generation` and `mode` with `orders_stores` in
+	 * floating-point mode `fp_mode`, or with `any` in any ordering and mode. */
+	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode, bool orders_stores,
+		std::uint32_t fp_mode, bool any = false) noexcept
 	{
 		for (auto &space : spaces)
 			if (space->generation == generation && space->mode == mode &&
-				(any_fp_mode || space->fp_mode == fp_mode))
+				(any || (space->orders_stores == orders_stores && space->fp_mode == fp_mode)))
 				return space.get();
 		return nullptr;
 	}
 
-	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept;
+	/* Drops the unordered spaces of `generation`, whose code never runs
+	 * again once a dispatch of it orders stores. */
+	void release_unordered(unsigned long generation) noexcept
+	{
+		for (auto it = spaces.begin(); it != spaces.end();) {
+			if ((*it)->generation != generation || (*it)->orders_stores) {
+				++it;
+				continue;
+			}
+			released_restarts += restarts(**it);
+			it = spaces.erase(it);
+		}
+	}
+
+	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode, bool orders_stores,
+		std::uint32_t fp_mode) noexcept;
 	void publish_code_write(Space &space, std::uint64_t address, std::size_t size) noexcept;
 };
 
@@ -826,9 +837,8 @@ std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, 
  * operand as segment base plus offset, and the spilled state still holds the
  * offsets, so the registers take the progress without the bases. A compat32
  * count is ECX, and its operands wrap at 4 GiB. */
-std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderStringOp *op_pointer)
+std::uint64_t run_string(Core::CpuStateFrame *frame, Space &space, const Core::EmbedderStringOp *op_pointer)
 {
-	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
 	auto &engine = *space.engine;
 	auto &memory = *engine.memory;
 	auto &op = *const_cast<Core::EmbedderStringOp *>(op_pointer);
@@ -975,6 +985,21 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	if (copy)
 		op.Src = src_base + offset(op.Src, src_base);
 	return 0;
+}
+
+/* The string helper the backend calls. x86 may reorder the elements of one
+ * string instruction but orders the instruction as a whole against the
+ * accesses around it, which in a space that orders stores the host's
+ * plain copy needs a barrier on each side for. */
+std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderStringOp *op_pointer)
+{
+	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
+	if (!space.orders_stores)
+		return run_string(frame, space, op_pointer);
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	const auto stopped = run_string(frame, space, op_pointer);
+	std::atomic_thread_fence(std::memory_order_seq_cst);
+	return stopped;
 }
 
 /* The host FPCR for a guest MXCSR: RC as RMode and DAZ as FZ, as the
@@ -1201,7 +1226,8 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 
 } // namespace
 
-Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept
+Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, bool orders_stores,
+	std::uint32_t fp_mode) noexcept
 {
 	initialize_fex_once();
 	if (spaces.size() >= maximum_spaces) {
@@ -1221,6 +1247,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, std
 	}
 	space->generation = generation;
 	space->mode = mode;
+	space->orders_stores = orders_stores;
 	space->fp_mode = fp_mode;
 	space->engine = this;
 	if (!space->callret.reserve())
@@ -1231,10 +1258,11 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, std
 		using FEXCore::Config::Set;
 		namespace C = FEXCore::Config;
 		Set(C::CONFIG_IS64BIT_MODE, mode == ExecutionMode::long64 ? "1" : "0");
-		const auto *orders_stores = space_orders_stores(generation) ? "1" : "0";
-		Set(C::CONFIG_TSOENABLED, orders_stores);
-		Set(C::CONFIG_VECTORTSOENABLED, orders_stores);
-		Set(C::CONFIG_MEMCPYSETTSOENABLED, orders_stores);
+		const auto *tso = orders_stores ? "1" : "0";
+		Set(C::CONFIG_TSOENABLED, tso);
+		Set(C::CONFIG_VECTORTSOENABLED, tso);
+		Set(C::CONFIG_STACKTSOENABLED, tso);
+		Set(C::CONFIG_MEMCPYSETTSOENABLED, tso);
 		space->context = FEXCore::Context::Context::CreateNewContext(host_features);
 		if (!space->context)
 			return nullptr;
@@ -1303,7 +1331,7 @@ bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
 {
 	if (!impl_)
 		return false;
-	const auto *space = impl_->find(generation, mode, 0, true);
+	const auto *space = impl_->find(generation, mode, false, 0, true);
 	if (space == nullptr)
 		return false;
 	mapping_sequence = space->mapping_sequence;
@@ -1312,12 +1340,13 @@ bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
 }
 
 void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
-	const AddressSpaceChanges &changes) noexcept
+	const AddressSpaceChanges &changes, bool orders_stores) noexcept
 {
 	if (!impl_)
 		return;
 	bool found = false;
-	/* Every floating-point mode's space translates the same memory. */
+	/* Every ordering's and floating-point mode's space translates the same
+	 * memory. */
 	for (auto &held : impl_->spaces) {
 		auto *space = held.get();
 		if (space->generation != generation || space->mode != mode)
@@ -1344,7 +1373,7 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 	if (found)
 		return;
 	/* A new space caches nothing yet. */
-	auto *space = impl_->create(generation, mode, 0);
+	auto *space = impl_->create(generation, mode, orders_stores, 0);
 	if (space == nullptr)
 		return;
 	space->mapping_sequence = changes.mapping_sequence;
@@ -1359,21 +1388,27 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	if (!impl_)
 		return run;
 	const auto fp_mode = fp_mode_for(cpu);
-	auto *space = impl_->find(request.generation, cpu.execution_mode, fp_mode);
+	const bool ordered = request.orders_stores;
+	auto *space = impl_->find(request.generation, cpu.execution_mode, ordered, fp_mode);
 	if (space == nullptr) {
-		/* The first dispatch in this floating-point mode: a new space,
-		 * which caches nothing, is as current as its siblings. */
-		const auto *sibling = impl_->find(request.generation, cpu.execution_mode, 0, true);
+		/* The first dispatch in this ordering or floating-point mode: a new
+		 * space, which caches nothing, is as current as its siblings. */
+		const auto *sibling = impl_->find(request.generation, cpu.execution_mode, false, 0, true);
 		if (sibling == nullptr)
 			return run;
 		const auto mapping_sequence = sibling->mapping_sequence;
 		const auto code_sequence = sibling->code_sequence;
-		space = impl_->create(request.generation, cpu.execution_mode, fp_mode);
+		/* The kernel's mark is sticky, so a dispatch that orders stores
+		 * retires the generation's unordered translations for good. */
+		if (ordered)
+			impl_->release_unordered(request.generation);
+		space = impl_->create(request.generation, cpu.execution_mode, ordered, fp_mode);
 		if (space == nullptr)
 			return run;
 		space->mapping_sequence = mapping_sequence;
 		space->code_sequence = code_sequence;
 	}
+	run.stores_ordered = space->orders_stores;
 	space->last_use = ++impl_->clock;
 	impl_->memory = &memory;
 	impl_->execution_context = request.execution_context;

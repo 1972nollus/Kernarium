@@ -59,8 +59,12 @@ enum darwin_uml_guest_event {
  * for one entry. The kernel sets them before it enters the guest and clears
  * them on return, so they never become part of the task's saved PSTATE. */
 enum {
-	/* clone(CLONE_VM) without CLONE_VFORK has shared the task's mm with
-	 * another task since the mm was created. */
+	/* Another agent may observe the memory of the task's mm, as it may
+	 * have at any time since clone(CLONE_VM) without CLONE_VFORK gave the
+	 * mm a second task, since the mm mapped memory that another mm may map
+	 * too (MAP_SHARED of any kind or SysV shm, also inherited at fork), or
+	 * since io_uring pinned memory of the mm to keep a ring in. A host
+	 * may rely on this meaning from bridge ABI 18. */
 	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
 };
 

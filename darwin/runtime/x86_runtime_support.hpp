@@ -75,6 +75,19 @@ private:
  * variable is unset. */
 void note_x86_mm_shared(unsigned long generation, std::uint64_t rip) noexcept;
 
+/* Whether UML_X86_MM_SHARED_LOG names a log the runtime could open. */
+[[nodiscard]] bool x86_mm_shared_logging() noexcept;
+
+/* With the log open, called after each x86-64 JIT dispatch with whether its
+ * code kept x86's store order. The runtime appends a "jit-space" line to the
+ * log the first time each address space runs unordered code and the first
+ * time it runs ordered code, with the RIP the dispatch started at: the
+ * test's proof of which code a space ran. Every unordered dispatch of a
+ * space that has run ordered code appends a "jit-regressed" line, which
+ * must never appear. */
+void note_x86_jit_ordering(unsigned long generation, bool ordered,
+	std::uint64_t rip) noexcept;
+
 } // namespace uml::runtime
 
 #endif
