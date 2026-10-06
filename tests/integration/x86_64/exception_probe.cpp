@@ -1136,7 +1136,14 @@ __asm__(".text\n"
 	X(fxsave_register, "0x0f, 0xae, 0xc0")                               \
 	X(group1_82, "0x82, 0xc0, 0x01")                                     \
 	X(reserved_0f3e, "0x0f, 0x3e")                                       \
-	X(reserved_0f3f, "0x0f, 0x3f")
+	X(reserved_0f3f, "0x0f, 0x3f")                                       \
+	X(lddqu_register, "0xf2, 0x0f, 0xf0, 0xc0")                          \
+	X(movlpd_register, "0x66, 0x0f, 0x12, 0xc0")                         \
+	X(emms_66, "0x66, 0x0f, 0x77")                                       \
+	X(x87_d9_1, "0xd9, 0x08")                                            \
+	X(x87_db_4, "0xdb, 0x20")                                            \
+	X(x87_dd_5, "0xdd, 0x28")                                            \
+	X(x87_db_f8, "0xdb, 0xf8")
 /* Each takes an unmapped address in AX, which they raise #GP before
  * reading. */
 #define PRIVILEGED_CASES(X)                                                  \
@@ -1752,8 +1759,8 @@ extern "C" char probe_mov_cs_end[];
 void mov_cs_unmapped() { probe_mov_cs(0); }
 
 /* Register forms of memory-only instructions, LOCK on an instruction that
- * does not write memory, 0x82 in either mode and the 0F 3E and 0F 3F
- * escapes raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
+ * does not write memory, 0x82 in either mode, the 0F 3E and 0F 3F escapes,
+ * EMMS with a mandatory prefix and the undefined x87 forms raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
  * and the system instructions LTR, LIDT, LMSW, INVLPG and MOV with CR0
  * raise #GP(0) outside ring 0, before they read memory. */
 bool undefined_faults()
@@ -2185,6 +2192,28 @@ __asm__(".text\n"
 	".global probe_mask_store_end\n"
 	"probe_mask_store_end:\n"
 	"	vzeroupper\n"
+	"	ret\n"
+	/* MASKMOVDQU and MASKMOVQ at (address) with a zero mask. */
+	".global probe_maskmovdqu_zero\n"
+	"probe_maskmovdqu_zero:\n"
+	"	pxor %xmm1, %xmm1\n"
+	"	pcmpeqb %xmm0, %xmm0\n"
+	".global probe_maskmovdqu_zero_insn\n"
+	"probe_maskmovdqu_zero_insn:\n"
+	"	maskmovdqu %xmm1, %xmm0\n"
+	".global probe_maskmovdqu_zero_end\n"
+	"probe_maskmovdqu_zero_end:\n"
+	"	ret\n"
+	".global probe_maskmovq_zero\n"
+	"probe_maskmovq_zero:\n"
+	"	pxor %mm1, %mm1\n"
+	"	pcmpeqb %mm0, %mm0\n"
+	".global probe_maskmovq_zero_insn\n"
+	"probe_maskmovq_zero_insn:\n"
+	"	maskmovq %mm1, %mm0\n"
+	".global probe_maskmovq_zero_end\n"
+	"probe_maskmovq_zero_end:\n"
+	"	emms\n"
 	"	ret\n");
 
 extern "C" void probe_mask_load(word *state);
@@ -2193,6 +2222,12 @@ extern "C" char probe_mask_load_end[];
 extern "C" void probe_mask_store(word *state);
 extern "C" char probe_mask_store_insn[];
 extern "C" char probe_mask_store_end[];
+extern "C" void probe_maskmovdqu_zero(unsigned char *address);
+extern "C" char probe_maskmovdqu_zero_insn[];
+extern "C" char probe_maskmovdqu_zero_end[];
+extern "C" void probe_maskmovq_zero(unsigned char *address);
+extern "C" char probe_maskmovq_zero_insn[];
+extern "C" char probe_maskmovq_zero_end[];
 
 constexpr long nr_munmap = 11;
 constexpr word page_bytes = 4096;
@@ -2203,6 +2238,12 @@ alignas(4096) unsigned char mask_pages[3 * page_bytes];
 
 void mask_load() { probe_mask_load(mask_state); }
 void mask_store() { probe_mask_store(mask_state); }
+/* Eight and four bytes before the unmapped page: the operands run onto it. */
+void maskmovdqu_zero()
+{
+	probe_maskmovdqu_zero(mask_pages + 2 * page_bytes - 8);
+}
+void maskmovq_zero() { probe_maskmovq_zero(mask_pages + 2 * page_bytes - 4); }
 
 void set_mask_state(const unsigned char *address, unsigned lanes)
 {
@@ -2231,7 +2272,8 @@ bool expect_lanes(const char *what, const unsigned char *bytes,
 /* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
  * on an unmapped page does not fault and a load zeroes it, every enabled
  * lane completes when the first one misses a cold page, and an enabled
- * lane on an unmapped page raises #PF at its address. */
+ * lane on an unmapped page raises #PF at its address. MASKMOVDQU and
+ * MASKMOVQ, unlike them, fault on any page their operand touches. */
 bool masked_moves()
 {
 	unsigned char *const cold = mask_pages;
@@ -2271,6 +2313,17 @@ bool masked_moves()
 		       address_of(probe_mask_load_end),
 		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
 			address_of(probe_mask_load_insn), 14, true, 4});
+	/* MASKMOVDQU and MASKMOVQ check every page their operand touches,
+	 * whatever the mask selects. (The Xeon reports the operand's address
+	 * plus 8 for one wholly on an unmapped page, which these avoid.) */
+	ok &= delivers("MASKMOVDQU with a zero mask onto an unmapped page",
+		       maskmovdqu_zero, address_of(probe_maskmovdqu_zero_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_maskmovdqu_zero_insn), 14, true, 6});
+	ok &= delivers("MASKMOVQ with a zero mask onto an unmapped page",
+		       maskmovq_zero, address_of(probe_maskmovq_zero_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_maskmovq_zero_insn), 14, true, 6});
 	return ok;
 }
 
@@ -4530,7 +4583,7 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "noncanonical"));
 	report("x86-64 DIV and IDIV raise #DE and write nothing",
 	       in_child(self, "divide-error"));
-	report("x86-64 VMASKMOV and VPMASKMOV access only enabled lanes",
+	report("x86-64 masked moves access the lanes x86 does",
 	       in_child(self, "masked-moves"));
 	report("x86-64 AVX2 gathers complete the elements before a fault",
 	       in_child(self, "gathers"));

@@ -655,7 +655,7 @@ random_value 64, str, x
 gadget store_\name
 	effective_address
 	mov x25, x7
-	x87_load_u64_value x24, \base
+	descriptor_table_base x24, \base
 	page_cross_check \size, Lx86_store_\name\()_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	strh wzr, [x7]
@@ -680,7 +680,7 @@ Lx86_store_\name\()_cross:
 	b Lx86_store_\name\()_done
 .endm
 
-.macro x87_load_u64_value destination, value
+.macro descriptor_table_base destination, value
 	movz \destination, #((\value) & 0xffff)
 	movk \destination, #(((\value) >> 16) & 0xffff), lsl #16
 	movk \destination, #(((\value) >> 32) & 0xffff), lsl #32
@@ -692,7 +692,7 @@ store_descriptor_table gdtr_32, 0xfffe0000, 6
 store_descriptor_table idtr, 0xffffffffffff0000, 10
 store_descriptor_table idtr_32, 0xffff0000, 6
 
-.purgem x87_load_u64_value
+.purgem descriptor_table_base
 .purgem store_descriptor_table
 
 /* LSL: the limit of the segment a selector names, with ZF set, or ZF clear
