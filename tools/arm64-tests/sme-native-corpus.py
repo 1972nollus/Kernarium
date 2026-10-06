@@ -70,7 +70,7 @@ live register files as in the pack.
 
 Oracle response:
 
-    "UMLSMER\\0" u32 version=1, u32 host svl, u32 host features, u32 count,
+    "UMLSMER\\0" u32 version=2, u32 host svl, u32 host features, u32 count,
     count * (u32 event, u32 pc offset, u64 fault address, u32 ESR, state,
              per request region: u32 runs, runs * (u32 offset, u32 length,
              bytes))
@@ -80,6 +80,12 @@ parts its own SVCR makes live. Events are numbered as in the pack, with 8
 for a run the oracle could not attribute. Host features are FEAT_SME,
 FEAT_SME2, FEAT_SME_F64F64, FEAT_SME_I16I64, FEAT_SME_FA64, and FEAT_SME2p1
 in bits 0-5.
+
+A response's FPSR is what the case's instructions left. XNU sets FPSR to
+0x0800009F on every kernel entry in streaming mode, interrupts included, so
+the oracle sets and reads FPSR in user mode with no trap in between (its
+header describes how). Version 1 responses carried that reset value for
+every case that ended in streaming mode, so this script reads none.
 
 A regeneration of the earlier steps that leaves this script's request
 unchanged needs no SME host: --carry PACK copies the native records of the
@@ -124,7 +130,8 @@ PRODUCER = "arm64-sme-native"
 SVL = 64
 REQUEST_MAGIC = b"UMLSMEQ\0"
 RESPONSE_MAGIC = b"UMLSMER\0"
-WIRE_VERSION = 1
+REQUEST_VERSION = 1
+RESPONSE_VERSION = 2
 SVC = 0xD400_0001
 SENTINEL = 0xD420_00E0  # BRK #7: the oracle runs each SVC as this
 SM = corpus.SVCR_SM
@@ -237,7 +244,7 @@ def _put_state(out: bytearray, state: WireState, svl: int) -> None:
 
 def write_request(cases: list[WireCase], svl: int) -> bytes:
     out = bytearray(REQUEST_MAGIC)
-    out += struct.pack("<III", WIRE_VERSION, svl, len(cases))
+    out += struct.pack("<III", REQUEST_VERSION, svl, len(cases))
     for case in cases:
         out += struct.pack("<II", len(case.words), case.entry)
         out += struct.pack(f"<{len(case.words)}I", *case.words)
@@ -299,7 +306,7 @@ def read_response(data: bytes, cases: list[WireCase], svl: int
     if reader.take(8) != RESPONSE_MAGIC:
         raise ValueError("not an oracle response")
     version, host_svl, features, count = reader.unpack("IIII")
-    if version != WIRE_VERSION or count != len(cases):
+    if version != RESPONSE_VERSION or count != len(cases):
         raise ValueError("the oracle response does not answer this request")
     host = {"svl": host_svl,
             "features": [name for bit, name in enumerate(HOST_FEATURES)
