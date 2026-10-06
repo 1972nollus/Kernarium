@@ -3,6 +3,7 @@
 
 #include "execution_engine.hpp"
 #include "memory/mmu/word_shared_mutex.hpp"
+#include "platform/host_capabilities.hpp"
 #include "platform/run_routing.hpp"
 
 #include <atomic>
@@ -144,6 +145,19 @@ private:
  * complete overlapping cohort retires. With no active route, every caller
  * receives nullptr. */
 [[nodiscard]] Context *current_context() noexcept;
+
+/* The host the virtual CPU presents through `engine`: the prober's
+ * capabilities less the parts of the SME profile that engine does not
+ * implement (cpu::engine_host_capabilities). The engine translates for it,
+ * so its identification registers agree with the guest's HWCAPs. An
+ * unresolved (automatic) engine gets the profile both engines implement. */
+[[nodiscard]] const ::uml::platform::HostCapabilities &guest_host_capabilities(
+	ExecutionEngine engine) noexcept;
+
+/* That of the current context's engine, from which the bridge derives the
+ * guest's HWCAPs; with no context, the profile both engines implement. */
+[[nodiscard]] const ::uml::platform::HostCapabilities &
+current_guest_host_capabilities() noexcept;
 
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed
  * guest RAM, which the host hands out once per process and never takes back. */

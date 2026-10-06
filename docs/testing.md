@@ -520,7 +520,8 @@ Unit binaries take the guest-SME policy from their environment, like any
 run, so the suites hold with it off, the default, on every host.
 `arm64-sme-foundation` checks the prober against the host's own sysctls under
 either policy, and the identification registers and HWCAP2 against arm64
-Linux's table with injected SME hosts at every SVL from 16 to 256 bytes. On
+Linux's table with injected SME hosts at every SVL from 16 to 256 bytes and
+every engine support level. On
 an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
 `arm64-jit-sme-control`, `arm64-jit-sme-register`,
 `arm64-jit-sme-memory` and `arm64-instruction-corpus`, which then runs the

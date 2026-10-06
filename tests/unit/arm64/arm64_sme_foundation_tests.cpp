@@ -3,6 +3,7 @@
  * host prober, the virtual CPU's SME profile, the SVL-sized storage layout,
  * the SVCR write rules and the lazy state transfer. */
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
@@ -599,9 +600,8 @@ void identification_follows_profile()
 		require((detail::guest_hwcaps(sme_host(svl, true))[1] &
 			sme2_hwcap2) == 0);
 
-	/* The probed host: no SME words with the policy off, Linux's
-	 * derivation with it on where the host has the profile, and the entry
-	 * points the guest kernel calls agree. */
+	/* The probed host: no SME words with the policy off, and Linux's
+	 * derivation with it on where the host has the profile. */
 	const auto off_words = detail::guest_hwcaps(
 		apple::probe_host_capabilities(apple::GuestSmePolicy::off));
 	require((off_words[1] & (sme2_hwcap2 | never_hwcap2)) == 0);
@@ -612,8 +612,62 @@ void identification_follows_profile()
 	require(on_words[1] == (off_words[1] |
 		(profile == arm64::SmeProfile::sme2 ? sme2_hwcap2 :
 		 profile == arm64::SmeProfile::sme ? sme1_hwcap2 : 0UL)));
-	const auto probed = detail::guest_hwcaps(
-		apple::probed_host_capabilities());
+}
+
+/* The profile an engine presents follows its level: FEAT_SME2, its
+ * identification fields, its HWCAP2 bits and its ZT0 forms only at sme2,
+ * and every other word as the host's. A host without SME2, which is every
+ * host with the policy off, is unchanged at every level. */
+void profile_follows_engine_support()
+{
+	namespace detail = arm64::detail;
+	using arm64::SmeSupport;
+	constexpr std::uint32_t ldr_zt0 = 0xe11f'8000U; // ldr zt0, [x0]
+	HostCapabilities base;
+	for (const auto feature : {ArmFeature::lse, ArmFeature::i8mm,
+		     ArmFeature::bf16})
+		base.supported.set(static_cast<std::size_t>(feature));
+	const auto off = apple::probe_host_capabilities(apple::GuestSmePolicy::off);
+	for (const auto support : {SmeSupport::none, SmeSupport::control,
+		     SmeSupport::complete, SmeSupport::sme2}) {
+		require(arm64::sme_host_for_support(base, support) == base);
+		require(arm64::sme_host_for_support(off, support) == off,
+			"the cap changed a policy-off host");
+		for (const auto svl : vector_lengths)
+			for (const bool sme2 : {false, true}) {
+				auto host = sme_host(svl, sme2);
+				host.supported |= base.supported;
+				auto capped =
+					arm64::sme_host_for_support(host, support);
+				const bool keeps = sme2 && support == SmeSupport::sme2;
+				require(arm64::sme_profile(capped) ==
+					(keeps ? arm64::SmeProfile::sme2 :
+						 arm64::SmeProfile::sme));
+				const auto words = detail::guest_hwcaps(capped);
+				const auto host_words = detail::guest_hwcaps(host);
+				require(words[0] == host_words[0]);
+				require(words[1] == ((host_words[1] & ~sme2_hwcap2) |
+					(keeps ? sme2_hwcap2 : sme1_hwcap2)));
+				require(read_id(capped, detail::id_aa64pfr1_el1) ==
+					(std::uint64_t{keeps ? 2U : 1U} << 24));
+				require(read_id(capped, detail::id_aa64smfr0_el1) ==
+					(keeps ? sme2_smfr0 : sme1_smfr0));
+				require((detail::decode_sme(ldr_zt0,
+					arm64::implemented_sme_features(capped),
+					svl) != nullptr) == keeps);
+				capped.supported.set(static_cast<std::size_t>(
+					ArmFeature::sme2), sme2);
+				require(capped == host,
+					"the cap changed more than FEAT_SME2");
+			}
+	}
+
+	/* The entry points the guest kernel calls, outside any run: the
+	 * profile both engines implement. */
+	const auto common = std::min(arm64::gadgets::sme_support,
+		arm64::jit::sme_support);
+	const auto probed = detail::guest_hwcaps(arm64::sme_host_for_support(
+		apple::probed_host_capabilities(), common));
 	require(darwin_uml_guest_hwcap() == probed[0]);
 	require(darwin_uml_guest_hwcap2() == probed[1]);
 }
@@ -666,6 +720,7 @@ int main()
 	svcr_writes_apply_to_state();
 	defaults_follow_engine_support();
 	identification_follows_profile();
+	profile_follows_engine_support();
 	host_streaming_state_is_read_only_on_sme_hardware();
 	return 0;
 }
