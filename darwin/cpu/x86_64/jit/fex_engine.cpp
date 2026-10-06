@@ -5,6 +5,7 @@
 #include "cpu/x86_64/code_page_registry.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/jit/fp_model.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
@@ -49,12 +50,16 @@ constexpr std::int64_t maximum_dispatch_budget = 64 * 1024;
 constexpr std::size_t callret_size = Core::InternalThreadState::CALLRET_STACK_SIZE;
 static_assert(callret_size / 2 >= maximum_dispatch_budget * 16,
 	"a dispatch cannot leave the call-return stack");
-/* Address spaces one vCPU keeps translations for at once. */
+/* Address spaces one vCPU keeps translations for at once, in each
+ * floating-point mode it runs them in. */
 constexpr std::size_t maximum_spaces = 8;
 
 constexpr std::uint64_t user_rflags_mask = 0x0000'0000'003f'7fd5ULL;
+constexpr std::uint32_t mxcsr_denormals_are_zero = 1U << 6U;
+constexpr std::uint32_t mxcsr_flush_to_zero = 1U << 15U;
 constexpr std::uint64_t rflags_trap_flag = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume_flag = 1ULL << 16U;
+constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 
 /* x86 orders every store before every later one. FEXCore emulates that with
  * acquire loads and release stores, which costs about 30% on memory-bound
@@ -264,10 +269,13 @@ private:
 	void *data_{};
 };
 
-/* One guest address space in one execution mode, as this vCPU runs it. */
+/* One guest address space in one execution mode and floating-point mode, as
+ * this vCPU runs it. */
 struct Space final {
 	unsigned long generation{};
 	ExecutionMode mode{};
+	/* Core::EMBEDDER_FP_MODE_* bits every translation assumes. */
+	std::uint32_t fp_mode{};
 	std::uint64_t last_use{};
 	std::uint64_t mapping_sequence{};
 	std::uint64_t code_sequence{};
@@ -291,6 +299,15 @@ struct Space final {
 	std::size_t split_size{};
 	/* The dispatch ended at a fault of a gather element. */
 	bool gather_fault{};
+	/* The exceptions of an instruction's low part, which its high part
+	 * settles (Embedder.FPPending), and the #XM or #MF a dispatch ended
+	 * at: its vector and error code. */
+	FpSteps pending_fp;
+	std::uint8_t fp_fault_vector{};
+	std::uint32_t fp_fault_error{};
+	/* The dispatch runs an instruction again whose checks settle all its
+	 * exceptions (Core::EMBEDDER_EXIT_FP_RETRY). */
+	bool fp_retrying{};
 
 	/* A compat32 address wraps at 4 GiB, segment base and offset alike,
 	 * as the hardware forms it. */
@@ -466,15 +483,19 @@ struct FexEngine::Impl final {
 		return space.thread != nullptr ? space.thread->CurrentFrame->Embedder.CodeBufferRestarts : 0;
 	}
 
-	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode) noexcept
+	/* The space for `generation` and `mode` in floating-point mode
+	 * `fp_mode`, or with `any_fp_mode` in any. */
+	[[nodiscard]] Space *find(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode,
+		bool any_fp_mode = false) noexcept
 	{
 		for (auto &space : spaces)
-			if (space->generation == generation && space->mode == mode)
+			if (space->generation == generation && space->mode == mode &&
+				(any_fp_mode || space->fp_mode == fp_mode))
 				return space.get();
 		return nullptr;
 	}
 
-	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode) noexcept;
+	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept;
 	void publish_code_write(Space &space, std::uint64_t address, std::size_t size) noexcept;
 };
 
@@ -731,6 +752,74 @@ uintptr_t embedder_tlb_miss(Core::CpuStateFrame *frame, std::uint64_t address, s
 	return host;
 }
 
+static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT &&
+	static_cast<unsigned>(FpKind::narrow) == Core::EMBEDDER_FP_NARROW &&
+	static_cast<unsigned>(FpKind::half_narrow) == Core::EMBEDDER_FP_HALF_NARROW &&
+	fp_fma_negate_odd_addends == Core::EMBEDDER_FP_FMA_NEGATE_ODD_ADDENDS &&
+	fp_cmp_vex == Core::EMBEDDER_FP_CMP_VEX && fp_comis_quiet == Core::EMBEDDER_FP_COMIS_QUIET &&
+	fp_to_int_truncate == Core::EMBEDDER_FP_TO_INT_TRUNCATE && fp_to_int64 == Core::EMBEDDER_FP_TO_INT64 &&
+	fp_from_int64 == Core::EMBEDDER_FP_FROM_INT64,
+	"the model's kinds and flags are FEXCore's");
+
+constexpr std::uint8_t simd_error_vector = 19;
+/* MXCSR's exception masks. */
+constexpr std::uint32_t mxcsr_masks = 0x1f80U;
+
+/* The cold path of an EmbedderFPCheck op: x86's result for the operation the
+ * descriptor names, from the sources and host result in FPScratch. While
+ * MXCSR unmasks an exception, the check settles the instruction's
+ * exceptions too, after its high part if it has two: it faults with #XM,
+ * leaving its destination alone, or raises the flags of the masked ones.
+ * As in the gadget engine, only the instructions a check sends here raise
+ * flags. Under the special checks a part that no test sent here holds
+ * flags of masked exceptions too: when its high part faults, the
+ * instruction runs again with checks that send every part here. */
+std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, std::uint64_t guest_rip)
+{
+	FpOperation operation{};
+	operation.kind = static_cast<FpKind>(descriptor & 0xffU);
+	operation.element_bytes = 2U << ((descriptor >> Core::EMBEDDER_FP_ELEMENT_SHIFT) & 3U);
+	operation.lanes = static_cast<std::uint32_t>((descriptor >> Core::EMBEDDER_FP_LANES_SHIFT) & 0xfU);
+	operation.immediate = static_cast<std::uint8_t>(descriptor >> Core::EMBEDDER_FP_IMM_SHIFT);
+	operation.flags = static_cast<std::uint8_t>(descriptor >> 24U);
+	FpValues values{};
+	auto *scratch = frame->Embedder.FPScratch;
+	std::memcpy(values.sources.data(), scratch, sizeof(values.sources));
+	std::memcpy(values.result.data(), scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.size());
+	const auto mxcsr = frame->State.mxcsr;
+	auto steps = x86_fp_compute(operation, mxcsr, values);
+	std::memcpy(scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.data(), values.result.size());
+	if ((mxcsr & mxcsr_masks) == mxcsr_masks)
+		return 0;
+	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
+	if (frame->Embedder.FPPending != 0) {
+		steps |= space.pending_fp;
+		space.pending_fp = {};
+		frame->Embedder.FPPending = 0;
+	}
+	if ((descriptor & Core::EMBEDDER_FP_PART_LOW) != 0) {
+		space.pending_fp = steps;
+		frame->Embedder.FPPending = 1;
+		return 0;
+	}
+	const auto outcome = x86_fp_settle(steps, mxcsr);
+	const auto unmasked = ~(mxcsr >> 7U) & 0x3fU;
+	if (outcome.fault && (descriptor & Core::EMBEDDER_FP_PART_HIGH) != 0 && (unmasked & 0x32U) == 0 &&
+		!space.fp_retrying) {
+		frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_RETRY;
+		record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+		return 1;
+	}
+	frame->State.mxcsr = mxcsr | outcome.flags;
+	if (!outcome.fault)
+		return 0;
+	space.fp_fault_vector = simd_error_vector;
+	space.fp_fault_error = frame->State.mxcsr;
+	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_FAULT;
+	record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+	return 1;
+}
+
 /* REP MOVS and REP STOS: element by element in page-bounded chunks. On a
  * fault RCX, RSI and RDI hold the progress made and RIP the instruction, so
  * the guest restarts it where it stopped, as on x86. The backend passes each
@@ -752,6 +841,15 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	const auto src_base = copy ? op.Src - gregs[X86State::REG_RSI] : 0;
 	if (compat32)
 		op.Count = static_cast<std::uint32_t>(op.Count);
+	const ExitAt at{op.GuestRIP, op.Unretired};
+	/* Under RFLAGS.AC a misaligned first element raises #AC before any
+	 * moves, as in the gadget engine; the rest keep its alignment. */
+	if ((space.fp_mode & Core::EMBEDDER_FP_MODE_ALIGNMENT) != 0 && op.Count != 0 &&
+		((space.linear(op.Dest) | (copy ? space.linear(op.Src) : 0U)) & (element - 1U)) != 0) {
+		frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_ALIGNMENT_FAULT;
+		record_exit(*frame, at);
+		return 1;
+	}
 	/* An operand's register, from its segment address. */
 	const auto offset = [&](std::uint64_t address, std::uint64_t base) {
 		const auto value = address - base;
@@ -764,7 +862,6 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 		if (copy)
 			gregs[X86State::REG_RSI] = offset(op.Src, src_base);
 	};
-	const ExitAt at{op.GuestRIP, op.Unretired};
 	const auto fail = [&](std::uint64_t address, MemoryAccess access) {
 		record_fault(*frame, memory, address, access, at);
 		save_progress();
@@ -880,18 +977,40 @@ std::uint64_t embedder_string(Core::CpuStateFrame *frame, const Core::EmbedderSt
 	return 0;
 }
 
-/* The host FPCR for a guest MXCSR: RC as RMode and FTZ as FZ, as FEXCore's
- * LDMXCSR sets it. FEXCore applies MXCSR only when the guest loads it, so a
- * dispatch must start from the guest's own value, not from whatever the
- * thread's last guest left behind. Without FEAT_AFP, FZ also flushes
- * denormal inputs and DAZ alone has no effect. */
+/* The host FPCR for a guest MXCSR: RC as RMode and DAZ as FZ, as the
+ * maintained series' LDMXCSR sets it when embedded. FZ flushes denormal
+ * inputs as DAZ does; the translations' checks apply FTZ, after rounding,
+ * and undo FZ's flush of a result x86 keeps. FEXCore applies MXCSR only when
+ * the guest loads it, so a dispatch must start from the guest's own value,
+ * not from whatever the thread's last guest left behind. */
 [[nodiscard]] std::uint64_t fpcr_for_mxcsr(std::uint32_t mxcsr) noexcept
 {
 	constexpr std::array<std::uint64_t, 4> rounding{0, 2, 1, 3};
 	auto value = rounding[(mxcsr >> 13U) & 3U] << 22U;
-	if ((mxcsr & (1U << 15U)) != 0)
+	if ((mxcsr & mxcsr_denormals_are_zero) != 0)
 		value |= 1ULL << 24U;
 	return value;
+}
+
+/* The x87 control word's exception masks, and the status word's ES and B,
+ * which show an unmasked exception pending. */
+constexpr std::uint16_t x87_exception_masks = 0x3fU;
+constexpr std::uint16_t x87_status_pending = 0x8080U;
+constexpr std::uint8_t x87_error_vector = 16;
+
+/* The floating-point mode a translation for `cpu` assumes. */
+[[nodiscard]] std::uint32_t fp_mode_for(const CpuState &cpu) noexcept
+{
+	/* Unmasked: invalid operation, division by zero or overflow, which a
+	 * value shows, and a denormal operand, underflow or precision. */
+	const auto unmasked = ~(cpu.mxcsr >> 7U) & 0x3fU;
+	const auto checks = (unmasked & 0x32U) != 0 ? Core::EMBEDDER_FP_MODE_CHECK_ALL :
+		unmasked != 0 ? Core::EMBEDDER_FP_MODE_CHECK_SPECIAL : 0U;
+	/* And the x87 control word unmasking any exception, and RFLAGS.AC. */
+	const auto x87 = (~cpu.x87_control & x87_exception_masks) != 0 ? Core::EMBEDDER_FP_MODE_X87 : 0U;
+	const auto alignment = (cpu.rflags & rflags_alignment_check) != 0 ? Core::EMBEDDER_FP_MODE_ALIGNMENT : 0U;
+	return ((cpu.mxcsr & mxcsr_denormals_are_zero) != 0 ? Core::EMBEDDER_FP_MODE_DAZ : 0U) |
+		((cpu.mxcsr & mxcsr_flush_to_zero) != 0 ? Core::EMBEDDER_FP_MODE_FTZ : 0U) | checks | x87 | alignment;
 }
 
 [[nodiscard]] std::uint64_t read_fpcr() noexcept
@@ -1082,7 +1201,7 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 
 } // namespace
 
-Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noexcept
+Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, std::uint32_t fp_mode) noexcept
 {
 	initialize_fex_once();
 	if (spaces.size() >= maximum_spaces) {
@@ -1102,6 +1221,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	}
 	space->generation = generation;
 	space->mode = mode;
+	space->fp_mode = fp_mode;
 	space->engine = this;
 	if (!space->callret.reserve())
 		return nullptr;
@@ -1121,6 +1241,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 		space->context->SetSignalDelegator(&signal_delegator);
 		space->context->SetSyscallHandler(space->syscalls.get());
 		space->context->EnableEmbedding();
+		space->context->SetEmbedderFPMode(fp_mode);
 		if (!space->context->InitCore())
 			return nullptr;
 		space->thread = space->context->CreateThread(0, 0, nullptr);
@@ -1138,6 +1259,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode) noe
 	pointers.EmbedderTLBMissHelper = reinterpret_cast<uint64_t>(&embedder_tlb_miss);
 	pointers.EmbedderStringHelper = reinterpret_cast<uint64_t>(&embedder_string);
 	pointers.EmbedderRandomHelper = reinterpret_cast<uint64_t>(&guest_random);
+	pointers.EmbedderFPHelper = reinterpret_cast<uint64_t>(&embedder_fp);
 	frame->Embedder.TLB = reinterpret_cast<uint64_t>(space->tlb.get());
 	frame->Embedder.HostContext = reinterpret_cast<uint64_t>(space.get());
 	frame->Embedder.CodeSizePerNode = code_bytes_per_node;
@@ -1181,7 +1303,7 @@ bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
 {
 	if (!impl_)
 		return false;
-	const auto *space = impl_->find(generation, mode);
+	const auto *space = impl_->find(generation, mode, 0, true);
 	if (space == nullptr)
 		return false;
 	mapping_sequence = space->mapping_sequence;
@@ -1194,13 +1316,13 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 {
 	if (!impl_)
 		return;
-	auto *space = impl_->find(generation, mode);
-	if (space == nullptr) {
-		/* A new space caches nothing yet. */
-		space = impl_->create(generation, mode);
-		if (space == nullptr)
-			return;
-	} else {
+	bool found = false;
+	/* Every floating-point mode's space translates the same memory. */
+	for (auto &held : impl_->spaces) {
+		auto *space = held.get();
+		if (space->generation != generation || space->mode != mode)
+			continue;
+		found = true;
 		if (changes.all_mappings) {
 			space->flush_tlb();
 			space->clear_code();
@@ -1216,7 +1338,15 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 			for (const auto &range : changes.code_ranges)
 				space->invalidate_code(range.address, range.length);
 		}
+		space->mapping_sequence = changes.mapping_sequence;
+		space->code_sequence = changes.code_sequence;
 	}
+	if (found)
+		return;
+	/* A new space caches nothing yet. */
+	auto *space = impl_->create(generation, mode, 0);
+	if (space == nullptr)
+		return;
 	space->mapping_sequence = changes.mapping_sequence;
 	space->code_sequence = changes.code_sequence;
 }
@@ -1228,9 +1358,22 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	result.reason = ::uml::cpu::ExitReason::fatal;
 	if (!impl_)
 		return run;
-	auto *space = impl_->find(request.generation, cpu.execution_mode);
-	if (space == nullptr)
-		return run;
+	const auto fp_mode = fp_mode_for(cpu);
+	auto *space = impl_->find(request.generation, cpu.execution_mode, fp_mode);
+	if (space == nullptr) {
+		/* The first dispatch in this floating-point mode: a new space,
+		 * which caches nothing, is as current as its siblings. */
+		const auto *sibling = impl_->find(request.generation, cpu.execution_mode, 0, true);
+		if (sibling == nullptr)
+			return run;
+		const auto mapping_sequence = sibling->mapping_sequence;
+		const auto code_sequence = sibling->code_sequence;
+		space = impl_->create(request.generation, cpu.execution_mode, fp_mode);
+		if (space == nullptr)
+			return run;
+		space->mapping_sequence = mapping_sequence;
+		space->code_sequence = code_sequence;
+	}
 	space->last_use = ++impl_->clock;
 	impl_->memory = &memory;
 	impl_->execution_context = request.execution_context;
@@ -1248,6 +1391,8 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	frame->Embedder.Budget = budget;
 	frame->Embedder.Unretired = 0;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_NONE;
+	frame->Embedder.FPPending = 0;
+	frame->Embedder.X87Raised = 0;
 	frame->Embedder.FaultAddress = 0;
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
@@ -1259,12 +1404,30 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	/* Registrations of a page by another vCPU wait for this one to leave
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
-	space->context->ExecuteEmbedded(thread, false);
-	/* A store into the running unit's own code left before it stored. Its
-	 * instruction runs again as a unit of its own, whose store publishes,
-	 * and the dispatch goes on from freshly fetched code. */
-	while (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE)
-		space->context->ExecuteEmbedded(thread, true);
+	space->context->ExecuteEmbedded(thread, false, 0);
+	for (;;) {
+		/* A store into the running unit's own code left before it
+		 * stored. Its instruction runs again as a unit of its own, whose
+		 * store publishes, and the dispatch goes on from freshly fetched
+		 * code. */
+		if (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_CODE_WRITE) {
+			space->context->ExecuteEmbedded(thread, true, 0);
+			continue;
+		}
+		/* A fault the special checks did not settle in full: the
+		 * instruction, which has not retired, runs again as a unit of its
+		 * own whose checks send every part to the helper. */
+		if (frame->Embedder.ExitReason == Core::EMBEDDER_EXIT_FP_RETRY) {
+			++frame->Embedder.Budget;
+			--frame->Embedder.Unretired;
+			space->fp_retrying = true;
+			space->context->ExecuteEmbedded(thread, true,
+				(fp_mode & ~Core::EMBEDDER_FP_MODE_CHECK_SPECIAL) | Core::EMBEDDER_FP_MODE_CHECK_ALL);
+			space->fp_retrying = false;
+			continue;
+		}
+		break;
+	}
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 
@@ -1277,10 +1440,23 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	impl_->memory = nullptr;
 
 	switch (frame->Embedder.ExitReason) {
+	case Core::EMBEDDER_EXIT_MODE:
+		/* A control word load in a context without x87 checks left ES
+		 * as it was: ES shows whether the new control word unmasks a
+		 * flag already set, which the next waiting instruction raises. */
+		if ((cpu.x87_status & ~cpu.x87_control & x87_exception_masks) != 0)
+			cpu.x87_status |= x87_status_pending;
+		else
+			cpu.x87_status &= static_cast<std::uint16_t>(~x87_status_pending);
+		[[fallthrough]];
 	case Core::EMBEDDER_EXIT_BUDGET:
+	case Core::EMBEDDER_EXIT_X87_EXCEPTION:
 		/* A step whose instruction branched back to a block it had
 		 * entered retired that instruction before the back edge ran out
-		 * of budget. */
+		 * of budget. An instruction that changed the floating-point mode
+		 * retired, and the next dispatch runs the space of the new mode;
+		 * so did an x87 instruction whose unmasked exception left all
+		 * but the status word alone. */
 		result.reason = impl_->stepping && result.retired_instructions != 0 ?
 			::uml::cpu::ExitReason::single_step : ::uml::cpu::ExitReason::instruction_budget;
 		return run;
@@ -1291,6 +1467,27 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		cpu.rflags |= rflags_resume_flag;
 		result.reason = impl_->stepping ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
+		return run;
+	case Core::EMBEDDER_EXIT_FP_FAULT:
+		/* #XM or #MF, a fault at its instruction. */
+		result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+		result.syndrome = space->fp_fault_vector;
+		run.error_code = static_cast<std::int32_t>(space->fp_fault_error);
+		return run;
+	case Core::EMBEDDER_EXIT_X87_FAULT:
+		/* #MF at a waiting instruction, with the status and control words
+		 * as the gadget engine reports them. */
+		result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+		result.syndrome = x87_error_vector;
+		run.error_code = static_cast<std::int32_t>(cpu.x87_status |
+			(std::uint32_t{cpu.x87_control} << 16U));
+		return run;
+	case Core::EMBEDDER_EXIT_ALIGNMENT_FAULT:
+		/* #AC, which reports no address. */
+		result.reason = ::uml::cpu::ExitReason::memory_fault;
+		result.fault.address = 0;
+		result.fault.access = MemoryAccess::read;
+		result.fault.alignment = true;
 		return run;
 	case Core::EMBEDDER_EXIT_MEMORY_FAULT:
 		result.reason = ::uml::cpu::ExitReason::memory_fault;

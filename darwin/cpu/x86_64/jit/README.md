@@ -25,9 +25,9 @@ the gadget engine.
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread
-per address-space generation and execution mode, at most eight, and releases
-the least recently used, because FEXCore's block caches are keyed by guest RIP
-alone. A compat32 context decodes and computes as 32-bit code.
+per address-space generation, execution mode and floating-point mode, at most
+eight, and releases the least recently used, because FEXCore's block caches
+are keyed by guest RIP alone. A compat32 context decodes and computes as 32-bit code.
 
 A compat32 address wraps at 4 GiB, segment base and offset alike: the TLB holds
 only wrapped addresses, so the miss path wraps the 64-bit sum the backend
@@ -139,12 +139,121 @@ DIV and IDIV raise `#DE` for a zero divisor or a quotient too wide for its
 destination before they write either destination. RDRAND and RDSEED read the
 host CSPRNG through a helper, as the gadget engine does, and always succeed.
 
+SIMD floating point gives x86's results whatever the host's features. The
+maintained series follows each x86 SIMD floating-point operation, or each
+128-bit part of one, with an `EmbedderFPCheck` op that holds the x86 sources
+and tests the host's result in line for the cases where arm64 arithmetic can
+differ; a cold path hands those to `fp_model.cpp`, which computes x86's result
+in integers and SoftFloat because it runs under the guest's FPCR. The model
+covers every operation the op names, with MXCSR's rounding, DAZ, FTZ and
+flags, so a check needs only to find the cases. The checks are the same on
+every host. FEXCore's FEAT_AFP path stays off: it sets FPCR.NEP with AH, and
+NEP gives a one-input scalar instruction a false dependency on its
+destination, while AH and FIZ would take over only the NaN and DAZ cases of
+plain arithmetic and the M1 has no FEAT_AFP
+([optimization history](../../../../docs/optimization-history.md#floating-point-control-features)).
+
+A translation assumes its context's floating-point mode: MXCSR.DAZ and FTZ,
+which exceptions MXCSR unmasks, none, only some of invalid operation,
+division by zero and overflow (the special checks), or any other (all
+checks), whether the x87 control word unmasks any (the x87 checks), and
+RFLAGS.AC (the alignment checks). The dispatch selects the space for the
+guest's MXCSR, control word and RFLAGS. An LDMXCSR, FLDCW, FLDENV, FRSTOR,
+FNINIT, FNSAVE, FXRSTOR, XRSTOR, POPF or IRET that changes the mode ends the
+dispatch after itself, and the next one runs in the new mode's space; one
+that changes only the rounding or the precision stays.
+FPCR.FZ is MXCSR.DAZ, which flushes inputs as x86 does but also flushes a
+result that is tiny before rounding, where x86 applies FTZ after rounding.
+The checks take:
+
+- a NaN result of an arithmetic, square root, horizontal, ADDSUB, DPPS, DPPD
+  or FMA operation: x86 propagates the first source's NaN, keeps the sign of
+  a NaN it subtracts or negates, and generates the negative indefinite;
+- under DAZ and FTZ, a zero product, quotient, FMA or narrowed double from
+  nonzero inputs, which x86 may round up to the smallest normal; a sum tiny
+  enough to flush is exact, so the host flushes it as x86 does, and a DPPS or
+  DPPD checks its products too;
+- under FTZ alone, a result up to the smallest normal, which x86 flushes when
+  it is tiny after rounding;
+- under DAZ alone, a zero result, which may be a tiny one x86 keeps;
+- under DAZ, a denormal MIN or MAX result, which FPCR.FZ compares flushed but
+  returns as it was;
+- a DPPS or DPPD under DAZ or FTZ alone, which rounds in steps its result
+  does not show, always;
+- RCPPS, RCPSS, RSQRTPS and RSQRTSS, which never use the host's estimates,
+  whose results depend on FEAT_RPRES: the op divides in line, which lies
+  within x86's error as the gadget engine's quotient does, and sends the
+  denormal, zero, huge and negative inputs to the model.
+
+Comparisons, conversions, rounding and half-precision conversions take DAZ
+from FPCR.FZ, and their results need no check.
+
+While MXCSR unmasks an exception, the checks also settle each instruction's
+exceptions, and every SIMD floating-point instruction has one. The special
+checks send the model a result whose exponent is all ones or one below, a
+NaN source of a comparison, MIN, MAX, rounding or widening, a source a
+conversion to an integer or to half precision cannot hold, and a DPPS or
+DPPD source large enough to overflow; a value that passes raises none of
+those three exceptions. All checks send every operation. The model gives
+x86's outcome: an unmasked exception faults with `#XM`, whose error code is
+MXCSR, leaving the destination alone, and invalid operation, a denormal
+operand and division by zero take precedence over the exceptions of the
+result. An instruction checked in two 128-bit parts settles after its last.
+Under the special checks a part that no test sent holds flags of masked
+exceptions too, so when the last part faults, the instruction runs again as
+a unit of its own with all checks, and its fault raises every part's flags.
+As in the gadget engine, only what a check sends to the model raises the
+flags of masked exceptions, though that is a part of an instruction here
+and the whole instruction there. Each such fault compiles its instruction
+once more, uncached.
+
+MXCSR keeps every bit LDMXCSR, FXRSTOR and XRSTOR load, the exception flags
+included, and FXSAVE and XSAVE store an MXCSR_MASK of 0xFFFF, as the gadget
+engine does. Like the gadget engine, the JIT accumulates no flags while MXCSR
+masks every exception: the host's cumulative flags are not x86's (FPCR.FZ
+raises no precision for a flush and detects tininess before rounding, the
+estimates' in-line division raises precision, and no host flag shows a
+denormal operand), and folding them in would give flags neither x86 nor the
+gadget engine gives.
+
 The x87 status word keeps every masked exception's sticky flag, and ES and B
-while an unmasked one is pending. The engine does not deliver unmasked SSE or
-x87 exceptions as `#XM` or `#MF`, because FEXCore keeps no MXCSR exception
-flags and raises nothing from the x87 ones, and has no alignment-check `#AC`.
-`run_guest_x86_64_exceptions.py --engine jit` fails exactly those two cases in
-each mode.
+while an unmasked one is pending, from the 80-bit helpers and from the inline
+conversion of a single or double, which raises invalid operation for a
+signaling NaN and a denormal operand for a denormal. The embedded stack follows
+the tag word: a read of an empty register is a stack underflow and a push onto
+a full one an overflow, each raising invalid operation with the stack-fault
+flag and going on with the QNaN indefinite, and FXAM classifies its operand
+from the 80-bit format. FNSAVE and FNSTENV tag each full register from its
+value, as zero, special or valid, as an Intel host does at the store. Three
+deviations from hardware remain, shared with the gadget engine: C1 stays
+clear when a result rounds up, FPREM computes its remainder in one step,
+never reporting a partial one with C2, and an unmasked overflow or underflow
+of a register result leaves the masked result and precision, where x86
+rebiases the exponent.
+
+Under the x87 checks, every waiting instruction -- each x87 instruction but
+FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE and the no-ops FNENI, FNDISI
+and FNSETPM, and FWAIT, EMMS and any instruction with an MMX register
+operand -- raises `#MF` while ES shows an exception pending, before it does
+anything, with the status word and the control word, shifted left by 16, as
+the error code. An instruction that raises an unmasked invalid operation,
+denormal operand or division by zero, or whose store to memory overflows or
+underflows unmasked, retires with only its status word changed, except that
+a load completes beside a denormal operand and a comparison sets its
+condition codes but does not pop, as on an Intel host. Every load of the
+control word or the status word makes ES and B show whether a flag is
+unmasked.
+
+Under the alignment checks, an access of two, four or eight bytes whose
+address is not a multiple of its size raises `#AC` before the instruction
+does anything, as on the gadget engine: a load or store, an atomic, each
+element of a REP MOVS or STOS (whose first decides), and the operand of a
+bit test, whose byte the engine reads. An x87 80-bit operand wants eight
+bytes, an environment or state image the width of its fields. Wider vector
+operands, masked vector moves, gathers, extended-state images and far
+transfers raise none. The gadget engine checks only an instruction's first
+access and the JIT every one, which differs only for an instruction whose
+later access is aligned differently, such as ENTER with a nesting level.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
@@ -163,4 +272,8 @@ JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
 names each record the engine is known to fail with its class; the test fails
 when a listed record passes or a row names no record, so a fix removes its rows
-in the same change. The classes are SSE NaN, denormal and estimate rules.
+in the same change. The list is empty. `x86-64-jit-sse-exactness` runs XE's
+differential harness through the engine, against the same x86 model as the
+gadget engine's `x86-64-sse-exactness`, with its pass that unmasks a
+denormal operand, and a third pass that holds the special checks to the
+outcome of all checks.
