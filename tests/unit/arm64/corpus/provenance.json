@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 173222,
+  "cases": 173298,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 34094,
+    "illegal-instruction": 34098,
     "instruction-budget": 186,
-    "memory-fault": 10486,
-    "system-call": 128360
+    "memory-fault": 10490,
+    "system-call": 128428
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 118006,
+    "16k+4k": 118082,
     "4k": 27601
   },
   "coverage": {
@@ -160,20 +160,20 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3355,
-  "pack_bytes": 14686333,
-  "pack_sha256": "b924aadab49948b95fa651766d082b5362e5a37bafe55f304e3a1745b2778b5e",
+  "pack_bytes": 14688640,
+  "pack_sha256": "d37aacab29d26691ac215a95e379288e6593823f09c969424c90915a268e7d53",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 144253,
-  "records": 1098,
+  "programs": 144271,
+  "records": 1099,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "sme_native": {
-    "cases": 28014,
+    "cases": 28090,
     "events": {
-      "illegal-instruction": 6078,
-      "memory-fault": 1215,
-      "system-call": 20721
+      "illegal-instruction": 6082,
+      "memory-fault": 1219,
+      "system-call": 20789
     },
     "host_features": [
       "FEAT_SME",
@@ -181,9 +181,9 @@
       "FEAT_SME_F64F64",
       "FEAT_SME_I16I64"
     ],
-    "request_sha256": "a56f72c7bfeb3fa61925cb15cd8c844cf13cdb3a5b33186afc0c6ca76a0f97f2",
+    "request_sha256": "f07f934c9cdf4baf07b8a2f26193750820ee8c3550cf56ce5cd7d50e67ed46c2",
     "script": "tools/arm64-tests/sme-native-corpus.py",
-    "sha256": "c6dd1deef4756c7f028d5e48f3cdd41b5a500d7823906a6816daeafe02244639",
+    "sha256": "b6b2cbb2e9aaf0a32276400e9d57ea71c551b4f432c8028c5ca39494ffd62489",
     "svl": 64,
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
@@ -191,7 +191,7 @@
     }
   },
   "state_minimization": {
-    "full": 31863,
+    "full": 31939,
     "narrow": 141359
   },
   "validator_cases": {
