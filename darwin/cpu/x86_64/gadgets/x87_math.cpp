@@ -653,4 +653,27 @@ extern "C" void uml_x86_64_x87_cosine(CpuState *cpu,
 	*result = transcendental(*cpu, TranscendentalOperation::cosine, *input);
 }
 
+extern "C" std::uint32_t uml_x86_64_x87_image_tags(
+	const CpuState *cpu) noexcept
+{
+	std::uint32_t tags{};
+	for (unsigned physical = 0; physical < 8; ++physical) {
+		const auto shift = physical * 2U;
+		auto tag = (std::uint32_t{cpu->x87_tag} >> shift) & 3U;
+		if (tag != 3U) {
+			const auto &value = cpu->x87[physical];
+			const auto exponent = value.sign_exponent & 0x7fffU;
+			if (exponent == 0)
+				tag = value.significand == 0 ? 1U : 2U;
+			else if (exponent == 0x7fffU ||
+				(value.significand >> 63U) == 0)
+				tag = 2U;
+			else
+				tag = 0U;
+		}
+		tags |= tag << shift;
+	}
+	return tags;
+}
+
 } // namespace uml::cpu::x86_64::gadgets

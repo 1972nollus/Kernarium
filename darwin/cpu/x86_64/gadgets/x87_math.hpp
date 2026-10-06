@@ -75,6 +75,9 @@ void uml_x86_64_x87_sine(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
 void uml_x86_64_x87_cosine(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
+/* The tag word FNSTENV and FNSAVE store: each register that is not empty
+ * tagged by what it holds, 00 valid, 01 zero or 10 special. */
+std::uint32_t uml_x86_64_x87_image_tags(const CpuState *cpu) noexcept;
 }
 
 } // namespace uml::cpu::x86_64::gadgets

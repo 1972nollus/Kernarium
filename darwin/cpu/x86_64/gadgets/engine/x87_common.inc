@@ -125,9 +125,12 @@ Lx86_x87_store_classified\@:
 	and w16, w16, #3
 	cmp w16, #Lx86_x87_tag_empty
 	b.eq Lx86_x87_push_slot_ready\@
+	/* A stack overflow, masked, pushes the QNaN indefinite. */
 	x87_stack_fault_check
 	mov w16, #0x241
 	orr w15, w15, w16
+	mov \significand, #0xc000000000000000
+	mov \exponent, #0xffff
 Lx86_x87_push_slot_ready\@:
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]

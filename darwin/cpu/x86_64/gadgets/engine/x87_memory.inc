@@ -215,20 +215,24 @@ gadget x87_environment_restore_\name
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	strh w10, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	.if \full
+	/* The image holds ST(0) first: ST(i) is physical register TOP + i. */
 	add x9, sp, #\environment_size
-	add x10, _cpu, #UML_X86_64_CPU_X87
-	add x11, _cpu, #UML_X86_64_CPU_MMX
-	mov w12, #8
+	mov w12, #0
 Lx86_x87_environment_restore_loop\@:
+	add w15, w11, w12
+	and w15, w15, #7
 	ldr x13, [x9]
 	ldrh w14, [x9, #8]
+	add x10, _cpu, #UML_X86_64_CPU_X87
+	add x10, x10, x15, lsl #4
 	str x13, [x10]
 	strh w14, [x10, #8]
-	str x13, [x11], #8
+	add x10, _cpu, #UML_X86_64_CPU_MMX
+	str x13, [x10, x15, lsl #3]
 	add x9, x9, #10
-	add x10, x10, #16
-	subs w12, w12, #1
-	b.ne Lx86_x87_environment_restore_loop\@
+	add w12, w12, #1
+	cmp w12, #8
+	b.lo Lx86_x87_environment_restore_loop\@
 	.endif
 	add sp, sp, #Lx86_x87_environment_stack\@
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
@@ -258,33 +262,40 @@ Lx86_x87_environment_clear_loop\@:
 	str q0, [x9], #16
 	subs w10, w10, #1
 	b.ne Lx86_x87_environment_clear_loop\@
+	/* The image tags each register that is not empty by what it
+	 * holds, which an MMX instruction's all-valid tags do not say. */
+	mov x0, _cpu
+	bl NAME(uml_x86_64_x87_image_tags)
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	strh w9, [sp]
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w9, w9, #0x3800
 	ldrb w10, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	orr w9, w9, w10, lsl #11
-	ldrh w10, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	.if \environment_size == 28
 	strh w9, [sp, #4]
-	strh w10, [sp, #8]
+	strh w0, [sp, #8]
 	.else
 	strh w9, [sp, #2]
-	strh w10, [sp, #4]
+	strh w0, [sp, #4]
 	.endif
 	.if \full
+	/* ST(0) first: ST(i) is physical register TOP + i. */
 	add x9, sp, #\environment_size
-	add x10, _cpu, #UML_X86_64_CPU_X87
-	mov w11, #8
+	mov w11, #0
 Lx86_x87_environment_save_loop\@:
-	ldr x12, [x10]
-	ldrh w13, [x10, #8]
+	add w14, w10, w11
+	and w14, w14, #7
+	add x15, _cpu, #UML_X86_64_CPU_X87
+	add x15, x15, x14, lsl #4
+	ldr x12, [x15]
+	ldrh w13, [x15, #8]
 	str x12, [x9]
 	strh w13, [x9, #8]
 	add x9, x9, #10
-	add x10, x10, #16
-	subs w11, w11, #1
-	b.ne Lx86_x87_environment_save_loop\@
+	add w11, w11, #1
+	cmp w11, #8
+	b.lo Lx86_x87_environment_save_loop\@
 	.endif
 	x87_bulk_store Lx86_x87_environment_total\@, sp, \
 		Lx86_x87_environment_save_fault\@

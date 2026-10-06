@@ -30,6 +30,16 @@ gadget x87_exchange_register
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	add w15, w14, w13
 	and w15, w15, #7
+	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	lsl w17, w14, #1
+	lsr w9, w16, w17
+	and w24, w9, #3
+	lsl w17, w15, #1
+	lsr w9, w16, w17
+	and w25, w9, #3
+	cmp w24, #Lx86_x87_tag_empty
+	ccmp w25, #Lx86_x87_tag_empty, #4, ne
+	b.eq Lx86_x87_exchange_empty
 	add x16, _cpu, #UML_X86_64_CPU_X87
 	add x17, x16, w14, uxtw #4
 	add x16, x16, w15, uxtw #4
@@ -46,16 +56,26 @@ gadget x87_exchange_register
 	ldr x10, [x16, w15, uxtw #3]
 	str x10, [x16, w14, uxtw #3]
 	str x9, [x16, w15, uxtw #3]
-	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	lsl w17, w14, #1
-	lsr w9, w16, w17
-	and w24, w9, #3
-	lsl w17, w15, #1
-	lsr w9, w16, w17
-	and w25, w9, #3
+	/* x87_set_tag uses w15 itself. */
+	mov w13, w15
 	x87_set_tag w14, w25
-	x87_set_tag w15, w24
+	x87_set_tag w13, w24
+Lx86_x87_exchange_done:
+	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	bic w9, w9, #Lx86_x87_status_c1
+	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
+/* A stack underflow: masked, an empty register reads as the QNaN
+ * indefinite and the exchange goes on. */
+Lx86_x87_exchange_empty:
+	x87_stack_fault_check
+	mov w12, #0
+	x87_load_stack w12, x9, w10
+	x87_load_stack w13, x11, w12
+	x87_store_stack w13, x9, w10
+	mov w13, #0
+	x87_store_stack w13, x11, w12
+	b Lx86_x87_exchange_done
 
 gadget x87_change_sign
 	mov w13, #0
@@ -71,10 +91,13 @@ gadget x87_absolute
 	x87_store_stack w13, x9, w10
 	retire_and_next
 
+/* FXAM's class in C3, C2 and C0: 000 unsupported, 001 NaN, 010 normal,
+ * 011 infinity, 100 zero, 101 empty, 110 denormal; its sign in C1. */
 gadget x87_examine
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	add x15, _cpu, #UML_X86_64_CPU_X87
 	add x15, x15, w14, uxtw #4
+	ldr x11, [x15]
 	ldrh w16, [x15, #8]
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w17, w14, #1
@@ -87,13 +110,29 @@ gadget x87_examine
 	orr w9, w9, #Lx86_x87_status_c1
 Lx86_x87_examine_positive:
 	cmp w15, #Lx86_x87_tag_empty
-	b.ne Lx86_x87_examine_present
 	mov w10, #0x4100
-	orr w9, w9, w10
+	b.eq Lx86_x87_examine_done
+	and w16, w16, #0x7fff
+	cbz w16, Lx86_x87_examine_tiny
+	mov w10, #0
+	tbz x11, #63, Lx86_x87_examine_done
+	mov w15, #0x7fff
+	cmp w16, w15
+	mov w10, #0x0400
+	b.ne Lx86_x87_examine_done
+	lsl x11, x11, #1
+	cmp x11, #0
+	mov w10, #0x0500
+	mov w15, #0x0100
+	csel w10, w10, w15, eq
 	b Lx86_x87_examine_done
-Lx86_x87_examine_present:
-	orr w9, w9, #Lx86_x87_status_c2
+Lx86_x87_examine_tiny:
+	cmp x11, #0
+	mov w10, #0x4000
+	mov w15, #0x4400
+	csel w10, w10, w15, eq
 Lx86_x87_examine_done:
+	orr w9, w9, w10
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 
