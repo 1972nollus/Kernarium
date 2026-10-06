@@ -514,21 +514,54 @@ void rows_translate_exactly_where_implemented() {
   }
 }
 
-/* Every FP&SIMD class, by its first word, translates in SM=1 exactly when
- * the profile marks it FP-legal and it processes data; AdvSIMD and the
- * SIMD&FP loads and stores are the illegal exit. */
+/* Every FP&SIMD class, by its first word (with Rt2 = 1, since a load
+ * pair naming one register twice is UNDEFINED), translates in SM=1
+ * exactly when the profile marks it FP-legal and it processes data or is
+ * a SIMD&FP load or store decode_streaming_fp_memory() accepts. AdvSIMD
+ * is the illegal exit, and so are the FEAT_LSFE and FEAT_LSUI loads and
+ * stores, which the virtual CPU lacks. Every word of an accepted memory
+ * class decodes, and none of a rejected one. */
 void fp_simd_classes_translate_where_streaming_runs_them() {
   constexpr std::uint64_t pc = 0x4f60'0000U;
   const auto host = sme_host(64);
   const uml::cpu::HostCapabilitiesScope scope{host};
   Checked checked;
   std::size_t translated = 0;
+  std::size_t memory_classes = 0;
+  std::size_t rejected_memory = 0;
+  std::uint64_t state = 0x9e37'79b9'7f4a'7c15ULL;
   for (const auto &row : arm64::detail::fp_simd_streaming_classes) {
-    const auto word = row.value;
+    const auto word = row.value | (~row.mask & 0x0400U);
     if (streaming_fp(word) == row.advsimd)
       continue; // an earlier row claims the word
-    const bool expected =
-        !row.advsimd && (word & 0x0e00'0000U) != 0x0c00'0000U;
+    const bool memory = (word & 0x0e00'0000U) == 0x0c00'0000U;
+    const bool decodes =
+        arm64::jit::decode_streaming_fp_memory(word).has_value();
+    const bool expected = !row.advsimd && (!memory || decodes);
+    if (memory && !row.advsimd) {
+      memory_classes += decodes;
+      rejected_memory += !decodes;
+      for (int sample = 0; sample < 256; ++sample) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const auto other =
+            row.value | (static_cast<std::uint32_t>(state >> 32) & ~row.mask);
+        if (streaming_fp(other) == row.advsimd)
+          continue;
+        const auto decoded = arm64::jit::decode_streaming_fp_memory(other);
+        const bool same_pair = decoded && decoded->registers == 2U &&
+                               decoded->transfer == decoded->transfer2;
+        const bool pair_load_same =
+            !decoded && ((other >> 10) & 31U) == (other & 31U) &&
+            (other & 0x3a40'0000U) == 0x2840'0000U;
+        if (decoded.has_value() != decodes && !pair_load_same) {
+          std::fprintf(stderr, "FP&SIMD class %u: %08x decodes %d, %08x "
+                       "decodes %d\n", row.form, word, decodes, other,
+                       decoded.has_value());
+          require(false);
+        }
+        require(!same_pair || !decoded->load);
+      }
+    }
     for (const std::uint8_t mode :
          {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)})
       if (illegal_in(word, mode) == expected) {
@@ -543,9 +576,11 @@ void fp_simd_classes_translate_where_streaming_runs_them() {
     std::snprintf(label, sizeof label, "class %08x", word);
     check_program(pc, program, label, checked);
   }
-  std::fprintf(stderr, "%zu FP&SIMD classes translate in streaming mode\n",
-               translated);
+  std::fprintf(stderr, "%zu FP&SIMD classes translate in streaming mode, "
+               "%zu of them loads and stores; %zu load and store classes "
+               "do not\n", translated, memory_classes, rejected_memory);
   require(translated > 500U);
+  require(memory_classes == 89U);
 }
 
 /* The SVE words whose rows can raise a floating-point exception, and so

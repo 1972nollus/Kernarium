@@ -287,6 +287,8 @@ private:
                                            std::uint64_t pc);
   void emit_memory_span(const detail::SmeMemory &memory,
                         std::uint32_t instruction, unsigned destination);
+  [[nodiscard]] bool emit_streaming_fp_memory(std::uint32_t instruction,
+                                              std::uint64_t pc);
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,
                             std::uint64_t pc, std::size_t count);
 

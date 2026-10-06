@@ -444,10 +444,12 @@ lies in one guest page the TLB holds. A crossing, a TLB miss, a failed
 translation, a misaligned SP base or a tagged base takes a terminal helper
 that does the whole access on the register file: it touches only active
 elements, translates every page they lie in before it moves a byte, and
-reports a fault as the gadget engine does. SVE prefetches are NOPs. SME2,
-the reserved bitmask immediates of ORR, EOR, AND and DUPM, every other SVE
-and SME word, and in streaming mode AdvSIMD and the SIMD&FP loads and
-stores are its illegal-instruction exit. SM=0 translations run with the host's SME off and
+reports a fault as the gadget engine does. The SIMD&FP loads and stores
+legal in streaming mode run the same way, with any writeback after the
+access. SVE prefetches are NOPs. SME2, the reserved bitmask immediates of
+ORR, EOR, AND and DUPM, every other SVE and SME word, and in streaming mode
+AdvSIMD and the FEAT_LSFE and FEAT_LSUI loads and stores are its
+illegal-instruction exit. SM=0 translations run with the host's SME off and
 hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
 with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 `CpuState`, so no translation depends on it.

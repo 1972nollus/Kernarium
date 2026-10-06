@@ -852,6 +852,95 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
   return true;
 }
 
+bool JitCompiler::emit_streaming_fp_memory(std::uint32_t instruction,
+                                           std::uint64_t pc) {
+  /*
+   * A SIMD&FP load or store in a streaming translation, on the guest's
+   * resident Z registers: when the bytes it moves lie in one guest page
+   * the TLB holds, the unsigned-offset (or pair offset) form of the word
+   * runs on the host address in x8 and the guest's writeback follows. A
+   * crossing, a miss, a misaligned SP base or a tagged base takes the
+   * helper, as the vector memory forms do.
+   */
+  const auto decoded = jit::decode_streaming_fp_memory(instruction);
+  if (!decoded || detail::classify_fp_simd_streaming(instruction) !=
+                      detail::FpSimdStreaming::fp)
+    return false;
+  const auto &memory = *decoded;
+  using Mode = jit::FpMemoryMode;
+  const auto access = memory.load ? Access::read : Access::write;
+  const std::size_t bytes = std::size_t{memory.bytes} * memory.registers;
+  if (!memory.load)
+    mark_direct_memory_write();
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sme_slow);
+  if (memory.mode == Mode::literal) {
+    emitter_.load_constant(
+        8, pc + static_cast<std::uint64_t>(memory.immediate));
+  } else {
+    load_gpr(8, memory.base, true);
+    if (memory.base == 31U) {
+      emit_misalignment_check(8, 16, slow);
+    } else {
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+      emitter_.compare_zero(slow, 0, false, true);
+    }
+    if (memory.mode == Mode::register_offset) {
+      /* ADD x8, x8, Rm, <extend> #shift; XZR reads as zero. */
+      const auto index = read_native_gpr(memory.index, false, 9);
+      emitter_.emit(0x8b20'0000U | (index.host << 16) |
+                    (unsigned{memory.option} << 13) |
+                    (unsigned{memory.shift} << 10) | (8U << 5) | 8U);
+    } else if (memory.mode != Mode::post_index) {
+      /* LDR Q's unsigned offset reaches 65520: two 12-bit halves. */
+      const auto magnitude = static_cast<unsigned>(
+          memory.immediate < 0 ? -memory.immediate : memory.immediate);
+      for (const bool high : {false, true}) {
+        const unsigned part = high ? magnitude >> 12 : magnitude & 0xfffU;
+        if (part == 0U)
+          continue;
+        if (memory.immediate < 0)
+          emitter_.subtract_immediate(8, 8, part, high);
+        else
+          emitter_.add_immediate(8, 8, part, high);
+      }
+    }
+  }
+  emit_translate(8, access, slow, slow, bytes);
+  if (!memory.load)
+    track_direct_store(8, bytes);
+  const unsigned rt = memory.transfer;
+  std::uint32_t word;
+  if (memory.registers == 2U) {
+    const unsigned opc = memory.bytes == 4U ? 0U : memory.bytes == 8U ? 1U : 2U;
+    word = (opc << 30) |
+           (memory.nontemporal ? 0x2c00'0000U : 0x2d00'0000U) |
+           (memory.load ? 0x0040'0000U : 0U) |
+           (unsigned{memory.transfer2} << 10) | (8U << 5) | rt;
+  } else {
+    const unsigned size =
+        memory.bytes == 16U ? 0U
+                            : static_cast<unsigned>(std::countr_zero(
+                                  unsigned{memory.bytes}));
+    const unsigned opc = (memory.bytes == 16U ? 2U : 0U) | (memory.load ? 1U : 0U);
+    word = (size << 30) | 0x3d00'0000U | (opc << 22) | (8U << 5) | rt;
+  }
+  emitter_.emit(word);
+  if (!memory.load)
+    clear_local_exclusive_monitor();
+  if ((memory.mode == Mode::pre_index || memory.mode == Mode::post_index) &&
+      memory.immediate != 0) {
+    const auto base = write_native_gpr(memory.base, true, true, 9);
+    if (memory.immediate > 0)
+      emitter_.add_immediate(base.host, base.host,
+                             static_cast<unsigned>(memory.immediate));
+    else
+      emitter_.subtract_immediate(base.host, base.host,
+                                  static_cast<unsigned>(-memory.immediate));
+    commit_native_gpr(base, memory.base, true);
+  }
+  return true;
+}
+
 void JitCompiler::emit_terminal_helper(const void *helper,
                                        std::uint32_t instruction,
                                        std::uint64_t pc, std::size_t count) {

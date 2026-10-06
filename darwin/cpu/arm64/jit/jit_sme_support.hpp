@@ -5,17 +5,20 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
+#include <bit>
 #include <cstdint>
+#include <optional>
 
 namespace uml::cpu::arm64::jit {
 
 /* How much of the SME profile the JIT implements (design 5.3, S4): the
- * control core (M1), the register-only forms (M2) and the SVE and SME1
- * memory forms (M3). SMSTART, SMSTOP, MRS and MSR SVCR and TPIDR2_EL0 are
- * base-space system instructions; the table rows are those
+ * control core (M1), the register-only forms (M2) and the SVE, SME1 and
+ * SIMD&FP memory forms (M3). SMSTART, SMSTOP, MRS and MSR SVCR and
+ * TPIDR2_EL0 are base-space system instructions; the table rows are those
  * implements_sme_row() names, less the reserved words sme_word_reserved()
- * finds. Every other SVE and SME word, every AdvSIMD word and every
- * SIMD&FP load or store in an SM=1 translation is the illegal-instruction
+ * finds, and the SIMD&FP loads and stores those
+ * decode_streaming_fp_memory() accepts. Every other SVE and SME word and
+ * every AdvSIMD word in an SM=1 translation is the illegal-instruction
  * exit. */
 inline constexpr SmeSupport sme_support = SmeSupport::control;
 
@@ -210,7 +213,130 @@ inline constexpr std::uint16_t dupm = form_of(0x05c0'0000U);
 static_assert(sme_forms::ldr_za != sme_forms::str_za);
 static_assert(sme_forms::ldr_zt0 != sme_forms::zero_zt0);
 static_assert(sme_forms::cterm == sme_forms::form_of(0x25a0'2010U));
+/* How a SIMD&FP load or store forms its address. */
+enum class FpMemoryMode : std::uint8_t {
+  offset,
+  pre_index,
+  post_index,
+  literal,
+  register_offset,
+};
+
+/* A SIMD&FP load or store, decoded. `immediate` is the byte offset from
+ * the base (for a literal, from the instruction); a register offset adds
+ * Rm extended by `option` (UXTW, LSL, SXTW or SXTX) and shifted left by
+ * `shift`. */
+struct FpMemory final {
+  FpMemoryMode mode;
+  bool load;
+  bool nontemporal;
+  std::uint8_t bytes;
+  std::uint8_t registers;
+  std::uint8_t transfer;
+  std::uint8_t transfer2;
+  std::uint8_t base;
+  std::uint8_t index;
+  std::uint8_t option;
+  std::uint8_t shift;
+  std::int64_t immediate;
+};
+
+/*
+ * The SIMD&FP loads and stores a streaming translation runs: LDR and STR
+ * (unsigned offset, pre- and post-index, register offset), LDUR, STUR,
+ * LDP, STP (offset, pre- and post-index), LDNP, STNP and LDR (literal),
+ * of B to Q registers. Nothing else: an unallocated size, opc or option,
+ * LDTR's unprivileged slot, a load pair naming one register twice
+ * (CONSTRAINED UNPREDICTABLE, made UNDEFINED as the base decoder makes
+ * it), and the FEAT_LSUI and FEAT_LSFE forms the virtual CPU lacks.
+ */
+[[nodiscard]] constexpr std::optional<FpMemory>
+decode_streaming_fp_memory(std::uint32_t word) noexcept {
+  if ((word & 0x0400'0000U) == 0U)
+    return std::nullopt;
+  FpMemory memory{};
+  memory.transfer = static_cast<std::uint8_t>(word & 31U);
+  memory.base = static_cast<std::uint8_t>((word >> 5) & 31U);
+  memory.registers = 1;
+  memory.load = true;
+  if ((word & 0x3b00'0000U) == 0x1800'0000U) {
+    /* LDR (literal): S, D or Q. */
+    const unsigned opc = word >> 30;
+    if (opc == 3U)
+      return std::nullopt;
+    memory.mode = FpMemoryMode::literal;
+    memory.bytes = static_cast<std::uint8_t>(4U << opc);
+    memory.immediate = detail::sign_extend((word >> 5) & 0x7'ffffU, 19) * 4;
+    return memory;
+  }
+  if ((word & 0x3a00'0000U) == 0x2800'0000U) {
+    /* LDP, STP, LDNP and STNP: S, D or Q (opc 3 is FEAT_LSUI's). */
+    const unsigned opc = word >> 30;
+    if (opc == 3U)
+      return std::nullopt;
+    memory.bytes = static_cast<std::uint8_t>(4U << opc);
+    memory.registers = 2;
+    memory.transfer2 = static_cast<std::uint8_t>((word >> 10) & 31U);
+    memory.load = (word & 0x0040'0000U) != 0U;
+    if (memory.load && memory.transfer == memory.transfer2)
+      return std::nullopt;
+    constexpr FpMemoryMode modes[] = {
+        FpMemoryMode::offset, FpMemoryMode::post_index, FpMemoryMode::offset,
+        FpMemoryMode::pre_index};
+    memory.mode = modes[(word >> 23) & 3U];
+    memory.nontemporal = ((word >> 23) & 3U) == 0U;
+    memory.immediate =
+        detail::sign_extend((word >> 15) & 0x7fU, 7) * memory.bytes;
+    return memory;
+  }
+  /* The single-register forms: size:opc names B, H, S, D or Q. */
+  const unsigned size = word >> 30;
+  const unsigned opc = (word >> 22) & 3U;
+  if (opc >= 2U && size != 0U)
+    return std::nullopt;
+  memory.bytes = static_cast<std::uint8_t>(opc >= 2U ? 16U : 1U << size);
+  memory.load = (opc & 1U) != 0U;
+  if ((word & 0x3b00'0000U) == 0x3900'0000U) {
+    memory.mode = FpMemoryMode::offset;
+    memory.immediate =
+        static_cast<std::int64_t>((word >> 10) & 0xfffU) * memory.bytes;
+    return memory;
+  }
+  if ((word & 0x3b20'0000U) == 0x3800'0000U) {
+    constexpr FpMemoryMode modes[] = {
+        FpMemoryMode::offset, FpMemoryMode::post_index, FpMemoryMode::offset,
+        FpMemoryMode::pre_index};
+    const unsigned mode = (word >> 10) & 3U;
+    if (mode == 2U)
+      return std::nullopt;
+    memory.mode = modes[mode];
+    memory.immediate = detail::sign_extend((word >> 12) & 0x1ffU, 9);
+    return memory;
+  }
+  if ((word & 0x3b20'4c00U) == 0x3820'4800U) {
+    memory.mode = FpMemoryMode::register_offset;
+    memory.index = static_cast<std::uint8_t>((word >> 16) & 31U);
+    memory.option = static_cast<std::uint8_t>((word >> 13) & 7U);
+    if ((word & 0x1000U) != 0U)
+      memory.shift = static_cast<std::uint8_t>(std::countr_zero(
+          static_cast<unsigned>(memory.bytes)));
+    return memory;
+  }
+  return std::nullopt;
+}
+
 static_assert(sme_forms::movprfx != sme_forms::movprfx_predicated);
+/* ldp q0, q1, [x2]; ldr q0, [x2, w3, sxtw #4]; ldur q0, [x2, #-1];
+ * ldr q0, #8; and FEAT_LSUI's ldtp q0, q1, [x2] and FEAT_LSFE's
+ * ldfadd h0, h1, [x2], which the virtual CPU lacks. */
+static_assert(decode_streaming_fp_memory(0xad40'0440U)->bytes == 16U);
+static_assert(decode_streaming_fp_memory(0x3ce3'd840U)->shift == 4U);
+static_assert(decode_streaming_fp_memory(0x3cdf'f040U)->immediate == -1);
+static_assert(decode_streaming_fp_memory(0x9c00'0040U)->immediate == 8);
+static_assert(!decode_streaming_fp_memory(0xed40'0440U));
+static_assert(!decode_streaming_fp_memory(0x7c20'0041U));
+/* No SVE or SME word (bit 27 clear), such as ld1w {z4.s}, p1/z, [x2]. */
+static_assert(!decode_streaming_fp_memory(0xa540'a444U));
 /* LD3H {Z0.H-Z2.H}, P0/Z, [X0, #-9, MUL VL] at SVL 64: 3 * 64 bytes back
  * for each MUL VL; LD1SB {Z0.D}, P0/Z, [X0, #1, MUL VL]: 8 bytes. */
 static_assert(sme_memory_span(*detail::sme_encoding_memory_of(

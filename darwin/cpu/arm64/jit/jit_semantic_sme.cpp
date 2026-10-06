@@ -445,6 +445,58 @@ void elements(const VectorAccess &access, Visit &&visit) noexcept {
   return retire(cpu);
 }
 
+/*
+ * A streaming SIMD&FP load or store the translation could not finish
+ * natively. A load writes each register's low bytes and zeroes the rest of
+ * its Z register, as the V register write does; a fault is at the first
+ * byte that does not translate, and leaves memory, the registers and the
+ * base unchanged.
+ */
+[[nodiscard]] std::uint64_t fp_memory(CpuState &cpu, Tlb &tlb,
+                                      const jit::FpMemory &memory) noexcept {
+  using Mode = jit::FpMemoryMode;
+  const std::size_t svl = cpu.sme_svl;
+  std::uint64_t base = 0;
+  std::uint64_t address;
+  if (memory.mode == Mode::literal) {
+    address = cpu.pc + static_cast<std::uint64_t>(memory.immediate);
+  } else {
+    base = cpu.read_register(memory.base, true);
+    if (memory.base == 31U && (base & 15U) != 0U)
+      return report_fault(tlb, base, memory.load, true);
+    std::uint64_t offset = 0;
+    if (memory.mode == Mode::register_offset) {
+      auto index = cpu.read_register(memory.index, false);
+      if ((memory.option & 3U) == 2U)
+        index = (memory.option & 4U) != 0U
+                    ? static_cast<std::uint64_t>(std::int64_t{
+                          static_cast<std::int32_t>(index)})
+                    : index & 0xffff'ffffU;
+      offset = index << memory.shift;
+    } else if (memory.mode != Mode::post_index) {
+      offset = static_cast<std::uint64_t>(memory.immediate);
+    }
+    address = cpu.untag_data_address(base + offset, memory.base == 31U);
+  }
+  Pages pages{tlb, memory.load};
+  if (const auto fault = pages.unreachable(
+          address, std::size_t{memory.bytes} * memory.registers))
+    return report_fault(tlb, *fault, memory.load, false);
+  const unsigned transfers[] = {memory.transfer, memory.transfer2};
+  for (unsigned index = 0; index < memory.registers; ++index) {
+    auto *const z = cpu.sme_registers + sme_z_offset(svl, transfers[index]);
+    if (memory.load)
+      std::memset(z, 0, svl);
+    pages.move(address + index * memory.bytes, z, memory.bytes);
+  }
+  if (memory.mode == Mode::pre_index || memory.mode == Mode::post_index)
+    cpu.write_register(memory.base,
+                       base + static_cast<std::uint64_t>(memory.immediate),
+                       true);
+  pages.publish(cpu);
+  return retire(cpu);
+}
+
 } // namespace
 
 extern "C" std::uint64_t
@@ -483,6 +535,10 @@ uml_arm64_jit_execute_sme(CpuState *cpu, Tlb *tlb,
   if (cpu == nullptr || tlb == nullptr || cpu->sme_registers == nullptr ||
       !valid_streaming_vector_length(cpu->sme_svl))
     return pack_jit_result(Event::fatal, 0);
+  if (const auto fp = jit::decode_streaming_fp_memory(instruction)) {
+    materialize(*cpu);
+    return fp_memory(*cpu, *tlb, *fp);
+  }
   const auto *row = detail::find_sme_encoding(instruction);
   if (row == nullptr)
     return pack_jit_result(Event::fatal, 0);
