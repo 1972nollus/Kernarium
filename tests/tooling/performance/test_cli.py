@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import pathlib
@@ -176,6 +177,8 @@ def run_geekbench_shutdown_case(
     emulator_status: int | None,
     *,
     workloads: str | None = None,
+    payload: pathlib.Path | None = None,
+    payload_sha256: str | None = None,
 ) -> tuple[int | None, RuntimeError | None, mock.Mock, mock.Mock]:
     module = load_runner_module("run_guest_geekbench.py")
     directory = tempfile.TemporaryDirectory(prefix="uml-geekbench-cli-")
@@ -185,6 +188,8 @@ def run_geekbench_shutdown_case(
         rootfs=pathlib.Path("rootfs.erofs"),
         console_log=console_log,
         workloads=workloads,
+        payload=payload,
+        payload_sha256=payload_sha256,
         kernel_argument=[],
         memory="8G",
         cpus=10,
@@ -371,6 +376,64 @@ def verify_geekbench_payloads() -> None:
         except ValueError:
             continue
         raise RuntimeError(f"Geekbench accepted workloads={workloads!r}")
+
+
+def verify_geekbench_payload_image() -> None:
+    """An attached payload is checked, then becomes the second disk."""
+    module = load_runner_module("run_guest_geekbench.py")
+    with tempfile.TemporaryDirectory(prefix="uml-geekbench-cli-") as name:
+        image = pathlib.Path(name, "payload.erofs")
+        image.write_bytes(b"payload image")
+        digest = hashlib.sha256(b"payload image").hexdigest()
+        disk = f"{module.PAYLOAD_DISK}={image.resolve()}"
+        mount = f"UML_GEEKBENCH_PAYLOAD={module.PAYLOAD_DEVICE}\n".encode()
+        for workloads, payload, arguments, parameters in (
+            (None, None, ("ncpus=10",), None),
+            (None, image, ("ncpus=10", disk), mount),
+            (
+                "102,201",
+                image,
+                ("ncpus=10", disk),
+                b"UML_GEEKBENCH_WORKLOADS=102,201\n" + mount,
+            ),
+        ):
+            status, error, _, constructor = run_geekbench_shutdown_case(
+                0,
+                True,
+                0,
+                workloads=workloads,
+                payload=payload,
+                payload_sha256=digest if payload else None,
+            )
+            built = constructor.call_args
+            installed = built.kwargs["payloads"].get(module.GUEST_PARAMETERS)
+            if (
+                status != 0
+                or error is not None
+                or built.args[4] != arguments
+                or (installed and installed.contents) != parameters
+            ):
+                raise RuntimeError(
+                    f"Geekbench with payload={payload} and workloads="
+                    f"{workloads!r} built {built}: status={status}, "
+                    f"error={error}"
+                )
+        for payload, payload_sha256 in (
+            (image, None),
+            (image, digest.upper()),
+            (image, hashlib.sha256(b"other").hexdigest()),
+            (None, digest),
+        ):
+            try:
+                run_geekbench_shutdown_case(
+                    0, True, 0, payload=payload, payload_sha256=payload_sha256
+                )
+            except ValueError:
+                continue
+            raise RuntimeError(
+                f"Geekbench accepted payload={payload} with "
+                f"payload_sha256={payload_sha256!r}"
+            )
 
 
 # The guest scripts the exec and link benches time, at two workers. Recorded
@@ -660,6 +723,7 @@ def main() -> int:
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
     verify_geekbench_payloads()
+    verify_geekbench_payload_image()
     verify_timed_sessions()
     verify_no_root_device_option()
     verify_core_class_launcher()
