@@ -118,20 +118,24 @@ set(_uml_arm64_streaming_loader
     ${PROJECT_SOURCE_DIR}/tools/arm64-tests/sme_encoding_table.py)
 set(_uml_arm64_streaming_table
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/detail/sme_encodings.hpp)
+set(_uml_arm64_streaming_assembly
+    ${_uml_arm64_streaming_dir}/streaming_generated.inc
+    ${_uml_arm64_streaming_dir}/streaming_memory.inc)
 add_custom_command(
-    OUTPUT ${_uml_arm64_streaming_dir}/streaming_generated.inc
+    OUTPUT ${_uml_arm64_streaming_assembly}
         ${_uml_arm64_streaming_dir}/streaming_forms.hpp
     COMMAND ${Python3_EXECUTABLE} -B ${_uml_arm64_streaming_generator}
         --loader ${_uml_arm64_streaming_loader}
         --table ${_uml_arm64_streaming_table}
         --assembly ${_uml_arm64_streaming_dir}/streaming_generated.inc
+        --memory-assembly ${_uml_arm64_streaming_dir}/streaming_memory.inc
         --header ${_uml_arm64_streaming_dir}/streaming_forms.hpp
     DEPENDS ${_uml_arm64_streaming_generator} ${_uml_arm64_streaming_loader}
         ${_uml_arm64_streaming_table}
-    COMMENT "Generating the arm64 register-only streaming gadgets"
+    COMMENT "Generating the arm64 streaming gadgets"
     VERBATIM)
 set_source_files_properties(arm64/gadgets/engine.S PROPERTIES
-    OBJECT_DEPENDS ${_uml_arm64_streaming_dir}/streaming_generated.inc
+    OBJECT_DEPENDS "${_uml_arm64_streaming_assembly}"
     INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})
 set_source_files_properties(arm64/gadgets/program_builder_streaming.cpp
     PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_streaming_dir})

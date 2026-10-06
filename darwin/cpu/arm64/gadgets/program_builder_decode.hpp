@@ -188,6 +188,12 @@ enum class DecodeResult : std::uint8_t {
  * streaming mode, or else the illegal exit. */
 [[nodiscard]] std::optional<DecodeResult> decode_streaming_sve(
 	DecodeContext &context, const detail::SmeEncoding &row);
+/* The vector memory gadgets: decode_streaming_memory() translates a word of
+ * an SVE or SME load, store or prefetch row for SVCR.SM = 1, or returns
+ * nothing for a row that is not one or has no gadget; the fallback also
+ * takes the SIMD&FP loads and stores streaming mode keeps. */
+[[nodiscard]] std::optional<DecodeResult> decode_streaming_memory(
+	DecodeContext &context, const detail::SmeEncoding &row);
 [[nodiscard]] DecodeResult decode_streaming_fallback(DecodeContext &context);
 
 /* Whether a program translated for SVCR.SM = 1 may select `entry`: an entry

@@ -255,9 +255,12 @@ DecodeResult decode_sme_space(DecodeContext &context)
 		return emit_za_memory(context, nullptr, memory_descriptor(
 			UML_GADGET_SME_ZT0_ZERO, 0, 0, 0, 0));
 	}
-	if (streaming)
+	if (streaming) {
+		if (const auto result = decode_streaming_memory(context, *row))
+			return *result;
 		if (const auto result = decode_streaming_sve(context, *row))
 			return *result;
+	}
 	return implementation_gap(context);
 }
 

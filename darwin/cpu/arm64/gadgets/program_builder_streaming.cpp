@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* Selection of the generated register-only streaming gadgets
+/* Selection of the generated streaming gadgets
  * (engine/generate_streaming.py) for a program translated for SVCR.SM = 1:
  * the SVE, SVE2 and SME forms the encoding table's rows name, and the FP&SIMD
  * classes that execute in streaming mode. The generated header gives each
  * form its entries, the instruction bits that select among them and the
  * operands whose offsets the stream carries; a lowered form's immediate, or
- * a count derived from the run-time SVL, follows them. */
+ * a count derived from the run-time SVL, follows them. A load or store takes
+ * a vector memory gadget instead, with its address mode, registers and
+ * shape resolved into the stream sme_layout.h describes. */
 #include "program_builder_decode.hpp"
 #include "gadget_selection_api.hpp"
+#include "sme_layout.h"
 #include "streaming_forms.hpp"
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
@@ -25,6 +28,8 @@ extern "C" {
 /* engine/sme.inc: the generated entries, in the order of the header. */
 extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sm_generated_entries_end[];
+extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries[];
+extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries_end[];
 }
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -353,7 +358,314 @@ struct Lowered final {
 	return detail::fp_simd_streaming_classes.size();
 }
 
+/* The words of a vector memory gadget's stream after its entry, less the
+ * PC (sme_layout.h). */
+struct VectorStream final {
+	std::uint64_t address = 0;
+	std::uint64_t immediate = 0;
+	std::uint64_t transfer = 0;
+	std::uint64_t shape = 0;
+};
+
+[[nodiscard]] constexpr std::uint64_t general_offset(unsigned number) noexcept
+{
+	return number == 31U ? UML_GADGET_CPU_ZERO :
+		std::uint64_t{number} * sizeof(std::uint64_t);
+}
+
+/* Word 0 for a base register (31 is SP) spanning `footprint` bytes. */
+[[nodiscard]] constexpr std::uint64_t base_word(unsigned base,
+	std::uint64_t footprint) noexcept
+{
+	return std::uint64_t{base} * sizeof(std::uint64_t) |
+		footprint << UML_GADGET_SME_VM_FOOTPRINT_SHIFT |
+		std::uint64_t{base == 31U} << UML_GADGET_SME_VM_BASE_SP_BIT;
+}
+
+/* Word 0's index register, shifted left by `shift`. */
+[[nodiscard]] constexpr std::uint64_t index_bits(unsigned index,
+	unsigned shift) noexcept
+{
+	return general_offset(index) << 16 |
+		std::uint64_t{shift} << UML_GADGET_SME_VM_SHIFT_SHIFT |
+		std::uint64_t{1} << UML_GADGET_SME_VM_INDEX_BIT;
+}
+
+[[nodiscard]] constexpr std::uint64_t shape_word(unsigned shape, bool store,
+	unsigned msize, unsigned esize, bool sign, unsigned registers) noexcept
+{
+	return std::uint64_t{shape} << UML_GADGET_SME_VM_SHAPE_SHIFT |
+		std::uint64_t{store} << UML_GADGET_SME_VM_STORE_BIT |
+		std::uint64_t(std::countr_zero(msize)) <<
+			UML_GADGET_SME_VM_MSIZE_SHIFT |
+		std::uint64_t(std::countr_zero(esize)) <<
+			UML_GADGET_SME_VM_ESIZE_SHIFT |
+		std::uint64_t{sign} << UML_GADGET_SME_VM_SIGN_BIT |
+		std::uint64_t{registers} << UML_GADGET_SME_VM_REGISTERS_SHIFT;
+}
+
+[[nodiscard]] bool emit_vector_memory(DecodeContext &context,
+	std::size_t entry, const VectorStream &stream)
+{
+	const std::span<const std::uintptr_t> entries{
+		uml_arm64_gadget_sm_memory_entries,
+		uml_arm64_gadget_sm_memory_entries_end};
+	if (entry >= entries.size())
+		return false;
+	emit(context.words, entries[entry]);
+	for (const auto word : {stream.address, stream.immediate,
+		     stream.transfer, stream.shape})
+		emit(context.words, static_cast<std::uintptr_t>(word));
+	emit(context.words, context.address);
+	return true;
+}
+
+/* The signed or unsigned immediate of a memory form. */
+[[nodiscard]] std::int64_t memory_immediate(const detail::SmeMemory &memory,
+	std::uint32_t word) noexcept
+{
+	std::uint32_t value = 0;
+	unsigned width = 0;
+	for (unsigned index = 0; index < memory.immediate_segment_count;
+	     ++index) {
+		const auto &segment = memory.immediate[index];
+		value = (value << segment.width) |
+			detail::sme_segment_value(segment, word);
+		width += segment.width;
+	}
+	if (width == 0U)
+		return 0;
+	return memory.immediate_signed ? sign_extend(value, width) :
+		static_cast<std::int64_t>(value);
+}
+
+[[nodiscard]] constexpr unsigned memory_shape(
+	detail::SmeMemoryShape shape) noexcept
+{
+	switch (shape) {
+	case detail::SmeMemoryShape::structure:
+		return UML_GADGET_SME_VM_STRUCTURE;
+	case detail::SmeMemoryShape::replicate:
+		return UML_GADGET_SME_VM_REPLICATE;
+	case detail::SmeMemoryShape::replicate_quad:
+		return UML_GADGET_SME_VM_REPLICATE_QUAD;
+	case detail::SmeMemoryShape::fill_z:
+		return UML_GADGET_SME_VM_FILL_Z;
+	case detail::SmeMemoryShape::fill_p:
+		return UML_GADGET_SME_VM_FILL_P;
+	case detail::SmeMemoryShape::za_slice:
+		return UML_GADGET_SME_VM_ZA_SLICE;
+	default:
+		return UML_GADGET_SME_VM_CONTIGUOUS;
+	}
+}
+
+/* The stream of an SVE or SME load or store at this SVL. */
+[[nodiscard]] std::optional<VectorStream> vector_stream(
+	const detail::SmeEncoding &row, const detail::SmeMemory &memory,
+	std::uint32_t word, unsigned svl, unsigned &variant) noexcept
+{
+	const auto *const operands = detail::sme_encoding_operands_of(row);
+	const unsigned esize = detail::sme_memory_esize(memory, word) / 8U;
+	const unsigned msize = memory.msize / 8U;
+	const unsigned registers = memory.registers;
+	const auto shape = memory_shape(memory.shape);
+	std::uint64_t footprint;
+	switch (shape) {
+	case UML_GADGET_SME_VM_STRUCTURE:
+	case UML_GADGET_SME_VM_FILL_Z:
+	case UML_GADGET_SME_VM_ZA_SLICE:
+		footprint = std::uint64_t{registers} * svl;
+		break;
+	case UML_GADGET_SME_VM_REPLICATE:
+		footprint = msize;
+		break;
+	case UML_GADGET_SME_VM_REPLICATE_QUAD:
+		footprint = 16U;
+		break;
+	case UML_GADGET_SME_VM_FILL_P:
+		footprint = svl / 8U;
+		break;
+	default:
+		footprint = std::uint64_t{svl} / esize * msize;
+		break;
+	}
+	VectorStream stream;
+	const auto base = detail::sme_operand_number(
+		operands[memory.base_operand], word);
+	stream.address = base_word(base, footprint);
+	const auto immediate = memory_immediate(memory, word);
+	switch (memory.offset) {
+	case detail::SmeAddressOffset::immediate_footprint:
+		stream.immediate = static_cast<std::uint64_t>(immediate) *
+			footprint;
+		break;
+	case detail::SmeAddressOffset::immediate_element:
+		stream.immediate = static_cast<std::uint64_t>(immediate) * msize;
+		break;
+	case detail::SmeAddressOffset::immediate_16:
+		stream.immediate = static_cast<std::uint64_t>(immediate) * 16U;
+		break;
+	case detail::SmeAddressOffset::register_element:
+		stream.address |= index_bits(detail::sme_operand_number(
+			operands[memory.index_operand], word),
+			static_cast<unsigned>(std::countr_zero(msize)));
+		break;
+	case detail::SmeAddressOffset::none:
+		break;
+	}
+	std::uint64_t predicate = 0;
+	unsigned slot = 0;
+	unsigned tile = 0;
+	unsigned slice = 12;
+	for (unsigned index = 0; index < row.operand_count; ++index) {
+		if (index == memory.base_operand || index == memory.index_operand)
+			continue;
+		const auto &operand = operands[index];
+		const auto number = detail::sme_operand_number(operand, word);
+		switch (operand.kind) {
+		case SmeOperandKind::z:
+			for (unsigned k = 0; k < operand.count; ++k)
+				stream.transfer |= std::uint64_t{sme_z_offset(
+					svl, (number + k * operand.stride) % 32U)}
+					<< (16U * slot++);
+			break;
+		case SmeOperandKind::p:
+			if (shape == UML_GADGET_SME_VM_FILL_P)
+				stream.transfer |= std::uint64_t{sme_p_offset(
+					svl, number)} << (16U * slot++);
+			else
+				predicate = sme_p_offset(svl, number);
+			break;
+		case SmeOperandKind::gpr:
+			slice = number;
+			break;
+		case SmeOperandKind::za_tile:
+			tile = number;
+			break;
+		default:
+			return std::nullopt;
+		}
+	}
+	if (shape == UML_GADGET_SME_VM_ZA_SLICE) {
+		/* The slice offset fills the bits below the tile number:
+		 * four for bytes down to none for quadwords. */
+		const unsigned offset_bits = 4U -
+			static_cast<unsigned>(std::countr_zero(esize));
+		const bool vertical = ((word >> 15) & 1U) != 0U;
+		stream.transfer = general_offset(slice) |
+			std::uint64_t{word & ((1U << offset_bits) - 1U)} << 16 |
+			std::uint64_t{tile} << 32 |
+			std::uint64_t{vertical} << 48;
+		variant = tile * 2U + (vertical ? 1U : 0U);
+	}
+	stream.shape = predicate | shape_word(shape,
+		memory.direction == detail::SmeMemoryDirection::store, msize,
+		esize, memory.sign_extend, registers);
+	return stream;
+}
+
+/* The stream of a SIMD&FP load or store streaming mode keeps (LDR, STR,
+ * LDUR, STUR, LDP, STP, LDNP, STNP and LDR literal), and its entry, or
+ * nothing for any other word. The base decoder has already rejected the
+ * reserved forms of these classes. */
+[[nodiscard]] std::optional<VectorStream> fp_stream(std::uint32_t word,
+	std::uint64_t pc, unsigned svl, std::size_t &entry) noexcept
+{
+	const unsigned rt = word & 31U;
+	const unsigned rn = (word >> 5) & 31U;
+	VectorStream stream;
+	unsigned bytes;
+	unsigned registers = 1;
+	bool store;
+	if ((word & 0x3f00'0000U) == 0x1c00'0000U) {
+		/* LDR (literal): an absolute address on the zero slot. */
+		const unsigned opc = word >> 30;
+		if (opc == 3U)
+			return std::nullopt;
+		bytes = 4U << opc;
+		store = false;
+		stream.address = UML_GADGET_CPU_ZERO |
+			std::uint64_t{bytes} << UML_GADGET_SME_VM_FOOTPRINT_SHIFT;
+		stream.immediate = pc + static_cast<std::uint64_t>(
+			sign_extend((word >> 5) & 0x7ffffU, 19) * 4);
+	} else if ((word & 0x3e00'0000U) == 0x2c00'0000U) {
+		/* LDP, STP, LDNP and STNP: 23-24 select the mode. */
+		const unsigned opc = word >> 30;
+		if (opc == 3U)
+			return std::nullopt;
+		bytes = 4U << opc;
+		registers = 2;
+		store = ((word >> 22) & 1U) == 0U;
+		const unsigned mode = (word >> 23) & 3U;
+		stream.address = base_word(rn, 2U * bytes);
+		stream.immediate = static_cast<std::uint64_t>(
+			sign_extend((word >> 15) & 0x7fU, 7) * bytes);
+		if (mode == 1U || mode == 3U)
+			stream.address |= std::uint64_t{1} <<
+				UML_GADGET_SME_VM_WRITEBACK_BIT;
+		if (mode == 1U)
+			stream.address |= std::uint64_t{1} <<
+				UML_GADGET_SME_VM_POST_BIT;
+		stream.transfer = std::uint64_t{sme_z_offset(svl,
+			(word >> 10) & 31U)} << 16;
+	} else if ((word & 0x3e00'0000U) == 0x3c00'0000U) {
+		const unsigned size = word >> 30;
+		const unsigned opc = (word >> 22) & 3U;
+		if ((opc & 2U) != 0U && size != 0U)
+			return std::nullopt;
+		bytes = (opc & 2U) != 0U ? 16U : 1U << size;
+		store = (opc & 1U) == 0U;
+		stream.address = base_word(rn, bytes);
+		if ((word & 0x0100'0000U) != 0U) {
+			stream.immediate = std::uint64_t{(word >> 10) & 0xfffU} *
+				bytes;
+		} else if ((word & 0x0020'0000U) != 0U) {
+			/* Register offset: option 010 UXTW, 011 LSL, 110 SXTW
+			 * and 111 SXTX, shifted by the size when S is set. */
+			const unsigned option = (word >> 13) & 7U;
+			if (((word >> 10) & 3U) != 2U || (option & 2U) == 0U)
+				return std::nullopt;
+			const auto scaled = ((word >> 12) & 1U) != 0U;
+			const auto shift = scaled ? static_cast<unsigned>(
+				std::countr_zero(bytes)) : 0U;
+			stream.address |= index_bits((word >> 16) & 31U, shift);
+			if ((option & 1U) == 0U)
+				stream.address |= std::uint64_t{1} <<
+					UML_GADGET_SME_VM_WORD_BIT;
+			if ((option & 4U) != 0U)
+				stream.address |= std::uint64_t{1} <<
+					UML_GADGET_SME_VM_SIGNED_BIT;
+		} else {
+			/* 00 unscaled, 01 post-indexed, 11 pre-indexed. */
+			const unsigned mode = (word >> 10) & 3U;
+			if (mode == 2U)
+				return std::nullopt;
+			stream.immediate = static_cast<std::uint64_t>(
+				sign_extend((word >> 12) & 0x1ffU, 9));
+			if (mode != 0U)
+				stream.address |= std::uint64_t{1} <<
+					UML_GADGET_SME_VM_WRITEBACK_BIT;
+			if (mode == 1U)
+				stream.address |= std::uint64_t{1} <<
+					UML_GADGET_SME_VM_POST_BIT;
+		}
+	} else {
+		return std::nullopt;
+	}
+	stream.transfer |= sme_z_offset(svl, rt);
+	stream.shape = shape_word(UML_GADGET_SME_VM_FP, store, bytes, bytes,
+		false, registers);
+	const auto size = static_cast<unsigned>(std::countr_zero(bytes));
+	entry = registers == 2U ?
+		streaming::fp_memory_pair[(size - 2U) * 2U + store] :
+		streaming::fp_memory_single[size * 2U + store];
+	return stream;
+}
+
 static_assert(streaming::sve_row_forms.size() ==
+	detail::sme_encodings.size());
+static_assert(streaming::memory_row_forms.size() ==
 	detail::sme_encodings.size());
 static_assert(streaming::fp_class_forms.size() ==
 	detail::fp_simd_streaming_classes.size());
@@ -374,6 +686,36 @@ std::optional<DecodeResult> decode_streaming_sve(DecodeContext &context,
 	return DecodeResult::decoded;
 }
 
+std::optional<DecodeResult> decode_streaming_memory(DecodeContext &context,
+	const detail::SmeEncoding &row)
+{
+	const auto *const memory = detail::sme_encoding_memory_of(row);
+	if (memory == nullptr)
+		return std::nullopt;
+	if (memory->shape == detail::SmeMemoryShape::prefetch) {
+		/* PRFB, PRFH, PRFW and PRFD: a hint, which never faults. */
+		emit(context.words, selection::uml_arm64_gadget_nop);
+		return DecodeResult::decoded;
+	}
+	const auto index = static_cast<std::size_t>(
+		&row - detail::sme_encodings.data());
+	const auto form_index = streaming::memory_row_forms[index];
+	if (form_index == streaming::no_form)
+		return std::nullopt;
+	const auto &form = streaming::memory_forms[form_index];
+	const auto word = context.instruction;
+	unsigned variant = 0;
+	const auto stream = vector_stream(row, *memory, word,
+		context.options.host_capabilities.sme_svl_bytes, variant);
+	if (form.variant == streaming::MemoryVariant::element_size)
+		variant = detail::sme_segment_value(memory->esize_shift, word) -
+			form.base;
+	if (!stream || variant >= form.variants ||
+	    !emit_vector_memory(context, form.first_entry + variant, *stream))
+		return illegal_instruction(context);
+	return DecodeResult::decoded;
+}
+
 DecodeResult decode_streaming_fallback(DecodeContext &context)
 {
 	const auto index = fp_simd_class(context.instruction);
@@ -386,7 +728,15 @@ DecodeResult decode_streaming_fallback(DecodeContext &context)
 				    streaming::fp_operands.data() +
 					    form.operand_begin))
 				return DecodeResult::decoded;
+			return illegal_instruction(context);
 		}
+		std::size_t entry = 0;
+		if (const auto stream = fp_stream(context.instruction,
+			    context.address,
+			    context.options.host_capabilities.sme_svl_bytes,
+			    entry))
+			if (emit_vector_memory(context, entry, *stream))
+				return DecodeResult::decoded;
 	}
 	return illegal_instruction(context);
 }
