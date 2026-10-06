@@ -137,13 +137,12 @@ gadget x87_sincos
 Lx86_x87_sincos_unreduced:
 	retire_and_next
 
-/* Current quotient-bit modeling intentionally clears C0/C1/C2/C3 after
- * FPREM/FPREM1, matching the accepted semantics and FEX corpus contract. */
-.macro x87_clear_remainder_flags name
+/* FPREM and FPREM1, whose helper sets C0 to C3: C2 for a partial remainder,
+ * else the quotient's low three bits in C0, C3 and C1. */
+.macro x87_remainder name
 	.globl NAME(uml_x86_64_gadget_x87_\name\()_with_flags)
 	.p2align 4
 NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
-	/* Share the calculation body by entering a private duplicate. */
 	sub sp, sp, #48
 	mov w13, #0
 	x87_load_stack w13, x9, w10
@@ -163,17 +162,13 @@ NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
 	add sp, sp, #48
 	mov w13, #0
 	x87_store_stack w13, x9, w10
-	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	mov w10, #0x4700
-	bic w9, w9, w10
-	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	retire_and_next
 .endm
 
-x87_clear_remainder_flags fprem
-x87_clear_remainder_flags fprem1
+x87_remainder fprem
+x87_remainder fprem1
 
-.purgem x87_clear_remainder_flags
+.purgem x87_remainder
 .purgem x87_two_input
 .purgem x87_unary
 .purgem x87_initialize_state

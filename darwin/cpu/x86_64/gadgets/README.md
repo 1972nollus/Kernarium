@@ -359,7 +359,11 @@ x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
 the control word's rounding mode and precision. As on x86, C1 after a result
 says whether rounding increased its magnitude -- FPTAN reports the tangent's
 rounding and FSINCOS the cosine's -- and an invalid operation clears it.
-FIST, FISTP and FISTTP raise precision for a value they round.
+FIST, FISTP and FISTTP raise precision for a value they round. FPREM and
+FPREM1 divide the significands as integers (SoftFloat's `extF80_x87Rem`,
+which the JIT shares): operands whose exponents differ by 64 or more get a
+partial remainder and C2, as on an Intel host, and a complete remainder sets
+C0, C3 and C1 to the quotient's low three bits.
 
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the

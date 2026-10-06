@@ -28,6 +28,8 @@ constexpr std::uint16_t status_exception_mask = 0x7fU;
 /* The six exceptions the control word masks. */
 constexpr std::uint16_t status_maskable_exceptions = 0x3fU;
 constexpr std::uint16_t status_c1 = 1U << 9U;
+/* C0, C1, C2 and C3. */
+constexpr std::uint16_t status_condition_codes = 0x4700U;
 constexpr std::uint16_t status_c2 = 1U << 10U;
 /* The denormal-operand exception, which SoftFloat has no flag for, in a
  * bit of softfloat_state::exceptionFlags that SoftFloat does not use. */
@@ -363,42 +365,23 @@ enum class TranscendentalOperation : std::uint8_t {
 	return from_soft(result);
 }
 
+/* FPREM (`nearest` false) and FPREM1: x87's exact remainder, partial for
+ * operands whose exponents differ by 64 or more, which sets C2; a complete
+ * one sets C0, C3 and C1 to the quotient's low three bits. An unmasked
+ * exception the gadget leaves for leaves them as they were. */
 [[nodiscard]] X87Register remainder(CpuState &cpu, X87Register dividend,
 	X87Register divisor, bool nearest) noexcept
 {
 	auto state = soft_state(cpu, true);
 	denormal_operand(state, dividend);
 	denormal_operand(state, divisor);
-	extFloat80_t result{};
-	if (nearest) {
-		result = extF80_rem(&state, to_soft(dividend), to_soft(divisor));
-	} else if (is_infinity(dividend)) {
-		state.exceptionFlags |= softfloat_flag_invalid;
-		result = to_soft(quiet_nan());
-	} else if (is_nan(dividend)) {
-		state.exceptionFlags |= softfloat_flag_invalid;
-		result = to_soft(dividend);
-	} else if (is_zero(divisor)) {
-		state.exceptionFlags |= softfloat_flag_invalid;
-		result = to_soft(quiet_nan());
-	} else {
-		const auto quotient = extF80_div(
-			&state, to_soft(dividend), to_soft(divisor));
-		const auto integer = extF80_roundToInt(&state, quotient,
-			softfloat_round_minMag, true);
-		if (integer.signif == 0 && (integer.signExp & 0x7fffU) == 0) {
-			result = to_soft(dividend);
-		} else {
-			result = extF80_sub(&state, to_soft(dividend),
-				extF80_mul(&state, integer, to_soft(divisor)));
-			/* An exact remainder of zero takes the dividend's sign;
-			 * the subtraction alone would give +0. */
-			if (is_zero(from_soft(result)))
-				result.signExp = static_cast<std::uint16_t>(
-					dividend.sign_exponent & 0x8000U);
-		}
-	}
+	uint_fast16_t conditions{};
+	const auto result = extF80_x87Rem(&state, to_soft(dividend),
+		to_soft(divisor), nearest, &conditions);
 	commit_exceptions(cpu, state);
+	if (cpu.exception_raised == 0)
+		cpu.x87_status = static_cast<std::uint16_t>(
+			(cpu.x87_status & ~status_condition_codes) | conditions);
 	return from_soft(result);
 }
 
