@@ -2,22 +2,25 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Check the "mm is shared" dispatch flag of the x86_64-userspace slice.
 
-The kernel marks an entry of a task shared when another agent may observe
-its address space, as the common kernel README states: another task on it,
-memory another address space may map too (MAP_SHARED of any kind, SysV
-shm), or an io_uring ring in its memory. The host reads the mark from each
-dispatch (DARWIN_UML_DISPATCH_MM_SHARED), and the x86-64 JIT keeps x86's
-store order for a marked dispatch only. Cross-builds the freestanding
-mm_shared_probe.cpp, boots an x86-64 image on an emulator built with the
-macos-x86_64 preset with UML_X86_MM_SHARED_LOG set, and runs the probe in
-each mode. The host logs each change of an address space's mark with the
-RIP of the dispatch that saw it; in the probe's code each mode must mark the
-address spaces it shares and no other.
+The kernel marks an entry of a task shared while another agent may observe
+its address space: while another task may run on it (a vfork child does not
+count its waiting parent), while it maps memory another address space may
+map too (MAP_SHARED of any kind, SysV shm), or while io_uring keeps a ring in
+its memory. The host reads the mark from each dispatch
+(DARWIN_UML_DISPATCH_MM_SHARED), and the x86-64 JIT keeps x86's store order
+for a marked dispatch only. Cross-builds the freestanding mm_shared_probe.cpp,
+boots an x86-64 image on an emulator built with the macos-x86_64 preset with
+UML_X86_MM_SHARED_LOG set, and runs the probe in each mode. The host logs
+each change of an address space's mark with the RIP of the dispatch that saw
+it; in the probe's code each mode must mark the address spaces it shares and
+no other, and a mode that ends its sharing must see the mark go again. Where
+the probe starts or ends its sharing with one system call, the change must
+come at that call's return address.
 
 On the JIT, the log also records each change of an address space's
 ordering: an unshared probe must run only unordered code, a shared one must
-run ordered code, and no dispatch the kernel marked shared may run
-unordered code.
+run ordered code and, once its sharing ends, unordered code again, and no
+dispatch the kernel marked shared may run unordered code.
 """
 
 from __future__ import annotations
@@ -85,11 +88,23 @@ MODES = {
     "shared-anon": Expect(1),
     "shared-ro": Expect(1),
     "shm": Expect(1),
-    "uring-nommap": Expect(1),
+    "uring-nommap": Expect(1, exact_share=True),
     "fork-shared": Expect(2),
     "thread-fork": Expect(1),
+    "thread-join": Expect(1, ends=True, exact_unshare=True),
+    "unmap": Expect(1, True, True, True),
+    "shmdt": Expect(1, True, True, True),
+    "split": Expect(1, True, True, True),
+    "mremap": Expect(1, True, True, True),
+    "remap-private": Expect(1, True, True, True),
+    "fork-dontcopy": Expect(1, True, True, True),
+    # The rings are unpinned from a work item after close().
+    "uring-close": Expect(1, ends=True, exact_share=True),
 }
-RANGE = re.compile(r"mm-shared-probe: mode=([\w-]+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+)")
+RANGE = re.compile(
+    r"mm-shared-probe: mode=([\w-]+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+) "
+    r"share=(0x[0-9a-f]+) unshare=(0x[0-9a-f]+)"
+)
 BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 60
 
@@ -204,8 +219,8 @@ def main() -> int:
                 match = RANGE.search(output)
                 if result.return_code != 0 or match is None or match.group(1) != mode:
                     raise RuntimeError(f"{mode}: the probe failed: {output!r}")
-                start, end = int(match.group(2), 16), int(match.group(3), 16)
-                share = unshare = 0
+                start, end, share, unshare = (int(match.group(index), 16)
+                                              for index in range(2, 6))
                 hits = [entry for entry in logged(log)[before:]
                         if start <= entry.rip < end]
                 problem = check_mode(expect, hits, arguments.engine, share, unshare)

@@ -10,6 +10,17 @@ threads of one process and between processes that share SysV shm, a memfd
 mapped MAP_SHARED or inherited shared anonymous memory. No test may see an
 outcome x86 forbids.
 
+The cycles run every test in two shared phases with unshared ones between
+and after them: tasks on the probe's address space, created and joined
+for each test (thread-cycle), and SysV shm attached and detached
+(shm-cycle) or shared anonymous memory mapped and unmapped (anon-cycle)
+around the processes of a phase. The host's UML_X86_MM_SHARED_LOG must
+show the probe's address space marked shared from the system call that
+starts each shared interval to the one that ends it, and unshared outside
+them, every agent process marked shared, and on the JIT the same address
+spaces running ordered code exactly while marked and unordered code
+otherwise.
+
 The negative control, which shows that message passing catches a space
 that keeps no order, is the unit test x86-64-jit-store-order: it drives the
 JIT engine directly, so the product carries no setting that relaxes a
@@ -34,6 +45,8 @@ REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
 from guest import Guest, GuestFile  # noqa: E402
+from mm_shared_log import (  # noqa: E402
+    MARK, ORDERING, UNORDERED_SHARED, Entry, changes, history, logged)
 
 
 PROBE = pathlib.Path(__file__).with_name("tso_litmus_probe.cpp")
@@ -61,16 +74,29 @@ PROBES = {
     "tso-litmus-probe": ("x86-64", ("--target=x86_64-unknown-linux-gnu", "-mno-red-zone")),
     "tso-litmus-probe32": ("i386", ("--target=i686-unknown-linux-gnu", "-march=i686")),
 }
-CASES = ("thread", "shm", "memfd", "anon")
+THREAD_TESTS = ("mp", "mp-stack-load", "mp-stack-store", "sb", "sb-mfence", "iriw")
+PROCESS_TESTS = ("mp", "sb", "sb-mfence", "iriw")
 TESTS = {
-    "thread": ("mp", "mp-stack-load", "mp-stack-store", "sb", "sb-mfence", "iriw"),
-    "shm": ("mp", "sb", "sb-mfence", "iriw"),
-    "memfd": ("mp", "sb", "sb-mfence", "iriw"),
-    "anon": ("mp", "sb", "sb-mfence", "iriw"),
+    "thread": THREAD_TESTS,
+    "shm": PROCESS_TESTS,
+    "memfd": PROCESS_TESTS,
+    "anon": PROCESS_TESTS,
+    "thread-cycle": THREAD_TESTS,
+    "shm-cycle": PROCESS_TESTS,
+    "anon-cycle": PROCESS_TESTS,
 }
+CASES = tuple(TESTS)
+# The shared phases of a cycle, and for each test the agents besides the
+# leader.
+PHASES = 2
+OTHER_AGENTS = {"iriw": 3}
 RESULT = re.compile(
-    r"tso-litmus: abi=(\S+) case=(\S+) test=(\S+) rounds=(\d+) "
-    r"(forbidden|allowed)=(\d+)"
+    r"tso-litmus: abi=(\S+) case=(\S+)(?: phase=(\d+))? test=(\S+) "
+    r"rounds=(\d+) (forbidden|allowed)=(\d+)"
+)
+RANGE = re.compile(
+    r"tso-litmus: abi=(\S+) range=(0x[0-9a-f]+)-(0x[0-9a-f]+) "
+    r"clone=(0x[0-9a-f]+) share=(0x[0-9a-f]+) unshare=(0x[0-9a-f]+)"
 )
 CPUS = 4
 BUILD_TIMEOUT_SECONDS = 120
@@ -91,15 +117,68 @@ def build_probes(compiler: str) -> dict[str, bytes]:
     return binaries
 
 
+def check_cycle(case: str, hits: list[Entry], engine: str, start: int,
+                unshare: int) -> list[str]:
+    """The problems of one cycle's log, in the probe's code: its address space
+    must be marked shared exactly from each system call that starts a shared
+    interval (returning to `start`) to the one that ends it (returning to
+    `unshare`), and each agent process's from its first dispatch to its
+    exit; on the JIT, the same spaces must run ordered code exactly then."""
+    tests = TESTS[case]
+    threads = case == "thread-cycle"
+    intervals = PHASES * (len(tests) if threads else 1)
+    expected = [(1, start), (0, unshare)] * intervals
+    problems = []
+    kinds = [(MARK, "marked shared")]
+    if engine == "jit":
+        kinds.append((ORDERING, "ran ordered code"))
+    marks = changes(hits, MARK)
+    leaders = [generation for generation, changed in marks.items()
+               if any(entry.rip == start for entry in changed)]
+    if len(leaders) != 1:
+        return [f"{len(leaders)} address spaces changed their mark at {start:#x}"]
+    leader = leaders[0]
+    for event, name in kinds:
+        by_generation = changes(hits, event)
+        changed = by_generation.get(leader, [])
+        print(f"  {event} generation={leader}: {history(changed)}")
+        states = [(entry.state, entry.rip) for entry in changed]
+        if event == ORDERING:
+            # The JIT also logs a space's first dispatch, which runs
+            # unordered code before the first interval starts.
+            if not states or states[0][0] != 0:
+                problems.append("the probe's first dispatch did not run unordered code")
+            states = states[1:]
+        if states != expected:
+            problems.append(f"the probe's address space {name} other than from "
+                            f"each {start:#x} to the next {unshare:#x}")
+        if threads:
+            continue
+        agents = [generation for generation in by_generation if generation != leader]
+        count = PHASES * sum(OTHER_AGENTS.get(test, 1) for test in tests)
+        if len(agents) != count:
+            problems.append(f"{len(agents)} agent processes logged {event}, expected {count}")
+        for generation in agents:
+            if [entry.state for entry in by_generation[generation]] != [1]:
+                problems.append(f"agent generation {generation} {name} only in part: "
+                                f"{history(by_generation[generation])}")
+    if threads and len(marks) != 1:
+        problems.append(f"{len(marks) - 1} other address spaces changed their mark")
+    return problems
+
+
 def run_cases(
     arguments: argparse.Namespace,
     binaries: dict[str, bytes],
     cases: tuple[str, ...],
     rounds: int,
-) -> dict[tuple[str, str, str], int]:
+    log: pathlib.Path,
+) -> tuple[dict[tuple[str, str, int, str], int], list[str]]:
     """Runs every case under both ABIs in one boot; returns the count each
-    (abi, case, test) printed, after checking that each printed once."""
-    counts: dict[tuple[str, str, str], int] = {}
+    (abi, case, phase, test) printed, after checking that each printed once,
+    and the problems of the cycles' logs. A case without phases has phase 0."""
+    counts: dict[tuple[str, str, int, str], int] = {}
+    problems = []
     with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
@@ -116,24 +195,40 @@ def run_cases(
         guest.boot_to_shell(arguments.timeout)
         for name, (abi, _) in PROBES.items():
             for case in cases:
+                before = len(logged(log))
                 result = guest.run_command(
                     f"{GUEST_DIRECTORY}/{name} {case} {rounds}",
                     arguments.probe_timeout,
                 )
                 output = result.output.strip()
                 print(output, flush=True)
-                if result.return_code not in (0, 1):
+                header = RANGE.search(output)
+                if result.return_code not in (0, 1) or header is None:
                     raise RuntimeError(f"{abi} {case}: the probe failed: {output!r}")
                 for match in RESULT.finditer(output):
-                    key = (match.group(1), match.group(2), match.group(3))
-                    if key in counts or int(match.group(4)) != rounds:
+                    key = (match.group(1), match.group(2), int(match.group(3) or 0),
+                           match.group(4))
+                    if key in counts or int(match.group(5)) != rounds:
                         raise RuntimeError(f"unexpected result line: {match.group(0)}")
-                    counts[key] = int(match.group(6))
-                expected = {(abi, case, test) for test in TESTS[case]}
+                    counts[key] = int(match.group(7))
+                phases = range(1, PHASES + 1) if case.endswith("-cycle") else (0,)
+                expected = {(abi, case, phase, test)
+                            for phase in phases for test in TESTS[case]}
                 missing = expected - counts.keys()
                 if missing:
                     raise RuntimeError(f"{abi} {case}: no result for {sorted(missing)}")
-    return counts
+                if not case.endswith("-cycle"):
+                    continue
+                low, high, clone, share, unshare = (int(header.group(index), 16)
+                                                    for index in range(2, 7))
+                hits = [entry for entry in logged(log)[before:] if low <= entry.rip < high]
+                start = clone if case == "thread-cycle" else share
+                for problem in check_cycle(case, hits, arguments.engine, start, unshare):
+                    problems.append(f"{abi} {case}: {problem}")
+    problems += [f"generation {entry.generation} ran unordered code at {entry.rip:#x} "
+                 "while marked shared"
+                 for entry in logged(log) if entry.event == UNORDERED_SHARED]
+    return counts, problems
 
 
 def main() -> int:
@@ -163,14 +258,21 @@ def main() -> int:
 
     binaries = build_probes(arguments.compiler)
     failures = 0
-    counts = run_cases(arguments, binaries, CASES, arguments.rounds)
-    for (abi, case, test), count in sorted(counts.items()):
+    with tempfile.TemporaryDirectory(prefix="uml-tso-litmus-log-") as directory:
+        log = pathlib.Path(directory) / "mm-shared.log"
+        os.environ["UML_X86_MM_SHARED_LOG"] = str(log)
+        counts, problems = run_cases(arguments, binaries, CASES, arguments.rounds, log)
+    for (abi, case, phase, test), count in sorted(counts.items()):
         if test == "sb":
             continue
         passed = count == 0
         failures += not passed
-        print(f"{'PASS' if passed else 'FAIL'} {abi} {case} {test}: "
+        where = f" phase {phase}" if phase else ""
+        print(f"{'PASS' if passed else 'FAIL'} {abi} {case}{where} {test}: "
               f"{count} forbidden outcome(s) in {arguments.rounds} rounds")
+    for problem in problems:
+        print(f"FAIL {problem}")
+    failures += len(problems)
 
     if failures:
         raise RuntimeError(f"{failures} check(s) failed")

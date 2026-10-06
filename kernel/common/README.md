@@ -174,10 +174,13 @@ store order for marked entries only. Writes through `ptrace()`,
 file that another process writes through `MAP_SHARED`, do not mark the mm,
 and a temporary `mm_users` reference such as a `/proc` reader marks entries
 only while it lasts. The arm64 host ignores the flag.
-`tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause.
+`tests/integration/x86_64/run_guest_x86_64_mm_shared.py` checks each cause
+and each way it ends, and `run_guest_x86_64_tso_litmus.py` that memory order
+holds through cycles of sharing.
 
 Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
 which reads as zero and ignores writes unless the run has SME.
+`guest-sme-off-gadgets` and `guest-sme-off-jit` check it without SME.
 
 An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
