@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run every materialized FEX ASM test through the x86 gadget backend."""
+"""Run every materialized FEX ASM test through an x86 engine's runner.
+
+The report gives the raw pass rate over every applicable test, and the rate
+under the policy, which sets aside the tests whose expectations x86 hardware
+contradicts: upstream's Known_Failures_host and the project's own record,
+contradicted-expectations.tsv. Set-aside tests still run and keep their
+results in the report.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +29,12 @@ from typing import Any
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fex_config  # noqa: E402
 from pinned_source import sha256_file  # noqa: E402
+
+
+CONTRADICTED_EXPECTATIONS = (
+    pathlib.Path(__file__).resolve().parent / "contradicted-expectations.tsv"
+)
+CONTRADICTED_COLUMNS = ("mode", "test", "expectation", "evidence")
 
 
 def fail(message: str) -> "NoReturn":
@@ -60,7 +73,44 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
             fail(f"binary hash mismatch: {record.get('test')}")
         if sha256_file(config) != record.get("config_sha256"):
             fail(f"configuration hash mismatch: {record.get('test')}")
+        if not isinstance(record.get("known_failure_host"), bool):
+            fail(f"corpus predates its Known_Failures_host record: {record.get('test')}")
     return metadata, tests
+
+
+def load_contradicted(
+    path: pathlib.Path, mode: str, tests: list[dict[str, Any]]
+) -> dict[str, str]:
+    """Return the reasons the project's record gives for MODE's tests.
+
+    Every row must name a test of the corpus of its mode, once, that
+    upstream's Known_Failures_host does not already name.
+    """
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as error:
+        fail(f"cannot read the contradicted-expectation record: {error}")
+    rows = [line for line in lines if line and not line.startswith("#")]
+    if not rows or tuple(rows[0].split("\t")) != CONTRADICTED_COLUMNS:
+        fail(f"{path.name} lacks its header")
+    by_name = {str(record["test"]): record for record in tests}
+    reasons: dict[str, str] = {}
+    for row in rows[1:]:
+        fields = row.split("\t")
+        if len(fields) != len(CONTRADICTED_COLUMNS) or not all(fields):
+            fail(f"{path.name} has a malformed row: {row}")
+        row_mode, test, expectation, evidence = fields
+        if row_mode not in ("x86-64", "i386"):
+            fail(f"{path.name} names an unknown mode: {row_mode}")
+        if row_mode != mode:
+            continue
+        record = by_name.get(test)
+        if record is None:
+            fail(f"{path.name} names no {mode} test: {test}")
+        if test in reasons or record["known_failure_host"]:
+            fail(f"{path.name} names {test} twice or beside Known_Failures_host")
+        reasons[test] = f"{expectation}; {evidence}"
+    return reasons
 
 
 def full_precision_config(config: bytes) -> bytes | None:
@@ -216,6 +266,7 @@ def run_one(
             "source": record["source"],
             "host_features": record.get("host_features", []),
             "disabled_upstream": bool(record.get("disabled_upstream")),
+            "known_failure_host": bool(record["known_failure_host"]),
             "x87_reduced_precision_dropped": rewritten is not None,
             "duration_ms": round((time.monotonic() - started) * 1000, 3),
         }
@@ -249,6 +300,12 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 1, 32))
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--filter", help="regular expression matched against test names")
+    parser.add_argument(
+        "--contradicted",
+        type=pathlib.Path,
+        default=CONTRADICTED_EXPECTATIONS,
+        help="the project's record of FEX expectations x86 hardware contradicts",
+    )
     arguments = parser.parse_args()
     runner = arguments.runner.resolve()
     root = arguments.corpus.resolve()
@@ -257,6 +314,9 @@ def main() -> int:
     if arguments.jobs < 1 or arguments.timeout <= 0:
         fail("jobs and timeout must be positive")
     metadata, tests = load_corpus(root)
+    contradicted = load_contradicted(
+        arguments.contradicted.resolve(), str(metadata["mode"]), tests
+    )
     if arguments.filter:
         try:
             expression = re.compile(arguments.filter)
@@ -292,6 +352,28 @@ def main() -> int:
     )
     opcode_counts.pop("", None)
     passed = status_counts.get("passed", 0)
+    set_aside = []
+    for result in applicable:
+        if result["known_failure_host"]:
+            reason = "upstream Known_Failures_host: fails on native x86"
+        elif result["test"] in contradicted:
+            reason = contradicted[str(result["test"])]
+        else:
+            continue
+        set_aside.append(
+            {"test": result["test"], "status": result["status"], "reason": reason}
+        )
+    set_aside_names = {entry["test"] for entry in set_aside}
+    policy_applicable = [
+        result for result in applicable if result["test"] not in set_aside_names
+    ]
+    policy_status_counts = Counter(
+        str(result["status"]) for result in policy_applicable
+    )
+    policy_passed = policy_status_counts.get("passed", 0)
+    passing_set_aside = [
+        entry["test"] for entry in set_aside if entry["status"] == "passed"
+    ]
     report = {
         "schema": 1,
         "source": metadata.get("source"),
@@ -314,6 +396,14 @@ def main() -> int:
         "illegal_opcode_counts": dict(
             sorted(opcode_counts.items(), key=lambda item: (-item[1], item[0]))
         ),
+        "policy": {
+            "applicable_count": len(policy_applicable),
+            "passed_count": policy_passed,
+            "failed_count": len(policy_applicable) - policy_passed,
+            "status_counts": dict(sorted(policy_status_counts.items())),
+            "set_aside": set_aside,
+            "passing_set_aside_count": len(passing_set_aside),
+        },
         "results": results,
     }
     atomic_json(arguments.output.resolve(), report)
@@ -323,13 +413,25 @@ def main() -> int:
         f"ran {len(disabled)} upstream-disabled tests; "
         f"report: {arguments.output.resolve()}"
     )
+    print(
+        f"under the policy: {policy_passed}/{len(policy_applicable)} passed; "
+        f"set aside {len(set_aside)} that x86 hardware contradicts"
+        + (": " + ", ".join(
+            f"{entry['test']}={entry['status']}" for entry in set_aside)
+           if set_aside else "")
+    )
+    if passing_set_aside:
+        print(
+            "set-aside tests passing FEX's expectation rather than "
+            "hardware's: " + ", ".join(passing_set_aside)
+        )
     print("statuses: " + ", ".join(f"{key}={value}" for key, value in sorted(status_counts.items())))
     if opcode_counts:
         top = ", ".join(
             f"{key}={value}" for key, value in opcode_counts.most_common(12)
         )
         print(f"top illegal opcode maps: {top}")
-    return 0 if passed == len(applicable) else 1
+    return 0 if policy_passed == len(policy_applicable) else 1
 
 
 if __name__ == "__main__":

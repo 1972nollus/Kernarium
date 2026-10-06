@@ -46,7 +46,7 @@ reduced, content-verified export.
 
 The output is disposable build data. `corpus.json` records the pinned FEX
 commit, every source-relative test name, feature requirements, disabled-test
-status, and content hashes. The producer rejects a dirty FEX checkout and one
+and known-failure status, and content hashes. The producer rejects a dirty FEX checkout and one
 that is not based on the pinned commit or whose `LICENSE`, `Scripts`, or
 `unittests` differ from it, so a prepared source carrying a maintained patch
 series yields the pinned corpus. It publishes the output directory only after
@@ -80,6 +80,16 @@ opcode map so implementation can proceed from measured coverage gaps.
 FEX's generic `Disabled_Tests` entries are retained as explicit unsupported
 upstream cases. Host-, simulator-, and FEX-JIT-specific exclusions do not
 apply to the gadget backend.
+
+Some FEX expectations are FEX's own behaviour where x86 hardware differs. The
+report gives the raw pass rate over every applicable test and the rate under
+the policy, which sets aside the tests upstream's `Known_Failures_host` names
+as failing on native x86 and those the project records in
+[`contradicted-expectations.tsv`](contradicted-expectations.tsv), each with the
+native Intel evidence. A set-aside test still runs, its result stays in the
+report, and one that passes is listed as matching FEX rather than hardware.
+The campaign's status follows the policy, and a record row that names no test
+fails it. An engine that follows x86 fails these tests in the raw count.
 
 The engine emulates x87 only at full 80-bit precision, and the runner refuses
 a case that asks for FEX's reduced-precision mode. The campaign therefore runs

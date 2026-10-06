@@ -1,0 +1,9 @@
+# FEX ASM expectations that x86 hardware contradicts and that upstream's
+# Known_Failures_host does not name. The campaign runs each of these tests
+# and reports its result, but sets it aside from the pass rate under the
+# policy, as it does upstream's known failures on native hosts. Each row
+# gives the test as the campaign names it, what FEX expects, and the native
+# Intel evidence for what x86 does instead. A row that names no test of the
+# corpus fails the campaign.
+mode	test	expectation	evidence
+x86-64	Test_VEX/vldmxcsr.asm	VSTMXCSR after VLDMXCSR of 0xffff reads 0xffc0: FEX drops the exception flags, DAZ and the reserved bits	Xeon Platinum 8581C (CPUID 1 EAX 0x000c06f2): VLDMXCSR and LDMXCSR of 0xffff read back 0xffff; repository case sse-mxcsr-keeps-exception-flags.s holds the flags on the same host; upstream disables the test on native hosts (Disabled_Tests_host)
