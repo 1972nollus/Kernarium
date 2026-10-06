@@ -1261,6 +1261,7 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, boo
 		const auto *tso = orders_stores ? "1" : "0";
 		Set(C::CONFIG_TSOENABLED, tso);
 		Set(C::CONFIG_VECTORTSOENABLED, tso);
+		Set(C::CONFIG_STACKTSOENABLED, tso);
 		Set(C::CONFIG_MEMCPYSETTSOENABLED, tso);
 		space->context = FEXCore::Context::Context::CreateNewContext(host_features);
 		if (!space->context)

@@ -17,6 +17,9 @@
  *   mp       message passing: the writer stores x, then y; the reader sees
  *            y, then reads x. x == 0 after y == 1 is forbidden, by a store
  *            the writer reordered or by a load the reader did.
+ *   mp-stack-load, mp-stack-store  (threads only) the same with x and y in
+ *            the reader's or the writer's own stack frame, which that
+ *            thread reaches through RSP and the other through a pointer.
  *   sb       store buffering: each of two agents stores its own variable
  *            and loads the other's. Both loads seeing 0 is allowed on x86;
  *            the count only shows that the agents raced.
@@ -237,6 +240,7 @@ struct alignas(128) Slot {
 };
 
 struct Shared {
+	Pair *volatile stack_pair;
 	Slot go;
 	Slot done;
 	Slot finished;
@@ -321,7 +325,7 @@ void wait_at_least(volatile word *slot, word value)
 	}
 }
 
-enum class Test { mp, sb, sb_mfence, iriw };
+enum class Test { mp, sb, sb_mfence, iriw, mp_stack_load, mp_stack_store };
 
 constexpr const char *test_name(Test test)
 {
@@ -330,6 +334,8 @@ constexpr const char *test_name(Test test)
 	case Test::sb: return "sb";
 	case Test::sb_mfence: return "sb-mfence";
 	case Test::iriw: return "iriw";
+	case Test::mp_stack_load: return "mp-stack-load";
+	case Test::mp_stack_store: return "mp-stack-store";
 	}
 	return "?";
 }
@@ -351,6 +357,9 @@ struct Job {
 void run_agent(const Job &job)
 {
 	Shared &shared = *job.shared;
+	Pair own;
+	if (job.test == Test::mp_stack_store)
+		shared.stack_pair = &own;
 	for (word round = 1; round <= job.rounds; round++) {
 		wait_at_least(&shared.go.value, round);
 		Pair &pair = shared.pair[round % pairs];
@@ -360,6 +369,18 @@ void run_agent(const Job &job)
 			pair.y.pad[3] = round;
 			pair.x.value = 1;
 			pair.y.value = 1;
+			break;
+		case Test::mp_stack_load: {
+			Pair &remote = *shared.stack_pair;
+			remote.y.pad[3] = round;
+			remote.x.value = 1;
+			remote.y.value = 1;
+			break;
+		}
+		case Test::mp_stack_store:
+			own.y.pad[3] = round;
+			own.x.value = 1;
+			own.y.value = 1;
 			break;
 		case Test::sb:
 			stagger(round, 7);
@@ -395,6 +416,61 @@ void run_agent(const Job &job)
 		add_fence(&shared.done.value, 1);
 	}
 	add_fence(&shared.finished.value, 1);
+	if (job.test == Test::mp_stack_store)
+		wait_at_least(&shared.go.value, job.rounds + 1);
+}
+
+/* MP whose reader keeps x and y in its own frame (mp-stack-load), or whose
+ * writer does (mp-stack-store, see run_agent). */
+word run_stack_leader(const Job &job)
+{
+	Shared &shared = *job.shared;
+	Pair own;
+	if (job.test == Test::mp_stack_load)
+		shared.stack_pair = &own;
+	else
+		while (shared.stack_pair == nullptr)
+			relax();
+	word counted = 0;
+	for (word round = 1; round <= job.rounds; round++) {
+		word x = 0;
+		word y = 0;
+		if (job.test == Test::mp_stack_load) {
+			own.x.value = 0;
+			own.y.value = 0;
+			own.x.pad[5] = round;
+			store_fence(&shared.go.value, round);
+			for (unsigned long spins = 0;; spins++) {
+				y = own.y.value;
+				x = own.x.value;
+				if (y != 0)
+					break;
+				if (spins == spin_limit)
+					fail("mp-stack: y never became 1");
+			}
+		} else {
+			Pair &remote = *shared.stack_pair;
+			remote.x.value = 0;
+			remote.y.value = 0;
+			remote.x.pad[5] = round;
+			store_fence(&shared.go.value, round);
+			for (unsigned long spins = 0;; spins++) {
+				y = remote.y.value;
+				x = remote.x.value;
+				if (y != 0)
+					break;
+				if (spins == spin_limit)
+					fail("mp-stack: y never became 1");
+			}
+		}
+		wait_at_least(&shared.done.value, round);
+		mfence();
+		counted += x == 0;
+	}
+	wait_at_least(&shared.finished.value, 1);
+	shared.stack_pair = nullptr;
+	store_fence(&shared.go.value, job.rounds + 1);
+	return counted;
 }
 
 /* The leader: resets each round's pair, starts the round, plays its own
@@ -459,6 +535,8 @@ word run_leader(const Job &job)
 			counted += y == 0 && shared.result[1].value == 0;
 			break;
 		}
+		default:
+			break;
 		}
 	}
 	return counted;
@@ -506,7 +584,9 @@ word run_test(Case kind, Test test, word rounds, Shared *anon, long handle)
 				&thread_jobs[agent]) <= 0)
 				fail("clone failed");
 		}
-		const word counted = run_leader({&shared, test, rounds, 0});
+		const bool stack = test == Test::mp_stack_load || test == Test::mp_stack_store;
+		const word counted = stack ? run_stack_leader({&shared, test, rounds, 0}) :
+			run_leader({&shared, test, rounds, 0});
 		wait_at_least(&shared.finished.value, agents - 1);
 		return counted;
 	}
@@ -595,8 +675,14 @@ long probe_main(long *stack)
 	}
 
 	long status = 0;
-	constexpr Test tests[] = {Test::mp, Test::sb, Test::sb_mfence, Test::iriw};
-	for (const auto test : tests) {
+	constexpr Test thread_tests[] = {Test::mp, Test::mp_stack_load, Test::mp_stack_store,
+		Test::sb, Test::sb_mfence, Test::iriw};
+	constexpr Test process_tests[] = {Test::mp, Test::sb, Test::sb_mfence, Test::iriw};
+	const Test *tests = kind == Case::thread ? thread_tests : process_tests;
+	const unsigned count = kind == Case::thread ? sizeof(thread_tests) / sizeof(Test) :
+		sizeof(process_tests) / sizeof(Test);
+	for (unsigned index = 0; index < count; index++) {
+		const Test test = tests[index];
 		const word counted = run_test(kind, test, rounds, anon, handle);
 		write_text("tso-litmus: abi=");
 		write_text(abi_name);

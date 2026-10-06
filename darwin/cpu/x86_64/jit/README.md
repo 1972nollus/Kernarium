@@ -287,9 +287,11 @@ vCPU's are never selected again. A dispatch request that asks for unordered
 code after ordered code for the same generation breaks that contract, and
 the runtime logs it (below).
 
-FEXCore treats an access through RSP as reaching only the thread's own
-stack, so ordered code still uses plain loads and stores for it: a local
-variable whose address another thread holds is not ordered.
+FEXCore assumes an access through RSP reaches only the thread's own stack
+and leaves it plain; an ordered space turns that off (StackTSOEnabled), since
+a local variable whose address another thread holds is reached through RSP
+by its owner. Pushes, pops, calls and returns stay plain: they reach only
+the slots at the top of the thread's own stack.
 
 `UML_X86_JIT_ORDER=all` orders every space, which only adds order;
 `UML_X86_JIT_ORDER=none` orders none, which breaks x86's model for shared

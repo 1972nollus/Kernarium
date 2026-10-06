@@ -4,10 +4,10 @@
 
 Cross-builds the freestanding tso_litmus_probe.cpp for x86-64 and i386, boots
 an x86-64 image with four vCPUs on an emulator built with the macos-x86_64
-preset, and runs message passing, store buffering with and without MFENCE,
-and IRIW, between the threads of one process and between processes that
-share SysV shm, a memfd mapped MAP_SHARED or inherited shared anonymous
-memory. No test may see an
+preset, and runs message passing (also with the variables in a thread's own
+stack frame), store buffering with and without MFENCE, and IRIW, between the
+threads of one process and between processes that share SysV shm, a memfd
+mapped MAP_SHARED or inherited shared anonymous memory. No test may see an
 outcome x86 forbids.
 
 On the JIT, a second boot runs the thread and shm cases with
@@ -65,7 +65,7 @@ PROBES = {
 CASES = ("thread", "shm", "memfd", "anon")
 CONTROL_CASES = ("thread", "shm")
 TESTS = {
-    "thread": ("mp", "sb", "sb-mfence", "iriw"),
+    "thread": ("mp", "mp-stack-load", "mp-stack-store", "sb", "sb-mfence", "iriw"),
     "shm": ("mp", "sb", "sb-mfence", "iriw"),
     "memfd": ("mp", "sb", "sb-mfence", "iriw"),
     "anon": ("mp", "sb", "sb-mfence", "iriw"),
