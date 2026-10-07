@@ -314,9 +314,10 @@ begins at its slot's start plus its 128-byte phase and every slot is whole
 128-byte lines, so a group that changes size within its slot moves no other
 group's bytes, and one that outgrows it moves the later groups by whole lines,
 keeping every gadget's phase. The bytes between groups follow an
-unconditional branch and are never reached. The region's bytes therefore
-depend on the engine's sources alone, and its image offset moves only in whole
-pages, when the arm64 region ahead of it crosses one.
+unconditional branch and are never reached. The region's bytes, but for the
+island's branches out of it, therefore depend on the engine's sources alone,
+and its image offset moves only in whole pages, when the arm64 region ahead of
+it crosses one.
 `x86-64-gadget-region-layout` checks this contract on the images each tree
 builds, and the region layout section of the
 [x86-64 gadget README](../darwin/cpu/x86_64/gadgets/README.md) says what a
