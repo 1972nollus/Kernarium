@@ -29,14 +29,14 @@
 .endm
 
 /* MXCSR.DAZ and FTZ apply to every step of a dot product: FTZ to each
- * product and sum that is tiny after rounding, and DAZ to each that is an
- * input of the next addition. */
+ * product and sum that is tiny after rounding, raising underflow and
+ * precision, and DAZ to each that is an input of the next addition. */
 .macro vector_map3_dot_flush element, value, product, input
 	tbz w12, #15, Lx86_vector_map3_dot_ftz_ready\@
 	.if \product
 	simd_flush_tiny_packed mul, \element, \value, 20, 22
 	.else
-	simd_flush_denormals \value, \element
+	simd_flush_denormal_results \element, \value
 	.endif
 Lx86_vector_map3_dot_ftz_ready\@:
 	.if \input

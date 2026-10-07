@@ -349,13 +349,55 @@ SIMD check, and run an exact path while `exception_checks` holds
 `exception_check_simd_exact`: with `exception_check_simd`, or while DAZ or FTZ
 is set, in every run; LDMXCSR, FXRSTOR and XRSTOR keep it current. One load
 and branch thus serve all three, as the check alone did before, and the common
-path adds only a NaN test where x86's NaN differs from the host's.
+path adds only a NaN test where x86's NaN differs from the host's. The
+arithmetic gadgets test the same bit before they read MXCSR for DAZ and FTZ.
 Applications set DAZ and FTZ for good as often as not -- Geekbench's image
 workloads and embree do -- so the exact path is a common path too: it follows
 the gadget inline (FMA's after the gadget's tail), and only its repairs, and
 DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
 denormal input passes the value through two dependent instructions, as scalar
 code waits on it.
+
+MXCSR's exception flags are sticky, and the gadgets keep them while the guest
+masks the exceptions. The host's cumulative FPSR flags hold them through a
+run: IOC, DZC, OFC, UFC and IXC are x86's invalid operation, division by
+zero, overflow, underflow and precision. A run clears them as it starts and
+adds them to MXCSR as it ends; STMXCSR, FXSAVE and XSAVE add them to the
+MXCSR they store, and LDMXCSR, FXRSTOR and XRSTOR clear them with the flags
+they load. IDC is never a denormal operand: it reports an input FPCR.FZ
+flushed, and the engine never sets FZ. Where the host's flags are not x86's,
+the gadget chooses another host instruction. CMP has a gadget for each of
+x86's 32 predicates: FCMEQ is quiet and FCMGE and FCMGT signal, as x86's
+relations do in predicates 0 to 15; VEX's quiet orderings compare the ordered
+lanes with their NaNs made zeros, and FALSE, TRUE and VEX's signalling
+equalities run a comparison for its flags alone. COMIS compares with FCMPE
+and UCOMIS with FCMP, and MIN and MAX with FCMGT. Conversions to integers
+round with FRINTX, or truncate with FCVTZS of the source after a DAZ flush;
+a double outside the int32 range, which may have a fraction, goes through
+neither, so it raises invalid operation alone, as on x86. Where x86 raises
+a flag the host does not, the gadget raises it in software, into MXCSR, on a
+path it already takes, after any exception-check leave: an FTZ flush raises
+underflow and precision, from the mask the flush itself uses, and ROUND
+raises precision for a lane it changed unless its immediate suppresses it
+or MXCSR holds precision already.
+Where the host computes something x86 does not, the gadget keeps FPSR around
+it: the FTZ test's scaled recomputation, an estimate's special inputs and its
+quotient, which raises only precision and runs unguarded once MXCSR or FPSR
+holds precision anyway -- found in FPSR, it goes into MXCSR at once, so the
+next estimate need not read FPSR -- and the 3DNow! gadgets, which MXCSR does
+not govern.
+The x87 gadgets compute in software and raise no host flag.
+
+Three flags stay inexact, as `x86-64-masked-flags` names them: the denormal
+operand while DAZ is clear, which no host flag shows and which a software
+test of every source would cost 2.5 to 23% of SIMD arithmetic in the default
+MXCSR, so it is raised only where the runtime runs an instruction checked;
+underflow for an inexact product, quotient, FMA, narrowing or dot-product
+step that rounds up to the smallest normal, which the host raises, detecting
+tininess before rounding, and x86 does not; and invalid operation for an FMA
+of infinity times zero plus a quiet NaN, which the host raises and x86 does
+not. Removing the last two would take FPSR from before every such
+instruction, an MRS on the hottest path.
 
 x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
 the control word's rounding mode and precision. As on x86, C1 after a result
@@ -415,7 +457,15 @@ and:
   input to a comparison, minimum or maximum, or a conversion to an integer out
   of its range. A dot product, whose intermediate results no test of its
   result sees, always leaves. These tests sit on the exact path where a
-  gadget has one.
+  gadget has one. The run adds its host flags to MXCSR before the runtime
+  runs the instruction again, so a gadget that leaves after computing what
+  x86 might not -- the other lanes of a packed instruction that faults before
+  its computation, an inexact result beside an unmasked overflow x86
+  rebiases exactly, the host's underflow before rounding or an FMA's invalid
+  operation -- saves FPSR first, on its exact path or behind the same test,
+  and its leave puts it back (`simd_save_status_branch`). A leave whose host
+  flags so far are x86's -- a NaN input test, a comparison's own flags, a
+  scalar conversion -- keeps FPSR.
 
 Either leaves before it stores anything, with
 `UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position. The runtime finds
@@ -426,9 +476,8 @@ x87 test costs a load and a branch per helper call, and most SIMD tests sit on
 a path the gadget already took only for a NaN, so code under $1332 and $1900
 runs within about 3% of the masked speed. An instruction the test sends to the
 runtime that raises nothing, such as an addition to an infinity, costs about
-140 ns. While the gadgets check SIMD exceptions, the flags of masked ones
-accumulate only for the instructions the runtime runs checked, as they never
-do while MXCSR masks every exception.
+140 ns. The flags of masked exceptions accumulate as they do while MXCSR masks
+every exception.
 
 The other checks split blocks. While `checked_exceptions` finds one enabled --
 RFLAGS.AC, MXCSR unmasking underflow, precision or a denormal operand, which no
@@ -455,11 +504,10 @@ checks, and runs every other block, linked, as `execute` does:
   invalid operation or division by zero. A flag the host raises otherwise than
   x86 is decided from the sources too (`host_flag_correction`): an FMA's
   invalid operation, which x86 does not raise for infinity times zero plus a
-  quiet NaN; a comparison's, which a quiet NaN raises under the signalling
-  predicates alone, VEX's 16 to 31 included, and a signalling NaN under every
-  predicate; the precision of ROUND and conversions to integers, which x86
-  raises for a lane that is not an integer unless ROUND's immediate
-  suppresses it or the conversion is out of range, and the host does not;
+  quiet NaN; the precision of ROUND, which its gadget raises in software,
+  outside the host flags the run reads, and of conversions to integers,
+  which x86 raises for a lane that is not an integer unless ROUND's
+  immediate suppresses it or the conversion is out of range;
   and the underflow of a sum, difference, product, quotient, FMA or
   narrowing to a single or half, which SoftFloat rounds as x86 does. x86
   detects tininess after rounding, so a result rounded up to the smallest

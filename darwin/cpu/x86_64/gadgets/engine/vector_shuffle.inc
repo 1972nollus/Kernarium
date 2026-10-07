@@ -5,7 +5,8 @@
  * vector_float.inc). Their first operand is the lower element of each
  * pair, or the first source for ADDSUB, as x86 hardware chooses between two
  * NaNs; the SDM ranks only distinct source operands. A sum or difference
- * that is tiny is exact, so FTZ flushes denormal results alone. Each
+ * that is tiny is exact, so FTZ flushes denormal results alone, raising
+ * underflow and precision. Each
  * computes only the lanes x86 does, whose host flags a checked run reads:
  * HSUB subtracts the odd elements from the even ones, and ADDSUB adds the
  * second source with its even lanes negated, a - b being a + -b. */
@@ -64,14 +65,14 @@ Lx86_vector_horizontal_special\@:
 Lx86_vector_horizontal_nan_ready\@:
 	tbz w12, #15, Lx86_vector_horizontal_ftz_ready\@
 	.if \width == 256
-	simd_flush_denormals_each \element, 4, 5
+	simd_flush_denormal_results \element, 4, 5
 	.else
-	simd_flush_denormals 4, \element
+	simd_flush_denormal_results \element, 4
 	.endif
 Lx86_vector_horizontal_ftz_ready\@:
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
 Lx86_vector_horizontal_repair\@:
-	simd_leave_if_checking
+	simd_leave_computed_if_checking
 	vector_horizontal_nan \operation, \element, 4, 0, 1
 	.if \width == 256
 	vector_horizontal_nan \operation, \element, 5, 2, 3
@@ -153,7 +154,7 @@ Lx86_vector_horizontal_repair\@:
 	vector_horizontal_inputs \element, \width
 	vector_horizontal_operation \operation, \element, \width
 	vector_horizontal_results \operation, \element, \width
-	b Lx86_vector_horizontal_done\@
+	simd_exact_end Lx86_vector_horizontal_common\@, Lx86_vector_horizontal_done\@
 Lx86_vector_horizontal_common\@:
 	vector_horizontal_operation \operation, \element, \width
 	.if \width == 256
