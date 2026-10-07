@@ -506,10 +506,10 @@ form, computes on AdvSIMD and general registers at VL 16, and stores its
 destination back. A predicate governing elements wider than a byte becomes a
 lane mask by one CMTST against the element pattern, and a flag-setting form
 computes PredTest into the guest's NZCV. A WHILE* reads its predicate and
-NZCV from a table indexed by its clamped active count
-([`gadgets/sve_layout.h`](../darwin/cpu/arm64/gadgets/sve_layout.h)), and one
-followed by a B.cond on N or Z runs as one entry whose fall-through is
-translated inline. CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL select base
+NZCV from a table indexed by its clamped active count, which
+`darwin/cpu/arm64/gadgets/sve_layout.h` lays out, and one followed by a
+B.cond on N or Z runs as one entry whose fall-through is translated
+inline. CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL select base
 entries on a constant the builder computes. A program holding one of these
 words accesses the FP state before it runs, since P and FFR travel with it,
 and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
