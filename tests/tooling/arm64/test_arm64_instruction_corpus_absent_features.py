@@ -43,9 +43,9 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 REWRITE = REPOSITORY / "tools" / "arm64-tests" / "absent-feature-corpus.py"
 TBI_NAME = re.compile(r"^(.*) with TBI tag 0x([0-9a-f]{2})$")
-# The producers of tools/arm64-tests/sme-native-corpus.py and
-# sve-native-corpus.py.
-NATIVE_PRODUCERS = ("arm64-sme-native", "arm64-sve-native")
+# The producers of tools/arm64-tests/sme-native-corpus.py,
+# sve-native-corpus.py and sve-sme-corpus.py.
+NATIVE_PRODUCERS = ("arm64-sme-native", "arm64-sve-native", "arm64-sve-sme")
 
 
 def load_rewrite():

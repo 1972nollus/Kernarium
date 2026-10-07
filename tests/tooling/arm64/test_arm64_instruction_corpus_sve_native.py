@@ -16,7 +16,7 @@ script writes now:
   requirement, initial state, and data regions;
 - each outcome agrees with the table where the table decides legality, each
   invalid-encoding flag with its outcome, and each retired count with its
-  terminal PC;
+  terminal PC and event;
 - a case whose SVE state is live ends live, and so does one that retired an
   SVE instruction, which makes the state live;
 - exactly the completed first-fault and non-fault loads use the relation
@@ -112,15 +112,23 @@ def check(native, records: list[dict], meta: dict) -> str:
             pc = int(case["expected"].get(
                 "pc", native.hex64(native.corpus.CODE_BASE)), 16)
             # Each instruction before the PC retired: a completed SVC
-            # leaves it after the SVC, a trap at the trapping word.
-            retired = (pc - native.corpus.CODE_BASE) // 4
+            # leaves it after the SVC, a trap at the trapping word. A BRK
+            # leaves it at the BRK, which retired as well
+            # (terminal_does_not_retire() in darwin/cpu/execution_types.hpp).
+            before = (pc - native.corpus.CODE_BASE) // 4
+            breakpoint = case["event"] == "breakpoint"
+            retired = before + breakpoint
             if case["retired"] != retired:
                 raise SystemExit(f"{draft.name}: retired count and PC "
                                  "disagree")
             if case["event"] == "system-call" and \
-                    words[retired - 1] != native.SVC:
+                    words[before - 1] != native.SVC:
                 raise SystemExit(f"{draft.name}: completes with the PC "
                                  "not after an SVC")
+            if breakpoint and (before >= len(words) or
+                               words[before] & 0xFFE0_001F != 0xD420_0000):
+                raise SystemExit(f"{draft.name}: a breakpoint with the PC "
+                                 "not at a BRK")
             initial, final = case["initial"], case["expected"]
             was_live = int(initial.get("sve_live", "0"), 16)
             live = int(final.get("sve_live", hex(was_live)), 16)

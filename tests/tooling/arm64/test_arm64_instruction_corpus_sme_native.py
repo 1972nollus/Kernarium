@@ -15,7 +15,7 @@ script writes now:
 - each case is the script's case in order: its name, program, native
   requirement, initial state, and data regions;
 - each outcome agrees with the table where the table decides legality, and
-  each retired count with its terminal PC;
+  each retired count with its terminal PC and event;
 - no case that stays in streaming mode expects the FPSR XNU leaves after a
   kernel entry there, 0x0800009F, which only a change of PSTATE.SM sets.
 
@@ -108,15 +108,23 @@ def check(native, records: list[dict], meta: dict) -> str:
             pc = int(case["expected"].get(
                 "pc", native.hex64(native.corpus.CODE_BASE)), 16)
             # Each instruction before the PC retired: a completed SVC
-            # leaves it after the SVC, a trap at the trapping word.
-            retired = (pc - native.corpus.CODE_BASE) // 4
+            # leaves it after the SVC, a trap at the trapping word. A BRK
+            # leaves it at the BRK, which retired as well
+            # (terminal_does_not_retire() in darwin/cpu/execution_types.hpp).
+            before = (pc - native.corpus.CODE_BASE) // 4
+            breakpoint = case["event"] == "breakpoint"
+            retired = before + breakpoint
             if case["retired"] != retired:
                 raise SystemExit(f"{draft.name}: retired count and PC "
                                  "disagree")
             if case["event"] == "system-call" and \
-                    words[retired - 1] != native.SVC:
+                    words[before - 1] != native.SVC:
                 raise SystemExit(f"{draft.name}: completes with the PC "
                                  "not after an SVC")
+            if breakpoint and (before >= len(words) or
+                               words[before] & 0xFFE0_001F != 0xD420_0000):
+                raise SystemExit(f"{draft.name}: a breakpoint with the PC "
+                                 "not at a BRK")
             # A literal load of the program's own words loads them, SVCs
             # included, not the oracle's sentinel in their place.
             if native.literal_load(words[0]) and \
