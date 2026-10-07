@@ -36,6 +36,20 @@ uml_add_tooling_test(
     TIMEOUT 300)
 
 uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-sme
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_sme.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-afp
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_afp.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-trap
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_trap.py

@@ -525,15 +525,29 @@ CPU, so both engines run them today with the guest-SVE policy off or on.
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
-pages. Until an engine reaches `sve_support` `complete` the engine lanes
-skip them all, and the corpus's library lane runs them through the SVE
-semantic library, skipping and counting the cases of a form it does not
-cover yet. The `arm64-instruction-corpus-sve-native` tooling test re-derives
-their cases from their generator, and `arm64-sve-native-oracle` drives the
-native oracle with base A64 cases on any arm64 Mac, and with SVE cases where
-the host has SVE at that length. Regenerating their outcomes needs such a
-host and runs the oracle twice from clean directories; the corpus README
-describes it.
+pages. Their floating-point forms are sampled across FPCR's rounding modes
+and its FZ, DN, and FZ16 controls. Until an engine reaches `sve_support`
+`complete` the engine lanes skip them all, and the corpus's library lane
+runs them through the SVE semantic library, skipping and counting the cases
+of a form it does not cover yet. The `arm64-instruction-corpus-sve-native`
+tooling test re-derives their cases from their generator, and
+`arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
+arm64 Mac, and with SVE cases where the host has SVE at that length.
+Regenerating their outcomes needs such a host and runs the oracle twice from
+clean directories; the corpus README describes it.
+
+The `arm64-sve-sme` records hold, at the same vector length, the 29 SME
+forms that SVE executes outside streaming mode. No host observes them
+there. Their integer and predicate families come from models of the
+pinned pseudocode, each of which must first reproduce every M4 streaming
+case of its encoding. Their floating-point families come from the M4 in
+streaming mode with every 128-bit segment holding the case. The runner
+runs them only for an engine at `sve_support` `complete` on a virtual CPU
+with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
+tooling test re-derives them. The `arm64-sve-afp` records come from the
+M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
+arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks their
+request until the M4 has answered.
 
 The `arm64-sve-trap` records hold the SVE floating-point forms with FPCR
 trap enables set. As for the AdvSIMD trapped records, no hardware observes

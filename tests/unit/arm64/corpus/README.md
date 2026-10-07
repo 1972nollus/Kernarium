@@ -293,6 +293,19 @@ a kept case that the allocation generator maps to the same allocation row
 `--dump PACK --text FILE` writes a reviewable JSON lines form, and
 `--repack FILE` rebuilds the pack and metadata from it.
 
+Each step after the export reads the previous step's dump, replaces its own
+records, and appends them, so the steps run in one order, followed by one
+`--repack`: [LSE2 alignment](#lse2-alignment-cases),
+[absent features](#absent-feature-cases), [native SME](#native-sme-cases),
+[native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
+[SVE FEAT_AFP](#sve-feat_afp-cases), and [SVE trap](#sve-trap-cases). A
+hardware step's `--carry PACK` copies the pack's records for a request that
+is unchanged, so a regeneration that changes no request needs no host. The
+SVE trap step derives its records from the native SVE records and stays
+last. Deriving trap records from the SVE/SME `m4` and SVE FEAT_AFP records
+as well waits until the M4 has answered, and needs a source predicate that
+admits the rows that need SME.
+
 ## LSE2 alignment cases
 
 The producer checks predate the FEAT_LSE2 alignment rule (see
@@ -499,16 +512,24 @@ requires to agree with the recorded live bit.
 
 Every native record has `vl` 16, the one vector length outside streaming
 mode, and runs only as the SVE state section above describes. The
-`classify`, `operands`, `memory`, `gather`, and `live` records hold for both
-page profiles: their regions are 16 KiB-aligned multiples of 16 KiB, so
-each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
+`classify`, `operands`, `memory`, `gather`, `live`, and `fpcr` records hold
+for both page profiles: their regions are 16 KiB-aligned multiples of
+16 KiB, so each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
 an access crosses into a 4 KiB page that is unmapped or read-only, and
 holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
 region maps exactly as the guest's does. The 29 SCLAMP-class forms need
 FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
-record them, and they are not in these records; the withheld features'
-forms are not either, since their UNDEFINED results belong to the
-absent-feature records.
+record them; the SVE/SME records below hold them. The withheld features'
+forms are not in these records either, since their UNDEFINED results belong
+to the absent-feature records.
+
+`fpcr` holds each floating-point form that FPCR affects, at each element
+size, with its sources holding ties, subnormals, NaNs, or values that
+overflow. Each class runs under the FPCR values that vary the controls it
+meets. Ties and overflow get each rounding mode. NaNs get DN clear and
+set. Subnormals get a strength-2 covering array of the rounding mode, FZ,
+DN, and FZ16, so every pair of their values occurs. The V2 has no
+FEAT_AFP, so FPCR.AH, FIZ, and NEP are not sampled here.
 
 The encoding table decides the legality of each row's witness, of its own
 registers, and of a word no row decodes; the hardware decides a free field
@@ -536,7 +557,8 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
   --output tests/unit/arm64/corpus
 ```
 
-A regeneration that leaves the request unchanged needs no SVE host:
+The SVE/SME step below follows on `sve.jsonl` before the repack. A
+regeneration that leaves the request unchanged needs no SVE host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes, the host's VL, page size, and hardware
@@ -546,6 +568,93 @@ capabilities, and the outcome counts under `sve_native`;
 its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac, and with SVE cases where the host has
 SVE at VL 16.
+
+## SVE/SME cases
+
+On a CPU with both FEAT_SVE and FEAT_SME, 29 encodings that FEAT_SME or
+FEAT_SME2 shares with FEAT_SVE2p1 execute outside streaming mode: PSEL,
+REVD, SCLAMP, UCLAMP, and 25 that need FEAT_SME2. The encoding table gives
+them the non-streaming requirement sve plus sme (plus sme2). No host
+observes them there: arm64-builder has no SME, and the M4 has no SVE.
+[`tools/arm64-tests/sve-sme-corpus.py`](../../../../tools/arm64-tests/sve-sme-corpus.py)
+authors their `arm64-sve-sme` records at VL 16 from the native SVE
+generator's classify and operand cases of their rows, appends them after the
+native SVE step, and takes each family's outcomes from one source:
+
+- `asl` holds the 22 integer and predicate encodings: PSEL, REVD, SCLAMP,
+  UCLAMP, the 2-way SDOT and UDOT, the two-register narrowing forms, and the
+  predicate-pair WHILEs. The script transcribes their execute pseudocode
+  from the pinned 2026-06 XML, which depends on the vector length only
+  through the element count. A model is used only after it reproduces the
+  whole final state of every M4 case of its encoding in streaming mode that
+  the native SME records hold, at VL 64.
+- `m4` holds the 7 floating-point encodings: FCLAMP, BFMLSLB and BFMLSLT,
+  and the half-precision FDOT. Each is lane-local within a 128-bit segment,
+  so the M4 runs each case in streaming mode with every Z and P register
+  holding its VL 16 value in each segment. The low segment and FPSR are then
+  the VL 16 outcome, and the script requires every segment to agree. The
+  same request runs the `asl` cases, whose results must match their models.
+  The pack holds no `m4` record until the M4 has answered.
+- `table` holds any word no row decodes; today there is none.
+
+Each record has a VL and no SVL, and each case names its row's
+requirement. The runner runs a case only for an engine at `sve_support`
+`complete` whose virtual CPU implements SME at any SVL, and SME2 where the
+case names it, and skips it elsewhere.
+
+```sh
+python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
+  --carry tests/unit/arm64/corpus/a64_instruction_corpus.pack
+python3 -B tools/arm64-tests/sve-sme-corpus.py --m4-request m4.request
+sme_native_oracle m4.request m4.response.1                # twice, on the M4
+python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
+  --m4-response m4.response.1 --m4-response m4.response.2
+```
+
+The first form keeps the pack's `m4` record, if any, and needs no host. The
+responses must give identical records. The SVE FEAT_AFP step below follows
+on `sve-sme.jsonl` before the repack. `provenance.json` records, under
+`sve_sme`, the script, table and M4 request hashes, the model checks per
+encoding, the case counts, and the M4's features. `build-unit-corpus.py
+--check` verifies the hashes. The `arm64-instruction-corpus-sve-sme` tooling
+test re-derives the `asl` and `table` records, repeats the model checks
+against the pack's SME records, and drives the M4 path with a synthetic
+response.
+
+## SVE FEAT_AFP cases
+
+FPCR.AH, FIZ, and NEP need FEAT_AFP, which arm64-builder lacks, so the native SVE
+records cannot set them. The M4 has FEAT_AFP but no SVE.
+[`tools/arm64-tests/sve-afp-corpus.py`](../../../../tools/arm64-tests/sve-afp-corpus.py)
+authors `arm64-sve-afp/m4` at VL 16 from M4 runs in streaming mode, with
+every 128-bit segment holding the case, as the SVE/SME `m4` record does.
+The forms are the native `fpcr` group's floating-point forms that are legal
+in streaming mode. The reductions are left out, because they depend on the
+vector length, and so are the conversions from integers. The script
+requires every segment of every register to agree, which also refuses a
+form that is not lane-local.
+
+The sources hold subnormals, NaNs, signed zeros, or ties. These run under
+FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and DN
+that each class meets. Ties run under AH with RZ, which the BF16 forms
+override with round-to-nearest. A host without FEAT_AFP reads AH, FIZ, and
+NEP back as zero, and the script refuses its response. Each case names its row's non-streaming requirement
+and `afp`, and also `rpres` for single-precision FRECPE and FRSQRTE under
+AH. The pack holds no record until the M4 has answered:
+
+```sh
+python3 -B tools/arm64-tests/sve-afp-corpus.py --m4-request afp.request
+sme_native_oracle afp.request afp.response.1              # twice, on the M4
+python3 -B tools/arm64-tests/sve-afp-corpus.py sve-sme.jsonl sve-afp.jsonl \
+  --m4-response afp.response.1 --m4-response afp.response.2
+```
+
+`--carry PACK` instead keeps the pack's record, if any, for a request that
+is unchanged. The SVE trap step below follows on `sve-afp.jsonl` before the
+repack. `provenance.json` records the script, table, and request hashes
+under `sve_afp`. The `arm64-instruction-corpus-sve-afp` tooling test
+checks the request's cases, any record against them, and the M4 path with a
+synthetic response.
 
 ## SVE trap cases
 
@@ -580,14 +689,12 @@ UFE set an exact tiny result underflows; the trap contract decides from an
 execution with every enable clear, so a case sets UFE only when it raised
 underflow with FZ and FZ16 clear.
 
-The step needs no hardware. It runs on a dump after the native SVE step and
-replaces its own records, so it reruns after any change to the native
-records or to the script:
+The step needs no hardware. It is the last step of the chain and reruns
+after any change to the native records or to the script, on `sve-afp.jsonl`
+or on the pack's own `--dump`:
 
 ```sh
-python3 -B tools/arm64-tests/build-unit-corpus.py \
-  --dump tests/unit/arm64/corpus/a64_instruction_corpus.pack --text sve.jsonl
-python3 -B tools/arm64-tests/sve-trap-corpus.py sve.jsonl sve-trap.jsonl
+python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
   --output tests/unit/arm64/corpus
 ```
