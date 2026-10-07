@@ -7,6 +7,7 @@
 #include "a64_register_operands.hpp"
 #include "architecture_difference.hpp"
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
@@ -644,11 +645,44 @@ std::optional<std::string> host_counter_frequency(const RelationInput &in) {
   return first_architecture_difference(expected, in.actual);
 }
 
+/* A first-fault or non-fault load leaves each element of its destination
+ * from the first whose FFR element is FALSE CONSTRAINED UNPREDICTABLE: the
+ * data it loaded, zero, or the old value (the ASL's SVELDNFDATA,
+ * SVELDNFZERO, and merge choices). Those elements are excluded from
+ * equality; FFR itself is compared. */
+std::optional<std::string>
+unpredictable_nonfault_elements(const RelationInput &in) {
+  namespace detail = arm64::detail;
+  const auto word = in.program.entry_word;
+  const auto *row = detail::find_sme_encoding(word);
+  const auto *memory =
+      row != nullptr ? detail::sme_encoding_memory_of(*row) : nullptr;
+  if (memory == nullptr ||
+      (memory->shape != detail::SmeMemoryShape::first_fault &&
+       memory->shape != detail::SmeMemoryShape::non_fault &&
+       memory->shape != detail::SmeMemoryShape::gather_first_fault))
+    return std::string{"the entry word is not a first-fault or non-fault "
+                       "load"};
+  const unsigned element = detail::sme_memory_esize(*memory, word) / 8U;
+  auto normalized = in.expected;
+  auto &destination = normalized.vectors[word & 31U].bytes;
+  bool unknown = false;
+  for (unsigned byte = 0; byte < arm64::sve_vector_length; byte += element) {
+    unknown = unknown || (in.expected.sve_ffr[byte] & 0x80U) == 0U;
+    if (unknown)
+      std::copy_n(in.actual.vectors[word & 31U].bytes.begin() + byte, element,
+                  destination.begin() + byte);
+  }
+  return first_architecture_difference(normalized, in.actual);
+}
+
 [[nodiscard]] Relation relation_for(std::string_view name) {
   static const std::map<std::string_view, Relation> relations{
       {"host-counter-frequency/v1", host_counter_frequency},
       {"ignore-host-counter-register/v1", ignore_counter_register},
       {"permitted-exclusive-store-failure/v1", exclusive_store_failure},
+      {"unpredictable-nonfault-load-elements/v1",
+       unpredictable_nonfault_elements},
   };
   if (const auto found = relations.find(name); found != relations.end())
     return found->second;
