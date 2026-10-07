@@ -26,6 +26,23 @@ uml_add_unit_test(
     COMMAND uml_x86_64_sse_exactness_tests
     LABELS cpu;x86-64)
 
+# The flags an Intel Xeon leaves in a masked MXCSR, against the engine's
+# ordinary path.
+set(_uml_x86_64_masked_flags
+    "${CMAKE_CURRENT_SOURCE_DIR}/masked_flags/xeon-flags.bin")
+add_executable(uml_x86_64_masked_flags_tests
+    x86_64_masked_flags_tests.cpp)
+target_link_libraries(uml_x86_64_masked_flags_tests PRIVATE
+    uml_x86_64_target
+    uml_x86_64_gadgets
+    UML::CpuContract)
+target_include_directories(uml_x86_64_masked_flags_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME x86-64-masked-flags
+    COMMAND uml_x86_64_masked_flags_tests "${_uml_x86_64_masked_flags}"
+    LABELS cpu;x86-64)
+
 add_executable(uml_x86_64_code_page_registry_tests
     code_page_registry_tests.cpp)
 target_link_libraries(uml_x86_64_code_page_registry_tests PRIVATE
@@ -127,7 +144,7 @@ if(TARGET uml_x86_64_jit)
     add_executable(uml_x86_64_sse_exactness_jit_tests
         x86_64_sse_exactness_tests.cpp)
     target_compile_definitions(uml_x86_64_sse_exactness_jit_tests PRIVATE
-        UML_SSE_EXACTNESS_JIT=1)
+        UML_SSE_EXACTNESS_JIT=1 UML_X86_64_SSE_LOOP_JIT=1)
     target_link_libraries(uml_x86_64_sse_exactness_jit_tests PRIVATE
         uml_x86_64_target
         uml_x86_64_gadgets
@@ -143,6 +160,25 @@ if(TARGET uml_x86_64_jit)
         LABELS cpu;x86-64)
     set_tests_properties(x86-64-jit-code-buffer-growth PROPERTIES
         TIMEOUT 300)
+    # The masked flags through the JIT.
+    add_executable(uml_x86_64_masked_flags_jit_tests
+        x86_64_masked_flags_tests.cpp)
+    target_compile_definitions(uml_x86_64_masked_flags_jit_tests PRIVATE
+        UML_X86_64_SSE_LOOP_JIT=1)
+    target_link_libraries(uml_x86_64_masked_flags_jit_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_gadgets
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_masked_flags_jit_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(
+        NAME x86-64-jit-masked-flags
+        COMMAND uml_x86_64_masked_flags_jit_tests
+            "${_uml_x86_64_masked_flags}"
+        LABELS cpu;x86-64)
     uml_add_unit_test(
         NAME x86-64-jit-retirement
         COMMAND uml_x86_64_fex_asm_jit_runner --retirement

@@ -102,6 +102,15 @@
 	.endif
 .endm
 
+/* 3DNow! has no exception flags, and MXCSR does not govern it: the body's
+ * host floating-point instructions keep FPSR, the guest's MXCSR flags, as
+ * they found it. Uses x12. */
+.macro vector_3dnow_kept_status opcode
+	mrs x12, fpsr
+	vector_3dnow_body \opcode
+	msr fpsr, x12
+.endm
+
 .macro vector_3dnow_register opcode
 gadget vector_3dnow_\opcode\()_rr
 	ldr x8, [_stream], #8
@@ -109,7 +118,7 @@ gadget vector_3dnow_\opcode\()_rr
 	ubfx x11, x8, #32, #16
 	ldr d0, [_cpu, x10]
 	ldr d1, [_cpu, x11]
-	vector_3dnow_body 0x\opcode
+	vector_3dnow_kept_status 0x\opcode
 	vector_write 64, 8
 	retire_and_next
 .endm
@@ -129,7 +138,7 @@ Lx86_vector_3dnow_cross\@:
 Lx86_vector_3dnow_loaded\@:
 	and x10, x26, #0xffff
 	ldr d0, [_cpu, x10]
-	vector_3dnow_body 0x\opcode
+	vector_3dnow_kept_status 0x\opcode
 	vector_write 64, 23
 	retire_and_next
 .endm
@@ -169,5 +178,6 @@ vector_3dnow_family bf
 .purgem vector_3dnow_family
 .purgem vector_3dnow_memory
 .purgem vector_3dnow_register
+.purgem vector_3dnow_kept_status
 .purgem vector_3dnow_body
 .purgem vector_3dnow_float_to_i32

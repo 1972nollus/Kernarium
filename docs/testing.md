@@ -342,6 +342,11 @@ control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
 `#XM`, `#MF` and `#AC` included, in both modes.
+`run_guest_x86_64_fenv.py`, which takes the same options, builds
+`fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
+such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
+STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
+Xeon's, on either engine.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -601,7 +606,10 @@ of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
-running it. The
+running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
+of XE2's request sets through each engine's ordinary path with every
+exception masked and hold the MXCSR flags each instruction leaves to an Intel
+Xeon's, except the documented inexact cases the test names. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

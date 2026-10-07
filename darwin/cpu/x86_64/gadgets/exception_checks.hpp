@@ -36,6 +36,7 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1900U;
 inline constexpr std::uint32_t mxcsr_denormals_are_zero = 0x40U;
 inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
+inline constexpr std::uint32_t mxcsr_denormal_operand = 0x02U;
 
 /* The unmasked x87 exceptions pending in the status word. */
 [[nodiscard]] constexpr unsigned x87_pending(const CpuState &cpu) noexcept
@@ -167,25 +168,25 @@ struct HostFlagCorrection final {
 
 /* The correction for the SIMD floating-point instruction `gadget`, from the
  * state before it runs. An FMA decides invalid operation, which the host
- * raises for infinity times zero plus a quiet NaN and x86 does not, and so
- * does a comparison, whose VEX predicates 16 to 31 raise it for a quiet NaN
- * where 0 to 15 do not and the reverse, and whose false and true predicates
- * still raise it for a signalling NaN. A sum, difference, product,
- * quotient, FMA or narrowing to a single or half decides underflow, which
- * x86 detects after rounding and the host before, and which x86 raises for
- * an exact tiny result while underflow is unmasked or FTZ flushes it, with
- * precision then; beside an unmasked underflow or overflow, it decides
- * precision too, which x86 raises as the significand rounds. ROUND and
- * conversions to integers decide precision, which the host does not raise
- * for a lane that is not an integer. DPPS and DPPD settle their flags,
- * which x86 raises step by step, faulting at the first step that raises an
- * unmasked exception. Nothing when a memory source is unreadable, which
- * the instruction then faults on. */
+ * raises for infinity times zero plus a quiet NaN and x86 does not. A sum,
+ * difference, product, quotient, FMA or narrowing to a single or half
+ * decides underflow, which x86 detects after rounding and the host before,
+ * and which x86 raises for an exact tiny result while underflow is unmasked
+ * or FTZ flushes it, with precision then; beside an unmasked underflow or
+ * overflow, it decides precision too, which x86 raises as the significand
+ * rounds. ROUND and conversions to integers decide precision, which ROUND's
+ * gadget raises in software, outside the host flags a checked run reads.
+ * DPPS and DPPD settle their flags, which x86 raises step by step, faulting
+ * at the first step that raises an unmasked exception. Nothing when a
+ * memory source is unreadable, which the instruction then faults on. */
 [[nodiscard]] HostFlagCorrection host_flag_correction(const CpuState &cpu,
 	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory);
 
 /* The host's cumulative floating-point exception flags, as the MXCSR flags
- * they correspond to. */
+ * they correspond to. Outside a checked run they are the guest's: a run
+ * clears them as it starts and adds them to MXCSR as it ends, STMXCSR,
+ * FXSAVE and XSAVE add them to the MXCSR they store, and LDMXCSR, FXRSTOR
+ * and XRSTOR clear them with the flags they load. */
 void clear_host_floating_exceptions() noexcept;
 [[nodiscard]] std::uint32_t host_floating_exceptions() noexcept;
 

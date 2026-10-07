@@ -81,6 +81,8 @@ Lx86_extended_save_x87_done\@:
 .macro extended_state_save_sse
 	tbz x24, #1, Lx86_extended_save_sse_done\@
 	ldr w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	fold_host_flags w9, 10, 11
+	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
 	str w9, [x19, #24]
 	mov w9, #0xffff
 	str w9, [x19, #28]
@@ -213,6 +215,7 @@ Lx86_extended_restore_x87_done\@:
 	tbnz x25, #1, Lx86_extended_restore_sse_present\@
 	mov w9, #0x1f80
 	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	msr fpsr, xzr
 	refresh_simd_exact w9, 10, 11
 	publish_guest_rounding 9, 10, 11
 	add x10, _cpu, #UML_X86_64_CPU_VECTORS
@@ -226,6 +229,7 @@ Lx86_extended_clear_sse_loop\@:
 Lx86_extended_restore_sse_present\@:
 	ldr w9, [x19, #24]
 	str w9, [_cpu, #UML_X86_64_CPU_MXCSR]
+	msr fpsr, xzr
 	refresh_simd_exact w9, 10, 11
 	publish_guest_rounding 9, 10, 11
 	add x10, _cpu, #UML_X86_64_CPU_VECTORS

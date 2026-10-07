@@ -193,7 +193,8 @@ Lx86_vector_fma_nan_done\@:
  * the smallest normal is when a * b + c, with a and c scaled up into the
  * normal range, rounds below the threshold scaled alike. A scaled operand
  * that overflows comes only with an exact result, which the overflow marks
- * as not tiny. The scaled operation's flags are discarded. */
+ * as not tiny. The scaled operation's flags are discarded, and a flush
+ * raises underflow and precision. */
 .macro vector_fma_flush_tiny_scalar operation, element, output, a, b, c
 	.if \element == 32
 	fmov w14, s\output
@@ -213,6 +214,7 @@ Lx86_vector_fma_nan_done\@:
 	cmp w14, w15
 	b.hs Lx86_vector_fma_tiny_done\@
 Lx86_vector_fma_flush\@:
+	mxcsr_raise 0x30, 14
 	fmov w14, s\output
 	and w14, w14, #0x80000000
 	fmov s\output, w14
@@ -235,6 +237,7 @@ Lx86_vector_fma_flush\@:
 	cmp x14, x15
 	b.hs Lx86_vector_fma_tiny_done\@
 Lx86_vector_fma_flush\@:
+	mxcsr_raise 0x30, 14
 	fmov x14, d\output
 	and x14, x14, #0x8000000000000000
 	fmov d\output, x14
@@ -275,6 +278,7 @@ Lx86_vector_fma_tiny_done\@:
 	msr fpsr, x15
 	orn v21.16b, v21.16b, v18.16b
 	and v17.16b, v17.16b, v21.16b
+	mxcsr_raise_flushed 17, 21
 	.if \element == 32
 	movi v16.4s, #0x80, lsl #24
 	.else
@@ -311,13 +315,16 @@ Lx86_vector_fma_tiny_done\@:
 	.endif
 .endm
 
-/* The exact path (`simd_exact_branch`). MXCSR.DAZ flushes the inputs -- for
- * a scalar one lane 0 of the destination alone, whose other lanes the
- * result keeps. One test finds a special result, and under FTZ a result no
- * larger than the smallest normal; the path for either leaves while the
- * gadgets check SIMD exceptions, repairs a NaN, and flushes a tiny result.
- * Returns to `back`. Uses v16 to v21. */
+/* The exact path (`simd_exact_branch`), entered with `exception_checks` in
+ * w14. MXCSR.DAZ flushes the inputs -- for a scalar one lane 0 of the
+ * destination alone, whose other lanes the result keeps. One test finds a
+ * special result, and under FTZ a result no larger than the smallest
+ * normal; the path for either leaves while the gadgets check SIMD
+ * exceptions, with FPSR as the instruction found it, since the host raises
+ * invalid operation for infinity times zero plus a quiet NaN, repairs a
+ * NaN, and flushes a tiny result. Returns to `back`. Uses v16 to v21. */
 .macro vector_fma_exact form, operation, element_bits, width, scalar, back
+	simd_save_status_branch Lx86_vector_fma_save\@, 14
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_fma_inputs_ready\@
 	simd_flush_masks \element_bits, 18, 19
@@ -377,6 +384,7 @@ Lx86_vector_fma_inputs_ready\@:
 	.endif
 Lx86_vector_fma_ready\@:
 	b \back
+	simd_save_status_path Lx86_vector_fma_save\@
 Lx86_vector_fma_unusual_stub\@:
 	b Lx86_vector_fma_unusual\@
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
@@ -392,7 +400,7 @@ Lx86_vector_fma_unusual\@:
 	cbz w14, Lx86_vector_fma_nan_ready\@
 	.endif
 Lx86_vector_fma_special\@:
-	simd_leave_if_checking
+	simd_leave_computed_if_checking
 	vector_fma_x86_nan \form, \operation, \element_bits, \width, \scalar
 Lx86_vector_fma_nan_ready\@:
 	tbz w12, #15, Lx86_vector_fma_tiny_ready\@

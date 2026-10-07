@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Legacy/MMX and scalar GPR floating-point conversions. */
 
-.macro vector_scalar_round input, output, element, truncate
+/* `precise` rounds with FRINTX, which raises the host's precision flag for
+ * an inexact result; otherwise FRINTI, which raises nothing. */
+.macro vector_scalar_round input, output, element, truncate, precise
 	.if \truncate
 	.if \element == 32
 	frintz s\output, s\input
@@ -11,9 +13,17 @@
 	.else
 	/* The dispatch already holds the guest's rounding mode. */
 	.if \element == 32
+	.if \precise
+	frintx s\output, s\input
+	.else
 	frinti s\output, s\input
+	.endif
+	.else
+	.if \precise
+	frintx d\output, d\input
 	.else
 	frinti d\output, d\input
+	.endif
 	.endif
 	.endif
 .endm
@@ -22,17 +32,20 @@
  * or out-of-range input raises invalid operation: its path leaves while the
  * gadgets check SIMD exceptions, and converts the value at the result's width
  * anyway, so that a checked run finds the host's invalid-operation flag set
- * as x86 sets MXCSR's. */
-.macro vector_scalar_fp_to_int input, element, width, truncate
-	/* MXCSR.DAZ makes a denormal input zero, which only a conversion that
-	 * rounds up or down away from zero would miss. */
-	.if !\truncate
+ * as x86 sets MXCSR's. An input in range raises precision when it converts
+ * inexactly, which FRINTX or, truncated, FCVTZS of the source raises; a
+ * double out of the int32 range may have a fraction, so for that conversion
+ * FRINTX runs only once the input is known to be in range (see
+ * vector_convert.inc). `computed` makes the leave a computed one, for a
+ * gadget that converted an earlier lane. */
+.macro vector_scalar_fp_to_int input, element, width, truncate, computed=0
+	/* MXCSR.DAZ makes a denormal input zero, which converts exactly. */
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w12, #6, Lx86_vector_scalar_input_ready\@
 	simd_flush_denormals \input, \element
 Lx86_vector_scalar_input_ready\@:
-	.endif
-	vector_scalar_round \input, 6, \element, \truncate
+	.set Lx86_vector_scalar_precise\@, (\element == 32 || \width == 64)
+	vector_scalar_round \input, 6, \element, \truncate, Lx86_vector_scalar_precise\@
 	.if \element == 32
 	fcmp s6, s6
 	b.vs Lx86_vector_scalar_invalid\@
@@ -52,10 +65,18 @@ Lx86_vector_scalar_input_ready\@:
 	fmov s7, w14
 	fcmp s6, s7
 	b.ge Lx86_vector_scalar_invalid\@
+	.if \truncate
+	.if \width == 32
+	fcvtzs w24, s\input
+	.else
+	fcvtzs x24, s\input
+	.endif
+	.else
 	.if \width == 32
 	fcvtzs w24, s6
 	.else
 	fcvtzs x24, s6
+	.endif
 	.endif
 	.else
 	fcmp d6, d6
@@ -76,15 +97,30 @@ Lx86_vector_scalar_input_ready\@:
 	fmov d7, x14
 	fcmp d6, d7
 	b.ge Lx86_vector_scalar_invalid\@
+	.if \truncate
+	.if \width == 32
+	fcvtzs w24, d\input
+	.else
+	fcvtzs x24, d\input
+	.endif
+	.else
+	.if !Lx86_vector_scalar_precise\@
+	frintx d6, d\input
+	.endif
 	.if \width == 32
 	fcvtzs w24, d6
 	.else
 	fcvtzs x24, d6
 	.endif
 	.endif
+	.endif
 	b Lx86_vector_scalar_integer_ready\@
 Lx86_vector_scalar_invalid\@:
+	.if \computed
+	simd_leave_computed_if_checking
+	.else
 	simd_leave_if_checking
+	.endif
 	.if \element == 32
 	.if \width == 32
 	fcvtzs w24, s6
@@ -310,16 +346,19 @@ vector_fp_to_gpr_family 64, 64, 1
 .purgem vector_fp_to_gpr_memory
 .purgem vector_fp_to_gpr_register
 
-.macro vector_fp_to_pi_body element, truncate
+/* Two lanes, converted one after the other: the second's leave follows the
+ * first's computation, so the gadget saves FPSR first, at `save`. */
+.macro vector_fp_to_pi_body element, truncate, save
+	simd_save_status_branch \save
 	movi v4.16b, #0
-	vector_scalar_fp_to_int 1, \element, 32, \truncate
+	vector_scalar_fp_to_int 1, \element, 32, \truncate, 1
 	mov v4.s[0], w24
 	.if \element == 32
 	dup v2.4s, v1.s[1]
 	.else
 	dup v2.2d, v1.d[1]
 	.endif
-	vector_scalar_fp_to_int 2, \element, 32, \truncate
+	vector_scalar_fp_to_int 2, \element, 32, \truncate, 1
 	mov v4.s[1], w24
 .endm
 
@@ -329,10 +368,11 @@ gadget vector_f\element\()_pi_\truncate\()_rr
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	ldr q1, [_cpu, x10]
-	vector_fp_to_pi_body \element, \truncate
+	vector_fp_to_pi_body \element, \truncate, Lx86_vector_fp_to_pi_save\@
 	str d4, [_cpu, x9]
 	synchronize_mmx x9, d4
 	retire_and_next
+	simd_save_status_path Lx86_vector_fp_to_pi_save\@
 .endm
 
 .macro vector_fp_to_pi_memory element, truncate
@@ -363,9 +403,10 @@ Lx86_vector_fp_to_pi_cross\@:
 	add sp, sp, #16
 	.endif
 Lx86_vector_fp_to_pi_loaded\@:
-	vector_fp_to_pi_body \element, \truncate
+	vector_fp_to_pi_body \element, \truncate, Lx86_vector_fp_to_pi_save\@
 	vector_write 64, 23
 	retire_and_next
+	simd_save_status_path Lx86_vector_fp_to_pi_save\@
 	.if \element == 64
 Lx86_vector_fp_to_pi_cross_fault\@:
 	add sp, sp, #16

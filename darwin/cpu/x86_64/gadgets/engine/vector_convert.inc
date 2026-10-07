@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Packed/scalar floating-point width and signed-int32 conversions. */
 
+/* x86 raises precision for a lane it converts inexactly, and invalid
+ * operation alone for a NaN or a value out of the int32 range. A single
+ * out of that range is an integer, so FRINTX, which raises the host's
+ * precision flag, rounds singles; FCVTZS of a truncated single's source
+ * raises it too. A double out of the range may have a fraction, so doubles
+ * round with FRINTI, which raises nothing, and only the lanes in range go
+ * through FRINTX, or FCVTZS of the source when truncated, for the flag. */
 .macro vector_convert_round input, output, element, truncate
 	.if \truncate
 	.if \element == 32
@@ -11,7 +18,7 @@
 	.else
 	/* The dispatch already holds the guest's rounding mode. */
 	.if \element == 32
-	frinti v\output\().4s, v\input\().4s
+	frintx v\output\().4s, v\input\().4s
 	.else
 	frinti v\output\().2d, v\input\().2d
 	.endif
@@ -23,8 +30,10 @@
  * of a conversion of singles with an exact path (`checked` clear) runs only
  * while they do not. A conversion of doubles also raises the host's
  * invalid-operation flag for it, which its conversion to 64-bit integers
- * would not, so that a checked run finds the flag as x86 sets MXCSR's. */
-.macro vector_convert_check_range element, checked
+ * would not, so that a checked run finds the flag as x86 sets MXCSR's. The
+ * leave of a rounded conversion of singles is a computed one: FRINTX raised
+ * precision for lanes x86 does not convert once one is invalid. */
+.macro vector_convert_check_range element, checked, truncate
 	.if \element == 64 || \checked
 	.if \element == 32
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
@@ -33,7 +42,11 @@
 	uminv s18, v7.4s
 	fmov w14, s18
 	cbnz w14, Lx86_vector_convert_in_range\@
+	.if \element == 32 && !\truncate
+	simd_leave_computed_if_checking
+	.else
 	simd_leave_if_checking
+	.endif
 	.if \element == 64
 	movi d18, #0xffffffffffffffff
 	fcmpe d18, d18
@@ -55,8 +68,12 @@ Lx86_vector_convert_in_range\@:
 	dup v17.4s, w14
 	fcmge v17.4s, v6.4s, v17.4s
 	and v7.16b, v7.16b, v17.16b
-	vector_convert_check_range 32, \checked
+	vector_convert_check_range 32, \checked, \truncate
+	.if \truncate
+	fcvtzs v16.4s, v\input\().4s
+	.else
 	fcvtzs v16.4s, v6.4s
+	.endif
 	mov w14, #0x80000000
 	dup v17.4s, w14
 	bsl v7.16b, v16.16b, v17.16b
@@ -69,8 +86,12 @@ Lx86_vector_convert_in_range\@:
 	dup v17.2d, x14
 	fcmge v17.2d, v6.2d, v17.2d
 	and v7.16b, v7.16b, v17.16b
-	vector_convert_check_range 64, 1
-	fcvtzs v16.2d, v6.2d
+	vector_convert_check_range 64, 1, \truncate
+	and v16.16b, v\input\().16b, v7.16b
+	.if !\truncate
+	frintx v16.2d, v16.2d
+	.endif
+	fcvtzs v16.2d, v16.2d
 	mov x14, #0x80000000
 	dup v17.2d, x14
 	bsl v7.16b, v16.16b, v17.16b
@@ -94,8 +115,9 @@ Lx86_vector_convert_inputs_ready\@:
 /* MXCSR.FTZ flushes a narrowed single that is tiny after rounding (see
  * vector_float.inc): every denormal one, and one the host rounded up to the
  * smallest normal when its double, scaled up, narrows below the scaled
- * threshold. The scalar result is in lane 0 of v6 from d1; the packed one in
- * v4 from v1, and v3 for a 32-byte input. It tests w12, MXCSR. */
+ * threshold, raising underflow and precision. The scalar result is in lane
+ * 0 of v6 from d1; the packed one in v4 from v1, and v3 for a 32-byte
+ * input. It tests w12, MXCSR. */
 .macro vector_convert_flush_narrowed scalar, input_size
 	tbz w12, #15, Lx86_vector_convert_ftz_ready\@
 	.if \scalar
@@ -131,6 +153,7 @@ Lx86_vector_convert_tiny\@:
 	cmp w14, w15
 	b.hs Lx86_vector_convert_tiny_done\@
 Lx86_vector_convert_flush\@:
+	mxcsr_raise 0x30, 14
 	fmov w14, s6
 	and w14, w14, #0x80000000
 	fmov s6, w14
@@ -149,6 +172,7 @@ Lx86_vector_convert_tiny_done\@:
 	movi v16.4s, #0x41, lsl #24
 	cmhi v18.4s, v16.4s, v18.4s
 	and v17.16b, v17.16b, v18.16b
+	mxcsr_raise_flushed 17, 18
 	movi v16.4s, #0x80, lsl #24
 	and v16.16b, v4.16b, v16.16b
 	bsl v17.16b, v16.16b, v4.16b
@@ -158,10 +182,11 @@ Lx86_vector_convert_tiny_done\@:
 	.popsection
 .endm
 
-/* A conversion from floating point but to integers with truncation, which
- * gives a denormal input zero in any case, has an exact path
- * (`simd_exact_branch`): there MXCSR.DAZ flushes its inputs and FTZ its
- * narrowed results, and the SIMD checks run. `exact` emits that path. */
+/* A conversion from floating point but to integers with truncation has an
+ * exact path (`simd_exact_branch`): there MXCSR.DAZ flushes its inputs and
+ * FTZ its narrowed results, and the SIMD checks run. `exact` emits that
+ * path. A truncation, which has none, flushes its inputs under DAZ before
+ * it converts them, so that a denormal one converts exactly. */
 .macro vector_convert_floating operation, output_width, input_size, truncate, exact
 	.ifc \operation,ps_pd
 	.if \exact
@@ -247,7 +272,7 @@ Lx86_vector_convert_tiny_done\@:
 	.if Lx86_vector_convert_exact\@
 	simd_exact_branch Lx86_vector_convert_common\@
 	vector_convert_floating \operation, \output_width, \input_size, \truncate, 1
-	b Lx86_vector_convert_done\@
+	simd_exact_end Lx86_vector_convert_common\@, Lx86_vector_convert_done\@
 Lx86_vector_convert_common\@:
 	vector_convert_floating \operation, \output_width, \input_size, \truncate, 0
 Lx86_vector_convert_done\@:
@@ -267,12 +292,14 @@ Lx86_vector_convert_done\@:
 	.endif
 	.endif
 	.ifc \operation,ps_dq
+	vector_convert_inputs 32, \input_size
 	vector_convert_fp_i32 1, 4, 32, \truncate
 	.if \output_width == 256
 	vector_convert_fp_i32 3, 5, 32, \truncate
 	.endif
 	.endif
 	.ifc \operation,pd_dq
+	vector_convert_inputs 64, \input_size
 	vector_convert_fp_i32 1, 4, 64, \truncate
 	.if \input_size == 32
 	vector_convert_fp_i32 3, 5, 64, \truncate
