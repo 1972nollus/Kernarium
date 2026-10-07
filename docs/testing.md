@@ -342,6 +342,11 @@ control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
 `#XM`, `#MF` and `#AC` included, in both modes.
+`run_guest_x86_64_fenv.py`, which takes the same options, builds
+`fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
+such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
+STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
+Xeon's; `--pending` marks an engine that does not keep masked flags yet.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
