@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The foundation every non-streaming SVE lane builds on: the guest-SVE
  * policy and the prober's SVE tokens, the engines' support levels and what
- * they present, the mask form of the predicates and the WHILE* tables, and
- * the state CpuState adds and the reset every change of PSTATE.SM
- * applies. */
+ * they present, the mask form of the predicates and the WHILE* tables, the
+ * state CpuState adds and the reset every change of PSTATE.SM applies, and
+ * ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1. arm64-advertised-features pins
+ * the words and registers of named hosts; this checks the rules. */
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/gadgets/sve_support.hpp"
@@ -70,6 +71,14 @@ constexpr unsigned long sve_hwcap2 = sve2_hwcap2 | sveaes_hwcap2 |
 		if (host.has(token))
 			return true;
 	return false;
+}
+
+[[nodiscard]] std::uint64_t read_id(const HostCapabilities &host,
+	std::uint32_t id_register)
+{
+	const ::uml::cpu::HostCapabilitiesScope scope{host};
+	require(detail::emulated_id_register(id_register));
+	return detail::emulated_id_register_value(id_register);
 }
 
 void policy_parses_only_one()
@@ -314,6 +323,53 @@ void streaming_mode_changes_reset_predicates()
 	require(!zeroed(cpu));
 }
 
+/* PFR0.SVE, ZFR0 and the SVE HWCAP bits, field by field, for hosts with the
+ * profile in every combination of its optional parts, and ZFR0 as zero
+ * without it, which is what every engine presents today. */
+void identification_follows_profile()
+{
+	require(read_id(HostCapabilities{}, detail::id_aa64zfr0_el1) == 0);
+	require(read_id(sve_predicates(), detail::id_aa64zfr0_el1) == 0);
+	require((read_id(sve_predicates(), detail::id_aa64pfr0_el1) >> 32 &
+		15U) == 0);
+
+	for (unsigned parts = 0; parts < 16U; ++parts) {
+		const bool aes = (parts & 1U) != 0U;
+		const bool sha3 = (parts & 2U) != 0U;
+		const bool i8mm = (parts & 4U) != 0U;
+		const bool bf16 = (parts & 8U) != 0U;
+		auto host = with({ArmFeature::fp16, ArmFeature::dotprod});
+		host.fp16 = true;
+		for (const auto &[feature, on] : {std::pair{ArmFeature::aes, aes},
+			     std::pair{ArmFeature::pmull, aes},
+			     std::pair{ArmFeature::sha3, sha3},
+			     std::pair{ArmFeature::i8mm, i8mm},
+			     std::pair{ArmFeature::bf16, bf16}})
+			host.supported.set(static_cast<std::size_t>(feature), on);
+		host.aes = host.pmull = aes;
+		host.sha3 = sha3;
+		const auto sve = apple::apply_guest_sve_policy(host,
+			apple::GuestSvePolicy::on);
+		require((read_id(sve, detail::id_aa64pfr0_el1) >> 32 & 15U) == 1);
+		const std::uint64_t zfr0 = 1U | (aes ? 2U << 4 : 0U) |
+			(bf16 ? std::uint64_t{1} << 20 : 0U) |
+			(sha3 ? std::uint64_t{1} << 32 : 0U) |
+			(i8mm ? std::uint64_t{1} << 44 : 0U);
+		require(read_id(sve, detail::id_aa64zfr0_el1) == zfr0);
+
+		const auto with_sve = detail::guest_hwcaps(sve);
+		const auto without = detail::guest_hwcaps(host);
+		require(with_sve[0] == (without[0] | sve_hwcap));
+		require(with_sve[1] == (without[1] | sve2_hwcap2 |
+			(aes ? sveaes_hwcap2 | svepmull_hwcap2 : 0UL) |
+			(sha3 ? svesha3_hwcap2 : 0UL) |
+			(i8mm ? svei8mm_hwcap2 : 0UL) |
+			(bf16 ? svebf16_hwcap2 : 0UL)));
+		require((without[0] & sve_hwcap) == 0 &&
+			(without[1] & sve_hwcap2) == 0);
+	}
+}
+
 } // namespace
 
 int main()
@@ -326,5 +382,6 @@ int main()
 	predicate_masks_round_trip();
 	leading_predicates_follow_predtest();
 	streaming_mode_changes_reset_predicates();
+	identification_follows_profile();
 	return 0;
 }
