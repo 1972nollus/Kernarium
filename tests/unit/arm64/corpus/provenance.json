@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 191994,
+  "cases": 192026,
   "cases_by_event": {
     "breakpoint": 78,
     "floating-point-trap": 21,
-    "illegal-instruction": 34216,
+    "illegal-instruction": 34248,
     "instruction-budget": 186,
     "memory-fault": 11843,
     "system-call": 145650
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 136402,
+    "16k+4k": 136434,
     "4k": 27977
   },
   "coverage": {
@@ -160,10 +160,10 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3357,
-  "pack_bytes": 14999865,
-  "pack_sha256": "c04413ef953401fb5b302b8f8ad414d741dfc7314a895f106fff11d36ef54698",
+  "pack_bytes": 15000355,
+  "pack_sha256": "4b41643bd9f549665b8e6e82a90de08d89f256f5249287810e17a9b075260048",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 155389,
+  "programs": 155421,
   "records": 1107,
   "sample_limit": 8,
   "schema": 1,
@@ -191,14 +191,14 @@
     }
   },
   "state_minimization": {
-    "full": 50635,
+    "full": 50667,
     "narrow": 141359
   },
   "sve_native": {
-    "cases": 18645,
+    "cases": 18677,
     "events": {
       "breakpoint": 3,
-      "illegal-instruction": 67,
+      "illegal-instruction": 99,
       "memory-fault": 1353,
       "system-call": 17222
     },
@@ -208,9 +208,9 @@
       "page": 4096,
       "vl": 16
     },
-    "request_sha256": "f1075180fe3fbc4a05a6e7f52a48824e0d88d56734c297c73023c9dd74863ce3",
+    "request_sha256": "7e8f4741fb9e4c9129f920f037b373e77d0ee3facc48a4f666f7b89101e1be12",
     "script": "tools/arm64-tests/sve-native-corpus.py",
-    "sha256": "0d8ce5700df8a85366e670dd7857b0512caac0108fb540abd401ee532b472cd3",
+    "sha256": "6a53e9583e7290a84477b4f7ad386ef2a0156def398e2b1684193b300c0a9557",
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
       "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"

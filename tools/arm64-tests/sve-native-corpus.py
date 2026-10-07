@@ -28,9 +28,11 @@ UNDEFINED, which the absent-feature records expect. The cases cover:
 - operands: each operand field at the lowest and highest register it
   allows, with the other operands distinct; every value of each free field
   of up to two bits (every element size among them) and both extremes of a
-  wider one; predicates all-true, all-false, partial, and alternating at
-  each element size; general-register sources at both extremes; and FPCR's
-  flush, default-NaN, and rounding controls for floating-point rows;
+  wider one; every class of bitmask immediate that DecodeBitMasks
+  reserves, for the logical-immediate rows; predicates all-true,
+  all-false, partial, and alternating at each element size;
+  general-register sources at both extremes; and FPCR's flush,
+  default-NaN, and rounding controls for floating-point rows;
 - memory: each contiguous, structure, replicate, fill, first-fault, and
   non-fault form aligned and misaligned, crossing a page with both pages
   mapped, crossing a 4 KiB boundary inside a mapping, with only the first
@@ -614,9 +616,10 @@ def with_predicates(draft: Draft, row, word: int, value: bytes) -> Draft:
 
 
 @functools.cache
-def alias_witnesses() -> tuple[tuple[str, str, int], ...]:
+def alias_witnesses(accept=executes) -> tuple[tuple[str, str, int], ...]:
     """The evidence-binding witnesses of the SVE entries without a row of
-    their own whose base row this host can observe."""
+    their own whose base row `accept` takes: by default those this host
+    can observe."""
     rows = {row.stable_id for row in table().rows}
     out = []
     with corpus.BINDINGS.open(encoding="utf-8", newline="") as source:
@@ -624,18 +627,20 @@ def alias_witnesses() -> tuple[tuple[str, str, int], ...]:
             if binding["section"] != "SVE" or binding["stable_id"] in rows:
                 continue
             word = int(binding["encoding"], 16)
-            if executes(row_index().row_for(word)):
+            if accept(row_index().row_for(word)):
                 out.append((binding["stable_id"],
                             binding["architectural_form"], word))
     return tuple(out)
 
 
-def classify_drafts() -> list[Draft]:
+def classify_drafts(rows=None, accept=executes) -> list[Draft]:
+    """Each row's witness, and each alias witness `accept` takes, from a
+    state that is not live; by default the rows this host observes."""
     drafts = []
-    for row in sve_rows():
+    for row in sve_rows() if rows is None else rows:
         drafts.append(base_draft("classify", row, row.witness,
                                  "witness, not live", live=0))
-    for stable_id, form, word in alias_witnesses():
+    for stable_id, form, word in alias_witnesses(accept):
         row = row_index().row_for(word)
         draft = base_draft("classify", row, word, "witness, not live",
                            live=0)
@@ -644,11 +649,21 @@ def classify_drafts() -> list[Draft]:
     return drafts
 
 
-def operand_drafts() -> list[Draft]:
+# DecodeBitMasks makes these immediates UNDEFINED (reserved): N = 1 with
+# imms all ones, N = 0 with imms 11111x, and for each smaller element size
+# the pattern with every element bit set.
+RESERVED_BITMASKS = (0x103F, 0x003E, 0x003F, 0x003D, 0x003B, 0x0037, 0x002F,
+                     0x001F)
+BITMASK_ROWS = ("and_z_zi_", "eor_z_zi_", "orr_z_zi_", "dupm_z_i_")
+
+
+def operand_drafts(rows=None) -> list[Draft]:
+    """The operand cases of each row; by default the rows this host
+    observes."""
     drafts = []
     # A word no row decodes can come from several rows of one encoding.
     illegal: set[int] = set()
-    for row in sve_rows():
+    for row in sve_rows() if rows is None else rows:
         count = len(row.operands)
         seen = {row.witness}
         low_word = allocate(row, row.witness, list(range(count)), False)
@@ -694,6 +709,11 @@ def operand_drafts() -> list[Draft]:
             for value in values:
                 add(with_run(low_word, run, value),
                     f"bits {low + width - 1}:{low} = {value:#x}",
+                    decides=False)
+        if row.encoding in BITMASK_ROWS:
+            for value in RESERVED_BITMASKS:
+                add(with_run(low_word, (5, 13), value),
+                    f"reserved bitmask immediate {value:#06x}",
                     decides=False)
         if predicate_operands(row, low_word):
             for label, value in PATTERNS:
