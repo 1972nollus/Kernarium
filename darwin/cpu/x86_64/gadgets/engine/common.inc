@@ -905,20 +905,24 @@ Lx86_address_16\@:
 	uxth w7, w7
 Lx86_address_ready\@:
 	ubfx x9, x23, #50, #2
-	tbnz x23, #UML_X86_64_MEMORY_LEGACY_SEGMENT, Lx86_address_legacy\@
 	cbnz x9, Lx86_address_segment\@
+	/* Field 0 with bit 55 is a stepped instruction's ES. */
+	tbnz x23, #UML_X86_64_MEMORY_LEGACY_SEGMENT, Lx86_address_legacy\@
 	b Lx86_segment_ready\@
 Lx86_address_segment\@:
 	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
 	cmp w11, #1
 	b.eq Lx86_address_compat\@
-	/* The selector indexes {segment_zero, fs_base, gs_base}; long mode
-	 * keeps its full-width FS or GS base. */
+	/* Only compatibility mode steps instructions through the segment
+	 * model, so long mode has FS or GS here, and nothing to do beyond what
+	 * it always did: the selector indexes {segment_zero, fs_base, gs_base},
+	 * and long mode keeps its full-width FS or GS base. */
 	add x11, _cpu, x9, lsl #3
 	ldr x10, [x11, #UML_X86_64_CPU_SEGMENT_ZERO]
 	add x7, x7, x10
 	b Lx86_segment_ready\@
 Lx86_address_compat\@:
+	tbnz x23, #UML_X86_64_MEMORY_LEGACY_SEGMENT, Lx86_address_legacy\@
 	/* FS or GS in compatibility mode: the offset passes the segment's
 	 * inline check, or the instruction leaves for the runtime's exact one
 	 * before it commits anything. Legacy protected mode has a 32-bit
