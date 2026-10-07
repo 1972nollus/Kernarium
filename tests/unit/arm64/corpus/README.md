@@ -22,7 +22,7 @@ instead of an exact state.
 
 - `manifest.tsv` has one row per record: a producer CTest, check site, harness
   options, and page profiles, with program and case counts and hashes; the
-  code hash also covers a record's SVL.
+  code hash also covers a record's SVL and VL.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
@@ -71,19 +71,21 @@ a `/16k` or `/4k` suffix holds profile-specific cases.
 | `host-counter-frequency/v1` | expected state with the host's CNTFRQ_EL0 in each MRS CNTFRQ_EL0 destination |
 | `ignore-host-counter-register/v1` | expected state except system-register read destinations |
 | `permitted-exclusive-store-failure/v1` | expected state except the opaque exclusive-monitor value and version |
+| `unpredictable-nonfault-load-elements/v1` | expected state except the elements of a first-fault or non-fault load's destination from the first whose expected FFR element is FALSE, which the ASL leaves CONSTRAINED UNPREDICTABLE |
 
 Relations derive their operands from the program, so a new relation or a new
 use of an existing one requires a runner change.
 
 ## Pack format
 
-All integers are little-endian. The file is `UMLA64C\0`, u32 version 2, u32 0,
+All integers are little-endian. The file is `UMLA64C\0`, u32 version 3, u32 0,
 and u64 body length, followed by the zlib-compressed body:
 
 ```text
 body     = meta:str32  tokens:u16*str16  native:u16*(u8*u16)
            validators:u16*str16  blobs:u32*(u32 size, bytes)  records:u32*record
 record   = name:str16 producer:str16 site:str16 profiles:u8 options:u16 svl:u16
+           vl:u16
            programs:u32*(entry:u16, u16*(offset:u16, word:u32))  cases:u32*case
 case     = program:u32 name:str16 ordinal_16k:u32 ordinal_4k:u32 event:u8
            flags:u8 retire [fault] [syndrome] native:u16 validator:u16
@@ -93,8 +95,11 @@ fault    = address:u64 access:u8        present when flags bit 1 is set
 syndrome = u32                          present for floating-point-trap
 state    = u32 mask, u64 per set bit (bit 31 is SP)
            u32 mask, 16 bytes per set vector
+           [sve]                                present when vl is not 0
            [sme]                                present when svl is not 0
            u8 count, (field id:u8, value) per field
+sve      = u16 mask, vl/8 bytes per set P register
+           u8 0 | u8 1, vl/8 bytes              FFR
 sme      = u32 mask, svl bytes per set Z register
            u16 mask, svl/8 bytes per set P register
            svl/8-byte mask, svl bytes per set ZA row (horizontal vector)
@@ -112,9 +117,9 @@ bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
-CPU without FEAT_AFP on every host, and bit 11 (`without_sme`) does the same
-for FEAT_SME. Region flags are readable, writable,
-executable, guest code, and guest writable. Events follow the harness order:
+CPU without FEAT_AFP on every host, bit 11 (`without_sme`) does the same
+for FEAT_SME, and bit 12 (`without_sve`) for FEAT_SVE. Region flags are
+readable, writable, executable, guest code, and guest writable. Events follow the harness order:
 system call, memory fault, reserved, illegal instruction, breakpoint,
 floating-point trap, PC alignment, instruction budget, fatal. The reserved
 option bits, event code 2, the field ids the table below omits, and non-empty
@@ -146,6 +151,7 @@ address is all ones, and every other field is zero. Field ids are:
 | 24 | `pstate_daif` u8 | | |
 
 | 38 | `svcr` u8 | 39 | `tpidr2` u64 |
+| 40 | `sve_live` u8 | | |
 
 Ids 5, 7, 9-18, 20-22, and 32-37 are reserved. A region's initial bytes are its
 blob, and its expected bytes are the blob with the runs applied.
@@ -167,8 +173,32 @@ SMSTART, is encoded against its base fill, and the V registers of an initial
 state in streaming mode are its Z registers' low bytes. Each byte of the SME base fill is `(n * 0x9e3779b1 mod 2^32) >> 24` for an
 index `n` that names the byte's position at the largest SVL: `256i + b` for
 byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
-`r`, and `0x30000 + b` of ZT0. A version 1 pack is a version 2 pack without
-SVLs; `build-unit-corpus.py` still reads one, and writes only version 2.
+`r`, and `0x30000 + b` of ZT0.
+
+### Non-streaming SVE state
+
+A record's `vl` is the vector length outside streaming mode that its cases'
+P and FFR are sized for, 16 bytes, or 0 for a record without that state.
+Only a record with a VL holds P0-P15, FFR, or `sve_live`. The runner runs its
+cases, and any case that needs an SVE profile feature natively, only for a
+lane whose `sve_support` is `complete` where the virtual CPU implements the
+SVE profile, and counts every other one as skipped for `sve`. At that VL Z_n
+is V_n, so the vector section holds the Z registers. P and FFR are packed,
+bit k for byte k, as the architecture holds them; the runner loads them into
+the engines' mask form and compares them packed. `sve_live` is 0 or 1, the
+image of arm64 Linux's TIF_SVE: whether the task's SVE state is live. A
+state that is not live holds zero P and FFR, because Linux zeroes them when
+it discards the state and when the next SVE instruction makes it live again;
+the encoder refuses a state that breaks this. The base fill of P, FFR, and
+`sve_live` is zero, and the expected state's are the initial ones unless it
+names its own. A record without a VL expects them zero. They are apart from
+the streaming P registers of the SME state.
+
+A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
+version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes
+version 3; it writes version 2 for a corpus without VLs, so the
+`arm64-instruction-corpus-freshness` test can show that every record keeps
+its meaning, bit for bit, in both.
 
 ## Running
 
@@ -275,8 +305,8 @@ ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, or the SIMD&FP extensions
 FEAT_FP8 (with FP8DOT2, FP8DOT4, FP8FMA, F8F16MM, F8F32MM, and its FPMR state),
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
-profile; every encoding they add is UNDEFINED. The producer harness
+FEAT_XS, FEAT_WFxT, or any SVE or SME feature outside the SVE and SME
+profiles; every encoding they add is UNDEFINED. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a
@@ -290,22 +320,33 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-FEAT_SME is two-sided, like FEAT_AFP: the virtual CPU implements the SME
-profile only where the host does. The producer's SME model is retired, so the
-rewrite drops its SME cases and strips its one-byte PSTATE.SM and ZA fields as
-for an absent feature, but its `arm64-absent-sme` record carries the
-`without_sme` option, which the runner translates for on every host. That
-record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
-every profile encoding in the generated SVE/SME encoding table
-([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
-to be undefined, and so is the evidence-binding witness of each SVE or SME
-entry without a table row: an alias, which its base instruction's row
-decodes, or MOVT between ZT0 and a general register, which only Debug state
-executes. The `arm64-absent-sve` record expects the witness of every table
-encoding outside the profile to be undefined with or without SME. Each
-witness is checked against LLVM MC by the table's generator or the allocation
-generator, and its case name gives the entry's stable id, encoding or form,
-and word.
+FEAT_SME and FEAT_SVE are two-sided, like FEAT_AFP: the virtual CPU
+implements the SME profile only where the host does, and the SVE profile only
+under the guest-SVE policy where the host has the AdvSIMD forms it lowers
+onto. The producer's SME model is retired, so the rewrite drops its SME cases
+and strips its one-byte PSTATE.SM and ZA fields as for an absent feature. The
+witness word of every row of the generated SVE/SME encoding table
+([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp)),
+and the evidence-binding witness of each SVE or SME entry without a row (an
+alias, which its base instruction's row decodes, or MOVT between ZT0 and a
+general register, which only Debug state executes), is expected undefined at
+PSTATE.SM = 0 in the record whose option makes it so, which the runner
+translates for on every host:
+
+- `arm64-absent-sme`, under `without_sme`: SMSTART, SMSTOP, MRS and MSR
+  SVCR, the other rows of the SME profile, MOVT, and the SVE rows that need
+  FEAT_SME outside streaming mode as well (the SCLAMP class);
+- `arm64-absent-sve`, under `without_sve`: every row the SVE profile executes
+  outside streaming mode, the SCLAMP class included;
+- `arm64-absent-sve` without an option: every other row, undefined there on
+  every virtual CPU: the SVE rows that never execute outside streaming mode
+  (the withheld FEAT_SVE_BitPerm, FEAT_SVE_SM4, FEAT_F32MM, FEAT_F64MM and
+  FEAT_SVE2p1 forms, and the SVE2p1 forms that SME2 executes in streaming
+  mode) and the rows outside both profiles.
+
+Each witness is checked against LLVM MC by the table's generator or the
+allocation generator, and its case name gives the entry's stable id, encoding
+or form, and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
@@ -369,7 +410,10 @@ engine whose `sme_support` is at least `complete` where the virtual CPU
 implements SME at that SVL, and a case that needs `sme2` only for an engine
 at `sme2` where the virtual CPU has the SME2 profile; it counts every other
 case as skipped for the feature. Each case names the profile features it
-needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). A case
+needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). The M4 has
+no FEAT_SVE, so a case outside streaming mode whose word the SVE profile
+executes there holds only for a virtual CPU without SVE; such cases sit in a
+sibling of their group's record under `without_sve`. A case
 starts with X18 zero, because Darwin clears X18 whenever a thread returns
 to user mode, and forms only addresses with a zero top byte, because the
 host ignores the top byte and the guest's default state does not.
@@ -409,6 +453,7 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
   --output tests/unit/arm64/corpus
 ```
 
+The native SVE step below follows on `native.jsonl` before the repack.
 A regeneration that leaves the request unchanged needs no SME host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
@@ -417,6 +462,78 @@ script, table, and request hashes and the outcome counts under `sme_native`,
 `arm64-instruction-corpus-sme-native` tooling test re-derives every case but
 its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac.
+
+## Native SVE cases
+
+No producer had an SVE model.
+[`tools/arm64-tests/sve-native-corpus.py`](../../../../tools/arm64-tests/sve-native-corpus.py)
+authors the `arm64-sve-native` records from the generated SVE/SME encoding
+table and appends them after the native SME step, and
+[`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
+observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
+vector length, arm64-builder's Neoverse V2. The script's docstring lists what each
+record covers and owns the oracle's request and response formats.
+
+The oracle is a sibling of the SME oracle, not a Linux build of it. The SME
+oracle reads a case's state on a Mach exception port and works around XNU's
+FPSR reset; this one runs each case under POSIX signal handlers and reads and
+writes its state in the signal frame's fpsimd, SVE, and ESR records. The
+handler starts a case by writing a full `sve_context` for a state that is
+live or a bare header for one that is not, and the return from the signal
+sets or clears TIF_SVE from it, so a case starts in exactly its state
+whatever the kernel did with the SVE state before. The response holds the
+frame's `sve_context` size at the case's last trap, which the script
+requires to agree with the recorded live bit.
+
+Every native record has `vl` 16, the one vector length outside streaming
+mode, and runs only as the SVE state section above describes. The
+`classify`, `operands`, `memory`, `gather`, and `live` records hold for both
+page profiles: their regions are 16 KiB-aligned multiples of 16 KiB, so
+each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
+an access crosses into a 4 KiB page that is unmapped or read-only, and
+holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
+region maps exactly as the guest's does. The 29 SCLAMP-class forms need
+FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
+record them, and they are not in these records; the withheld features'
+forms are not either, since their UNDEFINED results belong to the
+absent-feature records.
+
+The encoding table decides the legality of each row's witness, of its own
+registers, and of a word no row decodes; the hardware decides a free field
+value that a row decodes but its pseudocode makes UNDEFINED, such as a
+reserved bitmask immediate. A response that disagrees with the table is a
+finding about the table and writes nothing. The hardware also decides the
+fault address of a crossing access and what a faulting access leaves in
+memory and its destination. What it cannot decide, because the ASL leaves it
+CONSTRAINED UNPREDICTABLE, stays out of the expectations: a MOVPRFX is
+followed by the instruction it prefixes, and a completed first-fault or
+non-fault load uses `unpredictable-nonfault-load-elements/v1`, with zero,
+one of the permitted values, recorded in the elements it excludes.
+
+Regenerate on an SVE host at VL 16. The script runs the oracle there twice,
+each time from a fresh private directory in the host's home that it removes
+afterwards, and the generator requires the responses to give identical
+records; they may differ only in the elements the relation excludes:
+
+```sh
+python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
+tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
+python3 -B tools/arm64-tests/sve-native-corpus.py native.jsonl sve.jsonl \
+  --response sve.response.1 --response sve.response.2
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+A regeneration that leaves the request unchanged needs no SVE host:
+`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+current native records instead of `--response`. `provenance.json` records the
+script, table, and request hashes, the host's VL, page size, and hardware
+capabilities, and the outcome counts under `sve_native`;
+`build-unit-corpus.py --check` verifies the hashes, and the
+`arm64-instruction-corpus-sve-native` tooling test re-derives every case but
+its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
+with base A64 cases on any arm64 Mac, and with SVE cases where the host has
+SVE at VL 16.
 
 ## FEAT_AFP cases
 
