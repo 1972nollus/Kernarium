@@ -543,7 +543,10 @@ an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
 native SME records on both engines, with `DARWIN_UML_GUEST_SME=1`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
-corpus skips its native SME records.
+corpus skips its native SME records. Integration runs read the policy the same
+way: on an M4 with `DARWIN_UML_GUEST_SME=1`, `guest-gadgets-smoke` and
+`guest-jit-smoke` expect the SME HWCAP2 bits and `guest-hwcap-sanity`
+executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
 under the policy on. Each skips, naming its reason, unless the host has SME
@@ -553,9 +556,12 @@ sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
 exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
 sigreturn and ptrace alone, then with SME executed by the engine; further
 boots send host signals and each terminating signal while a vCPU streams,
-and `glibc_za_probe.py` checks glibc's ZA lazy-save commits. The `kernel`,
-`spin` and `terminate` modes need no engine support; on an SME host they run
-by hand with
+and `glibc_za_probe.py` checks the image's glibc and libgcc SME ABI: the ZA
+lazy-save commits at fork, spawn, thread creation, longjmp and siglongjmp,
+a glibc-installed handler for a signal that interrupts a streaming region,
+returning or leaving by siglongjmp, and libgcc's SME support routines. The
+`kernel`, `spin` and `terminate` modes need no engine support; on an SME host
+they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.

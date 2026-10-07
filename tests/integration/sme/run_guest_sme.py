@@ -19,7 +19,10 @@ runs, in order:
   sent while a vCPU spins in streaming mode, which must end the emulator at
   once with the status it has without SME;
 - glibc_za_probe.py on the image: glibc's __libc_arm_za_disable() commits a
-  pending ZA lazy save before fork, posix_spawn and thread creation.
+  pending ZA lazy save before fork, posix_spawn and thread creation and in
+  longjmp and siglongjmp; a signal handler installed through glibc runs
+  outside streaming mode, returns into the region intact, or siglongjmps
+  out of it; libgcc's SME support routines save, commit and restore ZA.
 
 --minimum-support and --modes select less for a manual run. "--modes off"
 instead boots the probe with the policy off, on any host and engine, and
