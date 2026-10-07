@@ -461,6 +461,26 @@ hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
 with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 `CpuState`, so no translation depends on it.
 
+The non-streaming SVE profile of the arm64 virtual CPU is FEAT_SVE with
+FEAT_SVE2, plus FEAT_SVE_AES with FEAT_SVE_PMULL128, FEAT_SVE_SHA3 and the
+SVE forms of FEAT_I8MM and FEAT_BF16, each where the host has the AdvSIMD
+forms both engines lower it onto. No supported host implements SVE, so the
+vector length is a fixed 16 bytes on every host, independent of the SME
+profile's SVL, and Z_n outside streaming mode is V_n.
+[`cpu/arm64/sve_profile.hpp`](../darwin/cpu/arm64/sve_profile.hpp) derives
+the profile and the engines' mask form of a predicate, a 16-byte image with
+0xff in each active byte. `CpuState` appends P0-P15 and FFR in that form,
+apart from the streaming P, and every change of PSTATE.SM zeroes them. The
+prober reports the profile only under the guest-SVE policy,
+`DARWIN_UML_GUEST_SVE=1`, which is off by default; BitPerm and SM4 are
+withheld. Each engine's `sve_support` names how much of the profile it
+implements outside streaming mode, `none`, `control` or `complete`, and
+`cpu::engine_host_capabilities` presents the profile only from an engine at
+`complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
+ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
+non-streaming SVE word is the illegal-instruction exit. Both engines are at
+`none`.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

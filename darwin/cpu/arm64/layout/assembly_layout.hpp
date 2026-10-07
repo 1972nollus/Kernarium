@@ -77,6 +77,18 @@ static_assert(UML_ARM64_SME_ZT0_BYTES == sme_zt0_bytes);
 static_assert(sme_layout_matches(16) && sme_layout_matches(32) &&
 	sme_layout_matches(64) && sme_layout_matches(128) &&
 	sme_layout_matches(256));
+static_assert(offsetof(CpuState, sve_p) == UML_ARM64_CPU_SVE_P);
+static_assert(offsetof(CpuState, sve_ffr) == UML_ARM64_CPU_SVE_FFR);
+static_assert(offsetof(CpuState, sve_live) == UML_ARM64_CPU_SVE_LIVE);
+static_assert(UML_ARM64_SVE_VECTOR_LENGTH == sve_vector_length);
+static_assert(sizeof(CpuState::sve_p) ==
+	sve_p_registers * UML_ARM64_SVE_VECTOR_LENGTH);
+/* Every SVE state offset, and the last byte of the block, fits the 16-bit
+ * operand a gadget carries and the scaled 12-bit immediate of a 16-byte
+ * load or store the JIT emits. */
+static_assert(UML_ARM64_CPU_SVE_LIVE < 0x1'0000);
+static_assert(UML_ARM64_CPU_SVE_P % 16 == 0 &&
+	UML_ARM64_CPU_SVE_FFR % 16 == 0 && UML_ARM64_CPU_SVE_FFR < 4096 * 16);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

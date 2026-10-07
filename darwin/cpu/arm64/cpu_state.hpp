@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 
 #include <array>
 #include <cstddef>
@@ -145,6 +146,16 @@ struct CpuState final {
 	 * bytes, or null when the run does not implement SME. While SM is set,
 	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
 	std::byte *sme_registers{};
+	/* Non-streaming SVE state (sve_profile.hpp), appended so that no
+	 * earlier offset moves: P0-P15 and FFR in the engines' mask form, apart
+	 * from the streaming P in the SME register file. Z_n outside streaming
+	 * mode is `vectors[n]`. sve_live, 0 or 1, is the image of arm64
+	 * Linux's TIF_SVE: the task has executed SVE since its last system
+	 * call or exec, so its P and FFR are part of its state. A byte rather
+	 * than a bool, since translated code stores it. */
+	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
+	alignas(16) SvePredicate sve_ffr{};
+	std::uint8_t sve_live{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{
@@ -281,6 +292,10 @@ struct CpuState final {
 			std::memset(sme_registers, 0, sme_za_offset(sme_svl, 0));
 		if (write.zero_vectors)
 			vectors = {};
+		if (write.zero_sve_predicates) {
+			sve_p = {};
+			sve_ffr = {};
+		}
 		if (write.zero_za)
 			std::memset(sme_registers + sme_za_offset(sme_svl, 0), 0,
 				sme_storage_size(sme_svl) -
