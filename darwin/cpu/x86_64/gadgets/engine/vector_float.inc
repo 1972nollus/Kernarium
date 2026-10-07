@@ -526,8 +526,10 @@ Lx86_vector_fp_estimate_kept\@:
 /* The host's quotient for an estimate's regular inputs raises precision
  * alone, and x86 raises nothing. Precision is sticky: while MXCSR holds it,
  * or FPSR does, one more changes nothing, and the quotient runs as it is;
- * otherwise `unsticky`, in the cold section, keeps FPSR around it. The
- * special inputs' path keeps FPSR in any case. Uses w14. */
+ * otherwise `unsticky`, in the cold section, keeps FPSR around it. When
+ * FPSR holds it, `unsticky` adds it to MXCSR, as the run would at its end,
+ * so that the next estimate need not read FPSR. The special inputs' path
+ * keeps FPSR in any case. Uses w14, MXCSR from here. */
 .macro vector_fp_estimate_sticky unsticky
 	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
 	tbz w14, #5, \unsticky
@@ -589,6 +591,8 @@ Lx86_vector_fp_estimate_ready\@:
 Lx86_vector_fp_estimate_unsticky\@:
 	mrs x15, fpsr
 	tbz x15, #4, Lx86_vector_fp_estimate_guarded\@
+	orr w14, w14, #0x20
+	str w14, [_cpu, #UML_X86_64_CPU_MXCSR]
 	b Lx86_vector_fp_estimate_plain\@
 Lx86_vector_fp_estimate_guarded\@:
 	vector_fp_estimate_regular \operation, \width, \scalar

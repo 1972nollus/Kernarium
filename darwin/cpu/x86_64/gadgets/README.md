@@ -378,11 +378,14 @@ neither, so it raises invalid operation alone, as on x86. Where x86 raises
 a flag the host does not, the gadget raises it in software, into MXCSR, on a
 path it already takes, after any exception-check leave: an FTZ flush raises
 underflow and precision, from the mask the flush itself uses, and ROUND
-raises precision for a lane it changed unless its immediate suppresses it.
+raises precision for a lane it changed unless its immediate suppresses it
+or MXCSR holds precision already.
 Where the host computes something x86 does not, the gadget keeps FPSR around
 it: the FTZ test's scaled recomputation, an estimate's special inputs and its
 quotient, which raises only precision and runs unguarded once MXCSR or FPSR
-holds precision anyway, and the 3DNow! gadgets, which MXCSR does not govern.
+holds precision anyway -- found in FPSR, it goes into MXCSR at once, so the
+next estimate need not read FPSR -- and the 3DNow! gadgets, which MXCSR does
+not govern.
 The x87 gadgets compute in software and raise no host flag.
 
 Three flags stay inexact, as `x86-64-masked-flags` names them: the denormal

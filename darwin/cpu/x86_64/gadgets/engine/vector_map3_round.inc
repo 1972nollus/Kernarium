@@ -99,11 +99,14 @@ Lx86_vector_map3_round_inputs_ready\@:
 
 /* ROUND raises precision for a lane whose rounding changed it, unless bit 3
  * of its immediate (w13) suppresses that; FRINTN, FRINTM, FRINTP and FRINTZ
- * raise none. The result is in v4 (and v5) from v1 (and v3), or lane 0 of
- * v4 from v1 for a scalar one. A NaN raised its invalid operation as it
- * rounded and raises no precision. Uses v16 to v18 and w14. */
+ * raise none. Precision is sticky, so nothing is tested while MXCSR holds
+ * it. The result is in v4 (and v5) from v1 (and v3), or lane 0 of v4 from
+ * v1 for a scalar one. A NaN raised its invalid operation as it rounded and
+ * raises no precision. Uses v16 to v18 and w14. */
 .macro vector_map3_round_precision element, width, scalar
 	tbnz w13, #3, Lx86_vector_map3_round_precise\@
+	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbnz w14, #5, Lx86_vector_map3_round_precise\@
 	.if \scalar
 	.if \element == 32
 	fcmp s4, s1
