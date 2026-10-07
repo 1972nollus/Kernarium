@@ -15,7 +15,8 @@ everything else. In every image given this checks that:
   call to a helper outside it goes through its veneer in the island, whose
   words are all branches; and
 - SVE and SME words appear only in the SME part, the one part that may run
-  in streaming mode.
+  in streaming mode; the SVE part lowers the non-streaming SVE forms onto
+  AdvSIMD and holds none.
 
 usage: test_gadget_region_layout.py IMAGE...
 """
@@ -47,6 +48,7 @@ BOUNDS = {
     "afp": "uml_arm64_gadget_afp_section",
     "veneer": "uml_arm64_gadget_veneer_section",
     "sme": "uml_arm64_gadget_sme_section",
+    "sve": "uml_arm64_gadget_sve_section",
 }
 ISLAND = "veneer"
 # The part the SME-only code goes in, after the island so that no base helper

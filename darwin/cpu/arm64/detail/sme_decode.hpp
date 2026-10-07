@@ -13,15 +13,18 @@ namespace uml::cpu::arm64::detail {
  *
  * - a word in the SVE or SME encoding space decodes to the row of
  *   sme_encodings that matches it, if any;
- * - the virtual CPU implements that row when the CPU has the row's features
- *   and at least its minimum streaming vector length; any other word of the
- *   space is UNDEFINED;
+ * - the virtual CPU implements that row when the CPU has the row's
+ *   streaming-mode requirement and at least its minimum streaming vector
+ *   length; any other word of the space is UNDEFINED;
  * - an implemented row executes only in the PSTATE.SM and PSTATE.ZA state
  *   its access checks demand, and traps otherwise;
  * - an FP&SIMD word is AdvSIMD, which traps while PSTATE.SM is 1, or FP.
  *
  * The features are the profile's, as SmeFeatureMask bits; svl_bytes is the
- * streaming vector length, which nothing here assumes.
+ * streaming vector length, which nothing here assumes. A row's
+ * non-streaming requirement, which the SVE profile decides, has no helper
+ * yet: no engine executes an SVE form outside streaming mode, and without
+ * an SVE feature that requirement decides what these helpers do.
  */
 
 /* True for a word in the SVE (op0 x, op1 0010) or SME (op0 1, op1 0000) space. */

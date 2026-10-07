@@ -176,7 +176,7 @@ class Program final {
 public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		ProgramWords words,
-		bool accesses_fp_state) noexcept;
+		bool accesses_fp_state, bool holds_sve = false) noexcept;
 
 	/* Where the block starts; its instructions are contiguous from here. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
@@ -195,12 +195,20 @@ public:
 	{
 		return accesses_fp_state_;
 	}
+	/* The program holds a word translated as a non-streaming SVE form, so
+	 * it also accesses the FP state, which carries P and FFR, and entering
+	 * it marks the task as having executed SVE (CpuState::sve_live). */
+	[[nodiscard]] bool holds_sve() const noexcept
+	{
+		return holds_sve_;
+	}
 
 private:
 	std::uint64_t guest_address_{};
 	std::size_t instruction_count_{};
 	ProgramWords words_;
 	bool accesses_fp_state_{};
+	bool holds_sve_{};
 };
 
 /* Where a guest PC sits in a program, counted in retired instructions from its

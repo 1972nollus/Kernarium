@@ -66,7 +66,8 @@ inline constexpr std::uint16_t dupm = form_of(0x05c0'0000U);
 
 /* Whether the JIT runs a memory shape in streaming mode: every shape of
  * the SME1 profile but SME2's multi-vector and strided forms (S6b). LDR
- * and STR of ZA and ZT0 are the control core's forms. */
+ * and STR of ZA and ZT0 are the control core's forms, and the gather,
+ * first-fault and non-fault shapes execute only outside streaming mode. */
 [[nodiscard]] constexpr bool implements_sme_memory(
     const detail::SmeMemory &memory) noexcept {
   using Shape = detail::SmeMemoryShape;
@@ -84,6 +85,11 @@ inline constexpr std::uint16_t dupm = form_of(0x05c0'0000U);
   case Shape::strided:
   case Shape::za_vector:
   case Shape::zt0:
+  case Shape::gather:
+  case Shape::gather_first_fault:
+  case Shape::first_fault:
+  case Shape::non_fault:
+  case Shape::gather_prefetch:
     break;
   }
   return false;
@@ -172,6 +178,8 @@ inline constexpr std::uint16_t dupm = form_of(0x05c0'0000U);
   case detail::SmeAddressOffset::immediate_16:
     return immediate * 16U;
   case detail::SmeAddressOffset::none:
+  case detail::SmeAddressOffset::vector_index:
+  case detail::SmeAddressOffset::register_byte:
     break;
   }
   return 0;

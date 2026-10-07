@@ -188,7 +188,7 @@ void profile_needs_every_part()
 void feature_mask_follows_tokens()
 {
 	namespace detail = arm64::detail;
-	const std::array<std::pair<ArmFeature, detail::SmeFeatureMask>, 6>
+	const std::array<std::pair<ArmFeature, detail::SmeFeatureMask>, 11>
 		bits{{
 			{ArmFeature::sme, detail::sme_feature_sme},
 			{ArmFeature::sme2, detail::sme_feature_sme2},
@@ -196,6 +196,12 @@ void feature_mask_follows_tokens()
 			{ArmFeature::sme_i16i64, detail::sme_feature_sme_i16i64},
 			{ArmFeature::bf16, detail::sme_feature_bf16},
 			{ArmFeature::i8mm, detail::sme_feature_i8mm},
+			{ArmFeature::sve, detail::sme_feature_sve},
+			{ArmFeature::sve2, detail::sme_feature_sve2},
+			{ArmFeature::sve_aes, detail::sme_feature_sve_aes},
+			{ArmFeature::sve_pmull128,
+				detail::sme_feature_sve_pmull128},
+			{ArmFeature::sve_sha3, detail::sme_feature_sve_sha3},
 		}};
 	unsigned all = 0;
 	for (const auto &[feature, bit] : bits) {
@@ -236,6 +242,13 @@ void feature_mask_follows_tokens()
 			host.supported.set(static_cast<std::size_t>(feature));
 		require(arm64::implemented_sme_features(host) ==
 			(profile | detail::sme_feature_sme2 | extras));
+		for (const auto feature : {ArmFeature::sve, ArmFeature::sve2,
+			     ArmFeature::sve_aes, ArmFeature::sve_pmull128,
+			     ArmFeature::sve_sha3})
+			host.supported.set(static_cast<std::size_t>(feature));
+		require(arm64::implemented_sme_features(host) ==
+				(profile | detail::sme_feature_sme2 | extras),
+			"an SVE token changes the streaming-mode rows");
 		host.sme_svl_bytes = 0;
 		require(arm64::implemented_sme_features(host) == 0U,
 			"rows implemented without the SME profile");

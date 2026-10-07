@@ -41,7 +41,8 @@ LINE = 128
 CPU = Path(__file__).resolve().parents[3] / "darwin/cpu"
 BANK = "uml_x86_64_gadget_region_bank"
 COLD = "uml_x86_64_gadget_cold_section_begin"
-ARM64_END = "uml_arm64_gadget_sme_section_end"
+# Every arm64 region part's end label; the last part's ends the region.
+ARM64_END = re.compile(r"_uml_arm64_gadget_\w+_section_end")
 ISLAND = "veneer"
 SHOWN = 20
 
@@ -139,6 +140,12 @@ class Image:
     def symbol(self, name: str) -> int | None:
         return self.symbols.get("_" + name)
 
+    def arm64_end(self) -> int | None:
+        """Where the arm64 region ends, if the image carries it."""
+        ends = [value for name, value in self.symbols.items()
+                if ARM64_END.fullmatch(name)]
+        return max(ends) if ends else None
+
     def words(self, section: Section, begin: int, end: int) -> tuple[int, ...]:
         start = section.offset + begin - section.address
         return struct.unpack_from(f"<{(end - begin) // 4}I", self.data, start)
@@ -186,7 +193,7 @@ def check(image: Image, slots: list[Slot]) -> tuple[list[str], str]:
     bank, cold = image.symbol(BANK), image.symbol(COLD)
     if bank is None or cold is None:
         return [f"no symbol {BANK if bank is None else COLD}"], ""
-    arm64_end = image.symbol(ARM64_END)
+    arm64_end = image.arm64_end()
     expected = text.address if arm64_end is None else page(arm64_end)
     if bank != expected:
         errors.append(f"the bank starts at 0x{bank:x}, not at 0x{expected:x}"

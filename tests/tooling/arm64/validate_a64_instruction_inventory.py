@@ -28,9 +28,9 @@ SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD", "SVE": "SVE",
 ENGINE_STATUSES = {"absent", "pending", "verified"}
 # Features the virtual CPU omits. An absent entry needs one of them in every
 # alternative; its corpus cases expect its encodings to be UNDEFINED. FEAT_SVE
-# and every SVE or SME feature outside the SME profile are among them; they
-# have no runtime ArmFeature identity, so these names are valid requirement
-# tokens too.
+# and every SVE or SME feature outside the SME profile are among them until
+# both engines execute the SVE profile. These names are valid requirement
+# tokens too, whether or not they have a runtime ArmFeature identity.
 ABSENT_FEATURES = {
     "cmpbr", "cpa", "d128", "f16f32dot", "f16f32mm", "f16mm", "f32mm", "f64mm",
     "f8f16mm", "f8f32mm", "faminmax", "fp8", "fp8dot2", "fp8dot4", "fp8fma",
