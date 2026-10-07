@@ -4,7 +4,8 @@
  * state. It runs as the guest's /init with the Darwin host's SVE policy on,
  * or as an ordinary program on an arm64 Linux host with SVE at a 16-byte
  * vector length, which supplied its expected values: every check holds on
- * both.
+ * both. The guest runs Linux 6.18, and where native Linux 6.12 differs from
+ * it, the guest is held to 6.18 and only a native run accepts 6.12.
  *
  * "kernel" mode covers each duty of the kernel: the vector length, prctl and
  * abi.sve_default_vector_length; the live state, which executing SVE starts
@@ -1526,10 +1527,14 @@ void test_stop_regsets()
 	header = regset_header();
 	same = header.flags == (sve_pt_regs_sve | sve_pt_vl_inherit) &&
 		header.size == sve_pt_size_sve(1);
-	/* Linux 6.18 zeroes V, FPSR and FPCR too; 6.12 keeps them. */
-	for (u64 byte = sve_preg_offset(1, 0); byte < sve_ffr_offset(1) + 2; byte++)
+	/* The guest's Linux 6.18 zeroes Z, P, FFR, FPSR and FPCR. Linux 6.12,
+	 * which supplied the native values, keeps V, FPSR and FPCR. */
+	const u64 zeroed = native ? sve_preg_offset(1, 0) : sve_zreg_offset(1, 0);
+	const u64 end = native ? sve_ffr_offset(1) + 2 : sve_pt_fpsr_offset(1) + 8;
+	for (u64 byte = zeroed; byte < end; byte++)
 		same = same && regset_buffer[byte] == 0;
-	check(same, "the task is then live with P and FFR zero and inherits");
+	check(same, native ? "the task is then live with P and FFR zero and inherits" :
+			     "the task is then live with every register zero and inherits");
 
 	check_value(static_cast<u64>(set_regset(pid, nt_arm_sve, fill_sve(21))), 0,
 		    "NT_ARM_SVE can be written again");
