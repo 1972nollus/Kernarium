@@ -1158,9 +1158,11 @@ Lx86_indirect_follow\@:
 .globl NAME(uml_x86_64_gadget_enter)
 NAME(uml_x86_64_gadget_enter):
 	/* x0 = immutable threaded stream, x1 = CpuState, x2 = execution
-	 * context. x18 is reserved by Apple and is preserved untouched.
+	 * context. Darwin reserves x18 and clears it when it interrupts the
+	 * thread, so the engine neither uses, saves nor restores it: x19's
+	 * pair partner is the zero register.
 	 */
-	stp x18, x19, [sp, #-0xb0]!
+	stp xzr, x19, [sp, #-0xb0]!
 	stp x20, x21, [sp, #0x10]
 	stp x22, x23, [sp, #0x20]
 	stp x24, x25, [sp, #0x30]
@@ -1230,7 +1232,7 @@ Lx86_leave_rounding_ready:
 	ldp x24, x25, [sp, #0x30]
 	ldp x22, x23, [sp, #0x20]
 	ldp x20, x21, [sp, #0x10]
-	ldp x18, x19, [sp], #0xb0
+	ldp xzr, x19, [sp], #0xb0
 	ret
 
 /* Materialize the lazy x86 arithmetic flags without entering C++. Common

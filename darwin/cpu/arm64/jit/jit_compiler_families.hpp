@@ -302,9 +302,11 @@ private:
   static constexpr unsigned unbound_guest = 32U;
   static constexpr std::array<unsigned, 8> resident_gpr_hosts{
       3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U};
+  /* x19-x21 carry linked-block state, and Darwin clears x18 when it
+   * interrupts the thread. */
   static_assert([] {
     for (const auto host : resident_gpr_hosts)
-      if (host >= 19U && host <= 21U)
+      if (host >= 18U && host <= 21U)
         return false;
     return true;
   }());
