@@ -586,7 +586,10 @@ of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
-running it. The
+running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
+of XE2's request sets through each engine's ordinary path with every
+exception masked and hold the MXCSR flags each instruction leaves to an Intel
+Xeon's, except the documented inexact cases the test names. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 
