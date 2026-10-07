@@ -109,16 +109,16 @@ companion table classifies each FP&SIMD encoding as AdvSIMD, which traps in
 streaming mode, or FP, as the 2026-06 pseudocode does on a CPU without
 FEAT_FPRCVT; the pseudocode makes UMOV and SMOV of element 0 and the scalar
 FRECPE, FRECPS, FRSQRTE, FRSQRTS, and FMULX FP. `sme_decode.hpp` decodes
-against both. No engine uses them yet, so every SVE and SME word is still
-UNDEFINED. `arm64-sme-encoding-table` checks the decoder against the table,
+against both, and both engines decode every SVE and SME word with it.
+`arm64-sme-encoding-table` checks the decoder against the table,
 and every row's LLVM MC witness against its row. The table is a header, not an
 `.inc` contract, because C++ sources may not include `.inc` files.
 
 FEAT_SME is two-sided. An SVE or SME entry is `verified` when one of its
 encodings needs only the SME profile (FEAT_SME, FEAT_SME2, FEAT_SME_F64F64,
 FEAT_SME_I16I64, and the profile's FEAT_BF16 and FEAT_I8MM forms), and so are
-SMSTART and SMSTOP. Where the virtual CPU lacks SME, which today is every host,
-because no engine implements it and SME stays unadvertised, the corpus pins
+SMSTART and SMSTOP. Where the virtual CPU lacks SME, on a host without the
+profile or with the guest-SME policy forced off, the corpus pins
 SMSTART, SMSTOP, the SVCR accesses, and one word of every profile encoding and
 alias UNDEFINED. The `arm64-sme-native` records hold the results the M4 host
 gives for the profile's encodings at its streaming vector length, 64 bytes,

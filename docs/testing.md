@@ -490,7 +490,8 @@ inventory tables and that completeness boundary.
 The `arm64-sme-native` records hold SME results observed on the M4 at its
 streaming vector length, 64 bytes. They run for each engine whose
 `sme_support` is at least `complete` where the virtual CPU implements SME
-at that length, which needs an SME host and the guest-SME policy on, and a
+at that length, which needs an SME host and the guest-SME policy, on by
+default, and a
 case that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
 skipped, and the `arm64-absent-sme` record pins every SME profile encoding
 UNDEFINED on every host. The
@@ -526,7 +527,8 @@ that needs one of these features runs only on an M4 or newer Mac.
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
-run, so the suites hold with it off, the default, on every host.
+run: on by default, off with `DARWIN_UML_GUEST_SME=0`. The suites hold
+either way on every host, and a host without SME sees no difference.
 `arm64-sme-foundation` checks the prober against the host's own sysctls under
 either policy, and the identification registers and HWCAP2 against arm64
 Linux's table with injected SME hosts at every SVL from 16 to 256 bytes and
@@ -534,13 +536,14 @@ every engine support level. On
 an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
 `arm64-jit-sme-control`, `arm64-jit-sme-register`,
 `arm64-jit-sme-memory` and `arm64-instruction-corpus`, which then runs the
-native SME records on both engines, with `DARWIN_UML_GUEST_SME=1`.
+native SME records on both engines, with the policy at its default and with
+`DARWIN_UML_GUEST_SME=0`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
 corpus skips its native SME records.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
-under the policy on. Each skips, naming its reason, unless the host has SME
+with the policy at its default. Each skips, naming its reason, unless the host has SME
 and its engine's SME support is `control` or better. The freestanding
 `sme_probe.cpp` boots as `/init` and checks signal frames, invalid
 sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
@@ -552,7 +555,7 @@ and `glibc_za_probe.py` checks glibc's ZA lazy-save commits. The `kernel`,
 by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
-that with the policy off the probe sees no SME.
+that with the policy forced off the probe sees no SME.
 
 ## x86 instruction conformance
 

@@ -12,6 +12,12 @@
 
 namespace uml::cpu {
 
+/* The guest-SME policy is on by default (platform/apple/host_features.hpp),
+ * so a guest on an SME host is told of every form of the profile but SME2's,
+ * which neither engine may then take as illegal. */
+static_assert(arm64::gadgets::sme_support >= arm64::SmeSupport::complete &&
+	arm64::jit::sme_support >= arm64::SmeSupport::complete);
+
 std::unique_ptr<CpuEngine> make_cpu_engine(
 	EngineKind kind, EngineConfiguration configuration)
 {

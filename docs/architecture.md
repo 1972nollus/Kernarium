@@ -324,18 +324,29 @@ vector length (SVL), whatever that is: native execution needs the guest's SVL
 to equal the host's, and EL0 cannot change it.
 [`cpu/arm64/sme_profile.hpp`](../darwin/cpu/arm64/sme_profile.hpp) derives
 the profile, the register-file layout and the SVCR transition rules for both
-engines. The prober reports the profile only under the guest-SME policy,
-`DARWIN_UML_GUEST_SME=1`, which is off by default; with it off,
+engines. The prober reports the profile under the guest-SME policy, which
+is on by default wherever the host has the profile, at any SVL, on macOS and
+iOS alike; `DARWIN_UML_GUEST_SME=0` forces it off, and then
 ID_AA64PFR1_EL1.SME, ID_AA64SMFR0_EL1 and the SME HWCAP2 bits read zero on
-every host. Each engine's `sme_support` names how much of the profile it
-implements: the control core (`control`), all of it but the SME2 forms
-(`complete`), or all of it (`sme2`). An SVE or SME word it does not
-implement is the illegal-instruction exit. A guest sees FEAT_SME2 only
-from an engine at `sme2`: the runtime configures each engine, and derives
-the HWCAPs from the selected one, with the host less FEAT_SME2 below that
-level (`cpu::engine_host_capabilities`). Below it ID_AA64PFR1_EL1.SME
-reads 1, SMEver, I16I32 and BI32I32 read zero, HWCAP2_SME2, SME_I16I32 and
-SME_BI32I32 are clear, and the ZT0 forms are undefined.
+every host, as they do on a host without SME. Each engine's `sme_support`
+names how much of the profile it implements: the control core (`control`),
+all of it but the SME2 forms (`complete`), or all of it (`sme2`). An SVE or
+SME word it does not implement is the illegal-instruction exit. The default
+needs both engines at `complete` or better, which `cpu/engine_factory.cpp`
+asserts. A guest sees FEAT_SME2 only from an engine at `sme2`: the runtime
+configures each engine, and derives the HWCAPs from the selected one, with
+the host less FEAT_SME2 below that level (`cpu::engine_host_capabilities`).
+Below it ID_AA64PFR1_EL1.SME reads 1, SMEver, I16I32 and BI32I32 read zero,
+HWCAP2_SME2, SME_I16I32 and SME_BI32I32 are clear, and the ZT0 forms are
+undefined.
+
+Both engines are `complete`, so a guest is told of SME1 only: FEAT_SME,
+FEAT_SME_F64F64 and FEAT_SME_I16I64. On the M4, SME1 against the policy
+off made Geekbench 6's Object Detection, Background Blur and Photo Library
+1.34x faster (geomean) on the gadget engine and 1.39x on the JIT, without
+regressing its single- or multi-core score, while adding SME2's forms to
+the gadget engine lost to SME1 (geomean 0.975), so the engines stay at
+`complete` ([optimization history](optimization-history.md)).
 
 Each vCPU's SME register file is one zeroed, 256-byte-aligned allocation of
 the size its SVL needs, made at start-up only when the run implements SME and

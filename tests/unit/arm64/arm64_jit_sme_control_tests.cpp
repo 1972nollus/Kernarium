@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * The JIT's SME control core at run time, from SmeSupport::control on
- * (design 5.1.3). On a host whose profile implements SME, an SME host with
- * DARWIN_UML_GUEST_SME=1, every test runs in every mode. Elsewhere the SM=0
+ * (design 5.1.3). On a host whose profile implements SME, an SME host
+ * unless DARWIN_UML_GUEST_SME=0, every test runs in every mode. Elsewhere the SM=0
  * tests run on an injected SME2 profile at SVL 64: SM=0 translations hold
  * no SVE or SME instruction (arm64-jit-sme-codegen), so they run on any
  * host, and only SM=1 code needs the hardware.
