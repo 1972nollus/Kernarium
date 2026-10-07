@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 # The guest SVE tests (run_guest_sve.py). guest-sve-<engine> runs for an
-# engine whose SVE support is complete and skips, naming the reason,
-# otherwise; guest-sve-off-<engine> checks on every host that a run with the
-# policy off shows no SVE.
+# engine whose SVE support is complete, with a kernel that keeps SVE task
+# state, and skips, naming the reason, otherwise; guest-sve-off-<engine>
+# checks on every host that a run with the policy off shows no SVE.
 uml_add_guest_payload(UML_GUEST_SVE_PROBE guest-sve-probe
     sve_probe.cpp
     COMMENT "Building the freestanding arm64 guest SVE probe"
@@ -25,11 +25,14 @@ uml_add_guest_payload(UML_GUEST_SVE_PROBE guest-sve-probe
         -Wl,-z,max-page-size=16384
         -Wl,-s)
 
-# Test support only: reports each engine's SVE support level.
+# Test support only: reports each engine's SVE support level and whether
+# the kernel keeps SVE task state.
 add_executable(uml-sve-engine-support sve_engine_support.cpp)
 target_include_directories(uml-sve-engine-support PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_link_libraries(uml-sve-engine-support PRIVATE UML::CpuContract)
+target_link_libraries(uml-sve-engine-support PRIVATE
+    UML::BridgeAbi
+    UML::CpuContract)
 add_dependencies(integration-test-binaries uml-sve-engine-support)
 
 foreach(_engine IN ITEMS gadgets jit)
