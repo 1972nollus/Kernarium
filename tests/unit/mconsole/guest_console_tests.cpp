@@ -23,6 +23,7 @@
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -44,6 +45,50 @@ struct Reply final {
 };
 
 using uml::testing::require;
+
+/*
+ * Every run removes what exited runs left in its parent, $TMPDIR, so a test
+ * that plants such entries in the shared one races every other run on the
+ * host, this test in the other page profile's tree included: one of them can
+ * remove a planted directory before the test binds into it. The tests that
+ * make console directories therefore run under a private $TMPDIR in the
+ * user's temporary directory, which is short enough to be the first choice.
+ */
+class PrivateTemporaryDirectory final {
+public:
+	PrivateTemporaryDirectory()
+	{
+		std::array<char, 1024> base {};
+		const auto length = ::confstr(_CS_DARWIN_USER_TEMP_DIR, base.data(),
+			base.size());
+		require(length > 0U && length <= base.size());
+		std::string pattern {base.data()};
+		if (!pattern.ends_with('/'))
+			pattern += '/';
+		pattern += "uml-console-test.XXXXXX";
+		require(::mkdtemp(pattern.data()) != nullptr);
+		path_ = std::move(pattern);
+		require(::setenv("TMPDIR", path_.c_str(), 1) == 0);
+	}
+
+	PrivateTemporaryDirectory(const PrivateTemporaryDirectory &) = delete;
+	PrivateTemporaryDirectory &operator=(
+		const PrivateTemporaryDirectory &) = delete;
+
+	~PrivateTemporaryDirectory()
+	{
+		std::error_code ignored;
+		std::filesystem::remove_all(path_, ignored);
+	}
+
+	[[nodiscard]] const std::string &path() const noexcept
+	{
+		return path_;
+	}
+
+private:
+	std::string path_;
+};
 
 const ::uml::device::GuestConsoleLocation &processLocation()
 {
@@ -378,6 +423,9 @@ int main(int argc, char **argv)
 		return EXIT_SUCCESS;
 	}
 	if (selected == "run") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
 		aRunOwnsItsDirectoryUntilItReturns();
 		theTerminationPathRemovesTheRunDirectory();
 		aDirectoryLeftByThisPidIsReplaced();
@@ -385,6 +433,9 @@ int main(int argc, char **argv)
 		return EXIT_SUCCESS;
 	}
 	if (selected == "suspend-timeout") {
+		const PrivateTemporaryDirectory temporary;
+		require(std::filesystem::path {processLocation().directory}
+				.parent_path() == temporary.path());
 		aSuspendTimeoutCannotQueueLegacyStop();
 		return EXIT_SUCCESS;
 	}
