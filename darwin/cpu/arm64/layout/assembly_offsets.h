@@ -66,6 +66,14 @@
 #define UML_ARM64_SME_ZA_OFFSET_VL 34
 #define UML_ARM64_SME_ZT0_BYTES 64
 
+/* Non-streaming SVE state (cpu/arm64/sve_profile.hpp), for both engines:
+ * P_n in mask form, 16 bytes each, at UML_ARM64_CPU_SVE_P + 16 * n, FFR in
+ * the same form, and the live flag. */
+#define UML_ARM64_CPU_SVE_P 1232
+#define UML_ARM64_CPU_SVE_FFR 1488
+#define UML_ARM64_CPU_SVE_LIVE 1504
+#define UML_ARM64_SVE_VECTOR_LENGTH 16
+
 #define UML_GADGET_TLB_ENTRIES 0
 #define UML_GADGET_TLB_ENTRY_READ_PAGE 0
 #define UML_GADGET_TLB_ENTRY_READ_DATA_MINUS_ADDRESS 8

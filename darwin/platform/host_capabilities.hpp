@@ -124,6 +124,18 @@ enum class ArmFeature : std::size_t {
 	sme2,
 	sme_f64f64,
 	sme_i16i64,
+	/* The non-streaming SVE profile (cpu/arm64/sve_profile.hpp): FEAT_SVE
+	 * and FEAT_SVE2, with FEAT_SVE_AES, FEAT_SVE_PMULL128 and
+	 * FEAT_SVE_SHA3. No supported host implements SVE; the engines lower
+	 * it onto the host's AdvSIMD forms, so the prober reports these only
+	 * under the guest-SVE policy and where the host has those forms. The
+	 * SVE forms of FEAT_I8MM and FEAT_BF16 need no token: they are FEAT_SVE
+	 * with those features. */
+	sve,
+	sve2,
+	sve_aes,
+	sve_pmull128,
+	sve_sha3,
 	inventory_count,
 	afp = inventory_count,
 	lse2,
@@ -192,6 +204,9 @@ inline constexpr std::array arm_feature_labels{
 	std::string_view{"VHE"}, std::string_view{"WFxT"},
 	std::string_view{"XS"}, std::string_view{"SME2"},
 	std::string_view{"SME_F64F64"}, std::string_view{"SME_I16I64"},
+	std::string_view{"SVE"}, std::string_view{"SVE2"},
+	std::string_view{"SVE_AES"}, std::string_view{"SVE_PMULL128"},
+	std::string_view{"SVE_SHA3"},
 	std::string_view{"AFP"}, std::string_view{"LSE2"},
 	std::string_view{"ECV"}, std::string_view{"RPRES"},
 };
@@ -255,6 +270,9 @@ inline constexpr std::array arm_feature_tokens{
 	std::string_view{"vhe"}, std::string_view{"wfxt"},
 	std::string_view{"xs"}, std::string_view{"sme2"},
 	std::string_view{"sme_f64f64"}, std::string_view{"sme_i16i64"},
+	std::string_view{"sve"}, std::string_view{"sve2"},
+	std::string_view{"sve_aes"}, std::string_view{"sve_pmull128"},
+	std::string_view{"sve_sha3"},
 	std::string_view{"afp"}, std::string_view{"lse2"},
 	std::string_view{"ecv"}, std::string_view{"rpres"},
 };
@@ -263,7 +281,7 @@ inline constexpr std::size_t arm_inventory_feature_count =
 	static_cast<std::size_t>(ArmFeature::inventory_count);
 inline constexpr std::size_t arm_feature_count =
 	static_cast<std::size_t>(ArmFeature::count);
-static_assert(arm_inventory_feature_count == 110);
+static_assert(arm_inventory_feature_count == 115);
 static_assert(arm_feature_labels.size() == arm_feature_count);
 static_assert(arm_feature_tokens.size() == arm_feature_count);
 

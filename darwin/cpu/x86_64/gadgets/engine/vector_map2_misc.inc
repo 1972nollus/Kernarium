@@ -355,13 +355,14 @@ vector_map2_broadcast_family 128, 256
 .purgem vector_map2_broadcast_body
 
 /* Widening raises invalid operation only for a signalling NaN, which it
- * leaves a NaN. */
+ * leaves a NaN; the host raises it for the same lanes, so the leave keeps
+ * FPSR. */
 .macro vector_map2_half_body width
 	fcvtl v4.4s, v1.4h
 	.if \width == 256
 	fcvtl2 v5.4s, v1.8h
 	.endif
-	simd_check_result 32, \width
+	simd_check_result 32, \width, 0
 .endm
 
 .macro vector_map2_half_register width

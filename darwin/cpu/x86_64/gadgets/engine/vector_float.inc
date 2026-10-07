@@ -2,7 +2,8 @@
 /* Packed and scalar SSE/AVX floating-point arithmetic and comparisons. */
 
 /* The same for the scalar result in lane 0 of v6, from v0 and v1, which is
- * not zero and at most the smallest normal in magnitude. */
+ * not zero and at most the smallest normal in magnitude, raising underflow
+ * and precision as it flushes. */
 .macro vector_fp_flush_tiny_scalar operation, element
 	.set Lx86_vector_fp_rounded\@, 0
 	.ifc \operation,mul
@@ -36,6 +37,7 @@
 	b.eq Lx86_vector_fp_tiny_done\@
 	.endif
 Lx86_vector_fp_flush\@:
+	mxcsr_raise 0x30, 14
 	fmov w14, s6
 	and w14, w14, #0x80000000
 	fmov s6, w14
@@ -65,6 +67,7 @@ Lx86_vector_fp_flush\@:
 	b.eq Lx86_vector_fp_tiny_done\@
 	.endif
 Lx86_vector_fp_flush\@:
+	mxcsr_raise 0x30, 14
 	fmov x14, d6
 	and x14, x14, #0x8000000000000000
 	fmov d6, x14
@@ -89,58 +92,124 @@ Lx86_vector_fp_tiny_done\@:
 	.endif
 .endm
 
+/* x86's 32 comparison predicates: 0 to 15 and, from VEX, 16 to 31, which
+ * repeat them with the other choice of whether a quiet NaN raises invalid
+ * operation. A signalling NaN always does. The host's FCMEQ is quiet and its
+ * FCMGE and FCMGT signal, as x86's equality and ordering relations do in 0
+ * to 15. For 16 to 31, a quiet ordering compares the ordered lanes after
+ * NaN lanes become zeros, and a signalling equality first runs FCMGE for
+ * its flags alone; FALSE and TRUE run FCMEQ or FCMGE for their flags. Uses
+ * v16 and v17. */
 .macro vector_fp_compare_mask predicate, element, scalar, output, left, right, temporary
-	.if \predicate == 0
+	.set Lx86_vector_fp_base\@, (\predicate & 15)
+	.set Lx86_vector_fp_signalling\@, 0
+	.if Lx86_vector_fp_base\@ == 1 || Lx86_vector_fp_base\@ == 2 || \
+		Lx86_vector_fp_base\@ == 5 || Lx86_vector_fp_base\@ == 6 || \
+		Lx86_vector_fp_base\@ == 9 || Lx86_vector_fp_base\@ == 10 || \
+		Lx86_vector_fp_base\@ == 13 || Lx86_vector_fp_base\@ == 14
+	.set Lx86_vector_fp_signalling\@, 1
+	.endif
+	.if \predicate >= 16
+	.set Lx86_vector_fp_signalling\@, !Lx86_vector_fp_signalling\@
+	.endif
+	.set Lx86_vector_fp_quiet_order\@, \
+		(\predicate >= 16 && !Lx86_vector_fp_signalling\@)
+	.if Lx86_vector_fp_signalling\@ && \predicate >= 16
+	/* A signalling equality, unordered test, FALSE or TRUE. */
+	vector_fp_cmp fcmge, \element, \scalar, \temporary, \left, \right
+	.elseif !Lx86_vector_fp_signalling\@ && \
+		(Lx86_vector_fp_base\@ == 11 || Lx86_vector_fp_base\@ == 15)
+	/* A quiet FALSE or TRUE. */
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \right
+	.endif
+	.if Lx86_vector_fp_quiet_order\@
+	/* The ordered lanes in v`temporary`, and v16 and v17 the sources with
+	 * NaN lanes zero; FCMEQ raises invalid operation for a signalling NaN
+	 * alone, and nothing compared after it sees a NaN. */
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \left
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \right, \right
+	and v\temporary\().16b, v\temporary\().16b, v\output\().16b
+	and v16.16b, v\left\().16b, v\temporary\().16b
+	and v17.16b, v\right\().16b, v\temporary\().16b
+	vector_fp_relation Lx86_vector_fp_base\@, \element, \scalar, \output, \
+		16, 17, \temporary, 1
+	.else
+	vector_fp_relation Lx86_vector_fp_base\@, \element, \scalar, \output, \
+		\left, \right, \temporary, 0
+	.endif
+.endm
+
+/* Predicate `base` (0 to 15) of v`left` and v`right`. With `ordered`, v`left`
+ * and v`right` hold no NaN and v`temporary` the ordered lanes, which the
+ * relation is then limited to: an ordered predicate holds only there and an
+ * unordered one everywhere else. */
+.macro vector_fp_relation base, element, scalar, output, left, right, temporary, ordered
+	.if \base == 0
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \right
-	.elseif \predicate == 1
+	.elseif \base == 1
 	vector_fp_cmp fcmgt, \element, \scalar, \output, \right, \left
-	.elseif \predicate == 2
+	.elseif \base == 2
 	vector_fp_cmp fcmge, \element, \scalar, \output, \right, \left
-	.elseif \predicate == 3
+	.elseif \base == 3
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 4
+	.elseif \base == 4
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \right
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 5
+	.elseif \base == 5
 	vector_fp_cmp fcmgt, \element, \scalar, \output, \right, \left
+	.if \ordered
+	and v\output\().16b, v\output\().16b, v\temporary\().16b
+	.endif
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 6
+	.elseif \base == 6
 	vector_fp_cmp fcmge, \element, \scalar, \output, \right, \left
+	.if \ordered
+	and v\output\().16b, v\output\().16b, v\temporary\().16b
+	.endif
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 7
+	.elseif \base == 7
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 8
+	.elseif \base == 8
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	mvn v\output\().16b, v\output\().16b
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \right
 	orr v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 9
+	.elseif \base == 9
 	vector_fp_cmp fcmge, \element, \scalar, \output, \left, \right
+	.if \ordered
+	and v\output\().16b, v\output\().16b, v\temporary\().16b
+	.endif
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 10
+	.elseif \base == 10
 	vector_fp_cmp fcmgt, \element, \scalar, \output, \left, \right
+	.if \ordered
+	and v\output\().16b, v\output\().16b, v\temporary\().16b
+	.endif
 	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 11
+	.elseif \base == 11
 	movi v\output\().16b, #0
-	.elseif \predicate == 12
+	.elseif \base == 12
 	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \right
 	bic v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 13
+	.elseif \base == 13
 	vector_fp_cmp fcmge, \element, \scalar, \output, \left, \right
-	.elseif \predicate == 14
+	.elseif \base == 14
 	vector_fp_cmp fcmgt, \element, \scalar, \output, \left, \right
 	.else
 	movi v\output\().16b, #0xff
+	.endif
+	.if \ordered && (\base == 1 || \base == 2 || \base == 13 || \base == 14)
+	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	.endif
 .endm
 
@@ -300,7 +369,7 @@ Lx86_vector_fp_tiny_done\@:
 Lx86_vector_fp_nan_ready\@:
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
 Lx86_vector_fp_special\@:
-	simd_leave_if_checking
+	simd_leave_computed_if_checking
 	simd_x86_nan \element, \output, \left, \right, \binary, \scalar
 	b Lx86_vector_fp_nan_ready\@
 	.popsection
@@ -343,6 +412,7 @@ Lx86_vector_fp_special\@:
 	.set Lx86_vector_fp_tiny_result\@, 1
 	.endif
 	.if Lx86_vector_fp_tiny_result\@
+	tbz w13, #2, Lx86_vector_fp_ftz_ready\@
 	tbz w12, #15, Lx86_vector_fp_ftz_ready\@
 	.if \scalar
 	.if \element == 32
@@ -453,6 +523,29 @@ Lx86_vector_fp_tiny\@:
 Lx86_vector_fp_estimate_kept\@:
 .endm
 
+/* The host's quotient for an estimate's regular inputs raises precision
+ * alone, and x86 raises nothing. Precision is sticky: while MXCSR holds it,
+ * or FPSR does, one more changes nothing, and the quotient runs as it is;
+ * otherwise `unsticky`, in the cold section, keeps FPSR around it. When
+ * FPSR holds it, `unsticky` adds it to MXCSR, as the run would at its end,
+ * so that the next estimate need not read FPSR. The special inputs' path
+ * keeps FPSR in any case. Uses w14, MXCSR from here. */
+.macro vector_fp_estimate_sticky unsticky
+	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbz w14, #5, \unsticky
+.endm
+
+.macro vector_fp_estimate_regular operation, width, scalar
+	.if \scalar
+	vector_fp_regular_value \operation, 32, 6, 1, 1
+	.else
+	vector_fp_packed_value \operation, 32, 4, 1, 1
+	.if \width == 256
+	vector_fp_packed_value \operation, 32, 5, 3, 3
+	.endif
+	.endif
+.endm
+
 .macro vector_fp_estimate operation, width, scalar
 	.if \scalar
 	fmov w14, s1
@@ -468,8 +561,12 @@ Lx86_vector_fp_estimate_kept\@:
 Lx86_vector_fp_estimate_cold\@:
 	.endif
 	b Lx86_vector_fp_estimate_special\@
+Lx86_vector_fp_estimate_unsticky_stub\@:
+	b Lx86_vector_fp_estimate_unsticky\@
 Lx86_vector_fp_estimate_regular\@:
-	vector_fp_regular_value \operation, 32, 6, 1, 1
+	vector_fp_estimate_sticky Lx86_vector_fp_estimate_unsticky_stub\@
+Lx86_vector_fp_estimate_plain\@:
+	vector_fp_estimate_regular \operation, \width, \scalar
 Lx86_vector_fp_estimate_ready\@:
 	mov v4.s[0], v6.s[0]
 	.else
@@ -482,15 +579,27 @@ Lx86_vector_fp_estimate_ready\@:
 	fmov w14, s17
 	cbz w14, Lx86_vector_fp_estimate_regular\@
 	b Lx86_vector_fp_estimate_special\@
+Lx86_vector_fp_estimate_unsticky_stub\@:
+	b Lx86_vector_fp_estimate_unsticky\@
 Lx86_vector_fp_estimate_regular\@:
-	vector_fp_packed_value \operation, 32, 4, 1, 1
-	.if \width == 256
-	vector_fp_packed_value \operation, 32, 5, 3, 3
-	.endif
+	vector_fp_estimate_sticky Lx86_vector_fp_estimate_unsticky_stub\@
+Lx86_vector_fp_estimate_plain\@:
+	vector_fp_estimate_regular \operation, \width, \scalar
 Lx86_vector_fp_estimate_ready\@:
 	.endif
 	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+Lx86_vector_fp_estimate_unsticky\@:
+	mrs x15, fpsr
+	tbz x15, #4, Lx86_vector_fp_estimate_guarded\@
+	orr w14, w14, #0x20
+	str w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	b Lx86_vector_fp_estimate_plain\@
+Lx86_vector_fp_estimate_guarded\@:
+	vector_fp_estimate_regular \operation, \width, \scalar
+	msr fpsr, x15
+	b Lx86_vector_fp_estimate_ready\@
 Lx86_vector_fp_estimate_special\@:
+	mrs x16, fpsr
 	.if \scalar
 	vector_fp_estimate_special_scalar \operation
 	.else
@@ -499,6 +608,7 @@ Lx86_vector_fp_estimate_special\@:
 	vector_fp_estimate_special_packed \operation, 5, 3
 	.endif
 	.endif
+	msr fpsr, x16
 	b Lx86_vector_fp_estimate_ready\@
 	.popsection
 .endm
@@ -527,7 +637,28 @@ Lx86_vector_fp_estimate_special\@:
 	.endif
 .endm
 
-.macro vector_fp_compute operation, element, width, scalar, predicate
+/* Lx86_vector_fp_saving = whether the gadget saves FPSR for its leave: a
+ * sum, difference, product, quotient or square root, whose special result
+ * leaves after it computed -- every lane of a packed one, and a result the
+ * host found inexact which x86, raising an unmasked overflow, may not. */
+.macro vector_fp_saving operation
+	.set Lx86_vector_fp_saving, 0
+	.irp generating, sqrt, add, mul, sub, div
+	.ifc \operation,\generating
+	.set Lx86_vector_fp_saving, 1
+	.endif
+	.endr
+.endm
+
+/* The gadget's FPSR save, after its tail. */
+.macro vector_fp_save_path operation, save
+	vector_fp_saving \operation
+	.if Lx86_vector_fp_saving
+	simd_save_status_path \save
+	.endif
+.endm
+
+.macro vector_fp_compute operation, element, width, scalar, predicate, save
 	.if \scalar
 	mov v4.16b, v0.16b
 	.endif
@@ -541,7 +672,15 @@ Lx86_vector_fp_estimate_special\@:
 	.if Lx86_vector_fp_estimate\@
 	vector_fp_estimate \operation, \width, \scalar
 	.else
+	/* `exception_check_simd_exact` (w13) gates MXCSR.DAZ and FTZ and the
+	 * SIMD checks, and so FPSR's save; w12 is MXCSR only while it is set. */
+	ldrb w13, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w13, #2, Lx86_vector_fp_inputs_ready\@
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]
+	vector_fp_saving \operation
+	.if Lx86_vector_fp_saving
+	simd_save_status_branch \save, 13
+	.endif
 	tbz w12, #6, Lx86_vector_fp_inputs_ready\@
 	.if \width == 256
 	simd_flush_denormals_each \element, 0, 1, 2, 3
@@ -592,9 +731,10 @@ Lx86_vector_fp_inputs_ready\@:
 gadget vector_fp_\name\()_\element\()_\shape\()_rr
 	ldr x8, [_stream], #8
 	vector_read_pair \width
-	vector_fp_compute \operation, \element, \width, \scalar, \predicate
+	vector_fp_compute \operation, \element, \width, \scalar, \predicate, Lx86_vector_fp_save\@
 	vector_write_xmm \width, 8
 	retire_and_next
+	vector_fp_save_path \operation, Lx86_vector_fp_save\@
 .endm
 
 .macro vector_fp_memory name, operation, element, shape, width, scalar, predicate
@@ -651,9 +791,10 @@ Lx86_vector_fp_loaded\@:
 	.if \width == 256
 	ldr q2, [x10, #16]
 	.endif
-	vector_fp_compute \operation, \element, \width, \scalar, \predicate
+	vector_fp_compute \operation, \element, \width, \scalar, \predicate, Lx86_vector_fp_save\@
 	vector_write_xmm \width, 23
 	retire_and_next
+	vector_fp_save_path \operation, Lx86_vector_fp_save\@
 	.if !\scalar
 Lx86_vector_fp_cross_fault\@:
 	add sp, sp, #32
@@ -717,6 +858,22 @@ vector_fp_predicate 12
 vector_fp_predicate 13
 vector_fp_predicate 14
 vector_fp_predicate 15
+vector_fp_predicate 16
+vector_fp_predicate 17
+vector_fp_predicate 18
+vector_fp_predicate 19
+vector_fp_predicate 20
+vector_fp_predicate 21
+vector_fp_predicate 22
+vector_fp_predicate 23
+vector_fp_predicate 24
+vector_fp_predicate 25
+vector_fp_predicate 26
+vector_fp_predicate 27
+vector_fp_predicate 28
+vector_fp_predicate 29
+vector_fp_predicate 30
+vector_fp_predicate 31
 
 .purgem vector_fp_predicate
 .purgem vector_fp_single_operation
@@ -725,9 +882,13 @@ vector_fp_predicate 15
 .purgem vector_fp_memory
 .purgem vector_fp_register
 .purgem vector_fp_compute
+.purgem vector_fp_save_path
+.purgem vector_fp_saving
 .purgem vector_fp_check_inputs
 .purgem vector_fp_nan_inputs
 .purgem vector_fp_estimate
+.purgem vector_fp_estimate_regular
+.purgem vector_fp_estimate_sticky
 .purgem vector_fp_estimate_special_scalar
 .purgem vector_fp_estimate_special_packed
 .purgem vector_fp_estimate_lanes
@@ -737,5 +898,6 @@ vector_fp_predicate 15
 .purgem vector_fp_packed_value
 .purgem vector_fp_regular_value
 .purgem vector_fp_compare_mask
+.purgem vector_fp_relation
 .purgem vector_fp_cmp
 .purgem vector_fp_flush_tiny_scalar

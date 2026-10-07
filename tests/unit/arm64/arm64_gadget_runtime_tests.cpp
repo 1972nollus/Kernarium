@@ -84,9 +84,12 @@ void emulated_identification_registers_read_sanitized_values()
 	constexpr std::uint64_t base = 0x6100;
 	constexpr std::uint64_t untouched = 0x5555'5555'5555'5555;
 	/* Only the fields AT_HWCAP also advertises may be set in
-	 * ID_AA64PFR0_EL1: FP, AdvSIMD and DIT. */
+	 * ID_AA64PFR0_EL1: FP, AdvSIMD, SVE and DIT. This run presents the
+	 * process profile, which has the guest-SVE policy's tokens when it is
+	 * on, without the filter the runtime applies for an engine below
+	 * complete; with the policy off SVE reads zero. */
 	constexpr std::uint64_t advertised_processor_feature_fields =
-		0x000f'0000'00ff'0000ULL;
+		0x000f'000f'00ff'0000ULL;
 	constexpr std::array instructions{
 		0xd538'0001U, // mrs x1, midr_el1
 		0xd538'00a2U, // mrs x2, mpidr_el1
