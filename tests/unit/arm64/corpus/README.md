@@ -22,7 +22,7 @@ instead of an exact state.
 
 - `manifest.tsv` has one row per record: a producer CTest, check site, harness
   options, and page profiles, with program and case counts and hashes; the
-  code hash also covers a record's SVL.
+  code hash also covers a record's SVL and VL.
 - `coverage.tsv` counts cases per `../a64_instruction_inventory.tsv` entry,
   attributing each entry word through its official allocation predicates and
   decode partition, with illegal-instruction cases counted separately.
@@ -77,13 +77,14 @@ use of an existing one requires a runner change.
 
 ## Pack format
 
-All integers are little-endian. The file is `UMLA64C\0`, u32 version 2, u32 0,
+All integers are little-endian. The file is `UMLA64C\0`, u32 version 3, u32 0,
 and u64 body length, followed by the zlib-compressed body:
 
 ```text
 body     = meta:str32  tokens:u16*str16  native:u16*(u8*u16)
            validators:u16*str16  blobs:u32*(u32 size, bytes)  records:u32*record
 record   = name:str16 producer:str16 site:str16 profiles:u8 options:u16 svl:u16
+           vl:u16
            programs:u32*(entry:u16, u16*(offset:u16, word:u32))  cases:u32*case
 case     = program:u32 name:str16 ordinal_16k:u32 ordinal_4k:u32 event:u8
            flags:u8 retire [fault] [syndrome] native:u16 validator:u16
@@ -93,8 +94,11 @@ fault    = address:u64 access:u8        present when flags bit 1 is set
 syndrome = u32                          present for floating-point-trap
 state    = u32 mask, u64 per set bit (bit 31 is SP)
            u32 mask, 16 bytes per set vector
+           [sve]                                present when vl is not 0
            [sme]                                present when svl is not 0
            u8 count, (field id:u8, value) per field
+sve      = u16 mask, vl/8 bytes per set P register
+           u8 0 | u8 1, vl/8 bytes              FFR
 sme      = u32 mask, svl bytes per set Z register
            u16 mask, svl/8 bytes per set P register
            svl/8-byte mask, svl bytes per set ZA row (horizontal vector)
@@ -112,9 +116,9 @@ bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
-CPU without FEAT_AFP on every host, and bit 11 (`without_sme`) does the same
-for FEAT_SME. Region flags are readable, writable,
-executable, guest code, and guest writable. Events follow the harness order:
+CPU without FEAT_AFP on every host, bit 11 (`without_sme`) does the same
+for FEAT_SME, and bit 12 (`without_sve`) for FEAT_SVE. Region flags are
+readable, writable, executable, guest code, and guest writable. Events follow the harness order:
 system call, memory fault, reserved, illegal instruction, breakpoint,
 floating-point trap, PC alignment, instruction budget, fatal. The reserved
 option bits, event code 2, the field ids the table below omits, and non-empty
@@ -146,6 +150,7 @@ address is all ones, and every other field is zero. Field ids are:
 | 24 | `pstate_daif` u8 | | |
 
 | 38 | `svcr` u8 | 39 | `tpidr2` u64 |
+| 40 | `sve_live` u8 | | |
 
 Ids 5, 7, 9-18, 20-22, and 32-37 are reserved. A region's initial bytes are its
 blob, and its expected bytes are the blob with the runs applied.
@@ -167,8 +172,32 @@ SMSTART, is encoded against its base fill, and the V registers of an initial
 state in streaming mode are its Z registers' low bytes. Each byte of the SME base fill is `(n * 0x9e3779b1 mod 2^32) >> 24` for an
 index `n` that names the byte's position at the largest SVL: `256i + b` for
 byte `b` of `Zi`, `0x2000 + 32i + b` of `Pi`, `0x10000 + 256r + b` of ZA row
-`r`, and `0x30000 + b` of ZT0. A version 1 pack is a version 2 pack without
-SVLs; `build-unit-corpus.py` still reads one, and writes only version 2.
+`r`, and `0x30000 + b` of ZT0.
+
+### Non-streaming SVE state
+
+A record's `vl` is the vector length outside streaming mode that its cases'
+P and FFR are sized for, 16 bytes, or 0 for a record without that state.
+Only a record with a VL holds P0-P15, FFR, or `sve_live`. The runner runs its
+cases, and any case that needs an SVE profile feature natively, only for a
+lane whose `sve_support` is `complete` where the virtual CPU implements the
+SVE profile, and counts every other one as skipped for `sve`. At that VL Z_n
+is V_n, so the vector section holds the Z registers. P and FFR are packed,
+bit k for byte k, as the architecture holds them; the runner loads them into
+the engines' mask form and compares them packed. `sve_live` is 0 or 1, arm64
+Linux's TIF_SVE: the task has executed SVE since its last system call. A
+state that is not live holds zero P and FFR, because Linux zeroes them when a
+system call discards the state and the next SVE instruction finds them so;
+the encoder refuses a state that breaks this. The base fill of P, FFR, and
+`sve_live` is zero, and the expected state's are the initial ones unless it
+names its own. A record without a VL expects them zero. They are apart from
+the streaming P registers of the SME state.
+
+A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
+version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes
+version 3; it writes version 2 for a corpus without VLs, so the
+`arm64-instruction-corpus-freshness` test can show that every record keeps
+its meaning, bit for bit, in both.
 
 ## Running
 

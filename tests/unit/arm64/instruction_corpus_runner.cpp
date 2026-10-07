@@ -11,9 +11,12 @@
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -72,7 +75,7 @@ constexpr std::size_t execution_limit = 64;
 constexpr unsigned long generation = 0x10000;
 constexpr std::array<char, 8> pack_magic{'U', 'M', 'L', 'A',
                                          '6', '4', 'C', '\0'};
-constexpr std::uint32_t pack_version = 2;
+constexpr std::uint32_t pack_version = 3;
 constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
@@ -84,7 +87,11 @@ constexpr std::uint16_t without_afp_option = 0x400U;
 /* Option bit 11 does the same for FEAT_SME: its cases pin SVE and SME
  * encodings UNDEFINED. */
 constexpr std::uint16_t without_sme_option = 0x800U;
-constexpr std::uint16_t known_options = 0xfffU;
+/* Option bit 12 does the same for FEAT_SVE: its cases pin the encodings the
+ * SVE profile executes outside streaming mode UNDEFINED, or hold what an SME
+ * host without SVE observed. */
+constexpr std::uint16_t without_sve_option = 0x1000U;
+constexpr std::uint16_t known_options = 0x1fffU;
 /* SME state: Z0-Z31, P0-P15 and the ZA rows are sized by a record's
  * streaming vector length (SVL), ZT0 is 64 bytes. */
 constexpr std::size_t zt0_bytes = arm64::sme_zt0_bytes;
@@ -268,6 +275,9 @@ struct Record final {
   /* The SVL the cases' SME state is sized for and their expectations hold
    * at, or 0 for a record without SME state. */
   std::uint16_t svl{};
+  /* The vector length outside streaming mode that the cases' P and FFR are
+   * sized for, arm64::sve_vector_length, or 0 for a record without them. */
+  std::uint16_t vl{};
   std::vector<Program> programs;
   std::vector<CorpusCase> cases;
 };
@@ -277,7 +287,7 @@ struct Record final {
  * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, 5 the retired FEAT_FP8
  * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the producer's one-byte
  * PSTATE.SM and ZA; all stay reserved. SVCR and TPIDR2_EL0 appear only in a
- * record with an SVL. */
+ * record with an SVL, sve_live only in a record with a VL. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -297,6 +307,7 @@ enum class Field : std::uint8_t {
   fp_dirty,
   svcr = 38,
   tpidr2,
+  sve_live,
 };
 
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
@@ -321,6 +332,7 @@ enum class Field : std::uint8_t {
   case Field::exclusive_size:
   case Field::fp_dirty:
   case Field::svcr:
+  case Field::sve_live:
     return 1;
   }
   throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -343,14 +355,28 @@ void skip_sme_sections(Reader &reader, unsigned svl) {
   (void)reader.bytes(zt0 * zt0_bytes);
 }
 
+/* Skips one sparse state's SVE sections: P and FFR outside streaming
+ * mode. */
+void skip_sve_sections(Reader &reader, unsigned vl) {
+  const auto p = reader.u16();
+  (void)reader.bytes(vl / 8U * static_cast<std::size_t>(std::popcount(p)));
+  const auto ffr = reader.u8();
+  if (ffr > 1U)
+    throw CorpusError{"invalid FFR flag"};
+  (void)reader.bytes(ffr * vl / 8U);
+}
+
 /* Returns the encoded span of one sparse state and validates its shape. */
 [[nodiscard]] std::span<const std::byte>
-sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl) {
+sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl,
+             unsigned vl) {
   const auto begin = reader.offset();
   const auto registers = reader.u32();
   (void)reader.bytes(8U * static_cast<std::size_t>(std::popcount(registers)));
   const auto vectors = reader.u32();
   (void)reader.bytes(16U * static_cast<std::size_t>(std::popcount(vectors)));
+  if (vl != 0U)
+    skip_sve_sections(reader, vl);
   if (svl != 0U)
     skip_sme_sections(reader, svl);
   const auto fields = reader.u8();
@@ -448,10 +474,25 @@ void apply_sme_sections(Reader &reader, std::span<std::byte> image,
     copy(arm64::sme_zt0_offset(svl), zt0_bytes);
 }
 
+/* Applies one sparse state's SVE sections, packed as the architecture
+ * holds them, to the engines' mask form of P and FFR. */
+void apply_sve_sections(Reader &reader, arm64::CpuState &state) {
+  const auto packed = [&] {
+    return static_cast<std::uint16_t>(reader.little(2));
+  };
+  const auto p = reader.u16();
+  for (unsigned n = 0; n < arm64::sve_p_registers; ++n)
+    if ((p >> n) & 1U)
+      state.sve_p[n] = arm64::sve_predicate_mask(packed());
+  if (reader.u8() != 0U)
+    state.sve_ffr = arm64::sve_predicate_mask(packed());
+}
+
 /* Applies a sparse state; `image` receives its SME sections when the
- * record has an SVL. */
+ * record has an SVL, and CpuState its P and FFR when it has a VL. */
 void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
-                  unsigned svl = 0, std::span<std::byte> image = {}) {
+                  unsigned svl = 0, std::span<std::byte> image = {},
+                  unsigned vl = 0) {
   Reader reader{encoded};
   const auto registers = reader.u32();
   for (unsigned index = 0; index < 32U; ++index)
@@ -468,6 +509,8 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
       const auto data = reader.bytes(16);
       std::copy(data.begin(), data.end(), state.vectors[index].bytes.begin());
     }
+  if (vl != 0U)
+    apply_sve_sections(reader, state);
   if (svl != 0U)
     apply_sme_sections(reader, image, svl);
   const auto fields = reader.u8();
@@ -528,6 +571,9 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
       break;
     case Field::tpidr2:
       state.tpidr2 = reader.u64();
+      break;
+    case Field::sve_live:
+      state.sve_live = reader.u8();
       break;
     default:
       throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -752,12 +798,15 @@ void validate_case(const Record &record, const CorpusCase &test_case,
     record.profiles = reader.u8();
     record.options = reader.u16();
     record.svl = reader.u16();
+    record.vl = reader.u16();
     if ((record.options & retired_options) != 0U)
       throw CorpusError{std::string{record.name} + ": retired harness option"};
     if ((record.options & ~known_options) != 0U)
       throw CorpusError{std::string{record.name} + ": unknown harness option"};
     if (record.svl != 0U && !valid_svl(record.svl))
       throw CorpusError{std::string{record.name} + ": invalid SVL"};
+    if (record.vl != 0U && record.vl != arm64::sve_vector_length)
+      throw CorpusError{std::string{record.name} + ": invalid VL"};
     const auto program_count = reader.u32();
     record.programs.reserve(program_count);
     for (std::uint32_t program = 0; program < program_count; ++program) {
@@ -831,8 +880,8 @@ void validate_case(const Record &record, const CorpusCase &test_case,
         test_case.syndrome = reader.u32();
       test_case.native = reader.u16();
       test_case.validator = reader.u16();
-      test_case.initial = sparse_state(reader, body, record.svl);
-      test_case.expected = sparse_state(reader, body, record.svl);
+      test_case.initial = sparse_state(reader, body, record.svl, record.vl);
+      test_case.expected = sparse_state(reader, body, record.svl, record.vl);
       const auto regions = reader.u8();
       for (unsigned region_index = 0; region_index < regions; ++region_index) {
         auto &region = test_case.memory.emplace_back();
@@ -1023,6 +1072,14 @@ enum class Lane : std::uint8_t { gadgets, jit };
                                : arm64::jit::sme_support;
 }
 
+/* How much of the non-streaming SVE profile a lane implements. A lane that
+ * executes SVE outside streaming mode some other way, such as the shared
+ * semantic library, joins Lane with its own level here. */
+[[nodiscard]] constexpr arm64::SveSupport lane_sve_support(Lane lane) noexcept {
+  return lane == Lane::gadgets ? arm64::gadgets::sve_support
+                               : arm64::jit::sve_support;
+}
+
 /* The SME profile's tokens, which without_sme removes. */
 constexpr std::array<ArmFeature, 4> sme_features{
     ArmFeature::sme, ArmFeature::sme2, ArmFeature::sme_f64f64,
@@ -1050,6 +1107,9 @@ public:
         host_.supported.reset(static_cast<std::size_t>(feature));
       host_.sme_svl_bytes = 0;
     }
+    if ((options & without_sve_option) != 0U)
+      for (const auto feature : arm64::sve_features)
+        host_.supported.reset(static_cast<std::size_t>(feature));
     const ::uml::cpu::EngineConfiguration configuration{
         .host_capabilities = host_,
     };
@@ -1148,15 +1208,25 @@ struct Counts final {
 };
 
 /* The feature a case needs that a lane's virtual CPU for `host` lacks
- * although the host may have it: FEAT_AFP or FEAT_RPRES outside their
- * predicates; FEAT_SME for a case with SME state or an SME requirement
- * unless the virtual CPU implements the profile at the record's SVL and the
- * lane's engine is complete; and FEAT_SME2 outside the SME2 profile or for
- * an engine without the SME2 forms. */
+ * although the host may have it: FEAT_SVE for a case with non-streaming SVE
+ * state or an SVE requirement unless the virtual CPU implements the SVE
+ * profile and the lane implements all of it; FEAT_AFP or FEAT_RPRES outside
+ * their predicates; FEAT_SME for a case with SME state or an SME
+ * requirement unless the virtual CPU implements the profile at the record's
+ * SVL and the lane's engine is complete; and FEAT_SME2 outside the SME2
+ * profile or for an engine without the SME2 forms. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
                   const ::uml::platform::HostCapabilities &host, Lane lane) {
+  const bool sve_case =
+      record.vl != 0U ||
+      std::ranges::any_of(arm64::sve_features, [&](ArmFeature feature) {
+        return native.test(static_cast<std::size_t>(feature));
+      });
+  if (sve_case && (!arm64::implements_sve(host) ||
+                   lane_sve_support(lane) < arm64::SveSupport::complete))
+    return ArmFeature::sve;
   const bool sme_case =
       record.svl != 0U ||
       std::ranges::any_of(sme_features, [&](ArmFeature feature) {
@@ -1358,11 +1428,13 @@ private:
         initial = base_state(program.entry);
         if (record.svl != 0U)
           initial_sme = sme_base_image(record.svl);
-        apply_sparse(*initial, test_case.initial, record.svl, initial_sme);
+        apply_sparse(*initial, test_case.initial, record.svl, initial_sme,
+                     record.vl);
         streaming_view(*initial, initial_sme, record.svl);
         expected = *initial;
         expected_sme = initial_sme;
-        apply_sparse(*expected, test_case.expected, record.svl, expected_sme);
+        apply_sparse(*expected, test_case.expected, record.svl, expected_sme,
+                     record.vl);
         streaming_view(*expected, expected_sme, record.svl);
         regions.reserve(test_case.memory.size());
         for (const auto &region : test_case.memory)
