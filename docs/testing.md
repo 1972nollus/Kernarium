@@ -524,7 +524,8 @@ CPU, so both engines run them today with the guest-SVE policy off or on.
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
-pages. Until an engine reaches `sve_support` `complete` they are all
+pages. Their floating-point forms are sampled across FPCR's rounding modes
+and its FZ, DN, and FZ16 controls. Until an engine reaches `sve_support` `complete` they are all
 skipped. The `arm64-instruction-corpus-sve-native` tooling test re-derives
 their cases from their generator, and `arm64-sve-native-oracle` drives the
 native oracle with base A64 cases on any arm64 Mac, and with SVE cases where
@@ -540,7 +541,10 @@ case of its encoding. Their floating-point families come from the M4 in
 streaming mode with every 128-bit segment holding the case. The runner
 runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
-tooling test re-derives them.
+tooling test re-derives them. The `arm64-sve-afp` records come from the
+M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
+arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks their
+request until the M4 has answered.
 
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
