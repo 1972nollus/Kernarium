@@ -496,7 +496,7 @@ profile, it lowers PTRUE, PTRUES, PFALSE and PTEST, the predicate logical
 operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and
 ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL
 and the unpredicated logical forms onto AdvSIMD and general registers
-([`jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp));
+([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp));
 every other non-streaming SVE word is its illegal-instruction exit. Since it
 presents no SVE to a guest below `complete`, only tests that hand it the
 profile reach these forms. No translation holds an SVE word, and SM=1
