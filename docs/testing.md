@@ -346,7 +346,8 @@ pass every exception case, unmasked
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
 STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
-Xeon's; `--pending` marks an engine that does not keep masked flags yet.
+Xeon's; `--pending` marks an engine that does not keep masked flags yet,
+which the JIT does not.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -594,7 +595,8 @@ of stop, in long64 and compat32, including a store into the code of the block
 running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names. The
+Xeon's, except the documented inexact cases the test names; the JIT's runs
+`--pending`, allowing flags it leaves out. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 
