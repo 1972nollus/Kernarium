@@ -293,6 +293,25 @@ region, can therefore still change its odds when an unrelated image changes
 size, so an iPad layout comparison logs each launch's load address and counts
 modes per arm.
 
+The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
+too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
+order file. It follows the arm64 region in an image that carries both and
+starts `__text` in one that does not, and each part starts on a 16 KiB page.
+Each part is a run of fixed slots, one per group, from the table in
+`engine/region.inc`; the groups are the common entry code, a veneer island
+like the arm64 one, each baked family and each `engine/*.inc` file. A group
+begins at its slot's start plus its 128-byte phase and every slot is whole
+128-byte lines, so a group that changes size within its slot moves no other
+group's bytes, and one that outgrows it moves the later groups by whole lines,
+keeping every gadget's phase. The bytes between groups follow an
+unconditional branch and are never reached. The region's bytes therefore
+depend on the engine's sources alone, and its image offset moves only in whole
+pages, when the arm64 region ahead of it crosses one.
+`x86-64-gadget-region-layout` checks this contract on the images each tree
+builds, and the region layout section of the
+[x86-64 gadget README](../darwin/cpu/x86_64/gadgets/README.md) says what a
+change to a group moves.
+
 Data-alignment faults retain the effective data address and the faulting PC.
 The host exports a distinct bridge event, and both kernel lines deliver
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They

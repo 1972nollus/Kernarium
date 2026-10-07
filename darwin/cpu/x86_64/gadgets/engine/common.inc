@@ -13,13 +13,6 @@ _executed .req x29
 	.set Lx86_guest_memory_gadget, 0
 	.set Lx86_simd_status_gadget, 0
 
-/* Name the start of the cold section, whose own labels are temporary, so a
- * host sample of a cold path names this section rather than whatever precedes
- * it in the image. It emits no bytes. */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-NAME(uml_x86_64_gadget_cold_section_begin):
-	.popsection
-
 .macro gadget name
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
@@ -952,7 +945,7 @@ Lx86_lazy_ready\@:
 	 * instructions in the entry and its whole body in the cold section, so a
 	 * bank this size keeps only the plain form in the hot stream.
 	 */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
@@ -1085,7 +1078,7 @@ Lx86_tlb_done\@:
 	 * program's publications, which is exactly when `write_code` says nothing
 	 * is owed.
 	 */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_tlb_write_code_owed\@:
 	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 	eor x14, x9, x14
@@ -1368,7 +1361,6 @@ Lx86_indirect_follow\@:
 	follow_block_link x8
 .endm
 
-.text
 .p2align 4
 .globl NAME(uml_x86_64_gadget_enter)
 NAME(uml_x86_64_gadget_enter):

@@ -70,7 +70,7 @@ Lx86_vector_horizontal_nan_ready\@:
 	simd_flush_denormal_results \element, 4
 	.endif
 Lx86_vector_horizontal_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_horizontal_repair\@:
 	simd_leave_computed_if_checking
 	vector_horizontal_nan \operation, \element, 4, 0, 1
@@ -163,7 +163,7 @@ Lx86_vector_horizontal_common\@:
 	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4
 	.endif
 Lx86_vector_horizontal_done\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_horizontal_nan\@:
 	vector_horizontal_nan \operation, \element, 4, 0, 1
 	.if \width == 256

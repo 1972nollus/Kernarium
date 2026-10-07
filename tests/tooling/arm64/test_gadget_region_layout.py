@@ -93,6 +93,9 @@ def order_parts(order: Path) -> list[str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # The x86-64 region's parts follow; its own guard checks them.
+        if line.startswith("_uml_x86_64_"):
+            continue
         prefix = "_uml_arm64_gadget_region_"
         if not line.startswith(prefix):
             raise ValueError(f"{order}: unexpected entry {line}")

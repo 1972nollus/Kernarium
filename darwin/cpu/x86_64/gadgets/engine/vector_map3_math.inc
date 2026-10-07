@@ -121,7 +121,7 @@ Lx86_vector_map3_dot_common\@:
 	simd_nan_lanes \element, Lx86_vector_map3_dot_exact\@, 4
 	.endif
 Lx86_vector_map3_dot_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_map3_dot_exact\@:
 	simd_leave_if_checking
 	ldr w12, [_cpu, #UML_X86_64_CPU_MXCSR]

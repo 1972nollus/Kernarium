@@ -134,7 +134,7 @@ Lx86_vector_convert_inputs_ready\@:
 	.endif
 	b Lx86_vector_convert_tiny\@
 Lx86_vector_convert_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_convert_tiny\@:
 	mrs x15, fpsr
 	mov x14, #0x43f0000000000000

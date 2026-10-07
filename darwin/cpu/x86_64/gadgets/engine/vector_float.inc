@@ -367,7 +367,7 @@ Lx86_vector_fp_tiny_done\@:
 	.endif
 	b Lx86_vector_fp_special\@
 Lx86_vector_fp_nan_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_fp_special\@:
 	simd_leave_computed_if_checking
 	simd_x86_nan \element, \output, \left, \right, \binary, \scalar
@@ -439,7 +439,7 @@ Lx86_vector_fp_special\@:
 	.endif
 	b Lx86_vector_fp_tiny\@
 Lx86_vector_fp_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_fp_tiny\@:
 	.if \scalar
 	vector_fp_flush_tiny_scalar \operation, \element
@@ -587,7 +587,7 @@ Lx86_vector_fp_estimate_plain\@:
 	vector_fp_estimate_regular \operation, \width, \scalar
 Lx86_vector_fp_estimate_ready\@:
 	.endif
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_fp_estimate_unsticky\@:
 	mrs x15, fpsr
 	tbz x15, #4, Lx86_vector_fp_estimate_guarded\@
