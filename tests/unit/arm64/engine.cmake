@@ -166,6 +166,10 @@
     uml_add_arm64_unit_test(tlb WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
 
+    # The executable-memory owner's window near the image.
+    uml_add_arm64_unit_test(jit_memory_window NAME arm64-jit-memory-window
+        WITHOUT_HARNESS OBJECTS $<TARGET_OBJECTS:uml_cpu_executable_memory>)
+
     foreach(JIT_CACHE_TEST IN ITEMS cache_geometry shared_translation_cache)
         uml_add_arm64_unit_test(jit_${JIT_CACHE_TEST} WITHOUT_HARNESS NO_OBJECTS
             LABELS tsan)

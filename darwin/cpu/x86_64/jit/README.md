@@ -129,6 +129,12 @@ the process. `FexEngineOptions::code_bytes_per_node` lowers the estimate and
 `code_buffer_restarts()` counts the restarts, which is how
 `x86-64-jit-code-buffer-growth` makes every large unit grow.
 
+Each space's FEXCore context keeps a 16 MiB code buffer and a 32 KiB
+dispatcher, and each vCPU keeps up to eight spaces. The owner serves both from
+its window near the host image, because the generated code calls FEXCore's
+fallbacks there; a buffer beyond the window's capacity runs x87-heavy code
+about a third slower ([architecture](../../../../docs/architecture.md)).
+
 ## Guest-visible model
 
 CPUID comes from `../cpuid.hpp`, with nothing withheld; AVX and AVX2 run as

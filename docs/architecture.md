@@ -175,6 +175,16 @@ allocation, release, and the write window through hooks the embedder installs,
 and prefix verification rejects a FEXCore archive that toggles JIT write
 protection.
 
+On macOS the owner serves JIT memory from one window in the host image's
+4 GiB block, claimed when the process first asks whether it can run JIT code,
+before its kernel boots. Apple cores predict an indirect branch's target
+cheaply only near the branch, and generated code calls into the image: FEXCore
+reaches its x87 fallbacks that way, and its code ran x87 a third slower from a
+buffer the kernel had placed hundreds of GiB away. The window takes the largest
+free range there, up to 1.5 GiB; a mapping beyond its capacity goes wherever
+the kernel puts it. A release keeps the pages mapped and reusable, so memory
+served again may hold its old bytes.
+
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
 presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
