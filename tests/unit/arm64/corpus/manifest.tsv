@@ -1106,3 +1106,4 @@ arm64-sve-native/memory	arm64-sve-native	tools/arm64-tests/sve-native-corpus.py	
 arm64-sve-native/memory/4k	arm64-sve-native	tools/arm64-tests/sve-native-corpus.py	0	4k	166	376	371bba63d276781cd516be1aeb41278c954bd71ee660a936808667bd13c55de1	5f930db8b453f4bd10a13a3bfa7d03b6a39dd9b9a4914ef100a8e8e16afdb93f
 arm64-sve-native/gather	arm64-sve-native	tools/arm64-tests/sve-native-corpus.py	0	16k+4k	213	2051	483961f69f137b8af87dfd57b09347a5fdcf5fc32e835553b277ce4acac23a76	3eb1687bc3ed30e73577af57daec9c59d6ea97dbd46574869961cdb136d16213
 arm64-sve-native/live	arm64-sve-native	tools/arm64-tests/sve-native-corpus.py	0	16k+4k	11	18	b04fa0395f4af5c7880ec112d4f87caf7753c4fe8d429140bb05d605892f30cb	7c0be4700cec6adc08857df008bb7443d643deb7edaf7fe4d0c19c90efe10638
+arm64-sve-sme/asl	arm64-sve-sme	tools/arm64-tests/sve-sme-corpus.py	0	16k+4k	196	311	1d89eb8651d5afa38f585f5f97c4c2392407eab8e6e97ec88718e17ad75b51c9	237d91ea6c3a43fe9ad0d6de2b4602ab37ed40890eeb17c7f61541e64e1129f1
