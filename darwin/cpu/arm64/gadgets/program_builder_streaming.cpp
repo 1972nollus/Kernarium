@@ -17,6 +17,7 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 
 #include <algorithm>
 #include <array>
@@ -63,25 +64,7 @@ using streaming::Lowering;
 [[nodiscard]] constexpr std::uint64_t pattern_count(unsigned pattern,
 	unsigned esize, unsigned svl) noexcept
 {
-	const unsigned elements = svl * 8U / esize;
-	switch (pattern) {
-	case 0: /* POW2 */
-		return std::bit_floor(elements);
-	case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		return elements >= pattern ? pattern : 0U;
-	case 9: case 10: case 11: case 12: case 13: {
-		const unsigned count = 16U << (pattern - 9U);
-		return elements >= count ? count : 0U;
-	}
-	case 29: /* MUL4 */
-		return elements - elements % 4U;
-	case 30: /* MUL3 */
-		return elements - elements % 3U;
-	case 31: /* ALL */
-		return elements;
-	default:
-		return 0;
-	}
+	return predicate_pattern_count(pattern, svl * 8U / esize);
 }
 
 /* The element size, in bits, that an immediate shift's tsz field selects,
@@ -512,6 +495,8 @@ struct VectorStream final {
 			static_cast<unsigned>(std::countr_zero(msize)));
 		break;
 	case detail::SmeAddressOffset::none:
+	case detail::SmeAddressOffset::vector_index:
+	case detail::SmeAddressOffset::register_byte:
 		break;
 	}
 	std::uint64_t predicate = 0;

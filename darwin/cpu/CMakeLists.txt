@@ -84,6 +84,24 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
 target_include_directories(uml_arm64_execution_helpers PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
+# The engine-neutral SVE semantic library (docs/architecture.md). No product
+# links it until an engine calls it.
+add_library(uml_arm64_sve_semantics OBJECT
+    arm64/detail/sve_semantics.cpp
+    arm64/detail/sve_semantics_crypto.cpp
+    arm64/detail/sve_semantics_floating.cpp
+    arm64/detail/sve_semantics_integer.cpp
+    arm64/detail/sve_semantics_memory.cpp
+    arm64/detail/sve_semantics_permute.cpp
+    arm64/detail/sve_semantics_predicate.cpp
+    arm64/detail/sve_semantics_wide.cpp)
+uml_declare_architecture_target(uml_arm64_sve_semantics cpu shared)
+target_link_libraries(uml_arm64_sve_semantics PRIVATE
+    UML::BridgeAbi
+    UML::CpuContract)
+target_include_directories(uml_arm64_sve_semantics PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+
 # Off by default so ordinary translation has no diagnostic instrumentation. A
 # threaded counter gadget indexes a table keyed by the exact selected entry,
 # which is what a static host-instruction cost per entry must be weighted by.
@@ -150,6 +168,40 @@ set(_uml_arm64_gadget_sme_sources
     arm64/gadgets/sme_helpers.cpp
     ${_uml_arm64_streaming_dir}/streaming_forms.hpp)
 
+# Gadget-engine non-streaming SVE sources, owned by SVE lane V5: the SVE
+# part's selection source and the gadget bodies and form header it generates
+# at build time from the same encoding table. engine.S gains their
+# OBJECT_DEPENDS and include directory by appending, so the SME block's
+# lines stay as they are.
+set(_uml_arm64_sve_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_sve)
+set(_uml_arm64_sve_generator
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_sve.py)
+add_custom_command(
+    OUTPUT ${_uml_arm64_sve_dir}/sve_generated.inc
+        ${_uml_arm64_sve_dir}/sve_forms.hpp
+    COMMAND ${Python3_EXECUTABLE} -B ${_uml_arm64_sve_generator}
+        --loader ${_uml_arm64_streaming_loader}
+        --table ${_uml_arm64_streaming_table}
+        --assembly ${_uml_arm64_sve_dir}/sve_generated.inc
+        --header ${_uml_arm64_sve_dir}/sve_forms.hpp
+    DEPENDS ${_uml_arm64_sve_generator} ${_uml_arm64_streaming_loader}
+        ${_uml_arm64_streaming_table}
+    COMMENT "Generating the arm64 non-streaming SVE gadgets"
+    VERBATIM)
+set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
+    OBJECT_DEPENDS ${_uml_arm64_sve_dir}/sve_generated.inc)
+set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
+    INCLUDE_DIRECTORIES ${_uml_arm64_sve_dir})
+set_source_files_properties(arm64/gadgets/program_builder_sve.cpp
+    PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_sve_dir})
+# The generated header for the tests that check the forms against the table.
+add_library(uml_arm64_sve_forms INTERFACE)
+uml_declare_architecture_target(uml_arm64_sve_forms cpu gadget)
+target_include_directories(uml_arm64_sve_forms INTERFACE ${_uml_arm64_sve_dir})
+set(_uml_arm64_gadget_sve_sources
+    arm64/gadgets/program_builder_sve.cpp
+    ${_uml_arm64_sve_dir}/sve_forms.hpp)
+
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -172,7 +224,8 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/software_crypto_helpers.cpp
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S
-    ${_uml_arm64_gadget_sme_sources})
+    ${_uml_arm64_gadget_sme_sources}
+    ${_uml_arm64_gadget_sve_sources})
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
@@ -193,7 +246,7 @@ if(APPLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/gadget_region.order)
     set(_uml_gadget_region_options)
     foreach(_uml_gadget_region_part IN ITEMS
-            bank forward vforward cold afp veneer sme)
+            bank forward vforward cold afp veneer sme sve)
         list(APPEND _uml_gadget_region_options
             "LINKER:-rename_section,__TEXT,__a64_${_uml_gadget_region_part},__TEXT,__text")
     endforeach()
@@ -321,7 +374,8 @@ if(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION)
     set(_uml_inline_asm_targets
         uml_arm64_gadgets
         uml_arm64_jit
-        uml_arm64_jit_executor)
+        uml_arm64_jit_executor
+        uml_arm64_sve_semantics)
     if(TARGET uml_arm64_jit_diagnostics_executor)
         list(APPEND _uml_inline_asm_targets
             uml_arm64_jit_diagnostics_executor)
