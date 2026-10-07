@@ -134,8 +134,10 @@ struct SveResult final {
  * floating-point form raises the cumulative FPSR flags of its active
  * elements only, and while an FPCR trap enable is set it traps when one of
  * them raises an enabled exception, as AdvSIMD's transactional path does.
- * A fault or a floating-point trap leaves the architectural state as it
- * was, but for the cumulative FPSR flags a trap commits and the live mark.
+ * A fault or a floating-point trap leaves the registers as they were, but
+ * for the cumulative FPSR flags a trap commits and the live mark, and a
+ * faulting store leaves memory as the hardware does (SveMemory). A store
+ * that writes, or completes, clears the local exclusive monitor.
  * Any other word, or a row the library does not cover, is a fatal internal
  * error that changes nothing.
  */

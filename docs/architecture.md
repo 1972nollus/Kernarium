@@ -274,7 +274,14 @@ table, for an engine's forms that it does not lower inline. It includes no
 engine header and works on `CpuState` alone. It reaches guest memory only
 through the caller's translation interface. It never changes PC, and it marks
 the SVE state live. A reserved bitmask immediate gives the
-illegal-instruction exit. A faulting access leaves what the hardware leaves.
+illegal-instruction exit. A memory form faults at the first byte, in the
+pseudocode's access order, that does not translate, and checks an SP base's
+16-byte alignment before any access, also with no element active. A fault
+leaves what arm64-builder's Neoverse V2 leaves: a load changes no register, a
+store writes its footprint's 16-byte pieces in order up to the faulting one,
+and a scatter its elements in order up to the faulting one. A first-fault
+load's later elements, and a non-fault load's every element, clear FFR from
+the first that does not translate instead of faulting.
 A floating-point form computes each active element with the host's own
 instruction under the guest FPCR, so inactive elements raise nothing; while
 an FPCR trap enable is set it runs as AdvSIMD's transactional path does, and
