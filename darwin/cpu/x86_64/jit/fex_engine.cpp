@@ -6,6 +6,7 @@
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
 #include "cpu/x86_64/jit/fp_model.hpp"
+#include "cpu/x86_64/segments.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 
 #include <FEXCore/Config/Config.h>
@@ -1009,6 +1010,15 @@ constexpr std::uint16_t x87_exception_masks = 0x3fU;
 constexpr std::uint16_t x87_status_pending = 0x8080U;
 constexpr std::uint8_t x87_error_vector = 16;
 
+/* The elements of a repeated string instruction the segment model moves
+ * before it yields, as the gadget engine's repeat budget bounds its own. */
+constexpr std::uint64_t string_step_elements = 4096;
+
+/* A space key bit above the floating-point mode: a compatibility-mode space
+ * whose ES, SS or DS has a base or a limit (Context::SetEmbedderSegmented),
+ * which runs only the single instructions the host's segment model checked. */
+constexpr std::uint32_t space_segmented = 1U << 31;
+
 /* The floating-point mode a translation for `cpu` assumes. */
 [[nodiscard]] std::uint32_t fp_mode_for(const CpuState &cpu) noexcept
 {
@@ -1075,30 +1085,31 @@ void load_state(Space &space, const CpuState &cpu) noexcept
 	state.flags[X86State::X87FLAG_TOP_LOC] = cpu.x87_top & 7U;
 
 	/* Embedded FEXCore decodes by the space's execution mode, as the gadget
-	 * engine does, so CS is only data, which a far transfer or IRET loads. */
+	 * engine does, and leaves every selector load, far transfer and IRET to
+	 * the host's segment model, so the selectors are only data. A
+	 * compatibility-mode override of ES, CS, SS or DS adds that segment's
+	 * base, which a segmented space also adds by default. */
 	state.es_idx = cpu.segment_selectors[0];
 	state.cs_idx = cpu.segment_selectors[1];
 	state.ss_idx = cpu.segment_selectors[2];
 	state.ds_idx = cpu.segment_selectors[3];
 	state.fs_idx = cpu.segment_selectors[4];
 	state.gs_idx = cpu.segment_selectors[5];
-	state.es_cached = state.cs_cached = state.ss_cached = state.ds_cached = 0;
+	const bool compat = cpu.execution_mode == ExecutionMode::compat32;
+	state.es_cached = compat ? cpu.segments[0].base : 0;
+	state.cs_cached = compat ? cpu.segments[1].base : 0;
+	state.ss_cached = compat ? cpu.segments[2].base : 0;
+	state.ds_cached = compat ? cpu.segments[3].base : 0;
 	state.fs_cached = cpu.fs_base;
 	state.gs_cached = cpu.gs_base;
-	/* The bases a compat32 FS or GS load finds, and the entries LSL reads
-	 * as flat: the kernel's TLS descriptors, at the GDT entries it
-	 * numbered, as the gadget engine reads them. */
-	auto &bases = thread->CurrentFrame->Embedder.SegmentBases;
-	std::fill(std::begin(bases), std::end(bases), 0U);
-	std::uint32_t present{};
-	for (std::size_t index = 0; index < cpu.compat_tls_bases.size(); ++index) {
-		const auto entry = static_cast<std::size_t>(cpu.compat_tls_first) + index;
-		if (((cpu.compat_tls_present >> index) & 1U) != 0 && entry < std::size(bases)) {
-			bases[entry] = cpu.compat_tls_bases[index];
-			present |= 1U << entry;
-		}
+	/* FS's and GS's inline checks, and whether the host runs one
+	 * instruction it checked itself. */
+	auto &embedder = thread->CurrentFrame->Embedder;
+	for (std::size_t index = 0; index < 2; ++index) {
+		embedder.SegmentChecks[index].Low = cpu.segments[4 + index].check_low;
+		embedder.SegmentChecks[index].Span = cpu.segments[4 + index].check_span;
 	}
-	thread->CurrentFrame->Embedder.SegmentPresent = present;
+	embedder.SegmentBypass = cpu.segment_bypass;
 }
 
 void save_state(Space &space, CpuState &cpu) noexcept
@@ -1247,6 +1258,9 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, boo
 	space->mode = mode;
 	space->orders_stores = orders_stores;
 	space->fp_mode = fp_mode;
+	/* A space made for a mode the address space is about to run counts as
+	 * used, so making the next one never evicts it. */
+	space->last_use = ++clock;
 	space->engine = this;
 	if (!space->callret.reserve())
 		return nullptr;
@@ -1267,7 +1281,8 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, boo
 		space->context->SetSignalDelegator(&signal_delegator);
 		space->context->SetSyscallHandler(space->syscalls.get());
 		space->context->EnableEmbedding();
-		space->context->SetEmbedderFPMode(fp_mode);
+		space->context->SetEmbedderFPMode(fp_mode & ~space_segmented);
+		space->context->SetEmbedderSegmented((fp_mode & space_segmented) != 0);
 		if (!space->context->InitCore())
 			return nullptr;
 		space->thread = space->context->CreateThread(0, 0, nullptr);
@@ -1380,6 +1395,116 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 
 JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitRunRequest &request) noexcept
 {
+	/* Selector loads, far transfers, IRET and the segment inspections are
+	 * the shared segment model's (segments.hpp), as is the exact check of a
+	 * compatibility-mode access through a segment that a translation does
+	 * not check itself: a dispatch stops at the instruction unretired, and
+	 * the model completes it, or checks it for a run of it alone. A task
+	 * whose ES, SS or DS has a base or a limit runs every instruction that
+	 * way. */
+	const bool stepping = (cpu.rflags & rflags_trap_flag) != 0;
+	const auto budget = std::max<std::size_t>(request.instruction_budget, 1);
+	std::size_t retired = 0;
+	bool check = false;
+	/* After the model retired an instruction: whether the run ends. A step
+	 * ends after one, IRET may have set TF, and a far transfer that changed
+	 * the execution mode needs the caller's sync of the new mode. */
+	const auto ends = [&](JitRunResult &run, const SegmentResult &done) noexcept {
+		++retired;
+		if (!stepping && !done.trap_armed && done.outcome != SegmentOutcome::retired_changed &&
+			retired < budget && !request.single_instruction)
+			return false;
+		run.execution.reason = stepping ? ::uml::cpu::ExitReason::single_step :
+			::uml::cpu::ExitReason::instruction_budget;
+		return true;
+	};
+	for (;;) {
+		JitRunResult run{};
+		auto &result = run.execution;
+		const bool segmented = cpu.execution_mode == ExecutionMode::compat32 && !cpu.flat_segments;
+		bool bypassed = false;
+		if (check || segmented) {
+			check = false;
+			const auto step = check_segment_step(cpu, memory, request.execution_context,
+				stepping || request.single_instruction ? 1U : string_step_elements);
+			if (step.fetch_fault || step.result.outcome == SegmentOutcome::memory_fault) {
+				result.reason = ::uml::cpu::ExitReason::memory_fault;
+				result.fault = step.fault;
+			} else if (step.illegal) {
+				result.reason = ::uml::cpu::ExitReason::illegal_instruction;
+			} else if (step.result.outcome == SegmentOutcome::fault) {
+				result.reason = ::uml::cpu::ExitReason::breakpoint;
+				result.syndrome = step.result.fault.vector;
+				run.error_code = static_cast<std::int32_t>(step.result.fault.error);
+			} else if (step.result.outcome == SegmentOutcome::yielded) {
+				result.reason = stepping ? ::uml::cpu::ExitReason::single_step :
+					::uml::cpu::ExitReason::instruction_budget;
+			} else if (step.result.outcome != SegmentOutcome::run) {
+				if (!ends(run, step.result))
+					continue;
+			} else {
+				const SegmentBypass bypass{cpu};
+				auto single = request;
+				single.instruction_budget = 1;
+				single.single_instruction = true;
+				run = dispatch(cpu, memory, single);
+				bypassed = true;
+			}
+			if (!bypassed) {
+				result.retired_instructions = retired;
+				return run;
+			}
+		} else {
+			auto rest = request;
+			rest.instruction_budget = budget - retired;
+			run = dispatch(cpu, memory, rest);
+		}
+		retired += result.retired_instructions;
+		result.retired_instructions = retired;
+		if (run.segment_check) {
+			/* Under the bypass every check passes: a run of the instruction
+			 * the model checked never stops at its check again. */
+			if (bypassed) {
+				result.reason = ::uml::cpu::ExitReason::fatal;
+				return run;
+			}
+			run.segment_check = false;
+			check = true;
+			continue;
+		}
+		/* The one instruction the model checked retired, and the run goes
+		 * on while budget remains. */
+		if (bypassed && !run.segment_instruction && result.reason == ::uml::cpu::ExitReason::instruction_budget &&
+			!stepping && !request.single_instruction && retired < budget)
+			continue;
+		if (!run.segment_instruction)
+			return run;
+		run.segment_instruction = false;
+		const auto step = run_segment_step(cpu, memory, request.execution_context);
+		if (step.illegal) {
+			result.reason = ::uml::cpu::ExitReason::illegal_instruction;
+			return run;
+		}
+		if (step.fetch_fault || step.result.outcome == SegmentOutcome::memory_fault) {
+			result.reason = ::uml::cpu::ExitReason::memory_fault;
+			result.fault = step.fault;
+			return run;
+		}
+		if (step.result.outcome == SegmentOutcome::fault) {
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = step.result.fault.vector;
+			run.error_code = static_cast<std::int32_t>(step.result.fault.error);
+			return run;
+		}
+		if (ends(run, step.result)) {
+			result.retired_instructions = retired;
+			return run;
+		}
+	}
+}
+
+JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const JitRunRequest &request) noexcept
+{
 	JitRunResult run{};
 	auto &result = run.execution;
 	result.reason = ::uml::cpu::ExitReason::fatal;
@@ -1387,7 +1512,9 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		return run;
 	const auto fp_mode = fp_mode_for(cpu);
 	const bool ordered = request.orders_stores;
-	auto *space = impl_->find(request.generation, cpu.execution_mode, ordered, fp_mode);
+	const auto key = fp_mode |
+		(cpu.execution_mode == ExecutionMode::compat32 && !cpu.flat_segments ? space_segmented : 0U);
+	auto *space = impl_->find(request.generation, cpu.execution_mode, ordered, key);
 	if (space == nullptr) {
 		/* The first dispatch in this ordering or floating-point mode: a new
 		 * space, which caches nothing, is as current as its siblings. */
@@ -1399,7 +1526,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 		/* The kernel's mark comes and goes with the address space's
 		 * sharers, so the other ordering's space stays: the next change
 		 * back costs a switch, not a retranslation. */
-		space = impl_->create(request.generation, cpu.execution_mode, ordered, fp_mode);
+		space = impl_->create(request.generation, cpu.execution_mode, ordered, key);
 		if (space == nullptr)
 			return run;
 		space->mapping_sequence = mapping_sequence;
@@ -1416,8 +1543,9 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	auto *frame = thread->CurrentFrame;
 	load_state(*space, cpu);
 	/* A step starts one instruction, and one iteration of a repeated
-	 * string instruction. */
-	const auto budget = impl_->stepping ? 1 :
+	 * string instruction; so does the run of one instruction the host's
+	 * segment model checked. */
+	const auto budget = impl_->stepping || request.single_instruction ? 1 :
 		std::clamp<std::int64_t>(static_cast<std::int64_t>(request.instruction_budget), 1,
 			maximum_dispatch_budget);
 	frame->Embedder.Budget = budget;
@@ -1436,7 +1564,7 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	/* Registrations of a page by another vCPU wait for this one to leave
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
-	space->context->ExecuteEmbedded(thread, false, 0);
+	space->context->ExecuteEmbedded(thread, request.single_instruction, 0);
 	for (;;) {
 		/* A store into the running unit's own code left before it
 		 * stored. Its instruction runs again as a unit of its own, whose
@@ -1544,6 +1672,16 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 
 	const auto fault = frame->SynchronousFaultData;
 	switch (fault.Signal) {
+	case Core::EMBEDDER_SIGNAL_SEGMENT:
+		/* The host's segment model runs the instruction at RIP. */
+		result.reason = ::uml::cpu::ExitReason::instruction_budget;
+		run.segment_instruction = true;
+		return run;
+	case Core::EMBEDDER_SIGNAL_SEGMENT_CHECK:
+		/* And checks the accesses of this one exactly. */
+		result.reason = ::uml::cpu::ExitReason::instruction_budget;
+		run.segment_check = true;
+		return run;
 	case Core::EMBEDDER_SIGNAL_SYSCALL:
 		result.reason = ::uml::cpu::ExitReason::system_call;
 		cpu.system_call_32bit = fault.TrapNo == 0x80;

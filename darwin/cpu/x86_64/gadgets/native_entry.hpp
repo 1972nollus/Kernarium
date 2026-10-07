@@ -56,6 +56,9 @@ struct NativeExecutionContext final {
 	/* An exception-check exit's stream pointer, just past a stream word of
 	 * the instruction that raised the exception. */
 	const std::uintptr_t *exception_stream{};
+	/* A segment-fault exit's #NP, #SS or #GP and its error code. */
+	std::uint8_t segment_vector{};
+	std::uint32_t segment_error{};
 };
 
 static_assert(offsetof(NativeExecutionContext, memory) ==
@@ -141,5 +144,9 @@ extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept;
  * names (1 a word, 2 a doubleword, 3 a quadword), or clears ZF. */
 extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
 	std::uint32_t selector, std::uint32_t destination) noexcept;
+/* Runs the instruction RIP names through the segment model, after the
+ * gadget materialized the flags; returns a UML_X86_64_SEGMENT_* code. */
+extern "C" std::uint32_t uml_x86_64_gadget_run_segment_instruction(
+	NativeExecutionContext *context, CpuState *cpu) noexcept;
 
 } // namespace uml::cpu::x86_64::gadgets

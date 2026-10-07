@@ -341,7 +341,8 @@ must show the space marked and ordered exactly while shared. Its negative
 control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
-`#XM`, `#MF` and `#AC` included, in both modes.
+`#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
+transfers included, in both modes.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

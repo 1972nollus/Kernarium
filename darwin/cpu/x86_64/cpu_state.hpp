@@ -89,24 +89,46 @@ inline constexpr std::uint8_t exception_check_x87 = 1U << 0U;
 inline constexpr std::uint8_t exception_check_simd = 1U << 1U;
 inline constexpr std::uint8_t exception_check_simd_exact = 1U << 2U;
 
+/* The hidden part of a segment register: what x86 loads from a descriptor
+ * with a selector and uses until the next load. */
+struct SegmentCache final {
+	/* An access through FS or GS in compatibility mode at offset o passes
+	 * the engines' inline check when o - check_low <= check_span, unsigned;
+	 * one that does not leaves for the runtime's exact check. */
+	std::uint64_t check_low{};
+	std::uint64_t check_span{};
+	std::uint32_t base{};
+	/* The last offset a segment that expands up admits, in bytes. */
+	std::uint32_t limit{};
+	/* Bits 40 to 55 of the descriptor: type, S, DPL, P, the limit's bits 19
+	 * to 16, AVL, L, D/B and G. */
+	std::uint16_t attributes{};
+	/* Clear for a null selector, through which no access passes. */
+	bool usable{};
+	std::uint8_t reserved{};
+	std::uint32_t padding{};
+};
+
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
 	std::array<std::array<std::byte, 32>, 16> vectors{};
 	std::array<std::uint64_t, 8> mmx{};
 	std::array<X87Register, 8> x87{};
+	/* ES, CS, SS, DS, FS and GS, in that order, which is x86's numbering
+	 * of the segment registers. */
 	std::array<std::uint16_t, 6> segment_selectors{};
-	/* Compat-mode TLS bases for the GDT entries from compat_tls_first on.
-	 * The kernel owns the numbering: an x86-64 kernel's three TLS entries
-	 * are 12 to 14 (selectors 0x63 to 0x73), and each descriptor it hands
-	 * over carries its entry number, from which the runtime sets the first
-	 * entry and fills and marks present only those three. The array and the
-	 * refresh gadget's bound still admit two more; a selector for either
-	 * finds its present bit clear, and trimming them would move every later
-	 * CpuState offset and change the bank. The refresh gadget reads
-	 * compat_tls_present and compat_tls_first as one halfword. */
-	std::array<std::uint32_t, 5> compat_tls_bases{};
-	std::uint8_t compat_tls_present{};
-	std::uint8_t compat_tls_first{};
+	/* Set while the runtime runs, alone, an instruction whose every segment
+	 * access it has already checked: the gadget guarding a check the engine
+	 * cannot make itself lets it run. */
+	std::uint8_t segment_bypass{};
+	/* The segment registers' descriptor caches leave no place for the
+	 * address generation of a flat compatibility-mode task to add a base or
+	 * check a limit through ES, SS or DS: `flat_segments` says so, and the
+	 * runtime steps any other compat32 task (`segments.hpp`). */
+	bool flat_segments{true};
+	/* The three TLS entries of the GDT, 12 to 14 (selectors 0x63 to 0x73),
+	 * as descriptors, zero where the task installed none. */
+	std::array<std::uint64_t, 3> tls_descriptors{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	/* Address generation indexes {segment_zero, fs_base, gs_base} with the
@@ -140,6 +162,12 @@ struct CpuState final {
 	/* The record an INC or DEC displaced without settling its carry. Only a
 	 * pending INC or DEC record reads it, and only for the carry flag. */
 	DeferredFlags carry_slot{};
+	/* The task's LDT, 8192 descriptors that the guest kernel owns and changes
+	 * with single aligned stores, or null while the task has none. */
+	const std::uint64_t *ldt{};
+	/* The descriptor cache of each segment register, numbered as
+	 * `segment_selectors` are, which `segments.hpp` keeps. */
+	std::array<SegmentCache, 6> segments{};
 
 	[[nodiscard]] std::uint64_t &gpr(Register reg) noexcept
 	{

@@ -116,6 +116,15 @@ static void uml_static_entry_bridge()
 }
 
 #if DARWIN_UML_X86_64_GUEST
+/* From bridge ABI 20 the kernel hands every x86 task's selectors over, ES,
+ * CS, SS and DS in fpmr and FS and GS in svcr, as x86 Linux's execve() sets
+ * them, and the execution mode follows CS. */
+constexpr std::uint64_t x86_long64_selectors =
+	(std::uint64_t{0x2b} << 32U) | (std::uint64_t{0x33} << 16U);
+constexpr std::uint64_t x86_compat32_selectors =
+	(std::uint64_t{0x2b} << 48U) | (std::uint64_t{0x2b} << 32U) |
+	(std::uint64_t{0x23} << 16U) | std::uint64_t{0x2b};
+
 static void uml_static_x86_64_entry_bridge()
 {
 	constexpr unsigned long generation = 131;
@@ -140,12 +149,29 @@ static void uml_static_x86_64_entry_bridge()
 		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 
+	/* A CS that IRET could not load faults before anything runs, with
+	 * the state as the kernel handed it over. */
+	darwin_uml_guest_registers refused{};
+	uml::testing::GuestFpTail refused_fp{};
+	refused.padding = 2;
+	refused.pc = base;
+	refused.x[16] = 2;
+	refused.fpmr = std::uint64_t{0x2b} << 32U;
+	unsigned long tls = 0;
+	require(darwin_uml_static_enter_guest(&refused, &refused_fp,
+		sizeof(refused_fp), generation, &tls) == DARWIN_UML_EVENT_BREAKPOINT);
+	require(refused.pc == base);
+	require(refused.x[0] == 0);
+	require(refused.fault.trap_number == 13);
+	require(refused.fault.error_code == 0);
+	require(refused.fpmr == std::uint64_t{0x2b} << 32U);
+
 	darwin_uml_guest_registers registers{};
 	uml::testing::GuestFpTail fp{};
 	registers.padding = 2;
 	registers.pc = base;
 	registers.x[16] = 2;
-	unsigned long tls = 0;
+	registers.fpmr = x86_long64_selectors;
 	const int event = darwin_uml_static_enter_guest(
 		&registers, &fp, sizeof(fp), generation, &tls);
 	require(event == DARWIN_UML_EVENT_SYSCALL);
@@ -198,6 +224,8 @@ static void uml_static_x86_user_interrupt_flag()
 		registers.x[4] = stack; // rsp
 		registers.x[16] = entry.kernel_flags;
 		registers.svcr = entry.mode;
+		registers.fpmr = entry.mode == compat32_execution ?
+			x86_compat32_selectors : x86_long64_selectors;
 		unsigned long tls = 0;
 		const int event = darwin_uml_static_enter_guest(
 			&registers, &fp, sizeof(fp), entry.generation, &tls);
@@ -247,6 +275,7 @@ static void uml_static_x86_compat32_entry_bridge()
 	registers.x[4] = stack;
 	registers.x[16] = 2;
 	registers.svcr = compat32_execution;
+	registers.fpmr = x86_compat32_selectors;
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
 		&registers, &fp, sizeof(fp), generation, &tls);
@@ -288,6 +317,7 @@ static void uml_static_x86_exception_bridge()
 		registers.x[1] = 0;
 		registers.x[2] = 0;
 		registers.x[16] = 2;
+		registers.fpmr = x86_long64_selectors;
 		unsigned long tls = 0;
 		const int event = darwin_uml_static_enter_guest(
 			&registers, &fp, sizeof(fp), generation, &tls);
@@ -315,6 +345,7 @@ static void uml_static_x86_exception_bridge()
 		registers.pc = base;
 		registers.x[16] = 2 | (std::uint64_t{1} << 11);
 		registers.svcr = compat32_execution;
+		registers.fpmr = x86_compat32_selectors;
 		unsigned long tls = 0;
 		const int event = darwin_uml_static_enter_guest(
 			&registers, &fp, sizeof(fp), generation, &tls);
@@ -349,6 +380,7 @@ static void uml_static_x86_64_signal_return_bridge()
 	registers.x[16] = 2;
 	registers.x[4] = stack; // rsp
 	registers.svcr = std::uint64_t{1} << 32;
+	registers.fpmr = x86_long64_selectors;
 	fp.reserved[1] = 0x5838'3634U;
 	unsigned long tls = 0;
 	const int event = darwin_uml_static_enter_guest(
@@ -391,11 +423,13 @@ static void uml_static_x86_64_x87_task_state()
 	first_registers.padding = 2;
 	first_registers.pc = base;
 	first_registers.x[16] = 2;
+	first_registers.fpmr = x86_long64_selectors;
 	darwin_uml_guest_registers second_registers{};
 	uml::testing::GuestFpTail second_fp{};
 	second_registers.padding = 2;
 	second_registers.pc = base + 0x100;
 	second_registers.x[16] = 2;
+	second_registers.fpmr = x86_long64_selectors;
 	unsigned long tls = 0;
 	require(darwin_uml_static_enter_guest(&first_registers, &first_fp,
 		sizeof(first_fp), generation, &tls) == DARWIN_UML_EVENT_SYSCALL);
@@ -449,6 +483,7 @@ static void uml_static_x86_mm_shared_dispatch()
 			registers.padding = 2;
 			registers.pc = base;
 			registers.dispatch_flags = flags;
+			registers.fpmr = x86_long64_selectors;
 			unsigned long tls = 0;
 			require(darwin_uml_static_enter_guest(&registers, &fp,
 				sizeof(fp), generation, &tls) ==

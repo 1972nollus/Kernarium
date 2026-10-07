@@ -13,10 +13,10 @@ the zero-count path now reads it too.
  2 files changed, 10 insertions(+), 2 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index a2f0001623e4b70249355934a15e3d95693ee160..b056e20dc1dde5b82f699bd7a58a4abfc0b873e6 100644
+index 75fa7c78371d6ab0000dd44795537d1f92c07dc0..6360bcac962b08962f7e1b17bc98a45861cb0ce9 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -2409,7 +2409,7 @@ void OpDispatchBuilder::RCRSmallerOp(OpcodeArgs) {
+@@ -2414,7 +2414,7 @@ void OpDispatchBuilder::RCRSmallerOp(OpcodeArgs) {
        auto NewOF = _XorShift(OpSize::i32Bit, Res, Res, ShiftType::LSR, 1);
        SetRFLAG<FEXCore::X86State::RFLAG_OF_RAW_LOC>(NewOF, Size - 2, true);
      }
@@ -25,7 +25,7 @@ index a2f0001623e4b70249355934a15e3d95693ee160..b056e20dc1dde5b82f699bd7a58a4abf
  }
  
  void OpDispatchBuilder::RCLOp1Bit(OpcodeArgs) {
-@@ -2579,7 +2579,7 @@ void OpDispatchBuilder::RCLSmallerOp(OpcodeArgs) {
+@@ -2584,7 +2584,7 @@ void OpDispatchBuilder::RCLSmallerOp(OpcodeArgs) {
        auto NewOF = _XorShift(OpSize::i64Bit, NewCF, Res, ShiftType::LSR, Size - 1);
        SetRFLAG<FEXCore::X86State::RFLAG_OF_RAW_LOC>(NewOF, 0, true);
      }

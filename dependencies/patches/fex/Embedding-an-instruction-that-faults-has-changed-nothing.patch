@@ -45,9 +45,9 @@ instructions changed state before their last access could fault:
  FEXCore/Source/Interface/IR/Passes.h          |   1 +
  .../IR/Passes/EmbedderReadsForWritePass.cpp   | 124 ++++++++++++++++++
  .../IR/Passes/EmbedderReadsForWritePass.h     |  35 +++++
- .../IR/Passes/RegisterAllocationPass.cpp      |  73 ++++++++++-
+ .../IR/Passes/RegisterAllocationPass.cpp      |  81 +++++++++++-
  FEXCore/include/FEXCore/Core/CoreState.h      |   3 +
- 15 files changed, 371 insertions(+), 7 deletions(-)
+ 15 files changed, 378 insertions(+), 8 deletions(-)
  create mode 100644 FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.cpp
  create mode 100644 FEXCore/Source/Interface/IR/Passes/EmbedderReadsForWritePass.h
 
@@ -551,7 +551,7 @@ index 0000000000000000000000000000000000000000..64984b7ef8ef4e704fd03db10be8fe7b
 +
 +} // namespace FEXCore::IR
 diff --git a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
-index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7ac1752ec3 100644
+index 503fe3fb933182c51c55e20e1086ddbc406091ce..399ed02fadbcce0010d8ba878c2a573f1f94e494 100644
 --- a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
 @@ -77,6 +77,63 @@ private:
@@ -618,7 +618,22 @@ index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7a
    // Map of assigned registers. Does not grow beyond the initial set.
    fextl::vector<PhysicalRegister> SSAToReg;
  
-@@ -584,6 +641,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+@@ -560,7 +617,13 @@ bool ConstrainedRAPass::TryPostRAMerge(Ref LastNode, Ref CodeNode, IROp_Header*
+   // arm64 is 3-address code, we can optimize these out.
+   //
+   // Note we rely on the short-circuiting here.
+-  if (PhysicalRegister(LastNode) == PhysicalRegister(CodeNode) && KillMove(LastOp, IROp, LastNode, CodeNode)) {
++  //
++  // Embedded, a move into an operation that can leave the block stays: the
++  // mirror of PreferredExits, a static-register store merged into such an
++  // operation disappears from the state its exit reports, and the
++  // instruction runs again with the register as it was before the move.
++  if (!(Embedded && CanLeaveBlock(IROp->Op)) && PhysicalRegister(LastNode) == PhysicalRegister(CodeNode) &&
++      KillMove(LastOp, IROp, LastNode, CodeNode)) {
+     LOGMAN_THROW_A_FMT(!PhysicalRegister(CodeNode).IsInvalid(), "invariant");
+ 
+     int NumArgs = IR::GetRAArgs(IROp->Op);
+@@ -584,6 +647,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
    IR = &IR_;
  
    PreferredReg.resize(IR->GetSSACount(), PhysicalRegister::Invalid());
@@ -628,7 +643,7 @@ index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7a
    SSAToReg.resize(IR->GetSSACount(), PhysicalRegister::Invalid());
    Seen.resize(IR->GetSSACount(), false);
  
-@@ -617,6 +677,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+@@ -617,6 +683,9 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
  
            PreferredReg[IR->GetID(Node).Value] = Reg;
            GetClass(Reg)->RegToSSA[Reg.Reg] = CodeNode;
@@ -638,7 +653,7 @@ index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7a
          }
  
          // Coalescing an SRA store is equivalent to hoisting the store,
-@@ -632,11 +695,18 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+@@ -632,11 +701,18 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
            auto Node = GetClass(Reg)->RegToSSA[Reg.Reg];
            IROp_Header* Header = IR->GetOp<IROp_Header>(Node);
  
@@ -658,7 +673,7 @@ index 503fe3fb933182c51c55e20e1086ddbc406091ce..32a824116c1164ced7db716cbf36ad7a
          const int NumArgs = IR::GetRAArgs(IROp->Op);
          for (int i = NumArgs - 1; i >= 0; --i) {
            const auto& Arg = IROp->Args[i];
-@@ -785,6 +855,7 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
+@@ -785,6 +861,7 @@ void ConstrainedRAPass::Run(IREmitter* IREmit_) {
    }
  
    PreferredReg.clear();

@@ -285,6 +285,8 @@ __asm__(".text\n"
 
 /* uc_mcontext: uc_flags, uc_link and a 24-byte stack_t, then r8-r15, rdi,
  * rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, eflags, csgsfs, err and trapno. */
+constexpr unsigned frame_di_offset = 40 + 8 * 8;
+constexpr unsigned frame_cx_offset = 40 + 14 * 8;
 constexpr unsigned frame_ip_offset = 40 + 16 * 8;
 constexpr unsigned frame_flags_offset = 40 + 17 * 8;
 constexpr unsigned frame_error_offset = 40 + 19 * 8;
@@ -626,6 +628,8 @@ __asm__(".text\n"
 
 /* uc_mcontext: uc_flags, uc_link and a 12-byte stack_t, then gs, fs, es, ds,
  * edi, esi, ebp, esp, ebx, edx, ecx, eax, trapno, err, eip, cs and eflags. */
+constexpr unsigned frame_di_offset = 20 + 4 * 4;
+constexpr unsigned frame_cx_offset = 20 + 10 * 4;
 constexpr unsigned frame_trapno_offset = 20 + 12 * 4;
 constexpr unsigned frame_error_offset = 20 + 13 * 4;
 constexpr unsigned frame_ip_offset = 20 + 14 * 4;
@@ -1124,6 +1128,7 @@ __asm__(".text\n"
  * and CR9 to CR15, which are undefined. */
 #if defined(__x86_64__)
 #define UNDEFINED_MODE_CASES(X)                                              \
+	X(group1_82, "0x82, 0xc0, 0x01")                                     \
 	X(mov_from_cr9, "0x44, 0x0f, 0x20, 0xc8")
 #define PRIVILEGED_MODE_CASES(X)                                             \
 	X(sysret, "0x0f, 0x07")                                              \
@@ -1149,7 +1154,6 @@ __asm__(".text\n"
 	X(movhps_register, "0x0f, 0x17, 0xc0")                               \
 	X(movntq_register, "0x0f, 0xe7, 0xc0")                               \
 	X(fxsave_register, "0x0f, 0xae, 0xc0")                               \
-	X(group1_82, "0x82, 0xc0, 0x01")                                     \
 	X(reserved_0f3e, "0x0f, 0x3e")                                       \
 	X(reserved_0f3f, "0x0f, 0x3f")                                       \
 	X(lddqu_register, "0xf2, 0x0f, 0xf0, 0xc0")                          \
@@ -1454,6 +1458,8 @@ enum Observed {
 	observed_flags,
 	observed_trapno,
 	observed_error,
+	observed_cx,
+	observed_di,
 	observed_fields,
 };
 
@@ -1480,6 +1486,8 @@ void record_fault(int signal, void *info, void *context)
 	observed[observed_flags] = frame_word(context, frame_flags_offset);
 	observed[observed_trapno] = frame_word(context, frame_trapno_offset);
 	observed[observed_error] = frame_word(context, frame_error_offset);
+	observed[observed_cx] = frame_word(context, frame_cx_offset);
+	observed[observed_di] = frame_word(context, frame_di_offset);
 	if (resume_ip != 0)
 		frame_word(context, frame_ip_offset) = resume_ip;
 }
@@ -1792,7 +1800,8 @@ void mov_cs_unmapped() { probe_mov_cs(0); }
 
 /* Register forms of memory-only instructions, memory forms of
  * register-only ones, LOCK on an instruction that does not write memory,
- * 0x82 in either mode, the 0F 3E and 0F 3F escapes, EMMS, XGETBV and
+ * 0x82 in 64-bit mode (outside it, group 1; see the segments case), the
+ * 0F 3E and 0F 3F escapes, EMMS, XGETBV and
  * XSETBV with a mandatory prefix, the undefined x87 forms and a move with
  * an undefined control register raise #UD; so does MOV to CS, before it
  * reads its source. SYSEXIT and the system instructions LTR, LLDT, LGDT,
@@ -4607,6 +4616,446 @@ bool tracer_steps_repeats()
 	return expect("child exit status", static_cast<u32>(status), 0);
 }
 
+/* Segments as Linux user code sees them: the GDT entries Linux gives every
+ * task and an LDT that modify_ldt installs. */
+struct LdtEntry {
+	u32 entry_number;
+	u32 base_addr;
+	u32 limit;
+	u32 flags;
+};
+
+constexpr u32 ldt_32bit = 1U;
+constexpr u32 ldt_expand_down = 1U << 1;
+constexpr u32 ldt_code = 2U << 1;
+constexpr u32 ldt_read_only = 1U << 3;
+constexpr u32 ldt_pages = 1U << 4;
+constexpr u32 ldt_not_present = 1U << 5;
+#if defined(__x86_64__)
+constexpr long nr_modify_ldt = 154;
+#else
+constexpr long nr_modify_ldt = 123;
+#endif
+
+/* The LDT the case installs: a 256-byte data segment over segment_buffer,
+ * a flat 32-bit code segment, a data segment that is not present, a
+ * read-only data segment over segment_buffer, an expand-down data segment
+ * whose lowest offset, 0x1000, is segment_buffer, and a 128-byte stack
+ * segment over segment_stack. */
+constexpr u32 ldt_data = 0x07;
+constexpr u32 ldt_code32 = 0x0f;
+constexpr u32 ldt_absent = 0x17;
+constexpr u32 ldt_read_only_data = 0x1f;
+constexpr u32 ldt_down = 0x27;
+
+alignas(4096) unsigned char segment_buffer[8192];
+alignas(4096) unsigned char segment_stack[4096];
+/* A far pointer an instruction reads, and room either side of it. */
+alignas(16) unsigned char segment_pointer[32];
+
+bool write_ldt(u32 entry, word base, u32 limit, u32 flags)
+{
+	LdtEntry descriptor = {entry, static_cast<u32>(base), limit, flags};
+	return raw_syscall(nr_modify_ldt, 0x11,
+			   reinterpret_cast<long>(&descriptor),
+			   sizeof(descriptor)) == 0;
+}
+
+bool install_ldt()
+{
+	const word buffer = reinterpret_cast<word>(segment_buffer);
+	if (write_ldt(0, buffer, 0xff, ldt_32bit) &&
+	    write_ldt(1, 0, 0xfffff, ldt_32bit | ldt_code | ldt_pages) &&
+	    write_ldt(2, buffer, 0xff, ldt_32bit | ldt_not_present) &&
+	    write_ldt(3, buffer, 0xff, ldt_32bit | ldt_read_only) &&
+	    write_ldt(4, buffer - 0x1000, 0xfff, ldt_32bit | ldt_expand_down) &&
+	    write_ldt(5, reinterpret_cast<word>(segment_stack), 0x7f, ldt_32bit))
+		return true;
+	put("  modify_ldt failed\n");
+	return false;
+}
+
+/* modify_ldt reads back the descriptors it wrote, accessed and at DPL 3. */
+bool ldt_reads_back()
+{
+	u64 table[8] = {};
+	const long bytes = raw_syscall(nr_modify_ldt, 0,
+				       reinterpret_cast<long>(table),
+				       sizeof(table));
+	const u64 base = reinterpret_cast<word>(segment_buffer);
+	const u64 data = 0xffULL | (base & 0xffffffULL) << 16 |
+			 0x40f3ULL << 40 | (base >> 24 & 0xffULL) << 56;
+	bool ok = expect("modify_ldt read size", static_cast<word>(bytes),
+			 sizeof(table));
+	ok &= expect("LDT entry 0", table[0], data);
+	ok &= expect("LDT entry 1", table[1], 0x00cffb000000ffffULL);
+	ok &= expect("LDT entry 6", table[6], 0);
+	return ok;
+}
+
+extern "C" word probe_seg_lar(word selector);
+extern "C" word probe_seg_lsl(word selector);
+extern "C" word probe_seg_verr(word selector);
+extern "C" word probe_seg_verw(word selector);
+extern "C" void probe_seg_movss_null();
+extern "C" char probe_seg_movss_null_insn[];
+extern "C" char probe_seg_movss_null_end[];
+extern "C" void probe_seg_movds_far();
+extern "C" char probe_seg_movds_far_insn[];
+extern "C" char probe_seg_movds_far_end[];
+extern "C" void probe_seg_absent();
+extern "C" char probe_seg_absent_insn[];
+extern "C" char probe_seg_absent_end[];
+extern "C" void probe_seg_farjmp_data(void *pointer);
+extern "C" char probe_seg_farjmp_data_insn[];
+extern "C" char probe_seg_farjmp_data_end[];
+extern "C" void probe_seg_lss_null(void *pointer);
+extern "C" char probe_seg_lss_null_insn[];
+extern "C" char probe_seg_lss_null_end[];
+extern "C" word probe_seg_ldt_call(void *pointer);
+extern "C" word probe_seg_fs_read(word selector);
+extern "C" void probe_seg_iret_bad();
+extern "C" char probe_seg_iret_bad_insn[];
+extern "C" char probe_seg_iret_bad_end[];
+
+void seg_farjmp_data() { probe_seg_farjmp_data(segment_pointer); }
+void seg_lss_null() { probe_seg_lss_null(segment_pointer); }
+
+#if defined(__x86_64__)
+__asm__(".text\n"
+	"probe_seg_lar: mov $-1, %rax\n lar %edi, %eax\n jz 1f\n mov $-1, %rax\n1: ret\n"
+	"probe_seg_lsl: mov $-1, %rax\n lsl %edi, %eax\n jz 1f\n mov $-1, %rax\n1: ret\n"
+	"probe_seg_verr: xor %eax, %eax\n verr %di\n setz %al\n ret\n"
+	"probe_seg_verw: xor %eax, %eax\n verw %di\n setz %al\n ret\n"
+	"probe_seg_movss_null: xor %eax, %eax\n"
+	"probe_seg_movss_null_insn: mov %eax, %ss\n"
+	"probe_seg_movss_null_end: ret\n"
+	"probe_seg_movds_far: mov $0x4142, %eax\n"
+	"probe_seg_movds_far_insn: mov %eax, %ds\n"
+	"probe_seg_movds_far_end: xor %eax, %eax\n mov %eax, %ds\n ret\n"
+	"probe_seg_absent: mov $0x17, %eax\n"
+	"probe_seg_absent_insn: mov %eax, %es\n"
+	"probe_seg_absent_end: xor %eax, %eax\n mov %eax, %es\n ret\n"
+	"probe_seg_farjmp_data: movl $0, (%rdi)\n movw $0x2b, 4(%rdi)\n"
+	"probe_seg_farjmp_data_insn: ljmp *(%rdi)\n"
+	"probe_seg_farjmp_data_end: ret\n"
+	"probe_seg_lss_null: movl $0, (%rdi)\n movw $0, 4(%rdi)\n"
+	"probe_seg_lss_null_insn: lss (%rdi), %eax\n"
+	"probe_seg_lss_null_end: ret\n"
+	/* A far CALL through m16:32 to the LDT's 32-bit code segment, which
+	 * runs 0x82 as group 1 and returns with a 32-bit far RET, on a stack
+	 * below 4 GiB. */
+	"probe_seg_ldt_call: push %r12\n mov %rsp, %r12\n"
+	"	lea segment_stack_top(%rip), %rsp\n"
+	"	lea seg_ldt_target(%rip), %rax\n mov %eax, (%rdi)\n movw $0x0f, 4(%rdi)\n"
+	"	mov $0x10, %eax\n lcall *(%rdi)\n"
+	"	mov %r12, %rsp\n pop %r12\n ret\n"
+	".code32\n"
+	"seg_ldt_target: .byte 0x82, 0xc0, 0x05\n mov %cs, %ecx\n shl $16, %ecx\n or %ecx, %eax\n lret\n"
+	".code64\n"
+	"probe_seg_fs_read: mov %edi, %fs\n mov %fs:4, %eax\n xor %ecx, %ecx\n mov %ecx, %fs\n ret\n"
+	/* IRETQ to a data selector as CS. */
+	"probe_seg_iret_bad: mov %rsp, %r11\n pushq $0x2b\n push %r11\n pushfq\n pushq $0x2b\n"
+	"	lea probe_seg_iret_bad_end(%rip), %rax\n push %rax\n"
+	"probe_seg_iret_bad_insn: iretq\n"
+	"probe_seg_iret_bad_end: mov %r11, %rsp\n ret\n"
+	"probe_seg_cx16: push %rbx\n xor %eax, %eax\n xor %edx, %edx\n xor %ebx, %ebx\n xor %ecx, %ecx\n"
+	"probe_seg_cx16_insn: lock cmpxchg16b (%rdi)\n"
+	"probe_seg_cx16_end: pop %rbx\n ret\n"
+	"probe_seg_cx16_plain: push %rbx\n xor %eax, %eax\n xor %edx, %edx\n xor %ebx, %ebx\n xor %ecx, %ecx\n"
+	"probe_seg_cx16_plain_insn: cmpxchg16b (%rdi)\n"
+	"probe_seg_cx16_plain_end: pop %rbx\n ret\n"
+	".pushsection .bss\n"
+	".balign 16\n"
+	"segment_low_stack: .skip 4096\n"
+	"segment_stack_top:\n"
+	".popsection\n");
+
+extern "C" void probe_seg_cx16(void *operand);
+extern "C" char probe_seg_cx16_insn[];
+extern "C" char probe_seg_cx16_end[];
+extern "C" void probe_seg_cx16_plain(void *operand);
+extern "C" char probe_seg_cx16_plain_insn[];
+extern "C" char probe_seg_cx16_plain_end[];
+
+void seg_cx16() { probe_seg_cx16(segment_buffer + 8); }
+void seg_cx16_plain() { probe_seg_cx16_plain(segment_buffer + 24); }
+#else
+__asm__(".text\n"
+	"probe_seg_lar: mov 4(%esp), %ecx\n mov $-1, %eax\n lar %ecx, %eax\n jz 1f\n mov $-1, %eax\n1: ret\n"
+	"probe_seg_lsl: mov 4(%esp), %ecx\n mov $-1, %eax\n lsl %ecx, %eax\n jz 1f\n mov $-1, %eax\n1: ret\n"
+	"probe_seg_verr: mov 4(%esp), %ecx\n xor %eax, %eax\n verr %cx\n setz %al\n ret\n"
+	"probe_seg_verw: mov 4(%esp), %ecx\n xor %eax, %eax\n verw %cx\n setz %al\n ret\n"
+	"probe_seg_movss_null: xor %eax, %eax\n"
+	"probe_seg_movss_null_insn: mov %eax, %ss\n"
+	"probe_seg_movss_null_end: ret\n"
+	"probe_seg_movds_far: mov $0x4142, %eax\n"
+	"probe_seg_movds_far_insn: mov %eax, %ds\n"
+	"probe_seg_movds_far_end: mov $0x2b, %eax\n mov %eax, %ds\n ret\n"
+	"probe_seg_absent: mov $0x17, %eax\n"
+	"probe_seg_absent_insn: mov %eax, %es\n"
+	"probe_seg_absent_end: mov $0x2b, %eax\n mov %eax, %es\n ret\n"
+	"probe_seg_farjmp_data: mov 4(%esp), %ecx\n movl $0, (%ecx)\n movw $0x2b, 4(%ecx)\n"
+	"probe_seg_farjmp_data_insn: ljmp *(%ecx)\n"
+	"probe_seg_farjmp_data_end: ret\n"
+	"probe_seg_lss_null: mov 4(%esp), %ecx\n movl $0, (%ecx)\n movw $0, 4(%ecx)\n"
+	"probe_seg_lss_null_insn: lss (%ecx), %eax\n"
+	"probe_seg_lss_null_end: ret\n"
+	/* A direct far CALL to the LDT's 32-bit code segment. */
+	"probe_seg_ldt_call: mov $0x10, %eax\n lcall $0x0f, $seg_ldt_target\n ret\n"
+	"seg_ldt_target: .byte 0x82, 0xc0, 0x05\n mov %cs, %ecx\n shl $16, %ecx\n or %ecx, %eax\n lret\n"
+	"probe_seg_fs_read: mov 4(%esp), %ecx\n mov %ecx, %fs\n mov %fs:4, %eax\n xor %ecx, %ecx\n mov %ecx, %fs\n ret\n"
+	/* IRET to a data selector as CS. */
+	"probe_seg_iret_bad: mov %esp, seg_saved_esp\n pushf\n push $0x2b\n push $probe_seg_iret_bad_end\n"
+	"probe_seg_iret_bad_insn: iret\n"
+	"probe_seg_iret_bad_end: mov seg_saved_esp, %esp\n ret\n"
+	/* A read through ES of the offset in the second argument, with the
+	 * selector in the first. */
+	"probe_seg_es_read: mov 4(%esp), %eax\n mov 8(%esp), %ecx\n mov %eax, %es\n"
+	"probe_seg_es_read_insn: mov %es:(%ecx), %eax\n"
+	"probe_seg_es_read_end: mov $0x2b, %ecx\n mov %ecx, %es\n ret\n"
+	/* REP STOSB from ES:0xf0 for 0x20 bytes, across the limit 0xff. */
+	"probe_seg_stos: push %edi\n mov $0x07, %eax\n mov %eax, %es\n mov $0xf0, %edi\n"
+	"	mov $0x20, %ecx\n mov $0x5a, %al\n cld\n"
+	"probe_seg_stos_insn: rep stosb\n"
+	"probe_seg_stos_end: mov $0x2b, %eax\n mov %eax, %es\n pop %edi\n ret\n"
+	/* Stores through a read-only data segment and through CS. */
+	"probe_seg_ro_write: mov $0x1f, %eax\n mov %eax, %es\n"
+	"probe_seg_ro_write_insn: movb $1, %es:0\n"
+	"probe_seg_ro_write_end: mov $0x2b, %eax\n mov %eax, %es\n ret\n"
+	"probe_seg_cs_write: mov 4(%esp), %ecx\n"
+	"probe_seg_cs_write_insn: movb $1, %cs:(%ecx)\n"
+	"probe_seg_cs_write_end: ret\n"
+	/* DS with a base: an absolute operand and a based one. */
+	"probe_seg_ds_base: mov $0x07, %eax\n mov %eax, %ds\n mov 4, %eax\n mov $8, %ecx\n add (%ecx), %eax\n"
+	"	mov $0x2b, %ecx\n mov %ecx, %ds\n ret\n"
+	/* A null DS, then an access through it. */
+	"probe_seg_null_ds: mov 4(%esp), %ecx\n xor %eax, %eax\n mov %eax, %ds\n"
+	"probe_seg_null_ds_insn: mov (%ecx), %eax\n"
+	"probe_seg_null_ds_end: mov $0x2b, %ecx\n mov %ecx, %ds\n ret\n"
+	/* A push through the LDT stack segment, limit 0x7f, with the ESP the
+	 * argument gives. */
+	"probe_seg_ss_push: mov %esp, seg_saved_esp\n mov 4(%esp), %edx\n mov $0x2f, %eax\n"
+	"	mov %eax, %ss\n mov %edx, %esp\n"
+	"probe_seg_ss_push_insn: push %eax\n"
+	"probe_seg_ss_push_end: mov $0x2b, %eax\n mov %eax, %ss\n mov seg_saved_esp, %esp\n ret\n"
+	/* LES, LDS, LFS, LGS and LSS of the LDT data segment through m16:32;
+	 * each returns the selector loaded above the offset's low half. */
+	"probe_seg_les: mov 4(%esp), %ecx\n les (%ecx), %eax\n mov %es, %edx\n shl $16, %edx\n mov %ax, %dx\n"
+	"	mov $0x2b, %eax\n mov %eax, %es\n mov %edx, %eax\n ret\n"
+	"probe_seg_lds: mov 4(%esp), %ecx\n lds (%ecx), %eax\n mov %ds, %edx\n shl $16, %edx\n mov %ax, %dx\n"
+	"	mov $0x2b, %eax\n mov %eax, %ds\n mov %edx, %eax\n ret\n"
+	"probe_seg_lfs: mov 4(%esp), %ecx\n lfs (%ecx), %eax\n mov %fs, %edx\n shl $16, %edx\n mov %ax, %dx\n"
+	"	xor %eax, %eax\n mov %eax, %fs\n mov %edx, %eax\n ret\n"
+	"probe_seg_lgs: mov 4(%esp), %ecx\n push %gs\n lgs (%ecx), %eax\n mov %gs, %edx\n shl $16, %edx\n mov %ax, %dx\n"
+	"	pop %gs\n mov %edx, %eax\n ret\n"
+	"probe_seg_lss: mov 4(%esp), %ecx\n lss (%ecx), %eax\n mov %ss, %edx\n mov $0x2b, %eax\n mov %eax, %ss\n"
+	"	shl $16, %edx\n mov (%ecx), %ax\n mov %ax, %dx\n mov %edx, %eax\n ret\n"
+	/* To 64-bit code and back: a direct far JMP to CS 0x33, and an
+	 * indirect one through m16:32 to CS 0x23. */
+	"probe_seg_mode_switch: mov 4(%esp), %ecx\n movl $seg_back32, (%ecx)\n movw $0x23, 4(%ecx)\n"
+	"	mov $1, %eax\n ljmp $0x33, $seg_long\n"
+	".code64\n"
+	"seg_long: add $1, %eax\n movl %ecx, %ecx\n mov %cs, %edx\n shl $16, %edx\n or %edx, %eax\n ljmpl *(%rcx)\n"
+	".code32\n"
+	"seg_back32: ret\n"
+	/* 0x82 is group 1 outside 64-bit mode. */
+	"probe_seg_group1_82: mov $0x10, %eax\n .byte 0x82, 0xc0, 0x05\n .byte 0x82, 0xe8, 0x01\n"
+	"	.byte 0x82, 0xf8, 0x14\n setz %cl\n movzbl %cl, %ecx\n shl $8, %ecx\n or %ecx, %eax\n ret\n"
+	".pushsection .bss\n"
+	"seg_saved_esp: .long 0\n"
+	".popsection\n");
+
+extern "C" word probe_seg_es_read(word selector, word offset);
+extern "C" char probe_seg_es_read_insn[];
+extern "C" char probe_seg_es_read_end[];
+extern "C" void probe_seg_stos();
+extern "C" char probe_seg_stos_insn[];
+extern "C" char probe_seg_stos_end[];
+extern "C" void probe_seg_ro_write();
+extern "C" char probe_seg_ro_write_insn[];
+extern "C" char probe_seg_ro_write_end[];
+extern "C" void probe_seg_cs_write(void *target);
+extern "C" char probe_seg_cs_write_insn[];
+extern "C" char probe_seg_cs_write_end[];
+extern "C" word probe_seg_ds_base();
+extern "C" word probe_seg_null_ds(const void *source);
+extern "C" char probe_seg_null_ds_insn[];
+extern "C" char probe_seg_null_ds_end[];
+extern "C" void probe_seg_ss_push(word stack_pointer);
+extern "C" char probe_seg_ss_push_insn[];
+extern "C" char probe_seg_ss_push_end[];
+extern "C" word probe_seg_les(const void *pointer);
+extern "C" word probe_seg_lds(const void *pointer);
+extern "C" word probe_seg_lfs(const void *pointer);
+extern "C" word probe_seg_lgs(const void *pointer);
+extern "C" word probe_seg_lss(const void *pointer);
+extern "C" word probe_seg_mode_switch(void *pointer);
+extern "C" word probe_seg_group1_82();
+
+word segment_offset;
+word segment_selector;
+void seg_es_read() { probe_seg_es_read(segment_selector, segment_offset); }
+void seg_cs_write() { probe_seg_cs_write(segment_buffer + 0x200); }
+void seg_null_ds() { probe_seg_null_ds(segment_buffer); }
+word segment_stack_pointer;
+void seg_ss_push() { probe_seg_ss_push(segment_stack_pointer); }
+#endif
+
+/* Selector loads check the descriptor they name: SS takes no null
+ * selector, a selector beyond the GDT or the LDT raises #GP and one whose
+ * segment is not present #NP, each with the selector's index as its error
+ * code; a far JMP to a data segment and an IRET to one raise #GP. The LDT
+ * that modify_ldt writes reads back as Linux fills it, LAR, LSL, VERR and
+ * VERW read its descriptors, FS loads its base from one, and a far CALL
+ * reaches its 32-bit code segment, which runs 0x82 as group 1. CMPXCHG16B
+ * raises #GP(0) for a misaligned operand, locked or not. In 32-bit code,
+ * every access checks its segment's limit -- an expand-down one from below --
+ * a REP STOSB stops at the first element beyond it with ECX and EDI there,
+ * a store through a read-only segment or CS raises #GP(0), DS and SS add
+ * their bases, a push beyond SS's limit raises #SS(0), and far JMPs reach
+ * 64-bit code and come back. */
+bool segments()
+{
+	bool ok = install_fault_handlers() && install_ldt();
+	if (!ok)
+		return false;
+	for (word index = 0; index < sizeof(segment_buffer); ++index)
+		segment_buffer[index] = static_cast<unsigned char>(index * 7 + 1);
+	ok &= ldt_reads_back();
+	ok &= expect("LAR of the LDT data segment", probe_seg_lar(ldt_data),
+		     0x40f300);
+	ok &= expect("LAR of the LDT code segment", probe_seg_lar(ldt_code32),
+		     0xcffb00);
+	ok &= expect("LAR of the absent segment", probe_seg_lar(ldt_absent),
+		     0x407300);
+	ok &= expect("LSL of the LDT data segment", probe_seg_lsl(ldt_data),
+		     0xff);
+	ok &= expect("LSL of the expand-down segment", probe_seg_lsl(ldt_down),
+		     0xfff);
+	ok &= expect("LSL beyond the LDT", probe_seg_lsl(0x4f), ~0UL);
+	ok &= expect("VERR, VERW of the read-only segment",
+		     probe_seg_verr(ldt_read_only_data) << 1 |
+			     probe_seg_verw(ldt_read_only_data), 2);
+	ok &= expect("VERR, VERW of the LDT data segment",
+		     probe_seg_verr(ldt_data) << 1 | probe_seg_verw(ldt_data), 3);
+	ok &= expect("VERR, VERW of the LDT code segment",
+		     probe_seg_verr(ldt_code32) << 1 | probe_seg_verw(ldt_code32),
+		     2);
+	const word ss_insn = address_of(probe_seg_movss_null_insn);
+	ok &= delivers("MOV SS of a null selector", probe_seg_movss_null,
+		       address_of(probe_seg_movss_null_end),
+		       {sigsegv, si_kernel, 0, ss_insn, 13, true, 0});
+	const word ds_insn = address_of(probe_seg_movds_far_insn);
+	ok &= delivers("MOV DS beyond the GDT", probe_seg_movds_far,
+		       address_of(probe_seg_movds_far_end),
+		       {sigsegv, si_kernel, 0, ds_insn, 13, true, 0x4140});
+	const word absent_insn = address_of(probe_seg_absent_insn);
+	ok &= delivers("MOV ES of an absent segment", probe_seg_absent,
+		       address_of(probe_seg_absent_end),
+		       {sigbus, si_kernel, 0, absent_insn, 11, true, 0x14});
+	const word jmp_insn = address_of(probe_seg_farjmp_data_insn);
+	ok &= delivers("far JMP to a data segment", seg_farjmp_data,
+		       address_of(probe_seg_farjmp_data_end),
+		       {sigsegv, si_kernel, 0, jmp_insn, 13, true, 0x28});
+	const word lss_insn = address_of(probe_seg_lss_null_insn);
+	ok &= delivers("LSS of a null selector", seg_lss_null,
+		       address_of(probe_seg_lss_null_end),
+		       {sigsegv, si_kernel, 0, lss_insn, 13, true, 0});
+	const word iret_insn = address_of(probe_seg_iret_bad_insn);
+	ok &= delivers("IRET to a data segment", probe_seg_iret_bad,
+		       address_of(probe_seg_iret_bad_end),
+		       {sigsegv, si_kernel, 0, iret_insn, 13, true, 0x28});
+	ok &= expect("far CALL to LDT code, 0x82 there",
+		     probe_seg_ldt_call(segment_pointer), 0x000f0015);
+	u32 fs_word;
+	__builtin_memcpy(&fs_word, segment_buffer + 4, sizeof(fs_word));
+	ok &= expect("FS:4 through the LDT data segment",
+		     probe_seg_fs_read(ldt_data) & 0xffffffffUL, fs_word);
+#if defined(__x86_64__)
+	const word cx16 = address_of(probe_seg_cx16_insn);
+	ok &= delivers("misaligned LOCK CMPXCHG16B", seg_cx16,
+		       address_of(probe_seg_cx16_end),
+		       {sigsegv, si_kernel, 0, cx16, 13, true, 0});
+	const word cx16_plain = address_of(probe_seg_cx16_plain_insn);
+	ok &= delivers("misaligned CMPXCHG16B", seg_cx16_plain,
+		       address_of(probe_seg_cx16_plain_end),
+		       {sigsegv, si_kernel, 0, cx16_plain, 13, true, 0});
+#else
+	u32 word_at;
+	const word es_insn = address_of(probe_seg_es_read_insn);
+	const word es_end = address_of(probe_seg_es_read_end);
+	__builtin_memcpy(&word_at, segment_buffer + 0xfc, sizeof(word_at));
+	ok &= expect("ES:0xfc, the last dword below the limit",
+		     probe_seg_es_read(ldt_data, 0xfc), word_at);
+	const word beyond[] = {0xfd, 0x100, 0xffffffff};
+	for (const word offset : beyond) {
+		segment_selector = ldt_data;
+		segment_offset = offset;
+		ok &= delivers("a dword read across ES's limit", seg_es_read,
+			       es_end, {sigsegv, si_kernel, 0, es_insn, 13,
+					true, 0});
+	}
+	__builtin_memcpy(&word_at, segment_buffer, sizeof(word_at));
+	ok &= expect("ES:0x1000 through the expand-down segment",
+		     probe_seg_es_read(ldt_down, 0x1000), word_at);
+	segment_selector = ldt_down;
+	segment_offset = 0xfff;
+	ok &= delivers("a read below the expand-down segment", seg_es_read,
+		       es_end, {sigsegv, si_kernel, 0, es_insn, 13, true, 0});
+	const word null_insn = address_of(probe_seg_null_ds_insn);
+	ok &= delivers("an access through a null DS", seg_null_ds,
+		       address_of(probe_seg_null_ds_end),
+		       {sigsegv, si_kernel, 0, null_insn, 13, true, 0});
+	for (word index = 0xe0; index < 0x110; ++index)
+		segment_buffer[index] = 0;
+	const word stos_insn = address_of(probe_seg_stos_insn);
+	ok &= delivers("REP STOSB across ES's limit", probe_seg_stos,
+		       address_of(probe_seg_stos_end),
+		       {sigsegv, si_kernel, 0, stos_insn, 13, true, 0});
+	ok &= expect("ECX at the fault", observed[observed_cx], 0x10);
+	ok &= expect("EDI at the fault", observed[observed_di], 0x100);
+	ok &= expect("the last byte stored", segment_buffer[0xff], 0x5a);
+	ok &= expect("the first byte beyond", segment_buffer[0x100], 0);
+	const word ro_insn = address_of(probe_seg_ro_write_insn);
+	ok &= delivers("a store through a read-only segment",
+		       probe_seg_ro_write, address_of(probe_seg_ro_write_end),
+		       {sigsegv, si_kernel, 0, ro_insn, 13, true, 0});
+	const word cs_insn = address_of(probe_seg_cs_write_insn);
+	ok &= delivers("a store through CS", seg_cs_write,
+		       address_of(probe_seg_cs_write_end),
+		       {sigsegv, si_kernel, 0, cs_insn, 13, true, 0});
+	u32 first;
+	u32 second;
+	__builtin_memcpy(&first, segment_buffer + 4, sizeof(first));
+	__builtin_memcpy(&second, segment_buffer + 8, sizeof(second));
+	ok &= expect("DS adds its base", probe_seg_ds_base(), first + second);
+	u32 pointer_image[2] = {0x12345678, ldt_data};
+	ok &= expect("LES", probe_seg_les(pointer_image), 0x00075678);
+	ok &= expect("LDS", probe_seg_lds(pointer_image), 0x00075678);
+	ok &= expect("LFS", probe_seg_lfs(pointer_image), 0x00075678);
+	ok &= expect("LGS", probe_seg_lgs(pointer_image), 0x00075678);
+	ok &= expect("LSS", probe_seg_lss(pointer_image), 0x00075678);
+	ok &= expect("far JMPs to 64-bit code and back",
+		     probe_seg_mode_switch(segment_pointer), 0x00330002);
+	ok &= expect("0x82 as group 1", probe_seg_group1_82(), 0x114);
+	if (!handle_on_alternate_stack(sigbus, record_fault)) {
+		put("  sigaltstack or rt_sigaction failed\n");
+		return false;
+	}
+	segment_stack_pointer = 0x80;
+	ok &= delivers_nothing("a push at SS:0x7c", seg_ss_push,
+			       address_of(probe_seg_ss_push_end));
+	ok &= expect("the pushed dword", segment_stack[0x7c], 0x2f);
+	segment_stack_pointer = 0x84;
+	const word push_insn = address_of(probe_seg_ss_push_insn);
+	ok &= delivers("a push beyond SS's limit", seg_ss_push,
+		       address_of(probe_seg_ss_push_end),
+		       {sigbus, si_kernel, 0, push_insn, 12, true, 0});
+#endif
+	return ok;
+}
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -4740,6 +5189,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "x87-status"));
 	report("i386 masked x87 exceptions set sticky status flags",
 	       in_child(i386_probe, "x87-status"));
+	report("x86-64 selector loads, the LDT and far transfers",
+	       in_child(self, "segments"));
+	report("i386 segment limits, bases, the LDT and far transfers",
+	       in_child(i386_probe, "segments"));
 	return failures;
 }
 #endif
@@ -4792,6 +5245,8 @@ extern "C" int probe_main(word *stack)
 			return x87_status_flags() ? 0 : 1;
 		if (equal(mode, "stack-pointers"))
 			return bad_stack_pointers() ? 0 : 1;
+		if (equal(mode, "segments"))
+			return segments() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
