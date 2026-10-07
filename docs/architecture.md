@@ -266,6 +266,31 @@ the JIT's native lowering leaves to a helper run in the JIT's own semantic
 slow path, never in another engine; a helper treats any word outside its
 routed classes as a fatal internal error.
 
+The non-streaming SVE semantic library,
+[`cpu/arm64/detail/sve_semantics.hpp`](../darwin/cpu/arm64/detail/sve_semantics.hpp),
+is shared C++ semantics rather than another engine. It executes the SVE
+profile's words at PSTATE.SM = 0 and VL 16, routed by the generated encoding
+table, for an engine's forms that it does not lower inline. It includes no
+engine header and works on `CpuState` alone. It reaches guest memory only
+through the caller's translation interface. It never changes PC, and it marks
+the SVE state live. A reserved bitmask immediate gives the
+illegal-instruction exit. A memory form faults at the first byte, in the
+pseudocode's access order, that does not translate, and checks an SP base's
+16-byte alignment before any access, also with no element active. A fault
+leaves what arm64-builder's Neoverse V2 leaves: a load changes no register, a
+store writes its footprint's 16-byte pieces in order up to the faulting one,
+and a scatter its elements in order up to the faulting one. A first-fault
+load's later elements, and a non-fault load's every element, clear FFR from
+the first that does not translate instead of faulting.
+A floating-point form computes each active element with the host's own
+instruction under the guest FPCR, so inactive elements raise nothing; while
+an FPCR trap enable is set it runs as AdvSIMD's transactional path does, and
+an enabled exception restores Z, V and P, commits only the unenabled flags,
+and gives the floating-point trap. The cryptographic and integer matrix forms
+are computed in software. `sve_semantics_covers()` holds for every row the
+table routes; any other word is a fatal internal error. No product links the
+library until an engine calls it.
+
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
 FEAT_AFP twins into, and an island of veneers. Every image that carries it

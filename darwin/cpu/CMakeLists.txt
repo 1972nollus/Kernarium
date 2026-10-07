@@ -84,6 +84,24 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
 target_include_directories(uml_arm64_execution_helpers PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
+# The engine-neutral SVE semantic library (docs/architecture.md). No product
+# links it until an engine calls it.
+add_library(uml_arm64_sve_semantics OBJECT
+    arm64/detail/sve_semantics.cpp
+    arm64/detail/sve_semantics_crypto.cpp
+    arm64/detail/sve_semantics_floating.cpp
+    arm64/detail/sve_semantics_integer.cpp
+    arm64/detail/sve_semantics_memory.cpp
+    arm64/detail/sve_semantics_permute.cpp
+    arm64/detail/sve_semantics_predicate.cpp
+    arm64/detail/sve_semantics_wide.cpp)
+uml_declare_architecture_target(uml_arm64_sve_semantics cpu shared)
+target_link_libraries(uml_arm64_sve_semantics PRIVATE
+    UML::BridgeAbi
+    UML::CpuContract)
+target_include_directories(uml_arm64_sve_semantics PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+
 # Off by default so ordinary translation has no diagnostic instrumentation. A
 # threaded counter gadget indexes a table keyed by the exact selected entry,
 # which is what a static host-instruction cost per entry must be weighted by.
@@ -326,7 +344,8 @@ if(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION)
     set(_uml_inline_asm_targets
         uml_arm64_gadgets
         uml_arm64_jit
-        uml_arm64_jit_executor)
+        uml_arm64_jit_executor
+        uml_arm64_sve_semantics)
     if(TARGET uml_arm64_jit_diagnostics_executor)
         list(APPEND _uml_inline_asm_targets
             uml_arm64_jit_diagnostics_executor)
