@@ -31,6 +31,7 @@
 
 #include <FEXCore/Utils/AllocatorHooks.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -128,6 +129,9 @@ private:
 		return mapping;
 	}
 
+	/* The owner serves released memory again as it was, and a walk
+	 * stops at the zeroed end of the blocks: clear what FEXCore wrote, all
+	 * of a dispatcher, so no old bytes follow a later buffer's blocks. */
 	static void release(void *mapping, std::size_t size)
 	{
 		auto &state = shared();
@@ -136,7 +140,35 @@ private:
 			state.buffers.erase(
 				reinterpret_cast<std::uintptr_t>(mapping));
 		}
+		{
+			FEXCore::Allocator::ScopedExecutableWrite write;
+			std::memset(mapping, 0, size < minimum_code_buffer ? size :
+				written(reinterpret_cast<std::uintptr_t>(mapping), size));
+		}
 		state.original.Free(mapping, size);
+	}
+
+	/* The end of the blocks from a buffer's start, or its size when they
+	 * do not parse. */
+	[[nodiscard]] static std::size_t written(std::uintptr_t base,
+		std::size_t buffer_size)
+	{
+		std::size_t offset = 0;
+		while (offset + 4U <= buffer_size) {
+			const auto header = read<std::uint32_t>(base + offset);
+			if (header == 0U)
+				return offset;
+			const auto tail = offset + header;
+			if (header < 8U || header % 8U != 0U ||
+			    tail + tail_size > buffer_size)
+				return buffer_size;
+			const auto size = read<std::uint64_t>(base + tail);
+			if (size < header + tail_size || size > buffer_size - offset)
+				return buffer_size;
+			offset = std::min(buffer_size, static_cast<std::size_t>(
+				(offset + size + 15U) & ~std::uint64_t{15}));
+		}
+		return buffer_size;
 	}
 
 	template<typename Value>
