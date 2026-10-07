@@ -70,6 +70,24 @@ namespace uml::emulator::tests {
 		return values("svcr", expected.svcr, actual.svcr);
 	if (expected.tpidr2 != actual.tpidr2)
 		return values("tpidr2", expected.tpidr2, actual.tpidr2);
+	/* P and FFR outside streaming mode, compared as the architecture holds
+	 * them: a mask byte counts by its top bit. */
+	namespace arm64 = ::uml::cpu::arm64;
+	for (std::size_t index = 0; index < expected.sve_p.size(); ++index)
+		if (arm64::sve_predicate_packed(expected.sve_p[index]) !=
+		    arm64::sve_predicate_packed(actual.sve_p[index]))
+			return values("p" + std::to_string(index) +
+					" outside streaming mode",
+				arm64::sve_predicate_packed(
+					expected.sve_p[index]),
+				arm64::sve_predicate_packed(
+					actual.sve_p[index]));
+	if (arm64::sve_predicate_packed(expected.sve_ffr) !=
+	    arm64::sve_predicate_packed(actual.sve_ffr))
+		return values("ffr", arm64::sve_predicate_packed(expected.sve_ffr),
+			arm64::sve_predicate_packed(actual.sve_ffr));
+	if (expected.sve_live != actual.sve_live)
+		return values("sve_live", expected.sve_live, actual.sve_live);
 	if (!(expected.exclusive_address == actual.exclusive_address &&
 	      expected.exclusive_key == actual.exclusive_key &&
 	      expected.exclusive_value == actual.exclusive_value &&

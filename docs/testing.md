@@ -508,7 +508,29 @@ UNDEFINED on every host. The
 `arm64-instruction-corpus-sme-native` tooling test re-derives their cases from
 their generator, and `arm64-sme-native-oracle` drives the native oracle with
 base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
-the corpus README describes it.
+the corpus README describes it. The M4 has no SVE, so the native SME cases
+outside streaming mode whose words the SVE profile executes there run under
+the `without_sve` option, which translates them for a virtual CPU without
+SVE on every host.
+
+A corpus case with non-streaming SVE state, or one that needs an SVE profile
+feature natively, runs only for an engine whose `sve_support` is `complete`
+where the virtual CPU implements the SVE profile; the summary counts every
+other one as skipped for `sve`. The `arm64-absent-sve` records pin every
+encoding the SVE profile executes outside streaming mode UNDEFINED under
+`without_sve`, and every other SVE encoding UNDEFINED there on every virtual
+CPU, so both engines run them today with the guest-SVE policy off or on.
+
+The `arm64-sve-native` records hold non-streaming SVE results observed at a
+16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
+in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
+pages. Until an engine reaches `sve_support` `complete` they are all
+skipped. The `arm64-instruction-corpus-sve-native` tooling test re-derives
+their cases from their generator, and `arm64-sve-native-oracle` drives the
+native oracle with base A64 cases on any arm64 Mac, and with SVE cases where
+the host has SVE at that length. Regenerating their outcomes needs such a
+host and runs the oracle twice from clean directories; the corpus README
+describes it.
 
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
