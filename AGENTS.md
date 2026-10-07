@@ -204,8 +204,6 @@ Update documentation in the same change whenever its current contract changes.
   artifacts that
   [`android/aosp-17/README.md`](android/aosp-17/README.md#superseded-releases)
   names, deleting only explicit paths.
-- Do not delete or overwrite a rootfs, dependency prefix, replay checkout, or
-  another developer's artifacts without explicit authorization.
 - Remove a worktree and delete its branch as soon as their work is merged,
   cherry-picked, or superseded; keep only trees with live work, unmerged
   commits, or a canonical replay that other trees reference. Before removing
