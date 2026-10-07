@@ -523,10 +523,13 @@ logical operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL,
 ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY
 and SEL) and the register-only hot set: the unpredicated, predicated and
 immediate integer arithmetic, logical, multiply, min/max and shift forms,
-the SVE2 widening, narrowing, high-half and shift-accumulate forms, the
-unsigned saturating forms, XAR, ZIP, UZP, TRN, byte TBL, the dot products,
-the integer compares, and the floating-point arithmetic, multiply-add,
-indexed, rounding and same-size conversion forms. A predicated
+including the shifts by wide elements, the SVE2 widening (also indexed),
+narrowing, high-half and shift-accumulate forms, the unsigned saturating
+forms, BSL, BSL1N, BSL2N, NBSL, EOR3, EORBT, EORTB, XAR, ZIP, UZP and TRN
+of vectors and predicates, REV, EXT, TBL of one or two registers, the dot
+products, the integer compares, and the floating-point arithmetic
+(also by immediate), multiply-add, indexed, rounding and same-size
+conversion forms. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
@@ -536,10 +539,10 @@ saturating form saturates by compare and select, since AdvSIMD's
 saturating forms set FPSR.QC and SVE's never do, and a shift by an
 immediate has a gadget per value of tsz:imm3. A contiguous load or store
 (LD1*, ST1*, LDNT1*, STNT1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, and LDR and
-STR of a Z register) whose footprint lies in one guest page the TLB holds
-runs on the host address: a load reads the whole footprint and zeroes the
-inactive elements, and a store runs only under an all-true predicate, as
-one store. A crossing, a page the TLB cannot fill, a fault, a partial
+STR of a Z or P register) whose footprint lies in one guest page the TLB
+holds runs on the host address: a load reads the whole footprint and
+zeroes the inactive elements, and a store runs only under an all-true
+predicate, as one store. A crossing, a page the TLB cannot fill, a fault, a partial
 store or an SP base runs through the semantic library, which decides
 faults and partial writes. SVE prefetches are NOPs. A size or index a
 form's gadgets leave out runs through the semantic library. Every other
@@ -569,10 +572,10 @@ entries on a constant the builder computes. A program holding one of these
 words accesses the FP state before it runs, since P and FFR travel with it,
 and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
 `arm64-gadget-sve` checks the control forms against the pseudocode and
-every generated form against the semantic library on random states: the
-register-only forms with the native FP environment inactive and active,
-and the memory forms from bases inside a page, across pages, unmapped and
-tagged, comparing memory and faults too. It also checks that no
+every generated form against the semantic library on random states, with
+the native FP environment inactive and active: the memory forms from bases
+inside a page, across pages, unmapped and tagged, comparing memory and
+faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 

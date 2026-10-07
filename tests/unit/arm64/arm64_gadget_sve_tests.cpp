@@ -1821,15 +1821,19 @@ private:
 };
 
 /* Every generated memory form agrees with the semantic library: random
- * words of each contiguous row, each alone in a block, from bases inside a
- * page, across the two mapped pages, into the unmapped page after them,
- * and with a tagged base under TBI, leave the library's state, event,
- * fault address and memory. Predicates are all-true half the time, so
- * both a store's fast path and the library's partial store run. */
+ * words of each contiguous row, each alone in a block on a two-page mapping
+ * of random bytes and again behind an FP instruction that leaves the
+ * guest's environment active, from bases inside a page, at a page's end,
+ * across into the unmapped page after them, and tagged under TBI, leave
+ * the library's state, event, fault address and memory. Predicates are
+ * all-true half the time, so both a store's fast path and the library's
+ * partial store run. */
 void memory_forms_match_the_library()
 {
 	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr std::size_t mapped = mapped_pages * page;
+	/* fadd s31, s31, s31 on 1.0, as in generated_forms_match_the_library. */
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
 	Random random{0x5ec7'0003U};
 	const auto host = sve_host();
 	std::size_t runs = 0;
@@ -1855,15 +1859,11 @@ void memory_forms_match_the_library()
 			if (decoded.kind != gadgets::SveWord::implemented ||
 			    decoded.row != &row)
 				continue;
-			const std::array code{word, svc};
-			Machine machine{code, host};
 			std::vector<std::byte> bytes(mapped);
-			for (std::size_t offset = 8; offset < mapped; offset += 8) {
+			for (std::size_t offset = 0; offset < mapped; offset += 8) {
 				const auto value = random.next();
 				std::memcpy(bytes.data() + offset, &value, 8);
 			}
-			std::memcpy(bytes.data(), code.data(), 8);
-			machine.put(0, bytes);
 			auto initial = random_state(random);
 			for (unsigned n = 0; n < 16; ++n)
 				if (random.next() % 2U == 0U)
@@ -1902,52 +1902,79 @@ void memory_forms_match_the_library()
 				initial.sp = base & ~std::uint64_t{15};
 			else
 				initial.registers[base_register] = base;
-			initial.pc = code_base;
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
 
-			machine.cpu = initial;
-			const auto event = machine.run();
-			std::vector<std::byte> after(mapped);
-			machine.get(0, after);
+			for (const bool behind : {false, true}) {
+				const std::array alone{word, svc};
+				const std::array activated{activate, word, svc};
+				const std::span<const std::uint32_t> code = behind ?
+					std::span<const std::uint32_t>{activated} :
+					std::span<const std::uint32_t>{alone};
+				std::vector<std::byte> before = bytes;
+				std::memcpy(before.data(), code.data(),
+					code.size_bytes());
+				Machine machine{code, host};
+				machine.put(0, before);
+				machine.cpu = initial;
+				const auto event = machine.run();
+				std::vector<std::byte> after(mapped);
+				machine.get(0, after);
 
-			auto expected = initial;
-			CopiedMemory reference{bytes};
-			const auto result = arm64::detail::execute_sve(expected,
-				word, row, reference);
-			const bool faulted = result.event ==
-				arm64::detail::SveEvent::memory_fault;
-			faults += faulted ? 1U : 0U;
-			bool same = event == (faulted ? EngineEvent::memory_fault :
-					EngineEvent::system_call) &&
-				(!faulted || (machine.cpu.pc == code_base &&
-					machine.fault_address() ==
-						result.fault_address)) &&
-				result.event != arm64::detail::SveEvent::fatal &&
-				machine.cpu.registers == expected.registers &&
-				machine.cpu.sp == expected.sp &&
-				machine.cpu.sve_p == expected.sve_p &&
-				machine.cpu.sve_ffr == expected.sve_ffr &&
-				after == bytes;
-			for (unsigned n = 0; n < 32 && same; ++n)
-				same = machine.cpu.vectors[n].bytes ==
-					expected.vectors[n].bytes;
-			if (!same) {
-				std::fprintf(stderr, "word %08x (row %zu, SVE-%04u) "
-					"at %#llx: the gadget leaves another "
-					"state than the library (event %d, "
-					"library %d, fault %#llx/%#llx, memory "
-					"%s)\n", word, index,
-					row.form & 0x7fffU,
-					static_cast<unsigned long long>(base),
-					static_cast<int>(event),
-					static_cast<int>(result.event),
-					static_cast<unsigned long long>(
-						machine.fault_address()),
-					static_cast<unsigned long long>(
-						result.fault_address),
-					after == bytes ? "same" : "differs");
-				require(false);
+				auto expected = initial;
+				if (behind)
+					set_vec(expected, 31, two);
+				CopiedMemory reference{before};
+				const auto result = arm64::detail::execute_sve(
+					expected, word, row, reference);
+				const bool faulted = result.event ==
+					arm64::detail::SveEvent::memory_fault;
+				const auto at = code_base + (behind ? 4U : 0U);
+				faults += faulted ? 1U : 0U;
+				bool same = event == (faulted ?
+						EngineEvent::memory_fault :
+						EngineEvent::system_call) &&
+					(!faulted || (machine.cpu.pc == at &&
+						machine.fault_address() ==
+							result.fault_address)) &&
+					result.event !=
+						arm64::detail::SveEvent::fatal &&
+					machine.cpu.registers == expected.registers &&
+					machine.cpu.sp == expected.sp &&
+					machine.cpu.sve_p == expected.sve_p &&
+					machine.cpu.sve_ffr == expected.sve_ffr &&
+					machine.cpu.nzcv == expected.nzcv &&
+					machine.cpu.fpsr == expected.fpsr &&
+					after == before;
+				for (unsigned n = 0; n < 32 && same; ++n)
+					same = machine.cpu.vectors[n].bytes ==
+						expected.vectors[n].bytes;
+				if (!same) {
+					std::fprintf(stderr, "word %08x (row %zu, "
+						"SVE-%04u%s) at %#llx: the gadget "
+						"leaves another state than the "
+						"library (event %d, library %d, "
+						"fault %#llx/%#llx, fpsr %08x/%08x, "
+						"memory %s)\n", word, index,
+						row.form & 0x7fffU,
+						behind ? ", FP active" : "",
+						static_cast<unsigned long long>(base),
+						static_cast<int>(event),
+						static_cast<int>(result.event),
+						static_cast<unsigned long long>(
+							machine.fault_address()),
+						static_cast<unsigned long long>(
+							result.fault_address),
+						machine.cpu.fpsr, expected.fpsr,
+						after == before ? "same" : "differs");
+					require(false);
+				}
+				++runs;
 			}
-			++runs;
 		}
 	}
 	require(rows > 0U && runs > rows && faults > 0U);

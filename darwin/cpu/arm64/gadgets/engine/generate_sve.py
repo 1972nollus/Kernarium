@@ -16,8 +16,9 @@ maps each table row to its form.
 A gadget's stream holds the CpuState offsets of the registers its form
 names, 16 bits each in slot order, and then any immediates the builder
 computes: a predicate image, a count from the vector length, a replicated
-immediate, a TBL index vector, or the address of a WHILE* table
-(sve_layout.h). Some forms need no gadget of their own: CNT*, RDVL and the
+immediate, a TBL index vector (DUP by index, EXT), the address of a WHILE*
+table (sve_layout.h), or a memory form's byte offset and the stream of the
+sve_library gadget its slow path enters. Some forms need no gadget of their own: CNT*, RDVL and the
 scalar INC* and DEC* forms are moves and additions of a builder constant,
 and ADDVL and ADDPL additions to a register or SP, so they select the base
 part's entries.
@@ -69,7 +70,7 @@ LOWERINGS = ["plain", "predicate_constant", "predicate_constant_flags",
              "integer_immediate", "bitmask_immediate", "float_immediate",
              "index_table", "count_move", "count_add",
              "vector_length_add", "unsigned_immediate", "memory",
-             "prefetch"]
+             "prefetch", "extract_table"]
 
 # Form flags.
 FLAG_DISCARD_ON_ZERO = 1  # slot 0 is a general destination; XZR is a NOP.
@@ -450,8 +451,6 @@ THREE_REGISTER = {
     "smlslt_z_zzz_": (widening("smlsl", True), True, False),
     "addhnb_z_zz_": (add_high_narrow(False), False, False),
     "addhnt_z_zz_": (add_high_narrow(True), True, False),
-    "tbl_z_zz_1": (lambda e: ["tbl v0.16b, {v1.16b}, v2.16b"] if e == 1
-                   else ABSENT, False, False),
 }
 
 
@@ -1146,20 +1145,262 @@ def comparison(operation: str, invert: bool):
     return lines
 
 
+# The rest of design 4.3's hot set.
+
+def load_constant(register: str, value: int, bits: int) -> list:
+    """MOVZ and MOVK of `value` into a `bits`-wide general register."""
+    lines = []
+    for part in range(bits // 16):
+        half = (value >> (16 * part)) & 0xffff
+        shift = f", lsl #{16 * part}" if part else ""
+        lines.append(f"{'movk' if part else 'movz'} {register}, "
+                     f"#0x{half:x}{shift}")
+    return lines
+
+
+def next_register(source: str, target: str) -> list:
+    """`target` := the CpuState offset of the Z register after the one at
+    offset `source`, Z31's successor being Z0."""
+    return [f"sub {target}, {source}, #UML_GADGET_CPU_V0",
+            f"add {target}, {target}, #16",
+            f"and {target}, {target}, #0x1f0",
+            f"add {target}, {target}, #UML_GADGET_CPU_V0"]
+
+
+def bitwise_select(first: bool = False, second: bool = False,
+                   result: bool = False) -> list:
+    """BSL, BSL1N, BSL2N and NBSL: Zdn := (Zdn AND Zk) OR (Zm AND NOT Zk),
+    with the first source, the second or the result inverted, from v0
+    Zdn, v1 Zm and v2 Zk."""
+    lines = (["mvn v0.16b, v0.16b"] if first else []) + \
+        (["mvn v1.16b, v1.16b"] if second else [])
+    return lines + ["bsl v2.16b, v0.16b, v1.16b",
+                    f"{'mvn' if result else 'mov'} v0.16b, v2.16b"]
+
+
+# The unsized forms of Zdn and two more Z registers (slots Zdn, Zm, Zk).
+BITWISE_TERNARY = {
+    "bsl_z_zzz_": bitwise_select(),
+    "bsl1n_z_zzz_": bitwise_select(first=True),
+    "bsl2n_z_zzz_": bitwise_select(second=True),
+    "nbsl_z_zzz_": bitwise_select(result=True),
+    "eor3_z_zzz_": ["eor v0.16b, v0.16b, v1.16b",
+                    "eor v0.16b, v0.16b, v2.16b"],
+}
+
+
+def even_elements(e: int, register: int) -> str:
+    """v`register` := all ones in each even element of `e` bytes."""
+    if e == 8:
+        return f"movi d{register}, #0xffffffffffffffff"
+    return f"movi v{register}.2d, #0x{byte_mask(2 * e, False):016x}"
+
+
+def interleaved_eor(top: bool):
+    """EORBT: Zd's even elements := Zn's even XOR Zm's odd; EORTB (`top`):
+    Zd's odd elements := Zn's odd XOR Zm's even. The other elements keep
+    Zd's: v0 Zd, v1 Zn, v2 Zm."""
+    def lines(e: int) -> list:
+        a = ARRANGEMENTS[e]
+        return [f"{'trn1' if top else 'trn2'} v3.{a}, v2.{a}, v2.{a}",
+                "eor v3.16b, v3.16b, v1.16b", even_elements(e, 4),
+                f"{'bif' if top else 'bit'} v0.16b, v3.16b, v4.16b"]
+    return lines
+
+
+def table_lookup(registers: int):
+    """TBL of one or two Z registers by element indexes: each index becomes
+    its element's byte indexes, or 0xff past the table, which AdvSIMD's TBL
+    reads as zero. v1 Zn (the first of two at x4), v2 the indexes."""
+    def lines(e: int) -> list:
+        body = [] if registers == 1 else ["mov v6.16b, v1.16b"] + \
+            next_register("x4", "x9") + ["ldr q7, [_cpu, x9]"]
+        table = "{v1.16b}" if registers == 1 else "{v6.16b, v7.16b}"
+        if e == 1:
+            return body + [f"tbl v0.16b, {table}, v2.16b"]
+        a = ARRANGEMENTS[e]
+        limit = registers * 16 // e
+        body += [f"mov x9, #{limit}", "dup v3.2d, x9"] if e == 8 else \
+            [f"movi v3.{a}, #{limit}"]
+        body += [f"cmhs v4.{a}, v2.{a}, v3.{a}",
+                 f"shl v5.{a}, v2.{a}, #{e.bit_length() - 1}"]
+        width = 8
+        while width < 8 * e:
+            body.append(f"sli v5.{a}, v5.{a}, #{width}")
+            width *= 2
+        offsets = sum(byte << (8 * byte) for byte in range(e))
+        if e == 2:
+            body.append("movi v3.8h, #1, lsl #8")
+        else:
+            register = "x9" if e == 8 else "w9"
+            body += load_constant(register, offsets, 8 * e) + [
+                f"dup v3.{a}, {register}"]
+        return body + [f"add v5.{a}, v5.{a}, v3.{a}",
+                       "orr v5.16b, v5.16b, v4.16b",
+                       f"tbl v0.16b, {table}, v5.16b"]
+    return lines
+
+
+def wide_shift(kind: str):
+    """LSL, LSR or ASR by the unsigned doubleword of the other operand
+    that holds each element, clamped to the element size and spread over
+    the doubleword's elements for AdvSIMD's per-element shift."""
+    def lines(e, d, a, b):
+        arrangement = ARRANGEMENTS[e]
+        body = [f"mov x9, #{8 * e}", "dup v6.2d, x9",
+                f"cmhi v4.2d, {b}.2d, v6.2d", f"bsl v4.16b, v6.16b, {b}.16b"]
+        size = 4
+        while size >= e:
+            body.append(f"trn1 v4.{ARRANGEMENTS[size]}, "
+                        f"v4.{ARRANGEMENTS[size]}, v4.{ARRANGEMENTS[size]}")
+            size //= 2
+        if kind != "lsl":
+            body.append(f"neg v4.{arrangement}, v4.{arrangement}")
+        operation = "sshl" if kind == "asr" else "ushl"
+        return body + [f"{operation} {d}.{arrangement}, {a}.{arrangement}, "
+                       f"v4.{arrangement}"]
+    return lines
+
+
+def saturating_into(subtract: bool):
+    """UQADD or UQSUB by compare and select, as the unpredicated forms."""
+    def lines(e, d, a, b):
+        arrangement = ARRANGEMENTS[e]
+        if not subtract:
+            return [f"add {d}.{arrangement}, {a}.{arrangement}, "
+                    f"{b}.{arrangement}",
+                    f"cmhi v6.{arrangement}, {a}.{arrangement}, "
+                    f"{d}.{arrangement}",
+                    f"orr {d}.16b, {d}.16b, v6.16b"]
+        if e == 8:
+            return [f"cmhi v6.2d, {a}.2d, {b}.2d",
+                    f"sub {d}.2d, {a}.2d, {b}.2d",
+                    f"and {d}.16b, {d}.16b, v6.16b"]
+        return [f"umax {d}.{arrangement}, {a}.{arrangement}, "
+                f"{b}.{arrangement}",
+                f"sub {d}.{arrangement}, {d}.{arrangement}, "
+                f"{b}.{arrangement}"]
+    return lines
+
+
+def saturating_shift_left(e, d, a, b):
+    """UQSHL by vector without FPSR.QC: the amount, the whole signed
+    element, clamped to a byte for USHL; a left shift that loses a set
+    bit saturates."""
+    arrangement = ARRANGEMENTS[e]
+    if e == 1:
+        body = [f"mov v5.16b, {b}.16b"]
+    elif e == 8:
+        body = ["mov x9, #127", "dup v4.2d, x9", f"cmgt v6.2d, {b}.2d, v4.2d",
+                f"bsl v6.16b, v4.16b, {b}.16b", "mov x9, #-128",
+                "dup v4.2d, x9", "cmgt v5.2d, v4.2d, v6.2d",
+                "bsl v5.16b, v4.16b, v6.16b"]
+    else:
+        body = [f"movi v4.{arrangement}, #127",
+                f"smin v5.{arrangement}, {b}.{arrangement}, "
+                f"v4.{arrangement}",
+                f"mvni v4.{arrangement}, #127",
+                f"smax v5.{arrangement}, v5.{arrangement}, v4.{arrangement}"]
+    return body + [
+        f"ushl {d}.{arrangement}, {a}.{arrangement}, v5.{arrangement}",
+        f"neg v4.{arrangement}, v5.{arrangement}",
+        f"ushl v4.{arrangement}, {d}.{arrangement}, v4.{arrangement}",
+        f"cmeq v4.{arrangement}, v4.{arrangement}, {a}.{arrangement}",
+        f"cmgt v6.{arrangement}, v5.{arrangement}, #0",
+        "bic v6.16b, v6.16b, v4.16b", f"orr {d}.16b, {d}.16b, v6.16b"]
+
+
+INTEGER_BINARY_PREDICATED_MORE = {
+    "uqadd_z_p_zz_": saturating_into(False),
+    "uqsub_z_p_zz_": saturating_into(True),
+    "uqshl_z_p_zz_": saturating_shift_left,
+    "lsl_z_p_zw_": wide_shift("lsl"),
+    "lsr_z_p_zw_": wide_shift("lsr"),
+    "asr_z_p_zw_": wide_shift("asr"),
+}
+
+
+def indexed_widening(operation: str, top: bool, wide: int, index: int):
+    """A widening multiply (-add, -subtract) of Zn's bottom (even) or top
+    (odd) elements by Zm's element `index`."""
+    narrow = ARRANGEMENTS[wide // 2]
+    return [f"{'uzp2' if top else 'uzp1'} v1.{narrow}, v1.{narrow}, "
+            f"v1.{narrow}",
+            f"{operation} v0.{ARRANGEMENTS[wide]}, v1.{HALVES[wide // 2]}, "
+            f"v2.{narrow[-1]}[{index}]"]
+
+
+# name: (operation, top, wide element bytes, index bits).
+INDEXED_WIDENING = {}
+for _prefix in ("u", "s"):
+    for _operation in ("mull", "mlal", "mlsl"):
+        for _top in (False, True):
+            _accumulate = "z_zzzi" if _operation != "mull" else "z_zzi"
+            _base = f"{_prefix}{_operation}{'t' if _top else 'b'}"
+            INDEXED_WIDENING[f"{_base}_{_accumulate}_s"] = (
+                f"{_prefix}{_operation}", _top, 4, [11, 19, 20])
+            INDEXED_WIDENING[f"{_base}_{_accumulate}_d"] = (
+                f"{_prefix}{_operation}", _top, 8, [11, 20])
+
+
+# The predicated forms of Zdn and an immediate, i1 (bit 5) choosing one of
+# two constants: name: (operation, whether the immediate comes first,
+# constants).
+FP_IMMEDIATE = {
+    "fadd_z_p_zs_": ("fadd", False, ("0.5", "1.0")),
+    "fsub_z_p_zs_": ("fsub", False, ("0.5", "1.0")),
+    "fsubr_z_p_zs_": ("fsub", True, ("0.5", "1.0")),
+    "fmul_z_p_zs_": ("fmul", False, ("0.5", "2.0")),
+    "fmax_z_p_zs_": ("fmax", False, ("0.0", "1.0")),
+    "fmin_z_p_zs_": ("fmin", False, ("0.0", "1.0")),
+    "fmaxnm_z_p_zs_": ("fmaxnm", False, ("0.0", "1.0")),
+    "fminnm_z_p_zs_": ("fminnm", False, ("0.0", "1.0")),
+}
+
+
+def fp_immediate_predicated(operation: str, reverse: bool, constant: str,
+                            e: int) -> list:
+    """Zdn := Zdn op the constant under Pg (merging), as
+    fp_binary_predicated: slots Zdn (x3), Pg (x4)."""
+    a = ARRANGEMENTS[e]
+    load = "movi v2.2d, #0" if constant == "0.0" else \
+        f"fmov v2.{a}, #{constant}"
+    first, second = ("v2", "v1") if reverse else ("v1", "v2")
+    masked = ("v2", "v3") if reverse else ("v3", "v2")
+    return ["ensure_fp_environment", "ldr x8, [_stream], #8"] + unpack(2) + [
+        "ldr q1, [_cpu, x3]", load] + all_true_test(e, "x4") + [
+        f"{operation} v0.{a}, {first}.{a}, {second}.{a}",
+        "str q0, [_cpu, x3]", "next_gadget", "1:", "ldr q0, [_cpu, x4]"] + \
+        lane_mask(e) + ["and v3.16b, v1.16b, v0.16b",
+                        f"{operation} v5.{a}, {masked[0]}.{a}, "
+                        f"{masked[1]}.{a}",
+                        "bit v1.16b, v5.16b, v0.16b", "str q1, [_cpu, x3]",
+                        "next_gadget"]
+
+
+def reverse_elements(e: int) -> list:
+    """REV: v0 := v1's elements in reverse order."""
+    a = ARRANGEMENTS[e]
+    return ([] if e == 8 else [f"rev64 v1.{a}, v1.{a}"]) + [
+        "ext v0.16b, v1.16b, v1.16b, #8"]
+
+
 # Contiguous memory. A load or store whose footprint lies in one guest page
-# the TLB holds runs on the host address: a load reads the whole footprint,
-# which on a mapped page is harmless for inactive elements, and zeroes
-# those by the lane mask; a store runs only when its predicate is all-true,
-# as one store of the footprint. Everything else, a crossing, a page the
-# TLB cannot fill, a fault, a partial store, a tagged address, goes to the
-# semantic library through sve_library, which decides faults and partial
-# writes. Stream: [packed slots][byte offset][library operand][PC]: the
+# the TLB holds runs on the host address, untagged first under TBI: a load
+# reads the whole footprint, which on a mapped page is harmless for
+# inactive elements, and zeroes those by the lane mask; a store runs only
+# when its predicate is all-true, as one store of the footprint. LDR and
+# STR of a predicate expand and compress its two bytes to and from the
+# mask form. Everything else, a crossing, a page the TLB cannot fill, a
+# fault, a partial store, goes to the semantic library through
+# sve_library, which decides faults and partial writes; the builder sends
+# an SP base, whose alignment the access checks, there directly. Stream: [packed slots][byte offset][library operand][PC]: the
 # library operand is the word and row of an sve_library stream, so the slow
 # path is a branch to that gadget with _stream at it. Slot offsets live in
 # x19 (Zt) and x20 (Pg), which a TLB miss's helper call preserves.
 
 MEMORY_SHAPES = ("contiguous", "replicate", "replicate_quad", "structure",
-                 "fill_z")
+                 "fill_z", "fill_p")
 MEMORY_OFFSETS = ("immediate_footprint", "register_element",
                   "immediate_element", "immediate_16")
 LABELS = itertools.count()
@@ -1168,6 +1409,8 @@ LABELS = itertools.count()
 def memory_footprint(memory, e: int, m: int) -> int:
     if memory.shape == "replicate":
         return m
+    if memory.shape == "fill_p":
+        return 2
     if memory.shape in ("replicate_quad", "fill_z"):
         return 16
     return memory.registers * (16 // e) * m
@@ -1222,6 +1465,11 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
         elif memory.shape == "structure":
             names = ", ".join(f"v{k}.{a}" for k in range(registers))
             body.append(f"ld{registers} {{{names}}}, [x7]")
+        elif memory.shape == "fill_p":
+            # Bit k of the two bytes is byte k of the mask form.
+            body += ["ldrh w9, [x7]", "dup v0.8b, w9", "lsr w9, w9, #8",
+                     "dup v1.8b, w9", "mov v0.d[1], v1.d[0]"] + \
+                bit_pattern(1) + ["cmtst v0.16b, v0.16b, v1.16b"]
         else:
             body.append(f"ldr {width[footprint]}0, [x7]")
             size = m
@@ -1250,6 +1498,11 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
         if memory.shape == "structure":
             names = ", ".join(f"v{k}.{a}" for k in range(registers))
             body.append(f"st{registers} {{{names}}}, [x7]")
+        elif memory.shape == "fill_p":
+            # Each byte keeps its bit; three pairwise sums gather each
+            # half's eight bits into one byte.
+            body += bit_pattern(1) + ["and v0.16b, v0.16b, v1.16b"] + \
+                ["addp v0.16b, v0.16b, v0.16b"] * 3 + ["str h0, [x7]"]
         else:
             size = e
             while size > m:
@@ -1265,6 +1518,13 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
     return body
 
 
+def bit_pattern(register: int) -> list:
+    """v`register` := 0x01, 0x02, ..., 0x80 in each half: bit k of a
+    predicate's byte k / 8."""
+    return load_constant("x9", 0x8040201008040201, 64) + [
+        f"dup v{register}.2d, x9"]
+
+
 def memory_form(row):
     """The slots and a variant builder for a contiguous memory row, or
     None for a row the semantic library runs."""
@@ -1272,10 +1532,12 @@ def memory_form(row):
     if memory.shape not in MEMORY_SHAPES or \
             memory.offset not in MEMORY_OFFSETS:
         return None
+    fill_p = memory.shape == "fill_p"
     kinds = [operand.kind for operand in row.operands]
-    predicated = "p" in kinds
+    predicated = "p" in kinds and not fill_p
     indexed = memory.offset == "register_element"
-    wanted = [("z", 0)] + ([("p", 10)] if predicated else []) + \
+    wanted = [("p" if fill_p else "z", 0)] + \
+        ([("p", 10)] if predicated else []) + \
         [("gpr_or_sp", 5)] + ([("gpr", 16)] if indexed else [])
     m = memory.msize // 8
 
@@ -1441,6 +1703,71 @@ def build_forms(table) -> list:
                     accumulate=operation != "fmul", fp=True)
                     for index in range(1 << len(bits))]
             add(row, "plain", (("z", 0), ("z", 5), ("z", 16)), indexed)
+        elif name in BITWISE_TERNARY:
+            add(row, "plain", (("z", 0), ("z", 16), ("z", 5)),
+                lambda f, l=BITWISE_TERNARY[name]: single(
+                    f, three_register(l, accumulate=True)))
+        elif name in ("eorbt_z_zz_", "eortb_z_zz_"):
+            add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),
+                lambda f, top=name.startswith("eortb"): sized(
+                    f, lambda e: three_register(interleaved_eor(top)(e),
+                                                accumulate=True)))
+        elif name in ("tbl_z_zz_1", "tbl_z_zz_2"):
+            add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),
+                lambda f, n=int(name[-1]): sized(
+                    f, lambda e: three_register(table_lookup(n)(e))))
+        elif name in ("lsl_z_zw_", "lsr_z_zw_", "asr_z_zw_"):
+            add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),
+                lambda f, k=base: sized(f, lambda e: three_register(
+                    wide_shift(k)(e, "v0", "v1", "v2"))))
+        elif name in INTEGER_BINARY_PREDICATED_MORE:
+            add(row, "plain", (("z", 0), ("z", 5), ("p", 10)),
+                lambda f, o=INTEGER_BINARY_PREDICATED_MORE[name]: sized(
+                    f, integer_binary_predicated(o)))
+        elif name in INDEXED_WIDENING:
+            operation, top, wide, bits = INDEXED_WIDENING[name]
+
+            def widening_indexed(form: Form, operation=operation, top=top,
+                                 wide=wide, bits=bits) -> None:
+                form.variant_bits = bits
+                form.variants = [three_register(indexed_widening(
+                    operation, top, wide, index),
+                    accumulate=operation[1:] != "mull")
+                    for index in range(1 << len(bits))]
+            add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),
+                widening_indexed)
+        elif name in FP_IMMEDIATE:
+            operation, reverse, constants = FP_IMMEDIATE[name]
+
+            def fp_immediates(form: Form, operation=operation,
+                              reverse=reverse, constants=constants) -> None:
+                form.variant_bits = [5] + SIZE_BITS
+                form.variants = [
+                    ABSENT if size == 0 else fp_immediate_predicated(
+                        operation, reverse, constants[choice], ESIZES[size])
+                    for size in range(4) for choice in range(2)]
+            add(row, "plain", (("z", 0), ("p", 10)), fp_immediates)
+        elif name in ("zip1_p_pp_", "zip2_p_pp_", "uzp1_p_pp_",
+                      "uzp2_p_pp_", "trn1_p_pp_", "trn2_p_pp_"):
+            add(row, "plain", (("p", 0), ("p", 5), ("p", 16)),
+                lambda f, o=base: sized(
+                    f, lambda e: three_register(same_size(o)(e))))
+        elif name in ("rev_z_z_", "rev_p_p_"):
+            kind = name[4]
+            add(row, "plain", ((kind, 0), (kind, 5)),
+                lambda f: sized(f, lambda e: two_register(
+                    reverse_elements(e))))
+        elif name in ("ext_z_zi_des", "ext_z_zi_con"):
+            constructive = name.endswith("con")
+            second = next_register("x4", "x9") + ["ldr q1, [_cpu, x9]"] \
+                if constructive else ["ldr q1, [_cpu, x4]"]
+            first = "x4" if constructive else "x3"
+            add(row, "extract_table", (("z", 0), ("z", 5)),
+                lambda f, s=second, a=first: single(f, [
+                    "ldr x8, [_stream], #8", "ldr q2, [_stream], #16"] +
+                    unpack(2) + [f"ldr q0, [_cpu, {a}]"] + s + [
+                    "tbl v0.16b, {v0.16b, v1.16b}, v2.16b",
+                    "str q0, [_cpu, x3]", "next_gadget"]))
         elif name in THREE_REGISTER:
             lines, accumulate, fp = THREE_REGISTER[name]
             add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),

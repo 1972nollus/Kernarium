@@ -312,9 +312,12 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 	std::uint64_t unit = 0;
 	switch (memory.offset) {
 	case detail::SmeAddressOffset::immediate_footprint:
-		unit = memory.shape == detail::SmeMemoryShape::fill_z ?
-			sve_vector_length :
-			std::uint64_t{memory.registers} *
+		if (memory.shape == detail::SmeMemoryShape::fill_z)
+			unit = sve_vector_length;
+		else if (memory.shape == detail::SmeMemoryShape::fill_p)
+			unit = sve_vector_length / 8U;
+		else
+			unit = std::uint64_t{memory.registers} *
 				(sve_vector_length / esize) * msize;
 		break;
 	case detail::SmeAddressOffset::immediate_element:
@@ -343,6 +346,19 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		indexes[byte] = static_cast<std::uint8_t>(
 			(index + 1U) * esize <= sve_vector_length ?
 				index * esize + byte % esize : 0xffU);
+	return indexes;
+}
+
+/* The TBL indexes of EXT: the bytes of the pair (first, second) from the
+ * immediate's position, which is 0 past the vector. */
+[[nodiscard]] SvePredicate extract_indexes(std::uint32_t word) noexcept
+{
+	unsigned position = (((word >> 16) & 31U) << 3) | ((word >> 10) & 7U);
+	if (position >= sve_vector_length)
+		position = 0;
+	SvePredicate indexes{};
+	for (unsigned byte = 0; byte < sve_vector_length; ++byte)
+		indexes[byte] = static_cast<std::uint8_t>(position + byte);
 	return indexes;
 }
 
@@ -397,6 +413,9 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		return true;
 	case Lowering::index_table:
 		emit_predicate(context, broadcast_indexes(word));
+		return true;
+	case Lowering::extract_table:
+		emit_predicate(context, extract_indexes(word));
 		return true;
 	case Lowering::plain:
 	case Lowering::count_move:
