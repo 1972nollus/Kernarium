@@ -304,9 +304,11 @@ gadget mxcsr_load
 	ldr w24, [x7]
 Lx86_mxcsr_load_done:
 	/* MXCSR holds what the guest loads, masks and flags included, as
-	 * STMXCSR shows; its reserved high half reads as zero. */
+	 * STMXCSR shows; its reserved high half reads as zero. The loaded
+	 * flags replace the host's. */
 	and w24, w24, #0xffff
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	msr fpsr, xzr
 	refresh_simd_exact w24, 9, 10
 	publish_guest_rounding 9, 10, 11
 	retire_unless_simd_unchecked w24
@@ -319,6 +321,8 @@ gadget mxcsr_store
 	effective_address
 	mov x25, x7
 	ldr w24, [_cpu, #UML_X86_64_CPU_MXCSR]
+	fold_host_flags w24, 9, 10
+	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
 	page_cross_check 4, Lx86_mxcsr_store_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 4
 	str w24, [x7]

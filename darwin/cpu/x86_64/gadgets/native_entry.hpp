@@ -56,6 +56,10 @@ struct NativeExecutionContext final {
 	/* An exception-check exit's stream pointer, just past a stream word of
 	 * the instruction that raised the exception. */
 	const std::uintptr_t *exception_stream{};
+	/* FPSR as the SIMD floating-point instruction running now found it,
+	 * which a gadget saves while the gadgets check SIMD exceptions and its
+	 * exception-check exit puts back. */
+	std::uint64_t simd_status{};
 	/* A segment-fault exit's #NP, #SS or #GP and its error code. */
 	std::uint8_t segment_vector{};
 	std::uint32_t segment_error{};
@@ -93,6 +97,8 @@ static_assert(offsetof(NativeExecutionContext, entry_stack) ==
 	UML_X86_64_CONTEXT_ENTRY_STACK);
 static_assert(offsetof(NativeExecutionContext, exception_stream) ==
 	UML_X86_64_CONTEXT_EXCEPTION_STREAM);
+static_assert(offsetof(NativeExecutionContext, simd_status) ==
+	UML_X86_64_CONTEXT_SIMD_STATUS);
 
 struct NativeEngineResult final {
 	std::int32_t event;

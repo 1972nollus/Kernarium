@@ -2487,7 +2487,7 @@ enum class VectorFloatKind {
 	if (element == 64 && width == OperandWidth::ymm) \
 		UML_X86_VECTOR_FP_COMPARE_ENTRY(predicate_value, 64, 256); \
 	break
-	switch (predicate & 0xfU) {
+	switch (predicate & 0x1fU) {
 	case 0: UML_X86_VECTOR_FP_COMPARE_SHAPE(0);
 	case 1: UML_X86_VECTOR_FP_COMPARE_SHAPE(1);
 	case 2: UML_X86_VECTOR_FP_COMPARE_SHAPE(2);
@@ -2504,6 +2504,22 @@ enum class VectorFloatKind {
 	case 13: UML_X86_VECTOR_FP_COMPARE_SHAPE(13);
 	case 14: UML_X86_VECTOR_FP_COMPARE_SHAPE(14);
 	case 15: UML_X86_VECTOR_FP_COMPARE_SHAPE(15);
+	case 16: UML_X86_VECTOR_FP_COMPARE_SHAPE(16);
+	case 17: UML_X86_VECTOR_FP_COMPARE_SHAPE(17);
+	case 18: UML_X86_VECTOR_FP_COMPARE_SHAPE(18);
+	case 19: UML_X86_VECTOR_FP_COMPARE_SHAPE(19);
+	case 20: UML_X86_VECTOR_FP_COMPARE_SHAPE(20);
+	case 21: UML_X86_VECTOR_FP_COMPARE_SHAPE(21);
+	case 22: UML_X86_VECTOR_FP_COMPARE_SHAPE(22);
+	case 23: UML_X86_VECTOR_FP_COMPARE_SHAPE(23);
+	case 24: UML_X86_VECTOR_FP_COMPARE_SHAPE(24);
+	case 25: UML_X86_VECTOR_FP_COMPARE_SHAPE(25);
+	case 26: UML_X86_VECTOR_FP_COMPARE_SHAPE(26);
+	case 27: UML_X86_VECTOR_FP_COMPARE_SHAPE(27);
+	case 28: UML_X86_VECTOR_FP_COMPARE_SHAPE(28);
+	case 29: UML_X86_VECTOR_FP_COMPARE_SHAPE(29);
+	case 30: UML_X86_VECTOR_FP_COMPARE_SHAPE(30);
+	case 31: UML_X86_VECTOR_FP_COMPARE_SHAPE(31);
 	default: break;
 	}
 #undef UML_X86_VECTOR_FP_COMPARE_SHAPE
@@ -2523,7 +2539,8 @@ enum class VectorFloatKind {
 	if (instruction.vector_opcode == 0xc2) {
 		/* The legacy encoding reads the immediate's low three bits, as x86
 		 * hardware does, and VEX its low five; bit 4 changes only which
-		 * NaNs raise invalid operation. */
+		 * NaNs raise invalid operation, and its predicates have gadgets of
+		 * their own. */
 		entry = vector_float_compare_entry(instruction.vex ?
 				instruction.vector_control : instruction.vector_control & 7U,
 			element, instruction.destination.width, scalar, memory);

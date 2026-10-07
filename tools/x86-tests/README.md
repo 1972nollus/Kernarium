@@ -18,3 +18,9 @@ producer stages use LLVM only while regenerating the asset. The resulting
 CTest has no dependency on LLVM, NASM, FEX, K, Python, or the native oracle.
 See the corpus README under `tests/unit/x86_64/corpus/` for the canonical
 workflow and profile contract.
+
+`masked-flags-subset.py` chooses the checked-in cases of the
+`x86-64-masked-flags` tests from XE2's masked-flag request sets and the Xeon's
+responses: one case per combination of instruction, DAZ and FTZ, the Xeon's
+flags and the flags each engine's host instructions raise. With `--all` it
+writes every case, which the same test executable runs as a whole-set check.

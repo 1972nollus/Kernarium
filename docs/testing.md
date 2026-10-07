@@ -347,6 +347,12 @@ shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
 `#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
 transfers included, in both modes.
+`run_guest_x86_64_fenv.py`, which takes the same options, builds
+`fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
+such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
+STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
+Xeon's; `--pending` marks an engine that does not keep masked flags yet,
+which the JIT does not.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -548,7 +554,10 @@ an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
 native SME records on both engines, with `DARWIN_UML_GUEST_SME=1`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
-corpus skips its native SME records.
+corpus skips its native SME records. Integration runs read the policy the same
+way: on an M4 with `DARWIN_UML_GUEST_SME=1`, `guest-gadgets-smoke` and
+`guest-jit-smoke` expect the SME HWCAP2 bits and `guest-hwcap-sanity`
+executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
 under the policy on. Each skips, naming its reason, unless the host has SME
@@ -558,9 +567,12 @@ sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
 exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
 sigreturn and ptrace alone, then with SME executed by the engine; further
 boots send host signals and each terminating signal while a vCPU streams,
-and `glibc_za_probe.py` checks glibc's ZA lazy-save commits. The `kernel`,
-`spin` and `terminate` modes need no engine support; on an SME host they run
-by hand with
+and `glibc_za_probe.py` checks the image's glibc and libgcc SME ABI: the ZA
+lazy-save commits at fork, spawn, thread creation, longjmp and siglongjmp,
+a glibc-installed handler for a signal that interrupts a streaming region,
+returning or leaving by siglongjmp, and libgcc's SME support routines. The
+`kernel`, `spin` and `terminate` modes need no engine support; on an SME host
+they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
@@ -600,7 +612,11 @@ of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
-running it. The
+running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
+of XE2's request sets through each engine's ordinary path with every
+exception masked and hold the MXCSR flags each instruction leaves to an Intel
+Xeon's, except the documented inexact cases the test names; the JIT's runs
+`--pending`, allowing flags it leaves out. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 

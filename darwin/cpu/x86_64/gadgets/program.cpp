@@ -326,12 +326,14 @@ namespace {
 
 /* Runs `native_stream`, the program's own stream or one built from its
  * instructions, for at most `limit` instructions of the caller's
- * `instruction_budget`. With `WatchFloating` the host's floating-point
- * exception flags are cleared as the stream starts and reported, as MXCSR
- * flags, in `floating_exceptions` as it ends. A `Checked` run is one
- * instruction the runtime checks itself, so the gadgets check nothing
- * (`checked_run_checks`); any other run has them check what `gadget_checks`
- * asks for. */
+ * `instruction_budget`. The host's floating-point exception flags are
+ * cleared as the stream starts and gather the guest's sticky MXCSR flags,
+ * which the run adds to MXCSR as it ends; with `WatchFloating` they are
+ * reported, as MXCSR flags, in `floating_exceptions` instead, for the
+ * runtime to correct.
+ * A `Checked` run is one instruction the runtime checks itself, so the
+ * gadgets check nothing (`checked_run_checks`); any other run has them check
+ * what `gadget_checks` asks for. */
 template<bool WatchFloating, bool Checked = false>
 [[nodiscard, gnu::always_inline]] inline ExecuteResult run_stream(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
@@ -366,12 +368,15 @@ template<bool WatchFloating, bool Checked = false>
 	cpu.exception_checks =
 		Checked ? checked_run_checks(cpu) : gadget_checks(cpu);
 	executor.enter_engine();
-	if constexpr (WatchFloating)
-		clear_host_floating_exceptions();
+	clear_host_floating_exceptions();
 	const auto result = uml_x86_64_gadget_enter(
 		native_stream.data(), &cpu, &context);
 	if constexpr (WatchFloating)
 		*floating_exceptions = host_floating_exceptions();
+	else
+		/* FPSR.IDC reports an input FPCR.FZ flushed, which the engine
+		 * never sets; it is not x86's denormal operand. */
+		cpu.mxcsr |= host_floating_exceptions() & ~mxcsr_denormal_operand;
 	executor.leave_engine();
 	/* A block that published a code write and then left the stream never
 	 * reached the link-following test that settles its own publication, so

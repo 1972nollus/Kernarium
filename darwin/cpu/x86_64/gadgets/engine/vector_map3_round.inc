@@ -97,8 +97,55 @@ Lx86_vector_map3_round_done\@:
 Lx86_vector_map3_round_inputs_ready\@:
 .endm
 
+/* ROUND raises precision for a lane whose rounding changed it, unless bit 3
+ * of its immediate (w13) suppresses that; FRINTN, FRINTM, FRINTP and FRINTZ
+ * raise none. Precision is sticky, so nothing is tested while MXCSR holds
+ * it. The result is in v4 (and v5) from v1 (and v3), or lane 0 of v4 from
+ * v1 for a scalar one. A NaN raised its invalid operation as it rounded and
+ * raises no precision. Uses v16 to v18 and w14. */
+.macro vector_map3_round_precision element, width, scalar
+	tbnz w13, #3, Lx86_vector_map3_round_precise\@
+	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
+	tbnz w14, #5, Lx86_vector_map3_round_precise\@
+	.if \scalar
+	.if \element == 32
+	fcmp s4, s1
+	.else
+	fcmp d4, d1
+	.endif
+	b.eq Lx86_vector_map3_round_precise\@
+	b.vs Lx86_vector_map3_round_precise\@
+	.else
+	.if \element == 32
+	fcmeq v16.4s, v4.4s, v1.4s
+	fcmeq v17.4s, v1.4s, v1.4s
+	.else
+	fcmeq v16.2d, v4.2d, v1.2d
+	fcmeq v17.2d, v1.2d, v1.2d
+	.endif
+	bic v17.16b, v17.16b, v16.16b
+	.if \width == 256
+	.if \element == 32
+	fcmeq v16.4s, v5.4s, v3.4s
+	fcmeq v18.4s, v3.4s, v3.4s
+	.else
+	fcmeq v16.2d, v5.2d, v3.2d
+	fcmeq v18.2d, v3.2d, v3.2d
+	.endif
+	bic v18.16b, v18.16b, v16.16b
+	orr v17.16b, v17.16b, v18.16b
+	.endif
+	umaxv s16, v17.4s
+	fmov w14, s16
+	cbz w14, Lx86_vector_map3_round_precise\@
+	.endif
+	mxcsr_raise 0x20, 14
+Lx86_vector_map3_round_precise\@:
+.endm
+
 /* Rounding raises invalid operation only for a signalling NaN, which it
- * leaves a NaN. `exact` emits the exact path. */
+ * leaves a NaN, and precision after any leave. `exact` emits the exact
+ * path. */
 .macro vector_map3_round_compute opcode, width, exact
 	.if \exact
 	.if \opcode == 0x08 || \opcode == 0x0a
@@ -115,6 +162,7 @@ Lx86_vector_map3_round_inputs_ready\@:
 	.if \exact
 	simd_check_result 32, \width
 	.endif
+	vector_map3_round_precision 32, \width, 0
 	.elseif \opcode == 0x09
 	vector_map3_round_apply 64, 4, 1, 0
 	.if \width == 256
@@ -123,25 +171,28 @@ Lx86_vector_map3_round_inputs_ready\@:
 	.if \exact
 	simd_check_result 64, \width
 	.endif
+	vector_map3_round_precision 64, \width, 0
 	.elseif \opcode == 0x0a
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 32, 4, 1, 1
 	.if \exact
 	simd_check_scalar 32, 4
 	.endif
+	vector_map3_round_precision 32, 128, 1
 	.else
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 64, 4, 1, 1
 	.if \exact
 	simd_check_scalar 64, 4
 	.endif
+	vector_map3_round_precision 64, 128, 1
 	.endif
 .endm
 
 .macro vector_map3_round_body opcode, width
 	simd_exact_branch Lx86_vector_map3_round_common\@
 	vector_map3_round_compute \opcode, \width, 1
-	b Lx86_vector_map3_round_done\@
+	simd_exact_end Lx86_vector_map3_round_common\@, Lx86_vector_map3_round_done\@
 Lx86_vector_map3_round_common\@:
 	vector_map3_round_compute \opcode, \width, 0
 Lx86_vector_map3_round_done\@:
@@ -236,6 +287,7 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
 .purgem vector_map3_round_register
 .purgem vector_map3_round_body
 .purgem vector_map3_round_compute
+.purgem vector_map3_round_precision
 .purgem vector_map3_round_apply
 
 /* F16C uses its immediate (or MXCSR) rounding mode rather than the host
@@ -276,7 +328,7 @@ Lx86_vector_map3_half_mode_ready\@:
 .macro vector_map3_half_body width
 	simd_exact_branch Lx86_vector_map3_half_common\@
 	vector_map3_half_compute \width, 1
-	b Lx86_vector_map3_half_done\@
+	simd_exact_end Lx86_vector_map3_half_common\@, Lx86_vector_map3_half_done\@
 Lx86_vector_map3_half_common\@:
 	vector_map3_half_compute \width, 0
 Lx86_vector_map3_half_done\@:
