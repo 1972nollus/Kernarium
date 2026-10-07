@@ -17,9 +17,12 @@ case against the trap contract independently of the script:
   whose enable is set: for a derived case, the first by priority (ID, IO,
   DZ, OF, UF, IX) of the enabled exceptions its native case raised;
 - a completed case retires its instruction and the SVC, and adds no flag
-  whose enable is set; a derived one ends exactly as its native case,
-  but for FPSR;
-- no case sets FPCR.UFE while FZ or FZ16 is set.
+  whose enable is set but underflow under FZ or FZ16, a flush's, which
+  never traps; a derived one ends exactly as its native case, but for
+  FPSR;
+- no derived case sets FPCR.UFE while FZ or FZ16 is set, since its
+  native case cannot show whether a flush or an exact tiny result
+  underflowed; the authored cases hold both rules.
 
 build-unit-corpus.py --check already refuses a pack whose recorded script
 or table hash is stale.
@@ -54,10 +57,12 @@ def contract(trap, case: dict, base: dict | None) -> None:
     fpsr = trap.number(initial, "fpsr")
     final = trap.number(expected, "fpsr", fpsr)
     enabled = fpcr >> trap.ENABLE_SHIFT & trap.FLAGS
-    if fpcr & trap.UFE and fpcr & (trap.FZ | trap.FZ16):
+    if base is not None and fpcr & trap.UFE and \
+            fpcr & (trap.FZ | trap.FZ16):
         raise SystemExit(f"{name}: UFE with FZ or FZ16")
+    flushes = trap.UFC if fpcr & (trap.FZ | trap.FZ16) else 0
     if final & fpsr != fpsr or (final & ~fpsr) & ~trap.FLAGS or \
-            (final & ~fpsr) & enabled:
+            (final & ~fpsr) & enabled & ~flushes:
         raise SystemExit(f"{name}: FPSR {final:#x} from {fpsr:#x} under "
                          f"enables {enabled:#x}")
     if case["event"] == "floating-point-trap":

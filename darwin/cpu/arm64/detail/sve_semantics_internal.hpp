@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/detail/floating_rounding.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/detail/sve_semantics_forms.hpp"
@@ -210,6 +211,10 @@ struct Context final {
 	std::uint32_t word;
 	const SmeEncoding &row;
 	SveMemory &memory;
+	/* Whether a floating-point form rounded a tiny value without
+	 * flushing it, which the trapped Underflow decision needs
+	 * (floating_rounding() below). */
+	bool tiny_result{};
 
 	[[nodiscard]] unsigned field(
 		unsigned low, unsigned width) const noexcept
@@ -315,5 +320,16 @@ using Handler = SveResult (*)(Context &);
 [[nodiscard]] Handler crypto_handler(std::uint16_t form) noexcept;
 /* The handler of a memory form's row, by its shape. */
 [[nodiscard]] Handler memory_handler(const SmeEncoding &row) noexcept;
+
+/*
+ * How a floating-point form rounds its results, for the trapped Underflow
+ * rules of floating_exception.hpp: the format whose flush-to-zero control
+ * applies, and the FCVT and FPCR.AH exceptions to it. While it executes,
+ * the form sets Context::tiny_result when it rounds a value to a subnormal
+ * result, intermediate results of FADDV, FADDA, FMAXV, FMINV, FMAXNMV,
+ * FMINNMV and FCLAMP included.
+ */
+[[nodiscard]] FloatingRounding floating_rounding(
+	const Context &context) noexcept;
 
 } // namespace uml::cpu::arm64::detail::sve_semantics

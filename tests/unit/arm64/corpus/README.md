@@ -725,15 +725,18 @@ writes the `arm64-sve-trap` records, at VL 16 in both page profiles:
 - `authored` holds what no native case pins: divide by zero and input
   denormal alone, the one cause of every element's exceptions together,
   the flags a trap leaves, inactive elements that would raise, which
-  complete, and traps that keep a compare's P destination and the V
-  destination of FADDV and FADDA. IEEE 754 arithmetic decides each
-  operand's exceptions.
+  complete, traps that keep a compare's P destination and the V
+  destination of FADDV and FADDA, and the underflow rules below. IEEE 754
+  arithmetic decides each operand's exceptions.
 
 A trap leaves the SVE state live, as the SVE access trap Linux takes first
 makes it. FPRoundBase() never traps a flush to zero's underflow, and with
-UFE set an exact tiny result underflows; the semantic library decides from
-the flags an execution with every enable clear raises, so a case sets UFE
-only when it raised underflow with FZ and FZ16 clear.
+UFE set a tiny result underflows even when it is exact. The authored cases
+hold both rules: exact tiny products, tiny intermediate results of FADDV,
+FADDA and FMAXV, and an FCVT to half precision, which ignores FZ16, trap;
+FMUL and FRECPE flushes under FZ and FZ16 complete. A native case cannot
+show an exact tiny intermediate result, so a derived case sets UFE only
+when it raised underflow with FZ and FZ16 clear.
 
 The step needs no hardware. It is the last step of the chain and reruns
 after any change to the native records or to the script, on `sve-afp.jsonl`

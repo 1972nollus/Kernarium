@@ -307,9 +307,12 @@ the first that does not translate instead of faulting.
 A floating-point form computes each active element with the host's own
 instruction under the guest FPCR, so inactive elements raise nothing; while
 an FPCR trap enable is set it runs as AdvSIMD's transactional path does, and
-the same header decides from the flags it raised with every enable clear:
-an enabled exception restores Z, V and P, commits nothing, and gives the
-floating-point trap with one cause. The cryptographic and integer matrix
+the same header decides. The library classifies each form's rounding and
+notes every value it rounds to a subnormal result, the steps of FADDV,
+FADDA, FMAXV, FMINV, FMAXNMV, FMINNMV and FCLAMP included, so flushes and
+exact tiny results follow FPRoundBase() as above. An enabled exception
+restores Z, V and P, commits nothing, and gives the floating-point trap
+with one cause. The cryptographic and integer matrix
 forms are computed in software. `sve_semantics_covers()` holds for every row
 the table routes; any other word is a fatal internal error. No product links
 the library until an engine calls it.

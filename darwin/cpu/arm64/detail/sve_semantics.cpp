@@ -100,7 +100,9 @@ namespace {
  * the cumulative flags clear; when its active elements raised an enabled
  * exception, the registers floating-point forms write (Z, V and P) and
  * FPSR return to their old values, and the trap reports one cause
- * (decide_floating_exception()).
+ * (decide_floating_exception()). Whether an Underflow traps follows the
+ * form's rounding: a flush to zero never traps, and with FPCR.UFE set a
+ * tiny result raises it even when exact.
  */
 [[nodiscard]] SveResult execute_trapping(
 	Context &context, Handler handler) noexcept
@@ -111,8 +113,11 @@ namespace {
 	const std::uint32_t original_fpsr = cpu.fpsr;
 	cpu.fpsr &= ~fpsr_exception_cumulative_mask;
 	const SveResult result = handler(context);
-	const auto decision =
-		decide_floating_exception(cpu.fpcr, original_fpsr, cpu.fpsr);
+	const auto decision = decide_floating_exception(cpu.fpcr,
+		original_fpsr, cpu.fpsr,
+		trappable_floating_exceptions(cpu.fpcr, cpu.fpsr,
+			floating_rounding(context),
+			[&] { return context.tiny_result; }));
 	if (result.event == SveEvent::retired && decision.traps()) {
 		cpu.vectors = vectors;
 		cpu.sve_p = predicates;
