@@ -75,10 +75,14 @@ unsigned predicate_count(unsigned pattern, unsigned esize) noexcept
 
 namespace {
 
-[[nodiscard]] Handler handler_for(std::uint16_t form) noexcept
+[[nodiscard]] Handler handler_for(const SmeEncoding &row) noexcept
 {
-	for (const auto lookup : {predicate_handler, integer_handler,
-		     wide_handler, permute_handler, floating_handler})
+	if (row.memory != 0U)
+		return memory_handler(row);
+	const std::uint16_t form = row.form;
+	for (const auto lookup :
+		{predicate_handler, integer_handler, wide_handler,
+			permute_handler, floating_handler, crypto_handler})
 		if (const Handler handler = lookup(form); handler != nullptr)
 			return handler;
 	return nullptr;
@@ -128,7 +132,7 @@ namespace {
 bool sve_semantics_covers(const SmeEncoding &row) noexcept
 {
 	return sve_semantics::routed(row) &&
-		sve_semantics::handler_for(row.form) != nullptr;
+		sve_semantics::handler_for(row) != nullptr;
 }
 
 SveResult execute_sve(CpuState &cpu, std::uint32_t word, const SmeEncoding &row,
@@ -137,7 +141,7 @@ SveResult execute_sve(CpuState &cpu, std::uint32_t word, const SmeEncoding &row,
 	using namespace sve_semantics;
 	if ((word & row.mask) != row.value || !routed(row))
 		return fatal();
-	const Handler handler = handler_for(row.form);
+	const Handler handler = handler_for(row);
 	if (handler == nullptr)
 		return fatal();
 	cpu.access_fp_state();

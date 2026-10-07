@@ -528,9 +528,9 @@ in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
 and its FZ, DN, and FZ16 controls. Until an engine reaches `sve_support`
 `complete` the engine lanes skip them all, and the corpus's library lane
-runs them through the SVE semantic library, skipping and counting the cases
-of a form it does not cover yet. The `arm64-instruction-corpus-sve-native`
-tooling test re-derives their cases from their generator, and
+runs them through the SVE semantic library, which covers every form the
+encoding table routes. The `arm64-instruction-corpus-sve-native` tooling
+test re-derives their cases from their generator, and
 `arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
 arm64 Mac, and with SVE cases where the host has SVE at that length.
 Regenerating their outcomes needs such a host and runs the oracle twice from

@@ -118,10 +118,10 @@ struct SveResult final {
 };
 
 /*
- * Whether execute_sve() implements the row. Every row
- * decode_sve_non_streaming() can return is covered once the library is
- * complete; until then the instruction corpus's library lane counts the
- * rows it is not as skipped.
+ * Whether execute_sve() implements the row, which holds for every row
+ * decode_sve_non_streaming() can return. The instruction corpus's library
+ * lane counts as skipped the cases of any row it does not hold for, which
+ * only a regenerated table with a new form can produce.
  */
 [[nodiscard]] bool sve_semantics_covers(const SmeEncoding &row) noexcept;
 
@@ -134,8 +134,10 @@ struct SveResult final {
  * floating-point form raises the cumulative FPSR flags of its active
  * elements only, and while an FPCR trap enable is set it traps when one of
  * them raises an enabled exception, as AdvSIMD's transactional path does.
- * A fault or a floating-point trap leaves the architectural state as it
- * was, but for the cumulative FPSR flags a trap commits and the live mark.
+ * A fault or a floating-point trap leaves the registers as they were, but
+ * for the cumulative FPSR flags a trap commits and the live mark, and a
+ * faulting store leaves memory as the hardware does (SveMemory). A store
+ * that writes, or completes, clears the local exclusive monitor.
  * Any other word, or a row the library does not cover, is a fatal internal
  * error that changes nothing.
  */
