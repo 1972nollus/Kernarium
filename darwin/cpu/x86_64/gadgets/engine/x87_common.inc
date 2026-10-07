@@ -249,7 +249,7 @@ Lx86_x87_scalar_load_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov \destination, x0
 Lx86_x87_scalar_load_done\@:
@@ -279,7 +279,7 @@ Lx86_x87_scalar_store_done\@:
 	mov x1, x25
 	mov x2, \buffer
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_bulk_load)
+	helper_call uml_x86_64_gadget_bulk_load
 	cbz w0, \fault
 .endm
 
@@ -289,6 +289,6 @@ Lx86_x87_scalar_store_done\@:
 	mov x1, x25
 	mov x2, \buffer
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_bulk_store)
+	helper_call uml_x86_64_gadget_bulk_store
 	cbz w0, \fault
 .endm

@@ -362,7 +362,7 @@ Lx86_push_memory_source_cross\@:
 	mov x0, _context
 	mov x1, x26
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x24, x0
 Lx86_push_memory_source_done\@:
@@ -418,7 +418,7 @@ Lx86_pop_memory_destination_cross\@:
 	mov x1, x27
 	mov x2, x24
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	b Lx86_pop_memory_done\@
 .endm
@@ -456,7 +456,7 @@ pop_memory 64, ldr, x, str, x
 	cbnz w8, Lx86_stack_write_overlap\@
 	mov x0, _context
 	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	helper_call uml_x86_64_gadget_invalidate_code
 Lx86_stack_write_overlap\@:
 	mov w23, #1
 Lx86_stack_write_ready\@:

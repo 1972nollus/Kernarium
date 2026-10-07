@@ -66,7 +66,7 @@ Lx86_vector_test_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbnz w0, Lx86_vector_test_cross_loaded\@
 	add sp, sp, #32
 	b Lx86_memory_fault

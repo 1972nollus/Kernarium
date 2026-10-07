@@ -200,7 +200,7 @@ Lx86_vector_map3_math_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_map3_math_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256

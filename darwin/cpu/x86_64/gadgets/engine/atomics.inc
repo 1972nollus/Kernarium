@@ -298,7 +298,7 @@ Lx86_cmpxchg_pair_16_read_cross:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbnz w0, Lx86_cmpxchg_pair_16_cross_loaded
 	add sp, sp, #16
 	b Lx86_memory_fault
@@ -327,7 +327,7 @@ Lx86_cmpxchg_pair_16_write_cross:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	cbnz w0, Lx86_cmpxchg_pair_16_cross_written
 	add sp, sp, #16
 	b Lx86_memory_fault

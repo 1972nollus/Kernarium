@@ -30,7 +30,7 @@ Lx86_enter_load_cross\@:
 	mov x0, _context
 	mov x1, x24
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x27, x0
 Lx86_enter_load_done\@:
@@ -146,7 +146,7 @@ Lx86_far_call_cross\@:
 	mov x1, x25
 	mov x2, x24
 	mov w3, #4
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	.endif
 	.if \width == 32
 	bfi x24, x19, #32, #32
@@ -154,7 +154,7 @@ Lx86_far_call_cross\@:
 	mov x1, x25
 	mov x2, x24
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	.endif
 	.if \width == 64
 	sub sp, sp, #16
@@ -163,7 +163,7 @@ Lx86_far_call_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	add sp, sp, #16
 	.endif
 	cbz w0, Lx86_memory_fault
@@ -224,7 +224,7 @@ Lx86_iret_load_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
 Lx86_iret_load_done\@:

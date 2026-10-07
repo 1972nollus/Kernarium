@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Keep one translation unit so shared macros and local labels remain cheap. */
 #include "engine/common.inc"
+/* The veneers of the helpers outside the engine (engine/common.inc). */
+	gadget_veneers
 #include "engine/load_store.inc"
 #include "engine/core_integer.inc"
 #include "engine/strings.inc"

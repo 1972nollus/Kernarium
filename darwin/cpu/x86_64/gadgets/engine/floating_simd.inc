@@ -79,7 +79,7 @@ Lx86_vector_load_cross\@:
 	and x8, x23, #0xffff
 	add x2, _cpu, x8
 	mov w3, #\width
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_memory_fault
 	.if \zero_upper
 	and x8, x23, #0xffff
@@ -118,7 +118,7 @@ Lx86_vector_store_cross\@:
 	and x8, x23, #0xffff
 	add x2, _cpu, x8
 	mov w3, #\width
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	cbz w0, Lx86_memory_fault
 	finish_store \width
 .endm
@@ -252,7 +252,7 @@ Lx86_vector_bitwise_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\width
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbnz w0, Lx86_vector_bitwise_cross_loaded\@
 	add sp, sp, #32
 	b Lx86_memory_fault
