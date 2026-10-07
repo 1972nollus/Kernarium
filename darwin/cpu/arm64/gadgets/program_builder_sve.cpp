@@ -8,8 +8,10 @@
  * A word takes the SVE path when its encoding-table row executes outside
  * streaming mode only with FEAT_SVE: the row's non-streaming requirement
  * decides whether the virtual CPU implements it, and the generated header
- * (engine/generate_sve.py) gives the form the engine runs for it, or none,
- * which is the illegal-instruction exit. The SME rows that execute in
+ * (engine/generate_sve.py) gives the form the engine runs for it. A row
+ * with no generated form runs through the shared semantic library
+ * (sve_library, sve_helpers.cpp), which implements every row decoded here,
+ * so the engine is at sve_support complete. The SME rows that execute in
  * either mode, such as RDSVL, stay with the SME decoder. A program holding
  * such a word accesses the FP state before it runs, since P and FFR travel
  * with it, and enters through the SVE link entry, which marks the task as
@@ -17,6 +19,7 @@
 #include "program_builder_decode.hpp"
 #include "gadget_selection_api.hpp"
 #include "sve_forms.hpp"
+#include "sve_helpers.hpp"
 #include "sve_layout.h"
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
@@ -35,9 +38,11 @@
 #include <span>
 
 extern "C" {
-/* engine/sve.inc: the generated entries, in the order of the header. */
+/* engine/sve.inc: the generated entries, in the order of the header, and
+ * the gadget that runs a word through the semantic library. */
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries_end[];
+void uml_arm64_gadget_sve_library();
 }
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -407,26 +412,40 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 {
 	const auto word = context.instruction;
 	const auto &host = context.options.host_capabilities;
-	const auto *row = detail::find_sme_encoding(word);
-	if (row == nullptr ||
-	    (row->non_streaming_requirement & detail::sme_feature_sve) == 0U) {
-		/* An SME row, or a word of no row: the SME decoder's, or
-		 * UNDEFINED on a virtual CPU without SME. */
+	const auto decoded_word =
+		decode_sve_word(word, host, context.options.svcr);
+	switch (decoded_word.kind) {
+	case SveWord::other:
+		/* The SME decoder's, or UNDEFINED on a virtual CPU without
+		 * SME. */
 		if (implements_sme(host))
 			return std::nullopt;
 		return illegal_instruction(context);
-	}
-	const auto features = implemented_sve_features(host);
-	if ((row->non_streaming_requirement & features) !=
-		    row->non_streaming_requirement ||
-	    ((row->mode & detail::sme_mode_za) != 0U &&
-		    (context.options.svcr & svcr_za) == 0U))
+	case SveWord::undefined:
 		return illegal_instruction(context);
-	const auto number = sve::row_forms[static_cast<std::size_t>(
-		row - detail::sme_encodings.data())];
-	if (number == sve::no_form)
-		return implementation_gap(context);
-	const auto decoded = emit_form(context, sve::forms[number]);
+	case SveWord::implemented:
+		break;
+	}
+	const auto *row = decoded_word.row;
+	const auto index =
+		static_cast<std::size_t>(row - detail::sme_encodings.data());
+	const auto number = sve::row_forms[index];
+	DecodeResult decoded = DecodeResult::decoded;
+	if (number != sve::no_form) {
+		decoded = emit_form(context, sve::forms[number]);
+	} else {
+		/* Every other form runs through the semantic library, which
+		 * implements every row the virtual CPU can decode here. The
+		 * word goes in the operand's high half: an SVE word is at least
+		 * 0x0400'0000, so the operand is above every user address and
+		 * never reads as a gadget entry. */
+		if (!detail::sve_semantics_covers(*row))
+			return implementation_gap(context);
+		emit(context.words, uml_arm64_gadget_sve_library);
+		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
+			static_cast<std::uint64_t>(index));
+		emit(context.words, context.address);
+	}
 	if (decoded == DecodeResult::decoded) {
 		context.program_accesses_fp_state = true;
 		context.program_holds_sve = true;

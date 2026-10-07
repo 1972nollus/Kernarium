@@ -46,13 +46,15 @@ gadget sve_link_entry
 
 /* An SVE word no generated gadget runs, or that a generated gadget leaves
  * off its fast path: the semantic library runs it on the register file
- * (uml_arm64_gadget_sve_execute). Stream: [word | row << 32][PC]. The
+ * (uml_arm64_gadget_sve_execute). Stream: [word << 32 | row][PC]. The
  * guest's NZCV, kept in x27, and its cumulative FPSR flags, kept in the
  * host register while the native FP environment is active, go to CpuState
  * before the call and come back after it. A fault leaves through the
- * memory-fault exit with the fault in the TLB, an UNDEFINED word (a
- * reserved bitmask immediate) through the illegal-instruction exit, each
- * with _stream at the PC word; an internal error is the fatal event. */
+ * memory-fault exit with the fault in the TLB, an UNDEFINED word through
+ * the illegal-instruction exit, each with _stream at the PC word; an
+ * internal error is the fatal event. The builder already ends a block in
+ * front of the words the library knows to be UNDEFINED (decode_sve_word),
+ * so that exit is a backstop. */
 gadget sve_library
 	ldr x8, [_stream], #8
 	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]

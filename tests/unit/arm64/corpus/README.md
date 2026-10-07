@@ -184,7 +184,10 @@ P and FFR are sized for, 16 bytes, or 0 for a record without that state.
 Only a record with a VL holds P0-P15, FFR, or `sve_live`. The runner runs its
 cases, and any case that needs an SVE profile feature natively, only for a
 lane whose `sve_support` is `complete` where the virtual CPU implements the
-SVE profile, and counts every other one as skipped for `sve`. At that VL Z_n
+SVE profile, and counts every other one as skipped for `sve`. Such a case
+that needs FEAT_BF16 or FEAT_I8MM runs only where the host has it, since the
+profile's forms of those are the virtual CPU's only there, and is otherwise
+skipped for `bf16` or `i8mm`. At that VL Z_n
 is V_n, so the vector section holds the Z registers. P and FFR are packed,
 bit k for byte k, as the architecture holds them; the runner loads them into
 the engines' mask form and compares them packed. `sve_live` is 0 or 1, the
@@ -232,8 +235,8 @@ controls clear. The default stops after 25 failures; `--max-failures 0` never
 stops early.
 A failure names the record, case index, producer check ordinals, entry word,
 lane, and the first mismatch. The summary counts each lane's runs and the runs
-it skipped for each missing feature, and the library lane's cases skipped for
-an uncovered form.
+it skipped for each missing feature, the library lane's cases skipped for
+an uncovered form, and the words that lane handed to the library.
 
 ## Regeneration and new cases
 

@@ -19,6 +19,7 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/sve_support.hpp"
@@ -511,6 +512,22 @@ public:
 		executor_.end_execution();
 		gadgets::restore_native_fp_environment(cpu);
 		return event;
+	}
+
+	/* Guest bytes at code_base + offset, in the mapped pages. */
+	void put64(std::size_t offset, std::uint64_t value)
+	{
+		backing_.put64(offset, value);
+	}
+
+	[[nodiscard]] std::uint64_t fault_address() const
+	{
+		return executor_.fault_address();
+	}
+
+	[[nodiscard]] std::uint32_t floating_point_syndrome() const
+	{
+		return executor_.floating_point_syndrome();
 	}
 
 	arm64::CpuState cpu{};
@@ -1406,9 +1423,196 @@ void live_marker_and_fp_access()
 	}
 }
 
-/* Words the virtual CPU does not implement end the block: without SVE;
- * a form outside the control core; a row whose feature the host lacks; a
- * reserved immediate; a word of no row, and an SME row, without SME. */
+/* Guest memory for a reference run of the library that touches none. */
+class NoMemory final : public arm64::detail::SveMemory {
+public:
+	std::byte *translate(std::uint64_t,
+		uml::memory::MemoryAccess) noexcept override
+	{
+		return nullptr;
+	}
+	void stored(std::byte *, std::size_t) noexcept override {}
+};
+
+/* The state the semantic library leaves for `word` on `cpu`. */
+[[nodiscard]] arm64::CpuState library_after(arm64::CpuState cpu,
+	std::uint32_t word, arm64::detail::SveEvent expected =
+		arm64::detail::SveEvent::retired,
+	std::uint32_t *syndrome = nullptr)
+{
+	const auto *row = arm64::detail::decode_sve_non_streaming(word,
+		arm64::detail::implemented_sve_features(sve_host()));
+	require(row != nullptr);
+	NoMemory memory;
+	const auto result = arm64::detail::execute_sve(cpu, word, *row, memory);
+	require(result.event == expected);
+	if (syndrome != nullptr)
+		*syndrome = result.syndrome;
+	return cpu;
+}
+
+void require_same_registers(const arm64::CpuState &actual,
+	const arm64::CpuState &expected)
+{
+	for (unsigned n = 0; n < 32; ++n)
+		require(actual.vectors[n].bytes == expected.vectors[n].bytes);
+	require(actual.sve_p == expected.sve_p);
+	require(actual.sve_ffr == expected.sve_ffr);
+	require(actual.nzcv == expected.nzcv);
+}
+
+/* Words no generated gadget lowers run through the semantic library, in
+ * the middle of a block: the state after them is the library's on the
+ * same state, NZCV included, and behind a native FP gadget the cumulative
+ * FPSR flags of both carry over, and an FPCR write in the block governs
+ * the library's rounding. A load reaches guest memory through the
+ * TLB on a page and across two, and reports a fault at its own PC. While
+ * an FPCR trap enable is set the executor runs the word through the
+ * library itself, which decides the trap. */
+void library_words()
+{
+	Random random{0x5ec7'0001U};
+	const auto randomize = [&](arm64::CpuState &cpu) {
+		for (unsigned n = 0; n < 8; ++n) {
+			Bytes bytes{};
+			for (auto &byte : bytes)
+				byte = static_cast<std::uint8_t>(random.next());
+			set_vec(cpu, n, bytes);
+		}
+		set_pred(cpu, 1, static_cast<std::uint16_t>(random.next()));
+		cpu.nzcv = nzcv_v;
+	};
+	for (const auto word : {0x0422'0020U /* add z0.b, z1.b, z2.b */,
+		     0x2403'a440U /* cmpeq p0.b, p1/z, z2.b, z3.b */}) {
+		for (int round = 0; round < 64; ++round) {
+			arm64::CpuState initial{};
+			randomize(initial);
+			const auto cpu = after(word, [&](arm64::CpuState &state) {
+				state = initial;
+			});
+			require_same_registers(cpu,
+				library_after(initial, word));
+		}
+	}
+
+	/* fadd s4, s4, s5 activates the native FP environment and raises
+	 * IXC; fadd z0.s, z1.s, z2.s then raises OFC through the library. */
+	{
+		const std::array code{0x1e25'2884U, 0x6582'0020U, svc};
+		Block block{code};
+		arm64::CpuState cpu{};
+		const auto one = std::bit_cast<std::uint32_t>(1.0F);
+		const auto tiny = std::bit_cast<std::uint32_t>(0x1p-30F);
+		const auto large = std::bit_cast<std::uint32_t>(0x1.fffffep127F);
+		Bytes s4{}, s5{}, big{};
+		std::memcpy(s4.data(), &one, 4);
+		std::memcpy(s5.data(), &tiny, 4);
+		for (unsigned lane = 0; lane < 4; ++lane)
+			std::memcpy(big.data() + 4 * lane, &large, 4);
+		set_vec(cpu, 4, s4);
+		set_vec(cpu, 5, s5);
+		set_vec(cpu, 1, big);
+		set_vec(cpu, 2, big);
+		block.run(cpu);
+		constexpr std::uint32_t ofc = 1U << 2;
+		constexpr std::uint32_t ixc = 1U << 4;
+		require((cpu.fpsr & (ofc | ixc)) == (ofc | ixc));
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::uint32_t value = 0;
+			std::memcpy(&value, cpu.vectors[0].bytes.data() + 4 * lane,
+				4);
+			require(value == 0x7f80'0000U);
+		}
+	}
+
+	/* msr fpcr, x1 to round toward zero behind an active native FP
+	 * environment: fadd z0.s through the library rounds 1 + 0.75 ULP
+	 * down, where the reset rounding would round it up. */
+	{
+		const std::array code{0x1e25'2884U, 0xd51b'4401U, 0x6582'0020U,
+			svc};
+		Block block{code};
+		arm64::CpuState cpu{};
+		const auto one = std::bit_cast<std::uint32_t>(1.0F);
+		const auto small = std::bit_cast<std::uint32_t>(0x1.8p-24F);
+		Bytes ones{}, smalls{};
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::memcpy(ones.data() + 4 * lane, &one, 4);
+			std::memcpy(smalls.data() + 4 * lane, &small, 4);
+		}
+		set_vec(cpu, 4, ones);
+		set_vec(cpu, 5, smalls);
+		set_vec(cpu, 1, ones);
+		set_vec(cpu, 2, smalls);
+		cpu.registers[1] = 3U << 22;
+		block.run(cpu);
+		require(cpu.fpcr == 3U << 22);
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::uint32_t value = 0;
+			std::memcpy(&value, cpu.vectors[0].bytes.data() + 4 * lane,
+				4);
+			require(value == one);
+		}
+		std::uint32_t s4 = 0;
+		std::memcpy(&s4, cpu.vectors[4].bytes.data(), 4);
+		require(s4 == one + 1U);
+	}
+
+	/* ld1b {z0.b}, p0/z, [x1]: within a page, across two, and at an
+	 * unmapped address. */
+	constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	for (const std::uint64_t offset : {std::uint64_t{0x800}, page - 8U}) {
+		const std::array code{ptrue(0, 0, 31), 0xa400'a020U, svc};
+		Machine machine{code, sve_host()};
+		machine.put64(offset, 0x0706'0504'0302'0100U);
+		machine.put64(offset + 8U, 0x0f0e'0d0c'0b0a'0908U);
+		machine.cpu.registers[1] = code_base + offset;
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.retired == 3U);
+		for (unsigned index = 0; index < 16; ++index)
+			require(machine.cpu.vectors[0].bytes[index] ==
+				std::byte{static_cast<std::uint8_t>(index)});
+	}
+	{
+		const std::array code{ptrue(0, 0, 31), 0xa400'a020U, svc};
+		Machine machine{code, sve_host()};
+		const std::uint64_t unmapped = code_base + 0x40'0000U;
+		machine.cpu.registers[1] = unmapped;
+		require(machine.run() == EngineEvent::memory_fault);
+		require(machine.cpu.pc == code_base + 4U);
+		require(machine.fault_address() == unmapped);
+		require(pred(machine.cpu, 0) == 0xffffU);
+	}
+
+	/* fadd z0.s, z1.s, z2.s with FPCR.IOE and a signalling NaN: the
+	 * library's trap, which leaves Z0 and FPSR as they were. */
+	{
+		const std::array code{0x6582'0020U, svc};
+		Machine machine{code, sve_host()};
+		Bytes nan{}, zero{};
+		const std::uint32_t signalling = 0x7f80'0001U;
+		for (unsigned lane = 0; lane < 4; ++lane)
+			std::memcpy(nan.data() + 4 * lane, &signalling, 4);
+		set_vec(machine.cpu, 1, nan);
+		set_vec(machine.cpu, 2, zero);
+		set_vec(machine.cpu, 0, nan);
+		machine.cpu.fpcr = 1U << 8;
+		std::uint32_t syndrome = 0;
+		const auto expected = library_after(machine.cpu, 0x6582'0020U,
+			arm64::detail::SveEvent::floating_point_trap, &syndrome);
+		require(machine.run() == EngineEvent::floating_point_trap);
+		require(machine.cpu.pc == code_base);
+		require(machine.floating_point_syndrome() == syndrome);
+		require(machine.cpu.vectors[0].bytes ==
+			expected.vectors[0].bytes);
+		require(machine.cpu.fpsr == expected.fpsr);
+	}
+}
+
+/* Words the virtual CPU does not implement end the block: without SVE; a
+ * row whose feature the host lacks; a reserved immediate, of a generated
+ * form (DUPM, DUP) and of one the library runs (AND); a word of no row,
+ * and an SME row, without SME. */
 void unimplemented_words()
 {
 	struct Case final {
@@ -1427,9 +1631,10 @@ void unimplemented_words()
 	require(unallocated != 0U);
 	const std::array cases{
 		Case{ptrue(0, 0, 31), sve_host(false)},
-		Case{0x0420'0000U /* add z0.b, z0.b, z0.b */, sve_host()},
 		Case{0x4522'e000U /* aese z0.b, z0.b, z0.b */, sve_host()},
 		Case{0x05c0'0000U | (0x103fU << 5) /* dupm, reserved */,
+			sve_host()},
+		Case{0x0580'0000U | (0x103fU << 5) /* and, reserved */,
 			sve_host()},
 		Case{0x2538'e000U /* dup z0.b, #0, lsl #8 */, sve_host()},
 		Case{unallocated, sve_host()},
@@ -1452,7 +1657,8 @@ void unimplemented_words()
  * hosts with SVE alone and with SVE and SME. Some SM = 0 programs do
  * select the SVE part. Program words are untyped, but no operand word
  * here can equal a gadget entry: they are CpuState offsets, immediates,
- * and stack and table addresses. */
+ * stack and table addresses, guest PCs, and the semantic library's word
+ * and row, which lies above every user address. */
 void streaming_safety()
 {
 	const auto sve_begin = reinterpret_cast<std::uintptr_t>(
@@ -1575,6 +1781,7 @@ int main()
 	while_forms();
 	fused_while_branch();
 	live_marker_and_fp_access();
+	library_words();
 	unimplemented_words();
 	streaming_safety();
 	streaming_mode_changes_zero_predicates();

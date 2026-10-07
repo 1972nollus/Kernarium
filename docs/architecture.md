@@ -515,15 +515,23 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
 non-streaming SVE word is the illegal-instruction exit. The JIT is at `none`.
 
-The gadget engine is at `control`: for SVCR.SM = 0, on capabilities that
-carry the profile, it runs PTRUE, PTRUES, PFALSE and PTEST, the predicate
-logical operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL,
-ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY,
-FCPY, SEL and the unpredicated logical forms; every other non-streaming SVE
-word is its illegal-instruction exit. Since it presents no SVE to a guest
-below `complete`, only tests and corpus runs that hand it the profile reach
-these forms. Its SVE part follows the SME part, so it moves no base or SME
-entry and re-encodes no veneer call, and holds no SVE or SME instruction:
+The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
+carry the profile, it runs every word of the profile, so under the
+guest-SVE policy it presents the profile to its guest. Generated gadgets
+run PTRUE, PTRUES, PFALSE and PTEST, the predicate logical operations, CNTP,
+INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL, SETFFR, RDFFR
+and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL and the unpredicated
+logical forms. Every other word runs through the semantic library from the
+`sve_library` gadget, which stores the guest's NZCV and, while the native FP
+environment is active, its cumulative FPSR flags to `CpuState`, calls the
+library with guest memory through the TLB, and reloads both; a library
+fault leaves through the memory-fault exit. A reserved bitmask immediate of
+AND, ORR, EOR or DUPM ends the block in front of it as the
+illegal-instruction exit. While an FPCR trap enable is set, the executor's
+one-instruction mode runs each non-streaming SVE word through the library,
+which decides a trap, so a trapping word commits nothing. Its SVE part
+follows the SME part, so it moves no base or SME entry and re-encodes no
+veneer call, and holds no SVE or SME instruction:
 `engine/generate_sve.py` writes its gadgets at build time from the encoding
 table, one per value of the bits that select a form's lowering, and each
 loads the registers its stream names from `CpuState`, P and FFR in mask

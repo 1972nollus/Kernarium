@@ -526,10 +526,12 @@ The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
-and its FZ, DN, and FZ16 controls. Until an engine reaches `sve_support`
-`complete` the engine lanes skip them all, and the corpus's library lane
-runs them through the SVE semantic library, which covers every form the
-encoding table routes. The `arm64-instruction-corpus-sve-native` tooling
+and its FZ, DN, and FZ16 controls. The gadget engine is at `sve_support`
+`complete`, so its lane runs them with the guest-SVE policy on; the JIT
+lane skips them until it is `complete` too. The corpus's library lane runs
+them through the gadget engine with the SVE semantic library behind its
+illegal-instruction exit, and the library covers every form the encoding
+table routes. The `arm64-instruction-corpus-sve-native` tooling
 test re-derives their cases from their generator, and
 `arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
 arm64 Mac, and with SVE cases where the host has SVE at that length.
