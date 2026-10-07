@@ -175,6 +175,16 @@ allocation, release, and the write window through hooks the embedder installs,
 and prefix verification rejects a FEXCore archive that toggles JIT write
 protection.
 
+On macOS the owner serves JIT memory from one window in the host image's
+4 GiB block, claimed when the process first asks whether it can run JIT code,
+before its kernel boots. Apple cores predict an indirect branch's target
+cheaply only near the branch, and generated code calls into the image: FEXCore
+reaches its x87 fallbacks that way, and its code ran x87 a third slower from a
+buffer the kernel had placed hundreds of GiB away. The window takes the largest
+free range there, up to 1.5 GiB; a mapping beyond its capacity goes wherever
+the kernel puts it. A release keeps the pages mapped and reusable, so memory
+served again may hold its old bytes.
+
 A library built without the embedded ELF runner, such as every XCFramework
 slice, excludes native-VM and embedded-ELF execution; only the macOS unit
 presets keep the native-VM bridge, for their tests. Kernarium uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
@@ -479,6 +489,26 @@ streaming mode too. SM=0 translations run with the host's SME off and
 hold no SVE or SME instruction: they reach ZA and ZT0 in the register file
 with GPR copies. SM=1 code reads SVL with RDSVL and SM=0 code from
 `CpuState`, so no translation depends on it.
+
+The non-streaming SVE profile of the arm64 virtual CPU is FEAT_SVE with
+FEAT_SVE2, plus FEAT_SVE_AES with FEAT_SVE_PMULL128, FEAT_SVE_SHA3 and the
+SVE forms of FEAT_I8MM and FEAT_BF16, each where the host has the AdvSIMD
+forms both engines lower it onto. No supported host implements SVE, so the
+vector length is a fixed 16 bytes on every host, independent of the SME
+profile's SVL, and Z_n outside streaming mode is V_n.
+[`cpu/arm64/sve_profile.hpp`](../darwin/cpu/arm64/sve_profile.hpp) derives
+the profile and the engines' mask form of a predicate, a 16-byte image with
+0xff in each active byte. `CpuState` appends P0-P15 and FFR in that form,
+apart from the streaming P, and every change of PSTATE.SM zeroes them. The
+prober reports the profile only under the guest-SVE policy,
+`DARWIN_UML_GUEST_SVE=1`, which is off by default; BitPerm and SM4 are
+withheld. Each engine's `sve_support` names how much of the profile it
+implements outside streaming mode, `none`, `control` or `complete`, and
+`cpu::engine_host_capabilities` presents the profile only from an engine at
+`complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
+ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
+non-streaming SVE word is the illegal-instruction exit. Both engines are at
+`none`.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

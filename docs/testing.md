@@ -346,8 +346,7 @@ pass every exception case, unmasked
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
 STMXCSR and `fadd` show of the sticky SIMD exception flags against an Intel
-Xeon's; `--pending` marks an engine that does not keep masked flags yet,
-which the JIT does not.
+Xeon's, on either engine.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
@@ -572,6 +571,14 @@ they run by hand with
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
 
+## Guest SVE policy
+
+`arm64-sve-foundation` checks the guest-SVE policy, the host features each
+part of the SVE profile needs, the engines' support levels, the predicate
+mask form and the SM-change reset, with injected hosts. Unit binaries take
+that policy from their environment as well; until an engine implements SVE
+the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
@@ -610,8 +617,7 @@ of stop, in long64 and compat32, including a store into the code of the block
 running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
-Xeon's, except the documented inexact cases the test names; the JIT's runs
-`--pending`, allowing flags it leaves out. The
+Xeon's, except the documented inexact cases the test names. The
 `ios-products-carry-no-fexcore` tooling test checks the script the iOS
 packaging runs to keep FEXCore out of every iOS product.
 
