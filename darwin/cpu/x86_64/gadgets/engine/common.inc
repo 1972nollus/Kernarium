@@ -11,6 +11,7 @@ _stream .req x28
 _executed .req x29
 
 	.set Lx86_guest_memory_gadget, 0
+	.set Lx86_simd_status_gadget, 0
 
 /* Name the start of the cold section, whose own labels are temporary, so a
  * host sample of a cold path names this section rather than whatever precedes
@@ -24,6 +25,7 @@ NAME(uml_x86_64_gadget_cold_section_begin):
 	.p2align 4
 NAME(uml_x86_64_gadget_\name):
 	.set Lx86_guest_memory_gadget, 0
+	.set Lx86_simd_status_gadget, 0
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -51,6 +53,44 @@ Lx86_rounding_ready\@:
 .macro next_gadget
 	ldr x8, [_stream], #8
 	br x8
+.endm
+
+/* x86's MXCSR exception flags are sticky, and the host's cumulative FPSR
+ * flags hold them while a run lasts: the SIMD floating-point gadgets
+ * compute with host instructions whose IOC, DZC, OFC, UFC and IXC are
+ * x86's IE, ZE, OE, UE and PE, and the run adds what they gathered to MXCSR
+ * as it ends (program.cpp). An instruction that observes MXCSR adds them
+ * first; one that loads it clears them. IDC is never DE: it reports an input
+ * FPCR.FZ flushed, and the engine never sets FZ. Where an instruction's host
+ * flags are not x86's, its gadget chooses another host instruction, keeps
+ * FPSR around host work x86 does not do, or raises the missing flags in
+ * software into MXCSR (`mxcsr_raise`), after any exception-check leave.
+ *
+ * Add FPSR's flags to the MXCSR value in `value`. Uses x`s0` and x`s1`. */
+.macro fold_host_flags value, s0, s1
+	mrs x\s0, fpsr
+	and w\s1, w\s0, #1
+	orr \value, \value, w\s1
+	and w\s1, w\s0, #0x1e
+	orr \value, \value, w\s1, lsl #1
+.endm
+
+/* Raise the MXCSR flags `bits`. Uses w`scratch`. */
+.macro mxcsr_raise bits, scratch
+	ldr w\scratch, [_cpu, #UML_X86_64_CPU_MXCSR]
+	orr w\scratch, w\scratch, #\bits
+	str w\scratch, [_cpu, #UML_X86_64_CPU_MXCSR]
+.endm
+
+/* Raise underflow and precision when a lane of v`mask` is set, as x86 does
+ * for a tiny result MXCSR.FTZ flushes, exact or not. Uses v`temporary` and
+ * x14. */
+.macro mxcsr_raise_flushed mask, temporary
+	umaxv s\temporary, v\mask\().4s
+	fmov w14, s\temporary
+	cbz w14, Lx86_mxcsr_flushed_none\@
+	mxcsr_raise 0x30, 14
+Lx86_mxcsr_flushed_none\@:
 .endm
 
 /* x86 promises total store order: the other CPUs see one CPU's stores in the
@@ -184,7 +224,18 @@ Lx86_simd_unchecked\@:
  *
  * Leaves while the gadgets check SIMD exceptions: on a path taken only for a
  * special value, or for an instruction whose intermediate results no test of
- * its result can see. */
+ * its result can see.
+ *
+ * The leave commits nothing, and the runtime adds the run's host flags to
+ * MXCSR before it runs the instruction checked, so the host flags the
+ * instruction raised so far must be ones x86 raises too: x86 computes no
+ * lane of an instruction that faults before its computation, and the host
+ * detects underflow before rounding and raises invalid operation for an FMA
+ * of infinity times zero plus a quiet NaN. This leave is for a gadget whose
+ * host instructions so far raised only x86's flags -- a test of the inputs,
+ * a comparison's own flags, a scalar conversion; a gadget that computed
+ * lanes x86 might not saves FPSR first (`simd_save_status_branch`), and its
+ * leave (`simd_leave_computed_if_checking`) puts FPSR back. */
 .macro simd_leave_if_checking
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #1, Lx86_simd_unchecked\@
@@ -192,16 +243,63 @@ Lx86_simd_unchecked\@:
 Lx86_simd_unchecked\@:
 .endm
 
+/* While the gadgets check SIMD exceptions, save FPSR for this gadget's
+ * computed leave: branch to `save`, which `simd_save_status_path` places
+ * off the gadget's straight path, and come back. `checks` names the
+ * register holding `exception_checks`; by default it is loaded into w14. */
+.macro simd_save_status_branch save, checks=-1
+	.if \checks < 0
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbnz w14, #1, \save
+	.else
+	tbnz w\checks, #1, \save
+	.endif
+\save\()_back:
+	.set Lx86_simd_status_gadget, 1
+.endm
+
+/* The save itself. Uses x15. */
+.macro simd_save_status_path save
+\save:
+	mrs x15, fpsr
+	str x15, [_context, #UML_X86_64_CONTEXT_SIMD_STATUS]
+	b \save\()_back
+.endm
+
+.macro simd_require_status
+	.if !Lx86_simd_status_gadget
+	.error "a computed SIMD leave needs simd_save_status_branch earlier in its gadget"
+	.endif
+.endm
+
+/* The leave for a gadget that saved FPSR, which it puts back. */
+.macro simd_leave_computed_if_checking
+	simd_require_status
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, Lx86_simd_unchecked\@
+	b uml_x86_64_gadget_simd_exception_check
+Lx86_simd_unchecked\@:
+.endm
+
 /* A SIMD floating-point gadget whose common path assumes MXCSR.DAZ and FTZ
  * clear and no SIMD check runs its exact path instead while
  * `exception_check_simd_exact` says so: one load and branch serve all three.
  * Applications commonly set DAZ and FTZ for good, so the exact path follows
- * inline and ends with a branch past the common path at `common`; only its
- * rare repairs go to the cold section. The exact path reads MXCSR itself.
- * Uses w14. */
+ * inline and ends at `simd_exact_end` with a branch past the common path at
+ * `common`; only its rare repairs go to the cold section. The exact path
+ * reads MXCSR itself, and saves FPSR for its computed leaves. Uses w14 and
+ * x15. */
 .macro simd_exact_branch common
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #2, \common
+	simd_save_status_branch \common\()_save, 14
+.endm
+
+/* The end of the exact path of `simd_exact_branch common`, which continues
+ * at `done`. */
+.macro simd_exact_end common, done
+	b \done
+	simd_save_status_path \common\()_save
 .endm
 
 /* Keep `exception_check_simd_exact` current after an instruction loads
@@ -348,6 +446,49 @@ Lx86_simd_no_nan\@:
 	.endif
 .endm
 
+/* v`mask` = all ones in the denormal lanes of v`vector`. Uses v`temporary`
+ * and x14. */
+.macro simd_denormal_lanes element, vector, mask, temporary
+	.if \element == 32
+	shl v\mask\().4s, v\vector\().4s, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().4s, v\mask\().4s, v\temporary\().4s
+	movi v\temporary\().4s, #0xff, msl #16
+	cmhi v\mask\().4s, v\temporary\().4s, v\mask\().4s
+	.else
+	shl v\mask\().2d, v\vector\().2d, #1
+	movi v\temporary\().16b, #0xff
+	add v\mask\().2d, v\mask\().2d, v\temporary\().2d
+	mov x14, #0x001fffffffffffff
+	dup v\temporary\().2d, x14
+	cmhi v\mask\().2d, v\temporary\().2d, v\mask\().2d
+	.endif
+.endm
+
+/* MXCSR.FTZ for a result that is tiny only when it is denormal -- a sum or
+ * difference, which is exact that small: replace each denormal lane of
+ * v`first`, and of v`second`, with a zero of its sign, and raise underflow
+ * and precision when there is one. The flush and the raise share one mask.
+ * Uses v16 to v19 and x14. */
+.macro simd_flush_denormal_results element, first, second=-1
+	simd_denormal_lanes \element, \first, 16, 17
+	.if \element == 32
+	movi v17.4s, #0x80, lsl #24
+	.else
+	mov x14, #0x8000000000000000
+	dup v17.2d, x14
+	.endif
+	and v18.16b, v\first\().16b, v17.16b
+	bit v\first\().16b, v18.16b, v16.16b
+	.if \second >= 0
+	simd_denormal_lanes \element, \second, 19, 18
+	and v18.16b, v\second\().16b, v17.16b
+	bit v\second\().16b, v18.16b, v19.16b
+	orr v16.16b, v16.16b, v19.16b
+	.endif
+	mxcsr_raise_flushed 16, 18
+.endm
+
 /* v`mask` = all ones in the lanes of v`output` that are not zero and at most
  * the smallest normal in magnitude. Uses v`temporary`. */
 .macro simd_small_lanes element, output, mask, temporary
@@ -409,8 +550,8 @@ Lx86_simd_no_nan\@:
 .endm
 
 /* MXCSR.FTZ: replace each tiny lane of the packed v`output` with a zero of
- * its sign. A sum or difference that small is exact, so only a denormal one
- * is tiny. */
+ * its sign, raising underflow and precision. A sum or difference that small
+ * is exact, so only a denormal one is tiny. */
 .macro simd_flush_tiny_packed operation, element, output, left, right
 	.set Lx86_simd_rounded\@, 0
 	.ifc \operation,mul
@@ -420,11 +561,12 @@ Lx86_simd_no_nan\@:
 	.set Lx86_simd_rounded\@, 1
 	.endif
 	.if !Lx86_simd_rounded\@
-	simd_flush_denormals \output, \element
+	simd_flush_denormal_results \element, \output
 	.else
 	simd_small_lanes \element, \output, 17, 18
 	simd_scaled_tiny \operation, \element, \left, \right
 	and v17.16b, v17.16b, v18.16b
+	mxcsr_raise_flushed 17, 18
 	.if \element == 32
 	movi v16.4s, #0x80, lsl #24
 	.else
@@ -529,9 +671,20 @@ Lx86_simd_first_nan\@:
 Lx86_simd_nan_done\@:
 .endm
 
+/* The leave of a result check: a computed one, which puts back the FPSR
+ * `simd_save_status_branch` saved, unless `computed` is 0. */
+.macro simd_check_leave computed
+	.if \computed
+	simd_require_status
+	b uml_x86_64_gadget_simd_exception_check
+	.else
+	b uml_x86_64_gadget_exception_check
+	.endif
+.endm
+
 /* While the gadgets check SIMD exceptions, leave when a lane of a packed
  * result -- v`first`, and v`second` for a 256-bit one -- is special. */
-.macro simd_check_packed element, first, second=-1
+.macro simd_check_packed element, first, second=-1, computed=1
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #1, Lx86_simd_packed_ok\@
 	simd_special_lanes \element, \first
@@ -541,27 +694,27 @@ Lx86_simd_nan_done\@:
 	.endif
 	cbz w14, Lx86_simd_packed_ok\@
 Lx86_simd_packed_special\@:
-	b uml_x86_64_gadget_exception_check
+	simd_check_leave \computed
 Lx86_simd_packed_ok\@:
 .endm
 
 /* The same for a packed result in v4, and v5 for a 256-bit one. */
-.macro simd_check_result element, width
+.macro simd_check_result element, width, computed=1
 	.if \width == 256
-	simd_check_packed \element, 4, 5
+	simd_check_packed \element, 4, 5, \computed
 	.else
-	simd_check_packed \element, 4
+	simd_check_packed \element, 4, -1, \computed
 	.endif
 .endm
 
 /* The same for the scalar result in lane 0 of v`register`. */
-.macro simd_check_scalar element, register
+.macro simd_check_scalar element, register, computed=1
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
 	tbz w14, #1, Lx86_simd_scalar_ok\@
 	simd_special_scalar \element, \register, Lx86_simd_scalar_special\@
 	b Lx86_simd_scalar_ok\@
 Lx86_simd_scalar_special\@:
-	b uml_x86_64_gadget_exception_check
+	simd_check_leave \computed
 Lx86_simd_scalar_ok\@:
 .endm
 
@@ -1193,8 +1346,12 @@ NAME(uml_x86_64_gadget_enter):
  * runtime runs it again, checked. A gadget can leave from inside a frame of
  * its own, so the exit takes the stack back to the entry frame, and it hands
  * the runtime its stream pointer, which is past a stream word of that
- * instruction and so names it. */
+ * instruction and so names it. A computed leave enters first, to put back
+ * FPSR as the instruction found it (`simd_save_status_branch`). */
 .p2align 4
+uml_x86_64_gadget_simd_exception_check:
+	ldr x9, [_context, #UML_X86_64_CONTEXT_SIMD_STATUS]
+	msr fpsr, x9
 uml_x86_64_gadget_exception_check:
 	ldr x9, [_context, #UML_X86_64_CONTEXT_ENTRY_STACK]
 	mov sp, x9

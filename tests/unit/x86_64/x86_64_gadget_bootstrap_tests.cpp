@@ -7046,9 +7046,11 @@ struct FlagCase {
  * singly and checked raises, whatever its values: every instruction #XM
  * covers, register and memory forms, scalar, 128- and 256-bit, under MXCSRs
  * that unmask invalid operation, division by zero, overflow or a denormal
- * operand in any mix and round either way. Only the masked underflow,
- * precision and denormal flags differ: the gadgets record flags only for an
- * instruction they run again. */
+ * operand in any mix and round either way. The flags they keep are the
+ * checked path's too, also where an instruction leaves for its run after it
+ * computed lanes x86 does not, except the denormal operand, which the
+ * gadgets raise only for an instruction they run again while MXCSR.DAZ is
+ * clear. */
 [[nodiscard]] bool simd_checks_match_the_checked_path()
 {
 	using namespace uml::cpu::x86_64;
@@ -7084,6 +7086,12 @@ struct FlagCase {
 		{"cmpunordsd m", {0xf2, 0x0f, 0xc2, 0x03, 0x03}, 64},
 		{"cmpltps", {0x0f, 0xc2, 0xc1, 0x01}, 32},
 		{"cmpneqpd", {0x66, 0x0f, 0xc2, 0xc1, 0x04}, 64},
+		{"vcmptrue_uqss", {0xc5, 0xfa, 0xc2, 0xc1, 0x0f}, 32},
+		{"vcmpeq_osps", {0xc5, 0xf8, 0xc2, 0xc1, 0x10}, 32},
+		{"vcmplt_oqpd ymm", {0xc5, 0xfd, 0xc2, 0xc1, 0x11}, 64},
+		{"vcmpnge_uqsd", {0xc5, 0xfb, 0xc2, 0xc1, 0x19}, 64},
+		{"vcmpfalse_osps ymm", {0xc5, 0xfc, 0xc2, 0xc1, 0x1b}, 32},
+		{"vcmpgt_oqss", {0xc5, 0xfa, 0xc2, 0xc1, 0x1e}, 32},
 		{"comiss", {0x0f, 0x2f, 0xc1}, 32},
 		{"comisd m", {0x66, 0x0f, 0x2f, 0x03}, 64},
 		{"ucomiss", {0x0f, 0x2e, 0xc1}, 32},
@@ -7218,7 +7226,7 @@ struct FlagCase {
 				(void)memory.read(0x800, stored[path]);
 			}
 			const auto flags = [](std::uint32_t mxcsr) {
-				return mxcsr & ~0x32U;
+				return mxcsr & ~0x02U;
 			};
 			const bool trap = result[0].event ==
 				uml::cpu::EngineEvent::floating_point_trap;
