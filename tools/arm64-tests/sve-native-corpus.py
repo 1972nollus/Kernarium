@@ -28,9 +28,11 @@ UNDEFINED, which the absent-feature records expect. The cases cover:
 - operands: each operand field at the lowest and highest register it
   allows, with the other operands distinct; every value of each free field
   of up to two bits (every element size among them) and both extremes of a
-  wider one; predicates all-true, all-false, partial, and alternating at
-  each element size; general-register sources at both extremes; and FPCR's
-  flush, default-NaN, and rounding controls for floating-point rows;
+  wider one; every class of bitmask immediate that DecodeBitMasks
+  reserves, for the logical-immediate rows; predicates all-true,
+  all-false, partial, and alternating at each element size;
+  general-register sources at both extremes; and FPCR's flush,
+  default-NaN, and rounding controls for floating-point rows;
 - memory: each contiguous, structure, replicate, fill, first-fault, and
   non-fault form aligned and misaligned, crossing a page with both pages
   mapped, crossing a 4 KiB boundary inside a mapping, with only the first
@@ -43,7 +45,16 @@ UNDEFINED, which the absent-feature records expect. The cases cover:
   page, and a negative 32-bit offset under each extension;
 - live: whether the SVE state is live after programs that execute SVE, run
   only general-register or AdvSIMD instructions, or trap, from either
-  state, and that P and FFR survive non-SVE instructions.
+  state, and that P and FFR survive non-SVE instructions;
+- fpcr: each floating-point form that FPCR affects, at each element size,
+  with every source holding one class of operands (ties, subnormals, NaNs,
+  or values that overflow) under the FPCR samples that vary the controls
+  the class meets: the rounding mode (RN, RP, RM, RZ) for ties and
+  overflow, every pair of the rounding mode, FZ, DN and FZ16 for
+  subnormals, and DN for NaNs (FPCR_SAMPLES). A conversion from integers
+  meets ties and overflow at its target's precision, and one that is
+  always exact is left out. Predicates are all true, and FPSR starts
+  clear.
 
 Page profiles. Every region of a record for both profiles is 16 KiB-aligned
 and a multiple of 16 KiB, so it is valid for the 16 KiB and 4 KiB guest
@@ -197,7 +208,7 @@ PATTERNS = (("all-true", 0xFFFF), ("all-false", 0x0000),
             ("alternating halfwords", 0x3333),
             ("alternating words", 0x0F0F),
             ("alternating doublewords", 0x00FF))
-GROUPS = ("classify", "operands", "memory", "gather", "live")
+GROUPS = ("classify", "operands", "memory", "gather", "live", "fpcr")
 BOTH = ("16k", "4k")
 
 
@@ -614,9 +625,10 @@ def with_predicates(draft: Draft, row, word: int, value: bytes) -> Draft:
 
 
 @functools.cache
-def alias_witnesses() -> tuple[tuple[str, str, int], ...]:
+def alias_witnesses(accept=executes) -> tuple[tuple[str, str, int], ...]:
     """The evidence-binding witnesses of the SVE entries without a row of
-    their own whose base row this host can observe."""
+    their own whose base row `accept` takes: by default those this host
+    can observe."""
     rows = {row.stable_id for row in table().rows}
     out = []
     with corpus.BINDINGS.open(encoding="utf-8", newline="") as source:
@@ -624,18 +636,20 @@ def alias_witnesses() -> tuple[tuple[str, str, int], ...]:
             if binding["section"] != "SVE" or binding["stable_id"] in rows:
                 continue
             word = int(binding["encoding"], 16)
-            if executes(row_index().row_for(word)):
+            if accept(row_index().row_for(word)):
                 out.append((binding["stable_id"],
                             binding["architectural_form"], word))
     return tuple(out)
 
 
-def classify_drafts() -> list[Draft]:
+def classify_drafts(rows=None, accept=executes) -> list[Draft]:
+    """Each row's witness, and each alias witness `accept` takes, from a
+    state that is not live; by default the rows this host observes."""
     drafts = []
-    for row in sve_rows():
+    for row in sve_rows() if rows is None else rows:
         drafts.append(base_draft("classify", row, row.witness,
                                  "witness, not live", live=0))
-    for stable_id, form, word in alias_witnesses():
+    for stable_id, form, word in alias_witnesses(accept):
         row = row_index().row_for(word)
         draft = base_draft("classify", row, word, "witness, not live",
                            live=0)
@@ -644,11 +658,21 @@ def classify_drafts() -> list[Draft]:
     return drafts
 
 
-def operand_drafts() -> list[Draft]:
+# DecodeBitMasks makes these immediates UNDEFINED (reserved): N = 1 with
+# imms all ones, N = 0 with imms 11111x, and for each smaller element size
+# the pattern with every element bit set.
+RESERVED_BITMASKS = (0x103F, 0x003E, 0x003F, 0x003D, 0x003B, 0x0037, 0x002F,
+                     0x001F)
+BITMASK_ROWS = ("and_z_zi_", "eor_z_zi_", "orr_z_zi_", "dupm_z_i_")
+
+
+def operand_drafts(rows=None) -> list[Draft]:
+    """The operand cases of each row; by default the rows this host
+    observes."""
     drafts = []
     # A word no row decodes can come from several rows of one encoding.
     illegal: set[int] = set()
-    for row in sve_rows():
+    for row in sve_rows() if rows is None else rows:
         count = len(row.operands)
         seen = {row.witness}
         low_word = allocate(row, row.witness, list(range(count)), False)
@@ -694,6 +718,11 @@ def operand_drafts() -> list[Draft]:
             for value in values:
                 add(with_run(low_word, run, value),
                     f"bits {low + width - 1}:{low} = {value:#x}",
+                    decides=False)
+        if row.encoding in BITMASK_ROWS:
+            for value in RESERVED_BITMASKS:
+                add(with_run(low_word, (5, 13), value),
+                    f"reserved bitmask immediate {value:#06x}",
                     decides=False)
         if predicate_operands(row, low_word):
             for label, value in PATTERNS:
@@ -966,10 +995,186 @@ def live_drafts() -> list[Draft]:
     return drafts
 
 
+# --------------------------------------------------------------------------
+# FPCR sampling
+
+# The floating-point rows that only move bits, which FPCR does not affect.
+FPCR_FREE = ("fdup_z_i_", "fcpy_z_p_i_", "fexpa_z_z_", "ftssel_z_zz_")
+# Formats as (exponent bits, fraction bits).
+HALF, SINGLE, DOUBLE, BFLOAT = (5, 10), (8, 23), (11, 52), (8, 7)
+FLOAT_SOURCES = {"h": HALF, "fp16": HALF, "s": SINGLE, "d": DOUBLE}
+SIZE_FORMATS = {1: HALF, 2: SINGLE, 3: DOUBLE}
+# SCVTF and UCVTF: each source's width and each target's precision.
+INTEGER_SOURCES = {"h": 16, "w": 32, "x": 64}
+PRECISIONS = {"fp16": 11, "s": 24, "d": 53}
+FPCR_FZ16, FPCR_RMODE, FPCR_FZ, FPCR_DN = 19, 22, 24, 25
+# A strength-2 covering array over the rounding mode (RN, RP, RM, RZ) and
+# FZ, DN, and FZ16: every pair of values of any two of them occurs, in the
+# eight samples. Each control matters for its own operand class (the
+# rounding mode for ties and overflow, FZ and FZ16 for subnormals, DN for
+# NaNs), so no three interact, and each class takes the samples that vary
+# its controls: subnormals all eight (a subnormal result also rounds), ties
+# and overflow the four with FZ clear, one per rounding mode, and NaNs the
+# first with DN clear and the first with it set.
+FPCR_SAMPLES = tuple(
+    rmode << FPCR_RMODE | flush << FPCR_FZ |
+    (flush ^ rmode & 1) << FPCR_DN | (flush ^ rmode >> 1 & 1) << FPCR_FZ16
+    for rmode in range(4) for flush in (0, 1))
+ROUNDING_SAMPLES = FPCR_SAMPLES[0::2]
+NAN_SAMPLES = FPCR_SAMPLES[0:2]
+CLASS_SAMPLES = {"ties": ROUNDING_SAMPLES, "overflow": ROUNDING_SAMPLES,
+                 "subnormals": FPCR_SAMPLES, "NaNs": NAN_SAMPLES}
+
+
+def floating(row) -> bool:
+    """Whether a row is a floating-point form that FPCR affects."""
+    return row.memory is None and row.encoding not in FPCR_FREE and \
+        row.encoding.startswith(("f", "bf", "scvtf", "ucvtf"))
+
+
+def size_field(row) -> int | None:
+    """The low bit of the size field that gives a floating-point row's
+    element size, or None where its name does."""
+    tail = row.encoding.rsplit("_", 1)[1]
+    if row.encoding.startswith(("scvtf", "ucvtf", "bfdot", "bfmlal",
+                                "bfmmla", "fmlal", "fmlsl")) or \
+            "2" in tail or tail in FLOAT_SOURCES:
+        return None
+    return 17 if row.encoding.startswith("flogb") else 22
+
+
+def source_format(row, word: int) -> tuple:
+    """The format of a floating-point row's sources: ("float", format) or
+    ("int", width, the target's precision)."""
+    name = row.encoding
+    tail = name.rsplit("_", 1)[1]
+    if name.startswith(("scvtf", "ucvtf")):
+        source, target = tail.split("2")
+        return "int", INTEGER_SOURCES[source], PRECISIONS[target]
+    if name.startswith(("bfdot", "bfmlal", "bfmmla")):
+        return "float", BFLOAT
+    if name.startswith(("fmlal", "fmlsl")):
+        return "float", HALF
+    if "2" in tail:
+        return "float", FLOAT_SOURCES["fp16" if tail.startswith("fp16")
+                                      else tail.split("2")[0]]
+    if tail in FLOAT_SOURCES:
+        return "float", FLOAT_SOURCES[tail]
+    return "float", SIZE_FORMATS[word >> size_field(row) & 3]
+
+
+def sized_words(row, word: int) -> list[int]:
+    """The word at each element size the row decodes, where its size
+    field gives the size."""
+    low = size_field(row)
+    if low is None:
+        return [word]
+    return [variant for size in SIZE_FORMATS
+            if expectation(row, variant := word & ~(3 << low) | size << low)
+            == "legal"]
+
+
+def float_classes(form: tuple[int, int]) -> tuple[tuple[str, list], ...]:
+    """Eight values of each operand class that makes an FPCR control
+    matter, in an order where each value and its successor are a useful
+    pair of sources."""
+    exponent, fraction = form
+
+    def value(negative: int, biased: int, bits: int = 0) -> int:
+        return negative << (exponent + fraction) | biased << fraction | bits
+
+    bias = (1 << exponent - 1) - 1
+    top = (1 << exponent) - 1
+    quiet = 1 << fraction - 1
+    one, two, half = value(0, bias), value(0, bias + 1), value(0, bias - 1)
+    tie = value(0, bias - fraction - 1)            # half an ulp of 1.0
+    above = value(0, bias, 1)                      # 1.0 plus an ulp
+    two_half = value(0, bias + 1, 1 << fraction - 2)
+    tiny, widest = value(0, 0, 1), value(0, 0, (1 << fraction) - 1)
+    least = value(0, 1)
+    largest = value(0, top - 1, (1 << fraction) - 1)
+    sign = 1 << exponent + fraction
+    return (
+        ("ties", [one, tie, two_half, above | sign, above, tie, half | sign,
+                  tie | sign]),
+        ("subnormals", [tiny, half, least, widest | sign, half, 3 * tiny,
+                        least | sign, tiny]),
+        ("NaNs", [value(0, top, quiet >> 1 | 1), value(0, top, quiet | 3),
+                  one, value(1, top, quiet | 5),
+                  value(1, top, quiet >> 2 | 2), two,
+                  value(0, top, quiet), one | sign]),
+        ("overflow", [largest, largest, largest | sign, two,
+                      largest | sign, largest | sign, largest,
+                      two | sign]),
+    )
+
+
+def integer_classes(width: int, precision: int
+                    ) -> tuple[tuple[str, list], ...]:
+    """The classes of integer sources whose conversion rounds: ties of
+    the target's precision, and the extremes, which may overflow it. A
+    conversion that is always exact has none."""
+    if precision >= width:
+        return ()
+    mask = (1 << width) - 1
+    tie = (1 << precision) + 1
+    return (
+        ("ties", [value & mask for value in
+                  (tie, tie + 2, -tie, 2 * tie, -tie - 2, tie - 2,
+                   tie << width - precision - 2, 1)]),
+        ("overflow", [value & mask for value in
+                      ((1 << width - 1) - 1, -(1 << width - 1), -1,
+                       (1 << width - 1) - 2, -(1 << width - 1) + 1, -2,
+                       1 << width - 2, 0)]),
+    )
+
+
+def fpcr_drafts() -> list[Draft]:
+    """Each floating-point row's low word, at each element size it
+    decodes, with all its Z sources holding one operand class, under the
+    class's FPCR samples, and with its predicates all true."""
+    drafts = []
+    for row in sve_rows():
+        if not floating(row):
+            continue
+        low_word = allocate(row, row.witness,
+                            list(range(len(row.operands))), False)
+        for word in sized_words(row, low_word):
+            drafts += fpcr_word_drafts(row, word)
+    return drafts
+
+
+def fpcr_word_drafts(row, word: int) -> list[Draft]:
+    source = source_format(row, word)
+    if source[0] == "int":
+        bits, classes = source[1], integer_classes(*source[1:])
+    else:
+        bits, classes = sum(source[1]) + 1, float_classes(source[1])
+    sources = [number for operand in row.operands if operand.kind == "z"
+               for _kind, number in occupied(operand, operand.number(word))]
+    drafts = []
+    for label, values in classes:
+        # Each source holds the class's values rotated by one more element
+        # than the one before, so that each pair of sources meets.
+        vectors = {
+            number: b"".join(
+                values[(lane + rotation) % len(values)].to_bytes(
+                    bits // 8, "little")
+                for lane in range(VL * 8 // bits))
+            for rotation, number in enumerate(sources)}
+        for fpcr in CLASS_SAMPLES[label]:
+            draft = base_draft("fpcr", row, word,
+                               f"{label}, FPCR {fpcr:#010x}")
+            draft.fpcr = fpcr
+            draft.v.update(vectors)
+            drafts.append(with_predicates(draft, row, word, ALL_TRUE))
+    return drafts
+
+
 @functools.cache
 def drafts() -> tuple[Draft, ...]:
     return tuple(classify_drafts() + operand_drafts() + memory_drafts() +
-                 gather_drafts() + live_drafts())
+                 gather_drafts() + live_drafts() + fpcr_drafts())
 
 
 def request_bytes() -> bytes:
@@ -1073,7 +1278,8 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     if pc_offset != case.entry:
         expected["pc"] = hex64(corpus.CODE_BASE + pc_offset)
     item["expected"] = expected
-    item["retired"] = pc_offset // 4
+    item["retired"] = sme_native.retired_count(draft.name, result.event,
+                                               result.pc_offset)
     if result.event == "memory-fault":
         if result.esr >> 26 == 0x26:
             access = "write" if draft.store else "read"
