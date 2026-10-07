@@ -4,6 +4,7 @@
 #include "cpu/host_capabilities.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 
@@ -134,6 +135,32 @@ struct SveLeadingPredicate final {
 	return result;
 }
 
+/* DecodePredCount(): how many of a vector's `elements` elements a
+ * predicate constraint names (POW2, VL1-VL256, MUL4, MUL3, ALL); the
+ * reserved patterns name none. It serves the streaming forms at SVL too. */
+[[nodiscard]] constexpr unsigned predicate_pattern_count(unsigned pattern,
+	unsigned elements) noexcept
+{
+	switch (pattern) {
+	case 0: /* POW2 */
+		return std::bit_floor(elements);
+	case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
+		return elements >= pattern ? pattern : 0U;
+	case 9: case 10: case 11: case 12: case 13: {
+		const unsigned count = 16U << (pattern - 9U);
+		return elements >= count ? count : 0U;
+	}
+	case 29: /* MUL4 */
+		return elements - elements % 4U;
+	case 30: /* MUL3 */
+		return elements - elements % 3U;
+	case 31: /* ALL */
+		return elements;
+	default:
+		return 0;
+	}
+}
+
 /* The table an engine indexes by the active count, for one element size:
  * entry n leaves the first n elements active. */
 template <unsigned Esize>
@@ -156,5 +183,9 @@ static_assert(sve_leading_predicate_table<8>()[2].predicate ==
 static_assert(sve_leading_predicate_table<1>()[0].nzcv == 0x6000'0000U);
 static_assert(sve_leading_predicate_table<4>()[4].nzcv == 0x8000'0000U);
 static_assert(sve_leading_predicate_table<2>()[3].nzcv == 0xa000'0000U);
+static_assert(predicate_pattern_count(0, 16) == 16 &&
+	predicate_pattern_count(30, 8) == 6 &&
+	predicate_pattern_count(9, 8) == 0 &&
+	predicate_pattern_count(14, 16) == 0);
 
 } // namespace uml::cpu::arm64
