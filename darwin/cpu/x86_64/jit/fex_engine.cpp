@@ -759,20 +759,68 @@ static_assert(static_cast<unsigned>(FpKind::rsqrt) == Core::EMBEDDER_FP_RSQRT &&
 	"the model's kinds and flags are FEXCore's");
 
 constexpr std::uint8_t simd_error_vector = 19;
-/* MXCSR's exception masks. */
-constexpr std::uint32_t mxcsr_masks = 0x1f80U;
+
+/* While a dispatch runs, the host's FPSR accumulates the guest's MXCSR
+ * exception flags: the dispatch clears it as it starts and folds it into
+ * MXCSR as it ends, FEXCore's translations fold it into the MXCSR STMXCSR,
+ * FXSAVE and XSAVE store, and LDMXCSR, FXRSTOR and XRSTOR clear it. Under
+ * Core::EMBEDDER_FP_MODE_CHECK_ALL the helper settles every instruction's
+ * flags into MXCSR instead, and FPSR's are not the guest's. */
+[[nodiscard]] std::uint64_t read_fpsr() noexcept
+{
+	std::uint64_t value;
+	asm volatile("mrs %0, fpsr" : "=r"(value));
+	return value;
+}
+
+void write_fpsr(std::uint64_t value) noexcept
+{
+	asm volatile("msr fpsr, %0" : : "r"(value));
+}
+
+/* FPSR's IOC, DZC, OFC, UFC and IXC as MXCSR's IE, ZE, OE, UE and PE. IDC
+ * is not DE: with FPCR.AH clear the host raises it for an input FPCR.FZ
+ * flushes, where DAZ raises nothing. */
+[[nodiscard]] constexpr std::uint32_t mxcsr_flags_for_fpsr(std::uint64_t fpsr) noexcept
+{
+	return static_cast<std::uint32_t>((fpsr & 0x1U) | ((fpsr & 0x1eU) << 1U));
+}
+
+/* Puts FPSR back to `value` as the scope ends. */
+struct FpsrRestore final {
+	std::uint64_t value;
+
+	explicit FpsrRestore(std::uint64_t initial) noexcept : value(initial) {}
+	FpsrRestore(const FpsrRestore &) = delete;
+	FpsrRestore &operator=(const FpsrRestore &) = delete;
+	~FpsrRestore()
+	{
+		if (read_fpsr() != value)
+			write_fpsr(value);
+	}
+};
 
 /* The cold path of an EmbedderFPCheck op: x86's result for the operation the
- * descriptor names, from the sources and host result in FPScratch. While
+ * descriptor names, from the sources and host result in FPScratch, and the
+ * flags it raises, which the host may lack, such as an FTZ flush's. While
  * MXCSR unmasks an exception, the check settles the instruction's
  * exceptions too, after its high part if it has two: it faults with #XM,
  * leaving its destination alone, or raises the flags of the masked ones.
- * As in the gadget engine, only the instructions a check sends here raise
- * flags. Under the special checks a part that no test sent here holds
- * flags of masked exceptions too: when its high part faults, the
- * instruction runs again with checks that send every part here. */
+ * Under the special checks a part that no test sent here holds flags of
+ * masked exceptions in FPSR: when its high part faults, the instruction
+ * runs again with checks that send every part here.
+ *
+ * The model computes with host arithmetic, whose flags are not the guest's:
+ * FPSR goes back to the guest's as the helper returns, and when it abandons
+ * the instruction, to its value before the instruction, whose computation
+ * may have raised flags x86's fault never does. Under DAZ without FTZ,
+ * FPCR.FZ flushes a result x86 keeps, raising underflow where the result is
+ * exact, and every flushed result comes here: FPSR goes back to its value
+ * before the part of the instruction the check covers, whose flags the
+ * model's replace. */
 std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, std::uint64_t guest_rip)
 {
+	FpsrRestore fpsr{read_fpsr()};
 	FpOperation operation{};
 	operation.kind = static_cast<FpKind>(descriptor & 0xffU);
 	operation.element_bytes = 2U << ((descriptor >> Core::EMBEDDER_FP_ELEMENT_SHIFT) & 3U);
@@ -786,8 +834,14 @@ std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, 
 	const auto mxcsr = frame->State.mxcsr;
 	auto steps = x86_fp_compute(operation, mxcsr, values);
 	std::memcpy(scratch + Core::EMBEDDER_FP_SCRATCH_RESULT, values.result.data(), values.result.size());
-	if ((mxcsr & mxcsr_masks) == mxcsr_masks)
+	const auto unmasked = ~(mxcsr >> 7U) & 0x3fU;
+	if ((mxcsr & (mxcsr_denormals_are_zero | mxcsr_flush_to_zero)) == mxcsr_denormals_are_zero &&
+		(unmasked & 0x32U) == 0 && operation.kind != FpKind::rcp && operation.kind != FpKind::rsqrt)
+		fpsr.value = frame->Embedder.FPSRPart;
+	if (unmasked == 0) {
+		frame->State.mxcsr = mxcsr | x86_fp_settle(steps, mxcsr).flags;
 		return 0;
+	}
 	auto &space = *reinterpret_cast<Space *>(frame->Embedder.HostContext);
 	if (frame->Embedder.FPPending != 0) {
 		steps |= space.pending_fp;
@@ -800,11 +854,11 @@ std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, 
 		return 0;
 	}
 	const auto outcome = x86_fp_settle(steps, mxcsr);
-	const auto unmasked = ~(mxcsr >> 7U) & 0x3fU;
 	if (outcome.fault && (descriptor & Core::EMBEDDER_FP_PART_HIGH) != 0 && (unmasked & 0x32U) == 0 &&
 		!space.fp_retrying) {
 		frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_RETRY;
 		record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+		fpsr.value = frame->Embedder.FPSRBefore;
 		return 1;
 	}
 	frame->State.mxcsr = mxcsr | outcome.flags;
@@ -814,6 +868,7 @@ std::uint64_t embedder_fp(Core::CpuStateFrame *frame, std::uint64_t descriptor, 
 	space.fp_fault_error = frame->State.mxcsr;
 	frame->Embedder.ExitReason = Core::EMBEDDER_EXIT_FP_FAULT;
 	record_exit(*frame, {guest_rip, descriptor >> Core::EMBEDDER_FP_UNRETIRED_SHIFT});
+	fpsr.value = frame->Embedder.FPSRBefore;
 	return 1;
 }
 
@@ -1433,6 +1488,10 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 
 	const auto host_fpcr = read_fpcr();
 	write_fpcr(fpcr_for_mxcsr(cpu.mxcsr));
+	/* The guest's MXCSR flags accumulate in FPSR from here (read_fpsr). */
+	write_fpsr(0);
+	frame->Embedder.FPSRBefore = 0;
+	frame->Embedder.FPSRPart = 0;
 	/* Registrations of a page by another vCPU wait for this one to leave
 	 * the engine once, so a store it translated lands first. */
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_seq_cst);
@@ -1453,13 +1512,18 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 			++frame->Embedder.Budget;
 			--frame->Embedder.Unretired;
 			space->fp_retrying = true;
+			/* Its checks settle all its flags into MXCSR, so FPSR keeps
+			 * the guest's from before it. */
+			const auto fpsr = read_fpsr();
 			space->context->ExecuteEmbedded(thread, true,
 				(fp_mode & ~Core::EMBEDDER_FP_MODE_CHECK_SPECIAL) | Core::EMBEDDER_FP_MODE_CHECK_ALL);
+			write_fpsr(fpsr);
 			space->fp_retrying = false;
 			continue;
 		}
 		break;
 	}
+	const auto fpsr = read_fpsr();
 	space->participant.engine_epoch.fetch_add(1, std::memory_order_release);
 	write_fpcr(host_fpcr);
 
@@ -1469,6 +1533,8 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 	result.retired_instructions = static_cast<std::size_t>(std::max<std::int64_t>(
 		budget - frame->Embedder.Budget - frame->Embedder.Unretired, 0));
 	save_state(*space, cpu);
+	if ((fp_mode & Core::EMBEDDER_FP_MODE_CHECK_ALL) == 0)
+		cpu.mxcsr |= mxcsr_flags_for_fpsr(fpsr);
 	impl_->memory = nullptr;
 
 	switch (frame->Embedder.ExitReason) {

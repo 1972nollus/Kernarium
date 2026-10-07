@@ -3,8 +3,3 @@
 # <record name><TAB><class>. Each class is a correctness gap of the engine,
 # not of the record; the JIT corpus test fails when a listed record passes,
 # so a fix removes its rows in the same change.
-
-# masked-mxcsr-flags (2): with every exception masked, the JIT leaves
-# MXCSR's exception flags clear.
-repository/sse-masked-exception-flags-follow-each-instruction.s	masked-mxcsr-flags
-repository/sse-masked-exception-flags-stay-until-mxcsr-loads.s	masked-mxcsr-flags

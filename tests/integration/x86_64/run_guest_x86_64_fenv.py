@@ -9,9 +9,7 @@ feraiseexcept, the rounding functions, x87 arithmetic, an FTZ flush and a
 DAZ input -- must leave what fetestexcept() and STMXCSR showed on an Intel
 Xeon 8581C, and glibc's fadd, which reads the precision flag to round to
 odd, must return the Xeon's value. The documented exception is DE while DAZ
-is clear, which no host flag shows (user decision 2026-10-07). `--pending`
-is for an engine that does not keep masked flags yet: it may leave flags
-out, and fails once it leaves none out.
+is clear, which no host flag shows (user decision 2026-10-07).
 """
 
 from __future__ import annotations
@@ -38,7 +36,6 @@ BUILD = (f"g++ -std=c++20 -O2 -Wall -Wextra -Werror -o {GUEST_BINARY} "
          f"{GUEST_SOURCE}")
 PROBE_TIMEOUT_SECONDS = 900
 DENORMAL_OPERAND = 0x02
-FLAG_BITS = 0x3F
 
 # The probe built with g++ 14.2 -O2 against glibc 2.41 on Debian 13, run on
 # an Intel Xeon Platinum 8581C: operation, fetestexcept(), MXCSR.
@@ -74,8 +71,6 @@ ftzflush UE,PE 1fb0
 dazdenorm - 1f80
 """
 XEON_NARROW = 0x3F800001
-# fadd's value when the sum's precision flag is lost: rounded toward zero.
-NARROW_WITHOUT_PRECISION = 0x3F800000
 
 
 def expected() -> dict[str, tuple[set[str], int]]:
@@ -101,22 +96,16 @@ def parse(output: str) -> tuple[dict[str, tuple[set[str], int]], int | None]:
     return cases, narrow
 
 
-def compare(actual: tuple[set[str], int], want: tuple[set[str], int],
-            pending: bool) -> str:
-    """'ok', 'residual', 'pending' or 'FAIL'."""
+def compare(actual: tuple[set[str], int], want: tuple[set[str], int]) -> str:
+    """'ok', 'residual' or 'FAIL'."""
     flags, mxcsr = actual
     want_flags, want_mxcsr = want
     if flags == want_flags and mxcsr == want_mxcsr:
         return "ok"
-    missing_only = flags <= want_flags and \
-        (mxcsr & ~want_mxcsr & FLAG_BITS) == 0 and \
-        (mxcsr & ~FLAG_BITS) == (want_mxcsr & ~FLAG_BITS)
     # DE, which fetestexcept cannot show, while DAZ (bit 6) is clear.
     if flags == want_flags and mxcsr | DENORMAL_OPERAND == want_mxcsr and \
             want_mxcsr & 0x40 == 0:
         return "residual"
-    if pending and missing_only:
-        return "pending"
     return "FAIL"
 
 
@@ -126,8 +115,6 @@ def main() -> int:
     parser.add_argument("--rootfs", required=True, type=pathlib.Path,
                         help="x86-64 image with g++ and glibc")
     parser.add_argument("--engine", choices=("gadgets", "jit"), default="gadgets")
-    parser.add_argument("--pending", action="store_true",
-                        help="the engine does not keep masked flags yet")
     parser.add_argument("--timeout", type=int, default=180)
     arguments = parser.parse_args()
 
@@ -159,29 +146,20 @@ def main() -> int:
         raise RuntimeError(f"the probe failed with status {result.return_code}")
     cases, narrow = parse(result.output)
     failures = 0
-    pending_used = False
     for name, want in expected().items():
         if name not in cases:
             print(f"FAIL {name}: no result")
             failures += 1
             continue
-        status = compare(cases[name], want, arguments.pending)
-        pending_used |= status == "pending"
+        status = compare(cases[name], want)
         if status != "ok":
             flags, mxcsr = cases[name]
             print(f"{status} {name}: fetestexcept {sorted(flags)} mxcsr "
                   f"{mxcsr:04x}, x86 {sorted(want[0])} {want[1]:04x}")
         failures += status == "FAIL"
     if narrow != XEON_NARROW:
-        if arguments.pending and narrow == NARROW_WITHOUT_PRECISION:
-            pending_used = True
-            print(f"pending narrow: fadd {narrow:08x}, x86 {XEON_NARROW:08x}")
-        else:
-            print(f"FAIL narrow: fadd {narrow if narrow is None else hex(narrow)}"
-                  f", x86 {XEON_NARROW:08x}")
-            failures += 1
-    if arguments.pending and not pending_used:
-        print("FAIL the engine keeps every flag: drop --pending")
+        print(f"FAIL narrow: fadd {narrow if narrow is None else hex(narrow)}"
+              f", x86 {XEON_NARROW:08x}")
         failures += 1
     if failures:
         raise RuntimeError(f"{failures} result(s) differ from the Xeon's")

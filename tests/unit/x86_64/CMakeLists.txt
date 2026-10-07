@@ -27,9 +27,7 @@ uml_add_unit_test(
     LABELS cpu;x86-64)
 
 # The flags an Intel Xeon leaves in a masked MXCSR, against the engine's
-# ordinary path. --pending: the engine does not keep masked flags yet and
-# may leave any out, but raise none x86 does not; the JIT keeps them with
-# lane MF-J.
+# ordinary path.
 set(_uml_x86_64_masked_flags
     "${CMAKE_CURRENT_SOURCE_DIR}/masked_flags/xeon-flags.bin")
 add_executable(uml_x86_64_masked_flags_tests
@@ -178,7 +176,7 @@ if(TARGET uml_x86_64_jit)
         ${PROJECT_SOURCE_DIR}/darwin)
     uml_add_unit_test(
         NAME x86-64-jit-masked-flags
-        COMMAND uml_x86_64_masked_flags_jit_tests --pending
+        COMMAND uml_x86_64_masked_flags_jit_tests
             "${_uml_x86_64_masked_flags}"
         LABELS cpu;x86-64)
     uml_add_unit_test(
