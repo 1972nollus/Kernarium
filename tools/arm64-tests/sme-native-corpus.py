@@ -1131,6 +1131,25 @@ class Finding(Exception):
     pass
 
 
+# Whether an exit retires the instruction it stops at, as
+# terminal_does_not_retire() in darwin/cpu/execution_types.hpp classifies
+# the arm64 exits: an SVC or a BRK retires, leaving the PC after the SVC
+# and at the BRK, and a memory fault, an illegal instruction, or a
+# floating-point trap leaves the PC at an instruction that did not retire.
+# The oracles' programs do not branch, so they raise no other exit.
+RETIRES = {"system-call": True, "breakpoint": True, "memory-fault": False,
+           "illegal-instruction": False, "floating-point-trap": False}
+
+
+def retired_count(name: str, event: str, pc_offset: int) -> int:
+    """The instructions a program retires when the oracle stops it with
+    `event` at the word at `pc_offset` (for a system call, its SVC)."""
+    if event not in RETIRES:
+        raise Finding(f"{name}: {event} at offset {pc_offset:#x}, which a "
+                      "program without branches cannot raise")
+    return pc_offset // 4 + RETIRES[event]
+
+
 def case_skeleton(draft: Draft, case: WireCase, program: int) -> dict:
     """The record case without what the hardware decides: its event,
     expected state, retired count, fault, and expected bytes."""
@@ -1201,7 +1220,8 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     item["expected"] = expected_fields(
         initial, final, corpus.CODE_BASE + pc_offset,
         corpus.CODE_BASE + case.entry)
-    item["retired"] = pc_offset // 4
+    item["retired"] = retired_count(draft.name, result.event,
+                                    result.pc_offset)
     if result.event == "memory-fault":
         if result.esr >> 26 == 0x26:
             access = "write" if draft.store else "read"

@@ -1093,7 +1093,8 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     if pc_offset != case.entry:
         expected["pc"] = hex64(corpus.CODE_BASE + pc_offset)
     item["expected"] = expected
-    item["retired"] = pc_offset // 4
+    item["retired"] = sme_native.retired_count(draft.name, result.event,
+                                               result.pc_offset)
     if result.event == "memory-fault":
         if result.esr >> 26 == 0x26:
             access = "write" if draft.store else "read"
