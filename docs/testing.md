@@ -553,7 +553,10 @@ sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
 exec, regsets, `AT_MINSIGSTKSZ`, prctl and the sysctl, first through
 sigreturn and ptrace alone, then with SME executed by the engine; further
 boots send host signals and each terminating signal while a vCPU streams,
-and `glibc_za_probe.py` checks glibc's ZA lazy-save commits. The `kernel`,
+and `glibc_za_probe.py` checks the image's glibc and libgcc SME ABI: the ZA
+lazy-save commits at fork, spawn, thread creation, longjmp and siglongjmp,
+a glibc-installed handler for a signal that interrupts a streaming region,
+returning or leaving by siglongjmp, and libgcc's SME support routines. The `kernel`,
 `spin` and `terminate` modes need no engine support; on an SME host they run
 by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
