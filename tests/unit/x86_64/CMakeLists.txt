@@ -114,7 +114,7 @@ if(TARGET uml_x86_64_jit)
     add_executable(uml_x86_64_sse_exactness_jit_tests
         x86_64_sse_exactness_tests.cpp)
     target_compile_definitions(uml_x86_64_sse_exactness_jit_tests PRIVATE
-        UML_SSE_EXACTNESS_JIT=1)
+        UML_SSE_EXACTNESS_JIT=1 UML_X86_64_SSE_LOOP_JIT=1)
     target_link_libraries(uml_x86_64_sse_exactness_jit_tests PRIVATE
         uml_x86_64_target
         uml_x86_64_gadgets
