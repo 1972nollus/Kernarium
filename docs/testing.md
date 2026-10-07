@@ -566,6 +566,14 @@ they run by hand with
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
 
+## Guest SVE policy
+
+`arm64-sve-foundation` checks the guest-SVE policy, the host features each
+part of the SVE profile needs, the engines' support levels, the predicate
+mask form and the SM-change reset, with injected hosts. Unit binaries take
+that policy from their environment as well; until an engine implements SVE
+the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites

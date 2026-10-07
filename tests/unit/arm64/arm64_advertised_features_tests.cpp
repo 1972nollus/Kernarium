@@ -10,9 +10,12 @@
  * An intended change to the advertised set changes rows of this table:
  * regenerate it with --print and review the rows that moved. */
 #include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "platform/apple/host_features.hpp"
 #include "require.hpp"
 #include "uml_darwin_cpu.h"
@@ -1029,11 +1032,15 @@ int main(int argc, char **argv)
 
 	/* The entry points the guest kernel calls apply this derivation to the
 	 * probed host as the engines present it: outside a run, with the
-	 * profile both engines implement (sme_host_for_support). */
+	 * profile both engines implement (sme_host_for_support,
+	 * sve_host_for_support). */
 	namespace arm64 = ::uml::cpu::arm64;
-	const auto words = detail::guest_hwcaps(arm64::sme_host_for_support(
-		::uml::platform::apple::probed_host_capabilities(),
-		std::min(arm64::gadgets::sme_support, arm64::jit::sme_support)));
+	const auto words = detail::guest_hwcaps(arm64::sve_host_for_support(
+		arm64::sme_host_for_support(
+			::uml::platform::apple::probed_host_capabilities(),
+			std::min(arm64::gadgets::sme_support,
+				arm64::jit::sme_support)),
+		std::min(arm64::gadgets::sve_support, arm64::jit::sve_support)));
 	require(darwin_uml_guest_hwcap() == words[0]);
 	require(darwin_uml_guest_hwcap2() == words[1]);
 	return 0;

@@ -14,8 +14,9 @@ namespace uml::cpu {
 
 /* The host an engine of `kind` presents the virtual CPU for: `host` less
  * the parts of the SME profile the engine does not implement
- * (arm64::sme_host_for_support). The runtime configures the engine and
- * derives the guest's HWCAPs from it. */
+ * (arm64::sme_host_for_support) and, until it implements all of it, the
+ * non-streaming SVE profile (arm64::sve_host_for_support). The runtime
+ * configures the engine and derives the guest's HWCAPs from it. */
 [[nodiscard]] HostCapabilities engine_host_capabilities(
 	EngineKind kind, HostCapabilities host) noexcept;
 

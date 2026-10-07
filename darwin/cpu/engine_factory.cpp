@@ -3,10 +3,13 @@
 
 #include "cpu/arm64/engine_adapters.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 
 #include <utility>
 
@@ -38,9 +41,12 @@ bool cpu_engine_available(EngineKind kind) noexcept
 HostCapabilities engine_host_capabilities(
 	EngineKind kind, HostCapabilities host) noexcept
 {
-	const auto support = kind == EngineKind::jit ?
-		arm64::jit::sme_support : arm64::gadgets::sme_support;
-	return arm64::sme_host_for_support(std::move(host), support);
+	const bool jit = kind == EngineKind::jit;
+	return arm64::sve_host_for_support(
+		arm64::sme_host_for_support(std::move(host),
+			jit ? arm64::jit::sme_support :
+			      arm64::gadgets::sme_support),
+		jit ? arm64::jit::sve_support : arm64::gadgets::sve_support);
 }
 
 void materialize_architectural_state(arm64::CpuState &cpu) noexcept
