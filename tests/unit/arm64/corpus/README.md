@@ -494,9 +494,9 @@ an access crosses into a 4 KiB page that is unmapped or read-only, and
 holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
 region maps exactly as the guest's does. The 29 SCLAMP-class forms need
 FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
-record them, and they are not in these records; the withheld features'
-forms are not either, since their UNDEFINED results belong to the
-absent-feature records.
+record them; the SVE/SME records below hold them. The withheld features'
+forms are not in these records either, since their UNDEFINED results belong
+to the absent-feature records.
 
 The encoding table decides the legality of each row's witness, of its own
 registers, and of a word no row decodes; the hardware decides a free field
@@ -524,7 +524,8 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
   --output tests/unit/arm64/corpus
 ```
 
-A regeneration that leaves the request unchanged needs no SVE host:
+The SVE/SME step below follows on `sve.jsonl` before the repack. A
+regeneration that leaves the request unchanged needs no SVE host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes, the host's VL, page size, and hardware
@@ -534,6 +535,57 @@ capabilities, and the outcome counts under `sve_native`;
 its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac, and with SVE cases where the host has
 SVE at VL 16.
+
+## SVE/SME cases
+
+On a CPU with both FEAT_SVE and FEAT_SME, 29 encodings that FEAT_SME or
+FEAT_SME2 shares with FEAT_SVE2p1 execute outside streaming mode: PSEL,
+REVD, SCLAMP, UCLAMP, and 25 that need FEAT_SME2. The encoding table gives
+them the non-streaming requirement sve plus sme (plus sme2). No host
+observes them there: arm64-builder has no SME, and the M4 has no SVE.
+[`tools/arm64-tests/sve-sme-corpus.py`](../../../../tools/arm64-tests/sve-sme-corpus.py)
+authors their `arm64-sve-sme` records at VL 16 from the native SVE
+generator's classify and operand cases of their rows, appends them after the
+native SVE step, and takes each family's outcomes from one source:
+
+- `asl` holds the 22 integer and predicate encodings: PSEL, REVD, SCLAMP,
+  UCLAMP, the 2-way SDOT and UDOT, the two-register narrowing forms, and the
+  predicate-pair WHILEs. The script transcribes their execute pseudocode
+  from the pinned 2026-06 XML, which depends on the vector length only
+  through the element count. A model is used only after it reproduces the
+  whole final state of every M4 case of its encoding in streaming mode that
+  the native SME records hold, at VL 64.
+- `m4` holds the 7 floating-point encodings: FCLAMP, BFMLSLB and BFMLSLT,
+  and the half-precision FDOT. Each is lane-local within a 128-bit segment,
+  so the M4 runs each case in streaming mode with every Z and P register
+  holding its VL 16 value in each segment. The low segment and FPSR are then
+  the VL 16 outcome, and the script requires every segment to agree. The
+  same request runs the `asl` cases, whose results must match their models.
+  The pack holds no `m4` record until the M4 has answered.
+- `table` holds any word no row decodes; today there is none.
+
+Each record has a VL and no SVL, and each case names its row's
+requirement. The runner runs a case only for an engine at `sve_support`
+`complete` whose virtual CPU implements SME at any SVL, and SME2 where the
+case names it, and skips it elsewhere.
+
+```sh
+python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
+  --carry tests/unit/arm64/corpus/a64_instruction_corpus.pack
+python3 -B tools/arm64-tests/sve-sme-corpus.py --m4-request m4.request
+sme_native_oracle m4.request m4.response.1                # twice, on the M4
+python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
+  --m4-response m4.response.1 --m4-response m4.response.2
+```
+
+The first form keeps the pack's `m4` record, if any, and needs no host. The
+responses must give identical records. `provenance.json` records, under
+`sve_sme`, the script, table and M4 request hashes, the model checks per
+encoding, the case counts, and the M4's features. `build-unit-corpus.py
+--check` verifies the hashes. The `arm64-instruction-corpus-sve-sme` tooling
+test re-derives the `asl` and `table` records, repeats the model checks
+against the pack's SME records, and drives the M4 path with a synthetic
+response.
 
 ## FEAT_AFP cases
 

@@ -532,6 +532,16 @@ the host has SVE at that length. Regenerating their outcomes needs such a
 host and runs the oracle twice from clean directories; the corpus README
 describes it.
 
+The `arm64-sve-sme` records hold, at the same vector length, the 29 SME
+forms that SVE executes outside streaming mode. No host observes them
+there. Their integer and predicate families come from models of the
+pinned pseudocode, each of which must first reproduce every M4 streaming
+case of its encoding. Their floating-point families come from the M4 in
+streaming mode with every 128-bit segment holding the case. The runner
+runs them only for an engine at `sve_support` `complete` on a virtual CPU
+with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
+tooling test re-derives them.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`
