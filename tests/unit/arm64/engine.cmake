@@ -267,6 +267,10 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv)
 
+    # The JIT's non-streaming SVE support (cpu/arm64/jit, sve_support).
+    uml_add_arm64_unit_test(jit_sve_control WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
     uml_add_arm64_unit_test(counter_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
