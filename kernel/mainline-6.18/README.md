@@ -175,6 +175,26 @@ and single steps work. A tracer's `orig_ax` (`orig_eax`) is the number of the
 system call the task is in and -1 at any other stop; writing it at a system
 call's entry stop runs that call instead, and -1 skips the call and leaves AX
 as the tracer set it.
+
+x86 tasks have an LDT, which `modify_ldt()` reads and writes as an x86-64
+kernel does: function 0 reads the entries in use, 2 gives 128 zero bytes,
+and 1 and 0x11 write one entry in the old and the new mode, with Linux's
+checks and `fill_ldt()`'s descriptor; a fork child gets a copy and `execve()`
+starts without one. 16-bit segments are refused, as an x86-64 kernel built
+without `CONFIG_X86_16BIT` refuses them, because the Darwin host runs no
+16-bit code. Wine's i386 `NtSetLdtEntries()` is the user. Every guest entry
+hands the table to the host as the common README's bridge ABI 20 states, and
+the host's segment model raises the faults selector loads, far transfers and
+segment limits raise: `#GP` as `SIGSEGV` with `SI_KERNEL` and the selector in
+the error code, and `#NP` and `#SS` as `SIGBUS` with `SI_KERNEL`, trap numbers
+11 and 12, as on x86 Linux. `execve()` starts a task with x86 Linux's
+selectors, and a 64-bit task that runs 32-bit code, as Wine's WoW64 does with
+CS 0x23, keeps that CS and SS through its signals: the frame records them,
+`UC_STRICT_RESTORE_SS` is set only for a signal that interrupted 64-bit code,
+and `rt_sigreturn()` takes the frame's CS and SS with RPL 3, which the host
+checks as IRET would. These topics live only in the slice overlay: only x86
+tasks have an LDT, selectors or `modify_ldt()`, so the arm64 kernels and
+Android build none of them.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
