@@ -27,7 +27,9 @@ SME_SECTION = 0x8000
 
 # The profile features a row can need, as runtime ArmFeature tokens, in the
 # table's bit order.
-FEATURES = ("sme", "sme2", "sme_f64f64", "sme_i16i64", "bf16", "i8mm")
+FEATURES = ("sme", "sme2", "sme_f64f64", "sme_i16i64", "bf16", "i8mm", "sve",
+            "sve2", "sve_aes", "sve_pmull128", "sve_sha3", "sve_bitperm",
+            "sve_sm4")
 
 
 class TableError(ValueError):
@@ -80,6 +82,10 @@ class Memory:
     immediate: tuple[Segment, ...]
     base_operand: int
     index_operand: int | None
+    vector_length: str
+    index_bits: int
+    index_shift: int
+    index_sign: Segment | None
 
     def element_bits(self, word: int) -> int:
         if self.esize_shift is None:
@@ -105,6 +111,7 @@ class Row:
     stable_id: str
     encoding: str
     requirement: tuple[str, ...]
+    non_streaming_requirement: tuple[str, ...]
     checks: tuple[str, ...]
     mode: tuple[str, ...]
     operands: tuple[Operand, ...]
@@ -114,6 +121,9 @@ class Row:
 
     @property
     def in_profile(self) -> bool:
+        """Whether the SME profile implements the row in streaming mode;
+        a row only the SVE profile implements, outside streaming mode, is
+        not, as no engine executes those yet."""
         return bool(self.requirement)
 
     @property
@@ -215,10 +225,12 @@ _MEMORY = re.compile(
     r"^SmeMemory\{SmeMemoryShape::(\w+), SmeMemoryDirection::(\w+), "
     r"SmeAddressOffset::(\w+), (\d+), (\{\}|sme_field\(\d+, \d+\)), (\d+), "
     r"(\d+), (\d+), (true|false), (true|false), (true|false), (\d+), "
-    r"\{\{(.*?)\}\}, (\d+), (\d+|sme_no_operand)\},$")
+    r"\{\{(.*?)\}\}, (\d+), (\d+|sme_no_operand), SmeVectorLength::(\w+), "
+    r"(\d+), (\d+), (\{\}|sme_field\(\d+, \d+\))\},$")
 _ROW = re.compile(
     r"^SmeEncoding\{(0x[0-9a-f']+U), (0x[0-9a-f']+U), (\d+)U, ([^,]+), "
-    r"([^,]+), ([^,]+), (\d+), (\d+), (\d+), (\d+)\}, // (\S+) (\S+)$")
+    r"([^,]+), ([^,]+), ([^,]+), (\d+), (\d+), (\d+), (\d+)\}, "
+    r"// (\S+) (\S+)$")
 _FP_SIMD = re.compile(
     r"^FpSimdStreamingClass\{(0x[0-9a-f']+U), (0x[0-9a-f']+U), (\d+)U, "
     r"(true|false)\}, // (\S+) (\S+)$")
@@ -244,8 +256,10 @@ def load(path: pathlib.Path = TABLE) -> Table:
             raise TableError(f"{TABLE_PATH}: cannot read memory {line!r}")
         (shape, direction, offset, esize, shift, msize, registers, stride,
          sign, nontemporal, signed, immediate_count, immediate, base,
-         index) = match.groups()
+         index, vector_length, index_bits, index_shift,
+         index_sign) = match.groups()
         shift_segments = _segments(shift)
+        sign_segments = _segments(index_sign)
         immediate_segments = _segments(immediate)
         if len(immediate_segments) != int(immediate_count):
             raise TableError(f"{TABLE_PATH}: memory {line!r}")
@@ -257,7 +271,10 @@ def load(path: pathlib.Path = TABLE) -> Table:
             sign_extend=sign == "true", nontemporal=nontemporal == "true",
             immediate_signed=signed == "true",
             immediate=immediate_segments, base_operand=int(base),
-            index_operand=None if index == "sme_no_operand" else int(index)))
+            index_operand=None if index == "sme_no_operand" else int(index),
+            vector_length=vector_length, index_bits=int(index_bits),
+            index_shift=int(index_shift),
+            index_sign=sign_segments[0] if sign_segments else None))
     witnesses = [_number(item) for item in _array(
         text, "std::uint32_t", "sme_encoding_witnesses")]
     rows = []
@@ -265,8 +282,9 @@ def load(path: pathlib.Path = TABLE) -> Table:
         match = _ROW.match(line)
         if match is None:
             raise TableError(f"{TABLE_PATH}: cannot read row {line!r}")
-        (mask, value, form, requirement, checks, mode, operand_count,
-         operand_begin, memory, min_svl, stable_id, encoding) = match.groups()
+        (mask, value, form, requirement, non_streaming, checks, mode,
+         operand_count, operand_begin, memory, min_svl, stable_id,
+         encoding) = match.groups()
         form = int(form)
         expected_id = (f"SME-{form - SME_SECTION:04d}" if form & SME_SECTION
                        else f"SVE-{form:04d}")
@@ -280,6 +298,7 @@ def load(path: pathlib.Path = TABLE) -> Table:
             index=index, mask=_number(mask), value=_number(value), form=form,
             stable_id=stable_id, encoding=encoding,
             requirement=_flags(requirement, "sme_feature_"),
+            non_streaming_requirement=_flags(non_streaming, "sme_feature_"),
             checks=_flags(checks, "sme_check_"),
             mode=_flags(mode, "sme_mode_"),
             operands=tuple(operands[begin:begin + count]),
@@ -289,7 +308,8 @@ def load(path: pathlib.Path = TABLE) -> Table:
         if not row.matches(row.witness):
             raise TableError(f"{TABLE_PATH}: {row.stable_id} {row.encoding}: "
                              "witness does not match its row")
-        if set(row.requirement) - set(FEATURES):
+        if (set(row.requirement) | set(row.non_streaming_requirement)) - \
+                set(FEATURES):
             raise TableError(f"{TABLE_PATH}: {row.stable_id}: unknown feature")
     fp_witnesses = [_number(item) for item in _array(
         text, "std::uint32_t", "fp_simd_streaming_witnesses")]

@@ -1145,7 +1145,7 @@ SVE-0156	SVE	FACLT	arm64-absent-sme	SVE-0156 FACLT 6540e010 is undefined	6540e01
 SVE-0157	SVE	FADD (immediate)	arm64-absent-sme	SVE-0157 fadd_z_p_zs_ 65588000 is undefined	65588000	-	sme
 SVE-0158	SVE	FADD (vectors, predicated)	arm64-absent-sme	SVE-0158 fadd_z_p_zz_ 65408000 is undefined	65408000	-	sme
 SVE-0159	SVE	FADD (vectors, unpredicated)	arm64-absent-sme	SVE-0159 fadd_z_zz_ 65400000 is undefined	65400000	-	sme
-SVE-0160	SVE	FADDA	arm64-absent-sve	SVE-0160 fadda_v_p_z_ 65d83fff is undefined	65d83fff	-	sve
+SVE-0160	SVE	FADDA	arm64-absent-sve	SVE-0160 fadda_v_p_z_ 65582000 is undefined	65582000	-	sve
 SVE-0161	SVE	FADDP	arm64-absent-sme	SVE-0161 faddp_z_p_zz_ 64508000 is undefined	64508000	-	sme
 SVE-0162	SVE	FADDQV	arm64-absent-sve	SVE-0162 faddqv_z_p_z_ 64d0bfff is undefined	64d0bfff	-	sme2p1
 SVE-0163	SVE	FADDV	arm64-absent-sme	SVE-0163 faddv_v_p_z_ 65402000 is undefined	65402000	-	sme
@@ -1181,7 +1181,7 @@ SVE-0192	SVE	FDOT (2-way, vectors, FP8 to FP16)	arm64-absent-sve	SVE-0192 fdot_z
 SVE-0193	SVE	FDOT (4-way, indexed)	arm64-absent-sve	SVE-0193 fdot_z32_zz8z8i_ 64604400 is undefined	64604400	-	ssve_fp8dot4
 SVE-0194	SVE	FDOT (4-way, vectors)	arm64-absent-sve	SVE-0194 fdot_z32_zz8z8_ 64608400 is undefined	64608400	-	ssve_fp8dot4
 SVE-0195	SVE	FDUP	arm64-absent-sme	SVE-0195 fdup_z_i_ 2579c000 is undefined	2579c000	-	sme
-SVE-0196	SVE	FEXPA	arm64-absent-sve	SVE-0196 fexpa_z_z_ 04e0bbff is undefined	04e0bbff	-	ssve_fexpa
+SVE-0196	SVE	FEXPA	arm64-absent-sve	SVE-0196 fexpa_z_z_ 0460b800 is undefined	0460b800	-	ssve_fexpa
 SVE-0197	SVE	FIRSTP	arm64-absent-sve	SVE-0197 firstp_r_p_p_ 25218000 is undefined	25218000	-	sme2p2
 SVE-0198	SVE	FLOGB	arm64-absent-sme	SVE-0198 flogb_z_p_z_m 651aa000 is undefined	651aa000	-	sme
 SVE-0199	SVE	FMAD	arm64-absent-sme	SVE-0199 fmad_z_p_zzz_ 65608000 is undefined	65608000	-	sme
@@ -1265,10 +1265,10 @@ SVE-0276	SVE	FSUB (vectors, predicated)	arm64-absent-sme	SVE-0276 fsub_z_p_zz_ 6
 SVE-0277	SVE	FSUB (vectors, unpredicated)	arm64-absent-sme	SVE-0277 fsub_z_zz_ 65400400 is undefined	65400400	-	sme
 SVE-0278	SVE	FSUBR (immediate)	arm64-absent-sme	SVE-0278 fsubr_z_p_zs_ 655b8000 is undefined	655b8000	-	sme
 SVE-0279	SVE	FSUBR (vectors)	arm64-absent-sme	SVE-0279 fsubr_z_p_zz_ 65438000 is undefined	65438000	-	sme
-SVE-0280	SVE	FTMAD	arm64-absent-sve	SVE-0280 ftmad_z_zzi_ 65d783ff is undefined	65d783ff	-	sve
-SVE-0281	SVE	FTSMUL	arm64-absent-sve	SVE-0281 ftsmul_z_zz_ 65df0fff is undefined	65df0fff	-	sve
-SVE-0282	SVE	FTSSEL	arm64-absent-sve	SVE-0282 ftssel_z_zz_ 04ffb3ff is undefined	04ffb3ff	-	sve
-SVE-0283	SVE	HISTCNT	arm64-absent-sve	SVE-0283 histcnt_z_p_zz_ 45ffdfff is undefined	45ffdfff	-	sve2
+SVE-0280	SVE	FTMAD	arm64-absent-sve	SVE-0280 ftmad_z_zzi_ 65508000 is undefined	65508000	-	sve
+SVE-0281	SVE	FTSMUL	arm64-absent-sve	SVE-0281 ftsmul_z_zz_ 65400c00 is undefined	65400c00	-	sve
+SVE-0282	SVE	FTSSEL	arm64-absent-sve	SVE-0282 ftssel_z_zz_ 0460b000 is undefined	0460b000	-	sve
+SVE-0283	SVE	HISTCNT	arm64-absent-sve	SVE-0283 histcnt_z_p_zz_ 45e0c000 is undefined	45e0c000	-	sve2
 SVE-0284	SVE	HISTSEG	arm64-absent-sve	SVE-0284 histseg_z_zz_ 4520a000 is undefined	4520a000	-	sve2
 SVE-0285	SVE	INCB, INCD, INCH, INCW (scalar)	arm64-absent-sme	SVE-0285 incb_r_rs_ 0430e000 is undefined	0430e000	-	sme
 SVE-0286	SVE	INCD, INCH, INCW (vector)	arm64-absent-sme	SVE-0286 incd_z_zs_ 04f0c000 is undefined	04f0c000	-	sme
