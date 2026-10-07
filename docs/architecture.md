@@ -266,6 +266,19 @@ the JIT's native lowering leaves to a helper run in the JIT's own semantic
 slow path, never in another engine; a helper treats any word outside its
 routed classes as a fatal internal error.
 
+The non-streaming SVE semantic library,
+[`cpu/arm64/detail/sve_semantics.hpp`](../darwin/cpu/arm64/detail/sve_semantics.hpp),
+is shared C++ semantics rather than another engine. It executes the SVE
+profile's words at PSTATE.SM = 0 and VL 16, routed by the generated encoding
+table, for an engine's forms that it does not lower inline. It includes no
+engine header and works on `CpuState` alone. It reaches guest memory only
+through the caller's translation interface. It never changes PC, and it marks
+the SVE state live. A reserved bitmask immediate gives the
+illegal-instruction exit. A faulting access leaves what the hardware leaves.
+The forms that `sve_semantics_covers()` names are its routed classes; any
+other word is a fatal internal error. No product links the library until an
+engine calls it.
+
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
 FEAT_AFP twins into, and an island of veneers. Every image that carries it
