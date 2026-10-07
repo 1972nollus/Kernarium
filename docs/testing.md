@@ -625,6 +625,21 @@ mask form and the SM-change reset, with injected hosts. Unit binaries take
 that policy from their environment as well; until an engine implements SVE
 the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
 
+`guest-sve-gadgets` and `guest-sve-jit` check the guest kernel's SVE contract
+under the policy on. Each skips, naming its reason, unless its engine's SVE
+support is `complete`. The freestanding `sve_probe.cpp` boots as `/init` and
+checks signal frames, sigreturn and its invalid frames, the live state across
+system calls, preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at
+signal and syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`,
+prctl and the sysctl; on an SME host a second boot adds the SME policy and
+the streaming-mode checks. The same binary runs as an ordinary program on
+arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
+every check must pass there too; its expected values came from such a run on
+Linux 6.12, and checks where native Linux may keep a discarded state live
+with zero registers accept either outcome. `guest-sve-off-gadgets` and
+`guest-sve-off-jit` run on every host and check that with the policy off the
+probe sees no SVE and PTRUE is undefined.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
