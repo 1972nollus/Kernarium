@@ -513,6 +513,25 @@ __asm__(".text\n"
 	".global probe_wrap_load_end\n"
 	"probe_wrap_load_end:\n"
 	"	ret\n"
+	/* Returns the dwords LODSL and an ordinary load read and the byte
+	 * XLATB reads at GS:(offset), summed, with GS's base 0xfffff000. */
+	".global probe_wrap_gs\n"
+	"probe_wrap_gs:\n"
+	"	pushl %esi\n"
+	"	pushl %ebx\n"
+	"	movl 12(%esp), %esi\n"
+	"	movl %esi, %ebx\n"
+	"	lodsl %gs:(%esi), %eax\n"
+	"	movl %eax, %edx\n"
+	"	xorl %eax, %eax\n"
+	"	.byte 0x65, 0xd7\n" /* XLATB through GS */
+	"	addl %eax, %edx\n"
+	"	movl 12(%esp), %eax\n"
+	"	addl %gs:(%eax), %edx\n"
+	"	movl %edx, %eax\n"
+	"	popl %ebx\n"
+	"	popl %esi\n"
+	"	ret\n"
 	/* A push with ESP 0. */
 	".global probe_wrap_push\n"
 	"probe_wrap_push:\n"
@@ -1098,8 +1117,24 @@ __asm__(".text\n"
 	"probe_ud2_end:\n"
 	"	ret\n");
 
-/* Encodings that decode alike in both modes and that hardware or the
- * product leaves undefined, and SYSEXIT, which user mode may not run. */
+/* Encodings that hardware or the product leaves undefined, and SYSEXIT
+ * and the system instructions that user mode may not run. The first lists
+ * decode alike in both modes; SYSRET and SWAPGS are undefined outside
+ * 64-bit mode, and a REX prefix names CR8, which user mode may not move,
+ * and CR9 to CR15, which are undefined. */
+#if defined(__x86_64__)
+#define UNDEFINED_MODE_CASES(X)                                              \
+	X(mov_from_cr9, "0x44, 0x0f, 0x20, 0xc8")
+#define PRIVILEGED_MODE_CASES(X)                                             \
+	X(sysret, "0x0f, 0x07")                                              \
+	X(swapgs, "0x0f, 0x01, 0xf8")                                        \
+	X(mov_to_cr8, "0x44, 0x0f, 0x22, 0xc0")
+#else
+#define UNDEFINED_MODE_CASES(X)                                              \
+	X(sysret, "0x0f, 0x07")                                              \
+	X(swapgs, "0x0f, 0x01, 0xf8")
+#define PRIVILEGED_MODE_CASES(X)
+#endif
 #define PROBE_BYTES(name, bytes)                                             \
 	".global probe_" #name "\n"                                          \
 	"probe_" #name ":\n"                                                 \
@@ -1116,9 +1151,54 @@ __asm__(".text\n"
 	X(fxsave_register, "0x0f, 0xae, 0xc0")                               \
 	X(group1_82, "0x82, 0xc0, 0x01")                                     \
 	X(reserved_0f3e, "0x0f, 0x3e")                                       \
-	X(reserved_0f3f, "0x0f, 0x3f")
+	X(reserved_0f3f, "0x0f, 0x3f")                                       \
+	X(lddqu_register, "0xf2, 0x0f, 0xf0, 0xc0")                          \
+	X(movlpd_register, "0x66, 0x0f, 0x12, 0xc0")                         \
+	X(emms_66, "0x66, 0x0f, 0x77")                                       \
+	X(x87_d9_1, "0xd9, 0x08")                                            \
+	X(x87_db_4, "0xdb, 0x20")                                            \
+	X(x87_dd_5, "0xdd, 0x28")                                            \
+	X(x87_db_f8, "0xdb, 0xf8")                                           \
+	X(xgetbv_66, "0x66, 0x0f, 0x01, 0xd0")                               \
+	X(xgetbv_f3, "0xf3, 0x0f, 0x01, 0xd0")                               \
+	X(xsetbv_66, "0x66, 0x0f, 0x01, 0xd1")                               \
+	X(mov_from_cr1, "0x0f, 0x20, 0xc8")                                  \
+	X(mov_to_cr5, "0x0f, 0x22, 0xe8")                                    \
+	X(mov_to_cr6, "0x0f, 0x22, 0xf0")                                    \
+	X(mov_from_cr7, "0x0f, 0x20, 0xf8")                                  \
+	X(movq2dq_memory, "0xf3, 0x0f, 0xd6, 0x00")                          \
+	X(movdq2q_memory, "0xf2, 0x0f, 0xd6, 0x00")                          \
+	X(clflushopt_register, "0x66, 0x0f, 0xae, 0xf8")                     \
+	UNDEFINED_MODE_CASES(X)
+/* Each takes an unmapped address in AX, which they raise #GP before
+ * reading. */
+#define PRIVILEGED_CASES(X)                                                  \
+	X(ltr, "0x0f, 0x00, 0xd8")                                           \
+	X(lidt, "0x0f, 0x01, 0x18")                                          \
+	X(lmsw_register, "0x0f, 0x01, 0xf0")                                 \
+	X(lmsw_memory, "0x0f, 0x01, 0x30")                                   \
+	X(invlpg, "0x0f, 0x01, 0x38")                                        \
+	X(mov_to_cr0, "0x0f, 0x22, 0xc0")                                    \
+	X(mov_from_cr0, "0x0f, 0x20, 0xc0")                                  \
+	X(mov_to_cr4, "0x0f, 0x22, 0xe0")                                    \
+	X(lldt_register, "0x0f, 0x00, 0xd0")                                 \
+	X(lldt_memory, "0x0f, 0x00, 0x10")                                   \
+	X(lgdt, "0x0f, 0x01, 0x10")                                          \
+	X(xsetbv, "0x0f, 0x01, 0xd1")                                        \
+	PRIVILEGED_MODE_CASES(X)
 #define EMIT_UNDEFINED(name, bytes) PROBE_BYTES(name, bytes)
+#define EMIT_PRIVILEGED(name, bytes)                                         \
+	".global probe_" #name "\n"                                          \
+	"probe_" #name ":\n"                                                 \
+	PROBE_ARG_AX                                                         \
+	".global probe_" #name "_insn\n"                                     \
+	"probe_" #name "_insn:\n"                                            \
+	"	.byte " bytes "\n"                                           \
+	".global probe_" #name "_end\n"                                      \
+	"probe_" #name "_end:\n"                                             \
+	"	ret\n"
 __asm__(".text\n" UNDEFINED_CASES(EMIT_UNDEFINED)
+	PRIVILEGED_CASES(EMIT_PRIVILEGED)
 	PROBE_BYTES(sysexit, "0x0f, 0x35")
 	/* MOV to CS from an unmapped address: #UD before the read. */
 	".global probe_mov_cs\n"
@@ -1131,6 +1211,7 @@ __asm__(".text\n" UNDEFINED_CASES(EMIT_UNDEFINED)
 	"probe_mov_cs_end:\n"
 	"	ret\n");
 #undef EMIT_UNDEFINED
+#undef EMIT_PRIVILEGED
 #undef PROBE_BYTES
 
 constexpr word sa_siginfo = 4;
@@ -1696,16 +1777,28 @@ bool ud2_faults()
 UNDEFINED_CASES(DECLARE_UNDEFINED)
 DECLARE_UNDEFINED(sysexit, "")
 #undef DECLARE_UNDEFINED
+#define DECLARE_PRIVILEGED(name, bytes)                                      \
+	extern "C" void probe_##name(word address);                         \
+	extern "C" char probe_##name##_insn[];                               \
+	extern "C" char probe_##name##_end[];                                \
+	void name##_unmapped() { probe_##name(0); }
+PRIVILEGED_CASES(DECLARE_PRIVILEGED)
+#undef DECLARE_PRIVILEGED
 extern "C" void probe_mov_cs(word address);
 extern "C" char probe_mov_cs_insn[];
 extern "C" char probe_mov_cs_end[];
 
 void mov_cs_unmapped() { probe_mov_cs(0); }
 
-/* Register forms of memory-only instructions, LOCK on an instruction that
- * does not write memory, 0x82 in either mode and the 0F 3E and 0F 3F
- * escapes raise #UD; so does MOV to CS, before it reads its source. SYSEXIT
- * outside ring 0 raises #GP. */
+/* Register forms of memory-only instructions, memory forms of
+ * register-only ones, LOCK on an instruction that does not write memory,
+ * 0x82 in either mode, the 0F 3E and 0F 3F escapes, EMMS, XGETBV and
+ * XSETBV with a mandatory prefix, the undefined x87 forms and a move with
+ * an undefined control register raise #UD; so does MOV to CS, before it
+ * reads its source. SYSEXIT and the system instructions LTR, LLDT, LGDT,
+ * LIDT, LMSW, INVLPG, XSETBV and MOV with a control register raise #GP(0)
+ * outside ring 0, before they read memory, and so do SYSRET and SWAPGS in
+ * 64-bit mode. */
 bool undefined_faults()
 {
 	struct Case {
@@ -1727,9 +1820,110 @@ bool undefined_faults()
 			    address_of(probe_mov_cs_end),
 			    {sigill, ill_illopn, mov_cs, mov_cs, 6, true, 0});
 	const word sysexit = reinterpret_cast<word>(probe_sysexit);
-	return ok && delivers("SYSEXIT", probe_sysexit,
-			      address_of(probe_sysexit_end),
-			      {sigsegv, si_kernel, 0, sysexit, 13, true, 0});
+	ok = ok && delivers("SYSEXIT", probe_sysexit,
+			    address_of(probe_sysexit_end),
+			    {sigsegv, si_kernel, 0, sysexit, 13, true, 0});
+	struct Privileged {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define PRIVILEGED_ENTRY(name, bytes)                                        \
+	{#name, name##_unmapped, probe_##name##_insn, probe_##name##_end},
+	const Privileged privileged[] = {PRIVILEGED_CASES(PRIVILEGED_ENTRY)};
+#undef PRIVILEGED_ENTRY
+	for (const Privileged &one : privileged) {
+		const word insn = address_of(one.insn);
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {sigsegv, si_kernel, 0, insn, 13, true, 0});
+	}
+	return ok;
+}
+
+/* Each takes its operand's address in AX. The first group requires its
+ * image aligned to 16 bytes, or for XSAVE and XRSTOR 64, and raises #GP(0)
+ * when it is not; the second accepts any alignment. */
+#define ALIGNMENT_FAULT_CASES(X)                                             \
+	X(fxsave, "0x0f, 0xae, 0x00")                                        \
+	X(fxrstor, "0x0f, 0xae, 0x08")                                       \
+	X(xsave, "0x0f, 0xae, 0x20")                                         \
+	X(xrstor, "0x0f, 0xae, 0x28")
+#define ALIGNMENT_FREE_CASES(X)                                              \
+	X(movups_load, "0x0f, 0x10, 0x00")                                   \
+	X(lddqu, "0xf2, 0x0f, 0xf0, 0x00")                                   \
+	X(vaddps, "0xc5, 0xf8, 0x58, 0x00")
+#define EMIT_ALIGNMENT(name, bytes)                                          \
+	".global probe_align_" #name "\n"                                    \
+	"probe_align_" #name ":\n"                                           \
+	PROBE_ARG_AX                                                         \
+	".global probe_align_" #name "_insn\n"                               \
+	"probe_align_" #name "_insn:\n"                                      \
+	"	.byte " bytes "\n"                                           \
+	".global probe_align_" #name "_end\n"                                \
+	"probe_align_" #name "_end:\n"                                       \
+	"	ret\n"
+__asm__(".text\n" ALIGNMENT_FAULT_CASES(EMIT_ALIGNMENT)
+	ALIGNMENT_FREE_CASES(EMIT_ALIGNMENT));
+#undef EMIT_ALIGNMENT
+#define DECLARE_ALIGNMENT(name, bytes)                                       \
+	extern "C" void probe_align_##name(word address);                   \
+	extern "C" char probe_align_##name##_insn[];                         \
+	extern "C" char probe_align_##name##_end[];
+ALIGNMENT_FAULT_CASES(DECLARE_ALIGNMENT)
+ALIGNMENT_FREE_CASES(DECLARE_ALIGNMENT)
+#undef DECLARE_ALIGNMENT
+
+/* Zeroed but for FXRSTOR's and XRSTOR's MXCSR, so an operand at any offset
+ * restores a valid image. */
+alignas(64) unsigned char misaligned_buffer[1024];
+word alignment_address;
+#define ALIGNMENT_WORK(name, bytes)                                          \
+	void align_##name() { probe_align_##name(alignment_address); }
+ALIGNMENT_FAULT_CASES(ALIGNMENT_WORK)
+ALIGNMENT_FREE_CASES(ALIGNMENT_WORK)
+#undef ALIGNMENT_WORK
+
+/* FXSAVE, FXRSTOR, XSAVE and XRSTOR raise #GP(0) for a misaligned image
+ * before they access it; XSAVE and XRSTOR require 64 bytes, so 16 is
+ * misaligned for them. Unaligned SSE moves and VEX arithmetic accept any
+ * operand. */
+bool alignment_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define ALIGNMENT_ENTRY(name, bytes)                                         \
+	{#name, align_##name, probe_align_##name##_insn, probe_align_##name##_end},
+	const Case faulting[] = {ALIGNMENT_FAULT_CASES(ALIGNMENT_ENTRY)};
+	const Case unaligned[] = {ALIGNMENT_FREE_CASES(ALIGNMENT_ENTRY)};
+#undef ALIGNMENT_ENTRY
+	for (unsigned offset = 0; offset < sizeof(misaligned_buffer); ++offset)
+		misaligned_buffer[offset] = 0;
+	for (unsigned base = 0; base < 128; base += 8) {
+		misaligned_buffer[base + 24] = 0x80;
+		misaligned_buffer[base + 25] = 0x1f;
+	}
+	bool ok = install_fault_handlers();
+	const word buffer = reinterpret_cast<word>(misaligned_buffer);
+	for (word offset = 8; offset <= 16; offset += 8) {
+		alignment_address = buffer + offset;
+		for (const Case &one : faulting) {
+			const bool wide = one.what[0] == 'x';
+			if (offset == 16 && !wide)
+				continue;
+			const word insn = address_of(one.insn);
+			ok &= delivers(one.what, one.work, address_of(one.end),
+				       {sigsegv, si_kernel, 0, insn, 13, true, 0});
+		}
+	}
+	alignment_address = buffer + 8;
+	for (const Case &one : unaligned)
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	return ok;
 }
 
 extern "C" void probe_pf_read(word address);
@@ -2119,6 +2313,28 @@ __asm__(".text\n"
 	".global probe_mask_store_end\n"
 	"probe_mask_store_end:\n"
 	"	vzeroupper\n"
+	"	ret\n"
+	/* MASKMOVDQU and MASKMOVQ at (address) with a zero mask. */
+	".global probe_maskmovdqu_zero\n"
+	"probe_maskmovdqu_zero:\n"
+	"	pxor %xmm1, %xmm1\n"
+	"	pcmpeqb %xmm0, %xmm0\n"
+	".global probe_maskmovdqu_zero_insn\n"
+	"probe_maskmovdqu_zero_insn:\n"
+	"	maskmovdqu %xmm1, %xmm0\n"
+	".global probe_maskmovdqu_zero_end\n"
+	"probe_maskmovdqu_zero_end:\n"
+	"	ret\n"
+	".global probe_maskmovq_zero\n"
+	"probe_maskmovq_zero:\n"
+	"	pxor %mm1, %mm1\n"
+	"	pcmpeqb %mm0, %mm0\n"
+	".global probe_maskmovq_zero_insn\n"
+	"probe_maskmovq_zero_insn:\n"
+	"	maskmovq %mm1, %mm0\n"
+	".global probe_maskmovq_zero_end\n"
+	"probe_maskmovq_zero_end:\n"
+	"	emms\n"
 	"	ret\n");
 
 extern "C" void probe_mask_load(word *state);
@@ -2127,6 +2343,12 @@ extern "C" char probe_mask_load_end[];
 extern "C" void probe_mask_store(word *state);
 extern "C" char probe_mask_store_insn[];
 extern "C" char probe_mask_store_end[];
+extern "C" void probe_maskmovdqu_zero(unsigned char *address);
+extern "C" char probe_maskmovdqu_zero_insn[];
+extern "C" char probe_maskmovdqu_zero_end[];
+extern "C" void probe_maskmovq_zero(unsigned char *address);
+extern "C" char probe_maskmovq_zero_insn[];
+extern "C" char probe_maskmovq_zero_end[];
 
 constexpr long nr_munmap = 11;
 constexpr word page_bytes = 4096;
@@ -2137,6 +2359,12 @@ alignas(4096) unsigned char mask_pages[3 * page_bytes];
 
 void mask_load() { probe_mask_load(mask_state); }
 void mask_store() { probe_mask_store(mask_state); }
+/* Eight and four bytes before the unmapped page: the operands run onto it. */
+void maskmovdqu_zero()
+{
+	probe_maskmovdqu_zero(mask_pages + 2 * page_bytes - 8);
+}
+void maskmovq_zero() { probe_maskmovq_zero(mask_pages + 2 * page_bytes - 4); }
 
 void set_mask_state(const unsigned char *address, unsigned lanes)
 {
@@ -2165,7 +2393,8 @@ bool expect_lanes(const char *what, const unsigned char *bytes,
 /* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
  * on an unmapped page does not fault and a load zeroes it, every enabled
  * lane completes when the first one misses a cold page, and an enabled
- * lane on an unmapped page raises #PF at its address. */
+ * lane on an unmapped page raises #PF at its address. MASKMOVDQU and
+ * MASKMOVQ, unlike them, fault on any page their operand touches. */
 bool masked_moves()
 {
 	unsigned char *const cold = mask_pages;
@@ -2205,6 +2434,17 @@ bool masked_moves()
 		       address_of(probe_mask_load_end),
 		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
 			address_of(probe_mask_load_insn), 14, true, 4});
+	/* MASKMOVDQU and MASKMOVQ check every page their operand touches,
+	 * whatever the mask selects. (The Xeon reports the operand's address
+	 * plus 8 for one wholly on an unmapped page, which these avoid.) */
+	ok &= delivers("MASKMOVDQU with a zero mask onto an unmapped page",
+		       maskmovdqu_zero, address_of(probe_maskmovdqu_zero_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_maskmovdqu_zero_insn), 14, true, 6});
+	ok &= delivers("MASKMOVQ with a zero mask onto an unmapped page",
+		       maskmovq_zero, address_of(probe_maskmovq_zero_end),
+		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+			address_of(probe_maskmovq_zero_insn), 14, true, 6});
 	return ok;
 }
 
@@ -2324,8 +2564,9 @@ bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
 		} else {
 			ok &= expect("element not gathered", value,
 				     0x11111111ULL * (lane + 1));
-			ok &= expect("its mask sign", (mask >> sign) & 1U,
-				     (enabled >> lane) & 1U);
+			ok &= expect("its mask", mask,
+				     (enabled >> lane) & 1U ?
+					     (2ULL << sign) - 1U : 0);
 		}
 	}
 	return ok;
@@ -2334,8 +2575,9 @@ bool expect_gathered(unsigned size, unsigned lanes, unsigned done,
 /* AVX2 gathers complete their elements in order: an element whose mask
  * sign is clear is not read, an element on a page not yet touched
  * completes, and an element on an unmapped page raises #PF at its address
- * with every element before it gathered and its mask cleared, and the
- * elements from it on untouched. An FS override adds the FS base. */
+ * with every element before it gathered or skipped and its mask cleared,
+ * and the elements from it on unread, their masks widened from the sign to
+ * all ones or zero. An FS override adds the FS base. */
 bool gathers()
 {
 	unsigned char *const first = gather_pages;
@@ -2573,6 +2815,8 @@ bool gathers()
 	X(call, "", "movq %r8, %rsp", "call 9f")                             \
 	X(call_memory, "", "movq %r8, %rsp", "call *8(%r9)")                 \
 	X(enter, "", "movq %r8, %rsp", "enter $16, $0")                      \
+	X(enter_nested_load, "leaq 0x108(%r10), %rbp", "leaq -64(%r9), %rsp",\
+	  "enter $16, $3")                                                   \
 	X(pushf, "", "movq %r8, %rsp", "pushfq")                             \
 	X(movs, "movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsq")            \
 	X(movs_down, "std; movq %r8, %rsi; leaq 8(%r8), %rdi", "", "movsb")  \
@@ -2913,6 +3157,8 @@ bool fault_state()
 	X(enter, "", "movl %edx, %esp", "enter $16, $0")                     \
 	X(enter_nested, "leal 64(%edx), %ebp", "movl %edx, %esp",            \
 	  "enter $16, $3")                                                   \
+	X(enter_nested_load, "leal 0x108(%esi), %ebp", "movl %edi, %esp",    \
+	  "enter $16, $3")                                                   \
 	X(pushf, "", "movl %edx, %esp", "pushfl")                            \
 	X(pusha, "", "movl %edx, %esp", "pushal")                            \
 	X(pusha_midway, "", "movl %edi, %esp", "pushal")                     \
@@ -3196,6 +3442,7 @@ extern "C" char probe_wrap_index_insn[];
 extern "C" char probe_wrap_index_end[];
 extern "C" word probe_wrap_sum(word base, word index);
 extern "C" word probe_wrap_absolute(word value);
+extern "C" word probe_wrap_gs(word offset);
 extern "C" word probe_wrap_load(word address);
 extern "C" char probe_wrap_load_insn[];
 extern "C" char probe_wrap_load_end[];
@@ -3218,9 +3465,9 @@ void wrap_load_fault() { (void)probe_wrap_load(4); }
 void wrap_stos_fault() { probe_wrap_stos(0xfffffffe); }
 
 /* A 32-bit effective address wraps at 4 GiB: base plus scaled index, an
- * absolute operand at or above 2 GiB, the stack and a string's operands. An
- * access through a wrapped address that reaches no mapping faults with the
- * wrapped address. */
+ * absolute operand at or above 2 GiB, a segment base plus the offset, the
+ * stack and a string's operands. An access through a wrapped address that
+ * reaches no mapping faults with the wrapped address. */
 bool addresses_wrap()
 {
 	const struct {
@@ -3246,6 +3493,24 @@ bool addresses_wrap()
 	ok &= expect("absolute operands at 0xe0000010",
 		     probe_wrap_absolute(0x2222), 0x2222 + 2 * 0x1111);
 	ok &= expect("the absolute store", page[5], 0x2222);
+	/* A segment base plus an offset wraps too. */
+	struct {
+		u32 entry_number;
+		u32 base_addr;
+		u32 limit;
+		u32 flags;
+	} descriptor = {~0U, 0xfffff000, 0xfffff, 1U | 1U << 4 | 1U << 6};
+	if (raw_syscall(nr_set_thread_area,
+			reinterpret_cast<long>(&descriptor)) != 0) {
+		put("  set_thread_area failed\n");
+		return false;
+	}
+	const u32 selector = descriptor.entry_number << 3 | 3;
+	__asm__ volatile("movw %w0, %%gs" : : "r"(selector));
+	const word current = wrap_value;
+	ok &= expect("LODSL, XLATB and a load through GS past 4 GiB",
+		     probe_wrap_gs(value + 0x1000),
+		     2 * current + (current & 0xff));
 	ok = ok && install_fault_handlers() &&
 	     handle_on_alternate_stack(sigsegv, record_fault);
 	ok = ok && delivers("a load indexed past 4 GiB", wrap_index_fault,
@@ -3661,9 +3926,11 @@ const X87Value x87_largest = {0x8000000000000000ULL, 0x7ffe};
 const X87Value x87_quiet_nan = {0xc000000000000000ULL, 0x7fff};
 
 /* Masked x87 exceptions set their sticky status-word flags, which only
- * FNCLEX and FNINIT clear; an operation that raises none leaves them. A zero
- * result of FPREM, FSIN or FSINCOS keeps its sign. Each case starts from
- * FNINIT, so FCW is 0x37f and TOP counts its pushes. */
+ * FNCLEX and FNINIT clear; an operation that raises none leaves them. C1
+ * says a result was rounded up, as 1/3, an overflow to infinity and pi
+ * stored as a single are. A zero result of FPREM, FSIN or FSINCOS keeps
+ * its sign. Each case starts from FNINIT, so FCW is 0x37f and TOP counts
+ * its pushes. */
 bool x87_status_flags()
 {
 	struct Case {
@@ -3705,13 +3972,13 @@ bool x87_status_flags()
 	const Case cases[] = {
 		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
 		{"FNCLEX clears the flags", status[1], 0x3800},
-		{"FIDIV of 1 by 3 sets PE", status[2], 0x3820},
-		{"FADD overflow sets OE and PE", status[3], 0x3828},
+		{"FIDIV of 1 by 3 sets PE and C1", status[2], 0x3a20},
+		{"FADD overflow sets OE, PE and C1", status[3], 0x3a28},
 		{"FSQRT of -1 sets IE", status[4], 0x3801},
 		{"IE stays across an ordered FCOM", status[5], 0x7001},
 		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
 		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
-		{"FSTP m32 of pi sets PE", status[8], 0x0020},
+		{"FSTP m32 of pi sets PE and C1", status[8], 0x0220},
 	};
 	bool ok = true;
 	for (const Case &one : cases) {
@@ -4417,9 +4684,9 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "ud2"));
 	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
 	       in_child(i386_probe, "ud2"));
-	report("x86-64 undefined encodings raise #UD and SYSEXIT #GP",
+	report("x86-64 undefined encodings raise #UD, privileged ones #GP",
 	       in_child(self, "undefined"));
-	report("i386 undefined encodings raise #UD and SYSEXIT #GP",
+	report("i386 undefined encodings raise #UD, privileged ones #GP",
 	       in_child(i386_probe, "undefined"));
 	report("x86-64 #PF error codes carry the user bit",
 	       in_child(self, "page-fault"));
@@ -4439,7 +4706,7 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "noncanonical"));
 	report("x86-64 DIV and IDIV raise #DE and write nothing",
 	       in_child(self, "divide-error"));
-	report("x86-64 VMASKMOV and VPMASKMOV access only enabled lanes",
+	report("x86-64 masked moves access the lanes x86 does",
 	       in_child(self, "masked-moves"));
 	report("x86-64 AVX2 gathers complete the elements before a fault",
 	       in_child(self, "gathers"));
@@ -4465,6 +4732,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-check"));
 	report("i386 RFLAGS.AC checks alignment",
 	       in_child(i386_probe, "alignment-check"));
+	report("x86-64 a misaligned extended-state image raises #GP",
+	       in_child(self, "alignment-faults"));
+	report("i386 a misaligned extended-state image raises #GP",
+	       in_child(i386_probe, "alignment-faults"));
 	report("x86-64 masked x87 exceptions set sticky status flags",
 	       in_child(self, "x87-status"));
 	report("i386 masked x87 exceptions set sticky status flags",
@@ -4513,6 +4784,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_steps_repeats() ? 0 : 1;
 		if (equal(mode, "fp-exceptions"))
 			return floating_point_exceptions() ? 0 : 1;
+		if (equal(mode, "alignment-faults"))
+			return alignment_faults() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
 		if (equal(mode, "x87-status"))

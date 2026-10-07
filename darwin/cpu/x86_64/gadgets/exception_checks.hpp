@@ -113,6 +113,19 @@ inline constexpr std::uint32_t mxcsr_flush_to_zero = 0x8000U;
 /* An x87 instruction that computes, and may raise an exception of its own. */
 [[nodiscard]] bool x87_computes(const Instruction &instruction) noexcept;
 
+/* An x87 comparison: one that sets C3, C2 and C0 (FCOM, FUCOM, FICOM,
+ * FTST), or ZF, PF and CF (FCOMI, FUCOMI). */
+enum class X87Compare : std::uint8_t {
+	none,
+	status,
+	flags,
+};
+[[nodiscard]] X87Compare x87_compare(const Instruction &instruction) noexcept;
+
+/* FLD of a single or a double, which completes beside an unmasked denormal
+ * operand. */
+[[nodiscard]] bool x87_converts_load(const Instruction &instruction) noexcept;
+
 /* The bytes an x87 instruction stores to its memory operand, or zero. */
 [[nodiscard]] std::size_t x87_store_bytes(
 	const Instruction &instruction) noexcept;

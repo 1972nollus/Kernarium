@@ -231,6 +231,19 @@ repeat budget's exit, the one place they stop with elements done and elements
 left; `execute` clears it again when the instruction resumes. Signal frames
 and a tracer therefore see what native Linux shows.
 
+## System instructions
+
+User code sees the system instructions as it does under Linux at CPL 3 with
+UMIP. LTR, LLDT, LGDT, LIDT, LMSW, INVLPG, XSETBV, SWAPGS, SYSRET and MOV
+with a control register raise #GP before they touch memory; SWAPGS and SYSRET
+are undefined in compatibility mode, and so is a move with CR1, CR5 to CR7 or
+CR9 to CR15, before the privilege check. SGDT, SIDT and SMSW store
+the values Linux's UMIP emulation reports; SGDT and SIDT store six bytes in
+compatibility mode. LSL reads the flat user code and data entries, the per-CPU
+entry, whose limit is the processor number RDPID reports, and a present TLS
+entry, and reports every other selector unusable, as the JIT does. SLDT,
+STR, LAR, VERR and VERW remain undefined, as on the JIT.
+
 ## Software TLB
 
 `Executor::prepare` enters an address-space generation, and it must not leave
@@ -344,10 +357,39 @@ DPPS and DPPD's whole exact path, live in the cold section. Its flush of a
 denormal input passes the value through two dependent instructions, as scalar
 code waits on it.
 
+x87 arithmetic, conversions and transcendentals run in SoftFloat helpers, in
+the control word's rounding mode and precision. As on x86, C1 after a result
+says whether rounding increased its magnitude -- FPTAN reports the tangent's
+rounding and FSINCOS the cosine's -- and an invalid operation clears it. An
+instruction that rounds nothing clears C1: the loads, a store to a register or
+to an 80-bit operand, FXCH, FCHS, FABS, FFREE, FFREEP, the compares into the
+status word and the stack-pointer instructions; FCOMI, FUCOMI and their
+popping forms, FCMOVcc and FNOP keep it.
+FIST, FISTP and FISTTP raise precision for a value they round, and a sine,
+cosine, tangent or arctangent of a finite nonzero operand raises precision
+even where its 128-bit value rounds to the operand or to 1, and underflow for
+a denormal result. FPTAN, FSINCOS and FXTRACT check the register of their
+second result first: on a full stack they compute nothing and leave the QNaN
+indefinite in both registers, raising only the stack overflow. FPREM and
+FPREM1 divide the significands as integers (SoftFloat's `extF80_x87Rem`,
+which the JIT shares): operands whose exponents differ by 64 or more get a
+partial remainder and C2, as on an Intel host, and a complete remainder sets
+C0, C3 and C1 to the quotient's low three bits. While the control word
+unmasks overflow or underflow, SoftFloat rebiases an extended result out of
+range (`softfloat_rebias_*`): its significand rounds as if the exponent were
+unbounded and the exponent moves back into range by 24576, as x87 delivers
+to a register; an exact tiny result raises an unmasked underflow too.
+Conversions to a single, double or integer never rebias, so a store still
+stores nothing. FSCALE adds the truncated scale to the exponent and rounds
+once (`extF80_scale`), so a result in range is exact however large the
+scale.
+
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
-registers.
+registers. No gadget keeps a value in x18: Darwin clears that platform
+register when it interrupts the thread, so a value there is lost at a random
+preemption, and `architecture-audit` rejects one.
 
 ## Exceptions the guest enables
 
@@ -433,11 +475,14 @@ checks, and runs every other block, linked, as `execute` does:
   before it, a memory destination included, and faults; MXCSR then holds only
   the flags checked before the computation when one of those was unmasked.
   Masked flags accumulate.
-- x87, run checked: the softfloat helpers set the status word's flags. An
-  unmasked invalid operation, denormal or division by zero, or an unmasked
-  overflow or underflow of a store, restores the registers, the stack and
-  memory, and any unmasked exception sets ES and B for the next waiting
-  instruction.
+- x87, run checked: the softfloat helpers set the status word's flags, a
+  denormal operand's included. An unmasked invalid operation, denormal
+  operand or division by zero restores the registers, the stack and memory
+  and drops the result's own exceptions, except that FLD of a single or
+  double completes beside a denormal operand and a comparison keeps its
+  condition codes or flags. An unmasked overflow or underflow of a store
+  stores nothing and raises no precision. Any unmasked exception sets ES and
+  B for the next waiting instruction.
 
 An instruction that could change what a run checks retires and leaves the
 engine, so linked code never runs past it unchecked: POPF setting AC; LDMXCSR,
@@ -448,12 +493,17 @@ are not checking or unmasking one whose flag is set. That costs POPF one branch
 and FLDCW and LDMXCSR three instructions when nothing is unmasked. LDMXCSR
 keeps the masks and flags the guest loads.
 
+FXSAVE and FXRSTOR raise #GP for an image not aligned to 16 bytes, and XSAVE,
+XSAVEOPT and XRSTOR for one not aligned to 64, before they access it and
+whatever RFLAGS.AC holds, as the JIT does. Neither engine raises the #GP x86
+raises for a misaligned operand of an aligned SSE form, such as MOVAPS,
+MOVNTPS or a legacy SSE operation's 16-byte memory source.
+
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
 too, and stays so: programs rarely set AC. Code without such instructions keeps
-its speed. An x87 overflow or underflow unmasked for a register destination
-leaves the masked result rather than x87's rebiased one.
+its speed.
 
 ## Code pages
 

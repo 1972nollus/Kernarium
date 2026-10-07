@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* ENTER and legacy far/interrupt control transfers. */
 
+/* ENTER keeps the stack pointer it moves in x25 and writes RSP only once
+ * every access has succeeded: a fault in a push or in a nesting level's
+ * frame-pointer load leaves RSP and RBP as the instruction found them. */
 .macro enter_push width, store, host_register
 	sub x25, x25, #(\width / 8)
 	.if \width == 32
@@ -14,7 +17,6 @@
 Lx86_enter_push_cross\@:
 	cross_page_store x27, (\width / 8)
 Lx86_enter_push_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	publish_pending_code x25, (\width / 8)
 .endm
 

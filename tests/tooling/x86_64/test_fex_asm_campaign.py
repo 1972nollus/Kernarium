@@ -4,7 +4,11 @@
 
 The campaign reads the runner's result line, so this runs the runner the
 campaign documents, on generated FEX-format inputs, and requires every
-terminal state to reach the report as the runner stated it.
+terminal state to reach the report as the runner stated it. It also holds
+the campaign to its policy: tests upstream's Known_Failures_host names, and
+tests the project's record of contradicted expectations names, run and keep
+their results but leave the policy's pass rate, and a record row that names
+no test fails the campaign.
 """
 
 from __future__ import annotations
@@ -55,7 +59,11 @@ def config_expecting_rax(
     return bytes(record)
 
 
-def write_corpus(root: pathlib.Path, cases: dict[str, tuple[bytes, bytes]]) -> None:
+def write_corpus(
+    root: pathlib.Path,
+    cases: dict[str, tuple[bytes, bytes]],
+    known_failures: frozenset[str],
+) -> None:
     tests = []
     for name, (binary, config) in cases.items():
         binary_path = root / "tests" / f"{name}.asm.bin"
@@ -72,6 +80,7 @@ def write_corpus(root: pathlib.Path, cases: dict[str, tuple[bytes, bytes]]) -> N
                 "config": str(config_path.relative_to(root)),
                 "config_sha256": hashlib.sha256(config).hexdigest(),
                 "disabled_upstream": False,
+                "known_failure_host": name in known_failures,
                 "host_features": [],
             }
         )
@@ -115,6 +124,33 @@ def check_parser(campaign) -> None:
             "a result with an unknown field was accepted")
 
 
+def run_campaign(
+    campaign: pathlib.Path,
+    runner: pathlib.Path,
+    root: pathlib.Path,
+    report_path: pathlib.Path,
+    record: pathlib.Path,
+    *extra: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable, "-B", str(campaign),
+            str(runner), str(root), str(report_path),
+            "--jobs", "2", "--timeout", "30",
+            "--contradicted", str(record), *extra,
+        ],
+        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=120,
+    )
+
+
+RECORD_HEADER = "mode\ttest\texpectation\tevidence\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner", required=True, type=pathlib.Path)
@@ -134,37 +170,76 @@ def main() -> int:
                 ((b"FEX_X87REDUCEDPRECISION", b"1"), (b"OTHER", b"kept")),
             ),
         ),
+        # Upstream's Known_Failures_host and the project's record set these
+        # aside under the policy; one fails and one matches FEX.
+        "known": (MOV_EAX_42_HLT, config_expecting_rax(43)),
+        "contradicted": (MOV_EAX_42_HLT, config_expecting_rax(42)),
     }
     expected = {
         "Test_pass.asm": ("passed", "reached HLT with expected state"),
         "Test_mismatch.asm": ("result_mismatch", "RAX expected=0x2b actual=0x2a"),
         "Test_illegal.asm": ("illegal_instruction", "decoder rejected opcode"),
         "Test_reduced.asm": ("passed", "reached HLT with expected state"),
+        "Test_known.asm": ("result_mismatch", "RAX expected=0x2b actual=0x2a"),
+        "Test_contradicted.asm": ("passed", "reached HLT with expected state"),
     }
     with tempfile.TemporaryDirectory(prefix="fex-campaign-") as scratch:
         root = pathlib.Path(scratch) / "corpus"
         report_path = pathlib.Path(scratch) / "report.json"
-        write_corpus(root, cases)
-        completed = subprocess.run(
-            [
-                sys.executable, "-B", str(arguments.campaign),
-                str(arguments.runner), str(root), str(report_path),
-                "--jobs", "2", "--timeout", "30",
-            ],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=120,
+        record = pathlib.Path(scratch) / "contradicted.tsv"
+        record.write_text(
+            "# fixture\n" + RECORD_HEADER
+            + "x86-64\tTest_contradicted.asm\tFEX expects 42\tthe fixture\n"
+            + "i386\tTest_32Bit_elsewhere.asm\tanother mode\tthe fixture\n"
         )
+        write_corpus(root, cases, frozenset({"known"}))
+        completed = run_campaign(arguments.campaign, arguments.runner, root,
+                                 report_path, record)
         require(completed.returncode == 1,
                 f"campaign exited {completed.returncode}: "
                 f"{completed.stdout}{completed.stderr}")
         report = json.loads(report_path.read_text())
-    require(report["applicable_count"] == 4 and report["passed_count"] == 2,
+
+        # Under the policy only set-aside tests fail, so the campaign passes.
+        filtered_path = pathlib.Path(scratch) / "filtered.json"
+        filtered = run_campaign(
+            arguments.campaign, arguments.runner, root, filtered_path, record,
+            "--filter", r"^Test_(pass|known|contradicted)\.asm$")
+        require(filtered.returncode == 0,
+                f"policy-only failures failed the campaign: "
+                f"{filtered.stdout}{filtered.stderr}")
+        filtered_report = json.loads(filtered_path.read_text())
+
+        stale = pathlib.Path(scratch) / "stale.tsv"
+        stale.write_text(
+            RECORD_HEADER + "x86-64\tTest_missing.asm\tgone\tthe fixture\n")
+        rejected = run_campaign(arguments.campaign, arguments.runner, root,
+                                pathlib.Path(scratch) / "stale.json", stale)
+        require(rejected.returncode != 0
+                and "names no x86-64 test" in rejected.stderr,
+                f"a record row naming no test was accepted: {rejected.stderr}")
+    require(report["applicable_count"] == 6 and report["passed_count"] == 3,
             f"campaign counted {report['passed_count']} of "
             f"{report['applicable_count']}")
+    policy = report["policy"]
+    require(policy["applicable_count"] == 4 and policy["passed_count"] == 2,
+            f"the policy counted {policy['passed_count']} of "
+            f"{policy['applicable_count']}")
+    set_aside = {entry["test"]: entry["status"] for entry in policy["set_aside"]}
+    require(set_aside == {"Test_known.asm": "result_mismatch",
+                          "Test_contradicted.asm": "passed"},
+            f"the policy set aside {set_aside}")
+    require(policy["passing_set_aside_count"] == 1,
+            "the policy did not count the set-aside test matching FEX")
+    filtered_policy = filtered_report["policy"]
+    require(filtered_report["passed_count"] == 2
+            and filtered_report["applicable_count"] == 3
+            and filtered_policy["passed_count"] == 1
+            and filtered_policy["applicable_count"] == 1,
+            f"the filtered campaign counted {filtered_report['passed_count']}"
+            f"/{filtered_report['applicable_count']} raw and "
+            f"{filtered_policy['passed_count']}/"
+            f"{filtered_policy['applicable_count']} under the policy")
     require(report["x87_reduced_precision_dropped_count"] == 1,
             "campaign did not count the dropped reduced-precision request")
     results = {result["test"]: result for result in report["results"]}
@@ -175,7 +250,7 @@ def main() -> int:
                 f"expected {status} ({detail})")
     check_parser(load_campaign(arguments.campaign))
     print("FEX campaign reported the runner's pass, mismatch, illegal and "
-          "full-precision results")
+          "full-precision results, raw and under the policy")
     return 0
 
 

@@ -14,10 +14,10 @@ another engine needs. FEXCore's own behaviour stays as it was.
  2 files changed, 11 insertions(+), 4 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 786872a8037522448285a9c7eb2565f09fed427c..8528015aee38c892695758a74813555ec85dd0fc 100644
+index 8876342a1459e66885296495184d97cbf17025d7..af21fafa7e009ecb33fc455a5501f25bc552f0a9 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -1520,6 +1520,7 @@ private:
+@@ -1524,6 +1524,7 @@ private:
    void DefaultSSEState();
    void DefaultAVXState();
  

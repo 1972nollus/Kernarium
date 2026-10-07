@@ -52,7 +52,8 @@ granule has no single-copy-atomic host access; as in the gadget engine, it is
 an ordinary load and store of the bounce buffer under the process-wide
 split-operand lock, faulting before anything is stored. A VEX gather translates
 its elements one at a time into a temporary, so on a fault the engine itself
-gathers the elements before the faulting one into the guest state, as x86 does.
+gathers the elements before the faulting one into the guest state and leaves
+the mask as x86 does.
 FEXCore allocates and publishes code only through the executable-memory owner's
 hooks, and its call-return stack, which generated code addresses without a
 bounds check, sits in that owner's guarded data reservation, so running off it
@@ -220,13 +221,19 @@ signaling NaN and a denormal operand for a denormal. The embedded stack follows
 the tag word: a read of an empty register is a stack underflow and a push onto
 a full one an overflow, each raising invalid operation with the stack-fault
 flag and going on with the QNaN indefinite, and FXAM classifies its operand
-from the 80-bit format. FNSAVE and FNSTENV tag each full register from its
-value, as zero, special or valid, as an Intel host does at the store. Three
-deviations from hardware remain, shared with the gadget engine: C1 stays
-clear when a result rounds up, FPREM computes its remainder in one step,
-never reporting a partial one with C2, and an unmasked overflow or underflow
-of a register result leaves the masked result and precision, where x86
-rebiases the exponent.
+from the 80-bit format. FPTAN, FSINCOS and FXTRACT check the register of
+their second result first and on a full stack compute nothing, as on the
+gadget engine, and FSIN, FCOS, FPTAN and FSINCOS leave an operand of 2^63 or
+more as it is, with C2 set, in a branch of their own. A sine, cosine,
+tangent or arctangent of a finite nonzero operand raises precision, and
+FXTRACT normalizes a denormal operand. FNSAVE and FNSTENV tag each full register from its
+value, as zero, special or valid, as an Intel host does at the store. C1
+says whether rounding increased a result's magnitude, and an instruction
+that rounds nothing clears or keeps it, as on the gadget engine, and FPREM and FPREM1 compute x87's exact remainders, partial ones
+with C2 and complete ones with the quotient's low bits in C0, C3 and C1. An
+overflow or underflow the control word unmasks rebiases a register result's
+exponent by 24576, as x86 does and the gadget engine does through the same
+SoftFloat state, and FSCALE scales across the whole exponent range.
 
 Under the x87 checks, every waiting instruction -- each x87 instruction but
 FNINIT, FNCLEX, FNSTSW, FNSTCW, FNSTENV, FNSAVE and the no-ops FNENI, FNDISI
@@ -251,14 +258,20 @@ operands, masked vector moves, gathers, extended-state images and far
 transfers raise none. The gadget engine checks only an instruction's first
 access and the JIT every one, which differs only for an instruction whose
 later access is aligned differently, such as ENTER with a nesting level.
+Whatever RFLAGS.AC holds, FXSAVE and FXRSTOR raise `#GP` for an image not
+aligned to 16 bytes, and XSAVE, XSAVEOPT and XRSTOR for one not aligned to
+64, as on the gadget engine.
 
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
 undefined set follows hardware, except that compat32 code raises `#UD` for
 0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
-as it does on the gadget engine. Other encodings the gadget engine refuses
-although hardware runs them, such as LSL or a SETcc whose ModRM reg field is
-not 0, the JIT runs.
+as it does on the gadget engine. The system instructions follow the gadget
+engine's [model](../gadgets/README.md#system-instructions) of Linux at CPL 3
+with UMIP: the privileged ones raise `#GP` before they touch memory, SIDT
+stores Linux's UMIP values, and LSL reads its selector, from memory too,
+and the flat user entries, the per-CPU entry and a TLS entry the host
+installed (`Embedder.SegmentPresent`).
 
 ## Memory order
 

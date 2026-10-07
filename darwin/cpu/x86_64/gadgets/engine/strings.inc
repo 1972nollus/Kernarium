@@ -14,13 +14,19 @@ Lx86_string_source_64\@:
 	cmp w8, #1
 	b.ne Lx86_string_source_not_fs\@
 	ldr x9, [_cpu, #UML_X86_64_CPU_FS_BASE]
-	add x25, x25, x9
-	b Lx86_string_source_done\@
+	b Lx86_string_source_base\@
 Lx86_string_source_not_fs\@:
 	cmp w8, #2
 	b.ne Lx86_string_source_done\@
 	ldr x9, [_cpu, #UML_X86_64_CPU_GS_BASE]
+Lx86_string_source_base\@:
 	add x25, x25, x9
+	/* Legacy protected mode's linear address space is 32 bits wide, so a
+	 * segment base plus the offset wraps at 4 GiB there. */
+	ldrb w9, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w9, #1
+	b.ne Lx86_string_source_done\@
+	mov w25, w25
 Lx86_string_source_done\@:
 .endm
 

@@ -134,18 +134,25 @@ def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
     if nasm_path is None:
         fail("NASM is required")
 
+    # Upstream's Known_Failures_host names the programs whose expectations
+    # fail on native x86; the 32-bit suite has no such list.
     if mode == "x86-64":
         asm_root = source / "unittests" / "ASM"
         test_prefix = "Test_"
+        known_failure_lists = ("Known_Failures_host",)
     else:
         asm_root = source / "unittests" / "32Bit_ASM"
         test_prefix = "Test_32Bit_"
+        known_failure_lists = ()
     include_directory = source / "unittests" / "ASM" / "Includes"
     parser_directory = source / "Scripts"
     sys.path.insert(0, str(parser_directory))
     from json_config_parse import parse_json  # type: ignore[import-not-found]
 
     disabled = listed_tests(asm_root / "Disabled_Tests")
+    known_failures: set[str] = set()
+    for name in known_failure_lists:
+        known_failures |= listed_tests(asm_root / name)
     sources = sorted(asm_root.rglob("*.asm"))
     if not sources:
         fail(f"the pinned FEX checkout has no {mode} ASM tests")
@@ -178,8 +185,12 @@ def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
                     "config_sha256": sha256_file(config),
                     "host_features": parsed.get("HOSTFEATURES", []),
                     "disabled_upstream": test_name in disabled,
+                    "known_failure_host": test_name in known_failures,
                 }
             )
+        unknown = known_failures - {str(record["test"]) for record in records}
+        if unknown:
+            fail("Known_Failures_host names no test: " + ", ".join(sorted(unknown)))
 
         metadata = {
             "schema": 1,
@@ -190,6 +201,9 @@ def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
             "test_count": len(records),
             "disabled_count": sum(
                 bool(record["disabled_upstream"]) for record in records
+            ),
+            "known_failure_host_count": sum(
+                bool(record["known_failure_host"]) for record in records
             ),
             "tests": records,
         }

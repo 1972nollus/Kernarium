@@ -19,10 +19,10 @@ its approximation.
  3 files changed, 43 insertions(+), 14 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 8528015aee38c892695758a74813555ec85dd0fc..c2787b0515d19c1180e2130347322a5bb2babc5a 100644
+index af21fafa7e009ecb33fc455a5501f25bc552f0a9..75559e4e9c740725b63c7d5a2d2c63e84b7178fa 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -744,6 +744,7 @@ public:
+@@ -748,6 +748,7 @@ public:
    void X87EMMS(OpcodeArgs);
    void X87FCMOV(OpcodeArgs);
    void X87FFREE(OpcodeArgs);
@@ -101,10 +101,10 @@ index 981639fd5815eea7a5369235721dc8c84557d622..ac93d5757847fcd5ca696bcece791864
    SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(C2);
    SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(C3);
 diff --git a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
-index 286f9f575161dc1e067e9135dd11ff8c2215dadd..24730dc28766e5687dafb1a6efc30e04046a295e 100644
+index 102a26a6686199a88c12b4b510b9b8f729ed1b1e..40ee4587f7c917a8cb186815dcc528fd17cc5418 100644
 --- a/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
 +++ b/FEXCore/Source/Interface/Core/X86Tables/X87Tables.cpp
-@@ -277,9 +277,7 @@ constexpr std::array<DispatchTableEntry, 140> X87F64OpTable = {{
+@@ -277,9 +277,7 @@ constexpr std::array<DispatchTableEntry, 143> X87F64OpTable = {{
  
    {OPDReg(0xDF, 7) | 0x00, 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FISTF64, false>},
  
@@ -115,7 +115,7 @@ index 286f9f575161dc1e067e9135dd11ff8c2215dadd..24730dc28766e5687dafb1a6efc30e04
    {OPD(0xDF, 0xC8), 8, &OpDispatchBuilder::FXCH},
    {OPD(0xDF, 0xD0), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},
    {OPD(0xDF, 0xD8), 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FSTToStack>},
-@@ -538,9 +536,7 @@ constexpr std::array<DispatchTableEntry, 140> X87F80OpTable = {{
+@@ -538,9 +536,7 @@ constexpr std::array<DispatchTableEntry, 143> X87F80OpTable = {{
  
    {OPDReg(0xDF, 7) | 0x00, 8, &OpDispatchBuilder::Bind<&OpDispatchBuilder::FIST, false>},
  

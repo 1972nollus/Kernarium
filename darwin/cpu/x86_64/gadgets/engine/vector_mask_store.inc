@@ -5,9 +5,10 @@
 /* Only the selected bytes are written, one byte store each: x86 leaves the
  * others untouched, so reading them back and storing them again would undo
  * another thread's write to them.  The mask's sign bits are gathered into a
- * bit set first, so an unselected byte costs nothing, and a write translation
- * is taken only for a page a selected byte lies on, so only such a page can
- * fault.  The address is DS:(E/R)DI with any segment override and address
+ * bit set first, so an unselected byte costs nothing.  x86 checks that every
+ * page the operand touches is writable whatever the mask selects, so a write
+ * translation of each comes first, and a zero mask faults as a full one
+ * does.  The address is DS:(E/R)DI with any segment override and address
  * size, from the descriptor.
  *
  * x19 holds the bytes still to store, x24 and x26 the last page translated
@@ -35,6 +36,15 @@ gadget vector_mask_store_\width
 	lsr x9, x9, #56
 	orr x19, x19, x9, lsl #8
 	.endif
+	mov x7, x25
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
+	add x7, x25, #((\width / 8) - 1)
+	eor x9, x7, x25
+	tst x9, #0xfffffffffffff000
+	b.eq Lx86_vector_mask_store_checked\@
+	and x7, x7, #0xfffffffffffff000
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
+Lx86_vector_mask_store_checked\@:
 	cbz x19, Lx86_vector_mask_store_done\@
 	and x27, x23, #0xffff
 	add x27, _cpu, x27

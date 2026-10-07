@@ -71,15 +71,15 @@ Lx86_x87_load_present\@:
 Lx86_x87_load_done\@:
 .endm
 
+/* Write the low two bits of `tag` as `physical`'s tag; uses w15 and w16.
+ * Rotating the entry to bit 0 and back needs no mask register. */
 .macro x87_set_tag physical, tag
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w16, \physical, #1
-	mov w17, #3
-	lsl w17, w17, w16
-	bic w15, w15, w17
-	and w17, \tag, #3
-	lsl w17, w17, w16
-	orr w15, w15, w17
+	ror w15, w15, w16
+	bfxil w15, \tag, #0, #2
+	neg w16, w16
+	ror w15, w15, w16
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 .endm
 
@@ -92,20 +92,20 @@ Lx86_x87_load_done\@:
 	str \significand, [x15, \physical, uxtw #3]
 
 	/* Recreate the x87 two-bit classification tag. */
-	mov w18, #2
+	mov w17, #2
 	and w15, \exponent, #0x7fff
 	cbz w15, Lx86_x87_store_zero_exp\@
-	mov w17, #0x7fff
-	cmp w15, w17
+	mov w16, #0x7fff
+	cmp w15, w16
 	b.eq Lx86_x87_store_classified\@
 	tbz \significand, #63, Lx86_x87_store_classified\@
-	mov w18, #0
+	mov w17, #0
 	b Lx86_x87_store_classified\@
 Lx86_x87_store_zero_exp\@:
 	cbnz \significand, Lx86_x87_store_classified\@
-	mov w18, #1
+	mov w17, #1
 Lx86_x87_store_classified\@:
-	x87_set_tag \physical, w18
+	x87_set_tag \physical, w17
 .endm
 
 .macro x87_store_stack logical, significand, exponent
@@ -113,9 +113,23 @@ Lx86_x87_store_classified\@:
 	x87_store_physical w14, \significand, \exponent
 .endm
 
-.macro x87_push significand, exponent
+/* An instruction that rounds nothing clears C1: a store to a register or
+ * to an 80-bit operand, FCHS, FABS, FFREE and FFREEP, as the loads, FXCH,
+ * the compares into the status word and the stack-pointer instructions
+ * do. FCOMI, FUCOMI and their popping forms keep it. */
+.macro x87_clear_c1
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w15, w15, #Lx86_x87_status_c1
+	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+.endm
+
+/* A push clears C1 unless `keep_c1` says the value pushed is a rounded
+ * result whose C1 the instruction reports, as FPTAN's and FSINCOS's are. */
+.macro x87_push significand, exponent, keep_c1=0
+	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	.if \keep_c1 == 0
+	bic w15, w15, #Lx86_x87_status_c1
+	.endif
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
 	and w14, w14, #7
@@ -125,17 +139,22 @@ Lx86_x87_store_classified\@:
 	and w16, w16, #3
 	cmp w16, #Lx86_x87_tag_empty
 	b.eq Lx86_x87_push_slot_ready\@
+	/* A stack overflow, masked, pushes the QNaN indefinite. */
 	x87_stack_fault_check
 	mov w16, #0x241
 	orr w15, w15, w16
+	mov \significand, #0xc000000000000000
+	mov \exponent, #0xffff
 Lx86_x87_push_slot_ready\@:
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	x87_store_physical w14, \significand, \exponent
 .endm
 
-/* FPTAN, FSINCOS and FXTRACT store ST0 before they push, so while the
- * gadgets check x87 exceptions they test for the stack overflow first. */
+/* FPTAN, FSINCOS and FXTRACT check the register of their second result
+ * first: on a full stack x86 computes nothing, and masked, leaves the QNaN
+ * indefinite in ST0 and pushes another, raising only the stack overflow.
+ * While the gadgets check x87 exceptions an unmasked one leaves here. */
 .macro x87_push_fault_check
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
@@ -147,13 +166,14 @@ Lx86_x87_push_slot_ready\@:
 	cmp w16, #Lx86_x87_tag_empty
 	b.eq Lx86_x87_push_fault_none\@
 	x87_stack_fault_check
+	b Lx86_x87_two_result_overflow
 Lx86_x87_push_fault_none\@:
 .endm
 
 .macro x87_pop
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	mov w18, #Lx86_x87_tag_empty
-	x87_set_tag w14, w18
+	mov w17, #Lx86_x87_tag_empty
+	x87_set_tag w14, w17
 	add w14, w14, #1
 	and w14, w14, #7
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]

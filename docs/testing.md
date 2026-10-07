@@ -567,10 +567,13 @@ repository. Run every binary through the test-only gadgets adapter with
 explicit exclusions, while FEX backend- and host-specific exclusions do not
 apply to gadgets. Programs that request FEX's reduced-precision x87 mode run
 at full precision against their natively produced expectations. Acceptance
-requires every applicable materialized case in both modes to pass with no
-decoder or semantic failures; each JSON report records the pinned source
-identity, mode, applicable count, upstream-disabled cases, and per-test
-result.
+requires every applicable materialized case in both modes to pass under the
+policy, which sets aside the expectations x86 hardware contradicts (upstream's
+`Known_Failures_host` and the project's record, as the
+[campaign README](../tools/fex-tests/README.md) describes), with no decoder or
+semantic failures; each JSON report records the pinned source identity, mode,
+applicable count, upstream-disabled and set-aside cases, both pass rates, and
+per-test result.
 
 The x86-64 JIT takes the same campaign: give `run-asm-corpus.py`
 `uml_x86_64_fex_asm_jit_runner`, which runs i386 binaries in a compat32

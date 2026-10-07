@@ -176,29 +176,29 @@ Lx86_extended_restore_x87_loop\@:
 	strh w17, [x15, #8]
 	add x15, _cpu, #UML_X86_64_CPU_MMX
 	str x16, [x15, x14, lsl #3]
-	lsrv w18, w26, w14
-	tbz w18, #0, Lx86_extended_restore_x87_next\@
+	lsrv w9, w26, w14
+	tbz w9, #0, Lx86_extended_restore_x87_next\@
 
 	/* Reconstruct the two-bit tag from the restored 80-bit payload. */
-	mov w18, #2
 	and w9, w17, #0x7fff
+	mov w17, #2
 	cbz w9, Lx86_extended_restore_x87_zero_exp\@
 	mov w15, #0x7fff
 	cmp w9, w15
 	b.eq Lx86_extended_restore_x87_classified\@
 	tbz x16, #63, Lx86_extended_restore_x87_classified\@
-	mov w18, #0
+	mov w17, #0
 	b Lx86_extended_restore_x87_classified\@
 Lx86_extended_restore_x87_zero_exp\@:
 	cbnz x16, Lx86_extended_restore_x87_classified\@
-	mov w18, #1
+	mov w17, #1
 Lx86_extended_restore_x87_classified\@:
 	lsl w9, w14, #1
 	mov w15, #3
 	lsl w15, w15, w9
 	bic w27, w27, w15
-	lsl w18, w18, w9
-	orr w27, w27, w18
+	lsl w17, w17, w9
+	orr w27, w27, w17
 Lx86_extended_restore_x87_next\@:
 	add x11, x11, #16
 	add w12, w12, #1
@@ -262,8 +262,18 @@ Lx86_extended_restore_avx_loop\@:
 Lx86_extended_restore_avx_done\@:
 .endm
 
+/* FXSAVE and FXRSTOR require their image aligned to 16 bytes, XSAVE and
+ * XRSTOR to 64, and raise #GP(0) at the instruction for one that is not,
+ * before any access. effective_address leaves the instruction's address in
+ * x22, which the #GP exit stores as RIP. */
+.macro extended_state_aligned mask
+	tst x7, #\mask
+	b.ne Lx86_extended_misaligned
+.endm
+
 gadget extended_state_fxsave
 	effective_address
+	extended_state_aligned 15
 	mov x25, x7
 	extended_state_load Lx86_extended_legacy_size
 	mov x24, #7
@@ -273,6 +283,7 @@ gadget extended_state_fxsave
 
 gadget extended_state_fxrstor
 	effective_address
+	extended_state_aligned 15
 	mov x25, x7
 	extended_state_load Lx86_extended_legacy_size
 	mov x24, #7
@@ -284,6 +295,7 @@ gadget extended_state_fxrstor
 
 gadget extended_state_xsave
 	effective_address
+	extended_state_aligned 63
 	mov x25, x7
 	extended_state_load Lx86_extended_size
 	extended_state_requested
@@ -300,6 +312,7 @@ gadget extended_state_xsave
 
 gadget extended_state_xrstor
 	effective_address
+	extended_state_aligned 63
 	mov x25, x7
 	extended_state_load Lx86_extended_size
 	extended_state_requested
@@ -311,6 +324,10 @@ gadget extended_state_xrstor
 	add sp, sp, #Lx86_extended_size
 	retire_unless_any_unchecked
 
+Lx86_extended_misaligned:
+	b Lx86_general_protection
+
+.purgem extended_state_aligned
 .purgem extended_state_restore_avx
 .purgem extended_state_restore_sse
 .purgem extended_state_restore_x87

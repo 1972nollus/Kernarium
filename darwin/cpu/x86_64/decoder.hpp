@@ -166,6 +166,7 @@ enum class Operation : std::uint8_t {
 	write_gs_base,
 	store_gdtr,
 	store_machine_status,
+	load_segment_limit,
 	cache_zero,
 	memory_fence,
 	cache_flush,

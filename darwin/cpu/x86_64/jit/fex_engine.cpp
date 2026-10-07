@@ -1085,16 +1085,20 @@ void load_state(Space &space, const CpuState &cpu) noexcept
 	state.es_cached = state.cs_cached = state.ss_cached = state.ds_cached = 0;
 	state.fs_cached = cpu.fs_base;
 	state.gs_cached = cpu.gs_base;
-	/* The bases a compat32 FS or GS load finds: the kernel's TLS
-	 * descriptors, at the GDT entries it numbered, as the gadget engine
-	 * reads them. */
+	/* The bases a compat32 FS or GS load finds, and the entries LSL reads
+	 * as flat: the kernel's TLS descriptors, at the GDT entries it
+	 * numbered, as the gadget engine reads them. */
 	auto &bases = thread->CurrentFrame->Embedder.SegmentBases;
 	std::fill(std::begin(bases), std::end(bases), 0U);
+	std::uint32_t present{};
 	for (std::size_t index = 0; index < cpu.compat_tls_bases.size(); ++index) {
 		const auto entry = static_cast<std::size_t>(cpu.compat_tls_first) + index;
-		if (((cpu.compat_tls_present >> index) & 1U) != 0 && entry < std::size(bases))
+		if (((cpu.compat_tls_present >> index) & 1U) != 0 && entry < std::size(bases)) {
 			bases[entry] = cpu.compat_tls_bases[index];
+			present |= 1U << entry;
+		}
 	}
+	thread->CurrentFrame->Embedder.SegmentPresent = present;
 }
 
 void save_state(Space &space, CpuState &cpu) noexcept
@@ -1146,9 +1150,10 @@ void save_state(Space &space, CpuState &cpu) noexcept
 }
 
 /* An AVX2 gather that faults has, on x86, gathered every enabled element
- * before the faulting one, clearing its mask element, and zeroed the
- * destination and mask above the elements it has; the guest restarts it
- * with what remains. The backend gathers into a temporary and leaves the
+ * before the faulting one, clearing the mask element of each element before
+ * it, enabled or not, widened the sign of each mask element from it on to
+ * the whole element, and zeroed the destination and mask above the elements
+ * it has; the guest restarts it with what remains. The backend gathers into a temporary and leaves the
  * state as it was before the instruction, so the host redoes the elements
  * in order up to the first that faults, as the gadget engine does, with the
  * backend's address arithmetic: segment base plus base plus displacement plus
@@ -1180,9 +1185,14 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 	unsigned shift = 0;
 	while ((1U << shift) < operand.scale)
 		++shift;
+	const auto enabled = [&](std::size_t element) {
+		return (std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) != 0;
+	};
 	for (std::size_t element = 0; element < count; ++element) {
-		if ((std::to_integer<unsigned>(mask[element * data + data - 1]) & 0x80U) == 0)
+		if (!enabled(element)) {
+			std::memset(mask.data() + element * data, 0, data);
 			continue;
+		}
 		std::int64_t offset{};
 		if (index == 4) {
 			std::int32_t value{};
@@ -1196,6 +1206,8 @@ void complete_gather(CpuState &cpu, GuestAddressSpace &memory, ::uml::cpu::Fault
 			address = static_cast<std::uint32_t>(address);
 		std::array<std::byte, 8> value{};
 		if (!memory.read(address, std::span<std::byte>{value.data(), data})) {
+			for (std::size_t rest = element; rest < count; ++rest)
+				std::memset(mask.data() + rest * data, enabled(rest) ? 0xff : 0, data);
 			const auto gathered = static_cast<std::ptrdiff_t>(count * data);
 			std::fill(destination.begin() + gathered, destination.end(), std::byte{});
 			std::fill(mask.begin() + gathered, mask.end(), std::byte{});

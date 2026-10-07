@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 22:02:15 +0900
+Subject: [PATCH] Embedding: a misaligned extended-state image raises #GP
+
+FXSAVE and FXRSTOR require their image aligned to 16 bytes, and XSAVE,
+XSAVEOPT and XRSTOR to 64; x86 raises #GP(0) at the instruction for an
+image that is not, before it accesses it, whatever RFLAGS.AC holds.
+Embedded, each now checks its address first and breaks with that fault.
+---
+ .../Source/Interface/Core/OpcodeDispatcher.h  |  4 +++
+ .../Core/OpcodeDispatcher/Vector.cpp          | 29 +++++++++++++++++++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index 82e1725194a9ef7560046f53a02990491f333630..86ac1bb6079c4fba2fdff276db3ba1dc497f4873 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -1493,6 +1493,10 @@ private:
+                             uint32_t Imm = 0, uint32_t Flags = 0);
+   // Embedded, while RFLAGS.AC is set: an EmbedderAlignmentCheck op.
+   void EmbedderAlignmentCheck(Ref Addr, uint32_t Alignment, bool Exempt);
++  // Embedded: raises #GP(0) at the instruction unless Addr is a multiple of
++  // Alignment, as FXSAVE, FXRSTOR, XSAVE and XRSTOR do for their image. It
++  // ends the block, so the caller computes its values after it.
++  void EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t Alignment);
+   // Embedded, while the x87 control word unmasks an exception: x87 checks.
+   bool EmbedderX87Checks() const;
+   // With x87 checks, EmbedderX87Commit(Mask).
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
+index 8403bd88d1054d5673ec70724fae536e889ca133..d100bbb137019fea7ceba485cd9d0cd0a78e0a12 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp
+@@ -775,6 +775,30 @@ void OpDispatchBuilder::EmbedderAlignmentCheck(Ref Addr, uint32_t Alignment, boo
+   }
+ }
+ 
++void OpDispatchBuilder::EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t Alignment) {
++  if (!CTX->Embedded) {
++    return;
++  }
++  Ref Misaligned = _And(OpSize::i64Bit, Addr, Constant(Alignment - 1));
++  CalculateDeferredFlags();
++  auto CondJump_ = CondJump(Misaligned, CondClass::NEQ);
++  auto FaultBlock = CreateNewCodeBlockAfter(GetCurrentBlock());
++  SetTrueJumpTarget(CondJump_, FaultBlock);
++  SetCurrentCodeBlock(FaultBlock);
++  StartNewBlock();
++  _StoreContextGPR(GetGPROpSize(), GetRelocatedPC(Op, -Op->InstSize), offsetof(FEXCore::Core::CPUState, rip));
++  Break({
++    .ErrorRegister = 0,
++    .Signal = Core::FAULT_SIGSEGV,
++    .TrapNumber = X86State::X86_TRAPNO_GP,
++    .si_code = 0x80,
++  });
++  auto NextBlock = CreateNewCodeBlockAfter(FaultBlock);
++  SetFalseJumpTarget(CondJump_, NextBlock);
++  SetCurrentCodeBlock(NextBlock);
++  StartNewBlock();
++}
++
+ Ref OpDispatchBuilder::EmbedderFPResult(Ref Result, uint32_t Descriptor, Ref Source1, Ref Source2, Ref Source3) {
+   if (!EmbedderFPChecks(static_cast<Core::EmbedderFPKind>(Descriptor & 0xFF))) {
+     return Result;
+@@ -3152,6 +3176,8 @@ void OpDispatchBuilder::AVXVFCMPOp(OpcodeArgs, IR::OpSize ElementSize) {
+ }
+ 
+ void OpDispatchBuilder::FXSaveOp(OpcodeArgs) {
++  // The check ends its block, and a value cannot live across blocks.
++  EmbedderRequireAlignment(Op, MakeSegmentAddress(Op, Op->Dest), 16);
+   Ref Mem = MakeSegmentAddress(Op, Op->Dest);
+   // x86 does not check an extended-state image under RFLAGS.AC.
+   EmbedderAlignmentCheck(Mem, 1, true);
+@@ -3173,6 +3199,7 @@ void OpDispatchBuilder::XSaveOpImpl(OpcodeArgs) {
+   // NOTE: Mask should be EAX and EDX concatenated, but we only need to test
+   //       for features that are in the lower 32 bits, so EAX only is sufficient.
+   const auto OpSize = GetGPROpSize();
++  EmbedderRequireAlignment(Op, XSaveBase(Op), 64);
+   EmbedderAlignmentCheck(XSaveBase(Op), 1, true);
+ 
+   const auto StoreIfFlagSet = [this, OpSize](uint32_t BitIndex, auto fn, uint32_t FieldSize = 1) {
+@@ -3354,6 +3381,7 @@ Ref OpDispatchBuilder::GetMXCSR() {
+ }
+ 
+ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
++  EmbedderRequireAlignment(Op, MakeSegmentAddress(Op, Op->Src[0]), 16);
+   Ref Mem = MakeSegmentAddress(Op, Op->Src[0]);
+   EmbedderAlignmentCheck(Mem, 1, true);
+   if (CTX->Embedded) {
+@@ -3371,6 +3399,7 @@ void OpDispatchBuilder::FXRStoreOp(OpcodeArgs) {
+ 
+ void OpDispatchBuilder::XRstorOpImpl(OpcodeArgs) {
+   const auto OpSize = GetGPROpSize();
++  EmbedderRequireAlignment(Op, XSaveBase(Op), 64);
+   EmbedderAlignmentCheck(XSaveBase(Op), 1, true);
+   if (CTX->Embedded) {
+     // The whole area, through the AVX state, is read before any of it is

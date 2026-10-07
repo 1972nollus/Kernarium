@@ -164,6 +164,47 @@ bool x87_computes(const Instruction &instruction) noexcept
 		!x87_loads_state(instruction);
 }
 
+X87Compare x87_compare(const Instruction &instruction) noexcept
+{
+	if (!x87_escape(instruction))
+		return X87Compare::none;
+	const auto modrm = instruction.vector_control;
+	const auto reg = modrm_reg(modrm);
+	const auto opcode = instruction.vector_opcode;
+	if (!modrm_register(modrm))
+		return (opcode == 0xd8 || opcode == 0xda || opcode == 0xdc ||
+				opcode == 0xde) && (reg == 2 || reg == 3) ?
+			X87Compare::status : X87Compare::none;
+	switch (opcode) {
+	case 0xd8:
+	case 0xdc:
+		return reg == 2 || reg == 3 ? X87Compare::status : X87Compare::none;
+	case 0xd9:
+		return modrm == 0xe4 ? X87Compare::status : X87Compare::none;
+	case 0xda:
+		return modrm == 0xe9 ? X87Compare::status : X87Compare::none;
+	case 0xdb:
+	case 0xdf:
+		return reg == 5 || reg == 6 ? X87Compare::flags : X87Compare::none;
+	case 0xdd:
+		return reg == 4 || reg == 5 ? X87Compare::status : X87Compare::none;
+	case 0xde:
+		return reg == 2 || modrm == 0xd9 ?
+			X87Compare::status : X87Compare::none;
+	default:
+		return X87Compare::none;
+	}
+}
+
+bool x87_converts_load(const Instruction &instruction) noexcept
+{
+	return x87_escape(instruction) &&
+		!modrm_register(instruction.vector_control) &&
+		modrm_reg(instruction.vector_control) == 0 &&
+		(instruction.vector_opcode == 0xd9 ||
+			instruction.vector_opcode == 0xdd);
+}
+
 std::size_t x87_store_bytes(const Instruction &instruction) noexcept
 {
 	if (!x87_escape(instruction) ||

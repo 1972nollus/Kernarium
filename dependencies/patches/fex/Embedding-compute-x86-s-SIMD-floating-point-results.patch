@@ -594,7 +594,7 @@ index f2fcc127a65c18e66f53d4dac1d1749f9e7f7a9c..7d3b9b2d45e866b41cbc942dbae6212c
    if (Op->SetDAZ && HostSupportsAFP) {
      // Extract DAZ from MXCSR and insert to in FPCR.FIZ
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..786872a8037522448285a9c7eb2565f09fed427c 100644
+index 45486dba92b93bdf71f36eca840c93dd5e6103dd..8876342a1459e66885296495184d97cbf17025d7 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 @@ -11,6 +11,7 @@
@@ -613,7 +613,7 @@ index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..786872a8037522448285a9c7eb2565f0
  #include <stddef.h>
  #include <utility>
  #include <xxhash.h>
-@@ -1378,6 +1380,7 @@ private:
+@@ -1382,6 +1384,7 @@ private:
    Ref CVTGPR_To_FPRImpl(OpcodeArgs, IR::OpSize DstElementSize, const X86Tables::DecodedOperand& Src1Op, const X86Tables::DecodedOperand& Src2Op);
  
    Ref DPPOpImpl(IR::OpSize DstSize, Ref Src1, Ref Src2, uint8_t Mask, IR::OpSize ElementSize);
@@ -621,7 +621,7 @@ index 944e6c1895c7734265488c9f6fcd7ad8d792c10a..786872a8037522448285a9c7eb2565f0
  
    Ref VDPPSOpImpl(OpcodeArgs, const X86Tables::DecodedOperand& Src1, const X86Tables::DecodedOperand& Src2, const X86Tables::DecodedOperand& Imm);
  
-@@ -1458,6 +1461,25 @@ private:
+@@ -1462,6 +1465,25 @@ private:
    Ref VectorScalarInsertALUOpImpl(OpcodeArgs, IROps IROp, IR::OpSize DstSize, IR::OpSize ElementSize,
                                    const X86Tables::DecodedOperand& Src1Op, const X86Tables::DecodedOperand& Src2Op, bool ZeroUpperBits);
  

@@ -601,13 +601,19 @@ Lx86_xlat_segment:
 	cmp w9, #1
 	b.ne Lx86_xlat_not_fs
 	ldr x10, [_cpu, #UML_X86_64_CPU_FS_BASE]
-	add x7, x7, x10
-	b Lx86_xlat_load
+	b Lx86_xlat_base
 Lx86_xlat_not_fs:
 	cmp w9, #2
 	b.ne Lx86_xlat_load
 	ldr x10, [_cpu, #UML_X86_64_CPU_GS_BASE]
+Lx86_xlat_base:
 	add x7, x7, x10
+	/* A segment base plus the offset wraps at 4 GiB in compatibility
+	 * mode. */
+	ldrb w10, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w10, #1
+	b.ne Lx86_xlat_load
+	mov w7, w7
 Lx86_xlat_load:
 	translate 0, UML_X86_64_TLB_READ_PAGE, 1
 	ldrb w11, [x7]
@@ -642,25 +648,73 @@ random_value 64, str, x
 
 .purgem random_value
 
-gadget store_gdtr
+/* SGDT and SIDT store a limit of zero and the base Linux reports for a
+ * descriptor table user code may not see: ten bytes in 64-bit mode, six,
+ * with the base's low half, in compatibility mode. */
+.macro store_descriptor_table name, base, size
+gadget store_\name
 	effective_address
 	mov x25, x7
-	mov x24, #0xfffffffffffe0000
-	page_cross_check 10, Lx86_store_gdtr_cross
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, 10
+	descriptor_table_base x24, \base
+	page_cross_check \size, Lx86_store_\name\()_cross
+	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	strh wzr, [x7]
+	.if \size == 10
 	stur x24, [x7, #2]
-Lx86_store_gdtr_done:
-	finish_store 10
-Lx86_store_gdtr_cross:
+	.else
+	stur w24, [x7, #2]
+	.endif
+Lx86_store_\name\()_done:
+	finish_store \size
+Lx86_store_\name\()_cross:
 	sub sp, sp, #16
 	strh wzr, [sp]
 	stur x24, [sp, #2]
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
-	mov w3, #10
+	mov w3, #\size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
 	add sp, sp, #16
 	cbz w0, Lx86_memory_fault
-	b Lx86_store_gdtr_done
+	b Lx86_store_\name\()_done
+.endm
+
+.macro descriptor_table_base destination, value
+	movz \destination, #((\value) & 0xffff)
+	movk \destination, #(((\value) >> 16) & 0xffff), lsl #16
+	movk \destination, #(((\value) >> 32) & 0xffff), lsl #32
+	movk \destination, #(((\value) >> 48) & 0xffff), lsl #48
+.endm
+
+store_descriptor_table gdtr, 0xfffffffffffe0000, 10
+store_descriptor_table gdtr_32, 0xfffe0000, 6
+store_descriptor_table idtr, 0xffffffffffff0000, 10
+store_descriptor_table idtr_32, 0xffff0000, 6
+
+.purgem descriptor_table_base
+.purgem store_descriptor_table
+
+/* LSL: the limit of the segment a selector names, with ZF set, or ZF clear
+ * and the destination as it was (`uml_x86_64_gadget_segment_limit`). The
+ * register form's word names the source register, and either form's
+ * destination word or memory descriptor value the destination register in
+ * its low byte and its width above. */
+gadget load_segment_limit_r
+	bl uml_x86_64_gadget_materialize_flags
+	ldr x8, [_stream], #8
+	ldrh w1, [_cpu, x8]
+	ldr x2, [_stream], #8
+	mov x0, _cpu
+	bl NAME(uml_x86_64_gadget_segment_limit)
+	retire_and_next
+
+gadget load_segment_limit_m
+	bl uml_x86_64_gadget_materialize_flags
+	effective_address
+	mov x25, x7
+	read_operand 2, ldrh, w, 1, w
+	and w2, w23, #0xffff
+	mov x0, _cpu
+	bl NAME(uml_x86_64_gadget_segment_limit)
+	retire_and_next

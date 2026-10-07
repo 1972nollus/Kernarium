@@ -553,11 +553,14 @@ constexpr std::uint32_t precomputation_exceptions = 0x07U;
 constexpr std::uint32_t overflow_underflow = 0x18U;
 constexpr std::uint8_t x87_error_vector = 16;
 constexpr std::uint8_t simd_error_vector = 19;
-/* The x87 status word's C0, C2, C3 and TOP, which an instruction that
- * raised an unmasked invalid operation or division by zero leaves as they
- * were, and its C1, stack fault and exception flags, which it sets. */
-constexpr std::uint16_t x87_kept_status = 0x7d00U;
-constexpr std::uint16_t x87_raised_status = 0x027fU;
+/* The x87 status word's condition codes C0, C2 and C3, its C1, and its
+ * stack fault flag. */
+constexpr std::uint16_t x87_condition_codes = 0x4500U;
+constexpr std::uint16_t x87_status_c1 = 0x0200U;
+constexpr std::uint16_t x87_stack_fault = 0x0040U;
+/* RFLAGS' ZF, PF and CF, which FCOMI sets, and OF, SF and AF, which it
+ * clears. */
+constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 
 /* Runs instruction `index` of `program`, whose decoded instructions are
  * `gadgets`, alone and checked for the exceptions in `checked`: #MF for a
@@ -655,20 +658,45 @@ constexpr std::uint16_t x87_raised_status = 0x027fU;
 	if (pending == 0)
 		return result;
 	/* x87 reports its exception at the next waiting instruction. One
-	 * checked before the computation, or an overflow or underflow of a
-	 * store, leaves the registers, the stack and memory alone; the rest
-	 * leave their result. */
-	if ((pending & precomputation_exceptions) != 0 ||
-		(x87_store_bytes(instruction) != 0 &&
-			(pending & overflow_underflow) != 0)) {
+	 * checked before the computation -- invalid operation, denormal
+	 * operand, division by zero -- leaves the registers, the stack and
+	 * memory alone and raises none of a result's exceptions, except that
+	 * FLD of a single or double completes beside a denormal operand and a
+	 * comparison still sets its condition codes or flags. An overflow or
+	 * underflow of a store stores nothing and raises no precision. The
+	 * rest leave their result. */
+	const bool precomputation = (pending & precomputation_exceptions) != 0;
+	const bool store_overflow = !precomputation &&
+		x87_store_bytes(instruction) != 0 &&
+		(pending & overflow_underflow) != 0;
+	if ((precomputation && !(x87_converts_load(instruction) &&
+			(pending & ~0x02U) == 0)) || store_overflow) {
 		const auto rip = cpu.rip;
 		const auto status = cpu.x87_status;
+		const auto rflags = cpu.rflags;
+		const auto compare = x87_compare(instruction);
 		cpu = before;
 		cpu.rip = rip;
 		restore_store(saved, memory);
-		cpu.x87_status = static_cast<std::uint16_t>(
-			(before.x87_status & x87_kept_status) |
-			(status & x87_raised_status));
+		auto kept = static_cast<std::uint16_t>(before.x87_status &
+			(x87_condition_codes | x87_exception_flags));
+		if (store_overflow) {
+			kept |= static_cast<std::uint16_t>(status & overflow_underflow);
+		} else {
+			kept |= static_cast<std::uint16_t>(status &
+				(precomputation_exceptions | x87_stack_fault));
+			/* A stack fault's C1 tells overflow from underflow. */
+			if ((pending & 0x01U) != 0 && (status & x87_stack_fault) != 0)
+				kept |= static_cast<std::uint16_t>(status & x87_status_c1);
+			if (compare == X87Compare::status)
+				kept = static_cast<std::uint16_t>(
+					(kept & ~x87_condition_codes) |
+					(status & x87_condition_codes));
+			else if (compare == X87Compare::flags)
+				cpu.rflags = (cpu.rflags & ~x87_compare_rflags) |
+					(rflags & x87_compare_rflags);
+		}
+		cpu.x87_status = kept;
 	}
 	cpu.x87_status |= x87_status_pending;
 	return result;

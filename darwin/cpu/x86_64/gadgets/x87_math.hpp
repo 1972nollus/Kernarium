@@ -45,8 +45,10 @@ UML_X86_64_DECLARE_X87_BINARY(subtract)
 UML_X86_64_DECLARE_X87_BINARY(divide)
 #undef UML_X86_64_DECLARE_X87_BINARY
 
+/* FUCOM and FUCOMI set bit 0 of `flags`, FCOMI and FUCOMI bit 1. */
 std::uint32_t uml_x86_64_x87_compare(CpuState *cpu,
-	const X87Register *left, const X87Register *right) noexcept;
+	const X87Register *left, const X87Register *right,
+	std::uint32_t flags) noexcept;
 void uml_x86_64_x87_f2xm1(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
 void uml_x86_64_x87_fyl2x(CpuState *cpu, const X87Register *value,
@@ -57,7 +59,7 @@ void uml_x86_64_x87_tangent(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
 void uml_x86_64_x87_atan(CpuState *cpu, const X87Register *y,
 	const X87Register *x, X87Register *result) noexcept;
-void uml_x86_64_x87_extract(const X87Register *input,
+void uml_x86_64_x87_extract(CpuState *cpu, const X87Register *input,
 	X87Register *exponent_result, X87Register *significand_result) noexcept;
 void uml_x86_64_x87_fprem(CpuState *cpu, const X87Register *dividend,
 	const X87Register *divisor, X87Register *result) noexcept;
@@ -75,6 +77,9 @@ void uml_x86_64_x87_sine(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
 void uml_x86_64_x87_cosine(CpuState *cpu, const X87Register *input,
 	X87Register *result) noexcept;
+/* The tag word FNSTENV and FNSAVE store: each register that is not empty
+ * tagged by what it holds, 00 valid, 01 zero or 10 special. */
+std::uint32_t uml_x86_64_x87_image_tags(const CpuState *cpu) noexcept;
 }
 
 } // namespace uml::cpu::x86_64::gadgets
