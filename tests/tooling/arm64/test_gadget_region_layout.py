@@ -36,7 +36,8 @@ LC_SEGMENT_64 = 0x19
 LC_SYMTAB = 0x2
 N_STAB = 0xE0
 HOST_PAGE = 16384
-GADGETS = Path(__file__).resolve().parents[3] / "darwin/cpu/arm64/gadgets"
+CPU = Path(__file__).resolve().parents[3] / "darwin/cpu"
+GADGETS = CPU / "arm64/gadgets"
 # The bound symbols of each part, by its gadget_region_start name.
 BOUNDS = {
     "bank": "uml_arm64_gadget_bank",
@@ -252,7 +253,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--engine", type=Path, default=GADGETS / "engine.S")
     parser.add_argument("--order", type=Path,
-                        default=GADGETS / "gadget_region.order")
+                        default=CPU / "gadget_region.order")
     parser.add_argument("images", type=Path, nargs="+")
     arguments = parser.parse_args()
     parts = engine_parts(arguments.engine)
