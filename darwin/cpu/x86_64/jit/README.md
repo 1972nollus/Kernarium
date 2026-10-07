@@ -186,8 +186,9 @@ The checks take:
   does not show, always;
 - RCPPS, RCPSS, RSQRTPS and RSQRTSS, which never use the host's estimates,
   whose results depend on FEAT_RPRES: the op divides in line, which lies
-  within x86's error as the gadget engine's quotient does, and sends the
-  denormal, zero, huge and negative inputs to the model.
+  within x86's error as the gadget engine's quotient does, and sends
+  denormal and zero inputs, RCP's huge ones and RSQRT's negative ones,
+  infinities and NaNs to the model.
 
 Comparisons, conversions, rounding and half-precision conversions take DAZ
 from FPCR.FZ, and their results need no check.
@@ -203,22 +204,61 @@ x86's outcome: an unmasked exception faults with `#XM`, whose error code is
 MXCSR, leaving the destination alone, and invalid operation, a denormal
 operand and division by zero take precedence over the exceptions of the
 result. An instruction checked in two 128-bit parts settles after its last.
-Under the special checks a part that no test sent holds flags of masked
-exceptions too, so when the last part faults, the instruction runs again as
-a unit of its own with all checks, and its fault raises every part's flags.
-As in the gadget engine, only what a check sends to the model raises the
-flags of masked exceptions, though that is a part of an instruction here
-and the whole instruction there. Each such fault compiles its instruction
-once more, uncached.
+Under the special checks a part that no test sent raises the flags of
+masked exceptions in the host's FPSR (below), so when the last part faults,
+the instruction runs again as a unit of its own with all checks, and its
+fault raises every part's flags. Under all checks only what the model
+computes raises flags. Each such fault compiles its instruction once more,
+uncached.
 
 MXCSR keeps every bit LDMXCSR, FXRSTOR and XRSTOR load, the exception flags
 included, and FXSAVE and XSAVE store an MXCSR_MASK of 0xFFFF, as the gadget
-engine does. Like the gadget engine, the JIT accumulates no flags while MXCSR
-masks every exception: the host's cumulative flags are not x86's (FPCR.FZ
-raises no precision for a flush and detects tininess before rounding, the
-estimates' in-line division raises precision, and no host flag shows a
-denormal operand), and folding them in would give flags neither x86 nor the
-gadget engine gives.
+engine does. Its exception flags are sticky, and the JIT keeps them while
+the guest masks the exceptions. The host's cumulative FPSR flags hold them
+through a dispatch: IOC, DZC, OFC, UFC and IXC are x86's invalid operation,
+division by zero, overflow, underflow and precision. A dispatch clears them
+as it starts and adds them to MXCSR as it ends; STMXCSR, FXSAVE and XSAVE
+add them to the MXCSR they store, and LDMXCSR, FXRSTOR and XRSTOR clear
+them with the flags they load. IDC is never a denormal operand: FPCR.FZ
+raises it for an input DAZ flushes, where x86 raises nothing. Under all
+checks the model settles every instruction's flags into MXCSR, and FPSR's
+are left out. Host code a dispatch runs leaves FPSR as it found it:
+FEXCore's compiler and block linker, and the model, which computes with
+host arithmetic. The x87 helpers compute in software, and a 3DNow!
+instruction, which MXCSR does not govern, puts back FPSR and MXCSR after
+itself.
+
+Where the host's flags are not x86's, the translation chooses another host
+instruction. COMIS compares with FCMPE and UCOMIS with FCMP, and scalar MIN
+and MAX with FCMPE. CMP raises what each of x86's 32 predicates raises: FCMEQ
+is quiet and FCMGE and FCMGT signal, a quiet relation compares operands whose
+NaN lanes a quiet ordered test cleared, and FALSE and TRUE compare for the
+flags alone. ROUND raises precision with FRINTX unless its immediate
+suppresses it, and a DPPS or DPPD with no destination lane still computes its
+sum. An estimate's quotient raises precision, which x86 does not, so FPSR goes
+back after it unless MXCSR or FPSR holds precision already; while MXCSR does,
+the estimate reads no FPSR, since a read waits for every floating-point
+instruction before it. The in-line tests compare an operation's own lanes
+alone, since a signalling NaN in another raises the host's invalid operation
+even for FCMEQ. What a check sends to the model raises the model's flags,
+which the host may lack, such as an FTZ flush's underflow and precision. Under
+DAZ alone FPCR.FZ flushes a result x86 keeps and raises underflow where it is
+exact; every flushed result goes to the model, so there each part of a checked
+instruction saves FPSR first, and the model's flags replace the part's. Under
+the special checks an instruction saves FPSR as it starts, and the model puts
+it back when a fault or the second run abandons the instruction, whose other
+lanes may have raised flags x86's fault never computes.
+
+Three flags stay inexact, as on the gadget engine and as
+`x86-64-jit-masked-flags` names them: the denormal operand while DAZ is
+clear, which no host flag shows, so it is raised only where the model
+computes an instruction; underflow for an inexact product, quotient, FMA,
+narrowing or dot-product step that rounds up to the smallest normal, which
+the host raises, detecting tininess before rounding, and x86 does not; and
+invalid operation for an FMA of infinity times zero plus a quiet NaN, which
+the host raises and x86 does not. The last two are exact where the model's
+flags replace the host's; anywhere else removing them would take FPSR from
+before every such instruction, an MRS on the hottest path.
 
 The x87 status word keeps every masked exception's sticky flag, and ES and B
 while an unmasked one is pending, from the 80-bit helpers and from the inline
