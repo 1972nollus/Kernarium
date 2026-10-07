@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <array>
@@ -54,6 +55,7 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
  * X0. */
 inline constexpr std::uint32_t id_aa64pfr0_el1 = 0xd538'0400U;
 inline constexpr std::uint32_t id_aa64pfr1_el1 = 0xd538'0420U;
+inline constexpr std::uint32_t id_aa64zfr0_el1 = 0xd538'0480U;
 inline constexpr std::uint32_t id_aa64smfr0_el1 = 0xd538'04a0U;
 inline constexpr std::uint32_t id_aa64isar0_el1 = 0xd538'0600U;
 inline constexpr std::uint32_t id_aa64isar1_el1 = 0xd538'0620U;
@@ -94,10 +96,13 @@ inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
 		/* ID_AA64PFR0_EL1. An FP or AdvSIMD field of zero already means
 		 * "implemented"; one additionally means half precision, whose
 		 * native scalar and vector paths both engines gate on this
-		 * probe. DIT: PSTATE.DIT is settable and readable. */
+		 * probe. SVE: the non-streaming SVE profile. DIT: PSTATE.DIT is
+		 * settable and readable. */
 		std::uint64_t value = 0;
 		if (host.fp16)
 			value |= field(1, 16) | field(1, 20);
+		if (implements_sve(host))
+			value |= field(1, 32);
 		if (host.has(ArmFeature::dit))
 			value |= field(1, 48);
 		return value;
@@ -114,6 +119,28 @@ inline constexpr std::uint32_t id_aa64mmfr2_el1 = 0xd538'0740U;
 			return field(2, 24);
 		}
 		return 0;
+	}
+	if (group == 4U && selector == 4U) {
+		/* ID_AA64ZFR0_EL1, every field arm64 Linux shows EL0, for the
+		 * non-streaming SVE profile (sve_profile.hpp): SVEver 1 (SVE2);
+		 * AES (2 with SVE_PMULL128) and SHA3 where those tokens are
+		 * reported; BF16 and I8MM where the host's AdvSIMD forms are,
+		 * as ID_AA64ISAR1_EL1 reports them. BitPerm, SM4, F32MM,
+		 * F64MM, F16MM, B16B16 and EltPerm stay zero. Zero without SVE,
+		 * where Linux does not read it. */
+		if (!implements_sve(host))
+			return 0;
+		std::uint64_t value = field(1, 0);
+		if (host.has(ArmFeature::sve_aes))
+			value |= field(
+				host.has(ArmFeature::sve_pmull128) ? 2 : 1, 4);
+		if (host.has(ArmFeature::bf16))
+			value |= field(1, 20);
+		if (host.has(ArmFeature::sve_sha3))
+			value |= field(1, 32);
+		if (host.has(ArmFeature::i8mm))
+			value |= field(1, 44);
+		return value;
 	}
 	if (group == 4U && selector == 5U) {
 		/* ID_AA64SMFR0_EL1, every field arm64 Linux shows EL0, for the
@@ -231,6 +258,15 @@ inline constexpr HwcapField hwcap_fields[]{
 	{id_aa64pfr0_el1, 16, 1, 9},		/* FP: FPHP */
 	{id_aa64pfr0_el1, 20, 1, 10},		/* AdvSIMD: ASIMDHP */
 	{id_aa64pfr0_el1, 48, 1, 24},		/* DIT */
+	/* SVE. Linux reads the ID_AA64ZFR0_EL1 bits only with SVE
+	 * (has_sve_feature()); that register is zero without it here. */
+	{id_aa64pfr0_el1, 32, 1, 22},		/* SVE */
+	{id_aa64zfr0_el1, 0, 1, 64 + 1},	/* SVEver: SVE2 */
+	{id_aa64zfr0_el1, 4, 1, 64 + 2},	/* AES: SVEAES */
+	{id_aa64zfr0_el1, 4, 2, 64 + 3},	/* AES: SVEPMULL */
+	{id_aa64zfr0_el1, 20, 1, 64 + 12},	/* BF16: SVEBF16 */
+	{id_aa64zfr0_el1, 32, 1, 64 + 5},	/* SHA3: SVESHA3 */
+	{id_aa64zfr0_el1, 44, 1, 64 + 9},	/* I8MM: SVEI8MM */
 	/* SME. Linux reads the ID_AA64SMFR0_EL1 bits only with SME
 	 * (has_sme_feature()); that register is zero without it here. */
 	{id_aa64pfr1_el1, 24, 1, 64 + 23},	/* SME */

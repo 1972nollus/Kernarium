@@ -7,10 +7,7 @@
  * ordinary path, unchecked, in the guest loop that loads MXCSR before the
  * instruction and stores it after, and the six flags it leaves must be the
  * Xeon's. The documented inexact cases are named in `residuals`, and only
- * those may differ. `--pending` names an engine that does not keep masked
- * flags yet: it may leave any flag out but raise none x86 does not, and the
- * test fails once it leaves none out, so the option goes with the fix.
- * `--show N` prints up to N unexplained cases. The same executable runs
+ * those may differ. `--show N` prints up to N unexplained cases. The same executable runs
  * XE2's whole request sets from a file the selection tool writes with
  * `--all`. */
 #include "x86_64_sse_loop.hpp"
@@ -179,20 +176,16 @@ private:
 
 int main(int argc, char **argv)
 {
-	bool pending = false;
 	std::size_t show = 20;
 	const char *path = nullptr;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument{argv[index]};
-		if (argument == "--pending")
-			pending = true;
-		else if (argument == "--show" && index + 1 < argc)
+		if (argument == "--show" && index + 1 < argc)
 			show = std::strtoull(argv[++index], nullptr, 10);
 		else if (path == nullptr && !argument.starts_with("--"))
 			path = argv[index];
 		else {
-			std::fprintf(stderr, "usage: %s [--pending] [--show N] DATA\n",
-				argv[0]);
+			std::fprintf(stderr, "usage: %s [--show N] DATA\n", argv[0]);
 			return 2;
 		}
 	}
@@ -212,7 +205,6 @@ int main(int argc, char **argv)
 	});
 
 	std::array<std::uint64_t, residuals.size()> explained{};
-	std::uint64_t pending_missing{};
 	std::uint64_t unexplained{};
 	std::uint64_t matched{};
 	std::map<std::tuple<std::string, std::string, bool>, std::uint64_t> tally;
@@ -287,10 +279,6 @@ int main(int argc, char **argv)
 						flag_explained = true;
 						break;
 					}
-				if (!flag_explained && pending && !spurious) {
-					++pending_missing;
-					flag_explained = true;
-				}
 				if (!flag_explained) {
 					case_explained = false;
 					++tally[{instruction.name, flag_name(flag), spurious}];
@@ -329,16 +317,8 @@ int main(int argc, char **argv)
 		std::printf("residual %llu: %s\n",
 			static_cast<unsigned long long>(explained[index]),
 			residuals[index].description);
-	if (pending)
-		std::printf("pending: %llu flags this engine does not keep yet\n",
-			static_cast<unsigned long long>(pending_missing));
 	std::printf("TOTAL cases %zu matched %llu unexplained %llu\n",
 		cases.size(), static_cast<unsigned long long>(matched),
 		static_cast<unsigned long long>(unexplained));
-	if (pending && pending_missing == 0) {
-		std::fprintf(stderr, "x86-64 masked flags: the engine keeps every "
-			"flag; drop --pending\n");
-		failed = true;
-	}
 	return failed || unexplained != 0 ? 1 : 0;
 }

@@ -46,10 +46,10 @@ pushes its selector, and Embedder.SegmentBases and SegmentPresent go.
  13 files changed, 286 insertions(+), 96 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index 7aecfea40642aa1d5d848fbe6e2401cabf3d8de3..9b7cfc9c717c8f1e93aa421d04daaa7a03ab41cc 100644
+index 6272c4acdcf99052bc6951e12c0c62394b7e0419..2f0ee1868301efeed58747a6c59059074fc523c4 100644
 --- a/FEXCore/Source/Interface/Context/Context.h
 +++ b/FEXCore/Source/Interface/Context/Context.h
-@@ -146,6 +146,9 @@ public:
+@@ -181,6 +181,9 @@ public:
    void SetEmbedderFPMode(uint32_t Mode) override {
      EmbedderFPMode = Mode;
    }
@@ -59,7 +59,7 @@ index 7aecfea40642aa1d5d848fbe6e2401cabf3d8de3..9b7cfc9c717c8f1e93aa421d04daaa7a
    void ExecuteEmbedded(FEXCore::Core::InternalThreadState* Thread, bool SingleInst, uint32_t SingleInstFPMode) override;
  
    void ExecuteThread(FEXCore::Core::InternalThreadState* Thread) override;
-@@ -388,6 +391,10 @@ public:
+@@ -423,6 +426,10 @@ public:
    // During ExecuteEmbedded(): the mode its single instruction is translated
    // for, if not zero.
    uint32_t EmbedderSingleInstFPMode {};
@@ -71,10 +71,10 @@ index 7aecfea40642aa1d5d848fbe6e2401cabf3d8de3..9b7cfc9c717c8f1e93aa421d04daaa7a
    uint32_t StrictSplitLockMutex {};
  
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..afc1848dfbfa85d5b120b991f098f597831dec9e 100644
+index 0c8d792cac0fbe87d8c2e20673302a0c6c97dced..87cf6ef9f4f83c7a2aec840e0397d38c053e738c 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -694,6 +694,11 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
+@@ -697,6 +697,11 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
            }
  
            Thread->OpDispatcher->SetForceTSO(ForceTSO);
@@ -83,9 +83,9 @@ index 55ffac2af9f477d01b475ebb36fd0f3829e0982e..afc1848dfbfa85d5b120b991f098f597
 +          if (Embedded && !BlockInfo->Is64BitMode) {
 +            Thread->OpDispatcher->EmbedderSegmentCheck(DecodedInfo);
 +          }
-           std::invoke(Fn, Thread->OpDispatcher, DecodedInfo);
-           if (Embedded) {
-             Thread->OpDispatcher->EmbedderFPEndInstruction();
+           // Embedded: MXCSR does not govern 3DNow!, whose host arithmetic
+           // and checks leave the guest's MXCSR flags, in FPSR and in the
+           // state, as they were.
 diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
 index f10d4fa33f67530b2ada6f35e8186ad5f7b2122e..9b836702582497a1dfcf067d48c933fb18a1100f 100644
 --- a/FEXCore/Source/Interface/Core/Frontend.cpp
@@ -474,12 +474,12 @@ index 066dbee9f0b6e09f07eb6b42970fbea78c4a3386..1b18e4b26e458de570a3bcad25f8cca1
    BreakOp(Op, FEXCore::IR::BreakDefinition {
                  .ErrorRegister = 0,
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-index 22e636a64dd4a42cf8295a2787ece0de31e5b316..a4ff198edb65d8ddfa0e6c14fa1f718ca6af6123 100644
+index e9b7ee8be0c18b36ae23e39b4cc9b541262fb9b4..c07ed771b1ec32bfc0dcd98f36ef831107db84fa 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
-@@ -323,6 +323,13 @@ public:
-   // Embedded: ends an instruction's EmbedderFPCheck ops. Of several that
-   // settle its exceptions, the last settles those of all.
+@@ -330,6 +330,13 @@ public:
+   // saves the host's FPSR as it starts, and under DAZ without FTZ each part
+   // of an instruction they check does.
    void EmbedderFPEndInstruction();
 +  // Embedded: leaves the dispatch at the instruction with
 +  // EMBEDDER_SIGNAL_SEGMENT, for the host to run.
@@ -491,7 +491,7 @@ index 22e636a64dd4a42cf8295a2787ece0de31e5b316..a4ff198edb65d8ddfa0e6c14fa1f718c
  
    void ResetHandledLock() {
      HandledLock = false;
-@@ -1661,8 +1668,12 @@ private:
+@@ -1676,8 +1683,12 @@ private:
    [[nodiscard]]
    Ref MakeSegmentAddress(const X86Tables::DecodedOp& Op, const X86Tables::DecodedOperand& Operand, IR::OpSize OpSize) {
      Ref Mem = LoadSourceGPR_WithOpSize(Op, Operand, OpSize, Op->Flags, {.LoadData = false});
@@ -715,7 +715,7 @@ index 43897aace59676e79e35145a8c643fb30dde3f5c..cad519d27b8f2ee450637072c94e4290
     * @brief Runs a thread until it exits through an embedder exit.
     *
 diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
-index 79073423555ccddf35151ec9b54d52431174213b..982ec8b934d2085c72d9780c74be9dd38ce98bd8 100644
+index b5fbe2dfbbe20f03df4bce589a023e7767785cde..ccf887d281e473a3d5ce7e9bb2e6ccc0c4989cdc 100644
 --- a/FEXCore/include/FEXCore/Core/CoreState.h
 +++ b/FEXCore/include/FEXCore/Core/CoreState.h
 @@ -415,6 +415,18 @@ constexpr uint32_t EMBEDDER_ACCESS_UNRETIRED_SHIFT = 32;

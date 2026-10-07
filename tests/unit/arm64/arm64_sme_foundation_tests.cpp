@@ -5,8 +5,10 @@
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
+#include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/execution_types.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -115,14 +117,15 @@ void prober_follows_policy()
 }
 
 /* The process profile, which test binaries install as probed, honours
- * DARWIN_UML_GUEST_SME. */
+ * DARWIN_UML_GUEST_SME, and DARWIN_UML_GUEST_SVE as arm64-sve-foundation
+ * checks. */
 void process_profile_honours_environment()
 {
 	const auto policy = apple::parse_guest_sme_policy(
 		std::getenv(apple::guest_sme_policy_variable));
 	require(apple::guest_sme_policy() == policy);
 	require(apple::probed_host_capabilities() ==
-		apple::probe_host_capabilities(policy));
+		apple::probe_host_capabilities(policy, apple::guest_sve_policy()));
 	require(::uml::cpu::host_capabilities() ==
 		apple::probed_host_capabilities());
 	std::printf("guest-SME policy %s, host SME %s, SVL %u\n",
@@ -663,11 +666,13 @@ void profile_follows_engine_support()
 	}
 
 	/* The entry points the guest kernel calls, outside any run: the
-	 * profile both engines implement. */
+	 * profile both engines implement, SVE included. */
 	const auto common = std::min(arm64::gadgets::sme_support,
 		arm64::jit::sme_support);
-	const auto probed = detail::guest_hwcaps(arm64::sme_host_for_support(
-		apple::probed_host_capabilities(), common));
+	const auto probed = detail::guest_hwcaps(arm64::sve_host_for_support(
+		arm64::sme_host_for_support(apple::probed_host_capabilities(),
+			common),
+		std::min(arm64::gadgets::sve_support, arm64::jit::sve_support)));
 	require(darwin_uml_guest_hwcap() == probed[0]);
 	require(darwin_uml_guest_hwcap2() == probed[1]);
 }
