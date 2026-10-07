@@ -73,10 +73,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 77435502156f6d117ae0df9f412fa327c86548af..0242fc997406925a2a9a33c7e93f87a6f746ae0c 100644
+index 03f5938d4e5ac3de2819283b7e2282c1c8c2bf71..5d67e4de8eb5a836cf81c03f8d047fe144e8f142 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -31,11 +31,22 @@ config UML_ARM64_SME
+@@ -31,12 +31,23 @@ config UML_ARM64_SME
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -85,6 +85,7 @@ index 77435502156f6d117ae0df9f412fa327c86548af..0242fc997406925a2a9a33c7e93f87a6
 +	select OLD_SIGSUSPEND3
 +	select SGETMASK_SYSCALL
 +	select SYSCALL_USER_DISPATCH
+ 	select UML_DARWIN_MM_SHARED
  	help
  	  Build the dedicated Darwin UML compatibility slice whose kernel
 -	  remains arm64.  Every userspace task uses the Linux x86-64 ABI, and
@@ -2701,10 +2702,10 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 643dd43970108a219b7b8467feada04437a4a0f1..a1509f6dd61fd55839427b27618a354a1e940bb0 100644
+index 641b75cf446198453998a4032d7137ed65a5c46e..6e8aa5909ddea7fa373f564faa6c347e7bc11f15 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -432,6 +432,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -436,6 +436,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

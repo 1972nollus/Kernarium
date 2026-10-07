@@ -413,10 +413,10 @@ static void uml_static_x86_64_x87_task_state()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
-/* The kernel marks every dispatch of a task whose mm another task shares.
- * The runtime keeps the mark of the current x86 dispatch for the x86 JIT,
- * and UML_X86_MM_SHARED_LOG records the first marked dispatch of each
- * address space. */
+/* The kernel marks every dispatch of a task whose mm another agent may
+ * observe, for as long as one may. The runtime keeps the mark of the
+ * current x86 dispatch for the x86 JIT, and UML_X86_MM_SHARED_LOG records
+ * each change of an address space's mark. */
 static void uml_static_x86_mm_shared_dispatch()
 {
 	constexpr std::uint64_t base = 0x3'0000;
@@ -442,6 +442,7 @@ static void uml_static_x86_mm_shared_dispatch()
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 		for (const std::uint32_t flags : {0U,
 			     unsigned{DARWIN_UML_DISPATCH_MM_SHARED},
+			     unsigned{DARWIN_UML_DISPATCH_MM_SHARED}, 0U, 0U,
 			     unsigned{DARWIN_UML_DISPATCH_MM_SHARED}}) {
 			darwin_uml_guest_registers registers{};
 			uml::testing::GuestFpTail fp{};
@@ -464,8 +465,12 @@ static void uml_static_x86_mm_shared_dispatch()
 	for (std::string line; std::getline(log, line);)
 		lines.push_back(line);
 	require(lines == std::vector<std::string>{
-		"uml-x86 mm-shared generation=139 rip=0x30000",
-		"uml-x86 mm-shared generation=140 rip=0x30000",
+		"uml-x86 mm-shared generation=139 shared=1 rip=0x30000",
+		"uml-x86 mm-shared generation=139 shared=0 rip=0x30000",
+		"uml-x86 mm-shared generation=139 shared=1 rip=0x30000",
+		"uml-x86 mm-shared generation=140 shared=1 rip=0x30000",
+		"uml-x86 mm-shared generation=140 shared=0 rip=0x30000",
+		"uml-x86 mm-shared generation=140 shared=1 rip=0x30000",
 	});
 	require(std::remove(path.c_str()) == 0);
 }
@@ -1190,13 +1195,15 @@ int main()
 	const uml::testing::RuntimeTestRoute runtime_route;
 	uml_static_entry_bridge();
 #if DARWIN_UML_X86_64_GUEST
+	/* First: the runtime reads UML_X86_MM_SHARED_LOG at the process's
+	 * first x86 dispatch. */
+	uml_static_x86_mm_shared_dispatch();
 	uml_static_x86_64_entry_bridge();
 	uml_static_x86_user_interrupt_flag();
 	uml_static_x86_compat32_entry_bridge();
 	uml_static_x86_exception_bridge();
 	uml_static_x86_64_signal_return_bridge();
 	uml_static_x86_64_x87_task_state();
-	uml_static_x86_mm_shared_dispatch();
 #endif
 	uml_static_descriptor_reuse_invalidation();
 	uml_static_inode_less_backings_remain_distinct();

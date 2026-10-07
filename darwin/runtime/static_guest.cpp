@@ -426,8 +426,9 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	load_x86_cpu(cpu, registers, fp);
 	runtime.x86_mm_shared =
 		(registers.dispatch_flags & DARWIN_UML_DISPATCH_MM_SHARED) != 0;
-	if (runtime.x86_mm_shared) [[unlikely]]
-		::uml::runtime::note_x86_mm_shared(generation, cpu.rip);
+	if (::uml::runtime::x86_mm_shared_logging()) [[unlikely]]
+		::uml::runtime::note_x86_mm_shared(generation,
+			runtime.x86_mm_shared, cpu.rip);
 	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
 	 * budget the executor retires exactly that many, so a budget of one is
 	 * a single step. */

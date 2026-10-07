@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
-#include <unordered_set>
+#include <unordered_map>
 
 namespace uml::runtime {
 
@@ -37,45 +37,51 @@ public:
 	MmSharedLog(const MmSharedLog &) = delete;
 	MmSharedLog &operator=(const MmSharedLog &) = delete;
 
-	void note(unsigned long generation, std::uint64_t rip) noexcept
+	void note(unsigned long generation, bool shared, std::uint64_t rip) noexcept
 	{
 		if (file_ == nullptr)
 			return;
 		const std::lock_guard lock{mutex_};
 		try {
-			if (!generations_.insert(generation).second)
+			/* A generation starts unshared. */
+			auto [entry, added] = shared_.try_emplace(generation, false);
+			if (entry->second == shared)
 				return;
+			entry->second = shared;
+			(void)added;
 		} catch (...) {
 			return;
 		}
-		std::fprintf(file_, "uml-x86 mm-shared generation=%lu rip=%#llx\n",
-			generation, static_cast<unsigned long long>(rip));
+		std::fprintf(file_, "uml-x86 mm-shared generation=%lu shared=%d rip=%#llx\n",
+			generation, shared ? 1 : 0, static_cast<unsigned long long>(rip));
 		std::fflush(file_);
 	}
 
-	void note_jit(unsigned long generation, bool ordered,
+	void note_jit(unsigned long generation, bool marked, bool ordered,
 		std::uint64_t rip) noexcept
 	{
 		if (file_ == nullptr)
 			return;
 		const std::lock_guard lock{mutex_};
-		const char *event = "jit-space";
+		if (marked && !ordered) {
+			/* Unordered code while the kernel marks the space shared:
+			 * always logged, and always a failure. */
+			std::fprintf(file_,
+				"uml-x86 jit-unordered-shared generation=%lu rip=%#llx\n",
+				generation, static_cast<unsigned long long>(rip));
+			std::fflush(file_);
+		}
 		try {
-			if (!ordered && jit_ordered_.contains(generation)) {
-				/* Unordered code after ordered code: always
-				 * logged, and always a failure. */
-				event = "jit-regressed";
-			} else {
-				auto &seen = ordered ? jit_ordered_ : jit_unordered_;
-				if (!seen.insert(generation).second)
-					return;
-			}
+			auto [entry, added] = ordered_.try_emplace(generation, ordered);
+			if (!added && entry->second == ordered)
+				return;
+			entry->second = ordered;
 		} catch (...) {
 			return;
 		}
 		std::fprintf(file_,
-			"uml-x86 %s generation=%lu ordered=%d rip=%#llx\n",
-			event, generation, ordered ? 1 : 0,
+			"uml-x86 jit-space generation=%lu ordered=%d rip=%#llx\n",
+			generation, ordered ? 1 : 0,
 			static_cast<unsigned long long>(rip));
 		std::fflush(file_);
 	}
@@ -83,9 +89,9 @@ public:
 private:
 	std::FILE *file_{};
 	std::mutex mutex_;
-	std::unordered_set<unsigned long> generations_;
-	std::unordered_set<unsigned long> jit_unordered_;
-	std::unordered_set<unsigned long> jit_ordered_;
+	/* Each generation's mark and ordering at its last dispatch. */
+	std::unordered_map<unsigned long, bool> shared_;
+	std::unordered_map<unsigned long, bool> ordered_;
 };
 
 MmSharedLog &mm_shared_log()
@@ -96,9 +102,10 @@ MmSharedLog &mm_shared_log()
 
 } // namespace
 
-void note_x86_mm_shared(unsigned long generation, std::uint64_t rip) noexcept
+void note_x86_mm_shared(unsigned long generation, bool shared,
+	std::uint64_t rip) noexcept
 {
-	mm_shared_log().note(generation, rip);
+	mm_shared_log().note(generation, shared, rip);
 }
 
 bool x86_mm_shared_logging() noexcept
@@ -106,10 +113,10 @@ bool x86_mm_shared_logging() noexcept
 	return mm_shared_log().enabled();
 }
 
-void note_x86_jit_ordering(unsigned long generation, bool ordered,
-	std::uint64_t rip) noexcept
+void note_x86_jit_ordering(unsigned long generation, bool marked,
+	bool ordered, std::uint64_t rip) noexcept
 {
-	mm_shared_log().note_jit(generation, ordered, rip);
+	mm_shared_log().note_jit(generation, marked, ordered, rip);
 }
 
 std::uint32_t x86_noncanonical_vector(StaticGuestMemory &memory,

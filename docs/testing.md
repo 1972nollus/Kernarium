@@ -332,10 +332,13 @@ instead of the default gadget engine; run them on both engines when a change
 reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
 checks that the host sees an address space as shared exactly when the
 kernel's contract in the [common kernel README](../kernel/common/README.md)
-says so, and on the JIT that only shared ones run ordered code.
+says so, including when the sharing ends, and on the JIT that exactly the
+marked dispatches run ordered code.
 `run_guest_x86_64_tso_litmus.py` runs x86 memory-order litmus tests on four
 vCPUs, between threads and between processes over shared memory, in both
-modes. Its negative control is the unit test `x86-64-jit-store-order`, which
+modes, and in cycles that share, stop sharing and share again, whose log
+must show the space marked and ordered exactly while shared. Its negative
+control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
 `#XM`, `#MF` and `#AC` included, in both modes.

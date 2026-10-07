@@ -274,18 +274,22 @@ consistent fence on each side of a REP MOVS or STOS, whose host helper
 copies plainly. An unordered space uses plain loads and stores. MFENCE,
 locked instructions and XCHG stay full barriers in both.
 
-The mark is sticky, and it changes only inside a kernel entry of a task on
-the mm: the `clone()` that starts a second task, the `mmap()` or `shmat()`
-that maps shared memory, or the io_uring setup that pins a ring. While the
-mm has one task, no relaxed code of it runs on another vCPU at that moment,
-and a fork child is marked before its first instruction. A store before the
-`clone()` reaches the new task before its first load through the
-scheduler's release and acquire as the task starts, and from there every
-dispatch of every task on the mm carries the mark. The first ordered
-dispatch of a space drops the vCPU's unordered contexts of it; another
-vCPU's are never selected again. A dispatch request that asks for unordered
-code after ordered code for the same generation breaks that contract, and
-the runtime logs it (below).
+The kernel works the mark out afresh for every guest entry, so it clears
+again once the last sharer goes: the last other task leaves the mm, the
+last shared mapping is unmapped, or io_uring unpins the last ring. It
+starts only inside a kernel entry of a task on the mm (the `clone()` that
+starts a second task, the `mmap()` or `shmat()` that maps shared memory, or
+the io_uring setup that pins a ring), so while the mm has one task no
+relaxed code of it runs on another vCPU at that moment, and a fork child is
+marked before its first instruction. A store before the `clone()` reaches
+the new task before its first load through the scheduler's release and
+acquire as the task starts. When the mark clears, every store of a former
+sharer is visible to the first unmarked entry, as the common README states,
+so relaxed code may run again. A space's ordered and unordered contexts
+both stay cached, within the engine's eight spaces per vCPU, so a process
+that shares and stops sharing over and over pays a context switch per
+change, not a retranslation. A dispatch the kernel marks shared that runs
+unordered code breaks the contract, and the runtime logs it (below).
 
 FEXCore assumes an access through RSP reaches only the thread's own stack
 and leaves it plain; an ordered space turns that off (StackTSOEnabled), since
@@ -294,13 +298,15 @@ by its owner. Pushes, pops, calls and returns stay plain: they reach only
 the slots at the top of the thread's own stack.
 
 The mark alone decides; no setting overrides it. With
-`UML_X86_MM_SHARED_LOG` set, the runtime logs the first unordered and the
-first ordered dispatch of each address space, and every unordered dispatch
-after an ordered one. The unit test `x86-64-jit-store-order` runs message
-passing between two engines on two host threads, with the data and flag
-reached through a general register or through RSP: an ordered space never
-shows the flag without the data, and an unordered one shows it, so the test
-would notice the order going missing.
+`UML_X86_MM_SHARED_LOG` set, the runtime logs each change of an address
+space's mark and of the ordering its code keeps, and every dispatch the
+kernel marked shared that ran unordered code. The unit test
+`x86-64-jit-store-order` runs message passing between two engines on two
+host threads, with the data and flag reached through a general register or
+through RSP: an ordered space never shows the flag without the data, and an
+unordered one shows it, so the test would notice the order going missing.
+Its `mp-cycle` case runs one space unordered, ordered, unordered and ordered
+again on the same engines, as the mark comes and goes.
 
 ## Instruction corpus
 

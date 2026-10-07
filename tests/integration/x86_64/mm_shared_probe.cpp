@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freestanding x86-64 guest probe for the "mm is shared" dispatch flag
- * (DARWIN_UML_DISPATCH_MM_SHARED). It prints its own code range, then runs
- * the mode its first argument names:
+ * (DARWIN_UML_DISPATCH_MM_SHARED). It prints its own code range and the
+ * return addresses of the system calls that start and end its sharing, then
+ * runs the mode its first argument names:
  *
  *   single        only system calls on its own;
  *   fork          fork() a child, which exits;
@@ -17,10 +18,27 @@
  *   fork-shared   map shared anonymous memory, then fork() a child, which
  *                 inherits the mapping and the mark;
  *   thread-fork   clone() a thread, then fork() a child, whose mm has one
- *                 task and no shared mapping.
+ *                 task and no shared mapping;
+ *
+ * and the modes whose sharing ends again, each with the system call that
+ * ends it:
+ *
+ *   thread-join   clone(CLONE_VM) a child task, which exits; wait4() reaps it;
+ *   unmap         map shared anonymous memory, write it; munmap() it;
+ *   shmdt         attach a SysV shm segment, write it; shmdt() it;
+ *   split         map two pages shared, unmap the first, which leaves the
+ *                 second mapped; munmap() the second;
+ *   mremap        map a page shared, move it onto a reservation with
+ *                 mremap(); munmap() it;
+ *   remap-private map a page shared; map private memory over it MAP_FIXED;
+ *   fork-dontcopy map shared anonymous memory MADV_DONTFORK, then fork() a
+ *                 child, which gets no shared mapping; munmap() it;
+ *   uring-close   set up the NO_MMAP io_uring and close() it; the kernel
+ *                 unpins its rings later, from a work item.
  *
  * The first four leave the mm unshared; each of the others shares the
- * probe's mm, and fork-shared its child's too.
+ * probe's mm, and fork-shared its child's too. A system call that starts or
+ * ends the probe's sharing returns to share_return or unshare_return.
  */
 
 namespace {
@@ -30,28 +48,41 @@ using u64 = unsigned long;
 constexpr long nr_write = 1;
 constexpr long nr_close = 3;
 constexpr long nr_mmap = 9;
+constexpr long nr_munmap = 11;
+constexpr long nr_mremap = 25;
 constexpr long nr_sched_yield = 24;
+constexpr long nr_madvise = 28;
 constexpr long nr_shmget = 29;
 constexpr long nr_shmat = 30;
 constexpr long nr_shmctl = 31;
+constexpr long nr_nanosleep = 35;
 constexpr long nr_getpid = 39;
 constexpr long nr_fork = 57;
 constexpr long nr_vfork = 58;
 constexpr long nr_exit = 60;
 constexpr long nr_wait4 = 61;
+constexpr long nr_shmdt = 67;
 constexpr long nr_ftruncate = 77;
 constexpr long nr_memfd_create = 319;
 constexpr long nr_io_uring_setup = 425;
 
+constexpr long prot_none = 0;
 constexpr long prot_read = 1;
 constexpr long prot_read_write = 3;
 constexpr long map_shared = 0x01;
 constexpr long map_private = 0x02;
+constexpr long map_fixed = 0x10;
 constexpr long map_anonymous = 0x20;
+constexpr long mremap_maymove = 1;
+constexpr long mremap_fixed = 2;
+constexpr long madv_dontfork = 10;
 constexpr long page_size = 4096;
 
 constexpr u64 clone_thread_flags = 0x00000100 | 0x00000200 | 0x00000400 |
 	0x00000800 | 0x00010000 | 0x00040000; /* VM FS FILES SIGHAND THREAD SYSVSEM */
+/* VM FS FILES, and SIGCHLD at its exit: a task on the probe's mm that wait4()
+ * reaps once it has left the mm. */
+constexpr u64 clone_task_flags = 0x00000100 | 0x00000200 | 0x00000400 | 17;
 
 inline long sys(long number, long a0 = 0, long a1 = 0, long a2 = 0, long a3 = 0,
 		long a4 = 0, long a5 = 0)
@@ -137,8 +168,15 @@ long map_memfd(long protection, long flags)
 extern "C" {
 extern const char __ehdr_start[];
 extern const char etext[];
+extern const char share_return[];
+extern const char unshare_return[];
 long fork_exit(long number);
 long clone_thread(u64 flags, void *stack, int (*function)());
+/* System calls that return to share_return and unshare_return. */
+long sys_share(long number, long a0, long a1 = 0, long a2 = 0, long a3 = 0,
+	long a4 = 0);
+long sys_unshare(long number, long a0, long a1 = 0, long a2 = 0, long a3 = 0,
+	long a4 = 0);
 int thread_main();
 [[noreturn]] void probe_main(long argc, char **argv);
 }
@@ -180,6 +218,34 @@ clone_thread:			# rdi flags, rsi stack, rdx function
 	syscall
 1:	ret
 
+	.globl sys_share
+sys_share:			# rdi number, rsi rdx rcx r8 r9 arguments
+	mov	%rdi, %rax
+	mov	%rsi, %rdi
+	mov	%rdx, %rsi
+	mov	%rcx, %rdx
+	mov	%r8, %r10
+	mov	%r9, %r8
+	xor	%r9d, %r9d
+	syscall
+	.globl share_return
+share_return:
+	ret
+
+	.globl sys_unshare
+sys_unshare:
+	mov	%rdi, %rax
+	mov	%rsi, %rdi
+	mov	%rdx, %rsi
+	mov	%rcx, %rdx
+	mov	%r8, %r10
+	mov	%r9, %r8
+	xor	%r9d, %r9d
+	syscall
+	.globl unshare_return
+unshare_return:
+	ret
+
 	.globl _start
 _start:
 	mov	(%rsp), %rdi
@@ -210,6 +276,130 @@ bool fork_child(long number)
 	       wait_status == 0;
 }
 
+/* Starts a task on the probe's mm, then reaps it with the wait4() that ends
+ * the sharing: the task has left the mm before wait4() returns. */
+bool join_task()
+{
+	const long pid = clone_thread(clone_task_flags, thread_stack + sizeof(thread_stack),
+				      thread_main);
+	int wait_status = 0;
+	return pid > 0 && sys_unshare(nr_wait4, pid, reinterpret_cast<long>(&wait_status)) == pid &&
+	       wait_status == 0;
+}
+
+/* Maps `pages` of shared anonymous memory with the mmap() that starts the
+ * sharing, and writes it; returns the mapping or 0. */
+long share_anon(long pages)
+{
+	const long address = sys_share(nr_mmap, 0, pages * page_size, prot_read_write,
+				       map_shared | map_anonymous, -1);
+	if (failed(address))
+		return 0;
+	for (long page = 0; page < pages; page++)
+		reinterpret_cast<volatile long *>(address + page * page_size)[0] = 1;
+	return address;
+}
+
+/* Some system calls, each a dispatch the host logs at the probe's RIP. */
+void settle()
+{
+	for (int round = 0; round < 8; round++)
+		sys(nr_getpid);
+}
+
+/* io_uring rings in the probe's own memory, set up with the system call
+ * that starts the sharing; returns the ring's descriptor. */
+long setup_uring()
+{
+	UringParams params{};
+	params.flags = uring_setup_no_mmap;
+	params.sq_user_addr = reinterpret_cast<unsigned long>(uring_entries);
+	params.cq_user_addr = reinterpret_cast<unsigned long>(uring_rings);
+	return sys_share(nr_io_uring_setup, 1, reinterpret_cast<long>(&params));
+}
+
+/* Ends the sharing of each mode that ends it; returns the exit status. */
+long run_unshare_mode(const char *mode)
+{
+	if (same(mode, "thread-join"))
+		return !join_task();
+	if (same(mode, "unmap")) {
+		const long address = share_anon(1);
+		settle();
+		return address == 0 || sys_unshare(nr_munmap, address, page_size) != 0;
+	}
+	if (same(mode, "shmdt")) {
+		const long segment = sys(nr_shmget, 0, page_size, 01000 | 0600);
+		const long address = failed(segment) ? segment : sys_share(nr_shmat, segment, 0, 0);
+		long status = failed(address);
+		if (status == 0) {
+			*reinterpret_cast<volatile long *>(address) = 1;
+			settle();
+			status = sys_unshare(nr_shmdt, address) != 0;
+		}
+		if (!failed(segment))
+			sys(nr_shmctl, segment, 0, 0);
+		return status;
+	}
+	if (same(mode, "split")) {
+		const long address = share_anon(2);
+		if (address == 0 || sys(nr_munmap, address, page_size) != 0)
+			return 1;
+		settle();
+		return sys_unshare(nr_munmap, address + page_size, page_size) != 0;
+	}
+	if (same(mode, "mremap")) {
+		const long address = share_anon(1);
+		const long target = sys(nr_mmap, 0, page_size, prot_none,
+					map_private | map_anonymous, -1);
+		if (address == 0 || failed(target))
+			return 1;
+		/* Moving the vma unmaps the old range after the copy is in. */
+		const long moved = sys(nr_mremap, address, page_size, page_size,
+				       mremap_maymove | mremap_fixed, target);
+		if (moved != target || *reinterpret_cast<volatile long *>(moved) != 1)
+			return 1;
+		settle();
+		return sys_unshare(nr_munmap, moved, page_size) != 0;
+	}
+	if (same(mode, "remap-private")) {
+		const long address = share_anon(1);
+		if (address == 0)
+			return 1;
+		settle();
+		const long remapped = sys_unshare(nr_mmap, address, page_size, prot_read_write,
+						  map_private | map_anonymous | map_fixed, -1);
+		if (remapped != address)
+			return 1;
+		*reinterpret_cast<volatile long *>(address) = 2;
+		return 0;
+	}
+	if (same(mode, "fork-dontcopy")) {
+		const long address = share_anon(1);
+		if (address == 0 || sys(nr_madvise, address, page_size, madv_dontfork) != 0 ||
+		    !fork_child(nr_fork))
+			return 1;
+		settle();
+		return sys_unshare(nr_munmap, address, page_size) != 0;
+	}
+	if (same(mode, "uring-close")) {
+		const long ring = setup_uring();
+		if (failed(ring))
+			return 1;
+		settle();
+		sys(nr_close, ring);
+		/* The rings are unpinned once a work item frees them: give it
+		 * two seconds, each sleep a dispatch the host logs. */
+		struct {
+			long seconds, nanoseconds;
+		} delay = {0, 20 * 1000 * 1000};
+		for (int round = 0; round < 100; round++)
+			sys(nr_nanosleep, reinterpret_cast<long>(&delay), 0);
+		return 0;
+	}
+	return 2;
+}
+
 } // namespace
 
 void probe_main(long argc, char **argv)
@@ -221,6 +411,10 @@ void probe_main(long argc, char **argv)
 	write_hex(reinterpret_cast<u64>(__ehdr_start));
 	write_text("-");
 	write_hex(reinterpret_cast<u64>(etext));
+	write_text(" share=");
+	write_hex(reinterpret_cast<u64>(share_return));
+	write_text(" unshare=");
+	write_hex(reinterpret_cast<u64>(unshare_return));
 	write_text("\n");
 	long status = 0;
 	if (same(mode, "fork") || same(mode, "vfork")) {
@@ -256,11 +450,7 @@ void probe_main(long argc, char **argv)
 		if (!failed(segment))
 			sys(nr_shmctl, segment, 0, 0);
 	} else if (same(mode, "uring-nommap")) {
-		UringParams params{};
-		params.flags = uring_setup_no_mmap;
-		params.sq_user_addr = reinterpret_cast<unsigned long>(uring_entries);
-		params.cq_user_addr = reinterpret_cast<unsigned long>(uring_rings);
-		const long ring = sys(nr_io_uring_setup, 1, reinterpret_cast<long>(&params));
+		const long ring = setup_uring();
 		if (failed(ring))
 			status = 1;
 		else
@@ -268,10 +458,9 @@ void probe_main(long argc, char **argv)
 	} else if (same(mode, "thread-fork")) {
 		status = !run_thread() || !fork_child(nr_fork);
 	} else if (!same(mode, "single")) {
-		status = 2;
+		status = run_unshare_mode(mode);
 	}
-	for (int round = 0; round < 8; round++)
-		sys(nr_getpid);
+	settle();
 	for (;;)
 		sys(nr_exit, status);
 }

@@ -66,27 +66,30 @@ private:
 	::uml::memory::StaticGuestMemory &memory,
 	const ::uml::cpu::x86_64::CpuState &cpu) noexcept;
 
-/* Called for each x86 dispatch whose mm is shared. Setting
- * UML_X86_MM_SHARED_LOG to a writable path makes the runtime append one line
- * the first time each address space (generation) dispatches that way, with
- * the RIP it resumed at; tests/integration/x86_64/run_guest_x86_64_mm_shared.py
- * reads it. It is a file rather than stderr because the emulator's stderr
- * shares the guest console. Nothing is opened, locked or recorded when the
- * variable is unset. */
-void note_x86_mm_shared(unsigned long generation, std::uint64_t rip) noexcept;
+/* With UML_X86_MM_SHARED_LOG set to a writable path, called for each x86
+ * dispatch with the kernel's mark of whether its mm is shared
+ * (DARWIN_UML_DISPATCH_MM_SHARED). The runtime appends an "mm-shared" line
+ * whenever an address space's (generation's) mark differs from its last
+ * dispatch's, starting from unshared, with the mark and the RIP the dispatch
+ * resumed at; tests/integration/x86_64/run_guest_x86_64_mm_shared.py reads
+ * it. It is a file rather than stderr because the emulator's stderr shares
+ * the guest console. The variable is read once, at the process's first x86
+ * dispatch; nothing is opened, locked or recorded when it is unset. */
+void note_x86_mm_shared(unsigned long generation, bool shared,
+	std::uint64_t rip) noexcept;
 
 /* Whether UML_X86_MM_SHARED_LOG names a log the runtime could open. */
 [[nodiscard]] bool x86_mm_shared_logging() noexcept;
 
-/* With the log open, called after each x86-64 JIT dispatch with whether its
- * code kept x86's store order. The runtime appends a "jit-space" line to the
- * log the first time each address space runs unordered code and the first
- * time it runs ordered code, with the RIP the dispatch started at: the
- * test's proof of which code a space ran. Every unordered dispatch of a
- * space that has run ordered code appends a "jit-regressed" line, which
- * must never appear. */
-void note_x86_jit_ordering(unsigned long generation, bool ordered,
-	std::uint64_t rip) noexcept;
+/* With the log open, called after each x86-64 JIT dispatch with the
+ * kernel's mark and whether its code kept x86's store order. The runtime
+ * appends a "jit-space" line for each address space's first dispatch and
+ * whenever its ordering changes, with the RIP the dispatch started at: the
+ * test's proof of which code a space ran. A dispatch the kernel marked
+ * shared that ran unordered code appends a "jit-unordered-shared" line,
+ * which must never appear. */
+void note_x86_jit_ordering(unsigned long generation, bool marked,
+	bool ordered, std::uint64_t rip) noexcept;
 
 } // namespace uml::runtime
 

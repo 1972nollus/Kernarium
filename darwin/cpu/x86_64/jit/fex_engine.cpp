@@ -267,8 +267,8 @@ struct Space final {
 	/* x86 orders every store before every later one and every load before
 	 * every later access. FEXCore emulates that with acquire loads and
 	 * release stores, at about 30% on memory-bound code, so a space orders
-	 * them only once another agent may observe its memory (the guest
-	 * kernel's mm-shared mark, sticky for the address space's life). */
+	 * them only while another agent may observe its memory (the guest
+	 * kernel's mm-shared mark, which it works out for each dispatch). */
 	bool orders_stores{};
 	/* Core::EMBEDDER_FP_MODE_* bits every translation assumes. */
 	std::uint32_t fp_mode{};
@@ -489,20 +489,6 @@ struct FexEngine::Impl final {
 				(any || (space->orders_stores == orders_stores && space->fp_mode == fp_mode)))
 				return space.get();
 		return nullptr;
-	}
-
-	/* Drops the unordered spaces of `generation`, whose code never runs
-	 * again once a dispatch of it orders stores. */
-	void release_unordered(unsigned long generation) noexcept
-	{
-		for (auto it = spaces.begin(); it != spaces.end();) {
-			if ((*it)->generation != generation || (*it)->orders_stores) {
-				++it;
-				continue;
-			}
-			released_restarts += restarts(**it);
-			it = spaces.erase(it);
-		}
 	}
 
 	[[nodiscard]] Space *create(unsigned long generation, ExecutionMode mode, bool orders_stores,
@@ -1398,10 +1384,9 @@ JitRunResult FexEngine::run(CpuState &cpu, GuestAddressSpace &memory, const JitR
 			return run;
 		const auto mapping_sequence = sibling->mapping_sequence;
 		const auto code_sequence = sibling->code_sequence;
-		/* The kernel's mark is sticky, so a dispatch that orders stores
-		 * retires the generation's unordered translations for good. */
-		if (ordered)
-			impl_->release_unordered(request.generation);
+		/* The kernel's mark comes and goes with the address space's
+		 * sharers, so the other ordering's space stays: the next change
+		 * back costs a switch, not a retranslation. */
 		space = impl_->create(request.generation, cpu.execution_mode, ordered, fp_mode);
 		if (space == nullptr)
 			return run;

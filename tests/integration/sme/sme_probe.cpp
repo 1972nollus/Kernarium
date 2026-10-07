@@ -26,7 +26,9 @@
  *
  * "off" mode runs with the policy off, on any host, and checks that a run
  * without SME shows none of it: no HWCAP2 bit, AT_MINSIGSTKSZ, prctl, sysctl,
- * regset or signal frame record.
+ * regset or signal frame record. NT_ARM_TLS exists without SME, as natively:
+ * it reads and writes TPIDR_EL0, and its TPIDR2_EL0 reads as zero and ignores
+ * writes.
  *
  * SME_PROBE_MODE=<mode> on the kernel command line selects the mode, "kernel"
  * by default. Every mode prints PASS or FAIL lines, then "sme-probe: <mode>:
@@ -1447,6 +1449,15 @@ int wait_stop(long pid)
 bool stopped_with(int status, int signal) { return (status & 0xff) == 0x7f && ((status >> 8) & 0xff) == signal; }
 
 constexpr u64 traced_tpidr2 = 0x7ace7ace7ace7aceUL;
+/* The TPIDR_EL0 a tracer writes through NT_ARM_TLS. */
+constexpr u64 traced_tpidr = 0x00007e1d5eed7e1dUL;
+
+u64 read_tpidr()
+{
+	u64 value;
+	__asm__ volatile("mrs %0, tpidr_el0" : "=r"(value));
+	return value;
+}
 constexpr u32 traced_fpsr = 0x00000011;
 constexpr u32 traced_fpcr = 0x00800000;
 
@@ -1462,7 +1473,9 @@ int regset_tracee(void *)
 	bool zt = !sme2 || zt_matches(capture, 6);
 	bool tls = capture.tpidr2 == traced_tpidr2;
 	bool fp = capture.fpsr == traced_fpsr && capture.fpcr == traced_fpcr;
-	return (z ? 0 : 1) | (za ? 0 : 2) | (zt ? 0 : 4) | (tls ? 0 : 8) | (fp ? 0 : 16);
+	bool tpidr = read_tpidr() == traced_tpidr;
+	return (z ? 0 : 1) | (za ? 0 : 2) | (zt ? 0 : 4) | (tls ? 0 : 8) | (fp ? 0 : 16) |
+	       (tpidr ? 0 : 32);
 }
 
 void fill_ssve(u16 flags, u16 vl)
@@ -1516,7 +1529,7 @@ void test_regsets()
 
 	length = get_regset(pid, nt_arm_tls, 16);
 	check(length == 16, "NT_ARM_TLS holds TPIDR_EL0 and TPIDR2_EL0");
-	u64 tpidr = load<u64>(regset_buffer);
+	check(load<u64>(regset_buffer) == read_tpidr(), "NT_ARM_TLS reads the TPIDR_EL0 inherited");
 
 	fill_ssve(sve_pt_regs_fpsimd, static_cast<u16>(svl));
 	check_value(static_cast<u64>(set_regset(pid, nt_arm_ssve, sve_pt_size_sve(svq))),
@@ -1573,12 +1586,12 @@ void test_regsets()
 		check(same, "NT_ARM_ZT reads back what was written");
 	}
 
-	store<u64>(regset_buffer, tpidr);
+	store<u64>(regset_buffer, traced_tpidr);
 	store<u64>(regset_buffer + 8, traced_tpidr2);
 	check(set_regset(pid, nt_arm_tls, 16) == 0, "NT_ARM_TLS can be written");
 	get_regset(pid, nt_arm_tls, 16);
-	check(load<u64>(regset_buffer) == tpidr && load<u64>(regset_buffer + 8) == traced_tpidr2,
-	      "NT_ARM_TLS reads back TPIDR_EL0 and the TPIDR2_EL0 written");
+	check(load<u64>(regset_buffer) == traced_tpidr && load<u64>(regset_buffer + 8) == traced_tpidr2,
+	      "NT_ARM_TLS reads back the TPIDR_EL0 and TPIDR2_EL0 written");
 
 	/* Resume; deliver the tracee's own SIGSEGV; collect its verdict. */
 	sys(nr_ptrace, ptrace_cont, pid, 0, 0);
@@ -1911,11 +1924,13 @@ void mount_proc()
 /* ------------------------------------------------------------------ */
 /* Off mode: a run that does not implement SME.                        */
 
+/* The tracee: stop, then report whether it runs with the TPIDR_EL0 the
+ * tracer wrote. */
 int off_tracee(void *)
 {
 	sys(nr_ptrace, ptrace_traceme, 0, 0, 0);
 	sys(nr_kill, sys(nr_getpid), sigstop);
-	return 0;
+	return read_tpidr() == traced_tpidr ? 0 : 1;
 }
 
 void check_error(long result, long error, const char *name)
@@ -1945,8 +1960,22 @@ void test_off()
 	check_error(get_regset(pid, nt_arm_ssve), einval, "NT_ARM_SSVE does not exist");
 	check_error(get_regset(pid, nt_arm_za), einval, "NT_ARM_ZA does not exist");
 	check_error(get_regset(pid, nt_arm_zt, 64), einval, "NT_ARM_ZT does not exist");
+	check(get_regset(pid, nt_arm_tls, 16) == 16, "NT_ARM_TLS holds TPIDR_EL0 and TPIDR2_EL0");
+	check(load<u64>(regset_buffer) == read_tpidr(), "NT_ARM_TLS reads the TPIDR_EL0 inherited");
+	check_value(load<u64>(regset_buffer + 8), 0, "NT_ARM_TLS reads TPIDR2_EL0 as zero");
+	store<u64>(regset_buffer, ~traced_tpidr);
+	store<u64>(regset_buffer + 8, traced_tpidr2);
+	check(set_regset(pid, nt_arm_tls, 16) == 0, "NT_ARM_TLS can be written");
+	get_regset(pid, nt_arm_tls, 16);
+	check(load<u64>(regset_buffer) == ~traced_tpidr && load<u64>(regset_buffer + 8) == 0,
+	      "NT_ARM_TLS reads back the TPIDR_EL0 written and ignores TPIDR2_EL0");
+	store<u64>(regset_buffer, traced_tpidr);
+	check(set_regset(pid, nt_arm_tls, 8) == 0, "NT_ARM_TLS can be written in part");
+	get_regset(pid, nt_arm_tls, 16);
+	check(load<u64>(regset_buffer) == traced_tpidr && load<u64>(regset_buffer + 8) == 0,
+	      "NT_ARM_TLS reads back the TPIDR_EL0 written alone");
 	sys(nr_ptrace, ptrace_cont, pid, 0, 0);
-	check(wait_stop(pid) == 0, "the tracee exits");
+	check(wait_stop(pid) == 0, "the tracee runs with the TPIDR_EL0 written and exits");
 }
 
 const char *find_argument(char **argv, int index)
