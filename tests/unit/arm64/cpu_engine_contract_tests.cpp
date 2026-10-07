@@ -266,7 +266,9 @@ void test_all_engines_scope_unsupported_instruction_to_guest()
 	constexpr std::uint64_t base = 0x120'0000;
 	/* PTRUE P0.B: allocated SVE, intentionally outside the current engine
 	 * profile. Every adapter must turn that implementation gap into a precise
-	 * guest illegal-instruction exit.
+	 * guest illegal-instruction exit. Each engine translates for what it
+	 * presents, as the runtime configures it: under the guest-SVE policy an
+	 * engine below sve_support complete presents no SVE.
 	 */
 	constexpr std::uint32_t unsupported_instruction = 0x2518'e3e0U;
 	unsigned long generation = 0x7200;
@@ -274,7 +276,12 @@ void test_all_engines_scope_unsupported_instruction_to_guest()
 		uml::cpu::EngineKind::jit}) {
 		if (!uml::cpu::cpu_engine_available(kind))
 			continue;
-		auto engine = uml::cpu::make_cpu_engine(kind);
+		auto engine = uml::cpu::make_cpu_engine(kind,
+			uml::cpu::EngineConfiguration{
+				.host_capabilities =
+					uml::cpu::engine_host_capabilities(kind,
+						uml::cpu::host_capabilities()),
+			});
 		require(engine != nullptr && engine->kind() == kind,
 			"requested engine was replaced by a fallback");
 		{
