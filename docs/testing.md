@@ -481,6 +481,12 @@ options, and regeneration, which requires a producer commit. Cases that need
 engine hooks or a deferred floating-point entry state stay in focused tests
 that run the production gadget and JIT engines through
 `tests/unit/arm64/arm64_engine_test_support.hpp`.
+`arm64-emitted-registers` checks that no host code names x18, which Darwin
+clears when it interrupts a thread: every word of the gadget region, and the
+JIT's translations of the corpus for this host and for one with every feature
+and SME, in each link shape and SVCR mode, including each corpus word with a
+register field set to 18. A word that its register oracle,
+`tests/unit/arm64/a64_register_operands.hpp`, cannot classify fails it too.
 
 The corpus covers every A64 inventory entry with representative cases; it is
 not exhaustive variant proof.
@@ -581,7 +587,10 @@ context. The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
-or names nothing. `x86-64-jit-code-buffer-growth` repeats the run from one byte
+or names nothing. `x86-64-jit-emitted-registers` repeats the run and walks
+every block FEXCore translates, failing on a reachable instruction that names
+x18 or that the same oracle cannot classify, or on a block that does not parse.
+`x86-64-jit-code-buffer-growth` repeats the run from one byte
 of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind

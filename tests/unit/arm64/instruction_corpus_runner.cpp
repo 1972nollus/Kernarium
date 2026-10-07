@@ -4,6 +4,7 @@
  * and JIT engines in one process. tests/unit/arm64/corpus/README.md owns the
  * pack format, the state encoding, and the named validator relations.
  */
+#include "a64_register_operands.hpp"
 #include "architecture_difference.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/engine_execution.hpp"
@@ -11,9 +12,11 @@
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
+#include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
+#include "cpu/host_capabilities.hpp"
 #include "memory/static_guest_memory.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -34,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <fstream>
 #include <map>
@@ -45,6 +49,7 @@
 #include <string_view>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1125,6 +1130,7 @@ struct Options final {
   bool run_jit{true};
   std::size_t max_failures{25};
   bool list{};
+  bool emitted_registers{};
 };
 
 struct Counts final {
@@ -1523,6 +1529,233 @@ private:
   Counts counts_;
 };
 
+/* ------------------------------------------------------------------------ */
+/* Emitted registers                                                          */
+
+/* The gadget region's parts (engine.S), each between its bound labels. */
+extern "C" const char uml_arm64_gadget_bank_begin[];
+extern "C" const char uml_arm64_gadget_bank_end[];
+extern "C" const char uml_arm64_gadget_forward_section_begin[];
+extern "C" const char uml_arm64_gadget_forward_section_end[];
+extern "C" const char uml_arm64_gadget_vector_forward_section_begin[];
+extern "C" const char uml_arm64_gadget_vector_forward_section_end[];
+extern "C" const char uml_arm64_gadget_cold_section_begin[];
+extern "C" const char uml_arm64_gadget_cold_section_end[];
+extern "C" const char uml_arm64_gadget_afp_section_begin[];
+extern "C" const char uml_arm64_gadget_afp_section_end[];
+extern "C" const char uml_arm64_gadget_veneer_section_begin[];
+extern "C" const char uml_arm64_gadget_veneer_section_end[];
+extern "C" const char uml_arm64_gadget_sme_section_begin[];
+extern "C" const char uml_arm64_gadget_sme_section_end[];
+
+namespace jit_test = arm64::jit::testing;
+
+/* A host with every feature and SME at `svl` bytes, for which the JIT
+ * selects each native path it has. Translations are only inspected. */
+[[nodiscard]] ::uml::platform::HostCapabilities
+every_feature_host(unsigned svl) {
+  ::uml::platform::HostCapabilities host;
+  for (std::size_t feature = 0; feature < ::uml::platform::arm_feature_count;
+       ++feature)
+    host.supported.set(feature);
+  host.floating_point = host.advanced_simd = host.fp16 = host.cssc = true;
+  host.aes = host.pmull = host.sha1 = host.sha2 = host.crc32 = true;
+  host.sha3 = host.sha512 = host.jscvt_subnormal_flags_correct = true;
+  host.sme_svl_bytes = static_cast<std::uint16_t>(svl);
+  return host;
+}
+
+/* Darwin clears x18 when it interrupts a thread, so no host code the
+ * engines run may name it. This checks every word of the gadget region and
+ * the JIT's translations of the corpus:
+ * - each program from each of its words, for this host;
+ * - one program of each pattern of the bits outside the register fields,
+ *   for this host in the other link shapes, and for a host with every
+ *   feature and SME at the record's SVL (64 bytes for a record without SME
+ *   state) in every SVCR mode;
+ * - one word of each such pattern with each register field set to 18, for
+ *   both hosts, so guest x18 reaches every operand position.
+ * A word the register oracle cannot classify fails too. */
+class EmittedRegisterScan final {
+public:
+  explicit EmittedRegisterScan(std::size_t max_failures)
+      : max_failures_{max_failures} {}
+
+  void region() {
+    const std::array<std::pair<const char *, const char *>, 7> parts{{
+        {uml_arm64_gadget_bank_begin, uml_arm64_gadget_bank_end},
+        {uml_arm64_gadget_forward_section_begin,
+         uml_arm64_gadget_forward_section_end},
+        {uml_arm64_gadget_vector_forward_section_begin,
+         uml_arm64_gadget_vector_forward_section_end},
+        {uml_arm64_gadget_cold_section_begin,
+         uml_arm64_gadget_cold_section_end},
+        {uml_arm64_gadget_afp_section_begin, uml_arm64_gadget_afp_section_end},
+        {uml_arm64_gadget_veneer_section_begin,
+         uml_arm64_gadget_veneer_section_end},
+        {uml_arm64_gadget_sme_section_begin, uml_arm64_gadget_sme_section_end},
+    }};
+    for (const auto &[begin, end] : parts) {
+      if (end <= begin || (end - begin) % 4 != 0)
+        throw CorpusError{"a gadget region part has no whole words"};
+      const std::span words{reinterpret_cast<const std::uint32_t *>(begin),
+                            static_cast<std::size_t>(end - begin) / 4U};
+      for (std::size_t index = 0; index < words.size(); ++index) {
+        ++region_words_;
+        const auto verdict = classify(words[index]);
+        if (verdict.empty())
+          continue;
+        Dl_info info{};
+        const auto *address = begin + index * 4U;
+        std::string where = hex(reinterpret_cast<std::uintptr_t>(address));
+        if (dladdr(address, &info) != 0 && info.dli_sname != nullptr)
+          where = std::string{info.dli_sname} + "+" +
+                  hex(static_cast<std::uint64_t>(
+                      address - static_cast<const char *>(info.dli_saddr)));
+        fail("gadget region " + where + ": " + verdict + " " +
+             hex(words[index]));
+      }
+    }
+  }
+
+  void translations(const std::vector<const Record *> &records) {
+    const auto actual = ::uml::platform::apple::probed_host_capabilities();
+    std::unordered_set<std::string> programs;
+    std::unordered_set<std::string> seen;
+    /* One word per pattern of everything outside the register fields. */
+    constexpr std::uint32_t fields =
+        (31U << 16) | (31U << 10) | (31U << 5) | 31U;
+    std::map<std::uint32_t, std::uint32_t> patterns;
+    for (const auto *record : records) {
+      const auto every = every_feature_host(record->svl != 0U ? record->svl
+                                                              : 64U);
+      for (const auto &program : record->programs) {
+        auto sorted = program.words;
+        std::ranges::sort(sorted, {}, &ProgramWord::offset);
+        std::size_t run = 0;
+        while (run < sorted.size()) {
+          std::size_t end = run + 1U;
+          while (end < sorted.size() &&
+                 sorted[end].offset == sorted[end - 1U].offset + 4U)
+            ++end;
+          std::vector<std::uint32_t> guest;
+          for (std::size_t index = run; index < end; ++index) {
+            guest.push_back(sorted[index].word);
+            patterns.try_emplace(sorted[index].word & ~fields,
+                                 sorted[index].word);
+          }
+          for (std::size_t start = 0; start < guest.size(); ++start) {
+            const std::span suffix =
+                std::span<const std::uint32_t>{guest}.subspan(start);
+            const auto pc = code_base + sorted[run + start].offset;
+            if (programs
+                    .emplace(reinterpret_cast<const char *>(suffix.data()),
+                             suffix.size_bytes())
+                    .second)
+              translate(actual, pc, suffix, Shapes::unlinked, "host");
+            std::string key;
+            for (const auto word : suffix) {
+              const auto pattern = word & ~fields;
+              key.append(reinterpret_cast<const char *>(&pattern),
+                         sizeof pattern);
+            }
+            key.append(reinterpret_cast<const char *>(&every.sme_svl_bytes),
+                       sizeof every.sme_svl_bytes);
+            if (!seen.insert(std::move(key)).second)
+              continue;
+            translate(actual, pc, suffix, Shapes::linked, "host");
+            translate(every, pc, suffix, Shapes::unlinked, "every feature");
+          }
+          run = end;
+        }
+      }
+    }
+    const auto every = every_feature_host(64U);
+    for (const auto &[pattern, word] : patterns)
+      for (const unsigned low : {0U, 5U, 10U, 16U}) {
+        const auto variant =
+            (word & ~(31U << low)) |
+            (::uml::testing::a64::darwin_platform_register << low);
+        if (variant == word)
+          continue;
+        const std::array guest{variant};
+        translate(actual, code_base, guest, Shapes::all, "host");
+        translate(every, code_base, guest, Shapes::unlinked, "every feature");
+      }
+  }
+
+  [[nodiscard]] bool passed() const noexcept { return failures_ == 0U; }
+
+  void print_summary(double elapsed) const {
+    std::printf("arm64 emitted registers (%zu KiB pages): region-words=%zu "
+                "translations=%zu host-words=%zu failures=%zu %.1fs\n",
+                page_size / 1024U, region_words_, translations_, host_words_,
+                failures_, elapsed);
+  }
+
+private:
+  /* "" for a word that names no x18, else why it fails. */
+  [[nodiscard]] static std::string classify(std::uint32_t word) {
+    const auto names = ::uml::testing::a64::names_platform_register(word);
+    if (!names.has_value())
+      return "unclassified word";
+    return *names ? "x18 operand" : "";
+  }
+
+  enum class Shapes { unlinked, linked, all };
+
+  /* Translates in every SVCR mode the host has, in the link shapes asked
+   * for. */
+  void translate(const ::uml::platform::HostCapabilities &host,
+                 std::uint64_t pc, std::span<const std::uint32_t> guest,
+                 Shapes shapes, const char *host_name) {
+    const ::uml::cpu::HostCapabilitiesScope scope{host};
+    const bool sme = host.sme_svl_bytes != 0U;
+    const std::uint8_t modes = sme ? arm64::svcr_mask : 0U;
+    for (std::uint8_t mode = 0; mode <= modes; ++mode)
+      for (const auto shape :
+           {jit_test::LinkShape::unlinked, jit_test::LinkShape::direct,
+            jit_test::LinkShape::indirect, jit_test::LinkShape::tracked}) {
+        const bool unlinked = shape == jit_test::LinkShape::unlinked;
+        if ((shapes == Shapes::unlinked && !unlinked) ||
+            (shapes == Shapes::linked && unlinked))
+          continue;
+        const auto code =
+            jit_test::compile_block_in_mode(pc, guest, mode, shape).code;
+        ++translations_;
+        const auto executable =
+            std::span<const std::uint32_t>{code.words}.first(
+                code.executable_words);
+        host_words_ += executable.size();
+        for (std::size_t index = 0; index < executable.size(); ++index) {
+          const auto verdict = classify(executable[index]);
+          if (verdict.empty())
+            continue;
+          std::string guest_words;
+          for (const auto word : guest)
+            guest_words += (guest_words.empty() ? "" : " ") + hex(word);
+          fail("JIT translation of [" + guest_words + "] mode " +
+               std::to_string(mode) + " shape " +
+               std::to_string(static_cast<int>(shape)) + " (" + host_name +
+               ") word " + std::to_string(index) + ": " + verdict + " " +
+               hex(executable[index]));
+        }
+      }
+  }
+
+  void fail(const std::string &message) {
+    ++failures_;
+    if (max_failures_ == 0U || failures_ <= max_failures_)
+      std::fprintf(stderr, "FAIL %s\n", message.c_str());
+  }
+
+  std::size_t max_failures_;
+  std::size_t region_words_{};
+  std::size_t translations_{};
+  std::size_t host_words_{};
+  std::size_t failures_{};
+};
+
 void usage() {
   std::fprintf(
       stderr,
@@ -1539,7 +1772,10 @@ void usage() {
       "                     need the real host to have it\n"
       "  --max-failures N   stop after N failures (default 25, 0: never)\n"
       "  --fail-fast        stop at the first failure\n"
-      "  --list             list the selected records without running them\n");
+      "  --list             list the selected records without running them\n"
+      "  --emitted-registers\n"
+      "                     check that neither the gadget region nor a JIT\n"
+      "                     translation of the selected records names x18\n");
 }
 
 [[nodiscard]] std::optional<Options> parse_options(int argc, char **argv) {
@@ -1586,6 +1822,8 @@ void usage() {
       }
     } else if (argument == "--fail-fast") {
       options.max_failures = 1;
+    } else if (argument == "--emitted-registers") {
+      options.emitted_registers = true;
     } else if (argument == "--list") {
       options.list = true;
     } else if (!argument.starts_with("--") && options.pack == nullptr) {
@@ -1644,6 +1882,15 @@ int main(int argc, char **argv) {
     if (records.empty()) {
       std::fprintf(stderr, "no corpus record matches the selection\n");
       return 2;
+    }
+    if (options->emitted_registers) {
+      EmittedRegisterScan scan{options->max_failures};
+      scan.region();
+      scan.translations(records);
+      scan.print_summary(std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - started)
+                             .count());
+      return scan.passed() ? 0 : 1;
     }
     /* The runner owns a full software TLB; keep it off the main stack. */
     const auto runner = std::make_unique<Runner>(corpus, *options);

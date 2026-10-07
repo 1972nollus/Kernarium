@@ -787,10 +787,12 @@ the checkout it was built from at run time. No host source under darwin/ or
 Kernarium/ names x18 outside a comment, whether assembly, an assembly
 contract, inline assembly or a generator: Darwin clears that platform register
 when it interrupts a thread, so a value kept there is lost at a random
-preemption. Outside macOS the configured graph
-holds none of the macOS-only x86-64 JIT, as the x86 section above describes.
-The audit does not prove performance, generated code shape, a kernel boot, or
-guest behavior; those require their owning validation.
+preemption. `arm64-emitted-registers` and `x86-64-jit-emitted-registers`
+hold the emitted code to the same rule, as [`testing.md`](testing.md)
+describes. Outside macOS the configured graph holds none of the macOS-only
+x86-64 JIT, as the x86 section above describes. The audit does not prove
+performance, generated code shape, a kernel boot, or guest behavior; those
+require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on
