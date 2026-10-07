@@ -3,6 +3,7 @@
 #include "cpu/x86_64/cpu_state.hpp"
 #if UML_FEX_ASM_JIT
 #include "cpu/x86_64/jit/fex_engine.hpp"
+#include "fex_emitted_registers.hpp"
 #include "platform/apple/host_features.hpp"
 #else
 #include "cpu/x86_64/gadgets/program.hpp"
@@ -659,6 +660,9 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
  * --require-growth then requires to have happened. */
 uml::cpu::x86_64::jit::FexEngineOptions jit_options{};
 bool require_growth = false;
+/* --emitted-registers: check that no block FEXCore emits for the corpus
+ * names x18 (fex_emitted_registers.hpp). */
+bool check_emitted_registers = false;
 
 /* One engine serves the process, as one serves a vCPU thread. Every case
  * runs in a fresh address-space generation, so no translation, software-TLB
@@ -1449,6 +1453,16 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 	std::uint32_t failures{};
 	std::map<std::string_view, std::uint32_t> expected;
 	std::set<std::string_view> named;
+#if UML_FEX_ASM_JIT
+	uml::testing::fex::EmittedRegisterScan emitted_registers;
+	if (check_emitted_registers) {
+		/* The engine installs FEXCore's executable-memory hooks with its
+		 * first context; wrap them before any case compiles. */
+		(void)jit_harness().begin(uml::cpu::x86_64::ExecutionMode::long64,
+			1);
+		uml::testing::fex::EmittedRegisterScan::install();
+	}
+#endif
 	for (std::uint32_t record_index = 0; record_index < record_count;
 		++record_index) {
 		std::uint8_t kind{};
@@ -1499,6 +1513,11 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 				kind == corpus_kind_repository ?
 					Dispatch::cached : Dispatch::fresh);
 		excluded_class = {};
+#if UML_FEX_ASM_JIT
+		/* Before a later case's space can retire this one's buffers. */
+		if (check_emitted_registers)
+			emitted_registers.scan();
+#endif
 		cases += case_count;
 		if (exclusion == exclusions.end() || result == 2) {
 			failures += result != 0;
@@ -1528,6 +1547,11 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 		print_result("no_growth", 0, 0, {},
 			"no compile outgrew its first code buffer");
 		++failures;
+	}
+	if (check_emitted_registers) {
+		std::cout << "emitted-registers: " << emitted_registers.summary()
+			  << '\n';
+		failures += emitted_registers.passed() ? 0U : 1U;
 	}
 #endif
 	std::cout << "status=" << (failures == 0 ? "passed" : "failed") << '\t'
@@ -1858,6 +1882,9 @@ int main(int argc, char **argv)
 		} else if (option == "--require-growth") {
 			require_growth = true;
 			++index;
+		} else if (option == "--emitted-registers") {
+			check_emitted_registers = true;
+			++index;
 #endif
 		} else {
 			break;
@@ -1891,7 +1918,7 @@ int main(int argc, char **argv)
 	print_result("malformed_input", 0, 0, {},
 #if UML_FEX_ASM_JIT
 		"usage: runner [--exclusions LIST] [--code-size-per-node BYTES] "
-		"[--require-growth] CORPUS | "
+		"[--require-growth] [--emitted-registers] CORPUS | "
 #else
 		"usage: runner [--exclusions LIST] CORPUS | "
 #endif

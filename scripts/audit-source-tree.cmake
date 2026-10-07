@@ -239,25 +239,35 @@ function(uml_audit_shell_cd ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
-# Darwin reserves x18 as the platform register and clears it when it
-# interrupts a thread, so an engine's assembly never keeps a value in it: a
-# preemption between the write and the read loses the value. The entry may
-# still save and restore it beside x19.
+# Darwin reserves x18 as the platform register and clears it whenever it
+# interrupts a thread, so a value kept there is lost at a random preemption.
+# No first-party host source names it outside a comment: not assembly or an
+# assembly contract, not inline assembly, and not a generator that writes
+# either. What a JIT composes at run time is for the emitted-code unit tests.
 function(uml_audit_platform_register ROOT OUT_VIOLATIONS)
+    set(_globs)
+    foreach(_tree IN ITEMS darwin Kernarium)
+        foreach(_extension IN ITEMS
+                S s inc c cc cpp cxx h hh hpp ipp inl m mm py)
+            list(APPEND _globs "${ROOT}/${_tree}/*.${_extension}")
+        endforeach()
+    endforeach()
+    file(GLOB_RECURSE _sources LIST_DIRECTORIES false ${_globs})
     set(_violations)
-    file(GLOB_RECURSE _sources LIST_DIRECTORIES false
-        "${ROOT}/darwin/cpu/x86_64/*.S"
-        "${ROOT}/darwin/cpu/x86_64/*.inc")
     foreach(_path IN LISTS _sources)
+        # A Python line comment starts with #; elsewhere # is a directive.
+        set(_comment "^[ \t]*(/\\*|\\*|//)")
+        if(_path MATCHES "[.]py$")
+            set(_comment "^[ \t]*#")
+        endif()
         file(STRINGS "${_path}" _lines
             REGEX "(^|[^A-Za-z0-9_])[wx]18([^0-9]|$)")
         foreach(_line IN LISTS _lines)
-            if(_line MATCHES "^[ \t]*(stp|ldp)[ \t]+x18,[ \t]*x19," OR
-               _line MATCHES "^[ \t]*(/\\*|\\*|//)")
+            if(_line MATCHES "${_comment}")
                 continue()
             endif()
             list(APPEND _violations
-                "${_path}: assembly keeps a value in x18, which Darwin clears")
+                "${_path}: names x18, which Darwin clears when it interrupts a thread")
             break()
         endforeach()
     endforeach()

@@ -104,8 +104,10 @@ if(TARGET uml_x86_64_jit)
         uml_cpu_executable_memory
         UML::ThirdPartyFEXCore
         UML::CpuContract)
+    # The arm64 tests' register oracle checks FEXCore's emitted code.
     target_include_directories(uml_x86_64_fex_asm_jit_runner PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
     set_target_properties(uml_x86_64_fex_asm_jit_runner PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
     uml_add_unit_test(
@@ -126,6 +128,17 @@ if(TARGET uml_x86_64_jit)
             --code-size-per-node 1 --require-growth
             "${_uml_x86_64_instruction_corpus}"
         LABELS cpu;x86-64)
+    # No block FEXCore emits for the corpus names x18, which Darwin clears
+    # when it interrupts a thread.
+    uml_add_unit_test(
+        NAME x86-64-jit-emitted-registers
+        COMMAND uml_x86_64_fex_asm_jit_runner
+            --exclusions "${CMAKE_CURRENT_SOURCE_DIR}/jit_corpus_exclusions.tsv"
+            --emitted-registers
+            "${_uml_x86_64_instruction_corpus}"
+        LABELS cpu;x86-64)
+    set_tests_properties(x86-64-jit-emitted-registers PROPERTIES
+        TIMEOUT 300)
     # XE's differential harness through the JIT, against the gadget engine's
     # oracle under every MXCSR rounding, DAZ and FTZ setting, with #XM for a
     # denormal operand, and against the gadget engine under MXCSRs that
