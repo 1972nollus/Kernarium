@@ -547,6 +547,57 @@ its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac, and with SVE cases where the host has
 SVE at VL 16.
 
+## SVE trap cases
+
+The AdvSIMD trapped records come from producer unit tests whose
+`check_trap()` derives each expectation from operands with known
+exceptions and the trap contract of
+[`floating_exception.hpp`](../../../../darwin/cpu/arm64/detail/floating_exception.hpp):
+an enabled exception leaves every register and PC as they were, commits
+only the unenabled flags, and gives syndrome EC 0x2c, IL, TFV, and the
+enabled exceptions raised. No hardware observes an SVE trap at
+PSTATE.SM = 0 either: the native records run with every enable clear, and
+in streaming mode FPProcessException() traps only with FEAT_SME_FA64.
+[`tools/arm64-tests/sve-trap-corpus.py`](../../../../tools/arm64-tests/sve-trap-corpus.py)
+applies the same derivation to the SVE floating-point forms and writes the
+`arm64-sve-trap` records, at VL 16 in both page profiles:
+
+- `derived` reruns each completed one-instruction floating-point case of
+  the `arm64-sve-native` records with every enable, with only the first
+  raised one's when it raised several, and with every enable but the
+  raised ones'. Its outcome follows from the exceptions arm64-builder observed
+  with every enable clear; a case that does not trap completes exactly as
+  observed.
+- `authored` holds what no native case pins: divide by zero and input
+  denormal alone, every element's exceptions together, the flags a trap
+  commits, inactive elements that would raise, which complete, and traps
+  that keep a compare's P destination and the V destination of FADDV and
+  FADDA. IEEE 754 arithmetic decides each operand's exceptions.
+
+A trap leaves the SVE state live, as the SVE access trap Linux takes first
+makes it. FPRoundBase() never traps a flush to zero's underflow, and with
+UFE set an exact tiny result underflows; the trap contract decides from an
+execution with every enable clear, so a case sets UFE only when it raised
+underflow with FZ and FZ16 clear.
+
+The step needs no hardware. It runs on a dump after the native SVE step and
+replaces its own records, so it reruns after any change to the native
+records or to the script:
+
+```sh
+python3 -B tools/arm64-tests/build-unit-corpus.py \
+  --dump tests/unit/arm64/corpus/a64_instruction_corpus.pack --text sve.jsonl
+python3 -B tools/arm64-tests/sve-trap-corpus.py sve.jsonl sve-trap.jsonl
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+`provenance.json` records the script and table hashes and the case counts
+under `sve_trap`; `build-unit-corpus.py --check` verifies the hashes, and
+the `arm64-instruction-corpus-sve-trap` tooling test re-derives every
+record from the pack's native records and checks each case against the
+contract.
+
 ## FEAT_AFP cases
 
 FEAT_AFP has no instructions of its own. The virtual CPU implements it

@@ -535,6 +535,13 @@ the host has SVE at that length. Regenerating their outcomes needs such a
 host and runs the oracle twice from clean directories; the corpus README
 describes it.
 
+The `arm64-sve-trap` records hold the SVE floating-point forms with FPCR
+trap enables set. As for the AdvSIMD trapped records, no hardware observes
+them: each is derived from a native case's observed exceptions, or authored
+with operands whose exceptions IEEE 754 arithmetic decides, under the
+emulator's trap contract. The `arm64-instruction-corpus-sve-trap` tooling
+test re-derives them from the native records.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`

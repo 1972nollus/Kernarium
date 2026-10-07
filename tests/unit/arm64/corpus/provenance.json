@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 192026,
+  "cases": 196914,
   "cases_by_event": {
     "breakpoint": 78,
-    "floating-point-trap": 21,
+    "floating-point-trap": 2087,
     "illegal-instruction": 34248,
     "instruction-budget": 186,
     "memory-fault": 11843,
-    "system-call": 145650
+    "system-call": 148472
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 136434,
+    "16k+4k": 141322,
     "4k": 27977
   },
   "coverage": {
@@ -160,11 +160,11 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3357,
-  "pack_bytes": 15000368,
-  "pack_sha256": "ca4caec298ce289a84d79b827132dcc0fbc63ce3943ede505b488f8c188411b5",
+  "pack_bytes": 15059931,
+  "pack_sha256": "448096d9845db5662352816d04f1c092d7508fe0147547d2b9d92fb48998f248",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 155421,
-  "records": 1107,
+  "programs": 156781,
+  "records": 1109,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
@@ -191,7 +191,7 @@
     }
   },
   "state_minimization": {
-    "full": 50667,
+    "full": 55555,
     "narrow": 141359
   },
   "sve_native": {
@@ -211,6 +211,23 @@
     "request_sha256": "7e8f4741fb9e4c9129f920f037b373e77d0ee3facc48a4f666f7b89101e1be12",
     "script": "tools/arm64-tests/sve-native-corpus.py",
     "sha256": "f587b8bd8359dce0d59635920c54a21c7731bc59439495026a7e488cefab6c62",
+    "table": {
+      "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
+      "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
+    },
+    "vl": 16
+  },
+  "sve_trap": {
+    "cases": {
+      "authored": 16,
+      "derived": 4872
+    },
+    "events": {
+      "floating-point-trap": 2066,
+      "system-call": 2822
+    },
+    "script": "tools/arm64-tests/sve-trap-corpus.py",
+    "sha256": "ab959f9edac60b20717b8864efb3e23ed8809e480620f9e4d0ca7bf0390dc314",
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
       "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
