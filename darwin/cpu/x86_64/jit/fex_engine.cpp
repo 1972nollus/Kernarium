@@ -296,6 +296,9 @@ struct Space final {
 	std::size_t split_size{};
 	/* The dispatch ended at a fault of a gather element. */
 	bool gather_fault{};
+	/* The guest address of the last code fetch this dispatch found no
+	 * executable page for, which a fetch fault names. */
+	std::optional<std::uint64_t> fetch_fault;
 	/* The exceptions of an instruction's low part, which its high part
 	 * settles (Embedder.FPPending), and the #XM or #MF a dispatch ended
 	 * at: its vector and error code. */
@@ -504,11 +507,15 @@ FEXCore::HLE::ExecutableRangeInfo EmbeddedSyscallHandler::QueryGuestExecutableRa
 {
 	auto *memory = space_.engine->memory;
 	const auto page = address & guest_page_mask;
-	if (memory == nullptr || !memory->is_executable(page))
+	if (memory == nullptr || !memory->is_executable(page)) {
+		space_.fetch_fault = address;
 		return {};
+	}
 	auto *host = memory->atomic_pointer(page, 1, MemoryAccess::execute);
-	if (host == nullptr)
+	if (host == nullptr) {
+		space_.fetch_fault = address;
 		return {};
+	}
 	space_.hold_code_page(page);
 	return {page, guest_page_size, false, reinterpret_cast<const uint8_t *>(host)};
 }
@@ -1557,6 +1564,7 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 	frame->Embedder.FaultAccess = 0;
 	frame->SynchronousFaultData = {};
 	space->gather_fault = false;
+	space->fetch_fault.reset();
 	frame->State.callret_sp = space->callret.middle();
 
 	const auto host_fpcr = read_fpcr();
@@ -1701,10 +1709,14 @@ JitRunResult FexEngine::dispatch(CpuState &cpu, GuestAddressSpace &memory, const
 	case Core::FAULT_SIGSEGV:
 		if (fault.TrapNo == X86State::X86_TRAPNO_PF) {
 			/* An instruction fetch from a page that is not executable: the
-			 * instruction's first byte, or the page its tail reaches. The
+			 * instruction's first byte, or the page its tail reaches, as
+			 * the fetch found them. The page may have become executable
+			 * since, as when another vCPU's fork replaced its mapping, so
+			 * asking again would name the page after a present one. The
 			 * block that reported it must not outlive the fault, which the
 			 * kernel may resolve. */
-			const auto address = memory.is_executable(cpu.rip) ? (cpu.rip | (guest_page_size - 1)) + 1 : cpu.rip;
+			const auto address = space->fetch_fault ? *space->fetch_fault :
+				memory.is_executable(cpu.rip) ? (cpu.rip | (guest_page_size - 1)) + 1 : cpu.rip;
 			space->invalidate_code(cpu.rip, 16);
 			result.reason = ::uml::cpu::ExitReason::memory_fault;
 			result.fault = {address, MemoryAccess::execute};

@@ -64,7 +64,9 @@ an ordinary load and store of the bounce buffer under the process-wide
 split-operand lock, faulting before anything is stored. A VEX gather translates
 its elements one at a time into a temporary, so on a fault the engine itself
 gathers the elements before the faulting one into the guest state and leaves
-the mask as x86 does.
+the mask as x86 does. A code fetch the static MMU refuses ends the dispatch
+with a fault at the first byte it refused, as the refusal named it: a fork on
+another vCPU can map the page again before the engine reports the fault.
 FEXCore allocates and publishes code only through the executable-memory owner's
 hooks, and its call-return stack, which generated code addresses without a
 bounds check, sits in that owner's guarded data reservation, so running off it
