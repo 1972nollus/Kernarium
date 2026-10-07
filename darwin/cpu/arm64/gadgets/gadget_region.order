@@ -8,3 +8,4 @@ _uml_arm64_gadget_region_cold
 _uml_arm64_gadget_region_afp
 _uml_arm64_gadget_region_veneer
 _uml_arm64_gadget_region_sme
+_uml_arm64_gadget_region_sve

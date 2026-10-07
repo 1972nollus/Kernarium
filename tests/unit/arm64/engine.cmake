@@ -169,6 +169,12 @@
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
     target_link_libraries(uml_arm64_gadget_sme_tests PRIVATE
         uml_arm64_streaming_forms)
+    # The non-streaming SVE control core through injected SVE profiles, and
+    # the selection sweep that keeps it out of streaming programs.
+    uml_add_arm64_unit_test(gadget_sve WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    target_link_libraries(uml_arm64_gadget_sve_tests PRIVATE
+        uml_arm64_sve_forms)
 
     uml_add_arm64_unit_test(gadget_successor_hoist_structure WITHOUT_HARNESS)
     uml_add_arm64_unit_test(static_runtime WITHOUT_HARNESS

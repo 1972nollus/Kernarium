@@ -3,7 +3,7 @@
 
 /* The gadget region: the bank, the sections its gadgets push forwarding
  * variants, cold paths and FEAT_AFP twins into, the island of branches to the
- * helpers outside it, and the SME part, in that order. Every image that
+ * helpers outside it, the SME part and the SVE part, in that order. Every image that
  * carries the engine links UML::GadgetRegionLayout, which merges these
  * sections into __TEXT,__text and puts them first, so the region sits at one
  * image offset whatever else the image holds. The bank starts on a 16 KiB
@@ -21,6 +21,8 @@
  * preceding it: every helper call in the base parts is a branch to its veneer
  * in another section, so a part between them and the island would re-encode
  * each one. Its own helper calls take veneers appended to the island's end.
+ * The SVE part, the non-streaming SVE forms lowered onto AdvSIMD, follows the
+ * SME part for the same reason and so moves neither it nor any base entry.
  * The names are the arm64 engine's own, so the x86-64 engine's sections never
  * interleave with them in an image that carries both. */
 #define GADGET_SECTION_BANK __TEXT,__a64_bank,regular,pure_instructions
@@ -30,20 +32,22 @@
 #define GADGET_SECTION_AFP __TEXT,__a64_afp,regular,pure_instructions
 #define GADGET_SECTION_VENEER __TEXT,__a64_veneer,regular,pure_instructions
 #define GADGET_SECTION_SME __TEXT,__a64_sme,regular,pure_instructions
+#define GADGET_SECTION_SVE __TEXT,__a64_sve,regular,pure_instructions
 
 /* Unreachable bytes ahead of each part's first entry, which set the part's
  * 64-byte phase. The bank's phase is the one the iPad measured fastest with
  * the region pinned: at 16, scalar_mix ran in its slow mode in most launches.
  * The other parts keep the phases their sections had in the shipped
  * KRuntime_6_18_16K at 49a43648, where each began wherever the code before
- * it ended. No host with FEAT_AFP has measured the twins' phase, and no host
- * with SME the SME part's. */
+ * it ended. No host with FEAT_AFP has measured the twins' phase, no host
+ * with SME the SME part's, and no host the SVE part's. */
 #define GADGET_PHASE_BANK 48
 #define GADGET_PHASE_FORWARD 16
 #define GADGET_PHASE_VECTOR_FORWARD 48
 #define GADGET_PHASE_COLD 4
 #define GADGET_PHASE_AFP 0
 #define GADGET_PHASE_SME 0
+#define GADGET_PHASE_SVE 0
 
 /* Zero-size bounds of each part, for the guest sampler's PC test. NAME() is
  * not defined until core_integer.inc. */
@@ -103,6 +107,12 @@ _uml_arm64_gadget_region_\part:
 	.endif
 	gadget_bank_bound uml_arm64_gadget_sme_section_\edge
 	.popsection
+	.pushsection GADGET_SECTION_SVE
+	.ifc \edge,begin
+	gadget_region_start sve, 6, GADGET_PHASE_SVE
+	.endif
+	gadget_bank_bound uml_arm64_gadget_sve_section_\edge
+	.popsection
 .endm
 
 /* Nonzero while engine/sme.inc assembles the GPR memory families a second
@@ -150,5 +160,7 @@ Lveneer_\symbol:
 #include "engine/lse2_alignment.inc"
 /* Only into the SME part, after every base part's code. */
 #include "engine/sme.inc"
+/* Only into the SVE part, after the SME part's code. */
+#include "engine/sve.inc"
 	afp_twin_table_end
 	gadget_bank_bounds end
