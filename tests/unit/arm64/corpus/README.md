@@ -487,9 +487,9 @@ requires to agree with the recorded live bit.
 
 Every native record has `vl` 16, the one vector length outside streaming
 mode, and runs only as the SVE state section above describes. The
-`classify`, `operands`, `memory`, `gather`, and `live` records hold for both
-page profiles: their regions are 16 KiB-aligned multiples of 16 KiB, so
-each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
+`classify`, `operands`, `memory`, `gather`, `live`, and `fpcr` records hold
+for both page profiles: their regions are 16 KiB-aligned multiples of
+16 KiB, so each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
 an access crosses into a 4 KiB page that is unmapped or read-only, and
 holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
 region maps exactly as the guest's does. The 29 SCLAMP-class forms need
@@ -497,6 +497,14 @@ FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
 record them; the SVE/SME records below hold them. The withheld features'
 forms are not in these records either, since their UNDEFINED results belong
 to the absent-feature records.
+
+`fpcr` holds each floating-point form that FPCR affects, at each element
+size, with its sources holding ties, subnormals, NaNs, or values that
+overflow. Each class runs under the FPCR values that vary the controls it
+meets. Ties and overflow get each rounding mode. NaNs get DN clear and
+set. Subnormals get a strength-2 covering array of the rounding mode, FZ,
+DN, and FZ16, so every pair of their values occurs. The V2 has no
+FEAT_AFP, so FPCR.AH, FIZ, and NEP are not sampled here.
 
 The encoding table decides the legality of each row's witness, of its own
 registers, and of a word no row decodes; the hardware decides a free field
