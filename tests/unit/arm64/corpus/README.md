@@ -405,9 +405,10 @@ python3 -B tools/arm64-tests/sme-native-corpus.py --request sme.request
 sme_native_oracle sme.request sme.response                # on the SME host
 python3 -B tools/arm64-tests/sme-native-corpus.py absent.jsonl native.jsonl \
   --response sme.response --response sme.response2
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
-  --output tests/unit/arm64/corpus
 ```
+
+The native floating-point trap step below follows, and its output is
+repacked.
 
 A regeneration that leaves the request unchanged needs no SME host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
@@ -417,6 +418,46 @@ script, table, and request hashes and the outcome counts under `sme_native`,
 `arm64-instruction-corpus-sme-native` tooling test re-derives every case but
 its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac.
+
+## Native floating-point trap cases
+
+The producer's trap checks derived their outcomes from the emulator's former
+trap contract. The hardware decides them now: Apple's cores trap enabled
+floating-point exceptions, and XNU reports one to the native oracle above as
+a bad instruction whose syndrome has EC 0x2c.
+[`tools/arm64-tests/floating-trap-native-corpus.py`](../../../../tools/arm64-tests/floating-trap-native-corpus.py)
+runs, without SME state, every case of the `arm64-floating-trap-scalar` and
+`-vector` records, whose outcomes it replaces, and authored cases, which it
+appends as the `arm64-floating-trap-native` records: flushes to zero and
+exact and inexact tiny results with FPCR.UFE set, several enabled causes
+within an element and across lanes, and what a trap leaves in FPSR and its
+destination. Each authored case names the cause the architecture and the
+reporting priority give it, and the script refuses a response that
+disagrees or whose trap reports more than one cause or changes any state.
+Its docstring lists the cases.
+
+Regenerate on any arm64 Mac, twice from clean directories, and require
+identical responses:
+
+```sh
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py \
+  --request native.jsonl trap.request
+sme_native_oracle trap.request trap.response
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
+  trap.jsonl --response trap.response --response trap.response2
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack trap.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
+request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host
+answers; `--afp-response` adds their records, and the script refuses a
+response from a host without both features. `--carry` copies the current
+outcomes and records when the requests are unchanged. `provenance.json`
+records the script and request hashes, the outcome counts and how many
+rerecorded outcomes changed under `floating_trap_native`, and the
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives
+every case but its outcome.
 
 ## FEAT_AFP cases
 

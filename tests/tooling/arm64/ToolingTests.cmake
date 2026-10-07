@@ -28,6 +28,13 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 300)
 
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-floating-trap-native
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_floating_trap_native.py
+    LABELS cpu
+    TIMEOUT 300)
+
 # The native oracle records the SME corpus cases on an SME host; this test
 # drives its exception path and state transfer with base A64 cases.
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

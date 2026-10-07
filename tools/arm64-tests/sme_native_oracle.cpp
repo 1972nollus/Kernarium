@@ -39,9 +39,10 @@
 //
 // Only an SME host executes an SME instruction of the template, so the
 // oracle also runs requests without SME state on any arm64 Mac, which the
-// arm64-sme-native-oracle tooling test does. XNU reports a trapped
-// floating-point exception as EXC_BAD_INSTRUCTION, with the exception
-// syndrome's EC 0x2c.
+// arm64-sme-native-oracle tooling test does, and so does
+// tools/arm64-tests/floating-trap-native-corpus.py for the corpus's trapped
+// floating-point cases: XNU reports a trapped floating-point exception as
+// EXC_BAD_INSTRUCTION, with the exception syndrome's EC 0x2c.
 
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>

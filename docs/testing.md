@@ -510,6 +510,13 @@ their generator, and `arm64-sme-native-oracle` drives the native oracle with
 base A64 cases on any arm64 Mac. Regenerating their outcomes needs an SME host;
 the corpus README describes it.
 
+The `arm64-floating-trap-native` records, and the outcomes of the
+`arm64-floating-trap-scalar` and `-vector` cases, are trapped floating-point
+exceptions observed on the M1, which traps them natively; any arm64 Mac
+regenerates them with the same oracle. The
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
+cases and holds every trap to one cause and no state change.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`

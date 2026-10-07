@@ -1901,8 +1901,10 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		return event;
 	}
 
-	const auto decision = arm64::detail::decide_floating_exception(
-		cpu.fpcr, original_fpsr, isolated.fpsr);
+	const auto decision = arm64::detail::decide_a64_floating_exception(
+		cpu.fpcr, original_fpsr, isolated.fpsr, instruction,
+		cpu.vectors[(instruction >> 5U) & 31U].bytes,
+		isolated.vectors[instruction & 31U].bytes);
 	if (decision.traps()) {
 		cpu.fpsr = decision.committed_fpsr;
 		floating_point_syndrome_ = decision.syndrome;

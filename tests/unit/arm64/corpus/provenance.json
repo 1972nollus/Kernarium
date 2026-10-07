@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 173298,
+  "cases": 173378,
   "cases_by_event": {
     "breakpoint": 75,
-    "floating-point-trap": 21,
+    "floating-point-trap": 78,
     "illegal-instruction": 34098,
     "instruction-budget": 186,
     "memory-fault": 10490,
-    "system-call": 128428
+    "system-call": 128451
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 118082,
+    "16k+4k": 118162,
     "4k": 27601
   },
   "coverage": {
@@ -149,6 +149,20 @@
       "producers": 452
     }
   },
+  "floating_trap_native": {
+    "cases": 80,
+    "events": {
+      "floating-point-trap": 57,
+      "system-call": 23
+    },
+    "request_sha256": "0457637332e03044c1378ff20307fa022a906f022ca17619b536d53f0e5e311a",
+    "rerecorded": {
+      "cases": 19,
+      "changed": 4
+    },
+    "script": "tools/arm64-tests/floating-trap-native-corpus.py",
+    "sha256": "606db77310f3147b5a65838d2c6b41fb566713968ee9cd42be303156764fe056"
+  },
   "force_include": {
     "file": "tests/unit/arm64/corpus/forced-cases.tsv",
     "sha256": "218c08a25f6fa3001f64a275e84eb5583c263a83747aa7f96fdd43ba7b2a78ef"
@@ -160,11 +174,11 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3355,
-  "pack_bytes": 14688640,
-  "pack_sha256": "d37aacab29d26691ac215a95e379288e6593823f09c969424c90915a268e7d53",
+  "pack_bytes": 14690777,
+  "pack_sha256": "3d55337038a23e19828c78ee0b9910aba03a6fb7be8b87c371dce47ab99e4546",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 144271,
-  "records": 1099,
+  "programs": 144320,
+  "records": 1104,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
@@ -191,7 +205,7 @@
     }
   },
   "state_minimization": {
-    "full": 31939,
+    "full": 32019,
     "narrow": 141359
   },
   "validator_cases": {

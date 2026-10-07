@@ -1525,6 +1525,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "absent_features" in corpus.meta else {}),
         **({"sme_native": corpus.meta["sme_native"]}
            if "sme_native" in corpus.meta else {}),
+        **({"floating_trap_native": corpus.meta["floating_trap_native"]}
+           if "floating_trap_native" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],
@@ -1667,6 +1669,12 @@ def check(options: argparse.Namespace) -> int:
         if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the native "
                          "records)")
+    # So are the native floating-point trap records.
+    trap = corpus.meta.get("floating_trap_native")
+    if trap is not None and sha256(
+            (REPOSITORY / trap["script"]).read_bytes()) != trap["sha256"]:
+        stale.append(trap["script"] + " (not the native trap records' "
+                     "script)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.

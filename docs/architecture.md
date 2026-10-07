@@ -266,6 +266,28 @@ the JIT's native lowering leaves to a helper run in the JIT's own semantic
 slow path, never in another engine; a helper treats any word outside its
 routed classes as a fatal internal error.
 
+With every FPCR trap enable clear, both engines run FP&SIMD data processing
+under the guest's FPCR, and the cost of trapped mode stays out of that path.
+While an enable is set, each FP&SIMD data-processing instruction runs on a
+copy of the vCPU state with FPSR's exception flags and the host's enables
+clear, and `darwin/cpu/arm64/detail/floating_exception.hpp` decides the
+outcome for every engine. If the instruction raised an enabled exception,
+it traps and commits nothing: FPSR, its destination and every other register
+keep their values, flags it raised that are not enabled included. The
+syndrome has TFV set and reports one cause, the first enabled one the
+instruction raised in the order Input Denormal, Invalid Operation, Divide by
+Zero, Overflow, Underflow, Inexact, whichever lane raised it. The
+architecture leaves both choices to the implementation; this is the M1's
+behaviour, measured on its native trapping. Otherwise the copy commits, with
+every flag it raised. The decision follows FPRoundBase(): a flush to zero
+sets FPSR.UFC but never traps, and with UFE set an exact tiny result raises
+Underflow. An execution with UFE clear flags neither case correctly, so the
+header decodes the form's output format and result elements, and evaluates
+each step of an FMAXV, FMINV, FMAXNMV or FMINNMV reduction, which rounds
+every intermediate maximum or minimum. Under FPCR.AH it also knows which
+forms never flush (FMAX and FMIN) and which raise no Underflow of their own
+(the estimate, reciprocal step and BFloat16 multiply-add forms).
+
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
 FEAT_AFP twins into, and an island of veneers. Every image that carries it
