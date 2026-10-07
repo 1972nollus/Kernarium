@@ -16,7 +16,7 @@
  * contract and darwin/cpu/x86_64/gadgets/README.md the rule for changing it.
  *
  * The phases are the 128-byte phases the groups had in the macOS x86_64
- * product at 7fa8dd78, where each began wherever the code before it ended; the
+ * product at 6152e368, where each began wherever the code before it ended; the
  * island was new. Each slot then took 1 KiB beyond its group's phase and size,
  * rounded up to a line. */
 
@@ -48,57 +48,57 @@
 	gadget_slot baked_unary_register,       52, 0x00f100,   0, 0x00000
 	gadget_slot baked_addresses,            56, 0x008c80,   0, 0x00000
 	gadget_slot baked_loads,                52, 0x062b80,   0, 0x00000
-	gadget_slot baked_stores,               52, 0x03ce00,  24, 0x09200
-	gadget_slot baked_memory_arith,         24, 0x3c7580,  88, 0x2c980
+	gadget_slot baked_stores,               52, 0x03ce00,   0, 0x09200
+	gadget_slot baked_memory_arith,         24, 0x3c7580,  64, 0x2c900
 	gadget_slot baked_lea,                  96, 0x004b80,   0, 0x00000
-	gadget_slot baked_push_pop,             96, 0x001e80,  24, 0x00600
-	gadget_slot load_store,                 44, 0x006700,  24, 0x01200
-	gadget_slot core_integer,               68, 0x01c580,   0, 0x04b80
-	gadget_slot strings,                     4, 0x005c00,  96, 0x00780
-	gadget_slot shifts,                     64, 0x00bf80, 112, 0x01c00
-	gadget_slot multiplication,             88, 0x001800,  80, 0x00800
-	gadget_slot division,                    0, 0x000d80,  24, 0x00600
-	gadget_slot atomics,                    12, 0x002a00, 120, 0x00900
-	gadget_slot bits,                       36, 0x008c00,   0, 0x01780
-	gadget_slot scalar_extensions,          16, 0x001580,  68, 0x00800
-	gadget_slot bmi,                        56, 0x002680,  96, 0x00a80
-	gadget_slot floating_simd,             124, 0x001c00, 120, 0x00900
-	gadget_slot vector_moves,               28, 0x001100,  44, 0x00700
-	gadget_slot vector_lanes,               80, 0x000d00,  60, 0x00600
-	gadget_slot vector_shuffle,             68, 0x003f80,  96, 0x02080
-	gadget_slot vector_float,              116, 0x022500,  32, 0x06d00
-	gadget_slot vector_convert,             76, 0x002f00,   8, 0x00b00
-	gadget_slot vector_scalar_convert,      68, 0x002700,  32, 0x00880
-	gadget_slot vector_3dnow,              124, 0x002a80,  88, 0x00a80
-	gadget_slot vector_fma,                 76, 0x021d00, 112, 0x2ad00
-	gadget_slot vector_aes,                104, 0x001180,  96, 0x00680
-	gadget_slot vector_sha,                120, 0x000f00, 124, 0x00600
-	gadget_slot vector_integer,            100, 0x011700, 100, 0x02d80
-	gadget_slot vector_integer_map2,        92, 0x00c180,  44, 0x02380
-	gadget_slot vector_map2_masked_memory, 120, 0x000e80,  28, 0x00600
-	gadget_slot vector_map2_misc,          116, 0x002f00, 124, 0x00b80
-	gadget_slot vector_gather,              16, 0x000f00,  72, 0x00680
-	gadget_slot vector_map3_lanes,           8, 0x001480,  40, 0x00700
-	gadget_slot vector_map3_shuffle,         4, 0x006200,  80, 0x01000
-	gadget_slot vector_map3_round,         112, 0x002680,  16, 0x00680
-	gadget_slot vector_map3_math,           84, 0x001580,  40, 0x02000
-	gadget_slot vector_map3_crypto,        100, 0x000f00,  96, 0x00580
-	gadget_slot vector_map3_strings,        88, 0x001400,  80, 0x00580
-	gadget_slot vector_extract,              0, 0x000b00,  64, 0x00500
-	gadget_slot vector_test,                 8, 0x001000, 116, 0x00600
-	gadget_slot vector_compare,              4, 0x000c00,  92, 0x00580
+	gadget_slot baked_push_pop,             96, 0x001e80,   0, 0x00600
+	gadget_slot load_store,                 44, 0x006700,   0, 0x01200
+	gadget_slot core_integer,               68, 0x01c580, 104, 0x04c00
+	gadget_slot strings,                     4, 0x005c00,  72, 0x00780
+	gadget_slot shifts,                     64, 0x00bf80,  88, 0x01c00
+	gadget_slot multiplication,             88, 0x001800,  56, 0x00780
+	gadget_slot division,                    0, 0x000d80,   0, 0x00600
+	gadget_slot atomics,                    12, 0x002a00,  96, 0x00900
+	gadget_slot bits,                       36, 0x008c00, 104, 0x01800
+	gadget_slot scalar_extensions,          16, 0x001580,  44, 0x00800
+	gadget_slot bmi,                        56, 0x002680,  72, 0x00a80
+	gadget_slot floating_simd,             124, 0x001c00,  96, 0x00900
+	gadget_slot vector_moves,               28, 0x001100,  20, 0x00700
+	gadget_slot vector_lanes,               80, 0x000d00,  36, 0x00600
+	gadget_slot vector_shuffle,             68, 0x003f80,  72, 0x02080
+	gadget_slot vector_float,              116, 0x022500,   8, 0x06c80
+	gadget_slot vector_convert,             76, 0x002f00, 112, 0x00b80
+	gadget_slot vector_scalar_convert,      68, 0x002700,   8, 0x00880
+	gadget_slot vector_3dnow,              124, 0x002a80,  64, 0x00a80
+	gadget_slot vector_fma,                 76, 0x021d00,  88, 0x2ad00
+	gadget_slot vector_aes,                104, 0x001180,  72, 0x00680
+	gadget_slot vector_sha,                120, 0x000f00, 100, 0x00600
+	gadget_slot vector_integer,            100, 0x011700,  76, 0x02d80
+	gadget_slot vector_integer_map2,        92, 0x00c180,  20, 0x02380
+	gadget_slot vector_map2_masked_memory, 120, 0x000e80,   4, 0x00600
+	gadget_slot vector_map2_misc,          116, 0x002f00, 100, 0x00b80
+	gadget_slot vector_gather,              16, 0x000f00,  48, 0x00680
+	gadget_slot vector_map3_lanes,           8, 0x001480,  16, 0x00700
+	gadget_slot vector_map3_shuffle,         4, 0x006200,  56, 0x00f80
+	gadget_slot vector_map3_round,         112, 0x002680, 120, 0x00700
+	gadget_slot vector_map3_math,           84, 0x001580,  16, 0x02000
+	gadget_slot vector_map3_crypto,        100, 0x000f00,  72, 0x00580
+	gadget_slot vector_map3_strings,        88, 0x001400,  56, 0x00580
+	gadget_slot vector_extract,              0, 0x000b00,  40, 0x00500
+	gadget_slot vector_test,                 8, 0x001000,  92, 0x00600
+	gadget_slot vector_compare,              4, 0x000c00,  68, 0x00580
 	gadget_slot vector_bitfield,            68, 0x000500,   0, 0x00000
-	gadget_slot vector_mask_store,         108, 0x000900,  76, 0x00500
-	gadget_slot control,                    64, 0x008500,  68, 0x01580
-	gadget_slot legacy_control,              8, 0x002980,   4, 0x00700
-	gadget_slot legacy_system,              28, 0x001e00,  60, 0x00780
-	gadget_slot extended_state,             40, 0x000e80,  24, 0x00580
+	gadget_slot vector_mask_store,         108, 0x000900,  52, 0x00500
+	gadget_slot control,                    64, 0x008500,  44, 0x01500
+	gadget_slot legacy_control,              8, 0x002980, 108, 0x00780
+	gadget_slot legacy_system,              28, 0x001e00,  36, 0x00700
+	gadget_slot extended_state,             40, 0x000e80,   0, 0x00500
 	gadget_slot x87_common,                 56, 0x000480,   0, 0x00000
 	gadget_slot x87_state,                  68, 0x001500,   0, 0x00000
-	gadget_slot x87_memory,                 20, 0x003700,   8, 0x00d80
-	gadget_slot x87_arithmetic,             36, 0x006d80,  16, 0x00c00
+	gadget_slot x87_memory,                 20, 0x003700, 112, 0x00d80
+	gadget_slot x87_arithmetic,             36, 0x006d80, 120, 0x00c00
 	gadget_slot x87_transcendental,         92, 0x001c00,   0, 0x00000
-	gadget_slot system,                     16, 0x000d80,  16, 0x00580
+	gadget_slot system,                     16, 0x000d80, 120, 0x00580
 
 /* The parts' offset-0 labels, which the order file names. The cold part's is
  * also what a host sample of a cold path reads, its own labels being
