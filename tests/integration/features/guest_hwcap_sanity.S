@@ -12,7 +12,11 @@
  *
  * This executes one instance of each advertised family with inputs whose
  * results are checked against constants derived by hand from DDI0487, and
- * exits with a distinct status per family so a failure names itself. It reads
+ * exits with a distinct status per family so a failure names itself. The
+ * SME families of the advertised profile (FEAT_SME and its F32F32, B16F32,
+ * F16F32, I8I32, F64F64 and I16I64 outer products) run in streaming mode at
+ * whatever vector length RDSVL reports; each stores its results and leaves
+ * streaming mode before anything is compared. It reads
  * AT_HWCAP and AT_HWCAP2 from its auxiliary vector and skips each family the
  * kernel does not advertise, so an engine is held to exactly what it
  * advertises. It is a correctness check, not a benchmark.
@@ -28,6 +32,10 @@
  * An assembler directive rather than a -march flag, so the file builds the
  * same way from any entry point. */
 	.arch armv8.5-a+fp16+dotprod+rdm+fp16fml+rcpc
+	.arch_extension sme
+	.arch_extension sme-f64f64
+	.arch_extension sme-i16i64
+	.arch_extension bf16
 
 	.equ NR_WRITE,		64
 	.equ NR_EXIT_GROUP,	94
@@ -62,6 +70,13 @@
 	.equ E_MOPS,		27
 	.equ E_AFP,		28
 	.equ E_RPRES,		29
+	.equ E_SME,		30
+	.equ E_SME_F32F32,	31
+	.equ E_SME_B16F32,	32
+	.equ E_SME_F16F32,	33
+	.equ E_SME_I8I32,	34
+	.equ E_SME_F64F64,	35
+	.equ E_SME_I16I64,	36
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -87,6 +102,13 @@
 	.equ HWCAP2_ECV,	19
 	.equ HWCAP2_AFP,	20
 	.equ HWCAP2_RPRES,	21
+	.equ HWCAP2_SME,	23
+	.equ HWCAP2_SME_I16I64,	24
+	.equ HWCAP2_SME_F64F64,	25
+	.equ HWCAP2_SME_I8I32,	26
+	.equ HWCAP2_SME_F16F32,	27
+	.equ HWCAP2_SME_B16F32,	28
+	.equ HWCAP2_SME_F32F32,	29
 	.equ HWCAP2_CSSC,	34
 	.equ HWCAP2_MOPS,	43
 
@@ -106,6 +128,44 @@
 	svc	#0
 	mov	x0, #\code
 	b	.Lexit
+	.endm
+
+	/* Every element of the first slice of ZA tile 0, stored to sme_row, has
+	 * the value in \expected, for the RDSVL #1 bytes in x23. */
+	.macro check_row width, expected, label
+	mov	x9, #0
+9:
+	.if \width == 4
+	ldr	w10, [x20, x9]
+	cmp	w10, \expected
+	.else
+	ldr	x10, [x20, x9]
+	cmp	x10, \expected
+	.endif
+	b.ne	\label
+	add	x9, x9, #\width
+	cmp	x9, x23
+	b.lo	9b
+	.endm
+
+	/* Starts one outer-product family: SM and ZA on, ZA zeroed, every
+	 * element of P0 true. */
+	.macro sme_enter skip, bit
+	tbz	x29, #\bit, \skip
+	rdsvl	x23, #1
+	adrp	x20, sme_row
+	add	x20, x20, :lo12:sme_row
+	smstart
+	zero	{za}
+	ptrue	p0.b
+	.endm
+
+	/* Stores the first slice of ZA tile 0, which is ZA's first row at
+	 * every element size, and leaves streaming mode. */
+	.macro sme_leave
+	mov	w12, #0
+	str	za[w12, 0], [x20]
+	smstop
 	.endm
 
 	.section .text
@@ -623,6 +683,144 @@ _start:
 	msr	fpsr, xzr
 .Lskip_rpres:
 
+	/* FEAT_SME: SMSTART turns on SM and ZA, so SVCR reads 3; RDSVL and a
+	 * streaming CNTB report the same vector length, one an implementation
+	 * can have; TPIDR2_EL0 holds what is written to it; LDR and STR of a
+	 * ZA vector round-trip; MOVA reads that slice into Z3, a streaming
+	 * SVE ADD and ST1B store it plus one; SMSTOP leaves SVCR 0. */
+	tbz	x29, #HWCAP2_SME, .Lskip_sme
+	adrp	x19, sme_source
+	add	x19, x19, :lo12:sme_source
+	adrp	x20, sme_row
+	add	x20, x20, :lo12:sme_row
+	adrp	x21, sme_sum
+	add	x21, x21, :lo12:sme_sum
+	mov	x9, #0
+	mov	w10, #3
+.Lsme_fill:
+	strb	w10, [x19, x9]
+	add	w10, w10, #7
+	add	x9, x9, #1
+	cmp	x9, #256
+	b.lo	.Lsme_fill
+	mov	x13, #0x5a5a
+	movk	x13, #0x1234, lsl #48
+	smstart
+	mrs	x22, svcr
+	rdsvl	x23, #1
+	cntb	x24
+	msr	tpidr2_el0, x13
+	mrs	x25, tpidr2_el0
+	msr	tpidr2_el0, xzr
+	mov	w12, #0
+	ldr	za[w12, 0], [x19]
+	str	za[w12, 0], [x20]
+	ptrue	p0.b
+	mova	z3.b, p0/m, za0h.b[w12, 0]
+	add	z3.b, z3.b, #1
+	st1b	{z3.b}, p0, [x21]
+	smstop
+	mrs	x26, svcr
+	cmp	x22, #3
+	b.ne	.Lfail_sme
+	cbnz	x26, .Lfail_sme
+	cmp	x23, x24
+	b.ne	.Lfail_sme
+	cmp	x23, #16
+	b.lo	.Lfail_sme
+	cmp	x23, #256
+	b.hi	.Lfail_sme
+	sub	x9, x23, #1
+	tst	x23, x9
+	b.ne	.Lfail_sme
+	cmp	x25, x13
+	b.ne	.Lfail_sme
+	mov	x9, #0
+.Lsme_compare:
+	ldrb	w10, [x19, x9]
+	ldrb	w11, [x20, x9]
+	cmp	w10, w11
+	b.ne	.Lfail_sme
+	ldrb	w11, [x21, x9]
+	add	w10, w10, #1
+	and	w10, w10, #0xff
+	cmp	w10, w11
+	b.ne	.Lfail_sme
+	add	x9, x9, #1
+	cmp	x9, x23
+	b.lo	.Lsme_compare
+.Lskip_sme:
+
+	/* FEAT_SME_F32F32: FMOPA of 1.5 and 2.0 in every single-precision
+	 * element gives 3.0. */
+	sme_enter .Lskip_sme_f32f32, HWCAP2_SME_F32F32
+	fmov	z1.s, #1.5
+	fmov	z2.s, #2.0
+	fmopa	za0.s, p0/m, p0/m, z1.s, z2.s
+	sme_leave
+	mov	w11, #0x40400000		/* 3.0 */
+	check_row 4, w11, .Lfail_sme_f32f32
+.Lskip_sme_f32f32:
+
+	/* FEAT_SME_B16F32: BFMOPA adds the two BFloat16 products 1.5 x 2.5
+	 * into each single-precision element: 7.5. */
+	sme_enter .Lskip_sme_b16f32, HWCAP2_SME_B16F32
+	mov	w9, #0x3fc0			/* 1.5 */
+	dup	z1.h, w9
+	mov	w9, #0x4020			/* 2.5 */
+	dup	z2.h, w9
+	bfmopa	za0.s, p0/m, p0/m, z1.h, z2.h
+	sme_leave
+	mov	w11, #0x40f00000		/* 7.5 */
+	check_row 4, w11, .Lfail_sme_b16f32
+.Lskip_sme_b16f32:
+
+	/* FEAT_SME_F16F32: the half-precision FMOPA does the same: 7.5. */
+	sme_enter .Lskip_sme_f16f32, HWCAP2_SME_F16F32
+	fmov	z1.h, #1.5
+	fmov	z2.h, #2.5
+	fmopa	za0.s, p0/m, p0/m, z1.h, z2.h
+	sme_leave
+	mov	w11, #0x40f00000		/* 7.5 */
+	check_row 4, w11, .Lfail_sme_f16f32
+.Lskip_sme_f16f32:
+
+	/* FEAT_SME_I8I32: SMOPA adds four signed byte products -3 x 5 into
+	 * each 32-bit element: -60. */
+	sme_enter .Lskip_sme_i8i32, HWCAP2_SME_I8I32
+	dup	z1.b, #-3
+	dup	z2.b, #5
+	smopa	za0.s, p0/m, p0/m, z1.b, z2.b
+	sme_leave
+	mov	w11, #-60
+	check_row 4, w11, .Lfail_sme_i8i32
+.Lskip_sme_i8i32:
+
+	/* FEAT_SME_F64F64: FMOPA of 1.5 and 2.0 in every double-precision
+	 * element gives 3.0. */
+	sme_enter .Lskip_sme_f64f64, HWCAP2_SME_F64F64
+	fmov	z1.d, #1.5
+	fmov	z2.d, #2.0
+	fmopa	za0.d, p0/m, p0/m, z1.d, z2.d
+	sme_leave
+	mov	x11, #0x4008000000000000	/* 3.0 */
+	check_row 8, x11, .Lfail_sme_f64f64
+.Lskip_sme_f64f64:
+
+	/* FEAT_SME_I16I64: SMOPA adds four signed halfword products
+	 * -300 x 1000 into each 64-bit element: -1,200,000. */
+	sme_enter .Lskip_sme_i16i64, HWCAP2_SME_I16I64
+	mov	w9, #-300
+	dup	z1.h, w9
+	mov	w9, #1000
+	dup	z2.h, w9
+	smopa	za0.d, p0/m, p0/m, z1.h, z2.h
+	sme_leave
+	movn	x11, #0x12, lsl #16
+	movk	x11, #0xb080			/* -1,200,000 */
+	check_row 8, x11, .Lfail_sme_i16i64
+.Lskip_sme_i16i64:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -660,6 +858,13 @@ _start:
 .Lfail_mops:		fail E_MOPS, msg_mops
 .Lfail_afp:		fail E_AFP, msg_afp
 .Lfail_rpres:		fail E_RPRES, msg_rpres
+.Lfail_sme:		fail E_SME, msg_sme
+.Lfail_sme_f32f32:	fail E_SME_F32F32, msg_sme_f32f32
+.Lfail_sme_b16f32:	fail E_SME_B16F32, msg_sme_b16f32
+.Lfail_sme_f16f32:	fail E_SME_F16F32, msg_sme_f16f32
+.Lfail_sme_i8i32:	fail E_SME_I8I32, msg_sme_i8i32
+.Lfail_sme_f64f64:	fail E_SME_F64F64, msg_sme_f64f64
+.Lfail_sme_i16i64:	fail E_SME_I16I64, msg_sme_i16i64
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -786,6 +991,20 @@ msg_afp:
 	.ascii "FAIL afp        \n"
 msg_rpres:
 	.ascii "FAIL rpres      \n"
+msg_sme:
+	.ascii "FAIL sme        \n"
+msg_sme_f32f32:
+	.ascii "FAIL smef32f32  \n"
+msg_sme_b16f32:
+	.ascii "FAIL smeb16f32  \n"
+msg_sme_f16f32:
+	.ascii "FAIL smef16f32  \n"
+msg_sme_i8i32:
+	.ascii "FAIL smei8i32   \n"
+msg_sme_f64f64:
+	.ascii "FAIL smef64f64  \n"
+msg_sme_i16i64:
+	.ascii "FAIL smei16i64  \n"
 success_message:
 	.ascii "OK\n"
 
@@ -793,3 +1012,10 @@ success_message:
 	.p2align 4
 scratch:
 	.space 64
+	/* The largest vector length is 256 bytes. */
+sme_source:
+	.space 256
+sme_row:
+	.space 256
+sme_sum:
+	.space 256
