@@ -1153,6 +1153,9 @@ struct Outcome final {
   std::size_t instructions{};
   MemoryFault fault{};
   std::uint32_t syndrome{};
+  /* In the library lane, the SVE words the library executed after the
+   * gadget engine exited on them. */
+  std::size_t library_exits{};
 };
 
 /* The production engines for one harness option set. Options that force a
@@ -1307,6 +1310,7 @@ private:
       if (row == nullptr || !arm64::detail::sve_semantics_covers(*row))
         break;
       LibraryMemory guest;
+      ++outcome.library_exits;
       const auto executed =
           arm64::detail::execute_sve(outcome.cpu, word, *row, guest);
       outcome.fault = {executed.fault_address, executed.access};
@@ -1373,10 +1377,12 @@ struct Counts final {
   std::size_t jit_unavailable{};
   /* SVE cases: those the library lane ran, those whose features its
    * virtual CPU lacks, and those with a word whose form it does not
-   * cover. */
+   * cover; and the SVE words the library executed for the lane's gadget
+   * engine, which runs those it implements itself. */
   std::size_t library{};
   std::size_t library_skipped_host_feature{};
   std::size_t library_uncovered{};
+  std::size_t library_exits{};
   std::map<std::string_view, std::size_t> library_missing_features;
   std::size_t failures{};
   std::map<std::string_view, std::size_t> missing_features;
@@ -1699,6 +1705,7 @@ private:
       ++(lane == Lane::gadgets ? counts_.gadgets
          : lane == Lane::jit   ? counts_.jit
                                : counts_.library);
+      counts_.library_exits += outcome.library_exits;
       if (auto failure =
               check(test_case, program, *initial, *expected, outcome, regions,
                     {record.svl, expected_sme, task})) {
@@ -2219,12 +2226,13 @@ int main(int argc, char **argv) {
                 "jit=%zu jit-skipped-by-host-feature=%zu "
                 "jit-unavailable=%zu library=%zu "
                 "library-skipped-by-host-feature=%zu "
-                "library-skipped-uncovered=%zu failures=%zu%s %.1fs\n",
+                "library-skipped-uncovered=%zu library-exits=%zu "
+                "failures=%zu%s %.1fs\n",
                 page_size / 1024U, counts.records, counts.cases, counts.gadgets,
                 counts.gadgets_skipped_host_feature, counts.jit,
                 counts.jit_skipped_host_feature, counts.jit_unavailable,
                 counts.library, counts.library_skipped_host_feature,
-                counts.library_uncovered, counts.failures,
+                counts.library_uncovered, counts.library_exits, counts.failures,
                 completed ? "" : " (stopped at the failure limit)", elapsed);
     if (!counts.gadgets_missing_features.empty()) {
       std::printf("gadgets host-feature skips:");
