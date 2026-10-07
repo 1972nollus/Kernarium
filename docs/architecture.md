@@ -275,6 +275,11 @@ engine header and works on `CpuState` alone. It reaches guest memory only
 through the caller's translation interface. It never changes PC, and it marks
 the SVE state live. A reserved bitmask immediate gives the
 illegal-instruction exit. A faulting access leaves what the hardware leaves.
+A floating-point form computes each active element with the host's own
+instruction under the guest FPCR, so inactive elements raise nothing; while
+an FPCR trap enable is set it runs as AdvSIMD's transactional path does, and
+an enabled exception restores Z, V and P, commits only the unenabled flags,
+and gives the floating-point trap.
 The forms that `sve_semantics_covers()` names are its routed classes; any
 other word is a fatal internal error. No product links the library until an
 engine calls it.

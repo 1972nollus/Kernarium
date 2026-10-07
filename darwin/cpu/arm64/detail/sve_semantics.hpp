@@ -130,10 +130,13 @@ struct SveResult final {
  * the virtual CPU's features, at PSTATE.SM = 0. The caller holds no newer
  * guest FP state in a native FP environment than CpuState does; the library
  * makes the lazily loaded FP state accessible itself, marks the task's SVE
- * state live unless the word is undefined, and never changes PC. A fault
- * or a floating-point trap leaves the architectural state as it was, but
- * for the cumulative FPSR flags a trap commits and the live mark. Any
- * other word, or a row the library does not cover, is a fatal internal
+ * state live unless the word is undefined, and never changes PC. A
+ * floating-point form raises the cumulative FPSR flags of its active
+ * elements only, and while an FPCR trap enable is set it traps when one of
+ * them raises an enabled exception, as AdvSIMD's transactional path does.
+ * A fault or a floating-point trap leaves the architectural state as it
+ * was, but for the cumulative FPSR flags a trap commits and the live mark.
+ * Any other word, or a row the library does not cover, is a fatal internal
  * error that changes nothing.
  */
 [[nodiscard]] SveResult execute_sve(CpuState &cpu, std::uint32_t word,

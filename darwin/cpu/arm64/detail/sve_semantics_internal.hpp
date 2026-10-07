@@ -311,5 +311,6 @@ using Handler = SveResult (*)(Context &);
 [[nodiscard]] Handler integer_handler(std::uint16_t form) noexcept;
 [[nodiscard]] Handler wide_handler(std::uint16_t form) noexcept;
 [[nodiscard]] Handler permute_handler(std::uint16_t form) noexcept;
+[[nodiscard]] Handler floating_handler(std::uint16_t form) noexcept;
 
 } // namespace uml::cpu::arm64::detail::sve_semantics

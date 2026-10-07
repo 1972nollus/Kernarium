@@ -6,6 +6,8 @@
  */
 #include "sve_semantics_internal.hpp"
 
+#include "cpu/arm64/detail/floating_exception.hpp"
+
 namespace uml::cpu::arm64::detail {
 
 namespace sve_semantics {
@@ -76,7 +78,7 @@ namespace {
 [[nodiscard]] Handler handler_for(std::uint16_t form) noexcept
 {
 	for (const auto lookup : {predicate_handler, integer_handler,
-		     wide_handler, permute_handler})
+		     wide_handler, permute_handler, floating_handler})
 		if (const Handler handler = lookup(form); handler != nullptr)
 			return handler;
 	return nullptr;
@@ -86,6 +88,37 @@ namespace {
 {
 	return (row.form & sme_form_sme_section) == 0U &&
 		row.non_streaming_requirement != 0U;
+}
+
+/*
+ * A floating-point form while an FPCR trap enable is set: AdvSIMD's
+ * transactional path (the gadget and JIT executors). The form runs with
+ * the cumulative flags clear; when its active elements raised an enabled
+ * exception, the registers floating-point forms write (Z, V and P) return
+ * to their old values, FPSR gains only the raised flags that are not
+ * enabled, and the trap carries the raised enabled ones.
+ */
+[[nodiscard]] SveResult execute_trapping(
+	Context &context, Handler handler) noexcept
+{
+	CpuState &cpu = context.cpu;
+	const auto vectors = cpu.vectors;
+	const auto predicates = cpu.sve_p;
+	const std::uint32_t original_fpsr = cpu.fpsr;
+	cpu.fpsr &= ~fpsr_exception_cumulative_mask;
+	const SveResult result = handler(context);
+	const auto decision =
+		decide_floating_exception(cpu.fpcr, original_fpsr, cpu.fpsr);
+	if (result.event == SveEvent::retired && decision.traps()) {
+		cpu.vectors = vectors;
+		cpu.sve_p = predicates;
+		cpu.fpsr = decision.committed_fpsr;
+		return {.event = SveEvent::floating_point_trap,
+			.syndrome = decision.syndrome};
+	}
+	cpu.fpsr = (cpu.fpsr & ~fpsr_exception_cumulative_mask) |
+		(decision.committed_fpsr & fpsr_exception_cumulative_mask);
+	return result;
 }
 
 } // namespace
@@ -109,7 +142,11 @@ SveResult execute_sve(CpuState &cpu, std::uint32_t word, const SmeEncoding &row,
 		return fatal();
 	cpu.access_fp_state();
 	Context context{cpu, word, row, memory};
-	const SveResult result = handler(context);
+	const SveResult result =
+		(cpu.fpcr & fpcr_exception_enable_mask) != 0U &&
+			floating_handler(row.form) != nullptr ?
+		execute_trapping(context, handler) :
+		handler(context);
 	if (result.event != SveEvent::fatal &&
 		result.event != SveEvent::undefined)
 		cpu.sve_live = 1;
