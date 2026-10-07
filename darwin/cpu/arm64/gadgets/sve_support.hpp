@@ -6,9 +6,9 @@
 namespace uml::cpu::arm64::gadgets {
 
 /* How much of the non-streaming SVE profile the gadget engine implements:
- * none of it yet. Every SVE word outside streaming mode is the
- * illegal-instruction exit, and the engine presents no SVE to its guest
- * (sve_host_for_support). */
-inline constexpr SveSupport sve_support = SveSupport::none;
+ * the control core (program_builder_sve.cpp), with every other SVE word
+ * outside streaming mode the illegal-instruction exit. Below complete the
+ * engine presents no SVE to its guest (sve_host_for_support). */
+inline constexpr SveSupport sve_support = SveSupport::control;
 
 } // namespace uml::cpu::arm64::gadgets

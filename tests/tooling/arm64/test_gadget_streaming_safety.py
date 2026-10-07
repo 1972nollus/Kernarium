@@ -17,7 +17,9 @@ mode
   FP&SIMD words (cpu/arm64/detail/sme_encodings.hpp);
 - calls a helper outside the region, through its veneer, or branches to a
   register other than a return or a gadget dispatch; or
-- leaves the region, or reaches a zero word.
+- leaves the region up to the SME part's end, so reaches the SVE part,
+  which follows it and runs only outside streaming mode, or reaches a zero
+  word.
 
 usage: test_gadget_streaming_safety.py IMAGE...
 """

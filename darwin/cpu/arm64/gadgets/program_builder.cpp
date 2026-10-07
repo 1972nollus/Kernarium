@@ -85,6 +85,7 @@ BuildResult Builder::build(
 	InlineSuffixes suffixes{};
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
+	bool program_holds_sve = false;
 	/* A transfer without a PC word names its instruction by a 16-bit
 	 * position in the block, and the same cap bounds every packed inline
 	 * suffix to sixteen bits. */
@@ -102,7 +103,8 @@ BuildResult Builder::build(
 	const auto finish = [&](std::size_t retired) {
 		resolve_inline_suffixes(words, suffixes, retired);
 		return Program{guest_address, retired, std::move(words),
-			program_accesses_fp_state && !streaming};
+			program_accesses_fp_state && !streaming,
+			program_holds_sve && !streaming};
 	};
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	const void *previous_gadget = nullptr;
@@ -144,6 +146,7 @@ BuildResult Builder::build(
 			window.subspan(compiled + 1),
 			compiled,
 			program_accesses_fp_state,
+			program_holds_sve,
 			words,
 			resolve_link,
 			resolve_indirect_link,
