@@ -146,6 +146,7 @@ constexpr std::size_t uml_gadget_resident_generations =
 
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
+extern "C" void uml_arm64_gadget_sve_link_entry();
 
 class CountingResource final : public std::pmr::memory_resource {
 public:
@@ -887,12 +888,14 @@ private:
 		std::uint8_t source_word_count{};
 		bool complete{};
 		bool accesses_fp_state{};
+		bool holds_sve{};
 
 		/* The stream follows the body, and the guest words it is
 		 * validated against follow the stream. A block that accesses
 		 * FP/SIMD state is linked to through one fp_link_entry word in
-		 * front of its stream, which falls through into it, so its link
-		 * record needs no prefix of its own. */
+		 * front of its stream, or sve_link_entry for one that holds a
+		 * non-streaming SVE word, which falls through into it, so its
+		 * link record needs no prefix of its own. */
 		[[nodiscard]] std::size_t entry_words() const noexcept
 		{
 			return accesses_fp_state ? 1U : 0U;
@@ -945,7 +948,7 @@ private:
 					word_count}};
 			return BuildResult{arm64::gadgets::Program{guest_address,
 					instruction_count, std::move(view),
-					accesses_fp_state},
+					accesses_fp_state, holds_sve},
 				complete, stop_address, stop_instruction};
 		}
 	};
@@ -1212,10 +1215,13 @@ private:
 				static_cast<std::uint8_t>(validation.size()),
 			.complete = built.complete,
 			.accesses_fp_state = program.accesses_fp_state(),
+			.holds_sve = program.holds_sve(),
 		};
 		if (entry != 0)
 			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
-				uml_arm64_gadget_fp_link_entry);
+				program.holds_sve() ?
+					uml_arm64_gadget_sve_link_entry :
+					uml_arm64_gadget_fp_link_entry);
 		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
 			body->source_words());

@@ -288,6 +288,32 @@ every intermediate maximum or minimum. Under FPCR.AH it also knows which
 forms never flush (FMAX and FMIN) and which raise no Underflow of their own
 (the estimate, reciprocal step and BFloat16 multiply-add forms).
 
+The non-streaming SVE semantic library,
+[`cpu/arm64/detail/sve_semantics.hpp`](../darwin/cpu/arm64/detail/sve_semantics.hpp),
+is shared C++ semantics rather than another engine. It executes the SVE
+profile's words at PSTATE.SM = 0 and VL 16, routed by the generated encoding
+table, for an engine's forms that it does not lower inline. It includes no
+engine header and works on `CpuState` alone. It reaches guest memory only
+through the caller's translation interface. It never changes PC, and it marks
+the SVE state live. A reserved bitmask immediate gives the
+illegal-instruction exit. A memory form faults at the first byte, in the
+pseudocode's access order, that does not translate, and checks an SP base's
+16-byte alignment before any access, also with no element active. A fault
+leaves what arm64-builder's Neoverse V2 leaves: a load changes no register, a
+store writes its footprint's 16-byte pieces in order up to the faulting one,
+and a scatter its elements in order up to the faulting one. A first-fault
+load's later elements, and a non-fault load's every element, clear FFR from
+the first that does not translate instead of faulting.
+A floating-point form computes each active element with the host's own
+instruction under the guest FPCR, so inactive elements raise nothing; while
+an FPCR trap enable is set it runs as AdvSIMD's transactional path does, and
+the same header decides from the flags it raised with every enable clear:
+an enabled exception restores Z, V and P, commits nothing, and gives the
+floating-point trap with one cause. The cryptographic and integer matrix
+forms are computed in software. `sve_semantics_covers()` holds for every row
+the table routes; any other word is a fatal internal error. No product links
+the library until an engine calls it.
+
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
 FEAT_AFP twins into, and an island of veneers. Every image that carries it
@@ -510,8 +536,34 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 `cpu::engine_host_capabilities` presents the profile only from an engine at
 `complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
-non-streaming SVE word is the illegal-instruction exit. Both engines are at
-`none`.
+non-streaming SVE word is the illegal-instruction exit. The JIT is at `none`.
+
+The gadget engine is at `control`: for SVCR.SM = 0, on capabilities that
+carry the profile, it runs PTRUE, PTRUES, PFALSE and PTEST, the predicate
+logical operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL,
+ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY,
+FCPY, SEL and the unpredicated logical forms; every other non-streaming SVE
+word is its illegal-instruction exit. Since it presents no SVE to a guest
+below `complete`, only tests and corpus runs that hand it the profile reach
+these forms. Its SVE part follows the SME part, so it moves no base or SME
+entry and re-encodes no veneer call, and holds no SVE or SME instruction:
+`engine/generate_sve.py` writes its gadgets at build time from the encoding
+table, one per value of the bits that select a form's lowering, and each
+loads the registers its stream names from `CpuState`, P and FFR in mask
+form, computes on AdvSIMD and general registers at VL 16, and stores its
+destination back. A predicate governing elements wider than a byte becomes a
+lane mask by one CMTST against the element pattern, and a flag-setting form
+computes PredTest into the guest's NZCV. A WHILE* reads its predicate and
+NZCV from a table indexed by its clamped active count, which
+`darwin/cpu/arm64/gadgets/sve_layout.h` lays out, and one followed by a
+B.cond on N or Z runs as one entry whose fall-through is translated
+inline. CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL select base
+entries on a constant the builder computes. A program holding one of these
+words accesses the FP state before it runs, since P and FFR travel with it,
+and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
+`arm64-gadget-sve` checks the forms against the pseudocode, and that no
+program translated for SM = 1 selects an SVE-part entry and none for SM = 0
+a streaming one.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

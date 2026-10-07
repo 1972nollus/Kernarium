@@ -35,6 +35,34 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 300)
 
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-native
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_native.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-sme
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_sme.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-afp
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_afp.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-sve-trap
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_trap.py
+    LABELS cpu
+    TIMEOUT 300)
+
 # The native oracle records the SME corpus cases on an SME host; this test
 # drives its exception path and state transfer with base A64 cases.
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -45,6 +73,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         COMMAND ${Python3_EXECUTABLE} -B
             ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sme_native_oracle.py
             $<TARGET_FILE:uml_sme_native_oracle>
+        LABELS cpu
+        TIMEOUT 60)
+    # The SVE oracle records on an arm64 Linux SVE host, where
+    # tools/arm64-tests/sve-native-oracle.sh builds it; this test drives its
+    # signal path and state transfer with base A64 cases.
+    add_executable(uml_sve_native_oracle
+        ${PROJECT_SOURCE_DIR}/tools/arm64-tests/sve_native_oracle.cpp)
+    uml_add_tooling_test(
+        NAME arm64-sve-native-oracle
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sve_native_oracle.py
+            $<TARGET_FILE:uml_sve_native_oracle>
         LABELS cpu
         TIMEOUT 60)
 endif()

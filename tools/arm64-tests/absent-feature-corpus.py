@@ -15,8 +15,8 @@ forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
 with its dot-product, multiply-add, and matrix forms and FPMR,
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, nor FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
-profile: their non-hint instructions are UNDEFINED, their hint-space
+FEAT_XS, FEAT_WFxT, or any SVE or SME feature outside the SVE and SME
+profiles: their non-hint instructions are UNDEFINED, their hint-space
 instructions are NOPs, FPCR.EBF is RES0, and the ID registers report them
 absent. The producer checks predate that choice, and their harness enabled
 these features in most cases' state or ran their instructions, so this script
@@ -37,18 +37,27 @@ rewrites a dump after export. For each named feature it
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
 
-FEAT_SME is two-sided, like FEAT_AFP below: the virtual CPU implements the
-SME profile only where the host does, and sme-native-corpus.py appends the
-cases observed on such a host.
-The producer's SME model is retired, so its SME cases and its one-byte
-PSTATE.SM and ZA state are dropped and stripped as for an absent feature, but
-the arm64-absent-sme record carries the without_sme option: it pins SMSTART,
-SMSTOP, MRS and MSR SVCR, one word of every encoding of the SME profile in
-the generated encoding table (darwin/cpu/arm64/detail/sme_encodings.hpp), and
-the evidence-binding witness of each SVE or SME entry without a table row
-UNDEFINED where the virtual CPU lacks SME, which the runner translates for on
-every host. The arm64-absent-sve record expects one word of every table
-encoding outside the profile to be undefined, with or without SME.
+FEAT_SME and FEAT_SVE are two-sided, like FEAT_AFP below: the virtual CPU
+implements the SME profile only where the host does, and the SVE profile only
+where the guest-SVE policy and the host's AdvSIMD forms allow it, and
+sme-native-corpus.py and sve-native-corpus.py append the cases observed on
+hosts with them. The producer's SME model is retired, so its SME cases and
+its one-byte PSTATE.SM and ZA state are dropped and stripped as for an absent
+feature. The witness word of every row of the generated encoding table
+(darwin/cpu/arm64/detail/sme_encodings.hpp), and the evidence-binding witness
+of each SVE or SME entry without a row, is pinned UNDEFINED at PSTATE.SM = 0
+in the record whose option makes it so, which the runner translates for on
+every host:
+
+- the arm64-absent-sme record, under without_sme, holds SMSTART, SMSTOP,
+  MRS and MSR SVCR, the other rows of the SME profile, and the SVE rows that
+  need FEAT_SME outside streaming mode as well;
+- the arm64-absent-sve record under without_sve holds every row the SVE
+  profile executes outside streaming mode;
+- the unconditional arm64-absent-sve record holds every other row: the SVE
+  rows that never execute outside streaming mode (the withheld features, and
+  the SVE2p1 forms that SME2 executes in streaming mode) and the rows outside
+  both profiles.
 
 A native FEAT_EBF16 requirement without FPCR.EBF set came from the engines'
 old host gates, not from the case, so such a case stays and loses the
@@ -121,9 +130,6 @@ DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "ebf16", "lse128",
                     "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
                     "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
                     "wfxt", "sve")
-# Features the virtual CPU implements on some hosts: their records pin their
-# encodings UNDEFINED under the without_<feature> option instead.
-TWO_SIDED = frozenset({"sme"})
 SVC = 0xD400_0001
 # Native requirements that were only the producer JIT's host gates: both
 # engines implement these features on every host.
@@ -315,7 +321,7 @@ FEATURES = {
         conditions=("FEAT_WFxT",),
         fields=()),
     # The producer never ran an SVE instruction, and the encoding table
-    # supplies the words: one per encoding outside the profile.
+    # supplies the words (table_records()).
     "sve": Feature(
         tokens=("sve",),
         conditions=(),
@@ -607,10 +613,13 @@ UNDEFINED = {
         ("WFIT", 0xD503_1023), ("WFIT XZR", 0xD503_103F),
     ),
 }
-# Features whose words also come from the encoding table: one witness word,
-# checked against LLVM MC by its generator, per encoding in the profile for
-# FEAT_SME and per encoding outside it for FEAT_SVE.
-TABLE_WORDS = {"sme": True, "sve": False}
+# The records whose words come from the encoding table: one witness word per
+# table row, checked against LLVM MC by its generator, each at PSTATE.SM = 0
+# in the record whose option makes it UNDEFINED there (table_records()).
+TABLE_RECORDS = {"sme": ("sme",), "sve": ("sve", "sve_profile")}
+# The option each such record runs under; the unconditional record has none.
+TABLE_OPTIONS = {"sme": "without_sme", "sve": None,
+                 "sve_profile": "without_sve"}
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
     "pauth": (
@@ -812,12 +821,38 @@ def without_afp_record(item: dict, cases: list[dict]) -> dict:
     return sibling
 
 
+def table_records(row) -> tuple[str, ...]:
+    """The records that pin a table row's witness, or the base row's of an
+    alias, UNDEFINED at PSTATE.SM = 0 (None: a form only Debug state
+    executes, which needs FEAT_SME2):
+
+    - "sve_profile", under without_sve: the rows the SVE profile executes
+      outside streaming mode, so a virtual CPU without SVE takes them as
+      UNDEFINED there;
+    - "sme", under without_sme: the other rows of the SME profile and the
+      SVE rows that need FEAT_SME outside streaming mode as well (the
+      SCLAMP class), so a virtual CPU without SME takes them as UNDEFINED
+      there, whatever its SVE;
+    - "sve", unconditional: the SVE rows that never execute outside
+      streaming mode (the withheld features and the SVE2p1 forms SME2
+      executes in streaming mode) and every row outside both profiles."""
+    if row is None:
+        return ("sme",)
+    outside = set(row.non_streaming_requirement)
+    if "sve" in outside:
+        return ("sve_profile", "sme") if "sme" in outside else \
+            ("sve_profile",)
+    if row.in_profile and (outside or row.form & sme_table.SME_SECTION):
+        return ("sme",)
+    return ("sve",)
+
+
 @functools.cache
-def table_words(in_profile: bool) -> tuple[tuple[str, int], ...]:
+def table_words(record: str) -> tuple[tuple[str, int], ...]:
     table = sme_table.load()
     words = [(f"{row.stable_id} {row.encoding} {row.witness:08x}",
               row.witness)
-             for row in table.rows if row.in_profile == in_profile]
+             for row in table.rows if record in table_records(row)]
     # The evidence-binding witness of each SVE or SME entry without a row:
     # an alias, which its base instruction's row decodes, or a form only
     # Debug state executes (MOVT between ZT0 and a general register), which
@@ -829,20 +864,29 @@ def table_words(in_profile: bool) -> tuple[tuple[str, int], ...]:
                     binding["stable_id"] in rows:
                 continue
             word = int(binding["encoding"], 16)
-            row = table.row_for(word)
-            if (row is None or row.in_profile) == in_profile:
+            if record in table_records(table.row_for(word)):
                 words.append((f"{binding['stable_id']} "
                               f"{binding['architectural_form']} {word:08x}",
                               word))
     return tuple(words)
 
 
-def undefined_record(feature: str) -> dict | None:
+def undefined_records(feature: str) -> list[dict]:
+    """The feature's arm64-absent-<feature> records."""
+    records = []
+    for table in TABLE_RECORDS.get(feature, (None,)):
+        record = undefined_record(feature, table)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def undefined_record(feature: str, table: str | None) -> dict | None:
     programs: list[list] = []
     cases = []
-    words = UNDEFINED.get(feature, ())
-    if feature in TABLE_WORDS:
-        words = (*words, *table_words(TABLE_WORDS[feature]))
+    words = () if table not in (None, feature) else UNDEFINED.get(feature, ())
+    if table is not None:
+        words = (*words, *table_words(table))
     for name, word in words:
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
@@ -852,7 +896,7 @@ def undefined_record(feature: str) -> dict | None:
             "invalid_encoding": True, "minimization": "full", "native": [],
             "initial": {}, "expected": {}, "retired": 0,
         })
-    for name, word in HINTS.get(feature, ()):
+    for name, word in HINTS.get(feature, ()) if table is None else ():
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
         cases.append({
@@ -867,9 +911,10 @@ def undefined_record(feature: str) -> dict | None:
         return None
     name = f"arm64-absent-{feature}"
     options = []
-    if feature in TWO_SIDED:
-        options = [f"without_{feature}"]
-        name += f"/options={1 << corpus.OPTION_NAMES.index(options[0]):x}"
+    option = TABLE_OPTIONS[table] if table is not None else None
+    if option is not None:
+        options = [option]
+        name += f"/options={1 << corpus.OPTION_NAMES.index(option):x}"
     return {
         "record": name, "producer": f"arm64-absent-{feature}",
         "site": SITE, "profiles": ["16k", "4k"], "options": options,
@@ -1137,11 +1182,9 @@ def main() -> int:
                     f"or drops otherwise, e.g. {sorted(unmatched)[0]}")
     added = 0
     for feature in features:
-        record = undefined_record(feature)
-        if record is None:
-            continue
-        records.append(record)
-        added += len(record["cases"])
+        for record in undefined_records(feature):
+            records.append(record)
+            added += len(record["cases"])
     replaced = collections.Counter()
     for record in replacements(kept_cases, lost, rewriter.classifier):
         records.append(record)

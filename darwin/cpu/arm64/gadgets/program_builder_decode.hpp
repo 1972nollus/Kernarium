@@ -32,6 +32,9 @@ struct DecodeContext final {
 	std::span<const std::uint32_t> following;
 	std::size_t &compiled;
 	bool &program_accesses_fp_state;
+	/* Set by a word the SVE decoder translates for SVCR.SM = 0: the
+	 * program enters through the SVE link entry (Program::holds_sve). */
+	bool &program_holds_sve;
 	ProgramWords &words;
 	const Builder::LinkResolver &resolve_link;
 	const Builder::IndirectLinkResolver &resolve_indirect_link;
@@ -179,6 +182,14 @@ enum class DecodeResult : std::uint8_t {
 [[nodiscard]] DecodeResult decode_sme_pstate(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_sme_system_register(DecodeContext &context);
 [[nodiscard]] DecodeResult decode_sme_space(DecodeContext &context);
+
+/* The non-streaming SVE forms (program_builder_sve.cpp), which
+ * decode_sme_space hands a word of the SVE or SME space while SVCR.SM is 0
+ * on a host with the SVE profile: the result for a word of a row that
+ * FEAT_SVE admits outside streaming mode, or for one no row matches when
+ * the virtual CPU lacks SME, and nothing for the SME decoder to take. */
+[[nodiscard]] std::optional<DecodeResult> decode_sve_space(
+	DecodeContext &context);
 
 /* The generated register-only streaming forms
  * (program_builder_streaming.cpp). decode_streaming_sve() translates a word

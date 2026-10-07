@@ -2,20 +2,26 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Generate the SVE/SME encoding table both arm64 engines decode against.
 
-The virtual CPU's SME profile (FEAT_SME, FEAT_SME2, FEAT_SME_F64F64,
-FEAT_SME_I16I64, no FEAT_SVE and no FEAT_SME_FA64) decides every SVE and SME
-word before an engine executes anything. This generator reads the pinned Arm
-A64 XML release and writes darwin/cpu/arm64/detail/sme_encodings.hpp with,
-for every non-alias encoding of the SVE and SME indexes:
+The virtual CPU's SVE and SME profiles decide every SVE and SME word before
+an engine executes anything. The SME profile is FEAT_SME, FEAT_SME2,
+FEAT_SME_F64F64 and FEAT_SME_I16I64; the SVE profile is FEAT_SVE, FEAT_SVE2,
+FEAT_SVE_AES, FEAT_SVE_PMULL128 and FEAT_SVE_SHA3; both include the SVE
+forms of FEAT_BF16 and FEAT_I8MM. FEAT_SME_FA64 and every other SVE or SME
+extension are outside them, FEAT_SVE_BitPerm and FEAT_SVE_SM4 among them
+until a workload needs them. This generator reads the pinned Arm A64 XML
+release and writes darwin/cpu/arm64/detail/sme_encodings.hpp with, for every
+non-alias encoding of the SVE and SME indexes:
 
 - the encoding's mask and value, split where a field value changes the
   features it needs, reserves the encoding, or changes its access check;
-- the features under which the virtual CPU implements it, as alternatives
-  over the profile's feature tokens, or none ("absent");
+- the features under which the virtual CPU implements it in streaming mode
+  (PSTATE.SM = 1) and outside it (PSTATE.SM = 0), over the profile's
+  feature tokens, or none in a mode where it never executes;
 - the minimum streaming vector length a MaxImplementedSVL() guard demands;
-- the access checks its execute pseudocode names and the mode they leave on
-  this profile (streaming, ZA, both, either mode, or never);
-- its register-operand layout and its memory shape; and
+- the access checks its execute pseudocode names and the streaming-mode
+  state they demand (streaming, ZA, both, or either mode);
+- its register-operand layout and its memory shape, with the vector length
+  that sizes it; and
 - a witness word that LLVM MC decodes to the encoding.
 
 A companion table classifies every FP&SIMD encoding as AdvSIMD (it traps
@@ -61,8 +67,8 @@ from generate_a64_instruction_allocations import archive_root
 
 # The profile's features that a row's requirement names, as the runtime's
 # ArmFeature tokens. FEAT_BF16 and FEAT_I8MM follow the host; the rest are the
-# SME profile. Every other FEAT_ name is unimplemented, except the base
-# features below, which every host the virtual CPU runs on implements.
+# SME and SVE profiles. Every other FEAT_ name is unimplemented, except the
+# base features below, which every host the virtual CPU runs on implements.
 PROFILE_FEATURES = {
     "FEAT_SME": "sme",
     "FEAT_SME2": "sme2",
@@ -70,8 +76,42 @@ PROFILE_FEATURES = {
     "FEAT_SME_I16I64": "sme_i16i64",
     "FEAT_BF16": "bf16",
     "FEAT_I8MM": "i8mm",
+    "FEAT_SVE": "sve",
+    "FEAT_SVE2": "sve2",
+    "FEAT_SVE_AES": "sve_aes",
+    "FEAT_SVE_PMULL128": "sve_pmull128",
+    "FEAT_SVE_SHA3": "sve_sha3",
+}
+# SVE extensions the virtual CPU withholds until a workload needs them (the
+# user's decision of 2026-10-07). Each has its requirement bit already, so
+# moving its line into PROFILE_FEATURES is the whole change here.
+WITHHELD_FEATURES = {
+    "FEAT_SVE_BitPerm": "sve_bitperm",
+    "FEAT_SVE_SM4": "sve_sm4",
 }
 BASE_FEATURES = frozenset({"FEAT_FP", "FEAT_AdvSIMD", "FEAT_FP16"})
+# The SVE features, which decide only what executes outside streaming mode:
+# without FEAT_SME_FA64 or a FEAT_SSVE_ extension, streaming mode executes
+# what FEAT_SME gives it (encoding_outcomes() checks this for every word).
+SVE_FEATURES = frozenset(
+    f for f in {**PROFILE_FEATURES, **WITHHELD_FEATURES} if f.startswith("FEAT_SVE")
+)
+# What each feature implies: FEAT_SVE2 needs FEAT_SVE, its crypto
+# extensions need it, FEAT_SVE_PMULL128 needs FEAT_SVE_AES, and SME's
+# extensions need FEAT_SME. One more is the profile's own: the virtual CPU
+# implements FEAT_SVE2 wherever it implements FEAT_SVE.
+IMPLIES = {
+    "FEAT_SVE": {"FEAT_SVE2"},
+    "FEAT_SVE2": {"FEAT_SVE"},
+    "FEAT_SVE_AES": {"FEAT_SVE2"},
+    "FEAT_SVE_PMULL128": {"FEAT_SVE_AES"},
+    "FEAT_SVE_SHA3": {"FEAT_SVE2"},
+    "FEAT_SVE_BitPerm": {"FEAT_SVE2"},
+    "FEAT_SVE_SM4": {"FEAT_SVE2"},
+    "FEAT_SME2": {"FEAT_SME"},
+    "FEAT_SME_F64F64": {"FEAT_SME"},
+    "FEAT_SME_I16I64": {"FEAT_SME"},
+}
 # Maximum vector lengths, in bits, that MaxImplementedSVL() guards compare.
 VECTOR_LENGTHS = (128, 256, 512, 1024, 2048)
 
@@ -88,10 +128,12 @@ ACCESS_CHECKS = (
     "AArch64_CheckFPAdvSIMDEnabled",
 )
 ACCESS_CHECK = re.compile(r"\b(" + "|".join(ACCESS_CHECKS) + r")\(")
-# What each check demands of PSTATE on this profile (FEAT_SME without
-# FEAT_SVE or FEAT_SME_FA64), from their shared pseudocode: CheckSVEEnabled
+# What each check demands of PSTATE on a CPU with FEAT_SME and without
+# FEAT_SVE or FEAT_SME_FA64, from their shared pseudocode: CheckSVEEnabled
 # becomes CheckStreamingSVEEnabled, and CheckNonStreamingSVEEnabled traps
-# outside streaming mode through it and inside streaming mode itself.
+# outside streaming mode through it and inside streaming mode itself. These
+# decide a row's streaming-mode requirement, and its mode records them, so
+# the streaming bit keeps its meaning; NON_STREAMING_CHECKS add FEAT_SVE.
 CHECK_DEMANDS = {
     "CheckSVEEnabled": {"sm"},
     "CheckStreamingSVEEnabled": {"sm"},
@@ -100,6 +142,20 @@ CHECK_DEMANDS = {
     "CheckSMEAndZAEnabled": {"za"},
     "CheckSMEZT0Enabled": {"za"},
     "CheckSMEEnabled": set(),
+}
+# The feature each check needs to pass outside streaming mode (PSTATE.SM =
+# 0), or None where it traps there: CheckSVEEnabled and
+# CheckNonStreamingSVEEnabled reach CheckOriginalSVEEnabled only with
+# FEAT_SVE (with FEAT_SME and without FEAT_SVE they trap), the streaming
+# checks trap, and the SME checks need FEAT_SME.
+NON_STREAMING_CHECKS = {
+    "CheckSVEEnabled": "FEAT_SVE",
+    "CheckStreamingSVEEnabled": None,
+    "CheckNonStreamingSVEEnabled": "FEAT_SVE",
+    "CheckStreamingSVEAndZAEnabled": None,
+    "CheckSMEAndZAEnabled": "FEAT_SME",
+    "CheckSMEZT0Enabled": "FEAT_SME",
+    "CheckSMEEnabled": "FEAT_SME",
 }
 
 
@@ -357,12 +413,34 @@ def _feature_names(text: str) -> set[str]:
 
 @dataclass(frozen=True)
 class Outcome:
-    """What one field assignment of an encoding means on this profile."""
+    """What one field assignment of an encoding means on this profile: the
+    features it needs in streaming mode (requirement) and outside it
+    (non_streaming), as alternatives, or none in a mode it never executes
+    in."""
 
     kind: str  # "legal", "never", "absent", "reserved", "other"
     requirement: tuple[tuple[str, ...], ...] = ()
     min_svl: int = 0
     checks: tuple[str, ...] = ()
+    non_streaming: tuple[tuple[str, ...], ...] = ()
+
+
+def _implied(feature: str) -> frozenset[str]:
+    """Every feature a feature implies, through IMPLIES."""
+    seen: set[str] = set()
+    pending = [feature]
+    while pending:
+        for implied in IMPLIES.get(pending.pop(), ()):
+            if implied not in seen:
+                seen.add(implied)
+                pending.append(implied)
+    return frozenset(seen)
+
+
+def _closed(subset: frozenset[str], universe: list[str]) -> bool:
+    """Whether a combination of the universe's features has every feature
+    of the universe that its features imply."""
+    return all(_implied(f) & set(universe) <= subset for f in subset)
 
 
 def _evaluate_once(
@@ -447,11 +525,24 @@ def encoding_outcomes(source: EncodingSource) -> dict[int, Outcome]:
         name for name in _feature_names(text) if name in PROFILE_FEATURES
     )
     lengths = VECTOR_LENGTHS if "MaxImplemented" in source.decode_text else (None,)
+    # In streaming mode the CPU has FEAT_SME, and the SVE features change
+    # nothing; outside it, the combinations of the named features and the
+    # two the checks consult that IMPLIES allows.
+    streaming_names = [f for f in symbolic if f not in SVE_FEATURES]
     subsets = [
         frozenset(c)
-        for size in range(len(symbolic) + 1)
-        for c in itertools.combinations(symbolic, size)
+        for size in range(len(streaming_names) + 1)
+        for c in itertools.combinations(streaming_names, size)
     ]
+    universe = sorted(set(symbolic) | {"FEAT_SVE", "FEAT_SME"})
+    outside_subsets = [
+        frozenset(c)
+        for size in range(len(universe) + 1)
+        for c in itertools.combinations(universe, size)
+        if _closed(frozenset(c), universe)
+    ]
+    every_sve = frozenset(f for f in PROFILE_FEATURES if f in SVE_FEATURES)
+    where = f"{source.file} {variant.encoding}"
     result: dict[int, Outcome] = {}
     for assignment in range(1 << len(bit_positions)):
         word = variant.value
@@ -462,18 +553,31 @@ def encoding_outcomes(source: EncodingSource) -> dict[int, Outcome]:
             result[word] = Outcome("other")
             continue
         fields = field_values(variant, word, relevant)
+
+        def evaluate(features: frozenset[str], length):
+            try:
+                return _evaluate_once(source, word, fields, features, length)
+            except asl.AslError as error:
+                raise GenerationError(f"{where} {word:08x}: {error}") from error
+
         table = {}
+        outside = {}
         for subset in subsets:
             for length in lengths:
-                try:
-                    table[(subset, length)] = _evaluate_once(
-                        source, word, fields, BASE_FEATURES | subset, length
-                    )
-                except asl.AslError as error:
+                table[(subset, length)] = evaluate(BASE_FEATURES | subset, length)
+                with_sme = BASE_FEATURES | subset | {"FEAT_SME"}
+                if _streaming_legal(evaluate(with_sme, length), where) != \
+                        _streaming_legal(evaluate(with_sme | every_sve, length), where):
                     raise GenerationError(
-                        f"{source.file} {variant.encoding} {word:08x}: {error}"
-                    ) from error
-        result[word] = _summarize(source, word, table, subsets, lengths)
+                        f"{where} {word:08x}: the SVE profile changes what "
+                        "streaming mode executes"
+                    )
+        for subset in outside_subsets:
+            for length in lengths:
+                outside[(subset, length)] = evaluate(BASE_FEATURES | subset, length)
+        result[word] = _summarize(
+            source, word, table, subsets, lengths, outside, outside_subsets
+        )
     return result
 
 
@@ -518,7 +622,55 @@ def _expression_fields(node) -> set[str]:
     return result
 
 
-def _summarize(source, word, table, subsets, lengths) -> Outcome:
+def _streaming_demands(checks: tuple[str, ...], where: str) -> set[str]:
+    """What a decodable word's checks demand in streaming mode."""
+    if not checks:
+        raise GenerationError(f"{where}: execute names no access check")
+    demands: set[str] = set()
+    for check in checks:
+        if check == "CheckFPMREnabled":
+            raise GenerationError(f"{where}: FPMR check in a decodable word")
+        if check not in CHECK_DEMANDS:
+            raise GenerationError(f"{where}: unexpected check {check}")
+        demands |= CHECK_DEMANDS[check]
+    return demands
+
+
+def _streaming_legal(checks: tuple[str, ...] | None, where: str) -> bool:
+    return checks is not None and "never" not in _streaming_demands(checks, where)
+
+
+def _non_streaming_legal(checks: tuple[str, ...], features: frozenset[str]) -> bool:
+    return all(NON_STREAMING_CHECKS[check] in features for check in checks)
+
+
+def _requirement(where, legal: dict, subsets, lengths) -> tuple[list, int]:
+    """The minimal feature sets of one mode's legal combinations, which must
+    imply legality exactly, and the minimum SVL they share."""
+    minimal = _minimal(list(legal))
+    for subset in subsets:
+        implied = any(m <= subset for m in minimal)
+        if implied != (subset in legal):
+            raise GenerationError(f"{where}: legality is not monotonic in features")
+    min_lengths = set()
+    for subset in legal:
+        lengths_ok = sorted(l for l in legal[subset] if l is not None)
+        if lengths != (None,):
+            first = lengths_ok[0]
+            if lengths_ok != [l for l in VECTOR_LENGTHS if l >= first]:
+                raise GenerationError(f"{where}: legality is not monotonic in SVL")
+            min_lengths.add(first)
+        else:
+            min_lengths.add(0)
+    if len(min_lengths) != 1:
+        raise GenerationError(f"{where}: minimum SVL depends on features")
+    min_svl = min_lengths.pop()
+    if min_svl == VECTOR_LENGTHS[0]:
+        min_svl = 0
+    return minimal, min_svl
+
+
+def _summarize(source, word, table, subsets, lengths, outside, outside_subsets) -> Outcome:
     where = f"{source.file} {source.variant.encoding} {word:08x}"
     legal: dict[frozenset[str], set] = {}
     decodable: list[frozenset[str]] = []
@@ -526,15 +678,7 @@ def _summarize(source, word, table, subsets, lengths) -> Outcome:
     for (subset, length), checks in table.items():
         if checks is None:
             continue
-        demands = set()
-        for check in checks:
-            if check == "CheckFPMREnabled":
-                raise GenerationError(f"{where}: FPMR check in a decodable word")
-            if check not in CHECK_DEMANDS:
-                raise GenerationError(f"{where}: unexpected check {check}")
-            demands |= CHECK_DEMANDS[check]
-        if not checks:
-            raise GenerationError(f"{where}: execute names no access check")
+        demands = _streaming_demands(checks, where)
         previous = checks_by_subset.setdefault(subset, checks)
         if previous != checks:
             raise GenerationError(f"{where}: checks depend on the vector length")
@@ -542,7 +686,20 @@ def _summarize(source, word, table, subsets, lengths) -> Outcome:
             decodable.append(subset)
         else:
             legal.setdefault(subset, set()).add(length)
-    if not legal and not decodable:
+    outside_legal: dict[frozenset[str], set] = {}
+    outside_checks: dict[frozenset[str], tuple[str, ...]] = {}
+    for (subset, length), checks in outside.items():
+        if checks is None:
+            continue
+        _streaming_demands(checks, where)
+        previous = outside_checks.setdefault(subset, checks)
+        if previous != checks:
+            raise GenerationError(f"{where}: checks depend on the vector length")
+        if _non_streaming_legal(checks, subset):
+            outside_legal.setdefault(subset, set()).add(length)
+        else:
+            decodable.append(subset)
+    if not legal and not outside_legal and not decodable:
         # Reserved: the profile has the encoding's features, but the decode
         # pseudocode rejects this field value.
         profile = frozenset(PROFILE_FEATURES) | BASE_FEATURES
@@ -557,45 +714,52 @@ def _summarize(source, word, table, subsets, lengths) -> Outcome:
             ):
                 return Outcome("absent")
         return Outcome("reserved")
+    if not legal and not outside_legal:
+        minimal = _minimal(decodable)
+        return Outcome(
+            "never",
+            tuple(tuple(sorted(PROFILE_FEATURES[f] for f in m)) for m in minimal),
+            0,
+            sorted(set(checks_by_subset.values()) | set(outside_checks.values()))[0],
+        )
+    checks = {checks_by_subset[s] for s in legal} | {outside_checks[s] for s in outside_legal}
+    if len(checks) != 1:
+        raise GenerationError(f"{where}: legal checks depend on features")
+    checks_called = checks.pop()
+    requirement: list[tuple[str, ...]] = []
+    min_svl = 0
     if legal:
-        minimal = _minimal(list(legal))
-        for subset in subsets:
-            implied = any(m <= subset for m in minimal)
-            if implied != (subset in legal):
-                raise GenerationError(f"{where}: legality is not monotonic in features")
-        min_lengths = set()
-        for subset in legal:
-            lengths_ok = sorted(l for l in legal[subset] if l is not None)
-            if lengths != (None,):
-                first = lengths_ok[0]
-                if lengths_ok != [l for l in VECTOR_LENGTHS if l >= first]:
-                    raise GenerationError(f"{where}: legality is not monotonic in SVL")
-                min_lengths.add(first)
-            else:
-                min_lengths.add(0)
-        if len(min_lengths) != 1:
-            raise GenerationError(f"{where}: minimum SVL depends on features")
-        min_svl = min_lengths.pop()
-        if min_svl == VECTOR_LENGTHS[0]:
-            min_svl = 0
-        checks = {checks_by_subset[s] for s in legal}
-        if len(checks) != 1:
-            raise GenerationError(f"{where}: legal checks depend on features")
-        # Without FEAT_SVE, the virtual CPU implements an SVE or SME
-        # encoding only through FEAT_SME, which FEAT_SME2 and the others
-        # imply; the requirement names it whatever the XML's expression is.
+        minimal, min_svl = _requirement(where, legal, subsets, lengths)
+        # Without the SVE profile, the virtual CPU implements an SVE or SME
+        # encoding in streaming mode only through FEAT_SME, which FEAT_SME2
+        # and the others imply; the requirement names it whatever the XML's
+        # expression is.
         requirement = sorted(
             {tuple(sorted({PROFILE_FEATURES[f] for f in m} | {"sme"})) for m in minimal},
             key=lambda item: (len(item), item),
         )
-        return Outcome("legal", tuple(requirement), min_svl, checks.pop())
-    minimal = _minimal(decodable)
-    checks = {checks_by_subset[s] for s in decodable}
+    non_streaming: list[tuple[str, ...]] = []
+    if outside_legal:
+        minimal, outside_svl = _requirement(where, outside_legal, outside_subsets, lengths)
+        non_streaming = sorted(
+            {tuple(sorted(PROFILE_FEATURES[f] for f in m)) for m in minimal},
+            key=lambda item: (len(item), item),
+        )
+        if legal and outside_svl != min_svl:
+            raise GenerationError(f"{where}: minimum SVL depends on the mode")
+        if not legal and outside_svl != 0:
+            raise GenerationError(f"{where}: a non-streaming row needs an SVL")
+        min_svl = outside_svl
+    # The mode's streaming bit keeps its meaning where the SVE profile is
+    # absent: a row without it executes outside streaming mode exactly where
+    # it does inside, and any other row only through FEAT_SVE.
+    streaming = "sm" in _streaming_demands(checks_called, where)
+    if legal and not streaming and non_streaming != requirement:
+        raise GenerationError(f"{where}: an either-mode row's requirements differ")
+    if (streaming or not legal) and any("sve" not in alt for alt in non_streaming):
+        raise GenerationError(f"{where}: executes outside streaming mode without FEAT_SVE")
     return Outcome(
-        "never",
-        tuple(tuple(sorted(PROFILE_FEATURES[f] for f in m)) for m in minimal),
-        0,
-        sorted(checks)[0],
+        "legal", tuple(requirement), min_svl, checks_called, tuple(non_streaming)
     )
 
 
@@ -1046,20 +1210,47 @@ MEMORY_FAMILIES = (
     (re.compile(r"(ld|st)r_za_ri"), "za_vector"),
     (re.compile(r"(ld|st)r_zt_br"), "zt0"),
     (re.compile(r"prf[bhwd]_i_p_(bi|br)"), "prefetch"),
+    (re.compile(r"(ld|st)1s?[bhwd]_z_p_(ai|bz)"), "gather"),
+    (re.compile(r"(ld|st)nt1s?[bhwd]_z_p_ar"), "gather"),
+    (re.compile(r"ldff1s?[bhwd]_z_p_(ai|bz)"), "gather_first_fault"),
+    (re.compile(r"ldff1s?[bhwd]_z_p_br"), "first_fault"),
+    (re.compile(r"ldnf1s?[bhwd]_z_p_bi"), "non_fault"),
+    (re.compile(r"prf[bhwd]_i_p_(ai|bz)"), "gather_prefetch"),
 )
-# The byte offset each AddressAdd expression adds to the base: an
-# immediate times the access's footprint (MUL VL), a register or an
-# immediate times the memory element size, or an immediate times 16.
+# The families that address each element on its own (gathers, scatters and
+# their prefetches), the first-fault and non-fault ones and the access
+# descriptor each of those creates, and the families based on a vector of
+# addresses (Zn) where their pages name one (_ai, _ar).
+GATHER_FAMILIES = frozenset({"gather", "gather_first_fault", "gather_prefetch"})
+FAULT_DESCRIPTORS = {
+    "first_fault": "CreateAccDescSVEFF(",
+    "gather_first_fault": "CreateAccDescSVEFF(",
+    "non_fault": "CreateAccDescSVENF(",
+}
+PREFETCH_FAMILIES = frozenset({"prefetch", "gather_prefetch"})
+# The byte offset each AddressAdd expression adds to its base, a scalar
+# (base) or a vector element (baddr): an immediate times the access's
+# footprint (MUL VL), a register or an immediate times the memory element
+# size, an immediate times 16, a vector element extended and shifted, or a
+# register unscaled.
 ADDRESS_OFFSETS = {
-    "offset * elements * mbytes": "imm_footprint",
-    "offset * elements * nreg * mbytes": "imm_footprint",
-    "offset * nreg * elements * mbytes": "imm_footprint",
-    "offset": "imm_footprint",
-    "moffs": "imm_footprint",
-    "UInt(offset) * mbytes": "register_element",
-    "UInt(moffs) * mbytes": "register_element",
-    "offset * mbytes": "imm_element",
-    "offset * 16": "imm_16",
+    ("base", "offset * elements * mbytes"): "imm_footprint",
+    ("base", "offset * elements * nreg * mbytes"): "imm_footprint",
+    ("base", "offset * nreg * elements * mbytes"): "imm_footprint",
+    ("base", "offset"): "imm_footprint",
+    ("base", "moffs"): "imm_footprint",
+    ("base", "UInt(offset) * mbytes"): "register_element",
+    ("base", "UInt(moffs) * mbytes"): "register_element",
+    ("base", "offset * mbytes"): "imm_element",
+    ("base", "offset * 16"): "imm_16",
+    ("base", "off << scale"): "vector_index",
+    ("baddr", "offset * mbytes"): "imm_element",
+    ("baddr", "offset"): "register_byte",
+}
+# The gather prefetches' addresses, which no AddressAdd forms.
+PREFETCH_ADDRESSES = {
+    "base + (off << scale)": "vector_index",
+    "ZeroExtend{64}(base[e*:esize]) + (offset << scale)": "imm_element",
 }
 MEMORY_MARKERS = re.compile(r"\bMem\w*\{|AArch64_MemSingle|Hint_Prefetch|CreateAccDesc")
 
@@ -1074,13 +1265,23 @@ class Memory:
     stride: int
     signed: bool
     nontemporal: bool
-    offset: str  # none, imm_footprint, register_element, imm_element, imm_16
+    # none, imm_footprint, register_element, imm_element, imm_16,
+    # vector_index or register_byte
+    offset: str
     immediate: tuple[Segment, ...] = ()
     immediate_signed: bool = False
     base: str = ""
     index: str = ""
     # The field whose value shifts esize left: ST1B's 8 << UInt(size).
     esize_field: Segment | None = None
+    # The vector length that sizes the access: CurrentVL(), which is VL
+    # outside streaming mode and SVL in it; CurrentSVL(); or none.
+    vector_length: str = "current"
+    # vector_index: the width of each offset element, its left shift, and
+    # the field that sign-extends it (SXTW where 1), or None to zero-extend.
+    index_bits: int = 0
+    index_shift: int = 0
+    index_sign: Segment | None = None
 
 
 def _constant(statements: list, name: str) -> int | bool | None:
@@ -1102,10 +1303,15 @@ def memory_shape(source: EncodingSource, operands: list[Operand]) -> Memory | No
         if MEMORY_MARKERS.search(execute):
             raise GenerationError(f"{where}: memory form of no known family")
         return None
-    if family == "prefetch":
+    if family in PREFETCH_FAMILIES:
         if "Hint_Prefetch" not in execute or "CreateAccDesc" in execute:
             raise GenerationError(f"{where}: prefetch without Hint_Prefetch")
         direction = "prefetch"
+    elif family in FAULT_DESCRIPTORS:
+        descriptors = set(re.findall(r"CreateAccDesc\w+\(", execute))
+        if descriptors != {FAULT_DESCRIPTORS[family]} or not stem.startswith("ld"):
+            raise GenerationError(f"{where}: access descriptors {sorted(descriptors)}")
+        direction = "load"
     else:
         operations = set(re.findall(r"CreateAccDesc\w+\((MemOp_\w+)", execute))
         if operations == {"MemOp_LOAD"}:
@@ -1116,6 +1322,12 @@ def memory_shape(source: EncodingSource, operands: list[Operand]) -> Memory | No
             raise GenerationError(f"{where}: memory operations {sorted(operations)}")
         if stem.startswith("ld") != (direction == "load"):
             raise GenerationError(f"{where}: name and operation disagree")
+    lengths = [name for name in ("CurrentVL()", "CurrentSVL()") if name in execute]
+    if len(lengths) > 1:
+        raise GenerationError(f"{where}: sized by both VL and SVL")
+    vector_length = {"CurrentVL()": "current", "CurrentSVL()": "streaming"}[
+        lengths[0]
+    ] if lengths else "none"
     decode = source.decode
     esize = _constant(decode, "esize")
     esize_field = None
@@ -1133,8 +1345,15 @@ def memory_shape(source: EncodingSource, operands: list[Operand]) -> Memory | No
     nreg = _constant(decode, "nreg")
     tstride = _constant(decode, "tstride")
     unsigned = _constant(decode, "unsigned")
+    scale = _constant(decode, "scale")
     if family in ("fill_z", "fill_p", "za_vector", "zt0"):
         esize = msize = 8
+    if family == "gather_prefetch":
+        # A prefetch moves no data; its "element" is what its offsets scale
+        # by, PRFH's halfword.
+        if msize is not None or scale is None:
+            raise GenerationError(f"{where}: gather prefetch scale {scale}")
+        msize = 8 << scale
     if esize is None:
         raise GenerationError(f"{where}: no constant element size")
     if msize is None:
@@ -1147,37 +1366,77 @@ def memory_shape(source: EncodingSource, operands: list[Operand]) -> Memory | No
     else:
         stride = 1
     contiguous = re.findall(r"\bcontiguous : boolean = (TRUE|FALSE)", execute)
-    if family != "prefetch" and contiguous != ["TRUE"]:
-        raise GenerationError(f"{where}: not a contiguous access")
+    if family not in PREFETCH_FAMILIES and contiguous != (
+        ["FALSE"] if family in GATHER_FAMILIES else ["TRUE"]
+    ):
+        raise GenerationError(f"{where}: contiguous {contiguous}")
     nontemporal = re.findall(r"\bnontemporal : boolean = (TRUE|FALSE)", execute)
-    if family != "prefetch" and len(nontemporal) != 1:
+    if family in FAULT_DESCRIPTORS:
+        if nontemporal:
+            raise GenerationError(f"{where}: a non-temporal fault-tolerant load")
+    elif family not in PREFETCH_FAMILIES and len(nontemporal) != 1:
         raise GenerationError(f"{where}: no single nontemporal setting")
-    offsets = re.findall(r"AddressAdd\(base,\s*([^,]+),", execute)
+    offsets = re.findall(r"AddressAdd\((base|baddr),\s*([^,]+),", execute)
     if family == "prefetch":
         offset = "imm_footprint" if stem.endswith("_bi") else "register_element"
         if stem.endswith("_bi") and "(offset * elements) + e" not in execute:
             raise GenerationError(f"{where}: unexpected prefetch address")
         if stem.endswith("_br") and "UInt(offset) + e" not in execute:
             raise GenerationError(f"{where}: unexpected prefetch address")
+    elif family == "gather_prefetch":
+        kinds = {kind for text, kind in PREFETCH_ADDRESSES.items() if text in execute}
+        if offsets or len(kinds) != 1:
+            raise GenerationError(f"{where}: unexpected prefetch address")
+        offset = kinds.pop()
     elif family == "zt0":
         if offsets:
             raise GenerationError(f"{where}: ZT0 access with an offset")
         offset = "none"
     else:
-        kinds = {ADDRESS_OFFSETS.get(" ".join(o.split())) for o in offsets}
+        kinds = {ADDRESS_OFFSETS.get((b, " ".join(o.split()))) for b, o in offsets}
         if len(kinds) != 1 or None in kinds:
             raise GenerationError(f"{where}: address offsets {offsets}")
         offset = kinds.pop()
     by_name = {operand.name: operand for operand in operands}
     base = by_name.get("n")
-    if base is None or base.kind != "gpr_or_sp":
-        raise GenerationError(f"{where}: base register is not Xn|SP")
+    vector_base = family in GATHER_FAMILIES and stem.endswith(("_ai", "_ar"))
+    if base is None or base.kind != ("z" if vector_base else "gpr_or_sp"):
+        raise GenerationError(f"{where}: base register is not "
+                              f"{'Zn' if vector_base else 'Xn|SP'}")
     index = ""
-    if offset == "register_element":
-        name = "m"
-        if name not in by_name or by_name[name].kind != "gpr":
-            raise GenerationError(f"{where}: index register is not Xm")
-        index = name
+    index_kind = {"register_element": "gpr", "register_byte": "gpr",
+                  "vector_index": "z"}.get(offset)
+    if index_kind is not None:
+        if "m" not in by_name or by_name["m"].kind != index_kind:
+            raise GenerationError(f"{where}: index register is not {index_kind}")
+        index = "m"
+    index_bits = index_shift = 0
+    index_sign = None
+    if offset == "vector_index":
+        index_bits = _constant(decode, "offs_size")
+        if index_bits not in (32, 64) or scale is None:
+            raise GenerationError(f"{where}: vector offsets {index_bits} << {scale}")
+        index_shift = scale
+        fields = {name: (low, width) for name, low, width in source.variant.fields}
+        signedness = next(
+            (st[2] for st in decode if st[0] == "let" and st[1] == "offs_unsigned"), None
+        )
+        if signedness == ("bool", True):
+            index_sign = None
+        elif (
+            signedness is not None and signedness[0] == "binary"
+            and signedness[1] == "==" and signedness[2][0] == "name"
+            and signedness[3][0] == "bits" and signedness[3][1].width == 1
+            and signedness[3][1].value == 0 and signedness[2][1] in fields
+        ):
+            low, width = fields[signedness[2][1]]
+            if width != 1:
+                raise GenerationError(f"{where}: offset extension field width")
+            index_sign = Segment(signedness[2][1], low, width)
+        else:
+            raise GenerationError(f"{where}: offset extension {signedness!r}")
+        if index_bits == 64 and index_sign is not None:
+            raise GenerationError(f"{where}: a 64-bit offset with an extension")
     immediate: tuple[Segment, ...] = ()
     immediate_signed = False
     if offset.startswith("imm"):
@@ -1208,6 +1467,10 @@ def memory_shape(source: EncodingSource, operands: list[Operand]) -> Memory | No
         base="n",
         index=index,
         esize_field=esize_field,
+        vector_length=vector_length,
+        index_bits=index_bits,
+        index_shift=index_shift,
+        index_sign=index_sign,
     )
 
 
@@ -1376,12 +1639,8 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT = REPOSITORY / "darwin/cpu/arm64/detail/sme_encodings.hpp"
 DEFAULT_PARTITIONS = REPOSITORY / "tests/unit/arm64/a64_instruction_decode_partitions.tsv"
 FEATURE_BITS = {
-    "sme": "sme_feature_sme",
-    "sme2": "sme_feature_sme2",
-    "sme_f64f64": "sme_feature_sme_f64f64",
-    "sme_i16i64": "sme_feature_sme_i16i64",
-    "bf16": "sme_feature_bf16",
-    "i8mm": "sme_feature_i8mm",
+    token: f"sme_feature_{token}"
+    for token in {**PROFILE_FEATURES, **WITHHELD_FEATURES}.values()
 }
 CHECK_BITS = {
     "CheckSVEEnabled": "sme_check_sve_enabled",
@@ -1398,7 +1657,10 @@ OFFSET_NAMES = {
     "register_element": "register_element",
     "imm_element": "immediate_element",
     "imm_16": "immediate_16",
+    "vector_index": "vector_index",
+    "register_byte": "register_byte",
 }
+VECTOR_LENGTH_NAMES = {"current": "current", "streaming": "streaming", "none": "none"}
 BUCKET_SHIFT = 21
 
 
@@ -1451,8 +1713,13 @@ def build_table(
         )
         if row.outcome.kind not in ("legal", "absent"):
             raise GenerationError(f"{where}: outcome {row.outcome.kind}")
-        if row.outcome.kind == "legal" and len(row.outcome.requirement) != 1:
-            raise GenerationError(f"{where}: requirement {row.outcome.requirement}")
+        if row.outcome.kind == "legal" and (
+            len(row.outcome.requirement) > 1 or len(row.outcome.non_streaming) > 1
+        ):
+            raise GenerationError(
+                f"{where}: requirements {row.outcome.requirement} and "
+                f"{row.outcome.non_streaming}"
+            )
         if not in_sve_or_sme_space(row.mask, row.value):
             raise GenerationError(f"{where}: outside the SVE and SME spaces")
     check_disjoint(rows)
@@ -1542,7 +1809,9 @@ def _memory(memory: Memory, operands: tuple[Operand, ...]) -> str:
         f"{memory.stride}, {flag(memory.signed)}, {flag(memory.nontemporal)}, "
         f"{flag(memory.immediate_signed)}, {len(memory.immediate)}, "
         f"{_segments(memory.immediate, 2)}, {base}, "
-        f"{'sme_no_operand' if index is None else index}}}"
+        f"{'sme_no_operand' if index is None else index}, "
+        f"SmeVectorLength::{VECTOR_LENGTH_NAMES[memory.vector_length]}, "
+        f"{memory.index_bits}, {memory.index_shift}, {_segment(memory.index_sign)}}}"
     )
 
 
@@ -1617,10 +1886,14 @@ def render(rows: list[TableRow], classes: list[tuple[ClassRow, int]], llvm: str)
             memory = memories[text] + 1
         outcome = row.outcome
         requirement = []
+        non_streaming = []
         checks = []
         mode = []
         if outcome.kind == "legal":
-            requirement = [FEATURE_BITS[f] for f in outcome.requirement[0]]
+            if outcome.requirement:
+                requirement = [FEATURE_BITS[f] for f in outcome.requirement[0]]
+            if outcome.non_streaming:
+                non_streaming = [FEATURE_BITS[f] for f in outcome.non_streaming[0]]
             checks = [CHECK_BITS[c] for c in CHECK_BITS if c in outcome.checks]
             demands = set().union(*(CHECK_DEMANDS[c] for c in outcome.checks))
             if "sm" in demands:
@@ -1631,7 +1904,8 @@ def render(rows: list[TableRow], classes: list[tuple[ClassRow, int]], llvm: str)
                 mode.append("sme_mode_zt0")
         encoding_lines.append(
             f"\tSmeEncoding{{{_hex(row.mask)}, {_hex(row.value)}, "
-            f"{_form(source.stable_id)}U, {_bits(requirement)}, {_bits(checks)}, "
+            f"{_form(source.stable_id)}U, {_bits(requirement)}, "
+            f"{_bits(non_streaming)}, {_bits(checks)}, "
             f"{_bits(mode)}, {len(operands)}, {begin}, {memory}, "
             f"{outcome.min_svl // 8}}}, // {source.stable_id} {source.variant.encoding}"
         )
@@ -1640,7 +1914,8 @@ def render(rows: list[TableRow], classes: list[tuple[ClassRow, int]], llvm: str)
         raise GenerationError("side tables exceed 16-bit indexes")
     starts, flat = _buckets([(r.row.mask, r.row.value) for r in rows])
     class_starts, class_flat = _buckets([(r.mask, r.value) for r, _w in classes])
-    legal = sum(r.row.outcome.kind == "legal" for r in rows)
+    streaming = sum(bool(r.row.outcome.requirement) for r in rows)
+    non_streaming = sum(bool(r.row.outcome.non_streaming) for r in rows)
     class_lines = [
         f"\tFpSimdStreamingClass{{{_hex(row.mask)}, {_hex(row.value)}, "
         f"{_form(row.source.stable_id)}U, {'true' if row.advsimd else 'false'}}}, "
@@ -1661,8 +1936,9 @@ def render(rows: list[TableRow], classes: list[tuple[ClassRow, int]], llvm: str)
         "namespace uml::cpu::arm64::detail {",
         "",
         "/*",
-        f" * The {len(rows)} rows of the SVE and SME encodings, {legal} of them in the",
-        " * virtual CPU's profile, and their side tables. See sme_encoding_types.hpp.",
+        f" * The {len(rows)} rows of the SVE and SME encodings, {streaming} of them in the",
+        f" * virtual CPU's profile in streaming mode and {non_streaming} outside it, and",
+        " * their side tables. See sme_encoding_types.hpp.",
         " */",
     ]
     lines += _array("SmeOperand", "sme_encoding_operands",
@@ -1752,13 +2028,51 @@ def main() -> int:
             raise ValueError("published table differs from the rendered table")
 
     publication.publish_payloads([(publication.targets[0], payload, validate)])
-    legal = sum(row.row.outcome.kind == "legal" for row in rows)
+    streaming = sum(bool(row.row.outcome.requirement) for row in rows)
+    non_streaming = sum(bool(row.row.outcome.non_streaming) for row in rows)
     print(
-        f"SVE/SME encoding table generated: {len(rows)} rows ({legal} in the "
-        f"profile), {len(classes)} FP&SIMD rows, {SOURCE_ORACLE}, {llvm}; "
-        f"wrote {options.output}"
+        f"SVE/SME encoding table generated: {len(rows)} rows ({streaming} in the "
+        f"profile in streaming mode, {non_streaming} outside it), {len(classes)} "
+        f"FP&SIMD rows, {SOURCE_ORACLE}, {llvm}; wrote {options.output}"
     )
+    print(sve_index_modes(rows))
     return 0
+
+
+def sve_index_modes(rows: list[TableRow]) -> str:
+    """The SVE index's encodings by the modes in which the profile executes
+    them, for comparison with the SVE design's inventory."""
+    modes: dict[tuple[str, str], set[tuple[bool, bool]]] = {}
+    sources: dict[tuple[str, str], EncodingSource] = {}
+    for table_row in rows:
+        row = table_row.row
+        if row.source.section != "SVE" or row.outcome.kind != "legal":
+            continue
+        key = (row.source.file, row.source.variant.encoding)
+        sources[key] = row.source
+        modes.setdefault(key, set()).add(
+            (bool(row.outcome.requirement), bool(row.outcome.non_streaming))
+        )
+    both = [key for key, seen in modes.items() if seen == {(True, True)}]
+    outside = [key for key, seen in modes.items() if seen == {(False, True)}]
+    inside = [key for key, seen in modes.items() if seen == {(True, False)}]
+    mixed = len(modes) - len(both) - len(outside) - len(inside)
+    split = sum(
+        "CheckNonStreamingSVEEnabled" in sources[key].check_names for key in both
+    )
+    with_sme = sum(
+        any("sme" in r.row.outcome.non_streaming[0] for r in rows
+            if (r.row.source.file, r.row.source.variant.encoding) == key
+            and r.row.outcome.non_streaming)
+        for key in both
+    )
+    return (
+        f"SVE index encodings: {len(both)} in either mode ({split} with a "
+        f"field-dependent check, {with_sme} only with FEAT_SME too), "
+        f"{len(outside)} only outside streaming mode, {len(inside)} only in "
+        f"it, {mixed} mixed; {len(both) + len(outside)} execute outside "
+        "streaming mode"
+    )
 
 
 if __name__ == "__main__":

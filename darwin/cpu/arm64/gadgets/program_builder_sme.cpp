@@ -176,6 +176,11 @@ DecodeResult decode_sme_space(DecodeContext &context)
 {
 	const auto instruction = context.instruction;
 	const auto &host = context.options.host_capabilities;
+	if ((context.options.svcr & svcr_sm) == 0U && implements_sve(host) &&
+	    detail::sme_encoding_space(instruction)) [[unlikely]] {
+		if (const auto decoded = decode_sve_space(context))
+			return *decoded;
+	}
 	if (!detail::sme_encoding_space(instruction) || !implements_sme(host))
 		return implementation_gap(context);
 	/* The profile decides first: a word it lacks is UNDEFINED, and one

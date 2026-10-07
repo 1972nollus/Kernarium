@@ -119,6 +119,10 @@
     # translates through the JIT's test API.
     target_sources(uml_arm64_instruction_corpus_tests PRIVATE
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
+    # Its library lane runs the SVE cases through the shared semantic
+    # library, which no product links yet.
+    target_sources(uml_arm64_instruction_corpus_tests PRIVATE
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>)
     uml_add_unit_test(NAME arm64-emitted-registers
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
@@ -165,6 +169,12 @@
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
     target_link_libraries(uml_arm64_gadget_sme_tests PRIVATE
         uml_arm64_streaming_forms)
+    # The non-streaming SVE control core through injected SVE profiles, and
+    # the selection sweep that keeps it out of streaming programs.
+    uml_add_arm64_unit_test(gadget_sve WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    target_link_libraries(uml_arm64_gadget_sve_tests PRIVATE
+        uml_arm64_sve_forms)
 
     uml_add_arm64_unit_test(gadget_successor_hoist_structure WITHOUT_HARNESS)
     uml_add_arm64_unit_test(static_runtime WITHOUT_HARNESS

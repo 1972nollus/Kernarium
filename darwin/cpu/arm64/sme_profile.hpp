@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/detail/sme_encoding_types.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstddef>
@@ -78,7 +79,9 @@ enum class SmeSupport : std::uint8_t {
 }
 
 /* The encoding table names its requirement bits after the ArmFeature
- * tokens; this is the one place that translates between them. */
+ * tokens; this is the one place that translates between them. The SVE
+ * profile's withheld FEAT_SVE_BitPerm and FEAT_SVE_SM4 have table bits but
+ * no token. */
 [[nodiscard]] inline detail::SmeFeatureMask sme_feature_mask(
 	const ArmFeatureSet &features) noexcept
 {
@@ -92,13 +95,19 @@ enum class SmeSupport : std::uint8_t {
 		bit(ArmFeature::sme_f64f64, detail::sme_feature_sme_f64f64) |
 		bit(ArmFeature::sme_i16i64, detail::sme_feature_sme_i16i64) |
 		bit(ArmFeature::bf16, detail::sme_feature_bf16) |
-		bit(ArmFeature::i8mm, detail::sme_feature_i8mm));
+		bit(ArmFeature::i8mm, detail::sme_feature_i8mm) |
+		bit(ArmFeature::sve, detail::sme_feature_sve) |
+		bit(ArmFeature::sve2, detail::sme_feature_sve2) |
+		bit(ArmFeature::sve_aes, detail::sme_feature_sve_aes) |
+		bit(ArmFeature::sve_pmull128, detail::sme_feature_sve_pmull128) |
+		bit(ArmFeature::sve_sha3, detail::sme_feature_sve_sha3));
 }
 
-/* The table rows the virtual CPU implements on `host`, as their
- * requirement bits: none without the SME profile; otherwise the profile's
- * parts, SME2 only in the SME2 profile, and BF16 and I8MM where the virtual
- * CPU has them, which is where the host does. */
+/* The table rows the virtual CPU implements on `host` in streaming mode,
+ * as their requirement bits: none without the SME profile; otherwise the
+ * profile's parts, SME2 only in the SME2 profile, and BF16 and I8MM where
+ * the virtual CPU has them, which is where the host does. No SVE token
+ * enters it: streaming-mode requirements name no SVE feature. */
 [[nodiscard]] inline detail::SmeFeatureMask implemented_sme_features(
 	const HostCapabilities &host) noexcept
 {
@@ -115,6 +124,27 @@ enum class SmeSupport : std::uint8_t {
 		if (host.has(feature))
 			features.set(static_cast<std::size_t>(feature));
 	return sme_feature_mask(features);
+}
+
+/* The table rows the virtual CPU implements on `host` outside streaming
+ * mode, as their non-streaming requirement bits: none without the SVE
+ * profile; otherwise its SVE tokens, BF16 and I8MM where the host has them,
+ * and the SME profile's bits, which the SM = 0 forms that FEAT_SME admits
+ * alongside FEAT_SVE (PSEL, REVD, SCLAMP and the like) need too. */
+[[nodiscard]] inline detail::SmeFeatureMask implemented_sve_features(
+	const HostCapabilities &host) noexcept
+{
+	if (!implements_sve(host))
+		return {};
+	ArmFeatureSet features;
+	for (const ArmFeature feature : sve_features)
+		if (host.has(feature))
+			features.set(static_cast<std::size_t>(feature));
+	for (const ArmFeature feature : {ArmFeature::bf16, ArmFeature::i8mm})
+		if (host.has(feature))
+			features.set(static_cast<std::size_t>(feature));
+	return static_cast<detail::SmeFeatureMask>(sme_feature_mask(features) |
+		implemented_sme_features(host));
 }
 
 /* SVCR: PSTATE.SM in bit 0 and PSTATE.ZA in bit 1. The lazy-transfer bits

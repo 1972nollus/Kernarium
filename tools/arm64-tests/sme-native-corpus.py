@@ -45,7 +45,11 @@ The cases cover, for each record:
 
 Every expectation is observed at the oracle host's streaming vector length,
 64 bytes, and a record's svl says so: the runner runs these cases only where
-the virtual CPU's SVL is the record's. Each case starts with X18 zero, since
+the virtual CPU's SVL is the record's. The SME host has no FEAT_SVE, so a
+case outside streaming mode whose word the SVE profile executes there holds
+only for a virtual CPU without SVE: it goes into a sibling of its group's
+record under the without_sve option, which the runner translates for on
+every host. Each case starts with X18 zero, since
 Darwin clears X18 whenever a thread returns to user mode, and every address
 a case forms has a zero top byte, since the host ignores it and the guest's
 default state does not.
@@ -1127,6 +1131,25 @@ class Finding(Exception):
     pass
 
 
+# Whether an exit retires the instruction it stops at, as
+# terminal_does_not_retire() in darwin/cpu/execution_types.hpp classifies
+# the arm64 exits: an SVC or a BRK retires, leaving the PC after the SVC
+# and at the BRK, and a memory fault, an illegal instruction, or a
+# floating-point trap leaves the PC at an instruction that did not retire.
+# The oracles' programs do not branch, so they raise no other exit.
+RETIRES = {"system-call": True, "breakpoint": True, "memory-fault": False,
+           "illegal-instruction": False, "floating-point-trap": False}
+
+
+def retired_count(name: str, event: str, pc_offset: int) -> int:
+    """The instructions a program retires when the oracle stops it with
+    `event` at the word at `pc_offset` (for a system call, its SVC)."""
+    if event not in RETIRES:
+        raise Finding(f"{name}: {event} at offset {pc_offset:#x}, which a "
+                      "program without branches cannot raise")
+    return pc_offset // 4 + RETIRES[event]
+
+
 def case_skeleton(draft: Draft, case: WireCase, program: int) -> dict:
     """The record case without what the hardware decides: its event,
     expected state, retired count, fault, and expected bytes."""
@@ -1197,7 +1220,8 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     item["expected"] = expected_fields(
         initial, final, corpus.CODE_BASE + pc_offset,
         corpus.CODE_BASE + case.entry)
-    item["retired"] = pc_offset // 4
+    item["retired"] = retired_count(draft.name, result.event,
+                                    result.pc_offset)
     if result.event == "memory-fault":
         if result.esr >> 26 == 0x26:
             access = "write" if draft.store else "read"
@@ -1211,6 +1235,62 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     return item
 
 
+WITHOUT_SVE = "without_sve"
+
+
+@functools.cache
+def _row_index() -> RowIndex:
+    return RowIndex(sme_table.load())
+
+
+def needs_no_sve(draft: Draft) -> bool:
+    """Whether the case holds only where the virtual CPU lacks SVE, as the
+    SME host does: one outside streaming mode whose word the SVE profile
+    executes there."""
+    if draft.svcr & SM:
+        return False
+    row = _row_index().row_for(draft.words[0])
+    return row is not None and "sve" in row.non_streaming_requirement
+
+
+def record_key(draft: Draft) -> tuple[str, tuple[str, ...]]:
+    """The record a case belongs to: its group's, or, for a case that holds
+    only without SVE, the group's sibling under the without_sve option,
+    which the runner translates for on every host."""
+    return draft.group, (WITHOUT_SVE,) if needs_no_sve(draft) else ()
+
+
+def assemble(items: list[tuple[Draft, tuple[int, ...], dict]]) -> list[dict]:
+    """The records holding the cases, each given with its draft and its
+    program's words, in group order and with each group's without_sve
+    sibling after it."""
+    records: dict[tuple, dict] = {}
+    programs: dict[tuple, dict[tuple, int]] = {}
+    for draft, words, item in items:
+        key = record_key(draft)
+        group, options = key
+        name = f"{PRODUCER}/{group}"
+        if options:
+            bits = sum(1 << corpus.OPTION_NAMES.index(option)
+                       for option in options)
+            name += f"/options={bits:x}"
+        record = records.setdefault(key, {
+            "record": name, "producer": PRODUCER, "site": SITE,
+            "profiles": ["16k", "4k"], "options": list(options),
+            "svl": SVL, "programs": [], "cases": []})
+        index = programs.setdefault(key, {})
+        if words not in index:
+            index[words] = len(record["programs"])
+            record["programs"].append({
+                "entry": 0,
+                "words": [[4 * i, f"{word:08x}"]
+                          for i, word in enumerate(words)]})
+        record["cases"].append(dict(item, program=index[words]))
+    return [records[key] for group in GROUPS
+            for key in ((group, ()), (group, (WITHOUT_SVE,)))
+            if key in records]
+
+
 def build_records(host: dict, results: list[WireResult]
                   ) -> tuple[list[dict], dict[str, bytes], dict]:
     items = drafts()
@@ -1219,30 +1299,17 @@ def build_records(host: dict, results: list[WireResult]
             set(host["features"]):
         raise SystemExit("the response is not from an SME2 host with a "
                          f"{SVL}-byte SVL")
-    records: dict[str, dict] = {}
-    programs: dict[str, dict[tuple, int]] = {}
     blobs: dict[str, bytes] = {}
     findings = []
     counts = {"cases": len(items), "events": {}}
+    recorded = []
     for draft, case, result in zip(items, cases, results):
-        record = records.setdefault(draft.group, {
-            "record": f"{PRODUCER}/{draft.group}", "producer": PRODUCER,
-            "site": SITE, "profiles": ["16k", "4k"], "options": [],
-            "svl": SVL, "programs": [], "cases": []})
-        index = programs.setdefault(draft.group, {})
-        key = case.words
-        if key not in index:
-            index[key] = len(record["programs"])
-            record["programs"].append({
-                "entry": 0,
-                "words": [[4 * i, f"{word:08x}"]
-                          for i, word in enumerate(case.words)]})
         try:
-            item = record_case(draft, case, result, index[key])
+            item = record_case(draft, case, result, 0)
         except Finding as finding:
             findings.append(str(finding))
             continue
-        record["cases"].append(item)
+        recorded.append((draft, case.words, item))
         counts["events"][item["event"]] = \
             counts["events"].get(item["event"], 0) + 1
         for region in case.regions:
@@ -1253,8 +1320,7 @@ def build_records(host: dict, results: list[WireResult]
             print(f"sme-native-corpus: {finding}", file=sys.stderr)
         raise SystemExit(f"sme-native-corpus: {len(findings)} cases disagree "
                          "with the encoding table")
-    ordered = [records[group] for group in GROUPS if group in records]
-    return ordered, blobs, counts
+    return assemble(recorded), blobs, counts
 
 
 def script_hash() -> str:
@@ -1358,7 +1424,31 @@ def carry(options: argparse.Namespace) -> int:
              for item in dumped if "blob" in item}
     used = {region["blob"] for item in dumped if "cases" in item
             for case in item["cases"] for region in case.get("memory", [])}
-    records = [item for item in dumped if "cases" in item]
+    # The request is unchanged, so each record holds its drafts' cases in
+    # order (names repeat where the table splits an encoding into rows);
+    # they go into the records this script now gives them.
+    queues: dict[tuple, list] = {}
+    for item in dumped:
+        if "cases" not in item:
+            continue
+        key = (item["record"].split("/")[1], tuple(item["options"]))
+        queues[key] = [
+            (tuple(int(word, 16) for _offset, word in
+                   item["programs"][case["program"]]["words"]), case)
+            for case in reversed(item["cases"])]
+    carried = []
+    for draft in drafts():
+        key = record_key(draft)
+        queue = queues.get(key, queues.get((draft.group, ())))
+        words, case = queue.pop() if queue else ((), {})
+        if case.get("name") != draft.name or words != draft.wire().words:
+            raise SystemExit(f"sme-native-corpus: {draft.name}: the pack's "
+                             "native cases do not answer the request")
+        carried.append((draft, words, case))
+    if any(queues.values()):
+        raise SystemExit("sme-native-corpus: the pack holds native cases "
+                         "the request lacks")
+    records = assemble(carried)
     header["meta"]["sme_native"] = dict(meta, sha256=script_hash())
     write_dump(options.output, header, lines,
                {digest: blobs[digest] for digest in sorted(used)}, records)

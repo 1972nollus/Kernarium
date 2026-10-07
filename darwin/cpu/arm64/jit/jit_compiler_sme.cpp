@@ -807,6 +807,8 @@ bool JitCompiler::emit_streaming_memory(const detail::SmeEncoding &row,
     break;
   }
   case detail::SmeAddressOffset::none:
+  case detail::SmeAddressOffset::vector_index:
+  case detail::SmeAddressOffset::register_byte:
     break;
   }
   if (constant_span) {
