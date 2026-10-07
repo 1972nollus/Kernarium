@@ -40,7 +40,8 @@ Where the host's instructions raise other flags than x86's:
 
 - COMISS and COMISD compare with FCMPE, which raises invalid operation
   for a quiet NaN as they do; UCOMISS and UCOMISD keep FCMP. MINSS,
-  MINSD, MAXSS and MAXSD compare with FCMPE too.
+  MINSD, MAXSS and MAXSD compare with FCMPE too. The flag pass keeps a
+  compare whose flags go unused, which still raises the flag.
 - CMPPS, CMPPD, CMPSS, CMPSD and VCMP raise invalid operation for each
   of x86's 32 predicates as it does: a quiet relation compares operands
   whose NaN lanes a quiet ordered test cleared, and FALSE and TRUE
@@ -74,9 +75,10 @@ Where the host's instructions raise other flags than x86's:
  .../Core/OpcodeDispatcher/AVX_128.cpp         |  17 +-
  .../Core/OpcodeDispatcher/Vector.cpp          | 164 ++++++++++++--
  FEXCore/Source/Interface/IR/IR.json           |  49 +++-
+ .../RedundantFlagCalculationElimination.cpp   |   5 +
  .../IR/Passes/x87StackOptimizationPass.cpp    |   6 +-
  FEXCore/include/FEXCore/Core/CoreState.h      |   7 +
- 15 files changed, 487 insertions(+), 88 deletions(-)
+ 16 files changed, 492 insertions(+), 88 deletions(-)
 
 diff --git a/CodeEmitter/CodeEmitter/Emitter.h b/CodeEmitter/CodeEmitter/Emitter.h
 index 001adcbaf6021b7a10fc55d0c441c597b40a2c89..207890dfd279c57617c780c19424c867f610767e 100644
@@ -1095,6 +1097,22 @@ index a737ca0fc1b3ed461e253ffd48ec241e1d2e1f5f..dce87cf41ef7c61c8cd7b7d386d870c2
                  ],
          "HasSideEffects": true
        }
+diff --git a/FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp b/FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp
+index 873ad68233d1201bb5c0e4437feea6f17120edfb..7da1cd8a79a5b49343360b5ef5cbac8ae01269e1 100644
+--- a/FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp
++++ b/FEXCore/Source/Interface/IR/Passes/RedundantFlagCalculationElimination.cpp
+@@ -349,6 +349,11 @@ constexpr auto FlagInfos = [] {
+ }();
+ 
+ FlagInfo DeadFlagCalculationEliminination::Classify(IROp_Header* IROp) {
++  if (Embedded && IROp->Op == OP_FCMP) {
++    // A compare whose flags go unused still raises the guest's invalid
++    // operation flag in FPSR, as COMISS and UCOMISS do.
++    return FlagInfo::Pack({.Write = FLAG_NZCV});
++  }
+   FlagInfo Info = FlagInfos[IROp->Op];
+   if (!Info.Special()) {
+     return Info;
 diff --git a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp b/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
 index 0c6af7f7d742aea6974b2efe1802e96dc94ac3ff..6af7c1496400e13ce0c86004d4046ef5a459eadf 100644
 --- a/FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp
