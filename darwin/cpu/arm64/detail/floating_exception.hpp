@@ -379,18 +379,18 @@ struct Step final {
 
 /*
  * The flags of `raised` that trap while FPCR.UFE is set, given the form's
- * rounding and tiny(), whether the form rounded a tiny value without
- * flushing it: a result element or an intermediate result that is
- * subnormal. A flush to zero sets FPSR.UFC but never traps, and a tiny
- * result raises Underflow even when it is exact (FPRoundBase's
- * trapped_UF), which an execution with UFE clear does not report. Every
- * engine and the SVE semantic library decide through this; tiny() runs
- * only when it decides.
+ * rounding, its source Vn as it was before the instruction, and its result
+ * in Vd (the isolated execution's). A flush to
+ * zero sets FPSR.UFC but never traps, and a rounded result element that is
+ * subnormal was tiny and so raises Underflow even when it is exact
+ * (FPRoundBase's trapped_UF), which an execution with UFE clear does not
+ * report.
  */
-template<typename Tiny>
 [[nodiscard]] constexpr std::uint32_t trappable_floating_exceptions(
 	std::uint32_t guest_fpcr, std::uint32_t raised,
-	const FloatingRounding &rounding, Tiny &&tiny) noexcept
+	const FloatingRounding &rounding,
+	const std::array<std::byte, 16> &source,
+	const std::array<std::byte, 16> &destination) noexcept
 {
 	if ((guest_fpcr & fpcr_underflow_enable) == 0U ||
 		rounding.kind == FloatingResultKind::none)
@@ -400,45 +400,43 @@ template<typename Tiny>
 		return raised & ~fpsr_underflow;
 	if ((raised & fpsr_underflow) != 0U)
 		return raised;
-	return tiny() ? raised | fpsr_underflow : raised;
+	if (rounding.reduction != FloatingReduction::none)
+		return floating_reduction_detail::reduction_underflows(
+			       guest_fpcr, rounding, source) ?
+			raised | fpsr_underflow :
+			raised;
+	const unsigned size = floating_rounding_detail::format_bytes(
+		rounding.format);
+	for (unsigned offset = rounding.first_byte;
+		offset + size <= rounding.first_byte + rounding.bytes;
+		offset += size) {
+		std::uint64_t element = 0;
+		for (unsigned byte = 0; byte < size; ++byte)
+			element |= std::uint64_t{std::to_integer<std::uint8_t>(
+					   destination[offset + byte])}
+				<< (8U * byte);
+		if (is_subnormal(element, rounding.format))
+			return raised | fpsr_underflow;
+	}
+	return raised;
 }
 
 /*
- * The same for an A64 FP&SIMD form, from its source Vn as it was before
- * the instruction and its result in Vd (the isolated execution's): a
- * result element is subnormal, or, for a reduction, a step of its tree.
+ * The same rules for a form that notes itself whether it rounded a tiny
+ * value without flushing it, a result or an intermediate result: the SVE
+ * semantic library's (sve_semantics_internal.hpp).
  */
 [[nodiscard]] constexpr std::uint32_t trappable_floating_exceptions(
 	std::uint32_t guest_fpcr, std::uint32_t raised,
-	const FloatingRounding &rounding,
-	const std::array<std::byte, 16> &source,
-	const std::array<std::byte, 16> &destination) noexcept
+	const FloatingRounding &rounding, bool tiny) noexcept
 {
-	return trappable_floating_exceptions(
-		guest_fpcr, raised, rounding, [&] {
-			if (rounding.reduction != FloatingReduction::none)
-				return floating_reduction_detail::
-					reduction_underflows(
-						guest_fpcr, rounding, source);
-			const unsigned size =
-				floating_rounding_detail::format_bytes(
-					rounding.format);
-			for (unsigned offset = rounding.first_byte;
-				offset + size <=
-				rounding.first_byte + rounding.bytes;
-				offset += size) {
-				std::uint64_t element = 0;
-				for (unsigned byte = 0; byte < size; ++byte)
-					element |= std::uint64_t{
-						std::to_integer<std::uint8_t>(
-							destination[offset +
-								byte])}
-						<< (8U * byte);
-				if (is_subnormal(element, rounding.format))
-					return true;
-			}
-			return false;
-		});
+	if ((guest_fpcr & fpcr_underflow_enable) == 0U ||
+		rounding.kind == FloatingResultKind::none)
+		return raised;
+	if (rounding.kind == FloatingResultKind::estimate ||
+		flushes_tiny_result(guest_fpcr, rounding))
+		return raised & ~fpsr_underflow;
+	return tiny ? raised | fpsr_underflow : raised;
 }
 
 /* The decision for an A64 FP&SIMD data-processing instruction, from Vn

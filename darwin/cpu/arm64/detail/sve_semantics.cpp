@@ -116,8 +116,7 @@ namespace {
 	const auto decision = decide_floating_exception(cpu.fpcr,
 		original_fpsr, cpu.fpsr,
 		trappable_floating_exceptions(cpu.fpcr, cpu.fpsr,
-			floating_rounding(context),
-			[&] { return context.tiny_result; }));
+			floating_rounding(context), context.tiny_result));
 	if (result.event == SveEvent::retired && decision.traps()) {
 		cpu.vectors = vectors;
 		cpu.sve_p = predicates;
