@@ -518,10 +518,25 @@ non-streaming SVE word is the illegal-instruction exit. The JIT is at `none`.
 The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
 carry the profile, it runs every word of the profile, so under the
 guest-SVE policy it presents the profile to its guest. Generated gadgets
-run PTRUE, PTRUES, PFALSE and PTEST, the predicate logical operations, CNTP,
-INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL, SETFFR, RDFFR
-and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL and the unpredicated
-logical forms. Every other word runs through the semantic library from the
+run the control forms (PTRUE, PTRUES, PFALSE and PTEST, the predicate
+logical operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL,
+ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY
+and SEL) and the register-only hot set: the unpredicated, predicated and
+immediate integer arithmetic, logical, multiply, min/max and shift forms,
+the SVE2 widening, narrowing, high-half and shift-accumulate forms, the
+unsigned saturating forms, XAR, ZIP, UZP, TRN, byte TBL, the dot products,
+the integer compares, and the floating-point arithmetic, multiply-add,
+indexed, rounding and same-size conversion forms. A predicated
+floating-point form tests its governing predicate for all-true and then
+runs the unpredicated AdvSIMD form; under a partial predicate it first
+replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
+they raise nothing, and merges under the lane mask, which a predicated
+integer form always does since that costs less than the test. A
+saturating form saturates by compare and select, since AdvSIMD's
+saturating forms set FPSR.QC and SVE's never do, and a shift by an
+immediate has a gadget per value of tsz:imm3. A size or index a form's
+gadgets leave out runs through the semantic library. Every other word runs
+through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP
 environment is active, its cumulative FPSR flags to `CpuState`, calls the
 library with guest memory through the TLB, and reloads both; a library
@@ -546,7 +561,9 @@ inline. CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL select base
 entries on a constant the builder computes. A program holding one of these
 words accesses the FP state before it runs, since P and FFR travel with it,
 and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
-`arm64-gadget-sve` checks the forms against the pseudocode, and that no
+`arm64-gadget-sve` checks the control forms against the pseudocode and
+every generated register-only form against the semantic library on random
+states, with the native FP environment inactive and active, and that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 

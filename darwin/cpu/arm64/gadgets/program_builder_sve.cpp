@@ -38,10 +38,12 @@
 #include <span>
 
 extern "C" {
-/* engine/sve.inc: the generated entries, in the order of the header, and
- * the gadget that runs a word through the semantic library. */
+/* engine/sve.inc: the generated entries, in the order of the header, the
+ * entry of a variant the generator leaves to the semantic library, and the
+ * gadget that runs a word through that library. */
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries_end[];
+void uml_arm64_gadget_sve_generated_absent();
 void uml_arm64_gadget_sve_library();
 }
 
@@ -322,6 +324,11 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 			sign_extend((word >> 5) & 0xffU, 8) *
 			(((word >> 13) & 1U) != 0U ? 256 : 1)), esize));
 		return true;
+	case Lowering::unsigned_immediate:
+		/* imm8, shifted left by 8 when bit 13 (sh) is set. */
+		emit_words(context, replicate(std::uint64_t{(word >> 5) & 0xffU} <<
+			(((word >> 13) & 1U) != 0U ? 8U : 0U), esize));
+		return true;
 	case Lowering::bitmask_immediate: {
 		const auto bits = detail::decode_logical_immediate(true,
 			(word >> 17) & 1U, (word >> 11) & 63U, (word >> 5) & 63U);
@@ -363,7 +370,23 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 	return static_cast<std::uint32_t>(found - sve::fused_conditions.begin());
 }
 
-DecodeResult emit_form(DecodeContext &context, const Form &form)
+/* The word, whose row is detail::sme_encodings[index], through the
+ * semantic library. The word goes in the operand's high half: an SVE word
+ * is at least 0x0400'0000, so the operand is above every user address and
+ * never reads as a gadget entry. */
+DecodeResult emit_library(DecodeContext &context, std::size_t index)
+{
+	if (!detail::sve_semantics_covers(detail::sme_encodings[index]))
+		return implementation_gap(context);
+	emit(context.words, uml_arm64_gadget_sve_library);
+	emit(context.words, (static_cast<std::uint64_t>(context.instruction)
+		<< 32) | static_cast<std::uint64_t>(index));
+	emit(context.words, context.address);
+	return DecodeResult::decoded;
+}
+
+DecodeResult emit_form(DecodeContext &context, const Form &form,
+	std::size_t index)
 {
 	const auto word = context.instruction;
 	if (form.variants == 0U)
@@ -381,8 +404,12 @@ DecodeResult emit_form(DecodeContext &context, const Form &form)
 	if (variant >= form.variants ||
 	    form.first_entry + variant >= entries.size())
 		return implementation_gap(context);
+	const auto entry = entries[form.first_entry + variant];
+	if (entry == reinterpret_cast<std::uintptr_t>(
+		    uml_arm64_gadget_sve_generated_absent))
+		return emit_library(context, index);
 	const auto start = context.words.size();
-	emit(context.words, entries[form.first_entry + variant]);
+	emit(context.words, entry);
 	const auto operand = context.words.size();
 	if (form.slot_count != 0U)
 		emit_words(context, packed_slots(form, word));
@@ -431,21 +458,13 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 		static_cast<std::size_t>(row - detail::sme_encodings.data());
 	const auto number = sve::row_forms[index];
 	DecodeResult decoded = DecodeResult::decoded;
-	if (number != sve::no_form) {
-		decoded = emit_form(context, sve::forms[number]);
-	} else {
-		/* Every other form runs through the semantic library, which
-		 * implements every row the virtual CPU can decode here. The
-		 * word goes in the operand's high half: an SVE word is at least
-		 * 0x0400'0000, so the operand is above every user address and
-		 * never reads as a gadget entry. */
-		if (!detail::sve_semantics_covers(*row))
-			return implementation_gap(context);
-		emit(context.words, uml_arm64_gadget_sve_library);
-		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
-			static_cast<std::uint64_t>(index));
-		emit(context.words, context.address);
-	}
+	/* Every other form, and a generated form's absent variant, runs
+	 * through the semantic library, which implements every row the
+	 * virtual CPU can decode here. */
+	if (number != sve::no_form)
+		decoded = emit_form(context, sve::forms[number], index);
+	else
+		decoded = emit_library(context, index);
 	if (decoded == DecodeResult::decoded) {
 		context.program_accesses_fp_state = true;
 		context.program_holds_sve = true;

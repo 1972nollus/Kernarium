@@ -22,6 +22,7 @@
 #include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "cpu/arm64/gadgets/sve_helpers.hpp"
 #include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
@@ -1609,6 +1610,186 @@ void library_words()
 	}
 }
 
+/* A random element value for a differential run: raw bits, a normal FP16,
+ * FP32 or FP64 value near one, a small integer, or an extreme. */
+void fill_lanes(Random &random, Bytes &bytes)
+{
+	const auto kind = random.next() % 6U;
+	if (kind == 0U) {
+		bytes = random.bytes();
+		return;
+	}
+	static constexpr unsigned sizes[]{2, 2, 4, 8, 1};
+	const unsigned esize = sizes[kind - 1U];
+	for (unsigned index = 0; index < 16U / esize; ++index) {
+		std::uint64_t value = random.next();
+		switch (kind) {
+		case 1: /* FP16 with exponent 13-17. */
+			value = (value & 0x83ffU) | ((13U + value % 5U) << 10);
+			break;
+		case 2: /* FP16 integers and extremes. */
+			value = std::array<std::uint64_t, 6>{0x0000U, 0x8000U,
+				0x3c00U, 0x7bffU, 0x0001U, 0xc500U}[value % 6U];
+			break;
+		case 3: /* FP32 with exponent 124-130. */
+			value = (value & 0x807f'ffffU) |
+				((124U + value % 7U) << 23);
+			break;
+		case 4: /* FP64 with exponent 1020-1026. */
+			value = (value & 0x800f'ffff'ffff'ffffULL) |
+				((1020ULL + value % 7U) << 52);
+			break;
+		default: /* Small integers and byte extremes. */
+			value = std::array<std::uint64_t, 6>{0x00U, 0x01U, 0x7fU,
+				0x80U, 0xffU, value % 9U}[value % 6U];
+			break;
+		}
+		for (unsigned byte = 0; byte < esize; ++byte)
+			bytes[index * esize + byte] =
+				static_cast<std::uint8_t>(value >> (8U * byte));
+	}
+}
+
+/* Random architectural state for a differential run. FPCR takes a random
+ * rounding mode, FZ, DN and FZ16, with no trap enable. */
+[[nodiscard]] arm64::CpuState random_state(Random &random)
+{
+	arm64::CpuState cpu{};
+	for (auto &value : cpu.registers) {
+		const auto raw = random.next();
+		switch (raw % 4U) {
+		case 0:
+			value = raw >> 58;
+			break;
+		case 1:
+			value = ~(raw >> 58);
+			break;
+		case 2:
+			value = (raw & 1U) != 0U ? 0x7fff'ffff'ffff'ffffULL - (raw >> 60) :
+				0x8000'0000'0000'0000ULL + (raw >> 60);
+			break;
+		default:
+			value = raw;
+			break;
+		}
+	}
+	cpu.sp = random.next() & ~std::uint64_t{15};
+	for (unsigned n = 0; n < 32; ++n) {
+		Bytes bytes{};
+		fill_lanes(random, bytes);
+		set_vec(cpu, n, bytes);
+	}
+	for (unsigned n = 0; n < 16; ++n)
+		set_pred(cpu, n, random.predicate());
+	cpu.sve_ffr = arm64::sve_predicate_mask(random.predicate());
+	cpu.sve_live = 1;
+	cpu.nzcv = static_cast<std::uint32_t>(random.next() & 0xfU) << 28;
+	cpu.fpcr = static_cast<std::uint32_t>(random.next()) &
+		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19));
+	cpu.fpsr = static_cast<std::uint32_t>(random.next()) & 0x0800'009fU;
+	return cpu;
+}
+
+/* Whether the gadget engine leaves `expected` after running `code`, which
+ * ends in an SVC, from `initial`; reports `word` otherwise. */
+void require_library_state(std::span<const std::uint32_t> code,
+	const arm64::CpuState &initial, const arm64::CpuState &expected,
+	std::uint32_t word, std::size_t index, bool fp_active)
+{
+	const auto host = sve_host();
+	const auto built = build(code, host);
+	arm64::CpuState cpu = initial;
+	cpu.pc = code_base;
+	uml::memory::Tlb tlb;
+	std::size_t executed = 0;
+	const auto event = gadgets::execute(built.program, cpu, tlb, executed);
+	gadgets::restore_native_fp_environment(cpu);
+	bool same = event == EngineEvent::system_call &&
+		executed == code.size() &&
+		cpu.registers == expected.registers &&
+		cpu.sp == expected.sp && cpu.sve_p == expected.sve_p &&
+		cpu.sve_ffr == expected.sve_ffr && cpu.nzcv == expected.nzcv &&
+		cpu.fpsr == expected.fpsr && cpu.fpcr == expected.fpcr &&
+		cpu.sve_live == expected.sve_live;
+	unsigned differing = 32;
+	for (unsigned n = 0; n < 32 && same; ++n)
+		if (cpu.vectors[n].bytes != expected.vectors[n].bytes) {
+			differing = n;
+			same = false;
+		}
+	if (same)
+		return;
+	const auto &row = arm64::detail::sme_encodings[index];
+	std::fprintf(stderr, "word %08x (row %zu, SVE-%04u%s): the gadget "
+		"leaves another state than the library (event %d, executed "
+		"%zu, Z%u, nzcv %08x/%08x, fpsr %08x/%08x, fpcr %08x)\n", word,
+		index, row.form & 0x7fffU, fp_active ? ", FP active" : "",
+		static_cast<int>(event), executed, differing, cpu.nzcv,
+		expected.nzcv, cpu.fpsr, expected.fpsr, initial.fpcr);
+	if (differing < 32U) {
+		std::fprintf(stderr, "  Z%u gadget ", differing);
+		for (const auto byte : cpu.vectors[differing].bytes)
+			std::fprintf(stderr, "%02x", static_cast<unsigned>(byte));
+		std::fprintf(stderr, "\n  Z%u library ", differing);
+		for (const auto byte : expected.vectors[differing].bytes)
+			std::fprintf(stderr, "%02x", static_cast<unsigned>(byte));
+		std::fprintf(stderr, "\n");
+	}
+	require(false);
+}
+
+/* Every generated form agrees with the semantic library: random words of
+ * each register-only row a generated gadget runs, each alone in a block on
+ * a random state, leave the library's registers, P, FFR, NZCV and FPSR;
+ * and so does each behind an FP instruction that leaves the guest's
+ * environment active in the host's FP registers. */
+void generated_forms_match_the_library()
+{
+	/* fadd s31, s31, s31 on 1.0: exact, so it raises nothing. */
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	Random random{0x5ec7'0002U};
+	const auto host = sve_host();
+	std::size_t runs = 0;
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory != 0U)
+			continue;
+		++rows;
+		for (int sample = 0; sample < 48; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word, host,
+				0);
+			if (decoded.kind != gadgets::SveWord::implemented ||
+			    decoded.row != &row)
+				continue;
+			auto initial = random_state(random);
+			const std::array alone{word, svc};
+			require_library_state(alone, initial,
+				library_after(initial, word), word, index, false);
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
+			auto activated = initial;
+			set_vec(activated, 31, two);
+			const std::array behind{activate, word, svc};
+			require_library_state(behind, initial,
+				library_after(activated, word), word, index, true);
+			runs += 2;
+		}
+	}
+	require(rows > 0U && runs > rows);
+	std::printf("%zu generated-form runs over %zu rows match the "
+		"library\n", runs, rows);
+}
+
 /* Words the virtual CPU does not implement end the block: without SVE; a
  * row whose feature the host lacks; a reserved immediate, of a generated
  * form (DUPM, DUP) and of one the library runs (AND); a word of no row,
@@ -1786,6 +1967,7 @@ int main()
 	fused_while_branch();
 	live_marker_and_fp_access();
 	library_words();
+	generated_forms_match_the_library();
 	unimplemented_words();
 	streaming_safety();
 	streaming_mode_changes_zero_predicates();
