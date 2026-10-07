@@ -4,7 +4,7 @@ BASE-0002	Base	ADC	32	0	25
 BASE-0003	Base	ADCS	32	0	29
 BASE-0004	Base	ADD (extended register)	157	52	209
 BASE-0005	Base	ADD (immediate)	2460	0	240
-BASE-0006	Base	ADD (shifted register)	234	45	274
+BASE-0006	Base	ADD (shifted register)	236	45	274
 BASE-0007	Base	ADDG	0	14	8
 BASE-0008	Base	ADDPT	0	20	20
 BASE-0009	Base	ADDS (extended register)	191	51	242
@@ -47,7 +47,7 @@ BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	0	28	28
 BASE-0046	Base	BR	18	23	37
 BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	0	30	30
 BASE-0048	Base	BRB	0	23	23
-BASE-0049	Base	BRK	75	0	75
+BASE-0049	Base	BRK	77	0	76
 BASE-0050	Base	BTI	16	0	4
 BASE-0051	Base	CAS, CASA, CASAL, CASL	232	11	76
 BASE-0052	Base	CASB, CASAB, CASALB, CASLB	98	11	35
@@ -516,7 +516,7 @@ BASE-0514	Base	XAFLAG	24	8	9
 BASE-0515	Base	XPACD, XPACI, XPACLRI	0	303	303
 BASE-0516	Base	YIELD	4	0	1
 FPSIMD-0001	FP&SIMD	ABS	66	147	210
-FPSIMD-0002	FP&SIMD	ADD (vector)	39	182	207
+FPSIMD-0002	FP&SIMD	ADD (vector)	42	182	207
 FPSIMD-0003	FP&SIMD	ADDHN, ADDHN2	68	4	61
 FPSIMD-0004	FP&SIMD	ADDP (scalar)	44	47	76
 FPSIMD-0005	FP&SIMD	ADDP (vector)	27	22	40
@@ -748,7 +748,7 @@ FPSIMD-0230	FP&SIMD	LDFMIN, LDFMINA, LDFMINAL, LDFMINL	0	353	281
 FPSIMD-0231	FP&SIMD	LDFMINNM, LDFMINNMA, LDFMINNMAL, LDFMINNML	0	353	281
 FPSIMD-0232	FP&SIMD	LDNP (SIMD&FP)	123	75	104
 FPSIMD-0233	FP&SIMD	LDP (SIMD&FP)	361	162	248
-FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	1089	314	797
+FPSIMD-0234	FP&SIMD	LDR (immediate, SIMD&FP)	1091	314	797
 FPSIMD-0235	FP&SIMD	LDR (literal, SIMD&FP)	326	156	469
 FPSIMD-0236	FP&SIMD	LDR (register, SIMD&FP)	325	207	329
 FPSIMD-0237	FP&SIMD	LDTNP (SIMD&FP)	0	48	47
@@ -982,46 +982,46 @@ FPSIMD-0464	FP&SIMD	XAR	2497	1	2441
 FPSIMD-0465	FP&SIMD	XTN, XTN2	44	84	128
 FPSIMD-0466	FP&SIMD	ZIP1	64	4	67
 FPSIMD-0467	FP&SIMD	ZIP2	64	4	67
-SVE-0001	SVE	ABS	11	5	9
-SVE-0002	SVE	ADCLB	8	2	8
-SVE-0003	SVE	ADCLT	8	2	8
-SVE-0004	SVE	ADD (immediate)	13	6	13
-SVE-0005	SVE	ADD (vectors, predicated)	11	2	8
-SVE-0006	SVE	ADD (vectors, unpredicated)	10	2	10
-SVE-0007	SVE	ADDHNB	15	4	15
-SVE-0008	SVE	ADDHNT	15	4	15
-SVE-0009	SVE	ADDP	11	2	8
-SVE-0010	SVE	ADDPL	6	2	6
+SVE-0001	SVE	ABS	26	5	9
+SVE-0002	SVE	ADCLB	16	2	8
+SVE-0003	SVE	ADCLT	16	2	8
+SVE-0004	SVE	ADD (immediate)	26	6	13
+SVE-0005	SVE	ADD (vectors, predicated)	26	2	8
+SVE-0006	SVE	ADD (vectors, unpredicated)	20	2	10
+SVE-0007	SVE	ADDHNB	30	4	15
+SVE-0008	SVE	ADDHNT	30	4	15
+SVE-0009	SVE	ADDP	26	2	8
+SVE-0010	SVE	ADDPL	12	2	6
 SVE-0011	SVE	ADDPT (predicated)	0	3	1
 SVE-0012	SVE	ADDPT (unpredicated)	0	3	1
 SVE-0013	SVE	ADDQP	0	3	1
 SVE-0014	SVE	ADDQV	0	3	1
 SVE-0015	SVE	ADDSUBP	0	3	1
-SVE-0016	SVE	ADDVL	6	2	6
-SVE-0017	SVE	ADR	0	9	3
+SVE-0016	SVE	ADDVL	12	2	6
+SVE-0017	SVE	ADR	31	9	31
 SVE-0018	SVE	AESD (indexed)	0	6	2
-SVE-0019	SVE	AESD (vectors)	0	3	1
+SVE-0019	SVE	AESD (vectors)	5	3	5
 SVE-0020	SVE	AESDIMC	0	6	2
 SVE-0021	SVE	AESE (indexed)	0	6	2
-SVE-0022	SVE	AESE (vectors)	0	3	1
+SVE-0022	SVE	AESE (vectors)	5	3	5
 SVE-0023	SVE	AESEMC	0	6	2
-SVE-0024	SVE	AESIMC	0	3	1
-SVE-0025	SVE	AESMC	0	3	1
-SVE-0026	SVE	AND (immediate)	3	5	3
-SVE-0027	SVE	AND (predicates)	13	4	9
-SVE-0028	SVE	AND (vectors, predicated)	11	2	8
-SVE-0029	SVE	AND (vectors, unpredicated)	7	2	7
+SVE-0024	SVE	AESIMC	2	3	2
+SVE-0025	SVE	AESMC	2	3	2
+SVE-0026	SVE	AND (immediate)	6	14	11
+SVE-0027	SVE	AND (predicates)	30	4	9
+SVE-0028	SVE	AND (vectors, predicated)	26	2	8
+SVE-0029	SVE	AND (vectors, unpredicated)	14	2	7
 SVE-0030	SVE	ANDQV	0	3	1
-SVE-0031	SVE	ANDS	13	4	9
-SVE-0032	SVE	ANDV	11	2	8
-SVE-0033	SVE	ASR (immediate, predicated)	32	8	20
-SVE-0034	SVE	ASR (immediate, unpredicated)	32	8	32
-SVE-0035	SVE	ASR (vectors)	11	2	8
-SVE-0036	SVE	ASR (wide elements, predicated)	17	4	11
-SVE-0037	SVE	ASR (wide elements, unpredicated)	15	4	15
-SVE-0038	SVE	ASRD	32	8	20
-SVE-0039	SVE	ASRR	11	2	8
-SVE-0040	SVE	BCAX	7	2	7
+SVE-0031	SVE	ANDS	30	4	9
+SVE-0032	SVE	ANDV	26	2	8
+SVE-0033	SVE	ASR (immediate, predicated)	80	10	21
+SVE-0034	SVE	ASR (immediate, unpredicated)	64	8	32
+SVE-0035	SVE	ASR (vectors)	26	2	8
+SVE-0036	SVE	ASR (wide elements, predicated)	42	4	11
+SVE-0037	SVE	ASR (wide elements, unpredicated)	30	4	15
+SVE-0038	SVE	ASRD	80	8	20
+SVE-0039	SVE	ASRR	26	2	8
+SVE-0040	SVE	BCAX	14	2	7
 SVE-0041	SVE	BDEP	0	3	1
 SVE-0042	SVE	BEXT	0	3	1
 SVE-0043	SVE	BF1CVT, BF2CVT	0	6	2
@@ -1029,29 +1029,29 @@ SVE-0044	SVE	BF1CVTLT, BF2CVTLT	0	6	2
 SVE-0045	SVE	BFADD (predicated)	0	3	1
 SVE-0046	SVE	BFADD (unpredicated)	0	3	1
 SVE-0047	SVE	BFCLAMP	0	3	1
-SVE-0048	SVE	BFCVT	9	5	6
+SVE-0048	SVE	BFCVT	22	5	6
 SVE-0049	SVE	BFCVTN	0	3	1
-SVE-0050	SVE	BFCVTNT	9	5	6
-SVE-0051	SVE	BFDOT (indexed)	10	2	9
-SVE-0052	SVE	BFDOT (vectors)	8	2	7
+SVE-0050	SVE	BFCVTNT	22	5	6
+SVE-0051	SVE	BFDOT (indexed)	20	2	9
+SVE-0052	SVE	BFDOT (vectors)	16	2	7
 SVE-0053	SVE	BFMAX	0	3	1
 SVE-0054	SVE	BFMAXNM	0	3	1
 SVE-0055	SVE	BFMIN	0	3	1
 SVE-0056	SVE	BFMINNM	0	3	1
 SVE-0057	SVE	BFMLA (indexed)	0	3	1
 SVE-0058	SVE	BFMLA (vectors)	0	3	1
-SVE-0059	SVE	BFMLALB (indexed)	11	2	10
-SVE-0060	SVE	BFMLALB (vectors)	8	2	7
-SVE-0061	SVE	BFMLALT (indexed)	11	2	10
-SVE-0062	SVE	BFMLALT (vectors)	8	2	7
+SVE-0059	SVE	BFMLALB (indexed)	22	2	10
+SVE-0060	SVE	BFMLALB (vectors)	16	2	7
+SVE-0061	SVE	BFMLALT (indexed)	22	2	10
+SVE-0062	SVE	BFMLALT (vectors)	16	2	7
 SVE-0063	SVE	BFMLS (indexed)	0	3	1
 SVE-0064	SVE	BFMLS (vectors)	0	3	1
-SVE-0065	SVE	BFMLSLB (indexed)	11	2	10
-SVE-0066	SVE	BFMLSLB (vectors)	8	2	7
-SVE-0067	SVE	BFMLSLT (indexed)	11	2	10
-SVE-0068	SVE	BFMLSLT (vectors)	8	2	7
+SVE-0065	SVE	BFMLSLB (indexed)	11	3	10
+SVE-0066	SVE	BFMLSLB (vectors)	8	3	7
+SVE-0067	SVE	BFMLSLT (indexed)	11	3	10
+SVE-0068	SVE	BFMLSLT (vectors)	8	3	7
 SVE-0069	SVE	BFMMLA (non-widening)	0	3	1
-SVE-0070	SVE	BFMMLA (widening)	0	3	1
+SVE-0070	SVE	BFMMLA (widening)	8	3	7
 SVE-0071	SVE	BFMUL (indexed)	0	3	1
 SVE-0072	SVE	BFMUL (vectors, predicated)	0	3	1
 SVE-0073	SVE	BFMUL (vectors, unpredicated)	0	3	1
@@ -1059,153 +1059,153 @@ SVE-0074	SVE	BFSCALE	0	3	1
 SVE-0075	SVE	BFSUB (predicated)	0	3	1
 SVE-0076	SVE	BFSUB (unpredicated)	0	3	1
 SVE-0077	SVE	BGRP	0	3	1
-SVE-0078	SVE	BIC (immediate)	3	5	3
-SVE-0079	SVE	BIC (predicates)	12	2	9
-SVE-0080	SVE	BIC (vectors, predicated)	11	2	8
-SVE-0081	SVE	BIC (vectors, unpredicated)	7	2	7
-SVE-0082	SVE	BICS	12	2	9
-SVE-0083	SVE	BRKA	11	2	8
-SVE-0084	SVE	BRKAS	10	2	7
-SVE-0085	SVE	BRKB	11	2	8
-SVE-0086	SVE	BRKBS	10	2	7
-SVE-0087	SVE	BRKN	10	2	7
-SVE-0088	SVE	BRKNS	10	2	7
-SVE-0089	SVE	BRKPA	12	2	9
-SVE-0090	SVE	BRKPAS	12	2	9
-SVE-0091	SVE	BRKPB	12	2	9
-SVE-0092	SVE	BRKPBS	12	2	9
-SVE-0093	SVE	BSL	7	2	7
-SVE-0094	SVE	BSL1N	7	2	7
-SVE-0095	SVE	BSL2N	7	2	7
-SVE-0096	SVE	CADD	9	2	9
-SVE-0097	SVE	CDOT (indexed)	22	4	22
-SVE-0098	SVE	CDOT (vectors)	20	4	20
-SVE-0099	SVE	CLASTA (scalar)	10	2	5
-SVE-0100	SVE	CLASTA (SIMD&FP scalar)	11	2	8
-SVE-0101	SVE	CLASTA (vectors)	11	2	8
-SVE-0102	SVE	CLASTB (scalar)	10	2	5
-SVE-0103	SVE	CLASTB (SIMD&FP scalar)	11	2	8
-SVE-0104	SVE	CLASTB (vectors)	11	2	8
-SVE-0105	SVE	CLS	11	5	9
-SVE-0106	SVE	CLZ	11	5	9
-SVE-0107	SVE	CMLA (indexed)	22	4	22
-SVE-0108	SVE	CMLA (vectors)	13	2	13
-SVE-0109	SVE	CMP<cc> (immediate)	110	20	80
-SVE-0110	SVE	CMP<cc> (vectors)	76	20	54
-SVE-0111	SVE	CMP<cc> (wide elements)	190	40	130
-SVE-0112	SVE	CMPLE (vectors)	13	4	9
-SVE-0113	SVE	CMPLO (vectors)	13	4	9
-SVE-0114	SVE	CMPLS (vectors)	13	4	9
-SVE-0115	SVE	CMPLT (vectors)	13	4	9
-SVE-0116	SVE	CNOT	11	5	9
-SVE-0117	SVE	CNT	11	5	9
-SVE-0118	SVE	CNTB, CNTD, CNTH, CNTW	24	8	16
+SVE-0078	SVE	BIC (immediate)	6	14	11
+SVE-0079	SVE	BIC (predicates)	28	2	9
+SVE-0080	SVE	BIC (vectors, predicated)	26	2	8
+SVE-0081	SVE	BIC (vectors, unpredicated)	14	2	7
+SVE-0082	SVE	BICS	28	2	9
+SVE-0083	SVE	BRKA	26	2	8
+SVE-0084	SVE	BRKAS	24	2	7
+SVE-0085	SVE	BRKB	26	2	8
+SVE-0086	SVE	BRKBS	24	2	7
+SVE-0087	SVE	BRKN	24	2	7
+SVE-0088	SVE	BRKNS	24	2	7
+SVE-0089	SVE	BRKPA	28	2	9
+SVE-0090	SVE	BRKPAS	28	2	9
+SVE-0091	SVE	BRKPB	28	2	9
+SVE-0092	SVE	BRKPBS	28	2	9
+SVE-0093	SVE	BSL	14	2	7
+SVE-0094	SVE	BSL1N	14	2	7
+SVE-0095	SVE	BSL2N	14	2	7
+SVE-0096	SVE	CADD	18	2	9
+SVE-0097	SVE	CDOT (indexed)	44	4	22
+SVE-0098	SVE	CDOT (vectors)	40	4	20
+SVE-0099	SVE	CLASTA (scalar)	24	2	5
+SVE-0100	SVE	CLASTA (SIMD&FP scalar)	26	2	8
+SVE-0101	SVE	CLASTA (vectors)	26	2	8
+SVE-0102	SVE	CLASTB (scalar)	24	2	5
+SVE-0103	SVE	CLASTB (SIMD&FP scalar)	26	2	8
+SVE-0104	SVE	CLASTB (vectors)	26	2	8
+SVE-0105	SVE	CLS	26	5	9
+SVE-0106	SVE	CLZ	26	5	9
+SVE-0107	SVE	CMLA (indexed)	44	4	22
+SVE-0108	SVE	CMLA (vectors)	26	2	13
+SVE-0109	SVE	CMP<cc> (immediate)	260	20	80
+SVE-0110	SVE	CMP<cc> (vectors)	176	20	54
+SVE-0111	SVE	CMP<cc> (wide elements)	460	40	130
+SVE-0112	SVE	CMPLE (vectors)	30	4	9
+SVE-0113	SVE	CMPLO (vectors)	30	4	9
+SVE-0114	SVE	CMPLS (vectors)	30	4	9
+SVE-0115	SVE	CMPLT (vectors)	30	4	9
+SVE-0116	SVE	CNOT	26	5	9
+SVE-0117	SVE	CNT	26	5	9
+SVE-0118	SVE	CNTB, CNTD, CNTH, CNTW	48	8	16
 SVE-0119	SVE	CNTP (predicate as counter)	11	2	6
-SVE-0120	SVE	CNTP (predicate)	13	2	8
-SVE-0121	SVE	COMPACT	0	6	2
-SVE-0122	SVE	CPY (immediate, merging)	24	10	13
-SVE-0123	SVE	CPY (immediate, zeroing)	23	8	13
-SVE-0124	SVE	CPY (scalar)	9	4	5
-SVE-0125	SVE	CPY (SIMD&FP scalar)	12	4	8
-SVE-0126	SVE	CTERMEQ, CTERMNE	16	4	12
-SVE-0127	SVE	DECB, DECD, DECH, DECW (scalar)	24	8	16
-SVE-0128	SVE	DECD, DECH, DECW (vector)	12	6	12
-SVE-0129	SVE	DECP (scalar)	10	2	5
-SVE-0130	SVE	DECP (vector)	11	4	5
-SVE-0131	SVE	DUP (immediate)	15	10	13
-SVE-0132	SVE	DUP (indexed)	47	12	46
-SVE-0133	SVE	DUP (scalar)	6	4	5
-SVE-0134	SVE	DUPM	3	5	3
+SVE-0120	SVE	CNTP (predicate)	30	2	8
+SVE-0121	SVE	COMPACT	13	6	7
+SVE-0122	SVE	CPY (immediate, merging)	60	10	13
+SVE-0123	SVE	CPY (immediate, zeroing)	58	8	13
+SVE-0124	SVE	CPY (scalar)	22	4	5
+SVE-0125	SVE	CPY (SIMD&FP scalar)	28	4	8
+SVE-0126	SVE	CTERMEQ, CTERMNE	32	4	12
+SVE-0127	SVE	DECB, DECD, DECH, DECW (scalar)	48	8	16
+SVE-0128	SVE	DECD, DECH, DECW (vector)	24	6	12
+SVE-0129	SVE	DECP (scalar)	24	2	5
+SVE-0130	SVE	DECP (vector)	30	4	5
+SVE-0131	SVE	DUP (immediate)	30	10	13
+SVE-0132	SVE	DUP (indexed)	94	12	46
+SVE-0133	SVE	DUP (scalar)	12	4	5
+SVE-0134	SVE	DUPM	6	14	11
 SVE-0135	SVE	DUPQ	0	3	1
-SVE-0136	SVE	EON	3	5	3
-SVE-0137	SVE	EOR (immediate)	3	5	3
-SVE-0138	SVE	EOR (predicates)	13	4	9
-SVE-0139	SVE	EOR (vectors, predicated)	11	2	8
-SVE-0140	SVE	EOR (vectors, unpredicated)	7	2	7
-SVE-0141	SVE	EOR3	7	2	7
-SVE-0142	SVE	EORBT	10	2	10
+SVE-0136	SVE	EON	6	14	11
+SVE-0137	SVE	EOR (immediate)	6	14	11
+SVE-0138	SVE	EOR (predicates)	30	4	9
+SVE-0139	SVE	EOR (vectors, predicated)	26	2	8
+SVE-0140	SVE	EOR (vectors, unpredicated)	14	2	7
+SVE-0141	SVE	EOR3	14	2	7
+SVE-0142	SVE	EORBT	20	2	10
 SVE-0143	SVE	EORQV	0	3	1
-SVE-0144	SVE	EORS	13	4	9
-SVE-0145	SVE	EORTB	10	2	10
-SVE-0146	SVE	EORV	11	2	8
+SVE-0144	SVE	EORS	30	4	9
+SVE-0145	SVE	EORTB	20	2	10
+SVE-0146	SVE	EORV	26	2	8
 SVE-0147	SVE	EXPAND	0	3	1
-SVE-0148	SVE	EXT	14	4	14
+SVE-0148	SVE	EXT	28	4	14
 SVE-0149	SVE	EXTQ	0	3	1
 SVE-0150	SVE	F1CVT, F2CVT	0	6	2
 SVE-0151	SVE	F1CVTLT, F2CVTLT	0	6	2
-SVE-0152	SVE	FABD	19	4	11
-SVE-0153	SVE	FABS	19	7	12
-SVE-0154	SVE	FAC<cc>	44	12	26
-SVE-0155	SVE	FACLE	22	6	13
-SVE-0156	SVE	FACLT	22	6	13
-SVE-0157	SVE	FADD (immediate)	15	4	7
-SVE-0158	SVE	FADD (vectors, predicated)	19	4	11
-SVE-0159	SVE	FADD (vectors, unpredicated)	21	4	15
-SVE-0160	SVE	FADDA	0	6	2
-SVE-0161	SVE	FADDP	19	4	11
+SVE-0152	SVE	FABD	46	4	11
+SVE-0153	SVE	FABS	46	7	12
+SVE-0154	SVE	FAC<cc>	104	12	26
+SVE-0155	SVE	FACLE	52	6	13
+SVE-0156	SVE	FACLT	52	6	13
+SVE-0157	SVE	FADD (immediate)	38	4	7
+SVE-0158	SVE	FADD (vectors, predicated)	46	4	11
+SVE-0159	SVE	FADD (vectors, unpredicated)	38	4	15
+SVE-0160	SVE	FADDA	27	6	11
+SVE-0161	SVE	FADDP	46	4	11
 SVE-0162	SVE	FADDQV	0	3	1
-SVE-0163	SVE	FADDV	19	4	11
+SVE-0163	SVE	FADDV	46	4	11
 SVE-0164	SVE	FAMAX	0	3	1
 SVE-0165	SVE	FAMIN	0	3	1
-SVE-0166	SVE	FCADD	21	4	13
-SVE-0167	SVE	FCLAMP	17	4	15
-SVE-0168	SVE	FCM<cc> (vectors)	107	24	65
-SVE-0169	SVE	FCM<cc> (zero)	102	24	54
-SVE-0170	SVE	FCMLA (indexed)	24	4	22
-SVE-0171	SVE	FCMLA (vectors)	29	4	21
-SVE-0172	SVE	FCMLE (vectors)	22	6	13
-SVE-0173	SVE	FCMLT (vectors)	22	6	13
-SVE-0174	SVE	FCPY	16	6	7
-SVE-0175	SVE	FCVT	54	30	36
-SVE-0176	SVE	FCVTLT	18	10	12
+SVE-0166	SVE	FCADD	50	4	13
+SVE-0167	SVE	FCLAMP	17	6	15
+SVE-0168	SVE	FCM<cc> (vectors)	254	24	65
+SVE-0169	SVE	FCM<cc> (zero)	252	24	54
+SVE-0170	SVE	FCMLA (indexed)	48	4	22
+SVE-0171	SVE	FCMLA (vectors)	66	4	21
+SVE-0172	SVE	FCMLE (vectors)	52	6	13
+SVE-0173	SVE	FCMLT (vectors)	52	6	13
+SVE-0174	SVE	FCPY	40	6	7
+SVE-0175	SVE	FCVT	132	30	36
+SVE-0176	SVE	FCVTLT	44	10	12
 SVE-0177	SVE	FCVTN	0	3	1
 SVE-0178	SVE	FCVTNB	0	3	1
-SVE-0179	SVE	FCVTNT (predicated)	18	10	12
+SVE-0179	SVE	FCVTNT (predicated)	44	10	12
 SVE-0180	SVE	FCVTNT (unpredicated)	0	3	1
-SVE-0181	SVE	FCVTX	9	5	6
-SVE-0182	SVE	FCVTXNT	9	5	6
-SVE-0183	SVE	FCVTZS	63	35	42
+SVE-0181	SVE	FCVTX	22	5	6
+SVE-0182	SVE	FCVTXNT	22	5	6
+SVE-0183	SVE	FCVTZS	154	35	42
 SVE-0184	SVE	FCVTZSN	0	3	1
-SVE-0185	SVE	FCVTZU	63	35	42
+SVE-0185	SVE	FCVTZU	154	35	42
 SVE-0186	SVE	FCVTZUN	0	3	1
-SVE-0187	SVE	FDIV	19	4	11
-SVE-0188	SVE	FDIVR	19	4	11
-SVE-0189	SVE	FDOT (2-way, indexed, FP16 to FP32)	10	2	9
+SVE-0187	SVE	FDIV	46	4	11
+SVE-0188	SVE	FDIVR	46	4	11
+SVE-0189	SVE	FDOT (2-way, indexed, FP16 to FP32)	10	3	9
 SVE-0190	SVE	FDOT (2-way, indexed, FP8 to FP16)	0	3	1
-SVE-0191	SVE	FDOT (2-way, vectors, FP16 to FP32)	8	2	7
+SVE-0191	SVE	FDOT (2-way, vectors, FP16 to FP32)	8	3	7
 SVE-0192	SVE	FDOT (2-way, vectors, FP8 to FP16)	0	3	1
 SVE-0193	SVE	FDOT (4-way, indexed)	0	3	1
 SVE-0194	SVE	FDOT (4-way, vectors)	0	3	1
-SVE-0195	SVE	FDUP	10	6	7
-SVE-0196	SVE	FEXPA	0	6	2
+SVE-0195	SVE	FDUP	20	6	7
+SVE-0196	SVE	FEXPA	13	6	11
 SVE-0197	SVE	FIRSTP	0	3	1
-SVE-0198	SVE	FLOGB	19	7	12
-SVE-0199	SVE	FMAD	23	4	15
-SVE-0200	SVE	FMAX (immediate)	15	4	7
-SVE-0201	SVE	FMAX (vectors)	19	4	11
-SVE-0202	SVE	FMAXNM (immediate)	15	4	7
-SVE-0203	SVE	FMAXNM (vectors)	19	4	11
-SVE-0204	SVE	FMAXNMP	19	4	11
+SVE-0198	SVE	FLOGB	46	7	12
+SVE-0199	SVE	FMAD	54	4	15
+SVE-0200	SVE	FMAX (immediate)	38	4	7
+SVE-0201	SVE	FMAX (vectors)	46	4	11
+SVE-0202	SVE	FMAXNM (immediate)	38	4	7
+SVE-0203	SVE	FMAXNM (vectors)	46	4	11
+SVE-0204	SVE	FMAXNMP	46	4	11
 SVE-0205	SVE	FMAXNMQV	0	3	1
-SVE-0206	SVE	FMAXNMV	19	4	11
-SVE-0207	SVE	FMAXP	19	4	11
+SVE-0206	SVE	FMAXNMV	46	4	11
+SVE-0207	SVE	FMAXP	46	4	11
 SVE-0208	SVE	FMAXQV	0	3	1
-SVE-0209	SVE	FMAXV	19	4	11
-SVE-0210	SVE	FMIN (immediate)	15	4	7
-SVE-0211	SVE	FMIN (vectors)	19	4	11
-SVE-0212	SVE	FMINNM (immediate)	15	4	7
-SVE-0213	SVE	FMINNM (vectors)	19	4	11
-SVE-0214	SVE	FMINNMP	19	4	11
+SVE-0209	SVE	FMAXV	46	4	11
+SVE-0210	SVE	FMIN (immediate)	38	4	7
+SVE-0211	SVE	FMIN (vectors)	46	4	11
+SVE-0212	SVE	FMINNM (immediate)	38	4	7
+SVE-0213	SVE	FMINNM (vectors)	46	4	11
+SVE-0214	SVE	FMINNMP	46	4	11
 SVE-0215	SVE	FMINNMQV	0	3	1
-SVE-0216	SVE	FMINNMV	19	4	11
-SVE-0217	SVE	FMINP	19	4	11
+SVE-0216	SVE	FMINNMV	46	4	11
+SVE-0217	SVE	FMINP	46	4	11
 SVE-0218	SVE	FMINQV	0	3	1
-SVE-0219	SVE	FMINV	19	4	11
-SVE-0220	SVE	FMLA (indexed)	29	6	26
-SVE-0221	SVE	FMLA (vectors)	23	4	15
-SVE-0222	SVE	FMLALB (indexed, FP16 to FP32)	11	2	10
+SVE-0219	SVE	FMINV	46	4	11
+SVE-0220	SVE	FMLA (indexed)	58	6	26
+SVE-0221	SVE	FMLA (vectors)	54	4	15
+SVE-0222	SVE	FMLALB (indexed, FP16 to FP32)	22	2	10
 SVE-0223	SVE	FMLALB (indexed, FP8 to FP16)	0	3	1
-SVE-0224	SVE	FMLALB (vectors, FP16 to FP32)	8	2	7
+SVE-0224	SVE	FMLALB (vectors, FP16 to FP32)	16	2	7
 SVE-0225	SVE	FMLALB (vectors, FP8 to FP16)	0	3	1
 SVE-0226	SVE	FMLALLBB (indexed)	0	3	1
 SVE-0227	SVE	FMLALLBB (vectors)	0	3	1
@@ -1215,726 +1215,726 @@ SVE-0230	SVE	FMLALLTB (indexed)	0	3	1
 SVE-0231	SVE	FMLALLTB (vectors)	0	3	1
 SVE-0232	SVE	FMLALLTT (indexed)	0	3	1
 SVE-0233	SVE	FMLALLTT (vectors)	0	3	1
-SVE-0234	SVE	FMLALT (indexed, FP16 to FP32)	11	2	10
+SVE-0234	SVE	FMLALT (indexed, FP16 to FP32)	22	2	10
 SVE-0235	SVE	FMLALT (indexed, FP8 to FP16)	0	3	1
-SVE-0236	SVE	FMLALT (vectors, FP16 to FP32)	8	2	7
+SVE-0236	SVE	FMLALT (vectors, FP16 to FP32)	16	2	7
 SVE-0237	SVE	FMLALT (vectors, FP8 to FP16)	0	3	1
-SVE-0238	SVE	FMLS (indexed)	29	6	26
-SVE-0239	SVE	FMLS (vectors)	23	4	15
-SVE-0240	SVE	FMLSLB (indexed)	11	2	10
-SVE-0241	SVE	FMLSLB (vectors)	8	2	7
-SVE-0242	SVE	FMLSLT (indexed)	11	2	10
-SVE-0243	SVE	FMLSLT (vectors)	8	2	7
+SVE-0238	SVE	FMLS (indexed)	58	6	26
+SVE-0239	SVE	FMLS (vectors)	54	4	15
+SVE-0240	SVE	FMLSLB (indexed)	22	2	10
+SVE-0241	SVE	FMLSLB (vectors)	16	2	7
+SVE-0242	SVE	FMLSLT (indexed)	22	2	10
+SVE-0243	SVE	FMLSLT (vectors)	16	2	7
 SVE-0244	SVE	FMMLA (non-widening)	0	9	3
 SVE-0245	SVE	FMMLA (widening, FP16 to FP32)	0	3	1
 SVE-0246	SVE	FMMLA (widening, FP8 to FP16)	0	3	1
 SVE-0247	SVE	FMMLA (widening, FP8 to FP32)	0	3	1
-SVE-0248	SVE	FMOV (immediate, predicated)	16	6	7
-SVE-0249	SVE	FMOV (immediate, unpredicated)	10	6	7
-SVE-0250	SVE	FMOV (zero, predicated)	10	6	5
-SVE-0251	SVE	FMOV (zero, unpredicated)	7	6	5
-SVE-0252	SVE	FMSB	23	4	15
-SVE-0253	SVE	FMUL (immediate)	15	4	7
-SVE-0254	SVE	FMUL (indexed)	29	6	26
-SVE-0255	SVE	FMUL (vectors, predicated)	19	4	11
-SVE-0256	SVE	FMUL (vectors, unpredicated)	17	4	15
-SVE-0257	SVE	FMULX	19	4	11
-SVE-0258	SVE	FNEG	19	7	12
-SVE-0259	SVE	FNMAD	23	4	15
-SVE-0260	SVE	FNMLA	23	4	15
-SVE-0261	SVE	FNMLS	23	4	15
-SVE-0262	SVE	FNMSB	23	4	15
-SVE-0263	SVE	FRECPE	13	4	11
-SVE-0264	SVE	FRECPS	17	4	15
-SVE-0265	SVE	FRECPX	19	7	12
+SVE-0248	SVE	FMOV (immediate, predicated)	40	6	7
+SVE-0249	SVE	FMOV (immediate, unpredicated)	20	6	7
+SVE-0250	SVE	FMOV (zero, predicated)	24	6	5
+SVE-0251	SVE	FMOV (zero, unpredicated)	14	6	5
+SVE-0252	SVE	FMSB	54	4	15
+SVE-0253	SVE	FMUL (immediate)	38	4	7
+SVE-0254	SVE	FMUL (indexed)	58	6	26
+SVE-0255	SVE	FMUL (vectors, predicated)	46	4	11
+SVE-0256	SVE	FMUL (vectors, unpredicated)	34	4	15
+SVE-0257	SVE	FMULX	46	4	11
+SVE-0258	SVE	FNEG	46	7	12
+SVE-0259	SVE	FNMAD	54	4	15
+SVE-0260	SVE	FNMLA	54	4	15
+SVE-0261	SVE	FNMLS	54	4	15
+SVE-0262	SVE	FNMSB	54	4	15
+SVE-0263	SVE	FRECPE	26	4	11
+SVE-0264	SVE	FRECPS	34	4	15
+SVE-0265	SVE	FRECPX	46	7	12
 SVE-0266	SVE	FRINT32X	0	6	2
 SVE-0267	SVE	FRINT32Z	0	6	2
 SVE-0268	SVE	FRINT64X	0	6	2
 SVE-0269	SVE	FRINT64Z	0	6	2
-SVE-0270	SVE	FRINT<r>	133	49	84
-SVE-0271	SVE	FRSQRTE	13	4	11
-SVE-0272	SVE	FRSQRTS	17	4	15
-SVE-0273	SVE	FSCALE	19	4	11
-SVE-0274	SVE	FSQRT	19	7	12
-SVE-0275	SVE	FSUB (immediate)	15	4	7
-SVE-0276	SVE	FSUB (vectors, predicated)	19	4	11
-SVE-0277	SVE	FSUB (vectors, unpredicated)	17	4	15
-SVE-0278	SVE	FSUBR (immediate)	15	4	7
-SVE-0279	SVE	FSUBR (vectors)	19	4	11
-SVE-0280	SVE	FTMAD	0	6	2
-SVE-0281	SVE	FTSMUL	0	6	2
-SVE-0282	SVE	FTSSEL	0	6	2
-SVE-0283	SVE	HISTCNT	0	6	2
-SVE-0284	SVE	HISTSEG	0	3	1
-SVE-0285	SVE	INCB, INCD, INCH, INCW (scalar)	24	8	16
-SVE-0286	SVE	INCD, INCH, INCW (vector)	12	6	12
-SVE-0287	SVE	INCP (scalar)	10	2	5
-SVE-0288	SVE	INCP (vector)	11	4	5
-SVE-0289	SVE	INDEX (immediate, scalar)	8	2	6
-SVE-0290	SVE	INDEX (immediates)	7	2	7
-SVE-0291	SVE	INDEX (scalar, immediate)	8	2	6
-SVE-0292	SVE	INDEX (scalars)	10	2	8
-SVE-0293	SVE	INSR (scalar)	7	2	5
-SVE-0294	SVE	INSR (SIMD&FP scalar)	8	2	8
-SVE-0295	SVE	LASTA (scalar)	10	2	5
-SVE-0296	SVE	LASTA (SIMD&FP scalar)	11	2	8
-SVE-0297	SVE	LASTB (scalar)	10	2	5
-SVE-0298	SVE	LASTB (SIMD&FP scalar)	11	2	8
+SVE-0270	SVE	FRINT<r>	322	49	84
+SVE-0271	SVE	FRSQRTE	26	4	11
+SVE-0272	SVE	FRSQRTS	34	4	15
+SVE-0273	SVE	FSCALE	46	4	11
+SVE-0274	SVE	FSQRT	46	7	12
+SVE-0275	SVE	FSUB (immediate)	38	4	7
+SVE-0276	SVE	FSUB (vectors, predicated)	46	4	11
+SVE-0277	SVE	FSUB (vectors, unpredicated)	34	4	15
+SVE-0278	SVE	FSUBR (immediate)	38	4	7
+SVE-0279	SVE	FSUBR (vectors)	46	4	11
+SVE-0280	SVE	FTMAD	15	6	13
+SVE-0281	SVE	FTSMUL	17	6	15
+SVE-0282	SVE	FTSSEL	17	6	15
+SVE-0283	SVE	HISTCNT	28	6	14
+SVE-0284	SVE	HISTSEG	7	3	7
+SVE-0285	SVE	INCB, INCD, INCH, INCW (scalar)	48	8	16
+SVE-0286	SVE	INCD, INCH, INCW (vector)	24	6	12
+SVE-0287	SVE	INCP (scalar)	24	2	5
+SVE-0288	SVE	INCP (vector)	30	4	5
+SVE-0289	SVE	INDEX (immediate, scalar)	16	2	6
+SVE-0290	SVE	INDEX (immediates)	14	2	7
+SVE-0291	SVE	INDEX (scalar, immediate)	16	2	6
+SVE-0292	SVE	INDEX (scalars)	20	2	8
+SVE-0293	SVE	INSR (scalar)	14	2	5
+SVE-0294	SVE	INSR (SIMD&FP scalar)	16	2	8
+SVE-0295	SVE	LASTA (scalar)	24	2	5
+SVE-0296	SVE	LASTA (SIMD&FP scalar)	26	2	8
+SVE-0297	SVE	LASTB (scalar)	24	2	5
+SVE-0298	SVE	LASTB (SIMD&FP scalar)	26	2	8
 SVE-0299	SVE	LASTP	0	3	1
 SVE-0300	SVE	LD1B (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0301	SVE	LD1B (scalar plus immediate, single register)	56	8	12
+SVE-0301	SVE	LD1B (scalar plus immediate, single register)	146	8	12
 SVE-0302	SVE	LD1B (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0303	SVE	LD1B (scalar plus scalar, single register)	296	120	44
-SVE-0304	SVE	LD1B (scalar plus vector)	0	9	3
-SVE-0305	SVE	LD1B (vector plus immediate)	0	6	2
+SVE-0303	SVE	LD1B (scalar plus scalar, single register)	400	136	44
+SVE-0304	SVE	LD1B (scalar plus vector)	85	9	17
+SVE-0305	SVE	LD1B (vector plus immediate)	44	6	12
 SVE-0306	SVE	LD1D (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0307	SVE	LD1D (scalar plus immediate, single register)	14	5	4
+SVE-0307	SVE	LD1D (scalar plus immediate, single register)	37	5	4
 SVE-0308	SVE	LD1D (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0309	SVE	LD1D (scalar plus scalar, single register)	74	105	28
-SVE-0310	SVE	LD1D (scalar plus vector)	0	12	4
-SVE-0311	SVE	LD1D (vector plus immediate)	0	3	1
+SVE-0309	SVE	LD1D (scalar plus scalar, single register)	101	121	28
+SVE-0310	SVE	LD1D (scalar plus vector)	99	12	22
+SVE-0311	SVE	LD1D (vector plus immediate)	21	3	6
 SVE-0312	SVE	LD1H (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0313	SVE	LD1H (scalar plus immediate, single register)	42	6	9
+SVE-0313	SVE	LD1H (scalar plus immediate, single register)	111	6	9
 SVE-0314	SVE	LD1H (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0315	SVE	LD1H (scalar plus scalar, single register)	222	110	37
-SVE-0316	SVE	LD1H (scalar plus vector)	0	18	6
-SVE-0317	SVE	LD1H (vector plus immediate)	0	6	2
+SVE-0315	SVE	LD1H (scalar plus scalar, single register)	303	126	37
+SVE-0316	SVE	LD1H (scalar plus vector)	175	18	34
+SVE-0317	SVE	LD1H (vector plus immediate)	46	6	12
 SVE-0318	SVE	LD1Q	0	3	1
-SVE-0319	SVE	LD1RB	52	8	12
-SVE-0320	SVE	LD1RD	13	2	3
-SVE-0321	SVE	LD1RH	39	6	9
+SVE-0319	SVE	LD1RB	132	8	12
+SVE-0320	SVE	LD1RD	33	2	3
+SVE-0321	SVE	LD1RH	99	6	9
 SVE-0322	SVE	LD1ROB (scalar plus immediate)	0	3	1
-SVE-0323	SVE	LD1ROB (scalar plus scalar)	0	35	9
+SVE-0323	SVE	LD1ROB (scalar plus scalar)	0	39	9
 SVE-0324	SVE	LD1ROD (scalar plus immediate)	0	3	1
-SVE-0325	SVE	LD1ROD (scalar plus scalar)	0	35	9
+SVE-0325	SVE	LD1ROD (scalar plus scalar)	0	39	9
 SVE-0326	SVE	LD1ROH (scalar plus immediate)	0	3	1
-SVE-0327	SVE	LD1ROH (scalar plus scalar)	0	35	9
+SVE-0327	SVE	LD1ROH (scalar plus scalar)	0	39	9
 SVE-0328	SVE	LD1ROW (scalar plus immediate)	0	3	1
-SVE-0329	SVE	LD1ROW (scalar plus scalar)	0	35	9
-SVE-0330	SVE	LD1RQB (scalar plus immediate)	13	2	3
-SVE-0331	SVE	LD1RQB (scalar plus scalar)	69	30	11
-SVE-0332	SVE	LD1RQD (scalar plus immediate)	13	2	3
-SVE-0333	SVE	LD1RQD (scalar plus scalar)	69	30	11
-SVE-0334	SVE	LD1RQH (scalar plus immediate)	13	2	3
-SVE-0335	SVE	LD1RQH (scalar plus scalar)	69	30	11
-SVE-0336	SVE	LD1RQW (scalar plus immediate)	13	2	3
-SVE-0337	SVE	LD1RQW (scalar plus scalar)	69	30	11
-SVE-0338	SVE	LD1RSB	39	6	9
-SVE-0339	SVE	LD1RSH	26	4	6
-SVE-0340	SVE	LD1RSW	13	2	3
-SVE-0341	SVE	LD1RW	26	4	6
-SVE-0342	SVE	LD1SB (scalar plus immediate)	42	6	9
-SVE-0343	SVE	LD1SB (scalar plus scalar)	222	110	37
-SVE-0344	SVE	LD1SB (scalar plus vector)	0	9	3
-SVE-0345	SVE	LD1SB (vector plus immediate)	0	6	2
-SVE-0346	SVE	LD1SH (scalar plus immediate)	28	4	6
-SVE-0347	SVE	LD1SH (scalar plus scalar)	148	100	30
-SVE-0348	SVE	LD1SH (scalar plus vector)	0	18	6
-SVE-0349	SVE	LD1SH (vector plus immediate)	0	6	2
-SVE-0350	SVE	LD1SW (scalar plus immediate)	14	2	3
-SVE-0351	SVE	LD1SW (scalar plus scalar)	74	90	23
-SVE-0352	SVE	LD1SW (scalar plus vector)	0	12	4
-SVE-0353	SVE	LD1SW (vector plus immediate)	0	3	1
+SVE-0329	SVE	LD1ROW (scalar plus scalar)	0	39	9
+SVE-0330	SVE	LD1RQB (scalar plus immediate)	33	2	3
+SVE-0331	SVE	LD1RQB (scalar plus scalar)	93	34	11
+SVE-0332	SVE	LD1RQD (scalar plus immediate)	33	2	3
+SVE-0333	SVE	LD1RQD (scalar plus scalar)	93	34	11
+SVE-0334	SVE	LD1RQH (scalar plus immediate)	33	2	3
+SVE-0335	SVE	LD1RQH (scalar plus scalar)	93	34	11
+SVE-0336	SVE	LD1RQW (scalar plus immediate)	33	2	3
+SVE-0337	SVE	LD1RQW (scalar plus scalar)	93	34	11
+SVE-0338	SVE	LD1RSB	99	6	9
+SVE-0339	SVE	LD1RSH	66	4	6
+SVE-0340	SVE	LD1RSW	33	2	3
+SVE-0341	SVE	LD1RW	66	4	6
+SVE-0342	SVE	LD1SB (scalar plus immediate)	108	6	9
+SVE-0343	SVE	LD1SB (scalar plus scalar)	300	126	37
+SVE-0344	SVE	LD1SB (scalar plus vector)	85	9	17
+SVE-0345	SVE	LD1SB (vector plus immediate)	44	6	12
+SVE-0346	SVE	LD1SH (scalar plus immediate)	74	4	6
+SVE-0347	SVE	LD1SH (scalar plus scalar)	202	116	30
+SVE-0348	SVE	LD1SH (scalar plus vector)	175	18	34
+SVE-0349	SVE	LD1SH (vector plus immediate)	46	6	12
+SVE-0350	SVE	LD1SW (scalar plus immediate)	37	2	3
+SVE-0351	SVE	LD1SW (scalar plus scalar)	101	106	23
+SVE-0352	SVE	LD1SW (scalar plus vector)	99	12	22
+SVE-0353	SVE	LD1SW (vector plus immediate)	21	3	6
 SVE-0354	SVE	LD1W (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0355	SVE	LD1W (scalar plus immediate, single register)	28	7	7
+SVE-0355	SVE	LD1W (scalar plus immediate, single register)	74	7	7
 SVE-0356	SVE	LD1W (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0357	SVE	LD1W (scalar plus scalar, single register)	148	115	35
-SVE-0358	SVE	LD1W (scalar plus vector)	0	18	6
-SVE-0359	SVE	LD1W (vector plus immediate)	0	6	2
-SVE-0360	SVE	LD2B (scalar plus immediate)	14	2	3
-SVE-0361	SVE	LD2B (scalar plus scalar)	74	70	19
-SVE-0362	SVE	LD2D (scalar plus immediate)	14	2	3
-SVE-0363	SVE	LD2D (scalar plus scalar)	74	70	19
-SVE-0364	SVE	LD2H (scalar plus immediate)	14	2	3
-SVE-0365	SVE	LD2H (scalar plus scalar)	74	70	19
+SVE-0357	SVE	LD1W (scalar plus scalar, single register)	202	131	35
+SVE-0358	SVE	LD1W (scalar plus vector)	175	18	34
+SVE-0359	SVE	LD1W (vector plus immediate)	46	6	12
+SVE-0360	SVE	LD2B (scalar plus immediate)	36	2	3
+SVE-0361	SVE	LD2B (scalar plus scalar)	100	82	19
+SVE-0362	SVE	LD2D (scalar plus immediate)	36	2	3
+SVE-0363	SVE	LD2D (scalar plus scalar)	100	82	19
+SVE-0364	SVE	LD2H (scalar plus immediate)	36	2	3
+SVE-0365	SVE	LD2H (scalar plus scalar)	100	82	19
 SVE-0366	SVE	LD2Q (scalar plus immediate)	0	3	1
 SVE-0367	SVE	LD2Q (scalar plus scalar)	0	15	5
-SVE-0368	SVE	LD2W (scalar plus immediate)	14	2	3
-SVE-0369	SVE	LD2W (scalar plus scalar)	74	70	19
-SVE-0370	SVE	LD3B (scalar plus immediate)	14	2	3
-SVE-0371	SVE	LD3B (scalar plus scalar)	74	70	19
-SVE-0372	SVE	LD3D (scalar plus immediate)	14	2	3
-SVE-0373	SVE	LD3D (scalar plus scalar)	74	70	19
-SVE-0374	SVE	LD3H (scalar plus immediate)	14	2	3
-SVE-0375	SVE	LD3H (scalar plus scalar)	74	70	19
+SVE-0368	SVE	LD2W (scalar plus immediate)	36	2	3
+SVE-0369	SVE	LD2W (scalar plus scalar)	100	82	19
+SVE-0370	SVE	LD3B (scalar plus immediate)	36	2	3
+SVE-0371	SVE	LD3B (scalar plus scalar)	100	82	19
+SVE-0372	SVE	LD3D (scalar plus immediate)	36	2	3
+SVE-0373	SVE	LD3D (scalar plus scalar)	100	82	19
+SVE-0374	SVE	LD3H (scalar plus immediate)	36	2	3
+SVE-0375	SVE	LD3H (scalar plus scalar)	100	82	19
 SVE-0376	SVE	LD3Q (scalar plus immediate)	0	3	1
 SVE-0377	SVE	LD3Q (scalar plus scalar)	0	15	5
-SVE-0378	SVE	LD3W (scalar plus immediate)	14	2	3
-SVE-0379	SVE	LD3W (scalar plus scalar)	74	70	19
-SVE-0380	SVE	LD4B (scalar plus immediate)	14	2	3
-SVE-0381	SVE	LD4B (scalar plus scalar)	74	70	19
-SVE-0382	SVE	LD4D (scalar plus immediate)	14	2	3
-SVE-0383	SVE	LD4D (scalar plus scalar)	74	70	19
-SVE-0384	SVE	LD4H (scalar plus immediate)	14	2	3
-SVE-0385	SVE	LD4H (scalar plus scalar)	74	70	19
+SVE-0378	SVE	LD3W (scalar plus immediate)	36	2	3
+SVE-0379	SVE	LD3W (scalar plus scalar)	100	82	19
+SVE-0380	SVE	LD4B (scalar plus immediate)	36	2	3
+SVE-0381	SVE	LD4B (scalar plus scalar)	100	82	19
+SVE-0382	SVE	LD4D (scalar plus immediate)	36	2	3
+SVE-0383	SVE	LD4D (scalar plus scalar)	100	82	19
+SVE-0384	SVE	LD4H (scalar plus immediate)	36	2	3
+SVE-0385	SVE	LD4H (scalar plus scalar)	100	82	19
 SVE-0386	SVE	LD4Q (scalar plus immediate)	0	3	1
 SVE-0387	SVE	LD4Q (scalar plus scalar)	0	15	5
-SVE-0388	SVE	LD4W (scalar plus immediate)	14	2	3
-SVE-0389	SVE	LD4W (scalar plus scalar)	74	70	19
-SVE-0390	SVE	LDFF1B (scalar plus scalar)	0	12	4
-SVE-0391	SVE	LDFF1B (scalar plus vector)	0	9	3
-SVE-0392	SVE	LDFF1B (vector plus immediate)	0	6	2
-SVE-0393	SVE	LDFF1D (scalar plus scalar)	0	3	1
-SVE-0394	SVE	LDFF1D (scalar plus vector)	0	12	4
-SVE-0395	SVE	LDFF1D (vector plus immediate)	0	3	1
-SVE-0396	SVE	LDFF1H (scalar plus scalar)	0	9	3
-SVE-0397	SVE	LDFF1H (scalar plus vector)	0	18	6
-SVE-0398	SVE	LDFF1H (vector plus immediate)	0	6	2
-SVE-0399	SVE	LDFF1SB (scalar plus scalar)	0	9	3
-SVE-0400	SVE	LDFF1SB (scalar plus vector)	0	9	3
-SVE-0401	SVE	LDFF1SB (vector plus immediate)	0	6	2
-SVE-0402	SVE	LDFF1SH (scalar plus scalar)	0	6	2
-SVE-0403	SVE	LDFF1SH (scalar plus vector)	0	18	6
-SVE-0404	SVE	LDFF1SH (vector plus immediate)	0	6	2
-SVE-0405	SVE	LDFF1SW (scalar plus scalar)	0	3	1
-SVE-0406	SVE	LDFF1SW (scalar plus vector)	0	12	4
-SVE-0407	SVE	LDFF1SW (vector plus immediate)	0	3	1
-SVE-0408	SVE	LDFF1W (scalar plus scalar)	0	6	2
-SVE-0409	SVE	LDFF1W (scalar plus vector)	0	18	6
-SVE-0410	SVE	LDFF1W (vector plus immediate)	0	6	2
-SVE-0411	SVE	LDNF1B	0	12	4
-SVE-0412	SVE	LDNF1D	0	3	1
-SVE-0413	SVE	LDNF1H	0	9	3
-SVE-0414	SVE	LDNF1SB	0	9	3
-SVE-0415	SVE	LDNF1SH	0	6	2
-SVE-0416	SVE	LDNF1SW	0	3	1
-SVE-0417	SVE	LDNF1W	0	6	2
+SVE-0388	SVE	LD4W (scalar plus immediate)	36	2	3
+SVE-0389	SVE	LD4W (scalar plus scalar)	100	82	19
+SVE-0390	SVE	LDFF1B (scalar plus scalar)	100	12	20
+SVE-0391	SVE	LDFF1B (scalar plus vector)	85	9	17
+SVE-0392	SVE	LDFF1B (vector plus immediate)	44	6	12
+SVE-0393	SVE	LDFF1D (scalar plus scalar)	26	3	5
+SVE-0394	SVE	LDFF1D (scalar plus vector)	99	12	22
+SVE-0395	SVE	LDFF1D (vector plus immediate)	21	3	6
+SVE-0396	SVE	LDFF1H (scalar plus scalar)	78	9	15
+SVE-0397	SVE	LDFF1H (scalar plus vector)	175	18	34
+SVE-0398	SVE	LDFF1H (vector plus immediate)	46	6	12
+SVE-0399	SVE	LDFF1SB (scalar plus scalar)	75	9	15
+SVE-0400	SVE	LDFF1SB (scalar plus vector)	85	9	17
+SVE-0401	SVE	LDFF1SB (vector plus immediate)	44	6	12
+SVE-0402	SVE	LDFF1SH (scalar plus scalar)	52	6	10
+SVE-0403	SVE	LDFF1SH (scalar plus vector)	175	18	34
+SVE-0404	SVE	LDFF1SH (vector plus immediate)	46	6	12
+SVE-0405	SVE	LDFF1SW (scalar plus scalar)	26	3	5
+SVE-0406	SVE	LDFF1SW (scalar plus vector)	99	12	22
+SVE-0407	SVE	LDFF1SW (vector plus immediate)	21	3	6
+SVE-0408	SVE	LDFF1W (scalar plus scalar)	52	6	10
+SVE-0409	SVE	LDFF1W (scalar plus vector)	175	18	34
+SVE-0410	SVE	LDFF1W (vector plus immediate)	46	6	12
+SVE-0411	SVE	LDNF1B	92	12	12
+SVE-0412	SVE	LDNF1D	24	3	3
+SVE-0413	SVE	LDNF1H	72	9	9
+SVE-0414	SVE	LDNF1SB	69	9	9
+SVE-0415	SVE	LDNF1SH	48	6	6
+SVE-0416	SVE	LDNF1SW	24	3	3
+SVE-0417	SVE	LDNF1W	48	6	6
 SVE-0418	SVE	LDNT1B (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0419	SVE	LDNT1B (scalar plus immediate, single register)	14	2	3
+SVE-0419	SVE	LDNT1B (scalar plus immediate, single register)	36	2	3
 SVE-0420	SVE	LDNT1B (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0421	SVE	LDNT1B (scalar plus scalar, single register)	74	30	11
-SVE-0422	SVE	LDNT1B (vector plus scalar)	0	6	2
+SVE-0421	SVE	LDNT1B (scalar plus scalar, single register)	100	34	11
+SVE-0422	SVE	LDNT1B (vector plus scalar)	42	6	10
 SVE-0423	SVE	LDNT1D (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0424	SVE	LDNT1D (scalar plus immediate, single register)	14	2	3
+SVE-0424	SVE	LDNT1D (scalar plus immediate, single register)	37	2	3
 SVE-0425	SVE	LDNT1D (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0426	SVE	LDNT1D (scalar plus scalar, single register)	74	30	11
-SVE-0427	SVE	LDNT1D (vector plus scalar)	0	3	1
+SVE-0426	SVE	LDNT1D (scalar plus scalar, single register)	101	34	11
+SVE-0427	SVE	LDNT1D (vector plus scalar)	20	3	5
 SVE-0428	SVE	LDNT1H (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0429	SVE	LDNT1H (scalar plus immediate, single register)	14	2	3
+SVE-0429	SVE	LDNT1H (scalar plus immediate, single register)	37	2	3
 SVE-0430	SVE	LDNT1H (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0431	SVE	LDNT1H (scalar plus scalar, single register)	74	30	11
-SVE-0432	SVE	LDNT1H (vector plus scalar)	0	6	2
-SVE-0433	SVE	LDNT1SB	0	6	2
-SVE-0434	SVE	LDNT1SH	0	6	2
-SVE-0435	SVE	LDNT1SW	0	3	1
+SVE-0431	SVE	LDNT1H (scalar plus scalar, single register)	101	34	11
+SVE-0432	SVE	LDNT1H (vector plus scalar)	44	6	10
+SVE-0433	SVE	LDNT1SB	42	6	10
+SVE-0434	SVE	LDNT1SH	44	6	10
+SVE-0435	SVE	LDNT1SW	20	3	5
 SVE-0436	SVE	LDNT1W (scalar plus immediate, consecutive registers)	26	4	6
-SVE-0437	SVE	LDNT1W (scalar plus immediate, single register)	14	2	3
+SVE-0437	SVE	LDNT1W (scalar plus immediate, single register)	37	2	3
 SVE-0438	SVE	LDNT1W (scalar plus scalar, consecutive registers)	30	4	10
-SVE-0439	SVE	LDNT1W (scalar plus scalar, single register)	74	30	11
-SVE-0440	SVE	LDNT1W (vector plus scalar)	0	6	2
-SVE-0441	SVE	LDR (predicate)	14	2	4
-SVE-0442	SVE	LDR (vector)	10	2	4
-SVE-0443	SVE	LSL (immediate, predicated)	32	8	20
-SVE-0444	SVE	LSL (immediate, unpredicated)	32	8	32
-SVE-0445	SVE	LSL (vectors)	11	2	8
-SVE-0446	SVE	LSL (wide elements, predicated)	17	4	11
-SVE-0447	SVE	LSL (wide elements, unpredicated)	15	4	15
-SVE-0448	SVE	LSLR	11	2	8
-SVE-0449	SVE	LSR (immediate, predicated)	32	8	20
-SVE-0450	SVE	LSR (immediate, unpredicated)	32	8	32
-SVE-0451	SVE	LSR (vectors)	11	2	8
-SVE-0452	SVE	LSR (wide elements, predicated)	17	4	11
-SVE-0453	SVE	LSR (wide elements, unpredicated)	15	4	15
-SVE-0454	SVE	LSRR	11	2	8
+SVE-0439	SVE	LDNT1W (scalar plus scalar, single register)	101	34	11
+SVE-0440	SVE	LDNT1W (vector plus scalar)	44	6	10
+SVE-0441	SVE	LDR (predicate)	27	2	4
+SVE-0442	SVE	LDR (vector)	23	2	4
+SVE-0443	SVE	LSL (immediate, predicated)	80	8	20
+SVE-0444	SVE	LSL (immediate, unpredicated)	64	8	32
+SVE-0445	SVE	LSL (vectors)	26	2	8
+SVE-0446	SVE	LSL (wide elements, predicated)	42	4	11
+SVE-0447	SVE	LSL (wide elements, unpredicated)	30	4	15
+SVE-0448	SVE	LSLR	26	2	8
+SVE-0449	SVE	LSR (immediate, predicated)	80	8	20
+SVE-0450	SVE	LSR (immediate, unpredicated)	64	8	32
+SVE-0451	SVE	LSR (vectors)	26	2	8
+SVE-0452	SVE	LSR (wide elements, predicated)	42	4	11
+SVE-0453	SVE	LSR (wide elements, unpredicated)	30	4	15
+SVE-0454	SVE	LSRR	26	2	8
 SVE-0455	SVE	LUTI2 (8-bit and 16-bit)	0	6	2
 SVE-0456	SVE	LUTI4 (8-bit and 16-bit)	0	9	3
 SVE-0457	SVE	LUTI6 (16-bit)	0	3	1
 SVE-0458	SVE	LUTI6 (8-bit)	0	3	1
-SVE-0459	SVE	MAD	13	2	10
+SVE-0459	SVE	MAD	30	2	10
 SVE-0460	SVE	MADPT	0	3	1
-SVE-0461	SVE	MATCH	0	3	1
-SVE-0462	SVE	MLA (indexed)	26	6	26
-SVE-0463	SVE	MLA (vectors)	13	2	10
+SVE-0461	SVE	MATCH	14	3	7
+SVE-0462	SVE	MLA (indexed)	52	6	26
+SVE-0463	SVE	MLA (vectors)	30	2	10
 SVE-0464	SVE	MLAPT	0	3	1
-SVE-0465	SVE	MLS (indexed)	26	6	26
-SVE-0466	SVE	MLS (vectors)	13	2	10
-SVE-0467	SVE	MOV (bitmask immediate)	3	5	3
-SVE-0468	SVE	MOV (predicate, unpredicated)	13	4	9
-SVE-0469	SVE	MOV (immediate, merging)	24	10	13
-SVE-0470	SVE	MOV (immediate, unpredicated)	15	10	13
-SVE-0471	SVE	MOV (immediate, zeroing)	23	8	13
-SVE-0472	SVE	MOV (predicate, merging)	13	4	9
-SVE-0473	SVE	MOV (predicate, zeroing)	13	4	9
-SVE-0474	SVE	MOV (scalar, predicated)	9	4	5
-SVE-0475	SVE	MOV (scalar, unpredicated)	6	4	5
-SVE-0476	SVE	MOV (SIMD&FP scalar, predicated)	12	4	8
-SVE-0477	SVE	MOV (SIMD&FP scalar, unpredicated)	47	12	46
-SVE-0478	SVE	MOV (vector, predicated)	14	4	10
-SVE-0479	SVE	MOV (vector, unpredicated)	8	4	7
-SVE-0480	SVE	MOVPRFX (predicated)	12	2	9
-SVE-0481	SVE	MOVPRFX (unpredicated)	5	2	5
-SVE-0482	SVE	MOVS (predicated)	13	4	9
-SVE-0483	SVE	MOVS (unpredicated)	13	4	9
-SVE-0484	SVE	MSB	13	2	10
-SVE-0485	SVE	MUL (immediate)	6	2	6
-SVE-0486	SVE	MUL (indexed)	26	6	26
-SVE-0487	SVE	MUL (vectors, predicated)	11	2	8
-SVE-0488	SVE	MUL (vectors, unpredicated)	10	2	10
-SVE-0489	SVE	NAND	12	2	9
-SVE-0490	SVE	NANDS	12	2	9
-SVE-0491	SVE	NBSL	7	2	7
-SVE-0492	SVE	NEG	11	5	9
-SVE-0493	SVE	NMATCH	0	3	1
-SVE-0494	SVE	NOR	12	2	9
-SVE-0495	SVE	NORS	12	2	9
-SVE-0496	SVE	NOT (predicate)	13	4	9
-SVE-0497	SVE	NOT (vector)	11	5	9
-SVE-0498	SVE	NOTS	13	4	9
-SVE-0499	SVE	ORN (immediate)	3	5	3
-SVE-0500	SVE	ORN (predicates)	12	2	9
-SVE-0501	SVE	ORNS	12	2	9
+SVE-0465	SVE	MLS (indexed)	52	6	26
+SVE-0466	SVE	MLS (vectors)	30	2	10
+SVE-0467	SVE	MOV (bitmask immediate)	6	14	11
+SVE-0468	SVE	MOV (predicate, unpredicated)	30	4	9
+SVE-0469	SVE	MOV (immediate, merging)	60	10	13
+SVE-0470	SVE	MOV (immediate, unpredicated)	30	10	13
+SVE-0471	SVE	MOV (immediate, zeroing)	58	8	13
+SVE-0472	SVE	MOV (predicate, merging)	30	4	9
+SVE-0473	SVE	MOV (predicate, zeroing)	30	4	9
+SVE-0474	SVE	MOV (scalar, predicated)	22	4	5
+SVE-0475	SVE	MOV (scalar, unpredicated)	12	4	5
+SVE-0476	SVE	MOV (SIMD&FP scalar, predicated)	28	4	8
+SVE-0477	SVE	MOV (SIMD&FP scalar, unpredicated)	94	12	46
+SVE-0478	SVE	MOV (vector, predicated)	32	4	10
+SVE-0479	SVE	MOV (vector, unpredicated)	16	4	7
+SVE-0480	SVE	MOVPRFX (predicated)	28	2	9
+SVE-0481	SVE	MOVPRFX (unpredicated)	10	2	5
+SVE-0482	SVE	MOVS (predicated)	30	4	9
+SVE-0483	SVE	MOVS (unpredicated)	30	4	9
+SVE-0484	SVE	MSB	30	2	10
+SVE-0485	SVE	MUL (immediate)	12	2	6
+SVE-0486	SVE	MUL (indexed)	52	6	26
+SVE-0487	SVE	MUL (vectors, predicated)	26	2	8
+SVE-0488	SVE	MUL (vectors, unpredicated)	20	2	10
+SVE-0489	SVE	NAND	28	2	9
+SVE-0490	SVE	NANDS	28	2	9
+SVE-0491	SVE	NBSL	14	2	7
+SVE-0492	SVE	NEG	26	5	9
+SVE-0493	SVE	NMATCH	14	3	7
+SVE-0494	SVE	NOR	28	2	9
+SVE-0495	SVE	NORS	28	2	9
+SVE-0496	SVE	NOT (predicate)	30	4	9
+SVE-0497	SVE	NOT (vector)	26	5	9
+SVE-0498	SVE	NOTS	30	4	9
+SVE-0499	SVE	ORN (immediate)	6	14	11
+SVE-0500	SVE	ORN (predicates)	28	2	9
+SVE-0501	SVE	ORNS	28	2	9
 SVE-0502	SVE	ORQV	0	3	1
-SVE-0503	SVE	ORR (immediate)	3	5	3
-SVE-0504	SVE	ORR (predicates)	13	4	9
-SVE-0505	SVE	ORR (vectors, predicated)	11	2	8
-SVE-0506	SVE	ORR (vectors, unpredicated)	8	4	7
-SVE-0507	SVE	ORRS	13	4	9
-SVE-0508	SVE	ORV	11	2	8
+SVE-0503	SVE	ORR (immediate)	6	14	11
+SVE-0504	SVE	ORR (predicates)	30	4	9
+SVE-0505	SVE	ORR (vectors, predicated)	26	2	8
+SVE-0506	SVE	ORR (vectors, unpredicated)	16	4	7
+SVE-0507	SVE	ORRS	30	4	9
+SVE-0508	SVE	ORV	26	2	8
 SVE-0509	SVE	PEXT (predicate pair)	10	2	7
 SVE-0510	SVE	PEXT (predicate)	12	2	9
-SVE-0511	SVE	PFALSE	5	2	2
-SVE-0512	SVE	PFIRST	8	2	5
+SVE-0511	SVE	PFALSE	14	2	2
+SVE-0512	SVE	PFIRST	20	2	5
 SVE-0513	SVE	PMLAL	0	3	1
 SVE-0514	SVE	PMOV (to predicate)	0	12	4
 SVE-0515	SVE	PMOV (to vector)	0	12	4
-SVE-0516	SVE	PMUL	7	2	7
+SVE-0516	SVE	PMUL	14	2	7
 SVE-0517	SVE	PMULL	0	3	1
-SVE-0518	SVE	PMULLB	8	5	9
-SVE-0519	SVE	PMULLT	8	5	9
-SVE-0520	SVE	PNEXT	11	2	8
-SVE-0521	SVE	PRFB (scalar plus immediate)	7	2	4
-SVE-0522	SVE	PRFB (scalar plus scalar)	35	30	12
-SVE-0523	SVE	PRFB (scalar plus vector)	0	9	3
-SVE-0524	SVE	PRFB (vector plus immediate)	0	6	2
-SVE-0525	SVE	PRFD (scalar plus immediate)	7	2	4
-SVE-0526	SVE	PRFD (scalar plus scalar)	35	30	12
-SVE-0527	SVE	PRFD (scalar plus vector)	0	9	3
-SVE-0528	SVE	PRFD (vector plus immediate)	0	6	2
-SVE-0529	SVE	PRFH (scalar plus immediate)	7	2	4
-SVE-0530	SVE	PRFH (scalar plus scalar)	35	30	12
-SVE-0531	SVE	PRFH (scalar plus vector)	0	9	3
-SVE-0532	SVE	PRFH (vector plus immediate)	0	6	2
-SVE-0533	SVE	PRFW (scalar plus immediate)	7	2	4
-SVE-0534	SVE	PRFW (scalar plus scalar)	35	30	12
-SVE-0535	SVE	PRFW (scalar plus vector)	0	9	3
-SVE-0536	SVE	PRFW (vector plus immediate)	0	6	2
-SVE-0537	SVE	PSEL	62	8	42
-SVE-0538	SVE	PTEST	8	2	5
+SVE-0518	SVE	PMULLB	23	5	15
+SVE-0519	SVE	PMULLT	23	5	15
+SVE-0520	SVE	PNEXT	26	2	8
+SVE-0521	SVE	PRFB (scalar plus immediate)	18	2	4
+SVE-0522	SVE	PRFB (scalar plus scalar)	50	34	12
+SVE-0523	SVE	PRFB (scalar plus vector)	79	9	11
+SVE-0524	SVE	PRFB (vector plus immediate)	40	6	8
+SVE-0525	SVE	PRFD (scalar plus immediate)	18	2	4
+SVE-0526	SVE	PRFD (scalar plus scalar)	50	34	12
+SVE-0527	SVE	PRFD (scalar plus vector)	79	9	11
+SVE-0528	SVE	PRFD (vector plus immediate)	42	6	8
+SVE-0529	SVE	PRFH (scalar plus immediate)	18	2	4
+SVE-0530	SVE	PRFH (scalar plus scalar)	50	34	12
+SVE-0531	SVE	PRFH (scalar plus vector)	79	9	11
+SVE-0532	SVE	PRFH (vector plus immediate)	42	6	8
+SVE-0533	SVE	PRFW (scalar plus immediate)	18	2	4
+SVE-0534	SVE	PRFW (scalar plus scalar)	50	34	12
+SVE-0535	SVE	PRFW (scalar plus vector)	79	9	11
+SVE-0536	SVE	PRFW (vector plus immediate)	42	6	8
+SVE-0537	SVE	PSEL	62	12	42
+SVE-0538	SVE	PTEST	20	2	5
 SVE-0539	SVE	PTRUE (predicate as counter)	8	2	5
-SVE-0540	SVE	PTRUE (predicate)	9	2	6
-SVE-0541	SVE	PTRUES	9	2	6
-SVE-0542	SVE	PUNPKHI, PUNPKLO	16	4	10
-SVE-0543	SVE	RADDHNB	15	4	15
-SVE-0544	SVE	RADDHNT	15	4	15
-SVE-0545	SVE	RAX1	0	3	1
-SVE-0546	SVE	RBIT	11	5	9
-SVE-0547	SVE	RDFFR (predicated)	0	3	1
-SVE-0548	SVE	RDFFR (unpredicated)	0	3	1
-SVE-0549	SVE	RDFFRS	0	3	1
-SVE-0550	SVE	RDVL	5	2	3
-SVE-0551	SVE	REV (predicate)	11	2	8
-SVE-0552	SVE	REV (vector)	8	2	8
-SVE-0553	SVE	REVB, REVH, REVW	41	19	29
-SVE-0554	SVE	REVD	8	5	6
-SVE-0555	SVE	RSHRNB	21	6	21
-SVE-0556	SVE	RSHRNT	21	6	21
-SVE-0557	SVE	RSUBHNB	15	4	15
-SVE-0558	SVE	RSUBHNT	15	4	15
-SVE-0559	SVE	SABA	10	2	10
+SVE-0540	SVE	PTRUE (predicate)	27	2	6
+SVE-0541	SVE	PTRUES	22	2	6
+SVE-0542	SVE	PUNPKHI, PUNPKLO	40	4	10
+SVE-0543	SVE	RADDHNB	30	4	15
+SVE-0544	SVE	RADDHNT	30	4	15
+SVE-0545	SVE	RAX1	7	3	7
+SVE-0546	SVE	RBIT	26	5	9
+SVE-0547	SVE	RDFFR (predicated)	12	3	5
+SVE-0548	SVE	RDFFR (unpredicated)	9	3	2
+SVE-0549	SVE	RDFFRS	12	3	5
+SVE-0550	SVE	RDVL	10	2	3
+SVE-0551	SVE	REV (predicate)	26	2	8
+SVE-0552	SVE	REV (vector)	16	2	8
+SVE-0553	SVE	REVB, REVH, REVW	102	19	29
+SVE-0554	SVE	REVD	8	6	6
+SVE-0555	SVE	RSHRNB	42	6	21
+SVE-0556	SVE	RSHRNT	42	6	21
+SVE-0557	SVE	RSUBHNB	30	4	15
+SVE-0558	SVE	RSUBHNT	30	4	15
+SVE-0559	SVE	SABA	20	2	10
 SVE-0560	SVE	SABAL	0	3	1
-SVE-0561	SVE	SABALB	15	4	15
-SVE-0562	SVE	SABALT	15	4	15
-SVE-0563	SVE	SABD	11	2	8
-SVE-0564	SVE	SABDLB	15	4	15
-SVE-0565	SVE	SABDLT	15	4	15
-SVE-0566	SVE	SADALP	17	4	11
-SVE-0567	SVE	SADDLB	15	4	15
-SVE-0568	SVE	SADDLBT	15	4	15
-SVE-0569	SVE	SADDLT	15	4	15
-SVE-0570	SVE	SADDV	17	4	11
-SVE-0571	SVE	SADDWB	15	4	15
-SVE-0572	SVE	SADDWT	15	4	15
-SVE-0573	SVE	SBCLB	8	2	8
-SVE-0574	SVE	SBCLT	8	2	8
-SVE-0575	SVE	SCLAMP	10	2	10
+SVE-0561	SVE	SABALB	30	4	15
+SVE-0562	SVE	SABALT	30	4	15
+SVE-0563	SVE	SABD	26	2	8
+SVE-0564	SVE	SABDLB	30	4	15
+SVE-0565	SVE	SABDLT	30	4	15
+SVE-0566	SVE	SADALP	42	4	11
+SVE-0567	SVE	SADDLB	30	4	15
+SVE-0568	SVE	SADDLBT	30	4	15
+SVE-0569	SVE	SADDLT	30	4	15
+SVE-0570	SVE	SADDV	42	4	11
+SVE-0571	SVE	SADDWB	30	4	15
+SVE-0572	SVE	SADDWT	30	4	15
+SVE-0573	SVE	SBCLB	16	2	8
+SVE-0574	SVE	SBCLT	16	2	8
+SVE-0575	SVE	SCLAMP	10	3	10
 SVE-0576	SVE	SCVTF (bottom, unpredicated)	0	3	1
-SVE-0577	SVE	SCVTF (predicated)	56	35	42
+SVE-0577	SVE	SCVTF (predicated)	140	35	42
 SVE-0578	SVE	SCVTFLT	0	3	1
-SVE-0579	SVE	SDIV	16	4	10
-SVE-0580	SVE	SDIVR	16	4	10
-SVE-0581	SVE	SDOT (2-way, indexed)	9	5	10
-SVE-0582	SVE	SDOT (2-way, vectors)	7	5	8
-SVE-0583	SVE	SDOT (4-way, indexed)	16	4	16
-SVE-0584	SVE	SDOT (4-way, vectors)	8	2	8
-SVE-0585	SVE	SEL (predicates)	13	4	9
-SVE-0586	SVE	SEL (vectors)	14	4	10
-SVE-0587	SVE	SETFFR	0	3	1
-SVE-0588	SVE	SHADD	11	2	8
-SVE-0589	SVE	SHRNB	21	6	21
-SVE-0590	SVE	SHRNT	21	6	21
-SVE-0591	SVE	SHSUB	11	2	8
-SVE-0592	SVE	SHSUBR	11	2	8
-SVE-0593	SVE	SLI	32	8	32
+SVE-0579	SVE	SDIV	40	4	10
+SVE-0580	SVE	SDIVR	40	4	10
+SVE-0581	SVE	SDOT (2-way, indexed)	9	6	10
+SVE-0582	SVE	SDOT (2-way, vectors)	7	6	8
+SVE-0583	SVE	SDOT (4-way, indexed)	32	4	16
+SVE-0584	SVE	SDOT (4-way, vectors)	16	2	8
+SVE-0585	SVE	SEL (predicates)	30	4	9
+SVE-0586	SVE	SEL (vectors)	32	4	10
+SVE-0587	SVE	SETFFR	1	3	1
+SVE-0588	SVE	SHADD	26	2	8
+SVE-0589	SVE	SHRNB	42	6	21
+SVE-0590	SVE	SHRNT	42	6	21
+SVE-0591	SVE	SHSUB	26	2	8
+SVE-0592	SVE	SHSUBR	26	2	8
+SVE-0593	SVE	SLI	64	8	32
 SVE-0594	SVE	SM4E	0	3	1
 SVE-0595	SVE	SM4EKEY	0	3	1
-SVE-0596	SVE	SMAX (immediate)	6	2	6
-SVE-0597	SVE	SMAX (vectors)	11	2	8
-SVE-0598	SVE	SMAXP	11	2	8
+SVE-0596	SVE	SMAX (immediate)	12	2	6
+SVE-0597	SVE	SMAX (vectors)	26	2	8
+SVE-0598	SVE	SMAXP	26	2	8
 SVE-0599	SVE	SMAXQV	0	3	1
-SVE-0600	SVE	SMAXV	11	2	8
-SVE-0601	SVE	SMIN (immediate)	6	2	6
-SVE-0602	SVE	SMIN (vectors)	11	2	8
-SVE-0603	SVE	SMINP	11	2	8
+SVE-0600	SVE	SMAXV	26	2	8
+SVE-0601	SVE	SMIN (immediate)	12	2	6
+SVE-0602	SVE	SMIN (vectors)	26	2	8
+SVE-0603	SVE	SMINP	26	2	8
 SVE-0604	SVE	SMINQV	0	3	1
-SVE-0605	SVE	SMINV	11	2	8
-SVE-0606	SVE	SMLALB (indexed)	18	4	18
-SVE-0607	SVE	SMLALB (vectors)	15	4	15
-SVE-0608	SVE	SMLALT (indexed)	18	4	18
-SVE-0609	SVE	SMLALT (vectors)	15	4	15
-SVE-0610	SVE	SMLSLB (indexed)	18	4	18
-SVE-0611	SVE	SMLSLB (vectors)	15	4	15
-SVE-0612	SVE	SMLSLT (indexed)	18	4	18
-SVE-0613	SVE	SMLSLT (vectors)	15	4	15
-SVE-0614	SVE	SMMLA	0	3	1
-SVE-0615	SVE	SMULH (predicated)	11	2	8
-SVE-0616	SVE	SMULH (unpredicated)	10	2	10
-SVE-0617	SVE	SMULLB (indexed)	18	4	18
-SVE-0618	SVE	SMULLB (vectors)	15	4	15
-SVE-0619	SVE	SMULLT (indexed)	18	4	18
-SVE-0620	SVE	SMULLT (vectors)	15	4	15
-SVE-0621	SVE	SPLICE	22	4	16
-SVE-0622	SVE	SQABS	11	5	9
-SVE-0623	SVE	SQADD (immediate)	13	6	13
-SVE-0624	SVE	SQADD (vectors, predicated)	11	2	8
-SVE-0625	SVE	SQADD (vectors, unpredicated)	14	2	10
-SVE-0626	SVE	SQCADD	9	2	9
-SVE-0627	SVE	SQCVTN	5	2	5
-SVE-0628	SVE	SQCVTUN	5	2	5
-SVE-0629	SVE	SQDECB	12	4	8
-SVE-0630	SVE	SQDECD (scalar)	12	4	8
-SVE-0631	SVE	SQDECD (vector)	4	2	4
-SVE-0632	SVE	SQDECH (scalar)	12	4	8
-SVE-0633	SVE	SQDECH (vector)	4	2	4
-SVE-0634	SVE	SQDECP (scalar)	20	4	10
-SVE-0635	SVE	SQDECP (vector)	11	4	5
-SVE-0636	SVE	SQDECW (scalar)	12	4	8
-SVE-0637	SVE	SQDECW (vector)	4	2	4
-SVE-0638	SVE	SQDMLALB (indexed)	18	4	18
-SVE-0639	SVE	SQDMLALB (vectors)	15	4	15
-SVE-0640	SVE	SQDMLALBT	15	4	15
-SVE-0641	SVE	SQDMLALT (indexed)	18	4	18
-SVE-0642	SVE	SQDMLALT (vectors)	15	4	15
-SVE-0643	SVE	SQDMLSLB (indexed)	18	4	18
-SVE-0644	SVE	SQDMLSLB (vectors)	15	4	15
-SVE-0645	SVE	SQDMLSLBT	15	4	15
-SVE-0646	SVE	SQDMLSLT (indexed)	18	4	18
-SVE-0647	SVE	SQDMLSLT (vectors)	15	4	15
-SVE-0648	SVE	SQDMULH (indexed)	26	6	26
-SVE-0649	SVE	SQDMULH (vectors)	10	2	10
-SVE-0650	SVE	SQDMULLB (indexed)	18	4	18
-SVE-0651	SVE	SQDMULLB (vectors)	15	4	15
-SVE-0652	SVE	SQDMULLT (indexed)	18	4	18
-SVE-0653	SVE	SQDMULLT (vectors)	15	4	15
-SVE-0654	SVE	SQINCB	12	4	8
-SVE-0655	SVE	SQINCD (scalar)	12	4	8
-SVE-0656	SVE	SQINCD (vector)	4	2	4
-SVE-0657	SVE	SQINCH (scalar)	12	4	8
-SVE-0658	SVE	SQINCH (vector)	4	2	4
-SVE-0659	SVE	SQINCP (scalar)	20	4	10
-SVE-0660	SVE	SQINCP (vector)	11	4	5
-SVE-0661	SVE	SQINCW (scalar)	12	4	8
-SVE-0662	SVE	SQINCW (vector)	4	2	4
-SVE-0663	SVE	SQNEG	11	5	9
-SVE-0664	SVE	SQRDCMLAH (indexed)	22	4	22
-SVE-0665	SVE	SQRDCMLAH (vectors)	13	2	13
-SVE-0666	SVE	SQRDMLAH (indexed)	26	6	26
-SVE-0667	SVE	SQRDMLAH (vectors)	10	2	10
-SVE-0668	SVE	SQRDMLSH (indexed)	26	6	26
-SVE-0669	SVE	SQRDMLSH (vectors)	10	2	10
-SVE-0670	SVE	SQRDMULH (indexed)	26	6	26
-SVE-0671	SVE	SQRDMULH (vectors)	10	2	10
-SVE-0672	SVE	SQRSHL	11	2	8
-SVE-0673	SVE	SQRSHLR	11	2	8
-SVE-0674	SVE	SQRSHRN	6	5	7
-SVE-0675	SVE	SQRSHRNB	21	6	21
-SVE-0676	SVE	SQRSHRNT	21	6	21
-SVE-0677	SVE	SQRSHRUN	6	5	7
-SVE-0678	SVE	SQRSHRUNB	21	6	21
-SVE-0679	SVE	SQRSHRUNT	21	6	21
-SVE-0680	SVE	SQSHL (immediate)	32	8	20
-SVE-0681	SVE	SQSHL (vectors)	11	2	8
-SVE-0682	SVE	SQSHLR	11	2	8
-SVE-0683	SVE	SQSHLU	32	8	20
+SVE-0605	SVE	SMINV	26	2	8
+SVE-0606	SVE	SMLALB (indexed)	36	4	18
+SVE-0607	SVE	SMLALB (vectors)	30	4	15
+SVE-0608	SVE	SMLALT (indexed)	36	4	18
+SVE-0609	SVE	SMLALT (vectors)	30	4	15
+SVE-0610	SVE	SMLSLB (indexed)	36	4	18
+SVE-0611	SVE	SMLSLB (vectors)	30	4	15
+SVE-0612	SVE	SMLSLT (indexed)	36	4	18
+SVE-0613	SVE	SMLSLT (vectors)	30	4	15
+SVE-0614	SVE	SMMLA	7	3	7
+SVE-0615	SVE	SMULH (predicated)	26	2	8
+SVE-0616	SVE	SMULH (unpredicated)	20	2	10
+SVE-0617	SVE	SMULLB (indexed)	36	4	18
+SVE-0618	SVE	SMULLB (vectors)	30	4	15
+SVE-0619	SVE	SMULLT (indexed)	36	4	18
+SVE-0620	SVE	SMULLT (vectors)	30	4	15
+SVE-0621	SVE	SPLICE	52	4	16
+SVE-0622	SVE	SQABS	26	5	9
+SVE-0623	SVE	SQADD (immediate)	26	6	13
+SVE-0624	SVE	SQADD (vectors, predicated)	26	2	8
+SVE-0625	SVE	SQADD (vectors, unpredicated)	24	2	10
+SVE-0626	SVE	SQCADD	18	2	9
+SVE-0627	SVE	SQCVTN	5	3	5
+SVE-0628	SVE	SQCVTUN	5	3	5
+SVE-0629	SVE	SQDECB	24	4	8
+SVE-0630	SVE	SQDECD (scalar)	24	4	8
+SVE-0631	SVE	SQDECD (vector)	8	2	4
+SVE-0632	SVE	SQDECH (scalar)	24	4	8
+SVE-0633	SVE	SQDECH (vector)	8	2	4
+SVE-0634	SVE	SQDECP (scalar)	48	4	10
+SVE-0635	SVE	SQDECP (vector)	30	4	5
+SVE-0636	SVE	SQDECW (scalar)	24	4	8
+SVE-0637	SVE	SQDECW (vector)	8	2	4
+SVE-0638	SVE	SQDMLALB (indexed)	36	4	18
+SVE-0639	SVE	SQDMLALB (vectors)	30	4	15
+SVE-0640	SVE	SQDMLALBT	30	4	15
+SVE-0641	SVE	SQDMLALT (indexed)	36	4	18
+SVE-0642	SVE	SQDMLALT (vectors)	30	4	15
+SVE-0643	SVE	SQDMLSLB (indexed)	36	4	18
+SVE-0644	SVE	SQDMLSLB (vectors)	30	4	15
+SVE-0645	SVE	SQDMLSLBT	30	4	15
+SVE-0646	SVE	SQDMLSLT (indexed)	36	4	18
+SVE-0647	SVE	SQDMLSLT (vectors)	30	4	15
+SVE-0648	SVE	SQDMULH (indexed)	52	6	26
+SVE-0649	SVE	SQDMULH (vectors)	20	2	10
+SVE-0650	SVE	SQDMULLB (indexed)	36	4	18
+SVE-0651	SVE	SQDMULLB (vectors)	30	4	15
+SVE-0652	SVE	SQDMULLT (indexed)	36	4	18
+SVE-0653	SVE	SQDMULLT (vectors)	30	4	15
+SVE-0654	SVE	SQINCB	24	4	8
+SVE-0655	SVE	SQINCD (scalar)	24	4	8
+SVE-0656	SVE	SQINCD (vector)	8	2	4
+SVE-0657	SVE	SQINCH (scalar)	24	4	8
+SVE-0658	SVE	SQINCH (vector)	8	2	4
+SVE-0659	SVE	SQINCP (scalar)	48	4	10
+SVE-0660	SVE	SQINCP (vector)	30	4	5
+SVE-0661	SVE	SQINCW (scalar)	24	4	8
+SVE-0662	SVE	SQINCW (vector)	8	2	4
+SVE-0663	SVE	SQNEG	26	5	9
+SVE-0664	SVE	SQRDCMLAH (indexed)	44	4	22
+SVE-0665	SVE	SQRDCMLAH (vectors)	26	2	13
+SVE-0666	SVE	SQRDMLAH (indexed)	52	6	26
+SVE-0667	SVE	SQRDMLAH (vectors)	20	2	10
+SVE-0668	SVE	SQRDMLSH (indexed)	52	6	26
+SVE-0669	SVE	SQRDMLSH (vectors)	20	2	10
+SVE-0670	SVE	SQRDMULH (indexed)	52	6	26
+SVE-0671	SVE	SQRDMULH (vectors)	20	2	10
+SVE-0672	SVE	SQRSHL	26	2	8
+SVE-0673	SVE	SQRSHLR	26	2	8
+SVE-0674	SVE	SQRSHRN	6	6	7
+SVE-0675	SVE	SQRSHRNB	42	6	21
+SVE-0676	SVE	SQRSHRNT	42	6	21
+SVE-0677	SVE	SQRSHRUN	6	6	7
+SVE-0678	SVE	SQRSHRUNB	42	6	21
+SVE-0679	SVE	SQRSHRUNT	42	6	21
+SVE-0680	SVE	SQSHL (immediate)	80	8	20
+SVE-0681	SVE	SQSHL (vectors)	26	2	8
+SVE-0682	SVE	SQSHLR	26	2	8
+SVE-0683	SVE	SQSHLU	80	8	20
 SVE-0684	SVE	SQSHRN	0	3	1
-SVE-0685	SVE	SQSHRNB	21	6	21
-SVE-0686	SVE	SQSHRNT	21	6	21
+SVE-0685	SVE	SQSHRNB	42	6	21
+SVE-0686	SVE	SQSHRNT	42	6	21
 SVE-0687	SVE	SQSHRUN	0	3	1
-SVE-0688	SVE	SQSHRUNB	21	6	21
-SVE-0689	SVE	SQSHRUNT	21	6	21
-SVE-0690	SVE	SQSUB (immediate)	13	6	13
-SVE-0691	SVE	SQSUB (vectors, predicated)	11	2	8
-SVE-0692	SVE	SQSUB (vectors, unpredicated)	10	2	10
-SVE-0693	SVE	SQSUBR	11	2	8
-SVE-0694	SVE	SQXTNB	15	6	15
-SVE-0695	SVE	SQXTNT	15	6	15
-SVE-0696	SVE	SQXTUNB	15	6	15
-SVE-0697	SVE	SQXTUNT	15	6	15
-SVE-0698	SVE	SRHADD	11	2	8
-SVE-0699	SVE	SRI	32	8	32
-SVE-0700	SVE	SRSHL	11	2	8
-SVE-0701	SVE	SRSHLR	11	2	8
-SVE-0702	SVE	SRSHR	32	8	20
-SVE-0703	SVE	SRSRA	32	8	32
-SVE-0704	SVE	SSHLLB	21	6	21
-SVE-0705	SVE	SSHLLT	21	6	21
-SVE-0706	SVE	SSRA	32	8	32
-SVE-0707	SVE	SSUBLB	15	4	15
-SVE-0708	SVE	SSUBLBT	15	4	15
-SVE-0709	SVE	SSUBLT	15	4	15
-SVE-0710	SVE	SSUBLTB	15	4	15
-SVE-0711	SVE	SSUBWB	15	4	15
-SVE-0712	SVE	SSUBWT	15	4	15
+SVE-0688	SVE	SQSHRUNB	42	6	21
+SVE-0689	SVE	SQSHRUNT	42	6	21
+SVE-0690	SVE	SQSUB (immediate)	26	6	13
+SVE-0691	SVE	SQSUB (vectors, predicated)	26	2	8
+SVE-0692	SVE	SQSUB (vectors, unpredicated)	20	2	10
+SVE-0693	SVE	SQSUBR	26	2	8
+SVE-0694	SVE	SQXTNB	30	6	15
+SVE-0695	SVE	SQXTNT	30	6	15
+SVE-0696	SVE	SQXTUNB	30	6	15
+SVE-0697	SVE	SQXTUNT	30	6	15
+SVE-0698	SVE	SRHADD	26	2	8
+SVE-0699	SVE	SRI	64	8	32
+SVE-0700	SVE	SRSHL	26	2	8
+SVE-0701	SVE	SRSHLR	26	2	8
+SVE-0702	SVE	SRSHR	80	8	20
+SVE-0703	SVE	SRSRA	64	8	32
+SVE-0704	SVE	SSHLLB	42	6	21
+SVE-0705	SVE	SSHLLT	42	6	21
+SVE-0706	SVE	SSRA	64	8	32
+SVE-0707	SVE	SSUBLB	30	4	15
+SVE-0708	SVE	SSUBLBT	30	4	15
+SVE-0709	SVE	SSUBLT	30	4	15
+SVE-0710	SVE	SSUBLTB	30	4	15
+SVE-0711	SVE	SSUBWB	30	4	15
+SVE-0712	SVE	SSUBWT	30	4	15
 SVE-0713	SVE	ST1B (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0714	SVE	ST1B (scalar plus immediate, single register)	18	2	6
+SVE-0714	SVE	ST1B (scalar plus immediate, single register)	45	2	6
 SVE-0715	SVE	ST1B (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0716	SVE	ST1B (scalar plus scalar, single register)	82	87	15
-SVE-0717	SVE	ST1B (scalar plus vector)	0	9	3
-SVE-0718	SVE	ST1B (vector plus immediate)	0	6	2
+SVE-0716	SVE	ST1B (scalar plus scalar, single register)	113	92	15
+SVE-0717	SVE	ST1B (scalar plus vector)	90	9	17
+SVE-0718	SVE	ST1B (vector plus immediate)	46	6	12
 SVE-0719	SVE	ST1D (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0720	SVE	ST1D (scalar plus immediate, single register)	15	5	4
+SVE-0720	SVE	ST1D (scalar plus immediate, single register)	40	5	4
 SVE-0721	SVE	ST1D (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0722	SVE	ST1D (scalar plus scalar, single register)	79	102	17
-SVE-0723	SVE	ST1D (scalar plus vector)	0	12	4
-SVE-0724	SVE	ST1D (vector plus immediate)	0	3	1
+SVE-0722	SVE	ST1D (scalar plus scalar, single register)	108	107	17
+SVE-0723	SVE	ST1D (scalar plus vector)	105	12	22
+SVE-0724	SVE	ST1D (vector plus immediate)	22	3	6
 SVE-0725	SVE	ST1H (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0726	SVE	ST1H (scalar plus immediate, single register)	31	4	7
+SVE-0726	SVE	ST1H (scalar plus immediate, single register)	82	4	7
 SVE-0727	SVE	ST1H (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0728	SVE	ST1H (scalar plus scalar, single register)	991	201	72
-SVE-0729	SVE	ST1H (scalar plus vector)	0	18	6
-SVE-0730	SVE	ST1H (vector plus immediate)	0	6	2
+SVE-0728	SVE	ST1H (scalar plus scalar, single register)	1102	206	72
+SVE-0729	SVE	ST1H (scalar plus vector)	185	18	34
+SVE-0730	SVE	ST1H (vector plus immediate)	48	6	12
 SVE-0731	SVE	ST1Q	0	3	1
 SVE-0732	SVE	ST1W (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0733	SVE	ST1W (scalar plus immediate, single register)	16	5	5
+SVE-0733	SVE	ST1W (scalar plus immediate, single register)	42	5	5
 SVE-0734	SVE	ST1W (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0735	SVE	ST1W (scalar plus scalar, single register)	80	102	18
-SVE-0736	SVE	ST1W (scalar plus vector)	0	18	6
-SVE-0737	SVE	ST1W (vector plus immediate)	0	6	2
-SVE-0738	SVE	ST2B (scalar plus immediate)	15	2	3
-SVE-0739	SVE	ST2B (scalar plus scalar)	79	70	19
-SVE-0740	SVE	ST2D (scalar plus immediate)	15	2	3
-SVE-0741	SVE	ST2D (scalar plus scalar)	79	70	19
-SVE-0742	SVE	ST2H (scalar plus immediate)	15	2	3
-SVE-0743	SVE	ST2H (scalar plus scalar)	79	70	19
+SVE-0735	SVE	ST1W (scalar plus scalar, single register)	110	107	18
+SVE-0736	SVE	ST1W (scalar plus vector)	185	18	34
+SVE-0737	SVE	ST1W (vector plus immediate)	48	6	12
+SVE-0738	SVE	ST2B (scalar plus immediate)	39	2	3
+SVE-0739	SVE	ST2B (scalar plus scalar)	107	82	19
+SVE-0740	SVE	ST2D (scalar plus immediate)	39	2	3
+SVE-0741	SVE	ST2D (scalar plus scalar)	107	82	19
+SVE-0742	SVE	ST2H (scalar plus immediate)	39	2	3
+SVE-0743	SVE	ST2H (scalar plus scalar)	107	82	19
 SVE-0744	SVE	ST2Q (scalar plus immediate)	0	3	1
 SVE-0745	SVE	ST2Q (scalar plus scalar)	0	15	5
-SVE-0746	SVE	ST2W (scalar plus immediate)	15	2	3
-SVE-0747	SVE	ST2W (scalar plus scalar)	79	70	19
-SVE-0748	SVE	ST3B (scalar plus immediate)	15	2	3
-SVE-0749	SVE	ST3B (scalar plus scalar)	79	70	19
-SVE-0750	SVE	ST3D (scalar plus immediate)	15	2	3
-SVE-0751	SVE	ST3D (scalar plus scalar)	79	70	19
-SVE-0752	SVE	ST3H (scalar plus immediate)	15	2	3
-SVE-0753	SVE	ST3H (scalar plus scalar)	79	70	19
+SVE-0746	SVE	ST2W (scalar plus immediate)	39	2	3
+SVE-0747	SVE	ST2W (scalar plus scalar)	107	82	19
+SVE-0748	SVE	ST3B (scalar plus immediate)	39	2	3
+SVE-0749	SVE	ST3B (scalar plus scalar)	107	82	19
+SVE-0750	SVE	ST3D (scalar plus immediate)	39	2	3
+SVE-0751	SVE	ST3D (scalar plus scalar)	107	82	19
+SVE-0752	SVE	ST3H (scalar plus immediate)	39	2	3
+SVE-0753	SVE	ST3H (scalar plus scalar)	107	82	19
 SVE-0754	SVE	ST3Q (scalar plus immediate)	0	3	1
 SVE-0755	SVE	ST3Q (scalar plus scalar)	0	15	5
-SVE-0756	SVE	ST3W (scalar plus immediate)	15	2	3
-SVE-0757	SVE	ST3W (scalar plus scalar)	79	70	19
-SVE-0758	SVE	ST4B (scalar plus immediate)	15	2	3
-SVE-0759	SVE	ST4B (scalar plus scalar)	79	70	19
-SVE-0760	SVE	ST4D (scalar plus immediate)	15	2	3
-SVE-0761	SVE	ST4D (scalar plus scalar)	79	70	19
-SVE-0762	SVE	ST4H (scalar plus immediate)	15	2	3
-SVE-0763	SVE	ST4H (scalar plus scalar)	79	70	19
+SVE-0756	SVE	ST3W (scalar plus immediate)	39	2	3
+SVE-0757	SVE	ST3W (scalar plus scalar)	107	82	19
+SVE-0758	SVE	ST4B (scalar plus immediate)	39	2	3
+SVE-0759	SVE	ST4B (scalar plus scalar)	107	82	19
+SVE-0760	SVE	ST4D (scalar plus immediate)	39	2	3
+SVE-0761	SVE	ST4D (scalar plus scalar)	107	82	19
+SVE-0762	SVE	ST4H (scalar plus immediate)	39	2	3
+SVE-0763	SVE	ST4H (scalar plus scalar)	107	82	19
 SVE-0764	SVE	ST4Q (scalar plus immediate)	0	3	1
 SVE-0765	SVE	ST4Q (scalar plus scalar)	0	15	5
-SVE-0766	SVE	ST4W (scalar plus immediate)	15	2	3
-SVE-0767	SVE	ST4W (scalar plus scalar)	79	70	19
+SVE-0766	SVE	ST4W (scalar plus immediate)	39	2	3
+SVE-0767	SVE	ST4W (scalar plus scalar)	107	82	19
 SVE-0768	SVE	STNT1B (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0769	SVE	STNT1B (scalar plus immediate, single register)	15	2	3
+SVE-0769	SVE	STNT1B (scalar plus immediate, single register)	39	2	3
 SVE-0770	SVE	STNT1B (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0771	SVE	STNT1B (scalar plus scalar, single register)	79	30	11
-SVE-0772	SVE	STNT1B (vector plus scalar)	0	6	2
+SVE-0771	SVE	STNT1B (scalar plus scalar, single register)	107	34	11
+SVE-0772	SVE	STNT1B (vector plus scalar)	44	6	10
 SVE-0773	SVE	STNT1D (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0774	SVE	STNT1D (scalar plus immediate, single register)	15	2	3
+SVE-0774	SVE	STNT1D (scalar plus immediate, single register)	40	2	3
 SVE-0775	SVE	STNT1D (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0776	SVE	STNT1D (scalar plus scalar, single register)	79	30	11
-SVE-0777	SVE	STNT1D (vector plus scalar)	0	3	1
+SVE-0776	SVE	STNT1D (scalar plus scalar, single register)	108	34	11
+SVE-0777	SVE	STNT1D (vector plus scalar)	21	3	5
 SVE-0778	SVE	STNT1H (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0779	SVE	STNT1H (scalar plus immediate, single register)	15	2	3
+SVE-0779	SVE	STNT1H (scalar plus immediate, single register)	40	2	3
 SVE-0780	SVE	STNT1H (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0781	SVE	STNT1H (scalar plus scalar, single register)	79	30	11
-SVE-0782	SVE	STNT1H (vector plus scalar)	0	6	2
+SVE-0781	SVE	STNT1H (scalar plus scalar, single register)	108	34	11
+SVE-0782	SVE	STNT1H (vector plus scalar)	46	6	10
 SVE-0783	SVE	STNT1W (scalar plus immediate, consecutive registers)	28	4	6
-SVE-0784	SVE	STNT1W (scalar plus immediate, single register)	15	2	3
+SVE-0784	SVE	STNT1W (scalar plus immediate, single register)	40	2	3
 SVE-0785	SVE	STNT1W (scalar plus scalar, consecutive registers)	32	4	10
-SVE-0786	SVE	STNT1W (scalar plus scalar, single register)	79	30	11
-SVE-0787	SVE	STNT1W (vector plus scalar)	0	6	2
-SVE-0788	SVE	STR (predicate)	15	2	4
-SVE-0789	SVE	STR (vector)	11	2	4
-SVE-0790	SVE	SUB (immediate)	13	6	13
-SVE-0791	SVE	SUB (vectors, predicated)	11	2	8
-SVE-0792	SVE	SUB (vectors, unpredicated)	10	2	10
-SVE-0793	SVE	SUBHNB	15	4	15
-SVE-0794	SVE	SUBHNT	15	4	15
+SVE-0786	SVE	STNT1W (scalar plus scalar, single register)	108	34	11
+SVE-0787	SVE	STNT1W (vector plus scalar)	46	6	10
+SVE-0788	SVE	STR (predicate)	30	2	4
+SVE-0789	SVE	STR (vector)	26	2	4
+SVE-0790	SVE	SUB (immediate)	26	6	13
+SVE-0791	SVE	SUB (vectors, predicated)	26	2	8
+SVE-0792	SVE	SUB (vectors, unpredicated)	20	2	10
+SVE-0793	SVE	SUBHNB	30	4	15
+SVE-0794	SVE	SUBHNT	30	4	15
 SVE-0795	SVE	SUBP	0	3	1
 SVE-0796	SVE	SUBPT (predicated)	0	3	1
 SVE-0797	SVE	SUBPT (unpredicated)	0	3	1
-SVE-0798	SVE	SUBR (immediate)	13	6	13
-SVE-0799	SVE	SUBR (vectors)	11	2	8
-SVE-0800	SVE	SUDOT	9	2	9
-SVE-0801	SVE	SUNPKHI, SUNPKLO	22	8	22
-SVE-0802	SVE	SUQADD	11	2	8
-SVE-0803	SVE	SXTB, SXTH, SXTW	41	19	29
-SVE-0804	SVE	TBL	20	4	20
+SVE-0798	SVE	SUBR (immediate)	26	6	13
+SVE-0799	SVE	SUBR (vectors)	26	2	8
+SVE-0800	SVE	SUDOT	18	2	9
+SVE-0801	SVE	SUNPKHI, SUNPKLO	44	8	22
+SVE-0802	SVE	SUQADD	26	2	8
+SVE-0803	SVE	SXTB, SXTH, SXTW	102	19	29
+SVE-0804	SVE	TBL	40	4	20
 SVE-0805	SVE	TBLQ	0	3	1
-SVE-0806	SVE	TBX	10	2	10
+SVE-0806	SVE	TBX	20	2	10
 SVE-0807	SVE	TBXQ	0	3	1
-SVE-0808	SVE	TRN1, TRN2 (predicates)	26	4	20
-SVE-0809	SVE	TRN1, TRN2 (vectors)	20	10	22
-SVE-0810	SVE	UABA	10	2	10
+SVE-0808	SVE	TRN1, TRN2 (predicates)	60	4	20
+SVE-0809	SVE	TRN1, TRN2 (vectors)	40	10	22
+SVE-0810	SVE	UABA	20	2	10
 SVE-0811	SVE	UABAL	0	3	1
-SVE-0812	SVE	UABALB	15	4	15
-SVE-0813	SVE	UABALT	15	4	15
-SVE-0814	SVE	UABD	11	2	8
-SVE-0815	SVE	UABDLB	15	4	15
-SVE-0816	SVE	UABDLT	15	4	15
-SVE-0817	SVE	UADALP	17	4	11
-SVE-0818	SVE	UADDLB	15	4	15
-SVE-0819	SVE	UADDLT	15	4	15
-SVE-0820	SVE	UADDV	11	2	8
-SVE-0821	SVE	UADDWB	15	4	15
-SVE-0822	SVE	UADDWT	15	4	15
-SVE-0823	SVE	UCLAMP	10	2	10
+SVE-0812	SVE	UABALB	30	4	15
+SVE-0813	SVE	UABALT	30	4	15
+SVE-0814	SVE	UABD	26	2	8
+SVE-0815	SVE	UABDLB	30	4	15
+SVE-0816	SVE	UABDLT	30	4	15
+SVE-0817	SVE	UADALP	42	4	11
+SVE-0818	SVE	UADDLB	30	4	15
+SVE-0819	SVE	UADDLT	30	4	15
+SVE-0820	SVE	UADDV	26	2	8
+SVE-0821	SVE	UADDWB	30	4	15
+SVE-0822	SVE	UADDWT	30	4	15
+SVE-0823	SVE	UCLAMP	10	3	10
 SVE-0824	SVE	UCVTF (bottom, unpredicated)	0	3	1
-SVE-0825	SVE	UCVTF (predicated)	56	35	42
+SVE-0825	SVE	UCVTF (predicated)	140	35	42
 SVE-0826	SVE	UCVTFLT	0	3	1
-SVE-0827	SVE	UDIV	16	4	10
-SVE-0828	SVE	UDIVR	16	4	10
-SVE-0829	SVE	UDOT (2-way, indexed)	9	5	10
-SVE-0830	SVE	UDOT (2-way, vectors)	7	5	8
-SVE-0831	SVE	UDOT (4-way, indexed)	16	4	16
-SVE-0832	SVE	UDOT (4-way, vectors)	8	2	8
-SVE-0833	SVE	UHADD	11	2	8
-SVE-0834	SVE	UHSUB	11	2	8
-SVE-0835	SVE	UHSUBR	11	2	8
-SVE-0836	SVE	UMAX (immediate)	6	2	6
-SVE-0837	SVE	UMAX (vectors)	11	2	8
-SVE-0838	SVE	UMAXP	11	2	8
+SVE-0827	SVE	UDIV	40	4	10
+SVE-0828	SVE	UDIVR	40	4	10
+SVE-0829	SVE	UDOT (2-way, indexed)	9	6	10
+SVE-0830	SVE	UDOT (2-way, vectors)	7	6	8
+SVE-0831	SVE	UDOT (4-way, indexed)	32	4	16
+SVE-0832	SVE	UDOT (4-way, vectors)	16	2	8
+SVE-0833	SVE	UHADD	26	2	8
+SVE-0834	SVE	UHSUB	26	2	8
+SVE-0835	SVE	UHSUBR	26	2	8
+SVE-0836	SVE	UMAX (immediate)	12	2	6
+SVE-0837	SVE	UMAX (vectors)	26	2	8
+SVE-0838	SVE	UMAXP	26	2	8
 SVE-0839	SVE	UMAXQV	0	3	1
-SVE-0840	SVE	UMAXV	11	2	8
-SVE-0841	SVE	UMIN (immediate)	6	2	6
-SVE-0842	SVE	UMIN (vectors)	11	2	8
-SVE-0843	SVE	UMINP	11	2	8
+SVE-0840	SVE	UMAXV	26	2	8
+SVE-0841	SVE	UMIN (immediate)	12	2	6
+SVE-0842	SVE	UMIN (vectors)	26	2	8
+SVE-0843	SVE	UMINP	26	2	8
 SVE-0844	SVE	UMINQV	0	3	1
-SVE-0845	SVE	UMINV	11	2	8
-SVE-0846	SVE	UMLALB (indexed)	18	4	18
-SVE-0847	SVE	UMLALB (vectors)	15	4	15
-SVE-0848	SVE	UMLALT (indexed)	18	4	18
-SVE-0849	SVE	UMLALT (vectors)	15	4	15
-SVE-0850	SVE	UMLSLB (indexed)	18	4	18
-SVE-0851	SVE	UMLSLB (vectors)	15	4	15
-SVE-0852	SVE	UMLSLT (indexed)	18	4	18
-SVE-0853	SVE	UMLSLT (vectors)	15	4	15
-SVE-0854	SVE	UMMLA	0	3	1
-SVE-0855	SVE	UMULH (predicated)	11	2	8
-SVE-0856	SVE	UMULH (unpredicated)	10	2	10
-SVE-0857	SVE	UMULLB (indexed)	18	4	18
-SVE-0858	SVE	UMULLB (vectors)	15	4	15
-SVE-0859	SVE	UMULLT (indexed)	18	4	18
-SVE-0860	SVE	UMULLT (vectors)	15	4	15
-SVE-0861	SVE	UQADD (immediate)	13	6	13
-SVE-0862	SVE	UQADD (vectors, predicated)	11	2	8
-SVE-0863	SVE	UQADD (vectors, unpredicated)	10	2	10
-SVE-0864	SVE	UQCVTN	5	2	5
-SVE-0865	SVE	UQDECB	12	4	8
-SVE-0866	SVE	UQDECD (scalar)	12	4	8
-SVE-0867	SVE	UQDECD (vector)	4	2	4
-SVE-0868	SVE	UQDECH (scalar)	12	4	8
-SVE-0869	SVE	UQDECH (vector)	4	2	4
-SVE-0870	SVE	UQDECP (scalar)	20	4	10
-SVE-0871	SVE	UQDECP (vector)	11	4	5
-SVE-0872	SVE	UQDECW (scalar)	12	4	8
-SVE-0873	SVE	UQDECW (vector)	4	2	4
-SVE-0874	SVE	UQINCB	12	4	8
-SVE-0875	SVE	UQINCD (scalar)	12	4	8
-SVE-0876	SVE	UQINCD (vector)	4	2	4
-SVE-0877	SVE	UQINCH (scalar)	12	4	8
-SVE-0878	SVE	UQINCH (vector)	4	2	4
-SVE-0879	SVE	UQINCP (scalar)	20	4	10
-SVE-0880	SVE	UQINCP (vector)	11	4	5
-SVE-0881	SVE	UQINCW (scalar)	12	4	8
-SVE-0882	SVE	UQINCW (vector)	4	2	4
-SVE-0883	SVE	UQRSHL	11	2	8
-SVE-0884	SVE	UQRSHLR	11	2	8
-SVE-0885	SVE	UQRSHRN	6	5	7
-SVE-0886	SVE	UQRSHRNB	21	6	21
-SVE-0887	SVE	UQRSHRNT	21	6	21
-SVE-0888	SVE	UQSHL (immediate)	32	8	20
-SVE-0889	SVE	UQSHL (vectors)	11	2	8
-SVE-0890	SVE	UQSHLR	11	2	8
+SVE-0845	SVE	UMINV	26	2	8
+SVE-0846	SVE	UMLALB (indexed)	36	4	18
+SVE-0847	SVE	UMLALB (vectors)	30	4	15
+SVE-0848	SVE	UMLALT (indexed)	36	4	18
+SVE-0849	SVE	UMLALT (vectors)	30	4	15
+SVE-0850	SVE	UMLSLB (indexed)	36	4	18
+SVE-0851	SVE	UMLSLB (vectors)	30	4	15
+SVE-0852	SVE	UMLSLT (indexed)	36	4	18
+SVE-0853	SVE	UMLSLT (vectors)	30	4	15
+SVE-0854	SVE	UMMLA	7	3	7
+SVE-0855	SVE	UMULH (predicated)	26	2	8
+SVE-0856	SVE	UMULH (unpredicated)	20	2	10
+SVE-0857	SVE	UMULLB (indexed)	36	4	18
+SVE-0858	SVE	UMULLB (vectors)	30	4	15
+SVE-0859	SVE	UMULLT (indexed)	36	4	18
+SVE-0860	SVE	UMULLT (vectors)	30	4	15
+SVE-0861	SVE	UQADD (immediate)	26	6	13
+SVE-0862	SVE	UQADD (vectors, predicated)	26	2	8
+SVE-0863	SVE	UQADD (vectors, unpredicated)	20	2	10
+SVE-0864	SVE	UQCVTN	5	3	5
+SVE-0865	SVE	UQDECB	24	4	8
+SVE-0866	SVE	UQDECD (scalar)	24	4	8
+SVE-0867	SVE	UQDECD (vector)	8	2	4
+SVE-0868	SVE	UQDECH (scalar)	24	4	8
+SVE-0869	SVE	UQDECH (vector)	8	2	4
+SVE-0870	SVE	UQDECP (scalar)	48	4	10
+SVE-0871	SVE	UQDECP (vector)	30	4	5
+SVE-0872	SVE	UQDECW (scalar)	24	4	8
+SVE-0873	SVE	UQDECW (vector)	8	2	4
+SVE-0874	SVE	UQINCB	24	4	8
+SVE-0875	SVE	UQINCD (scalar)	24	4	8
+SVE-0876	SVE	UQINCD (vector)	8	2	4
+SVE-0877	SVE	UQINCH (scalar)	24	4	8
+SVE-0878	SVE	UQINCH (vector)	8	2	4
+SVE-0879	SVE	UQINCP (scalar)	48	4	10
+SVE-0880	SVE	UQINCP (vector)	30	4	5
+SVE-0881	SVE	UQINCW (scalar)	24	4	8
+SVE-0882	SVE	UQINCW (vector)	8	2	4
+SVE-0883	SVE	UQRSHL	26	2	8
+SVE-0884	SVE	UQRSHLR	26	2	8
+SVE-0885	SVE	UQRSHRN	6	6	7
+SVE-0886	SVE	UQRSHRNB	42	6	21
+SVE-0887	SVE	UQRSHRNT	42	6	21
+SVE-0888	SVE	UQSHL (immediate)	80	8	20
+SVE-0889	SVE	UQSHL (vectors)	26	2	8
+SVE-0890	SVE	UQSHLR	26	2	8
 SVE-0891	SVE	UQSHRN	0	3	1
-SVE-0892	SVE	UQSHRNB	21	6	21
-SVE-0893	SVE	UQSHRNT	21	6	21
-SVE-0894	SVE	UQSUB (immediate)	13	6	13
-SVE-0895	SVE	UQSUB (vectors, predicated)	11	2	8
-SVE-0896	SVE	UQSUB (vectors, unpredicated)	10	2	10
-SVE-0897	SVE	UQSUBR	11	2	8
-SVE-0898	SVE	UQXTNB	15	6	15
-SVE-0899	SVE	UQXTNT	15	6	15
-SVE-0900	SVE	URECPE	8	5	6
-SVE-0901	SVE	URHADD	11	2	8
-SVE-0902	SVE	URSHL	11	2	8
-SVE-0903	SVE	URSHLR	11	2	8
-SVE-0904	SVE	URSHR	32	8	20
-SVE-0905	SVE	URSQRTE	8	5	6
-SVE-0906	SVE	URSRA	32	8	32
-SVE-0907	SVE	USDOT (indexed)	9	2	9
-SVE-0908	SVE	USDOT (vectors)	7	2	7
-SVE-0909	SVE	USHLLB	21	6	21
-SVE-0910	SVE	USHLLT	21	6	21
-SVE-0911	SVE	USMMLA	0	3	1
-SVE-0912	SVE	USQADD	11	2	8
-SVE-0913	SVE	USRA	32	8	32
-SVE-0914	SVE	USUBLB	15	4	15
-SVE-0915	SVE	USUBLT	15	4	15
-SVE-0916	SVE	USUBWB	15	4	15
-SVE-0917	SVE	USUBWT	15	4	15
-SVE-0918	SVE	UUNPKHI, UUNPKLO	22	8	22
-SVE-0919	SVE	UXTB, UXTH, UXTW	41	19	29
-SVE-0920	SVE	UZP1, UZP2 (predicates)	26	4	20
-SVE-0921	SVE	UZP1, UZP2 (vectors)	20	10	22
+SVE-0892	SVE	UQSHRNB	42	6	21
+SVE-0893	SVE	UQSHRNT	42	6	21
+SVE-0894	SVE	UQSUB (immediate)	26	6	13
+SVE-0895	SVE	UQSUB (vectors, predicated)	26	2	8
+SVE-0896	SVE	UQSUB (vectors, unpredicated)	20	2	10
+SVE-0897	SVE	UQSUBR	26	2	8
+SVE-0898	SVE	UQXTNB	30	6	15
+SVE-0899	SVE	UQXTNT	30	6	15
+SVE-0900	SVE	URECPE	20	5	6
+SVE-0901	SVE	URHADD	26	2	8
+SVE-0902	SVE	URSHL	26	2	8
+SVE-0903	SVE	URSHLR	26	2	8
+SVE-0904	SVE	URSHR	80	8	20
+SVE-0905	SVE	URSQRTE	20	5	6
+SVE-0906	SVE	URSRA	64	8	32
+SVE-0907	SVE	USDOT (indexed)	18	2	9
+SVE-0908	SVE	USDOT (vectors)	14	2	7
+SVE-0909	SVE	USHLLB	42	6	21
+SVE-0910	SVE	USHLLT	42	6	21
+SVE-0911	SVE	USMMLA	7	3	7
+SVE-0912	SVE	USQADD	26	2	8
+SVE-0913	SVE	USRA	64	8	32
+SVE-0914	SVE	USUBLB	30	4	15
+SVE-0915	SVE	USUBLT	30	4	15
+SVE-0916	SVE	USUBWB	30	4	15
+SVE-0917	SVE	USUBWT	30	4	15
+SVE-0918	SVE	UUNPKHI, UUNPKLO	44	8	22
+SVE-0919	SVE	UXTB, UXTH, UXTW	102	19	29
+SVE-0920	SVE	UZP1, UZP2 (predicates)	60	4	20
+SVE-0921	SVE	UZP1, UZP2 (vectors)	40	10	22
 SVE-0922	SVE	UZPQ1	0	3	1
 SVE-0923	SVE	UZPQ2	0	3	1
 SVE-0924	SVE	WHILEGE (predicate as counter)	14	2	9
-SVE-0925	SVE	WHILEGE (predicate pair)	13	2	8
-SVE-0926	SVE	WHILEGE (predicate)	14	2	9
+SVE-0925	SVE	WHILEGE (predicate pair)	13	3	8
+SVE-0926	SVE	WHILEGE (predicate)	32	2	9
 SVE-0927	SVE	WHILEGT (predicate as counter)	14	2	9
-SVE-0928	SVE	WHILEGT (predicate pair)	13	2	8
-SVE-0929	SVE	WHILEGT (predicate)	14	2	9
+SVE-0928	SVE	WHILEGT (predicate pair)	13	3	8
+SVE-0929	SVE	WHILEGT (predicate)	32	2	9
 SVE-0930	SVE	WHILEHI (predicate as counter)	14	2	9
-SVE-0931	SVE	WHILEHI (predicate pair)	13	2	8
-SVE-0932	SVE	WHILEHI (predicate)	14	2	9
+SVE-0931	SVE	WHILEHI (predicate pair)	13	3	8
+SVE-0932	SVE	WHILEHI (predicate)	32	2	9
 SVE-0933	SVE	WHILEHS (predicate as counter)	14	2	9
-SVE-0934	SVE	WHILEHS (predicate pair)	13	2	8
-SVE-0935	SVE	WHILEHS (predicate)	14	2	9
+SVE-0934	SVE	WHILEHS (predicate pair)	13	3	8
+SVE-0935	SVE	WHILEHS (predicate)	32	2	9
 SVE-0936	SVE	WHILELE (predicate as counter)	14	2	9
-SVE-0937	SVE	WHILELE (predicate pair)	13	2	8
-SVE-0938	SVE	WHILELE (predicate)	14	2	9
+SVE-0937	SVE	WHILELE (predicate pair)	13	3	8
+SVE-0938	SVE	WHILELE (predicate)	32	2	9
 SVE-0939	SVE	WHILELO (predicate as counter)	14	2	9
-SVE-0940	SVE	WHILELO (predicate pair)	13	2	8
-SVE-0941	SVE	WHILELO (predicate)	14	2	9
+SVE-0940	SVE	WHILELO (predicate pair)	13	3	8
+SVE-0941	SVE	WHILELO (predicate)	32	2	9
 SVE-0942	SVE	WHILELS (predicate as counter)	14	2	9
-SVE-0943	SVE	WHILELS (predicate pair)	13	2	8
-SVE-0944	SVE	WHILELS (predicate)	14	2	9
+SVE-0943	SVE	WHILELS (predicate pair)	13	3	8
+SVE-0944	SVE	WHILELS (predicate)	32	2	9
 SVE-0945	SVE	WHILELT (predicate as counter)	14	2	9
-SVE-0946	SVE	WHILELT (predicate pair)	13	2	8
-SVE-0947	SVE	WHILELT (predicate)	14	2	9
-SVE-0948	SVE	WHILERW	13	2	8
-SVE-0949	SVE	WHILEWR	13	2	8
-SVE-0950	SVE	WRFFR	0	3	1
-SVE-0951	SVE	XAR	32	8	32
-SVE-0952	SVE	ZIP1, ZIP2 (predicates)	26	4	20
-SVE-0953	SVE	ZIP1, ZIP2 (vectors)	20	10	22
+SVE-0946	SVE	WHILELT (predicate pair)	13	3	8
+SVE-0947	SVE	WHILELT (predicate)	32	2	9
+SVE-0948	SVE	WHILERW	30	2	8
+SVE-0949	SVE	WHILEWR	30	2	8
+SVE-0950	SVE	WRFFR	9	3	2
+SVE-0951	SVE	XAR	64	8	32
+SVE-0952	SVE	ZIP1, ZIP2 (predicates)	60	4	20
+SVE-0953	SVE	ZIP1, ZIP2 (vectors)	40	10	22
 SVE-0954	SVE	ZIPQ1	0	3	1
 SVE-0955	SVE	ZIPQ2	0	3	1
 SME-0001	SME	ADD (to array, array and multiple vectors)	20	12	12
