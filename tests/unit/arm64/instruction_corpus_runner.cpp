@@ -1158,9 +1158,8 @@ struct Outcome final {
   std::size_t library_exits{};
 };
 
-/* The production engines for one harness option set. Options that force a
- * portable gadget body select the gadget executor directly, as the harness
- * that produced those cases did. */
+/* The production engines for one harness option set: the gadget and JIT
+ * lanes' engines, and the library lane's gadget engine. */
 class Engines final {
 public:
   Engines(std::uint16_t options, ::uml::platform::HostCapabilities host)
@@ -1183,28 +1182,18 @@ public:
             : ::uml::platform::apple::apply_guest_sve_policy(
                   host_, ::uml::platform::apple::GuestSvePolicy::on);
     library_features_ = arm64::detail::implemented_sve_features(library_host_);
-    const ::uml::cpu::EngineConfiguration configuration{
-        .host_capabilities = host_,
-    };
-    if ((options & 0x3fcU) == 0U) {
-      gadgets_ =
-          ::uml::cpu::make_cpu_engine(EngineKind::gadgets, configuration);
-    } else {
-      forced_ = std::make_unique<arm64::gadgets::GadgetExecutor>(
-          arm64::gadgets::BuildOptions{
-              .force_software_checksum = (options & 4U) != 0U,
-              .force_software_flags = (options & 8U) != 0U,
-              .force_software_sha3 = (options & 16U) != 0U,
-              .force_software_fixed_transforms = (options & 32U) != 0U,
-              .force_software_aes = (options & 64U) != 0U,
-              .force_software_pmull = (options & 128U) != 0U,
-              .force_software_dotprod = (options & 256U) != 0U,
-              .force_software_i8mm = (options & 512U) != 0U,
-              .host_capabilities = host_,
-          });
-    }
+    gadgets_ = Gadgets{options, host_};
+    /* The library lane's gadget engine translates for that lane's virtual
+     * CPU, so it runs the SVE forms it implements itself and exits on the
+     * rest as illegal, for the library; only where the policy adds nothing
+     * is it the gadget lane's own. */
+    if (library_host_.supported != host_.supported)
+      library_gadgets_ = Gadgets{options, library_host_};
     if (::uml::cpu::cpu_engine_available(EngineKind::jit))
-      jit_ = ::uml::cpu::make_cpu_engine(EngineKind::jit, configuration);
+      jit_ = ::uml::cpu::make_cpu_engine(
+          EngineKind::jit, ::uml::cpu::EngineConfiguration{
+                               .host_capabilities = host_,
+                           });
   }
 
   [[nodiscard]] bool jit_available() const noexcept { return jit_ != nullptr; }
@@ -1274,10 +1263,53 @@ private:
         .generation = generation,
         .instruction_budget = budget,
     };
-    if (lane == Lane::gadgets && forced_ != nullptr)
-      return arm64::detail::run_translated(*forced_, request);
-    return (lane == Lane::gadgets ? gadgets_ : jit_)->run(request);
+    if (lane == Lane::jit)
+      return jit_->run(request);
+    auto &gadgets = lane == Lane::library && library_gadgets_.has_value()
+                        ? *library_gadgets_
+                        : *gadgets_;
+    return gadgets.run(request);
   }
+
+  /* A gadget engine for one virtual CPU. Options that force a portable
+   * gadget body select the gadget executor directly, as the harness that
+   * produced those cases did. */
+  class Gadgets final {
+  public:
+    Gadgets(std::uint16_t options,
+            const ::uml::platform::HostCapabilities &host) {
+      if ((options & 0x3fcU) == 0U) {
+        engine_ = ::uml::cpu::make_cpu_engine(
+            EngineKind::gadgets, ::uml::cpu::EngineConfiguration{
+                                     .host_capabilities = host,
+                                 });
+        return;
+      }
+      forced_ = std::make_unique<arm64::gadgets::GadgetExecutor>(
+          arm64::gadgets::BuildOptions{
+              .force_software_checksum = (options & 4U) != 0U,
+              .force_software_flags = (options & 8U) != 0U,
+              .force_software_sha3 = (options & 16U) != 0U,
+              .force_software_fixed_transforms = (options & 32U) != 0U,
+              .force_software_aes = (options & 64U) != 0U,
+              .force_software_pmull = (options & 128U) != 0U,
+              .force_software_dotprod = (options & 256U) != 0U,
+              .force_software_i8mm = (options & 512U) != 0U,
+              .host_capabilities = host,
+          });
+    }
+
+    [[nodiscard]] ::uml::cpu::ExecutionResult
+    run(::uml::cpu::ExecutionRequest &request) {
+      if (forced_ != nullptr)
+        return arm64::detail::run_translated(*forced_, request);
+      return engine_->run(request);
+    }
+
+  private:
+    std::unique_ptr<::uml::cpu::CpuEngine> engine_;
+    std::unique_ptr<arm64::gadgets::GadgetExecutor> forced_;
+  };
 
   /* The gadget engine with the library behind its illegal-instruction
    * exit: each SVE word the library lane's virtual CPU executes retires
@@ -1291,7 +1323,7 @@ private:
         outcome.event = Event::instruction_budget;
         break;
       }
-      const auto result = run_engine(Lane::gadgets, outcome.cpu, memory,
+      const auto result = run_engine(Lane::library, outcome.cpu, memory,
                                      execution_limit - outcome.instructions);
       outcome.instructions += result.retired_instructions;
       outcome.event = event_for(result.reason);
@@ -1341,8 +1373,8 @@ private:
   ::uml::platform::HostCapabilities host_;
   ::uml::platform::HostCapabilities library_host_;
   arm64::detail::SmeFeatureMask library_features_{};
-  std::unique_ptr<::uml::cpu::CpuEngine> gadgets_;
-  std::unique_ptr<arm64::gadgets::GadgetExecutor> forced_;
+  std::optional<Gadgets> gadgets_;
+  std::optional<Gadgets> library_gadgets_;
   std::unique_ptr<::uml::cpu::CpuEngine> jit_;
 };
 
