@@ -1959,11 +1959,11 @@ gadget setf_fast_\suffix
 	ubfx w15, w12, #(\width - 1), #1
 	eor w16, w12, w12, lsr #1
 	ubfx w16, w16, #(\width - 1), #1
-	and w18, w27, #0x20000000
-	orr w18, w18, w15, lsl #31
-	orr w18, w18, w17, lsl #30
-	orr w18, w18, w16, lsl #28
-	mov w27, w18
+	and w13, w27, #0x20000000
+	orr w13, w13, w15, lsl #31
+	orr w13, w13, w17, lsl #30
+	orr w13, w13, w16, lsl #28
+	mov w27, w13
 	next_gadget
 .endm
 
