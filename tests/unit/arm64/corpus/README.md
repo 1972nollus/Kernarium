@@ -587,13 +587,46 @@ python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
 ```
 
 The first form keeps the pack's `m4` record, if any, and needs no host. The
-responses must give identical records. `provenance.json` records, under
+responses must give identical records. The SVE FEAT_AFP step below follows
+on `sve-sme.jsonl` before the repack. `provenance.json` records, under
 `sve_sme`, the script, table and M4 request hashes, the model checks per
 encoding, the case counts, and the M4's features. `build-unit-corpus.py
 --check` verifies the hashes. The `arm64-instruction-corpus-sve-sme` tooling
 test re-derives the `asl` and `table` records, repeats the model checks
 against the pack's SME records, and drives the M4 path with a synthetic
 response.
+
+## SVE FEAT_AFP cases
+
+FPCR.AH, FIZ, and NEP need FEAT_AFP, which arm64-builder lacks, so the native SVE
+records cannot set them. The M4 has FEAT_AFP but no SVE.
+[`tools/arm64-tests/sve-afp-corpus.py`](../../../../tools/arm64-tests/sve-afp-corpus.py)
+authors `arm64-sve-afp/m4` at VL 16 from M4 runs in streaming mode, with
+every 128-bit segment holding the case, as the SVE/SME `m4` record does.
+The forms are the native `fpcr` group's floating-point forms that are legal
+in streaming mode. The reductions are left out, because they depend on the
+vector length, and so are the conversions from integers. The script
+requires every segment of every register to agree, which also refuses a
+form that is not lane-local.
+
+The sources hold subnormals, NaNs, signed zeros, or ties. These run under
+FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and DN
+that each class meets. Each case names its row's non-streaming requirement
+and `afp`, and also `rpres` for single-precision FRECPE and FRSQRTE under
+AH. The pack holds no record until the M4 has answered:
+
+```sh
+python3 -B tools/arm64-tests/sve-afp-corpus.py --m4-request afp.request
+sme_native_oracle afp.request afp.response.1              # twice, on the M4
+python3 -B tools/arm64-tests/sve-afp-corpus.py sve-sme.jsonl sve-afp.jsonl \
+  --m4-response afp.response.1 --m4-response afp.response.2
+```
+
+`--carry PACK` instead keeps the pack's record, if any, for a request that
+is unchanged. `provenance.json` records the script, table, and request
+hashes under `sve_afp`. The `arm64-instruction-corpus-sve-afp` tooling test
+checks the request's cases, any record against them, and the M4 path with a
+synthetic response.
 
 ## FEAT_AFP cases
 
