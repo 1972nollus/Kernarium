@@ -638,9 +638,10 @@ streaming-mode checks. The same binary runs as an ordinary program on
 arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
 every check must pass there too; its expected values came from such a run on
 Linux 6.12, and checks where native Linux may keep a discarded state live
-with zero registers accept either outcome. `guest-sve-off-gadgets` and
-`guest-sve-off-jit` run on every host and check that with the policy off the
-probe sees no SVE and PTRUE is undefined.
+with zero registers accept either outcome. Where 6.12 differs from the
+guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
+6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
+check that with the policy off the probe sees no SVE and PTRUE is undefined.
 
 ## x86 instruction conformance
 
