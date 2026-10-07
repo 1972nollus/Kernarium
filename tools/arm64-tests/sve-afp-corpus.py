@@ -27,9 +27,14 @@ class in every source, with the class's FPCR samples:
   DN;
 - NaNs, whose propagation AH changes: AH, and AH with FZ, FZ16, and DN;
 - signed zeros, which AH changes FMAX and FMIN for: AH;
-- ties, which AH rounds differently in the BF16 forms: AH.
+- ties, which the BF16 forms round to nearest under AH whatever the
+  rounding mode: AH with RZ, which every other form follows.
 
 NEP affects only AdvSIMD scalar forms, so one sample pins it as a no-op.
+FPCR must read back as the case set it, so a host whose FPCR holds AH, FIZ
+and NEP as zero, one without FEAT_AFP, records nothing. The M4 also has
+FEAT_RPRES, which the estimates under AH need; the oracle does not report
+it.
 Predicates are all true, and FPSR starts clear. Each case names its row's
 non-streaming requirement and afp; the single-precision FRECPE and FRSQRTE
 cases under AH name rpres as well, which their estimates' precision needs.
@@ -90,7 +95,7 @@ CLASS_SAMPLES = {
     "subnormals": (FIZ, AH, AH | FIZ, AH | FIZ | NEP, AH | FLUSH_DN),
     "NaNs": (AH, AH | FLUSH_DN),
     "zeros": (AH,),
-    "ties": (AH,),
+    "ties": (AH | 3 << native.FPCR_RMODE,),
 }
 REDUCTIONS = ("faddv_", "fmaxv_", "fminv_", "fmaxnmv_", "fminnmv_",
               "fadda_")

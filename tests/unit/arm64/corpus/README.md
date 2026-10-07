@@ -611,7 +611,9 @@ form that is not lane-local.
 
 The sources hold subnormals, NaNs, signed zeros, or ties. These run under
 FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and DN
-that each class meets. Each case names its row's non-streaming requirement
+that each class meets. Ties run under AH with RZ, which the BF16 forms
+override with round-to-nearest. A host without FEAT_AFP reads AH, FIZ, and
+NEP back as zero, and the script refuses its response. Each case names its row's non-streaming requirement
 and `afp`, and also `rpres` for single-precision FRECPE and FRSQRTE under
 AH. The pack holds no record until the M4 has answered:
 
