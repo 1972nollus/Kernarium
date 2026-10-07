@@ -38,17 +38,20 @@
     set(UML_ARM64_RUNTIME_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     set(UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
     set(UML_ARM64_STATIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -119,10 +122,6 @@
     # translates through the JIT's test API.
     target_sources(uml_arm64_instruction_corpus_tests PRIVATE
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
-    # Its library lane runs the SVE cases through the shared semantic
-    # library, which no product links yet.
-    target_sources(uml_arm64_instruction_corpus_tests PRIVATE
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>)
     uml_add_unit_test(NAME arm64-emitted-registers
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
@@ -337,6 +336,7 @@
             OBJECTS
                 $<TARGET_OBJECTS:uml_static_mmu>
                 $<TARGET_OBJECTS:uml_arm64_gadgets>
+                $<TARGET_OBJECTS:uml_arm64_sve_semantics>
                 $<TARGET_OBJECTS:uml_arm64_execution_helpers>
                 ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     endforeach()

@@ -19,4 +19,13 @@
 #define UML_GADGET_SVE_WHILE_NZCV 16
 #define UML_GADGET_SVE_WHILE_COUNTS 17
 
+/* What uml_arm64_gadget_sve_execute (sve_helpers.cpp) returns to the
+ * sve_library gadget: the word retired; it faulted, with the fault in the
+ * TLB; it is UNDEFINED there (a reserved bitmask immediate); or it reached
+ * an internal error, the engine's fatal event. */
+#define UML_GADGET_SVE_LIBRARY_RETIRED 0
+#define UML_GADGET_SVE_LIBRARY_FAULT 1
+#define UML_GADGET_SVE_LIBRARY_UNDEFINED 2
+#define UML_GADGET_SVE_LIBRARY_FATAL 3
+
 #endif
