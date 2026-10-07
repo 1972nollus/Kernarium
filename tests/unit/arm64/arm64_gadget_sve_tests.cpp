@@ -1657,10 +1657,14 @@ void unimplemented_words()
  * hosts with SVE alone and with SVE and SME. Some SM = 0 programs do
  * select the SVE part. Program words are untyped, but no operand word
  * here can equal a gadget entry: they are CpuState offsets, immediates,
- * stack and table addresses, guest PCs, and the semantic library's word
- * and row, which lies above every user address. */
+ * stack and table addresses, the semantic library's word and row, which
+ * lies above every user address, and guest addresses. The walk translates
+ * at walk_base, more than 4 GiB above any image the loader places, so no
+ * guest PC, branch target or ADR and ADRP result reaches a gadget either;
+ * at code_base an ADRP could, under some ASLR slides. */
 void streaming_safety()
 {
+	constexpr std::uint64_t walk_base = 0x7000'0000'0000U;
 	const auto sve_begin = reinterpret_cast<std::uintptr_t>(
 		uml_arm64_gadget_sve_section_begin);
 	const auto sve_end = reinterpret_cast<std::uintptr_t>(
@@ -1705,7 +1709,7 @@ void streaming_safety()
 			for (const auto word : words) {
 				const std::array window{word};
 				const auto built = gadgets::Builder{}.build(
-					code_base, window,
+					walk_base, window,
 					[&](std::uint64_t) { return &link; },
 					std::pmr::get_default_resource(),
 					[&](std::uint64_t) { return &site; },
