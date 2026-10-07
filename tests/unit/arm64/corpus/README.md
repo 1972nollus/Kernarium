@@ -8,8 +8,10 @@ engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
 neither lane on a host without it, and a case that needs FEAT_AFP or
 FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
-(see [FEAT_AFP cases](#feat_afp-cases)). The runner needs no Python, network,
-or file other than the pack.
+(see [FEAT_AFP cases](#feat_afp-cases)). A third lane runs the cases with
+non-streaming SVE state through the SVE semantic library (see
+[Non-streaming SVE state](#non-streaming-sve-state)). The runner needs no
+Python, network, or file other than the pack.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -194,6 +196,15 @@ the encoder refuses a state that breaks this. The base fill of P, FFR, and
 names its own. A record without a VL expects them zero. They are apart from
 the streaming P registers of the SME state.
 
+The `library` lane runs every SVE case, for a virtual CPU with the profile
+the guest-SVE policy gives the host, through the gadget engine with the SVE
+semantic library
+([`cpu/arm64/detail/sve_semantics.hpp`](../../../../darwin/cpu/arm64/detail/sve_semantics.hpp))
+behind its illegal-instruction exit: each non-streaming SVE word the
+engine stops at retires through the library, and the engine resumes after
+it. It skips a case whose features that virtual CPU lacks, or whose program
+holds a word of a form the library does not cover yet, and counts each.
+
 A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
 version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes
 version 3; it writes version 2 for a corpus without VLs, so the
@@ -205,7 +216,7 @@ its meaning, bit for bit, in both.
 ```sh
 uml_arm64_instruction_corpus_tests tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
-  [--engine gadgets|jit] [--assume-host-feature TOKEN] \
+  [--engine gadgets|jit|library] [--assume-host-feature TOKEN] \
   [--max-failures N | --fail-fast] [--list]
 ```
 
@@ -218,8 +229,9 @@ host and must match the base entries on the cases whose FPCR leaves the
 controls clear. The default stops after 25 failures; `--max-failures 0` never
 stops early.
 A failure names the record, case index, producer check ordinals, entry word,
-engine, and the first mismatch. The summary counts gadget and JIT runs and the
-JIT runs skipped for each missing host feature.
+lane, and the first mismatch. The summary counts each lane's runs and the runs
+it skipped for each missing feature, and the library lane's cases skipped for
+an uncovered form.
 
 ## Regeneration and new cases
 
@@ -280,6 +292,19 @@ a kept case that the allocation generator maps to the same allocation row
 (only `binding_encoding` changes), or sets `ctest` and `case` to `-`.
 `--dump PACK --text FILE` writes a reviewable JSON lines form, and
 `--repack FILE` rebuilds the pack and metadata from it.
+
+Each step after the export reads the previous step's dump, replaces its own
+records, and appends them, so the steps run in one order, followed by one
+`--repack`: [LSE2 alignment](#lse2-alignment-cases),
+[absent features](#absent-feature-cases), [native SME](#native-sme-cases),
+[native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
+[SVE FEAT_AFP](#sve-feat_afp-cases), and [SVE trap](#sve-trap-cases). A
+hardware step's `--carry PACK` copies the pack's records for a request that
+is unchanged, so a regeneration that changes no request needs no host. The
+SVE trap step derives its records from the native SVE records and stays
+last. Deriving trap records from the SVE/SME `m4` and SVE FEAT_AFP records
+as well waits until the M4 has answered, and needs a source predicate that
+admits the rows that need SME.
 
 ## LSE2 alignment cases
 
@@ -625,10 +650,60 @@ python3 -B tools/arm64-tests/sve-afp-corpus.py sve-sme.jsonl sve-afp.jsonl \
 ```
 
 `--carry PACK` instead keeps the pack's record, if any, for a request that
-is unchanged. `provenance.json` records the script, table, and request
-hashes under `sve_afp`. The `arm64-instruction-corpus-sve-afp` tooling test
+is unchanged. The SVE trap step below follows on `sve-afp.jsonl` before the
+repack. `provenance.json` records the script, table, and request hashes
+under `sve_afp`. The `arm64-instruction-corpus-sve-afp` tooling test
 checks the request's cases, any record against them, and the M4 path with a
 synthetic response.
+
+## SVE trap cases
+
+The AdvSIMD trapped records come from producer unit tests whose
+`check_trap()` derives each expectation from operands with known
+exceptions and the trap contract of
+[`floating_exception.hpp`](../../../../darwin/cpu/arm64/detail/floating_exception.hpp):
+an enabled exception leaves every register and PC as they were, commits
+only the unenabled flags, and gives syndrome EC 0x2c, IL, TFV, and the
+enabled exceptions raised. No hardware observes an SVE trap at
+PSTATE.SM = 0 either: the native records run with every enable clear, and
+in streaming mode FPProcessException() traps only with FEAT_SME_FA64.
+[`tools/arm64-tests/sve-trap-corpus.py`](../../../../tools/arm64-tests/sve-trap-corpus.py)
+applies the same derivation to the SVE floating-point forms and writes the
+`arm64-sve-trap` records, at VL 16 in both page profiles:
+
+- `derived` reruns each completed one-instruction floating-point case of
+  the `arm64-sve-native` records with every enable, with only the first
+  raised one's when it raised several, and with every enable but the
+  raised ones'. Its outcome follows from the exceptions arm64-builder observed
+  with every enable clear; a case that does not trap completes exactly as
+  observed.
+- `authored` holds what no native case pins: divide by zero and input
+  denormal alone, every element's exceptions together, the flags a trap
+  commits, inactive elements that would raise, which complete, and traps
+  that keep a compare's P destination and the V destination of FADDV and
+  FADDA. IEEE 754 arithmetic decides each operand's exceptions.
+
+A trap leaves the SVE state live, as the SVE access trap Linux takes first
+makes it. FPRoundBase() never traps a flush to zero's underflow, and with
+UFE set an exact tiny result underflows; the trap contract decides from an
+execution with every enable clear, so a case sets UFE only when it raised
+underflow with FZ and FZ16 clear.
+
+The step needs no hardware. It is the last step of the chain and reruns
+after any change to the native records or to the script, on `sve-afp.jsonl`
+or on the pack's own `--dump`:
+
+```sh
+python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+`provenance.json` records the script and table hashes and the case counts
+under `sve_trap`; `build-unit-corpus.py --check` verifies the hashes, and
+the `arm64-instruction-corpus-sve-trap` tooling test re-derives every
+record from the pack's native records and checks each case against the
+contract.
 
 ## FEAT_AFP cases
 
