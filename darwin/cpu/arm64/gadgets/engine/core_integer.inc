@@ -309,9 +309,11 @@ NAME(uml_arm64_gadget_enter):
 	 * x3 = initial guest instruction count. x29 is otherwise unused by the
 	 * engine and remains live across helper calls. The two-register result
 	 * returns the event in w0 and completed count in x1 without a hot-boundary
-	 * memory store. Apple reserves x18, so it remains untouched.
+	 * memory store. Darwin reserves x18 and clears it when it interrupts the
+	 * thread, so the engine neither uses, saves nor restores it: x19's pair
+	 * partner is the zero register.
 	 */
-	stp x18, x19, [sp, #-0x80]!
+	stp xzr, x19, [sp, #-0x80]!
 	stp x20, x21, [sp, #0x10]
 	stp x22, x23, [sp, #0x20]
 	stp x24, x25, [sp, #0x30]
@@ -342,7 +344,7 @@ uml_arm64_gadget_leave:
 	ldp x24, x25, [sp, #0x30]
 	ldp x22, x23, [sp, #0x20]
 	ldp x20, x21, [sp, #0x10]
-	ldp x18, x19, [sp], #0x80
+	ldp xzr, x19, [sp], #0x80
 	ret
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
