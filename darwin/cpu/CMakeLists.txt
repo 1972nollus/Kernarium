@@ -88,6 +88,7 @@ target_include_directories(uml_arm64_execution_helpers PRIVATE
 # links it until an engine calls it.
 add_library(uml_arm64_sve_semantics OBJECT
     arm64/detail/sve_semantics.cpp
+    arm64/detail/sve_semantics_crypto.cpp
     arm64/detail/sve_semantics_floating.cpp
     arm64/detail/sve_semantics_integer.cpp
     arm64/detail/sve_semantics_memory.cpp

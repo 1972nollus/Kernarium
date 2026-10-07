@@ -80,8 +80,9 @@ namespace {
 	if (row.memory != 0U)
 		return memory_handler(row);
 	const std::uint16_t form = row.form;
-	for (const auto lookup : {predicate_handler, integer_handler,
-		     wide_handler, permute_handler, floating_handler})
+	for (const auto lookup :
+		{predicate_handler, integer_handler, wide_handler,
+			permute_handler, floating_handler, crypto_handler})
 		if (const Handler handler = lookup(form); handler != nullptr)
 			return handler;
 	return nullptr;

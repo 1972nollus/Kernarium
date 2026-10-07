@@ -1128,8 +1128,8 @@ enum class Lane : std::uint8_t { gadgets, jit, library };
 }
 
 /* How much of the non-streaming SVE profile a lane implements. The
- * library is the whole profile's semantics; the runner skips the cases of
- * a form it does not cover yet (Runner::library_runs). */
+ * library is the whole profile's semantics; the runner would skip the
+ * cases of a form a regenerated table adds (Runner::library_runs). */
 [[nodiscard]] constexpr arm64::SveSupport lane_sve_support(Lane lane) noexcept {
   switch (lane) {
   case Lane::gadgets:
@@ -1372,8 +1372,8 @@ struct Counts final {
   std::size_t gadgets_skipped_host_feature{};
   std::size_t jit_unavailable{};
   /* SVE cases: those the library lane ran, those whose features its
-   * virtual CPU lacks, and those with a word whose form it does not cover
-   * yet. */
+   * virtual CPU lacks, and those with a word whose form it does not
+   * cover. */
   std::size_t library{};
   std::size_t library_skipped_host_feature{};
   std::size_t library_uncovered{};
@@ -1403,7 +1403,8 @@ struct Counts final {
  * and FEAT_SME2 outside the SME2 profile or for an engine without the SME2
  * forms. A record without an SVL never enters streaming mode, so its SME
  * requirement (an SVE form that SME admits at PSTATE.SM = 0) holds at any
- * SVL. */
+ * SVL; the library lane implements all of those forms and runs no record
+ * with an SVL. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
@@ -1418,13 +1419,18 @@ virtual_cpu_lacks(const Record &record,
         return native.test(static_cast<std::size_t>(feature));
       });
   if (sme_case) {
+    /* The library executes every form SME admits at PSTATE.SM = 0, and
+     * nothing in streaming mode. */
+    const auto support = lane != Lane::library ? lane_sme_support(lane)
+                         : record.svl == 0U    ? arm64::SmeSupport::sme2
+                                               : arm64::SmeSupport::none;
     if (!arm64::implements_sme(host) ||
         (record.svl != 0U && record.svl != host.sme_svl_bytes) ||
-        lane_sme_support(lane) < arm64::SmeSupport::complete)
+        support < arm64::SmeSupport::complete)
       return ArmFeature::sme;
     if (native.test(static_cast<std::size_t>(ArmFeature::sme2)) &&
         (arm64::sme_profile(host) != arm64::SmeProfile::sme2 ||
-         lane_sme_support(lane) < arm64::SmeSupport::sme2))
+         support < arm64::SmeSupport::sme2))
       return ArmFeature::sme2;
   }
   if (native.test(static_cast<std::size_t>(ArmFeature::afp)) &&
@@ -1540,7 +1546,8 @@ private:
    * virtual CPU lacks a feature the case needs (BF16 and I8MM where the
    * host has no AdvSIMD forms of them), the gadget engine that runs the
    * case's other words cannot complete it on this hardware, or a word of
-   * the program has a form the library does not cover yet. */
+   * the program has a form the library does not cover, which only a
+   * regenerated table with a new form can produce. */
   bool library_runs(const Program &program, const ArmFeatureSet &native,
                     const std::optional<ArmFeature> &lacking,
                     const Engines &engines) {

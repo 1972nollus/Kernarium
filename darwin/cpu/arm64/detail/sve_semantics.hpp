@@ -118,10 +118,10 @@ struct SveResult final {
 };
 
 /*
- * Whether execute_sve() implements the row. Every row
- * decode_sve_non_streaming() can return is covered once the library is
- * complete; until then the instruction corpus's library lane counts the
- * rows it is not as skipped.
+ * Whether execute_sve() implements the row, which holds for every row
+ * decode_sve_non_streaming() can return. The instruction corpus's library
+ * lane counts as skipped the cases of any row it does not hold for, which
+ * only a regenerated table with a new form can produce.
  */
 [[nodiscard]] bool sve_semantics_covers(const SmeEncoding &row) noexcept;
 

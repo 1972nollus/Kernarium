@@ -202,8 +202,10 @@ semantic library
 ([`cpu/arm64/detail/sve_semantics.hpp`](../../../../darwin/cpu/arm64/detail/sve_semantics.hpp))
 behind its illegal-instruction exit: each non-streaming SVE word the
 engine stops at retires through the library, and the engine resumes after
-it. It skips a case whose features that virtual CPU lacks, or whose program
-holds a word of a form the library does not cover yet, and counts each.
+it. It skips a case whose features that virtual CPU lacks, and counts each.
+The library covers every form the encoding table routes; the lane also
+skips and counts a case with a word of a form it does not cover, which only
+a regenerated table with a new form can produce.
 
 A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
 version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes

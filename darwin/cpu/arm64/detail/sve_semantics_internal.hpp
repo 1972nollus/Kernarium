@@ -312,6 +312,7 @@ using Handler = SveResult (*)(Context &);
 [[nodiscard]] Handler wide_handler(std::uint16_t form) noexcept;
 [[nodiscard]] Handler permute_handler(std::uint16_t form) noexcept;
 [[nodiscard]] Handler floating_handler(std::uint16_t form) noexcept;
+[[nodiscard]] Handler crypto_handler(std::uint16_t form) noexcept;
 /* The handler of a memory form's row, by its shape. */
 [[nodiscard]] Handler memory_handler(const SmeEncoding &row) noexcept;
 
