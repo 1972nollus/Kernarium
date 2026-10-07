@@ -534,9 +534,16 @@ they raise nothing, and merges under the lane mask, which a predicated
 integer form always does since that costs less than the test. A
 saturating form saturates by compare and select, since AdvSIMD's
 saturating forms set FPSR.QC and SVE's never do, and a shift by an
-immediate has a gadget per value of tsz:imm3. A size or index a form's
-gadgets leave out runs through the semantic library. Every other word runs
-through the semantic library from the
+immediate has a gadget per value of tsz:imm3. A contiguous load or store
+(LD1*, ST1*, LDNT1*, STNT1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, and LDR and
+STR of a Z register) whose footprint lies in one guest page the TLB holds
+runs on the host address: a load reads the whole footprint and zeroes the
+inactive elements, and a store runs only under an all-true predicate, as
+one store. A crossing, a page the TLB cannot fill, a fault, a partial
+store or an SP base runs through the semantic library, which decides
+faults and partial writes. SVE prefetches are NOPs. A size or index a
+form's gadgets leave out runs through the semantic library. Every other
+word runs through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP
 environment is active, its cumulative FPSR flags to `CpuState`, calls the
 library with guest memory through the TLB, and reloads both; a library
@@ -562,8 +569,10 @@ entries on a constant the builder computes. A program holding one of these
 words accesses the FP state before it runs, since P and FFR travel with it,
 and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
 `arm64-gadget-sve` checks the control forms against the pseudocode and
-every generated register-only form against the semantic library on random
-states, with the native FP environment inactive and active, and that no
+every generated form against the semantic library on random states: the
+register-only forms with the native FP environment inactive and active,
+and the memory forms from bases inside a page, across pages, unmapped and
+tagged, comparing memory and faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 

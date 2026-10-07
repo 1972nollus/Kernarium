@@ -272,9 +272,62 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		return emit_add(context, rd, slot_number(form, 1, word),
 			sign_extend((word >> 5) & 63U, 6) * step);
 	}
+	case Lowering::prefetch:
+		/* PRF[BHWD]: a hint, which never faults. */
+		emit(context.words, selection::uml_arm64_gadget_nop);
+		return DecodeResult::decoded;
 	default:
 		return implementation_gap(context);
 	}
+}
+
+/* A contiguous memory form's immediate, its bits concatenated in order and
+ * sign-extended where the form says. */
+[[nodiscard]] std::int64_t memory_immediate(const detail::SmeMemory &memory,
+	std::uint32_t word) noexcept
+{
+	std::uint32_t value = 0;
+	unsigned width = 0;
+	for (unsigned index = 0; index < memory.immediate_segment_count;
+	     ++index) {
+		const auto &segment = memory.immediate[index];
+		value = (value << segment.width) |
+			detail::sme_segment_value(segment, word);
+		width += segment.width;
+	}
+	if (width == 0U)
+		return 0;
+	return memory.immediate_signed ? sign_extend(value, width) :
+		static_cast<std::int64_t>(value);
+}
+
+/* The bytes a contiguous form's immediate adds to its base: the immediate
+ * times the access's footprint, its memory element, or 16. A register
+ * index is scaled in the gadget. */
+[[nodiscard]] std::uint64_t memory_offset(const detail::SmeMemory &memory,
+	std::uint32_t word) noexcept
+{
+	const unsigned esize = detail::sme_memory_esize(memory, word) / 8U;
+	const unsigned msize = memory.msize / 8U;
+	std::uint64_t unit = 0;
+	switch (memory.offset) {
+	case detail::SmeAddressOffset::immediate_footprint:
+		unit = memory.shape == detail::SmeMemoryShape::fill_z ?
+			sve_vector_length :
+			std::uint64_t{memory.registers} *
+				(sve_vector_length / esize) * msize;
+		break;
+	case detail::SmeAddressOffset::immediate_element:
+		unit = msize;
+		break;
+	case detail::SmeAddressOffset::immediate_16:
+		unit = 16U;
+		break;
+	default:
+		return 0;
+	}
+	return static_cast<std::uint64_t>(memory_immediate(memory, word)) *
+		unit;
 }
 
 /* The TBL indexes of DUP Zd.T, Zn.T[imm]: each byte of the element the
@@ -349,6 +402,8 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 	case Lowering::count_move:
 	case Lowering::count_add:
 	case Lowering::vector_length_add:
+	case Lowering::memory:
+	case Lowering::prefetch:
 		return true;
 	}
 	return true;
@@ -408,6 +463,18 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 	if (entry == reinterpret_cast<std::uintptr_t>(
 		    uml_arm64_gadget_sve_generated_absent))
 		return emit_library(context, index);
+	const auto *const memory = form.lowering == Lowering::memory ?
+		detail::sme_encoding_memory_of(detail::sme_encodings[index]) :
+		nullptr;
+	if (memory != nullptr) {
+		/* An SP base, whose 16-byte alignment the access checks, runs
+		 * through the library. */
+		const auto *const operands = detail::sme_encoding_operands_of(
+			detail::sme_encodings[index]);
+		if (detail::sme_operand_number(operands[memory->base_operand],
+			    word) == 31U)
+			return emit_library(context, index);
+	}
 	const auto start = context.words.size();
 	emit(context.words, entry);
 	const auto operand = context.words.size();
@@ -417,6 +484,14 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 		/* A reserved immediate: the word is UNDEFINED. */
 		context.words.truncate(start);
 		return illegal_instruction(context);
+	}
+	if (memory != nullptr) {
+		/* The byte offset, then the stream of sve_library, which the
+		 * gadget's slow path enters. */
+		emit_words(context, memory_offset(*memory, word));
+		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
+			static_cast<std::uint64_t>(index));
+		emit(context.words, context.address);
 	}
 	if (!fused)
 		return DecodeResult::decoded;

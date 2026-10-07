@@ -45,6 +45,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import importlib.util
+import itertools
 import sys
 from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
@@ -67,7 +68,8 @@ LOWERINGS = ["plain", "predicate_constant", "predicate_constant_flags",
              "while_compare", "while_conflict", "vector_count",
              "integer_immediate", "bitmask_immediate", "float_immediate",
              "index_table", "count_move", "count_add",
-             "vector_length_add", "unsigned_immediate"]
+             "vector_length_add", "unsigned_immediate", "memory",
+             "prefetch"]
 
 # Form flags.
 FLAG_DISCARD_ON_ZERO = 1  # slot 0 is a general destination; XZR is a NOP.
@@ -1144,6 +1146,155 @@ def comparison(operation: str, invert: bool):
     return lines
 
 
+# Contiguous memory. A load or store whose footprint lies in one guest page
+# the TLB holds runs on the host address: a load reads the whole footprint,
+# which on a mapped page is harmless for inactive elements, and zeroes
+# those by the lane mask; a store runs only when its predicate is all-true,
+# as one store of the footprint. Everything else, a crossing, a page the
+# TLB cannot fill, a fault, a partial store, a tagged address, goes to the
+# semantic library through sve_library, which decides faults and partial
+# writes. Stream: [packed slots][byte offset][library operand][PC]: the
+# library operand is the word and row of an sve_library stream, so the slow
+# path is a branch to that gadget with _stream at it. Slot offsets live in
+# x19 (Zt) and x20 (Pg), which a TLB miss's helper call preserves.
+
+MEMORY_SHAPES = ("contiguous", "replicate", "replicate_quad", "structure",
+                 "fill_z")
+MEMORY_OFFSETS = ("immediate_footprint", "register_element",
+                  "immediate_element", "immediate_16")
+LABELS = itertools.count()
+
+
+def memory_footprint(memory, e: int, m: int) -> int:
+    if memory.shape == "replicate":
+        return m
+    if memory.shape in ("replicate_quad", "fill_z"):
+        return 16
+    return memory.registers * (16 // e) * m
+
+
+def memory_gadget(memory, e: int, m: int, predicated: bool,
+                  indexed: bool) -> list:
+    """One variant of a contiguous load or store of elements of `e` bytes
+    from memory elements of `m` bytes."""
+    number = next(LABELS)
+    cold, resume, slow, tagged, translate = (
+        f"Lsve_memory_{number}_{name}"
+        for name in ("cold", "resume", "slow", "tagged", "translate"))
+    load = memory.direction == "load"
+    footprint = memory_footprint(memory, e, m)
+    registers = memory.registers
+    base_slot = 2 if predicated else 1
+    page = "UML_GADGET_TLB_ENTRY_READ_PAGE" if load else \
+        "UML_GADGET_TLB_ENTRY_WRITE_PAGE"
+    body = ["ldp x8, x9, [_stream], #16", "and x19, x8, #0xffff"]
+    if predicated:
+        body.append("ubfx x20, x8, #16, #16")
+    body += [f"ubfx x10, x8, #{16 * base_slot}, #16", "ldr x7, [_cpu, x10]"]
+    if indexed:
+        body += [f"lsr x11, x8, #{16 * (base_slot + 1)}",
+                 "ldr x11, [_cpu, x11]",
+                 f"add x7, x7, x11, lsl #{m.bit_length() - 1}"]
+    else:
+        body.append("add x7, x7, x9")
+    if predicated and not load:
+        test = all_true_test(e, "x20")
+        test[-1] = test[-1].replace("1f", slow)
+        body += test
+    body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
+             f"cbnz w10, {tagged}", f"{translate}:",
+             f"transfer_translate {int(not load)}, {page}, {footprint}, x7, "
+             f"{cold}, {resume}, {slow}"]
+    a = ARRANGEMENTS[e]
+    width = {1: "b", 2: "h", 4: "s", 8: "d", 16: "q"}
+    if load:
+        if memory.shape == "replicate":
+            if m == 8:
+                instruction, target = "ldr", "x9"
+            elif memory.sign_extend:
+                instruction = {1: "ldrsb", 2: "ldrsh", 4: "ldrsw"}[m]
+                target = "x9" if e == 8 else "w9"
+            else:
+                instruction = {1: "ldrb", 2: "ldrh", 4: "ldr"}[m]
+                target = "w9"
+            body += [f"{instruction} {target}, [x7]",
+                     f"dup v0.{a}, {'x9' if e == 8 else 'w9'}"]
+        elif memory.shape == "structure":
+            names = ", ".join(f"v{k}.{a}" for k in range(registers))
+            body.append(f"ld{registers} {{{names}}}, [x7]")
+        else:
+            body.append(f"ldr {width[footprint]}0, [x7]")
+            size = m
+            while size < e:
+                extend = "sxtl" if memory.sign_extend else "uxtl"
+                body.append(f"{extend} v0.{ARRANGEMENTS[2 * size]}, "
+                            f"v0.{HALVES[size]}")
+                size *= 2
+        if predicated:
+            body += ["ldr q6, [_cpu, x20]"] + lane_mask(e, 6)
+            body += [f"and v{k}.16b, v{k}.16b, v6.16b"
+                     for k in range(registers)]
+        body.append("str q0, [_cpu, x19]")
+        for k in range(1, registers):
+            body += ["sub x10, x19, #UML_GADGET_CPU_V0",
+                     f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
+                     "add x10, x10, #UML_GADGET_CPU_V0",
+                     f"str q{k}, [_cpu, x10]"]
+    else:
+        body.append("ldr q0, [_cpu, x19]")
+        for k in range(1, registers):
+            body += ["sub x10, x19, #UML_GADGET_CPU_V0",
+                     f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
+                     "add x10, x10, #UML_GADGET_CPU_V0",
+                     f"ldr q{k}, [_cpu, x10]"]
+        if memory.shape == "structure":
+            names = ", ".join(f"v{k}.{a}" for k in range(registers))
+            body.append(f"st{registers} {{{names}}}, [x7]")
+        else:
+            size = e
+            while size > m:
+                body.append(f"xtn v0.{HALVES[size // 2]}, "
+                            f"v0.{ARRANGEMENTS[size]}")
+                size //= 2
+            body.append(f"str {width[footprint]}0, [x7]")
+    body += ["add _stream, _stream, #16", "next_gadget",
+             f"{tagged}:", "ubfx x7, x7, #0, #56", f"b {translate}",
+             f"transfer_translate_cold {int(not load)}, {page}, {footprint}, "
+             f"x7, {cold}, {resume}, {slow}, 0, 0, {slow}",
+             f"{slow}:", "b NAME(uml_arm64_gadget_sve_library)"]
+    return body
+
+
+def memory_form(row):
+    """The slots and a variant builder for a contiguous memory row, or
+    None for a row the semantic library runs."""
+    memory = row.memory
+    if memory.shape not in MEMORY_SHAPES or \
+            memory.offset not in MEMORY_OFFSETS:
+        return None
+    kinds = [operand.kind for operand in row.operands]
+    predicated = "p" in kinds
+    indexed = memory.offset == "register_element"
+    wanted = [("z", 0)] + ([("p", 10)] if predicated else []) + \
+        [("gpr_or_sp", 5)] + ([("gpr", 16)] if indexed else [])
+    m = memory.msize // 8
+
+    def build(form: Form) -> None:
+        if memory.esize_shift is None:
+            form.variants = [memory_gadget(memory, memory.esize // 8, m,
+                                           predicated, indexed)]
+            return
+        segment = memory.esize_shift
+        form.variant_bits = list(range(segment.low,
+                                       segment.low + segment.width))
+        for value in range(1 << segment.width):
+            e = (memory.esize // 8) << value
+            form.variants.append(
+                ABSENT if e < m or e > 8 else
+                memory_gadget(memory, e, m, predicated, indexed))
+    return tuple(wanted), build
+
+
 # Form construction.
 
 def sized(form: Form, template) -> None:
@@ -1175,11 +1326,24 @@ def build_forms(table) -> list:
         forms.append(form)
 
     for row in table.rows:
-        if "sve" not in row.non_streaming_requirement or \
-                row.memory is not None:
+        if "sve" not in row.non_streaming_requirement:
             continue
         name = row.encoding
         base = name.split("_")[0]
+        if row.memory is not None:
+            if row.memory.shape == "prefetch":
+                # A hint, which never faults: the base part's NOP.
+                if name not in by_name:
+                    form = Form(name, [row.index], "prefetch", [], key=name)
+                    by_name[name] = form
+                    forms.append(form)
+                else:
+                    by_name[name].rows.append(row.index)
+                continue
+            described = memory_form(row)
+            if described is not None:
+                add(row, "memory", described[0], described[1])
+            continue
         if name in IMMEDIATE_FORMS:
             lowering, lines = IMMEDIATE_FORMS[name]
             add(row, lowering, (("z", 0),),

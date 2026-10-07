@@ -526,6 +526,17 @@ public:
 		return executor_.fault_address();
 	}
 
+	/* The mapped pages' bytes. */
+	void get(std::size_t offset, std::span<std::byte> bytes) const
+	{
+		backing_.get(offset, bytes);
+	}
+
+	void put(std::size_t offset, std::span<const std::byte> bytes)
+	{
+		backing_.put(offset, bytes);
+	}
+
 	[[nodiscard]] std::uint32_t floating_point_syndrome() const
 	{
 		return executor_.floating_point_syndrome();
@@ -1790,6 +1801,160 @@ void generated_forms_match_the_library()
 		"library\n", runs, rows);
 }
 
+/* Guest memory for a reference run of the library: the machine's mapped
+ * pages, copied. */
+class CopiedMemory final : public arm64::detail::SveMemory {
+public:
+	explicit CopiedMemory(std::vector<std::byte> &bytes) : bytes_{bytes} {}
+
+	std::byte *translate(std::uint64_t address,
+		uml::memory::MemoryAccess) noexcept override
+	{
+		if (address < code_base || address - code_base >= bytes_.size())
+			return nullptr;
+		return bytes_.data() + (address - code_base);
+	}
+	void stored(std::byte *, std::size_t) noexcept override {}
+
+private:
+	std::vector<std::byte> &bytes_;
+};
+
+/* Every generated memory form agrees with the semantic library: random
+ * words of each contiguous row, each alone in a block, from bases inside a
+ * page, across the two mapped pages, into the unmapped page after them,
+ * and with a tagged base under TBI, leave the library's state, event,
+ * fault address and memory. Predicates are all-true half the time, so
+ * both a store's fast path and the library's partial store run. */
+void memory_forms_match_the_library()
+{
+	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr std::size_t mapped = mapped_pages * page;
+	Random random{0x5ec7'0003U};
+	const auto host = sve_host();
+	std::size_t runs = 0;
+	std::size_t faults = 0;
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory == 0U)
+			continue;
+		const auto &memory = arm64::detail::sme_encoding_memory[
+			row.memory - 1U];
+		const auto *const operands =
+			arm64::detail::sme_encoding_operands_of(row);
+		++rows;
+		for (int sample = 0; sample < 12; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word, host,
+				0);
+			if (decoded.kind != gadgets::SveWord::implemented ||
+			    decoded.row != &row)
+				continue;
+			const std::array code{word, svc};
+			Machine machine{code, host};
+			std::vector<std::byte> bytes(mapped);
+			for (std::size_t offset = 8; offset < mapped; offset += 8) {
+				const auto value = random.next();
+				std::memcpy(bytes.data() + offset, &value, 8);
+			}
+			std::memcpy(bytes.data(), code.data(), 8);
+			machine.put(0, bytes);
+			auto initial = random_state(random);
+			for (unsigned n = 0; n < 16; ++n)
+				if (random.next() % 2U == 0U)
+					set_pred(initial, n, 0xffffU);
+			/* The base: mostly inside the second page, sometimes at
+			 * the end of a page, or unmapped. */
+			std::uint64_t base = code_base + page +
+				random.next() % (page - 64U);
+			switch (random.next() % 8U) {
+			case 0:
+				base = code_base + page - random.next() % 48U;
+				break;
+			case 1:
+				base = code_base + mapped - random.next() % 48U;
+				break;
+			case 2:
+				base = code_base + mapped + random.next() % page;
+				break;
+			default:
+				break;
+			}
+			const auto base_register = arm64::detail::sme_operand_number(
+				operands[memory.base_operand], word);
+			if (memory.index_operand != arm64::detail::sme_no_operand) {
+				const auto index_register =
+					arm64::detail::sme_operand_number(
+						operands[memory.index_operand], word);
+				initial.registers[index_register] =
+					random.next() % 4U;
+			}
+			if (random.next() % 4U == 0U) {
+				initial.tbi_enabled = true;
+				base |= (random.next() & 0xffU) << 56;
+			}
+			if (base_register == 31U)
+				initial.sp = base & ~std::uint64_t{15};
+			else
+				initial.registers[base_register] = base;
+			initial.pc = code_base;
+
+			machine.cpu = initial;
+			const auto event = machine.run();
+			std::vector<std::byte> after(mapped);
+			machine.get(0, after);
+
+			auto expected = initial;
+			CopiedMemory reference{bytes};
+			const auto result = arm64::detail::execute_sve(expected,
+				word, row, reference);
+			const bool faulted = result.event ==
+				arm64::detail::SveEvent::memory_fault;
+			faults += faulted ? 1U : 0U;
+			bool same = event == (faulted ? EngineEvent::memory_fault :
+					EngineEvent::system_call) &&
+				(!faulted || (machine.cpu.pc == code_base &&
+					machine.fault_address() ==
+						result.fault_address)) &&
+				result.event != arm64::detail::SveEvent::fatal &&
+				machine.cpu.registers == expected.registers &&
+				machine.cpu.sp == expected.sp &&
+				machine.cpu.sve_p == expected.sve_p &&
+				machine.cpu.sve_ffr == expected.sve_ffr &&
+				after == bytes;
+			for (unsigned n = 0; n < 32 && same; ++n)
+				same = machine.cpu.vectors[n].bytes ==
+					expected.vectors[n].bytes;
+			if (!same) {
+				std::fprintf(stderr, "word %08x (row %zu, SVE-%04u) "
+					"at %#llx: the gadget leaves another "
+					"state than the library (event %d, "
+					"library %d, fault %#llx/%#llx, memory "
+					"%s)\n", word, index,
+					row.form & 0x7fffU,
+					static_cast<unsigned long long>(base),
+					static_cast<int>(event),
+					static_cast<int>(result.event),
+					static_cast<unsigned long long>(
+						machine.fault_address()),
+					static_cast<unsigned long long>(
+						result.fault_address),
+					after == bytes ? "same" : "differs");
+				require(false);
+			}
+			++runs;
+		}
+	}
+	require(rows > 0U && runs > rows && faults > 0U);
+	std::printf("%zu memory-form runs over %zu rows match the library, "
+		"%zu of them faulting\n", runs, rows, faults);
+}
+
 /* Words the virtual CPU does not implement end the block: without SVE; a
  * row whose feature the host lacks; a reserved immediate, of a generated
  * form (DUPM, DUP) and of one the library runs (AND); a word of no row,
@@ -1968,6 +2133,7 @@ int main()
 	live_marker_and_fp_access();
 	library_words();
 	generated_forms_match_the_library();
+	memory_forms_match_the_library();
 	unimplemented_words();
 	streaming_safety();
 	streaming_mode_changes_zero_predicates();
