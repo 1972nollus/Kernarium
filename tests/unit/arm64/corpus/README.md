@@ -8,8 +8,10 @@ engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
 neither lane on a host without it, and a case that needs FEAT_AFP or
 FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
-(see [FEAT_AFP cases](#feat_afp-cases)). The runner needs no Python, network,
-or file other than the pack.
+(see [FEAT_AFP cases](#feat_afp-cases)). A third lane runs the cases with
+non-streaming SVE state through the SVE semantic library (see
+[Non-streaming SVE state](#non-streaming-sve-state)). The runner needs no
+Python, network, or file other than the pack.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -194,6 +196,15 @@ the encoder refuses a state that breaks this. The base fill of P, FFR, and
 names its own. A record without a VL expects them zero. They are apart from
 the streaming P registers of the SME state.
 
+The `library` lane runs every SVE case, for a virtual CPU with the profile
+the guest-SVE policy gives the host, through the gadget engine with the SVE
+semantic library
+([`cpu/arm64/detail/sve_semantics.hpp`](../../../../darwin/cpu/arm64/detail/sve_semantics.hpp))
+behind its illegal-instruction exit: each non-streaming SVE word the
+engine stops at retires through the library, and the engine resumes after
+it. It skips a case whose features that virtual CPU lacks, or whose program
+holds a word of a form the library does not cover yet, and counts each.
+
 A version 1 pack is a version 2 pack without SVLs, and a version 2 pack is a
 version 3 pack without VLs. `build-unit-corpus.py` reads all three and writes
 version 3; it writes version 2 for a corpus without VLs, so the
@@ -205,7 +216,7 @@ its meaning, bit for bit, in both.
 ```sh
 uml_arm64_instruction_corpus_tests tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
-  [--engine gadgets|jit] [--assume-host-feature TOKEN] \
+  [--engine gadgets|jit|library] [--assume-host-feature TOKEN] \
   [--max-failures N | --fail-fast] [--list]
 ```
 
@@ -218,8 +229,9 @@ host and must match the base entries on the cases whose FPCR leaves the
 controls clear. The default stops after 25 failures; `--max-failures 0` never
 stops early.
 A failure names the record, case index, producer check ordinals, entry word,
-engine, and the first mismatch. The summary counts gadget and JIT runs and the
-JIT runs skipped for each missing host feature.
+lane, and the first mismatch. The summary counts each lane's runs and the runs
+it skipped for each missing feature, and the library lane's cases skipped for
+an uncovered form.
 
 ## Regeneration and new cases
 

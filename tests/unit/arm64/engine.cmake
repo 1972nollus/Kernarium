@@ -119,6 +119,10 @@
     # translates through the JIT's test API.
     target_sources(uml_arm64_instruction_corpus_tests PRIVATE
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
+    # Its library lane runs the SVE cases through the shared semantic
+    # library, which no product links yet.
+    target_sources(uml_arm64_instruction_corpus_tests PRIVATE
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>)
     uml_add_unit_test(NAME arm64-emitted-registers
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack

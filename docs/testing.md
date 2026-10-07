@@ -479,7 +479,8 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 
 `arm64-instruction-corpus` runs the checked-in corpus in
 [`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
-the gadget and JIT engines of each page profile in one process, and the
+the gadget and JIT engines of each page profile in one process, its SVE cases
+through the SVE semantic library as well, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
 options, and regeneration, which requires a producer commit. Cases that need
@@ -524,8 +525,10 @@ CPU, so both engines run them today with the guest-SVE policy off or on.
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
-pages. Until an engine reaches `sve_support` `complete` they are all
-skipped. The `arm64-instruction-corpus-sve-native` tooling test re-derives
+pages. Until an engine reaches `sve_support` `complete` the engine lanes
+skip them all, and the corpus's library lane runs them through the SVE
+semantic library, skipping and counting the cases of a form it does not
+cover yet. The `arm64-instruction-corpus-sve-native` tooling test re-derives
 their cases from their generator, and `arm64-sve-native-oracle` drives the
 native oracle with base A64 cases on any arm64 Mac, and with SVE cases where
 the host has SVE at that length. Regenerating their outcomes needs such a
