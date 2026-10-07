@@ -512,6 +512,8 @@ struct VectorStream final {
 			static_cast<unsigned>(std::countr_zero(msize)));
 		break;
 	case detail::SmeAddressOffset::none:
+	case detail::SmeAddressOffset::vector_index:
+	case detail::SmeAddressOffset::register_byte:
 		break;
 	}
 	std::uint64_t predicate = 0;

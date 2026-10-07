@@ -99,20 +99,39 @@ model. The corpus runs its MOPS cases through both engines on every host.
 One generated table decides the SVE and SME encodings for both engines:
 [`darwin/cpu/arm64/detail/sme_encodings.hpp`](../darwin/cpu/arm64/detail/sme_encodings.hpp),
 which `generate_sme_encoding_table.py` derives from the pinned Arm release and
-LLVM MC. Its 2,923 rows cover every non-alias SVE and SME encoding. For each it
-records the SME profile features the encoding needs (2,084 rows) or that the
-profile, which lacks FEAT_SVE and FEAT_SME_FA64, never implements it (839),
+LLVM MC. Its 2,929 rows cover every non-alias SVE and SME encoding. Each row
+has two requirements, 0 where it never executes:
+- in streaming mode, the features of the SME profile (FEAT_SME, FEAT_SME2,
+  FEAT_SME_F64F64, FEAT_SME_I16I64) it needs (2,084 rows);
+- outside it, the features of the SVE profile (FEAT_SVE, FEAT_SVE2,
+  FEAT_SVE_AES, FEAT_SVE_PMULL128, FEAT_SVE_SHA3) it needs, or the SME
+  profile's for an SME form legal in either mode (1,677 rows).
+
+Both profiles include the SVE forms of FEAT_BF16 and FEAT_I8MM. 1,457 rows
+execute in both modes, 627 only in streaming mode, 220 only outside it, and
+625 in neither: FEAT_SME_FA64, FEAT_SVE2p1 and the other later extensions are
+outside both profiles, and FEAT_SVE_BitPerm and FEAT_SVE_SM4 are withheld
+until a workload needs them. The pseudocode lets a CPU with FEAT_SVE and
+FEAT_SME execute 29 SVE encodings that FEAT_SME or FEAT_SVE2p1 added (SCLAMP,
+PSEL, the predicate-pair WHILE forms and others) outside streaming mode, so
+their non-streaming requirement names FEAT_SME too. Each row also records
 the smallest streaming vector length at which it is allocated, the PSTATE.SM
-and PSTATE.ZA state its access checks demand, its register operands and
-groups, and its memory shape. Nothing in it assumes a vector length. A
-companion table classifies each FP&SIMD encoding as AdvSIMD, which traps in
-streaming mode, or FP, as the 2026-06 pseudocode does on a CPU without
-FEAT_FPRCVT; the pseudocode makes UMOV and SMOV of element 0 and the scalar
-FRECPE, FRECPS, FRSQRTE, FRSQRTS, and FMULX FP. `sme_decode.hpp` decodes
-against both. No engine uses them yet, so every SVE and SME word is still
-UNDEFINED. `arm64-sme-encoding-table` checks the decoder against the table,
-and every row's LLVM MC witness against its row. The table is a header, not an
-`.inc` contract, because C++ sources may not include `.inc` files.
+and PSTATE.ZA state its access checks demand on a CPU without FEAT_SVE, its
+register operands and groups, and its memory shape, including the gathers,
+scatters, first-fault and non-fault loads that execute only outside
+streaming mode. A memory shape names the vector length that sizes it: VL
+outside streaming mode and SVL in it, SVL in both for the ZA array vectors,
+or none for ZT0. Nothing in the table assumes a length. A companion table
+classifies each FP&SIMD encoding as AdvSIMD, which traps in streaming mode,
+or FP, as the 2026-06 pseudocode does on a CPU without FEAT_FPRCVT; the
+pseudocode makes UMOV and SMOV of element 0 and the scalar FRECPE, FRECPS,
+FRSQRTE, FRSQRTS, and FMULX FP. `sme_decode.hpp` decodes against both, with
+the streaming-mode requirement: no engine executes an SVE form outside
+streaming mode yet, so those words stay UNDEFINED. `arm64-sme-encoding-table`
+checks the decoder against the table, every row's LLVM MC witness against its
+row, and each row's requirements against its access checks. The table is a
+header, not an `.inc` contract, because C++ sources may not include `.inc`
+files.
 
 FEAT_SME is two-sided. An SVE or SME entry is `verified` when one of its
 encodings needs only the SME profile (FEAT_SME, FEAT_SME2, FEAT_SME_F64F64,

@@ -1426,6 +1426,8 @@ void check_memory_word(std::uint32_t word,
 			value * 16));
 		break;
 	case detail::SmeAddressOffset::none:
+	case detail::SmeAddressOffset::vector_index:
+	case detail::SmeAddressOffset::register_byte:
 		require(false);
 	}
 	require((address >> 52) == (indexed ? 0x10U : 0U));
