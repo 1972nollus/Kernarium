@@ -1246,9 +1246,12 @@ struct Counts final {
  * state or an SVE requirement unless the virtual CPU implements the SVE
  * profile and the lane implements all of it; FEAT_AFP or FEAT_RPRES outside
  * their predicates; FEAT_SME for a case with SME state or an SME
- * requirement unless the virtual CPU implements the profile at the record's
- * SVL and the lane's engine is complete; and FEAT_SME2 outside the SME2
- * profile or for an engine without the SME2 forms. */
+ * requirement unless the virtual CPU implements the profile, at the
+ * record's SVL when the record has one, and the lane's engine is complete;
+ * and FEAT_SME2 outside the SME2 profile or for an engine without the SME2
+ * forms. A record without an SVL never enters streaming mode, so its SME
+ * requirement (an SVE form that SME admits at PSTATE.SM = 0) holds at any
+ * SVL. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
@@ -1267,7 +1270,8 @@ virtual_cpu_lacks(const Record &record,
         return native.test(static_cast<std::size_t>(feature));
       });
   if (sme_case) {
-    if (!arm64::implements_sme(host) || record.svl != host.sme_svl_bytes ||
+    if (!arm64::implements_sme(host) ||
+        (record.svl != 0U && record.svl != host.sme_svl_bytes) ||
         lane_sme_support(lane) < arm64::SmeSupport::complete)
       return ArmFeature::sme;
     if (native.test(static_cast<std::size_t>(ArmFeature::sme2)) &&
