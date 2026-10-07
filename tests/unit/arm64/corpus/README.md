@@ -304,8 +304,8 @@ ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, or the SIMD&FP extensions
 FEAT_FP8 (with FP8DOT2, FP8DOT4, FP8FMA, F8F16MM, F8F32MM, and its FPMR state),
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
-FEAT_XS, FEAT_WFxT, FEAT_SVE, or any SVE or SME feature outside the SME
-profile; every encoding they add is UNDEFINED. The producer harness
+FEAT_XS, FEAT_WFxT, or any SVE or SME feature outside the SVE and SME
+profiles; every encoding they add is UNDEFINED. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a
@@ -319,22 +319,33 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-FEAT_SME is two-sided, like FEAT_AFP: the virtual CPU implements the SME
-profile only where the host does. The producer's SME model is retired, so the
-rewrite drops its SME cases and strips its one-byte PSTATE.SM and ZA fields as
-for an absent feature, but its `arm64-absent-sme` record carries the
-`without_sme` option, which the runner translates for on every host. That
-record expects SMSTART, SMSTOP, MRS and MSR SVCR, and the witness word of
-every profile encoding in the generated SVE/SME encoding table
-([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp))
-to be undefined, and so is the evidence-binding witness of each SVE or SME
-entry without a table row: an alias, which its base instruction's row
-decodes, or MOVT between ZT0 and a general register, which only Debug state
-executes. The `arm64-absent-sve` record expects the witness of every table
-encoding outside the profile to be undefined with or without SME. Each
-witness is checked against LLVM MC by the table's generator or the allocation
-generator, and its case name gives the entry's stable id, encoding or form,
-and word.
+FEAT_SME and FEAT_SVE are two-sided, like FEAT_AFP: the virtual CPU
+implements the SME profile only where the host does, and the SVE profile only
+under the guest-SVE policy where the host has the AdvSIMD forms it lowers
+onto. The producer's SME model is retired, so the rewrite drops its SME cases
+and strips its one-byte PSTATE.SM and ZA fields as for an absent feature. The
+witness word of every row of the generated SVE/SME encoding table
+([`darwin/cpu/arm64/detail/sme_encodings.hpp`](../../../../darwin/cpu/arm64/detail/sme_encodings.hpp)),
+and the evidence-binding witness of each SVE or SME entry without a row (an
+alias, which its base instruction's row decodes, or MOVT between ZT0 and a
+general register, which only Debug state executes), is expected undefined at
+PSTATE.SM = 0 in the record whose option makes it so, which the runner
+translates for on every host:
+
+- `arm64-absent-sme`, under `without_sme`: SMSTART, SMSTOP, MRS and MSR
+  SVCR, the other rows of the SME profile, MOVT, and the SVE rows that need
+  FEAT_SME outside streaming mode as well (the SCLAMP class);
+- `arm64-absent-sve`, under `without_sve`: every row the SVE profile executes
+  outside streaming mode, the SCLAMP class included;
+- `arm64-absent-sve` without an option: every other row, undefined there on
+  every virtual CPU: the SVE rows that never execute outside streaming mode
+  (the withheld FEAT_SVE_BitPerm, FEAT_SVE_SM4, FEAT_F32MM, FEAT_F64MM and
+  FEAT_SVE2p1 forms, and the SVE2p1 forms that SME2 executes in streaming
+  mode) and the rows outside both profiles.
+
+Each witness is checked against LLVM MC by the table's generator or the
+allocation generator, and its case name gives the entry's stable id, encoding
+or form, and word.
 
 FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
 FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
@@ -398,7 +409,10 @@ engine whose `sme_support` is at least `complete` where the virtual CPU
 implements SME at that SVL, and a case that needs `sme2` only for an engine
 at `sme2` where the virtual CPU has the SME2 profile; it counts every other
 case as skipped for the feature. Each case names the profile features it
-needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). A case
+needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). The M4 has
+no FEAT_SVE, so a case outside streaming mode whose word the SVE profile
+executes there holds only for a virtual CPU without SVE; such cases sit in a
+sibling of their group's record under `without_sve`. A case
 starts with X18 zero, because Darwin clears X18 whenever a thread returns
 to user mode, and forms only addresses with a zero top byte, because the
 host ignores the top byte and the guest's default state does not.

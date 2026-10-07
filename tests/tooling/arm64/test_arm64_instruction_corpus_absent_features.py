@@ -121,8 +121,7 @@ def check(rewrite, records: list[dict], step: dict) -> str:
 
     expected = {}
     for feature in step["features"]:
-        record = rewrite.undefined_record(feature)
-        if record is not None:
+        for record in rewrite.undefined_records(feature):
             expected[record["record"]] = record
     replacements = [item for item in authored
                     if item["producer"] == rewrite.REPLACEMENT_PRODUCER]

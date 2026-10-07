@@ -10,7 +10,8 @@ script writes now:
 
 - provenance.json names the script's request, script, and table hashes;
 - the records are the script's groups, at its SVL, in both page profiles,
-  without harness options;
+  each without harness options but for its sibling of the cases that hold
+  only where the virtual CPU lacks SVE, under without_sve;
 - each case is the script's case in order: its name, program, native
   requirement, initial state, and data regions;
 - each outcome agrees with the table where the table decides legality, and
@@ -62,21 +63,22 @@ def check(native, records: list[dict], meta: dict) -> str:
         raise SystemExit("the pack's native records name another SVL or "
                          "script")
     drafts = native.drafts()
-    by_group: dict[str, list] = {}
+    by_key: dict[tuple, list] = {}
     for draft in drafts:
-        by_group.setdefault(draft.group, []).append(draft)
-    names = [f"{native.PRODUCER}/{group}" for group in native.GROUPS
-             if group in by_group]
-    if [record["record"] for record in records] != names:
+        by_key.setdefault(native.record_key(draft), []).append(draft)
+    keys = [key for group in native.GROUPS
+            for key in ((group, ()), (group, (native.WITHOUT_SVE,)))
+            if key in by_key]
+    if [(record["record"].split("/")[1], tuple(record["options"]))
+            for record in records] != keys:
         raise SystemExit("the native records are not the script's groups")
     total = 0
-    for record in records:
-        group = record["record"].split("/", 1)[1]
+    for record, key in zip(records, keys):
         if (record["producer"], record["site"], record.get("svl"),
-                record["profiles"], record["options"]) != \
-                (native.PRODUCER, native.SITE, native.SVL, ["16k", "4k"], []):
+                record["profiles"]) != \
+                (native.PRODUCER, native.SITE, native.SVL, ["16k", "4k"]):
             raise SystemExit(f"{record['record']}: not the script's record")
-        expected = by_group[group]
+        expected = by_key[key]
         if len(record["cases"]) != len(expected):
             raise SystemExit(f"{record['record']}: {len(record['cases'])} "
                              f"cases, the script writes {len(expected)}")

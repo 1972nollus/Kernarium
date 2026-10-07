@@ -1,6 +1,6 @@
 {
   "absent_features": {
-    "added_cases": 3421,
+    "added_cases": 3454,
     "afp": {
       "added_requirement": 419,
       "controls": 2661,
@@ -78,7 +78,7 @@
     },
     "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "151cf8df26fb0c7b258a4ddb5feeae3ecbe2b5340ea1d3d8205c1e826bc0339d",
+    "sha256": "08b742ac4ec2c54f894d2a069b223f2763888638befbb8a0a80cc502af361ca5",
     "sme_table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
       "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 173316,
+  "cases": 173349,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 34116,
+    "illegal-instruction": 34149,
     "instruction-budget": 186,
     "memory-fault": 10490,
     "system-call": 128428
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 118100,
+    "16k+4k": 118133,
     "4k": 27601
   },
   "coverage": {
@@ -160,11 +160,11 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3355,
-  "pack_bytes": 14688696,
-  "pack_sha256": "9231e871bedde27cf722647d9c7a24a3658ae1d5e29b72e4d9aaed565a20a5b7",
+  "pack_bytes": 14698938,
+  "pack_sha256": "9b6101c018a8598e038882cd2d7e2c5b07a9852b8956e74f02e8c2ddfb2c9b8c",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 144283,
-  "records": 1099,
+  "programs": 145984,
+  "records": 1101,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
@@ -183,7 +183,7 @@
     ],
     "request_sha256": "70d198cac5be951259a7db388ab0b3d518fb21f0a122ff6813992f80c69a65d6",
     "script": "tools/arm64-tests/sme-native-corpus.py",
-    "sha256": "b6b2cbb2e9aaf0a32276400e9d57ea71c551b4f432c8028c5ca39494ffd62489",
+    "sha256": "a7dba90ece629c128cc9df8b44ec9a6acac98c02772e99b1003dede52b977114",
     "svl": 64,
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
@@ -191,7 +191,7 @@
     }
   },
   "state_minimization": {
-    "full": 31957,
+    "full": 31990,
     "narrow": 141359
   },
   "validator_cases": {
