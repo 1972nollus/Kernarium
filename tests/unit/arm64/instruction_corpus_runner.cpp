@@ -1434,7 +1434,11 @@ struct Counts final {
 /* The feature a case needs that a lane's virtual CPU for `host` lacks
  * although the host may have it: FEAT_SVE for a case with non-streaming SVE
  * state or an SVE requirement unless the virtual CPU implements the SVE
- * profile and the lane implements all of it; FEAT_AFP or FEAT_RPRES outside
+ * profile and the lane implements all of it; FEAT_BF16 or FEAT_I8MM for
+ * such a case on a host without it, since the profile's forms of those are
+ * the virtual CPU's only where the host has them
+ * (detail::implemented_sve_features), unlike the AdvSIMD forms the gadget
+ * engine emulates anywhere; FEAT_AFP or FEAT_RPRES outside
  * their predicates; FEAT_SME for a case with SME state or an SME
  * requirement unless the virtual CPU implements the profile, at the
  * record's SVL when the record has one, and the lane's engine is complete;
@@ -1447,10 +1451,15 @@ struct Counts final {
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
                   const ::uml::platform::HostCapabilities &host, Lane lane) {
-  if (sve_case(record, native) &&
-      (!arm64::implements_sve(host) ||
-       lane_sve_support(lane) < arm64::SveSupport::complete))
-    return ArmFeature::sve;
+  if (sve_case(record, native)) {
+    if (!arm64::implements_sve(host) ||
+        lane_sve_support(lane) < arm64::SveSupport::complete)
+      return ArmFeature::sve;
+    for (const auto feature : {ArmFeature::bf16, ArmFeature::i8mm})
+      if (native.test(static_cast<std::size_t>(feature)) &&
+          !host.has(feature))
+        return feature;
+  }
   const bool sme_case =
       record.svl != 0U ||
       std::ranges::any_of(sme_features, [&](ArmFeature feature) {
