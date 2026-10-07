@@ -252,9 +252,10 @@ struct Profile final {
 	}
 
 	/* The M4: every feature above but CSSC, which every host is given
-	 * anyway, as the prober reports it with the guest-SME policy forced
-	 * off, then with SME and SME2 at SVL 64, then as both engines present
-	 * that host, which is what its guest sees by default. */
+	 * anyway, as the prober reports it with the guest-SME policy off, the
+	 * default, then with SME and SME2 at SVL 64, then as both engines
+	 * present that host, which is what its guest sees with the policy
+	 * on. */
 	const auto m4 = with({ArmFeature::aes, ArmFeature::pmull,
 		ArmFeature::sha1, ArmFeature::sha256, ArmFeature::sha512,
 		ArmFeature::sha3, ArmFeature::crc32, ArmFeature::fp16,
