@@ -794,12 +794,16 @@ and no Xcode project names one. A first-party shell script writes each `cd`
 as `CDPATH= cd --` unless it names a literal absolute directory, so an
 exported `CDPATH` can neither redirect it nor print into captured output.
 No compile definition names a source or build directory, so no binary needs
-the checkout it was built from at run time. The x86-64 gadget engine's
-assembly keeps no value in x18, which Darwin clears when it interrupts a
-thread. Outside macOS the configured graph
-holds none of the macOS-only x86-64 JIT, as the x86 section above describes.
-The audit does not prove performance, generated code shape, a kernel boot, or
-guest behavior; those require their owning validation.
+the checkout it was built from at run time. No host source under darwin/ or
+Kernarium/ names x18 outside a comment, whether assembly, an assembly
+contract, inline assembly or a generator: Darwin clears that platform register
+when it interrupts a thread, so a value kept there is lost at a random
+preemption. `arm64-emitted-registers` and `x86-64-jit-emitted-registers`
+hold the emitted code to the same rule, as [`testing.md`](testing.md)
+describes. Outside macOS the configured graph holds none of the macOS-only
+x86-64 JIT, as the x86 section above describes. The audit does not prove
+performance, generated code shape, a kernel boot, or guest behavior; those
+require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

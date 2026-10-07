@@ -370,6 +370,40 @@ list(APPEND ACCEPTED
     "cd_in_python\\.py:"
     "vendored\\.sh:")
 
+# No host source names x18 outside a comment, in any language that can name
+# a register. Guest assembly outside darwin/ and Kernarium/ may use it.
+uml_write_audit_fixture(darwin/cpu/fixture/setf_flags.inc
+    "\tand w18, w27, #0x20000000")
+uml_write_audit_fixture(darwin/cpu/fixture/entry_pair.S
+    "\tstp x18, x19, [sp, #-0x80]!")
+uml_write_audit_fixture(darwin/cpu/fixture/define_register.S
+    "#define SCRATCH x18")
+uml_write_audit_fixture(darwin/platform/fixture/read_register.cpp
+    "asm volatile(\"mov %0, x18\" : \"=r\"(value));")
+uml_write_audit_fixture(Kernarium/fixture/clobber.mm
+    "asm volatile(\"\" ::: \"x18\");")
+uml_write_audit_fixture(darwin/cpu/fixture/write_gadget.py
+    "emit('mov w18, w0')")
+list(APPEND REJECTED
+    "setf_flags\\.inc: names x18"
+    "entry_pair\\.S: names x18"
+    "define_register\\.S: names x18"
+    "read_register\\.cpp: names x18"
+    "clobber\\.mm: names x18"
+    "write_gadget\\.py: names x18")
+uml_write_audit_fixture(darwin/cpu/fixture/commented_register.S
+    "/* x18 belongs to Darwin.\n * So does w18.\n */\n// x18 again")
+uml_write_audit_fixture(darwin/cpu/fixture/similar_registers.S
+    "\tmovi v18.16b, #0x18\n\tldr q18, [x0, #0x18]\n\tmov x1, xzr // ax18 x180")
+uml_write_audit_fixture(darwin/cpu/fixture/commented_gadget.py
+    "# x18 belongs to Darwin")
+uml_write_audit_fixture(tests/fixture/guest_loop.S "\tmov x18, x0")
+list(APPEND ACCEPTED
+    "commented_register\\.S: names x18"
+    "similar_registers\\.S: names x18"
+    "commented_gadget\\.py: names x18"
+    "guest_loop\\.S: names x18")
+
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"
     RESULT_VARIABLE AUDIT_RESULT

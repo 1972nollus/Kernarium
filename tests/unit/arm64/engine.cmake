@@ -114,6 +114,16 @@
             --assume-host-feature frintts --assume-host-feature fcma
             --assume-host-feature jscvt)
 
+    # Neither the gadget region nor a JIT translation of the corpus names
+    # x18, which Darwin clears when it interrupts a thread. The scan
+    # translates through the JIT's test API.
+    target_sources(uml_arm64_instruction_corpus_tests PRIVATE
+        $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
+    uml_add_unit_test(NAME arm64-emitted-registers
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            --emitted-registers)
+
     uml_add_arm64_unit_test(engine_test_support NAME arm64-engine-harness
         NO_OBJECTS)
     uml_add_arm64_unit_test(deferred_fp_state NO_OBJECTS)
