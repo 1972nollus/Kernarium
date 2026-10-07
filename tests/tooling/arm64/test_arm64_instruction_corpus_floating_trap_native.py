@@ -4,7 +4,8 @@
 
 tools/arm64-tests/floating-trap-native-corpus.py authors the
 arm64-floating-trap-native records and has the host decide the outcomes of
-those records and of the arm64-floating-trap-scalar and -vector cases. This
+those records and of the register-only arm64-floating-trap-scalar, -vector
+and -control cases. This
 test re-derives everything but the outcomes from the current script, so a
 pack can only hold the records of the request the script writes now:
 
@@ -15,7 +16,7 @@ pack can only hold the records of the request the script writes now:
 - each authored outcome is the cause the script gives the case, or a
   completion at its SVC;
 - every trap, authored or rerecorded, reports one cause with EC 0x2c, IL
-  and TFV and changes no state.
+  and TFV, and one at the program's entry changes no state.
 
 build-unit-corpus.py --check already refuses a pack whose recorded script
 hash is stale.
@@ -45,13 +46,19 @@ def load_generator():
     return module
 
 
-def check_outcome(trap, name: str, case: dict) -> int:
+def check_outcome(trap, name: str, case: dict, words: tuple[int, ...],
+                  undefined: bool = False) -> int:
     """Checks a case's outcome form; returns its reported cause or 0."""
     code = trap.corpus.CODE_BASE
+    pc = int(case["expected"].get("pc", trap.native.hex64(code)), 16)
+    if case["retired"] != (pc - code) // 4:
+        raise SystemExit(f"{name}: retired count and PC disagree")
     if case["event"] == "system-call":
-        if case["retired"] != 2 or "syndrome" in case or \
-                case["expected"].get("pc") != trap.native.hex64(code + 8):
+        if "syndrome" in case or words[case["retired"] - 1] != \
+                trap.native.SVC:
             raise SystemExit(f"{name}: does not complete at its SVC")
+        return 0
+    if undefined and case["event"] == "illegal-instruction":
         return 0
     if case["event"] != "floating-point-trap":
         raise SystemExit(f"{name}: {case['event']}")
@@ -61,7 +68,7 @@ def check_outcome(trap, name: str, case: dict) -> int:
             cause & (cause - 1):
         raise SystemExit(f"{name}: syndrome {syndrome:#010x} is not one "
                          "trapped cause")
-    if case["expected"] or case["retired"] != 0:
+    if case["retired"] == 0 and case["expected"]:
         raise SystemExit(f"{name}: the trap changes state")
     return cause
 
@@ -87,8 +94,13 @@ def check(trap, lines: list[str], meta: dict) -> str:
     for record in records:
         if record.get("producer") in trap.RERECORDED:
             for case in record["cases"]:
+                if case.get("memory"):
+                    continue
+                program = record["programs"][case["program"]]
+                words = tuple(int(word, 16) for _offset, word in
+                              program["words"])
                 check_outcome(trap, f"{record['record']}: {case['name']}",
-                              case)
+                              case, words, undefined=True)
                 rerecorded += 1
     native = [record for record in records
               if record.get("producer") == trap.PRODUCER]
@@ -115,13 +127,13 @@ def check(trap, lines: list[str], meta: dict) -> str:
             skeleton = trap.case_skeleton(draft, case["program"])
             if {key: case.get(key) for key in skeleton} != skeleton:
                 raise SystemExit(f"{draft.name}: not the script's case")
-            if check_outcome(trap, draft.name, case) != draft.expect:
+            if check_outcome(trap, draft.name, case, words) != draft.expect:
                 raise SystemExit(f"{draft.name}: not the cause the script "
                                  "gives it")
             total += 1
     return (f"native floating-point trap records: {total} cases in "
             f"{len(native)} records re-derived from {trap.SITE}, and "
-            f"{rerecorded} rerecorded cases trap with one cause")
+            f"{rerecorded} rerecorded outcomes are well formed")
 
 
 def main() -> int:

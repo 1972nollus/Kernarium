@@ -426,14 +426,16 @@ trap contract. The hardware decides them now: Apple's cores trap enabled
 floating-point exceptions, and XNU reports one to the native oracle above as
 a bad instruction whose syndrome has EC 0x2c.
 [`tools/arm64-tests/floating-trap-native-corpus.py`](../../../../tools/arm64-tests/floating-trap-native-corpus.py)
-runs, without SME state, every case of the `arm64-floating-trap-scalar` and
-`-vector` records, whose outcomes it replaces, and authored cases, which it
+runs, without SME state, every register-only case of the
+`arm64-floating-trap-scalar`, `-vector` and `-control` records, whose
+outcomes it replaces, and authored cases, which it
 appends as the `arm64-floating-trap-native` records: flushes to zero and
 exact and inexact tiny results with FPCR.UFE set, several enabled causes
 within an element and across lanes, and what a trap leaves in FPSR and its
 destination. Each authored case names the cause the architecture and the
 reporting priority give it, and the script refuses a response that
-disagrees or whose trap reports more than one cause or changes any state.
+disagrees, or whose trap reports more than one cause or, at a program's
+entry, changes any state.
 Its docstring lists the cases.
 
 Regenerate on any arm64 Mac, twice from clean directories, and require

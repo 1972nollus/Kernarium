@@ -14,9 +14,9 @@ oracle's response into corpus records:
         --response trap.response --response trap.response2
 
 The input is a dump after the native SME step. The output is it with the
-outcome of every case of the arm64-floating-trap-scalar and -vector records
-replaced by the host's (and the one case name that described the former
-trap contract corrected), and with the arm64-floating-trap-native records
+outcome of every register-only case of the arm64-floating-trap-scalar,
+-vector and -control records replaced by the host's (and the one case name
+that described the former trap contract corrected), and with the arm64-floating-trap-native records
 after it, replacing any it held. Those records cover, by group:
 
 - flush: FPRoundBase() (ISA_A64_xml_A_profile-2026-06) never traps the
@@ -88,7 +88,8 @@ corpus = native.corpus
 
 SITE = "tools/arm64-tests/floating-trap-native-corpus.py"
 PRODUCER = "arm64-floating-trap-native"
-RERECORDED = ("arm64-floating-trap-scalar", "arm64-floating-trap-vector")
+RERECORDED = ("arm64-floating-trap-scalar", "arm64-floating-trap-vector",
+              "arm64-floating-trap-control")
 # Producer case names that describe the former trap contract.
 RENAMED = {"vector collects all lane causes":
            "vector reports one lane cause by priority"}
@@ -495,12 +496,16 @@ def afp_host_drafts() -> tuple[Draft, ...]:
 
 
 def rerecorded(lines: list[str]) -> list[tuple[int, int]]:
-    """(line, case) indices of the cases whose outcome the host decides."""
+    """(line, case) indices of the cases whose outcome the host decides:
+    every register-only case of the producer's trap records. The two
+    trap-control cases with a data region load and store through SIMD&FP
+    registers, which no enable makes transactional, and stay derived."""
     out = []
     for index, line in enumerate(lines):
         item = json.loads(line)
         if item.get("producer") in RERECORDED:
-            out += [(index, case) for case in range(len(item["cases"]))]
+            out += [(index, case) for case, body in enumerate(item["cases"])
+                    if not body.get("memory")]
     return out
 
 
@@ -510,8 +515,8 @@ def number(fields: dict, name: str, default: int = 0) -> int:
 
 def case_wire(record: dict, case: dict):
     """A producer case as a request case: its program, and its initial
-    state with X18 zero, which the oracle needs and an FP&SIMD instruction
-    neither reads nor writes."""
+    state with X18 zero, which the oracle needs and none of these programs
+    reads or writes."""
     program = record["programs"][case["program"]]
     words = tuple(int(word, 16) for _offset, word in program["words"])
     initial = case["initial"]
@@ -521,7 +526,7 @@ def case_wire(record: dict, case: dict):
             {f"v{i}" for i in range(32)} - \
             {"sp", "nzcv", "fpcr", "fpsr", "tls"}:
         raise SystemExit(f"{record['record']}: {case['name']}: not a "
-                         "one-instruction register case")
+                         "register-only program")
     x = {i: number(initial, f"x{i}") for i in range(31)
          if f"x{i}" in initial}
     if "sp" in initial:
@@ -560,31 +565,34 @@ class Finding(Exception):
     pass
 
 
-def outcome(case, result, name: str) -> dict:
+def outcome(case, result, name: str, undefined: bool = False) -> dict:
     """The event, expected state, retired count and syndrome the host gave
-    a case, which must complete at its SVC or trap without changing any
-    state."""
-    if result.event not in ("system-call", "floating-point-trap"):
+    a case, which must complete at its SVC, trap with one cause, or, where
+    `undefined` allows it, take an undefined instruction. A trap at the
+    entry changes no state."""
+    events = ("system-call", "floating-point-trap") + \
+        (("illegal-instruction",) if undefined else ())
+    if result.event not in events:
         raise Finding(f"{name}: {result.event} (ESR {result.esr:#010x})")
     initial = native.Dense.base(SVL).apply(case.state)
     final = initial.apply(result.state)
     completed = result.event == "system-call"
     pc_offset = result.pc_offset + (4 if completed else 0)
-    if completed and case.words[result.pc_offset // 4] != native.SVC or \
-            not completed and result.pc_offset != case.entry:
+    if result.pc_offset % 4 or result.pc_offset // 4 >= len(case.words) or \
+            completed and case.words[result.pc_offset // 4] != native.SVC:
         raise Finding(f"{name}: stopped at offset {result.pc_offset:#x}")
     expected = native.expected_fields(
         initial, final, corpus.CODE_BASE + pc_offset,
         corpus.CODE_BASE + case.entry)
     item = {"event": result.event, "expected": expected,
             "retired": pc_offset // 4}
-    if not completed:
+    if result.event == "floating-point-trap":
         cause = result.esr & FLAGS
         if result.esr & ~FLAGS != SYNDROME or cause & (cause - 1) or \
                 not cause:
             raise Finding(f"{name}: syndrome {result.esr:#010x} is not one "
                           "trapped cause")
-        if expected:
+        if expected and result.pc_offset == case.entry:
             raise Finding(f"{name}: the trap changed " +
                           ", ".join(sorted(expected)))
         item["syndrome"] = f"{result.esr:#010x}"
@@ -755,7 +763,8 @@ def append(options: argparse.Namespace) -> int:
         [draft.name for draft in items]
     results = read_responses(options.response, cases, names)
     try:
-        outcomes = [outcome(case, result, name) for case, result, name in
+        outcomes = [outcome(case, result, name, undefined=True)
+                    for case, result, name in
                     zip(cases[:rerecords], results[:rerecords], names)]
     except Finding as finding:
         raise SystemExit(f"floating-trap-native-corpus: {finding}")
