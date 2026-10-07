@@ -34,7 +34,7 @@ fi
 host=$1
 request=$2
 output=$3
-source_file="$(cd "$(dirname "$0")" && pwd)/sve_native_oracle.cpp"
+source_file="$(CDPATH= cd -- "$(dirname "$0")" && pwd)/sve_native_oracle.cpp"
 [[ -f $request && -f $source_file ]] || { echo "missing input" >&2; exit 66; }
 
 ssh_options=(-o ConnectTimeout=15 -o BatchMode=yes)
@@ -58,7 +58,7 @@ for ((run = 1; run <= runs; run++)); do
 	[[ $directory == /* ]] || { echo "bad remote directory" >&2; exit 70; }
 	timeout 600 rsync -z -e "ssh ${ssh_options[*]}" \
 		"$source_file" "$request" "$host:$directory/" </dev/null
-	remote 1800 "set -e; cd '$directory';
+	remote 1800 "set -e; CDPATH= cd -- '$directory';
 		c++ -std=c++20 -O2 -Wall -Wextra -Werror \
 			-o sve_native_oracle sve_native_oracle.cpp;
 		timeout 1500 ./sve_native_oracle '$(basename "$request")' response"
