@@ -189,9 +189,10 @@ void process_profile_honours_environment()
 }
 
 /* Below complete an engine presents no SVE token and changes nothing else;
- * at complete it presents the host as given. The engines are at none, so
- * each presents today's virtual CPU under either policy, and so do the
- * entry points the guest kernel reads outside a run. */
+ * at complete it presents the host as given. The gadget engine is at none
+ * and the JIT at control, so each presents today's virtual CPU under either
+ * policy, and so do the entry points the guest kernel reads outside a
+ * run. */
 void engines_present_sve_only_when_complete()
 {
 	using arm64::SveSupport;
@@ -206,7 +207,7 @@ void engines_present_sve_only_when_complete()
 		require(arm64::sve_host_for_support(without, support) == without);
 
 	require(arm64::gadgets::sve_support == SveSupport::none &&
-		arm64::jit::sve_support == SveSupport::none);
+		arm64::jit::sve_support == SveSupport::control);
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
 		     ::uml::cpu::EngineKind::jit}) {
 		const auto presented = ::uml::cpu::engine_host_capabilities(kind,

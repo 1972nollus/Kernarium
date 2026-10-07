@@ -8,11 +8,12 @@
 
 namespace uml::cpu::arm64::jit {
 
-/* How much of the non-streaming SVE profile the JIT implements: none of it
- * yet. Every SVE word in an SM=0 translation is the illegal-instruction
- * exit, and the engine presents no SVE to its guest (sve_host_for_support).
- */
-inline constexpr SveSupport sve_support = SveSupport::none;
+/* How much of the non-streaming SVE profile the JIT implements: the control
+ * core (implements_sve_form below), which an SM=0 translation lowers when
+ * its capabilities carry the profile; every other SVE word there is the
+ * illegal-instruction exit. Below complete the engine presents no SVE to
+ * its guest (sve_host_for_support), so only tests reach the core. */
+inline constexpr SveSupport sve_support = SveSupport::control;
 
 namespace sve_forms {
 
