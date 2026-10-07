@@ -71,6 +71,7 @@ a `/16k` or `/4k` suffix holds profile-specific cases.
 | `host-counter-frequency/v1` | expected state with the host's CNTFRQ_EL0 in each MRS CNTFRQ_EL0 destination |
 | `ignore-host-counter-register/v1` | expected state except system-register read destinations |
 | `permitted-exclusive-store-failure/v1` | expected state except the opaque exclusive-monitor value and version |
+| `unpredictable-nonfault-load-elements/v1` | expected state except the elements of a first-fault or non-fault load's destination from the first whose expected FFR element is FALSE, which the ASL leaves CONSTRAINED UNPREDICTABLE |
 
 Relations derive their operands from the program, so a new relation or a new
 use of an existing one requires a runner change.
@@ -184,10 +185,10 @@ lane whose `sve_support` is `complete` where the virtual CPU implements the
 SVE profile, and counts every other one as skipped for `sve`. At that VL Z_n
 is V_n, so the vector section holds the Z registers. P and FFR are packed,
 bit k for byte k, as the architecture holds them; the runner loads them into
-the engines' mask form and compares them packed. `sve_live` is 0 or 1, arm64
-Linux's TIF_SVE: the task has executed SVE since its last system call. A
-state that is not live holds zero P and FFR, because Linux zeroes them when a
-system call discards the state and the next SVE instruction finds them so;
+the engines' mask form and compares them packed. `sve_live` is 0 or 1, the
+image of arm64 Linux's TIF_SVE: whether the task's SVE state is live. A
+state that is not live holds zero P and FFR, because Linux zeroes them when
+it discards the state and when the next SVE instruction makes it live again;
 the encoder refuses a state that breaks this. The base fill of P, FFR, and
 `sve_live` is zero, and the expected state's are the initial ones unless it
 names its own. A record without a VL expects them zero. They are apart from
@@ -452,6 +453,7 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
   --output tests/unit/arm64/corpus
 ```
 
+The native SVE step below follows on `native.jsonl` before the repack.
 A regeneration that leaves the request unchanged needs no SME host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
@@ -460,6 +462,78 @@ script, table, and request hashes and the outcome counts under `sme_native`,
 `arm64-instruction-corpus-sme-native` tooling test re-derives every case but
 its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac.
+
+## Native SVE cases
+
+No producer had an SVE model.
+[`tools/arm64-tests/sve-native-corpus.py`](../../../../tools/arm64-tests/sve-native-corpus.py)
+authors the `arm64-sve-native` records from the generated SVE/SME encoding
+table and appends them after the native SME step, and
+[`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
+observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
+vector length, arm64-builder's Neoverse V2. The script's docstring lists what each
+record covers and owns the oracle's request and response formats.
+
+The oracle is a sibling of the SME oracle, not a Linux build of it. The SME
+oracle reads a case's state on a Mach exception port and works around XNU's
+FPSR reset; this one runs each case under POSIX signal handlers and reads and
+writes its state in the signal frame's fpsimd, SVE, and ESR records. The
+handler starts a case by writing a full `sve_context` for a state that is
+live or a bare header for one that is not, and the return from the signal
+sets or clears TIF_SVE from it, so a case starts in exactly its state
+whatever the kernel did with the SVE state before. The response holds the
+frame's `sve_context` size at the case's last trap, which the script
+requires to agree with the recorded live bit.
+
+Every native record has `vl` 16, the one vector length outside streaming
+mode, and runs only as the SVE state section above describes. The
+`classify`, `operands`, `memory`, `gather`, and `live` records hold for both
+page profiles: their regions are 16 KiB-aligned multiples of 16 KiB, so
+each page crossing is one in both. `memory/4k` maps 4 KiB regions so that
+an access crosses into a 4 KiB page that is unmapped or read-only, and
+holds for the 4 KiB profile only. The host's own pages are 4 KiB, so every
+region maps exactly as the guest's does. The 29 SCLAMP-class forms need
+FEAT_SME as well outside streaming mode, so an SVE host without SME cannot
+record them, and they are not in these records; the withheld features'
+forms are not either, since their UNDEFINED results belong to the
+absent-feature records.
+
+The encoding table decides the legality of each row's witness, of its own
+registers, and of a word no row decodes; the hardware decides a free field
+value that a row decodes but its pseudocode makes UNDEFINED, such as a
+reserved bitmask immediate. A response that disagrees with the table is a
+finding about the table and writes nothing. The hardware also decides the
+fault address of a crossing access and what a faulting access leaves in
+memory and its destination. What it cannot decide, because the ASL leaves it
+CONSTRAINED UNPREDICTABLE, stays out of the expectations: a MOVPRFX is
+followed by the instruction it prefixes, and a completed first-fault or
+non-fault load uses `unpredictable-nonfault-load-elements/v1`, with zero,
+one of the permitted values, recorded in the elements it excludes.
+
+Regenerate on an SVE host at VL 16. The script runs the oracle there twice,
+each time from a fresh private directory in the host's home that it removes
+afterwards, and the generator requires the responses to give identical
+records; they may differ only in the elements the relation excludes:
+
+```sh
+python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
+tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
+python3 -B tools/arm64-tests/sve-native-corpus.py native.jsonl sve.jsonl \
+  --response sve.response.1 --response sve.response.2
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
+  --output tests/unit/arm64/corpus
+```
+
+A regeneration that leaves the request unchanged needs no SVE host:
+`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+current native records instead of `--response`. `provenance.json` records the
+script, table, and request hashes, the host's VL, page size, and hardware
+capabilities, and the outcome counts under `sve_native`;
+`build-unit-corpus.py --check` verifies the hashes, and the
+`arm64-instruction-corpus-sve-native` tooling test re-derives every case but
+its outcome. The `arm64-sve-native-oracle` tooling test drives the oracle
+with base A64 cases on any arm64 Mac, and with SVE cases where the host has
+SVE at VL 16.
 
 ## FEAT_AFP cases
 
