@@ -4,8 +4,9 @@
  * Features line the guest kernel prints in /proc/cpuinfo from the two words.
  * The profiles are named hosts, every host predicate the advertised set reads
  * toggled on and off, FEAT_AFP and FEAT_RPRES with and without the host
- * features AFP needs, four pairs of features no host can have apart, and the
- * SME profiles at every streaming vector length, whole and in part.
+ * features AFP needs, four pairs of features no host can have apart, the
+ * SME profiles at every streaming vector length, whole and in part, and the
+ * M4 as the prober reports it and as the engines present it.
  * An intended change to the advertised set changes rows of this table:
  * regenerate it with --print and review the rows that moved. */
 #include "cpu/arm64/gadgets/sme_support.hpp"
@@ -249,6 +250,29 @@ struct Profile final {
 		host.supported.reset(static_cast<std::size_t>(missing));
 		result.push_back({"m1-ultra +sme2 svl=64 -" + name(missing), host});
 	}
+
+	/* The M4: every feature above but CSSC, which every host is given
+	 * anyway, as the prober reports it with the guest-SME policy off, the
+	 * default, then with SME and SME2 at SVL 64, then as both engines
+	 * present that host, which is what its guest sees with the policy
+	 * on. */
+	const auto m4 = with({ArmFeature::aes, ArmFeature::pmull,
+		ArmFeature::sha1, ArmFeature::sha256, ArmFeature::sha512,
+		ArmFeature::sha3, ArmFeature::crc32, ArmFeature::fp16,
+		ArmFeature::lse, ArmFeature::lse2, ArmFeature::rdm,
+		ArmFeature::dotprod, ArmFeature::fhm, ArmFeature::jscvt,
+		ArmFeature::fcma, ArmFeature::lrcpc, ArmFeature::lrcpc2,
+		ArmFeature::flag_m, ArmFeature::flag_m2, ArmFeature::sb,
+		ArmFeature::dit, ArmFeature::i8mm, ArmFeature::frintts,
+		ArmFeature::bf16, ArmFeature::ecv, ArmFeature::afp,
+		ArmFeature::rpres});
+	namespace arm64 = ::uml::cpu::arm64;
+	result.push_back({"m4", m4});
+	result.push_back({"m4 +sme2 svl=64", with_sme(m4, 64, true)});
+	result.push_back({"m4 +sme2 svl=64 engines",
+		arm64::sme_host_for_support(with_sme(m4, 64, true),
+			std::min(arm64::gadgets::sme_support,
+				arm64::jit::sme_support))});
 	return result;
 }
 
@@ -741,11 +765,22 @@ constexpr Advertised pinned[]{
 	{"m1-ultra +sme2 svl=64 -sme_i16i64", 0x2fb2ffff, 0x80400000180,
 		{0x1000000110000, 0, 0, 0x21100110212120, 0x1100211000,
 			0x10000000010000, 0, 0, 0x100000000}},
+	{"m4", 0x2fb2ffff, 0x80400386180,
+		{0x1000000110000, 0, 0, 0x21100110212120, 0x10101100211000,
+			0x10000000010010, 0x1000000000000000, 0x100000000000,
+			0x100000000}},
+	{"m4 +sme2 svl=64", 0x2fb2ffff, 0x9a43fb86180,
+		{0x1000000110000, 0x2000000, 0x1f150ff00000000,
+			0x21100110212120, 0x10101100211000, 0x10000000010010,
+			0x1000000000000000, 0x100000000000, 0x100000000}},
+	{"m4 +sme2 svl=64 engines", 0x2fb2ffff, 0x8043fb86180,
+		{0x1000000110000, 0x1000000, 0xf100fd00000000,
+			0x21100110212120, 0x10101100211000, 0x10000000010010,
+			0x1000000000000000, 0x100000000000, 0x100000000}},
 };
 
 /* The Features line, for the named hosts. */
-constexpr std::array<std::pair<const char *, const char *>, 4>
-	pinned_features{{
+constexpr std::pair<const char *, const char *> pinned_features[]{
 		{"none",
 			"fp asimd evtstrm cpuid cssc mops"},
 		{"baseline",
@@ -760,7 +795,63 @@ constexpr std::array<std::pair<const char *, const char *>, 4>
 			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
 			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
 			"flagm2 frint i8mm bf16 ecv afp rpres cssc mops"},
-	}};
+		{"m1-ultra +sme svl=16",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc mops"},
+		{"m1-ultra +sme svl=32",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc mops"},
+		{"m1-ultra +sme svl=64",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc mops"},
+		{"m1-ultra +sme svl=128",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc mops"},
+		{"m1-ultra +sme svl=256",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc mops"},
+		{"m1-ultra +sme2 svl=64",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint sme smei16i64 smef64f64 smei8i32 "
+			"smef16f32 smeb16f32 smef32f32 cssc sme2 smei16i32 "
+			"smebi32i32 mops"},
+		{"m4",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint i8mm bf16 ecv afp rpres cssc mops"},
+		{"m4 +sme2 svl=64",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint i8mm bf16 ecv afp rpres sme smei16i64 "
+			"smef64f64 smei8i32 smef16f32 smeb16f32 smef32f32 cssc "
+			"sme2 smei16i32 smebi32i32 mops"},
+		{"m4 +sme2 svl=64 engines",
+			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
+			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
+			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
+			"flagm2 frint i8mm bf16 ecv afp rpres sme smei16i64 "
+			"smef64f64 smei8i32 smef16f32 smeb16f32 smef32f32 cssc "
+			"mops"},
+};
 
 [[nodiscard]] Advertised advertised(const Profile &profile)
 {
@@ -808,7 +899,10 @@ constexpr std::pair<unsigned, const char *> hwcap_names[]{
 	{26, "ilrcpc"}, {27, "flagm"}, {29, "sb"}, {64 + 7, "flagm2"},
 	{64 + 8, "frint"}, {64 + 13, "i8mm"}, {64 + 14, "bf16"},
 	{64 + 19, "ecv"}, {64 + 20, "afp"}, {64 + 21, "rpres"},
-	{64 + 34, "cssc"}, {64 + 43, "mops"},
+	{64 + 23, "sme"}, {64 + 24, "smei16i64"}, {64 + 25, "smef64f64"},
+	{64 + 26, "smei8i32"}, {64 + 27, "smef16f32"}, {64 + 28, "smeb16f32"},
+	{64 + 29, "smef32f32"}, {64 + 34, "cssc"}, {64 + 37, "sme2"},
+	{64 + 39, "smei16i32"}, {64 + 40, "smebi32i32"}, {64 + 43, "mops"},
 };
 
 [[nodiscard]] std::string features_line(const Advertised &advertised)
@@ -830,6 +924,15 @@ constexpr std::pair<unsigned, const char *> hwcap_names[]{
 		std::string{advertised.profile} +
 			": a bit with no name in hwcap_names is advertised");
 	return line;
+}
+
+[[nodiscard]] const Profile &find(const std::vector<Profile> &all,
+	const char *profile_name)
+{
+	for (const auto &profile : all)
+		if (profile.name == profile_name)
+			return profile;
+	fail(std::string{profile_name} + ": no such profile");
 }
 
 /* Prints the two tables above, wrapped before column 80. */
@@ -861,9 +964,10 @@ void print(const std::vector<Profile> &all)
 		}
 		std::printf("\n");
 	}
-	for (std::size_t index = 0; index < pinned_features.size(); ++index) {
-		const auto line = features_line(advertised(all[index]));
-		std::printf("\t\t{\"%s\",\n", all[index].name.c_str());
+	for (const auto &[profile_name, pinned_line] : pinned_features) {
+		const auto line = features_line(advertised(find(all,
+			profile_name)));
+		std::printf("\t\t{\"%s\",\n", profile_name);
 		std::size_t start = 0;
 		do {
 			const auto end = line.size() - start <= 54 ?
@@ -917,12 +1021,11 @@ int main(int argc, char **argv)
 				": an identification register changed");
 		require_every_field_read(observed);
 	}
-	for (std::size_t index = 0; index < pinned_features.size(); ++index) {
-		require(all[index].name == pinned_features[index].first);
-		require(features_line(advertised(all[index])) ==
-				pinned_features[index].second,
-			all[index].name + ": the Features line changed");
-	}
+	for (const auto &[profile_name, pinned_line] : pinned_features)
+		require(features_line(advertised(find(all, profile_name))) ==
+				pinned_line,
+			std::string{profile_name} +
+				": the Features line changed");
 
 	/* The entry points the guest kernel calls apply this derivation to the
 	 * probed host as the engines present it: outside a run, with the
