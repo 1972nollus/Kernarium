@@ -155,6 +155,33 @@ void under_guest_fpcr(Context &context, Body &&body) noexcept
 	context.cpu.fpsr |= raised_by(context.cpu.fpcr, body);
 }
 
+/* The format of an IEEE element of `bytes` bytes. */
+[[nodiscard]] constexpr FloatingFormat element_format(unsigned bytes) noexcept
+{
+	return bytes == 2U  ? FloatingFormat::half :
+		bytes == 4U ? FloatingFormat::single :
+			      FloatingFormat::double_precision;
+}
+
+/*
+ * A value FPRoundBase() rounded: a subnormal one was tiny and not flushed,
+ * so with FPCR.UFE set it raises Underflow even when it is exact, which the
+ * flags of an execution with the enables clear do not show. It sets `tiny`
+ * for the trap decision (floating_rounding()).
+ */
+[[nodiscard]] Bits rounded(
+	bool &tiny, FloatingFormat format, Bits value) noexcept
+{
+	tiny = tiny || is_subnormal(value, format);
+	return value;
+}
+
+[[nodiscard]] Bits rounded(
+	Context &context, unsigned bytes, Bits value) noexcept
+{
+	return rounded(context.tiny_result, element_format(bytes), value);
+}
+
 /* Whether any FEAT_AFP control is set, which only a host that implements
  * the extensions the software models stand in for allows. */
 [[nodiscard]] bool afp_controls(const Context &context) noexcept
@@ -943,7 +970,7 @@ SveResult binary_predicated(Context &context)
 				r = binary(Binary::divide, bytes, a, b);
 				break;
 			}
-			put(result, e, bytes, r);
+			put(result, e, bytes, rounded(context, bytes, r));
 		}
 	});
 	context.set_z(dn, result);
@@ -975,10 +1002,12 @@ SveResult binary_immediate(Context &context)
 				continue;
 			const Bits a = get(result, e, bytes);
 			put(result, e, bytes,
-				operation == 3U ? binary(operations[operation],
-							  bytes, immediate, a) :
-						  binary(operations[operation],
-							  bytes, a, immediate));
+				rounded(context, bytes,
+					operation == 3U ?
+						binary(operations[operation],
+							bytes, immediate, a) :
+						binary(operations[operation],
+							bytes, a, immediate)));
 		}
 	});
 	context.set_z(dn, result);
@@ -1029,7 +1058,7 @@ SveResult binary_unpredicated(Context &context)
 					a, b);
 				break;
 			}
-			put(result, e, bytes, r);
+			put(result, e, bytes, rounded(context, bytes, r));
 		}
 	});
 	context.set_z(context.field(0, 5), result);
@@ -1180,8 +1209,11 @@ SveResult trig_multiply_add(Context &context)
 			const unsigned index = immediate +
 				((b & sign_of(bytes)) != 0U ? 8U : 0U);
 			put(result, e, bytes,
-				fused(bytes, trig_coefficient(bytes, index), a,
-					unary(Unary::absolute, bytes, b)));
+				rounded(context, bytes,
+					fused(bytes,
+						trig_coefficient(bytes, index),
+						a, unary(Unary::absolute, bytes,
+							   b))));
 		}
 	});
 	context.set_z(dn, result);
@@ -1293,18 +1325,20 @@ SveResult compare_zero(Context &context)
 	return retired();
 }
 
-/* FPReduce(): the halves reduced recursively, op(low, high). */
-[[nodiscard]] Bits reduce(Binary operation, unsigned bytes,
+/* FPReduce(): the halves reduced recursively, op(low, high), each step
+ * rounded. */
+[[nodiscard]] Bits reduce(Context &context, Binary operation, unsigned bytes,
 	const std::array<Bits, 8> &values, unsigned first,
 	unsigned count) noexcept
 {
 	if (count == 1U)
 		return values[first];
 	const unsigned half = count / 2U;
-	const Bits high =
-		reduce(operation, bytes, values, first + half, count - half);
-	const Bits low = reduce(operation, bytes, values, first, half);
-	return binary(operation, bytes, low, high);
+	const Bits high = reduce(
+		context, operation, bytes, values, first + half, count - half);
+	const Bits low =
+		reduce(context, operation, bytes, values, first, half);
+	return rounded(context, bytes, binary(operation, bytes, low, high));
 }
 
 /* FADDV, FMAXNMV, FMINNMV, FMAXV and FMINV: FPReducePredicated(), with
@@ -1348,7 +1382,8 @@ SveResult reduce_vector(Context &context)
 						     identity;
 	Bits result = 0;
 	under_guest_fpcr(context, [&] {
-		result = reduce(operation, bytes, values, 0U, elements);
+		result = reduce(
+			context, operation, bytes, values, 0U, elements);
 	});
 	context.set_v_scalar(context.field(0, 5), result, bytes);
 	return retired();
@@ -1365,8 +1400,9 @@ SveResult add_strictly_ordered(Context &context)
 	under_guest_fpcr(context, [&] {
 		for (unsigned e = 0; e < vector_bytes / bytes; ++e)
 			if (active(mask, e, bytes))
-				result = binary(Binary::add, bytes, result,
-					get(source, e, bytes));
+				result = rounded(context, bytes,
+					binary(Binary::add, bytes, result,
+						get(source, e, bytes)));
 	});
 	context.set_v_scalar(dn, result, bytes);
 	return retired();
@@ -1397,8 +1433,10 @@ SveResult pairwise(Context &context)
 			const Vector &pair = e % 2U == 0U ? left : right;
 			const unsigned base = e - e % 2U;
 			put(result, e, bytes,
-				binary(operation, bytes, get(pair, base, bytes),
-					get(pair, base + 1U, bytes)));
+				rounded(context, bytes,
+					binary(operation, bytes,
+						get(pair, base, bytes),
+						get(pair, base + 1U, bytes))));
 		}
 	});
 	context.set_z(dn, result);
@@ -1434,7 +1472,9 @@ SveResult fused_predicated(Context &context)
 			if (negate_addend)
 				c = negate(bytes, c);
 			put(result, e, bytes,
-				fused(bytes, c, a, get(op2, e, bytes)));
+				rounded(context, bytes,
+					fused(bytes, c, a,
+						get(op2, e, bytes))));
 		}
 	});
 	context.set_z(d, result);
@@ -1477,7 +1517,9 @@ SveResult fused_indexed(Context &context)
 			const Bits b =
 				get(right, e - e % per_segment + index, bytes);
 			put(result, e, bytes,
-				fused(bytes, get(result, e, bytes), a, b));
+				rounded(context, bytes,
+					fused(bytes, get(result, e, bytes), a,
+						b)));
 		}
 	});
 	context.set_z(da, result);
@@ -1495,10 +1537,13 @@ SveResult multiply_indexed(Context &context)
 	under_guest_fpcr(context, [&] {
 		for (unsigned e = 0; e < vector_bytes / bytes; ++e)
 			put(result, e, bytes,
-				binary(Binary::multiply, bytes,
-					get(left, e, bytes),
-					get(right, e - e % per_segment + index,
-						bytes)));
+				rounded(context, bytes,
+					binary(Binary::multiply, bytes,
+						get(left, e, bytes),
+						get(right,
+							e - e % per_segment +
+								index,
+							bytes))));
 	});
 	context.set_z(context.field(0, 5), result);
 	return retired();
@@ -1522,17 +1567,22 @@ SveResult complex_add(Context &context)
 				if (!rotate_270)
 					b = negate(bytes, b);
 				put(result, 2U * p, bytes,
-					binary(Binary::add, bytes,
-						get(left, 2U * p, bytes), b));
+					rounded(context, bytes,
+						binary(Binary::add, bytes,
+							get(left, 2U * p,
+								bytes),
+							b)));
 			}
 			if (active(mask, 2U * p + 1U, bytes)) {
 				Bits b = get(right, 2U * p, bytes);
 				if (rotate_270)
 					b = negate(bytes, b);
 				put(result, 2U * p + 1U, bytes,
-					binary(Binary::add, bytes,
-						get(left, 2U * p + 1U, bytes),
-						b));
+					rounded(context, bytes,
+						binary(Binary::add, bytes,
+							get(left, 2U * p + 1U,
+								bytes),
+							b)));
 			}
 		}
 	});
@@ -1543,9 +1593,9 @@ SveResult complex_add(Context &context)
 /* One FCMLA pair: Zda's pair p plus Zn's element sel_a times Zm's pair
  * `pair`, rotated by `rotation`, for the parts `real` and `imaginary`
  * select. */
-void complex_multiply_add_pair(Vector &result, const Vector &left,
-	const Vector &right, unsigned bytes, unsigned p, unsigned pair,
-	unsigned rotation, bool real, bool imaginary) noexcept
+void complex_multiply_add_pair(Context &context, Vector &result,
+	const Vector &left, const Vector &right, unsigned bytes, unsigned p,
+	unsigned pair, unsigned rotation, bool real, bool imaginary) noexcept
 {
 	const unsigned sel_a = rotation & 1U;
 	const unsigned sel_b = sel_a ^ 1U;
@@ -1557,14 +1607,18 @@ void complex_multiply_add_pair(Vector &result, const Vector &left,
 		if (negate_real)
 			b = negate(bytes, b);
 		put(result, 2U * p, bytes,
-			fused(bytes, get(result, 2U * p, bytes), a, b));
+			rounded(context, bytes,
+				fused(bytes, get(result, 2U * p, bytes), a,
+					b)));
 	}
 	if (imaginary) {
 		Bits b = get(right, 2U * pair + sel_b, bytes);
 		if (negate_imaginary)
 			b = negate(bytes, b);
 		put(result, 2U * p + 1U, bytes,
-			fused(bytes, get(result, 2U * p + 1U, bytes), a, b));
+			rounded(context, bytes,
+				fused(bytes, get(result, 2U * p + 1U, bytes),
+					a, b)));
 	}
 }
 
@@ -1580,8 +1634,9 @@ SveResult complex_multiply_add(Context &context)
 	Vector result = context.z(da);
 	under_guest_fpcr(context, [&] {
 		for (unsigned p = 0; p < vector_bytes / bytes / 2U; ++p)
-			complex_multiply_add_pair(result, left, right, bytes, p,
-				p, rotation, active(mask, 2U * p, bytes),
+			complex_multiply_add_pair(context, result, left, right,
+				bytes, p, p, rotation,
+				active(mask, 2U * p, bytes),
 				active(mask, 2U * p + 1U, bytes));
 	});
 	context.set_z(da, result);
@@ -1604,9 +1659,9 @@ SveResult complex_multiply_add_indexed(Context &context)
 	const unsigned pairs_per_segment = 16U / (2U * bytes);
 	under_guest_fpcr(context, [&] {
 		for (unsigned p = 0; p < vector_bytes / bytes / 2U; ++p)
-			complex_multiply_add_pair(result, left, right, bytes, p,
-				p - p % pairs_per_segment + index, rotation,
-				true, true);
+			complex_multiply_add_pair(context, result, left, right,
+				bytes, p, p - p % pairs_per_segment + index,
+				rotation, true, true);
 	});
 	context.set_z(da, result);
 	return retired();
@@ -1622,12 +1677,14 @@ SveResult clamp(Context &context)
 	Vector result = context.z(d);
 	under_guest_fpcr(context, [&] {
 		for (unsigned e = 0; e < vector_bytes / bytes; ++e) {
-			const Bits bounded = binary(Binary::maximum_number,
-				bytes, get(low, e, bytes),
-				get(result, e, bytes));
+			const Bits bounded = rounded(context, bytes,
+				binary(Binary::maximum_number, bytes,
+					get(low, e, bytes),
+					get(result, e, bytes)));
 			put(result, e, bytes,
-				binary(Binary::minimum_number, bytes, bounded,
-					get(high, e, bytes)));
+				rounded(context, bytes,
+					binary(Binary::minimum_number, bytes,
+						bounded, get(high, e, bytes))));
 		}
 	});
 	context.set_z(d, result);
@@ -1663,7 +1720,8 @@ SveResult convert_precision(Context &context)
 		return fatal();
 	}
 	return unary_merging(context, container, [&](Bits value) {
-		return convert(from, to, value & mask_of(from));
+		return rounded(context, to,
+			convert(from, to, value & mask_of(from)));
 	});
 }
 
@@ -1713,7 +1771,8 @@ SveResult convert_narrow_top_form(Context &context)
 {
 	const unsigned container = context.bit(22) ? 8U : 4U;
 	return convert_narrow_top(context, container, [&](Bits value) {
-		return convert(container, container / 2U, value);
+		return rounded(context, container / 2U,
+			convert(container, container / 2U, value));
 	});
 }
 
@@ -1721,12 +1780,16 @@ SveResult convert_narrow_top_form(Context &context)
  * odd. */
 SveResult convert_odd_form(Context &context)
 {
-	return unary_merging(context, 8U, convert_odd);
+	return unary_merging(context, 8U, [&](Bits value) {
+		return rounded(context, 4U, convert_odd(value));
+	});
 }
 
 SveResult convert_odd_top(Context &context)
 {
-	return convert_narrow_top(context, 8U, convert_odd);
+	return convert_narrow_top(context, 8U, [&](Bits value) {
+		return rounded(context, 4U, convert_odd(value));
+	});
 }
 
 /* FCVTZS and FCVTZU: the element sizes by bits 23:17, U by bit 16. */
@@ -1843,7 +1906,8 @@ SveResult convert_bfloat(Context &context)
 	const bool host = afp_controls(context);
 	std::uint32_t flags = 0;
 	const SveResult result = unary_merging(context, 4U, [&](Bits value) {
-		return to_bfloat(value, fpcr, host, flags);
+		return rounded(context.tiny_result, FloatingFormat::bfloat16,
+			to_bfloat(value, fpcr, host, flags));
 	});
 	context.cpu.fpsr |= flags;
 	return result;
@@ -1856,7 +1920,9 @@ SveResult convert_bfloat_top(Context &context)
 	std::uint32_t flags = 0;
 	const SveResult result =
 		convert_narrow_top(context, 4U, [&](Bits value) {
-			return to_bfloat(value, fpcr, host, flags);
+			return rounded(context.tiny_result,
+				FloatingFormat::bfloat16,
+				to_bfloat(value, fpcr, host, flags));
 		});
 	context.cpu.fpsr |= flags;
 	return result;
@@ -1981,6 +2047,8 @@ SveResult multiply_add_long(Context &context)
 				fpsr_exception_cumulative_mask;
 		}
 	}
+	for (unsigned e = 0; e < vector_bytes / 4U; ++e)
+		static_cast<void>(rounded(context, 4U, get(result, e, 4U)));
 	context.set_z(da, result);
 	return retired();
 }
@@ -2078,11 +2146,12 @@ SveResult dot_pair(Context &context)
 						get(pairs, 2U * e, 2U)),
 					static_cast<std::uint16_t>(
 						get(pairs, 2U * e + 1U, 2U))};
+				const auto addend = static_cast<std::uint32_t>(
+					get(result, e, 4U));
 				put(result, e, 4U,
-					half_dot_add(
-						static_cast<std::uint32_t>(
-							get(result, e, 4U)),
-						operands, fpcr, flags));
+					rounded(context, 4U,
+						half_dot_add(addend, operands,
+							fpcr, flags)));
 			}
 		});
 		context.cpu.fpsr |= flags;
@@ -2276,6 +2345,138 @@ Handler floating_handler(std::uint16_t id) noexcept
 		return bfloat_matrix;
 	default:
 		return nullptr;
+	}
+}
+
+FloatingRounding floating_rounding(const Context &context) noexcept
+{
+	using floating_rounding_detail::flushed_under_ah;
+	using floating_rounding_detail::ignores_fz16;
+	using floating_rounding_detail::unflushed_under_ah;
+	const auto rounding = [](FloatingFormat format,
+				      std::uint8_t flags = 0U,
+				      FloatingResultKind kind =
+					      FloatingResultKind::rounded) {
+		return floating_rounding_detail::make(kind, format, 0U,
+			floating_rounding_detail::format_bytes(format), flags);
+	};
+	const FloatingFormat sized =
+		element_format(esize_of(context.field(22, 2)));
+	switch (context.row.form) {
+	case form::fadd_z_p_zz:
+	case form::fsub_z_p_zz:
+	case form::fmul_z_p_zz:
+	case form::fsubr_z_p_zz:
+	case form::fmaxnm_z_p_zz:
+	case form::fminnm_z_p_zz:
+	case form::fabd_z_p_zz:
+	case form::fscale_z_p_zz:
+	case form::fmulx_z_p_zz:
+	case form::fdivr_z_p_zz:
+	case form::fdiv_z_p_zz:
+	case form::fadd_z_p_zs:
+	case form::fsub_z_p_zs:
+	case form::fmul_z_p_zs:
+	case form::fsubr_z_p_zs:
+	case form::fmaxnm_z_p_zs:
+	case form::fminnm_z_p_zs:
+	case form::fadd_z_zz:
+	case form::fsub_z_zz:
+	case form::fmul_z_zz:
+	case form::ftsmul_z_zz:
+	case form::ftmad_z_zzi:
+	case form::faddv_v_p_z:
+	case form::fmaxnmv_v_p_z:
+	case form::fminnmv_v_p_z:
+	case form::fadda_v_p_z:
+	case form::faddp_z_p_zz:
+	case form::fmaxnmp_z_p_zz:
+	case form::fminnmp_z_p_zz:
+	case form::fmla_z_p_zzz:
+	case form::fmls_z_p_zzz:
+	case form::fnmla_z_p_zzz:
+	case form::fnmls_z_p_zzz:
+	case form::fmad_z_p_zzz:
+	case form::fmsb_z_p_zzz:
+	case form::fnmad_z_p_zzz:
+	case form::fnmsb_z_p_zzz:
+	case form::fcadd_z_p_zz:
+	case form::fcmla_z_p_zzz:
+	case form::fclamp_z_zz:
+		return rounding(sized);
+	/* FPMax() and FPMin() never flush under FPCR.AH. */
+	case form::fmax_z_p_zz:
+	case form::fmin_z_p_zz:
+	case form::fmax_z_p_zs:
+	case form::fmin_z_p_zs:
+	case form::fmaxv_v_p_z:
+	case form::fminv_v_p_z:
+	case form::fmaxp_z_p_zz:
+	case form::fminp_z_p_zz:
+		return rounding(sized, unflushed_under_ah);
+	case form::frecps_z_zz:
+	case form::frsqrts_z_zz:
+		return rounding(sized, flushed_under_ah);
+	case form::frecpe_z_z:
+	case form::frsqrte_z_z:
+		return rounding(sized, flushed_under_ah,
+			FloatingResultKind::estimate);
+	case form::fmla_z_zzzi_h:
+	case form::fmls_z_zzzi_h:
+	case form::fmul_z_zzi_h:
+		return rounding(element_format(indexed_operand(context).bytes));
+	case form::fcmla_z_zzzi_h:
+		return rounding(context.bit(22) ? FloatingFormat::single :
+						  FloatingFormat::half);
+	/* A conversion to half precision rounds through FPRoundCV(), which
+	 * ignores FPCR.FZ16; a widening one is never tiny. */
+	case form::fcvt_z_p_z_h2s:
+		switch (context.field(16, 8)) {
+		case 0x88:
+		case 0xc8:
+			return rounding(FloatingFormat::half, ignores_fz16);
+		case 0xca:
+			return rounding(FloatingFormat::single);
+		default:
+			return {};
+		}
+	case form::fcvtnt_z_p_z_s2h:
+		return context.bit(22) ?
+			rounding(FloatingFormat::single) :
+			rounding(FloatingFormat::half, ignores_fz16);
+	case form::fcvtx_z_p_z_d2s:
+	case form::fcvtxnt_z_p_z_d2s:
+	case form::fmlalb_z_zzz:
+	case form::fmlalt_z_zzz:
+	case form::fmlslb_z_zzz:
+	case form::fmlslt_z_zzz:
+	case form::fmlalb_z_zzzi_s:
+	case form::fmlalt_z_zzzi_s:
+	case form::fmlslb_z_zzzi_s:
+	case form::fmlslt_z_zzzi_s:
+	case form::fdot_z_zzz:
+	case form::fdot_z_zzzi:
+		return rounding(FloatingFormat::single);
+	/* BFMulAddH() and BFCVT raise no Underflow of their own under
+	 * FPCR.AH. */
+	case form::bfmlalb_z_zzz:
+	case form::bfmlalt_z_zzz:
+	case form::bfmlslb_z_zzz:
+	case form::bfmlslt_z_zzz:
+	case form::bfmlalb_z_zzzi:
+	case form::bfmlalt_z_zzzi:
+	case form::bfmlslb_z_zzzi:
+	case form::bfmlslt_z_zzzi:
+		return rounding(FloatingFormat::single, flushed_under_ah);
+	case form::bfcvt_z_p_z_s2bf:
+	case form::bfcvtnt_z_p_z_s2bf:
+		return rounding(FloatingFormat::bfloat16, flushed_under_ah);
+	/* No tiny result: absolute value, negation, FRECPX, square root,
+	 * round to integral, FLOGB, FEXPA, FTSSEL, comparisons, FCVTLT,
+	 * the integer conversions, and BFDOT and BFMMLA, which raise
+	 * nothing. */
+	default:
+		return {};
 	}
 }
 

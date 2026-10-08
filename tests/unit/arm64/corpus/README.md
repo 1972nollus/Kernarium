@@ -302,6 +302,7 @@ Each step after the export reads the previous step's dump, replaces its own
 records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
+[native floating-point trap](#native-floating-point-trap-cases),
 [native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
 [SVE FEAT_AFP](#sve-feat_afp-cases), and [SVE trap](#sve-trap-cases). A
 hardware step's `--carry PACK` copies the pack's records for a request that
@@ -479,11 +480,10 @@ python3 -B tools/arm64-tests/sme-native-corpus.py --request sme.request
 sme_native_oracle sme.request sme.response                # on the SME host
 python3 -B tools/arm64-tests/sme-native-corpus.py absent.jsonl native.jsonl \
   --response sme.response --response sme.response2
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
-  --output tests/unit/arm64/corpus
 ```
 
-The native SVE step below follows on `native.jsonl` before the repack.
+The native floating-point trap step below follows on `native.jsonl` before
+the repack.
 A regeneration that leaves the request unchanged needs no SME host:
 `--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
@@ -493,12 +493,54 @@ script, table, and request hashes and the outcome counts under `sme_native`,
 its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac.
 
+## Native floating-point trap cases
+
+The producer's trap checks derived their outcomes from the emulator's former
+trap contract. The hardware decides them now: Apple's cores trap enabled
+floating-point exceptions, and XNU reports one to the native oracle above as
+a bad instruction whose syndrome has EC 0x2c.
+[`tools/arm64-tests/floating-trap-native-corpus.py`](../../../../tools/arm64-tests/floating-trap-native-corpus.py)
+runs, without SME state, every register-only case of the
+`arm64-floating-trap-scalar`, `-vector` and `-control` records, whose
+outcomes it replaces, and authored cases, which it
+appends as the `arm64-floating-trap-native` records: flushes to zero and
+exact and inexact tiny results with FPCR.UFE set, several enabled causes
+within an element and across lanes, and what a trap leaves in FPSR and its
+destination. Each authored case names the cause the architecture and the
+reporting priority give it, and the script refuses a response that
+disagrees, or whose trap reports more than one cause or, at a program's
+entry, changes any state.
+Its docstring lists the cases.
+
+Regenerate on any arm64 Mac, twice from clean directories, and require
+identical responses:
+
+```sh
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py \
+  --request native.jsonl trap.request
+sme_native_oracle trap.request trap.response
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
+  trap.jsonl --response trap.response --response trap.response2
+```
+
+The native SVE step below follows on `trap.jsonl` before the repack.
+
+The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
+request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host
+answers; `--afp-response` adds their records, and the script refuses a
+response from a host without both features. `--carry` copies the current
+outcomes and records when the requests are unchanged. `provenance.json`
+records the script and request hashes, the outcome counts and how many
+rerecorded outcomes changed under `floating_trap_native`, and the
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives
+every case but its outcome.
+
 ## Native SVE cases
 
 No producer had an SVE model.
 [`tools/arm64-tests/sve-native-corpus.py`](../../../../tools/arm64-tests/sve-native-corpus.py)
 authors the `arm64-sve-native` records from the generated SVE/SME encoding
-table and appends them after the native SME step, and
+table and appends them after the native floating-point trap step, and
 [`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
 observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
 vector length, arm64-builder's Neoverse V2. The script's docstring lists what each
@@ -556,7 +598,7 @@ records; they may differ only in the elements the relation excludes:
 ```sh
 python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
 tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
-python3 -B tools/arm64-tests/sve-native-corpus.py native.jsonl sve.jsonl \
+python3 -B tools/arm64-tests/sve-native-corpus.py trap.jsonl sve.jsonl \
   --response sve.response.1 --response sve.response.2
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
   --output tests/unit/arm64/corpus
@@ -663,18 +705,19 @@ synthetic response.
 
 ## SVE trap cases
 
-The AdvSIMD trapped records come from producer unit tests whose
-`check_trap()` derives each expectation from operands with known
-exceptions and the trap contract of
+The AdvSIMD trapped outcomes are the M1's (see
+[Native floating-point trap cases](#native-floating-point-trap-cases)),
+and they fix the trap contract of
 [`floating_exception.hpp`](../../../../darwin/cpu/arm64/detail/floating_exception.hpp):
-an enabled exception leaves every register and PC as they were, commits
-only the unenabled flags, and gives syndrome EC 0x2c, IL, TFV, and the
-enabled exceptions raised. No hardware observes an SVE trap at
-PSTATE.SM = 0 either: the native records run with every enable clear, and
-in streaming mode FPProcessException() traps only with FEAT_SME_FA64.
+an enabled exception leaves every register, FPSR and PC as they were, and
+gives syndrome EC 0x2c, IL, TFV, and one cause, the first enabled one
+raised in the order ID, IO, DZ, OF, UF, IX. No hardware observes an SVE
+trap at PSTATE.SM = 0: the native records run with every enable clear,
+the M1 has no SVE, and in streaming mode FPProcessException() traps only
+with FEAT_SME_FA64.
 [`tools/arm64-tests/sve-trap-corpus.py`](../../../../tools/arm64-tests/sve-trap-corpus.py)
-applies the same derivation to the SVE floating-point forms and writes the
-`arm64-sve-trap` records, at VL 16 in both page profiles:
+derives the SVE floating-point forms' outcomes from that contract and
+writes the `arm64-sve-trap` records, at VL 16 in both page profiles:
 
 - `derived` reruns each completed one-instruction floating-point case of
   the `arm64-sve-native` records with every enable, with only the first
@@ -683,16 +726,20 @@ applies the same derivation to the SVE floating-point forms and writes the
   with every enable clear; a case that does not trap completes exactly as
   observed.
 - `authored` holds what no native case pins: divide by zero and input
-  denormal alone, every element's exceptions together, the flags a trap
-  commits, inactive elements that would raise, which complete, and traps
-  that keep a compare's P destination and the V destination of FADDV and
-  FADDA. IEEE 754 arithmetic decides each operand's exceptions.
+  denormal alone, the one cause of every element's exceptions together,
+  the flags a trap leaves, inactive elements that would raise, which
+  complete, traps that keep a compare's P destination and the V
+  destination of FADDV and FADDA, and the underflow rules below. IEEE 754
+  arithmetic decides each operand's exceptions.
 
 A trap leaves the SVE state live, as the SVE access trap Linux takes first
 makes it. FPRoundBase() never traps a flush to zero's underflow, and with
-UFE set an exact tiny result underflows; the trap contract decides from an
-execution with every enable clear, so a case sets UFE only when it raised
-underflow with FZ and FZ16 clear.
+UFE set a tiny result underflows even when it is exact. The authored cases
+hold both rules: exact tiny products, tiny intermediate results of FADDV,
+FADDA and FMAXV, and an FCVT to half precision, which ignores FZ16, trap;
+FMUL and FRECPE flushes under FZ and FZ16 complete. A native case cannot
+show an exact tiny intermediate result, so a derived case sets UFE only
+when it raised underflow with FZ and FZ16 clear.
 
 The step needs no hardware. It is the last step of the chain and reruns
 after any change to the native records or to the script, on `sve-afp.jsonl`
