@@ -145,8 +145,7 @@ def check(trap, sources: list[dict], records: list[dict], meta: dict) -> str:
 def main() -> int:
     trap = load_generator()
     builder = trap.corpus
-    pack = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else \
-        builder.CORPUS / builder.PACK_NAME
+    pack = pathlib.Path(sys.argv[1])
     corpus, tokens = builder.decode_pack(pack.read_bytes())
     items = [item for item in map(json.loads,
                                   builder.dump_corpus(corpus, tokens))

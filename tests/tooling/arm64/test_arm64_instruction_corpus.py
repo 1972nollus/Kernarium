@@ -199,11 +199,12 @@ def main() -> int:
     builder = load_builder()
     sme_round_trip(builder)
     sve_round_trip(builder)
-    # Metadata and the canonical encoding must match the checked-in pack.
-    builder.check(argparse.Namespace(output=builder.CORPUS))
+    # Metadata and the canonical encoding must match the generated pack.
+    pack_path = pathlib.Path(sys.argv[1])
+    builder.check(argparse.Namespace(output=pack_path.parent))
 
     # The reviewable text form must reproduce the binary form exactly.
-    pack = (builder.CORPUS / builder.PACK_NAME).read_bytes()
+    pack = pack_path.read_bytes()
     corpus, tokens = builder.decode_pack(pack)
     version_2_round_trip(builder, corpus, tokens, pack)
 

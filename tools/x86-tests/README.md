@@ -1,7 +1,8 @@
 # x86 instruction unit-corpus producer
 
-`build-unit-corpus.py` is the sole producer for the checked-in x86 instruction
-unit corpus. It verifies the dependency-manifest commits, links the K assembly
+`build-unit-corpus.py` produces new independently validated x86 instruction
+cases for promotion to the checked-in source tables. It verifies the
+dependency-manifest commits, links the K assembly
 programs as fixed-address x86-64 ELF, converts each checked K state queue into
 compact architectural state deltas, fills missing or disputed K states from a
 provenanced native-Intel trace, and adds every profile-valid FEX contract that is
@@ -15,7 +16,7 @@ Intel Linux host and records GPR, flag, and XSAVE state without libc. It
 single-steps K programs and runs each repository case uninterrupted to its
 `HLT`, so no trap flag of its own reaches the flags a case stores. Both
 producer stages use LLVM only while regenerating the asset. The resulting
-CTest has no dependency on LLVM, NASM, FEX, K, Python, or the native oracle.
+CTest has no runtime dependency on LLVM, NASM, FEX, K, Python, or the native oracle.
 See the corpus README under `tests/unit/x86_64/corpus/` for the canonical
 workflow and profile contract.
 

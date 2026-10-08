@@ -1,7 +1,7 @@
 # A64 instruction unit corpus
 
-`a64_instruction_corpus.pack` is the self-contained input of the ordinary
-`arm64-instruction-corpus` CTest. Its runner,
+`a64_instruction_corpus.pack` is the build-generated, self-contained input of
+the ordinary `arm64-instruction-corpus` CTest. Its runner,
 [`../instruction_corpus_runner.cpp`](../instruction_corpus_runner.cpp),
 executes every case of the build's page profile through the production gadget
 engine and, when the host implements the case's native features or the case
@@ -12,6 +12,17 @@ FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
 non-streaming SVE state through the SVE semantic library (see
 [Non-streaming SVE state](#non-streaming-sve-state)). The runner needs no
 Python, network, or file other than the pack.
+
+The checked-in `source/` tables retain the programs and independently derived
+or observed golden expectations. CMake's `uml_arm64_instruction_corpus` target
+generates the full pack in this directory's build-tree counterpart, including
+both page profiles. Allocation loops and regular register and memory fills
+are recipes. Maintained SME/SVE generators supply native test inputs while
+the tables retain their hardware observations; the SVE trap generator derives
+trap cases from the native golden records. Generation needs Python only
+at build time and verifies the accepted pack hash. The
+[source contract](../../../../tools/instruction-corpus/README.md) owns this
+format and promotion of accepted producer output.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -220,7 +231,7 @@ its meaning, bit for bit, in both.
 ## Running
 
 ```sh
-uml_arm64_instruction_corpus_tests tests/unit/arm64/corpus/a64_instruction_corpus.pack \
+uml_arm64_instruction_corpus_tests BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
   [--engine gadgets|jit|library] [--assume-host-feature TOKEN] \
   [--max-failures N | --fail-fast] [--list]
@@ -246,7 +257,8 @@ from observation on native hardware, never from an engine's output.
 
 The exporter, its driver, and the producer unit tests exist only in producer
 commits; `provenance.json` names the one that produced the current pack as
-`producer_commit`. Later commits removed the harness's interpreter lane and
+`producer_commit`. Ordinary source-table materialization does not need that
+commit. Later commits removed the harness's interpreter lane and
 export mode, `tools/arm64-tests/export-unit-corpus.py`, and the producers whose
 cases the corpus holds. To add a case, check out the producer commit and copy
 the current `forced-cases.tsv` into it, add or extend a check in a producer
@@ -284,8 +296,9 @@ producer commit, so a producer change that renumbers checks must re-pin that
 producer's directives; the export summary reports a directive whose check is
 missing or excluded. A harness abort names the ordinal of the failing check,
 and each export directory lists the ordinal of every exported case in
-`<producer>.cases.tsv`. Carry the regenerated pack, `manifest.tsv`,
-`coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
+`<producer>.cases.tsv`. Promote the accepted regenerated pack with the
+source contract's import command; it updates the source tables and metadata.
+Carry those and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack, that every inventory entry has a case or an
@@ -414,7 +427,7 @@ python3 -B tools/arm64-tests/lse2-alignment-corpus.py corpus.jsonl lse2.jsonl
 python3 -B tools/arm64-tests/absent-feature-corpus.py \
   --failing tests/unit/arm64/corpus/absent-feature-failing.tsv lse2.jsonl absent.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 A regeneration that changes which stripped cases fail refreshes the failing
@@ -487,7 +500,7 @@ python3 -B tools/arm64-tests/sme-native-corpus.py absent.jsonl native.jsonl \
 The native floating-point trap step below follows on `native.jsonl` before
 the repack.
 A regeneration that leaves the request unchanged needs no SME host:
-`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+`--carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes and the outcome counts under `sme_native`,
 `build-unit-corpus.py --check` verifies the hashes, and the
@@ -604,12 +617,12 @@ tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
 python3 -B tools/arm64-tests/sve-native-corpus.py trap.jsonl sve.jsonl \
   --response sve.response.1 --response sve.response.2
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 The SVE/SME step below follows on `sve.jsonl` before the repack. A
 regeneration that leaves the request unchanged needs no SVE host:
-`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+`--carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes, the host's VL, page size, and hardware
 capabilities, and the outcome counts under `sve_native`;
@@ -654,7 +667,7 @@ case names it, and skips it elsewhere.
 
 ```sh
 python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
-  --carry tests/unit/arm64/corpus/a64_instruction_corpus.pack
+  --carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack
 python3 -B tools/arm64-tests/sve-sme-corpus.py --m4-request m4.request
 sme_native_oracle m4.request m4.response.1                # twice, on the M4
 python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
@@ -751,7 +764,7 @@ or on the pack's own `--dump`:
 ```sh
 python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 `provenance.json` records the script and table hashes and the case counts

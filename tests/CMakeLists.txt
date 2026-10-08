@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+# Instruction assets are build outputs shared by unit and tooling consumers.
+if(UML_BUILD_UNIT_TESTS OR UML_BUILD_TOOLING_TESTS)
+    add_subdirectory(unit/arm64/corpus)
+endif()
+if(UML_BUILD_UNIT_TESTS AND TARGET uml_x86_64_gadgets)
+    add_subdirectory(unit/x86_64/corpus)
+    add_subdirectory(unit/x86_64/masked_flags)
+endif()
+
 # Host test fixtures for GPU builds. The standalone GPU server serves only the
 # VNC tooling smoke; the VNC client serves that smoke and the external
 # integration workflows, so either suite can use it without the other.
@@ -99,6 +108,7 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_GPU)
 endif()
 if(UML_BUILD_TOOLING_TESTS)
     uml_finalize_suite_binary_target(tooling tooling-test-binaries)
+    add_dependencies(tooling-test-binaries uml_arm64_instruction_corpus)
 endif()
 if(UML_BUILD_INTEGRATION_TESTS)
     uml_finalize_suite_binary_target(integration integration-test-binaries)

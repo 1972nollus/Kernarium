@@ -2,7 +2,7 @@
 /* x86 SIMD floating-point exception flags while MXCSR masks every exception.
  * Each case is one register-form instruction from XE2's request sets, with
  * the MXCSR flags an Intel Xeon 8581C left after it
- * (`masked_flags/xeon-flags.bin`, chosen by
+ * (the generated `xeon-flags.bin`, chosen by
  * tools/x86-tests/masked-flags-subset.py). The case runs through the engine's
  * ordinary path, unchecked, in the guest loop that loads MXCSR before the
  * instruction and stores it after, and the six flags it leaves must be the

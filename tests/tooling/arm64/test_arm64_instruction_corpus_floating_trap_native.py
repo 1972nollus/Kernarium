@@ -139,8 +139,7 @@ def check(trap, lines: list[str], meta: dict) -> str:
 def main() -> int:
     trap = load_generator()
     builder = trap.corpus
-    pack = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else \
-        builder.CORPUS / builder.PACK_NAME
+    pack = pathlib.Path(sys.argv[1])
     corpus, tokens = builder.decode_pack(pack.read_bytes())
     lines = [line for line in builder.dump_corpus(corpus, tokens)
              if '"cases"' in line]

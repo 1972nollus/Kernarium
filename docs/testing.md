@@ -14,8 +14,8 @@ cmake --list-presets=all
 
 Every first-party CTest has exactly one primary suite:
 
-- `unit`: native C++/assembly behavior; no Python, shell, kernel, network, CLI,
-  or rootfs dependency;
+- `unit`: native C++/assembly behavior; no runtime Python, shell, kernel,
+  network, CLI, or rootfs dependency;
 - `tooling`: repository, build, manifest, and source-policy checks; and
 - `integration`: guest, rootfs, GUI, network, and kernel behavior.
 
@@ -45,10 +45,19 @@ for the management console's run directory. Each registration owns
 may not fit `sun_path`. Tests remove what they create, so a leftover file
 names the test that leaked it.
 
-A unit test that reads checked-in data, such as an instruction corpus or the
-video fixtures, takes its path as a registration argument rather than a
-compiled-in source or build path. A copy of the binary then runs wherever its
-data is copied, and a binary run without the argument prints its usage.
+A unit test that reads data, such as a generated instruction corpus or the
+checked-in video fixtures, takes its path as a registration argument rather
+than a compiled-in source or build path. A copy of the binary then runs
+wherever its data is copied, and a binary run without the argument prints its
+usage.
+
+CPU instruction assets are generated in the build tree from checked-in source
+tables and independent golden expectations. Their consumers depend on the
+generation targets, and the tooling aggregate builds the A64 asset as well.
+Generation requires Python's standard library, with no network, Git history,
+assembler, upstream checkout, or reference hardware. The
+[source contract](../tools/instruction-corpus/README.md) owns their format and
+promotion; the binary assets are not tracked.
 
 Unit tests assert with `require`, `fail` and `requireThrows` from
 `tests/unit/require/require.hpp`, which every unit binary links. A failure
@@ -477,14 +486,14 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 
 ## A64 instruction corpus
 
-`arm64-instruction-corpus` runs the checked-in corpus in
+`arm64-instruction-corpus` runs the build-generated corpus from
 [`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
 the gadget and JIT engines of each page profile in one process, its SVE cases
 through the SVE semantic library as well, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
-options, and regeneration, which requires a producer commit. Cases that need
-engine hooks or a deferred floating-point entry state stay in focused tests
+options, and promotion of new cases, which requires a producer commit. Cases
+that need engine hooks or a deferred floating-point entry state stay in focused tests
 that run the production gadget and JIT engines through
 `tests/unit/arm64/arm64_engine_test_support.hpp`.
 `arm64-emitted-registers` checks that no host code names x18, which Darwin
@@ -658,7 +667,7 @@ per-test result.
 
 The x86-64 JIT takes the same campaign: give `run-asm-corpus.py`
 `uml_x86_64_fex_asm_jit_runner`, which runs i386 binaries in a compat32
-context. The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus
+context. The macOS 4 KiB unit tree also runs the build-generated x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes
