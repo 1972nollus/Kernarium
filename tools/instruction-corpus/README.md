@@ -52,4 +52,3 @@ directory. The import also carries the producer's manifests and provenance.
 Commit the source tables and metadata, never the generated pack or binary.
 Literal golden observations still occupy more checkout space than compressed
 packs, but Git can compress and delta individual source files across updates.
-Historical binary objects remain in existing Git history.
