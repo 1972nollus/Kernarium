@@ -637,8 +637,8 @@ native SVE step, and takes each family's outcomes from one source:
   so the M4 runs each case in streaming mode with every Z and P register
   holding its VL 16 value in each segment. The low segment and FPSR are then
   the VL 16 outcome, and the script requires every segment to agree. The
-  same request runs the `asl` cases, whose results must match their models.
-  The pack holds no `m4` record until the M4 has answered.
+  same request runs the `asl` cases, whose results must match their models,
+  and on the M4 they all do.
 - `table` holds any word no row decodes; today there is none.
 
 Each record has a VL and no SVL, and each case names its row's
