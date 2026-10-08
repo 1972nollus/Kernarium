@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 211781,
+  "cases": 211813,
   "cases_by_event": {
     "breakpoint": 78,
     "floating-point-trap": 6272,
-    "illegal-instruction": 34248,
+    "illegal-instruction": 34280,
     "instruction-budget": 186,
     "memory-fault": 11843,
     "system-call": 159154
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 156189,
+    "16k+4k": 156221,
     "4k": 27977
   },
   "coverage": {
@@ -174,18 +174,18 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3357,
-  "pack_bytes": 15213843,
-  "pack_sha256": "23d709e9146dc35479c8989bde15b41118caf13c102de4acd5ee5ef548a5f184",
+  "pack_bytes": 15214412,
+  "pack_sha256": "28c3f27ba2253993442099395ad5e10abed4bc0a72e259c07d52761b24187cde",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 157323,
+  "programs": 157355,
   "records": 1116,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "sme_native": {
-    "cases": 28102,
+    "cases": 28134,
     "events": {
-      "illegal-instruction": 6094,
+      "illegal-instruction": 6126,
       "memory-fault": 1219,
       "system-call": 20789
     },
@@ -195,9 +195,9 @@
       "FEAT_SME_F64F64",
       "FEAT_SME_I16I64"
     ],
-    "request_sha256": "70d198cac5be951259a7db388ab0b3d518fb21f0a122ff6813992f80c69a65d6",
+    "request_sha256": "ebd53ddeac2f15b35f6ab50ac9d52992c83c988dcffb89acefa752ff86207707",
     "script": "tools/arm64-tests/sme-native-corpus.py",
-    "sha256": "046899aee1c0d7d7a0c13f38829eb5936ef44c710cab91cf5090b99ec0eee54d",
+    "sha256": "a33a7146dff25bdd4d06547b823c6a96e0db311bd642265d8709a9fb98287ce2",
     "svl": 64,
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
@@ -205,7 +205,7 @@
     }
   },
   "state_minimization": {
-    "full": 70422,
+    "full": 70454,
     "narrow": 141359
   },
   "sve_native": {

@@ -30,9 +30,10 @@ The cases cover, for each record:
 - operands: each operand field of each profile row at the lowest and highest
   register its alignment allows, with the other operands distinct; every
   value of each short immediate or size field and both extremes of a wider
-  one; all-true, all-false, and partial predicates; general-register
-  sources at both extremes; and FPCR's flush, default-NaN, and rounding
-  controls for floating-point rows;
+  one; every class of bitmask immediate that DecodeBitMasks reserves, for
+  the logical-immediate rows; all-true, all-false, and partial predicates;
+  general-register sources at both extremes; and FPCR's flush,
+  default-NaN, and rounding controls for floating-point rows;
 - za: ZA slice-index registers at zero and at all ones, which wraps;
 - memory: each profile memory form aligned and misaligned, crossing a 16 KiB
   page with both pages mapped, with only the first mapped and its elements
@@ -922,6 +923,15 @@ def operand_drafts(table) -> list[Draft]:
                 if found is not None and found is not row:
                     continue
                 add(word, f"bits {low + width - 1}:{low} = {value:#x}")
+        if row.encoding in ("and_z_zi_", "eor_z_zi_", "orr_z_zi_",
+                            "dupm_z_i_"):
+            # Every class of bitmask immediate that DecodeBitMasks
+            # reserves: N = 1 with imms all ones, N = 0 with imms 11111x,
+            # and each smaller element size with every element bit set.
+            for value in (0x103F, 0x003E, 0x003F, 0x003D, 0x003B, 0x0037,
+                          0x002F, 0x001F):
+                add(with_run(low_word, (5, 13), value),
+                    f"reserved bitmask immediate {value:#06x}")
         if predicated(row) and svcr & SM:
             patterns = (("all-true", b"\xff" * (SVL // 8)),
                         ("all-false", bytes(SVL // 8)),

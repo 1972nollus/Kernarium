@@ -1007,7 +1007,7 @@ SVE-0022	SVE	AESE (vectors)	5	3	5
 SVE-0023	SVE	AESEMC	0	6	2
 SVE-0024	SVE	AESIMC	2	3	2
 SVE-0025	SVE	AESMC	2	3	2
-SVE-0026	SVE	AND (immediate)	6	14	11
+SVE-0026	SVE	AND (immediate)	6	22	11
 SVE-0027	SVE	AND (predicates)	30	4	9
 SVE-0028	SVE	AND (vectors, predicated)	26	2	8
 SVE-0029	SVE	AND (vectors, unpredicated)	14	2	7
@@ -1059,7 +1059,7 @@ SVE-0074	SVE	BFSCALE	0	3	1
 SVE-0075	SVE	BFSUB (predicated)	0	3	1
 SVE-0076	SVE	BFSUB (unpredicated)	0	3	1
 SVE-0077	SVE	BGRP	0	3	1
-SVE-0078	SVE	BIC (immediate)	6	14	11
+SVE-0078	SVE	BIC (immediate)	6	22	11
 SVE-0079	SVE	BIC (predicates)	28	2	9
 SVE-0080	SVE	BIC (vectors, predicated)	26	2	8
 SVE-0081	SVE	BIC (vectors, unpredicated)	14	2	7
@@ -1115,10 +1115,10 @@ SVE-0130	SVE	DECP (vector)	30	4	5
 SVE-0131	SVE	DUP (immediate)	30	10	13
 SVE-0132	SVE	DUP (indexed)	94	12	46
 SVE-0133	SVE	DUP (scalar)	12	4	5
-SVE-0134	SVE	DUPM	6	14	11
+SVE-0134	SVE	DUPM	6	22	11
 SVE-0135	SVE	DUPQ	0	3	1
-SVE-0136	SVE	EON	6	14	11
-SVE-0137	SVE	EOR (immediate)	6	14	11
+SVE-0136	SVE	EON	6	22	11
+SVE-0137	SVE	EOR (immediate)	6	22	11
 SVE-0138	SVE	EOR (predicates)	30	4	9
 SVE-0139	SVE	EOR (vectors, predicated)	26	2	8
 SVE-0140	SVE	EOR (vectors, unpredicated)	14	2	7
@@ -1448,7 +1448,7 @@ SVE-0463	SVE	MLA (vectors)	30	2	10
 SVE-0464	SVE	MLAPT	0	3	1
 SVE-0465	SVE	MLS (indexed)	52	6	26
 SVE-0466	SVE	MLS (vectors)	30	2	10
-SVE-0467	SVE	MOV (bitmask immediate)	6	14	11
+SVE-0467	SVE	MOV (bitmask immediate)	6	22	11
 SVE-0468	SVE	MOV (predicate, unpredicated)	30	4	9
 SVE-0469	SVE	MOV (immediate, merging)	60	10	13
 SVE-0470	SVE	MOV (immediate, unpredicated)	30	10	13
@@ -1480,11 +1480,11 @@ SVE-0495	SVE	NORS	28	2	9
 SVE-0496	SVE	NOT (predicate)	30	4	9
 SVE-0497	SVE	NOT (vector)	26	5	9
 SVE-0498	SVE	NOTS	30	4	9
-SVE-0499	SVE	ORN (immediate)	6	14	11
+SVE-0499	SVE	ORN (immediate)	6	22	11
 SVE-0500	SVE	ORN (predicates)	28	2	9
 SVE-0501	SVE	ORNS	28	2	9
 SVE-0502	SVE	ORQV	0	3	1
-SVE-0503	SVE	ORR (immediate)	6	14	11
+SVE-0503	SVE	ORR (immediate)	6	22	11
 SVE-0504	SVE	ORR (predicates)	30	4	9
 SVE-0505	SVE	ORR (vectors, predicated)	26	2	8
 SVE-0506	SVE	ORR (vectors, unpredicated)	16	4	7
