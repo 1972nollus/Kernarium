@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 211781,
+  "cases": 211796,
   "cases_by_event": {
     "breakpoint": 78,
-    "floating-point-trap": 6272,
+    "floating-point-trap": 6279,
     "illegal-instruction": 34248,
     "instruction-budget": 186,
     "memory-fault": 11843,
-    "system-call": 159154
+    "system-call": 159162
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 156189,
+    "16k+4k": 156204,
     "4k": 27977
   },
   "coverage": {
@@ -150,6 +150,14 @@
     }
   },
   "floating_trap_native": {
+    "afp": {
+      "cases": 15,
+      "events": {
+        "floating-point-trap": 7,
+        "system-call": 8
+      },
+      "request_sha256": "a5b0df6665b3c1384fc2f4a6334fe7b5c7b210726053062cd1b9932415d0b661"
+    },
     "cases": 80,
     "events": {
       "floating-point-trap": 57,
@@ -161,7 +169,7 @@
       "changed": 4
     },
     "script": "tools/arm64-tests/floating-trap-native-corpus.py",
-    "sha256": "d43af5524432d1283b19c7755afcd820e7fd6965d783397ec77e27f9f3c9fefb"
+    "sha256": "74c3747bc690e1399eb42463f042a58c98156f261e5f112ca2502643db0f4b70"
   },
   "force_include": {
     "file": "tests/unit/arm64/corpus/forced-cases.tsv",
@@ -174,11 +182,11 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3357,
-  "pack_bytes": 15213843,
-  "pack_sha256": "23d709e9146dc35479c8989bde15b41118caf13c102de4acd5ee5ef548a5f184",
+  "pack_bytes": 15214454,
+  "pack_sha256": "a5358b3daa4496570be92d17f99a8c0e5ef0f478cd29d9198449de16386938ab",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
-  "programs": 157323,
-  "records": 1116,
+  "programs": 157331,
+  "records": 1118,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
@@ -205,7 +213,7 @@
     }
   },
   "state_minimization": {
-    "full": 70422,
+    "full": 70437,
     "narrow": 141359
   },
   "sve_native": {
