@@ -32,13 +32,24 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <compare>
+#include <crt_externs.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mach-o/dyld.h>
 #include <memory_resource>
+#include <set>
+#include <spawn.h>
 #include <span>
+#include <sstream>
+#include <string>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 extern "C" {
@@ -2025,19 +2036,32 @@ void unimplemented_words()
 	}
 }
 
-/* No program translated for SVCR.SM = 1 names an entry of the SVE part,
- * and no program for SM = 0 a streaming SVE entry, whatever the word, on
- * hosts with SVE alone and with SVE and SME. Some SM = 0 programs do
- * select the SVE part. Program words are untyped, but no operand word
- * here can equal a gadget entry: they are CpuState offsets, immediates,
- * stack and table addresses, the semantic library's word and row, which
- * lies above every user address, and guest addresses. The walk translates
- * at walk_base, more than 4 GiB above any image the loader places, so no
- * guest PC, branch target or ADR and ADRP result reaches a gadget either;
- * at code_base an ADRP could, under some ASLR slides. */
-void streaming_safety()
+/* A word of a translated program that names an entry outside its mode:
+ * for SVCR.SM = 1 one of the SVE part, for SM = 0 a streaming SVE entry or
+ * a streaming twin. The entry is its offset from the SVE part, which no
+ * address-space slide changes. */
+struct EntryFinding final {
+	unsigned host;
+	unsigned mode;
+	std::uint32_t word;
+	std::size_t index;
+	std::uintptr_t offset;
+	auto operator<=>(const EntryFinding &) const = default;
+};
+
+struct EntryScan final {
+	std::set<EntryFinding> findings;
+	std::size_t selected_sve{};
+};
+
+/* Every such word of the programs translated from sampled words on hosts
+ * with SVE alone and with SVE and SME, in each SVCR mode the host has, and
+ * how many words at SM = 0 name the SVE part. Program words are untyped:
+ * an operand word, such as a packed immediate or an ADRP result, can
+ * equal an entry's address under this process's slide, and is found too;
+ * under another slide it names another offset. */
+[[nodiscard]] EntryScan scan_entries()
 {
-	constexpr std::uint64_t walk_base = 0x7000'0000'0000U;
 	const auto sve_begin = reinterpret_cast<std::uintptr_t>(
 		uml_arm64_gadget_sve_section_begin);
 	const auto sve_end = reinterpret_cast<std::uintptr_t>(
@@ -2070,7 +2094,8 @@ void streaming_safety()
 				 ~row.mask));
 	gadgets::BlockLink link{};
 	gadgets::IndirectLink site{};
-	std::size_t selected_sve = 0;
+	EntryScan scan;
+	unsigned host_index = 0;
 	for (const auto &host : {sve_host(), sve_sme_host()}) {
 		const bool sme = arm64::implements_sme(host);
 		for (const std::uint8_t mode : {0, 1, 2, 3}) {
@@ -2082,39 +2107,156 @@ void streaming_safety()
 			for (const auto word : words) {
 				const std::array window{word};
 				const auto built = gadgets::Builder{}.build(
-					walk_base, window,
+					code_base, window,
 					[&](std::uint64_t) { return &link; },
 					std::pmr::get_default_resource(),
 					[&](std::uint64_t) { return &site; },
 					options);
 				require(!streaming_mode ||
 					!built.program.holds_sve());
-				for (const auto entry : built.program.words()) {
+				const auto stream = built.program.words();
+				for (std::size_t index = 0; index < stream.size();
+				     ++index) {
+					const auto entry = stream[index];
 					const bool in_sve = entry >= sve_begin &&
 						entry < sve_end;
-					if (streaming_mode && in_sve) {
-						std::fprintf(stderr, "SM=1 word "
-							"%08x selects the SVE part\n",
-							word);
-						require(false);
-					}
-					if (!streaming_mode &&
-					    (std::ranges::binary_search(streaming,
-						     entry) ||
-					     (entry >= twins_begin &&
-					      entry < twins_end))) {
-						std::fprintf(stderr, "SM=0 word "
-							"%08x selects a streaming "
-							"entry\n", word);
-						require(false);
-					}
-					selected_sve += in_sve ? 1U : 0U;
+					const bool outside = streaming_mode ?
+						in_sve :
+						std::ranges::binary_search(
+							streaming, entry) ||
+							(entry >= twins_begin &&
+							 entry < twins_end);
+					if (outside)
+						scan.findings.insert({host_index,
+							mode, word, index,
+							entry - sve_begin});
+					if (!streaming_mode && in_sve)
+						++scan.selected_sve;
 				}
 			}
 		}
+		++host_index;
 	}
-	require(selected_sve > 0U);
-	std::printf("%zu SVE part entries selected at SM = 0\n", selected_sve);
+	return scan;
+}
+
+constexpr const char *scan_variable = "UML_GADGET_SVE_ENTRY_SCAN";
+
+/* The findings of this test binary run in a new process, which has its own
+ * address-space slide, and that slide's SVE part address. */
+[[nodiscard]] std::pair<std::set<EntryFinding>, std::uintptr_t>
+findings_in_another_process()
+{
+	std::array<char, 4096> path{};
+	auto size = static_cast<std::uint32_t>(path.size());
+	require(_NSGetExecutablePath(path.data(), &size) == 0);
+	std::array<int, 2> pipe_ends{};
+	require(pipe(pipe_ends.data()) == 0);
+	posix_spawn_file_actions_t actions;
+	require(posix_spawn_file_actions_init(&actions) == 0);
+	require(posix_spawn_file_actions_adddup2(&actions, pipe_ends[1],
+			STDOUT_FILENO) == 0);
+	require(posix_spawn_file_actions_addclose(&actions, pipe_ends[0]) == 0);
+	std::vector<std::string> variables;
+	for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+		variables.emplace_back(*entry);
+	variables.push_back(std::string{scan_variable} + "=1");
+	std::vector<char *> environment;
+	for (auto &variable : variables)
+		environment.push_back(variable.data());
+	environment.push_back(nullptr);
+	char *const arguments[] = {path.data(), nullptr};
+	pid_t child = 0;
+	require(posix_spawn(&child, path.data(), &actions, nullptr, arguments,
+			environment.data()) == 0);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipe_ends[1]);
+	std::string output;
+	std::array<char, 4096> buffer{};
+	for (ssize_t got; (got = read(pipe_ends[0], buffer.data(),
+				  buffer.size())) != 0;) {
+		if (got < 0 && errno == EINTR)
+			continue;
+		require(got > 0);
+		output.append(buffer.data(), static_cast<std::size_t>(got));
+	}
+	close(pipe_ends[0]);
+	int status = 0;
+	while (waitpid(child, &status, 0) < 0)
+		require(errno == EINTR);
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	std::set<EntryFinding> findings;
+	std::uintptr_t base = 0;
+	std::istringstream lines{output};
+	for (std::string line; std::getline(lines, line);) {
+		unsigned long long a = 0, b = 0, c = 0, d = 0, e = 0;
+		if (std::sscanf(line.c_str(), "sve %llx", &a) == 1)
+			base = a;
+		else if (std::sscanf(line.c_str(),
+				 "finding %llu %llu %llx %llu %llx", &a, &b, &c,
+				 &d, &e) == 5)
+			findings.insert({static_cast<unsigned>(a),
+				static_cast<unsigned>(b),
+				static_cast<std::uint32_t>(c),
+				static_cast<std::size_t>(d),
+				static_cast<std::uintptr_t>(e)});
+	}
+	require(base != 0);
+	return {findings, base};
+}
+
+/* No program translated for SVCR.SM = 1 names an entry of the SVE part,
+ * and no program for SM = 0 a streaming SVE entry or twin, at any position
+ * of its stream, on hosts with SVE alone and with SVE and SME; some SM = 0
+ * programs do select the SVE part. A finding counts only when a process
+ * with another slide makes it too: an entry has the same offset from the
+ * SVE part under every slide, and an operand word does not. */
+void streaming_safety()
+{
+	const auto scan = scan_entries();
+	require(scan.selected_sve > 0U);
+	std::printf("%zu SVE part entries selected at SM = 0\n",
+		scan.selected_sve);
+	if (scan.findings.empty())
+		return;
+	const auto base = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sve_section_begin);
+	for (int attempt = 0; attempt < 4; ++attempt) {
+		const auto [other, other_base] = findings_in_another_process();
+		if (other_base == base)
+			continue;
+		bool failed = false;
+		for (const auto &finding : scan.findings) {
+			if (!other.contains(finding))
+				continue;
+			std::fprintf(stderr, "host %u SVCR %u word %08x names "
+				"SVE-part offset %#lx at word %zu, outside its "
+				"mode's entries\n", finding.host, finding.mode,
+				finding.word,
+				static_cast<unsigned long>(finding.offset),
+				finding.index);
+			failed = true;
+		}
+		require(!failed);
+		std::printf("%zu operand words matched entries under this "
+			"slide only\n", scan.findings.size());
+		return;
+	}
+	std::fputs("no process with another slide\n", stderr);
+	require(false);
+}
+
+/* The sweep alone, for streaming_safety() in the parent process. */
+int report_entry_findings()
+{
+	std::printf("sve %#lx\n", static_cast<unsigned long>(
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sve_section_begin)));
+	for (const auto &finding : scan_entries().findings)
+		std::printf("finding %u %u %08x %zu %#lx\n", finding.host,
+			finding.mode, finding.word, finding.index,
+			static_cast<unsigned long>(finding.offset));
+	return 0;
 }
 
 /* An SM change zeroes P and FFR: only where the host runs streaming
@@ -2143,6 +2285,8 @@ void streaming_mode_changes_zero_predicates()
 int main()
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
+	if (std::getenv(scan_variable) != nullptr)
+		return report_entry_findings();
 	std::printf("gadget SVE support: %s\n",
 		gadgets::sve_support == arm64::SveSupport::none ? "none" :
 		gadgets::sve_support == arm64::SveSupport::control ? "control" :
