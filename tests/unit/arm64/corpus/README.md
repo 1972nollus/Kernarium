@@ -115,7 +115,11 @@ region   = address:u64 size:u32 flags:u8 blob:u32
 index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
-2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
+2 broad) in bits 2-3. The invalid-encoding bit means that the virtual CPU
+decodes the word as no instruction in any state, as for an unallocated word
+or a reserved operand value; a clear bit on an illegal-instruction case
+means a valid encoding that traps for its exception level, mode, or state,
+or for a missing feature. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
@@ -458,8 +462,10 @@ that keeps PSTATE.SM set expects the reset value.
 
 Where the encoding table decides a case's legality (each row's witness in
 every mode it needs and in each mode that lacks one, the rows outside the
-profile, and every FP&SIMD class in streaming mode), the script refuses a
-response that disagrees, so a disagreement is a finding about the table,
+profile, every FP&SIMD class in streaming mode, and an operand case's word
+that no row decodes or whose bitmask immediate DecodeBitMasks reserves,
+which is an invalid encoding), the script refuses a response that
+disagrees, so a disagreement is a finding about the table,
 never an expectation. The FP&SIMD classes of `absent` inventory entries are
 left out: the host may implement their features (the M4 executes the
 FEAT_LRCPC3 forms), but the guest's result is UNDEFINED, which the
