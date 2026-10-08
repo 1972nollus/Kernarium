@@ -29,6 +29,13 @@ uml_add_tooling_test(
     TIMEOUT 300)
 
 uml_add_tooling_test(
+    NAME arm64-instruction-corpus-floating-trap-native
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_floating_trap_native.py
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-native
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_native.py

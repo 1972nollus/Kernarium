@@ -3,16 +3,16 @@
 """Derive the corpus cases of the SVE floating-point forms with FPCR trap
 enables set.
 
-The AdvSIMD trapped-exception records (arm64-floating-trap-scalar, -vector
-and -control) come from producer unit tests whose check_trap() derives each
-expectation from the architecture and the emulator's trap contract
-(darwin/cpu/arm64/detail/floating_exception.hpp): operands whose raised
-exceptions are known, and an outcome that follows from them. No hardware
-observes an SVE trap at PSTATE.SM = 0 either: arm64-builder records the native
-SVE cases with every enable clear, and the M4 runs SVE forms only in
-streaming mode, where FPProcessException() traps only with FEAT_SME_FA64,
-which the SME profile lacks. This script applies the same derivation to
-the non-streaming SVE floating-point forms, at VL 16 and in both page
+The AdvSIMD trapped-exception outcomes (the arm64-floating-trap-scalar,
+-vector, -control and -native records) are the M1's, which traps
+floating-point exceptions natively, and they fix the emulator's trap
+contract (darwin/cpu/arm64/detail/floating_exception.hpp). No hardware
+observes an SVE trap at PSTATE.SM = 0: arm64-builder records the native SVE
+cases with every enable clear, the M1 has no SVE, and the M4 runs SVE
+forms only in streaming mode, where FPProcessException() traps only with
+FEAT_SME_FA64, which the SME profile lacks. This script derives the
+non-streaming SVE floating-point forms' outcomes from operands whose
+raised exceptions are known and that contract, at VL 16 and in both page
 profiles, without an SVL:
 
 - derived: every completed one-instruction case of an SVE floating-point
@@ -23,28 +23,34 @@ profiles, without an SVL:
   enable is set traps nothing), with only the first raised exception's
   enable when the form raised several enabled ones, and with every
   enable but those of the raised exceptions. An enabled raised exception
-  gives the floating-point trap: the instruction does not retire, PC and
-  every register keep their values, FPSR gains the raised exceptions that
-  are not enabled, and the syndrome is EC 0x2c, IL, TFV, and the raised
-  enabled exceptions. Otherwise the instruction completes exactly as
-  observed.
+  gives the floating-point trap: the instruction does not retire, PC,
+  FPSR and every register keep their values, and the syndrome is EC 0x2c,
+  IL, TFV, and one cause, the first raised enabled exception in the
+  order ID, IO, DZ, OF, UF, IX. Otherwise the instruction completes
+  exactly as observed.
   A trap leaves the SVE state live, as the SVE access trap Linux takes
   first makes it.
 - authored: cases that no observation covers, with operands chosen so
   that IEEE 754 arithmetic decides every raised exception: divide by zero
   alone at each element size; input denormal alone under FZ in single
-  and double precision, and nothing under FZ16 in half precision; every
-  element's exceptions together; the flags a trap commits; a divide by
-  zero, a NaN compare, and an infinite sum in an inactive element, which
-  complete; and traps that keep the P destination of a compare and the V
-  destination of FADDV and FADDA.
+  and double precision, and nothing under FZ16 in half precision; the one
+  cause every element's exceptions together report; a trap that leaves
+  an unenabled flag it raised uncommitted; a divide by zero, a NaN
+  compare, and an infinite sum in an inactive element, which complete;
+  traps that keep the P destination of a compare and the V destination
+  of FADDV and FADDA; and the underflow rules below.
 
 FPRoundBase() (ISA_A64_xml_A_profile-2026-06) never traps the underflow
-of a flush to zero, and with FPCR.UFE set it makes an exact tiny result
-underflow. The emulator's trap contract decides from the exceptions an
-execution with every trap disabled raises, as the AdvSIMD records do, so
-neither rule is in these records: a case sets UFE only when it raised
-underflow with FZ and FZ16 clear.
+of a flush to zero, and with FPCR.UFE set it makes a tiny result
+underflow even when it is exact, which an execution with every trap
+disabled does not raise. The authored cases hold both rules: exact tiny
+products in single and double precision, a tiny intermediate sum of
+FADDV and FADDA and a subnormal maximum of FMAXV, which trap on
+underflow, an FCVT to half precision, which ignores FZ16 and traps, and
+flushes under FZ and FZ16, by FMUL and by FRECPE, which complete with
+FPSR.UFC. A native case cannot show an exact tiny intermediate result, so
+a derived case sets UFE only when it raised underflow with FZ and FZ16
+clear.
 
     sve-trap-corpus.py sve.jsonl sve-trap.jsonl
 
@@ -118,6 +124,12 @@ def words_of(program: dict) -> tuple[int, ...]:
 # Derived cases
 
 
+def reported(trapped: int) -> int:
+    """The one cause a trap reports: input denormal, then the lowest
+    raised enabled flag (IO, DZ, OF, UF, IX)."""
+    return IDC if trapped & IDC else trapped & -trapped
+
+
 def allowed_enables(fpcr: int, raised: int) -> int:
     """The enables a case may set: UFE only where FPRoundBase() and the
     trap contract agree, when the form raised underflow without a flush."""
@@ -147,19 +159,17 @@ def variant(base: dict, enables: int, fpsr: int, raised: int) -> dict:
     initial["fpcr"] = corpus.hex64(number(initial, "fpcr") | enables)
     initial["fpsr"] = corpus.hex64(fpsr)
     trapped = raised & enables >> ENABLE_SHIFT
-    committed = fpsr | raised & ~(enables >> ENABLE_SHIFT)
+    committed = fpsr | raised
     item = {key: value for key, value in base.items()
             if key not in ("expected", "initial")}
     item["name"] = f"{base['name']}, enables {enables:#06x}"
     item["initial"] = initial
     if trapped:
         expected = {}
-        if committed != fpsr:
-            expected["fpsr"] = corpus.hex64(committed)
         if not number(initial, "sve_live"):
             expected["sve_live"] = corpus.hex64(1)
         item.update(event="floating-point-trap", retired=0,
-                    syndrome=f"0x{SYNDROME | trapped:08x}")
+                    syndrome=f"0x{SYNDROME | reported(trapped):08x}")
     else:
         expected = dict(base["expected"])
         expected.pop("fpsr", None)
@@ -249,6 +259,9 @@ def fmul(esize: int) -> int:
 FCMGE = checked(0x6500_4000 | 2 << 22 | 1 << 16 | 1, "fcmge_p_p_zz_")
 FADDV = checked(0x6500_2000 | 2 << 22 | 1 << 5, "faddv_v_p_z_")
 FADDA = checked(0x6518_2000 | 2 << 22 | 1 << 5, "fadda_v_p_z_")
+FMAXV = checked(0x6506_2000 | 2 << 22 | 1 << 5, "fmaxv_v_p_z_")
+FCVT_S2H = checked(0x6588_A000 | 1 << 5, "fcvt_z_p_z_s2h")
+FRECPE = checked(0x650E_3000 | 2 << 22 | 1 << 5, "frecpe_z_z_")
 
 
 @dataclasses.dataclass
@@ -261,6 +274,18 @@ class Authored:
     raised: int                       # what the operands raise
     result: dict[int, bytes] = dataclasses.field(default_factory=dict)
     predicate: dict[int, bytes] = dataclasses.field(default_factory=dict)
+    # A rounded value is tiny and not flushed, which underflows with UFE
+    # set even when it is exact; or the raised underflow is a flush's,
+    # which never traps.
+    tiny: bool = False
+    flushed: bool = False
+
+    def trappable(self) -> int:
+        if self.flushed:
+            return self.raised & ~UFC
+        if self.tiny and self.fpcr & UFE:
+            return self.raised | UFC
+        return self.raised
 
 
 def authored_cases() -> list[Authored]:
@@ -299,15 +324,16 @@ def authored_cases() -> list[Authored]:
                                1: vector(4, [0, TWO, THREE, FOUR])},
                  {0: inactive(4, 0)}, 0,
                  result={0: vector(4, [one, THREE, TWO, ONE_AND_HALF])}),
-        Authored("FDIV S commits inexact with a divide-by-zero trap",
+        Authored("FDIV S divide-by-zero trap leaves inexact uncommitted",
                  fdiv(4), DZC << ENABLE_SHIFT,
                  {0: vector(4, [one]), 1: vector(4, [0, THREE, one])},
                  {0: ALL}, DZC | IXC),
-        Authored("FDIV S commits divide by zero with an inexact trap",
+        Authored("FDIV S inexact trap leaves divide by zero uncommitted",
                  fdiv(4), IXC << ENABLE_SHIFT,
                  {0: vector(4, [one]), 1: vector(4, [0, THREE, one])},
                  {0: ALL}, DZC | IXC),
-        Authored("FDIV S traps on every element's exceptions", fdiv(4),
+        Authored("FDIV S every element's exceptions report invalid "
+                 "operation", fdiv(4),
                  ALL_ENABLES, {0: vector(4, [one, 0, one, MAX]),
                                1: vector(4, [0, 0, THREE, MIN_NORMAL])},
                  {0: ALL}, IOC | DZC | OFC | IXC),
@@ -337,7 +363,62 @@ def authored_cases() -> list[Authored]:
                  {0: inactive(4, 0)}, 0,
                  result={0: vector(4, [INF], 0)}),
     ]
+    cases += underflow_cases()
     return cases
+
+
+def underflow_cases() -> list[Authored]:
+    """FPRoundBase()'s two underflow rules. 2^-100 * 2^-30 is the exact
+    single 2^-130 and 2^-600 * 2^-430 the exact double 2^-1030, both
+    tiny; a flush to zero raises underflow alone. FADDV's tree adds the
+    smallest denormal to zero, a tiny exact sum, before adding the
+    smallest normal number, exactly; FADDA's first step does the same, and
+    FMAXV's tree takes the denormal as a maximum. FCVT rounds 2^-20 to the
+    exact half-precision denormal ignoring FZ16, and FRECPE of 2^127 under
+    FZ flushes its 2^-127 estimate to zero."""
+    tiny_s = (0x0D80_0000, 0x3080_0000)           # 2^-100, 2^-30
+    tiny_d = (0x1A70_0000_0000_0000, 0x2510_0000_0000_0000)
+    tiny_h = 0x1400                               # 2^-10
+    denormal = DENORMAL[4]
+    return [
+        Authored("FMUL S exact tiny product traps on underflow", fmul(4),
+                 UFE, {0: vector(4, [tiny_s[0]]),
+                       1: vector(4, [tiny_s[1]])}, {0: ALL}, 0,
+                 tiny=True),
+        Authored("FMUL D exact tiny product traps on underflow", fmul(8),
+                 UFE, {0: vector(8, [tiny_d[0]]),
+                       1: vector(8, [tiny_d[1]])}, {0: ALL}, 0,
+                 tiny=True),
+        Authored("FMUL S product flushed under FZ completes", fmul(4),
+                 FZ | UFE, {0: vector(4, [tiny_s[0]]),
+                            1: vector(4, [tiny_s[1]])}, {0: ALL}, UFC,
+                 result={0: vector(4, [0])}, flushed=True),
+        Authored("FMUL H product flushed under FZ16 completes", fmul(2),
+                 FZ16 | UFE, {0: vector(2, [tiny_h]),
+                              1: vector(2, [tiny_h])}, {0: ALL}, UFC,
+                 result={0: vector(2, [0])}, flushed=True),
+        Authored("FADDV S tiny intermediate sum traps on underflow", FADDV,
+                 UFE, {1: vector(4, [denormal, 0, MIN_NORMAL, 0])},
+                 {0: ALL}, 0, tiny=True),
+        Authored("FADDV S tiny intermediate sum completes without UFE",
+                 FADDV, NO_UFE,
+                 {1: vector(4, [denormal, 0, MIN_NORMAL, 0])}, {0: ALL}, 0,
+                 result={0: vector(4, [MIN_NORMAL | denormal], 0)},
+                 tiny=True),
+        Authored("FADDA S tiny first step traps on underflow", FADDA, UFE,
+                 {0: vector(4, [0]),
+                  1: vector(4, [denormal, MIN_NORMAL, 0])}, {0: ALL}, 0,
+                 tiny=True),
+        Authored("FMAXV S denormal maximum traps on underflow", FMAXV, UFE,
+                 {1: vector(4, [denormal, 0xBF80_0000, 0xC000_0000,
+                                0xC040_0000])}, {0: ALL}, 0, tiny=True),
+        Authored("FCVT H from S exact tiny traps under FZ16", FCVT_S2H,
+                 FZ16 | UFE, {1: vector(4, [0x3580_0000])}, {0: ALL}, 0,
+                 tiny=True),
+        Authored("FRECPE S estimate flushed under FZ completes", FRECPE,
+                 FZ | UFE, {1: vector(4, [0x7F00_0000])}, {}, UFC,
+                 result={0: vector(4, [0])}, flushed=True),
+    ]
 
 
 def authored_item(case: Authored) -> tuple[tuple[int, ...], dict]:
@@ -347,13 +428,11 @@ def authored_item(case: Authored) -> tuple[tuple[int, ...], dict]:
     wire = draft.wire()
     initial = native.BASE.apply(wire.state)
     item = native.case_skeleton(draft, wire, 0)
-    trapped = case.raised & case.fpcr >> ENABLE_SHIFT
+    trapped = case.trappable() & case.fpcr >> ENABLE_SHIFT
     if trapped:
-        committed = QC | case.raised & ~(case.fpcr >> ENABLE_SHIFT)
-        final = dataclasses.replace(initial, fpsr=committed)
         item.update(event="floating-point-trap", retired=0,
-                    expected=native.state_fields(initial, final),
-                    syndrome=f"0x{SYNDROME | trapped:08x}")
+                    expected=native.state_fields(initial, initial),
+                    syndrome=f"0x{SYNDROME | reported(trapped):08x}")
     else:
         v, p = list(initial.v), list(initial.p)
         for index, value in case.result.items():

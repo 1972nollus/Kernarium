@@ -243,18 +243,18 @@ void unrelated_enable_commits_result(test::engine::EngineHarness &harness)
 	});
 }
 
-void trap_commits_only_new_unenabled_flags(
-	test::engine::EngineHarness &harness)
+void trap_commits_no_flag(test::engine::EngineHarness &harness)
 {
 	auto initial = test::state(208U);
 	initial.fpcr = test::enable_for(test::fpsr_overflow);
 	initial.fpsr |= test::fpsr_input_denormal;
 	test::write_lane(initial, 1U, 0U, 4U, 0x7f7f'ffffU);
 	test::write_lane(initial, 2U, 0U, 4U, 0x4000'0000U);
-	auto expected = initial;
-	expected.fpsr |= test::fpsr_inexact;
+	/* The overflow also raises Inexact, which is not enabled; the trap
+	 * leaves FPSR as it was all the same. */
+	const auto expected = initial;
 	harness.check({
-		.name = "trap commits only newly raised unenabled flags",
+		.name = "trap commits no newly raised unenabled flag",
 		.instruction = fmul_s0_s1_s2,
 		.initial = initial,
 		.expected = expected,
@@ -432,7 +432,7 @@ int main()
 	test::engine::EngineHarness harness;
 	preexisting_flag_does_not_retrap(harness);
 	unrelated_enable_commits_result(harness);
-	trap_commits_only_new_unenabled_flags(harness);
+	trap_commits_no_flag(harness);
 	unenabled_flags_survive_a_later_trap(harness);
 	fpcr_write_takes_effect_at_next_instruction(harness);
 	nonfloating_and_reserved_instructions(harness);

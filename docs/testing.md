@@ -549,12 +549,21 @@ M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
 arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks their
 request until the M4 has answered.
 
+The `arm64-floating-trap-native` records, and the outcomes of the
+register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
+were observed on the M1, which traps floating-point exceptions natively; any
+arm64 Mac regenerates them with the same oracle. The
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
+cases and holds every trap to one cause, and one at a program's entry to no
+state change.
+
 The `arm64-sve-trap` records hold the SVE floating-point forms with FPCR
-trap enables set. As for the AdvSIMD trapped records, no hardware observes
-them: each is derived from a native case's observed exceptions, or authored
-with operands whose exceptions IEEE 754 arithmetic decides, under the
-emulator's trap contract. The `arm64-instruction-corpus-sve-trap` tooling
-test re-derives them from the native records.
+trap enables set. No hardware observes them, since the M1 has no SVE: each
+is derived from a native case's observed exceptions, or authored with
+operands whose exceptions IEEE 754 arithmetic and FPRoundBase() decide,
+under the trap contract the M1's records fix. The
+`arm64-instruction-corpus-sve-trap` tooling test re-derives them from the
+native records.
 
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
