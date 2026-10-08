@@ -522,9 +522,10 @@ python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
 The native SVE step below follows on `trap.jsonl` before the repack.
 
 The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
-request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host
-answers; `--afp-response` adds their records, and the script refuses a
-response from a host without both features. `--carry` copies the current
+request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host, the
+M4 under its lease and workdir rules, answers twice; `--afp-response` adds
+their `afp` and `bf16` records, and the script refuses a response from a host
+without both features. `--carry` copies the current
 outcomes and records when the requests are unchanged. `provenance.json`
 records the script and request hashes, the outcome counts and how many
 rerecorded outcomes changed under `floating_trap_native`, and the
