@@ -546,8 +546,8 @@ runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
 tooling test re-derives them. The `arm64-sve-afp` records come from the
 M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks their
-request until the M4 has answered.
+arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks them
+against their request.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,

@@ -115,7 +115,11 @@ region   = address:u64 size:u32 flags:u8 blob:u32
 index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
-2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
+2 broad) in bits 2-3. The invalid-encoding bit means that the virtual CPU
+decodes the word as no instruction in any state, as for an unallocated word
+or a reserved operand value; a clear bit on an illegal-instruction case
+means a valid encoding that traps for its exception level, mode, or state,
+or for a missing feature. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
@@ -306,8 +310,7 @@ hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
 SVE trap step derives its records from the native SVE records and stays
 last. Deriving trap records from the SVE/SME `m4` and SVE FEAT_AFP records
-as well waits until the M4 has answered, and needs a source predicate that
-admits the rows that need SME.
+as well needs a source predicate that admits the rows that need SME.
 
 ## LSE2 alignment cases
 
@@ -459,8 +462,10 @@ that keeps PSTATE.SM set expects the reset value.
 
 Where the encoding table decides a case's legality (each row's witness in
 every mode it needs and in each mode that lacks one, the rows outside the
-profile, and every FP&SIMD class in streaming mode), the script refuses a
-response that disagrees, so a disagreement is a finding about the table,
+profile, every FP&SIMD class in streaming mode, and an operand case's word
+that no row decodes or whose bitmask immediate DecodeBitMasks reserves,
+which is an invalid encoding), the script refuses a response that
+disagrees, so a disagreement is a finding about the table,
 never an expectation. The FP&SIMD classes of `absent` inventory entries are
 left out: the host may implement their features (the M4 executes the
 FEAT_LRCPC3 forms), but the guest's result is UNDEFINED, which the
@@ -638,8 +643,8 @@ native SVE step, and takes each family's outcomes from one source:
   so the M4 runs each case in streaming mode with every Z and P register
   holding its VL 16 value in each segment. The low segment and FPSR are then
   the VL 16 outcome, and the script requires every segment to agree. The
-  same request runs the `asl` cases, whose results must match their models.
-  The pack holds no `m4` record until the M4 has answered.
+  same request runs the `asl` cases, whose results must match their models,
+  and on the M4 they all do.
 - `table` holds any word no row decodes; today there is none.
 
 Each record has a VL and no SVL, and each case names its row's
@@ -683,9 +688,9 @@ The sources hold subnormals, NaNs, signed zeros, or ties. These run under
 FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and DN
 that each class meets. Ties run under AH with RZ, which the BF16 forms
 override with round-to-nearest. A host without FEAT_AFP reads AH, FIZ, and
-NEP back as zero, and the script refuses its response. Each case names its row's non-streaming requirement
-and `afp`, and also `rpres` for single-precision FRECPE and FRSQRTE under
-AH. The pack holds no record until the M4 has answered:
+NEP back as zero, and the script refuses its response. Each case names its
+row's non-streaming requirement and `afp`, and also `rpres` for
+single-precision FRECPE and FRSQRTE under AH:
 
 ```sh
 python3 -B tools/arm64-tests/sve-afp-corpus.py --m4-request afp.request
