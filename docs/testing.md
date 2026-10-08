@@ -552,7 +552,8 @@ request until the M4 has answered.
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
 were observed on the M1, which traps floating-point exceptions natively; any
-arm64 Mac regenerates them with the same oracle. The
+arm64 Mac regenerates them with the same oracle. The `afp` and `bf16` records
+need FEAT_AFP and FEAT_BF16 and were observed on the M4. The
 `arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
 cases and holds every trap to one cause, and one at a program's entry to no
 state change.
