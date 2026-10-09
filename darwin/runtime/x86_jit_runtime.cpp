@@ -19,8 +19,12 @@ namespace x86_64 = ::uml::cpu::x86_64;
 using ::uml::memory::StaticGuestMemory;
 
 /* The most changes of either kind the engine is handed as ranges; a reader
- * further behind retires everything instead. */
-constexpr std::size_t change_capacity = 128;
+ * further behind retires everything instead. A vCPU that was inside the
+ * guest kernel while it mapped a large buffer is a few thousand mapping
+ * changes behind, none of which touches a translation, so each capacity
+ * covers what the address space remembers of its kind. */
+constexpr std::size_t mapping_change_capacity = 4096;
+constexpr std::size_t code_change_capacity = 1024;
 
 /* Hands the engine what changed in the address space since it last ran in
  * it: the ranges while the address space can still name them, everything
@@ -44,8 +48,11 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 	if (mapping_seen == sequences.mapping_changes &&
 		code_seen == sequences.code_changes)
 		return;
-	std::array<darwin_uml_static_mapping_change, change_capacity> mapped{};
-	std::array<x86_64::jit::GuestRange, change_capacity> mapping_ranges{};
+	thread_local std::array<darwin_uml_static_mapping_change,
+		mapping_change_capacity>
+		mapped;
+	thread_local std::array<x86_64::jit::GuestRange, mapping_change_capacity>
+		mapping_ranges;
 	if (mapping_seen != sequences.mapping_changes) {
 		std::uint64_t current = sequences.mapping_changes;
 		const int count = darwin_uml_static_vm_mapping_changes(generation,
@@ -61,8 +68,11 @@ void sync_engine(x86_64::jit::FexEngine &engine,
 			changes.mapping_sequence = current;
 		}
 	}
-	std::array<darwin_uml_static_code_change, change_capacity> coded{};
-	std::array<x86_64::jit::GuestRange, change_capacity> code_ranges{};
+	thread_local std::array<darwin_uml_static_code_change,
+		code_change_capacity>
+		coded;
+	thread_local std::array<x86_64::jit::GuestRange, code_change_capacity>
+		code_ranges;
 	if (code_seen != sequences.code_changes) {
 		std::uint64_t current = sequences.code_changes;
 		const int count =

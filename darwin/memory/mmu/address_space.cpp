@@ -89,10 +89,76 @@ ActiveWalker &active_walker()
 
 constexpr std::size_t maximum_mapping_history = 4096;
 
+/* Whether a translator can hold code for the page: it fetches only from a
+ * guest-code page that grants execute. */
+[[nodiscard]] bool can_hold_translation(const Mapping &mapping) noexcept
+{
+	return mapping.guest_code && (mapping.protection & PROT_EXEC) != 0;
+}
+
+/* Whether replacing `before` with `after` can leave a translation of the
+ * page wrong. A translation exists only for a page that could hold one, so
+ * a page that could not changes no code, whatever it becomes. One that
+ * could changes code when it stops being able to or when its bytes may
+ * differ, which is another backing or another place in it; a change of
+ * protection or of who may write that keeps execute and the bytes changes
+ * none. A store into the page publishes for itself (a translation's page is
+ * in the code-page registry), and the page's other writers publish with
+ * their own stores. */
+[[nodiscard]] bool changes_translatable_code(
+	const std::optional<Mapping> &before,
+	const std::optional<Mapping> &after) noexcept
+{
+	if (!before || !can_hold_translation(*before))
+		return false;
+	if (!after || !can_hold_translation(*after))
+		return true;
+	return before->backing != after->backing ||
+		before->offset != after->offset;
+}
+
+/* The pages of one mapping change whose code changes, as the smallest span
+ * covering them, or the whole address space. */
+struct CodeSpan final {
+	std::uint64_t first{~std::uint64_t{0}};
+	std::uint64_t end{};
+	bool whole{};
+
+	void add(std::uint64_t page) noexcept
+	{
+		first = std::min(first, page);
+		end = std::max(end, page + page_size);
+	}
+
+	[[nodiscard]] bool empty() const noexcept
+	{
+		return !whole && end <= first;
+	}
+};
+
+/* Notes that the page at `address`, which was `before` and becomes `after`,
+ * changes code, when it does. A page stamp names the bytes a translation was
+ * validated against, and the stores that move it are those a translator sees
+ * land on a page it holds -- a page mapped without execute, or reached by
+ * another alias, is not one. So a page leaving the translatable state moves
+ * its own stamp as it is published: whatever later returns to it compares
+ * its saved source instead of trusting a stamp that nothing could move. The
+ * stamp exists only once something has translated the page, and a page
+ * nothing translated has none to move. */
+void note_code_change(CodeSpan &code, std::uint64_t address,
+	const std::optional<Mapping> &before,
+	const std::optional<Mapping> &after) noexcept
+{
+	if (!changes_translatable_code(before, after))
+		return;
+	code.add(address);
+	before->backing->retire_code_page(before->offset);
+}
+
 struct MappingChangePlan final {
 	std::uint64_t address;
 	std::uint64_t length;
-	bool changes_code;
+	CodeSpan code;
 };
 
 class PendingMappingChanges final {
@@ -110,12 +176,15 @@ public:
 				state.mapping_history.push_back({first + index,
 					changes[index].address, changes[index].length});
 				++added_;
-				if (!changes[index].changes_code)
+				const auto &code = changes[index].code;
+				if (code.empty())
 					continue;
+				/* A whole-space change names the range {0, 0}. */
 				if (code_changes_ < code_ranges_.size())
-					code_ranges_[code_changes_] = {
-						changes[index].address,
-						changes[index].length};
+					code_ranges_[code_changes_] = code.whole ?
+						CodeChangeRange{0, 0} :
+						CodeChangeRange{code.first,
+							code.end - code.first};
 				++code_changes_;
 			}
 		} catch (...) {
@@ -431,20 +500,27 @@ public:
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		bool changed = false;
-		bool changes_code = false;
+		CodeSpan code;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
 			auto mapping = state->mappings.find(address + position);
 			if (mapping != state->mappings.end() &&
 			    mapping->second.protection != protection) {
 				changed = true;
-				changes_code = changes_code || mapping->second.guest_code;
+				/* The backing and the bytes stay; only losing execute
+				 * leaves a translation wrong. */
+				if (can_hold_translation(mapping->second) &&
+				    (protection & PROT_EXEC) == 0) {
+					code.add(address + position);
+					mapping->second.backing->retire_code_page(
+						mapping->second.offset);
+				}
 			}
 		}
 		if (!changed)
 			return 0;
 		const std::array changes{
-			MappingChangePlan{address, length, changes_code}};
+			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{*state, changes};
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
@@ -515,7 +591,7 @@ public:
 		 * narrower range, and clearing the generation here replaces one host
 		 * execution quiesce per VMA with one generation-wide boundary. */
 		const std::array changes{
-			MappingChangePlan{0, 0, true}};
+			MappingChangePlan{0, 0, {.whole = true}}};
 		PendingMappingChanges pending{*state, changes};
 		state->invalidation_epoch.fetch_add(
 			1, std::memory_order_release);
@@ -552,7 +628,7 @@ public:
 		{
 			std::lock_guard lock{state->mappings_mutex};
 			const std::array changes{
-				MappingChangePlan{0, 0, true}};
+				MappingChangePlan{0, 0, {.whole = true}}};
 			PendingMappingChanges pending{*state, changes};
 			state->mappings.clear();
 			pending.commit();
@@ -1222,12 +1298,18 @@ private:
 			UML_MEMORY_ALLOCATION_CHECKPOINT(
 				testing::AllocationSite::batch_commit);
 			bool changed = false;
-			bool changes_code = false;
+			/* A translation can exist only for what the page held before
+			 * the batch: the vCPUs see the batch whole, so a page it maps
+			 * and unmaps again leaves none to retire. A page an earlier
+			 * operation of the batch already changed is judged again
+			 * against its original, which at worst names it twice. */
+			CodeSpan code;
 			const auto clear_page = [&](PlannedMappingPage &page) {
 				if (!page.final)
 					return;
 				changed = true;
-				changes_code = changes_code || page.final->guest_code;
+				note_code_change(code, page.address, page.original,
+					std::nullopt);
 				page.final.reset();
 			};
 			const auto operation_pages = operation.length / page_size;
@@ -1270,15 +1352,14 @@ private:
 						if (same_mapping(page.final, next))
 							continue;
 						changed = true;
-						changes_code = changes_code ||
-							(page.final && page.final->guest_code) ||
-							(next && next->guest_code);
+						note_code_change(code, page.address,
+							page.original, next);
 						page.final = std::move(next);
 					}
 				}
 			if (changed)
 				changes.push_back({operation.address,
-					operation.length, changes_code});
+					operation.length, code});
 		}
 		if (changes.empty())
 			return;
@@ -1306,7 +1387,7 @@ private:
 	{
 		std::vector<PlannedMappingPage> pages;
 		pages.reserve(static_cast<std::size_t>(length / page_size));
-		bool changes_code = false;
+		CodeSpan code;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
 			const auto page_address = address + position;
@@ -1319,14 +1400,13 @@ private:
 				mapping.guest_writable};
 			if (previous && same_mapping(*previous, next))
 				continue;
-			changes_code = changes_code ||
-				(previous && previous->guest_code) || next.guest_code;
+			note_code_change(code, page_address, previous, next);
 			pages.push_back({page_address, previous, std::move(next)});
 		}
 		if (pages.empty())
 			return;
 		const std::array changes{
-			MappingChangePlan{address, length, changes_code}};
+			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{state, changes};
 		MappingPlanRollback rollback{state, pages};
 		for (const auto &page : pages) {
@@ -1381,19 +1461,23 @@ private:
 		std::uint64_t length)
 	{
 		bool changed = false;
-		bool changes_code = false;
+		CodeSpan code;
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size) {
 			auto mapping = state.mappings.find(address + position);
 			if (mapping == state.mappings.end())
 				continue;
 			changed = true;
-			changes_code = changes_code || mapping->second.guest_code;
+			if (can_hold_translation(mapping->second)) {
+				code.add(address + position);
+				mapping->second.backing->retire_code_page(
+					mapping->second.offset);
+			}
 		}
 		if (!changed)
 			return false;
 		const std::array changes{
-			MappingChangePlan{address, length, changes_code}};
+			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{state, changes};
 		for (std::uint64_t position = 0; position < length;
 		     position += page_size)

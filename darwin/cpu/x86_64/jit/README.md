@@ -82,6 +82,17 @@ the unit running it, which would go on to run the bytes it replaces, stops
 that unit before it stores; its instruction runs again as a unit of its own,
 and the dispatch goes on from freshly fetched code.
 
+The engine learns of the address space's changes as two histories. The mapping
+history names the pages whose cached host addresses to retire, and the engine
+retires only its TLB entries for it. The code history is what a translation
+can no longer trust: a page that stops granting execute, goes away or holds
+other bytes, which the static MMU publishes (see
+[`uml_darwin_static_mmu.h`](../../../include/uml_darwin_static_mmu.h)), and a
+store to a page the registry holds. A fork write-protecting the parent, an
+mprotect that keeps execute and a first mapping publish nothing. A reader
+further behind than the history reaches, or a range of length zero, drops every
+translation of the space.
+
 ## State at every exit
 
 A dispatch leaves the engine at a system call, a fault, a TLB miss the runtime

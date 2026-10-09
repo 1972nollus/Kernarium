@@ -641,8 +641,10 @@ the stream, and a register-baked bank generated at build time in which every
 register offset is an immediate. A store publishes a code change only when a
 per-address-space registry says some executor holds a translation of that
 page, which keeps publication precise where READ_IMPLIES_EXEC makes every
-readable page executable. The banks, the host-flag fusion rules and the
-registry contract are in
+readable page executable. The static MMU is as precise: a mapping change
+publishes a code change only for a page a translation can be wrong about,
+so a fork's write-protection of a process publishes none. The banks, the
+host-flag fusion rules and the registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
 CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,

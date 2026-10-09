@@ -118,7 +118,17 @@ struct darwin_uml_static_sequences darwin_uml_static_vm_execution_context_sequen
 	void *context);
 /* Copies the guest ranges whose code changed after `sequence` and returns
  * their count.  A negative result means the caller must retire every
- * translation it holds for the address space.
+ * translation it holds for the address space; a range of length zero names
+ * the whole address space, as a flush does.
+ *
+ * A mapping change publishes a range only for pages a translation can be
+ * wrong about: a guest-code page that grants execute stops granting it,
+ * goes away, or holds other bytes (another backing or another place in it).
+ * A protection or writability change that keeps execute and the bytes, and
+ * a mapping where none was, publish none; they appear only in the mapping
+ * changes, which name the pages whose cached host addresses to retire.  A
+ * published page also moves its code-page stamp, which no store can once the
+ * page cannot be executed.
  */
 int darwin_uml_static_vm_execution_context_code_change_ranges(
 	void *context, uint64_t sequence,

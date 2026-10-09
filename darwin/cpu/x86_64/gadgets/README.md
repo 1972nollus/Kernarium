@@ -676,7 +676,12 @@ compares the source.
 
 The address space's code-change sequence says when to revalidate, not whether
 a program survives the revalidation: a publication that touched a program moved
-the stamp of its page, and one that did not leaves the program alone. A vCPU
+the stamp of its page, and one that did not leaves the program alone. A store
+is not the only publication: the static MMU publishes a page that stops
+granting execute, goes away or holds other bytes, and moves its stamp with the
+publication, because a page without execute sees no store that could, and a
+program of it must then compare its saved source before it runs again. A
+mapping change that keeps execute and the bytes publishes nothing. A vCPU
 publishing at speed -- a JIT heap, or a trampoline sharing a page with hot data
 -- costs the other vCPUs of its address space a revalidation per block, not a
 translation per block.

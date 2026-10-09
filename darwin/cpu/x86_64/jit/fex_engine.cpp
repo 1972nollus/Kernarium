@@ -1427,16 +1427,19 @@ void FexEngine::apply_changes(unsigned long generation, ExecutionMode mode,
 		if (space->generation != generation || space->mode != mode)
 			continue;
 		found = true;
+		/* A mapping change that leaves a translation wrong is a code
+		 * change too, so the mapping history tells only which TLB
+		 * entries to retire. */
 		if (changes.all_mappings) {
 			space->flush_tlb();
-			space->clear_code();
 		} else {
-			for (const auto &range : changes.mapping_ranges) {
+			for (const auto &range : changes.mapping_ranges)
 				space->retire_tlb_range(range.address, range.length);
-				space->invalidate_code(range.address, range.length);
-			}
 		}
-		if (changes.all_code) {
+		bool whole = changes.all_code;
+		for (const auto &range : changes.code_ranges)
+			whole = whole || range.length == 0;
+		if (whole) {
 			space->clear_code();
 		} else {
 			for (const auto &range : changes.code_ranges)

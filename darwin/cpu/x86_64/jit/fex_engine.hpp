@@ -28,7 +28,13 @@ struct GuestRange final {
 };
 
 /* What the address space reports changed since the engine last looked: the
- * ranges, or `all_*` when it cannot describe them. */
+ * ranges, or `all_*` when it cannot describe them.
+ *
+ * Mapping ranges are for the software TLB alone. A change that can leave a
+ * translation wrong -- a page that stops being executable or holds other
+ * bytes -- is also a code range, so translations answer to code ranges only;
+ * a code range of length zero names the whole address space, as a flush of
+ * its mappings does. */
 struct AddressSpaceChanges final {
 	std::uint64_t mapping_sequence{};
 	std::uint64_t code_sequence{};
@@ -93,9 +99,9 @@ public:
 		ExecutionMode mode, std::uint64_t &mapping_sequence,
 		std::uint64_t &code_sequence) const noexcept;
 
-	/* Retires software-TLB entries and translations the changes cover, and
-	 * makes the space's context on first use, ordering stores as the next
-	 * run will. */
+	/* Retires the software-TLB entries the mapping changes cover and the
+	 * translations the code changes cover, and makes the space's context on
+	 * first use, ordering stores as the next run will. */
 	void apply_changes(unsigned long generation, ExecutionMode mode,
 		const AddressSpaceChanges &changes,
 		bool orders_stores = true) noexcept;
