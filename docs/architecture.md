@@ -655,7 +655,8 @@ every row of the profile against the library on random states: alone in a
 block, behind an FP instruction that leaves the native environment active,
 behind PTRUE of P0-P7, and after every writer of a predicate that a PTRUE
 made all-active, from memory bases inside a page, across pages, unmapped and tagged, and
-under random FPCR trap enables.
+under random FPCR trap enables and, where the host implements FEAT_AFP, random
+FIZ, AH and NEP.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
