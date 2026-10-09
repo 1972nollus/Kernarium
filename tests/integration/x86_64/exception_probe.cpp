@@ -4307,9 +4307,9 @@ bool x87_status_flags()
 		u16 status;
 		u16 expected;
 	};
-	u16 status[9] = {};
+	u16 status[10] = {};
 	short stored = 0;
-	X87Value value[3] = {};
+	X87Value value[5] = {};
 	__asm__ volatile("fninit\n\tfldz\n\tfld1\n\tfdivp\n\t"
 			 "fnstsw %0\n\tfnclex\n\tfnstsw %1"
 			 : "=m"(status[0]), "=m"(status[1]) : : "memory");
@@ -4338,6 +4338,13 @@ bool x87_status_flags()
 			 : "=m"(value[0]), "=m"(value[1]), "=m"(value[2])
 			 : "m"(x87_three), "m"(x87_minus_six)
 			 : "memory");
+	/* An empty register is a stack underflow: FSTP ST(0) pops it with IE
+	 * and SF set, and FCHS and FABS leave the indefinite it reads as. */
+	__asm__ volatile("fninit\n\tfstp %%st(0)\n\tfnstsw %0\n\tfninit"
+			 : "=m"(status[9]) : : "memory");
+	__asm__ volatile("fninit\n\tfchs\n\tfstpt %0\n\tfninit\n\t"
+			 "fabs\n\tfstpt %1\n\tfninit"
+			 : "=m"(value[3]), "=m"(value[4]) : : "memory");
 	const Case cases[] = {
 		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
 		{"FNCLEX clears the flags", status[1], 0x3800},
@@ -4348,6 +4355,8 @@ bool x87_status_flags()
 		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
 		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
 		{"FSTP m32 of pi sets PE and C1", status[8], 0x0220},
+		{"FSTP ST(0) of an empty register sets IE and SF", status[9],
+		 0x0841},
 	};
 	bool ok = true;
 	for (const Case &one : cases) {
@@ -4369,6 +4378,20 @@ bool x87_status_flags()
 			put("  ");
 			put(zeros[index]);
 			put(" is not -0: ");
+			put_hex(value[index].sign_exponent);
+			put(" ");
+			put_hex(value[index].significand);
+			put("\n");
+			ok = false;
+		}
+	}
+	const char *const underflows[] = {"FCHS", "FABS"};
+	for (unsigned index = 3; index < 5; ++index) {
+		if (value[index].sign_exponent != 0xffff ||
+		    value[index].significand != 0xc000000000000000ULL) {
+			put("  ");
+			put(underflows[index - 3]);
+			put(" of an empty register is not the indefinite: ");
 			put_hex(value[index].sign_exponent);
 			put(" ");
 			put_hex(value[index].significand);

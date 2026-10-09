@@ -77,9 +77,10 @@ Lx86_x87_exchange_empty:
 	x87_store_stack w13, x11, w12
 	b Lx86_x87_exchange_done
 
+/* FCHS and FABS of an empty ST(0) leave the indefinite the underflow made. */
 gadget x87_change_sign
 	mov w13, #0
-	x87_load_stack w13, x9, w10
+	x87_load_stack w13, x9, w10, Lx86_x87_sign_underflow
 	eor w10, w10, #0x8000
 	x87_store_stack w13, x9, w10
 	x87_clear_c1
@@ -87,8 +88,12 @@ gadget x87_change_sign
 
 gadget x87_absolute
 	mov w13, #0
-	x87_load_stack w13, x9, w10
+	x87_load_stack w13, x9, w10, Lx86_x87_sign_underflow
 	and w10, w10, #0x7fff
+	x87_store_stack w13, x9, w10
+	x87_clear_c1
+	retire_and_next
+Lx86_x87_sign_underflow:
 	x87_store_stack w13, x9, w10
 	x87_clear_c1
 	retire_and_next
