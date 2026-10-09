@@ -6782,9 +6782,14 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	case Operation::memory_fence:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_memory_fence));
 		return true;
-	case Operation::cache_flush:
-		stream.push_back(entry_address(native::uml_x86_64_gadget_cache_flush));
+	case Operation::cache_flush: {
+		const auto encoded = encode_memory(gadget, instruction.destination, 0);
+		if (!encoded)
+			return false;
+		append_memory_words(stream, entry_address(
+			native::uml_x86_64_gadget_cache_flush), *encoded, gadget);
 		return true;
+	}
 	case Operation::cache_zero:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_cache_zero));
 		stream.push_back(static_cast<std::uintptr_t>(instruction.length) << 56U);

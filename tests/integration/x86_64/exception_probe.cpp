@@ -1930,6 +1930,70 @@ bool alignment_faults()
 	return ok;
 }
 
+/* Each takes its operand's address in AX. CLFLUSH, CLFLUSHOPT and CLWB read
+ * their line as far as paging goes: an operand on an unmapped page raises
+ * #PF for a read, at the operand's own address and not its line's. CLDEMOTE
+ * and the prefetches are hints that never fault. */
+#define CACHE_LINE_FAULT_CASES(X)                                            \
+	X(clflush, "0x0f, 0xae, 0x38")                                       \
+	X(clflushopt, "0x66, 0x0f, 0xae, 0x38")                              \
+	X(clwb, "0x66, 0x0f, 0xae, 0x30")
+#define CACHE_LINE_HINT_CASES(X)                                             \
+	X(cldemote, "0x0f, 0x1c, 0x00")                                      \
+	X(prefetcht0, "0x0f, 0x18, 0x08")                                    \
+	X(prefetchnta, "0x0f, 0x18, 0x00")                                   \
+	X(prefetchw, "0x0f, 0x0d, 0x08")
+#define EMIT_CACHE_LINE(name, bytes)                                         \
+	".global probe_line_" #name "\n"                                     \
+	"probe_line_" #name ":\n"                                            \
+	PROBE_ARG_AX                                                         \
+	".global probe_line_" #name "_insn\n"                                \
+	"probe_line_" #name "_insn:\n"                                       \
+	"	.byte " bytes "\n"                                           \
+	".global probe_line_" #name "_end\n"                                 \
+	"probe_line_" #name "_end:\n"                                        \
+	"	ret\n"
+__asm__(".text\n" CACHE_LINE_FAULT_CASES(EMIT_CACHE_LINE)
+	CACHE_LINE_HINT_CASES(EMIT_CACHE_LINE));
+#undef EMIT_CACHE_LINE
+#define DECLARE_CACHE_LINE(name, bytes)                                      \
+	extern "C" void probe_line_##name(word address);                    \
+	extern "C" char probe_line_##name##_insn[];                          \
+	extern "C" char probe_line_##name##_end[];
+CACHE_LINE_FAULT_CASES(DECLARE_CACHE_LINE)
+CACHE_LINE_HINT_CASES(DECLARE_CACHE_LINE)
+#undef DECLARE_CACHE_LINE
+
+constexpr word cache_line_operand = 0x10025;
+#define CACHE_LINE_WORK(name, bytes)                                         \
+	void line_##name() { probe_line_##name(cache_line_operand); }
+CACHE_LINE_FAULT_CASES(CACHE_LINE_WORK)
+CACHE_LINE_HINT_CASES(CACHE_LINE_WORK)
+#undef CACHE_LINE_WORK
+
+bool cache_line_flushes()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define CACHE_LINE_ENTRY(name, bytes)                                        \
+	{#name, line_##name, probe_line_##name##_insn, probe_line_##name##_end},
+	const Case faulting[] = {CACHE_LINE_FAULT_CASES(CACHE_LINE_ENTRY)};
+	const Case hints[] = {CACHE_LINE_HINT_CASES(CACHE_LINE_ENTRY)};
+#undef CACHE_LINE_ENTRY
+	bool ok = install_fault_handlers();
+	for (const Case &one : faulting)
+		ok &= delivers(one.what, one.work, address_of(one.end),
+			       {sigsegv, segv_maperr, cache_line_operand,
+				address_of(one.insn), 14, true, 4});
+	for (const Case &one : hints)
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	return ok;
+}
+
 /* XSAVE, XSAVEOPT and XRSTOR with RFBM in (eax) at (ecx) and FXSAVE and
  * FXRSTOR touch only the bytes their components occupy: the legacy area and
  * the header, and the AVX component only when RFBM selects it. */
@@ -4858,6 +4922,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-faults"));
 	report("i386 a misaligned extended-state image raises #GP",
 	       in_child(i386_probe, "alignment-faults"));
+	report("x86-64 CLFLUSH, CLFLUSHOPT and CLWB fault on an unmapped line",
+	       in_child(self, "cache-line"));
+	report("i386 CLFLUSH, CLFLUSHOPT and CLWB fault on an unmapped line",
+	       in_child(i386_probe, "cache-line"));
 	report("x86-64 XSAVE and XRSTOR touch only the components RFBM names",
 	       in_child(self, "state-area"));
 	report("i386 XSAVE and XRSTOR touch only the components RFBM names",
@@ -4912,6 +4980,8 @@ extern "C" int probe_main(word *stack)
 			return floating_point_exceptions() ? 0 : 1;
 		if (equal(mode, "alignment-faults"))
 			return alignment_faults() ? 0 : 1;
+		if (equal(mode, "cache-line"))
+			return cache_line_flushes() ? 0 : 1;
 		if (equal(mode, "state-area"))
 			return state_area_extents() ? 0 : 1;
 		if (equal(mode, "alignment-check"))

@@ -263,7 +263,12 @@ gadget memory_fence
 	dmb ish
 	retire_and_next
 
+/* CLFLUSH, CLFLUSHOPT and CLWB read the line they name as far as paging goes:
+ * an operand on an unmapped or inaccessible page raises #PF for a read at the
+ * operand's own address. The host cache needs no flushing. */
 gadget cache_flush
+	effective_address
+	translate 0, UML_X86_64_TLB_READ_PAGE, 1
 	dmb ish
 	retire_and_next
 

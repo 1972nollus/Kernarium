@@ -555,6 +555,10 @@ same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
 as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
 header, and the AVX component only when RFBM selects it.
 
+CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
+address when its page is unmapped or unreadable. CLDEMOTE and the prefetches
+are hints and never fault.
+
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
