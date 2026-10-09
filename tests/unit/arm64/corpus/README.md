@@ -1,7 +1,7 @@
 # A64 instruction unit corpus
 
-`a64_instruction_corpus.pack` is the self-contained input of the ordinary
-`arm64-instruction-corpus` CTest. Its runner,
+`a64_instruction_corpus.pack` is the build-generated, self-contained input of
+the ordinary `arm64-instruction-corpus` CTest. Its runner,
 [`../instruction_corpus_runner.cpp`](../instruction_corpus_runner.cpp),
 executes every case of the build's page profile through the production gadget
 engine and, when the host implements the case's native features or the case
@@ -12,6 +12,17 @@ FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
 non-streaming SVE state through the SVE semantic library (see
 [Non-streaming SVE state](#non-streaming-sve-state)). The runner needs no
 Python, network, or file other than the pack.
+
+The checked-in `source/` tables retain the programs and independently derived
+or observed golden expectations. CMake's `uml_arm64_instruction_corpus` target
+generates the full pack in this directory's build-tree counterpart, including
+both page profiles. Allocation loops and regular register and memory fills
+are recipes. Maintained SME/SVE generators supply native test inputs while
+the tables retain their hardware observations; the SVE trap generator derives
+trap cases from the native golden records. Generation needs Python only
+at build time and verifies the accepted pack hash. The
+[source contract](../../../../tools/instruction-corpus/README.md) owns this
+format and promotion of accepted producer output.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -115,7 +126,11 @@ region   = address:u64 size:u32 flags:u8 blob:u32
 index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
-2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
+2 broad) in bits 2-3. The invalid-encoding bit means that the virtual CPU
+decodes the word as no instruction in any state, as for an unallocated word
+or a reserved operand value; a clear bit on an illegal-instruction case
+means a valid encoding that traps for its exception level, mode, or state,
+or for a missing feature. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
@@ -216,7 +231,7 @@ its meaning, bit for bit, in both.
 ## Running
 
 ```sh
-uml_arm64_instruction_corpus_tests tests/unit/arm64/corpus/a64_instruction_corpus.pack \
+uml_arm64_instruction_corpus_tests BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
   [--engine gadgets|jit|library] [--assume-host-feature TOKEN] \
   [--max-failures N | --fail-fast] [--list]
@@ -242,7 +257,8 @@ from observation on native hardware, never from an engine's output.
 
 The exporter, its driver, and the producer unit tests exist only in producer
 commits; `provenance.json` names the one that produced the current pack as
-`producer_commit`. Later commits removed the harness's interpreter lane and
+`producer_commit`. Ordinary source-table materialization does not need that
+commit. Later commits removed the harness's interpreter lane and
 export mode, `tools/arm64-tests/export-unit-corpus.py`, and the producers whose
 cases the corpus holds. To add a case, check out the producer commit and copy
 the current `forced-cases.tsv` into it, add or extend a check in a producer
@@ -280,8 +296,9 @@ producer commit, so a producer change that renumbers checks must re-pin that
 producer's directives; the export summary reports a directive whose check is
 missing or excluded. A harness abort names the ordinal of the failing check,
 and each export directory lists the ordinal of every exported case in
-`<producer>.cases.tsv`. Carry the regenerated pack, `manifest.tsv`,
-`coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
+`<producer>.cases.tsv`. Promote the accepted regenerated pack with the
+source contract's import command; it updates the source tables and metadata.
+Carry those and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack, that every inventory entry has a case or an
@@ -299,14 +316,14 @@ Each step after the export reads the previous step's dump, replaces its own
 records, and appends them, so the steps run in one order, followed by one
 `--repack`: [LSE2 alignment](#lse2-alignment-cases),
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
+[native floating-point trap](#native-floating-point-trap-cases),
 [native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
 [SVE FEAT_AFP](#sve-feat_afp-cases), and [SVE trap](#sve-trap-cases). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
 SVE trap step derives its records from the native SVE records and stays
 last. Deriving trap records from the SVE/SME `m4` and SVE FEAT_AFP records
-as well waits until the M4 has answered, and needs a source predicate that
-admits the rows that need SME.
+as well needs a source predicate that admits the rows that need SME.
 
 ## LSE2 alignment cases
 
@@ -410,7 +427,7 @@ python3 -B tools/arm64-tests/lse2-alignment-corpus.py corpus.jsonl lse2.jsonl
 python3 -B tools/arm64-tests/absent-feature-corpus.py \
   --failing tests/unit/arm64/corpus/absent-feature-failing.tsv lse2.jsonl absent.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 A regeneration that changes which stripped cases fail refreshes the failing
@@ -458,8 +475,10 @@ that keeps PSTATE.SM set expects the reset value.
 
 Where the encoding table decides a case's legality (each row's witness in
 every mode it needs and in each mode that lacks one, the rows outside the
-profile, and every FP&SIMD class in streaming mode), the script refuses a
-response that disagrees, so a disagreement is a finding about the table,
+profile, every FP&SIMD class in streaming mode, and an operand case's word
+that no row decodes or whose bitmask immediate DecodeBitMasks reserves,
+which is an invalid encoding), the script refuses a response that
+disagrees, so a disagreement is a finding about the table,
 never an expectation. The FP&SIMD classes of `absent` inventory entries are
 left out: the host may implement their features (the M4 executes the
 FEAT_LRCPC3 forms), but the guest's result is UNDEFINED, which the
@@ -476,13 +495,12 @@ python3 -B tools/arm64-tests/sme-native-corpus.py --request sme.request
 sme_native_oracle sme.request sme.response                # on the SME host
 python3 -B tools/arm64-tests/sme-native-corpus.py absent.jsonl native.jsonl \
   --response sme.response --response sme.response2
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack native.jsonl \
-  --output tests/unit/arm64/corpus
 ```
 
-The native SVE step below follows on `native.jsonl` before the repack.
+The native floating-point trap step below follows on `native.jsonl` before
+the repack.
 A regeneration that leaves the request unchanged needs no SME host:
-`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+`--carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes and the outcome counts under `sme_native`,
 `build-unit-corpus.py --check` verifies the hashes, and the
@@ -490,12 +508,55 @@ script, table, and request hashes and the outcome counts under `sme_native`,
 its outcome. The `arm64-sme-native-oracle` tooling test drives the oracle
 with base A64 cases on any arm64 Mac.
 
+## Native floating-point trap cases
+
+The producer's trap checks derived their outcomes from the emulator's former
+trap contract. The hardware decides them now: Apple's cores trap enabled
+floating-point exceptions, and XNU reports one to the native oracle above as
+a bad instruction whose syndrome has EC 0x2c.
+[`tools/arm64-tests/floating-trap-native-corpus.py`](../../../../tools/arm64-tests/floating-trap-native-corpus.py)
+runs, without SME state, every register-only case of the
+`arm64-floating-trap-scalar`, `-vector` and `-control` records, whose
+outcomes it replaces, and authored cases, which it
+appends as the `arm64-floating-trap-native` records: flushes to zero and
+exact and inexact tiny results with FPCR.UFE set, several enabled causes
+within an element and across lanes, and what a trap leaves in FPSR and its
+destination. Each authored case names the cause the architecture and the
+reporting priority give it, and the script refuses a response that
+disagrees, or whose trap reports more than one cause or, at a program's
+entry, changes any state.
+Its docstring lists the cases.
+
+Regenerate on any arm64 Mac, twice from clean directories, and require
+identical responses:
+
+```sh
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py \
+  --request native.jsonl trap.request
+sme_native_oracle trap.request trap.response
+python3 -B tools/arm64-tests/floating-trap-native-corpus.py native.jsonl \
+  trap.jsonl --response trap.response --response trap.response2
+```
+
+The native SVE step below follows on `trap.jsonl` before the repack.
+
+The cases that need FEAT_AFP or FEAT_BF16, which the M1 lacks, form a second
+request, which `--afp-request` writes and an FEAT_AFP and FEAT_BF16 host, the
+M4 under its lease and workdir rules, answers twice; `--afp-response` adds
+their `afp` and `bf16` records, and the script refuses a response from a host
+without both features. `--carry` copies the current
+outcomes and records when the requests are unchanged. `provenance.json`
+records the script and request hashes, the outcome counts and how many
+rerecorded outcomes changed under `floating_trap_native`, and the
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives
+every case but its outcome.
+
 ## Native SVE cases
 
 No producer had an SVE model.
 [`tools/arm64-tests/sve-native-corpus.py`](../../../../tools/arm64-tests/sve-native-corpus.py)
 authors the `arm64-sve-native` records from the generated SVE/SME encoding
-table and appends them after the native SME step, and
+table and appends them after the native floating-point trap step, and
 [`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
 observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
 vector length, arm64-builder's Neoverse V2. The script's docstring lists what each
@@ -553,15 +614,15 @@ records; they may differ only in the elements the relation excludes:
 ```sh
 python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
 tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
-python3 -B tools/arm64-tests/sve-native-corpus.py native.jsonl sve.jsonl \
+python3 -B tools/arm64-tests/sve-native-corpus.py trap.jsonl sve.jsonl \
   --response sve.response.1 --response sve.response.2
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 The SVE/SME step below follows on `sve.jsonl` before the repack. A
 regeneration that leaves the request unchanged needs no SVE host:
-`--carry tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
+`--carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack` copies the
 current native records instead of `--response`. `provenance.json` records the
 script, table, and request hashes, the host's VL, page size, and hardware
 capabilities, and the outcome counts under `sve_native`;
@@ -595,8 +656,8 @@ native SVE step, and takes each family's outcomes from one source:
   so the M4 runs each case in streaming mode with every Z and P register
   holding its VL 16 value in each segment. The low segment and FPSR are then
   the VL 16 outcome, and the script requires every segment to agree. The
-  same request runs the `asl` cases, whose results must match their models.
-  The pack holds no `m4` record until the M4 has answered.
+  same request runs the `asl` cases, whose results must match their models,
+  and on the M4 they all do.
 - `table` holds any word no row decodes; today there is none.
 
 Each record has a VL and no SVL, and each case names its row's
@@ -606,7 +667,7 @@ case names it, and skips it elsewhere.
 
 ```sh
 python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
-  --carry tests/unit/arm64/corpus/a64_instruction_corpus.pack
+  --carry BUILD/tests/unit/arm64/corpus/a64_instruction_corpus.pack
 python3 -B tools/arm64-tests/sve-sme-corpus.py --m4-request m4.request
 sme_native_oracle m4.request m4.response.1                # twice, on the M4
 python3 -B tools/arm64-tests/sve-sme-corpus.py sve.jsonl sve-sme.jsonl \
@@ -640,9 +701,9 @@ The sources hold subnormals, NaNs, signed zeros, or ties. These run under
 FIZ, AH, and the combinations of AH with FIZ, NEP, and FZ, FZ16, and DN
 that each class meets. Ties run under AH with RZ, which the BF16 forms
 override with round-to-nearest. A host without FEAT_AFP reads AH, FIZ, and
-NEP back as zero, and the script refuses its response. Each case names its row's non-streaming requirement
-and `afp`, and also `rpres` for single-precision FRECPE and FRSQRTE under
-AH. The pack holds no record until the M4 has answered:
+NEP back as zero, and the script refuses its response. Each case names its
+row's non-streaming requirement and `afp`, and also `rpres` for
+single-precision FRECPE and FRSQRTE under AH:
 
 ```sh
 python3 -B tools/arm64-tests/sve-afp-corpus.py --m4-request afp.request
@@ -660,18 +721,19 @@ synthetic response.
 
 ## SVE trap cases
 
-The AdvSIMD trapped records come from producer unit tests whose
-`check_trap()` derives each expectation from operands with known
-exceptions and the trap contract of
+The AdvSIMD trapped outcomes are the M1's (see
+[Native floating-point trap cases](#native-floating-point-trap-cases)),
+and they fix the trap contract of
 [`floating_exception.hpp`](../../../../darwin/cpu/arm64/detail/floating_exception.hpp):
-an enabled exception leaves every register and PC as they were, commits
-only the unenabled flags, and gives syndrome EC 0x2c, IL, TFV, and the
-enabled exceptions raised. No hardware observes an SVE trap at
-PSTATE.SM = 0 either: the native records run with every enable clear, and
-in streaming mode FPProcessException() traps only with FEAT_SME_FA64.
+an enabled exception leaves every register, FPSR and PC as they were, and
+gives syndrome EC 0x2c, IL, TFV, and one cause, the first enabled one
+raised in the order ID, IO, DZ, OF, UF, IX. No hardware observes an SVE
+trap at PSTATE.SM = 0: the native records run with every enable clear,
+the M1 has no SVE, and in streaming mode FPProcessException() traps only
+with FEAT_SME_FA64.
 [`tools/arm64-tests/sve-trap-corpus.py`](../../../../tools/arm64-tests/sve-trap-corpus.py)
-applies the same derivation to the SVE floating-point forms and writes the
-`arm64-sve-trap` records, at VL 16 in both page profiles:
+derives the SVE floating-point forms' outcomes from that contract and
+writes the `arm64-sve-trap` records, at VL 16 in both page profiles:
 
 - `derived` reruns each completed one-instruction floating-point case of
   the `arm64-sve-native` records with every enable, with only the first
@@ -680,16 +742,20 @@ applies the same derivation to the SVE floating-point forms and writes the
   with every enable clear; a case that does not trap completes exactly as
   observed.
 - `authored` holds what no native case pins: divide by zero and input
-  denormal alone, every element's exceptions together, the flags a trap
-  commits, inactive elements that would raise, which complete, and traps
-  that keep a compare's P destination and the V destination of FADDV and
-  FADDA. IEEE 754 arithmetic decides each operand's exceptions.
+  denormal alone, the one cause of every element's exceptions together,
+  the flags a trap leaves, inactive elements that would raise, which
+  complete, traps that keep a compare's P destination and the V
+  destination of FADDV and FADDA, and the underflow rules below. IEEE 754
+  arithmetic decides each operand's exceptions.
 
 A trap leaves the SVE state live, as the SVE access trap Linux takes first
 makes it. FPRoundBase() never traps a flush to zero's underflow, and with
-UFE set an exact tiny result underflows; the trap contract decides from an
-execution with every enable clear, so a case sets UFE only when it raised
-underflow with FZ and FZ16 clear.
+UFE set a tiny result underflows even when it is exact. The authored cases
+hold both rules: exact tiny products, tiny intermediate results of FADDV,
+FADDA and FMAXV, and an FCVT to half precision, which ignores FZ16, trap;
+FMUL and FRECPE flushes under FZ and FZ16 complete. A native case cannot
+show an exact tiny intermediate result, so a derived case sets UFE only
+when it raised underflow with FZ and FZ16 clear.
 
 The step needs no hardware. It is the last step of the chain and reruns
 after any change to the native records or to the script, on `sve-afp.jsonl`
@@ -698,7 +764,7 @@ or on the pack's own `--dump`:
 ```sh
 python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
-  --output tests/unit/arm64/corpus
+  --output .build/corpora/arm64
 ```
 
 `provenance.json` records the script and table hashes and the case counts

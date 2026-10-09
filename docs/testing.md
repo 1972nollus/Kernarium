@@ -14,8 +14,8 @@ cmake --list-presets=all
 
 Every first-party CTest has exactly one primary suite:
 
-- `unit`: native C++/assembly behavior; no Python, shell, kernel, network, CLI,
-  or rootfs dependency;
+- `unit`: native C++/assembly behavior; no runtime Python, shell, kernel,
+  network, CLI, or rootfs dependency;
 - `tooling`: repository, build, manifest, and source-policy checks; and
 - `integration`: guest, rootfs, GUI, network, and kernel behavior.
 
@@ -45,10 +45,19 @@ for the management console's run directory. Each registration owns
 may not fit `sun_path`. Tests remove what they create, so a leftover file
 names the test that leaked it.
 
-A unit test that reads checked-in data, such as an instruction corpus or the
-video fixtures, takes its path as a registration argument rather than a
-compiled-in source or build path. A copy of the binary then runs wherever its
-data is copied, and a binary run without the argument prints its usage.
+A unit test that reads data, such as a generated instruction corpus or the
+checked-in video fixtures, takes its path as a registration argument rather
+than a compiled-in source or build path. A copy of the binary then runs
+wherever its data is copied, and a binary run without the argument prints its
+usage.
+
+CPU instruction assets are generated in the build tree from checked-in source
+tables and independent golden expectations. Their consumers depend on the
+generation targets, and the tooling aggregate builds the A64 asset as well.
+Generation requires Python's standard library, with no network, Git history,
+assembler, upstream checkout, or reference hardware. The
+[source contract](../tools/instruction-corpus/README.md) owns their format and
+promotion; the binary assets are not tracked.
 
 Unit tests assert with `require`, `fail` and `requireThrows` from
 `tests/unit/require/require.hpp`, which every unit binary links. A failure
@@ -482,14 +491,14 @@ python3 tests/integration/ltp/run_guest_ltp.py --help
 
 ## A64 instruction corpus
 
-`arm64-instruction-corpus` runs the checked-in corpus in
+`arm64-instruction-corpus` runs the build-generated corpus from
 [`../tests/unit/arm64/corpus/`](../tests/unit/arm64/corpus/README.md) through
 the gadget and JIT engines of each page profile in one process, its SVE cases
 through the SVE semantic library as well, and the
 `arm64-instruction-corpus-freshness` tooling test checks the corpus metadata
 against its pack. The corpus README owns the format, sampling policy, runner
-options, and regeneration, which requires a producer commit. Cases that need
-engine hooks or a deferred floating-point entry state stay in focused tests
+options, and promotion of new cases, which requires a producer commit. Cases
+that need engine hooks or a deferred floating-point entry state stay in focused tests
 that run the production gadget and JIT engines through
 `tests/unit/arm64/arm64_engine_test_support.hpp`.
 `arm64-emitted-registers` checks that no host code names x18, which Darwin
@@ -551,15 +560,25 @@ runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
 tooling test re-derives them. The `arm64-sve-afp` records come from the
 M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks their
-request until the M4 has answered.
+arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks them
+against their request.
+
+The `arm64-floating-trap-native` records, and the outcomes of the
+register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
+were observed on the M1, which traps floating-point exceptions natively; any
+arm64 Mac regenerates them with the same oracle. The `afp` and `bf16` records
+need FEAT_AFP and FEAT_BF16 and were observed on the M4. The
+`arm64-instruction-corpus-floating-trap-native` tooling test re-derives their
+cases and holds every trap to one cause, and one at a program's entry to no
+state change.
 
 The `arm64-sve-trap` records hold the SVE floating-point forms with FPCR
-trap enables set. As for the AdvSIMD trapped records, no hardware observes
-them: each is derived from a native case's observed exceptions, or authored
-with operands whose exceptions IEEE 754 arithmetic decides, under the
-emulator's trap contract. The `arm64-instruction-corpus-sve-trap` tooling
-test re-derives them from the native records.
+trap enables set. No hardware observes them, since the M1 has no SVE: each
+is derived from a native case's observed exceptions, or authored with
+operands whose exceptions IEEE 754 arithmetic and FPRoundBase() decide,
+under the trap contract the M1's records fix. The
+`arm64-instruction-corpus-sve-trap` tooling test re-derives them from the
+native records.
 
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
@@ -653,7 +672,7 @@ per-test result.
 
 The x86-64 JIT takes the same campaign: give `run-asm-corpus.py`
 `uml_x86_64_fex_asm_jit_runner`, which runs i386 binaries in a compat32
-context. The macOS 4 KiB unit tree also runs the checked-in x86-64 corpus
+context. The macOS 4 KiB unit tree also runs the build-generated x86-64 corpus
 through the x86-64 JIT. `x86-64-jit-instruction-corpus` holds it to
 `tests/unit/x86_64/jit_corpus_exclusions.tsv`, whose rows name each record the
 engine is known to fail with its class and fail the test when the record passes

@@ -46,11 +46,10 @@ boundaries, predicate patterns, general sources, and FPCR controls). The
 table decides each word's legality; every value of a free field of these
 rows decodes, so the models need no hardware for it, and a word no row
 decodes goes in a third record, table. The records hold for both page
-profiles at VL 16, without an SVL: arm64-sve-sme/asl and /table now, and
-arm64-sve-sme/m4 once the M4 has answered. Each case names its row's
-non-streaming requirement, so the runner runs it only for an engine at
-sve_support complete whose virtual CPU implements SME at any SVL (and SME2
-for the 25), and skips it everywhere else.
+profiles at VL 16, without an SVL: arm64-sve-sme/asl, /table, and /m4.
+Each case names its row's non-streaming requirement, so the runner runs it
+only for an engine at sve_support complete whose virtual CPU implements SME
+at any SVL (and SME2 for the 25), and skips it everywhere else.
 
     sve-sme-corpus.py sve.jsonl sve-sme.jsonl --carry PACK
     sve-sme-corpus.py --m4-request m4.request

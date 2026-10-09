@@ -7,8 +7,9 @@ on an SME host, which this host need not be. Its exception path, register
 transfer, and region handling are the same for every case, so this test
 runs a request without SME state through them: a completed case, an
 undefined instruction, a breakpoint, read and write faults with their
-addresses, NZCV, SP, and SIMD&FP results, an initial FPSR, and a store's
-region runs. On an SME host it also runs streaming cases, whose FPSR XNU
+addresses, NZCV, SP, and SIMD&FP results, an initial FPSR, a store's
+region runs, and a trapped floating-point exception, which XNU reports as a
+bad instruction with the syndrome's EC 0x2c. On an SME host it also runs streaming cases, whose FPSR XNU
 resets on every kernel entry: the FPSR an instruction leaves must reach the
 response after a completed case, a fault and an undefined instruction, the
 initial FPSR must reach the program, and SMSTART's own reset must stay.
@@ -30,6 +31,8 @@ GENERATOR = REPOSITORY / "tools" / "arm64-tests" / "sme-native-corpus.py"
 
 FADD_SCALAR = 0x1E21_2802  # FADD S2, S0, S1
 FADD_VECTOR = 0x4E22_D420  # FADD V0.4S, V1.4S, V2.4S
+FDIV_SCALAR = 0x1E22_1820  # FDIV S0, S1, S2
+DZE = 0x200
 ONE = struct.pack("<I", 0x3F80_0000)  # 1.0
 TINY = struct.pack("<I", 0x3080_0000)  # 2^-30: 1.0 + TINY is inexact
 DZC, IXC = 0x02, 0x10
@@ -139,6 +142,10 @@ def main() -> int:
         (Case((FADD_SCALAR, svc), 0,
               state(fpsr=DZC, v={0: ONE + bytes(12), 1: TINY + bytes(12)})),
          "system-call", 4, 0, {}),
+        (Case((FDIV_SCALAR, svc), 0,
+              state(fpcr=DZE, fpsr=IXC,
+                    v={1: ONE + bytes(12), 2: bytes(16)})),
+         "floating-point-trap", 0, 0, {}),
     ]
     cases = [check[0] for check in checks]
     host, results = run_oracle(oracle, native, cases, 0)
@@ -161,6 +168,10 @@ def main() -> int:
     if results[10].state.fpsr != DZC | IXC:
         failures.append(
             f"FADD from FPSR.DZC: FPSR {results[10].state.fpsr:#x}")
+    if results[11].esr != 0xB280_0002 or results[11].state.v or \
+            results[11].state.fpsr != IXC:
+        failures.append(f"FDIV by zero with DZE: ESR {results[11].esr:#x}, "
+                        f"FPSR {results[11].state.fpsr:#x}")
     if host["svl"]:
         failures += streaming_failures(oracle, native, host["svl"])
     if failures:

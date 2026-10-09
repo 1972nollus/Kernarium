@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Normalize pinned K and FEX x86-64 cases, and the repository's own cases,
-into the checked-in unit corpus."""
+into the generated unit corpus."""
 
 from __future__ import annotations
 
@@ -1526,7 +1526,7 @@ def write_outputs(
         for name, contents in generated.items():
             path = output / name
             if not path.is_file() or path.read_bytes() != contents:
-                fail(f"checked-in corpus is stale: {path}")
+                fail(f"generated corpus is stale: {path}")
         print(f"verified {provenance['cases']} checked-in x86 instruction cases")
         return
     output.mkdir(parents=True, exist_ok=True)
@@ -1569,7 +1569,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=REPOSITORY / "tests" / "unit" / "x86_64" / "corpus",
+        default=REPOSITORY / ".build/corpora/x86_64",
     )
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()

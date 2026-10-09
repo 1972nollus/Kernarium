@@ -12,14 +12,17 @@ case against the trap contract independently of the script:
   counts and events;
 - the records are the script's, case for case: derived from the native
   records in their order, then the authored cases;
-- a trap retires nothing, changes no register, keeps the starting FPSR
-  flags, adds no flag whose enable is set, leaves the SVE state live, and
-  names in its syndrome (EC 0x2c, IL, TFV) only exceptions whose enables
-  are set;
+- a trap retires nothing, changes no register and not FPSR, leaves the
+  SVE state live, and names in its syndrome (EC 0x2c, IL, TFV) one cause
+  whose enable is set: for a derived case, the first by priority (ID, IO,
+  DZ, OF, UF, IX) of the enabled exceptions its native case raised;
 - a completed case retires its instruction and the SVC, and adds no flag
-  whose enable is set; a derived one ends exactly as its native case,
-  but for FPSR;
-- no case sets FPCR.UFE while FZ or FZ16 is set.
+  whose enable is set but underflow under FZ or FZ16, a flush's, which
+  never traps; a derived one ends exactly as its native case, but for
+  FPSR;
+- no derived case sets FPCR.UFE while FZ or FZ16 is set, since its
+  native case cannot show whether a flush or an exact tiny result
+  underflowed; the authored cases hold both rules.
 
 build-unit-corpus.py --check already refuses a pack whose recorded script
 or table hash is stale.
@@ -54,24 +57,33 @@ def contract(trap, case: dict, base: dict | None) -> None:
     fpsr = trap.number(initial, "fpsr")
     final = trap.number(expected, "fpsr", fpsr)
     enabled = fpcr >> trap.ENABLE_SHIFT & trap.FLAGS
-    if fpcr & trap.UFE and fpcr & (trap.FZ | trap.FZ16):
+    if base is not None and fpcr & trap.UFE and \
+            fpcr & (trap.FZ | trap.FZ16):
         raise SystemExit(f"{name}: UFE with FZ or FZ16")
+    flushes = trap.UFC if fpcr & (trap.FZ | trap.FZ16) else 0
     if final & fpsr != fpsr or (final & ~fpsr) & ~trap.FLAGS or \
-            (final & ~fpsr) & enabled:
+            (final & ~fpsr) & enabled & ~flushes:
         raise SystemExit(f"{name}: FPSR {final:#x} from {fpsr:#x} under "
                          f"enables {enabled:#x}")
     if case["event"] == "floating-point-trap":
         syndrome = int(case["syndrome"], 16)
         cause = syndrome & ~trap.SYNDROME
         if syndrome & trap.SYNDROME != trap.SYNDROME or not cause or \
-                cause & ~enabled:
+                cause & (cause - 1) or cause & ~enabled:
             raise SystemExit(f"{name}: syndrome {syndrome:#010x} under "
                              f"enables {enabled:#x}")
-        if case["retired"] != 0 or set(expected) - {"fpsr", "sve_live"} or \
+        if base is not None:
+            raised = enabled & trap.number(base["expected"], "fpsr") & \
+                trap.FLAGS
+            first = trap.IDC if raised & trap.IDC else raised & -raised
+            if cause != first:
+                raise SystemExit(f"{name}: reports {cause:#x}, not "
+                                 f"{first:#x}")
+        if case["retired"] != 0 or set(expected) - {"sve_live"} or \
                 int(expected.get("sve_live", initial.get("sve_live", "0")),
                     16) != 1:
-            raise SystemExit(f"{name}: a trap that changes more than FPSR "
-                             "and the live mark")
+            raise SystemExit(f"{name}: a trap that changes more than the "
+                             "live mark")
     elif case["event"] == "system-call":
         pc = trap.corpus.hex64(trap.corpus.CODE_BASE + 8)
         if case["retired"] != 2 or expected.get("pc") != pc:
@@ -133,8 +145,7 @@ def check(trap, sources: list[dict], records: list[dict], meta: dict) -> str:
 def main() -> int:
     trap = load_generator()
     builder = trap.corpus
-    pack = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else \
-        builder.CORPUS / builder.PACK_NAME
+    pack = pathlib.Path(sys.argv[1])
     corpus, tokens = builder.decode_pack(pack.read_bytes())
     items = [item for item in map(json.loads,
                                   builder.dump_corpus(corpus, tokens))

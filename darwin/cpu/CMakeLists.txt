@@ -73,6 +73,7 @@ endif()
 
 add_library(uml_arm64_execution_helpers OBJECT
     arm64/code_synchronization.cpp
+    arm64/floating_exception.cpp
     arm64/fp_environment.cpp
     arm64/memory_transfer.cpp
     arm64/native_environment.S

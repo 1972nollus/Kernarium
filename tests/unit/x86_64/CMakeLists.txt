@@ -29,7 +29,7 @@ uml_add_unit_test(
 # The flags an Intel Xeon leaves in a masked MXCSR, against the engine's
 # ordinary path.
 set(_uml_x86_64_masked_flags
-    "${CMAKE_CURRENT_SOURCE_DIR}/masked_flags/xeon-flags.bin")
+    "${UML_X86_64_MASKED_FLAGS}")
 add_executable(uml_x86_64_masked_flags_tests
     x86_64_masked_flags_tests.cpp)
 target_link_libraries(uml_x86_64_masked_flags_tests PRIVATE
@@ -38,6 +38,7 @@ target_link_libraries(uml_x86_64_masked_flags_tests PRIVATE
     UML::CpuContract)
 target_include_directories(uml_x86_64_masked_flags_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
+add_dependencies(uml_x86_64_masked_flags_tests uml_x86_64_masked_flags)
 uml_add_unit_test(
     NAME x86-64-masked-flags
     COMMAND uml_x86_64_masked_flags_tests "${_uml_x86_64_masked_flags}"
@@ -56,15 +57,10 @@ uml_add_unit_test(
     LABELS cpu;x86-64)
 
 # K instruction traces and complementary FEX assembly programs are normalized
-# into this checked-in pack. The ordinary unit test therefore has no runtime or
-# build dependency on either upstream project or on an x86 assembler.
+# into source tables. CMake generates the pack without either upstream project
+# or an x86 assembler; the ordinary unit test consumes only that pack.
 set(_uml_x86_64_instruction_corpus
-    "${CMAKE_CURRENT_SOURCE_DIR}/corpus/x86_64_v3.pack")
-if(NOT EXISTS "${_uml_x86_64_instruction_corpus}")
-    message(FATAL_ERROR
-        "The checked-in x86-64 instruction corpus is missing: "
-        "${_uml_x86_64_instruction_corpus}")
-endif()
+    "${UML_X86_64_INSTRUCTION_CORPUS}")
 add_executable(uml_x86_64_fex_asm_runner
     fex_asm_runner.cpp)
 target_link_libraries(uml_x86_64_fex_asm_runner PRIVATE
@@ -75,6 +71,7 @@ target_include_directories(uml_x86_64_fex_asm_runner PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 set_target_properties(uml_x86_64_fex_asm_runner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+add_dependencies(uml_x86_64_fex_asm_runner uml_x86_64_instruction_corpus)
 uml_add_unit_test(
     NAME x86-64-instruction-corpus
     COMMAND uml_x86_64_fex_asm_runner "${_uml_x86_64_instruction_corpus}"
@@ -108,6 +105,7 @@ if(TARGET uml_x86_64_jit)
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
     set_target_properties(uml_x86_64_fex_asm_jit_runner PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+    add_dependencies(uml_x86_64_fex_asm_jit_runner uml_x86_64_instruction_corpus)
     uml_add_unit_test(
         NAME x86-64-jit-instruction-corpus
         COMMAND uml_x86_64_fex_asm_jit_runner
@@ -174,6 +172,7 @@ if(TARGET uml_x86_64_jit)
         UML::CpuContract)
     target_include_directories(uml_x86_64_masked_flags_jit_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
+    add_dependencies(uml_x86_64_masked_flags_jit_tests uml_x86_64_masked_flags)
     uml_add_unit_test(
         NAME x86-64-jit-masked-flags
         COMMAND uml_x86_64_masked_flags_jit_tests
