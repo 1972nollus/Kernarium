@@ -1845,13 +1845,10 @@ bool JitCompiler::emit_sve_floating_compare(std::uint16_t form,
                                             std::uint32_t instruction,
                                             std::uint64_t pc) {
   /*
-   * FCM<cc> (not FCMUO) and FAC<cc> Pd.T, Pg/Z, Zn.T, <Zm.T | #0.0>. AdvSIMD's
-   * compares raise the exceptions SVE's do (the ordered compares on any
-   * NaN, FCMEQ and the unordered forms on a signalling one), but also for a
-   * lane Pg leaves inactive, so a predicate that is not all-active takes
-   * the library. FCMUO is the library's too: its two self-compares would
-   * flag a denormal operand beside a NaN under FPCR.AH, which the library's
-   * FCMP does not.
+   * FCM<cc> and FAC<cc> Pd.T, Pg/Z, Zn.T, <Zm.T | #0.0>. AdvSIMD's compares
+   * raise the exceptions SVE's do (the ordered compares on any NaN, FCMEQ and
+   * the unordered forms on a signalling one), but also for a lane Pg leaves
+   * inactive, so a predicate that is not all-active takes the library.
    */
   const auto &host = host_capabilities();
   const unsigned size = field(instruction, 22, 2);
@@ -1861,7 +1858,7 @@ bool JitCompiler::emit_sve_floating_compare(std::uint16_t form,
   const unsigned d = field(instruction, 0, 4);
   const unsigned g = field(instruction, 10, 3);
   const unsigned n = field(instruction, 5, 5);
-  enum class Condition { eq, ne, ge, gt, lt, le, acge, acgt };
+  enum class Condition { eq, ne, ge, gt, lt, le, uo, acge, acgt };
   Condition condition;
   const bool zero = form == inl::fcmp_zero;
   if (zero) {
@@ -1883,6 +1880,7 @@ bool JitCompiler::emit_sve_floating_compare(std::uint16_t form,
     case 0x5: condition = Condition::gt; break;
     case 0x6: condition = Condition::eq; break;
     case 0x7: condition = Condition::ne; break;
+    case 0xc: condition = Condition::uo; break;
     case 0xd: condition = Condition::acge; break;
     case 0xf: condition = Condition::acgt; break;
     default: return false;
@@ -1901,17 +1899,41 @@ bool JitCompiler::emit_sve_floating_compare(std::uint16_t form,
                  : read_native_vector(field(instruction, 16, 5), 1U).host;
   }
   const bool swapped = condition == Condition::lt || condition == Condition::le;
-  const FloatingOp &op = condition == Condition::eq || condition == Condition::ne
-                             ? op_fcmeq
-                         : condition == Condition::ge ||
-                                 condition == Condition::le
-                             ? op_fcmge
-                         : condition == Condition::acge ? op_facge
-                         : condition == Condition::acgt ? op_facgt
-                                                        : op_fcmgt;
-  emitter_.emit(three(floating_word(op, size), scratch_a,
-                      swapped ? second : first.host,
-                      swapped ? first.host : second));
+  if (condition == Condition::uo) {
+    /*
+     * FCMUO raises what FCMEQ does: both unpack alike, a signalling NaN is
+     * invalid, and a denormal is processed (IDC under FPCR.AH, or when FZ
+     * flushes it) only as FCMEQ would, and under AH not beside a NaN. So
+     * FCMEQ runs for its flags alone, and the NaNs are found on the integers,
+     * with none: with the sign shifted out, a NaN is above twice the
+     * infinity. Two self-compares would flag a denormal beside a NaN.
+     */
+    constexpr std::uint64_t infinity[]{0x7c00U, 0x7f80'0000U,
+                                       0x7ff0'0000'0000'0000ULL};
+    emitter_.emit(three(floating_word(op_fcmeq, size), scratch_b, first.host,
+                        second));
+    emit_sve_element_constant(3U, infinity[size - 1U] << 1U, esize);
+    const unsigned bits = esize * 8U;
+    emitter_.emit(0x4f00'5400U | ((bits + 1U) << 16) | (first.host << 5) |
+                  scratch_a); // shl #1
+    emitter_.emit(0x4f00'5400U | ((bits + 1U) << 16) | (second << 5) |
+                  scratch_b);
+    emitter_.emit(three(sized(vector_cmhi, size), scratch_a, scratch_a, 3U));
+    emitter_.emit(three(sized(vector_cmhi, size), scratch_b, scratch_b, 3U));
+    emitter_.emit(three(vector_orr, scratch_a, scratch_a, scratch_b));
+  } else {
+    const FloatingOp &op = condition == Condition::eq || condition == Condition::ne
+                               ? op_fcmeq
+                           : condition == Condition::ge ||
+                                   condition == Condition::le
+                               ? op_fcmge
+                           : condition == Condition::acge ? op_facge
+                           : condition == Condition::acgt ? op_facgt
+                                                          : op_fcmgt;
+    emitter_.emit(three(floating_word(op, size), scratch_a,
+                        swapped ? second : first.host,
+                        swapped ? first.host : second));
+  }
   if (condition == Condition::ne)
     emitter_.emit(0x6e20'5800U | (scratch_a << 5) | scratch_a); // not
   mark_native_fp();

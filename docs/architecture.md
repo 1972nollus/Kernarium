@@ -634,7 +634,8 @@ onto AdvSIMD for an all-active governing predicate
 the forms are listed in
 [`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
 multiply-add (negated forms included), arithmetic (divide, square root and
-rounding included), compare (except FCMUO; into a predicate, flags untouched)
+rounding included), compare (into a predicate, flags untouched; FCMUO through FCMEQ for its
+exceptions and integer compares for its NaNs)
 and same-size conversion forms, the integer arithmetic, unary (negate, count,
 extend), logical, shift (by a vector, by an immediate and merging), halving,
 difference, widening, narrowing, high-half, dot-product and UADDV forms, ZIP,
