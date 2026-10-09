@@ -5609,6 +5609,64 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 	return expect(varied, "RDRAND returned one value sixteen times");
 }
 
+/* A guest vCPU has no processor numbering, so RDPID, RDTSCP's ECX and the
+ * limit of the per-CPU segment LSL reads all name processor 0 of node 0. */
+[[nodiscard]] bool processor_numbering_is_cpu_zero_node_zero()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t zero_flag = 1ULL << 6U;
+	/* RDTSCP overwrites EAX and EDX, so RDPID reads into another register. */
+	TestMemory long64;
+	long64.load(0, {
+		0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov r8, -1
+		0xf3, 0x49, 0x0f, 0xc7, 0xf8,             // rdpid r8
+		0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff, // mov rcx, -1
+		0x0f, 0x01, 0xf9,                         // rdtscp
+		0xbf, 0x7b, 0x00, 0x00, 0x00,             // mov edi, 0x7b
+		0x48, 0xc7, 0xc6, 0xff, 0xff, 0xff, 0xff, // mov rsi, -1
+		0x0f, 0x03, 0xf7,                         // lsl esi, di
+	});
+	TestMemory compat32;
+	compat32.load(0, {
+		0xbb, 0xff, 0xff, 0xff, 0xff,             // mov ebx, -1
+		0xf3, 0x0f, 0xc7, 0xfb,                   // rdpid ebx
+		0xb9, 0xff, 0xff, 0xff, 0xff,             // mov ecx, -1
+		0x0f, 0x01, 0xf9,                         // rdtscp
+		0xbf, 0x7b, 0x00, 0x00, 0x00,             // mov edi, 0x7b
+		0xbe, 0xff, 0xff, 0xff, 0xff,             // mov esi, -1
+		0x0f, 0x03, 0xf7,                         // lsl esi, di
+	});
+	struct Case final {
+		ExecutionMode mode;
+		TestMemory *memory;
+		Register processor;
+	};
+	const Case cases[] = {
+		{ExecutionMode::long64, &long64, Register::r8},
+		{ExecutionMode::compat32, &compat32, Register::rbx},
+	};
+	for (const auto &[mode, memory, processor] : cases) {
+		const auto built = require_built(
+			gadgets::build(*memory, 0, mode, 7),
+			"processor numbering block did not build");
+		CpuState cpu{};
+		cpu.execution_mode = mode;
+		const auto result = gadgets::execute(built.program, cpu, *memory, 7);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 7,
+			"processor numbering block did not retire") ||
+			!expect(cpu.gpr(processor) == 0,
+				"RDPID did not report processor 0") ||
+			!expect(cpu.gpr(Register::rcx) == 0,
+				"RDTSCP did not report processor 0 in ECX") ||
+			!expect(cpu.gpr(Register::rsi) == 0 &&
+				(cpu.rflags & zero_flag) != 0,
+				"LSL of the per-CPU segment did not read processor 0"))
+			return false;
+	}
+	return true;
+}
+
 /* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
  * address and leave the base unchanged; the 32-bit form zero-extends and so
  * cannot fault. */
@@ -7421,7 +7479,11 @@ struct FlagCase {
 		!expect(cpu.gpr(Register::r13) == 0,
 			"a conversion after LDMXCSR set DAZ kept its denormal input"))
 		return false;
+	/* An XSTATE_BV of zero initializes the vector registers, and RFBM still
+	 * selects the SSE component, so XRSTOR loads the image's MXCSR; the
+	 * image now holds one with DAZ clear over the DAZ set before it. */
 	put(0x1000 + 512, std::uint64_t{0});
+	put(0x1000 + 24, std::uint32_t{0x1f80});
 	const auto initial = require_built(gadgets::build(memory, 0x400),
 		"XRSTOR initializing block did not build");
 	cpu = CpuState{};
@@ -7434,7 +7496,8 @@ struct FlagCase {
 	return expect(cleared.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1f80 &&
 			cpu.gpr(Register::r8) == denormal_single_widened,
-		"a conversion after XRSTOR initialized MXCSR flushed its input");
+		"a conversion after XRSTOR loaded an MXCSR with DAZ clear "
+		"flushed its input");
 }
 
 /* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as
@@ -8230,27 +8293,39 @@ private:
 /* Model the compare/exchange retry used by glibc and libstdc++ locks. A failed
  * CMPXCHG supplies the newly observed value through EAX; the next attempt uses
  * it without reading shared memory non-atomically in the test harness.
+ *
+ * A compare/exchange retry is lock-free: some thread succeeds, but not every
+ * thread within any number of attempts. Threads that run at different speeds
+ * (a slower core, a preempted vCPU) leave the slowest to lose every race
+ * while the others still have work, so the test bounds no thread's retries.
+ * It fails a thread that keeps failing while no thread at all succeeds. Each
+ * failure means another thread changed the word, and that thread counts its
+ * success before it can change the word again, so at most one change per
+ * other thread goes uncounted; a count that stays still across many failures
+ * means the failure path itself returns the wrong value or flags.
  */
 [[nodiscard]] bool cmpxchg_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
 	constexpr unsigned iterations = 5000;
-	constexpr unsigned retry_limit = 10000;
+	constexpr unsigned stall_limit = 1000;
 	constexpr std::uint64_t counter = 0x800;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0x0f, 0xb1, 0x0b, 0x0f, 0x05});
 	const auto built = require_built(gadgets::build(memory, 0),
 		"contended CMPXCHG block did not build");
+	std::atomic<std::uint64_t> exchanges{0};
 	const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
 		CpuState cpu{};
 		cpu.gpr(Register::rbx) = counter;
 		std::uint32_t expected = 0;
 		for (unsigned step = 0; step < iterations; ++step) {
 			bool exchanged = false;
-			for (unsigned retry = 0;
-			     retry < retry_limit &&
-				 healthy.load(std::memory_order_relaxed); ++retry) {
+			auto seen = exchanges.load(std::memory_order_relaxed);
+			unsigned stalled = 0;
+			while (healthy.load(std::memory_order_relaxed) &&
+			       stalled < stall_limit) {
 				const auto desired = expected + 1;
 				cpu.rip = 0;
 				cpu.gpr(Register::rax) = expected;
@@ -8263,12 +8338,20 @@ private:
 				}
 				materialize_flags(cpu);
 				if ((cpu.rflags & rflags_zero) != 0) {
+					exchanges.fetch_add(1, std::memory_order_relaxed);
 					expected = desired;
 					exchanged = true;
 					break;
 				}
 				expected = static_cast<std::uint32_t>(
 					cpu.gpr(Register::rax));
+				const auto now = exchanges.load(std::memory_order_relaxed);
+				if (now != seen) {
+					seen = now;
+					stalled = 0;
+				} else {
+					++stalled;
+				}
 			}
 			if (!exchanged) {
 				healthy.store(false, std::memory_order_relaxed);
@@ -8277,7 +8360,7 @@ private:
 		}
 	});
 	return expect(all_healthy,
-		"a contended CMPXCHG retry did not make progress") &&
+		"a contended CMPXCHG retry failed with no thread succeeding") &&
 		expect(memory.dword(counter) == thread_count * iterations,
 			"concurrent CMPXCHG lost successful updates");
 }
@@ -8950,6 +9033,7 @@ int main()
 		segment_base_writes_reject_non_canonical_addresses() &&
 		overlong_instructions_raise_general_protection() &&
 		random_instructions_expose_no_host_state() &&
+		processor_numbering_is_cpu_zero_node_zero() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
