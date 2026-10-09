@@ -1173,6 +1173,19 @@ __asm__(".text\n"
 	X(movq2dq_memory, "0xf3, 0x0f, 0xd6, 0x00")                          \
 	X(movdq2q_memory, "0xf2, 0x0f, 0xd6, 0x00")                          \
 	X(clflushopt_register, "0x66, 0x0f, 0xae, 0xf8")                     \
+	X(clzero, "0x0f, 0x01, 0xfc")                                        \
+	X(femms, "0x0f, 0x0e")                                               \
+	X(pi2fw, "0x0f, 0x0f, 0xc1, 0x0c")                                   \
+	X(pfadd, "0x0f, 0x0f, 0xc1, 0x9e")                                   \
+	X(pswapd, "0x0f, 0x0f, 0xc1, 0xbb")                                  \
+	X(pavgusb_memory, "0x0f, 0x0f, 0x00, 0xbf")                          \
+	X(amd_3dnow_ff, "0x0f, 0x0f, 0xc1, 0xff")                            \
+	X(extrq_immediate, "0x66, 0x0f, 0x78, 0xc1, 0x08, 0x04")             \
+	X(extrq_register, "0x66, 0x0f, 0x79, 0xc1")                          \
+	X(insertq_immediate, "0xf2, 0x0f, 0x78, 0xc1, 0x08, 0x04")           \
+	X(insertq_register, "0xf2, 0x0f, 0x79, 0xc1")                        \
+	X(movntss, "0xf3, 0x0f, 0x2b, 0x00")                                 \
+	X(movntsd, "0xf2, 0x0f, 0x2b, 0x00")                                 \
 	UNDEFINED_MODE_CASES(X)
 /* Each takes an unmapped address in AX, which they raise #GP before
  * reading. */

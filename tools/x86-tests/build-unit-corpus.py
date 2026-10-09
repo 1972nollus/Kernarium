@@ -171,6 +171,9 @@ EXCLUDED_FEX_SOURCES = {
     "X87/X87MMXInteraction.asm": "expects FEX's tag word, which FNSAVE stores "
     "as valid for every full register where x86 tags zeros and special "
     "values; upstream lists it as a known failure on native hosts",
+    "modrm_oob/DDD.asm": "runs the AMD-only 3DNow! family, which upstream "
+    "does not annotate with its 3DNOW feature; an Intel core and the guest "
+    "raise #UD",
 }
 
 # HLT is the FEX test terminator and is not part of a case's userspace form.

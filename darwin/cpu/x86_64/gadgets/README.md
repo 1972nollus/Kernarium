@@ -389,8 +389,7 @@ Where the host computes something x86 does not, the gadget keeps FPSR around
 it: the FTZ test's scaled recomputation, an estimate's special inputs and its
 quotient, which raises only precision and runs unguarded once MXCSR or FPSR
 holds precision anyway -- found in FPSR, it goes into MXCSR at once, so the
-next estimate need not read FPSR -- and the 3DNow! gadgets, which MXCSR does
-not govern.
+next estimate need not read FPSR.
 The x87 gadgets compute in software and raise no host flag.
 
 Three flags stay inexact, as `x86-64-masked-flags` names them: the denormal

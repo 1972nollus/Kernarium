@@ -39,7 +39,7 @@ namespace {
 		instruction.auxiliary.kind == OperandKind::mmx_reg;
 }
 
-/* An x87 escape, D8 to DF, rather than EMMS or FEMMS. */
+/* An x87 escape, D8 to DF, rather than EMMS. */
 [[nodiscard]] bool x87_escape(const Instruction &instruction) noexcept
 {
 	return instruction.operation == Operation::x87 &&
@@ -337,7 +337,6 @@ bool misaligned_access(const CpuState &cpu, const Gadget &gadget) noexcept
 	case Operation::extended_state:
 	case Operation::vector_gather:
 	case Operation::cache_flush:
-	case Operation::cache_zero:
 	case Operation::far_call:
 	case Operation::far_jump:
 		return false;

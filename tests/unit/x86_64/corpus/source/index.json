@@ -8748,10 +8748,6 @@
       "file": "fex-..jsonl"
     },
     {
-      "name": "fex/modrm_oob/DDD.asm",
-      "file": "fex-modrm_oob.jsonl"
-    },
-    {
       "name": "fex/modrm_oob/H0F38.asm",
       "file": "fex-modrm_oob.jsonl"
     },

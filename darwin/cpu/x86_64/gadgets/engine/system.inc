@@ -339,24 +339,6 @@ Lx86_mxcsr_store_cross:
 	cross_page_store x24, 4
 	b Lx86_mxcsr_store_done
 
-gadget cache_zero
-	ldp x23, x22, [_stream], #16
-	ldr x25, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	and x25, x25, #0xffffffffffffffc0
-	mov x7, x25
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, 64
-	movi v0.16b, #0
-	stp q0, q0, [x7]
-	stp q0, q0, [x7, #32]
-	publish_pending_code x25, 64
-	ubfx x8, x23, #56, #4
-	add x8, x22, x8
-	str x8, [_cpu, #UML_X86_64_CPU_RIP]
-	add _executed, _executed, #1
-	x86_memory_order_boundary
-	mov w0, #UML_X86_64_EVENT_CONTINUED
-	b uml_x86_64_gadget_leave
-
 .p2align 4
 Lx86_memory_fault:
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]

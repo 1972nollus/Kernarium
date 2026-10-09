@@ -656,9 +656,10 @@ long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
 are the external instruction acceptance gate. AVX-512 and later encodings,
 RTM/MPX, obsolete protected-mode bounds and far-pointer-load families, and
 privileged, real-mode, virtual-machine, enclave, and system-management
-instructions are outside this Linux userspace profile. That gate is not proof
-of an arbitrary distribution or complete Linux syscall compatibility. The
-normal mainline slices and Android remain arm64-userspace-only and contain
+instructions are outside this Linux userspace profile, and AMD's 3DNow!, SSE4a
+and CLZERO raise #UD, as on an Intel core. That gate is not proof of an
+arbitrary distribution or complete Linux syscall compatibility. The normal
+mainline slices and Android remain arm64-userspace-only and contain
 none of the x86_64 kernel overlay.
 
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the

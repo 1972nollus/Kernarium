@@ -2067,31 +2067,6 @@ template<typename Entry>
 	return true;
 }
 
-[[nodiscard]] bool append_vector_bitfield(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
-{
-	const auto &instruction = gadget.instruction;
-	const auto destination = vector_offset(instruction.destination);
-	const auto source = vector_offset(instruction.source);
-	if (!destination || !source ||
-		(instruction.vector_opcode != 0x78 &&
-		 instruction.vector_opcode != 0x79) ||
-		(instruction.vector_prefix != 1 &&
-		 instruction.vector_prefix != 3))
-		return false;
-	const bool immediate = instruction.vector_opcode == 0x78;
-	const bool extracting = instruction.vector_prefix == 1;
-	const auto control = static_cast<std::uintptr_t>(extracting) |
-		(static_cast<std::uintptr_t>(immediate) << 1U) |
-		(static_cast<std::uintptr_t>(instruction.vector_control) << 8U) |
-		(static_cast<std::uintptr_t>(instruction.vector_group) << 16U);
-	stream.push_back(entry_address(
-		native::uml_x86_64_gadget_vector_bitfield));
-	stream.push_back(pack_offsets(*destination, *source));
-	stream.push_back(control);
-	return true;
-}
-
 [[nodiscard]] bool append_vector_mask_store(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
 {
@@ -2828,74 +2803,6 @@ enum class VectorFloatKind {
 	if (!encoded)
 		return false;
 	append_memory_words(stream, entry_address(entry), *encoded, gadget);
-	return true;
-}
-
-[[nodiscard]] NativeEntry vector_3dnow_entry(
-	std::uint8_t opcode, bool memory) noexcept
-{
-#define UML_X86_3DNOW_ENTRY(value, symbol) \
-	case value: return memory ? \
-		native::uml_x86_64_gadget_vector_3dnow_##symbol##_rm : \
-		native::uml_x86_64_gadget_vector_3dnow_##symbol##_rr
-	switch (opcode) {
-	UML_X86_3DNOW_ENTRY(0x0c, 0c);
-	UML_X86_3DNOW_ENTRY(0x0d, 0d);
-	UML_X86_3DNOW_ENTRY(0x1c, 1c);
-	UML_X86_3DNOW_ENTRY(0x1d, 1d);
-	UML_X86_3DNOW_ENTRY(0x86, 86);
-	UML_X86_3DNOW_ENTRY(0x87, 87);
-	UML_X86_3DNOW_ENTRY(0x8a, 8a);
-	UML_X86_3DNOW_ENTRY(0x8e, 8e);
-	UML_X86_3DNOW_ENTRY(0x90, 90);
-	UML_X86_3DNOW_ENTRY(0x94, 94);
-	UML_X86_3DNOW_ENTRY(0x96, 96);
-	UML_X86_3DNOW_ENTRY(0x97, 97);
-	UML_X86_3DNOW_ENTRY(0x9a, 9a);
-	UML_X86_3DNOW_ENTRY(0x9e, 9e);
-	UML_X86_3DNOW_ENTRY(0xa0, a0);
-	UML_X86_3DNOW_ENTRY(0xa4, a4);
-	UML_X86_3DNOW_ENTRY(0xa6, a6);
-	UML_X86_3DNOW_ENTRY(0xa7, a7);
-	UML_X86_3DNOW_ENTRY(0xaa, aa);
-	UML_X86_3DNOW_ENTRY(0xae, ae);
-	UML_X86_3DNOW_ENTRY(0xb0, b0);
-	UML_X86_3DNOW_ENTRY(0xb4, b4);
-	UML_X86_3DNOW_ENTRY(0xb6, b6);
-	UML_X86_3DNOW_ENTRY(0xb7, b7);
-	UML_X86_3DNOW_ENTRY(0xbb, bb);
-	UML_X86_3DNOW_ENTRY(0xbf, bf);
-	default: break;
-	}
-#undef UML_X86_3DNOW_ENTRY
-	return nullptr;
-}
-
-[[nodiscard]] bool append_vector_3dnow(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
-{
-	const auto &instruction = gadget.instruction;
-	const auto destination = mmx_offset(instruction.destination);
-	const auto left = mmx_offset(instruction.source);
-	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
-	const auto entry = vector_3dnow_entry(
-		instruction.vector_opcode, memory);
-	if (!destination || !left || entry == nullptr)
-		return false;
-	if (!memory) {
-		const auto right = mmx_offset(instruction.auxiliary);
-		if (!right)
-			return false;
-		stream.push_back(entry_address(entry));
-		stream.push_back(pack_offsets(*destination, *left, *right));
-		return true;
-	}
-	const auto encoded = encode_memory(
-		gadget, instruction.auxiliary, *destination);
-	if (!encoded)
-		return false;
-	append_memory_words(stream, entry_address(entry), *encoded, gadget);
-	stream.push_back(*left);
 	return true;
 }
 
@@ -5047,7 +4954,7 @@ struct FlagState final {
 	const auto index = static_cast<std::uint8_t>(modrm & 7U);
 	NativeEntry entry{};
 	bool carries_index{};
-	if (opcode == 0x0e || opcode == 0x77) {
+	if (opcode == 0x77) {
 		entry = native::uml_x86_64_gadget_x87_emms;
 	} else if ((modrm >> 6U) != 3) {
 		const auto encoded = encode_memory(gadget, instruction.source, 0);
@@ -6790,11 +6697,6 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			native::uml_x86_64_gadget_cache_flush), *encoded, gadget);
 		return true;
 	}
-	case Operation::cache_zero:
-		stream.push_back(entry_address(native::uml_x86_64_gadget_cache_zero));
-		stream.push_back(static_cast<std::uintptr_t>(instruction.length) << 56U);
-		stream.push_back(gadget.address);
-		return true;
 	case Operation::store_machine_status: {
 		if (instruction.destination.kind == OperandKind::reg) {
 			const auto destination = register_offset(instruction.destination);
@@ -6894,8 +6796,6 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return append_vector_compare_flags(stream, gadget);
 	case Operation::vector_gpr_move:
 		return append_vector_gpr_move(stream, gadget);
-	case Operation::vector_bitfield:
-		return append_vector_bitfield(stream, gadget);
 	case Operation::vector_mask_store:
 		return append_vector_mask_store(stream, gadget);
 	case Operation::vector_lane_move:
@@ -6910,8 +6810,6 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return append_vector_convert(stream, gadget);
 	case Operation::vector_scalar_convert:
 		return append_vector_scalar_convert(stream, gadget);
-	case Operation::vector_3dnow:
-		return append_vector_3dnow(stream, gadget);
 	case Operation::vector_fma:
 		return append_vector_fma(stream, gadget);
 	case Operation::vector_aes:

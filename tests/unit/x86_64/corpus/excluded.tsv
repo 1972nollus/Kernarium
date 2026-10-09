@@ -96,6 +96,7 @@ fex	X87_F64/FScaleFXtract_F64.asm	exact duplicate normalized case
 fex	X87_F64/FXAM_Push_2_F64.asm	exact duplicate normalized case
 fex	X87_F64/FXAM_Push_F64.asm	exact duplicate normalized case
 fex	X87_F64/Rounding_F64.asm	exact duplicate normalized case
+fex	modrm_oob/DDD.asm	runs the AMD-only 3DNow! family, which upstream does not annotate with its 3DNOW feature; an Intel core and the guest raise #UD
 fex	modrm_oob/SecondaryModRM.asm	AMD-only cache-zero extension
 fex	modrm_oob/SecondaryREP.asm	AMD-only extension outside x86-64-v3
 fex	modrm_oob/SecondaryREPNE.asm	AMD-only extension outside x86-64-v3
