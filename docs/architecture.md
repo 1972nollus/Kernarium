@@ -314,8 +314,9 @@ exact tiny results follow FPRoundBase() as above. An enabled exception
 restores Z, V and P, commits nothing, and gives the floating-point trap
 with one cause. The cryptographic and integer matrix
 forms are computed in software. `sve_semantics_covers()` holds for every row
-the table routes; any other word is a fatal internal error. No product links
-the library until an engine calls it.
+the table routes; any other word is a fatal internal error. Both engines call
+it: the gadget engine through its `sve_library` gadget and the JIT through a
+terminal helper.
 
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
@@ -539,7 +540,8 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 `cpu::engine_host_capabilities` presents the profile only from an engine at
 `complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
-non-streaming SVE word is the illegal-instruction exit.
+non-streaming SVE word is the illegal-instruction exit. Both engines are at
+`complete`.
 
 The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
 carry the profile, it runs every word of the profile, so under the
@@ -553,9 +555,11 @@ including the shifts by wide elements, the SVE2 widening (also indexed),
 narrowing, high-half and shift-accumulate forms, the unsigned saturating
 forms, BSL, BSL1N, BSL2N, NBSL, EOR3, EORBT, EORTB, XAR, ZIP, UZP and TRN
 of vectors and predicates, REV, EXT, TBL of one or two registers, the dot
-products, the integer compares, and the floating-point arithmetic
-(also by immediate), multiply-add, indexed, rounding and same-size
-conversion forms. A predicated
+products, the integer compares (also by immediate), the floating-point
+compares, PUNPK, SUNPK and UUNPK, BRKA and BRKB, INDEX, COMPACT and SPLICE,
+UADDV, FADDV and FADDA, ADDP, USQADD, URHADD, SUBHNB and SUBHNT, and the
+floating-point arithmetic (also by immediate, and with reversed operands),
+multiply-add, indexed, rounding and same-size conversion forms. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
@@ -564,19 +568,32 @@ integer form always does since that costs less than the test. A
 saturating form saturates by compare and select, since AdvSIMD's
 saturating forms set FPSR.QC and SVE's never do, and a shift by an
 immediate has a gadget per value of tsz:imm3. A contiguous load or store
-(LD1*, ST1*, LDNT1*, STNT1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, and LDR and
-STR of a Z or P register) whose footprint lies in one guest page the TLB
-holds runs on the host address: a load reads the whole footprint and
-zeroes the inactive elements, and a store runs only under an all-true
-predicate, as one store. A crossing, a page the TLB cannot fill, a fault, a partial
-store or an SP base runs through the semantic library, which decides
-faults and partial writes. SVE prefetches are NOPs. A size or index a
+(LD1*, ST1*, LDNT1*, STNT1*, LDFF1*, LDNF1*, LD1R*, LD1RQ*, LD2-LD4,
+ST2-ST4, and LDR and STR of a Z or P register) whose footprint lies in one
+guest page the TLB holds runs on the host address: a load reads the whole
+footprint and zeroes the inactive elements (a first-fault or non-fault
+load, whose elements all translate, leaves FFR as it is), and a store under
+an all-true predicate is one store, and under any other writes its active
+elements one by one, never touching an inactive element's bytes. A
+crossing, a page the TLB cannot fill, a fault, an SP base that is
+misaligned or tagged (an SP base is never untagged) runs through the semantic
+library, which decides faults, partial writes and FFR. A gather or scatter
+(LD1*, LDFF1*, ST1*, and LDNT1* and STNT1* with a vector base) forms,
+untags under TBI and translates each active element's address inline; an
+element whose page the TLB lacks, an element crossing a page or a bad SP base
+sends the whole instruction to the library, which is exact because a load
+writes its destination last and a scatter's stores are idempotent in element
+order.
+SVE prefetches, gather prefetches included, are NOPs. A size or index a
 form's gadgets leave out runs through the semantic library. Every other
 word runs through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP
 environment is active, its cumulative FPSR flags to `CpuState`, calls the
 library with guest memory through the TLB, and reloads both; a library
-fault leaves through the memory-fault exit. A reserved bitmask immediate of
+fault leaves through the memory-fault exit. While
+`count_sve_library_exits` is enabled (it is off by default), the words that
+reach the library are counted per table row, which is the library-exit
+report. A reserved bitmask immediate of
 AND, ORR, EOR or DUPM ends the block in front of it as the
 illegal-instruction exit. While an FPCR trap enable is set, the executor's
 one-instruction mode runs each non-streaming SVE word through the library,
@@ -605,25 +622,56 @@ faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 
-The JIT is at `control`: for SVCR.SM = 0, on capabilities that carry the
+The JIT is at `complete`: for SVCR.SM = 0, on capabilities that carry the
 profile, it lowers PTRUE, PTRUES, PFALSE and PTEST, the predicate logical
 operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and
 ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL
 and the unpredicated logical forms onto AdvSIMD and general registers
-([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp));
-every other non-streaming SVE word is its illegal-instruction exit. Since it
-presents no SVE to a guest below `complete`, only tests that hand it the
-profile reach these forms. No translation holds an SVE word, and SM=1
-translations and translations without an SVE word are unchanged. Z is V in
-the block-local vector bindings, and P and FFR are bound beside them in mask
+([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp)),
+and lowers the register-only and contiguous-memory hot set of the profile
+onto AdvSIMD for an all-active governing predicate
+([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
+the forms are listed in
+[`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
+multiply-add, arithmetic and same-size conversion forms, the integer
+arithmetic, logical, shift, widening, narrowing, high-half and dot-product
+forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, and LD1*, ST1*, LD1R*,
+LD1RQ*, LD2-LD4, ST2-ST4 and LDR and STR of a Z register whose footprint lies
+in one guest page the TLB holds. A predicated form checks its governing
+predicate once per block and element size, after a PTRUE that sets every
+element it checks nothing, and leaves the block for the library, which alone
+knows what an inactive lane must not do, when the predicate is partial.
+The saturating forms saturate by compare and select, since AdvSIMD's set
+FPSR.QC and SVE's never do. A word that lowering declines (an element size
+AdvSIMD lacks, a crossing or missing page, an SP base or a tagged one) and
+every other word of the profile ends its block in a terminal helper
+([`cpu/arm64/jit/jit_semantic_sve.cpp`](../darwin/cpu/arm64/jit/jit_semantic_sve.cpp)),
+which runs the word through the semantic library on `CpuState` as the SME
+slow paths do: the library marks the SVE state live, reports a fault at the
+word's PC, clears the local exclusive monitor on a store and invalidates the
+software reservations the store wrote. A reserved bitmask or shifted byte
+immediate, and a row the capabilities lack, are the illegal-instruction
+exit. No translation holds an SVE word, and SM=1 translations and
+translations without an SVE word are unchanged. While an FPCR trap enable
+is set, or a single step is pending, the executor runs each SVE word through
+the library itself, which decides the trap, the flags it commits and the one
+cause it reports, as the gadget engine's trapped mode does. Z is V in the
+block-local vector bindings, and P and FFR are bound beside them in mask
 form and written back at every exit. A flag-setting form computes PredTest
-into the guest's NZCV. A WHILE* reads its predicate and NZCV from a table
+into the guest's NZCV (PTRUES tests its result under itself, a WHILE* under
+the all-true predicate). A WHILE* reads its predicate and NZCV from a table
 indexed by its active count clamped to 16, and one followed in the block by
 a B.cond on N, Z or C branches on that bit of the table's NZCV and ends the
-block with the pair. A block holding an SVE word accesses the FP state
-before it runs, since P and FFR travel with it, and stores
-`CpuState::sve_live`. `arm64-jit-sve-control` checks the forms against the
-pseudocode on injected hosts.
+block with the pair. A block holding an inline SVE word accesses the FP
+state before it runs, since P and FFR travel with it, and stores
+`CpuState::sve_live`. `arm64-jit-sve-control` checks the control forms
+against the pseudocode on injected hosts, and `arm64-jit-sve-forms` checks
+every row of the profile against the library on random states: alone in a
+block, behind an FP instruction that leaves the native environment active,
+behind PTRUE of P0-P7, and after every writer of a predicate that a PTRUE
+made all-active, from memory bases inside a page, across pages, unmapped and tagged, and
+under random FPCR trap enables and, where the host implements FEAT_AFP, random
+FIZ, AH and NEP.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

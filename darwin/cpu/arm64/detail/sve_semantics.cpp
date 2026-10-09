@@ -139,6 +139,15 @@ bool sve_semantics_covers(const SmeEncoding &row) noexcept
 		sve_semantics::handler_for(row) != nullptr;
 }
 
+bool sve_reserved_encoding(std::uint32_t word, const SmeEncoding &row) noexcept
+{
+	namespace form = sve_semantics::form;
+	if (row.form != form::and_z_zi && row.form != form::orr_z_zi &&
+		row.form != form::eor_z_zi && row.form != form::dupm_z_i)
+		return false;
+	return !sve_semantics::logical_immediate_of(word).has_value();
+}
+
 SveResult execute_sve(CpuState &cpu, std::uint32_t word, const SmeEncoding &row,
 	SveMemory &memory) noexcept
 {

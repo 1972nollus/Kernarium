@@ -585,19 +585,10 @@ SveResult binary_immediate(Context &context)
 	return retired();
 }
 
-/* The 64-bit value of a logical immediate in bits 17:5, or nothing for a
- * reserved one. */
-[[nodiscard]] std::optional<std::uint64_t> logical_immediate(
-	const Context &context) noexcept
-{
-	return decode_logical_immediate(true, context.field(17, 1),
-		context.field(11, 6), context.field(5, 6));
-}
-
 /* AND, ORR and EOR (immediate): opc in bits 23:22. */
 SveResult logical_immediate_form(Context &context)
 {
-	const auto immediate = logical_immediate(context);
+	const auto immediate = logical_immediate_of(context.word);
 	if (!immediate.has_value())
 		return undefined();
 	const unsigned dn = context.field(0, 5);
@@ -616,7 +607,7 @@ SveResult logical_immediate_form(Context &context)
 
 SveResult duplicate_mask_immediate(Context &context)
 {
-	const auto immediate = logical_immediate(context);
+	const auto immediate = logical_immediate_of(context.word);
 	if (!immediate.has_value())
 		return undefined();
 	Vector result;

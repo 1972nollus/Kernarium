@@ -12,6 +12,7 @@
  * values; x8-x11 and x16 general.
  */
 #include "jit_compiler.hpp"
+#include "jit_sve_encoders.hpp"
 #include "jit_sve_support.hpp"
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
@@ -31,152 +32,7 @@ namespace {
 
 namespace forms = jit::sve_forms;
 
-constexpr unsigned scratch_a = 4U;
-constexpr unsigned scratch_b = 5U;
-
-[[nodiscard]] constexpr unsigned field(std::uint32_t word, unsigned low,
-                                       unsigned width) noexcept {
-  return (word >> low) & ((1U << width) - 1U);
-}
-
-/* Condition codes. */
-constexpr unsigned cond_eq = 0U;
-constexpr unsigned cond_ne = 1U;
-constexpr unsigned cond_hs = 2U;
-constexpr unsigned cond_lo = 3U;
-constexpr unsigned cond_pl = 5U;
-constexpr unsigned cond_hi = 8U;
-constexpr unsigned cond_ls = 9U;
-constexpr unsigned cond_ge = 10U;
-constexpr unsigned cond_lt = 11U;
-constexpr unsigned cond_gt = 12U;
-constexpr unsigned cond_le = 13U;
-
-/* General-register data processing, 64-bit unless named W. */
-[[nodiscard]] constexpr std::uint32_t three(std::uint32_t opcode, unsigned d,
-                                            unsigned n, unsigned m) noexcept {
-  return opcode | (m << 16) | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t and_x(unsigned d, unsigned n,
-                                            unsigned m) noexcept {
-  return three(0x8a00'0000U, d, n, m);
-}
-[[nodiscard]] constexpr std::uint32_t eor_x(unsigned d, unsigned n,
-                                            unsigned m) noexcept {
-  return three(0xca00'0000U, d, n, m);
-}
-[[nodiscard]] constexpr std::uint32_t sub_x(unsigned d, unsigned n,
-                                            unsigned m) noexcept {
-  return three(0xcb00'0000U, d, n, m);
-}
-[[nodiscard]] constexpr std::uint32_t subs_x(unsigned d, unsigned n,
-                                             unsigned m) noexcept {
-  return three(0xeb00'0000U, d, n, m);
-}
-[[nodiscard]] constexpr std::uint32_t add_x(unsigned d, unsigned n,
-                                            unsigned m) noexcept {
-  return three(0x8b00'0000U, d, n, m);
-}
-/* CMP Xn, Xm and TST Xn, Xm. */
-[[nodiscard]] constexpr std::uint32_t cmp_x(unsigned n, unsigned m) noexcept {
-  return subs_x(31U, n, m);
-}
-[[nodiscard]] constexpr std::uint32_t tst_x(unsigned n, unsigned m) noexcept {
-  return three(0xea00'0000U, 31U, n, m);
-}
-/* CMP Xn, #imm12 and CMN Wn, #imm12; Xn is never XZR here. */
-[[nodiscard]] constexpr std::uint32_t cmp_immediate(unsigned n,
-                                                    unsigned immediate) noexcept {
-  return 0xf100'001fU | (immediate << 10) | (n << 5);
-}
-[[nodiscard]] constexpr std::uint32_t cmn_immediate(unsigned n, bool wide,
-                                                    unsigned immediate) noexcept {
-  return (wide ? 0xb100'001fU : 0x3100'001fU) | (immediate << 10) | (n << 5);
-}
-[[nodiscard]] constexpr std::uint32_t csel_x(unsigned d, unsigned n,
-                                             unsigned m,
-                                             unsigned condition) noexcept {
-  return three(0x9a80'0000U, d, n, m) | (condition << 12);
-}
-[[nodiscard]] constexpr std::uint32_t csinc_x(unsigned d, unsigned n,
-                                              unsigned m,
-                                              unsigned condition) noexcept {
-  return three(0x9a80'0400U, d, n, m) | (condition << 12);
-}
-/* CSET Wd, condition. */
-[[nodiscard]] constexpr std::uint32_t cset_w(unsigned d,
-                                             unsigned condition) noexcept {
-  return 0x1a9f'07e0U | ((condition ^ 1U) << 12) | d;
-}
-/* ORR Wd, Wn, Wm, LSL #shift. */
-[[nodiscard]] constexpr std::uint32_t orr_w_lsl(unsigned d, unsigned n,
-                                                unsigned m,
-                                                unsigned shift) noexcept {
-  return three(0x2a00'0000U, d, n, m) | (shift << 10);
-}
-/* LSL Wd, Wn, #shift and LSR Xd, Xn, #shift. */
-[[nodiscard]] constexpr std::uint32_t lsl_w(unsigned d, unsigned n,
-                                            unsigned shift) noexcept {
-  return 0x5300'0000U | (((32U - shift) & 31U) << 16) | ((31U - shift) << 10) |
-         (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t lsr_x(unsigned d, unsigned n,
-                                            unsigned shift) noexcept {
-  return 0xd340'fc00U | (shift << 16) | (n << 5) | d;
-}
-/* SXTW Xd, Wn and MOV Wd, Wn (UXTW). */
-[[nodiscard]] constexpr std::uint32_t sxtw(unsigned d, unsigned n) noexcept {
-  return 0x9340'7c00U | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t uxtw(unsigned d, unsigned n) noexcept {
-  return 0x2a00'03e0U | (n << 16) | d;
-}
-constexpr std::uint32_t msr_nzcv_x11 = 0xd51b'420bU;
-
-/* AdvSIMD, 16 bytes. */
-constexpr std::uint32_t vector_and = 0x4e20'1c00U;
-constexpr std::uint32_t vector_bic = 0x4e60'1c00U;
-constexpr std::uint32_t vector_orr = 0x4ea0'1c00U;
-constexpr std::uint32_t vector_orn = 0x4ee0'1c00U;
-constexpr std::uint32_t vector_eor = 0x6e20'1c00U;
-constexpr std::uint32_t vector_bit = 0x6ea0'1c00U;
-constexpr std::uint32_t vector_bif = 0x6ee0'1c00U;
-/* ADD and SUB (vector) with SVE's size field. */
-[[nodiscard]] constexpr std::uint32_t vector_add(bool subtract, unsigned size,
-                                                 unsigned d, unsigned n,
-                                                 unsigned m) noexcept {
-  return three(subtract ? 0x6e20'8400U : 0x4e20'8400U, d, n, m) | (size << 22);
-}
-[[nodiscard]] constexpr std::uint32_t vector_move(unsigned d,
-                                                  unsigned n) noexcept {
-  return three(vector_orr, d, n, n);
-}
-/* DUP Vd.T, Rn and DUP Vd.T, Vn.T[index], with SVE's size field. */
-[[nodiscard]] constexpr std::uint32_t dup_general(unsigned size, unsigned d,
-                                                  unsigned n) noexcept {
-  return 0x4e00'0c00U | ((1U << size) << 16) | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t dup_element(unsigned size,
-                                                  unsigned index, unsigned d,
-                                                  unsigned n) noexcept {
-  return 0x4e00'0400U | (((index << (size + 1U)) | (1U << size)) << 16) |
-         (n << 5) | d;
-}
-/* MOVI Vd.2D or Dd with a mask of whole bytes. */
-[[nodiscard]] constexpr std::uint32_t movi_bytes(bool both, unsigned d,
-                                                 unsigned bytes) noexcept {
-  return (both ? 0x6f00'e400U : 0x2f00'e400U) | ((bytes >> 5) << 16) |
-         ((bytes & 31U) << 5) | d;
-}
-/* FMOV Dd, Xn and INS Vd.D[1], Xn. */
-[[nodiscard]] constexpr std::uint32_t fmov_d_x(unsigned d,
-                                               unsigned n) noexcept {
-  return 0x9e67'0000U | (n << 5) | d;
-}
-[[nodiscard]] constexpr std::uint32_t ins_high(unsigned d,
-                                               unsigned n) noexcept {
-  return 0x4e18'1c00U | (n << 5) | d;
-}
+using namespace jit::encoders;
 
 /* The 64-bit value's MOVI byte-mask immediate, when each byte is 0x00 or
  * 0xff. */
@@ -271,27 +127,6 @@ static_assert(while_tables<true>[1][1].predicate[14] == 0xffU &&
               while_tables<true>[1][1].nzcv == 0U);
 static_assert(while_tables<true>[3][9].nzcv == 0x8000'0000U);
 
-/* A word of a control-core form that is UNDEFINED nonetheless: a reserved
- * DUPM immediate, a shifted byte immediate, or a byte-sized form without
- * one. */
-[[nodiscard]] bool sve_word_reserved(std::uint16_t form,
-                                     std::uint32_t instruction) noexcept {
-  const unsigned size = field(instruction, 22, 2);
-  if (form == forms::dupm)
-    return !detail::decode_logical_immediate(true, field(instruction, 17, 1),
-                                             field(instruction, 11, 6),
-                                             field(instruction, 5, 6))
-                .has_value();
-  if (form == forms::dup_immediate || form == forms::cpy_merging ||
-      form == forms::cpy_zeroing)
-    return size == 0U && field(instruction, 13, 1) != 0U;
-  if (form == forms::fdup || form == forms::fcpy ||
-      form == forms::inc_vector || form == forms::dec_vector ||
-      form == forms::incp_vector || form == forms::decp_vector)
-    return size == 0U;
-  return false;
-}
-
 /* DUP and CPY (immediate): the signed byte, shifted by 8 when sh is set,
  * as an element of esize bytes. */
 [[nodiscard]] constexpr std::uint64_t integer_element(std::uint32_t instruction,
@@ -351,17 +186,25 @@ JitCompiler::emit_sve_instruction(std::uint32_t instruction,
        (sme_mode() & svcr_za) == 0U))
     return Action::unsupported;
   const auto form = row->form;
-  if (!jit::implements_sve_form(form) || sve_word_reserved(form, instruction))
+  if (jit::sve_word_reserved(form, instruction))
     return Action::unsupported;
-  /* P, FFR and Z are FP state: the executor makes it current first (design
-   * 2.2). The first SVE word of the block marks the task as using SVE, so
-   * a context switch saves its predicates. */
-  accesses_fp_state_ = true;
-  if (!sve_marked_) {
-    emitter_.load_constant(8, 1);
-    emitter_.store_b(8, 15, offsetof(CpuState, sve_live));
-    sve_marked_ = true;
+  /* The hot set lowers inline for the all-active predicate; every other
+   * row the profile implements, and a word the lowering declines, runs
+   * through the semantic library: a terminal helper, as the SME slow paths
+   * are. */
+  if (!jit::implements_sve_form(form)) {
+    if (emit_sve_inline(*row, instruction, pc))
+      return Action::keep_going;
+    if (row->memory != 0U &&
+        detail::sme_encoding_memory_of(*row)->direction ==
+            detail::SmeMemoryDirection::store)
+      mark_memory_write();
+    emit_terminal_helper(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_sve),
+        instruction, pc, count_ + 1U);
+    return Action::terminate;
   }
+  begin_sve_word();
   if (while_form(form))
     return emit_sve_while(form, instruction, pc) ? Action::terminate
                                                  : Action::keep_going;
@@ -497,8 +340,13 @@ void JitCompiler::emit_sve_predicate_form(std::uint16_t form,
     emit_sve_vector_constant(out.host, predicate_half(image.predicate, 0),
                              predicate_half(image.predicate, 1));
     commit_native_predicate(out, d);
+    if (form != forms::pfalse && count == sve_vector_length / esize)
+      note_sve_predicate_full(d, esize);
     if (form == forms::ptrues) {
-      emitter_.load_constant(11, image.nzcv);
+      /* PTRUES tests its result under itself, not under the all-true
+       * predicate a WHILE* result is tested under: N when any element is
+       * active, Z and C when none is. */
+      emitter_.load_constant(11, count != 0U ? 0x8000'0000U : 0x6000'0000U);
       emit_sve_flags_from_w11();
     }
     return;

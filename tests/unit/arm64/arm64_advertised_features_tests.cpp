@@ -292,8 +292,7 @@ struct Profile final {
 	 * guest-SME and guest-SVE policies off, the default, then with SME
 	 * and SME2 at SVL 64, then as both engines present that host, which
 	 * is what its guest sees with the SME policy on. Then the same with
-	 * the SVE policy on as well, which the engines do not present until
-	 * they implement SVE. */
+	 * the SVE policy on as well, which both engines now present. */
 	const auto m4 = with({ArmFeature::aes, ArmFeature::pmull,
 		ArmFeature::sha1, ArmFeature::sha256, ArmFeature::sha512,
 		ArmFeature::sha3, ArmFeature::crc32, ArmFeature::fp16,
@@ -947,8 +946,8 @@ constexpr Advertised pinned[]{
 		{0x1000100110000, 0x2000000, 0x100100100021, 0x1f150ff00000000,
 			0x21100110212120, 0x10101100211000, 0x10000000010010,
 			0x1000000000000000, 0x100000000000, 0x100000000}},
-	{"m4 +sve +sme2 svl=64 engines", 0x2fb2ffff, 0x8043fb86180,
-		{0x1000000110000, 0x1000000, 0, 0xf100fd00000000,
+	{"m4 +sve +sme2 svl=64 engines", 0x2ff2ffff, 0x8043fb873ae,
+		{0x1000100110000, 0x1000000, 0x100100100021, 0xf100fd00000000,
 			0x21100110212120, 0x10101100211000, 0x10000000010010,
 			0x1000000000000000, 0x100000000000, 0x100000000}},
 };
@@ -1059,8 +1058,9 @@ constexpr std::pair<const char *, const char *> pinned_features[]{
 		{"m4 +sve +sme2 svl=64 engines",
 			"fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics "
 			"fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc sha3 "
-			"asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb "
-			"flagm2 frint i8mm bf16 ecv afp rpres sme smei16i64 "
+			"asimddp sha512 sve asimdfhm dit uscat ilrcpc flagm sb "
+			"sve2 sveaes svepmull svesha3 flagm2 frint svei8mm "
+			"svebf16 i8mm bf16 ecv afp rpres sme smei16i64 "
 			"smef64f64 smei8i32 smef16f32 smeb16f32 smef32f32 cssc "
 			"mops"},
 };
