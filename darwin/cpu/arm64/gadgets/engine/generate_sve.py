@@ -1388,13 +1388,15 @@ def reverse_elements(e: int) -> list:
 # Contiguous memory. A load or store whose footprint lies in one guest page
 # the TLB holds runs on the host address, untagged first under TBI: a load
 # reads the whole footprint, which on a mapped page is harmless for
-# inactive elements, and zeroes those by the lane mask; a store runs only
-# when its predicate is all-true, as one store of the footprint. A
+# inactive elements, and zeroes those by the lane mask; a store under an
+# all-true predicate is one store of the footprint, and under any other
+# predicate writes its active elements one by one (partial_store), never
+# touching the bytes of an inactive one. A
 # first-fault or non-fault load is such a load on a page the TLB holds: no
 # element faults, so FFR is left as it is. LDR and
 # STR of a predicate expand and compress its two bytes to and from the
 # mask form. Everything else, a crossing, a page the TLB cannot fill, a
-# fault, a partial store, goes to the semantic library through
+# fault, goes to the semantic library through
 # sve_library, which decides faults and partial writes; the builder sends
 # an SP base, whose alignment the access checks, there directly. Stream: [packed slots][byte offset][library operand][PC]: the
 # library operand is the word and row of an sve_library stream, so the slow
@@ -1442,14 +1444,17 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                  f"add x7, x7, x11, lsl #{m.bit_length() - 1}"]
     else:
         body.append("add x7, x7, x9")
-    if predicated and not load:
-        test = all_true_test(e, "x20")
-        test[-1] = test[-1].replace("1f", slow)
-        body += test
     body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
              f"cbnz w10, {tagged}", f"{translate}:",
              f"transfer_translate {int(not load)}, {page}, {footprint}, x7, "
              f"{cold}, {resume}, {slow}"]
+    partial = f"Lsve_memory_{number}_partial"
+    if predicated and not load:
+        # A store under a predicate that is not all-true writes only its
+        # active elements, after the page decision.
+        test = all_true_test(e, "x20")
+        test[-1] = test[-1].replace("1f", partial)
+        body += test
     a = ARRANGEMENTS[e]
     width = {1: "b", 2: "h", 4: "s", 8: "d", 16: "q"}
     if load:
@@ -1491,12 +1496,7 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                      "add x10, x10, #UML_GADGET_CPU_V0",
                      f"str q{k}, [_cpu, x10]"]
     else:
-        body.append("ldr q0, [_cpu, x19]")
-        for k in range(1, registers):
-            body += ["sub x10, x19, #UML_GADGET_CPU_V0",
-                     f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
-                     "add x10, x10, #UML_GADGET_CPU_V0",
-                     f"ldr q{k}, [_cpu, x10]"]
+        body += store_registers(registers)
         if memory.shape == "structure":
             names = ", ".join(f"v{k}.{a}" for k in range(registers))
             body.append(f"st{registers} {{{names}}}, [x7]")
@@ -1512,12 +1512,53 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                             f"v0.{ARRANGEMENTS[size]}")
                 size //= 2
             body.append(f"str {width[footprint]}0, [x7]")
-    body += ["add _stream, _stream, #16", "next_gadget",
-             f"{tagged}:", "ubfx x7, x7, #0, #56", f"b {translate}",
+    body += ["add _stream, _stream, #16", "next_gadget"]
+    if predicated and not load:
+        body += partial_store(memory, e, m, number, partial)
+    body += [f"{tagged}:", "ubfx x7, x7, #0, #56", f"b {translate}",
              f"transfer_translate_cold {int(not load)}, {page}, {footprint}, "
              f"x7, {cold}, {resume}, {slow}, 0, 0, {slow}",
              f"{slow}:", "b NAME(uml_arm64_gadget_sve_library)"]
     return body
+
+
+def store_registers(registers: int) -> list:
+    """v0.. := the registers a store reads, Zt (at CpuState offset x19) and
+    the ones after it, wrapping at Z31."""
+    body = ["ldr q0, [_cpu, x19]"]
+    for k in range(1, registers):
+        body += ["sub x10, x19, #UML_GADGET_CPU_V0",
+                 f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
+                 "add x10, x10, #UML_GADGET_CPU_V0",
+                 f"ldr q{k}, [_cpu, x10]"]
+    return body
+
+
+def partial_store(memory, e: int, m: int, number: int, label: str) -> list:
+    """A contiguous store under a predicate that is not all-true, whose
+    footprint lies in the page x7 now addresses: each active element is
+    written alone, as a lane store, and the bytes of the inactive ones are
+    never touched (a read-modify-write would race with other threads).
+    Element i of Zt, narrowed to `m` bytes, goes to byte (i * registers + r)
+    * m of the footprint for register r of a structure store."""
+    registers = memory.registers
+    lane_type = {1: "b", 2: "h", 4: "s", 8: "d"}[m]
+    body = [f"{label}:"] + store_registers(registers) + [
+        "add x9, _cpu, x20", "ldp x14, x15, [x9]"]
+    for element in range(16 // e):
+        byte = element * e
+        mask = "x14" if byte < 8 else "x15"
+        skip = f"Lsve_memory_{number}_skip{element}"
+        body.append(f"tbz {mask}, #{(byte % 8) * 8 + 7}, {skip}")
+        for r in range(registers):
+            offset = (element * registers + r) * m
+            address = "x7"
+            if offset:
+                body.append(f"add x9, x7, #{offset}")
+                address = "x9"
+            body.append(f"st1 {{v{r}.{lane_type}}}[{byte // m}], [{address}]")
+        body.append(f"{skip}:")
+    return body + ["add _stream, _stream, #16", "next_gadget"]
 
 
 def bit_pattern(register: int) -> list:

@@ -568,10 +568,11 @@ immediate has a gadget per value of tsz:imm3. A contiguous load or store
 ST2-ST4, and LDR and STR of a Z or P register) whose footprint lies in one
 guest page the TLB holds runs on the host address: a load reads the whole
 footprint and zeroes the inactive elements (a first-fault or non-fault
-load, whose elements all translate, leaves FFR as it is), and a store runs
-only under an all-true predicate, as one store. A crossing, a page the TLB
-cannot fill, a fault, a partial store or an SP base runs through the
-semantic library, which decides faults, partial writes and FFR. SVE prefetches are NOPs. A size or index a
+load, whose elements all translate, leaves FFR as it is), and a store under
+an all-true predicate is one store, and under any other writes its active
+elements one by one, never touching an inactive element's bytes. A
+crossing, a page the TLB cannot fill, a fault or an SP base runs through
+the semantic library, which decides faults, partial writes and FFR. SVE prefetches are NOPs. A size or index a
 form's gadgets leave out runs through the semantic library. Every other
 word runs through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP
