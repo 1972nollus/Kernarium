@@ -59,3 +59,18 @@ if(_uml_x86_64_gadget_region_images AND APPLE)
         LABELS cpu;x86-64
         TIMEOUT 120)
 endif()
+
+# fit_slots.py reports the slot each group of the engine needs from an assembly
+# of engine.S with the flags of the tree's Ninja build.
+if(_uml_x86_64_gadget_region_images AND APPLE AND CMAKE_GENERATOR MATCHES "Ninja")
+    uml_add_tooling_test(
+        NAME x86-64-gadget-fit-slots
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/x86_64/test_fit_slots.py
+            --tool ${PROJECT_SOURCE_DIR}/darwin/cpu/x86_64/gadgets/engine/fit_slots.py
+            --region ${PROJECT_SOURCE_DIR}/darwin/cpu/x86_64/gadgets/engine/region.inc
+            --build-dir ${CMAKE_BINARY_DIR}
+            --ninja ${CMAKE_MAKE_PROGRAM}
+        LABELS cpu;x86-64
+        TIMEOUT 600)
+endif()

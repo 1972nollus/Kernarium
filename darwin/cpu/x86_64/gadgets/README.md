@@ -30,13 +30,15 @@ file. What a change moves:
   the base sees the change's code and the shift of that group's own later
   gadgets.
 - A group that outgrows its slot fails assembly at
-  `.org Lx86_bank_end_<group>` or `.org Lx86_cold_end_<group>`. Grow that
-  row's slot to the group's phase and new size plus 1 KiB, rounded up to a
-  128-byte line. Every later group then moves by whole lines and keeps its
-  phase, which GX1 measured as neutral: a 2,480-byte shift of most gadgets
-  cost File Compression and Clang 2 to 4 percent, and padding it to 2,560
-  bytes recovered both. Such a change needs no pad control, but its commit
-  says which slot grew.
+  `.org Lx86_bank_end_<group>` or `.org Lx86_cold_end_<group>`, and every
+  group after it fails too. `engine/fit_slots.py --build-dir <tree>` lists
+  each group that no longer fits with the slot it needs, its phase and new
+  size plus 1 KiB rounded up to a 128-byte line; set those rows' slots to
+  it. Every later group then moves by whole lines and keeps its phase, which
+  GX1 measured as neutral: a 2,480-byte shift of most gadgets cost File
+  Compression and Clang 2 to 4 percent, and padding it to 2,560 bytes
+  recovered both. Such a change needs no pad control, but its commit says
+  which slots grew.
 - A phase never changes; it is what keeps the measured layout.
 - A new group takes a new row with phase 0, a new `engine/*.inc` file's at
   the end of the table and a new baked family's after the last baked one, and
