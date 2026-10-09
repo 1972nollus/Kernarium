@@ -66,6 +66,7 @@ extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sm_memory_entries_end[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries_end[];
+void uml_arm64_gadget_sve_generated_absent();
 }
 
 namespace arm64 = uml::cpu::arm64;
@@ -1773,6 +1774,9 @@ void generated_forms_match_the_library()
 	const auto host = sve_host();
 	std::size_t runs = 0;
 	std::size_t rows = 0;
+	std::vector<unsigned> on_gadgets(arm64::detail::sme_encodings.size());
+	std::vector<unsigned> sampled(arm64::detail::sme_encodings.size());
+	gadgets::count_sve_library_exits(true);
 	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
 	     ++index) {
 		const auto &row = arm64::detail::sme_encodings[index];
@@ -1791,8 +1795,12 @@ void generated_forms_match_the_library()
 				continue;
 			auto initial = random_state(random);
 			const std::array alone{word, svc};
+			gadgets::reset_sve_library_exits();
 			require_library_state(alone, initial,
 				library_after(initial, word), word, index, false);
+			++sampled[index];
+			if (gadgets::sve_library_exit_total() == 0U)
+				++on_gadgets[index];
 			Bytes one{}, two{};
 			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
 			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
@@ -1808,6 +1816,20 @@ void generated_forms_match_the_library()
 		}
 	}
 	require(rows > 0U && runs > rows);
+	std::size_t stuck = 0;
+	for (std::size_t index = 0;
+	     index < arm64::detail::sme_encodings.size(); ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory != 0U || sampled[index] == 0U ||
+		    on_gadgets[index] != 0U)
+			continue;
+		std::fprintf(stderr, "row %zu (SVE-%04u): no run stayed on "
+			"the gadgets\n", index, row.form & 0x7fffU);
+		++stuck;
+	}
+	gadgets::count_sve_library_exits(false);
+	require(stuck == 0U);
 	std::printf("%zu generated-form runs over %zu rows match the "
 		"library\n", runs, rows);
 }
@@ -1831,6 +1853,105 @@ private:
 	std::vector<std::byte> &bytes_;
 };
 
+/* The elements of a gather's vector base `n`: mostly addresses that lie in
+ * the machine's two mapped pages, some in the unmapped page after them, some
+ * raw. The offset a form adds (a small immediate or register) leaves most
+ * of them mapped. A clean run keeps them all within a kilobyte inside the
+ * second page. */
+void fill_vector_base(arm64::CpuState &cpu, const arm64::detail::SmeMemory &memory,
+	std::uint32_t word, unsigned n, Random &random, bool clean)
+{
+	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr std::size_t mapped = mapped_pages * page;
+	const unsigned esize = arm64::detail::sme_memory_esize(memory, word) / 8U;
+	Bytes bytes{};
+	for (unsigned element = 0; element < 16U / esize; ++element) {
+		std::uint64_t value = clean ?
+			code_base + page + page / 4U + random.next() % 1024U :
+			code_base + random.next() % (mapped - 16U);
+		switch (clean ? 99U : random.next() % 16U) {
+		case 0:
+			value = random.next();
+			break;
+		case 1:
+			value = code_base + mapped + random.next() % page;
+			break;
+		case 2:
+			value = code_base + page - random.next() % 8U;
+			break;
+		case 3:
+			value = code_base + mapped - random.next() % 8U;
+			break;
+		default:
+			break;
+		}
+		for (unsigned byte = 0; byte < esize; ++byte)
+			bytes[element * esize + byte] =
+				static_cast<std::uint8_t>(value >> (8U * byte));
+	}
+	set_vec(cpu, n, bytes);
+}
+
+/* The index vector `n` of a gather: mostly small offsets, so that the
+ * addresses stay near the base, some negative, some raw. A 32-bit index in
+ * a 64-bit element keeps random bits above it. A clean run has no raw
+ * index and a negative one only where the form sign-extends it. */
+void fill_vector_index(arm64::CpuState &cpu,
+	const arm64::detail::SmeMemory &memory, std::uint32_t word, unsigned n,
+	Random &random, bool clean)
+{
+	const unsigned esize = arm64::detail::sme_memory_esize(memory, word) / 8U;
+	const bool negative_ok = memory.index_bits == 64U ||
+		arm64::detail::sme_segment_value(memory.index_sign, word) != 0U;
+	Bytes bytes{};
+	for (unsigned element = 0; element < 16U / esize; ++element) {
+		std::uint64_t value = random.next() % (clean ? 64U : 512U);
+		switch (random.next() % 16U) {
+		case 0:
+			if (!clean)
+				value = random.next();
+			break;
+		case 1:
+		case 2:
+			if (!clean || negative_ok)
+				value = -(random.next() % (clean ? 64U : 512U));
+			break;
+		case 3:
+			if (!clean)
+				value = (random.next() &
+					~std::uint64_t{0xffff'ffff}) |
+					(random.next() % 512U);
+			break;
+		default:
+			break;
+		}
+		for (unsigned byte = 0; byte < esize; ++byte)
+			bytes[element * esize + byte] =
+				static_cast<std::uint8_t>(value >> (8U * byte));
+	}
+	set_vec(cpu, n, bytes);
+}
+
+/* Whether the word's variant of its generated form is one the generator
+ * leaves to the semantic library. */
+[[nodiscard]] bool variant_absent(std::uint32_t word, std::size_t index)
+{
+	const auto number = gadgets::sve::row_forms[index];
+	require(number != gadgets::sve::no_form);
+	const auto &form = gadgets::sve::forms[number];
+	if (form.variants == 0U)
+		return false;
+	std::uint32_t variant = 0;
+	unsigned position = 0;
+	for (std::uint32_t mask = form.variant_mask; mask != 0U;
+	     mask &= mask - 1U, ++position)
+		variant |= ((word >> std::countr_zero(mask)) & 1U) << position;
+	return variant >= form.variants ||
+		uml_arm64_gadget_sve_generated_entries[form.first_entry + variant] ==
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sve_generated_absent);
+}
+
 /* Every generated memory form agrees with the semantic library: random
  * words of each contiguous row, each alone in a block on a two-page mapping
  * of random bytes and again behind an FP instruction that leaves the
@@ -1850,6 +1971,10 @@ void memory_forms_match_the_library()
 	std::size_t runs = 0;
 	std::size_t faults = 0;
 	std::size_t rows = 0;
+	/* The runs of each row that left no word to the semantic library. */
+	std::vector<unsigned> on_gadgets(arm64::detail::sme_encodings.size());
+	std::vector<unsigned> sampled(arm64::detail::sme_encodings.size());
+	gadgets::count_sve_library_exits(true);
 	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
 	     ++index) {
 		const auto &row = arm64::detail::sme_encodings[index];
@@ -1861,7 +1986,15 @@ void memory_forms_match_the_library()
 		const auto *const operands =
 			arm64::detail::sme_encoding_operands_of(row);
 		++rows;
-		for (int sample = 0; sample < 12; ++sample) {
+		/* A gather has many more outcomes to meet: which elements are
+		 * active, which of them fault. */
+		const int samples = memory.index_operand !=
+				arm64::detail::sme_no_operand ||
+			memory.shape == arm64::detail::SmeMemoryShape::gather ||
+			memory.shape ==
+				arm64::detail::SmeMemoryShape::gather_first_fault ?
+			48 : 12;
+		for (int sample = 0; sample < samples; ++sample) {
 			const auto word = row.value |
 				(static_cast<std::uint32_t>(random.next()) &
 				 ~row.mask);
@@ -1870,20 +2003,46 @@ void memory_forms_match_the_library()
 			if (decoded.kind != gadgets::SveWord::implemented ||
 			    decoded.row != &row)
 				continue;
+			/* A third of the runs are clean: a base in the middle of
+			 * the second page, no TBI, an addressable register base,
+			 * predicates that are all-true or a prefix, and every
+			 * gather element addressing that page. Where the library
+			 * faults nowhere, such a run must stay on the gadgets. */
+			const bool clean = sample % 3 == 0;
+			const auto base_kind = operands[memory.base_operand].kind;
+			if (clean && base_kind ==
+				    arm64::detail::SmeOperandKind::gpr_or_sp &&
+			    arm64::detail::sme_operand_number(
+				    operands[memory.base_operand], word) == 31U)
+				continue;
+			const unsigned element_bytes =
+				arm64::detail::sme_memory_esize(memory, word) / 8U;
 			std::vector<std::byte> bytes(mapped);
 			for (std::size_t offset = 0; offset < mapped; offset += 8) {
 				const auto value = random.next();
 				std::memcpy(bytes.data() + offset, &value, 8);
 			}
 			auto initial = random_state(random);
-			for (unsigned n = 0; n < 16; ++n)
-				if (random.next() % 2U == 0U)
+			for (unsigned n = 0; n < 16; ++n) {
+				if (clean) {
+					std::uint16_t packed = 0xffffU;
+					const unsigned elements = 16U / element_bytes;
+					if (random.next() % 2U == 0U) {
+						packed = 0;
+						for (unsigned i = 0; i < 1U +
+							     random.next() % (elements - 1U); ++i)
+							packed |= 1U << (i * element_bytes);
+					}
+					set_pred(initial, n, packed);
+				} else if (random.next() % 2U == 0U) {
 					set_pred(initial, n, 0xffffU);
+				}
+			}
 			/* The base: mostly inside the second page, sometimes at
 			 * the end of a page, or unmapped. */
 			std::uint64_t base = code_base + page +
 				random.next() % (page - 64U);
-			switch (random.next() % 8U) {
+			switch (clean ? 99U : random.next() % 8U) {
 			case 0:
 				base = code_base + page - random.next() % 48U;
 				break;
@@ -1898,21 +2057,36 @@ void memory_forms_match_the_library()
 			}
 			const auto base_register = arm64::detail::sme_operand_number(
 				operands[memory.base_operand], word);
-			if (memory.index_operand != arm64::detail::sme_no_operand) {
+			const bool vector_base = operands[memory.base_operand]
+				.kind == arm64::detail::SmeOperandKind::z;
+			const bool vector_index = memory.offset ==
+				arm64::detail::SmeAddressOffset::vector_index;
+			if (memory.index_operand != arm64::detail::sme_no_operand &&
+			    !vector_index) {
 				const auto index_register =
 					arm64::detail::sme_operand_number(
 						operands[memory.index_operand], word);
 				initial.registers[index_register] =
 					random.next() % 4U;
 			}
-			if (random.next() % 4U == 0U) {
+			if (clean)
+				base = code_base + page + page / 4U;
+			if (!clean && random.next() % 4U == 0U) {
 				initial.tbi_enabled = true;
 				base |= (random.next() & 0xffU) << 56;
 			}
-			if (base_register == 31U)
+			if (vector_base)
+				fill_vector_base(initial, memory, word, base_register,
+					random, clean);
+			else if (base_register == 31U)
 				initial.sp = base & ~std::uint64_t{15};
 			else
 				initial.registers[base_register] = base;
+			if (vector_index)
+				fill_vector_index(initial, memory, word,
+					arm64::detail::sme_operand_number(
+						operands[memory.index_operand], word), random,
+					clean);
 			Bytes one{}, two{};
 			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
 			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
@@ -1930,9 +2104,22 @@ void memory_forms_match_the_library()
 				std::memcpy(before.data(), code.data(),
 					code.size_bytes());
 				Machine machine{code, host};
+				/* A first run fills the TLB with the pages the word
+				 * reaches, as a loop's first iteration does; the
+				 * second, from the same state, is the one compared,
+				 * and the one that stays on the gadgets where they
+				 * can. */
 				machine.put(0, before);
 				machine.cpu = initial;
+				(void)machine.run();
+				machine.put(0, before);
+				machine.cpu = initial;
+				gadgets::reset_sve_library_exits();
 				const auto event = machine.run();
+				++sampled[index];
+				const auto exits = gadgets::sve_library_exit_total();
+				if (exits == 0U)
+					++on_gadgets[index];
 				std::vector<std::byte> after(mapped);
 				machine.get(0, after);
 
@@ -1946,6 +2133,15 @@ void memory_forms_match_the_library()
 					arm64::detail::SveEvent::memory_fault;
 				const auto at = code_base + (behind ? 4U : 0U);
 				faults += faulted ? 1U : 0U;
+				if (clean && !faulted && exits != 0U &&
+				    !variant_absent(word, index)) {
+					std::fprintf(stderr, "word %08x (row %zu, "
+						"SVE-%04u): a clean run left %llu "
+						"word(s) to the library\n", word,
+						index, row.form & 0x7fffU,
+						static_cast<unsigned long long>(exits));
+					require(false);
+				}
 				bool same = event == (faulted ?
 						EngineEvent::memory_fault :
 						EngineEvent::system_call) &&
@@ -1989,6 +2185,21 @@ void memory_forms_match_the_library()
 		}
 	}
 	require(rows > 0U && runs > rows && faults > 0U);
+	/* A row that always ended in the library would match it trivially. */
+	std::size_t stuck = 0;
+	for (std::size_t index = 0;
+	     index < arm64::detail::sme_encodings.size(); ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory == 0U || sampled[index] == 0U ||
+		    on_gadgets[index] != 0U)
+			continue;
+		std::fprintf(stderr, "row %zu (SVE-%04u): no run of %u stayed on "
+			"the gadgets\n", index, row.form & 0x7fffU, sampled[index]);
+		++stuck;
+	}
+	gadgets::count_sve_library_exits(false);
+	require(stuck == 0U);
 	std::printf("%zu memory-form runs over %zu rows match the library, "
 		"%zu of them faulting\n", runs, rows, faults);
 }

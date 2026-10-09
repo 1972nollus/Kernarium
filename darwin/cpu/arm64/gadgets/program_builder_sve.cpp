@@ -490,8 +490,9 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 		 * through the library. */
 		const auto *const operands = detail::sme_encoding_operands_of(
 			detail::sme_encodings[index]);
-		if (detail::sme_operand_number(operands[memory->base_operand],
-			    word) == 31U)
+		const auto &base = operands[memory->base_operand];
+		if (base.kind == SmeOperandKind::gpr_or_sp &&
+		    detail::sme_operand_number(base, word) == 31U)
 			return emit_library(context, index);
 	}
 	const auto start = context.words.size();

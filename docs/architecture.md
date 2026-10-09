@@ -572,7 +572,13 @@ load, whose elements all translate, leaves FFR as it is), and a store under
 an all-true predicate is one store, and under any other writes its active
 elements one by one, never touching an inactive element's bytes. A
 crossing, a page the TLB cannot fill, a fault or an SP base runs through
-the semantic library, which decides faults, partial writes and FFR. SVE prefetches are NOPs. A size or index a
+the semantic library, which decides faults, partial writes and FFR. A gather or
+scatter (LD1*, LDFF1*, ST1*, and LDNT1* and STNT1* with a vector base) forms
+and translates each active element's address inline; an element whose page the
+TLB lacks, an element crossing a page, a TBI address or an SP base sends the
+whole instruction to the library, which is exact because a load writes its
+destination last and a scatter's stores are idempotent in element order.
+SVE prefetches, gather prefetches included, are NOPs. A size or index a
 form's gadgets leave out runs through the semantic library. Every other
 word runs through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP

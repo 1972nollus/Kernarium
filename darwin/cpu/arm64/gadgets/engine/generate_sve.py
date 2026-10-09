@@ -1568,9 +1568,21 @@ def bit_pattern(register: int) -> list:
         f"dup v{register}.2d, x9"]
 
 
+# The gadgets generated so far by their parameters, so that rows whose
+# gadgets are the same text, such as LD1B and LDFF1B or LD1B and LDNT1B,
+# share the entries.
+MEMORY_GADGETS: dict = {}
+
+
+def cached(parameters: tuple, make) -> list:
+    if parameters not in MEMORY_GADGETS:
+        MEMORY_GADGETS[parameters] = make()
+    return MEMORY_GADGETS[parameters]
+
+
 def memory_form(row):
-    """The slots and a variant builder for a contiguous memory row, or
-    None for a row the semantic library runs."""
+    """The slots, a variant builder and the key of a contiguous memory row,
+    or None for a row the semantic library runs."""
     memory = row.memory
     if memory.shape not in MEMORY_SHAPES or \
             memory.offset not in MEMORY_OFFSETS:
@@ -1583,21 +1595,147 @@ def memory_form(row):
         ([("p", 10)] if predicated else []) + \
         [("gpr_or_sp", 5)] + ([("gpr", 16)] if indexed else [])
     m = memory.msize // 8
+    shape = "contiguous" if memory.shape in (
+        "first_fault", "non_fault") else memory.shape
+    # Everything memory_gadget reads of the row.
+    parameters = ("contiguous", shape, memory.direction, memory.esize,
+                  memory.esize_shift, m, memory.registers,
+                  memory.sign_extend, predicated, indexed)
+
+    def one(e: int) -> list:
+        return cached(parameters + (e,), lambda: memory_gadget(
+            memory, e, m, predicated, indexed))
 
     def build(form: Form) -> None:
         if memory.esize_shift is None:
-            form.variants = [memory_gadget(memory, memory.esize // 8, m,
-                                           predicated, indexed)]
+            form.variants = [one(memory.esize // 8)]
             return
         segment = memory.esize_shift
         form.variant_bits = list(range(segment.low,
                                        segment.low + segment.width))
         for value in range(1 << segment.width):
             e = (memory.esize // 8) << value
-            form.variants.append(
-                ABSENT if e < m or e > 8 else
-                memory_gadget(memory, e, m, predicated, indexed))
-    return tuple(wanted), build
+            form.variants.append(ABSENT if e < m or e > 8 else one(e))
+    return tuple(wanted), build, "/".join(map(str, parameters))
+
+
+# Gathers and scatters, and the first-fault gathers. One access per active
+# element, 2 (.D) or 4 (.S) of them, each translated alone: an address
+# whose page the TLB holds (sve_element_translate) is read or written at
+# once; a miss, a crossing, TBI, or an SP base leaves for the semantic
+# library through sve_library with the whole instruction undone. That is
+# exact because nothing but memory has changed by then and a scatter's
+# stores are idempotent: the library repeats them in order and stops at
+# the element that faults, as the hardware does, and a load writes its
+# destination last. A first-fault gather whose every element translates
+# faults nowhere and leaves FFR as it is, so it is the gather. Stream:
+# [packed slots][immediate byte offset][library operand][PC], the slots in
+# order Zt, Pg, the base (Xn, or Zn for a vector base) and the index (Zm,
+# or Xm for a vector base plus register). The predicate's halves are in
+# x15 and x16, the base in x5, the pointer to the index or base vector in
+# x6, and the vector base's offset in x4.
+
+GATHER_SHAPES = ("gather", "gather_first_fault")
+GATHER_OFFSETS = ("vector_index", "immediate_element", "register_byte")
+
+
+def gather_gadget(memory, signed_index: bool) -> list:
+    """One variant of a gather or scatter; `signed_index` selects SXTW for
+    32-bit vector indexes."""
+    number = next(LABELS)
+    slow = f"Lsve_gather_{number}_slow"
+    load = memory.direction == "load"
+    e = memory.esize // 8
+    m = memory.msize // 8
+    scalar = memory.offset == "vector_index"
+    register_offset = memory.offset == "register_byte"
+    arrangement = {4: "s", 8: "d"}[e]
+    width = {1: "b", 2: "h", 4: "s", 8: "d"}
+    page, second = ("UML_GADGET_TLB_ENTRY_READ_PAGE",
+                    "UML_GADGET_TLB_SECOND_READ_PAGE") if load else \
+        ("UML_GADGET_TLB_ENTRY_WRITE_PAGE",
+         "UML_GADGET_TLB_SECOND_WRITE_PAGE")
+    body = ["ldp x8, x9, [_stream], #16", "and x19, x8, #0xffff",
+            "ubfx x20, x8, #16, #16", "ubfx x13, x8, #32, #16"]
+    if scalar or register_offset:
+        body.append("lsr x14, x8, #48")
+    body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
+             f"cbnz w10, {slow}"]
+    if scalar:
+        body += ["ldr x5, [_cpu, x13]", "add x6, _cpu, x14"]
+    else:
+        body.append("add x6, _cpu, x13")
+        body.append("ldr x4, [_cpu, x14]" if register_offset
+                    else "mov x4, x9")
+    body += ["add x3, _cpu, x20", "ldp x15, x16, [x3]"]
+    body.append("movi v0.2d, #0" if load else "ldr q0, [_cpu, x19]")
+    for element in range(16 // e):
+        byte = element * e
+        skip = f"Lsve_gather_{number}_skip{element}"
+        body.append(f"tbz {'x15' if byte < 8 else 'x16'}, "
+                    f"#{(byte % 8) * 8 + 7}, {skip}")
+        if scalar:
+            if memory.index_bits == 64:
+                body.append(f"ldr x7, [x6, #{byte}]")
+            elif signed_index:
+                body.append(f"ldrsw x7, [x6, #{byte}]")
+            else:
+                body.append(f"ldr w7, [x6, #{byte}]")
+            shift = f", lsl #{memory.index_shift}" \
+                if memory.index_shift else ""
+            body.append(f"add x7, x5, x7{shift}")
+        else:
+            body += [f"ldr {'x7' if e == 8 else 'w7'}, [x6, #{byte}]",
+                     "add x7, x7, x4"]
+        body.append(f"sve_element_translate {page}, {second}, {m}, x7, "
+                    f"{slow}")
+        if not load:
+            body.append(f"st1 {{v0.{width[m]}}}[{byte // m}], [x7]")
+        elif m == e:
+            body.append(f"ld1 {{v0.{arrangement}}}[{element}], [x7]")
+        else:
+            sign = memory.sign_extend
+            wide = "x9" if e == 8 else "w9"
+            instruction = {1: "ldrsb" if sign else "ldrb",
+                           2: "ldrsh" if sign else "ldrh",
+                           4: "ldrsw" if sign else "ldr"}[m]
+            body += [f"{instruction} "
+                     f"{wide if sign else 'w9'}, [x7]",
+                     f"ins v0.{arrangement}[{element}], {wide}"]
+        body.append(f"{skip}:")
+    if load:
+        body.append("str q0, [_cpu, x19]")
+    return body + ["add _stream, _stream, #16", "next_gadget",
+                   f"{slow}:", "b NAME(uml_arm64_gadget_sve_library)"]
+
+
+def gather_form(row):
+    """The slots, variant builder and key of a gather, scatter or
+    first-fault gather row, or None for a row the semantic library runs."""
+    memory = row.memory
+    if memory.shape not in GATHER_SHAPES or \
+            memory.offset not in GATHER_OFFSETS:
+        return None
+    scalar = memory.offset == "vector_index"
+    wanted = [("z", 0), ("p", 10)] + (
+        [("gpr_or_sp", 5), ("z", 16)] if scalar else
+        [("z", 5)] + ([("gpr", 16)] if memory.offset == "register_byte"
+                      else []))
+    parameters = ("gather", memory.direction, memory.esize, memory.msize,
+                  memory.sign_extend, memory.offset, memory.index_bits,
+                  memory.index_shift)
+
+    def build(form: Form) -> None:
+        def one(signed: bool) -> list:
+            return cached(parameters + (signed,),
+                          lambda: gather_gadget(memory, signed))
+        if memory.index_bits == 32:
+            # The word's xs bit: UXTW (0) or SXTW (1).
+            form.variant_bits = [memory.index_sign.low]
+            form.variants = [one(False), one(True)]
+        else:
+            form.variants = [one(False)]
+    return tuple(wanted), build, "/".join(map(str, parameters))
 
 
 # Form construction.
@@ -1636,7 +1774,7 @@ def build_forms(table) -> list:
         name = row.encoding
         base = name.split("_")[0]
         if row.memory is not None:
-            if row.memory.shape == "prefetch":
+            if row.memory.shape in ("prefetch", "gather_prefetch"):
                 # A hint, which never faults: the base part's NOP.
                 if name not in by_name:
                     form = Form(name, [row.index], "prefetch", [], key=name)
@@ -1645,9 +1783,10 @@ def build_forms(table) -> list:
                 else:
                     by_name[name].rows.append(row.index)
                 continue
-            described = memory_form(row)
+            described = memory_form(row) or gather_form(row)
             if described is not None:
-                add(row, "memory", described[0], described[1])
+                add(row, "memory", described[0], described[1],
+                    key=described[2])
             continue
         if name in IMMEDIATE_FORMS:
             lowering, lines = IMMEDIATE_FORMS[name]
