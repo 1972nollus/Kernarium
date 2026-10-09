@@ -106,9 +106,7 @@ printf '%s\n' baseline >"$UPSTREAM/payload.txt"
 mkdir -p "$UPSTREAM/sub"
 printf '#!/bin/sh\nexit 0\n' >"$UPSTREAM/sub/tool.sh"
 chmod +x "$UPSTREAM/sub/tool.sh"
-mkdir -p "$UPSTREAM/other"
-printf '%s\n' unselected >"$UPSTREAM/other/unselected.txt"
-git -C "$UPSTREAM" add payload.txt sub/tool.sh other/unselected.txt
+git -C "$UPSTREAM" add payload.txt sub/tool.sh
 git -C "$UPSTREAM" commit --quiet -m 'fixture: upstream base'
 BASE=$(git -C "$UPSTREAM" rev-parse HEAD)
 
@@ -176,39 +174,27 @@ git -C "$UPSTREAM" commit --quiet -m 'fixture: second maintained change'
 mkdir -p "$SERIES_DIR"
 export_series
 
-for name in clean patched sparse; do
+for name in clean patched; do
 	git clone --quiet "$UPSTREAM" "$CACHE/git/$name"
 	git -C "$CACHE/git/$name" remote set-url origin \
 		"https://example.invalid/$name.git"
 	git -C "$CACHE/git/$name" update-ref refs/heads/uml-pin "$BASE"
-	git -C "$CACHE/git/$name" config uploadpack.allowFilter true
 done
 
-# Model the large sparse-source cache used by the Apple GPU product: only the
-# selected cone is present, and the promisor URL is deliberately unreachable.
-# Publishing from this cache must remain local and must not let upload-pack
-# recursively lazy-fetch through the staged repository's local origin.
-git -C "$UPSTREAM" config uploadpack.allowFilter true
-git clone --quiet --filter=blob:none --no-checkout \
-	"file://$UPSTREAM" "$CACHE/git/partial"
-git -C "$CACHE/git/partial" sparse-checkout init --cone
-git -C "$CACHE/git/partial" sparse-checkout set --cone sub
-git -C "$CACHE/git/partial" switch --detach "$BASE" >/dev/null
-git -C "$CACHE/git/partial" remote set-url origin \
-	https://example.invalid/partial.git
-git -C "$CACHE/git/partial" update-ref refs/heads/uml-pin "$BASE"
-git -C "$CACHE/git/partial" config uploadpack.allowFilter true
-printf '%s\n' "$BASE" >"$CACHE/git/partial/.git/shallow"
-[ -n "$(env GIT_NO_LAZY_FETCH=1 git -C "$CACHE/git/partial" \
-	rev-list --objects --missing=print "$BASE" | sed -n 's/^?//p' | sed -n '1p')" ] ||
-	fail "partial sparse fixture unexpectedly contains the whole commit"
+# A cache that an earlier checkout filtered keeps its promisor marker. It
+# cannot serve a full source, so an offline preparation refuses it.
+git clone --quiet "$UPSTREAM" "$CACHE/git/filtered"
+git -C "$CACHE/git/filtered" remote set-url origin \
+	https://example.invalid/filtered.git
+git -C "$CACHE/git/filtered" update-ref refs/heads/uml-pin "$BASE"
+git -C "$CACHE/git/filtered" config remote.origin.promisor true
+git -C "$CACHE/git/filtered" config remote.origin.partialclonefilter blob:none
 
 cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
 clean	1.0	fixture	https://example.invalid/clean.git	$BASE	.	-
 patched	1.0	fixture	https://example.invalid/patched.git	$BASE	.	patches/patched/series.tsv
-sparse	1.0	sparse-fixture	https://example.invalid/sparse.git	$BASE	sub	-
-partial	1.0	partial-fixture	https://example.invalid/partial.git	$BASE	sub	-
+filtered	1.0	filtered-fixture	https://example.invalid/filtered.git	$BASE	.	-
 EOF
 cp "$MANIFEST" "$MANIFEST.original"
 cp -R "$SERIES_DIR" "$TEST_ROOT/series-original"
@@ -258,33 +244,30 @@ cmp "$UPSTREAM/added.bin" "$PREPARED/patched/added.bin" >/dev/null ||
 [ "$(git -C "$PREPARED/patched" rev-list --count "$BASE..HEAD")" -eq 2 ] ||
 	fail "prepared dependency history has the wrong topology"
 
-SPARSE_PREPARED="$TEST_ROOT/sparse-prepared"
-SPARSE_CACHE_HEAD=$(git -C "$CACHE/git/sparse" rev-parse HEAD)
-SPARSE_CACHE_STATUS=$(git -C "$CACHE/git/sparse" status --porcelain)
-UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
-	"$PREPARE" --product sparse-fixture --root "$SPARSE_PREPARED" \
-		--cache "$CACHE" >/dev/null
-[ -x "$SPARSE_PREPARED/sparse/sub/tool.sh" ] ||
-	fail "sparse preparation omitted its selected source path"
-[ ! -e "$SPARSE_PREPARED/sparse/other/unselected.txt" ] ||
-	fail "sparse preparation materialized an unselected source path"
-[ "$(git -C "$CACHE/git/sparse" rev-parse HEAD)" = "$SPARSE_CACHE_HEAD" ] ||
-	fail "sparse materialization changed the shared cache HEAD"
-[ "$(git -C "$CACHE/git/sparse" status --porcelain)" = "$SPARSE_CACHE_STATUS" ] ||
-	fail "sparse materialization changed the shared cache worktree"
+# Every source is complete: a manifest row that selects source paths is
+# refused before anything is fetched or published, however it spells them.
+for paths in sub 'sub,other' ./ ..; do
+	awk -F '\t' -v paths="$paths" 'BEGIN { OFS = FS }
+		$1 == "clean" { $6 = paths } { print }' \
+		"$MANIFEST.original" >"$MANIFEST"
+	expect_diagnostic "source_paths must be '.'" \
+		prepare "$TEST_ROOT/partial-sources"
+	[ ! -e "$TEST_ROOT/partial-sources" ] ||
+		fail "a refused source selection created a source root"
+done
+cp "$MANIFEST.original" "$MANIFEST"
 
-PARTIAL_PREPARED="$TEST_ROOT/partial-prepared"
-UML_DEPENDENCY_MANIFEST="$MANIFEST" \
-UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
-	"$PREPARE" --product partial-fixture --root "$PARTIAL_PREPARED" \
-		--cache "$CACHE" --no-fetch >/dev/null
-[ -x "$PARTIAL_PREPARED/partial/sub/tool.sh" ] ||
-	fail "partial-cache publication omitted its selected source path"
-[ ! -e "$PARTIAL_PREPARED/partial/other/unselected.txt" ] ||
-	fail "partial-cache publication materialized an unselected source path"
-[ -z "$(git -C "$PARTIAL_PREPARED/partial" remote)" ] ||
-	fail "partial-cache publication retained its local promisor remote"
+# A repository prepared for another source selection is stale, not accepted.
+git -C "$PREPARED/clean" config uml.source.paths sub
+expect_diagnostic "prepared source paths changed" verify "$PREPARED"
+git -C "$PREPARED/clean" config uml.source.paths .
+verify "$PREPARED" >/dev/null
+
+expect_diagnostic "full source is incomplete in the offline cache" \
+	env UML_DEPENDENCY_MANIFEST="$MANIFEST" \
+		UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+		"$PREPARE" --product filtered-fixture \
+		--root "$TEST_ROOT/filtered-prepared" --cache "$CACHE" --no-fetch
 
 CONCURRENT="$TEST_ROOT/concurrent"
 prepare "$CONCURRENT" >"$TEST_ROOT/concurrent-1.out" 2>&1 &
