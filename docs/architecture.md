@@ -568,9 +568,11 @@ including the shifts by wide elements, the SVE2 widening (also indexed),
 narrowing, high-half and shift-accumulate forms, the unsigned saturating
 forms, BSL, BSL1N, BSL2N, NBSL, EOR3, EORBT, EORTB, XAR, ZIP, UZP and TRN
 of vectors and predicates, REV, EXT, TBL of one or two registers, the dot
-products, the integer compares, and the floating-point arithmetic
-(also by immediate), multiply-add, indexed, rounding and same-size
-conversion forms. A predicated
+products, the integer compares (also by immediate), the floating-point
+compares, PUNPK, SUNPK and UUNPK, BRKA and BRKB, INDEX, COMPACT and SPLICE,
+UADDV, FADDV and FADDA, ADDP, USQADD, URHADD, SUBHNB and SUBHNT, and the
+floating-point arithmetic (also by immediate, and with reversed operands),
+multiply-add, indexed, rounding and same-size conversion forms. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
@@ -579,19 +581,32 @@ integer form always does since that costs less than the test. A
 saturating form saturates by compare and select, since AdvSIMD's
 saturating forms set FPSR.QC and SVE's never do, and a shift by an
 immediate has a gadget per value of tsz:imm3. A contiguous load or store
-(LD1*, ST1*, LDNT1*, STNT1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, and LDR and
-STR of a Z or P register) whose footprint lies in one guest page the TLB
-holds runs on the host address: a load reads the whole footprint and
-zeroes the inactive elements, and a store runs only under an all-true
-predicate, as one store. A crossing, a page the TLB cannot fill, a fault, a partial
-store or an SP base runs through the semantic library, which decides
-faults and partial writes. SVE prefetches are NOPs. A size or index a
+(LD1*, ST1*, LDNT1*, STNT1*, LDFF1*, LDNF1*, LD1R*, LD1RQ*, LD2-LD4,
+ST2-ST4, and LDR and STR of a Z or P register) whose footprint lies in one
+guest page the TLB holds runs on the host address: a load reads the whole
+footprint and zeroes the inactive elements (a first-fault or non-fault
+load, whose elements all translate, leaves FFR as it is), and a store under
+an all-true predicate is one store, and under any other writes its active
+elements one by one, never touching an inactive element's bytes. A
+crossing, a page the TLB cannot fill, a fault, an SP base that is
+misaligned or tagged (an SP base is never untagged) runs through the semantic
+library, which decides faults, partial writes and FFR. A gather or scatter
+(LD1*, LDFF1*, ST1*, and LDNT1* and STNT1* with a vector base) forms,
+untags under TBI and translates each active element's address inline; an
+element whose page the TLB lacks, an element crossing a page or a bad SP base
+sends the whole instruction to the library, which is exact because a load
+writes its destination last and a scatter's stores are idempotent in element
+order.
+SVE prefetches, gather prefetches included, are NOPs. A size or index a
 form's gadgets leave out runs through the semantic library. Every other
 word runs through the semantic library from the
 `sve_library` gadget, which stores the guest's NZCV and, while the native FP
 environment is active, its cumulative FPSR flags to `CpuState`, calls the
 library with guest memory through the TLB, and reloads both; a library
-fault leaves through the memory-fault exit. A reserved bitmask immediate of
+fault leaves through the memory-fault exit. While
+`count_sve_library_exits` is enabled (it is off by default), the words that
+reach the library are counted per table row, which is the library-exit
+report. A reserved bitmask immediate of
 AND, ORR, EOR or DUPM ends the block in front of it as the
 illegal-instruction exit. While an FPCR trap enable is set, the executor's
 one-instruction mode runs each non-streaming SVE word through the library,
