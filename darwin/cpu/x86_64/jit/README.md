@@ -164,8 +164,14 @@ its window near the host image, because the generated code calls FEXCore's
 fallbacks there; a buffer beyond the window's capacity runs x87-heavy code
 about a third slower ([architecture](../../../../docs/architecture.md)). The
 window serves buffers in the order spaces map them, however little a space
-runs: with ten vCPUs, idle spaces' buffers can fill it, and a busy space's
-buffer, grown past 16 MiB, then lands beyond it.
+runs: with ten vCPUs, idle spaces' buffers can fill it.
+
+A space drops its translations without allocating: the buffer starts over at
+its beginning, and the context's lookup caches, block links, page lists and
+decoder range go with the code, so the next block overwrites the old ones. Only
+the space's own vCPU runs in its context, which is what makes overwriting safe.
+A buffer therefore grows, to twice its size up to 128 MiB, only when the
+translations of one space fill it.
 
 ## Guest-visible model
 

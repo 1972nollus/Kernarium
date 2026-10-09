@@ -16,7 +16,10 @@
  *	remap		MAP_FIXED, munmap and mmap, and mremap put other bytes
  *			at the address;
  *	vcpu		another thread, on another vCPU, ran the function
- *			before the store and runs it after.
+ *			before the store and runs it after;
+ *	flood		another vCPU publishes more code changes than the
+ *			address space remembers while this one is away, and
+ *			the function is then translated again and patched.
  *
  * A case that sees a value its code no longer holds is a stale translation.
  * Prints one line per case and, last, "code-change: abi=... verdict=ok" when
@@ -493,6 +496,145 @@ void case_vcpu(bool write_protect_first)
 		futex_wait(&reply, answered);
 }
 
+/* Another vCPU unmaps more executable pages than the address space keeps
+ * records of while this one waits in the kernel, so this vCPU can only be
+ * told that everything changed: its engine drops all its translations and
+ * starts over. The function is then translated again and a store into it
+ * must still be seen.
+ *
+ * The function waits for the other vCPU itself, so the first code this vCPU
+ * translates after it starts over is on the page of the function, the page
+ * it translated last: an engine whose decoder remembered that page from
+ * before would not ask for it again, and no store to it would be published.
+ *
+ *	wait:	futex(churn_done, FUTEX_WAIT_PRIVATE, churn_expect)
+ *		call callee
+ *		ret
+ */
+volatile int churn_request;
+volatile int churn_wanted;
+volatile int churn_done;
+volatile int churn_expect;
+int churn_rounds_asked;
+unsigned char *flood_region;
+constexpr unsigned churn_pairs = 1500;
+
+void churn(void *)
+{
+	int seen = 0;
+	for (;;) {
+		int current;
+		while ((current = __atomic_load_n(&churn_request, __ATOMIC_ACQUIRE)) == seen)
+			futex_wait(&churn_request, seen);
+		seen = current;
+		if (current < 0)
+			break;
+		for (int pair = 0; pair < churn_wanted; ++pair) {
+			const long scratch = raw_syscall(nr_mmap, 0, page,
+				prot_read | prot_write | prot_exec,
+				map_private | map_anonymous, -1, 0);
+			if (scratch < 0 && scratch > -4096)
+				break;
+			*reinterpret_cast<volatile unsigned char *>(scratch) = 0xc3;
+			raw_syscall(nr_munmap, scratch, page);
+		}
+		__atomic_store_n(&churn_done, current, __ATOMIC_RELEASE);
+		futex_wake(&churn_done);
+	}
+}
+
+void emit_waiting_function(unsigned char *at, word callee_offset)
+{
+	unsigned char *out = at;
+	const auto put = [&](unsigned char byte) { *out++ = byte; };
+	const auto put32 = [&](unsigned long value) {
+		for (int shift = 0; shift < 32; shift += 8)
+			put(static_cast<unsigned char>(value >> shift));
+	};
+#if defined(__x86_64__)
+	const auto put64 = [&](unsigned long value) {
+		for (int shift = 0; shift < 64; shift += 8)
+			put(static_cast<unsigned char>(value >> shift));
+	};
+	put(0x48); put(0xb8); put64(reinterpret_cast<unsigned long>(&churn_expect));
+	put(0x8b); put(0x10);				/* mov (%rax), %edx */
+	put(0xb8); put32(nr_futex);			/* mov $futex, %eax */
+	put(0x48); put(0xbf); put64(reinterpret_cast<unsigned long>(&churn_done));
+	put(0xbe); put32(futex_wait_private);		/* mov $op, %esi */
+	put(0x45); put(0x31); put(0xd2);		/* xor %r10d, %r10d */
+	put(0x0f); put(0x05);				/* syscall */
+#else
+	put(0x53); put(0x56);				/* push %ebx; push %esi */
+	put(0xb8); put32(reinterpret_cast<unsigned>(&churn_expect));
+	put(0x8b); put(0x10);				/* mov (%eax), %edx */
+	put(0xb8); put32(nr_futex);
+	put(0xbb); put32(reinterpret_cast<unsigned>(&churn_done));
+	put(0xb9); put32(futex_wait_private);		/* mov $op, %ecx */
+	put(0x31); put(0xf6);				/* xor %esi, %esi */
+	put(0xcd); put(0x80);				/* int $0x80 */
+#endif
+	put(0xe8);					/* call callee */
+	put32(callee_offset - static_cast<word>(out + 4 - at));
+#if !defined(__x86_64__)
+	put(0x5e); put(0x5b);				/* pop %esi; pop %ebx */
+#endif
+	put(0xc3);
+}
+
+/* Runs the function; `block` makes its wait last until the other vCPU says
+ * it is done, and otherwise the wait finds the word already different. */
+long flood_call(int done, bool block)
+{
+	churn_expect = block ? done : done + 1000;
+	return call_caller(flood_region);
+}
+
+/* Asks the other vCPU for `pairs` map and unmap pairs, and runs the function
+ * through them. */
+long flood_round(int pairs)
+{
+	const int done = __atomic_load_n(&churn_done, __ATOMIC_ACQUIRE);
+	churn_wanted = pairs;
+	__atomic_store_n(&churn_request, ++churn_rounds_asked, __ATOMIC_RELEASE);
+	futex_wake(&churn_request);
+	return flood_call(done, true);
+}
+
+void case_flood()
+{
+	flood_region = map_region(2);
+	auto *callee = flood_region + callee_near;
+	emit_waiting_function(flood_region, callee_near);
+	emit_callee(callee, 1);
+	auto *stack = map_region(stack_size / page, prot_read | prot_write,
+		map_private | map_anonymous);
+	churn_request = 0;
+	churn_done = 0;
+	churn_rounds_asked = 0;
+	if (spawn_thread(thread_flags, stack + stack_size, churn, nullptr) < 0) {
+		print("code-change: thread failed\n");
+		leave(4);
+	}
+	expect("flood-warm", 1, flood_call(0, false));
+	for (unsigned round = 0; round < 4; ++round) {
+		const unsigned first = 20 + round * 10;
+		/* Everything this vCPU runs around the function is translated
+		 * before the flood, so that the function's page is the last one the
+		 * decoder read. */
+		flood_round(0);
+		flood_round(0);
+		patch(callee, first);
+		expect("flood-before", first, flood_call(0, false));
+		expect("flood-after", first, flood_round(churn_pairs));
+		patch(callee, first + 1);
+		expect("flood-patched", first + 1, flood_call(0, false));
+		patch(callee, first + 2);
+		expect("flood-patched-again", first + 2, flood_call(0, false));
+	}
+	__atomic_store_n(&churn_request, -1, __ATOMIC_RELEASE);
+	futex_wake(&churn_request);
+}
+
 } // namespace
 
 extern "C" {
@@ -580,6 +722,7 @@ int probe_main()
 	case_remap();
 	case_vcpu(false);
 	case_vcpu(true);
+	case_flood();
 	print("code-change: abi="); print(abi);
 	print(" checks="); print(checks);
 	print(" failed="); print(failures);

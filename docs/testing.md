@@ -348,8 +348,9 @@ four vCPUs, as glibc's fork() does, and checks that the workers keep their
 counts and that the parent's releases of the locks it held across the fork
 reach its copy. `run_guest_x86_64_code_change.py`, which takes the same
 options, cross-builds a probe that changes the code of functions an engine has
-translated by stores, mprotect round trips, forks, remaps and another vCPU,
-and requires every later call to run the new bytes. `run_guest_x86_64_tso_litmus.py` runs x86
+translated by stores, mprotect round trips, forks, remaps, another vCPU and a
+flood of changes that makes the engine drop everything, and requires every
+later call to run the new bytes. `run_guest_x86_64_tso_litmus.py` runs x86
 memory-order litmus tests on four vCPUs, between threads and between
 processes over shared memory, in both modes, and in cycles that share, stop
 sharing and share again, whose log must show the space marked and ordered

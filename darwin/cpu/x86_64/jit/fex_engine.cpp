@@ -437,9 +437,13 @@ struct Space final {
 		}
 	}
 
+	/* Drops every translation and starts the code buffer over: only this
+	 * space runs in its context, so nothing else names the code the next
+	 * block overwrites. A new, larger buffer would be a window the image
+	 * cannot spare, and is made only when translations fill this one. */
 	void clear_code() noexcept
 	{
-		context->ClearCodeCache(thread);
+		context->ClearCodeCache(thread, false);
 		release_code_pages();
 	}
 
