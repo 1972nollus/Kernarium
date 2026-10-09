@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/segments.hpp"
 #if UML_FEX_ASM_JIT
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "fex_emitted_registers.hpp"
@@ -506,6 +507,8 @@ struct ReportedResult final {
 	std::string status;
 	std::size_t retired{};
 	std::uint64_t address{};
+	/* RAX where a fault or other stop left it. */
+	std::uint64_t rax{};
 };
 ReportedResult reported;
 bool capture_results = false;
@@ -553,6 +556,34 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 		"RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "RSP",
 		"R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"};
 	return index < names.size() ? names[index] : "unknown";
+}
+
+/* FEX builds every 32-bit test to start with "mov eax, 0x17; mov ds, ax;
+ * mov es, ax" (unittests/32Bit_ASM/CMakeLists.txt): selector 0x17 names
+ * LDT entry 2, which the tests take to be flat data, as FEX checks no
+ * selector. An i386 task gets that LDT, with the entry modify_ldt() writes
+ * for a flat 32-bit data segment. */
+constexpr std::size_t fex_test_data_entry = 2;
+constexpr std::uint64_t flat_32bit_data = 0x00cf'f300'0000'ffffULL;
+const std::array<std::uint64_t, 8192> fex_test_ldt = [] {
+	std::array<std::uint64_t, 8192> table{};
+	table[fex_test_data_entry] = flat_32bit_data;
+	return table;
+}();
+
+/* The segments Linux gives a task at execve: the flat 64-bit or 32-bit
+ * user code segment and the flat data segment as SS, and as DS and ES for
+ * an i386 task; the execution mode follows CS. */
+void linux_segments(uml::cpu::x86_64::CpuState &cpu,
+	uml::cpu::x86_64::ExecutionMode mode)
+{
+	const bool compat = mode == uml::cpu::x86_64::ExecutionMode::compat32;
+	cpu.segment_selectors = {
+		static_cast<std::uint16_t>(compat ? 0x2b : 0),
+		static_cast<std::uint16_t>(compat ? 0x23 : 0x33), 0x2b,
+		static_cast<std::uint16_t>(compat ? 0x2b : 0), 0, 0};
+	cpu.ldt = compat ? fex_test_ldt.data() : nullptr;
+	(void)uml::cpu::x86_64::enter_segments(cpu);
 }
 
 [[nodiscard]] bool compare_registers(const Configuration &configuration,
@@ -673,16 +704,21 @@ struct JitHarness final {
 	unsigned long generation{};
 	uml::cpu::InterruptToken interrupt{};
 
+	/* A case starts in `mode` and may reach the other execution mode
+	 * through a far transfer, so the generation gets a space in each. */
 	[[nodiscard]] unsigned long begin(uml::cpu::x86_64::ExecutionMode mode,
 		std::uint64_t code_sequence)
 	{
+		using uml::cpu::x86_64::ExecutionMode;
 		++generation;
-		engine.apply_changes(generation, mode, {
-			.mapping_sequence = 1,
-			.code_sequence = code_sequence,
-			.all_mappings = true,
-			.all_code = true,
-		});
+		for (const auto each : {mode, mode == ExecutionMode::long64 ?
+			ExecutionMode::compat32 : ExecutionMode::long64})
+			engine.apply_changes(generation, each, {
+				.mapping_sequence = 1,
+				.code_sequence = code_sequence,
+				.all_mappings = true,
+				.all_code = true,
+			});
 		return generation;
 	}
 
@@ -782,12 +818,7 @@ constexpr std::uint32_t vector_general_protection = 13;
 #if UML_FEX_ASM_JIT
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
-	cpu.execution_mode = configuration.mode;
-	if (configuration.mode ==
-		uml::cpu::x86_64::ExecutionMode::compat32) {
-		cpu.segment_selectors[1] = 0x23;
-		cpu.segment_selectors[2] = 0x2b;
-	}
+	linux_segments(cpu, configuration.mode);
 	auto &harness = jit_harness();
 	const auto generation = harness.begin(configuration.mode,
 		sequences.code_changes);
@@ -855,6 +886,7 @@ constexpr std::uint32_t vector_general_protection = 13;
 			detail += " vector " + std::to_string(result.syndrome);
 		print_result(status, retired, cpu.rip,
 			memory.snapshot(cpu.rip, 15), detail, test);
+		reported.rax = cpu.gpr(uml::cpu::x86_64::Register::rax);
 		return 1;
 	}
 #else
@@ -876,12 +908,7 @@ constexpr std::uint32_t vector_general_protection = 13;
 	prepare();
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
-	cpu.execution_mode = configuration.mode;
-	if (configuration.mode ==
-		uml::cpu::x86_64::ExecutionMode::compat32) {
-		cpu.segment_selectors[1] = 0x23;
-		cpu.segment_selectors[2] = 0x2b;
-	}
+	linux_segments(cpu, configuration.mode);
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);
@@ -985,6 +1012,7 @@ constexpr std::uint32_t vector_general_protection = 13;
 				"memory_fault" : "unexpected_event";
 			print_result(status, retired, cpu.rip,
 				memory.snapshot(cpu.rip, 15), event_name(result.event), test);
+			reported.rax = cpu.gpr(uml::cpu::x86_64::Register::rax);
 			return 1;
 		}
 		if (result.instruction_budget_exhausted)
@@ -1146,6 +1174,7 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 			cpu.rflags |= pack_flags[index];
 	}
 	cpu.rip = code_address + offsets[expected.rip_index];
+	linux_segments(cpu, uml::cpu::x86_64::ExecutionMode::long64);
 }
 
 [[nodiscard]] bool binary32_nan(std::uint32_t value) noexcept
@@ -1583,8 +1612,10 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
  * a repeated string instruction retires once however many elements it moves
  * and a loop retires every pass, across dispatches when it outlasts one. A
  * store into the code of the block running it stops that block too, and a
- * case that names RAX checks that the run went on with the new code. The
- * compat32 cases hold 32-bit code to the same rules. */
+ * case that names RAX checks that the run went on with the new code. A case
+ * that names RAX at its stop checks the register a faulting instruction runs
+ * again with, as the instructions before it left it. The compat32 cases
+ * hold 32-bit code to the same rules. */
 struct RetirementCase final {
 	std::string_view name;
 	std::vector<std::uint8_t> code;
@@ -1595,6 +1626,9 @@ struct RetirementCase final {
 	std::optional<std::uint64_t> rax{};
 	uml::cpu::x86_64::ExecutionMode mode{
 		uml::cpu::x86_64::ExecutionMode::long64};
+	/* RAX at a stop short of the end: what the instructions before a
+	 * faulting one wrote to it, which the instruction runs again with. */
+	std::optional<std::uint64_t> stop_rax{};
 };
 
 [[nodiscard]] std::vector<RetirementCase> retirement_cases()
@@ -1623,6 +1657,7 @@ struct RetirementCase final {
 		crossing[offset] = byte;
 	std::fill(crossing.begin() + 7, crossing.begin() + 0xf, 0x90);
 	constexpr auto compat32 = uml::cpu::x86_64::ExecutionMode::compat32;
+	constexpr auto long64 = uml::cpu::x86_64::ExecutionMode::long64;
 	const auto le32 = [](std::uint64_t value) {
 		return std::array<std::uint8_t, 4>{
 			static_cast<std::uint8_t>(value),
@@ -1649,6 +1684,13 @@ struct RetirementCase final {
 		{"load-fault", {0x90, 0x90, 0x48, 0xc7, 0xc3, 0x00, 0x00, 0x00, 0x30,
 			0x48, 0x8b, 0x03, 0x90, 0xf4}, {}, "memory_fault", 3,
 			code_address + 9},
+		/* mov $0x30000000, %ebx; mov $0x1234, %ecx; mov $5, %eax;
+		 * mov %rcx, %rax; xchg %rax, (%rbx); hlt: the exchange faults,
+		 * and runs again with the RAX the move left. */
+		{"xchg-fault-after-move", {0xbb, 0x00, 0x00, 0x00, 0x30, 0xb9, 0x34,
+			0x12, 0x00, 0x00, 0xb8, 0x05, 0x00, 0x00, 0x00, 0x48, 0x89, 0xc8,
+			0x48, 0x87, 0x03, 0xf4}, {}, "memory_fault", 4, code_address + 18,
+			{}, long64, 0x1234},
 		/* nop; xor %ecx, %ecx; xor %edx, %edx; div %ecx; nop; hlt */
 		{"divide-error", {0x90, 0x31, 0xc9, 0x31, 0xd2, 0xf7, 0xf1, 0x90,
 			0xf4}, {}, "unexpected_event", 3, code_address + 5},
@@ -1763,6 +1805,14 @@ struct RetirementCase final {
 		{"compat32-load-fault", {0x90, 0x90, 0xbb, 0x00, 0x00, 0x00, 0x30,
 			0x8b, 0x03, 0x90, 0xf4}, {}, "memory_fault", 3, code_address + 7,
 			{}, compat32},
+		/* mov $0x30000000, %ebx; mov $0x1234, %ecx; mov $5, %eax;
+		 * mov %ecx, %eax; xchg %eax, (%ebx); hlt: glibc's
+		 * __malloc_fork_unlock_parent, whose exchange faults after a
+		 * fork. */
+		{"compat32-xchg-fault-after-move", {0xbb, 0x00, 0x00, 0x00, 0x30,
+			0xb9, 0x34, 0x12, 0x00, 0x00, 0xb8, 0x05, 0x00, 0x00, 0x00, 0x89,
+			0xc8, 0x87, 0x03, 0xf4}, {}, "memory_fault", 4, code_address + 17,
+			{}, compat32, 0x1234},
 		/* nop; nop; ud2; nop; hlt */
 		{"compat32-ud2", {0x90, 0x90, 0x0f, 0x0b, 0x90, 0xf4}, {},
 			"illegal_instruction", 2, code_address + 2, {}, compat32},
@@ -1772,9 +1822,16 @@ struct RetirementCase final {
 		/* nop; nop; SYSENTER; nop; hlt */
 		{"compat32-sysenter", {0x90, 0x90, 0x0f, 0x34, 0x90, 0xf4}, {},
 			"illegal_instruction", 2, code_address + 2, {}, compat32},
-		/* nop; nop; les (%edx), %eax; nop; hlt */
-		{"compat32-les", {0x90, 0x90, 0xc4, 0x02, 0x90, 0xf4}, {},
-			"illegal_instruction", 2, code_address + 2, {}, compat32},
+		/* nop; nop; les (%edx), %eax, with EDX naming nothing mapped;
+		 * nop; hlt */
+		{"compat32-les-fault", {0x90, 0x90, 0xc4, 0x02, 0x90, 0xf4}, {},
+			"memory_fault", 2, code_address + 2, {}, compat32},
+		/* mov $data, %edx; movl $0x12345678, (%edx); movw $0x2b, 4(%edx);
+		 * les (%edx), %eax; hlt */
+		{"compat32-les", {0xba, 0x00, 0x00, 0x00, 0x20, 0xc7, 0x02, 0x78,
+			0x56, 0x34, 0x12, 0x66, 0xc7, 0x42, 0x04, 0x2b, 0x00, 0xc4, 0x02,
+			0xf4}, {{data, data + 0x1000}}, "passed", 4, code_address + 19,
+			{}, compat32},
 		/* nop; mov $265, %eax; xor %ebx, %ebx; int $0x80; nop; hlt */
 		{"compat32-int-0x80", {0x90, 0xb8, 0x09, 0x01, 0x00, 0x00, 0x31,
 			0xdb, 0xcd, 0x80, 0x90, 0xf4}, {}, "passed", 5, code_address + 11,
@@ -1831,7 +1888,8 @@ struct RetirementCase final {
 		capture_results = false;
 		const bool passed = reported.status == test.status &&
 			reported.retired == test.retired &&
-			reported.address == test.address;
+			reported.address == test.address &&
+			(!test.stop_rax || reported.rax == *test.stop_rax);
 		if (!passed)
 			++failures;
 		std::cout << "status=" << (passed ? "passed" : "failed") << '\t'
@@ -1839,9 +1897,16 @@ struct RetirementCase final {
 			<< "stop=" << reported.status << '\t'
 			<< "retired=" << reported.retired << '\t'
 			<< "address=0x" << std::hex << reported.address << std::dec;
-		if (!passed)
+		if (test.stop_rax)
+			std::cout << '\t' << "rax=0x" << std::hex << reported.rax <<
+				std::dec;
+		if (!passed) {
 			std::cout << '\t' << "expected=" << test.status << ',' <<
 				test.retired << ",0x" << std::hex << test.address << std::dec;
+			if (test.stop_rax)
+				std::cout << ",rax=0x" << std::hex << *test.stop_rax <<
+					std::dec;
+		}
 		std::cout << '\n';
 	}
 	std::cout << "status=" << (failures == 0 ? "passed" : "failed") << '\t'

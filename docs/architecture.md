@@ -677,8 +677,10 @@ readable page executable. The banks, the host-flag fusion rules and the
 registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
-CPU state, the decoder, CPUID, the software TLB entry, the code-page registry
-and the split-operand lock form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a
+CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
+the split-operand lock and the segment model, which runs every selector load,
+far transfer and descriptor inspection for both engines, form
+`uml_x86_64_target` in `darwin/cpu/x86_64/`, a
 `shared` CPU target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
@@ -686,7 +688,7 @@ and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
 long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
 are the external instruction acceptance gate. AVX-512 and later encodings,
-RTM/MPX, obsolete protected-mode bounds and far-pointer-load families, and
+RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile. That gate is not proof
 of an arbitrary distribution or complete Linux syscall compatibility. The

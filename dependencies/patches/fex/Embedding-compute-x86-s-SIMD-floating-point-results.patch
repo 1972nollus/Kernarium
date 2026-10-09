@@ -1142,7 +1142,7 @@ index 41d3ef24184df15817f813b9ed8c5addef024ed9..7e0935ae124a17a6e2261559ddd82848
          "Desc": [
            "Reciprocal value - matches the precision required by the x86 spec.",
 diff --git a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
-index 32a824116c1164ced7db716cbf36ad7ac1752ec3..8ca0155ab7764ef418ab4ab3f47cc5ef91685f6b 100644
+index 399ed02fadbcce0010d8ba878c2a573f1f94e494..c69b8bb07ab1ce660d1d042aa2709e54b5f3a623 100644
 --- a/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
 +++ b/FEXCore/Source/Interface/IR/Passes/RegisterAllocationPass.cpp
 @@ -101,6 +101,8 @@ private:
