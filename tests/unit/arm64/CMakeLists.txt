@@ -30,6 +30,7 @@ function(uml_add_arm64_unit_test STEM)
         set(_arm64_test_OBJECTS
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     endif()
     add_executable(${_target}

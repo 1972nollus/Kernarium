@@ -85,8 +85,9 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
 target_include_directories(uml_arm64_execution_helpers PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
-# The engine-neutral SVE semantic library (docs/architecture.md). No product
-# links it until an engine calls it.
+# The engine-neutral SVE semantic library (docs/architecture.md). The gadget
+# engine calls it (arm64/gadgets/sve_helpers.cpp), so every composition that
+# carries the gadget objects carries its objects beside them.
 add_library(uml_arm64_sve_semantics OBJECT
     arm64/detail/sve_semantics.cpp
     arm64/detail/sve_semantics_crypto.cpp
@@ -201,6 +202,7 @@ uml_declare_architecture_target(uml_arm64_sve_forms cpu gadget)
 target_include_directories(uml_arm64_sve_forms INTERFACE ${_uml_arm64_sve_dir})
 set(_uml_arm64_gadget_sve_sources
     arm64/gadgets/program_builder_sve.cpp
+    arm64/gadgets/sve_helpers.cpp
     ${_uml_arm64_sve_dir}/sve_forms.hpp)
 
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
@@ -229,7 +231,8 @@ add_library(uml_arm64_gadgets OBJECT
     ${_uml_arm64_gadget_sve_sources})
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
-target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
+target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers
+    uml_arm64_sve_semantics)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml_arm64_gadgets PUBLIC
@@ -487,6 +490,7 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
+    $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)
     target_link_libraries(uml_cpu_engine_objects INTERFACE

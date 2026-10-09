@@ -44,6 +44,57 @@ gadget sve_link_entry
 	ldp x1, x2, [sp], #16
 	b 98b
 
+/* An SVE word no generated gadget runs, or that a generated gadget leaves
+ * off its fast path: the semantic library runs it on the register file
+ * (uml_arm64_gadget_sve_execute). Stream: [word << 32 | row][PC]. The
+ * guest's NZCV, kept in x27, and its cumulative FPSR flags, kept in the
+ * host register while the native FP environment is active, go to CpuState
+ * before the call and come back after it. A fault leaves through the
+ * memory-fault exit with the fault in the TLB, an UNDEFINED word through
+ * the illegal-instruction exit, each with _stream at the PC word; an
+ * internal error is the fatal event. The builder already ends a block in
+ * front of the words the library knows to be UNDEFINED (decode_sve_word),
+ * so that exit is a backstop. */
+gadget sve_library
+	ldr x8, [_stream], #8
+	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w6, 1f
+	mrs x16, fpsr
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+1:
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov x19, x1
+	mov x20, x2
+	mov x0, x1
+	mov x1, x2
+	mov x2, x8
+	helper_call uml_arm64_gadget_sve_execute
+	mov x1, x19
+	mov x2, x20
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w6, 2f
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
+2:
+	cbnz w0, 3f
+	add _stream, _stream, #8
+	next_gadget
+3:
+	cmp w0, #UML_GADGET_SVE_LIBRARY_FAULT
+	b.ne 4f
+	b uml_arm64_gadget_memory_fault
+4:
+	ldr x8, [_stream]
+	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	cmp w0, #UML_GADGET_SVE_LIBRARY_UNDEFINED
+	mov w0, #UML_GADGET_EVENT_ILLEGAL
+	/* Otherwise EngineEvent::fatal. */
+	mov w9, #-1
+	csel w0, w0, w9, eq
+	b uml_arm64_gadget_leave
+
 /* v\reg := the element pattern of \esize bytes, 0xff in each element's
  * lowest byte: the bits of a predicate a consumer of that size reads. */
 .macro sve_element_pattern esize, reg

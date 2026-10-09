@@ -8,8 +8,10 @@
  * A word takes the SVE path when its encoding-table row executes outside
  * streaming mode only with FEAT_SVE: the row's non-streaming requirement
  * decides whether the virtual CPU implements it, and the generated header
- * (engine/generate_sve.py) gives the form the engine runs for it, or none,
- * which is the illegal-instruction exit. The SME rows that execute in
+ * (engine/generate_sve.py) gives the form the engine runs for it. A row
+ * with no generated form runs through the shared semantic library
+ * (sve_library, sve_helpers.cpp), which implements every row decoded here,
+ * so the engine is at sve_support complete. The SME rows that execute in
  * either mode, such as RDSVL, stay with the SME decoder. A program holding
  * such a word accesses the FP state before it runs, since P and FFR travel
  * with it, and enters through the SVE link entry, which marks the task as
@@ -17,6 +19,7 @@
 #include "program_builder_decode.hpp"
 #include "gadget_selection_api.hpp"
 #include "sve_forms.hpp"
+#include "sve_helpers.hpp"
 #include "sve_layout.h"
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
@@ -35,9 +38,13 @@
 #include <span>
 
 extern "C" {
-/* engine/sve.inc: the generated entries, in the order of the header. */
+/* engine/sve.inc: the generated entries, in the order of the header, the
+ * entry of a variant the generator leaves to the semantic library, and the
+ * gadget that runs a word through that library. */
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries_end[];
+void uml_arm64_gadget_sve_generated_absent();
+void uml_arm64_gadget_sve_library();
 }
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -265,9 +272,65 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		return emit_add(context, rd, slot_number(form, 1, word),
 			sign_extend((word >> 5) & 63U, 6) * step);
 	}
+	case Lowering::prefetch:
+		/* PRF[BHWD]: a hint, which never faults. */
+		emit(context.words, selection::uml_arm64_gadget_nop);
+		return DecodeResult::decoded;
 	default:
 		return implementation_gap(context);
 	}
+}
+
+/* A contiguous memory form's immediate, its bits concatenated in order and
+ * sign-extended where the form says. */
+[[nodiscard]] std::int64_t memory_immediate(const detail::SmeMemory &memory,
+	std::uint32_t word) noexcept
+{
+	std::uint32_t value = 0;
+	unsigned width = 0;
+	for (unsigned index = 0; index < memory.immediate_segment_count;
+	     ++index) {
+		const auto &segment = memory.immediate[index];
+		value = (value << segment.width) |
+			detail::sme_segment_value(segment, word);
+		width += segment.width;
+	}
+	if (width == 0U)
+		return 0;
+	return memory.immediate_signed ? sign_extend(value, width) :
+		static_cast<std::int64_t>(value);
+}
+
+/* The bytes a contiguous form's immediate adds to its base: the immediate
+ * times the access's footprint, its memory element, or 16. A register
+ * index is scaled in the gadget. */
+[[nodiscard]] std::uint64_t memory_offset(const detail::SmeMemory &memory,
+	std::uint32_t word) noexcept
+{
+	const unsigned esize = detail::sme_memory_esize(memory, word) / 8U;
+	const unsigned msize = memory.msize / 8U;
+	std::uint64_t unit = 0;
+	switch (memory.offset) {
+	case detail::SmeAddressOffset::immediate_footprint:
+		if (memory.shape == detail::SmeMemoryShape::fill_z)
+			unit = sve_vector_length;
+		else if (memory.shape == detail::SmeMemoryShape::fill_p)
+			unit = sve_vector_length / 8U;
+		else
+			unit = std::uint64_t{memory.registers} *
+				(sve_vector_length / esize) * msize;
+		break;
+	case detail::SmeAddressOffset::immediate_element:
+		unit = msize;
+		break;
+	case detail::SmeAddressOffset::immediate_16:
+		unit = 16U;
+		break;
+	default:
+		return 0;
+	}
+	return static_cast<std::uint64_t>(memory_immediate(memory, word)) *
+		unit;
 }
 
 /* The TBL indexes of DUP Zd.T, Zn.T[imm]: each byte of the element the
@@ -283,6 +346,19 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		indexes[byte] = static_cast<std::uint8_t>(
 			(index + 1U) * esize <= sve_vector_length ?
 				index * esize + byte % esize : 0xffU);
+	return indexes;
+}
+
+/* The TBL indexes of EXT: the bytes of the pair (first, second) from the
+ * immediate's position, which is 0 past the vector. */
+[[nodiscard]] SvePredicate extract_indexes(std::uint32_t word) noexcept
+{
+	unsigned position = (((word >> 16) & 31U) << 3) | ((word >> 10) & 7U);
+	if (position >= sve_vector_length)
+		position = 0;
+	SvePredicate indexes{};
+	for (unsigned byte = 0; byte < sve_vector_length; ++byte)
+		indexes[byte] = static_cast<std::uint8_t>(position + byte);
 	return indexes;
 }
 
@@ -317,6 +393,11 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 			sign_extend((word >> 5) & 0xffU, 8) *
 			(((word >> 13) & 1U) != 0U ? 256 : 1)), esize));
 		return true;
+	case Lowering::unsigned_immediate:
+		/* imm8, shifted left by 8 when bit 13 (sh) is set. */
+		emit_words(context, replicate(std::uint64_t{(word >> 5) & 0xffU} <<
+			(((word >> 13) & 1U) != 0U ? 8U : 0U), esize));
+		return true;
 	case Lowering::bitmask_immediate: {
 		const auto bits = detail::decode_logical_immediate(true,
 			(word >> 17) & 1U, (word >> 11) & 63U, (word >> 5) & 63U);
@@ -333,10 +414,15 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 	case Lowering::index_table:
 		emit_predicate(context, broadcast_indexes(word));
 		return true;
+	case Lowering::extract_table:
+		emit_predicate(context, extract_indexes(word));
+		return true;
 	case Lowering::plain:
 	case Lowering::count_move:
 	case Lowering::count_add:
 	case Lowering::vector_length_add:
+	case Lowering::memory:
+	case Lowering::prefetch:
 		return true;
 	}
 	return true;
@@ -358,7 +444,23 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 	return static_cast<std::uint32_t>(found - sve::fused_conditions.begin());
 }
 
-DecodeResult emit_form(DecodeContext &context, const Form &form)
+/* The word, whose row is detail::sme_encodings[index], through the
+ * semantic library. The word goes in the operand's high half: an SVE word
+ * is at least 0x0400'0000, so the operand is above every user address and
+ * never reads as a gadget entry. */
+DecodeResult emit_library(DecodeContext &context, std::size_t index)
+{
+	if (!detail::sve_semantics_covers(detail::sme_encodings[index]))
+		return implementation_gap(context);
+	emit(context.words, uml_arm64_gadget_sve_library);
+	emit(context.words, (static_cast<std::uint64_t>(context.instruction)
+		<< 32) | static_cast<std::uint64_t>(index));
+	emit(context.words, context.address);
+	return DecodeResult::decoded;
+}
+
+DecodeResult emit_form(DecodeContext &context, const Form &form,
+	std::size_t index)
 {
 	const auto word = context.instruction;
 	if (form.variants == 0U)
@@ -376,8 +478,24 @@ DecodeResult emit_form(DecodeContext &context, const Form &form)
 	if (variant >= form.variants ||
 	    form.first_entry + variant >= entries.size())
 		return implementation_gap(context);
+	const auto entry = entries[form.first_entry + variant];
+	if (entry == reinterpret_cast<std::uintptr_t>(
+		    uml_arm64_gadget_sve_generated_absent))
+		return emit_library(context, index);
+	const auto *const memory = form.lowering == Lowering::memory ?
+		detail::sme_encoding_memory_of(detail::sme_encodings[index]) :
+		nullptr;
+	if (memory != nullptr) {
+		/* An SP base, whose 16-byte alignment the access checks, runs
+		 * through the library. */
+		const auto *const operands = detail::sme_encoding_operands_of(
+			detail::sme_encodings[index]);
+		if (detail::sme_operand_number(operands[memory->base_operand],
+			    word) == 31U)
+			return emit_library(context, index);
+	}
 	const auto start = context.words.size();
-	emit(context.words, entries[form.first_entry + variant]);
+	emit(context.words, entry);
 	const auto operand = context.words.size();
 	if (form.slot_count != 0U)
 		emit_words(context, packed_slots(form, word));
@@ -385,6 +503,14 @@ DecodeResult emit_form(DecodeContext &context, const Form &form)
 		/* A reserved immediate: the word is UNDEFINED. */
 		context.words.truncate(start);
 		return illegal_instruction(context);
+	}
+	if (memory != nullptr) {
+		/* The byte offset, then the stream of sve_library, which the
+		 * gadget's slow path enters. */
+		emit_words(context, memory_offset(*memory, word));
+		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
+			static_cast<std::uint64_t>(index));
+		emit(context.words, context.address);
 	}
 	if (!fused)
 		return DecodeResult::decoded;
@@ -407,26 +533,32 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 {
 	const auto word = context.instruction;
 	const auto &host = context.options.host_capabilities;
-	const auto *row = detail::find_sme_encoding(word);
-	if (row == nullptr ||
-	    (row->non_streaming_requirement & detail::sme_feature_sve) == 0U) {
-		/* An SME row, or a word of no row: the SME decoder's, or
-		 * UNDEFINED on a virtual CPU without SME. */
+	const auto decoded_word =
+		decode_sve_word(word, host, context.options.svcr);
+	switch (decoded_word.kind) {
+	case SveWord::other:
+		/* The SME decoder's, or UNDEFINED on a virtual CPU without
+		 * SME. */
 		if (implements_sme(host))
 			return std::nullopt;
 		return illegal_instruction(context);
-	}
-	const auto features = implemented_sve_features(host);
-	if ((row->non_streaming_requirement & features) !=
-		    row->non_streaming_requirement ||
-	    ((row->mode & detail::sme_mode_za) != 0U &&
-		    (context.options.svcr & svcr_za) == 0U))
+	case SveWord::undefined:
 		return illegal_instruction(context);
-	const auto number = sve::row_forms[static_cast<std::size_t>(
-		row - detail::sme_encodings.data())];
-	if (number == sve::no_form)
-		return implementation_gap(context);
-	const auto decoded = emit_form(context, sve::forms[number]);
+	case SveWord::implemented:
+		break;
+	}
+	const auto *row = decoded_word.row;
+	const auto index =
+		static_cast<std::size_t>(row - detail::sme_encodings.data());
+	const auto number = sve::row_forms[index];
+	DecodeResult decoded = DecodeResult::decoded;
+	/* Every other form, and a generated form's absent variant, runs
+	 * through the semantic library, which implements every row the
+	 * virtual CPU can decode here. */
+	if (number != sve::no_form)
+		decoded = emit_form(context, sve::forms[number], index);
+	else
+		decoded = emit_library(context, index);
 	if (decoded == DecodeResult::decoded) {
 		context.program_accesses_fp_state = true;
 		context.program_holds_sve = true;
