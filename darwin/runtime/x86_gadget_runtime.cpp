@@ -191,6 +191,99 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		}
 		result.reason = ::uml::cpu::ExitReason::memory_fault;
 	};
+	/* What a run of the engine left: true to go on, false to return. */
+	const auto handle = [&](const x86_64::gadgets::ExecuteResult &executed,
+		bool stepping) noexcept -> bool {
+		result.retired_instructions += executed.retired_instructions;
+		result.fault = executed.fault;
+		if (executed.instruction_budget_exhausted) {
+			result.reason = budget_reason();
+			return false;
+		}
+		if (stepping && executed.repeat_yielded) {
+			/* An iteration that did not end its instruction is a whole
+			 * step: #DB follows it with RIP naming the instruction and,
+			 * as the gadget leaves it, RF set, as it follows each
+			 * iteration on x86. */
+			result.reason = budget_reason();
+			return false;
+		}
+		switch (executed.event) {
+		case ::uml::cpu::EngineEvent::continued:
+			/* A repeated string instruction retires once however many
+			 * elements it moves, and one its repeat budget stopped has
+			 * retired nothing yet, so a loop of long ones would never spend
+			 * this budget. The kernel services its timer only when a
+			 * dispatch returns, so charge the work the repeat budget covered
+			 * instead. A step keeps its exact budget. */
+			if (executed.repeat_yielded && !exact_budget && !trap_armed)
+				instruction_budget -= std::min(
+					instruction_budget - result.retired_instructions,
+					x86_64::gadgets::string_repeat_budget);
+			return true;
+		case ::uml::cpu::EngineEvent::trap_flag:
+			/* With no budget left for the next instruction, the next entry
+			 * sees TF and steps it instead. */
+			if (result.retired_instructions < instruction_budget) {
+				instruction_budget = result.retired_instructions + 1;
+				trap_armed = true;
+			}
+			return true;
+		case ::uml::cpu::EngineEvent::system_call:
+			result.reason = ::uml::cpu::ExitReason::system_call;
+			return false;
+		case ::uml::cpu::EngineEvent::memory_fault:
+			memory_fault();
+			return false;
+		case ::uml::cpu::EngineEvent::interrupt:
+			result.reason = ::uml::cpu::ExitReason::interrupt;
+			return false;
+		case ::uml::cpu::EngineEvent::illegal_instruction:
+			result.reason = ::uml::cpu::ExitReason::illegal_instruction;
+			trace_fatal("execute-illegal", cpu, generation, 0,
+				result.retired_instructions, &memory);
+			return false;
+		case ::uml::cpu::EngineEvent::breakpoint:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 3;
+			return false;
+		case ::uml::cpu::EngineEvent::overflow:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 4;
+			return false;
+		case ::uml::cpu::EngineEvent::general_protection:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			if (executed.vector != 0) {
+				/* The segment model's #NP, #SS or #GP. */
+				result.syndrome = executed.vector;
+				run.error_code = static_cast<std::int32_t>(executed.error);
+				return false;
+			}
+			result.syndrome = x86_general_protection;
+			run.error_code = general_protection_error(memory, cpu);
+			return false;
+		case ::uml::cpu::EngineEvent::debug_trap:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 1;
+			return false;
+		case ::uml::cpu::EngineEvent::bound_range:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 5;
+			return false;
+		case ::uml::cpu::EngineEvent::floating_point_trap:
+			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+			result.syndrome = executed.vector;
+			run.error_code = static_cast<std::int32_t>(executed.error);
+			return false;
+		case ::uml::cpu::EngineEvent::pc_alignment:
+		case ::uml::cpu::EngineEvent::sme_access:
+		case ::uml::cpu::EngineEvent::fatal:
+			trace_fatal("execute", cpu, generation, 0,
+				result.retired_instructions);
+			return false;
+		}
+	return false;
+	};
 	while (result.retired_instructions < instruction_budget) {
 		const auto sequences = execution.sequences();
 		if (sequences.execution_interrupt != 0) {
@@ -239,6 +332,19 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		const auto available = instruction_budget - result.retired_instructions;
+		/* A task whose ES, SS or DS has a base or a limit runs one
+		 * instruction at a time after the exact check of its accesses. */
+		if (cpu.execution_mode == x86_64::ExecutionMode::compat32 &&
+			!cpu.flat_segments) {
+			const bool stepping = exact_budget || trap_armed;
+			const auto stepped = x86_64::gadgets::segment_step(cpu, memory,
+				*active, guarded_interrupt, checked,
+				stepping ? 1U : x86_64::gadgets::string_repeat_budget);
+			state->code_changes = active->prepared_code_changes();
+			if (!handle(stepped, stepping))
+				return run;
+			continue;
+		}
 		/* Only a step has to stop inside a block. Cutting the block that
 		 * crosses an ordinary budget would decode it again for a truncated
 		 * copy, which the program keeps -- a different block every
@@ -281,89 +387,9 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			x86_64::gadgets::execute_checked(*selected.program, cpu,
 				memory, *active, limit, guarded_interrupt, stepping,
 				checked);
-		result.retired_instructions += executed.retired_instructions;
 		state->code_changes = active->prepared_code_changes();
-		result.fault = executed.fault;
-		if (executed.instruction_budget_exhausted) {
-			result.reason = budget_reason();
+		if (!handle(executed, stepping))
 			return run;
-		}
-		if (stepping && executed.repeat_yielded) {
-			/* An iteration that did not end its instruction is a whole
-			 * step: #DB follows it with RIP naming the instruction and,
-			 * as the gadget leaves it, RF set, as it follows each
-			 * iteration on x86. */
-			result.reason = budget_reason();
-			return run;
-		}
-		switch (executed.event) {
-		case ::uml::cpu::EngineEvent::continued:
-			/* A repeated string instruction retires once however many
-			 * elements it moves, and one its repeat budget stopped has
-			 * retired nothing yet, so a loop of long ones would never spend
-			 * this budget. The kernel services its timer only when a
-			 * dispatch returns, so charge the work the repeat budget covered
-			 * instead. A step keeps its exact budget. */
-			if (executed.repeat_yielded && !exact_budget && !trap_armed)
-				instruction_budget -= std::min(
-					instruction_budget - result.retired_instructions,
-					x86_64::gadgets::string_repeat_budget);
-			continue;
-		case ::uml::cpu::EngineEvent::trap_flag:
-			/* With no budget left for the next instruction, the next entry
-			 * sees TF and steps it instead. */
-			if (result.retired_instructions < instruction_budget) {
-				instruction_budget = result.retired_instructions + 1;
-				trap_armed = true;
-			}
-			continue;
-		case ::uml::cpu::EngineEvent::system_call:
-			result.reason = ::uml::cpu::ExitReason::system_call;
-			return run;
-		case ::uml::cpu::EngineEvent::memory_fault:
-			memory_fault();
-			return run;
-		case ::uml::cpu::EngineEvent::interrupt:
-			result.reason = ::uml::cpu::ExitReason::interrupt;
-			return run;
-		case ::uml::cpu::EngineEvent::illegal_instruction:
-			result.reason = ::uml::cpu::ExitReason::illegal_instruction;
-			trace_fatal("execute-illegal", cpu, generation, 0,
-				result.retired_instructions, &memory);
-			return run;
-		case ::uml::cpu::EngineEvent::breakpoint:
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 3;
-			return run;
-		case ::uml::cpu::EngineEvent::overflow:
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 4;
-			return run;
-		case ::uml::cpu::EngineEvent::general_protection:
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = x86_general_protection;
-			run.error_code = general_protection_error(memory, cpu);
-			return run;
-		case ::uml::cpu::EngineEvent::debug_trap:
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 1;
-			return run;
-		case ::uml::cpu::EngineEvent::bound_range:
-			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 5;
-			return run;
-		case ::uml::cpu::EngineEvent::floating_point_trap:
-			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
-			result.syndrome = executed.vector;
-			run.error_code = static_cast<std::int32_t>(executed.error);
-			return run;
-		case ::uml::cpu::EngineEvent::pc_alignment:
-		case ::uml::cpu::EngineEvent::sme_access:
-		case ::uml::cpu::EngineEvent::fatal:
-			trace_fatal("execute", cpu, generation, 0,
-				result.retired_instructions);
-			return run;
-		}
 	}
 	result.reason = budget_reason();
 	return run;

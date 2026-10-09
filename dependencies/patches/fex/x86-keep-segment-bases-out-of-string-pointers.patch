@@ -15,10 +15,10 @@ reads through the prefix's segment.
  1 file changed, 5 insertions(+), 7 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index ba7627260079bc6b058d14d5798a7004f7a6cbc9..4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2 100644
+index e97d2fff5b3c00851d6b80656845ec0dcdffa590..1d562463a0ff3ada30a778d89037e54387dc7408 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -3494,11 +3494,9 @@ void OpDispatchBuilder::MOVSOp(OpcodeArgs) {
+@@ -3499,11 +3499,9 @@ void OpDispatchBuilder::MOVSOp(OpcodeArgs) {
        _StoreMem(RegClass::GPR, Size, Src, RDI, Invalid(), OpSize::i8Bit, MemOffsetType::SXTX, 1);
      }
  
@@ -33,7 +33,7 @@ index ba7627260079bc6b058d14d5798a7004f7a6cbc9..4bbc4fbe8b5aaa1543bc7b0d918b0adf
    }
  }
  
-@@ -3726,7 +3724,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
+@@ -3731,7 +3729,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
  
    if (!Repeat) {
      Ref Src_RSI = LoadGPRRegister(X86State::REG_RSI, AddrSize);
@@ -42,7 +42,7 @@ index ba7627260079bc6b058d14d5798a7004f7a6cbc9..4bbc4fbe8b5aaa1543bc7b0d918b0adf
  
      auto Src = _LoadMemGPRAutoTSO(Size, Dest_RSI, Size);
  
-@@ -3773,7 +3771,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
+@@ -3778,7 +3776,7 @@ void OpDispatchBuilder::LODSOp(OpcodeArgs) {
        // Working loop
        {
          Ref Src_RSI = LoadGPRRegister(X86State::REG_RSI, AddrSize);

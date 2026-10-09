@@ -183,6 +183,17 @@ host does not read it.
 each way it ends, and `run_guest_x86_64_tso_litmus.py` that memory order holds
 through cycles of sharing.
 
+From bridge ABI 20, a guest entry of an x86_64-slice task carries in `fp` the
+address of its mm's LDT, 8192 descriptors in x86 format with zero where no
+entry is installed, or 0 while the mm has none, and in `compat_tls` the i386
+TLS descriptors of a task of either ABI, since a 64-bit task installs them
+too, with INT 0x80 `set_thread_area()`, as Wine's WoW64 does. The kernel
+changes an LDT descriptor only with one aligned 8-byte store and frees the
+table only with the mm, so the host reads it while the mm's tasks run. Both
+engines' shared segment model reads the two fields. The arm64 kernels set
+neither, and the arm64 host reads neither; the implementation is the x86_64
+slice's (see the [mainline README](../mainline-6.18/README.md)).
+
 Every arm64 task has `NT_ARM_TLS`, as natively: TPIDR_EL0, then TPIDR2_EL0,
 which reads as zero and ignores writes unless the run has SME.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` check it without SME.

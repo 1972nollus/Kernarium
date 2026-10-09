@@ -343,14 +343,19 @@ checks that the host sees an address space as shared exactly when the
 kernel's contract in the [common kernel README](../kernel/common/README.md)
 says so, including when the sharing ends, and on the JIT that exactly the
 marked dispatches run ordered code.
-`run_guest_x86_64_tso_litmus.py` runs x86 memory-order litmus tests on four
-vCPUs, between threads and between processes over shared memory, in both
-modes, and in cycles that share, stop sharing and share again, whose log
+`run_guest_x86_64_fork_cow.py` forks from a busy multi-threaded process on
+four vCPUs, as glibc's fork() does, and checks that the workers keep their
+counts and that the parent's releases of the locks it held across the fork
+reach its copy. `run_guest_x86_64_tso_litmus.py` runs x86 memory-order
+litmus tests on four vCPUs, between threads and between processes over
+shared memory, in both modes, and in cycles that share, stop sharing and
+share again, whose log
 must show the space marked and ordered exactly while shared. Its negative
 control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
-`#XM`, `#MF` and `#AC` included, in both modes.
+`#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
+transfers included, in both modes.
 `run_guest_x86_64_fenv.py`, which takes the same options, builds
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
@@ -535,10 +540,12 @@ The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
-and its FZ, DN, and FZ16 controls. Until an engine reaches `sve_support`
-`complete` the engine lanes skip them all, and the corpus's library lane
-runs them through the SVE semantic library, which covers every form the
-encoding table routes. The `arm64-instruction-corpus-sve-native` tooling
+and its FZ, DN, and FZ16 controls. The gadget engine is at `sve_support`
+`complete`, so its lane runs them with the guest-SVE policy on; the JIT
+lane skips them until it is `complete` too. The corpus's library lane runs
+them through the gadget engine with the SVE semantic library behind its
+illegal-instruction exit, and the library covers every form the encoding
+table routes. The `arm64-instruction-corpus-sve-native` tooling
 test re-derives their cases from their generator, and
 `arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
 arm64 Mac, and with SVE cases where the host has SVE at that length.
@@ -643,6 +650,8 @@ part of the SVE profile needs, the engines' support levels, the predicate
 mask form and the SM-change reset, with injected hosts. Unit binaries take
 that policy from their environment as well; until an engine implements SVE
 the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
+`arm64-jit-sve-control` checks the JIT's control core on injected SVE hosts
+under either policy.
 
 ## x86 instruction conformance
 

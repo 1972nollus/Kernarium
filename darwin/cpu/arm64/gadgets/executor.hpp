@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/detail/sme_encodings.hpp"
 #include "cpu/arm64/gadgets/execution_histogram.hpp"
 #include "cpu/arm64/gadgets/guest_sampler.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
@@ -90,6 +91,11 @@ private:
 	[[nodiscard]] ::uml::cpu::EngineEvent run_trap_enabled_instruction(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		std::size_t &executed);
+	/* One SVE word outside streaming mode, implemented as `row`, through
+	 * the semantic library, for the trap-enabled path. */
+	[[nodiscard]] ::uml::cpu::EngineEvent run_library_instruction(
+		CpuState &cpu, std::uint32_t instruction,
+		const detail::SmeEncoding &row, std::size_t &executed);
 
 	class ProgramCache;
 

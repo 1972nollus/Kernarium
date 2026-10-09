@@ -260,9 +260,15 @@ struct ExecuteResult final {
 	bool repeat_yielded{};
 	/* A floating-point trap's x86 vector: #DE, 0, from the engine, or #MF,
 	 * 16, or #XM, 19, from `execute_checked`, whose `error` is then the
-	 * x87 status word with the control word above it, or MXCSR. */
+	 * x87 status word with the control word above it, or MXCSR. A
+	 * general-protection event's #NP, #SS or #GP from the segment model,
+	 * 11, 12 or 13, and its error code; zero for the engine's own #GP. */
 	std::uint8_t vector{};
 	std::uint32_t error{};
+	/* A continued run stopped at an instruction whose access through a
+	 * segment it could not check itself, which RIP names and which has not
+	 * retired: the runtime checks it exactly (`prepare_segment_step`). */
+	bool segment_check{};
 };
 
 [[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,
@@ -278,6 +284,27 @@ struct ExecuteResult final {
 	std::size_t instruction_budget,
 	const ::uml::cpu::InterruptToken &interrupt = {},
 	bool single_step = false) noexcept;
+/* The step of the instruction RIP names through the segment model: its
+ * exact check (`prepare_segment_step`), then the run of it alone under a
+ * SegmentBypass, or what the model did instead. A task whose ES, SS or DS
+ * has a base or a limit runs every instruction this way; `execute` steps an
+ * instruction that failed its inline check or guard itself. */
+[[nodiscard]] ExecuteResult segment_step(CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	const ::uml::cpu::InterruptToken &interrupt, unsigned checked,
+	std::uint64_t string_elements) noexcept;
+/* segment_step after a run that `prior` describes stopped at the check. */
+[[nodiscard]] ExecuteResult continue_segment_step(const ExecuteResult &prior,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
+	Executor &executor, const ::uml::cpu::InterruptToken &interrupt,
+	unsigned checked, bool single) noexcept;
+/* Runs `gadget`, an instruction RIP names, alone: the step of a task whose
+ * segments the engine's address generation cannot honour on its own, or of
+ * an instruction whose segment access the runtime has just checked
+ * (`prepare_segment_step`). The caller holds a SegmentBypass. */
+[[nodiscard]] ExecuteResult execute_step(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	const ::uml::cpu::InterruptToken &interrupt, unsigned checked) noexcept;
 /* `execute` while the guest has enabled an exception the engine does not
  * check for: `checked` is `checked_exceptions(cpu)`, which is not zero, and
  * the program comes from a build for `checked` or more. A block without a

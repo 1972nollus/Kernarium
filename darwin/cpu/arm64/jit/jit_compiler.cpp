@@ -62,6 +62,7 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions) {
     begin_link_observation();
+    block_ = instructions;
     /* A streaming translation never binds a host vector register: AdvSIMD
      * is illegal there, and the guest's vectors stay in the host's own. */
     const bool streaming = streaming_translation();

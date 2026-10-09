@@ -2,6 +2,7 @@
 #include "memory/static_guest_memory.hpp"
 #include "cpu/engine_factory.hpp"
 #if DARWIN_UML_X86_64_GUEST
+#include "cpu/x86_64/segments.hpp"
 #include "runtime/x86_gadget_runtime.hpp"
 #include "runtime/x86_runtime_support.hpp"
 #endif
@@ -47,7 +48,9 @@ constexpr std::size_t x86_64_x87_significand_slot = 19;
 constexpr std::size_t x86_64_x87_exponent_slot = 27;
 constexpr std::size_t x86_32_tls_entry_count = DARWIN_UML_COMPAT_TLS_COUNT;
 constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
-constexpr std::uint64_t x86_64_compat32_execution = 1ULL << 33U;
+/* The kernel's own mark of an i386 task, which it keeps in this bit and the
+ * host hands back untouched: the execution mode follows CS. */
+constexpr std::uint64_t x86_64_i386_task = 1ULL << 33U;
 /* The x86 slice's PR_SET_TSC(PR_TSC_SIGSEGV) task state. */
 constexpr std::uint64_t x86_64_timestamp_faults = 1ULL << 34U;
 #endif
@@ -63,6 +66,7 @@ constexpr std::uint32_t pstate_ss = 0x0020'0000U;
 #if DARWIN_UML_X86_64_GUEST
 constexpr std::int32_t x86_64_debug_trap = 1;
 constexpr std::uint32_t x86_64_bound_range = 5;
+constexpr std::uint32_t x86_64_segment_not_present = 11;
 constexpr std::uint32_t x86_64_stack_segment_fault = 12;
 constexpr std::uint32_t x86_64_general_protection = 13;
 constexpr std::int32_t x86_64_alignment_check = 17;
@@ -196,17 +200,14 @@ void save_cpu(arm64::CpuState &cpu,
 }
 
 #if DARWIN_UML_X86_64_GUEST
-void load_x86_cpu(x86_64::CpuState &cpu,
+/* Loads the state the kernel hands over, and returns the #GP, #NP or #SS an
+ * unusable CS or SS raises before any instruction runs. */
+x86_64::SegmentFault load_x86_cpu(x86_64::CpuState &cpu,
 	const darwin_uml_guest_registers &registers,
 	const darwin_uml_guest_fp_registers &fp) noexcept
 {
 	std::copy_n(std::begin(registers.x), x86_64_register_count,
 		cpu.registers.begin());
-	cpu.execution_mode =
-		(registers.svcr & x86_64_compat32_execution) != 0 ?
-			x86_64::ExecutionMode::compat32 : x86_64::ExecutionMode::long64;
-	cpu.rip = x86_64::normalize_instruction_pointer(
-		cpu.execution_mode, registers.pc);
 	cpu.timestamp_faults = (registers.svcr & x86_64_timestamp_faults) != 0;
 	/* Linux runs userspace with IF set, and no user instruction can clear
 	 * it (CLI and STI raise #GP; POPF and IRET keep it). The kernel sets IF
@@ -216,28 +217,26 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 	 * hands over, and they reach the kernel on the way out. */
 	cpu.rflags = registers.x[x86_64_rflags_slot] |
 		x86_64::rflags_reserved | x86_64::rflags_interrupt;
-	cpu.compat_tls_bases = {};
-	cpu.compat_tls_present = 0;
-	cpu.compat_tls_first = 0;
-	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
-		/* Each descriptor is a struct user_desc: entry number, then base.
-		 * The kernel keeps slot i at GDT entry first + i, so an installed
-		 * descriptor's entry number names the first entry, and the GDT
-		 * numbering stays the kernel's alone. */
-		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
-			const auto head = registers.compat_tls[index][0];
-			const auto tail = registers.compat_tls[index][1];
-			if ((head | tail) == 0)
-				continue;
-			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);
-			cpu.compat_tls_present |= static_cast<std::uint8_t>(1U << index);
-			cpu.compat_tls_first = static_cast<std::uint8_t>(
-				static_cast<std::uint32_t>(head) - index);
-		}
-	}
+	/* Bridge ABI 20: the TLS descriptors of every task, one struct
+	 * user_desc each, slot i at GDT entry 12 + i; and in fp the address of
+	 * the task's LDT, or zero. */
+	static_assert(x86_32_tls_entry_count == std::tuple_size_v<
+		decltype(cpu.tls_descriptors)>);
+	for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index)
+		cpu.tls_descriptors[index] = x86_64::tls_descriptor(
+			registers.compat_tls[index][0], registers.compat_tls[index][1]);
+	cpu.ldt = reinterpret_cast<const std::uint64_t *>(registers.fp);
 	cpu.fs_base = registers.x[x86_64_fs_base_slot];
 	cpu.gs_base = registers.x[x86_64_gs_base_slot];
 	cpu.deferred_flags = {};
+	for (std::size_t index = 0; index < 4; ++index)
+		cpu.segment_selectors[index] = static_cast<std::uint16_t>(
+			registers.fpmr >> (index * 16U));
+	for (std::size_t index = 4; index < 6; ++index)
+		cpu.segment_selectors[index] = static_cast<std::uint16_t>(
+			registers.svcr >> ((index - 4U) * 16U));
+	cpu.system_call_32bit =
+		(registers.svcr & x86_64_compatibility_syscall) != 0;
 	if (fp.reserved[1] == x86_64_fp_marker) {
 		static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 		std::memcpy(cpu.vectors.data(), fp.vectors, sizeof(fp.vectors));
@@ -255,14 +254,6 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 				packed >> ((index % 4U) * 16U));
 			cpu.mmx[index] = cpu.x87[index].significand;
 		}
-		for (std::size_t index = 0; index < 4; ++index)
-			cpu.segment_selectors[index] = static_cast<std::uint16_t>(
-				registers.fpmr >> (index * 16U));
-		for (std::size_t index = 4; index < 6; ++index)
-			cpu.segment_selectors[index] = static_cast<std::uint16_t>(
-				registers.svcr >> ((index - 4U) * 16U));
-		cpu.system_call_32bit =
-			(registers.svcr & x86_64_compatibility_syscall) != 0;
 	} else {
 		cpu.vectors = {};
 		cpu.mmx = {};
@@ -272,11 +263,12 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		cpu.x87_status = 0;
 		cpu.x87_tag = 0xffff;
 		cpu.x87_top = 0;
-		cpu.segment_selectors = {0, static_cast<std::uint16_t>(
-			cpu.execution_mode == x86_64::ExecutionMode::compat32 ? 0x23 : 0x33),
-			0x2b, 0, 0, 0};
-		cpu.system_call_32bit = false;
 	}
+	/* The descriptor caches, and the mode, which follows CS. */
+	const auto fault = x86_64::enter_segments(cpu);
+	cpu.rip = x86_64::normalize_instruction_pointer(
+		cpu.execution_mode, registers.pc);
+	return fault;
 }
 
 void save_x86_cpu(x86_64::CpuState &cpu,
@@ -309,8 +301,7 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	registers.svcr = static_cast<std::uint64_t>(cpu.segment_selectors[4]) |
 		(static_cast<std::uint64_t>(cpu.segment_selectors[5]) << 16U) |
 		(cpu.system_call_32bit ? x86_64_compatibility_syscall : 0U) |
-		(cpu.execution_mode == x86_64::ExecutionMode::compat32 ?
-			x86_64_compat32_execution : 0U) |
+		(registers.svcr & x86_64_i386_task) |
 		(cpu.timestamp_faults ? x86_64_timestamp_faults : 0U);
 	static_assert(sizeof(cpu.vectors) == sizeof(fp.vectors));
 	std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
@@ -380,13 +371,14 @@ template<typename Run>
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
-		/* #DB from ICEBP, #BP and #OF are traps; #BR, #SS and #GP are
-		 * faults. */
+		/* #DB from ICEBP, #BP and #OF are traps; #BR, #NP, #SS and #GP
+		 * are faults. */
 		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
 		if (result.syndrome == x86_64_bound_range ||
+			result.syndrome == x86_64_segment_not_present ||
 			result.syndrome == x86_64_stack_segment_fault ||
 			result.syndrome == x86_64_general_protection)
 			save_x86_fault_flags(registers);
@@ -423,7 +415,15 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	::uml::runtime::ThreadExecutionState &runtime) noexcept
 {
 	auto &cpu = runtime.x86_cpu;
-	load_x86_cpu(cpu, registers, fp);
+	if (const auto fault = load_x86_cpu(cpu, registers, fp)) {
+		/* Like IRET to a CS or SS it may not load, the entry faults with
+		 * RIP and the selectors as the kernel handed them over. */
+		::uml::runtime::X86GadgetRunResult run{};
+		run.execution.reason = uml::cpu::ExitReason::breakpoint;
+		run.execution.syndrome = fault.vector;
+		run.error_code = static_cast<std::int32_t>(fault.error);
+		return finish_x86_run(registers, fp, context, cpu, false, run);
+	}
 	runtime.x86_mm_shared =
 		(registers.dispatch_flags & DARWIN_UML_DISPATCH_MM_SHARED) != 0;
 	if (::uml::runtime::x86_mm_shared_logging()) [[unlikely]]

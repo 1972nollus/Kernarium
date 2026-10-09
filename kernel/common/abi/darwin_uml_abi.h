@@ -109,6 +109,11 @@ struct darwin_uml_faultinfo {
 /* Prefix passed unchanged between a UML task and the native host runtime. */
 struct darwin_uml_guest_registers {
 	darwin_uml_abi_u64 x[29];
+	/* For a task of an x86-64 userspace kernel, the address of its mm's
+	 * LDT, or 0 when the mm has none: 8192 descriptors in x86 format,
+	 * zero where no entry is installed. The kernel changes a descriptor
+	 * only with one aligned 8-byte store and frees the table only with
+	 * the mm. A host may rely on this from bridge ABI 20. */
 	darwin_uml_abi_u64 fp;
 	darwin_uml_abi_u64 lr;
 	darwin_uml_abi_u64 sp;
@@ -124,8 +129,9 @@ struct darwin_uml_guest_registers {
 	/* An arm64 task's PSTATE.SM in bit 0 and PSTATE.ZA in bit 1; the other
 	 * bits stay zero. */
 	darwin_uml_abi_u64 svcr;
-	/* The i386 TLS descriptors of an x86_64-userspace kernel's compat
-	 * task, one struct user_desc each; zero for every other task. */
+	/* The i386 TLS descriptors of a task of an x86_64-userspace kernel,
+	 * whichever ABI installed them, one struct user_desc each; zero for
+	 * every other task. */
 	darwin_uml_abi_u64 compat_tls[DARWIN_UML_COMPAT_TLS_COUNT][2];
 };
 

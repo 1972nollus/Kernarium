@@ -93,125 +93,45 @@ enter_gadget 64, ldr, x, str, x
 .purgem enter_load
 .purgem enter_push
 
-.macro legacy_load width, load, host_register, destination
-	mov x7, x25
-	page_cross_check (\width / 8), Lx86_legacy_load_cross\@
-	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
-	\load \host_register\()\destination, [x7]
-	b Lx86_legacy_load_done\@
-Lx86_legacy_load_cross\@:
-	cross_page_load (\width / 8)
-	mov x\destination, x0
-Lx86_legacy_load_done\@:
-.endm
-
-.macro far_transfer kind, width, load, host_register
-gadget far_\kind\()_\width
-	effective_address
-	mov x25, x7
-	legacy_load \width, \load, \host_register, 26
-	add x25, x25, #(\width / 8)
-	legacy_load 16, ldrh, w, 27
-	.ifc \kind,call
-	ubfx x8, x23, #56, #4
-	add x24, x22, x8
-	.if \width == 16
-	uxth w24, w24
-	.endif
-	.if \width == 32
-	mov w24, w24
-	.endif
-	ldrh w19, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	sub x25, x25, #(\width / 4)
-	mov x7, x25
-	page_cross_check (\width / 4), Lx86_far_call_cross\@
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 4)
-	.if \width == 16
-	bfi x24, x19, #16, #16
-	str w24, [x7]
-	.endif
-	.if \width == 32
-	bfi x24, x19, #32, #32
-	str x24, [x7]
-	.endif
-	.if \width == 64
-	stp x24, x19, [x7]
-	.endif
-	b Lx86_far_call_done\@
-Lx86_far_call_cross\@:
-	.if \width == 16
-	bfi x24, x19, #16, #16
+/* The instructions the segment model shared by both engines runs
+ * (`segments.hpp`): selector loads, far CALL, JMP and RET, an IRET that
+ * changes CS or SS, and LAR, VERR, VERW, SLDT and STR. The stream word
+ * names the instruction, which the helper decodes again and completes or
+ * faults. One that changed neither the mode nor the segment class and did
+ * not transfer control continues in the stream; any other leaves, so the
+ * runtime selects code for what it left. An IRET whose CS and SS stay as
+ * they are takes its own gadget below and joins here otherwise, with x22
+ * naming it. */
+gadget segment_instruction
+	ldr x22, [_stream], #8
+Lx86_segment_instruction:
+	x86_marks_guest_memory
+	bl uml_x86_64_gadget_materialize_flags
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #4
-	helper_call uml_x86_64_gadget_cross_page_store
-	.endif
-	.if \width == 32
-	bfi x24, x19, #32, #32
-	mov x0, _context
-	mov x1, x25
-	mov x2, x24
-	mov w3, #8
-	helper_call uml_x86_64_gadget_cross_page_store
-	.endif
-	.if \width == 64
-	sub sp, sp, #16
-	stp x24, x19, [sp]
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	helper_call uml_x86_64_gadget_cross_page_vector_store
-	add sp, sp, #16
-	.endif
-	cbz w0, Lx86_memory_fault
-Lx86_far_call_done\@:
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	publish_pending_code x25, (\width / 4)
-	.endif
-	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
-	str x26, [_cpu, #UML_X86_64_CPU_RIP]
+	mov x1, _cpu
+	helper_call uml_x86_64_gadget_run_segment_instruction
+	cbz w0, Lx86_segment_next
+	cmp w0, #UML_X86_64_SEGMENT_LEAVE
+	b.eq Lx86_segment_leave
+	cmp w0, #UML_X86_64_SEGMENT_TRAP
+	b.eq Lx86_segment_trap
+	cmp w0, #UML_X86_64_SEGMENT_MEMORY_FAULT
+	b.eq Lx86_memory_fault
+	mov w0, #UML_X86_64_EVENT_SEGMENT_FAULT
+	b uml_x86_64_gadget_leave
+Lx86_segment_next:
+	retire_and_next
+Lx86_segment_leave:
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.endm
-
-far_transfer call, 16, ldrh, w
-far_transfer call, 32, ldr, w
-far_transfer call, 64, ldr, x
-far_transfer jump, 16, ldrh, w
-far_transfer jump, 32, ldr, w
-far_transfer jump, 64, ldr, x
-
-.purgem far_transfer
-
-.macro far_return width, load, host_register
-gadget far_return_\width
-	ldp x23, x22, [_stream], #16
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	legacy_load \width, \load, \host_register, 26
-	add x25, x25, #(\width / 8)
-	legacy_load \width, \load, \host_register, 27
-	add x25, x25, #(\width / 8)
-	add x25, x25, x23
-	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
-	str x26, [_cpu, #UML_X86_64_CPU_RIP]
+Lx86_segment_trap:
 	add _executed, _executed, #1
 	x86_memory_order_boundary
-	mov w0, #UML_X86_64_EVENT_CONTINUED
+	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
 	b uml_x86_64_gadget_leave
-.endm
-
-far_return 16, ldrh, w
-far_return 32, ldr, w
-far_return 64, ldr, x
-
-.purgem far_return
-.purgem legacy_load
 
 .macro iret_load width, load, host_register, destination, offset
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
@@ -241,30 +161,25 @@ gadget interrupt_return_\name
 	iret_load \width, \load, \host_register, 19, 0
 	iret_load \width, \load, \host_register, 24, 1
 	iret_load \width, \load, \host_register, 25, 2
+	ldrh w8, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
+	cmp w8, w24, uxth
+	b.ne Lx86_segment_instruction
 	.if \long_mode
 	/* Wine relies on the five-slot frame to switch from its syscall stack
 	 * to the initial user stack even though both selectors have ring-three
 	 * privilege. */
 	iret_load \width, \load, \host_register, 26, 3
 	iret_load \width, \load, \host_register, 27, 4
-	mov w15, #1
+	ldrh w8, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 4)]
+	cmp w8, w27, uxth
+	b.ne Lx86_segment_instruction
 	.else
-	ldrh w8, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
-	and w8, w8, #3
-	and w9, w24, #3
-	cmp w9, w8
-	b.hi Lx86_iret_outer_privilege\@
-	mov w15, wzr
+	/* At CPL 3 the same CS is the same privilege, so compatibility mode
+	 * pops three slots. */
 	add x26, x23, #((\width / 8) * 3)
 	.if \width == 32
 	mov w26, w26
 	.endif
-	b Lx86_iret_state_ready\@
-Lx86_iret_outer_privilege\@:
-	iret_load \width, \load, \host_register, 26, 3
-	iret_load \width, \load, \host_register, 27, 4
-	mov w15, #1
-Lx86_iret_state_ready\@:
 	.endif
 	/* At CPL 3 IRET loads what POPF loads, plus RF: IF, IOPL, VM, VIF and
 	 * VIP keep their values and the reserved bits stay fixed.  None of the
@@ -285,12 +200,8 @@ Lx86_iret_state_ready\@:
 	orr x25, x25, #2
 	bic x12, x25, x9
 	str x19, [_cpu, #UML_X86_64_CPU_RIP]
-	strh w24, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x25, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	cbz w15, Lx86_iret_keep_stack_segment\@
-	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 4)]
-Lx86_iret_keep_stack_segment\@:
 	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	add _executed, _executed, #1
 	x86_memory_order_boundary

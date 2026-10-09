@@ -81,6 +81,7 @@ Lveneer_\symbol:
 	veneer uml_x86_64_x87_f2xm1
 	veneer uml_x86_64_x87_fyl2x
 	veneer uml_x86_64_x87_fyl2xp1
+	veneer uml_x86_64_gadget_run_segment_instruction
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -910,11 +911,13 @@ Lx86_lazy_ready\@:
  *   47:32  index-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
  *          there is no index register
  *   49:48  index scale shift
- *   51:50  segment (0 none, 1 FS, 2 GS)
+ *   51:50  segment (0 none, 1 FS, 2 GS), or with bit 55 the ES, CS, SS
+ *          or DS whose base a stepped instruction adds
  *   52     32-bit effective-address arithmetic
  *   53     16-bit effective-address arithmetic
  *   54     none of the three above: the address is complete once the base,
  *          the scaled index and the displacement are summed
+ *   55     a legacy segment in 51:50 (`segments.hpp`)
  *   59:56  instruction length
  *   60     a write translation proved this store publishes nothing:
  *          its page holds no cached code and no publication is pending
@@ -957,25 +960,48 @@ Lx86_address_general\@:
 Lx86_address_16\@:
 	uxth w7, w7
 Lx86_address_ready\@:
-	/* The selector indexes {segment_zero, fs_base, gs_base}, so no segment is
-	 * an addition of zero rather than a pair of branches.
-	 */
 	ubfx x9, x23, #50, #2
+	cbnz x9, Lx86_address_segment\@
+	/* Field 0 with bit 55 is a stepped instruction's ES. */
+	tbnz x23, #UML_X86_64_MEMORY_LEGACY_SEGMENT, Lx86_address_legacy\@
+	b Lx86_segment_ready\@
+Lx86_address_segment\@:
+	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
+	cmp w11, #1
+	b.eq Lx86_address_compat\@
+	/* Only compatibility mode steps instructions through the segment
+	 * model, so long mode has FS or GS here, and nothing to do beyond what
+	 * it always did: the selector indexes {segment_zero, fs_base, gs_base},
+	 * and long mode keeps its full-width FS or GS base. */
 	add x11, _cpu, x9, lsl #3
 	ldr x10, [x11, #UML_X86_64_CPU_SEGMENT_ZERO]
 	add x7, x7, x10
-	/* Legacy protected mode has a 32-bit linear-address space. Linux's i386
-	 * TLS sequences rely on a high FS/GS base plus an effective offset
-	 * wrapping through zero; long mode keeps its full-width FS/GS base. The
-	 * wrap follows the selector, not the base value, so a zero FS base in
-	 * compat32 still wraps exactly as before.
-	 */
-	cbz x9, Lx86_address_done\@
-	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
-	cmp w11, #1
-	b.ne Lx86_address_done\@
-	mov w7, w7
-Lx86_address_done\@:
+	b Lx86_segment_ready\@
+Lx86_address_compat\@:
+	tbnz x23, #UML_X86_64_MEMORY_LEGACY_SEGMENT, Lx86_address_legacy\@
+	/* FS or GS in compatibility mode: the offset passes the segment's
+	 * inline check, or the instruction leaves for the runtime's exact one
+	 * before it commits anything. Legacy protected mode has a 32-bit
+	 * linear-address space, and Linux's i386 TLS sequences rely on a high
+	 * base plus an offset wrapping through zero. */
+	add x11, _cpu, #(UML_X86_64_CPU_SEGMENTS + 3 * UML_X86_64_SEGMENT_CACHE_SIZE)
+	add x11, x11, x9, lsl #5
+	ldp x12, x13, [x11, #UML_X86_64_SEGMENT_CHECK_LOW]
+	sub x12, x7, x12
+	cmp x12, x13
+	b.ls Lx86_address_checked\@
+	b Lx86_segment_check
+Lx86_address_checked\@:
+	add x11, _cpu, x9, lsl #3
+	ldr x10, [x11, #UML_X86_64_CPU_SEGMENT_ZERO]
+	add w7, w7, w10
+	b Lx86_segment_ready\@
+Lx86_address_legacy\@:
+	/* A stepped instruction's ES, CS, SS or DS, whose accesses the runtime
+	 * has checked: only the base to add, wrapping at 4 GiB. */
+	add x11, _cpu, x9, lsl #5
+	ldr w10, [x11, #(UML_X86_64_CPU_SEGMENTS + UML_X86_64_SEGMENT_BASE)]
+	add w7, w7, w10
 	b Lx86_segment_ready\@
 	.popsection
 Lx86_segment_ready\@:

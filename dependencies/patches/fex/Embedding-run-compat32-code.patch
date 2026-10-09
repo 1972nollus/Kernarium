@@ -15,33 +15,34 @@ the descriptors its kernel installed: entry n gives the base of
 selector n << 3 | 3, any other selector gives base 0, and no selector
 load faults, matching the host's other engine. ES, CS, SS and DS keep
 base 0. The cached base is stored whole, so a load clears its upper
-half. SYSCALL outside 64-bit mode raises #UD, and so does 0x82, group
-1's alias there, which the host's other engine leaves undefined.
+half. SYSCALL outside 64-bit mode raises #UD. 0x82, group 1's alias
+outside 64-bit mode, raises #UD in 64-bit mode only, and its ADD, OR,
+AND, SUB and XOR forms, which SecondaryALUOp did not name, run as
+0x80's do.
 ---
- FEXCore/Source/Interface/Core/Frontend.cpp    | 19 +++++++++++---
- .../Interface/Core/OpcodeDispatcher.cpp       | 25 ++++++++++++++++++-
+ FEXCore/Source/Interface/Core/Frontend.cpp    | 18 ++++++++---
+ .../Interface/Core/OpcodeDispatcher.cpp       | 30 ++++++++++++++++++-
  .../Source/Interface/Core/OpcodeDispatcher.h  |  1 +
  .../Core/X86Tables/SecondaryTables.cpp        |  2 +-
  FEXCore/include/FEXCore/Core/CoreState.h      |  5 ++++
- 5 files changed, 46 insertions(+), 6 deletions(-)
+ 5 files changed, 50 insertions(+), 6 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/Frontend.cpp b/FEXCore/Source/Interface/Core/Frontend.cpp
-index 9dc805151cbb4677b8010d73ce13f573ebc1a776..9305bcc40e3ef08daad1cb6dd0b417a4dc3f6ea7 100644
+index 9dc805151cbb4677b8010d73ce13f573ebc1a776..f10d4fa33f67530b2ada6f35e8186ad5f7b2122e 100644
 --- a/FEXCore/Source/Interface/Core/Frontend.cpp
 +++ b/FEXCore/Source/Interface/Core/Frontend.cpp
-@@ -728,6 +728,11 @@ Decoder::DecodedBlockStatus Decoder::NormalOpHeader(const FEXCore::X86Tables::X8
+@@ -728,6 +728,10 @@ Decoder::DecodedBlockStatus Decoder::NormalOpHeader(const FEXCore::X86Tables::X8
  
  #define OPD(group, prefix, Reg) (((group - FEXCore::X86Tables::TYPE_GROUP_1) << 6) | (prefix) << 3 | (Reg))
      Op = OPD(Info->Type, Info->MoreBytes, ModRM.reg);
-+    // An embedding host leaves 0x82, group 1's alias outside 64-bit mode,
-+    // undefined in every mode.
-+    if (CTX->Embedded && Info->Type == FEXCore::X86Tables::TYPE_GROUP_1 && Info->MoreBytes == OpToIndex(0x82)) {
++    // 0x82, group 1's alias outside 64-bit mode, is undefined in it.
++    if (CTX->Embedded && BlockInfo.Is64BitMode && Info->Type == FEXCore::X86Tables::TYPE_GROUP_1 && Info->MoreBytes == OpToIndex(0x82)) {
 +      return DecodedBlockStatus::INVALID_INST;
 +    }
      return NormalOp(&PrimaryInstGroupOps[Op], Op);
  #undef OPD
    } else if (Info->Type >= FEXCore::X86Tables::TYPE_GROUP_6 && Info->Type <= FEXCore::X86Tables::TYPE_GROUP_P) {
-@@ -1412,10 +1417,16 @@ void Decoder::DecodeInstructionsAtEntry(FEXCore::Core::InternalThreadState* Thre
+@@ -1412,10 +1416,16 @@ void Decoder::DecodeInstructionsAtEntry(FEXCore::Core::InternalThreadState* Thre
    MaxCondBranchBackwards = ~0ULL;
    DecodedBuffer = PoolObject.ReownOrClaimBuffer();
  
@@ -63,7 +64,7 @@ index 9dc805151cbb4677b8010d73ce13f573ebc1a776..9305bcc40e3ef08daad1cb6dd0b417a4
    EntryPoint = PC;
    BlockInfo.EntryPoints = {PC};
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 76959bbeb676af0d6536f1e1e45d496f6918fcef..e8304cb57af9ed8c0a330b7d3172f8d5e75bdd0c 100644
+index 76959bbeb676af0d6536f1e1e45d496f6918fcef..b404eaa73ebf5f4c1cae28ca0cd9e16f52cc272b 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 @@ -176,6 +176,14 @@ void OpDispatchBuilder::LEAOp(OpcodeArgs) {
@@ -81,7 +82,43 @@ index 76959bbeb676af0d6536f1e1e45d496f6918fcef..e8304cb57af9ed8c0a330b7d3172f8d5
  void OpDispatchBuilder::RETOp(OpcodeArgs) {
    const auto GPRSize = GetGPROpSize();
  
-@@ -4400,10 +4408,25 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
+@@ -269,30 +277,35 @@ void OpDispatchBuilder::SecondaryALUOp(OpcodeArgs) {
+   switch (Op->OP) {
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x80), 0):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x81), 0):
++  case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x82), 0):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x83), 0):
+     IROp = FEXCore::IR::IROps::OP_ADD;
+     AtomicIROp = FEXCore::IR::IROps::OP_ATOMICFETCHADD;
+     break;
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x80), 1):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x81), 1):
++  case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x82), 1):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x83), 1):
+     IROp = FEXCore::IR::IROps::OP_OR;
+     AtomicIROp = FEXCore::IR::IROps::OP_ATOMICFETCHOR;
+     break;
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x80), 4):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x81), 4):
++  case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x82), 4):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x83), 4):
+     IROp = FEXCore::IR::IROps::OP_ANDWITHFLAGS;
+     AtomicIROp = FEXCore::IR::IROps::OP_ATOMICFETCHAND;
+     break;
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x80), 5):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x81), 5):
++  case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x82), 5):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x83), 5):
+     IROp = FEXCore::IR::IROps::OP_SUB;
+     AtomicIROp = FEXCore::IR::IROps::OP_ATOMICFETCHSUB;
+     break;
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x80), 6):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x81), 6):
++  case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x82), 6):
+   case OPD(FEXCore::X86Tables::TYPE_GROUP_1, OpToIndex(0x83), 6):
+     IROp = FEXCore::IR::IROps::OP_XOR;
+     AtomicIROp = FEXCore::IR::IROps::OP_ATOMICFETCHXOR;
+@@ -4400,10 +4413,25 @@ void OpDispatchBuilder::CheckLegacySegmentWrite(Ref NewNode, uint32_t SegmentReg
  }
  
  void OpDispatchBuilder::UpdatePrefixFromSegment(Ref Segment, uint32_t SegmentReg) {

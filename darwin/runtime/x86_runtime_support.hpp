@@ -8,6 +8,7 @@
 #if DARWIN_UML_X86_64_GUEST
 
 #include "cpu/x86_64/cpu_state.hpp"
+#include "cpu/x86_64/segments.hpp"
 #include "memory/static_guest_memory.hpp"
 #include "uml_darwin_static_mmu.h"
 

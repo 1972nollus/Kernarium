@@ -149,6 +149,7 @@ private:
 struct Prefixes final {
 	ExecutionMode mode{ExecutionMode::long64};
 	Segment segment{Segment::none};
+	LegacySegment legacy_segment{LegacySegment::none};
 	std::uint8_t rex{};
 	std::uint8_t repeat{};
 	bool operand_size{};
@@ -346,16 +347,27 @@ private:
 			case 0x2e:
 			case 0x36:
 			case 0x3e:
+				/* Compatibility mode honours the last segment
+				 * override; long mode ignores these four. */
+				if (prefixes_.mode == ExecutionMode::compat32) {
+					prefixes_.segment = Segment::none;
+					prefixes_.legacy_segment = opcode == 0x26 ?
+						LegacySegment::es : opcode == 0x2e ?
+						LegacySegment::cs : opcode == 0x36 ?
+						LegacySegment::ss : LegacySegment::ds;
+				}
 				prefixes_.rex = 0;
 				prefixes_.rex_present = false;
 				continue;
 			case 0x64:
 				prefixes_.segment = Segment::fs;
+				prefixes_.legacy_segment = LegacySegment::none;
 				prefixes_.rex = 0;
 				prefixes_.rex_present = false;
 				continue;
 			case 0x65:
 				prefixes_.segment = Segment::gs;
+				prefixes_.legacy_segment = LegacySegment::none;
 				prefixes_.rex = 0;
 				prefixes_.rex_present = false;
 				continue;
@@ -463,6 +475,7 @@ private:
 		operand.kind = OperandKind::memory;
 		operand.width = width;
 		operand.memory.segment = prefixes_.segment;
+		operand.memory.legacy_segment = prefixes_.legacy_segment;
 		if (address_16(prefixes_)) {
 			constexpr std::array<std::uint8_t, 8> bases{
 				3, 3, 5, 5, 6, 7, 5, 3};
@@ -771,6 +784,7 @@ private:
 		memory.width = (opcode == 0xa0 || opcode == 0xa2) ?
 			OperandWidth::byte : width;
 		memory.memory.segment = prefixes_.segment;
+		memory.memory.legacy_segment = prefixes_.legacy_segment;
 		memory.memory.address_16 = address_16(prefixes_);
 		memory.memory.address_32 = address_32(prefixes_);
 		memory.memory.absolute_address = true;
@@ -802,13 +816,15 @@ private:
 	}
 
 	[[nodiscard]] Operand string_memory(std::uint8_t base,
-		OperandWidth width, Segment segment) const noexcept
+		OperandWidth width, Segment segment,
+		LegacySegment legacy) const noexcept
 	{
 		Operand operand{};
 		operand.kind = OperandKind::memory;
 		operand.width = width;
 		operand.memory.base = base;
 		operand.memory.segment = segment;
+		operand.memory.legacy_segment = legacy;
 		operand.memory.address_16 = address_16(prefixes_);
 		operand.memory.address_32 = address_32(prefixes_);
 		return operand;
@@ -819,8 +835,12 @@ private:
 	{
 		const auto width = (opcode & 1U) == 0 ?
 			OperandWidth::byte : ordinary;
-		const auto source = string_memory(6, width, prefixes_.segment);
-		const auto destination = string_memory(7, width, Segment::none);
+		const auto source = string_memory(6, width, prefixes_.segment,
+			prefixes_.legacy_segment);
+		/* A destination is always ES:(E)DI. */
+		const auto destination = string_memory(7, width, Segment::none,
+			prefixes_.mode == ExecutionMode::compat32 ?
+				LegacySegment::es : LegacySegment::none);
 		const auto accumulator = register_operand(
 			0, false, width, prefixes_.rex_present);
 		switch (opcode) {
@@ -1010,19 +1030,93 @@ private:
 		return false;
 	}
 
-	/* LLDT and LTR raise #GP at CPL 3 before they touch memory. */
+	/* SLDT and STR, which UMIP leaves to Linux, store a selector: a
+	 * register form writes the operand size and keeps the bits above it,
+	 * a memory form two bytes. LLDT and LTR raise #GP at CPL 3 before they
+	 * touch memory. VERR and VERW read a selector. */
 	[[nodiscard]] bool decode_0f00(Instruction &instruction)
 	{
 		std::uint8_t modrm{};
 		if (!read(modrm))
 			return false;
 		const auto group = static_cast<std::uint8_t>((modrm >> 3U) & 7U);
-		if (group != 2 && group != 3)
+		switch (group) {
+		case 0:
+		case 1:
+			if (!rm_operand(modrm, (modrm >> 6U) == 3U ?
+				ordinary_width(prefixes_) : OperandWidth::word,
+				instruction.destination))
+				return false;
+			instruction.operation = Operation::store_segment_table;
+			instruction.vector_group = group;
+			return true;
+		case 2:
+		case 3: {
+			Operand ignored{};
+			if (!rm_operand(modrm, OperandWidth::word, ignored))
+				return false;
+			instruction.operation = Operation::privileged;
+			return true;
+		}
+		case 4:
+		case 5:
+			if (!rm_operand(modrm, OperandWidth::word,
+				instruction.source))
+				return false;
+			instruction.operation = Operation::verify_segment;
+			instruction.vector_group = group;
+			return true;
+		default:
 			return false;
-		Operand ignored{};
-		if (!rm_operand(modrm, OperandWidth::word, ignored))
+		}
+	}
+
+	/* LAR: the access rights of the descriptor a selector names. */
+	[[nodiscard]] bool decode_access_rights(Instruction &instruction)
+	{
+		std::uint8_t modrm{};
+		if (!read(modrm) || !rm_operand(modrm, OperandWidth::word,
+			instruction.source))
 			return false;
-		instruction.operation = Operation::privileged;
+		instruction.operation = Operation::load_access_rights;
+		instruction.destination = reg_field(modrm, ordinary_width(prefixes_));
+		return true;
+	}
+
+	/* LDS, LES, LSS, LFS and LGS read a far pointer: an offset of the
+	 * operand size, then a selector. A register operand is undefined. */
+	[[nodiscard]] bool decode_far_pointer(Instruction &instruction,
+		std::uint8_t modrm, std::uint8_t segment)
+	{
+		const auto width = ordinary_width(prefixes_);
+		if ((modrm >> 6U) == 3U ||
+			!rm_operand(modrm, width, instruction.source))
+			return false;
+		instruction.operation = Operation::load_far_pointer;
+		instruction.vector_group = segment;
+		instruction.destination = reg_field(modrm, width);
+		return true;
+	}
+
+	/* A direct far CALL or JMP, outside 64-bit mode: an offset of the
+	 * operand size, then the selector, both immediate. */
+	[[nodiscard]] bool decode_far_direct(Instruction &instruction,
+		std::uint8_t opcode)
+	{
+		if (prefixes_.mode != ExecutionMode::compat32)
+			return false;
+		const auto width = prefixes_.operand_size ?
+			OperandWidth::word : OperandWidth::dword;
+		std::uint64_t offset{};
+		std::uint64_t selector{};
+		if (!read_unsigned(static_cast<unsigned>(width), offset) ||
+			!read_unsigned(2, selector))
+			return false;
+		instruction.operation = opcode == 0x9a ?
+			Operation::far_call : Operation::far_jump;
+		instruction.source = immediate_operand(offset, width);
+		instruction.auxiliary = immediate_operand(selector,
+			OperandWidth::word);
 		return true;
 	}
 
@@ -1271,7 +1365,8 @@ private:
 				((prefixes_.rex & 1U) != 0 ? 8U : 0U)), width);
 		/* The store goes through DS:(E/R)DI, which a segment override and
 		 * the address-size prefix both change. */
-		instruction.destination = string_memory(7, width, prefixes_.segment);
+		instruction.destination = string_memory(7, width, prefixes_.segment,
+			prefixes_.legacy_segment);
 		instruction.vex = prefixes_.vex;
 		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
 		return true;
@@ -2418,11 +2513,11 @@ private:
 			return false;
 		/* In 32-bit code C4 and C5 are LES and LDS, and select VEX only
 		 * when the next byte would be a register ModR/M, which those
-		 * instructions reject.  Far-pointer loads are not implemented, so
-		 * the LES/LDS forms are illegal like LSS, LFS and LGS. */
+		 * instructions reject. */
 		const bool compat32 = prefixes_.mode == ExecutionMode::compat32;
 		if (compat32 && (second & 0xc0U) != 0xc0U)
-			return false;
+			return decode_far_pointer(instruction, second,
+				first == 0xc4 ? 0U : 3U);
 		std::uint8_t third{};
 		std::uint8_t rex{};
 		std::uint8_t map = 1;
@@ -2640,6 +2735,8 @@ private:
 			return decode_0f00(instruction);
 		case 0x01:
 			return decode_0f01(instruction);
+		case 0x02:
+			return decode_access_rights(instruction);
 		case 0x03:
 			return decode_segment_limit(instruction);
 		case 0x07:
@@ -2762,6 +2859,14 @@ private:
 		case 0xb3:
 			return decode_bit_register(instruction, Operation::bit_reset,
 				ordinary_width(prefixes_));
+		case 0xb2:
+		case 0xb4:
+		case 0xb5: {
+			std::uint8_t modrm{};
+			return read(modrm) && decode_far_pointer(instruction, modrm,
+				static_cast<std::uint8_t>(opcode == 0xb2 ? 2U :
+					opcode == 0xb4 ? 4U : 5U));
+		}
 		case 0xb8:
 			if (prefixes_.repeat != 0xf3)
 				return false;
@@ -2994,6 +3099,12 @@ private:
 			return decode_imul_immediate(instruction, opcode, width);
 		case 0x80: return decode_immediate_group(instruction,
 			OperandWidth::byte, 1, false);
+		case 0x82:
+			/* Outside 64-bit mode, an alias of 80. */
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			return decode_immediate_group(instruction,
+				OperandWidth::byte, 1, false);
 		case 0x81: return decode_immediate_group(instruction, width,
 			width == OperandWidth::word ? 2U : 4U,
 			width == OperandWidth::qword);
@@ -3204,6 +3315,8 @@ private:
 			instruction.source.width = OperandWidth::byte;
 			instruction.source.memory.base = 3;
 			instruction.source.memory.segment = prefixes_.segment;
+			instruction.source.memory.legacy_segment =
+				prefixes_.legacy_segment;
 			instruction.source.memory.address_16 = address_16(prefixes_);
 			instruction.source.memory.address_32 = address_32(prefixes_);
 			return true;
@@ -3229,6 +3342,9 @@ private:
 		case 0xde:
 		case 0xdf:
 			return decode_x87(instruction, opcode);
+		case 0x9a:
+		case 0xea:
+			return decode_far_direct(instruction, opcode);
 		case 0xe8: return decode_relative(instruction, Operation::call, 4);
 		case 0xe9: return decode_relative(instruction, Operation::jump, 4);
 		case 0xeb: return decode_relative(instruction, Operation::jump, 1);

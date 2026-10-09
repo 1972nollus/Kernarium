@@ -544,43 +544,6 @@ Lx86_push_segment_64_cross:
 	cross_page_store x24, 8
 	b Lx86_push_segment_64_done
 
-gadget pop_segment_32
-	ldp x23, x22, [_stream], #16
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	mov w25, w25
-	mov x7, x25
-	page_cross_check 4, Lx86_pop_segment_32_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 4
-	ldr w24, [x7]
-Lx86_pop_segment_32_done:
-	add w9, w25, #4
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	and x8, x23, #0xffff
-	strh w24, [_cpu, x8]
-	retire_and_next
-Lx86_pop_segment_32_cross:
-	cross_page_load 4
-	mov x24, x0
-	b Lx86_pop_segment_32_done
-
-gadget pop_segment_64
-	ldp x23, x22, [_stream], #16
-	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	mov x7, x25
-	page_cross_check 8, Lx86_pop_segment_64_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 8
-	ldr x24, [x7]
-Lx86_pop_segment_64_done:
-	add x9, x25, #8
-	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	and x8, x23, #0xffff
-	strh w24, [_cpu, x8]
-	retire_and_next
-Lx86_pop_segment_64_cross:
-	cross_page_load 8
-	mov x24, x0
-	b Lx86_pop_segment_64_done
-
 gadget xlat
 	ldp x23, x22, [_stream], #16
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
