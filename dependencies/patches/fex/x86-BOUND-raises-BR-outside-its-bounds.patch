@@ -16,10 +16,10 @@ index lies outside them. A register operand is still undefined, and
  3 files changed, 44 insertions(+), 1 deletion(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 09e0be8efb4aec4b622578272ffb47202d1ff195..ba7627260079bc6b058d14d5798a7004f7a6cbc9 100644
+index fe1fc28c79c9eabb58a8c40630f4f6630dedf8f6..e97d2fff5b3c00851d6b80656845ec0dcdffa590 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1173,6 +1173,42 @@ void OpDispatchBuilder::ARPLOp(OpcodeArgs) {
+@@ -1178,6 +1178,42 @@ void OpDispatchBuilder::ARPLOp(OpcodeArgs) {
    StoreResultGPR_WithOpSize(Op, Op->Dest, FinalDest, Size);
  }
  

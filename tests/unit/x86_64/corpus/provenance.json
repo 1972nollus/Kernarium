@@ -1,7 +1,7 @@
 {
-  "cases": 74415,
-  "excluded_records": 113,
-  "fex_records": 2148,
+  "cases": 74412,
+  "excluded_records": 118,
+  "fex_records": 2143,
   "inputs": {
     "fex_commit": "e869aa644a16e4332cdc15c1ea0b4d13d482385d",
     "fex_corpus_sha256": "72124229990fec462bb2652573321a40141a957b990a0db0d76e4842698279a0",
@@ -13,15 +13,15 @@
     },
     "repository_oracle": {
       "cpuid_signature": "0x000c06f2",
-      "response_sha256": "265369ce608b067c3a62926c131cf903856dc8fc46c96b0ecfba8ef793d283b0",
+      "response_sha256": "bf0e71519a039a64349bed30ab03ab518f7e0b9a58c822e9df8abcca658229b7",
       "vendor": "GenuineIntel"
     },
     "sdm": "325462-092, June 2026"
   },
   "k_records": 188,
-  "pack_sha256": "1962665a7bc0e74c56b35b27b7b10ca85472d237c264c1395d6ce743a16dd308",
+  "pack_sha256": "7637ddd783a83b6770dc0117339fd4616fa860ad0583dbe909faa0ce9e3ab152",
   "profile": "x86-64-v3 plus AES, PCLMUL, XSAVE, FSGSBASE, and ADX",
-  "records": 2378,
-  "repository_records": 42,
+  "records": 2375,
+  "repository_records": 44,
   "schema": 1
 }

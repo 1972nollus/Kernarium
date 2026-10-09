@@ -190,7 +190,7 @@ void process_profile_honours_environment()
 
 /* Below complete an engine presents no SVE token and changes nothing else;
  * at complete it presents the host as given. The gadget engine is at
- * complete and the JIT at none, so under the policy the gadget engine
+ * complete and the JIT at control, so under the policy the gadget engine
  * presents SVE and the JIT does not; the entry points the guest kernel
  * reads outside a run present what both engines implement, so no SVE
  * either way until the JIT is complete too. */
@@ -208,7 +208,7 @@ void engines_present_sve_only_when_complete()
 		require(arm64::sve_host_for_support(without, support) == without);
 
 	require(arm64::gadgets::sve_support == SveSupport::complete &&
-		arm64::jit::sve_support == SveSupport::none);
+		arm64::jit::sve_support == SveSupport::control);
 	const auto gadgets = ::uml::cpu::engine_host_capabilities(
 		::uml::cpu::EngineKind::gadgets, host);
 	require(gadgets == arm64::sme_host_for_support(host,

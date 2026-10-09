@@ -10,9 +10,9 @@
 #define UML_X86_64_CPU_MMX 640
 #define UML_X86_64_CPU_X87 704
 #define UML_X86_64_CPU_SEGMENT_SELECTORS 832
-#define UML_X86_64_CPU_COMPAT_TLS_BASES 844
-#define UML_X86_64_CPU_COMPAT_TLS_PRESENT 864
-#define UML_X86_64_CPU_COMPAT_TLS_FIRST 865
+#define UML_X86_64_CPU_SEGMENT_BYPASS 844
+#define UML_X86_64_CPU_FLAT_SEGMENTS 845
+#define UML_X86_64_CPU_TLS_DESCRIPTORS 848
 #define UML_X86_64_CPU_RIP 872
 #define UML_X86_64_CPU_RFLAGS 880
 #define UML_X86_64_CPU_SEGMENT_ZERO 888
@@ -38,6 +38,12 @@
 #define UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK 956
 #define UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE 958
 #define UML_X86_64_CPU_CARRY_SLOT 960
+#define UML_X86_64_CPU_LDT 992
+#define UML_X86_64_CPU_SEGMENTS 1000
+#define UML_X86_64_SEGMENT_CACHE_SIZE 32
+#define UML_X86_64_SEGMENT_CHECK_LOW 0
+#define UML_X86_64_SEGMENT_CHECK_SPAN 8
+#define UML_X86_64_SEGMENT_BASE 16
 
 #define UML_X86_64_TLB_READ_PAGE 0
 #define UML_X86_64_TLB_READ_DATA_MINUS_ADDRESS 8
@@ -56,6 +62,10 @@
  * segment base to add.
  */
 #define UML_X86_64_MEMORY_PLAIN_ADDRESS 54
+/* Stream-descriptor bit: the operand's segment field names ES, CS, SS or DS,
+ * whose base a compatibility-mode address adds. Only a stepped task's
+ * blocks set it. */
+#define UML_X86_64_MEMORY_LEGACY_SEGMENT 55
 
 #define UML_X86_64_CONTEXT_MEMORY 0
 #define UML_X86_64_CONTEXT_TLB 8
@@ -93,6 +103,26 @@
  * and left before committing anything, with the context's exception stream
  * just past a stream word of its own. `execute` runs it again, checked. */
 #define UML_X86_64_EVENT_EXCEPTION_CHECK 65
+/* Not an EngineEvent: an access through a segment failed its inline check,
+ * or the guard of an instruction the engine cannot check stopped it, before
+ * anything committed, with RIP naming the instruction. `execute` reports it
+ * as continued and sets ExecuteResult::segment_check. */
+#define UML_X86_64_EVENT_SEGMENT_CHECK 66
+/* Not an EngineEvent: the segment model raised #NP, #SS or #GP for an
+ * instruction, before anything committed, with RIP naming it and the
+ * context holding the vector and error code. `execute` reports it as
+ * general_protection with ExecuteResult's vector and error. */
+#define UML_X86_64_EVENT_SEGMENT_FAULT 67
+
+/* What uml_x86_64_gadget_run_segment_instruction returns: the instruction
+ * retired and the stream continues (0), it retired and the run leaves, or
+ * leaves with RFLAGS.TF newly set, or it faulted, as the context's fault or
+ * segment fault names. */
+#define UML_X86_64_SEGMENT_NEXT 0
+#define UML_X86_64_SEGMENT_LEAVE 1
+#define UML_X86_64_SEGMENT_TRAP 2
+#define UML_X86_64_SEGMENT_MEMORY_FAULT 3
+#define UML_X86_64_SEGMENT_FAULT 4
 
 /* The work a repeated string instruction does before it stops between
  * elements: elements in its element loop, 64-byte blocks in a page-bounded

@@ -5,6 +5,8 @@
 #include "native_builder.hpp"
 #include "native_entry.hpp"
 
+#include "cpu/x86_64/segments.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -402,6 +404,19 @@ template<bool WatchFloating, bool Checked = false>
 				instruction_budget);
 		}
 	}
+	if (result.event == UML_X86_64_EVENT_SEGMENT_FAULT) {
+		ExecuteResult fault{::uml::cpu::EngineEvent::general_protection,
+			result.executed, {}, false, false};
+		fault.vector = context.segment_vector;
+		fault.error = context.segment_error;
+		return fault;
+	}
+	if (result.event == UML_X86_64_EVENT_SEGMENT_CHECK) {
+		ExecuteResult check{::uml::cpu::EngineEvent::continued,
+			result.executed, {}, false, false};
+		check.segment_check = true;
+		return check;
+	}
 	/* An instruction that loads the x87 control word or environment and
 	 * unmasks an exception whose flag is set leaves the engine, and the
 	 * exception is then pending: the status word shows it, and the next
@@ -493,8 +508,12 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		}
 	}
 
-	return run_stream<false>(program, cpu, memory, executor, native_stream,
-		instruction_budget, instruction_budget);
+	const auto result = run_stream<false>(program, cpu, memory, executor,
+		native_stream, instruction_budget, instruction_budget);
+	if (result.segment_check) [[unlikely]]
+		return continue_segment_step(result, cpu, memory, executor,
+			interrupt, 0, single_step);
+	return result;
 }
 
 namespace {
@@ -767,6 +786,85 @@ ExecuteResult run_raised(const Program &program, CpuState &cpu,
 
 } // namespace
 
+ExecuteResult segment_step(CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	const ::uml::cpu::InterruptToken &interrupt, unsigned checked,
+	std::uint64_t string_elements) noexcept
+{
+	/* An instruction the bypass let through never asks again. */
+	if (cpu.segment_bypass != 0)
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
+	auto step = check_segment_step(cpu, memory, executor.execution_context(),
+		string_elements);
+	if (step.fetch_fault)
+		return {::uml::cpu::EngineEvent::memory_fault, 0, step.fault,
+			false, false};
+	if (step.illegal)
+		return {::uml::cpu::EngineEvent::illegal_instruction, 0, {}, false,
+			false};
+	switch (step.result.outcome) {
+	case SegmentOutcome::retired:
+	case SegmentOutcome::retired_changed:
+		return {step.result.trap_armed ? ::uml::cpu::EngineEvent::trap_flag :
+			::uml::cpu::EngineEvent::continued, 1, {}, false, false};
+	case SegmentOutcome::yielded:
+		return {::uml::cpu::EngineEvent::continued, 0, {}, false, true};
+	case SegmentOutcome::memory_fault:
+		return {::uml::cpu::EngineEvent::memory_fault, 0, step.fault, false,
+			false};
+	case SegmentOutcome::fault: {
+		ExecuteResult fault{::uml::cpu::EngineEvent::general_protection, 0,
+			{}, false, false};
+		fault.vector = step.result.fault.vector;
+		fault.error = step.result.fault.error;
+		return fault;
+	}
+	case SegmentOutcome::run:
+		break;
+	}
+	const Gadget gadget{cpu.rip, step.instruction};
+	const SegmentBypass bypass{cpu};
+	return execute_step(gadget, cpu, memory, executor, interrupt, checked);
+}
+
+ExecuteResult continue_segment_step(const ExecuteResult &prior,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
+	Executor &executor, const ::uml::cpu::InterruptToken &interrupt,
+	unsigned checked, bool single) noexcept
+{
+	auto stepped = segment_step(cpu, memory, executor, interrupt, checked,
+		single ? 1U : string_repeat_budget);
+	stepped.retired_instructions += prior.retired_instructions;
+	return stepped;
+}
+
+ExecuteResult execute_step(const Gadget &gadget, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	const ::uml::cpu::InterruptToken &interrupt, unsigned checked) noexcept
+{
+	if (interrupt.pending())
+		return {::uml::cpu::EngineEvent::interrupt, 0, {}, false, false};
+	try {
+		const auto mode = cpu.execution_mode;
+		const auto length = gadget.instruction.length;
+		std::array<std::byte, maximum_instruction_bytes> source{};
+		if (!memory.fetch(gadget.address, std::span{source}.first(length)))
+			return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
+		const auto stream = build_native_stream({&gadget, 1},
+			advance_instruction_pointer(mode, gadget.address, length), mode);
+		const Program program{mode, gadget.address, length, {&gadget, 1},
+			std::span<const std::byte>{source}.first(length), stream};
+		if (checked != 0)
+			return run_checked_instruction(program, {&gadget, 1}, 0, cpu,
+				memory, executor, 1, false,
+				checked | enabled_exceptions(cpu));
+		return run_stream<false>(program, cpu, memory, executor,
+			program.native_stream(), 1, 1);
+	} catch (...) {
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
+	}
+}
+
 ExecuteResult execute_checked(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
 	std::size_t instruction_budget,
@@ -799,9 +897,13 @@ ExecuteResult execute_checked(const Program &program, CpuState &cpu,
 		}
 		/* The block was split for `checked`; the instruction is checked
 		 * for every exception the guest enables. */
-		return run_checked_instruction(program, gadgets, 0, cpu, memory,
-			executor, instruction_budget, single_step,
-			checked | enabled_exceptions(cpu));
+		const auto all = checked | enabled_exceptions(cpu);
+		const auto result = run_checked_instruction(program, gadgets, 0,
+			cpu, memory, executor, instruction_budget, single_step, all);
+		if (result.segment_check) [[unlikely]]
+			return continue_segment_step(result, cpu, memory, executor,
+				interrupt, all, single_step);
+		return result;
 	} catch (...) {
 		trace_fatal("checked-stream", program, cpu, instruction_budget);
 		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};

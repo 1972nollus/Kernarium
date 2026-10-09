@@ -539,7 +539,7 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 `cpu::engine_host_capabilities` presents the profile only from an engine at
 `complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
-non-streaming SVE word is the illegal-instruction exit. The JIT is at `none`.
+non-streaming SVE word is the illegal-instruction exit.
 
 The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
 carry the profile, it runs every word of the profile, so under the
@@ -620,6 +620,26 @@ faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 
+The JIT is at `control`: for SVCR.SM = 0, on capabilities that carry the
+profile, it lowers PTRUE, PTRUES, PFALSE and PTEST, the predicate logical
+operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and
+ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL
+and the unpredicated logical forms onto AdvSIMD and general registers
+([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp));
+every other non-streaming SVE word is its illegal-instruction exit. Since it
+presents no SVE to a guest below `complete`, only tests that hand it the
+profile reach these forms. No translation holds an SVE word, and SM=1
+translations and translations without an SVE word are unchanged. Z is V in
+the block-local vector bindings, and P and FFR are bound beside them in mask
+form and written back at every exit. A flag-setting form computes PredTest
+into the guest's NZCV. A WHILE* reads its predicate and NZCV from a table
+indexed by its active count clamped to 16, and one followed in the block by
+a B.cond on N, Z or C branches on that bit of the table's NZCV and ends the
+block with the pair. A block holding an SVE word accesses the FP state
+before it runs, since P and FFR travel with it, and stores
+`CpuState::sve_live`. `arm64-jit-sve-control` checks the forms against the
+pseudocode on injected hosts.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
@@ -640,8 +660,10 @@ readable page executable. The banks, the host-flag fusion rules and the
 registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
-CPU state, the decoder, CPUID, the software TLB entry, the code-page registry
-and the split-operand lock form `uml_x86_64_target` in `darwin/cpu/x86_64/`, a
+CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
+the split-operand lock and the segment model, which runs every selector load,
+far transfer and descriptor inspection for both engines, form
+`uml_x86_64_target` in `darwin/cpu/x86_64/`, a
 `shared` CPU target that the source audit keeps free of engine includes.
 Exact x87 formats and transcendentals use bounded software-math primitives
 called by those native gadgets. The userspace ISA boundary includes scalar x86
@@ -649,7 +671,7 @@ and x87/MMX, SSE through SSE4.2, AVX/AVX2,
 F16C/FMA, AES/PCLMUL, BMI1/2, atomic and extended-state operations in both
 long64 and compat32 modes. The pinned FEX handwritten x86-64 and i386 corpora
 are the external instruction acceptance gate. AVX-512 and later encodings,
-RTM/MPX, obsolete protected-mode bounds and far-pointer-load families, and
+RTM/MPX, obsolete protected-mode bounds, 16-bit code segments, and
 privileged, real-mode, virtual-machine, enclave, and system-management
 instructions are outside this Linux userspace profile. That gate is not proof
 of an arbitrary distribution or complete Linux syscall compatibility. The
