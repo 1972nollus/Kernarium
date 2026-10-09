@@ -228,12 +228,17 @@ Lx86_fill_done\@:
 	.endif
 .endm
 
+/* A compare leaves its operands in x11 and x12 and their difference in x13,
+ * and in w19 whether they were equal, for the repeat condition. RFLAGS takes
+ * them only when the instruction finishes (`Lx86_string_finish`): x86 keeps
+ * the flags it started with while a repeated CMPS or SCAS is interrupted, is
+ * single-stepped or faults on a later element, whatever the elements before
+ * it compared. */
 .macro string_compare_flags width, host_register
 	mov x11, x27
 	mov x12, x19
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
-	record_deferred 2, \width
 	cmp \host_register\()13, #0
 	cset w19, eq
 .endm
@@ -258,7 +263,7 @@ Lx86_string_count_16\@:
 Lx86_string_count_64\@:
 	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 Lx86_string_count_ready\@:
-	cbz x24, Lx86_string_finish\@
+	cbz x24, Lx86_string_finish_empty\@
 	.ifc \operation,move
 	b Lx86_string_bulk_run\@
 	.else
@@ -546,6 +551,13 @@ Lx86_string_between_elements\@:
 	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
 	b uml_x86_64_gadget_leave
 Lx86_string_finish\@:
+	.ifc \operation,compare
+	record_deferred 2, \width
+	.endif
+	.ifc \operation,scan
+	record_deferred 2, \width
+	.endif
+Lx86_string_finish_empty\@:
 	tbz x23, #32, Lx86_string_continue\@
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
@@ -577,7 +589,7 @@ Lx86_string_step_count_16\@:
 Lx86_string_step_count_64\@:
 	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 Lx86_string_step_count_ready\@:
-	cbz x24, Lx86_string_finish\@
+	cbz x24, Lx86_string_finish_empty\@
 	b Lx86_string_iteration\@
 .endm
 

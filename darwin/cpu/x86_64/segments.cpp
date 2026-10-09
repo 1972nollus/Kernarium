@@ -25,7 +25,7 @@ constexpr std::uint64_t never_low = std::uint64_t{1} << 32U;
  * code segments; the TSS; the LDT while the task has one; the three TLS
  * entries, which `tls_descriptors` holds; and the per-CPU segment, a
  * read-only expand-down data segment whose limit is the CPU number, which
- * this machine reports as 1, as RDPID does. */
+ * is 0 for every guest vCPU, as RDPID reports. */
 constexpr std::array<std::uint64_t, gdt_entries> fixed_gdt{
 	0,
 	0x00cf9b000000ffffULL,
@@ -42,7 +42,7 @@ constexpr std::array<std::uint64_t, gdt_entries> fixed_gdt{
 	0,
 	0,
 	0,
-	0x0040f50000000001ULL,
+	0x0040f50000000000ULL,
 };
 constexpr std::uint64_t ldt_system_descriptor = 0x000082000000ffffULL;
 
@@ -1309,7 +1309,6 @@ void record_subtract(CpuState &cpu, std::uint64_t left, std::uint64_t right,
 	switch (instruction.operation) {
 	case Operation::lea:
 	case Operation::nop:
-	case Operation::cache_zero:
 		return 0;
 	case Operation::compare:
 	case Operation::test:

@@ -990,10 +990,6 @@ private:
 			instruction.auxiliary = immediate_operand(1, OperandWidth::byte);
 			return true;
 		}
-		if (modrm == 0xfc) {
-			instruction.operation = Operation::cache_zero;
-			return true;
-		}
 		/* LGDT, LIDT, LMSW, INVLPG, XSETBV and SWAPGS raise #GP at CPL 3
 		 * before they touch memory. SWAPGS is undefined outside 64-bit
 		 * mode. */
@@ -1277,19 +1273,17 @@ private:
 		Instruction &instruction, std::uint8_t opcode)
 	{
 		const auto prefix = mandatory_prefix();
-		if (opcode == 0x2b && prefix > 3)
+		/* MOVNTSS and MOVNTSD, which F3 and F2 select, are SSE4a. */
+		if (opcode == 0x2b && prefix > 1)
 			return false;
 		if (opcode == 0xe7 && prefix != 0 && prefix != 1)
 			return false;
 		if (prefixes_.vex && opcode == 0xe7 && prefix != 1)
 			return false;
 		const bool mmx = opcode == 0xe7 && !prefixes_.vex && prefix == 0;
-		const bool scalar = opcode == 0x2b && prefix >= 2;
 		const auto width = mmx ? OperandWidth::qword :
-			(scalar ? (prefix == 2 ? OperandWidth::dword :
-				OperandWidth::qword) :
-				(prefixes_.vex && prefixes_.vex_long ?
-					OperandWidth::ymm : OperandWidth::xmm));
+			(prefixes_.vex && prefixes_.vex_long ?
+				OperandWidth::ymm : OperandWidth::xmm);
 		std::uint8_t modrm{};
 		if (!read(modrm) || (modrm >> 6U) == 3 ||
 			!rm_operand(modrm, width, instruction.destination))
@@ -2406,89 +2400,6 @@ private:
 		return true;
 	}
 
-	[[nodiscard]] bool decode_vector_bitfield(Instruction &instruction,
-		std::uint8_t opcode)
-	{
-		const auto prefix = mandatory_prefix();
-		if ((prefix != 1 && prefix != 3) || prefixes_.vex)
-			return false;
-		std::uint8_t modrm{};
-		if (!read(modrm) || (modrm >> 6U) != 3)
-			return false;
-		instruction.operation = Operation::vector_bitfield;
-		instruction.vector_opcode = opcode;
-		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
-		if (opcode == 0x78 && prefix == 1) {
-			if (((modrm >> 3U) & 7U) != 0 ||
-				!vector_rm_operand(modrm, OperandWidth::xmm,
-					instruction.destination))
-				return false;
-			instruction.source = instruction.destination;
-		} else {
-			instruction.destination = vector_reg_field(
-				modrm, OperandWidth::xmm);
-			if (!vector_rm_operand(modrm, OperandWidth::xmm,
-				instruction.source))
-				return false;
-		}
-		if (opcode == 0x78) {
-			std::uint64_t length{};
-			std::uint64_t index{};
-			if (!read_unsigned(1, length) || !read_unsigned(1, index))
-				return false;
-			instruction.vector_control = static_cast<std::uint8_t>(length);
-			instruction.vector_group = static_cast<std::uint8_t>(index);
-		}
-		return true;
-	}
-
-	[[nodiscard]] bool decode_3dnow(Instruction &instruction)
-	{
-		std::uint8_t modrm{};
-		if (!read(modrm))
-			return false;
-		instruction.operation = Operation::vector_3dnow;
-		instruction.destination = mmx_register_operand((modrm >> 3U) & 7U);
-		instruction.source = instruction.destination;
-		if (!mmx_rm_operand(modrm, instruction.auxiliary))
-			return false;
-		std::uint8_t suffix{};
-		if (!read(suffix))
-			return false;
-		switch (suffix) {
-		case 0x0c:
-		case 0x0d:
-		case 0x1c:
-		case 0x1d:
-		case 0x86:
-		case 0x87:
-		case 0x8a:
-		case 0x8e:
-		case 0x90:
-		case 0x94:
-		case 0x96:
-		case 0x97:
-		case 0x9a:
-		case 0x9e:
-		case 0xa0:
-		case 0xa4:
-		case 0xa6:
-		case 0xa7:
-		case 0xaa:
-		case 0xae:
-		case 0xb0:
-		case 0xb4:
-		case 0xb6:
-		case 0xb7:
-		case 0xbb:
-		case 0xbf:
-			instruction.vector_opcode = suffix;
-			return true;
-		default:
-			return false;
-		}
-	}
-
 	[[nodiscard]] bool decode_x87(
 		Instruction &instruction, std::uint8_t opcode)
 	{
@@ -2688,8 +2599,6 @@ private:
 			return decode_vector_to_gpr(instruction, opcode);
 		if (opcode == 0xc4)
 			return decode_vector_insert(instruction);
-		if (opcode == 0x78 || opcode == 0x79)
-			return decode_vector_bitfield(instruction, opcode);
 		if (opcode >= 0x80 && opcode <= 0x8f) {
 			instruction.condition = static_cast<Condition>(opcode & 0xfU);
 			return decode_relative(instruction,
@@ -2720,13 +2629,11 @@ private:
 			return true;
 		}
 		switch (opcode) {
-		case 0x0f:
-			return decode_3dnow(instruction);
-		case 0x0e:
 		case 0x77:
-			/* EMMS takes no 66, F2 or F3 prefix. */
-			if (opcode == 0x77 &&
-				(prefixes_.operand_size || prefixes_.repeat != 0))
+			/* EMMS takes no 66, F2 or F3 prefix. FEMMS and the 3DNow! and
+			 * SSE4a encodings are AMD's; the guest's CPUID reports none of
+			 * them and an Intel core raises #UD for each. */
+			if (prefixes_.operand_size || prefixes_.repeat != 0)
 				return false;
 			instruction.operation = Operation::x87;
 			instruction.vector_opcode = opcode;

@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <type_traits>
 
 /*
@@ -203,6 +204,16 @@ template<typename T>
 	const __int128 sum = (subtract ? base - product : base + product) +
 		(__int128{1} << (esize - 2U));
 	return saturate_signed<T>(sum >> (esize - 1U));
+}
+
+/* The 64-bit value of the logical immediate N:immr:imms in bits 17:5 of an
+ * AND, ORR, EOR or DUPM word, or nothing for a reserved one, which makes the
+ * word UNDEFINED. */
+[[nodiscard]] inline std::optional<std::uint64_t> logical_immediate_of(
+	std::uint32_t word) noexcept
+{
+	return decode_logical_immediate(true, (word >> 17) & 1U,
+		(word >> 11) & 0x3fU, (word >> 5) & 0x3fU);
 }
 
 /* The operands and state of the instruction being executed. */

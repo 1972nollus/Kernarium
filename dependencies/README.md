@@ -6,8 +6,9 @@ prefix verification. Kernel provenance is separate under
 [`../kernel/`](../kernel/README.md).
 
 [`manifest.tsv`](manifest.tsv) is the exact source inventory. Each row pins one
-upstream Git commit, the products that consume it, the required source paths,
-and any ordered local patch series.
+upstream Git commit, the products that consume it, its `source_paths` (always
+`.`: every source is complete, and `prepare.sh` rejects any other value), and
+any ordered local patch series.
 
 Production must not discover libraries from Homebrew, ambient
 `CMAKE_PREFIX_PATH`, or unrestricted `pkg-config`. Consumers use only verified

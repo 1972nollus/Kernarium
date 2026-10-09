@@ -95,6 +95,23 @@ gadget sve_library
 	csel w0, w0, w9, eq
 	b uml_arm64_gadget_leave
 
+/* In front of a memory word whose base is SP: the access needs SP 16-byte
+ * aligned (the library raises the alignment fault), and an SP base is never
+ * untagged, so a top byte that is not clear would reach another address
+ * than the gadget's untagging does. A base that fails sends the word to the
+ * library through the memory gadget's own slow path: the gadget's stream is
+ * [entry][slots][immediate offset][library operand][PC]. */
+gadget sve_sp_check
+	ldr x8, [_cpu, #UML_GADGET_CPU_SP]
+	tst x8, #15
+	lsr x9, x8, #56
+	ccmp x9, #0, #0, eq
+	b.ne 1f
+	next_gadget
+1:
+	add _stream, _stream, #24
+	b NAME(uml_arm64_gadget_sve_library)
+
 /* v\reg := the element pattern of \esize bytes, 0xff in each element's
  * lowest byte: the bits of a predicate a consumer of that size reads. */
 .macro sve_element_pattern esize, reg
@@ -174,8 +191,52 @@ gadget sve_library
 	next_gadget
 .endm
 
+/* Translates the access of \bytes bytes at \address for a gather or scatter
+ * element: \address becomes the host address when the TLB holds the page
+ * (either way, in the 16 KiB build), and anything else, a miss or a crossing,
+ * leaves for \slow with \address unchanged, which runs the whole
+ * instruction through the semantic library. That fills the TLB, so only the
+ * first execution after a miss takes it. \page_offset and \second_offset are
+ * the entry's read or write key and the second way's. Scratch: x8-x12. */
+.macro sve_element_translate page_offset, second_offset, bytes, address, slow
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+	.if \bytes > 1
+	add x8, \address, #(\bytes - 1)
+	.endif
+	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	add x10, _tlb, x9, lsl #6
+	ldp x11, x12, [x10, #\page_offset]
+	.if \bytes > 1
+	lsr x8, x8, #UML_GADGET_GUEST_PAGE_SHIFT
+	.else
+	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
+	.endif
+	cmp x11, x8
+	b.eq 91f
+	ldp x11, x12, [x10, #\second_offset]
+	cmp x11, x8
+	b.ne \slow
+91:
+	add \address, x12, \address
+#else
+	.if \bytes > 1
+	branch_if_cross_page \address, \bytes, x9, \slow
+	.endif
+	ubfx x9, \address, #UML_GADGET_GUEST_PAGE_SHIFT, #UML_GADGET_TLB_INDEX_BITS
+	eor x9, x9, \address, lsr #UML_GADGET_TLB_FOLD_SHIFT
+	and w9, w9, #UML_GADGET_TLB_INDEX_MASK
+	add x10, _tlb, x9, lsl #5
+	ldp x11, x12, [x10, #\page_offset]
+	lsr x8, \address, #UML_GADGET_GUEST_PAGE_SHIFT
+	cmp x11, x8
+	b.ne \slow
+	add \address, x12, \address
+#endif
+.endm
+
 #include "sve_generated.inc"
 
+.purgem sve_element_translate
 .purgem sve_follow_block_link
 .purgem sve_predicate_test
 .purgem sve_lane_mask

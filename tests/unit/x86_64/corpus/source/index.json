@@ -8728,10 +8728,6 @@
       "file": "fex-..jsonl"
     },
     {
-      "name": "fex/modrm_oob/DDD.asm",
-      "file": "fex-modrm_oob.jsonl"
-    },
-    {
       "name": "fex/modrm_oob/H0F38.asm",
       "file": "fex-modrm_oob.jsonl"
     },
@@ -9584,6 +9580,10 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/rdpid-rdtscp-and-lsl-name-one-processor.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/segment-selectors-load-and-describe-linux-segments.s",
       "file": "repository-cases.jsonl"
     },
@@ -9717,6 +9717,10 @@
     },
     {
       "name": "repository/x87-unmasked-underflow-rebiases-remainders-and-quotients.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/xsave-moves-mxcsr-with-the-sse-and-avx-components.s",
       "file": "repository-cases.jsonl"
     }
   ]

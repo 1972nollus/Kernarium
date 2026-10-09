@@ -195,7 +195,10 @@ work -- elements, or 64-byte blocks of a page-bounded run -- with RIP still
 naming it, and `execute` reports that yield. The dispatch charges the same
 amount to its instruction budget, so a loop of long REP strings returns to the
 kernel about as often as ordinary code does; the kernel services its
-cooperative timer only there. A step keeps its exact budget.
+cooperative timer only there. A step keeps its exact budget. A repeated CMPS
+or SCAS commits its flags when it finishes: a stop between elements, whether
+for an interrupt, a fault or a step, shows the flags it was entered with, as
+x86 does.
 
 A step of a repeated string instruction is one iteration, as x86 raises #DB
 after each. `execute` given `single_step` enters the instruction through its
@@ -246,8 +249,10 @@ compatibility mode. SLDT and STR store what Linux's UMIP emulation stores:
 the LDT selector 0x50 once the task's mm has an LDT and 0 before, and the TSS
 selector 0x40, a register form writing only its operand size. LAR, LSL, VERR
 and VERW read the descriptors below; the per-CPU entry's limit is the
-processor number RDPID reports. CMPXCHG16B raises `#GP(0)` for an operand
-not aligned to 16 bytes, locked or not, as x86 does.
+processor number RDPID reports. A guest vCPU has no processor numbering:
+RDPID, RDTSCP's ECX and that limit all report processor 0 of node 0 on both
+engines. CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16 bytes,
+locked or not, as x86 does.
 
 ## Segments
 
@@ -430,8 +435,7 @@ Where the host computes something x86 does not, the gadget keeps FPSR around
 it: the FTZ test's scaled recomputation, an estimate's special inputs and its
 quotient, which raises only precision and runs unguarded once MXCSR or FPSR
 holds precision anyway -- found in FPSR, it goes into MXCSR at once, so the
-next estimate need not read FPSR -- and the 3DNow! gadgets, which MXCSR does
-not govern.
+next estimate need not read FPSR.
 The x87 gadgets compute in software and raise no host flag.
 
 Three flags stay inexact, as `x86-64-masked-flags` names them: the denormal
@@ -592,6 +596,26 @@ XSAVEOPT and XRSTOR for one not aligned to 64, before they access it and
 whatever RFLAGS.AC holds, as the JIT does. Neither engine raises the #GP x86
 raises for a misaligned operand of an aligned SSE form, such as MOVAPS,
 MOVNTPS or a legacy SSE operation's 16-byte memory source.
+
+LDMXCSR, VLDMXCSR, FXRSTOR and XRSTOR raise #GP(0) for an MXCSR with a
+reserved bit, 31 to 16, before they change any state. XRSTOR loads MXCSR from
+its image whenever RFBM selects the SSE or the AVX component, whatever
+XSTATE_BV holds, and XSAVE and XSAVEOPT store MXCSR and MXCSR_MASK under the
+same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
+as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
+header, and the AVX component only when RFBM selects it.
+
+CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
+address when its page is unmapped or unreadable. CLDEMOTE and the prefetches
+are hints and never fault.
+
+A masked store writes nothing when it faults. VMASKMOV and VPMASKMOV probe
+the first byte of the lowest enabled lane and then the last byte of the
+highest before they write, and report the first to miss, as an Intel core
+does; a mask with no enabled lane accesses nothing. MASKMOVDQU and MASKMOVQ
+fault on any page their operand touches, whatever the mask selects, and
+MASKMOVDQU checks its high quadword before its low one, each quadword's first
+byte before its last.
 
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision

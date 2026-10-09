@@ -28,7 +28,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  3 files changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 87cf6ef9f4f83c7a2aec840e0397d38c053e738c..fe2c1e7004b476686e4b510f1478ba7e36362de9 100644
+index 3b4437b8a1197d3871f7db5357c5fa6280f1a8cd..e18bac36fab7752f1b78b4c9603e1f370a5c3113 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
 @@ -509,6 +509,19 @@ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, boo

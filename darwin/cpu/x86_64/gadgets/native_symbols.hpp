@@ -559,7 +559,6 @@ void uml_x86_64_gadget_write_gs_base_32_r();
 void uml_x86_64_gadget_write_gs_base_64_r();
 void uml_x86_64_gadget_memory_fence();
 void uml_x86_64_gadget_cache_flush();
-void uml_x86_64_gadget_cache_zero();
 void uml_x86_64_gadget_store_machine_status_16_r();
 void uml_x86_64_gadget_store_machine_status_32_r();
 void uml_x86_64_gadget_store_machine_status_64_r();
@@ -639,7 +638,6 @@ void uml_x86_64_gadget_vector_move_128_mr();
 void uml_x86_64_gadget_vector_move_256_mr();
 void uml_x86_64_gadget_vector_zero_upper();
 void uml_x86_64_gadget_vector_zero_all();
-void uml_x86_64_gadget_vector_bitfield();
 void uml_x86_64_gadget_vector_mask_store_64();
 void uml_x86_64_gadget_vector_mask_store_128();
 void uml_x86_64_gadget_vector_lane_merge_rr();
@@ -788,36 +786,6 @@ UML_X86_DECLARE_FP_PI(64, 0)
 UML_X86_DECLARE_FP_PI(64, 1)
 #undef UML_X86_DECLARE_FP_PI
 
-#define UML_X86_DECLARE_3DNOW(opcode) \
-	void uml_x86_64_gadget_vector_3dnow_##opcode##_rr(); \
-	void uml_x86_64_gadget_vector_3dnow_##opcode##_rm();
-UML_X86_DECLARE_3DNOW(0c)
-UML_X86_DECLARE_3DNOW(0d)
-UML_X86_DECLARE_3DNOW(1c)
-UML_X86_DECLARE_3DNOW(1d)
-UML_X86_DECLARE_3DNOW(86)
-UML_X86_DECLARE_3DNOW(87)
-UML_X86_DECLARE_3DNOW(8a)
-UML_X86_DECLARE_3DNOW(8e)
-UML_X86_DECLARE_3DNOW(90)
-UML_X86_DECLARE_3DNOW(94)
-UML_X86_DECLARE_3DNOW(96)
-UML_X86_DECLARE_3DNOW(97)
-UML_X86_DECLARE_3DNOW(9a)
-UML_X86_DECLARE_3DNOW(9e)
-UML_X86_DECLARE_3DNOW(a0)
-UML_X86_DECLARE_3DNOW(a4)
-UML_X86_DECLARE_3DNOW(a6)
-UML_X86_DECLARE_3DNOW(a7)
-UML_X86_DECLARE_3DNOW(aa)
-UML_X86_DECLARE_3DNOW(ae)
-UML_X86_DECLARE_3DNOW(b0)
-UML_X86_DECLARE_3DNOW(b4)
-UML_X86_DECLARE_3DNOW(b6)
-UML_X86_DECLARE_3DNOW(b7)
-UML_X86_DECLARE_3DNOW(bb)
-UML_X86_DECLARE_3DNOW(bf)
-#undef UML_X86_DECLARE_3DNOW
 
 #define UML_X86_DECLARE_FMA_SHAPE(opcode, element, shape) \
 	void uml_x86_64_gadget_vector_fma_##opcode##_##element##_##shape##_rr(); \

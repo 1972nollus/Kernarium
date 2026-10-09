@@ -67,6 +67,13 @@ Lx86_vector_map2_mask_load_fault\@:
 	b Lx86_memory_fault
 .endm
 
+/* A masked store writes nothing when it faults: x86 checks the write before
+ * it stores any lane, at the first byte of the lowest enabled lane and then
+ * at the last byte of the highest, which are the two ends of what the store
+ * touches, so a fault reports the first of them to miss. A mask with no
+ * enabled lane accesses nothing. The scan leaves the lowest enabled lane's
+ * offset in x24's bits 7:0, the highest's in bits 15:8, and bit 16 set once
+ * a lane is enabled. */
 .macro vector_map2_mask_store element, width
 gadget vector_map2_mask_store_\element\()_\width
 	effective_address
@@ -75,6 +82,35 @@ gadget vector_map2_mask_store_\element\()_\width
 	add x26, _cpu, x26
 	and x27, x23, #0xffff
 	add x27, _cpu, x27
+	mov x24, #0
+	mov x19, #0
+Lx86_vector_map2_mask_store_scan\@:
+	cmp x19, #(\width / 8)
+	b.hs Lx86_vector_map2_mask_store_scanned\@
+	.if \element == 32
+	ldr w14, [x26, x19]
+	tbz w14, #31, Lx86_vector_map2_mask_store_skip\@
+	.else
+	ldr x14, [x26, x19]
+	tbz x14, #63, Lx86_vector_map2_mask_store_skip\@
+	.endif
+	tbnz x24, #16, Lx86_vector_map2_mask_store_highest\@
+	orr x24, x24, #0x10000
+	bfi x24, x19, #0, #8
+Lx86_vector_map2_mask_store_highest\@:
+	bfi x24, x19, #8, #8
+Lx86_vector_map2_mask_store_skip\@:
+	add x19, x19, #(\element / 8)
+	b Lx86_vector_map2_mask_store_scan\@
+Lx86_vector_map2_mask_store_scanned\@:
+	tbz x24, #16, Lx86_vector_map2_mask_store_done\@
+	ubfx x9, x24, #0, #8
+	add x7, x25, x9
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
+	ubfx x9, x24, #8, #8
+	add x7, x25, x9
+	add x7, x7, #((\element / 8) - 1)
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
 	mov x19, #0
 Lx86_vector_map2_mask_store_loop\@:
 	cmp x19, #(\width / 8)

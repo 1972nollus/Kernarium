@@ -70,7 +70,8 @@ LOWERINGS = ["plain", "predicate_constant", "predicate_constant_flags",
              "integer_immediate", "bitmask_immediate", "float_immediate",
              "index_table", "count_move", "count_add",
              "vector_length_add", "unsigned_immediate", "memory",
-             "prefetch", "extract_table"]
+             "prefetch", "extract_table", "compare_signed_immediate",
+             "compare_unsigned_immediate", "index_immediate", "tables"]
 
 # Form flags.
 FLAG_DISCARD_ON_ZERO = 1  # slot 0 is a general destination; XZR is a NOP.
@@ -396,17 +397,18 @@ def byte_mask(e: int, high: bool) -> int:
     return value
 
 
-def add_high_narrow(top: bool):
+def add_high_narrow(top: bool, operation: str = "add"):
     """ADDHNB: the sum's high half moved down, the top half zero; ADDHNT:
-    the sum's high half kept in place under the bottom half of Zd."""
+    the sum's high half kept in place under the bottom half of Zd. SUBHNB
+    and SUBHNT take the difference."""
     def lines(e: int):
         if e == 1:
             return ABSENT
         a = ARRANGEMENTS[e]
         if not top:
-            return [f"add v0.{a}, v1.{a}, v2.{a}",
+            return [f"{operation} v0.{a}, v1.{a}, v2.{a}",
                     f"ushr v0.{a}, v0.{a}, #{4 * e}"]
-        return [f"add v3.{a}, v1.{a}, v2.{a}",
+        return [f"{operation} v3.{a}, v1.{a}, v2.{a}",
                 f"movi v4.2d, #0x{byte_mask(e, True):016x}",
                 "bit v0.16b, v3.16b, v4.16b"]
     return lines
@@ -451,6 +453,8 @@ THREE_REGISTER = {
     "smlslt_z_zzz_": (widening("smlsl", True), True, False),
     "addhnb_z_zz_": (add_high_narrow(False), False, False),
     "addhnt_z_zz_": (add_high_narrow(True), True, False),
+    "subhnb_z_zz_": (add_high_narrow(False, "sub"), False, False),
+    "subhnt_z_zz_": (add_high_narrow(True, "sub"), True, False),
 }
 
 
@@ -481,16 +485,19 @@ def fp_sized(template):
     return lambda e: ABSENT if e == 1 else template(e)
 
 
-def fp_binary_predicated(operation: str, divisor: str = ""):
-    """Zdn := Zdn op Zm under Pg (merging): slots Zdn (x3), Zm (x4), Pg
-    (x5). `divisor` names the operand, a or b, that a partial predicate's
-    inactive elements set to 1.0."""
+def fp_binary_predicated(operation: str, divisor: str = "",
+                         reverse: bool = False):
+    """Zdn := Zdn op Zm under Pg (merging), or Zm op Zdn when `reverse`:
+    slots Zdn (x3), Zm (x4), Pg (x5). `divisor` names the operand, a (Zdn)
+    or b (Zm), that a partial predicate's inactive elements set to 1.0."""
     def lines(e: int) -> list:
         a = ARRANGEMENTS[e]
+        first, second = ("2", "1") if reverse else ("1", "2")
+        masked_first, masked_second = ("4", "3") if reverse else ("3", "4")
         body = ["ensure_fp_environment", "ldr x8, [_stream], #8"] + \
             unpack(3) + ["ldr q1, [_cpu, x3]", "ldr q2, [_cpu, x4]"] + \
             all_true_test(e, "x5") + [
-                f"{operation} v0.{a}, v1.{a}, v2.{a}",
+                f"{operation} v0.{a}, v{first}.{a}, v{second}.{a}",
                 "str q0, [_cpu, x3]", "next_gadget", "1:",
                 "ldr q0, [_cpu, x5]"] + lane_mask(e) + [
                 "and v3.16b, v1.16b, v0.16b", "and v4.16b, v2.16b, v0.16b"]
@@ -498,7 +505,8 @@ def fp_binary_predicated(operation: str, divisor: str = ""):
             target = "v3" if divisor == "a" else "v4"
             body += [f"fmov v5.{a}, #1.0",
                      f"bif {target}.16b, v5.16b, v0.16b"]
-        return body + [f"{operation} v5.{a}, v3.{a}, v4.{a}",
+        return body + [f"{operation} v5.{a}, v{masked_first}.{a}, "
+                       f"v{masked_second}.{a}",
                        "bit v1.16b, v5.16b, v0.16b", "str q1, [_cpu, x3]",
                        "next_gadget"]
     return fp_sized(lines)
@@ -561,6 +569,8 @@ FP_BINARY_PREDICATED = {
     "fminnm_z_p_zz_": fp_binary_predicated("fminnm"),
     "fabd_z_p_zz_": fp_binary_predicated("fabd"),
     "fdiv_z_p_zz_": fp_binary_predicated("fdiv", "b"),
+    "fsubr_z_p_zz_": fp_binary_predicated("fsub", reverse=True),
+    "fdivr_z_p_zz_": fp_binary_predicated("fdiv", "a", reverse=True),
 }
 
 # name: (operation, negate, addend, multiplicand, multiplier, destination)
@@ -1145,6 +1155,263 @@ def comparison(operation: str, invert: bool):
     return lines
 
 
+def comparison_immediate(operation: str, invert: bool, swap: bool):
+    """Pd := Pg AND (Zn cmp immediate), `comparison` with the immediate the
+    builder replicates into the stream: slots Pd (x3), Zn (x4), Pg (x5). A
+    `swap` compares the immediate with Zn."""
+    def lines(e: int) -> list:
+        a = ARRANGEMENTS[e]
+        first, second = ("v2", "v1") if swap else ("v1", "v2")
+        body = ["ldp x8, x9, [_stream], #16"] + unpack(3) + [
+            "dup v2.2d, x9", "ldr q1, [_cpu, x4]", "ldr q0, [_cpu, x5]",
+            f"{operation} v3.{a}, {first}.{a}, {second}.{a}"]
+        if invert:
+            body.append("not v3.16b, v3.16b")
+        if e > 1:
+            body += [f"sve_element_pattern {e}, 7",
+                     "and v0.16b, v0.16b, v7.16b"]
+        return body + ["and v3.16b, v3.16b, v0.16b", "str q3, [_cpu, x3]"] + \
+            predicate_test("v0", "v3") + ["next_gadget"]
+    return lines
+
+
+# name: (AdvSIMD compare, invert, swap, builder lowering).
+IMMEDIATE_COMPARISONS = {
+    "cmpeq_p_p_zi_": ("cmeq", False, False, "compare_signed_immediate"),
+    "cmpne_p_p_zi_": ("cmeq", True, False, "compare_signed_immediate"),
+    "cmpgt_p_p_zi_": ("cmgt", False, False, "compare_signed_immediate"),
+    "cmpge_p_p_zi_": ("cmge", False, False, "compare_signed_immediate"),
+    "cmplt_p_p_zi_": ("cmgt", False, True, "compare_signed_immediate"),
+    "cmple_p_p_zi_": ("cmge", False, True, "compare_signed_immediate"),
+    "cmphi_p_p_zi_": ("cmhi", False, False, "compare_unsigned_immediate"),
+    "cmphs_p_p_zi_": ("cmhs", False, False, "compare_unsigned_immediate"),
+    "cmplo_p_p_zi_": ("cmhi", False, True, "compare_unsigned_immediate"),
+    "cmpls_p_p_zi_": ("cmhs", False, True, "compare_unsigned_immediate"),
+}
+
+
+def fp_comparison(operation: str, invert: bool, zero: bool = False,
+                  unordered: bool = False):
+    """Pd := Pg AND (Zn cmp Zm), or Zn cmp 0.0 when `zero`, one active byte
+    per element, setting no flags: slots Pd (x3), Zn (x4), Zm (x5) unless
+    `zero`, Pg last. AdvSIMD compares as SVE does (FCMEQ, and so the forms
+    built from it, quietly; the others and FAC* signalling); a partial
+    predicate sets the inactive elements to +0.0 first, which raise nothing."""
+    def lines(e: int) -> list:
+        a = ARRANGEMENTS[e]
+        governing = "x5" if zero else "x6"
+
+        def compare() -> list:
+            if unordered:
+                return [f"fcmeq v4.{a}, v1.{a}, v1.{a}",
+                        f"fcmeq v5.{a}, v2.{a}, v2.{a}",
+                        "and v3.16b, v4.16b, v5.16b", "not v3.16b, v3.16b"]
+            body = [f"{operation} v3.{a}, v1.{a}, " +
+                    ("#0.0" if zero else f"v2.{a}")]
+            return body + (["not v3.16b, v3.16b"] if invert else [])
+        body = ["ensure_fp_environment", "ldr x8, [_stream], #8"] + \
+            unpack(3 if zero else 4) + ["ldr q1, [_cpu, x4]"]
+        if not zero:
+            body.append("ldr q2, [_cpu, x5]")
+        body += all_true_test(e, governing) + compare() + [
+            f"sve_element_pattern {e}, 7", "and v3.16b, v3.16b, v7.16b",
+            "str q3, [_cpu, x3]", "next_gadget", "1:",
+            f"ldr q0, [_cpu, {governing}]"] + lane_mask(e) + [
+            "and v1.16b, v1.16b, v0.16b"]
+        if not zero:
+            body.append("and v2.16b, v2.16b, v0.16b")
+        return body + compare() + [
+            "and v3.16b, v3.16b, v0.16b", f"sve_element_pattern {e}, 7",
+            "and v3.16b, v3.16b, v7.16b", "str q3, [_cpu, x3]",
+            "next_gadget"]
+    return fp_sized(lines)
+
+
+# name: (AdvSIMD compare, invert, unordered).
+FP_COMPARISONS = {
+    "fcmeq_p_p_zz_": ("fcmeq", False, False),
+    "fcmne_p_p_zz_": ("fcmeq", True, False),
+    "fcmge_p_p_zz_": ("fcmge", False, False),
+    "fcmgt_p_p_zz_": ("fcmgt", False, False),
+    "fcmuo_p_p_zz_": ("", False, True),
+    "facge_p_p_zz_": ("facge", False, False),
+    "facgt_p_p_zz_": ("facgt", False, False),
+}
+FP_ZERO_COMPARISONS = {
+    "fcmeq_p_p_z0_": ("fcmeq", False),
+    "fcmne_p_p_z0_": ("fcmeq", True),
+    "fcmge_p_p_z0_": ("fcmge", False),
+    "fcmgt_p_p_z0_": ("fcmgt", False),
+    "fcmle_p_p_z0_": ("fcmle", False),
+    "fcmlt_p_p_z0_": ("fcmlt", False),
+}
+
+
+def unpack_elements(signed: bool, high: bool):
+    """SUNPK* and UUNPK*: the low or high half of Zn widened to the size
+    field's elements."""
+    def lines(e: int):
+        if e == 1:
+            return ABSENT
+        extend = ("s" if signed else "u") + "xtl" + ("2" if high else "")
+        source = ARRANGEMENTS[e // 2] if high else HALVES[e // 2]
+        return [f"{extend} v0.{ARRANGEMENTS[e]}, v1.{source}"]
+    return lines
+
+
+def break_predicate(after: bool, merging: bool, flags: bool) -> list:
+    """BRKA (`after` the first true element of Pn under Pg) and BRKB
+    (before it): Pd is Pg's elements up to there, zero elsewhere or, when
+    `merging`, the old Pd. Slots Pd (x3), Pn (x4), Pg (x5). x15 is the bit
+    index of the first active byte (128 without one); x16:x6 the prefix."""
+    body = ["ldr x8, [_stream], #8"] + unpack(3) + [
+        "add x6, _cpu, x4", "ldp x11, x12, [x6]", "add x6, _cpu, x5",
+        "ldp x9, x10, [x6]", "and x13, x11, x9", "and x14, x12, x10",
+        "rbit x15, x13", "clz x15, x15", "rbit x16, x14", "clz x16, x16",
+        "add x16, x16, #64", "cmp x13, #0", "csel x15, x15, x16, ne"]
+    if after:
+        body += ["add x16, x15, #8", "cmp x15, #128",
+                 "csel x15, x15, x16, eq"]
+    # The prefix: the low `x15` bits of the 128-bit mask, in x16 and x6.
+    body += ["mov x16, #1", "lsl x16, x16, x15", "sub x16, x16, #1",
+             "cmp x15, #64", "csinv x16, x16, xzr, lo",
+             "subs x17, x15, #64", "csel x17, x17, xzr, hs",
+             "mov x6, #1", "lsl x6, x6, x17", "sub x6, x6, #1",
+             "cmp x17, #64", "csinv x6, x6, xzr, lo",
+             "and x11, x9, x16", "and x12, x10, x6", "add x13, _cpu, x3"]
+    if merging:
+        body += ["ldp x14, x15, [x13]", "bic x14, x14, x9",
+                 "bic x15, x15, x10", "orr x14, x14, x11",
+                 "orr x15, x15, x12", "stp x14, x15, [x13]"]
+    else:
+        body.append("stp x11, x12, [x13]")
+    if flags:
+        body.append("sve_predicate_test")
+    return body + ["next_gadget"]
+
+
+# The constants the builder points a form at (program_builder_sve.cpp,
+# sve_tables): the bytes 0-15, then TBL indexes for COMPACT of .S elements
+# (16 of them, by the mask of active elements), then for .D elements (4).
+TABLE_COMPACT_WORD = 16
+TABLE_COMPACT_DOUBLEWORD = 16 + 16 * 16
+
+
+def index_series(e: int) -> list:
+    """INDEX of elements of `e` bytes, whose start (x9) and step (x10) are
+    in general registers. A small element adds the step times the byte
+    numbers, which the builder points x11 at; a word or doubleword adds the
+    step one element at a time."""
+    if e == 8:
+        return ["add x11, x9, x10", "fmov d0, x9", "mov v0.d[1], x11"]
+    if e == 4:
+        return ["add w11, w9, w10", "add w12, w11, w10",
+                "add w13, w12, w10", "fmov s0, w9", "mov v0.s[1], w11",
+                "mov v0.s[2], w12", "mov v0.s[3], w13"]
+    a = ARRANGEMENTS[e]
+    widen = ["uxtl v7.8h, v7.8b"] if e == 2 else []
+    return ["ldr q7, [x11]"] + widen + [
+        f"dup v1.{a}, w10", f"mul v1.{a}, v1.{a}, v7.{a}",
+        f"dup v0.{a}, w9", f"add v0.{a}, v0.{a}, v1.{a}"]
+
+
+def compact_elements(e: int):
+    """COMPACT: the active elements of Zn packed to the bottom of Zd, zero
+    above, by a TBL whose indexes the builder's table gives for the mask of
+    active elements. Slots Zd (x3), Zn (x4), Pg (x5)."""
+    if e < 4:
+        return ABSENT
+    body = ["ldp x8, x9, [_stream], #16"] + unpack(3) + [
+        "add x6, _cpu, x5", "ldp x15, x16, [x6]", "ldr q1, [_cpu, x4]"]
+    if e == 4:
+        body += ["and w10, w15, #1", "ubfx x11, x15, #32, #1",
+                 "ubfx x12, x16, #0, #1", "ubfx x13, x16, #32, #1",
+                 "orr w10, w10, w11, lsl #1", "orr w10, w10, w12, lsl #2",
+                 "orr w10, w10, w13, lsl #3"]
+        offset = TABLE_COMPACT_WORD
+    else:
+        body += ["and w10, w15, #1", "and w11, w16, #1",
+                 "orr w10, w10, w11, lsl #1"]
+        offset = TABLE_COMPACT_DOUBLEWORD
+    return body + [f"add x9, x9, #{offset}", "ldr q2, [x9, x10, lsl #4]",
+                   "tbl v0.16b, {v1.16b}, v2.16b", "str q0, [_cpu, x3]",
+                   "next_gadget"]
+
+
+def splice_segment(e: int) -> list:
+    """SPLICE: the bytes of Zdn from its first active element to its last,
+    then the leading bytes of Zm. The byte range comes from the predicate,
+    and one TBL over the pair reads it: index j is F + j inside the segment
+    (S bytes) and 16 + j - S after it. Slots Zdn (x3), Zm (x4), Pg (x5)."""
+    body = ["ldp x8, x9, [_stream], #16"] + unpack(3) + [
+        "add x6, _cpu, x5", "ldp x15, x16, [x6]", "ldr q1, [_cpu, x3]",
+        "ldr q2, [_cpu, x4]"]
+    if e > 1:
+        pattern = f"0x{ELEMENT_PATTERNS[e]:x}"
+        body += [f"and x15, x15, #{pattern}", f"and x16, x16, #{pattern}"]
+    return body + [
+        # x10: the bit number of the first active byte, 128 without one;
+        # x11: the leading zeros of the 128 bits.
+        "rbit x10, x15", "clz x10, x10", "rbit x11, x16", "clz x11, x11",
+        "add x11, x11, #64", "cmp x15, #0", "csel x10, x10, x11, ne",
+        "clz x11, x16", "clz x12, x15", "add x12, x12, #64", "cmp x16, #0",
+        "csel x11, x11, x12, ne",
+        # F, the first byte; the last active byte; S, the segment's bytes,
+        # none (negative) without an active element.
+        "lsr x10, x10, #3", "mov x12, #127", "sub x12, x12, x11",
+        "asr x12, x12, #3", f"add x13, x12, #{e}", "sub x13, x13, x10",
+        "cmp x13, #0", "csel x13, x13, xzr, gt", "mov w14, #16",
+        "sub w14, w14, w13", "ldr q7, [x9]", "dup v3.16b, w13",
+        "cmhi v4.16b, v3.16b, v7.16b", "dup v5.16b, w10", "dup v6.16b, w14",
+        "bsl v4.16b, v5.16b, v6.16b", "add v4.16b, v4.16b, v7.16b",
+        "tbl v0.16b, {v1.16b, v2.16b}, v4.16b", "str q0, [_cpu, x3]",
+        "next_gadget"]
+
+
+def unsigned_add_reduction(e: int) -> list:
+    """UADDV: the sum of the active elements into Vd, wide enough not to
+    wrap. Slots Vd (x3), Zn (x4), Pg (x5)."""
+    body = ["ldr x8, [_stream], #8"] + unpack(3) + [
+        "ldr q1, [_cpu, x4]", "ldr q0, [_cpu, x5]"] + lane_mask(e) + [
+        "and v1.16b, v1.16b, v0.16b"]
+    reduce = {1: "uaddlv h0, v1.16b", 2: "uaddlv s0, v1.8h",
+              4: "uaddlv d0, v1.4s", 8: "addp d0, v1.2d"}[e]
+    return body + [reduce, "str q0, [_cpu, x3]", "next_gadget"]
+
+
+def fp_add_reduction(e: int) -> list:
+    """FADDV: pairs of adjacent elements added level by level, as the
+    pseudocode's halving recursion does, the inactive elements +0.0.
+    Slots Vd (x3), Zn (x4), Pg (x5)."""
+    a = ARRANGEMENTS[e]
+    scalar = {2: "h", 4: "s", 8: "d"}[e]
+    body = ["ensure_fp_environment", "ldr x8, [_stream], #8"] + unpack(3) + [
+        "ldr q1, [_cpu, x4]", "ldr q0, [_cpu, x5]"] + lane_mask(e) + [
+        "and v1.16b, v1.16b, v0.16b"]
+    for _ in range({2: 2, 4: 1, 8: 0}[e]):
+        body.append(f"faddp v1.{a}, v1.{a}, v1.{a}")
+    pair = {2: "2h", 4: "2s", 8: "2d"}[e]
+    return body + [f"faddp {scalar}0, v1.{pair}", "str q0, [_cpu, x3]",
+                   "next_gadget"]
+
+
+def fp_ordered_add_reduction(e: int) -> list:
+    """FADDA: the active elements added to the accumulator in order. Slots
+    Vdn (x3), Zm (x4), Pg (x5)."""
+    scalar = {2: "h", 4: "s", 8: "d"}[e]
+    body = ["ensure_fp_environment", "ldr x8, [_stream], #8"] + unpack(3) + [
+        f"ldr {scalar}0, [_cpu, x3]", "ldr q1, [_cpu, x4]",
+        "add x9, _cpu, x5", "ldp x10, x11, [x9]"]
+    for element in range(16 // e):
+        byte = element * e
+        body += [f"tbz {'x10' if byte < 8 else 'x11'}, "
+                 f"#{(byte % 8) * 8}, {element + 10}f",
+                 f"mov {scalar}2, v1.{scalar}[{element}]",
+                 f"fadd {scalar}0, {scalar}0, {scalar}2",
+                 f"{element + 10}:"]
+    return body + ["str q0, [_cpu, x3]", "next_gadget"]
+
+
 # The rest of design 4.3's hot set.
 
 def load_constant(register: str, value: int, bits: int) -> list:
@@ -1310,7 +1577,43 @@ def saturating_shift_left(e, d, a, b):
         "bic v6.16b, v6.16b, v4.16b", f"orr {d}.16b, {d}.16b, v6.16b"]
 
 
+def rounding_halving_add_doubleword(e, d, a, b):
+    """URHADD of doublewords, which AdvSIMD lacks: (a | b) - ((a ^ b) >> 1)
+    is (a + b + 1) >> 1 without the carry out of the sum."""
+    return [f"orr v5.16b, {a}.16b, {b}.16b", f"eor v4.16b, {a}.16b, {b}.16b",
+            "ushr v4.2d, v4.2d, #1", f"sub {d}.2d, v5.2d, v4.2d"]
+
+
+def unsigned_saturating_signed_add(e, d, a, b):
+    """USQADD: the unsigned `a` plus the signed `b`, clamped to the
+    element's range, found by compare and select since AdvSIMD's USQADD
+    sets FPSR.QC and SVE's never does. The sum wraps above `a` exactly when
+    a negative `b` underflows and below `a` when a positive one overflows."""
+    arrangement = ARRANGEMENTS[e]
+    return [f"add {d}.{arrangement}, {a}.{arrangement}, {b}.{arrangement}",
+            f"cmlt v4.{arrangement}, {b}.{arrangement}, #0",
+            f"cmhi v5.{arrangement}, {a}.{arrangement}, {d}.{arrangement}",
+            f"cmhi v6.{arrangement}, {d}.{arrangement}, {a}.{arrangement}",
+            "bic v5.16b, v5.16b, v4.16b", "and v6.16b, v6.16b, v4.16b",
+            f"orr {d}.16b, {d}.16b, v5.16b", f"bic {d}.16b, {d}.16b, v6.16b"]
+
+
+def pairwise_add(e, d, a, b):
+    """ADDP: the even elements are sums of adjacent pairs of Zdn, the odd
+    ones sums of adjacent pairs of Zm; AdvSIMD's ADDP puts the pairs of the
+    first source in the low half and the second's in the high half, which
+    ZIP1 of the two halves interleaves."""
+    arrangement = ARRANGEMENTS[e]
+    return [f"addp {d}.{arrangement}, {a}.{arrangement}, {b}.{arrangement}",
+            f"ext v6.16b, {d}.16b, {d}.16b, #8",
+            f"zip1 {d}.{arrangement}, {d}.{arrangement}, v6.{arrangement}"]
+
+
 INTEGER_BINARY_PREDICATED_MORE = {
+    "urhadd_z_p_zz_": doubleword_by(vector_op("urhadd"),
+                                    rounding_halving_add_doubleword),
+    "usqadd_z_p_zz_": unsigned_saturating_signed_add,
+    "addp_z_p_zz_": pairwise_add,
     "uqadd_z_p_zz_": saturating_into(False),
     "uqsub_z_p_zz_": saturating_into(True),
     "uqshl_z_p_zz_": saturating_shift_left,
@@ -1388,11 +1691,15 @@ def reverse_elements(e: int) -> list:
 # Contiguous memory. A load or store whose footprint lies in one guest page
 # the TLB holds runs on the host address, untagged first under TBI: a load
 # reads the whole footprint, which on a mapped page is harmless for
-# inactive elements, and zeroes those by the lane mask; a store runs only
-# when its predicate is all-true, as one store of the footprint. LDR and
+# inactive elements, and zeroes those by the lane mask; a store under an
+# all-true predicate is one store of the footprint, and under any other
+# predicate writes its active elements one by one (partial_store), never
+# touching the bytes of an inactive one. A
+# first-fault or non-fault load is such a load on a page the TLB holds: no
+# element faults, so FFR is left as it is. LDR and
 # STR of a predicate expand and compress its two bytes to and from the
 # mask form. Everything else, a crossing, a page the TLB cannot fill, a
-# fault, a partial store, goes to the semantic library through
+# fault, goes to the semantic library through
 # sve_library, which decides faults and partial writes; the builder sends
 # an SP base, whose alignment the access checks, there directly. Stream: [packed slots][byte offset][library operand][PC]: the
 # library operand is the word and row of an sve_library stream, so the slow
@@ -1400,7 +1707,7 @@ def reverse_elements(e: int) -> list:
 # x19 (Zt) and x20 (Pg), which a TLB miss's helper call preserves.
 
 MEMORY_SHAPES = ("contiguous", "replicate", "replicate_quad", "structure",
-                 "fill_z", "fill_p")
+                 "fill_z", "fill_p", "first_fault", "non_fault")
 MEMORY_OFFSETS = ("immediate_footprint", "register_element",
                   "immediate_element", "immediate_16")
 LABELS = itertools.count()
@@ -1440,14 +1747,17 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                  f"add x7, x7, x11, lsl #{m.bit_length() - 1}"]
     else:
         body.append("add x7, x7, x9")
-    if predicated and not load:
-        test = all_true_test(e, "x20")
-        test[-1] = test[-1].replace("1f", slow)
-        body += test
     body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
              f"cbnz w10, {tagged}", f"{translate}:",
              f"transfer_translate {int(not load)}, {page}, {footprint}, x7, "
              f"{cold}, {resume}, {slow}"]
+    partial = f"Lsve_memory_{number}_partial"
+    if predicated and not load:
+        # A store under a predicate that is not all-true writes only its
+        # active elements, after the page decision.
+        test = all_true_test(e, "x20")
+        test[-1] = test[-1].replace("1f", partial)
+        body += test
     a = ARRANGEMENTS[e]
     width = {1: "b", 2: "h", 4: "s", 8: "d", 16: "q"}
     if load:
@@ -1489,12 +1799,7 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                      "add x10, x10, #UML_GADGET_CPU_V0",
                      f"str q{k}, [_cpu, x10]"]
     else:
-        body.append("ldr q0, [_cpu, x19]")
-        for k in range(1, registers):
-            body += ["sub x10, x19, #UML_GADGET_CPU_V0",
-                     f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
-                     "add x10, x10, #UML_GADGET_CPU_V0",
-                     f"ldr q{k}, [_cpu, x10]"]
+        body += store_registers(registers)
         if memory.shape == "structure":
             names = ", ".join(f"v{k}.{a}" for k in range(registers))
             body.append(f"st{registers} {{{names}}}, [x7]")
@@ -1510,12 +1815,53 @@ def memory_gadget(memory, e: int, m: int, predicated: bool,
                             f"v0.{ARRANGEMENTS[size]}")
                 size //= 2
             body.append(f"str {width[footprint]}0, [x7]")
-    body += ["add _stream, _stream, #16", "next_gadget",
-             f"{tagged}:", "ubfx x7, x7, #0, #56", f"b {translate}",
+    body += ["add _stream, _stream, #16", "next_gadget"]
+    if predicated and not load:
+        body += partial_store(memory, e, m, number, partial)
+    body += [f"{tagged}:", "ubfx x7, x7, #0, #56", f"b {translate}",
              f"transfer_translate_cold {int(not load)}, {page}, {footprint}, "
              f"x7, {cold}, {resume}, {slow}, 0, 0, {slow}",
              f"{slow}:", "b NAME(uml_arm64_gadget_sve_library)"]
     return body
+
+
+def store_registers(registers: int) -> list:
+    """v0.. := the registers a store reads, Zt (at CpuState offset x19) and
+    the ones after it, wrapping at Z31."""
+    body = ["ldr q0, [_cpu, x19]"]
+    for k in range(1, registers):
+        body += ["sub x10, x19, #UML_GADGET_CPU_V0",
+                 f"add x10, x10, #{16 * k}", "and x10, x10, #0x1f0",
+                 "add x10, x10, #UML_GADGET_CPU_V0",
+                 f"ldr q{k}, [_cpu, x10]"]
+    return body
+
+
+def partial_store(memory, e: int, m: int, number: int, label: str) -> list:
+    """A contiguous store under a predicate that is not all-true, whose
+    footprint lies in the page x7 now addresses: each active element is
+    written alone, as a lane store, and the bytes of the inactive ones are
+    never touched (a read-modify-write would race with other threads).
+    Element i of Zt, narrowed to `m` bytes, goes to byte (i * registers + r)
+    * m of the footprint for register r of a structure store."""
+    registers = memory.registers
+    lane_type = {1: "b", 2: "h", 4: "s", 8: "d"}[m]
+    body = [f"{label}:"] + store_registers(registers) + [
+        "add x9, _cpu, x20", "ldp x14, x15, [x9]"]
+    for element in range(16 // e):
+        byte = element * e
+        mask = "x14" if byte < 8 else "x15"
+        skip = f"Lsve_memory_{number}_skip{element}"
+        body.append(f"tbz {mask}, #{(byte % 8) * 8 + 7}, {skip}")
+        for r in range(registers):
+            offset = (element * registers + r) * m
+            address = "x7"
+            if offset:
+                body.append(f"add x9, x7, #{offset}")
+                address = "x9"
+            body.append(f"st1 {{v{r}.{lane_type}}}[{byte // m}], [{address}]")
+        body.append(f"{skip}:")
+    return body + ["add _stream, _stream, #16", "next_gadget"]
 
 
 def bit_pattern(register: int) -> list:
@@ -1525,9 +1871,21 @@ def bit_pattern(register: int) -> list:
         f"dup v{register}.2d, x9"]
 
 
+# The gadgets generated so far by their parameters, so that rows whose
+# gadgets are the same text, such as LD1B and LDFF1B or LD1B and LDNT1B,
+# share the entries.
+MEMORY_GADGETS: dict = {}
+
+
+def cached(parameters: tuple, make) -> list:
+    if parameters not in MEMORY_GADGETS:
+        MEMORY_GADGETS[parameters] = make()
+    return MEMORY_GADGETS[parameters]
+
+
 def memory_form(row):
-    """The slots and a variant builder for a contiguous memory row, or
-    None for a row the semantic library runs."""
+    """The slots, a variant builder and the key of a contiguous memory row,
+    or None for a row the semantic library runs."""
     memory = row.memory
     if memory.shape not in MEMORY_SHAPES or \
             memory.offset not in MEMORY_OFFSETS:
@@ -1540,21 +1898,150 @@ def memory_form(row):
         ([("p", 10)] if predicated else []) + \
         [("gpr_or_sp", 5)] + ([("gpr", 16)] if indexed else [])
     m = memory.msize // 8
+    shape = "contiguous" if memory.shape in (
+        "first_fault", "non_fault") else memory.shape
+    # Everything memory_gadget reads of the row.
+    parameters = ("contiguous", shape, memory.direction, memory.esize,
+                  memory.esize_shift, m, memory.registers,
+                  memory.sign_extend, predicated, indexed)
+
+    def one(e: int) -> list:
+        return cached(parameters + (e,), lambda: memory_gadget(
+            memory, e, m, predicated, indexed))
 
     def build(form: Form) -> None:
         if memory.esize_shift is None:
-            form.variants = [memory_gadget(memory, memory.esize // 8, m,
-                                           predicated, indexed)]
+            form.variants = [one(memory.esize // 8)]
             return
         segment = memory.esize_shift
         form.variant_bits = list(range(segment.low,
                                        segment.low + segment.width))
         for value in range(1 << segment.width):
             e = (memory.esize // 8) << value
-            form.variants.append(
-                ABSENT if e < m or e > 8 else
-                memory_gadget(memory, e, m, predicated, indexed))
-    return tuple(wanted), build
+            form.variants.append(ABSENT if e < m or e > 8 else one(e))
+    return tuple(wanted), build, "/".join(map(str, parameters))
+
+
+# Gathers and scatters, and the first-fault gathers. One access per active
+# element, 2 (.D) or 4 (.S) of them, each translated alone: an address
+# whose page the TLB holds (sve_element_translate) is read or written at
+# once, untagged first under TBI (x17 holds the bits it clears); a miss or
+# a crossing leaves for the semantic library through sve_library with the
+# whole instruction undone. That is
+# exact because nothing but memory has changed by then and a scatter's
+# stores are idempotent: the library repeats them in order and stops at
+# the element that faults, as the hardware does, and a load writes its
+# destination last. A first-fault gather whose every element translates
+# faults nowhere and leaves FFR as it is, so it is the gather. Stream:
+# [packed slots][immediate byte offset][library operand][PC], the slots in
+# order Zt, Pg, the base (Xn, or Zn for a vector base) and the index (Zm,
+# or Xm for a vector base plus register). The predicate's halves are in
+# x15 and x16, the base in x5, the pointer to the index or base vector in
+# x6, and the vector base's offset in x4.
+
+GATHER_SHAPES = ("gather", "gather_first_fault")
+GATHER_OFFSETS = ("vector_index", "immediate_element", "register_byte")
+
+
+def gather_gadget(memory, signed_index: bool) -> list:
+    """One variant of a gather or scatter; `signed_index` selects SXTW for
+    32-bit vector indexes."""
+    number = next(LABELS)
+    slow = f"Lsve_gather_{number}_slow"
+    load = memory.direction == "load"
+    e = memory.esize // 8
+    m = memory.msize // 8
+    scalar = memory.offset == "vector_index"
+    register_offset = memory.offset == "register_byte"
+    arrangement = {4: "s", 8: "d"}[e]
+    width = {1: "b", 2: "h", 4: "s", 8: "d"}
+    page, second = ("UML_GADGET_TLB_ENTRY_READ_PAGE",
+                    "UML_GADGET_TLB_SECOND_READ_PAGE") if load else \
+        ("UML_GADGET_TLB_ENTRY_WRITE_PAGE",
+         "UML_GADGET_TLB_SECOND_WRITE_PAGE")
+    body = ["ldp x8, x9, [_stream], #16", "and x19, x8, #0xffff",
+            "ubfx x20, x8, #16, #16", "ubfx x13, x8, #32, #16"]
+    if scalar or register_offset:
+        body.append("lsr x14, x8, #48")
+    # x17: the address bits the top-byte-ignore mode clears.
+    body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
+             "neg x17, x10", "and x17, x17, #0xff00000000000000"]
+    if scalar:
+        body += ["ldr x5, [_cpu, x13]", "add x6, _cpu, x14"]
+    else:
+        body.append("add x6, _cpu, x13")
+        body.append("ldr x4, [_cpu, x14]" if register_offset
+                    else "mov x4, x9")
+    body += ["add x3, _cpu, x20", "ldp x15, x16, [x3]"]
+    body.append("movi v0.2d, #0" if load else "ldr q0, [_cpu, x19]")
+    for element in range(16 // e):
+        byte = element * e
+        skip = f"Lsve_gather_{number}_skip{element}"
+        body.append(f"tbz {'x15' if byte < 8 else 'x16'}, "
+                    f"#{(byte % 8) * 8 + 7}, {skip}")
+        if scalar:
+            if memory.index_bits == 64:
+                body.append(f"ldr x7, [x6, #{byte}]")
+            elif signed_index:
+                body.append(f"ldrsw x7, [x6, #{byte}]")
+            else:
+                body.append(f"ldr w7, [x6, #{byte}]")
+            shift = f", lsl #{memory.index_shift}" \
+                if memory.index_shift else ""
+            body.append(f"add x7, x5, x7{shift}")
+        else:
+            body += [f"ldr {'x7' if e == 8 else 'w7'}, [x6, #{byte}]",
+                     "add x7, x7, x4"]
+        body.append("bic x7, x7, x17")
+        body.append(f"sve_element_translate {page}, {second}, {m}, x7, "
+                    f"{slow}")
+        if not load:
+            body.append(f"st1 {{v0.{width[m]}}}[{byte // m}], [x7]")
+        elif m == e:
+            body.append(f"ld1 {{v0.{arrangement}}}[{element}], [x7]")
+        else:
+            sign = memory.sign_extend
+            wide = "x9" if e == 8 else "w9"
+            instruction = {1: "ldrsb" if sign else "ldrb",
+                           2: "ldrsh" if sign else "ldrh",
+                           4: "ldrsw" if sign else "ldr"}[m]
+            body += [f"{instruction} "
+                     f"{wide if sign else 'w9'}, [x7]",
+                     f"ins v0.{arrangement}[{element}], {wide}"]
+        body.append(f"{skip}:")
+    if load:
+        body.append("str q0, [_cpu, x19]")
+    return body + ["add _stream, _stream, #16", "next_gadget",
+                   f"{slow}:", "b NAME(uml_arm64_gadget_sve_library)"]
+
+
+def gather_form(row):
+    """The slots, variant builder and key of a gather, scatter or
+    first-fault gather row, or None for a row the semantic library runs."""
+    memory = row.memory
+    if memory.shape not in GATHER_SHAPES or \
+            memory.offset not in GATHER_OFFSETS:
+        return None
+    scalar = memory.offset == "vector_index"
+    wanted = [("z", 0), ("p", 10)] + (
+        [("gpr_or_sp", 5), ("z", 16)] if scalar else
+        [("z", 5)] + ([("gpr", 16)] if memory.offset == "register_byte"
+                      else []))
+    parameters = ("gather", memory.direction, memory.esize, memory.msize,
+                  memory.sign_extend, memory.offset, memory.index_bits,
+                  memory.index_shift)
+
+    def build(form: Form) -> None:
+        def one(signed: bool) -> list:
+            return cached(parameters + (signed,),
+                          lambda: gather_gadget(memory, signed))
+        if memory.index_bits == 32:
+            # The word's xs bit: UXTW (0) or SXTW (1).
+            form.variant_bits = [memory.index_sign.low]
+            form.variants = [one(False), one(True)]
+        else:
+            form.variants = [one(False)]
+    return tuple(wanted), build, "/".join(map(str, parameters))
 
 
 # Form construction.
@@ -1593,7 +2080,7 @@ def build_forms(table) -> list:
         name = row.encoding
         base = name.split("_")[0]
         if row.memory is not None:
-            if row.memory.shape == "prefetch":
+            if row.memory.shape in ("prefetch", "gather_prefetch"):
                 # A hint, which never faults: the base part's NOP.
                 if name not in by_name:
                     form = Form(name, [row.index], "prefetch", [], key=name)
@@ -1602,9 +2089,10 @@ def build_forms(table) -> list:
                 else:
                     by_name[name].rows.append(row.index)
                 continue
-            described = memory_form(row)
+            described = memory_form(row) or gather_form(row)
             if described is not None:
-                add(row, "memory", described[0], described[1])
+                add(row, "memory", described[0], described[1],
+                    key=described[2])
             continue
         if name in IMMEDIATE_FORMS:
             lowering, lines = IMMEDIATE_FORMS[name]
@@ -1641,6 +2129,83 @@ def build_forms(table) -> list:
         elif name in COMPARISONS:
             add(row, "plain", (("p", 0), ("z", 5), ("z", 16), ("p", 10)),
                 lambda f, c=COMPARISONS[name]: sized(f, comparison(*c)))
+        elif name in IMMEDIATE_COMPARISONS:
+            operation, invert, swap, lowering = IMMEDIATE_COMPARISONS[name]
+            add(row, lowering, (("p", 0), ("z", 5), ("p", 10)),
+                lambda f, l=comparison_immediate(operation, invert, swap):
+                sized(f, l))
+        elif name in FP_COMPARISONS:
+            operation, invert, unordered = FP_COMPARISONS[name]
+            add(row, "plain", (("p", 0), ("z", 5), ("z", 16), ("p", 10)),
+                lambda f, l=fp_comparison(operation, invert, False,
+                                          unordered): sized(f, l))
+        elif name in FP_ZERO_COMPARISONS:
+            operation, invert = FP_ZERO_COMPARISONS[name]
+            add(row, "plain", (("p", 0), ("z", 5), ("p", 10)),
+                lambda f, l=fp_comparison(operation, invert, True):
+                sized(f, l))
+        elif name in ("punpklo_p_p_", "punpkhi_p_p_"):
+            add(row, "plain", (("p", 0), ("p", 5)),
+                lambda f, o="zip2" if "hi" in name else "zip1": single(
+                    f, two_register(["movi v2.2d, #0",
+                                     f"{o} v0.16b, v1.16b, v2.16b"])))
+        elif name in ("sunpklo_z_z_", "sunpkhi_z_z_", "uunpklo_z_z_",
+                      "uunpkhi_z_z_"):
+            add(row, "plain", (("z", 0), ("z", 5)),
+                lambda f, u=unpack_elements(name[0] == "s", "hi" in name):
+                sized(f, lambda e: None if u(e) is ABSENT else
+                      two_register(u(e))))
+        elif name in ("brka_p_p_p_", "brkb_p_p_p_"):
+            def breaks(form: Form, after=name.startswith("brka")) -> None:
+                form.variant_bits = [4]
+                form.variants = [break_predicate(after, False, False),
+                                 break_predicate(after, True, False)]
+            add(row, "plain", (("p", 0), ("p", 5), ("p", 10)), breaks)
+        elif name in ("brkas_p_p_p_z", "brkbs_p_p_p_z"):
+            add(row, "plain", (("p", 0), ("p", 5), ("p", 10)),
+                lambda f, a=name.startswith("brka"): single(
+                    f, break_predicate(a, False, True)))
+        elif name == "index_z_ii_":
+            add(row, "index_immediate", (("z", 0),),
+                lambda f: single(f, [
+                    "ldp x8, x9, [_stream], #16", "ldr x10, [_stream], #8",
+                    "and x3, x8, #0xffff", "fmov d0, x9",
+                    "mov v0.d[1], x10", "str q0, [_cpu, x3]",
+                    "next_gadget"]), argument=2)
+        elif name in ("index_z_ir_", "index_z_ri_", "index_z_rr_"):
+            kind = name[8:10]
+            if kind == "ir":
+                wanted, argument = (("z", 0), ("gpr", 16)), 0
+                head = ["ldp x8, x9, [_stream], #16", "and x3, x8, #0xffff",
+                        "lsr x4, x8, #16", "ldr x10, [_cpu, x4]"]
+            elif kind == "ri":
+                wanted, argument = (("z", 0), ("gpr", 5)), 1
+                head = ["ldp x8, x10, [_stream], #16", "and x3, x8, #0xffff",
+                        "lsr x4, x8, #16", "ldr x9, [_cpu, x4]"]
+            else:
+                wanted, argument = (("z", 0), ("gpr", 5), ("gpr", 16)), 3
+                head = ["ldr x8, [_stream], #8"] + unpack(3) + [
+                    "ldr x9, [_cpu, x4]", "ldr x10, [_cpu, x5]"]
+            add(row, "index_immediate", wanted,
+                lambda f, h=head: sized(f, lambda e: h + (
+                    ["ldr x11, [_stream], #8"] if e < 4 else []) +
+                    index_series(e) + ["str q0, [_cpu, x3]", "next_gadget"]),
+                argument=argument)
+        elif name == "compact_z_p_z_":
+            add(row, "tables", (("z", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, compact_elements))
+        elif name == "splice_z_p_zz_des":
+            add(row, "tables", (("z", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, splice_segment))
+        elif name == "uaddv_r_p_z_":
+            add(row, "plain", (("v", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, unsigned_add_reduction))
+        elif name == "faddv_v_p_z_":
+            add(row, "plain", (("v", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, fp_sized(fp_add_reduction)))
+        elif name == "fadda_v_p_z_":
+            add(row, "plain", (("v", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, fp_sized(fp_ordered_add_reduction)))
         elif name in SHIFT_IMMEDIATE:
             kind, accumulate = SHIFT_IMMEDIATE[name]
 
