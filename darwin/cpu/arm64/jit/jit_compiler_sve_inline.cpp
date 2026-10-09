@@ -373,6 +373,10 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
   const unsigned m = field(instruction, 16, 5);
   const unsigned g = field(instruction, 10, 3);
 
+  /* SQINC, SQDEC, UQINC and UQDEC of Xdn or Wdn: bits 15-12 are 1111. */
+  if ((instruction & 0xff20'f000U) == 0x0420'f000U)
+    return emit_sve_saturating_count(instruction);
+
   for (const auto &op : destructive_ops) {
     if (op.form != form || op.floating)
       continue;
@@ -1046,6 +1050,8 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
   }
   if (memory.shape == Shape::gather)
     return emit_sve_gather(row, instruction, pc);
+  if (memory.shape == Shape::fill_p)
+    return emit_sve_predicate_fill(row, instruction, pc);
   if (memory.shape != Shape::contiguous && memory.shape != Shape::structure &&
       memory.shape != Shape::replicate &&
       memory.shape != Shape::replicate_quad && memory.shape != Shape::fill_z)
@@ -1321,6 +1327,122 @@ bool JitCompiler::emit_sve_gather(const detail::SmeEncoding &row,
                                 out.host));
   }
   commit_native_vector(out, transfer);
+  return true;
+}
+
+bool JitCompiler::emit_sve_predicate_fill(const detail::SmeEncoding &row,
+                                          std::uint32_t instruction,
+                                          std::uint64_t pc) {
+  const auto &memory = *detail::sme_encoding_memory_of(row);
+  const auto *operands = detail::sme_encoding_operands_of(row);
+  const bool store = memory.direction == detail::SmeMemoryDirection::store;
+  /* The 16 bits of the predicate, one per byte of the vector; the base is
+   * a register, the offset a multiple of the two bytes. */
+  constexpr std::size_t bytes = sve_vector_length / 8U;
+  unsigned predicate = 0;
+  for (unsigned index = 0; index < row.operand_count; ++index)
+    if (index != memory.base_operand &&
+        operands[index].kind == detail::SmeOperandKind::p)
+      predicate = detail::sme_operand_number(operands[index], instruction);
+  const unsigned base =
+      detail::sme_operand_number(operands[memory.base_operand], instruction);
+  const auto offset = static_cast<std::int64_t>(
+      jit::sme_memory_offset(memory, instruction, sve_vector_length, 0));
+
+  if (store)
+    mark_direct_memory_write();
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
+  begin_sve_word();
+  load_gpr(8, base, true);
+  if (base == 31U) {
+    emit_misalignment_check(8, 16, slow);
+  } else {
+    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+    emitter_.compare_zero(slow, 0, false, true);
+  }
+  if (offset != 0) {
+    const auto magnitude =
+        static_cast<std::uint64_t>(offset < 0 ? -offset : offset);
+    if (offset < 0)
+      emitter_.subtract_immediate(8, 8, static_cast<unsigned>(magnitude));
+    else
+      emitter_.add_immediate(8, 8, static_cast<unsigned>(magnitude));
+  }
+  emit_translate(8, store ? Access::write : Access::read, slow, slow, bytes);
+  if (store)
+    track_direct_store(8, bytes);
+
+  /* Byte i of the mask form is all ones when bit i of the 16 bits is set:
+   * the bits spread to the bytes and test against each byte's own. */
+  constexpr std::uint64_t weights = 0x8040'2010'0804'0201ULL;
+  if (!store) {
+    emitter_.emit(load_scalar(1, false, false, 9, 8));
+    emitter_.emit(dup_general(1, scratch_a, 9));
+    emitter_.emit(movi_bytes_one(scratch_b));
+    emitter_.emit(ins_low_zero(scratch_b));
+    emitter_.emit(tbl_one(scratch_a, scratch_a, scratch_b));
+    emit_sve_vector_constant(scratch_b, weights, weights);
+    const auto out = write_native_predicate(predicate, false, 3U);
+    emitter_.emit(cmtst_bytes(out.host, scratch_a, scratch_b));
+    commit_native_predicate(out, predicate);
+    return true;
+  }
+  const auto source = read_native_predicate(predicate, 0U);
+  emit_sve_vector_constant(scratch_b, weights, weights);
+  emitter_.emit(three(vector_and, scratch_a, source.host, scratch_b));
+  emitter_.emit(ext_half(scratch_b, scratch_a, scratch_a));
+  emitter_.emit(zip1_bytes(scratch_a, scratch_a, scratch_b));
+  emitter_.emit(addv_halves(scratch_a, scratch_a));
+  emitter_.emit(umov_h0(9, scratch_a));
+  emitter_.emit(store_half(9, 8));
+  clear_local_exclusive_monitor();
+  return true;
+}
+
+bool JitCompiler::emit_sve_saturating_count(std::uint32_t instruction) {
+  const unsigned size = field(instruction, 22, 2);
+  const unsigned d = field(instruction, 0, 5);
+  const bool wide = field(instruction, 20, 1) != 0U;
+  const bool decrement = field(instruction, 11, 1) != 0U;
+  const bool is_unsigned = field(instruction, 10, 1) != 0U;
+  const unsigned count =
+      predicate_pattern_count(field(instruction, 5, 5),
+                              sve_vector_length >> size) *
+      (field(instruction, 16, 4) + 1U);
+  begin_sve_word();
+  if (d == 31U || (wide && count == 0U))
+    return true; // XZR, or X plus nothing
+  const auto out = write_native_gpr(d, false, true, 9U);
+  const unsigned x = out.host;
+  /* The saturation tests the flags, which guest code never sees. */
+  spill_flags_for_internal_clobber();
+  if (is_unsigned) {
+    /* The carry: a decrement saturates at zero when it borrowed, an
+     * increment at all ones when it carried. */
+    emitter_.emit(add_immediate_flags(wide, decrement, x, x, count));
+    emitter_.emit(decrement ? (wide ? csel_x(x, x, 31, cond_hs)
+                                    : csel_w(x, x, 31, cond_hs))
+                            : csinv(wide, x, x, 31, cond_lo));
+  } else if (wide) {
+    /* The overflow: a signed 64-bit decrement can only reach the least
+     * value, an increment the greatest. */
+    emitter_.emit(add_immediate_flags(true, decrement, x, x, count));
+    emitter_.load_constant(10, decrement ? 0x8000'0000'0000'0000ULL
+                                         : 0x7fff'ffff'ffff'ffffULL);
+    emitter_.emit(csel_x(x, 10, x, cond_vs));
+  } else {
+    /* Wdn is a signed 32-bit value; the result is sign-extended. */
+    emitter_.emit(sxtw(x, x));
+    if (decrement)
+      emitter_.subtract_immediate(x, x, count);
+    else
+      emitter_.add_immediate(x, x, count);
+    emitter_.load_constant(10, decrement ? 0xffff'ffff'8000'0000ULL
+                                         : 0x7fff'ffffULL);
+    emitter_.emit(cmp_x(x, 10));
+    emitter_.emit(csel_x(x, 10, x, decrement ? cond_lt : cond_gt));
+  }
+  commit_native_gpr(out, d, false);
   return true;
 }
 

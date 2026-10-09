@@ -446,6 +446,16 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
       print_bytes("", initial.vectors[n].bytes);
     }
   }
+  for (unsigned n = 0; n < machine.cpu.registers.size(); ++n)
+    if (machine.cpu.registers[n] != expected.registers[n])
+      std::fprintf(stderr, "  X%u: jit %#llx, library %#llx (was %#llx)\n", n,
+                   static_cast<unsigned long long>(machine.cpu.registers[n]),
+                   static_cast<unsigned long long>(expected.registers[n]),
+                   static_cast<unsigned long long>(initial.registers[n]));
+  if (machine.cpu.sp != expected.sp)
+    std::fprintf(stderr, "  SP: jit %#llx, library %#llx\n",
+                 static_cast<unsigned long long>(machine.cpu.sp),
+                 static_cast<unsigned long long>(expected.sp));
   if (machine.cpu.sve_p != expected.sve_p)
     std::fprintf(stderr, "  P differs\n");
   require(false);
@@ -880,6 +890,51 @@ void scatters_with_tracked_stores(const HostCapabilities &host, Tally &tally) {
               checked);
 }
 
+/* The scalar saturating counts (SQINC, SQDEC, UQINC, UQDEC of Xdn or Wdn)
+ * at the values where they saturate: random registers are never near. */
+void saturating_counts_at_their_limits(const HostCapabilities &host,
+                                       Tally &tally) {
+  Random random{0x6a17'5e0bU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  const std::array<std::uint64_t, 8> edges{
+      0U,           0x7fff'ffffU, 0x8000'0000U,
+      0xffff'ffffU, 0x1'0000'0000U, 0x7fff'ffff'ffff'ffffULL,
+      0x8000'0000'0000'0000ULL, 0xffff'ffff'ffff'ffffULL};
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if ((row.value & 0xff20'f000U) != 0x0420'f000U ||
+        (row.mask & 0xff20'f000U) != 0xff20'f000U ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    for (std::size_t sample = 0; sample < 6U; ++sample) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          (word & 31U) == 31U)
+        continue;
+      /* A machine per word: it translates the program once, at slot 0. */
+      Machine machine{host};
+      for (const auto edge : edges)
+        for (const std::uint64_t delta :
+             {0ULL, 1ULL, 2ULL, 7ULL, 16ULL, 33ULL, 255ULL, 256ULL,
+              static_cast<std::uint64_t>(-1), static_cast<std::uint64_t>(-2),
+              static_cast<std::uint64_t>(-16), static_cast<std::uint64_t>(-256)}) {
+          std::vector<std::byte> data(mapped);
+          auto initial = random_state(random, false);
+          initial.registers[word & 31U] = edge + delta;
+          compare(machine, 0, word, index, Variant::alone, initial, data, false,
+                  tally);
+          ++checked;
+        }
+    }
+  }
+  std::printf("%zu saturating counts at their limits match the library\n",
+              checked);
+}
+
 /* A predicate that PTRUE made all-active stops being known so as soon as
  * anything writes it: each writer below makes P0 partial for some state,
  * and the consumer after it, which the translation lowered for P0 all-active
@@ -1000,6 +1055,7 @@ int main() {
   lowered_words_stay_inline(sve_host(), tally);
   gather_lane_faults(sve_host(), tally);
   scatters_with_tracked_stores(sve_host(), tally);
+  saturating_counts_at_their_limits(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);
   std::printf("%zu runs over %zu rows (%zu inline) match the library, %zu of "

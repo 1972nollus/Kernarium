@@ -27,6 +27,7 @@ constexpr unsigned cond_lo = 3U;
 constexpr unsigned cond_pl = 5U;
 constexpr unsigned cond_hi = 8U;
 constexpr unsigned cond_ls = 9U;
+constexpr unsigned cond_vs = 6U;
 constexpr unsigned cond_ge = 10U;
 constexpr unsigned cond_lt = 11U;
 constexpr unsigned cond_gt = 12U;
@@ -82,6 +83,25 @@ constexpr unsigned cond_le = 13U;
                                               unsigned m,
                                               unsigned condition) noexcept {
   return three(0x9a80'0400U, d, n, m) | (condition << 12);
+}
+/* ADDS and SUBS with an unsigned 12-bit immediate, Xd or Wd (d may be XZR). */
+[[nodiscard]] constexpr std::uint32_t add_immediate_flags(bool wide, bool subtract,
+                                                          unsigned d, unsigned n,
+                                                          unsigned immediate) noexcept {
+  return ((wide ? 0x9100'0000U : 0x1100'0000U) | (subtract ? 0x4000'0000U : 0U) |
+          0x2000'0000U) |
+         (immediate << 10) | (n << 5) | d;
+}
+/* CSEL Wd, Wn, Wm and CSINV Wd/Xd, Xn, Xm, condition. */
+[[nodiscard]] constexpr std::uint32_t csel_w(unsigned d, unsigned n,
+                                             unsigned m,
+                                             unsigned condition) noexcept {
+  return three(0x1a80'0000U, d, n, m) | (condition << 12);
+}
+[[nodiscard]] constexpr std::uint32_t csinv(bool wide, unsigned d, unsigned n,
+                                            unsigned m,
+                                            unsigned condition) noexcept {
+  return three(wide ? 0xda80'0000U : 0x5a80'0000U, d, n, m) | (condition << 12);
 }
 /* CSET Wd, condition. */
 [[nodiscard]] constexpr std::uint32_t cset_w(unsigned d,
@@ -267,6 +287,45 @@ constexpr std::uint32_t vector_umin = 0x6e20'6c00U;
   }
   return (load ? 0x0d40'0000U : 0x0d00'0000U) | (q << 30) | (opcode << 13) |
          (s << 12) | (size << 10) | (n << 5) | t;
+}
+/* MOVI Vd.16B, #1, INS Vd.D[0], XZR and TBL Vd.16B, {Vn.16B}, Vm.16B. */
+[[nodiscard]] constexpr std::uint32_t movi_bytes_one(unsigned d) noexcept {
+  return 0x4f00'e420U | d;
+}
+[[nodiscard]] constexpr std::uint32_t ins_low_zero(unsigned d) noexcept {
+  return 0x4e08'1fe0U | d;
+}
+[[nodiscard]] constexpr std::uint32_t tbl_one(unsigned d, unsigned n,
+                                              unsigned m) noexcept {
+  return 0x4e00'0000U | (m << 16) | (n << 5) | d;
+}
+/* CMTST Vd.16B, Vn.16B, Vm.16B. */
+[[nodiscard]] constexpr std::uint32_t cmtst_bytes(unsigned d, unsigned n,
+                                                  unsigned m) noexcept {
+  return 0x4e20'8c00U | (m << 16) | (n << 5) | d;
+}
+/* EXT Vd.16B, Vn.16B, Vm.16B, #8 and ZIP1 Vd.16B, Vn.16B, Vm.16B. */
+[[nodiscard]] constexpr std::uint32_t ext_half(unsigned d, unsigned n,
+                                               unsigned m) noexcept {
+  return 0x6e00'4000U | (m << 16) | (n << 5) | d;
+}
+[[nodiscard]] constexpr std::uint32_t zip1_bytes(unsigned d, unsigned n,
+                                                 unsigned m) noexcept {
+  return 0x4e00'3800U | (m << 16) | (n << 5) | d;
+}
+/* ADDV Hd, Vn.8H and UMOV Wd, Vn.H[0]. */
+[[nodiscard]] constexpr std::uint32_t addv_halves(unsigned d,
+                                                  unsigned n) noexcept {
+  return 0x4e71'b800U | (n << 5) | d;
+}
+[[nodiscard]] constexpr std::uint32_t umov_h0(unsigned d,
+                                              unsigned n) noexcept {
+  return 0x0e02'3c00U | (n << 5) | d;
+}
+/* STRH Wt, [Xn], zero offset. */
+[[nodiscard]] constexpr std::uint32_t store_half(unsigned t,
+                                                 unsigned n) noexcept {
+  return 0x7900'0000U | (n << 5) | t;
 }
 /* Scalar loads into Wt or Xt at [Xn], zero offset, for LD1R's extending
  * forms: LDRB, LDRH, LDR W and LDR X, then LDRSB W, LDRSB X, LDRSH W,

@@ -322,6 +322,13 @@ private:
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
+  /* SQINC, SQDEC, UQINC and UQDEC of a general register by an element
+   * count. */
+  [[nodiscard]] bool emit_sve_saturating_count(std::uint32_t instruction);
+  /* LDR and STR of a predicate: its 16 bits, one per byte of the vector. */
+  [[nodiscard]] bool emit_sve_predicate_fill(const detail::SmeEncoding &row,
+                                             std::uint32_t instruction,
+                                             std::uint64_t pc);
   /* The gathers and scatters, one translated access per element. */
   [[nodiscard]] bool emit_sve_gather(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,

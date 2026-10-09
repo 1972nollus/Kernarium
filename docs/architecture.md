@@ -620,20 +620,21 @@ the forms are listed in
 [`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
 multiply-add, arithmetic and same-size conversion forms, the integer
 arithmetic, logical, shift, widening, narrowing, high-half and dot-product
-forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, and LD1*, ST1*, LD1R*, LD1RQ*,
-LD2-LD4, ST2-ST4, PRF* and LDR and STR of a Z register whose footprint lies in
-one guest page the TLB holds, and the gathers and scatters (LD1*, LDNT1*, ST1*
-and STNT1* with an address per element) whose every access does. A gather or
-scatter translates one element at a time without the bridge, so a page the TLB
-lacks sends the word to the library, which fills the TLB; a gather loads into
-scratch and writes Z last, a scatter writes its elements in order, and either
-leaves the block before it changes anything the library would not repeat. A
-tracked block (another vCPU holds an exclusive reservation) leaves scatters to
-the library, since it records one store range per instruction. LDFF1 and LDNF1
-stay in the library. A predicated form checks its governing predicate once per
-block and element size, after a PTRUE that sets every element it checks
-nothing, and leaves the block for the library, which alone knows what an
-inactive lane must not do, when the predicate is partial.
+forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, SQINC, SQDEC, UQINC and UQDEC of
+a general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
+LDR and STR of a Z or P register whose footprint lies in one guest page the TLB
+holds, and the gathers and scatters (LD1*, LDNT1*, ST1* and STNT1* with an
+address per element) whose every access does. A gather or scatter translates
+one element at a time without the bridge, so a page the TLB lacks sends the
+word to the library, which fills the TLB; a gather loads into scratch and
+writes Z last, a scatter writes its elements in order, and either leaves the
+block before it changes anything the library would not repeat. A tracked block
+(another vCPU holds an exclusive reservation) leaves scatters to the library,
+since it records one store range per instruction. LDFF1 and LDNF1 stay in the
+library. A predicated form checks its governing predicate once per block and
+element size, after a PTRUE that sets every element it checks nothing, and
+leaves the block for the library, which alone knows what an inactive lane must
+not do, when the predicate is partial.
 The saturating forms saturate by compare and select, since AdvSIMD's set
 FPSR.QC and SVE's never do. A word that lowering declines (an element size
 AdvSIMD lacks, a crossing or missing page, an SP base or a tagged one) and
