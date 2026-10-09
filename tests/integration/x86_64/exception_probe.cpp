@@ -2511,12 +2511,9 @@ alignas(4096) unsigned char mask_pages[3 * page_bytes];
 
 void mask_load() { probe_mask_load(mask_state); }
 void mask_store() { probe_mask_store(mask_state); }
-/* Eight and four bytes before the unmapped page: the operands run onto it. */
-void maskmovdqu_zero()
-{
-	probe_maskmovdqu_zero(mask_pages + 2 * page_bytes - 8);
-}
-void maskmovq_zero() { probe_maskmovq_zero(mask_pages + 2 * page_bytes - 4); }
+unsigned char *maskmov_target;
+void maskmovdqu_zero() { probe_maskmovdqu_zero(maskmov_target); }
+void maskmovq_zero() { probe_maskmovq_zero(maskmov_target); }
 
 void set_mask_state(const unsigned char *address, unsigned lanes)
 {
@@ -2540,6 +2537,13 @@ bool expect_lanes(const char *what, const unsigned char *bytes,
 		ok &= expect(what, values[lane],
 			     (lanes >> lane) & 1U ? 0x11111111U * (lane + 1) : 0);
 	return ok;
+}
+
+void clear_below(unsigned char *page)
+{
+	volatile unsigned char *bytes = page - 32;
+	for (unsigned offset = 0; offset < 32; ++offset)
+		bytes[offset] = 0;
 }
 
 /* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
@@ -2576,27 +2580,120 @@ bool masked_moves()
 			       address_of(probe_mask_load_end));
 	ok &= expect_lanes("loaded lane", loaded, 0x0f);
 
-	set_mask_state(edge, 0x1f);
-	ok &= delivers("VMASKMOVPS onto an unmapped page", mask_store,
-		       address_of(probe_mask_store_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_mask_store_insn), 14, true, 6});
+	/* A masked store writes nothing when it faults. x86 reports the first
+	 * byte of the lowest enabled lane when that misses; when only the
+	 * second page does and some enabled lane starts below it, the last byte
+	 * of the highest enabled lane, whichever lane that is, and the lane
+	 * that straddles the edge counts as starting below. A load reports the
+	 * lowest enabled lane that reaches the page, from the page's own first
+	 * byte if that lane starts before it. */
+	constexpr long nr_mprotect_pages = 10;
+	constexpr long segv_accerr = 2;
+	const auto unmapped_address = reinterpret_cast<word>(unmapped);
+	const auto store_at = [&](const char *what, unsigned char *address,
+				  unsigned lanes, word fault) {
+		clear_below(unmapped);
+		set_mask_state(address, lanes);
+		return delivers(what, mask_store,
+				address_of(probe_mask_store_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_mask_store_insn), 14, true, 6});
+	};
+	ok &= store_at("VMASKMOVPS across the page edge", edge, 0x1f,
+		       unmapped_address + 3);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS onto the page from its start", edge, 0x30,
+		       unmapped_address);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS across the edge to its last lane", edge,
+		       0x8f, unmapped_address + 15);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS with a lane over the edge", unmapped - 2,
+		       0x01, unmapped_address + 1);
+	ok &= expect_lanes("byte of a store that faulted", unmapped - 8, 0, 2);
 	set_mask_state(edge, 0x1f);
 	ok &= delivers("VPMASKMOVD from an unmapped page", mask_load,
 		       address_of(probe_mask_load_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+		       {sigsegv, segv_maperr, unmapped_address,
 			address_of(probe_mask_load_insn), 14, true, 4});
-	/* MASKMOVDQU and MASKMOVQ check every page their operand touches,
-	 * whatever the mask selects. (The Xeon reports the operand's address
-	 * plus 8 for one wholly on an unmapped page, which these avoid.) */
-	ok &= delivers("MASKMOVDQU with a zero mask onto an unmapped page",
-		       maskmovdqu_zero, address_of(probe_maskmovdqu_zero_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_maskmovdqu_zero_insn), 14, true, 6});
-	ok &= delivers("MASKMOVQ with a zero mask onto an unmapped page",
-		       maskmovq_zero, address_of(probe_maskmovq_zero_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_maskmovq_zero_insn), 14, true, 6});
+	set_mask_state(unmapped - 2, 0x01);
+	ok &= delivers("VPMASKMOVD with a lane over the edge", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, unmapped_address,
+			address_of(probe_mask_load_insn), 14, true, 4});
+	set_mask_state(unmapped + 8, 0x06);
+	ok &= delivers("VPMASKMOVD from inside the unmapped page", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, unmapped_address + 12,
+			address_of(probe_mask_load_insn), 14, true, 4});
+
+	/* With the lower page the one that misses, only a lane that starts on
+	 * it can fault. */
+	unsigned char *const lower = mask_pages;
+	unsigned char *const upper = mask_pages + page_bytes;
+	unsigned char *const seam = upper - 16;
+	if (raw_syscall(nr_mprotect_pages, reinterpret_cast<long>(lower),
+			page_bytes, 0) != 0) {
+		put("  mprotect failed\n");
+		return false;
+	}
+	set_mask_state(seam, 0x1e);
+	ok &= delivers("VMASKMOVPS into the page below", mask_store,
+		       address_of(probe_mask_store_end),
+		       {sigsegv, segv_accerr,
+			reinterpret_cast<word>(seam) + 4,
+			address_of(probe_mask_store_insn), 14, true, 6});
+	set_mask_state(seam, 0x1e);
+	ok &= delivers("VPMASKMOVD from the page below", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_accerr,
+			reinterpret_cast<word>(seam) + 4,
+			address_of(probe_mask_load_insn), 14, true, 4});
+	set_mask_state(seam, 0x30);
+	ok &= delivers_nothing("VMASKMOVPS wholly above the page below",
+			       mask_store, address_of(probe_mask_store_end));
+	const auto *above = reinterpret_cast<const volatile u32 *>(upper);
+	ok &= expect("lane above", above[0], 0x55555555U);
+	ok &= expect("lane above", above[1], 0x66666666U);
+
+	/* MASKMOVDQU and MASKMOVQ, unlike them, fault on any page their operand
+	 * touches, whatever the mask selects, and a zero mask does too.
+	 * MASKMOVDQU checks its high quadword first, then the low one, and a
+	 * quadword's first byte before its last. */
+	const auto maskmovdqu_at = [&](const char *what, unsigned char *address,
+				       word fault) {
+		maskmov_target = address;
+		return delivers(what, maskmovdqu_zero,
+				address_of(probe_maskmovdqu_zero_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_maskmovdqu_zero_insn), 14,
+				 true, 6});
+	};
+	const auto maskmovq_at = [&](const char *what, unsigned char *address,
+				     word fault) {
+		maskmov_target = address;
+		return delivers(what, maskmovq_zero,
+				address_of(probe_maskmovq_zero_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_maskmovq_zero_insn), 14, true,
+				 6});
+	};
+	ok &= maskmovdqu_at("MASKMOVDQU with a zero mask onto an unmapped page",
+			    unmapped - 8, unmapped_address);
+	ok &= maskmovdqu_at("MASKMOVDQU with its high quadword over the edge",
+			    unmapped - 12, unmapped_address);
+	ok &= maskmovdqu_at("MASKMOVDQU with its low quadword over the edge",
+			    unmapped - 4, unmapped_address + 4);
+	ok &= maskmovdqu_at("MASKMOVDQU inside an unmapped page", unmapped + 4,
+			    unmapped_address + 12);
+	maskmov_target = unmapped - 16;
+	ok &= delivers_nothing("MASKMOVDQU up to the unmapped page",
+			       maskmovdqu_zero,
+			       address_of(probe_maskmovdqu_zero_end));
+	ok &= maskmovq_at("MASKMOVQ with a zero mask onto an unmapped page",
+			  unmapped - 4, unmapped_address);
+	ok &= maskmovq_at("MASKMOVQ inside an unmapped page", unmapped + 3,
+			  unmapped_address + 3);
 	return ok;
 }
 

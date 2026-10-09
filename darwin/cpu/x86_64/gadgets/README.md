@@ -562,6 +562,14 @@ CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
 address when its page is unmapped or unreadable. CLDEMOTE and the prefetches
 are hints and never fault.
 
+A masked store writes nothing when it faults. VMASKMOV and VPMASKMOV probe
+the first byte of the lowest enabled lane and then the last byte of the
+highest before they write, and report the first to miss, as an Intel core
+does; a mask with no enabled lane accesses nothing. MASKMOVDQU and MASKMOVQ
+fault on any page their operand touches, whatever the mask selects, and
+MASKMOVDQU checks its high quadword before its low one, each quadword's first
+byte before its last.
+
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower
