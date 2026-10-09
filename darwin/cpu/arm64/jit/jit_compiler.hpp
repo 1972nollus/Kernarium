@@ -317,6 +317,8 @@ private:
                                       std::uint64_t pc);
   [[nodiscard]] bool emit_sve_index(std::uint16_t form,
                                     std::uint32_t instruction);
+  [[nodiscard]] bool emit_sve_compare(std::uint16_t form,
+                                      std::uint32_t instruction);
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);

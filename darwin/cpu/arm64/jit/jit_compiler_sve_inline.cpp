@@ -165,6 +165,8 @@ bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
     return false;
   if (row.memory != 0U)
     return emit_sve_memory(row, instruction, pc);
+  if (row.form == inl::cmp_vector || row.form == inl::cmp_immediate)
+    return emit_sve_compare(row.form, instruction);
   return emit_sve_floating(row.form, instruction, pc) ||
          emit_sve_integer(row.form, instruction, pc) ||
          emit_sve_permute(row.form, instruction, pc);
@@ -286,6 +288,49 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
         false);
     return true;
   }
+  if (form == inl::fadda_p || form == inl::faddv_p) {
+    if (!supported)
+      return false;
+    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
+    begin_sve_word();
+    emit_sve_full_guard(g, 1U << size, slow);
+    const auto vector = read_native_vector(n, 0U);
+    if (form == inl::fadda_p) {
+      /* Vdn = Vdn + each element of Zm in turn, the scalar adds the
+       * architecture orders. */
+      const auto accumulator = read_native_vector(d, 1U);
+      const std::uint32_t add = size == 1U   ? 0x1ee0'2800U
+                                : size == 2U ? 0x1e20'2800U
+                                             : 0x1e60'2800U;
+      emitter_.emit(add | (vector.host << 16) | (accumulator.host << 5) |
+                    scratch_a);
+      for (unsigned element = 1; element < sve_vector_length >> size;
+           ++element) {
+        emitter_.emit(0x5e00'0400U |
+                      (((element << (size + 1U)) | (1U << size)) << 16) |
+                      (vector.host << 5) | scratch_b);
+        emitter_.emit(add | (scratch_b << 16) | (scratch_a << 5) | scratch_a);
+      }
+    } else if (size == 3U) {
+      emitter_.emit(0x7e70'd800U | (vector.host << 5) | scratch_a);
+    } else {
+      /* The halving tree of FADDV: pairs of neighbours, then pairs of
+       * those, as FADDP. */
+      const std::uint32_t pairs = size == 2U ? 0x6e20'd400U : 0x6e40'1400U;
+      emitter_.emit(pairs | (vector.host << 16) | (vector.host << 5) |
+                    scratch_a);
+      if (size == 1U)
+        emitter_.emit(pairs | (scratch_a << 16) | (scratch_a << 5) |
+                      scratch_a);
+      emitter_.emit((size == 2U ? 0x7e30'd800U : 0x5e30'd800U) |
+                    (scratch_a << 5) | scratch_a);
+    }
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
   if (form == inl::scvtf_p || form == inl::ucvtf_p || form == inl::fcvtzs_p ||
       form == inl::fcvtzu_p) {
     /* Only the conversions that keep the element size (bits 17-18 name the
@@ -332,6 +377,26 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
   }
 
   switch (form) {
+  case jit::sve_forms::orr_immediate:
+  case jit::sve_forms::eor_immediate:
+  case jit::sve_forms::and_immediate: {
+    /* Zdn = Zdn op #bitmask: the 64-bit pattern, whatever the element. */
+    const auto value = detail::decode_logical_immediate(
+        true, field(instruction, 17, 1), field(instruction, 11, 6),
+        field(instruction, 5, 6));
+    if (!value)
+      return false;
+    begin_sve_word();
+    emit_sve_vector_constant(scratch_b, *value, *value);
+    const auto first = read_native_vector(d, 0U);
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(three(form == jit::sve_forms::orr_immediate   ? vector_orr
+                        : form == jit::sve_forms::eor_immediate ? vector_eor
+                                                                : vector_and,
+                        out.host, first.host, scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
   case inl::add_u:
   case inl::sub_u: {
     begin_sve_word();
@@ -856,6 +921,109 @@ bool JitCompiler::emit_sve_index(std::uint16_t form,
   const auto out = write_native_vector(d, false, 0U);
   emitter_.emit(vector_move(out.host, scratch_a));
   commit_native_vector(out, d);
+  return true;
+}
+
+bool JitCompiler::emit_sve_compare(std::uint16_t form,
+                                   std::uint32_t instruction) {
+  /*
+   * CMP<cc> Pd.T, Pg/Z, Zn.T, <Zm.T | #imm>, flags from PredTest(Pg, Pd).
+   * The NEON compare gives all-ones lanes; the predicate keeps only each
+   * element's lowest byte (the significant one), under Pg, and the flags
+   * are those of the same two canonical images. No lane is read that the
+   * result depends on beyond Pg's, and an integer compare raises nothing,
+   * so no governing-predicate check is needed.
+   */
+  enum class Condition { eq, ne, ge, gt, hs, hi, lt, le, lo, ls };
+  const unsigned size = field(instruction, 22, 2);
+  const unsigned esize = 1U << size;
+  const unsigned d = field(instruction, 0, 4);
+  const unsigned g = field(instruction, 10, 3);
+  const unsigned n = field(instruction, 5, 5);
+  const bool immediate = form == inl::cmp_immediate;
+  Condition condition;
+  std::uint64_t value = 0;
+  const unsigned operation =
+      (field(instruction, 13, 3) << 1) | field(instruction, 4, 1);
+  if (!immediate) {
+    switch (operation) {
+    case 0: condition = Condition::hs; break;
+    case 1: condition = Condition::hi; break;
+    case 8: condition = Condition::ge; break;
+    case 9: condition = Condition::gt; break;
+    case 10: condition = Condition::eq; break;
+    case 11: condition = Condition::ne; break;
+    default: return false;
+    }
+  } else if (field(instruction, 24, 1) != 0U) {
+    /* A signed 5-bit immediate. */
+    switch (operation) {
+    case 0: condition = Condition::ge; break;
+    case 1: condition = Condition::gt; break;
+    case 2: condition = Condition::lt; break;
+    case 3: condition = Condition::le; break;
+    case 8: condition = Condition::eq; break;
+    case 9: condition = Condition::ne; break;
+    default: return false;
+    }
+    value = static_cast<std::uint64_t>(sign_extend(field(instruction, 16, 5), 5));
+  } else {
+    /* An unsigned 7-bit immediate: bit 13 and bit 4 select the condition. */
+    switch (field(instruction, 13, 1) * 2U + field(instruction, 4, 1)) {
+    case 0: condition = Condition::hs; break;
+    case 1: condition = Condition::hi; break;
+    case 2: condition = Condition::lo; break;
+    default: condition = Condition::ls; break;
+    }
+    value = field(instruction, 14, 7);
+  }
+  begin_sve_word();
+  const auto element_mask = esize == 8U
+                                ? ~std::uint64_t{0}
+                                : (std::uint64_t{1} << (esize * 8U)) - 1U;
+  const auto first = read_native_vector(n, 0U);
+  unsigned second;
+  if (immediate) {
+    emit_sve_element_constant(scratch_b, value & element_mask, esize);
+    second = scratch_b;
+  } else {
+    second = field(instruction, 16, 5) == n
+                 ? first.host
+                 : read_native_vector(field(instruction, 16, 5), 1U).host;
+  }
+  const bool swapped = condition == Condition::lt ||
+                       condition == Condition::le ||
+                       condition == Condition::lo || condition == Condition::ls;
+  std::uint32_t opcode;
+  switch (condition) {
+  case Condition::eq:
+  case Condition::ne: opcode = 0x6e20'8c00U; break;
+  case Condition::ge:
+  case Condition::le: opcode = 0x4e20'3c00U; break;
+  case Condition::gt:
+  case Condition::lt: opcode = 0x4e20'3400U; break;
+  case Condition::hs:
+  case Condition::ls: opcode = 0x6e20'3c00U; break;
+  default: opcode = 0x6e20'3400U; break;
+  }
+  emitter_.emit(three(sized(opcode, size), scratch_a,
+                      swapped ? second : first.host,
+                      swapped ? first.host : second));
+  if (condition == Condition::ne)
+    emitter_.emit(0x6e20'5800U | (scratch_a << 5) | scratch_a); // not
+  const auto governing = read_native_predicate(g, 2U);
+  emitter_.emit(three(vector_and, scratch_a, scratch_a, governing.host));
+  const auto out = write_native_predicate(d, false, 3U);
+  unsigned mask = governing.host;
+  if (esize != 1U) {
+    emit_sve_element_constant(scratch_b, 0xffU, esize);
+    emitter_.emit(three(vector_and, scratch_a, scratch_a, scratch_b));
+    emitter_.emit(three(vector_and, out.host, governing.host, scratch_b));
+    mask = out.host;
+  }
+  emit_sve_predicate_test(mask, scratch_a);
+  emitter_.emit(vector_move(out.host, scratch_a));
+  commit_native_predicate(out, d);
   return true;
 }
 

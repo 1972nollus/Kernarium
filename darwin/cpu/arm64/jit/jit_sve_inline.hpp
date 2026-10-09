@@ -42,6 +42,8 @@ inline constexpr std::uint16_t fmaxnm_p = form_of(0x6584'8020U);
 inline constexpr std::uint16_t fminnm_p = form_of(0x6585'8020U);
 inline constexpr std::uint16_t fmax_p = form_of(0x6586'8020U);
 inline constexpr std::uint16_t fmin_p = form_of(0x6587'8020U);
+inline constexpr std::uint16_t fadda_p = form_of(0x6598'2020U);
+inline constexpr std::uint16_t faddv_p = form_of(0x6580'2020U);
 inline constexpr std::uint16_t fabs_p = form_of(0x049c'a020U);
 inline constexpr std::uint16_t fneg_p = form_of(0x049d'a020U);
 inline constexpr std::uint16_t scvtf_p = form_of(0x6552'a020U);
@@ -102,6 +104,11 @@ inline constexpr std::uint16_t uqshrnb = form_of(0x452f'3020U);
 inline constexpr std::uint16_t uqshrnt = form_of(0x452f'3420U);
 inline constexpr std::uint16_t sdot = form_of(0x4482'0020U);
 inline constexpr std::uint16_t udot = form_of(0x4482'0420U);
+
+/* Integer compares into a predicate: two vectors, or a vector and an
+ * immediate. */
+inline constexpr std::uint16_t cmp_vector = form_of(0x2483'a440U);
+inline constexpr std::uint16_t cmp_immediate = form_of(0x2583'8440U);
 
 /* Permutes and index. */
 inline constexpr std::uint16_t zip = form_of(0x0522'6020U);
