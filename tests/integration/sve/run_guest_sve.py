@@ -2,15 +2,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Run the guest SVE tests on one execution engine.
 
-An engine presents SVE to its guest only at SveSupport complete, and the
-guest kernel keeps SVE task state only from the bridge ABI that puts the SVE
-registers in the arm64 task tail. Unless both hold, the runner names the
-test, says why it is skipped and exits with CTest's skip status. Otherwise
-it sets DARWIN_UML_GUEST_SVE=1 and boots sve_probe.cpp as the guest's /init
-in "kernel" mode: the guest kernel's non-streaming SVE task state through
-signal frames, sigreturn and ptrace (sve_probe.cpp). On a host with SME it
-boots the probe once more with DARWIN_UML_GUEST_SME=1 too, where the probe
-adds its streaming-mode checks.
+An engine presents SVE to its guest only at SveSupport complete, so below it
+the runner names the test, says why it is skipped and exits with CTest's
+skip status. Otherwise it sets DARWIN_UML_GUEST_SVE=1 and boots
+sve_probe.cpp as the guest's /init in "kernel" mode: the guest kernel's
+non-streaming SVE task state through signal frames, sigreturn and ptrace
+(sve_probe.cpp). On a host with SME it boots the probe once more with
+DARWIN_UML_GUEST_SME=1 too, where the probe adds its streaming-mode checks.
 
 "--modes off" instead boots the probe with both policies off, on any host
 and engine, and checks that the run shows no SVE at all.
@@ -52,13 +50,13 @@ def host_has_sme() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "1"
 
 
-def build_support(tool: pathlib.Path) -> dict[str, str]:
-    """Each engine's SVE support level, and "kernel": "yes" or "no"."""
+def engine_support(tool: pathlib.Path, engine: str) -> str:
     output = subprocess.run(
         [str(tool)], capture_output=True, text=True, check=True,
         stdin=subprocess.DEVNULL, timeout=30,
     ).stdout
-    return dict(field.split("=", 1) for field in output.split())
+    levels = dict(field.split("=", 1) for field in output.split())
+    return levels[engine]
 
 
 def run_probe_boot(arguments: argparse.Namespace, mode: str) -> int:
@@ -112,12 +110,7 @@ def main() -> int:
     if modes != ["off"]:
         if arguments.engine_support_tool is None:
             parser.error("--engine-support-tool is required unless --modes off")
-        support = build_support(arguments.engine_support_tool)
-        if support["kernel"] != "yes":
-            print(f"{arguments.name}: SKIP: the kernel's bridge ABI has no SVE "
-                  "task state")
-            return SKIP
-        level = support[arguments.engine]
+        level = engine_support(arguments.engine_support_tool, arguments.engine)
         if level != "complete":
             print(f"{arguments.name}: SKIP: the {arguments.engine} engine's SVE "
                   f"support is {level}; it presents SVE only at complete")

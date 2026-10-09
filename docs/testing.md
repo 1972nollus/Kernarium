@@ -655,14 +655,12 @@ under either policy.
 
 `guest-sve-gadgets` and `guest-sve-jit` check the guest kernel's SVE contract
 under the policy on. Each skips, naming its reason, unless its engine's SVE
-support is `complete` and the build's bridge ABI, which its accepted kernel
-must match, carries the SVE registers in the arm64 task tail. The
-freestanding `sve_probe.cpp` boots as `/init` and checks signal frames,
-sigreturn and its invalid frames, the live state across system calls,
-preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at signal and
-syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`, prctl and the
-sysctl; on an SME host a second boot adds the SME policy and the
-streaming-mode checks. The same binary runs as an ordinary program on
+support is `complete`. The freestanding `sve_probe.cpp` boots as `/init` and
+checks signal frames, sigreturn and its invalid frames, the live state across
+system calls, preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at
+signal and syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`,
+prctl and the sysctl; on an SME host a second boot adds the SME policy and
+the streaming-mode checks. The same binary runs as an ordinary program on
 arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
 every check must pass there too; its expected values came from such a run on
 Linux 6.12, and checks where native Linux may keep a discarded state live

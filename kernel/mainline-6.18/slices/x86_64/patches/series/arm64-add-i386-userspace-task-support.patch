@@ -73,7 +73,7 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 03f5938d4e5ac3de2819283b7e2282c1c8c2bf71..5d67e4de8eb5a836cf81c03f8d047fe144e8f142 100644
+index 2295cd7fc89ddae90c5e1efe28702ac605a1facb..78c1c5d0c0a400a752f1ca2201270d446038c904 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -31,12 +31,23 @@ config UML_ARM64_SME
@@ -104,13 +104,13 @@ index 03f5938d4e5ac3de2819283b7e2282c1c8c2bf71..5d67e4de8eb5a836cf81c03f8d047fe1
  config ARCH_MMAP_RND_BITS_MIN
  	int
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 2c4bfc313ba3ac50461ad94bd72d2044148ba6b0..f77144580797b906037c665199e4550c78898e96 100644
+index 3bd3cb1086c79190ea0fc41293255a3b019c0be3..c9851f6e70ed197395c0a990198778befc4220b6 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -4,22 +4,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
  	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
  	x86_64_syscalls.o
- obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
 +obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
  obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
  
@@ -2702,10 +2702,10 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 641b75cf446198453998a4032d7137ed65a5c46e..6e8aa5909ddea7fa373f564faa6c347e7bc11f15 100644
+index 7c3e69d64e95667d076ccef8e843cac3ea07be1e..fc8b4348cb0576c3cbec1f021044c243a28676f8 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -436,6 +436,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -450,6 +450,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;
