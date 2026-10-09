@@ -339,6 +339,14 @@ private:
    * halves go to the even or odd elements of the destination. */
   [[nodiscard]] bool emit_sve_narrow(std::uint16_t form,
                                      std::uint32_t instruction);
+  /* BRKA, BRKAS, BRKB and BRKBS, by a prefix OR of the mask form. */
+  [[nodiscard]] bool emit_sve_break(std::uint16_t form,
+                                    std::uint32_t instruction);
+  /* COMPACT by a TBL through a table of the active-element masks, and
+   * SPLICE by a TBL of the two sources with indices from the first and
+   * last active byte. */
+  [[nodiscard]] bool emit_sve_compact(std::uint32_t instruction);
+  [[nodiscard]] bool emit_sve_splice(std::uint32_t instruction);
   /* SQINC, SQDEC, UQINC and UQDEC of a general register by an element
    * count. */
   [[nodiscard]] bool emit_sve_saturating_count(std::uint32_t instruction);

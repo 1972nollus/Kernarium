@@ -639,7 +639,8 @@ and same-size conversion forms, the integer arithmetic, unary (negate, count,
 extend), logical, shift (by a vector, by an immediate and merging), halving,
 difference, widening, narrowing, high-half, dot-product and UADDV forms, ZIP,
 UZP and TRN (also of predicates), TBL of any element size (one or two
-tables), unpacks, EXT, REV and INDEX, SQINC, SQDEC, UQINC and UQDEC of a
+tables), unpacks, EXT, REV and INDEX, BRKA and BRKB (flag-setting forms
+included), COMPACT, SPLICE, EORBT and EORTB, SQINC, SQDEC, UQINC and UQDEC of a
 general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
 LDR and STR of a Z or P register whose footprint lies in one guest page the TLB
 holds, and the gathers and scatters (LD1*, LDNT1*, ST1* and STNT1* with an
@@ -653,7 +654,10 @@ since it records one store range per instruction. LDFF1 and LDNF1 stay in the
 library. A predicated form checks its governing predicate once per block and
 element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
-not do, when the predicate is partial.
+not do, when the predicate is partial. The breaks, COMPACT and SPLICE, which
+raise nothing, take any governing predicate: a prefix OR of the mask form, a
+table of the active-element masks (COMPACT) and a TBL index built from the first
+and last active byte (SPLICE).
 The saturating forms saturate by compare and select, since AdvSIMD's set
 FPSR.QC and SVE's never do. A 64-bit multiply, minimum or maximum, which
 AdvSIMD lacks, is built from 32-bit multiplies or a compare and select, and

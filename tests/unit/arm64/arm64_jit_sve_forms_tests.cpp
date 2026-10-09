@@ -46,6 +46,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -1092,6 +1093,86 @@ void writers_forget_fullness(const HostCapabilities &host) {
 
 } // namespace
 
+/* The breaks, COMPACT and SPLICE read the whole shape of a governing
+ * predicate, its first and last active elements and the gaps between: none,
+ * one, all but one, runs from either end, and for the narrow sizes every
+ * subset, each at the element sizes the form has. The bytes of an element
+ * past its first are not part of its predicate, and are set at random. */
+void predicate_shapes_for_breaks_and_compaction(const HostCapabilities &host,
+                                                Tally &tally) {
+  using arm64::jit::sve_forms::form_of;
+  const std::array wanted{form_of(0x2510'4000U), form_of(0x2550'4000U),
+                          form_of(0x2590'4000U), form_of(0x25d0'4000U),
+                          form_of(0x05a1'8000U), form_of(0x052c'8000U)};
+  Random random{0x6a17'5e0dU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if (std::find(wanted.begin(), wanted.end(), row.form) == wanted.end() ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    const bool breaks = row.value >> 24 == 0x25U;
+    for (std::size_t sample = 0; sample < 8U; ++sample) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          arm64::jit::sve_word_reserved(row, word))
+        continue;
+      const unsigned size = breaks ? 0U : (word >> 22) & 3U;
+      const unsigned element = 1U << size;
+      const unsigned elements = 16U / element;
+      const unsigned governing = breaks ? (word >> 10) & 15U : (word >> 10) & 7U;
+      std::vector<std::uint32_t> shapes;
+      if (elements <= 8U) {
+        for (std::uint32_t subset = 0; subset < (1U << elements); ++subset)
+          shapes.push_back(subset);
+      } else {
+        const std::uint32_t all = (1U << elements) - 1U;
+        shapes.push_back(0U);
+        shapes.push_back(all);
+        for (unsigned at = 0; at < elements; ++at) {
+          shapes.push_back(1U << at);
+          shapes.push_back(all ^ (1U << at));
+          shapes.push_back((1U << (at + 1U)) - 1U);
+          shapes.push_back(all & ~((1U << at) - 1U));
+          shapes.push_back((1U << at) | 1U);
+          shapes.push_back((1U << at) | (1U << (elements - 1U)));
+        }
+        for (unsigned more = 0; more < 24U; ++more)
+          shapes.push_back(static_cast<std::uint32_t>(random.next()) & all);
+      }
+      std::optional<Machine> machine;
+      std::size_t slot = slots;
+      for (const auto shape : shapes) {
+        if (slot == slots) {
+          machine.emplace(host);
+          slot = 0;
+        }
+        std::vector<std::byte> data(mapped);
+        auto initial = random_state(random, false);
+        Bytes image{};
+        for (unsigned at = 0; at < elements; ++at) {
+          const bool active = ((shape >> at) & 1U) != 0U;
+          for (unsigned byte = 0; byte < element; ++byte)
+            image[at * element + byte] =
+                byte == 0U ? (active ? 0xffU : 0U)
+                           : ((random.next() & 1U) != 0U ? 0xffU : 0U);
+        }
+        std::memcpy(initial.sve_p[governing].data(), image.data(), 16);
+        compare(*machine, slot++, word, index, Variant::alone, initial, data,
+                false, tally);
+        ++checked;
+      }
+    }
+  }
+  std::printf("%zu governing predicate shapes of breaks, COMPACT and SPLICE "
+              "match the library\n",
+              checked);
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   if (!jit_available()) {
@@ -1107,6 +1188,7 @@ int main() {
   scatters_with_tracked_stores(sve_host(), tally);
   saturating_counts_at_their_limits(sve_host(), tally);
   table_lookups_with_small_indices(sve_host(), tally);
+  predicate_shapes_for_breaks_and_compaction(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);
   std::printf("%zu runs over %zu rows (%zu inline) match the library, %zu of "

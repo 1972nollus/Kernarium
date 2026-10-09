@@ -656,8 +656,9 @@ pseudocode on injected SVE hosts under either policy, and
 against the semantic library on random states, requires a lowered word to stay
 out of the library from a clean state, and runs gathers and scatters with a
 lane out of reach, scatters while another vCPU's reservation tracks stores,
-the saturating counts at their limits and table lookups with indices that land
-in the tables.
+the saturating counts at their limits, table lookups with indices that land
+in the tables, and the governing-predicate shapes (none, one, all but one, runs,
+every subset of the narrow sizes) of the breaks, COMPACT and SPLICE.
 
 `DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
 words that leave translated code for the semantic library, and appends to the

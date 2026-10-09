@@ -196,6 +196,17 @@ inline constexpr std::uint16_t trn_p = form_of(0x0522'5020U);
 inline constexpr std::uint16_t cmp_vector = form_of(0x2483'a440U);
 inline constexpr std::uint16_t cmp_immediate = form_of(0x2583'8440U);
 
+/* Predicate breaks (BRKA, BRKAS, BRKB, BRKBS), COMPACT, SPLICE (both
+ * encodings share the form) and the interleaving exclusive ORs. */
+inline constexpr std::uint16_t brka = form_of(0x2510'4000U);
+inline constexpr std::uint16_t brkas = form_of(0x2550'4000U);
+inline constexpr std::uint16_t brkb = form_of(0x2590'4000U);
+inline constexpr std::uint16_t brkbs = form_of(0x25d0'4000U);
+inline constexpr std::uint16_t compact = form_of(0x05a1'8000U);
+inline constexpr std::uint16_t splice = form_of(0x052c'8000U);
+inline constexpr std::uint16_t eorbt = form_of(0x4500'9000U);
+inline constexpr std::uint16_t eortb = form_of(0x4500'9400U);
+
 /* Permutes and index. */
 inline constexpr std::uint16_t zip = form_of(0x0522'6020U);
 inline constexpr std::uint16_t uzp = form_of(0x0522'6820U);

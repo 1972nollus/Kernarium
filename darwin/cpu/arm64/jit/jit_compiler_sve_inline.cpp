@@ -153,6 +153,56 @@ constexpr std::array destructive_ops{
   return tsz == 0U ? 4U : static_cast<unsigned>(std::bit_width(tsz)) - 1U;
 }
 
+/* EXT Vd.16B, Vn.16B, Vm.16B, #position. */
+[[nodiscard]] constexpr std::uint32_t ext_bytes(unsigned d, unsigned n,
+                                                unsigned m,
+                                                unsigned position) noexcept {
+  return 0x6e00'0000U | (m << 16) | (position << 11) | (n << 5) | d;
+}
+
+/*
+ * What COMPACT reads from memory: 16 bytes that give the first byte of each
+ * element the weight 1 << element (so ADDV of the mask form under them is
+ * the mask of the active elements), then for every such mask the TBL index
+ * that brings the active elements to the bottom. The other bytes index
+ * past the vector, which TBL reads as zero.
+ */
+template <unsigned Esize> struct CompactTable final {
+  std::array<std::uint8_t, 16> weights{};
+  std::array<std::array<std::uint8_t, 16>, 1U << (16U / Esize)> rows{};
+};
+
+template <unsigned Esize>
+[[nodiscard]] constexpr CompactTable<Esize> make_compact_table() noexcept {
+  constexpr unsigned elements = 16U / Esize;
+  CompactTable<Esize> table{};
+  for (unsigned element = 0; element < elements; ++element)
+    table.weights[element * Esize] = static_cast<std::uint8_t>(1U << element);
+  for (unsigned mask = 0; mask < (1U << elements); ++mask) {
+    auto &row = table.rows[mask];
+    for (auto &index : row)
+      index = 0xffU;
+    unsigned out = 0;
+    for (unsigned element = 0; element < elements; ++element)
+      if (((mask >> element) & 1U) != 0U) {
+        for (unsigned byte = 0; byte < Esize; ++byte)
+          row[out * Esize + byte] =
+              static_cast<std::uint8_t>(element * Esize + byte);
+        ++out;
+      }
+  }
+  return table;
+}
+
+constexpr auto compact_words = make_compact_table<4>();
+constexpr auto compact_doublewords = make_compact_table<8>();
+static_assert(offsetof(CompactTable<4>, rows) == 16 &&
+              compact_words.rows[0b1010][0] == 4 &&
+              compact_words.rows[0b1010][4] == 12 &&
+              compact_words.rows[0b1010][8] == 0xff &&
+              compact_doublewords.rows[0b10][0] == 8 &&
+              compact_doublewords.rows[0b10][8] == 0xff);
+
 } // namespace
 
 void JitCompiler::begin_sve_word() {
@@ -209,6 +259,7 @@ bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
   return emit_sve_floating(row.form, instruction, pc) ||
          emit_sve_integer(row.form, instruction, pc) ||
          emit_sve_narrow(row.form, instruction) ||
+         emit_sve_break(row.form, instruction) ||
          emit_sve_permute(row.form, instruction, pc);
 }
 
@@ -1402,9 +1453,178 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
   case inl::index_ri:
   case inl::index_rr:
     return emit_sve_index(form, instruction);
+  case inl::compact:
+    return emit_sve_compact(instruction);
+  case inl::splice:
+    return emit_sve_splice(instruction);
+  case inl::eorbt:
+  case inl::eortb: {
+    /*
+     * EORBT and EORTB Zd.T, Zn.T, Zm.T: the even (EORBT) or odd elements
+     * of Zd become Zn's element there XOR Zm's neighbour, the others stay.
+     * TRN2 (EORBT) or TRN1 of Zm repeats the odd or even neighbour over its
+     * pair; Zn XOR that has the result in the right lane, and a TRN of it
+     * with Zd's own pairs puts the kept elements in the other.
+     */
+    const bool top = form == inl::eortb;
+    begin_sve_word();
+    const auto first = read_native_vector(n, 0U);
+    const auto second = m == n ? first : read_native_vector(m, 1U);
+    const auto old = d == n   ? first
+                     : d == m ? second
+                              : read_native_vector(d, 2U);
+    const std::uint32_t trn1 = sized(0x4e00'2800U, size);
+    const std::uint32_t trn2 = sized(0x4e00'6800U, size);
+    emitter_.emit(three(top ? trn1 : trn2, scratch_a, second.host,
+                        second.host));
+    emitter_.emit(three(vector_eor, scratch_a, scratch_a, first.host));
+    emitter_.emit(three(top ? trn1 : trn2, scratch_b, old.host, old.host));
+    const auto out = write_native_vector(d, false, 3U);
+    emitter_.emit(top ? three(trn2, out.host, scratch_b, scratch_a)
+                      : three(trn1, out.host, scratch_a, scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
   default:
     return false;
   }
+}
+
+bool JitCompiler::emit_sve_break(std::uint16_t form,
+                                 std::uint32_t instruction) {
+  const bool before = form == inl::brkb || form == inl::brkbs;
+  const bool sets_flags = form == inl::brkas || form == inl::brkbs;
+  if (!before && !sets_flags && form != inl::brka)
+    return false;
+  /*
+   * BRKA and BRKB Pd.B, Pg/<Z|M>, Pn.B, and BRKAS and BRKBS (zeroing, the
+   * flags of PredTest(Pg, Pd)). An active element is true while no active
+   * element before it (BRKA) or at or before it (BRKB) is true in Pn. On
+   * the mask form that is Pg and not the prefix OR of Pg and Pn, taken in
+   * four shifts of the whole register by one, two, four and eight bytes
+   * (EXT against zero); BRKA shifts the prefix by one more. The inactive
+   * elements are zero, or Pd's own when merging.
+   */
+  const bool merging = !sets_flags && field(instruction, 4, 1) != 0U;
+  const unsigned d = field(instruction, 0, 4);
+  const unsigned n = field(instruction, 5, 4);
+  const unsigned g = field(instruction, 10, 4);
+  begin_sve_word();
+  const auto governing = read_native_predicate(g, 0U);
+  const auto source = n == g ? governing : read_native_predicate(n, 1U);
+  NativeVector old;
+  if (merging)
+    old = d == g   ? governing
+          : d == n ? source
+                   : read_native_predicate(d, 2U);
+  constexpr unsigned shifted = 3U;
+  emitter_.emit(three(vector_and, scratch_a, governing.host, source.host));
+  emitter_.emit(movi_bytes(true, scratch_b, 0U));
+  for (const unsigned bytes : {1U, 2U, 4U, 8U}) {
+    emitter_.emit(ext_bytes(shifted, scratch_b, scratch_a, 16U - bytes));
+    emitter_.emit(three(vector_orr, scratch_a, scratch_a, shifted));
+  }
+  if (!before) {
+    emitter_.emit(ext_bytes(shifted, scratch_b, scratch_a, 15U));
+    emitter_.emit(three(vector_bic, scratch_a, governing.host, shifted));
+  } else {
+    emitter_.emit(three(vector_bic, scratch_a, governing.host, scratch_a));
+  }
+  if (merging) {
+    emitter_.emit(three(vector_bic, shifted, old.host, governing.host));
+    emitter_.emit(three(vector_orr, scratch_a, scratch_a, shifted));
+  }
+  if (sets_flags)
+    emit_sve_predicate_test(governing.host, scratch_a);
+  const auto out = write_native_predicate(d, false, 3U);
+  emitter_.emit(vector_move(out.host, scratch_a));
+  commit_native_predicate(out, d);
+  return true;
+}
+
+bool JitCompiler::emit_sve_compact(std::uint32_t instruction) {
+  /* COMPACT Zd.<S|D>, Pg, Zn.<S|D>: the active elements to the bottom, the
+   * rest zero. The elements active give a row of a table (weights, ADDV),
+   * and TBL applies it. */
+  const unsigned size = field(instruction, 22, 2);
+  if (size < 2U)
+    return false;
+  const unsigned d = field(instruction, 0, 5);
+  const unsigned n = field(instruction, 5, 5);
+  const unsigned g = field(instruction, 10, 3);
+  begin_sve_word();
+  const auto governing = read_native_predicate(g, 0U);
+  const auto source = read_native_vector(n, 1U);
+  const void *table = size == 2U ? static_cast<const void *>(&compact_words)
+                                 : static_cast<const void *>(&compact_doublewords);
+  emitter_.load_constant(16, reinterpret_cast<std::uint64_t>(table));
+  emitter_.emit(ldr_simd(4U, scratch_b, 16U));
+  emitter_.emit(three(vector_and, scratch_a, governing.host, scratch_b));
+  emitter_.emit(0x4e31'b800U | (scratch_a << 5) | scratch_a); // addv b
+  emitter_.emit(umov_b0(8U, scratch_a));
+  emitter_.emit(lsl_w(8U, 8U, 4U));
+  emitter_.emit(add_x(8U, 8U, 16U));
+  emitter_.emit(ldr_simd(4U, scratch_b, 8U) | (1U << 10)); // the row, at +16
+  const auto out = write_native_vector(d, false, 3U);
+  emitter_.emit(tbl_one(out.host, source.host, scratch_b));
+  commit_native_vector(out, d);
+  return true;
+}
+
+bool JitCompiler::emit_sve_splice(std::uint32_t instruction) {
+  /*
+   * SPLICE Zdn.T, Pv, Zdn.T, Zm.T and the SVE2 SPLICE Zd.T, Pv, {Zn.T,
+   * Zn+1.T}: the bytes of the first source from its first active element
+   * to its last, then the second source's lowest bytes. The mask of the
+   * active bytes is taken to four bits a byte (SHRN), the first active byte
+   * B and the end E of the last by RBIT, CLZ and CLZ, and the length
+   * L = E - B. Byte i of the result is byte B + i of the first source
+   * while i < L, else byte i - L of the second, which TBL reads as byte
+   * 16 + i - L of the pair. With no active element B is 16 and L is -16
+   * (the byte 240, past every i), so every byte is 16 + i: the second
+   * source.
+   */
+  const unsigned size = field(instruction, 22, 2);
+  const unsigned d = field(instruction, 0, 5);
+  const unsigned n = field(instruction, 5, 5);
+  const unsigned g = field(instruction, 10, 3);
+  const bool constructive = field(instruction, 16, 1) != 0U;
+  const unsigned first_register = constructive ? n : d;
+  const unsigned second_register = constructive ? (n + 1U) & 31U : n;
+  begin_sve_word();
+  const auto governing = read_native_predicate(g, 2U);
+  const auto first = read_native_vector(first_register, 0U);
+  const auto second = second_register == first_register
+                          ? first
+                          : read_native_vector(second_register, 1U);
+  const unsigned mask = emit_sve_lane_mask(governing.host, 1U << size,
+                                           scratch_b);
+  emitter_.emit(0x0f0c'8400U | (mask << 5) | scratch_a); // shrn #4
+  emitter_.emit(0x9e66'0000U | (scratch_a << 5) | 8U);   // fmov x8, d
+  emit_sve_vector_constant(3U, 0x0706'0504'0302'0100ULL,
+                           0x0f0e'0d0c'0b0a'0908ULL);    // the byte numbers
+  emitter_.emit(0xdac0'0000U | (8U << 5) | 9U);          // rbit x9, x8
+  emitter_.emit(0xdac0'1000U | (9U << 5) | 9U);          // clz x9, x9
+  emitter_.emit(lsr_x(9U, 9U, 2U));                      // B
+  emitter_.emit(0xdac0'1000U | (8U << 5) | 10U);         // clz x10, x8
+  emitter_.emit(lsr_x(10U, 10U, 2U));                    // 16 - E
+  emitter_.emit(add_x(11U, 10U, 9U));                    // 16 - L
+  emitter_.load_constant(10U, 16U);
+  emitter_.emit(sub_x(16U, 10U, 11U));                   // L
+  emitter_.emit(sub_x(11U, 10U, 16U));                   // 16 - L
+  emitter_.emit(dup_general(0U, scratch_b, 16U));
+  emitter_.emit(three(vector_cmhi, scratch_a, scratch_b, 3U)); // i < L
+  emitter_.emit(dup_general(0U, scratch_b, 11U));
+  emitter_.emit(vector_add(false, 0U, scratch_b, scratch_b, 3U));
+  emitter_.emit(dup_general(0U, 2U, 9U));
+  emitter_.emit(vector_add(false, 0U, 2U, 2U, 3U));
+  emitter_.emit(0x6e60'1c00U | (scratch_b << 16) | (2U << 5) | scratch_a); // bsl
+  emitter_.emit(vector_move(2U, first.host));
+  emitter_.emit(vector_move(3U, second.host));
+  const auto out = write_native_vector(d, false, 3U);
+  emitter_.emit(0x4e00'2000U | (scratch_a << 16) | (2U << 5) | out.host);
+  commit_native_vector(out, d);
+  return true;
 }
 
 bool JitCompiler::emit_sve_index(std::uint16_t form,
