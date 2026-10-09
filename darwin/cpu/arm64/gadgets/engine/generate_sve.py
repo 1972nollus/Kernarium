@@ -1389,7 +1389,9 @@ def reverse_elements(e: int) -> list:
 # the TLB holds runs on the host address, untagged first under TBI: a load
 # reads the whole footprint, which on a mapped page is harmless for
 # inactive elements, and zeroes those by the lane mask; a store runs only
-# when its predicate is all-true, as one store of the footprint. LDR and
+# when its predicate is all-true, as one store of the footprint. A
+# first-fault or non-fault load is such a load on a page the TLB holds: no
+# element faults, so FFR is left as it is. LDR and
 # STR of a predicate expand and compress its two bytes to and from the
 # mask form. Everything else, a crossing, a page the TLB cannot fill, a
 # fault, a partial store, goes to the semantic library through
@@ -1400,7 +1402,7 @@ def reverse_elements(e: int) -> list:
 # x19 (Zt) and x20 (Pg), which a TLB miss's helper call preserves.
 
 MEMORY_SHAPES = ("contiguous", "replicate", "replicate_quad", "structure",
-                 "fill_z", "fill_p")
+                 "fill_z", "fill_p", "first_fault", "non_fault")
 MEMORY_OFFSETS = ("immediate_footprint", "register_element",
                   "immediate_element", "immediate_16")
 LABELS = itertools.count()
