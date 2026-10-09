@@ -1471,10 +1471,11 @@ public:
 [[nodiscard]] arm64::CpuState library_after(arm64::CpuState cpu,
 	std::uint32_t word, arm64::detail::SveEvent expected =
 		arm64::detail::SveEvent::retired,
-	std::uint32_t *syndrome = nullptr)
+	std::uint32_t *syndrome = nullptr,
+	const HostCapabilities &host = sve_host())
 {
 	const auto *row = arm64::detail::decode_sve_non_streaming(word,
-		arm64::detail::implemented_sve_features(sve_host()));
+		arm64::detail::implemented_sve_features(host));
 	require(row != nullptr);
 	NoMemory memory;
 	const auto result = arm64::detail::execute_sve(cpu, word, *row, memory);
@@ -1730,9 +1731,9 @@ void fill_lanes(Random &random, Bytes &bytes)
  * ends in an SVC, from `initial`; reports `word` otherwise. */
 void require_library_state(std::span<const std::uint32_t> code,
 	const arm64::CpuState &initial, const arm64::CpuState &expected,
-	std::uint32_t word, std::size_t index, bool fp_active)
+	std::uint32_t word, std::size_t index, bool fp_active,
+	const HostCapabilities &host = sve_host())
 {
-	const auto host = sve_host();
 	const auto built = build(code, host);
 	arm64::CpuState cpu = initial;
 	cpu.pc = code_base;
@@ -1916,6 +1917,89 @@ void generated_forms_match_the_library()
 	require(stuck == 0U);
 	std::printf("%zu generated-form runs over %zu rows match the "
 		"library\n", runs, rows);
+}
+
+/* The SVE encodings that FEAT_SME or FEAT_SME2 admit at SM = 0 (SCLAMP,
+ * UCLAMP, PSEL, REVD, the predicate-pair WHILEs, FCLAMP, the BFMLSL and
+ * FDOT forms and the rest of that class) have no generated gadget; with
+ * the SVE profile and the SME profile they run through the library at
+ * SM = 0 and leave its state, behind an FP instruction too. Without SME
+ * none of them is a word of the virtual CPU, and without SME2 the SME2 ones
+ * are not either. */
+void sve_sme_forms_at_sm_0()
+{
+	Random random{0x5ec7'0004U};
+	const auto sme2_host = sve_sme_host();
+	auto sme_host = sme2_host;
+	clear(sme_host, {ArmFeature::sme2});
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	std::size_t rows = 0, sme2_rows = 0, runs = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		const auto requirement = row.non_streaming_requirement;
+		if ((requirement & arm64::detail::sme_feature_sve) == 0U ||
+		    (requirement & arm64::detail::sme_feature_sme) == 0U)
+			continue;
+		const bool sme2 =
+			(requirement & arm64::detail::sme_feature_sme2) != 0U;
+		++rows;
+		sme2_rows += sme2 ? 1U : 0U;
+		require(gadgets::sve::row_forms[index] == gadgets::sve::no_form);
+		std::size_t sampled = 0;
+		for (int sample = 0; sample < 48; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word,
+				sme2_host, 0);
+			if (decoded.row != &row ||
+			    decoded.kind != gadgets::SveWord::implemented)
+				continue;
+			++sampled;
+			require(gadgets::decode_sve_word(word, sve_host(), 0)
+					.kind != gadgets::SveWord::implemented);
+			require((gadgets::decode_sve_word(word, sme_host, 0)
+					.kind == gadgets::SveWord::implemented) !=
+				sme2);
+			if (sme2) {
+				const std::array code{movz(0, 1), word, svc};
+				arm64::CpuState cpu{};
+				std::size_t executed = 0;
+				require(run_illegal(code, sme_host, executed,
+						cpu) ==
+					EngineEvent::illegal_instruction);
+				require(cpu.pc == code_base + 4U);
+			}
+			auto initial = random_state(random);
+			const std::array alone{word, svc};
+			require_library_state(alone, initial,
+				library_after(initial, word,
+					arm64::detail::SveEvent::retired,
+					nullptr, sme2_host),
+				word, index, false, sme2_host);
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
+			auto activated = initial;
+			set_vec(activated, 31, two);
+			const std::array behind{activate, word, svc};
+			require_library_state(behind, initial,
+				library_after(activated, word,
+					arm64::detail::SveEvent::retired,
+					nullptr, sme2_host),
+				word, index, true, sme2_host);
+			runs += 2;
+		}
+		require(sampled > 0U);
+	}
+	require(rows == 33U && sme2_rows != 0U && sme2_rows < rows);
+	std::printf("%zu runs of the %zu SVE rows SME admits at SM = 0 "
+		"(%zu of them SME2) match the library\n", runs, rows,
+		sme2_rows);
 }
 
 /* Guest memory for a reference run of the library: the machine's mapped
@@ -2663,6 +2747,7 @@ int main()
 	live_marker_and_fp_access();
 	library_words();
 	library_exit_report();
+	sve_sme_forms_at_sm_0();
 	generated_forms_match_the_library();
 	memory_forms_match_the_library();
 	unimplemented_words();

@@ -118,6 +118,19 @@
             --assume-host-feature frintts --assume-host-feature fcma
             --assume-host-feature jscvt)
 
+    # The 29 SVE encodings that FEAT_SME or FEAT_SME2 admit outside streaming
+    # mode execute where the virtual CPU has the SVE profile and the SME
+    # profile, which only an SME host under the guest-SVE policy is. Their
+    # records hold no SVL, so the library lane runs them on any host with the
+    # SME profile assumed.
+    uml_add_unit_test(NAME arm64-instruction-corpus-sve-sme-profile
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${UML_ARM64_INSTRUCTION_CORPUS}
+            --record arm64-sve-sme
+            --assume-host-feature sme --assume-host-feature sme2
+            --assume-host-feature sme_f64f64
+            --assume-host-feature sme_i16i64 --assume-sme-svl 64)
+
     # Neither the gadget region nor a JIT translation of the corpus names
     # x18, which Darwin clears when it interrupts a thread. The scan
     # translates through the JIT's test API.
