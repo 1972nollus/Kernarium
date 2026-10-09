@@ -847,7 +847,7 @@ def fpsimd_drafts(table) -> list[Draft]:
         if row.stable_id in absent:
             continue
         word = row.witness
-        if word & 0x3C40_0000 == 0x2C40_0000 and \
+        if load_store(word) and word & 0x3C40_0000 == 0x2C40_0000 and \
                 word >> 10 & 31 == word & 31:
             # A SIMD&FP load pair with Rt == Rt2 is CONSTRAINED
             # UNPREDICTABLE, and the host makes it UNDEFINED.
