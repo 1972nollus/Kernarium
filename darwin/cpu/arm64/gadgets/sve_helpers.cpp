@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace uml::cpu::arm64::gadgets {
@@ -86,9 +87,20 @@ std::atomic<bool> counting{false};
  * process's start, a report at its exit. */
 char report_path[1024];
 
+std::mutex report_mutex;
+
+void write_report() noexcept
+{
+	try {
+		const std::lock_guard guard{report_mutex};
+		write_sve_library_report(report_path);
+	} catch (...) {
+	}
+}
+
 void write_report_at_exit() noexcept
 {
-	write_sve_library_report(report_path);
+	write_report();
 }
 
 struct ReportFromEnvironment final {
@@ -107,6 +119,12 @@ struct ReportFromEnvironment final {
 const ReportFromEnvironment report_from_environment;
 
 } // namespace
+
+void write_sve_library_report_from_environment() noexcept
+{
+	if (report_path[0] != '\0')
+		write_report();
+}
 
 void note_sve_translation(std::size_t row, bool library) noexcept
 {

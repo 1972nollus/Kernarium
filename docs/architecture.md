@@ -606,7 +606,9 @@ fault leaves through the memory-fault exit. While
 reach the library are counted per table row, with the words the builder
 translated and sent there. That is the library-exit report:
 `DARWIN_UML_SVE_LIBRARY_EXITS=PATH` enables counting from a process's start
-and writes the report at its exit, and `tools/arm64-tests/sve-library-report.py`
+and writes the report at its exit and as each executor retires (the emulator
+leaves through `_Exit`, so the last write is the complete one), and
+`tools/arm64-tests/sve-library-report.py`
 sums reports and ranks the forms by exits. A reserved bitmask immediate of
 AND, ORR, EOR or DUPM ends the block in front of it as the
 illegal-instruction exit. While an FPCR trap enable is set, the executor's

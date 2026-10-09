@@ -6,7 +6,8 @@ Setting DARWIN_UML_SVE_LIBRARY_EXITS=PATH makes a process that links the
 gadget engine count, per encoding-table row, the SVE words the builder
 translated, those it sent to the semantic library for want of a generated
 gadget, and the executions of words that took the library (darwin/cpu/arm64/
-gadgets/sve_helpers.hpp). It writes PATH at exit. This tool reads one or more
+gadgets/sve_helpers.hpp). It writes PATH at exit and as each executor
+retires (the emulator leaves through _Exit). This tool reads one or more
 such reports, sums them, and prints the forms (the rows of one encoding
 together; --rows keeps them apart) by exits with their names and share of
 all exits, so that a form is lowered by the weight real code gives it.

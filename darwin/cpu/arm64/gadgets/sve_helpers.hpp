@@ -65,8 +65,15 @@ void note_sve_translation(std::size_t row, bool library) noexcept;
  * row's encoding in hex. tools/arm64-tests/sve_library_report.py names the
  * forms. Setting DARWIN_UML_SVE_LIBRARY_EXITS to a path in a process that
  * links the gadget engine enables counting from its start and writes the
- * report there at exit. Returns false if the file cannot be written. */
+ * report there at exit, and again each time a gadget executor retires,
+ * because the emulator leaves through _Exit, which runs no atexit handler:
+ * the last write is the complete one. Returns false if the file cannot be
+ * written. */
 bool write_sve_library_report(const char *path) noexcept;
+
+/* Rewrites the report the environment asked for, if it did, from the counts
+ * so far. The executor calls it as it retires. */
+void write_sve_library_report_from_environment() noexcept;
 
 /* Runs `word`, implemented as `row`, through the semantic library on `cpu`,
  * reaching guest memory through `tlb`; a fault is recorded in the TLB, as
