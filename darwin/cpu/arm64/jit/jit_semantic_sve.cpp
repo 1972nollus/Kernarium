@@ -15,11 +15,18 @@
 
 #include "cpu/arm64/fp_environment.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <span>
+#include <utility>
+#include <vector>
+
+#include <unistd.h>
 
 namespace uml::cpu::arm64 {
 
@@ -62,6 +69,60 @@ std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
 std::array<std::atomic<std::uint32_t>, detail::sme_encodings.size()>
     library_exit_words{};
 std::atomic<bool> counting{false};
+
+/*
+ * DARWIN_UML_SVE_LIBRARY_EXITS names a file that receives, as the process
+ * ends, one line per table row that took the library (the row's SVE-nnnn
+ * form, its index, the run count and the last word), the most frequent
+ * first, after a header with the process and the total. The lines are
+ * appended, so every process of a run reports into the same file. Setting
+ * it counts the whole run; the evidence picks the words worth lowering.
+ */
+class LibraryExitReport final {
+public:
+  LibraryExitReport() noexcept {
+    const char *name = std::getenv("DARWIN_UML_SVE_LIBRARY_EXITS");
+    if (name != nullptr && *name != '\0') {
+      path_ = name;
+      counting.store(true, std::memory_order_relaxed);
+    }
+  }
+  ~LibraryExitReport() {
+    if (path_ == nullptr)
+      return;
+    std::vector<std::pair<std::uint64_t, std::size_t>> rows;
+    std::uint64_t total = 0;
+    for (std::size_t row = 0; row < library_exits.size(); ++row) {
+      const auto count = library_exits[row].load(std::memory_order_relaxed);
+      if (count != 0U)
+        rows.emplace_back(count, row);
+      total += count;
+    }
+    std::sort(rows.begin(), rows.end(), [](const auto &left, const auto &right) {
+      return left.first != right.first ? left.first > right.first
+                                       : left.second < right.second;
+    });
+    std::FILE *out = std::fopen(path_, "ae");
+    if (out == nullptr)
+      return;
+    std::fprintf(out, "# pid %ld total %llu rows %zu\n",
+                 static_cast<long>(::getpid()),
+                 static_cast<unsigned long long>(total), rows.size());
+    for (const auto &[count, row] : rows)
+      std::fprintf(out, "SVE-%04u\t%zu\t%llu\t%08x\n",
+                   detail::sme_encodings[row].form & 0x7fffU, row,
+                   static_cast<unsigned long long>(count),
+                   library_exit_words[row].load(std::memory_order_relaxed));
+    std::fclose(out);
+  }
+  LibraryExitReport(const LibraryExitReport &) = delete;
+  LibraryExitReport &operator=(const LibraryExitReport &) = delete;
+
+private:
+  const char *path_{};
+};
+
+const LibraryExitReport library_exit_report;
 
 } // namespace
 

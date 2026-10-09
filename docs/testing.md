@@ -658,6 +658,12 @@ out of the library from a clean state, and runs gathers and scatters with a
 lane out of reach, and scatters while another vCPU's reservation tracks
 stores.
 
+`DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
+words that leave translated code for the semantic library, and appends to the
+file, as the process ends, one line per table row (form, row index, count, last
+word), most frequent first. The words a workload sends there are the ones
+worth lowering.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
