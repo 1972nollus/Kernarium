@@ -118,6 +118,18 @@ struct SveResult final {
 };
 
 /*
+ * Whether `word`, which decode_sve_non_streaming() decoded to `row`, is
+ * UNDEFINED by its encoding alone: the only such words are the bitmask
+ * immediate forms AND, ORR, EOR and DUPM with a reserved immediate, which
+ * execute_sve() reports as SveEvent::undefined. An engine ends the block in
+ * front of one, before any state of the program changes, so it calls this
+ * when it translates; the library's own decision is the same by
+ * construction (they share the immediate's decoder).
+ */
+[[nodiscard]] bool sve_reserved_encoding(
+	std::uint32_t word, const SmeEncoding &row) noexcept;
+
+/*
  * Whether execute_sve() implements the row, which holds for every row
  * decode_sve_non_streaming() can return. The instruction corpus's library
  * lane counts as skipped the cases of any row it does not hold for, which

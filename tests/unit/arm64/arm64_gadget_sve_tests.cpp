@@ -2036,6 +2036,56 @@ void unimplemented_words()
 	}
 }
 
+/* The library's reserved-encoding predicate agrees with the library: of
+ * every value of N:immr:imms in AND, ORR, EOR and DUPM (a Z register and
+ * the mask at both ends of the register field), the predicate holds exactly
+ * when execute_sve() reports the word UNDEFINED, and it holds for no other
+ * row sampled. */
+void reserved_encoding_predicate()
+{
+	const auto features =
+		arm64::detail::implemented_sve_features(sve_host());
+	std::size_t reserved = 0;
+	for (const std::uint32_t base :
+		{0x0500'0000U, 0x0540'0000U, 0x0580'0000U, 0x05c0'0000U})
+		for (std::uint32_t immediate = 0; immediate < 0x2000U;
+			++immediate)
+			for (const std::uint32_t registers : {0U, 0x1fU}) {
+				const auto word = base | (immediate << 5) |
+					registers;
+				const auto *row = arm64::detail::
+					decode_sve_non_streaming(word, features);
+				require(row != nullptr);
+				arm64::CpuState cpu{};
+				NoMemory memory;
+				const auto result = arm64::detail::execute_sve(
+					cpu, word, *row, memory);
+				const bool undefined = result.event ==
+					arm64::detail::SveEvent::undefined;
+				require(undefined ||
+					result.event ==
+						arm64::detail::SveEvent::retired);
+				require(arm64::detail::sve_reserved_encoding(
+						word, *row) == undefined);
+				reserved += undefined ? 1U : 0U;
+			}
+	require(reserved > 0U);
+	/* Any other row: a predicate, a vector move, a load and a floating-point
+	 * form. */
+	for (const std::uint32_t word : {ptrue(0, 0, 31), 0x2538'e000U,
+		     0x04a0'0000U /* add z0.s, z0.s, z0.s */,
+		     0xa540'a000U /* ld1b z0.b, p0/z, [x0] */,
+		     0x6540'0000U /* fadd z0.h, z0.h, z0.h */}) {
+		const auto *row =
+			arm64::detail::decode_sve_non_streaming(word, features);
+		if (row != nullptr)
+			require(!arm64::detail::sve_reserved_encoding(
+				word, *row));
+	}
+	std::printf("reserved-encoding predicate matches the library on "
+		"%zu reserved immediates\n", reserved);
+}
+
 /* A word of a translated program that names an entry outside its mode:
  * for SVCR.SM = 1 one of the SVE part, for SM = 0 a streaming SVE entry or
  * a streaming twin. The entry is its offset from the SVE part, which no
@@ -2306,6 +2356,7 @@ int main()
 	generated_forms_match_the_library();
 	memory_forms_match_the_library();
 	unimplemented_words();
+	reserved_encoding_predicate();
 	streaming_safety();
 	streaming_mode_changes_zero_predicates();
 	return 0;
