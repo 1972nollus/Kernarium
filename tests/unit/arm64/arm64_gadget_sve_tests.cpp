@@ -2002,6 +2002,254 @@ void sve_sme_forms_at_sm_0()
 		sme2_rows);
 }
 
+/* A random element of `esize` bytes that stresses floating-point code:
+ * zeros, denormals, numbers near one, the extreme exponents, infinities,
+ * signaling and quiet NaNs of any payload, small integers (a scale, a
+ * selector), the integer extremes, and raw bits; either sign. */
+[[nodiscard]] std::uint64_t edge_element(Random &random, unsigned esize)
+{
+	const unsigned bits = 8U * esize;
+	const unsigned fraction = esize == 2U ? 10U : esize == 4U ? 23U : 52U;
+	const std::uint64_t full = bits == 64U ? ~std::uint64_t{0} :
+		(std::uint64_t{1} << bits) - 1U;
+	const std::uint64_t sign = std::uint64_t{1} << (bits - 1U);
+	const std::uint64_t fraction_mask =
+		(std::uint64_t{1} << fraction) - 1U;
+	const std::uint64_t exponent_max =
+		(std::uint64_t{1} << (bits - 1U - fraction)) - 1U;
+	const auto raw = random.next();
+	const auto payload = random.next() & fraction_mask;
+	std::uint64_t value = 0;
+	switch (raw % 11U) {
+	case 0:
+		break;
+	case 1:
+		value = payload;
+		break;
+	case 2:
+		value = (exponent_max << fraction) |
+			((raw >> 8 & 1U) != 0U ? payload : 0U);
+		break;
+	case 3:
+		value = (((exponent_max >> 1) - 2U + (raw >> 8) % 5U)
+			 << fraction) | payload;
+		break;
+	case 4:
+		value = (std::uint64_t{1} << fraction) | payload;
+		break;
+	case 5:
+		value = ((exponent_max - 1U) << fraction) | payload;
+		break;
+	case 6:
+		value = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>((raw >> 8) % 600U) - 300);
+		break;
+	case 7:
+		value = (raw >> 8 & 1U) != 0U ? sign + (raw >> 9 & 7U) :
+			sign - 1U - (raw >> 9 & 7U);
+		break;
+	default:
+		value = random.next();
+		break;
+	}
+	if ((raw >> 40 & 1U) != 0U)
+		value ^= sign;
+	return value & full;
+}
+
+/* A field of a word the edge test randomizes: `limit` values from `low`. */
+struct EdgeField final {
+	unsigned low;
+	std::uint32_t limit;
+};
+
+/* FSCALE's operands: scales that put the exponent on and around the edges
+ * of the normal range (to zero, one, the largest finite exponent and the
+ * infinity's), on mostly normal elements so that the gadget's fast path
+ * runs; the rest of the vectors keep their edge values. */
+void prepare_scale(Random &random, arm64::CpuState &cpu, std::uint32_t word)
+{
+	const unsigned bytes = 1U << ((word >> 22) & 3U);
+	const unsigned fraction = bytes == 2U ? 10U : bytes == 4U ? 23U : 52U;
+	const std::int64_t maximum =
+		(std::int64_t{1} << (8U * bytes - 1U - fraction)) - 1;
+	const unsigned dn = word & 31U;
+	const unsigned m = (word >> 5) & 31U;
+	if (dn == m)
+		return;
+	const bool mostly_fast = random.next() % 2U == 0U;
+	for (unsigned lane = 0; lane < 16U / bytes; ++lane) {
+		std::uint64_t value = 0;
+		std::memcpy(&value, cpu.vectors[dn].bytes.data() + lane * bytes,
+			bytes);
+		const auto scenario = mostly_fast ? random.next() % 5U :
+			random.next() % 8U;
+		if (scenario >= 5U)
+			continue;
+		const std::uint64_t exponent_mask =
+			static_cast<std::uint64_t>(maximum) << fraction;
+		const std::int64_t exponent = 1 + static_cast<std::int64_t>(
+			random.next() % static_cast<std::uint64_t>(maximum - 1));
+		value = (value & ~exponent_mask) |
+			(static_cast<std::uint64_t>(exponent) << fraction);
+		const std::array<std::int64_t, 7> edges{0, 1, 2, maximum - 2,
+			maximum - 1, maximum, maximum + 1};
+		const auto pick = random.next() % 9U;
+		const std::int64_t target = pick < edges.size() ? edges[pick] :
+			1 + static_cast<std::int64_t>(random.next() %
+				static_cast<std::uint64_t>(maximum - 1));
+		const auto scale = static_cast<std::uint64_t>(target - exponent);
+		std::memcpy(cpu.vectors[dn].bytes.data() + lane * bytes, &value,
+			bytes);
+		std::memcpy(cpu.vectors[m].bytes.data() + lane * bytes, &scale,
+			bytes);
+	}
+}
+
+/* `iterations` words of one form (`base` with random fields), each run alone
+ * and sometimes behind an FP instruction on states whose Z0-Z3 hold edge
+ * elements of `data_bytes` bytes, leave the library's state: its registers,
+ * P, FFR, NZCV and the FPSR flags, under a random FPCR. */
+void edge_values_match_the_library(const char *name, std::uint32_t base,
+	std::initializer_list<EdgeField> fields, unsigned data_bytes,
+	int iterations, std::uint64_t seed, unsigned container_bytes = 0,
+	void (*prepare)(Random &, arm64::CpuState &, std::uint32_t) = nullptr)
+{
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	Random random{seed};
+	const auto host = sve_host();
+	const unsigned container = container_bytes != 0U ? container_bytes :
+		data_bytes;
+	int runs = 0;
+	for (int round = 0; round < iterations; ++round) {
+		auto word = base;
+		for (const auto &field : fields)
+			word |= static_cast<std::uint32_t>(
+				random.next() % field.limit) << field.low;
+		const auto decoded = gadgets::decode_sve_word(word, host, 0);
+		/* A field combination no row decodes (a reserved tsz). */
+		if (decoded.kind != gadgets::SveWord::implemented)
+			continue;
+		++runs;
+		const auto index = static_cast<std::size_t>(decoded.row -
+			arm64::detail::sme_encodings.data());
+		auto initial = random_state(random);
+		for (unsigned n = 0; n < 4U; ++n) {
+			Bytes bytes{};
+			for (unsigned element = 0; element < 16U / container;
+			     ++element) {
+				/* The value in the low bytes of a container,
+				 * raw bits above it. */
+				std::uint64_t value = edge_element(random,
+					data_bytes);
+				if (container > data_bytes)
+					value |= random.next() << (8U * data_bytes);
+				std::memcpy(bytes.data() + element * container,
+					&value, container);
+			}
+			set_vec(initial, n, bytes);
+		}
+		if (prepare != nullptr)
+			prepare(random, initial, word);
+		const std::array alone{word, svc};
+		require_library_state(alone, initial,
+			library_after(initial, word), word, index, false);
+		if (round % 4 != 0)
+			continue;
+		Bytes one{}, two{};
+		const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+		const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+		std::memcpy(one.data(), &one_bits, 4);
+		std::memcpy(two.data(), &two_bits, 4);
+		set_vec(initial, 31, one);
+		auto activated = initial;
+		set_vec(activated, 31, two);
+		const std::array behind{activate, word, svc};
+		require_library_state(behind, initial,
+			library_after(activated, word), word, index, true);
+	}
+	require(runs * 2 >= iterations);
+	std::printf("%s: %d edge-value runs match the library\n", name, runs);
+}
+
+/* The forms the gadget engine lowered after the hot set, on their edge
+ * cases (NaNs and infinities, denormals under FZ and FIZ, every rounding
+ * mode, all selector and index bits, a scale past the exponent range, the
+ * integer extremes and saturation): FEXPA, FTSSEL, FTSMUL and FTMAD at every
+ * precision, then FCADD, FSCALE, the single/double FCVT, the 32-bit
+ * integer/double SCVTF, UCVTF, FCVTZS and FCVTZU, ASRD and UQINC/UQDEC of a
+ * scalar. */
+void remaining_forms_on_edge_values()
+{
+	constexpr int iterations = 1536;
+	const std::initializer_list<EdgeField> two_registers{{0, 4}, {5, 4}};
+	const std::initializer_list<EdgeField> three_registers{
+		{0, 4}, {5, 4}, {16, 4}};
+	const std::initializer_list<EdgeField> with_immediate{
+		{0, 4}, {5, 4}, {16, 8}};
+	struct Precision final {
+		const char *name;
+		std::uint32_t size;
+		unsigned bytes;
+	};
+	for (const auto &precision : {Precision{"h", 1U, 2U},
+		     Precision{"s", 2U, 4U}, Precision{"d", 3U, 8U}}) {
+		const auto size = precision.size << 22;
+		const auto label = [&](const char *form) {
+			return std::string{form} + "." + precision.name;
+		};
+		edge_values_match_the_library(label("fexpa").c_str(),
+			0x0420'b800U | size, two_registers, precision.bytes,
+			iterations, 0x5ec7'1001U + precision.size);
+		edge_values_match_the_library(label("ftssel").c_str(),
+			0x0420'b000U | size, three_registers, precision.bytes,
+			iterations, 0x5ec7'1011U + precision.size);
+		edge_values_match_the_library(label("ftsmul").c_str(),
+			0x6500'0c00U | size, three_registers, precision.bytes,
+			iterations, 0x5ec7'1021U + precision.size);
+		/* The immediate field is bits 16-18. */
+		edge_values_match_the_library(label("ftmad").c_str(),
+			0x6510'8000U | size, with_immediate,
+			precision.bytes, iterations, 0x5ec7'1031U + precision.size);
+		edge_values_match_the_library(label("fcadd").c_str(),
+			0x6400'8000U | size, {{0, 4}, {5, 4}, {10, 8}, {16, 2}},
+			precision.bytes, iterations, 0x5ec7'1041U + precision.size);
+		edge_values_match_the_library(label("fscale").c_str(),
+			0x6509'8000U | size, {{0, 4}, {5, 4}, {10, 8}},
+			precision.bytes, iterations, 0x5ec7'1051U + precision.size,
+			0, prepare_scale);
+	}
+	const std::initializer_list<EdgeField> predicated{
+		{0, 4}, {5, 4}, {10, 8}};
+	edge_values_match_the_library("fcvt.s2d", 0x65cb'a000U, predicated, 4,
+		iterations, 0x5ec7'1061U, 8);
+	edge_values_match_the_library("fcvt.d2s", 0x65ca'a000U, predicated, 8,
+		iterations, 0x5ec7'1062U);
+	edge_values_match_the_library("scvtf.w2d", 0x65d0'a000U, predicated, 4,
+		iterations, 0x5ec7'1063U, 8);
+	edge_values_match_the_library("ucvtf.w2d", 0x65d1'a000U, predicated, 4,
+		iterations, 0x5ec7'1064U, 8);
+	edge_values_match_the_library("fcvtzs.d2w", 0x65d8'a000U, predicated, 8,
+		iterations, 0x5ec7'1065U);
+	edge_values_match_the_library("fcvtzu.d2w", 0x65d9'a000U, predicated, 8,
+		iterations, 0x5ec7'1066U);
+	/* ASRD's tsz:imm3 picks the element size and the shift: random bits
+	 * reach every size, whatever the data's width. */
+	for (const unsigned bytes : {1U, 2U, 4U, 8U})
+		edge_values_match_the_library(
+			(std::string{"asrd."} + std::to_string(bytes)).c_str(),
+			0x0404'8000U, {{0, 4}, {5, 8}, {8, 4}, {10, 8}, {22, 4}},
+			bytes, iterations, 0x5ec7'1070U + bytes);
+	/* UQINC and UQDEC of Xdn and Wdn; the register holds edge values. */
+	for (const std::uint32_t base : {0x0420'fc00U, 0x0430'fc00U,
+		     0x0420'f400U, 0x0430'f400U})
+		edge_values_match_the_library(
+			(std::string{"uq"} + ((base & 0x800U) != 0U ? "dec" : "inc") +
+			 ((base & 0x10'0000U) != 0U ? ".x" : ".uw")).c_str(),
+			base, {{0, 32}, {5, 32}, {16, 16}, {22, 4}}, 8, iterations,
+			0x5ec7'1080U + (base >> 20 & 1U) + (base >> 10 & 2U));
+}
+
 /* Guest memory for a reference run of the library: the machine's mapped
  * pages, copied. */
 class CopiedMemory final : public arm64::detail::SveMemory {
@@ -2748,6 +2996,7 @@ int main()
 	library_words();
 	library_exit_report();
 	sve_sme_forms_at_sm_0();
+	remaining_forms_on_edge_values();
 	generated_forms_match_the_library();
 	memory_forms_match_the_library();
 	unimplemented_words();

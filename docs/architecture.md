@@ -559,7 +559,18 @@ products, the integer compares (also by immediate), the floating-point
 compares, PUNPK, SUNPK and UUNPK, BRKA and BRKB, INDEX, COMPACT and SPLICE,
 UADDV, FADDV and FADDA, ADDP, USQADD, URHADD, SUBHNB and SUBHNT, and the
 floating-point arithmetic (also by immediate, and with reversed operands),
-multiply-add, indexed, rounding and same-size conversion forms. A predicated
+multiply-add, indexed, rounding and same-size conversion forms, and the
+vector-math and scalar-loop helpers: FEXPA, FTMAD, FTSMUL and FTSSEL, FCADD,
+FSCALE, FCVT between single and double precision, SCVTF and UCVTF of words
+to doubles, FCVTZS and FCVTZU of doubles to words, ASRD, and UQINC and UQDEC
+of a general register. FEXPA and FTMAD read the tables of the semantic
+library (`cpu/arm64/detail/sve_trig_tables.hpp`) through a pointer in their
+stream. FSCALE adds the scale to the exponent field of every active normal
+element whose result is normal (a zero or an infinity is its own result) and
+raises nothing; any other active element, a NaN, a denormal or an overflow
+or underflow, sends the whole instruction to the semantic library from the
+gadget. The half-precision FCVT stays in the library, since AdvSIMD's
+conversions honour FPCR.AHP and SVE's do not. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so

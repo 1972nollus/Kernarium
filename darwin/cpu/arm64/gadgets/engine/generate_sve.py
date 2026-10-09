@@ -71,10 +71,14 @@ LOWERINGS = ["plain", "predicate_constant", "predicate_constant_flags",
              "index_table", "count_move", "count_add",
              "vector_length_add", "unsigned_immediate", "memory",
              "prefetch", "extract_table", "compare_signed_immediate",
-             "compare_unsigned_immediate", "index_immediate", "tables"]
+             "compare_unsigned_immediate", "index_immediate", "tables",
+             "exponential", "trig_coefficients"]
 
 # Form flags.
 FLAG_DISCARD_ON_ZERO = 1  # slot 0 is a general destination; XZR is a NOP.
+# The stream ends with the library operand and the PC (as a memory form's
+# does), which the gadget enters when a lane leaves its fast path.
+FLAG_LIBRARY_TAIL = 2
 
 # The conditions a WHILE* fuses with: B.cond tests one NZCV bit of x27.
 FUSED_CONDITIONS = (("eq", 30, True), ("ne", 30, False),
@@ -557,6 +561,263 @@ def fp_unary_predicated(operation: str, esize: int = 0):
     return (lambda e: lines(esize)) if esize else fp_sized(lines)
 
 
+def trig_square(e: int) -> list:
+    """FTSMUL: v0 := Zn squared with the sign bit of Zm's bit 0, unless the
+    square is a NaN (FPTrigSMul()). The NaN test is on the integer bits, so
+    it raises nothing whatever the FPCR."""
+    a = ARRANGEMENTS[e]
+    bits = 8 * e
+    infinity = {2: ["movz w9, #0x7c00"], 4: ["movz w9, #0x7f80, lsl #16"],
+                8: ["movz x9, #0x7ff0, lsl #48"]}[e]
+    return [f"fmul v0.{a}, v1.{a}, v1.{a}",
+            f"shl v5.{a}, v0.{a}, #1", f"ushr v5.{a}, v5.{a}, #1"] + \
+        infinity + [f"dup v7.{a}, {'x9' if e == 8 else 'w9'}",
+                    f"cmhs v6.{a}, v7.{a}, v5.{a}",
+                    f"shl v4.{a}, v2.{a}, #{bits - 1}",
+                    "orr v5.16b, v5.16b, v4.16b",
+                    "bit v0.16b, v5.16b, v6.16b"]
+
+
+def trig_select(e: int) -> list:
+    """FTSSEL: v0 := 1.0 when Zm's bit 0 is set, else Zn, with the sign
+    flipped (Zn) or set (1.0) by Zm's bit 1 (FPTrigSSel()). Integer only."""
+    a = ARRANGEMENTS[e]
+    bits = 8 * e
+    one = {2: "movi v5.8h, #0x3c, lsl #8", 4: "fmov v5.4s, #1.0",
+           8: "fmov v5.2d, #1.0"}[e]
+    return [f"shl v0.{a}, v2.{a}, #{bits - 1}",
+            f"sshr v0.{a}, v0.{a}, #{bits - 1}",
+            f"shl v4.{a}, v2.{a}, #{bits - 2}",
+            f"ushr v4.{a}, v4.{a}, #{bits - 1}",
+            f"shl v4.{a}, v4.{a}, #{bits - 1}", one,
+            "orr v5.16b, v5.16b, v4.16b", "eor v1.16b, v1.16b, v4.16b",
+            "bsl v0.16b, v5.16b, v1.16b"]
+
+
+def exponential_accelerator(e: int):
+    """FEXPA: each element's low bits index the table of fraction bits the
+    builder points x9 at, and the next bits are the exponent field
+    (FPExpA()). No FPCR, no flags. Slots Zd (x3), Zn (x4)."""
+    if e == 1:
+        return ABSENT
+    a = ARRANGEMENTS[e]
+    lane = {2: "h", 4: "s", 8: "d"}[e]
+    index_bits = 5 if e == 2 else 6
+    exponent_bits = {2: 5, 4: 8, 8: 11}[e]
+    shift = {2: 1, 4: 2, 8: 3}[e]
+    per_register = 8 // e
+    body = ["ldp x8, x9, [_stream], #16"] + unpack(2) + [
+        "ldr q1, [_cpu, x4]", "mov x10, v1.d[0]", "mov x11, v1.d[1]"]
+    for k in range(16 // e):
+        source = "x10" if k < per_register else "x11"
+        offset = 8 * e * (k % per_register)
+        t = 12 + k % 4
+        body.append(f"and x{t}, {source}, #{(1 << index_bits) - 1}"
+                    if offset == 0 else
+                    f"ubfx x{t}, {source}, #{offset}, #{index_bits}")
+        body.append({2: f"ldrh w{t}", 4: f"ldr w{t}", 8: f"ldr x{t}"}[e] +
+                    f", [x9, x{t}, lsl #{shift}]")
+        register = f"x{t}" if e == 8 else f"w{t}"
+        body.append(f"fmov {'d0' if e == 8 else 's0'}, {register}"
+                    if k == 0 else f"mov v0.{lane}[{k}], {register}")
+    # The exponent field, from the bits above the index, at the fraction's
+    # top: keep it by a left shift that drops the rest, then move it down.
+    bits = 8 * e
+    return body + [f"ushr v2.{a}, v1.{a}, #{index_bits}",
+                   f"shl v2.{a}, v2.{a}, #{bits - exponent_bits}",
+                   f"ushr v2.{a}, v2.{a}, #1", "orr v0.16b, v0.16b, v2.16b",
+                   "str q0, [_cpu, x3]", "next_gadget"]
+
+
+def trig_multiply_add(e: int):
+    """FTMAD: Zdn := coefficient + Zdn * |Zm|, fused, the coefficient the
+    builder's table gives by the immediate, or eight entries on when the
+    element of Zm is negative (FPTrigMAdd()). The builder points x9 at the
+    entry for the immediate. Slots Zdn (x3), Zm (x4)."""
+    if e == 1:
+        return ABSENT
+    a = ARRANGEMENTS[e]
+    bits = 8 * e
+    return ["ensure_fp_environment", "ldp x8, x9, [_stream], #16"] + \
+        unpack(2) + ["ldr q1, [_cpu, x3]", "ldr q2, [_cpu, x4]",
+                     f"ld1r {{v3.{a}}}, [x9]", f"add x10, x9, #{8 * e}",
+                     f"ld1r {{v4.{a}}}, [x10]",
+                     f"sshr v5.{a}, v2.{a}, #{bits - 1}",
+                     "bsl v5.16b, v4.16b, v3.16b", f"fabs v2.{a}, v2.{a}",
+                     f"fmla v5.{a}, v1.{a}, v2.{a}",
+                     "str q5, [_cpu, x3]", "next_gadget"]
+
+
+def fp_complex_add(rotation: int):
+    """FCADD under Pg (merging): Zdn := Zdn + Zm rotated by 90 or 270 degrees
+    in each pair of elements. An output element reads one element of Zm, the
+    other of its pair, so the pair-swapped lane mask zeroes the inputs of the
+    inactive outputs: those compute 0 - 0, which raises nothing. Slots Zdn
+    (x3), Zm (x4), Pg (x5)."""
+    def lines(e: int):
+        if e == 1:
+            return ABSENT
+        a = ARRANGEMENTS[e]
+        angle = 90 if rotation == 0 else 270
+        swap = {2: "rev32 v6.8h, v0.8h", 4: "rev64 v6.4s, v0.4s",
+                8: "ext v6.16b, v0.16b, v0.16b, #8"}[e]
+        return ["ensure_fp_environment", "ldr x8, [_stream], #8"] + \
+            unpack(3) + ["ldr q1, [_cpu, x3]", "ldr q2, [_cpu, x4]"] + \
+            all_true_test(e, "x5") + [
+                f"fcadd v0.{a}, v1.{a}, v2.{a}, #{angle}",
+                "str q0, [_cpu, x3]", "next_gadget", "1:",
+                "ldr q0, [_cpu, x5]"] + lane_mask(e) + [
+                swap, "and v3.16b, v1.16b, v0.16b",
+                "and v4.16b, v2.16b, v6.16b",
+                f"fcadd v5.{a}, v3.{a}, v4.{a}, #{angle}",
+                "bit v1.16b, v5.16b, v0.16b", "str q1, [_cpu, x3]",
+                "next_gadget"]
+    return lines
+
+
+def splat(register: str, value: int, e: int) -> list:
+    """`register` := `value` in every element of `e` bytes; x9 scratch."""
+    a = ARRANGEMENTS[e]
+    if e < 8 and value < 256:
+        return [f"movi {register}.{a}, #{value}"]
+    bits = 8 * e
+    lines = []
+    scalar = "x9" if e == 8 else "w9"
+    parts = [(position, (value >> position) & 0xffff)
+             for position in range(0, bits, 16)]
+    parts = [(position, part) for position, part in parts if part]
+    if not parts:
+        return [f"movi {register}.2d, #0"]
+    for index, (position, part) in enumerate(parts):
+        shift = f", lsl #{position}" if position else ""
+        lines.append(f"{'movz' if index == 0 else 'movk'} {scalar}, "
+                     f"#0x{part:x}{shift}")
+    return lines + [f"dup {register}.{a}, {scalar}"]
+
+
+def fp_scale(e: int):
+    """FSCALE under Pg (merging): Zdn := Zdn * 2^Zm for a signed integer
+    element of Zm (FPScale()). A lane whose input is a normal number and
+    whose result stays a normal number takes its exponent field plus the
+    scale, exactly and without flags, and a zero or an infinity is its own
+    result; every other active lane (a NaN, a denormal, an overflow or an
+    underflow) sends the whole instruction to the semantic library. The fast
+    path touches no FP register, so the guest's FPCR and flags need no
+    environment. Slots Zdn (x3), Zm (x4), Pg (x5); the stream ends with the
+    library operand and the PC, which the fast path skips."""
+    if e == 1:
+        return ABSENT
+    a = ARRANGEMENTS[e]
+    bits = 8 * e
+    fraction = {2: 10, 4: 23, 8: 52}[e]
+    maximum = (1 << (bits - 1 - fraction)) - 1
+    full = (1 << bits) - 1
+    infinity = ((maximum << fraction) << 1) & full
+    keep = ~(maximum << fraction) & full
+    return ["ldr x8, [_stream], #8"] + unpack(3) + [
+        "ldr q1, [_cpu, x3]", "ldr q2, [_cpu, x4]", "ldr q0, [_cpu, x5]"] + \
+        lane_mask(e) + splat("v6", 1, e) + splat("v7", maximum - 1, e) + [
+            f"shl v16.{a}, v1.{a}, #1",
+            f"ushr v3.{a}, v16.{a}, #{fraction + 1}",
+            f"add v5.{a}, v3.{a}, v2.{a}",
+            f"sub v3.{a}, v3.{a}, v6.{a}", f"sub v4.{a}, v5.{a}, v6.{a}",
+            f"cmhi v3.{a}, v7.{a}, v3.{a}", f"cmhi v4.{a}, v7.{a}, v4.{a}",
+            "and v3.16b, v3.16b, v4.16b",
+            f"cmeq v17.{a}, v16.{a}, #0"] + splat("v18", infinity, e) + [
+            f"cmeq v18.{a}, v16.{a}, v18.{a}",
+            "orr v17.16b, v17.16b, v18.16b", "orr v17.16b, v17.16b, v3.16b",
+            "bic v17.16b, v0.16b, v17.16b", "mov x10, v17.d[0]",
+            "mov x11, v17.d[1]", "orr x10, x10, x11", "cbnz x10, 2f"] + \
+        splat("v19", keep, e) + [
+            f"shl v5.{a}, v5.{a}, #{fraction}",
+            "bsl v19.16b, v1.16b, v5.16b", "and v3.16b, v3.16b, v0.16b",
+            "bit v1.16b, v19.16b, v3.16b", "str q1, [_cpu, x3]",
+            "add _stream, _stream, #16", "next_gadget", "2:",
+            "b NAME(uml_arm64_gadget_sve_library)"]
+
+
+def fp_convert_predicated(container: int, convert):
+    """A conversion under Pg (merging) over containers of `container`
+    bytes: `convert(source, destination)` lines convert the elements of one
+    register into another (v5, v6 and x9-x11 scratch). Under a partial
+    predicate the inactive containers convert as zero, which raises
+    nothing. Slots Zd (x3), Zn (x4), Pg (x5)."""
+    return ["ensure_fp_environment", "ldr x8, [_stream], #8"] + unpack(3) + [
+        "ldr q1, [_cpu, x4]"] + all_true_test(container, "x5") + \
+        convert("v1", "v0") + ["str q0, [_cpu, x3]", "next_gadget", "1:",
+                               "ldr q0, [_cpu, x5]"] + \
+        lane_mask(container) + ["and v3.16b, v1.16b, v0.16b"] + \
+        convert("v3", "v4") + ["ldr q2, [_cpu, x3]",
+                               "bit v2.16b, v4.16b, v0.16b",
+                               "str q2, [_cpu, x3]", "next_gadget"]
+
+
+def convert_widen(narrow: str, wide: str):
+    """FCVT to a wider precision: the narrow value sits in the low bits of
+    each wide container, which XTN gathers for FCVTL. (Only the single and
+    double precisions: AdvSIMD's half-precision conversions honour
+    FPCR.AHP, which SVE's ignore.)"""
+    return lambda s, d: [f"xtn v5.{narrow}, {s}.{wide}",
+                         f"fcvtl {d}.{wide}, v5.{narrow}"]
+
+
+def convert_narrow(narrow: str, wide: str):
+    """FCVT to a narrower precision: the narrow value goes to the low bits
+    of each wide container and the rest of it is zero."""
+    return lambda s, d: [f"fcvtn v5.{narrow}, {s}.{wide}",
+                         f"uxtl {d}.{wide}, v5.{narrow}"]
+
+
+def convert_word_to_double(signed: bool):
+    """SCVTF and UCVTF of 32-bit integers in 64-bit containers: the
+    integer is exact in a double, so no flags."""
+    extend, convert = ("sshll", "scvtf") if signed else ("ushll", "ucvtf")
+    return lambda s, d: ["xtn v5.2s, " + f"{s}.2d",
+                         f"{extend} v5.2d, v5.2s, #0",
+                         f"{convert} {d}.2d, v5.2d"]
+
+
+def convert_double_to_word(signed: bool):
+    """FCVTZS and FCVTZU of doubles to 32-bit integers in 64-bit
+    containers, sign-extended when signed: the scalar instruction
+    saturates at 32 bits, which AdvSIMD's vector form does not."""
+    operation = "fcvtzs" if signed else "fcvtzu"
+    def lines(s: str, d: str) -> list:
+        body = [f"{operation} w9, d{s[1:]}", f"mov d6, {s}.d[1]",
+                f"{operation} w10, d6"]
+        if signed:
+            body += ["sxtw x9, w9", "sxtw x10, w10"]
+        return body + [f"fmov d{d[1:]}, x9", f"mov {d}.d[1], x10"]
+    return lines
+
+
+FP_CONVERSIONS = {
+    "fcvt_z_p_z_s2d": (8, convert_widen("2s", "2d")),
+    "fcvt_z_p_z_d2s": (8, convert_narrow("2s", "2d")),
+    "scvtf_z_p_z_w2d": (8, convert_word_to_double(True)),
+    "ucvtf_z_p_z_w2d": (8, convert_word_to_double(False)),
+    "fcvtzs_z_p_z_d2w": (8, convert_double_to_word(True)),
+    "fcvtzu_z_p_z_d2w": (8, convert_double_to_word(False)),
+}
+
+
+def saturating_count(subtract: bool, wide: bool):
+    """UQINC and UQDEC of a general register by the element count the
+    builder computes (x9): unsigned saturation at 0 or all ones, on the
+    32-bit register (zero-extended into the doubleword) unless `wide`.
+    Slot Rdn (x3); XZR is a NOP."""
+    r = "x" if wide else "w"
+    load = f"ldr {r}10, [_cpu, x3]"
+    if subtract:
+        arithmetic = [f"subs {r}11, {r}10, {r}9",
+                      f"csel {r}10, {r}zr, {r}11, lo"]
+    else:
+        arithmetic = [f"adds {r}11, {r}10, {r}9",
+                      f"csinv {r}10, {r}11, {r}zr, lo"]
+    return ["ldp x8, x9, [_stream], #16", "and x3, x8, #0xffff", load] + \
+        arithmetic + ["str x10, [_cpu, x3]", "next_gadget"]
+
+
 # name: lines by element size.
 FP_BINARY_PREDICATED = {
     "fadd_z_p_zz_": fp_binary_predicated("fadd"),
@@ -625,6 +886,8 @@ FP_INDEXED = {
 }
 
 THREE_REGISTER.update({
+    "ftsmul_z_zz_": (fp_sized(trig_square), False, True),
+    "ftssel_z_zz_": (fp_sized(trig_select), False, False),
     "fadd_z_zz_": (fp_sized(same_size("fadd")), False, True),
     "fsub_z_zz_": (fp_sized(same_size("fsub")), False, True),
     "fmul_z_zz_": (fp_sized(same_size("fmul")), False, True),
@@ -1034,6 +1297,18 @@ def predicated_shift(kind: str):
                           f"cmtst v4.{a}, v4.{a}, v4.{a}",
                           f"shl v3.{a}, v1.{a}, #{left}",
                           "orr v3.16b, v3.16b, v4.16b"]
+        elif kind == "asrd":
+            # A divide by 2^right rounds toward zero: add 2^right - 1 to a
+            # negative element first. A shift by the whole element is 0.
+            if not 1 <= right <= bits:
+                return ABSENT
+            if right == bits:
+                result = ["movi v3.2d, #0"]
+            else:
+                result = [f"sshr v4.{a}, v1.{a}, #{bits - 1}",
+                          f"ushr v4.{a}, v4.{a}, #{bits - right}",
+                          f"add v3.{a}, v1.{a}, v4.{a}",
+                          f"sshr v3.{a}, v3.{a}, #{right}"]
         else:
             if not 1 <= right <= bits:
                 return ABSENT
@@ -1052,6 +1327,7 @@ PREDICATED_SHIFT = {
     "lsl_z_p_zi_": "lsl",
     "lsr_z_p_zi_": "lsr",
     "asr_z_p_zi_": "asr",
+    "asrd_z_p_zi_": "asrd",
     "uqshl_z_p_zi_": "uqshl",
     "urshr_z_p_zi_": "urshr",
     "srshr_z_p_zi_": "srshr",
@@ -2252,6 +2528,26 @@ def build_forms(table) -> list:
                 lambda f, l=fp_ternary_predicated(
                     operation, negate, addend, multiplicand, multiplier,
                     destination): sized(f, l))
+        elif name in FP_CONVERSIONS:
+            container, convert = FP_CONVERSIONS[name]
+            add(row, "plain", (("z", 0), ("z", 5), ("p", 10)),
+                lambda f, c=container, v=convert: single(
+                    f, fp_convert_predicated(c, v)))
+        elif name == "fcadd_z_p_zz_":
+            def complex_add(form: Form) -> None:
+                form.variant_bits = [16] + SIZE_BITS
+                form.variants = [fp_complex_add(value & 1)(
+                    ESIZES[value >> 1]) for value in range(8)]
+            add(row, "plain", (("z", 0), ("z", 5), ("p", 10)), complex_add)
+        elif name == "fscale_z_p_zz_":
+            add(row, "plain", (("z", 0), ("z", 5), ("p", 10)),
+                lambda f: sized(f, fp_scale), flags=FLAG_LIBRARY_TAIL)
+        elif base[:4] in ("uqin", "uqde") and name.endswith(
+                ("_r_rs_x", "_r_rs_uw")):
+            add(row, "vector_count", (("gpr", 0),),
+                lambda f, d=base.startswith("uqde"), w=name.endswith("_x"):
+                single(f, saturating_count(d, w)),
+                flags=FLAG_DISCARD_ON_ZERO)
         elif name in FP_UNARY_PREDICATED:
             add(row, "plain", (("z", 0), ("z", 5), ("p", 10)),
                 lambda f, l=FP_UNARY_PREDICATED[name]: sized(f, l))
@@ -2333,6 +2629,12 @@ def build_forms(table) -> list:
                     unpack(2) + [f"ldr q0, [_cpu, {a}]"] + s + [
                     "tbl v0.16b, {v0.16b, v1.16b}, v2.16b",
                     "str q0, [_cpu, x3]", "next_gadget"]))
+        elif name == "fexpa_z_z_":
+            add(row, "exponential", (("z", 0), ("z", 5)),
+                lambda f: sized(f, exponential_accelerator))
+        elif name == "ftmad_z_zzi_":
+            add(row, "trig_coefficients", (("z", 0), ("z", 5)),
+                lambda f: sized(f, trig_multiply_add))
         elif name in THREE_REGISTER:
             lines, accumulate, fp = THREE_REGISTER[name]
             add(row, "plain", (("z", 0), ("z", 5), ("z", 16)),
@@ -2656,6 +2958,10 @@ def render_header(forms: list, labels: list, table) -> str:
             " * instruction with XZR there changes nothing. */",
             f"inline constexpr std::uint8_t discard_on_zero = "
             f"{FLAG_DISCARD_ON_ZERO}U;", "",
+            "/* The form's stream ends with the library operand and the PC,",
+            " * for the gadget's fallback to the semantic library. */",
+            f"inline constexpr std::uint8_t library_tail = "
+            f"{FLAG_LIBRARY_TAIL}U;", "",
             "/* One form: its variants are entries [first_entry,",
             " * first_entry + variants) of",
             " * uml_arm64_gadget_sve_generated_entries, selected by the",
