@@ -14,10 +14,15 @@
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
 
 namespace uml::cpu::arm64::gadgets {
 namespace {
@@ -67,12 +72,110 @@ SveWordDecode decode_sve_word(std::uint32_t word,
 
 namespace {
 
-/* The words run through the library per table row, while counting. */
+/* The words run through the library per table row, while counting, and the
+ * translations that sent a word there or elsewhere. */
 std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
 	library_exits{};
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+	translated{};
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+	translated_to_library{};
 std::atomic<bool> counting{false};
 
+/* The report DARWIN_UML_SVE_LIBRARY_EXITS asks for: counting from the
+ * process's start, a report at its exit. */
+char report_path[1024];
+
+void write_report_at_exit() noexcept
+{
+	write_sve_library_report(report_path);
+}
+
+struct ReportFromEnvironment final {
+	ReportFromEnvironment() noexcept
+	{
+		const char *path = std::getenv("DARWIN_UML_SVE_LIBRARY_EXITS");
+		if (path == nullptr || *path == '\0' ||
+		    std::strlen(path) >= sizeof report_path)
+			return;
+		std::strcpy(report_path, path);
+		counting.store(true, std::memory_order_relaxed);
+		std::atexit(write_report_at_exit);
+	}
+};
+
+const ReportFromEnvironment report_from_environment;
+
 } // namespace
+
+void note_sve_translation(std::size_t row, bool library) noexcept
+{
+	if (row >= translated.size() ||
+	    !counting.load(std::memory_order_relaxed))
+		return;
+	translated[row].fetch_add(1, std::memory_order_relaxed);
+	if (library)
+		translated_to_library[row].fetch_add(1,
+			std::memory_order_relaxed);
+}
+
+std::uint64_t sve_translated(std::size_t row) noexcept
+{
+	return row < translated.size() ?
+		translated[row].load(std::memory_order_relaxed) : 0U;
+}
+
+std::uint64_t sve_translated_to_library(std::size_t row) noexcept
+{
+	return row < translated_to_library.size() ?
+		translated_to_library[row].load(std::memory_order_relaxed) : 0U;
+}
+
+bool write_sve_library_report(const char *path) noexcept
+{
+	struct Line final {
+		std::size_t row;
+		std::uint64_t translated;
+		std::uint64_t to_library;
+		std::uint64_t exits;
+	};
+	std::FILE *file = std::fopen(path, "w");
+	if (file == nullptr)
+		return false;
+	std::vector<Line> lines;
+	try {
+		for (std::size_t row = 0; row < library_exits.size(); ++row) {
+			const Line line{row, sve_translated(row),
+				sve_translated_to_library(row),
+				sve_library_exits(row)};
+			if (line.translated != 0U || line.exits != 0U)
+				lines.push_back(line);
+		}
+		std::ranges::sort(lines, [](const Line &a, const Line &b) {
+			return a.exits != b.exits ? a.exits > b.exits :
+				a.translated != b.translated ?
+				a.translated > b.translated : a.row < b.row;
+		});
+	} catch (...) {
+		std::fclose(file);
+		return false;
+	}
+	std::fprintf(file, "# SVE library exits: total %llu\n"
+		"# form\trow\tmask\tvalue\ttranslated\t"
+		"translated_to_library\texits\n",
+		static_cast<unsigned long long>(sve_library_exit_total()));
+	for (const auto &line : lines) {
+		const auto &row = detail::sme_encodings[line.row];
+		std::fprintf(file, "SVE-%04u\t%zu\t%08x\t%08x\t%llu\t%llu\t%llu\n",
+			static_cast<unsigned>(row.form & 0x7fffU), line.row,
+			static_cast<unsigned>(row.mask),
+			static_cast<unsigned>(row.value),
+			static_cast<unsigned long long>(line.translated),
+			static_cast<unsigned long long>(line.to_library),
+			static_cast<unsigned long long>(line.exits));
+	}
+	return std::fclose(file) == 0;
+}
 
 void count_sve_library_exits(bool enable) noexcept
 {
@@ -96,6 +199,10 @@ std::uint64_t sve_library_exit_total() noexcept
 void reset_sve_library_exits() noexcept
 {
 	for (auto &count : library_exits)
+		count.store(0, std::memory_order_relaxed);
+	for (auto &count : translated)
+		count.store(0, std::memory_order_relaxed);
+	for (auto &count : translated_to_library)
 		count.store(0, std::memory_order_relaxed);
 }
 

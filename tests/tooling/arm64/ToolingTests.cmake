@@ -7,6 +7,15 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 60)
 
+# The SVE library-exit report names and ranks its rows from the checked-in
+# encoding table.
+uml_add_tooling_test(
+    NAME arm64-sve-library-report
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sve_library_report.py
+    LABELS cpu
+    TIMEOUT 60)
+
 uml_add_tooling_test(
     NAME arm64-instruction-inventory
     COMMAND ${Python3_EXECUTABLE}

@@ -49,6 +49,25 @@ void count_sve_library_exits(bool enable) noexcept;
 [[nodiscard]] std::uint64_t sve_library_exit_total() noexcept;
 void reset_sve_library_exits() noexcept;
 
+/* The same counting also tallies, per row, the SVE words the builder
+ * translated and how many of those it sent to the library for want of a
+ * generated gadget (their executions are the exits). The builder calls
+ * note_sve_translation; the report reads the counts. */
+void note_sve_translation(std::size_t row, bool library) noexcept;
+[[nodiscard]] std::uint64_t sve_translated(std::size_t row) noexcept;
+[[nodiscard]] std::uint64_t sve_translated_to_library(
+	std::size_t row) noexcept;
+
+/* Writes the report to `path`: a '#' header, then one tab-separated line
+ * per row with a count, most exits first:
+ *   SVE-nnnn  row  mask  value  translated  translated_to_library  exits
+ * The form number is the architecture oracle's, the mask and value are the
+ * row's encoding in hex. tools/arm64-tests/sve_library_report.py names the
+ * forms. Setting DARWIN_UML_SVE_LIBRARY_EXITS to a path in a process that
+ * links the gadget engine enables counting from its start and writes the
+ * report there at exit. Returns false if the file cannot be written. */
+bool write_sve_library_report(const char *path) noexcept;
+
 /* Runs `word`, implemented as `row`, through the semantic library on `cpu`,
  * reaching guest memory through `tlb`; a fault is recorded in the TLB, as
  * the memory-fault exit expects. CpuState must hold the guest's NZCV and FP

@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mach-o/dyld.h>
 #include <memory_resource>
 #include <set>
@@ -1773,6 +1774,77 @@ void require_library_state(std::span<const std::uint32_t> code,
 	require(false);
 }
 
+/* The library-exit report names the words the builder translated, how many
+ * went to the library for want of a generated gadget, and how often the
+ * library ran them: a vector ADD stays on its gadget, and FRECPX, which has
+ * none, counts its translation and its executions. */
+void library_exit_report()
+{
+	constexpr std::uint32_t add_vectors = 0x0422'0020U;
+	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	const auto host = sve_host();
+	const auto row_of = [&](std::uint32_t word) {
+		const auto decoded = gadgets::decode_sve_word(word, host, 0);
+		require(decoded.kind == gadgets::SveWord::implemented);
+		return static_cast<std::size_t>(decoded.row -
+			arm64::detail::sme_encodings.data());
+	};
+	const auto add_row = row_of(add_vectors);
+	const auto frecpx_row = row_of(frecpx);
+	require(gadgets::sve::row_forms[add_row] != gadgets::sve::no_form);
+	require(gadgets::sve::row_forms[frecpx_row] == gadgets::sve::no_form);
+
+	gadgets::count_sve_library_exits(true);
+	gadgets::reset_sve_library_exits();
+	{
+		const std::array code{add_vectors, frecpx, frecpx, svc};
+		Block block{code};
+		for (int run = 0; run < 3; ++run) {
+			arm64::CpuState cpu{};
+			block.run(cpu);
+		}
+	}
+	require(gadgets::sve_translated(add_row) == 1U);
+	require(gadgets::sve_translated_to_library(add_row) == 0U);
+	require(gadgets::sve_library_exits(add_row) == 0U);
+	require(gadgets::sve_translated(frecpx_row) == 2U);
+	require(gadgets::sve_translated_to_library(frecpx_row) == 2U);
+	require(gadgets::sve_library_exits(frecpx_row) == 6U);
+	require(gadgets::sve_library_exit_total() == 6U);
+
+	const char *temporary = std::getenv("TMPDIR");
+	std::string path = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	path += "/sve-library-report.XXXXXX";
+	const int descriptor = mkstemp(path.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	require(gadgets::write_sve_library_report(path.c_str()));
+	std::ifstream file{path};
+	std::string line;
+	std::vector<std::string> lines;
+	while (std::getline(file, line))
+		lines.push_back(line);
+	file.close();
+	unlink(path.c_str());
+	gadgets::count_sve_library_exits(false);
+	gadgets::reset_sve_library_exits();
+
+	/* Two comment lines, then FRECPX (it has exits) before ADD. */
+	require(lines.size() == 4U);
+	require(lines[0] == "# SVE library exits: total 6");
+	const auto &row = arm64::detail::sme_encodings[frecpx_row];
+	char expected[128];
+	std::snprintf(expected, sizeof expected,
+		"SVE-%04u\t%zu\t%08x\t%08x\t2\t2\t6",
+		static_cast<unsigned>(row.form & 0x7fffU), frecpx_row,
+		static_cast<unsigned>(row.mask),
+		static_cast<unsigned>(row.value));
+	require(lines[2] == expected);
+	require(lines[3].ends_with("\t1\t0\t0"));
+	std::printf("the library-exit report counts translations and exits\n");
+}
+
 /* Every generated form agrees with the semantic library: random words of
  * each register-only row a generated gadget runs, each alone in a block on
  * a random state, leave the library's registers, P, FFR, NZCV and FPSR;
@@ -2590,6 +2662,7 @@ int main()
 	fused_while_branch();
 	live_marker_and_fp_access();
 	library_words();
+	library_exit_report();
 	generated_forms_match_the_library();
 	memory_forms_match_the_library();
 	unimplemented_words();

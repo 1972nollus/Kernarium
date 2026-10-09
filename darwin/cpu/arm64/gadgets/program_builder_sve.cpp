@@ -652,6 +652,7 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 	const auto index =
 		static_cast<std::size_t>(row - detail::sme_encodings.data());
 	const auto number = sve::row_forms[index];
+	const auto first_word = context.words.size();
 	DecodeResult decoded = DecodeResult::decoded;
 	/* Every other form, and a generated form's absent variant, runs
 	 * through the semantic library, which implements every row the
@@ -663,6 +664,12 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 	if (decoded == DecodeResult::decoded) {
 		context.program_accesses_fp_state = true;
 		context.program_holds_sve = true;
+		/* The library report: a word that goes to the library whole, not
+		 * one whose gadget may leave for it at run time. */
+		note_sve_translation(index,
+			context.words.size() > first_word &&
+			context.words[first_word] == reinterpret_cast<
+				std::uintptr_t>(uml_arm64_gadget_sve_library));
 	}
 	return decoded;
 }
