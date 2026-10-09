@@ -293,6 +293,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
         three(floating_word(form == inl::fabs_p ? op_fabs : op_fneg, size), d,
               n, 0),
         false);
+    /* FPCR.AH keeps the sign of a NaN, so the native environment matters. */
+    mark_native_fp();
     return true;
   }
   if (form == inl::fadda_p || form == inl::faddv_p) {

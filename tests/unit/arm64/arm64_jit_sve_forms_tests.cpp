@@ -26,6 +26,7 @@
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/detail/sve_semantics.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
@@ -193,8 +194,8 @@ void fill_lanes(Random &random, Bytes &bytes) {
 }
 
 /* Random architectural state for a differential run. FPCR takes a random
- * rounding mode, FZ, DN and FZ16 and, with `traps`, a random trap enable
- * set. */
+ * rounding mode, FZ, DN and FZ16, FIZ, AH and NEP where the host implements
+ * FEAT_AFP and, with `traps`, a random trap enable set. */
 [[nodiscard]] arm64::CpuState random_state(Random &random, bool traps) {
   arm64::CpuState cpu{};
   for (auto &value : cpu.registers) {
@@ -228,6 +229,12 @@ void fill_lanes(Random &random, Bytes &bytes) {
   cpu.nzcv = static_cast<std::uint32_t>(random.next() & 0xfU) << 28;
   cpu.fpcr = static_cast<std::uint32_t>(random.next()) &
              ((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19));
+  /* FIZ, AH and NEP are guest state only where the virtual CPU implements
+   * FEAT_AFP, which the probed host decides here. */
+  static const bool afp = arm64::implements_afp(sve_host());
+  if (afp)
+    cpu.fpcr |= static_cast<std::uint32_t>(random.next()) &
+                arm64::fpcr_afp_controls;
   if (traps)
     cpu.fpcr |= static_cast<std::uint32_t>(random.next() & 0x9fU) << 8;
   cpu.fpsr = static_cast<std::uint32_t>(random.next()) & 0x0800'009fU;
