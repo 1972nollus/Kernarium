@@ -333,8 +333,13 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
       emitter_.emit((size == 2U ? 0x7e30'd800U : 0x5e30'd800U) |
                     (scratch_a << 5) | scratch_a);
     }
+    /* The result is the low element of a zeroed register. A scalar add
+     * does not leave the rest so under FPCR.NEP, where it keeps its
+     * source's other elements, so insert the element into zero. */
     const auto out = write_native_vector(d, false, 2U);
-    emitter_.emit(vector_move(out.host, scratch_a));
+    emitter_.emit(0x6f00'e400U | out.host);
+    emitter_.emit(0x6e00'0400U | ((1U << size) << 16) | (scratch_a << 5) |
+                  out.host);
     commit_native_vector(out, d);
     mark_native_fp();
     return true;
