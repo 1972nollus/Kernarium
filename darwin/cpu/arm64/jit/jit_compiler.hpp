@@ -102,6 +102,7 @@ private:
       memory_slow,
       memory_copy_set_slow,
       sme_slow,
+      sve_slow,
     };
 
     Arm64Emitter::Label label;
@@ -298,6 +299,34 @@ private:
    * SVE row outside the profile or the control core. */
   [[nodiscard]] std::optional<Action>
   emit_sve_instruction(std::uint32_t instruction, std::uint64_t pc);
+  /* An SVE word beyond the control core, lowered onto NEON for the
+   * all-active predicate (jit_compiler_sve_inline.cpp). False, with
+   * nothing emitted, when the lowering declines the word, which then runs
+   * through the semantic library. */
+  [[nodiscard]] bool emit_sve_inline(const detail::SmeEncoding &row,
+                                     std::uint32_t instruction,
+                                     std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_floating(std::uint16_t form,
+                                       std::uint32_t instruction,
+                                       std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_integer(std::uint16_t form,
+                                      std::uint32_t instruction,
+                                      std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_permute(std::uint16_t form,
+                                      std::uint32_t instruction,
+                                      std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_index(std::uint16_t form,
+                                    std::uint32_t instruction);
+  [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
+                                     std::uint32_t instruction,
+                                     std::uint64_t pc);
+  /* The block's first SVE word marks the task live (sve_live), and every
+   * one makes the FP state current. */
+  void begin_sve_word();
+  /* Branches to `slow` unless the predicate is all-active for elements of
+   * esize bytes; known after an all-active PTRUE or a passed guard. */
+  void emit_sve_full_guard(unsigned predicate, unsigned esize,
+                           Arm64Emitter::Label slow);
   void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_move_form(std::uint16_t form, std::uint32_t instruction);

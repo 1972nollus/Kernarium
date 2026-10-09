@@ -613,7 +613,22 @@ operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and
 ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL
 and the unpredicated logical forms onto AdvSIMD and general registers
 ([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp)),
-and ends its block in a terminal helper for every other word of the profile
+and lowers the register-only and contiguous-memory hot set of the profile
+onto AdvSIMD for an all-active governing predicate
+([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
+the forms are listed in `jit_sve_inline.hpp`): the floating-point
+multiply-add, arithmetic and same-size conversion forms, the integer
+arithmetic, logical, shift, widening, narrowing, high-half and dot-product
+forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, and LD1*, ST1*, LD1R*,
+LD1RQ*, LD2-LD4, ST2-ST4 and LDR and STR of a Z register whose footprint lies
+in one guest page the TLB holds. A predicated form checks its governing
+predicate once per block and element size, after a PTRUE that sets every
+element it checks nothing, and leaves the block for the library, which alone
+knows what an inactive lane must not do, when the predicate is partial.
+The saturating forms saturate by compare and select, since AdvSIMD's set
+FPSR.QC and SVE's never do. A word that lowering declines (an element size
+AdvSIMD lacks, a crossing or missing page, an SP base or a tagged one) and
+every other word of the profile ends its block in a terminal helper
 ([`cpu/arm64/jit/jit_semantic_sve.cpp`](../darwin/cpu/arm64/jit/jit_semantic_sve.cpp)),
 which runs the word through the semantic library on `CpuState` as the SME
 slow paths do: the library marks the SVE state live, reports a fault at the
@@ -637,7 +652,8 @@ state before it runs, since P and FFR travel with it, and stores
 against the pseudocode on injected hosts, and `arm64-jit-sve-forms` checks
 every row of the profile against the library on random states: alone in a
 block, behind an FP instruction that leaves the native environment active,
-from memory bases inside a page, across pages, unmapped and tagged, and
+behind PTRUE of P0-P7, and after every writer of a predicate that a PTRUE
+made all-active, from memory bases inside a page, across pages, unmapped and tagged, and
 under random FPCR trap enables.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode

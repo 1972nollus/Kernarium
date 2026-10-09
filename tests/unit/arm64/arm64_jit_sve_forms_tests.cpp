@@ -9,8 +9,10 @@
  * registers, predicates, FFR, NZCV and FPSR, the same event, fault and
  * syndrome, and the same memory.
  *
- * Each word runs alone in a block and again behind an FP instruction that
- * leaves the guest's FP environment active in the host's registers. A
+ * Each word runs alone in a block, again behind an FP instruction that
+ * leaves the guest's FP environment active in the host's registers, and
+ * again behind PTRUE of P0-P7, where the translation knows every governing
+ * predicate all-active and emits no check. A
  * memory word runs from bases inside a page, at a page's end, across into
  * the unmapped page after the two, and tagged under TBI. A floating-point
  * word also runs with FPCR trap enables set, where the executor runs it
@@ -27,6 +29,7 @@
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
+#include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -47,6 +50,7 @@
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
+namespace jit_test = arm64::jit::testing;
 using arm64::JitExecutor;
 using uml::cpu::ArmFeature;
 using uml::cpu::HostCapabilities;
@@ -63,12 +67,16 @@ constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
 constexpr std::size_t mapped_pages = 2;
 constexpr std::size_t mapped = mapped_pages * page;
 constexpr std::uint32_t svc = 0xd400'0001U;
+constexpr std::uint32_t nop = 0xd503'201fU;
 /* fadd s31, s31, s31 on 1.0: exact, so it raises nothing, and it leaves
  * the guest's FP environment active in the host's registers. */
 constexpr std::uint32_t activate = 0x1e3f'2bffU;
 /* The words each sample's program occupies. */
-constexpr std::size_t slot_bytes = 32;
-constexpr std::size_t slots = 40;
+constexpr std::size_t slot_bytes = 48;
+constexpr std::size_t slots = 28;
+constexpr std::size_t variants = 3;
+/* ptrue p<n>.b, all. */
+constexpr std::uint32_t ptrue_b = 0x2518'e3e0U;
 
 /* The probed host without SME and with every SVE token injected, plus the
  * BF16 and I8MM tokens their SVE forms need; the library implements
@@ -317,23 +325,34 @@ void print_bytes(const char *label, std::span<const std::byte> bytes) {
   std::fprintf(stderr, "\n");
 }
 
-/* Runs `word`, behind an activating FP instruction when `behind`, on the
- * JIT from `initial` over `data`, and against the library on a copy; any
- * difference is reported and fails. */
+/* How a word is preceded in its block. */
+enum class Variant { alone, behind_fp, behind_ptrue };
+
+/* Runs `word` after the variant's prefix on the JIT from `initial` over
+ * `data`, and against the library on a copy; any difference is reported
+ * and fails. */
 void compare(Machine &machine, std::size_t slot, std::uint32_t word,
-             std::size_t index, bool behind, const arm64::CpuState &initial,
-             const std::vector<std::byte> &data, bool traps, Tally &tally) {
+             std::size_t index, Variant variant,
+             const arm64::CpuState &initial, const std::vector<std::byte> &data,
+             bool traps, Tally &tally) {
   const auto &row = arm64::detail::sme_encodings[index];
-  const std::array alone{word, svc};
-  const std::array activated{activate, word, svc};
-  const std::span<const std::uint32_t> code =
-      behind ? std::span<const std::uint32_t>{activated}
-             : std::span<const std::uint32_t>{alone};
+  std::vector<std::uint32_t> code;
+  if (variant == Variant::behind_fp)
+    code.push_back(activate);
+  if (variant == Variant::behind_ptrue)
+    for (std::uint32_t n = 0; n < 8U; ++n)
+      code.push_back(ptrue_b | n);
+  const auto prefix = code.size();
+  code.push_back(word);
+  code.push_back(svc);
+  const bool behind = variant == Variant::behind_fp;
   /* A program per slot and variant, so no block is ever reused after the
    * words under it changed. */
-  const auto offset = (slot * 2U + (behind ? 1U : 0U)) * slot_bytes;
+  const auto offset =
+      (slot * variants + static_cast<std::size_t>(variant)) * slot_bytes;
   std::vector<std::byte> before = data;
-  std::memcpy(before.data() + offset, code.data(), code.size_bytes());
+  std::memcpy(before.data() + offset, code.data(),
+              code.size() * sizeof(std::uint32_t));
   machine.put(0, before);
   machine.cpu = initial;
   std::size_t retired = 0;
@@ -343,6 +362,9 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
 
   /* Beyond the FP instruction, the library's view of the state. */
   auto expected = initial;
+  if (variant == Variant::behind_ptrue)
+    for (unsigned n = 0; n < 8U; ++n)
+      expected.sve_p[n] = arm64::sve_predicate_mask(0xffffU);
   if (behind) {
     /* fadd s31, s31, s31 on 1.0 leaves 2.0 in S31 and clears the rest of
      * the register; it raises nothing. */
@@ -357,7 +379,7 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
       result.event == arm64::detail::SveEvent::floating_point_trap;
   tally.faults += faulted ? 1U : 0U;
   tally.traps += trapped ? 1U : 0U;
-  const auto at = code_base + offset + (behind ? 4U : 0U);
+  const auto at = code_base + offset + prefix * 4U;
   const Event want = faulted   ? Event::memory_fault
                      : trapped ? Event::floating_point_trap
                                : Event::system_call;
@@ -394,7 +416,8 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
                "state than the library\n  event %d (want %d, library %d), "
                "retired %zu, pc %#llx/%#llx, fault %#llx/%#llx, nzcv "
                "%08x/%08x, fpsr %08x/%08x, fpcr %08x, memory %s\n",
-               word, index, row.form & 0x7fffU, behind ? ", FP active" : "",
+               word, index, row.form & 0x7fffU, behind ? ", FP active"
+                               : prefix != 0U ? ", P0-P7 true" : "",
                traps ? ", traps" : "", static_cast<int>(event),
                static_cast<int>(want), static_cast<int>(result.event), retired,
                static_cast<unsigned long long>(machine.cpu.pc),
@@ -407,6 +430,12 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
     print_bytes("jit    ", machine.cpu.vectors[differing].bytes);
     print_bytes("library", expected.vectors[differing].bytes);
     std::fprintf(stderr, "  in Z%u\n", differing);
+    /* The words' conventional operand fields, before the run. */
+    for (const unsigned low : {0U, 5U, 16U}) {
+      const unsigned n = (word >> low) & 31U;
+      std::fprintf(stderr, "  initial Z%u (bits %u)", n, low);
+      print_bytes("", initial.vectors[n].bytes);
+    }
   }
   if (machine.cpu.sve_p != expected.sve_p)
     std::fprintf(stderr, "  P differs\n");
@@ -464,9 +493,8 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
         (row.mode & arm64::detail::sme_mode_za) != 0U)
       continue;
     const bool memory = row.memory != 0U;
-    if (arm64::jit::implements_sve_form(row.form))
-      ++tally.inline_rows;
     ++tally.rows;
+    bool lowered = false;
     Machine machine{host};
     const std::size_t samples = memory ? 14U : slots;
     for (std::size_t slot = 0; slot < samples; ++slot) {
@@ -482,25 +510,144 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
       }
       const bool traps = !memory && random.next() % 4U == 0U;
       auto initial = random_state(random, traps);
-      if (memory) {
-        for (unsigned n = 0; n < 16; ++n)
-          if (random.next() % 2U == 0U)
-            initial.sve_p[n] = arm64::sve_predicate_mask(0xffffU);
+      /* Governing predicates are often all-active, so the inline bodies
+       * run as often as the library's. */
+      for (unsigned n = 0; n < 16; ++n)
+        if (random.next() % 2U == 0U)
+          initial.sve_p[n] = arm64::sve_predicate_mask(0xffffU);
+      if (memory)
         place_base(row, word, random, initial);
+      /* Whether this word runs inline: a library word ends its block, an
+       * inline one is followed by the rest. */
+      if (!lowered) {
+        const std::array probe{word, nop, nop};
+        const uml::cpu::HostCapabilitiesScope scope{host};
+        lowered = jit_test::compile_block_in_mode(code_base, probe, 0,
+                                                  jit_test::LinkShape::unlinked)
+                      .code.guest_instructions > 1U;
       }
       /* S31 must hold 1.0 for the activating FADD to be exact. */
       initial.vectors[31].bytes = {};
       const auto one = std::bit_cast<std::uint32_t>(1.0F);
-      for (const bool behind : {false, true}) {
+      for (const auto variant : {Variant::alone, Variant::behind_fp,
+                                 Variant::behind_ptrue}) {
         auto start = initial;
-        if (behind) {
+        if (variant == Variant::behind_fp) {
           std::memcpy(start.vectors[31].bytes.data(), &one, 4);
           /* The FADD's own result is part of the expectation. */
         }
-        compare(machine, slot, word, index, behind, start, data, traps, tally);
+        compare(machine, slot, word, index, variant, start, data, traps,
+                tally);
       }
     }
+    if (lowered)
+      ++tally.inline_rows;
   }
+}
+
+/* A predicate that PTRUE made all-active stops being known so as soon as
+ * anything writes it: each writer below makes P0 partial for some state,
+ * and the consumer after it, which the translation lowered for P0 all-active
+ * only while it was known, must then leave the block for the library. */
+void writers_forget_fullness(const HostCapabilities &host) {
+  constexpr std::array<std::uint32_t, 8> writers{
+      0x2518'e400U, /* pfalse p0.b */
+      0x25a1'1c00U, /* whilelo p0.s, x0, x1 */
+      0x2522'1fe0U, /* whilelo p0.b, xzr, x2 */
+      0x2598'e060U, /* ptrue p0.s, vl3 */
+      0x2502'4020U, /* and p0.b, p0/z, p1.b, p2.b */
+      0x2519'f000U, /* rdffr p0.b */
+      0x2581'4420U, /* orr p0.b, p1/z, p1.b, p1.b */
+      0x2518'e3e0U, /* ptrue p0.b, all: stays known */
+  };
+  constexpr std::array<std::uint32_t, 11> consumers{
+      0x65a2'0020U, /* fmla z0.s, p0/m, z1.s, z2.s */
+      0xa540'a080U, /* ld1w {z0.s}, p0/z, [x4] */
+      0xe540'e0a1U, /* st1w {z1.s}, p0, [x5] */
+      0x0400'0020U, /* add z0.b, p0/m, z0.b, z1.b */
+      0x0490'0020U, /* mul z0.s, p0/m, z0.s, z1.s */
+      0xa420'a080U, /* ld1b {z0.h}, p0/z, [x4] */
+      0xe460'e0a1U, /* st1b {z1.d}, p0, [x5] */
+      0xa520'e080U, /* ld2w {z0.s, z1.s}, p0/z, [x4] */
+      0x65c0'8083U, /* fadd z3.d, p0/m, z3.d, z4.d */
+      0x0447'8060U, /* uqshl z0.s, p0/m, z0.s, #3 */
+      0x8540'c080U, /* ld1rw {z0.s}, p0/z, [x4] */
+  };
+  Random random{0x6a17'5e02U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t checked = 0;
+  for (const auto writer : writers)
+    for (const auto consumer : consumers) {
+      /* One machine and one program per pair: the blocks it translates are
+       * reused by the states below. */
+      Machine machine{host};
+      const std::array<std::uint32_t, 4> program{ptrue_b, writer, consumer,
+                                                 svc};
+      constexpr std::size_t offset = 0;
+      for (unsigned sample = 0; sample < 12U; ++sample) {
+        std::vector<std::byte> data(mapped);
+        for (std::size_t at = 0; at < mapped; at += 8) {
+          const auto value = random.next();
+          std::memcpy(data.data() + at, &value, 8);
+        }
+        auto initial = random_state(random, false);
+        for (unsigned n = 1; n < 16U; ++n)
+          if (random.next() % 2U == 0U)
+            initial.sve_p[n] = arm64::sve_predicate_mask(0xffffU);
+        initial.registers[0] = random.next() % 40U;
+        initial.registers[1] = random.next() % 40U;
+        initial.registers[2] = random.next() % 40U;
+        initial.registers[4] = code_base + page + 64U + random.next() % (page - 256U);
+        initial.registers[5] = code_base + page + 64U + random.next() % (page - 256U);
+        std::vector<std::byte> before = data;
+        std::memcpy(before.data() + offset, program.data(), sizeof program);
+        machine.put(0, before);
+        machine.cpu = initial;
+        std::size_t retired = 0;
+        const auto event = machine.run(code_base + offset, retired);
+        std::vector<std::byte> after(mapped);
+        machine.get(0, after);
+
+        auto expected = initial;
+        CopiedMemory reference{before};
+        for (const auto word : {ptrue_b, writer, consumer}) {
+          const auto *row = arm64::detail::decode_sve_non_streaming(word, features);
+          require(row != nullptr);
+          const auto result = arm64::detail::execute_sve(expected, word, *row, reference);
+          require(result.event == arm64::detail::SveEvent::retired);
+        }
+        bool same = event == Event::system_call && retired == 4U &&
+                    machine.cpu.registers == expected.registers &&
+                    machine.cpu.sve_p == expected.sve_p &&
+                    machine.cpu.sve_ffr == expected.sve_ffr &&
+                    machine.cpu.fpsr == expected.fpsr &&
+                    machine.cpu.nzcv == expected.nzcv && after == before;
+        for (unsigned n = 0; n < 32U && same; ++n)
+          same = machine.cpu.vectors[n].bytes == expected.vectors[n].bytes;
+        if (!same) {
+          std::fprintf(stderr,
+                       "writer %08x then consumer %08x: the JIT leaves another "
+                       "state than the library (event %d, retired %zu)\n",
+                       writer, consumer, static_cast<int>(event), retired);
+          for (unsigned n = 0; n < 32U; ++n)
+            if (machine.cpu.vectors[n].bytes != expected.vectors[n].bytes) {
+              std::fprintf(stderr, "  Z%u differs\n", n);
+              print_bytes("jit    ", machine.cpu.vectors[n].bytes);
+              print_bytes("library", expected.vectors[n].bytes);
+            }
+          for (unsigned n = 0; n < 16U; ++n)
+            if (machine.cpu.sve_p[n] != expected.sve_p[n])
+              std::fprintf(stderr, "  P%u differs\n", n);
+          if (machine.cpu.registers != expected.registers)
+            std::fprintf(stderr, "  X differs\n");
+          if (after != before)
+            std::fprintf(stderr, "  memory differs\n");
+          require(false);
+        }
+        ++checked;
+      }
+    }
+  std::printf("%zu writer/consumer programs match the library\n", checked);
 }
 
 } // namespace
@@ -513,6 +660,7 @@ int main() {
   }
   require(arm64::jit::sve_support == arm64::SveSupport::complete);
   Tally tally;
+  writers_forget_fullness(sve_host());
   forms_match_the_library(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);

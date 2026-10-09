@@ -298,7 +298,8 @@ set(_uml_cpu_jit_executor_sve_sources
 
 # JIT non-streaming SVE sources, owned by SVE lane V4.
 set(_uml_cpu_jit_sve_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve_inline.cpp)
 
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp

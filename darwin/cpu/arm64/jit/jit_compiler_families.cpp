@@ -505,6 +505,7 @@ JitCompilerFamilies::read_native_predicate(unsigned index,
 JitCompilerFamilies::NativeVector
 JitCompilerFamilies::write_native_predicate(unsigned index, bool reads_old,
                                             unsigned fallback) {
+  sve_full_[index] = 0U;
   return write_native_vector(predicate_identity + index, reads_old,
                              fallback);
 }
