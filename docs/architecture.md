@@ -616,7 +616,8 @@ and the unpredicated logical forms onto AdvSIMD and general registers
 and lowers the register-only and contiguous-memory hot set of the profile
 onto AdvSIMD for an all-active governing predicate
 ([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
-the forms are listed in `jit_sve_inline.hpp`): the floating-point
+the forms are listed in
+[`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
 multiply-add, arithmetic and same-size conversion forms, the integer
 arithmetic, logical, shift, widening, narrowing, high-half and dot-product
 forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, and LD1*, ST1*, LD1R*,
