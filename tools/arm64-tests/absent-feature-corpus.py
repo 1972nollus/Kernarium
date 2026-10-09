@@ -33,7 +33,11 @@ rewrites a dump after export. For each named feature it
   option, and allocation tags from every other case and record, and drops
   the cases the --failing file names, which fail once that state is gone;
 - appends the arm64-absent-<feature> records, which expect every encoding
-  class of the feature to be undefined and its hints to be NOPs; and
+  class of the feature to be undefined and its hints to be NOPs, and whose
+  cases take their invalid-encoding bit from invalid_encoding.py: a word of
+  an omitted feature is an invalid encoding, but a generic system word that
+  names its register and a word that another virtual-CPU configuration
+  executes are not; and
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
 
@@ -123,6 +127,11 @@ _spec = importlib.util.spec_from_file_location(
 sme_table = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = sme_table
 _spec.loader.exec_module(sme_table)
+_spec = importlib.util.spec_from_file_location(
+    "invalid_encoding", HERE / "invalid_encoding.py")
+invalid_encoding = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = invalid_encoding
+_spec.loader.exec_module(invalid_encoding)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
 DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "ebf16", "lse128",
@@ -887,13 +896,24 @@ def undefined_record(feature: str, table: str | None) -> dict | None:
     words = () if table not in (None, feature) else UNDEFINED.get(feature, ())
     if table is not None:
         words = (*words, *table_words(table))
+    option = TABLE_OPTIONS[table] if table is not None else None
+    options = [option] if option is not None else []
     for name, word in words:
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
+        # Whether the word is an invalid encoding is the shared classifier's
+        # answer, not the case's being undefined: a generic system word
+        # that names an omitted feature's register decodes, and a word of a
+        # feature that another configuration implements does too.
+        decision = invalid_encoding.classifier().decide(word, options)
+        if decision is None:
+            raise SystemExit(f"{name} {word:08x}: invalid_encoding.py does "
+                             "not decide this absent-feature word")
         cases.append({
             "name": f"{name} is undefined", "program": len(programs) - 1,
             "event": "illegal-instruction", "ordinals": [0, 0],
-            "invalid_encoding": True, "minimization": "full", "native": [],
+            "invalid_encoding": decision.invalid, "minimization": "full",
+            "native": [],
             "initial": {}, "expected": {}, "retired": 0,
         })
     for name, word in HINTS.get(feature, ()) if table is None else ():
@@ -910,10 +930,7 @@ def undefined_record(feature: str, table: str | None) -> dict | None:
     if not cases:
         return None
     name = f"arm64-absent-{feature}"
-    options = []
-    option = TABLE_OPTIONS[table] if table is not None else None
     if option is not None:
-        options = [option]
         name += f"/options={1 << corpus.OPTION_NAMES.index(option):x}"
     return {
         "record": name, "producer": f"arm64-absent-{feature}",
