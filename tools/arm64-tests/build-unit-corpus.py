@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Build, check, dump, and re-pack the checked-in A64 instruction corpus."""
+"""Build, check, dump, and re-pack the generated A64 instruction corpus."""
 
 from __future__ import annotations
 
@@ -1851,7 +1851,8 @@ def repack(options: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=pathlib.Path, default=CORPUS,
+    parser.add_argument("--output", type=pathlib.Path,
+                        default=REPOSITORY / ".build/corpora/arm64",
                         help="corpus directory (default: %(default)s)")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--export-16k", type=pathlib.Path,

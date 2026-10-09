@@ -30,9 +30,10 @@ The cases cover, for each record:
 - operands: each operand field of each profile row at the lowest and highest
   register its alignment allows, with the other operands distinct; every
   value of each short immediate or size field and both extremes of a wider
-  one; all-true, all-false, and partial predicates; general-register
-  sources at both extremes; and FPCR's flush, default-NaN, and rounding
-  controls for floating-point rows;
+  one; every class of bitmask immediate that DecodeBitMasks reserves, for
+  the logical-immediate rows; all-true, all-false, and partial predicates;
+  general-register sources at both extremes; and FPCR's flush,
+  default-NaN, and rounding controls for floating-point rows;
 - za: ZA slice-index registers at zero and at all ones, which wraps;
 - memory: each profile memory form aligned and misaligned, crossing a 16 KiB
   page with both pages mapped, with only the first mapped and its elements
@@ -58,6 +59,11 @@ The response must come from an SME host with FEAT_SME2. A case whose
 legality differs from the table's mode requirements, or an FP&SIMD class
 whose legality in streaming mode differs from the table's AdvSIMD flag, is a
 finding about the table: the script reports each one and writes nothing.
+The table also decides that an operand case's word is UNDEFINED in every
+mode when no row decodes it or its row's bitmask immediate is one that
+DecodeBitMasks reserves. Such a case, like a row outside the profile or a
+Debug-state form, is an invalid encoding; a case that is UNDEFINED only for
+its mode or a missing feature is not.
 
 Oracle request (little-endian):
 
@@ -882,6 +888,29 @@ class RowIndex:
                      if row.matches(word)), None)
 
 
+BITMASK_ROWS = ("and_z_zi_", "eor_z_zi_", "orr_z_zi_", "dupm_z_i_")
+
+
+def reserved_bitmask(word: int) -> bool:
+    """Whether DecodeBitMasks reserves a logical-immediate word's imm13 (N
+    at bit 17, imms at bits 10:5): N:NOT(imms) selects no element size, or
+    imms sets every bit of its element size."""
+    n, imms = word >> 17 & 1, word >> 5 & 0x3F
+    size = (n << 6 | ~imms & 0x3F).bit_length() - 1
+    if size < 1:
+        return True
+    ones = (1 << size) - 1
+    return imms & ones == ones
+
+
+def undefined_everywhere(index: RowIndex, word: int) -> bool:
+    """Whether the table makes a word UNDEFINED in every mode: no row
+    decodes it, or its row's bitmask immediate is reserved."""
+    row = index.row_for(word)
+    return row is None or \
+        row.encoding in BITMASK_ROWS and reserved_bitmask(word)
+
+
 def operand_drafts(table) -> list[Draft]:
     drafts = []
     index = RowIndex(table)
@@ -898,6 +927,8 @@ def operand_drafts(table) -> list[Draft]:
                 return None
             seen.add(word)
             draft = base_draft("operands", row, word, label, svcr)
+            if undefined_everywhere(index, word):
+                draft.expect, draft.invalid = "illegal", True
             for key, value in changes.items():
                 if key == "x":
                     draft.x.update(value)
@@ -922,6 +953,14 @@ def operand_drafts(table) -> list[Draft]:
                 if found is not None and found is not row:
                     continue
                 add(word, f"bits {low + width - 1}:{low} = {value:#x}")
+        if row.encoding in BITMASK_ROWS:
+            # Every class of bitmask immediate that DecodeBitMasks
+            # reserves: N = 1 with imms all ones, N = 0 with imms 11111x,
+            # and each smaller element size with every element bit set.
+            for value in (0x103F, 0x003E, 0x003F, 0x003D, 0x003B, 0x0037,
+                          0x002F, 0x001F):
+                add(with_run(low_word, (5, 13), value),
+                    f"reserved bitmask immediate {value:#06x}")
         if predicated(row) and svcr & SM:
             patterns = (("all-true", b"\xff" * (SVL // 8)),
                         ("all-false", bytes(SVL // 8)),
