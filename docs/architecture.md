@@ -553,9 +553,11 @@ including the shifts by wide elements, the SVE2 widening (also indexed),
 narrowing, high-half and shift-accumulate forms, the unsigned saturating
 forms, BSL, BSL1N, BSL2N, NBSL, EOR3, EORBT, EORTB, XAR, ZIP, UZP and TRN
 of vectors and predicates, REV, EXT, TBL of one or two registers, the dot
-products, the integer compares, and the floating-point arithmetic
-(also by immediate), multiply-add, indexed, rounding and same-size
-conversion forms. A predicated
+products, the integer compares (also by immediate), the floating-point
+compares, PUNPK, SUNPK and UUNPK, BRKA and BRKB, INDEX, COMPACT and SPLICE,
+UADDV, FADDV and FADDA, ADDP, USQADD, URHADD, SUBHNB and SUBHNT, and the
+floating-point arithmetic (also by immediate, and with reversed operands),
+multiply-add, indexed, rounding and same-size conversion forms. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so

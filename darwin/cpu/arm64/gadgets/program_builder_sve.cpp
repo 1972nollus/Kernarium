@@ -110,6 +110,55 @@ static_assert(while_tables[1][2][4].nzcv == 0x8000'0000U &&
 	while_tables[1][2][3].mask[4] == 0xffU &&
 	while_tables[1][2][3].mask[0] == 0U);
 
+/* Constants the gadgets read through a pointer in their stream
+ * (engine/generate_sve.py, TABLE_*): the bytes 0-15; the TBL indexes that
+ * pack the active elements of a vector of words, by the mask of which of
+ * its four elements are active; and the same for doublewords and two. A
+ * byte past the packed elements is out of range for TBL, which gives zero. */
+struct SveTables final {
+	std::array<std::uint8_t, 16> iota{};
+	std::array<std::array<std::uint8_t, 16>, 16> compact_word{};
+	std::array<std::array<std::uint8_t, 16>, 4> compact_doubleword{};
+};
+
+[[nodiscard]] constexpr SveTables make_sve_tables() noexcept
+{
+	SveTables tables;
+	for (unsigned byte = 0; byte < 16U; ++byte)
+		tables.iota[byte] = static_cast<std::uint8_t>(byte);
+	for (unsigned mask = 0; mask < 16U; ++mask) {
+		unsigned out = 0;
+		for (auto &index : tables.compact_word[mask])
+			index = 0xffU;
+		for (unsigned element = 0; element < 4U; ++element) {
+			if ((mask >> element & 1U) == 0U)
+				continue;
+			for (unsigned byte = 0; byte < 4U; ++byte)
+				tables.compact_word[mask][out * 4U + byte] =
+					static_cast<std::uint8_t>(element * 4U + byte);
+			++out;
+		}
+	}
+	for (unsigned mask = 0; mask < 4U; ++mask) {
+		unsigned out = 0;
+		for (auto &index : tables.compact_doubleword[mask])
+			index = 0xffU;
+		for (unsigned element = 0; element < 2U; ++element) {
+			if ((mask >> element & 1U) == 0U)
+				continue;
+			for (unsigned byte = 0; byte < 8U; ++byte)
+				tables.compact_doubleword[mask][out * 8U + byte] =
+					static_cast<std::uint8_t>(element * 8U + byte);
+			++out;
+		}
+	}
+	return tables;
+}
+
+alignas(16) constexpr SveTables sve_tables = make_sve_tables();
+static_assert(offsetof(SveTables, compact_word) == 16 &&
+	offsetof(SveTables, compact_doubleword) == 16 + 16 * 16);
+
 /* The word's bits under `mask`, packed from the least significant up. */
 [[nodiscard]] constexpr std::uint32_t gather(std::uint32_t word,
 	std::uint32_t mask) noexcept
@@ -407,6 +456,56 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		emit_words(context, *bits);
 		return true;
 	}
+	case Lowering::compare_signed_immediate:
+		/* imm5, sign-extended to the element size. */
+		emit_words(context, replicate(static_cast<std::uint64_t>(
+			sign_extend((word >> 16) & 31U, 5)), esize));
+		return true;
+	case Lowering::compare_unsigned_immediate:
+		/* imm7. */
+		emit_words(context, replicate((word >> 14) & 127U, esize));
+		return true;
+	case Lowering::index_immediate: {
+		/* INDEX with an immediate start (argument 0) or step (1), which
+		 * the gadget adds to its register operand, or both (2), when the
+		 * whole vector is a constant. */
+		const auto start = static_cast<std::uint64_t>(
+			sign_extend((word >> 5) & 31U, 5));
+		const auto step = static_cast<std::uint64_t>(
+			sign_extend((word >> 16) & 31U, 5));
+		if (form.argument == 0U) {
+			emit_words(context, start);
+		} else if (form.argument == 1U) {
+			emit_words(context, step);
+		} else if (form.argument == 3U) {
+			/* Both are registers. */
+		} else {
+			std::array<std::uint64_t, 2> lanes{};
+			const unsigned bits = esize * 8U;
+			const std::uint64_t mask = bits == 64U ?
+				~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1U;
+			for (unsigned element = 0;
+			     element < sve_vector_length / esize; ++element) {
+				const auto value =
+					(start + std::uint64_t{element} * step) & mask;
+				const unsigned bit = element * bits;
+				lanes[bit / 64U] |= value << (bit % 64U);
+			}
+			emit_words(context, lanes[0]);
+			emit_words(context, lanes[1]);
+			return true;
+		}
+		/* A byte or halfword series adds the step times the byte
+		 * numbers. */
+		if (esize < 4U)
+			emit(context.words, reinterpret_cast<std::uintptr_t>(
+				sve_tables.iota.data()));
+		return true;
+	}
+	case Lowering::tables:
+		emit(context.words, reinterpret_cast<std::uintptr_t>(
+			&sve_tables));
+		return true;
 	case Lowering::float_immediate:
 		emit_words(context, replicate(selection::expand_vfp_immediate(
 			static_cast<std::uint8_t>((word >> 5) & 0xffU), esize * 8U),
