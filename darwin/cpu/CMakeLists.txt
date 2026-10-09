@@ -294,6 +294,10 @@ set(_uml_cpu_jit_sme_sources
 set(_uml_cpu_jit_executor_sme_sources
     arm64/jit/jit_semantic_sme.cpp)
 
+# JIT non-streaming SVE sources, owned by SVE lane V4.
+set(_uml_cpu_jit_sve_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve.cpp)
+
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler.cpp
@@ -307,7 +311,8 @@ set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_simd_permute.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_emitter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_tlb_translate.S
-    ${_uml_cpu_jit_sme_sources})
+    ${_uml_cpu_jit_sme_sources}
+    ${_uml_cpu_jit_sve_sources})
 
 add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
 uml_declare_architecture_target(uml_arm64_jit cpu native)

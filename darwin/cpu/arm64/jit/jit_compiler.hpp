@@ -292,6 +292,40 @@ private:
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,
                             std::uint64_t pc, std::size_t count);
 
+  /* The non-streaming SVE control core (jit_compiler_sve.cpp), in an SM=0
+   * translation on a host whose profile implements SVE. Nothing for a word
+   * of no SVE row, which the SME path then takes; the illegal exit for an
+   * SVE row outside the profile or the control core. */
+  [[nodiscard]] std::optional<Action>
+  emit_sve_instruction(std::uint32_t instruction, std::uint64_t pc);
+  void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
+  void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
+  void emit_sve_move_form(std::uint16_t form, std::uint32_t instruction);
+  /* A WHILE* word, fused with a B.cond that follows it in the block: then
+   * the pair ends the block and this returns true. */
+  [[nodiscard]] bool emit_sve_while(std::uint16_t form,
+                                    std::uint32_t instruction,
+                                    std::uint64_t pc);
+  /* Guest NZCV = PredTest(mask, result, 8) of two predicates held in host
+   * vector registers. */
+  void emit_sve_predicate_test(unsigned mask, unsigned result);
+  /* Guest NZCV = the NZCV image in w11. */
+  void emit_sve_flags_from_w11();
+  /* Wdestination = the active elements of esize bytes in the predicate
+   * held in a host vector register; v4 is scratch. */
+  void emit_sve_active_count(unsigned predicate, unsigned esize,
+                             unsigned destination);
+  /* The host register holding a predicate's lane mask for elements of
+   * esize bytes: the predicate itself for bytes, else `scratch`. */
+  [[nodiscard]] unsigned emit_sve_lane_mask(unsigned predicate,
+                                            unsigned esize, unsigned scratch);
+  /* A host vector register = a 128-bit constant, or an element of esize
+   * bytes in every lane. x16 is scratch. */
+  void emit_sve_vector_constant(unsigned destination, std::uint64_t low,
+                                std::uint64_t high);
+  void emit_sve_element_constant(unsigned destination, std::uint64_t element,
+                                 unsigned esize);
+
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);
 
@@ -422,6 +456,10 @@ private:
   bool track_direct_stores_{};
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
+  /* The block being compiled, for a form that looks at its successor. */
+  std::span<const std::uint32_t> block_{};
+  /* An SVE word in this block has marked the task live (sve_live). */
+  bool sve_marked_{};
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

@@ -403,6 +403,23 @@ JitCompilerFamilies::allocate_vector_slot(unsigned guest) {
   return std::nullopt;
 }
 
+std::size_t
+JitCompilerFamilies::vector_slot_offset(unsigned guest) noexcept {
+  if (guest < unbound_guest)
+    return offsetof(arm64::CpuState, vectors) +
+           guest * sizeof(arm64::VectorRegister);
+  const unsigned index = guest - predicate_identity;
+  if (index == sve_ffr)
+    return offsetof(arm64::CpuState, sve_ffr);
+  return offsetof(arm64::CpuState, sve_p) +
+         index * sizeof(arm64::SvePredicate);
+}
+
+/* LDR and STR (Q, unsigned offset) reach every binding's state. */
+static_assert(offsetof(arm64::CpuState, sve_p) % 16U == 0U &&
+              offsetof(arm64::CpuState, sve_ffr) % 16U == 0U &&
+              offsetof(arm64::CpuState, sve_ffr) < 4096U * 16U);
+
 JitCompilerFamilies::NativeVector
 JitCompilerFamilies::read_native_vector(unsigned guest,
                                         unsigned fallback) {
@@ -410,9 +427,7 @@ JitCompilerFamilies::read_native_vector(unsigned guest,
   auto slot = find_vector_slot(guest);
   if (!slot)
     slot = allocate_vector_slot(guest);
-  const auto offset =
-      offsetof(arm64::CpuState, vectors) +
-      guest * sizeof(arm64::VectorRegister);
+  const auto offset = vector_slot_offset(guest);
   if (slot) {
     auto &binding = vector_slots_[*slot];
     if (!binding.loaded) {
@@ -459,9 +474,7 @@ JitCompilerFamilies::write_native_vector(unsigned guest, bool reads_old,
   auto slot = find_vector_slot(guest);
   if (!slot)
     slot = allocate_vector_slot(guest);
-  const auto offset =
-      offsetof(arm64::CpuState, vectors) +
-      guest * sizeof(arm64::VectorRegister);
+  const auto offset = vector_slot_offset(guest);
   if (slot) {
     auto &binding = vector_slots_[*slot];
     if (reads_old && !binding.loaded)
@@ -480,9 +493,25 @@ void JitCompilerFamilies::commit_native_vector(NativeVector value,
   if (value.resident)
     return;
   static_cast<Arm64Emitter *>(family_emitter_)
-      ->store_q(value.host, 15,
-                offsetof(arm64::CpuState, vectors) +
-                    guest * sizeof(arm64::VectorRegister));
+      ->store_q(value.host, 15, vector_slot_offset(guest));
+}
+
+JitCompilerFamilies::NativeVector
+JitCompilerFamilies::read_native_predicate(unsigned index,
+                                           unsigned fallback) {
+  return read_native_vector(predicate_identity + index, fallback);
+}
+
+JitCompilerFamilies::NativeVector
+JitCompilerFamilies::write_native_predicate(unsigned index, bool reads_old,
+                                            unsigned fallback) {
+  return write_native_vector(predicate_identity + index, reads_old,
+                             fallback);
+}
+
+void JitCompilerFamilies::commit_native_predicate(NativeVector value,
+                                                  unsigned index) {
+  commit_native_vector(value, predicate_identity + index);
 }
 
 void JitCompilerFamilies::emit_native_vector_unary(
@@ -625,10 +654,8 @@ void JitCompilerFamilies::flush_vectors(std::uint32_t mask) {
     const auto &slot = vector_slots_[index];
     if ((mask & (1U << index)) == 0U || slot.guest == unbound_guest)
       continue;
-    emitter.store_q(
-        resident_vector_hosts[index], 15,
-        offsetof(arm64::CpuState, vectors) +
-            slot.guest * sizeof(arm64::VectorRegister));
+    emitter.store_q(resident_vector_hosts[index], 15,
+                    vector_slot_offset(slot.guest));
   }
 }
 

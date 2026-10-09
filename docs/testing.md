@@ -645,6 +645,8 @@ part of the SVE profile needs, the engines' support levels, the predicate
 mask form and the SM-change reset, with injected hosts. Unit binaries take
 that policy from their environment as well; until an engine implements SVE
 the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
+`arm64-jit-sve-control` checks the JIT's control core on injected SVE hosts
+under either policy.
 
 ## x86 instruction conformance
 
