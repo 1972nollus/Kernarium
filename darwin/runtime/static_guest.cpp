@@ -171,13 +171,14 @@ void load_cpu(arm64::CpuState &cpu,
  * travel only while the task is live; between entries the vCPU's copies are
  * zero (save_sve), which is what a task that has not executed SVE since its
  * last system call finds when it starts to. Only the kernel sets a live
- * task's flags, for the run's vector length; anything else is fatal. */
-[[nodiscard]] bool load_sve(arm64::CpuState &cpu,
+ * task's flags, for the run's vector length; anything else is fatal.
+ *
+ * Every entry and return runs the test, and a task that is not live is the
+ * common case, so the test is inline and the live path is not: a call there
+ * costs the syscall boundary probe 3% on the A15. */
+[[nodiscard, gnu::noinline]] bool load_live_sve(arm64::CpuState &cpu,
 	const darwin_uml_guest_sve_registers &sve) noexcept
 {
-	cpu.sve_live = 0;
-	if (sve.flags == 0) [[likely]]
-		return true;
 	if (sve.flags != DARWIN_UML_GUEST_SVE_LIVE ||
 		sve.vl != arm64::sve_vector_length)
 		return false;
@@ -188,13 +189,20 @@ void load_cpu(arm64::CpuState &cpu,
 	return true;
 }
 
+[[nodiscard, gnu::always_inline]] inline bool load_sve(arm64::CpuState &cpu,
+	const darwin_uml_guest_sve_registers &sve) noexcept
+{
+	cpu.sve_live = 0;
+	if (sve.flags == 0) [[likely]]
+		return true;
+	return load_live_sve(cpu, sve);
+}
+
 /* A live task gets back its P, FFR and flag, and the vCPU's copies are
  * zeroed for the next task. A task that is not live keeps its tail. */
-void save_sve(arm64::CpuState &cpu,
+[[gnu::noinline]] void save_live_sve(arm64::CpuState &cpu,
 	darwin_uml_guest_sve_registers &sve) noexcept
 {
-	if (cpu.sve_live == 0) [[likely]]
-		return;
 	for (unsigned n = 0; n < arm64::sve_p_registers; ++n)
 		sve.p[n] = arm64::sve_predicate_packed(cpu.sve_p[n]);
 	sve.ffr = arm64::sve_predicate_packed(cpu.sve_ffr);
@@ -203,7 +211,16 @@ void save_sve(arm64::CpuState &cpu,
 	cpu.sve_ffr = {};
 }
 
-void save_cpu(arm64::CpuState &cpu,
+[[gnu::always_inline]] inline void save_sve(arm64::CpuState &cpu,
+	darwin_uml_guest_sve_registers &sve) noexcept
+{
+	if (cpu.sve_live == 0) [[likely]]
+		return;
+	save_live_sve(cpu, sve);
+}
+
+/* Inline, like the tests above: outlined, it adds a call to every return. */
+[[gnu::always_inline]] inline void save_cpu(arm64::CpuState &cpu,
 	      darwin_uml_guest_registers &registers,
 	      darwin_uml_guest_fp_registers &fp,
 	      darwin_uml_guest_sme_registers &sme,
