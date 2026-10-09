@@ -1,11 +1,12 @@
 # x86-64 instruction unit corpus
 
-`x86_64_v3.pack` is the self-contained instruction input for the ordinary
-`x86-64-instruction-corpus` CTest. It contains compact per-instruction traces
+`x86_64_v3.pack` is the build-generated, self-contained instruction input for
+the ordinary `x86-64-instruction-corpus` CTest. It contains compact per-instruction traces
 derived from the pinned K x86-64 semantics tests, complementary handwritten
-FEX assembly programs, and the repository's own cases in `cases/`. CMake,
-CTest, and the test executable do not need either upstream checkout, an
-assembler, Python, or a network connection. The x86-64 guest exists only in
+FEX assembly programs, and the repository's own cases in `cases/`. CMake
+generates it from `source/` with Python's standard library and no upstream
+checkout, assembler, network, Git history, or reference hardware. CTest and
+the test executable need only the generated pack. The x86-64 guest exists only in
 4 KiB builds, so the test runs in the 4 KiB unit tree. There the same pack
 also runs through the macOS-only x86-64 JIT, as `x86-64-jit-instruction-corpus`
 and `x86-64-jit-code-buffer-growth`, against the classed exclusion list
@@ -35,7 +36,16 @@ x87 is emulated only at full 80-bit precision. The producer drops FEX's
 and keeps those programs' expected registers: FEX's x86-64 host runner checks
 every ASM program natively, so they are full-precision hardware results. The
 test runner rejects a case that still carries the request.
-The upstream license notices are retained alongside the pack.
+The upstream license notices are retained alongside the source tables.
+
+The `uml_x86_64_instruction_corpus` target generates the pack in this
+directory's build-tree counterpart. Source tables retain instruction bytes,
+named-register FEX/repository expectations, and per-instruction K architectural
+deltas. Byte loops factor large assembled FEX programs without requiring NASM
+or an upstream checkout during generation. The accepted provenance hash must
+match before publication. The
+[source contract](../../../../tools/instruction-corpus/README.md) owns this
+format. Updating expectations remains the independent producer workflow below.
 
 ## Repository cases
 
@@ -95,4 +105,7 @@ python3 -B tools/x86-tests/build-unit-corpus.py \
   --repository-response .build/x86-tests/repository-response.bin
 ```
 
-Use the final command with `--check` for a byte-for-byte freshness check.
+Producer output defaults to `.build/corpora/x86_64`. Use the final command with
+`--check` for a byte-for-byte freshness check. Promote the accepted output with
+the source contract's import command and `--kind x86`, committing its source
+tables and metadata rather than the generated pack.

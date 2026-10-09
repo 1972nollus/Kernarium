@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 uml_add_tooling_test(
+    NAME instruction-corpus-source
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_instruction_corpus_source.py
+    LABELS cpu
+    TIMEOUT 60)
+
+uml_add_tooling_test(
     NAME arm64-instruction-inventory
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/validate_a64_instruction_inventory.py
@@ -11,6 +18,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-freshness
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -18,6 +26,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-absent-features
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_absent_features.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -25,6 +34,15 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-sme-native
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sme_native.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
+    LABELS cpu
+    TIMEOUT 300)
+
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-floating-trap-native
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_floating_trap_native.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -32,6 +50,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-native
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_native.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -39,6 +58,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-sme
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_sme.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -46,6 +66,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-afp
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_afp.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 
@@ -53,6 +74,7 @@ uml_add_tooling_test(
     NAME arm64-instruction-corpus-sve-trap
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_sve_trap.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
     TIMEOUT 300)
 

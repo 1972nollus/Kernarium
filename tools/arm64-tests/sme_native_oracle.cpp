@@ -39,7 +39,10 @@
 //
 // Only an SME host executes an SME instruction of the template, so the
 // oracle also runs requests without SME state on any arm64 Mac, which the
-// arm64-sme-native-oracle tooling test does.
+// arm64-sme-native-oracle tooling test does, and so does
+// tools/arm64-tests/floating-trap-native-corpus.py for the corpus's trapped
+// floating-point cases: XNU reports a trapped floating-point exception as
+// EXC_BAD_INSTRUCTION, with the exception syndrome's EC 0x2c.
 
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
@@ -667,6 +670,9 @@ void handle(const ExceptionRequest &request)
         else if (request.exception == EXC_BREAKPOINT)
             run.event = run.code[(pc - code) / 4] == sentinel ? system_call
                                                                : breakpoint;
+        else if (request.exception == EXC_BAD_INSTRUCTION &&
+                 run.esr >> 26 == 0x2c)
+            run.event = floating_point_trap;  // XNU's trapped FP exception
         else if (request.exception == EXC_BAD_INSTRUCTION)
             run.event = illegal_instruction;
         else if (request.exception == EXC_BAD_ACCESS)
