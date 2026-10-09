@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
@@ -8,12 +9,12 @@
 
 namespace uml::cpu::arm64::jit {
 
-/* How much of the non-streaming SVE profile the JIT implements: the control
- * core (implements_sve_form below), which an SM=0 translation lowers when
- * its capabilities carry the profile; every other SVE word there is the
- * illegal-instruction exit. Below complete the engine presents no SVE to
- * its guest (sve_host_for_support), so only tests reach the core. */
-inline constexpr SveSupport sve_support = SveSupport::control;
+/* How much of the non-streaming SVE profile the JIT implements: all of it.
+ * An SM=0 translation lowers the forms below inline (implements_sve_form,
+ * the control core) and sends every other row the virtual CPU implements to
+ * the semantic library (jit_semantic_sve.cpp), so its guest sees the whole
+ * profile (sve_host_for_support) whenever the policy enables it. */
+inline constexpr SveSupport sve_support = SveSupport::complete;
 
 namespace sve_forms {
 
@@ -74,6 +75,11 @@ inline constexpr std::uint16_t dup_scalar = form_of(0x0520'3800U);
 inline constexpr std::uint16_t dup_immediate = form_of(0x2538'c000U);
 inline constexpr std::uint16_t dup_indexed = form_of(0x0521'2000U);
 inline constexpr std::uint16_t dupm = form_of(0x05c0'0000U);
+/* The bitmask-immediate logical forms, which share DUPM's reserved
+ * immediates (sve_word_reserved). */
+inline constexpr std::uint16_t orr_immediate = form_of(0x0500'0000U);
+inline constexpr std::uint16_t eor_immediate = form_of(0x0540'0000U);
+inline constexpr std::uint16_t and_immediate = form_of(0x0580'0000U);
 inline constexpr std::uint16_t fdup = form_of(0x2579'c000U);
 inline constexpr std::uint16_t cpy_merging = form_of(0x0510'4000U);
 inline constexpr std::uint16_t cpy_zeroing = form_of(0x0510'0000U);
@@ -99,10 +105,11 @@ inline constexpr std::uint16_t whilerw = form_of(0x2520'3010U);
 
 } // namespace sve_forms
 
-/* The control core: the forms an SM=0 translation runs inline. Every
- * other row the non-streaming profile implements is the illegal-instruction
- * exit, and so is a reserved DUPM immediate. None of these forms can raise
- * a floating-point exception, so none needs the trapped-FP path. */
+/* The forms an SM=0 translation lowers inline: the control core. Every
+ * other row the non-streaming profile implements runs through the
+ * semantic library, and a reserved encoding (sve_word_reserved) is the
+ * illegal-instruction exit. None of these forms can raise a
+ * floating-point exception. */
 [[nodiscard]] constexpr bool implements_sve_form(std::uint16_t form) noexcept {
   using namespace sve_forms;
   for (const auto implemented :
@@ -124,6 +131,33 @@ inline constexpr std::uint16_t whilerw = form_of(0x2520'3010U);
         whilehi,     whilehs,      whilewr,     whilerw})
     if (form == implemented)
       return true;
+  return false;
+}
+
+/* Whether `word`, of table form `form`, is UNDEFINED although the table
+ * allocates its row: a reserved bitmask immediate (AND, ORR, EOR and DUPM
+ * share the decoder), a shifted byte immediate of DUP or CPY, or a
+ * byte-sized FDUP, FCPY or vector INC and DEC. Both the translation and
+ * the executor's trapped-exception mode ask. */
+[[nodiscard]] inline bool sve_word_reserved(std::uint16_t form,
+                                            std::uint32_t word) noexcept {
+  using namespace sve_forms;
+  const unsigned size = (word >> 22) & 3U;
+  /* TODO(SVE V5): call detail::sve_reserved_encoding, the shared test the
+   * gadget engine's lane is adding to the library, once it is on main;
+   * this is the temporary local form of its bitmask part (the immediate
+   * decoder is the shared primitive). */
+  if (form == dupm || form == orr_immediate || form == eor_immediate ||
+      form == and_immediate)
+    return !detail::decode_logical_immediate(true, (word >> 17) & 1U,
+                                             (word >> 11) & 0x3fU,
+                                             (word >> 5) & 0x3fU)
+                .has_value();
+  if (form == dup_immediate || form == cpy_merging || form == cpy_zeroing)
+    return size == 0U && ((word >> 13) & 1U) != 0U;
+  if (form == fdup || form == fcpy || form == inc_vector ||
+      form == dec_vector || form == incp_vector || form == decp_vector)
+    return size == 0U;
   return false;
 }
 
