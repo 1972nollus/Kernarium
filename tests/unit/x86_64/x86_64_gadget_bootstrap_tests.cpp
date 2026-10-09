@@ -5585,6 +5585,64 @@ read_test_sequences(void *context) noexcept
 	return expect(varied, "RDRAND returned one value sixteen times");
 }
 
+/* A guest vCPU has no processor numbering, so RDPID, RDTSCP's ECX and the
+ * limit of the per-CPU segment LSL reads all name processor 0 of node 0. */
+[[nodiscard]] bool processor_numbering_is_cpu_zero_node_zero()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t zero_flag = 1ULL << 6U;
+	/* RDTSCP overwrites EAX and EDX, so RDPID reads into another register. */
+	TestMemory long64;
+	long64.load(0, {
+		0x49, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov r8, -1
+		0xf3, 0x49, 0x0f, 0xc7, 0xf8,             // rdpid r8
+		0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff, // mov rcx, -1
+		0x0f, 0x01, 0xf9,                         // rdtscp
+		0xbf, 0x7b, 0x00, 0x00, 0x00,             // mov edi, 0x7b
+		0x48, 0xc7, 0xc6, 0xff, 0xff, 0xff, 0xff, // mov rsi, -1
+		0x0f, 0x03, 0xf7,                         // lsl esi, di
+	});
+	TestMemory compat32;
+	compat32.load(0, {
+		0xbb, 0xff, 0xff, 0xff, 0xff,             // mov ebx, -1
+		0xf3, 0x0f, 0xc7, 0xfb,                   // rdpid ebx
+		0xb9, 0xff, 0xff, 0xff, 0xff,             // mov ecx, -1
+		0x0f, 0x01, 0xf9,                         // rdtscp
+		0xbf, 0x7b, 0x00, 0x00, 0x00,             // mov edi, 0x7b
+		0xbe, 0xff, 0xff, 0xff, 0xff,             // mov esi, -1
+		0x0f, 0x03, 0xf7,                         // lsl esi, di
+	});
+	struct Case final {
+		ExecutionMode mode;
+		TestMemory *memory;
+		Register processor;
+	};
+	const Case cases[] = {
+		{ExecutionMode::long64, &long64, Register::r8},
+		{ExecutionMode::compat32, &compat32, Register::rbx},
+	};
+	for (const auto &[mode, memory, processor] : cases) {
+		const auto built = require_built(
+			gadgets::build(*memory, 0, mode, 7),
+			"processor numbering block did not build");
+		CpuState cpu{};
+		cpu.execution_mode = mode;
+		const auto result = gadgets::execute(built.program, cpu, *memory, 7);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 7,
+			"processor numbering block did not retire") ||
+			!expect(cpu.gpr(processor) == 0,
+				"RDPID did not report processor 0") ||
+			!expect(cpu.gpr(Register::rcx) == 0,
+				"RDTSCP did not report processor 0 in ECX") ||
+			!expect(cpu.gpr(Register::rsi) == 0 &&
+				(cpu.rflags & zero_flag) != 0,
+				"LSL of the per-CPU segment did not read processor 0"))
+			return false;
+	}
+	return true;
+}
+
 /* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
  * address and leave the base unchanged; the 32-bit form zero-extends and so
  * cannot fault. */
@@ -8873,6 +8931,7 @@ int main()
 		segment_base_writes_reject_non_canonical_addresses() &&
 		overlong_instructions_raise_general_protection() &&
 		random_instructions_expose_no_host_state() &&
+		processor_numbering_is_cpu_zero_node_zero() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&

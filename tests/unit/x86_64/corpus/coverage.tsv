@@ -312,7 +312,7 @@ cmpl:imm,mem	0	3	0
 cmpl:imm,r32	0	25	2
 cmpl:mem,r32	0	2	0
 cmpl:r32,mem	0	2	0
-cmpl:r32,r32	102	48	1
+cmpl:r32,r32	102	48	2
 cmplepd:mem,xmm	0	1	0
 cmplepd:xmm,xmm	0	1	0
 cmpleps:mem,xmm	0	1	0
@@ -367,7 +367,7 @@ cmpq:imm,mem	0	3	0
 cmpq:imm,r64	0	24	0
 cmpq:mem,r64	0	2	0
 cmpq:r64,mem	0	2	0
-cmpq:r64,r64	102	7	0
+cmpq:r64,r64	102	7	1
 cmpsbb:r32,mem	0	3	1
 cmpsd:imm,xmm,xmm	0	0	1
 cmpsll:r32,mem	0	2	0
@@ -471,7 +471,7 @@ cwtll:	0	2	0
 decb:mem	0	4	0
 decb:r8	93	0	0
 decl:mem	0	5	0
-decl:r32	65	1	1
+decl:r32	65	1	2
 decq:mem	0	5	0
 decq:r64	65	1	0
 decw:mem	0	5	0
@@ -686,6 +686,7 @@ jae:rel	0	6	0
 jbb:mem	0	0	1
 jbb:rel	0	6	0
 jbe:rel	0	4	0
+je:mem	0	0	1
 je:rel	0	33	0
 jecxz:rel	0	1	0
 jg:mem	0	0	13
@@ -699,7 +700,7 @@ jmp:mem	0	0	1
 jmp:rel	0	72	0
 jmpq:mem	0	2	0
 jmpq:rel	0	1	0
-jne:mem	0	0	2
+jne:mem	0	0	3
 jne:rel	0	25	0
 jno:mem	0	0	1
 jno:rel	0	5	0
@@ -732,7 +733,7 @@ loope:mem	7	0	0
 loope:rel	0	1	0
 loopne:rel	0	1	0
 lslll:mem,r32	0	0	1
-lslll:r16,r32	0	0	2
+lslll:r16,r32	0	0	3
 lslqq:r16,r64	0	0	1
 lslww:r16,r16	0	0	1
 lzcntll:mem,r32	0	1	0
@@ -805,7 +806,7 @@ movhps:mem,xmm	1377	4	0
 movhps:xmm,gs:0	0	1	0
 movhps:xmm,mem	0	2	0
 movl:imm,mem	0	2	8
-movl:imm,r32	0	37	33
+movl:imm,r32	0	37	34
 movl:mem,r32	0	4	15
 movl:r32,mem	0	0	12
 movl:r32,r32	0	0	6
@@ -831,7 +832,7 @@ movntps:xmm,mem	0	2	0
 movntqq:mm,mem	0	2	0
 movq2dqq:mm,xmm	0	3	0
 movq:imm,mem	0	1	2
-movq:imm,r64	29	22	12
+movq:imm,r64	29	22	13
 movq:mem,mm	0	2	0
 movq:mem,r64	0	11	21
 movq:mm,mem	0	1	0
@@ -1457,8 +1458,9 @@ rcrw:r8,r16	408	2	0
 rdfsbaseqq:r64	0	6	0
 rdgsbasell:r32	0	1	0
 rdgsbaseqq:r64	0	2	0
+rdpid:r64	0	0	1
 rdtsc:	0	1	0
-rdtscp:	0	1	0
+rdtscp:	0	1	1
 rep:mem	0	1	0
 rep:mem,mem	0	7	0
 rep:mem,r16	6	3	0
@@ -1599,7 +1601,7 @@ setbb:sil	0	0	1
 setbe:mem	0	1	0
 setbe:r8	0	3	0
 sete:mem	0	1	0
-sete:r8	0	34	3
+sete:r8	0	34	4
 setg:mem	0	1	0
 setg:r8	0	3	0
 setge:mem	0	1	0
@@ -3235,7 +3237,7 @@ xorl:imm,mem	0	3	0
 xorl:imm,r32	321	2	0
 xorl:mem,r32	0	2	3
 xorl:r32,mem	0	3	0
-xorl:r32,r32	321	25	26
+xorl:r32,r32	321	25	27
 xorpd:mem,xmm	0	2	0
 xorpd:xmm,xmm	0	2	0
 xorps:mem,xmm	0	2	0

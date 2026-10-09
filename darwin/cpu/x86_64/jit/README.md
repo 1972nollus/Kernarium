@@ -320,7 +320,8 @@ engine's [model](../gadgets/README.md#system-instructions) of Linux at CPL 3
 with UMIP: the privileged ones raise `#GP` before they touch memory, SIDT
 stores Linux's UMIP values, and LSL reads its selector, from memory too,
 and the flat user entries, the per-CPU entry and a TLS entry the host
-installed (`Embedder.SegmentPresent`).
+installed (`Embedder.SegmentPresent`). RDPID, RDTSCP's ECX and the per-CPU
+entry's limit all report processor 0 of node 0, as the gadget engine does.
 
 ## Memory order
 

@@ -244,7 +244,9 @@ CR9 to CR15, before the privilege check. SGDT, SIDT and SMSW store
 the values Linux's UMIP emulation reports; SGDT and SIDT store six bytes in
 compatibility mode. LSL reads the flat user code and data entries, the per-CPU
 entry, whose limit is the processor number RDPID reports, and a present TLS
-entry, and reports every other selector unusable, as the JIT does. SLDT,
+entry, and reports every other selector unusable, as the JIT does. A guest
+vCPU has no processor numbering: RDPID, RDTSCP's ECX and that limit all report
+processor 0 of node 0 on both engines. SLDT,
 STR, LAR, VERR and VERW remain undefined, as on the JIT.
 
 ## Software TLB

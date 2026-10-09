@@ -9600,6 +9600,10 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/rdpid-rdtscp-and-lsl-name-one-processor.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/sse-conversions-follow-daz-and-ftz.s",
       "file": "repository-cases.jsonl"
     },

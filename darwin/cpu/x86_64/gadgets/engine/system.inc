@@ -207,16 +207,17 @@ Lx86_general_protection:
 	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
 	b uml_x86_64_gadget_leave
 
+/* RDPID reads TSC_AUX, which is zero here as RDTSCP's ECX and the per-CPU
+ * segment's limit are: a guest vCPU has no processor numbering, so every
+ * vCPU reports processor 0 of node 0. */
 gadget rdpid_32_r
 	ldr x8, [_stream], #8
-	mov x9, #1
-	str x9, [_cpu, x8]
+	str xzr, [_cpu, x8]
 	retire_and_next
 
 gadget rdpid_64_r
 	ldr x8, [_stream], #8
-	mov x9, #1
-	str x9, [_cpu, x8]
+	str xzr, [_cpu, x8]
 	retire_and_next
 
 .macro read_segment_base name, base, host_register

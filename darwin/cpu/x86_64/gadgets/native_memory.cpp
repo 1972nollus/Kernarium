@@ -238,8 +238,8 @@ extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
 {
 	/* The GDT entries Linux gives user code that LSL may read: the flat
 	 * 32-bit code, data and 64-bit code segments; the per-CPU segment,
-	 * whose limit is the processor number RDPID reads, which the gadgets
-	 * report as 1; and a present TLS entry, which the runtime records only
+	 * whose limit is the processor number RDPID reads, which is 0 for every
+	 * guest vCPU; and a present TLS entry, which the runtime records only
 	 * by its base and which the C libraries give a flat limit. Other
 	 * selectors, an LDT's included, read as unusable. */
 	constexpr std::uint64_t zero_flag = 1ULL << 6U;
@@ -251,7 +251,7 @@ extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
 	} else if (entry == 4 || entry == 5 || entry == 6) {
 		limit = 0xffffffffU;
 	} else if (entry == 15) {
-		limit = 1;
+		limit = 0;
 	} else if (entry >= cpu->compat_tls_first && tls < 8 &&
 		((cpu->compat_tls_present >> tls) & 1U) != 0) {
 		limit = 0xffffffffU;
