@@ -43,7 +43,7 @@ Options:
                   apple-gpu-vulkan-experiment, kernel-host-tools,
                   x86-conformance, or all
   --root PATH     Prepared source root (default: external/sources)
-  --cache PATH    Partial Git cache (default: .build/dependency-cache)
+  --cache PATH    Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching
   --no-fetch      Prepare only from commits already present in the Git cache
   --recreate      Replace a clean prepared source of the same upstream whose
@@ -413,8 +413,8 @@ validate_vulkan_pair()
 		fail "$name paired Vulkan source identity is missing or duplicated"
 	[ "$paired_identity" = "$(printf '%s\t%s' "$repository" "$commit")" ] ||
 		fail "$name host and guest Vulkan source identities differ"
-	[ "$products" = apple-gpu-vulkan-experiment ] && [ "$source_paths" = . ] ||
-		fail "$name is a full-source experimental Vulkan dependency only"
+	[ "$products" = apple-gpu-vulkan-experiment ] ||
+		fail "$name is an experimental Vulkan dependency only"
 	if [ "$name" = venus-protocol ]; then
 		[ "$patch_series" = rootfs-vulkan:patches/venus-protocol/series.tsv ] ||
 			fail "venus-protocol must use its canonical rootfs-vulkan series"
@@ -447,17 +447,11 @@ validate_products()
 	done
 }
 
+# The manifest keeps its source_paths column, but every source is complete.
 validate_source_paths()
 {
-	old_ifs=$IFS
-	IFS=,
-	set -- $source_paths
-	IFS=$old_ifs
-	[ "$#" -gt 0 ] || fail "$name has no source paths"
-	for source_path in "$@"; do
-		safe_relative_path "$source_path" ||
-			fail "$name has an unsafe source path: $source_path"
-	done
+	[ "$source_paths" = . ] ||
+		fail "$name source_paths must be '.': partial sources are unsupported"
 }
 
 series_tool()
@@ -644,7 +638,7 @@ check_repository()
 		return 1
 	}
 	[ "$(git_value "$repository_directory" uml.source.paths)" = "$source_paths" ] || {
-		REPOSITORY_PROBLEM="$name prepared sparse paths changed"
+		REPOSITORY_PROBLEM="$name prepared source paths changed"
 		return 1
 	}
 	[ "$(git_value "$repository_directory" uml.source.patchSeries)" = "$patch_series" ] || {
@@ -715,18 +709,8 @@ obtain_cache()
 		temporary_cache=$(mktemp -d "$cache_parent/.${name}.XXXXXX")
 		git -C "$temporary_cache" init --quiet
 		git -C "$temporary_cache" remote add origin "$repository"
-		if [ "$source_paths" = '.' ]; then
-			git -C "$temporary_cache" fetch --no-tags --depth 1 \
-				origin "$commit" >/dev/null
-		else
-			git -C "$temporary_cache" config remote.origin.promisor true
-			git -C "$temporary_cache" config \
-				remote.origin.partialclonefilter blob:none
-			git -C "$temporary_cache" config uploadpack.allowFilter true
-			git -C "$temporary_cache" config uploadpack.allowAnySHA1InWant true
-			git -C "$temporary_cache" fetch --no-tags --depth 1 \
-				--filter=blob:none origin "$commit" >/dev/null
-		fi
+		git -C "$temporary_cache" fetch --no-tags --depth 1 \
+			origin "$commit" >/dev/null
 		git -C "$temporary_cache" update-ref refs/heads/uml-pin "$commit"
 		if ! publish_exclusively "$temporary_cache" "$cache_repository"; then
 			rm -rf -- "$temporary_cache"
@@ -736,8 +720,8 @@ obtain_cache()
 	[ -d "$cache_repository/.git" ] || fail "$name Git cache is malformed"
 	[ "$(git -C "$cache_repository" remote get-url origin 2>/dev/null || true)" = \
 		"$repository" ] || fail "$name Git cache origin changed"
-	if [ "$source_paths" = '.' ] &&
-		[ "$(git -C "$cache_repository" config --bool remote.origin.promisor 2>/dev/null || true)" = \
+	# A cache an earlier checkout filtered cannot serve a full source.
+	if [ "$(git -C "$cache_repository" config --bool remote.origin.promisor 2>/dev/null || true)" = \
 		true ]; then
 		[ "$FETCH" -eq 1 ] || fail "$name full source is incomplete in the offline cache"
 		git -C "$cache_repository" fetch --refetch --no-filter --no-tags \
@@ -749,77 +733,17 @@ obtain_cache()
 	if ! env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" cat-file -e \
 		"$commit^{commit}" 2>/dev/null; then
 		[ "$FETCH" -eq 1 ] || fail "$name commit is absent from the offline cache"
-		if [ "$source_paths" = '.' ]; then
-			git -C "$cache_repository" fetch --no-tags --depth 1 \
-				origin "$commit" >/dev/null
-		else
-			git -C "$cache_repository" fetch --no-tags --depth 1 \
-				--filter=blob:none origin "$commit" >/dev/null
-		fi
+		git -C "$cache_repository" fetch --no-tags --depth 1 \
+			origin "$commit" >/dev/null
 		git -C "$cache_repository" update-ref refs/heads/uml-pin "$commit"
 	fi
 	[ "$(git -C "$cache_repository" rev-parse "$commit^{commit}")" = "$commit" ] ||
 		fail "$name cache resolved the wrong commit"
 	[ "$(git -C "$cache_repository" rev-parse refs/heads/uml-pin 2>/dev/null || true)" = \
 		"$commit" ] || fail "$name Git cache does not retain its pinned ref"
-	if [ "$source_paths" = '.' ]; then
-		missing=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
-			rev-list --objects --missing=print "$commit" | sed -n 's/^?//p')
-		[ -z "$missing" ] || fail "$name full source is incomplete in the Git cache"
-		return
-	fi
-	[ "$(git -C "$cache_repository" config --bool uploadpack.allowFilter 2>/dev/null || true)" = \
-		true ] || fail "$name Git cache does not permit filtered local clones"
-	old_ifs=$IFS
-	IFS=,
-	set -- $source_paths
-	IFS=$old_ifs
-	CACHE_HAS_COMPLETE_COMMIT=0
-	missing_any=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
-		rev-list --objects --missing=print "$commit" | sed -n 's/^?//p' | \
-		sed -n '1p')
-	[ -n "$missing_any" ] || CACHE_HAS_COMPLETE_COMMIT=1
-	if [ "$FETCH" -eq 1 ] && [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 0 ]; then
-		# `cat-file --batch-check` asks a promisor remote for each missing
-		# object independently. A large sparse tree such as Mesa can therefore
-		# create thousands of lazy-fetch subprocesses and race the shallow
-		# boundary. A transient sparse checkout lets unpack-trees request the
-		# complete missing-object set in one bounded fetch. Direct its object
-		# writes into the shared cache, while keeping HEAD, the index, sparse
-		# configuration, and worktree private to this preparation process.
-		if [ -z "$STAGING_ROOT" ]; then
-			STAGING_ROOT=$(mktemp -d "$DEPENDENCY_ROOT/.prepare.XXXXXX")
-		fi
-		materialization_repository="$STAGING_ROOT/.materialize-$name"
-		git -C "$STAGING_ROOT" init --quiet ".materialize-$name"
-		git -C "$materialization_repository" remote add origin "$repository"
-		git -C "$materialization_repository" config remote.origin.promisor true
-		git -C "$materialization_repository" config \
-			remote.origin.partialclonefilter blob:none
-		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
-			git -C "$materialization_repository" sparse-checkout init --cone
-		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
-			git -C "$materialization_repository" sparse-checkout set --cone "$@"
-		env GIT_OBJECT_DIRECTORY="$cache_repository/.git/objects" \
-			git -C "$materialization_repository" switch --detach "$commit" \
-				>/dev/null
-		rm -rf -- "$materialization_repository"
-	fi
-	missing_selected=$(
-		git -C "$cache_repository" ls-tree -r "$commit" -- "$@" |
-			awk '$2 == "blob" { print $3 }' |
-			env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" cat-file \
-				--batch-check='%(objectname) %(objecttype)' |
-			awk '$2 != "blob" { print $1; exit }'
-	)
-	[ -z "$missing_selected" ] ||
-		fail "$name sparse source is incomplete in the Git cache: $missing_selected"
-	if [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 0 ]; then
-		missing_any=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
-			rev-list --objects --missing=print "$commit" | \
-			sed -n 's/^?//p' | sed -n '1p')
-		[ -n "$missing_any" ] || CACHE_HAS_COMPLETE_COMMIT=1
-	fi
+	missing=$(env GIT_NO_LAZY_FETCH=1 git -C "$cache_repository" \
+		rev-list --objects --missing=print "$commit" | sed -n 's/^?//p')
+	[ -z "$missing" ] || fail "$name full source is incomplete in the Git cache"
 }
 
 prepare_repository()
@@ -839,44 +763,8 @@ prepare_repository()
 		STAGING_ROOT=$(mktemp -d "$DEPENDENCY_ROOT/.prepare.XXXXXX")
 	fi
 	staged_repository="$STAGING_ROOT/$name"
-	if [ "$source_paths" = '.' ]; then
-		git clone --quiet --no-checkout \
-			"file://$cache_repository" "$staged_repository"
-	elif [ "$CACHE_HAS_COMPLETE_COMMIT" -eq 1 ]; then
-		# A complete shallow cache can be cloned directly without spending
-		# minutes repacking the same object graph through a blob filter.
-		git clone --quiet --no-checkout --no-local \
-			"$cache_repository" "$staged_repository"
-	else
-		# A partial repository cannot safely serve another filtered local
-		# clone: upload-pack may try to lazily obtain an omitted blob through
-		# the clone's local promisor URL and recursively invoke itself.  Copy
-		# the already verified object store into an independent repository
-		# instead.  The temporary promisor marker lets sparse checkout tolerate
-		# unselected blobs, while GIT_NO_LAZY_FETCH below makes publication
-		# strictly offline.  Removing the remote leaves the prepared source
-		# self-contained for every selected path.
-		git -C "$STAGING_ROOT" init --quiet "$name"
-		git -C "$staged_repository" remote add origin "$repository"
-		git -C "$staged_repository" config remote.origin.promisor true
-		git -C "$staged_repository" config \
-			remote.origin.partialclonefilter blob:none
-		cp -R "$cache_repository/.git/objects/." \
-			"$staged_repository/.git/objects"
-		if [ -f "$cache_repository/.git/shallow" ]; then
-			cp "$cache_repository/.git/shallow" \
-				"$staged_repository/.git/shallow"
-		fi
-		git -C "$staged_repository" update-ref refs/heads/uml-pin "$commit"
-	fi
-	if [ "$source_paths" != '.' ]; then
-		old_ifs=$IFS
-		IFS=,
-		set -- $source_paths
-		IFS=$old_ifs
-		env GIT_NO_LAZY_FETCH=1 git -C "$staged_repository" \
-			sparse-checkout set --cone "$@"
-	fi
+	git clone --quiet --no-checkout \
+		"file://$cache_repository" "$staged_repository"
 	env GIT_NO_LAZY_FETCH=1 git -C "$staged_repository" \
 		switch --detach "$commit" >/dev/null
 	git -C "$staged_repository" remote remove origin
