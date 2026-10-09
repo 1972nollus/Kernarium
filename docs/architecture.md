@@ -634,7 +634,10 @@ every other word of the profile ends its block in a terminal helper
 which runs the word through the semantic library on `CpuState` as the SME
 slow paths do: the library marks the SVE state live, reports a fault at the
 word's PC, clears the local exclusive monitor on a store and invalidates the
-software reservations the store wrote. A reserved bitmask or shifted byte
+software reservations the store wrote. While library-exit counting is on,
+which it is not by default (`semantic::count_sve_library_exits`), the helper
+and the trapped mode count each row's library runs and keep its last word;
+the counts name the words a workload sends to the library. A reserved bitmask or shifted byte
 immediate, and a row the capabilities lack, are the illegal-instruction
 exit. No translation holds an SVE word, and SM=1 translations and
 translations without an SVE word are unchanged. While an FPCR trap enable
@@ -656,7 +659,10 @@ block, behind an FP instruction that leaves the native environment active,
 behind PTRUE of P0-P7, and after every writer of a predicate that a PTRUE
 made all-active, from memory bases inside a page, across pages, unmapped and tagged, and
 under random FPCR trap enables and, where the host implements FEAT_AFP, random
-FIZ, AH and NEP.
+FIZ, AH and NEP. A pass from a clean state (every predicate and FFR
+all-active, no trap enable, an aligned base inside a page) requires the
+library-exit count of every lowered word's row to stay zero, so a lowering
+that always bailed to the library cannot pass as a match.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

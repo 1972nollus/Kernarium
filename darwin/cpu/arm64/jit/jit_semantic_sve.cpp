@@ -15,6 +15,8 @@
 
 #include "cpu/arm64/fp_environment.hpp"
 
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <optional>
 #include <span>
@@ -51,9 +53,59 @@ private:
 
 namespace jit::semantic {
 
+namespace {
+
+/* The words run through the library per table row, and the last of them,
+ * while counting. */
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+    library_exits{};
+std::array<std::atomic<std::uint32_t>, detail::sme_encodings.size()>
+    library_exit_words{};
+std::atomic<bool> counting{false};
+
+} // namespace
+
+void count_sve_library_exits(bool enable) noexcept {
+  counting.store(enable, std::memory_order_relaxed);
+}
+
+std::uint64_t sve_library_exits(std::size_t row) noexcept {
+  return row < library_exits.size()
+             ? library_exits[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+std::uint32_t sve_library_exit_word(std::size_t row) noexcept {
+  return row < library_exit_words.size()
+             ? library_exit_words[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+std::uint64_t sve_library_exit_total() noexcept {
+  std::uint64_t total = 0;
+  for (const auto &count : library_exits)
+    total += count.load(std::memory_order_relaxed);
+  return total;
+}
+
+void reset_sve_library_exits() noexcept {
+  for (auto &count : library_exits)
+    count.store(0, std::memory_order_relaxed);
+  for (auto &word : library_exit_words)
+    word.store(0, std::memory_order_relaxed);
+}
+
 sve_detail::SveResult execute_sve_word(CpuState &cpu, Tlb &tlb,
                                    std::uint32_t word,
                                    const sve_detail::SmeEncoding &row) noexcept {
+  if (counting.load(std::memory_order_relaxed)) {
+    const auto index =
+        static_cast<std::size_t>(&row - detail::sme_encodings.data());
+    if (index < library_exits.size()) {
+      library_exits[index].fetch_add(1, std::memory_order_relaxed);
+      library_exit_words[index].store(word, std::memory_order_relaxed);
+    }
+  }
   JitSveMemory memory{tlb};
   const auto result = sve_detail::execute_sve(cpu, word, row, memory);
   if (result.event == sve_detail::SveEvent::memory_fault) {

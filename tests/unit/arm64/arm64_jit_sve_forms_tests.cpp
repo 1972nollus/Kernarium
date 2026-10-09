@@ -29,6 +29,7 @@
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_semantic_sve.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
@@ -65,7 +66,7 @@ using Bytes = std::array<std::uint8_t, 16>;
 
 constexpr std::uint64_t code_base = 0x94'0000;
 constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
-constexpr std::size_t mapped_pages = 2;
+constexpr std::size_t mapped_pages = 4;
 constexpr std::size_t mapped = mapped_pages * page;
 constexpr std::uint32_t svc = 0xd400'0001U;
 constexpr std::uint32_t nop = 0xd503'201fU;
@@ -487,6 +488,38 @@ void place_base(const arm64::detail::SmeEncoding &row, std::uint32_t word,
     initial.registers[base_register] = base;
 }
 
+/* A base and index that nothing sends to the library: a register base 16-byte
+ * aligned in the middle of a page in the middle of the mapping, a 4 KiB reach
+ * from either end of it, and a small index. */
+bool place_clean_base(const arm64::detail::SmeEncoding &row, std::uint32_t word,
+                      Random &random, arm64::CpuState &initial) {
+  const auto &memory = arm64::detail::sme_encoding_memory[row.memory - 1U];
+  const auto *const operands = arm64::detail::sme_encoding_operands_of(row);
+  const std::uint64_t base =
+      (code_base + mapped / 2U + page / 2U + random.next() % 64U) &
+      ~std::uint64_t{15};
+  unsigned base_register = 31U;
+  if (operands[memory.base_operand].kind != arm64::detail::SmeOperandKind::z) {
+    base_register =
+        arm64::detail::sme_operand_number(operands[memory.base_operand], word);
+    if (base_register == 31U)
+      initial.sp = base;
+    else
+      initial.registers[base_register] = base;
+  }
+  if (memory.index_operand != arm64::detail::sme_no_operand &&
+      operands[memory.index_operand].kind != arm64::detail::SmeOperandKind::z) {
+    const auto index_register = arm64::detail::sme_operand_number(
+        operands[memory.index_operand], word);
+    /* One register named twice cannot be both a base and a small index. */
+    if (index_register != 31U && index_register == base_register)
+      return false;
+    if (index_register != 31U)
+      initial.registers[index_register] = random.next() % 4U;
+  }
+  return true;
+}
+
 /* Every row the virtual CPU implements agrees with the library. */
 void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
   Random random{0x6a17'5e01U};
@@ -550,6 +583,93 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
     if (lowered)
       ++tally.inline_rows;
   }
+}
+
+/* A word the translation lowers stays inline from a state in which nothing
+ * asks for the library: every predicate and FFR all-active, no FPCR trap
+ * enable, an untagged aligned base inside the page. The library-exit counter
+ * of its row must not move; a lowering whose fast path always bailed would
+ * match the library and still cost its call. */
+void lowered_words_stay_inline(const HostCapabilities &host, Tally &tally) {
+  Random random{0x6a17'5e03U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  arm64::jit::semantic::count_sve_library_exits(true);
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if ((row.non_streaming_requirement & arm64::detail::sme_feature_sve) == 0U ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement ||
+        (row.mode & arm64::detail::sme_mode_za) != 0U)
+      continue;
+    Machine machine{host};
+    for (std::size_t slot = 0; slot < 10U; ++slot) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      const auto *decoded = arm64::detail::decode_sve_non_streaming(word, features);
+      if (decoded != &row || arm64::jit::sve_word_reserved(row.form, word))
+        continue;
+      const std::array probe{word, nop, nop};
+      bool lowered = false;
+      {
+        const uml::cpu::HostCapabilitiesScope scope{host};
+        lowered = jit_test::compile_block_in_mode(
+                      code_base, probe, 0, jit_test::LinkShape::unlinked)
+                      .code.guest_instructions > 1U;
+      }
+      std::vector<std::byte> data(mapped);
+      for (std::size_t offset = 0; offset < mapped; offset += 8) {
+        const auto value = random.next();
+        std::memcpy(data.data() + offset, &value, 8);
+      }
+      auto initial = random_state(random, false);
+      for (auto &predicate : initial.sve_p)
+        predicate = arm64::sve_predicate_mask(0xffffU);
+      initial.sve_ffr = arm64::sve_predicate_mask(0xffffU);
+      initial.tbi_enabled = false;
+      initial.vectors[31].bytes = {};
+      if (row.memory != 0U && !place_clean_base(row, word, random, initial))
+        continue;
+      const auto before = arm64::jit::semantic::sve_library_exits(index);
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
+      const auto taken = arm64::jit::semantic::sve_library_exits(index) - before;
+      if (lowered && taken != 0U) {
+        std::fprintf(stderr,
+                     "word %08x (row %zu, SVE-%04u, memory shape %d) was "
+                     "lowered but took the library from a clean state\n",
+                     word, index, row.form & 0x7fffU,
+                     row.memory == 0U
+                         ? -1
+                         : static_cast<int>(arm64::detail::sme_encoding_memory
+                                                [row.memory - 1U].shape));
+        require(false);
+      }
+      checked += lowered ? 1U : 0U;
+    }
+  }
+  /* The counters agree with one another: each row that took the library
+   * kept a word that decodes to it, and the rows add up to the total. */
+  std::uint64_t total = 0;
+  std::size_t rows_taking_the_library = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto exits = arm64::jit::semantic::sve_library_exits(index);
+    total += exits;
+    if (exits == 0U)
+      continue;
+    ++rows_taking_the_library;
+    require(arm64::detail::decode_sve_non_streaming(
+                arm64::jit::semantic::sve_library_exit_word(index), features) ==
+            &arm64::detail::sme_encodings[index]);
+  }
+  require(rows_taking_the_library != 0U);
+  require(total == arm64::jit::semantic::sve_library_exit_total());
+  arm64::jit::semantic::reset_sve_library_exits();
+  require(arm64::jit::semantic::sve_library_exit_total() == 0U);
+  arm64::jit::semantic::count_sve_library_exits(false);
+  std::printf("%zu lowered words stay inline from a clean state\n", checked);
 }
 
 /* A predicate that PTRUE made all-active stops being known so as soon as
@@ -669,6 +789,7 @@ int main() {
   Tally tally;
   writers_forget_fullness(sve_host());
   forms_match_the_library(sve_host(), tally);
+  lowered_words_stay_inline(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);
   std::printf("%zu runs over %zu rows (%zu inline) match the library, %zu of "
