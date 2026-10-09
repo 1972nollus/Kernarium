@@ -348,3 +348,25 @@ Lx86_memory_fault_unlocked:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_MEMORY_FAULT
 	b uml_x86_64_gadget_leave
+
+/* An access through a segment failed its inline check, or a guard stopped
+ * an instruction the engine cannot check: it leaves, as a fault would,
+ * before anything committed, with x22 naming it, for the runtime's exact
+ * check (`prepare_segment_step`). */
+Lx86_segment_check:
+	ldrb w8, [_context, #UML_X86_64_CONTEXT_SPLIT_LOCK]
+	cbz w8, Lx86_segment_check_unlocked
+	split_lock_leave
+Lx86_segment_check_unlocked:
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_SEGMENT_CHECK
+	b uml_x86_64_gadget_leave
+
+/* Ahead of an instruction whose accesses through a segment the engine does
+ * not check inline: it leaves for the exact check unless the runtime runs the
+ * instruction under a bypass, having checked it. */
+gadget segment_guard
+	ldr x22, [_stream], #8
+	ldrb w8, [_cpu, #UML_X86_64_CPU_SEGMENT_BYPASS]
+	cbz w8, Lx86_segment_check
+	next_gadget

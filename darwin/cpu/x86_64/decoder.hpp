@@ -26,6 +26,17 @@ enum class Segment : std::uint8_t {
 	gs,
 };
 
+/* A compatibility-mode operand's ES, CS, SS or DS override, or the ES a
+ * string destination always uses; long mode ignores them. FS and GS are
+ * `Segment`, and an operand has at most one of the two. */
+enum class LegacySegment : std::uint8_t {
+	none,
+	es,
+	cs,
+	ss,
+	ds,
+};
+
 enum class OperandKind : std::uint8_t {
 	none,
 	reg,
@@ -49,6 +60,12 @@ struct MemoryOperand final {
 	std::int32_t displacement{};
 	std::uint64_t absolute{};
 	Segment segment{Segment::none};
+	LegacySegment legacy_segment{LegacySegment::none};
+	/* Never decoded: set by the runtime for an instruction of a task whose
+	 * ES, SS or DS has a base or a limit (`segments.hpp`), which it runs
+	 * alone after checking it. The address then adds the base of the
+	 * operand's ES, CS, SS or DS. */
+	bool segment_base{};
 	bool rip_relative{};
 	bool address_16{};
 	bool address_32{};
@@ -202,6 +219,19 @@ enum class Operation : std::uint8_t {
 	bound,
 	/* Raises #GP at user privilege: port I/O, HLT, CLI/STI, INT n, MSRs. */
 	privileged,
+	/* LDS, LES, LSS, LFS and LGS: the offset of the far pointer in memory
+	 * to the destination register, its selector to the segment register
+	 * `vector_group` numbers, ES 0 to GS 5. */
+	load_far_pointer,
+	/* LAR: the access rights of the descriptor the source selector names,
+	 * with ZF set, or ZF clear. */
+	load_access_rights,
+	/* VERR (`vector_group` 4) and VERW (5): ZF says whether the source
+	 * selector names a segment CPL 3 could read or write. */
+	verify_segment,
+	/* SLDT (`vector_group` 0) and STR (1), which Linux emulates for user
+	 * code under UMIP. */
+	store_segment_table,
 };
 
 enum class Condition : std::uint8_t {

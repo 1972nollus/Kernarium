@@ -343,14 +343,19 @@ checks that the host sees an address space as shared exactly when the
 kernel's contract in the [common kernel README](../kernel/common/README.md)
 says so, including when the sharing ends, and on the JIT that exactly the
 marked dispatches run ordered code.
-`run_guest_x86_64_tso_litmus.py` runs x86 memory-order litmus tests on four
-vCPUs, between threads and between processes over shared memory, in both
-modes, and in cycles that share, stop sharing and share again, whose log
+`run_guest_x86_64_fork_cow.py` forks from a busy multi-threaded process on
+four vCPUs, as glibc's fork() does, and checks that the workers keep their
+counts and that the parent's releases of the locks it held across the fork
+reach its copy. `run_guest_x86_64_tso_litmus.py` runs x86 memory-order
+litmus tests on four vCPUs, between threads and between processes over
+shared memory, in both modes, and in cycles that share, stop sharing and
+share again, whose log
 must show the space marked and ordered exactly while shared. Its negative
 control is the unit test `x86-64-jit-store-order`, which
 shows message passing catching a JIT space that keeps no order. Both engines
 pass every exception case, unmasked
-`#XM`, `#MF` and `#AC` included, in both modes.
+`#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
+transfers included, in both modes.
 `run_guest_x86_64_fenv.py`, which takes the same options, builds
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,

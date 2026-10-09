@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_entry.hpp"
 #include "cpu/x86_64/code_page_registry.hpp"
+#include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/segments.hpp"
 #include "cpu/x86_64/split_operand_lock.hpp"
 #include "executor.hpp"
 
@@ -236,29 +238,10 @@ extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept
 extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
 	std::uint32_t selector, std::uint32_t destination) noexcept
 {
-	/* The GDT entries Linux gives user code that LSL may read: the flat
-	 * 32-bit code, data and 64-bit code segments; the per-CPU segment,
-	 * whose limit is the processor number RDPID reads, which is 0 for every
-	 * guest vCPU; and a present TLS entry, which the runtime records only
-	 * by its base and which the C libraries give a flat limit. Other
-	 * selectors, an LDT's included, read as unusable. */
 	constexpr std::uint64_t zero_flag = 1ULL << 6U;
-	const auto entry = (selector & 0xffffU) >> 3U;
-	const auto tls = entry - cpu->compat_tls_first;
-	std::uint64_t limit{};
-	if ((selector & 4U) != 0) {
-		limit = ~std::uint64_t{};
-	} else if (entry == 4 || entry == 5 || entry == 6) {
-		limit = 0xffffffffU;
-	} else if (entry == 15) {
-		limit = 0;
-	} else if (entry >= cpu->compat_tls_first && tls < 8 &&
-		((cpu->compat_tls_present >> tls) & 1U) != 0) {
-		limit = 0xffffffffU;
-	} else {
-		limit = ~std::uint64_t{};
-	}
-	if (limit == ~std::uint64_t{}) {
+	const auto limit = segment_limit(*cpu,
+		static_cast<std::uint16_t>(selector));
+	if (!limit) {
 		cpu->rflags &= ~zero_flag;
 		return;
 	}
@@ -266,15 +249,90 @@ extern "C" void uml_x86_64_gadget_segment_limit(CpuState *cpu,
 	auto &value = cpu->registers[(destination & 0xffU) / 8U];
 	switch ((destination >> 8U) & 3U) {
 	case 1:
-		value = (value & ~std::uint64_t{0xffff}) | (limit & 0xffffU);
-		break;
-	case 2:
-		value = static_cast<std::uint32_t>(limit);
+		value = (value & ~std::uint64_t{0xffff}) | (*limit & 0xffffU);
 		break;
 	default:
-		value = limit;
+		value = *limit;
 		break;
 	}
+}
+
+namespace {
+
+/* The segment model's accesses, through this run's memory: a failure
+ * records the run's fault, and a store to code publishes as a gadget's
+ * does. */
+class GadgetSegmentMemory final : public SegmentMemory {
+public:
+	explicit GadgetSegmentMemory(NativeExecutionContext &context) noexcept :
+		context_(context)
+	{
+	}
+
+	[[nodiscard]] bool read(std::uint64_t address,
+		std::span<std::byte> destination) noexcept override
+	{
+		if (context_.memory->read(address, destination))
+			return true;
+		record_fault(context_, address, ::uml::memory::MemoryAccess::read);
+		return false;
+	}
+
+	[[nodiscard]] bool write(std::uint64_t address,
+		std::span<const std::byte> source) noexcept override
+	{
+		if (context_.memory->write(address, source)) {
+			publish_code_write(context_, address, source.size());
+			return true;
+		}
+		record_fault(context_, address, ::uml::memory::MemoryAccess::write);
+		return false;
+	}
+
+private:
+	NativeExecutionContext &context_;
+};
+
+} // namespace
+
+extern "C" std::uint32_t uml_x86_64_gadget_run_segment_instruction(
+	NativeExecutionContext *context, CpuState *cpu) noexcept
+{
+	const auto decoded = decode(*context->memory, cpu->rip,
+		cpu->execution_mode);
+	if (decoded.status == DecodeStatus::fetch_fault) {
+		context->fault = {decoded.fault_address,
+			::uml::memory::MemoryAccess::execute};
+		return UML_X86_64_SEGMENT_MEMORY_FAULT;
+	}
+	if (decoded.status != DecodeStatus::decoded ||
+		!segment_instruction(decoded.instruction)) {
+		context->segment_vector = general_protection_vector;
+		context->segment_error = 0;
+		return UML_X86_64_SEGMENT_FAULT;
+	}
+	GadgetSegmentMemory memory{*context};
+	const auto result = execute_segment_instruction(*cpu, memory,
+		decoded.instruction);
+	switch (result.outcome) {
+	case SegmentOutcome::retired:
+		if (!decoded.instruction.terminal())
+			return UML_X86_64_SEGMENT_NEXT;
+		[[fallthrough]];
+	case SegmentOutcome::retired_changed:
+		return result.trap_armed ? UML_X86_64_SEGMENT_TRAP :
+			UML_X86_64_SEGMENT_LEAVE;
+	case SegmentOutcome::memory_fault:
+		return UML_X86_64_SEGMENT_MEMORY_FAULT;
+	case SegmentOutcome::fault:
+	case SegmentOutcome::run:
+	case SegmentOutcome::yielded:
+		break;
+	}
+	context->segment_vector = result.fault.vector != 0 ?
+		result.fault.vector : general_protection_vector;
+	context->segment_error = result.fault.error;
+	return UML_X86_64_SEGMENT_FAULT;
 }
 
 extern "C" void uml_x86_64_gadget_invalidate_code(

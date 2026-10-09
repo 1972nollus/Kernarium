@@ -51,6 +51,10 @@ struct JitRunRequest final {
 	 * run then keeps x86's total store order. Once a generation runs
 	 * ordered it must never run unordered again. */
 	bool orders_stores{true};
+	/* Run only the instruction at RIP, translated on its own: one whose
+	 * accesses the host's segment model checked (`prepare_segment_step`),
+	 * under a SegmentBypass. */
+	bool single_instruction{};
 };
 
 struct JitRunResult final {
@@ -59,6 +63,11 @@ struct JitRunResult final {
 	std::int32_t error_code{};
 	/* Whether the code that ran kept x86's total store order. */
 	bool stores_ordered{};
+	/* Within `run`: a dispatch stopped, unretired, at an instruction the
+	 * segment model runs (`execute_segment_instruction`), or at one whose
+	 * accesses through a segment it checks first (`prepare_segment_step`). */
+	bool segment_instruction{};
+	bool segment_check{};
 };
 
 struct FexEngineOptions final {
@@ -91,8 +100,10 @@ public:
 		const AddressSpaceChanges &changes,
 		bool orders_stores = true) noexcept;
 
-	/* Runs 64-bit guest code until it exits. RFLAGS.TF set on entry makes
-	 * the run retire one instruction and report a single step. */
+	/* Runs guest code until it exits. RFLAGS.TF set on entry makes the run
+	 * retire one instruction and report a single step. The segment model
+	 * completes the instructions a dispatch leaves to it, so a result never
+	 * names `segment_instruction` or `segment_check`. */
 	[[nodiscard]] JitRunResult run(CpuState &cpu,
 		::uml::memory::GuestAddressSpace &memory,
 		const JitRunRequest &request) noexcept;
@@ -103,6 +114,11 @@ public:
 	struct Impl;
 
 private:
+	/* One dispatch of translated code. */
+	[[nodiscard]] JitRunResult dispatch(CpuState &cpu,
+		::uml::memory::GuestAddressSpace &memory,
+		const JitRunRequest &request) noexcept;
+
 	std::unique_ptr<Impl> impl_;
 };
 

@@ -40,8 +40,13 @@ fex	H0F38/sha256msg1.asm	post-AVX2 SHA extension
 fex	H0F38/sha256msg2.asm	post-AVX2 SHA extension
 fex	H0F38/sha256rnds2.asm	post-AVX2 SHA extension
 fex	H0F3A/sha1rnds4.asm	post-AVX2 SHA extension
+fex	Primary/Primary_8C.asm	expects FEX's selector loads, which accept selectors beyond the GDT or naming an absent LDT where x86 raises #GP; upstream disables it on native hosts
+fex	Primary/Primary_8C_2.asm	expects FEX's selector loads under REX.R, which accept selectors beyond the GDT or naming an absent LDT where x86 raises #GP; upstream disables it on native hosts
 fex	Primary/Primary_E8.asm	upstream marks this source unsupported
 fex	Primary/Primary_E9.asm	upstream marks this source unsupported
+fex	PrimaryGroup/5_FF_05.asm	expects AMD's REX.W far JMP, which reads m16:32, where Intel reads m16:64 and takes the null selector after it to #GP(0)
+fex	PrimaryGroup/5_FF_05_03_o64.asm	expects AMD's REX.W far CALL, which reads m16:32, where Intel reads m16:64 and takes the null selector after it to #GP(0)
+fex	PrimaryGroup/5_FF_05_03_o64_imm.asm	expects AMD's REX.W far CALL, which reads m16:32, where Intel reads m16:64 and takes the null selector after it to #GP(0)
 fex	REP/F3_2B.asm	AMD-only extension outside x86-64-v3
 fex	REPNE/F2_2B.asm	AMD-only extension outside x86-64-v3
 fex	SSE4a/extrq_imm.asm	AMD-only extension outside x86-64-v3

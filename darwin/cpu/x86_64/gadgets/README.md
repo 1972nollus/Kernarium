@@ -62,17 +62,20 @@ in the environment keeps the ordinary bank for every instruction, for
 comparison.
 
 The ordinary bank's memory descriptor resolves base, index, scale, segment and
-address size with no branch on which of them are present, which means the
-common long-mode address still pays for a segment base it adds as zero. That
-addition is not free: the selected base is reached through a computed address
-rather than a constant offset from the CPU state, a form the host cannot
-disambiguate against the CPU-state stores every gadget makes, and it is the
-most expensive instruction of the generic address path. The builder therefore
-proves the absence of all three from the operand and sets one descriptor bit
+address size. A segment base is not free: it is reached through a computed
+address rather than a constant offset from the CPU state, a form the host
+cannot disambiguate against the CPU-state stores every gadget makes, and it is
+the most expensive instruction of the generic address path. The builder
+therefore proves the absence of a segment override, an address-size override
+and compatibility mode from the operand and sets one descriptor bit
 (`UML_X86_64_MEMORY_PLAIN_ADDRESS`), on which the gadget stops once base,
 scaled index and displacement are summed. The bit is only ever an optimization:
 a descriptor that leaves it clear takes the general tail and resolves the same
-address.
+address. That tail, in the cold section, truncates the sum to the address size
+and adds a base only for a segment the descriptor names: FS or GS, at full
+width in long mode and, in compatibility mode, after the segment's limit
+check (below); or the ES, CS, SS or DS of an instruction the runtime steps
+through the segment model, which has checked its accesses already.
 
 ## Host-flag fusion
 
@@ -242,12 +245,54 @@ with a control register raise #GP before they touch memory; SWAPGS and SYSRET
 are undefined in compatibility mode, and so is a move with CR1, CR5 to CR7 or
 CR9 to CR15, before the privilege check. SGDT, SIDT and SMSW store
 the values Linux's UMIP emulation reports; SGDT and SIDT store six bytes in
-compatibility mode. LSL reads the flat user code and data entries, the per-CPU
-entry, whose limit is the processor number RDPID reports, and a present TLS
-entry, and reports every other selector unusable, as the JIT does. A guest
-vCPU has no processor numbering: RDPID, RDTSCP's ECX and that limit all report
-processor 0 of node 0 on both engines. SLDT,
-STR, LAR, VERR and VERW remain undefined, as on the JIT.
+compatibility mode. SLDT and STR store what Linux's UMIP emulation stores:
+the LDT selector 0x50 once the task's mm has an LDT and 0 before, and the TSS
+selector 0x40, a register form writing only its operand size. LAR, LSL, VERR
+and VERW read the descriptors below; the per-CPU entry's limit is the
+processor number RDPID reports. A guest vCPU has no processor numbering:
+RDPID, RDTSCP's ECX and that limit all report processor 0 of node 0 on both
+engines. CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16 bytes,
+locked or not, as x86 does.
+
+## Segments
+
+Both engines share one model of x86 segmentation as Linux user code sees it
+on an x86-64 kernel ([`segments.hpp`](../segments.hpp)): the GDT entries Linux
+gives every task (code 0x23 and 0x33, data 0x2b, the per-CPU entry 0x7b), the
+i386 TLS entries 12 to 14, the LDT the task installs with `modify_ldt()`,
+which the guest kernel hands over through the bridge (ABI 20), and a
+descriptor cache per segment register. MOV and POP to a segment register,
+LDS, LES, LSS, LFS and LGS, far CALL, JMP and RET, direct and indirect, an
+IRET that changes CS or SS, LAR, LSL, VERR, VERW, SLDT and STR leave the
+engine unretired for `execute_segment_instruction`, which checks the
+descriptor as x86 does at CPL 3 and completes the instruction or raises
+`#GP`, `#NP` or `#SS` with the selector's error code. The execution mode
+follows CS: 0x33 runs long64 and 0x23 or a 32-bit code segment compat32, so
+Wine's WoW64 switches between them with far jumps and IRETQ, and a switch
+ends the dispatch. At every entry from the guest kernel the caches are loaded
+again from the selectors, as Linux's return to user mode does: CS and SS must
+name segments IRET would load, or the entry raises that fault first, and a
+DS, ES, FS or GS that no longer names a usable segment becomes null. Code
+segments are flat: a code segment with a base or a limit raises `#GP` when
+loaded, and the kernel refuses 16-bit segments, so neither Win16 nor DOS code
+runs.
+
+In compatibility mode every access through a segment checks its limit. An
+access through FS or GS compares its offset with a low bound and a span the
+model derives from the limit, with room for the widest access, in the
+general tail; one that fails, and a string instruction, XLAT, gather, masked
+store, extended-state image or store through CS, which a guard gadget stops,
+leave unretired for the model's exact check. That check raises the fault the
+first failing access raises, completes the instruction itself (a string
+instruction element by element, yielding after a bounded number as an
+interrupt would), or runs it alone with every check passing. A 4 GiB
+expand-up segment checks nothing, as glibc's i386 TLS offsets just below 4
+GiB need. While ES, SS or DS is anything but flat writable data (base 0,
+limit 4 GiB), a null selector included, the task is segmented: the runtime
+steps it one instruction at a time through the exact check, and each operand
+adds its segment's base. Long-mode code pays
+for none of this; only an FS or GS operand in compatibility mode reaches the
+check.
 
 ## Software TLB
 
@@ -310,10 +355,11 @@ unaligned ones, in packed structures above all.
   at any alignment inside one 16-byte granule, so an unaligned operand that
   fits in a granule keeps the exclusive path. Every Apple-silicon Mac has the
   feature; the runtime checks it once and refuses to run x86 code without it.
-- Every other operand -- one across a granule or a page, and a 16-byte
-  CMPXCHG16B operand off its alignment -- runs the gadget's ordinary load and
-  store under one process-wide lock (`split_operand`, `split_lock_leave`). A
-  fault in between releases the lock in the fault tail.
+- Every other operand, one across a granule or a page, runs the gadget's
+  ordinary load and store under one process-wide lock (`split_operand`,
+  `split_lock_leave`). A fault in between releases the lock in the fault
+  tail. A CMPXCHG16B operand off its 16-byte alignment raises `#GP(0)`
+  instead, as on x86.
 
 The lock makes such an operand atomic against every other operand on that
 path, which covers the same instruction running on the other vCPUs. It is

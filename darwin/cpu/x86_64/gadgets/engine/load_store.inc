@@ -1,40 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Scalar transfers, effective addresses, stack operations, and memory control transfers. */
 
-.macro refresh_compat_tls_segment selector_offset, selector_value
-	ldrb w12, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
-	cmp w12, #1
-	b.ne Lx86_tls_done\@
-	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 8)
-	b.ne Lx86_tls_check_gs\@
-	mov x14, #UML_X86_64_CPU_FS_BASE
-	b Lx86_tls_selected\@
-Lx86_tls_check_gs\@:
-	cmp \selector_offset, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 10)
-	b.ne Lx86_tls_done\@
-	mov x14, #UML_X86_64_CPU_GS_BASE
-Lx86_tls_selected\@:
-	and w12, \selector_value, #7
-	cmp w12, #3
-	b.ne Lx86_tls_clear\@
-	/* w13 holds the present mask and, in its second byte, the first TLS
-	 * entry the kernel numbered. */
-	ldrh w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
-	lsr w12, \selector_value, #3
-	sub w12, w12, w13, lsr #8
-	cmp w12, #4
-	b.hi Lx86_tls_clear\@
-	lsr w13, w13, w12
-	tbz w13, #0, Lx86_tls_clear\@
-	add x13, _cpu, #UML_X86_64_CPU_COMPAT_TLS_BASES
-	ldr w12, [x13, w12, uxtw #2]
-	str x12, [_cpu, x14]
-	b Lx86_tls_done\@
-Lx86_tls_clear\@:
-	str xzr, [_cpu, x14]
-Lx86_tls_done\@:
-.endm
-
 .macro scalar_move_rr name, load, store, load_register, store_register
 gadget \name
 	ldr x8, [_stream], #8
@@ -42,9 +8,6 @@ gadget \name
 	ubfx x10, x8, #16, #16
 	\load \load_register\()11, [_cpu, x10]
 	\store \store_register\()11, [_cpu, x9]
-	.ifc \name,move_16_rr
-	refresh_compat_tls_segment w9, w11
-	.endif
 	retire_and_next
 .endm
 
@@ -78,9 +41,6 @@ gadget move_\width\()_rm
 Lx86_load_write\@:
 	and x8, x23, #0xffff
 	\store \store_register\()11, [_cpu, x8]
-	.if \width == 16
-	refresh_compat_tls_segment w8, w11
-	.endif
 	retire_and_next
 Lx86_load_cross\@:
 	cross_page_load (\width / 8)
@@ -123,7 +83,6 @@ memory_move_store i, 64, ldr, x, str
 
 .purgem memory_move_store
 .purgem memory_move_load
-.purgem refresh_compat_tls_segment
 
 gadget lea_16
 	effective_address

@@ -19,10 +19,10 @@ the TLS entries in Embedder.SegmentPresent.
  2 files changed, 42 insertions(+), 6 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index e6c772995a04584e0a15bc5cf4eabc61809f1999..7e0c95e5b5f2601e38a1f53e37aaf24c4276ad4f 100644
+index 3652610b081dafee336ae3fc940f03a58343969a..066dbee9f0b6e09f07eb6b42970fbea78c4a3386 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -3267,8 +3267,10 @@ void OpDispatchBuilder::SGDTOp(OpcodeArgs) {
+@@ -3272,8 +3272,10 @@ void OpDispatchBuilder::SGDTOp(OpcodeArgs) {
  void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
    auto DestAddress = LoadSourceGPR(Op, Op->Dest, Op->Flags, {.LoadData = false});
  
@@ -35,7 +35,7 @@ index e6c772995a04584e0a15bc5cf4eabc61809f1999..7e0c95e5b5f2601e38a1f53e37aaf24c
    auto IDTStoreSize = OpSize::i64Bit;
    if (!Is64BitMode) {
      // Mask off upper bits if 32-bit result.
-@@ -3276,7 +3278,7 @@ void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
+@@ -3281,7 +3283,7 @@ void OpDispatchBuilder::SIDTOp(OpcodeArgs) {
      IDTStoreSize = OpSize::i32Bit;
    }
  
@@ -44,7 +44,7 @@ index e6c772995a04584e0a15bc5cf4eabc61809f1999..7e0c95e5b5f2601e38a1f53e37aaf24c
    _StoreMemGPRAutoTSO(IDTStoreSize, AddressMode {.Base = DestAddress, .Offset = 2, .AddrSize = OpSize::i64Bit}, Constant(IDTAddress));
  }
  
-@@ -5081,9 +5083,40 @@ void OpDispatchBuilder::ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::I
+@@ -5086,9 +5088,40 @@ void OpDispatchBuilder::ALUOp(OpcodeArgs, FEXCore::IR::IROps ALUIROp, FEXCore::I
  }
  
  void OpDispatchBuilder::LSLOp(OpcodeArgs) {

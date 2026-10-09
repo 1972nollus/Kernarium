@@ -3,6 +3,7 @@
 
 #include "native_baked.hpp"
 #include "native_symbols.hpp"
+#include "cpu/x86_64/segments.hpp"
 #include "cpu/x86_64/layout/assembly_offsets.h"
 
 #include <array>
@@ -951,18 +952,27 @@ template<typename Entry>
 	const auto scale_shift = std::countr_zero(
 		static_cast<unsigned>(memory.scale));
 	const auto segment = apply_segment ? memory.segment : Segment::none;
+	/* A stepped instruction's ES, CS, SS or DS names that segment, whose base
+	 * the general tail adds. */
+	const bool legacy = apply_segment && memory.segment_base &&
+		segment == Segment::none;
+	const auto segment_field = legacy ?
+		static_cast<std::uintptr_t>(operand_segment(memory)) :
+		static_cast<std::uintptr_t>(segment);
 	/* Nothing follows the sum of base, scaled index and displacement: no
 	 * truncation to a narrow address space and no segment base to add. The
 	 * gadget takes that as permission to stop there, so it is set only when
 	 * every one of the three is absent.
 	 */
-	const auto plain = segment == Segment::none && !memory.address_32 &&
-		!memory.address_16;
+	const auto plain = segment == Segment::none && !legacy &&
+		!memory.address_32 && !memory.address_16;
 	std::uintptr_t descriptor = value_offset |
 		(static_cast<std::uintptr_t>(base) << 16U) |
 		(static_cast<std::uintptr_t>(index) << 32U) |
 		(static_cast<std::uintptr_t>(scale_shift) << 48U) |
-		(static_cast<std::uintptr_t>(segment) << 50U) |
+		(segment_field << 50U) |
+		(static_cast<std::uintptr_t>(legacy) <<
+			UML_X86_64_MEMORY_LEGACY_SEGMENT) |
 		(static_cast<std::uintptr_t>(memory.address_32) << 52U) |
 		(static_cast<std::uintptr_t>(memory.address_16) << 53U) |
 		(static_cast<std::uintptr_t>(plain) <<
@@ -4683,31 +4693,14 @@ struct FlagState final {
 		offsetof(CpuState, segment_selectors) + index * sizeof(std::uint16_t));
 }
 
+/* MOV from a segment register; a load of one is the segment model's. */
 [[nodiscard]] bool append_segment_move(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto selector = segment_selector_offset(instruction.vector_group);
-	if (!selector)
+	if (!selector || instruction.vector_opcode == 0x8e)
 		return false;
-	if (instruction.vector_opcode == 0x8e) {
-		if (instruction.source.kind == OperandKind::memory) {
-			const auto encoded = encode_memory(
-				gadget, instruction.source, *selector);
-			if (!encoded)
-				return false;
-			append_memory_words(stream, entry_address(
-				native::uml_x86_64_gadget_move_16_rm),
-				*encoded, gadget);
-			return true;
-		}
-		const auto source = register_offset(instruction.source);
-		if (!source)
-			return false;
-		stream.push_back(entry_address(native::uml_x86_64_gadget_move_16_rr));
-		stream.push_back(pack_offsets(*selector, *source));
-		return true;
-	}
 	if (instruction.destination.kind == OperandKind::memory) {
 		const auto encoded = encode_memory(
 			gadget, instruction.destination, *selector);
@@ -4739,31 +4732,22 @@ struct FlagState final {
 	return true;
 }
 
+/* PUSH of a segment register; a POP to one is the segment model's. */
 [[nodiscard]] bool append_segment_stack(
 	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto selector = segment_selector_offset(instruction.vector_group);
-	const bool pushing = instruction.vector_control != 0;
-	const auto width = pushing ? instruction.source.width :
-		instruction.destination.width;
-	if (!selector || (width != OperandWidth::word &&
-		width != OperandWidth::dword && width != OperandWidth::qword))
+	const auto width = instruction.source.width;
+	if (!selector || instruction.vector_control == 0 ||
+		(width != OperandWidth::word && width != OperandWidth::dword &&
+			width != OperandWidth::qword))
 		return false;
-	NativeEntry entry{};
-	if (pushing) {
-		entry = width == OperandWidth::word ?
-			native::uml_x86_64_gadget_push_16_r :
-			width == OperandWidth::dword ?
-				native::uml_x86_64_gadget_push_segment_32 :
-				native::uml_x86_64_gadget_push_segment_64;
-	} else {
-		entry = width == OperandWidth::word ?
-			native::uml_x86_64_gadget_pop_16_r :
-			width == OperandWidth::dword ?
-				native::uml_x86_64_gadget_pop_segment_32 :
-				native::uml_x86_64_gadget_pop_segment_64;
-	}
+	const NativeEntry entry = width == OperandWidth::word ?
+		native::uml_x86_64_gadget_push_16_r :
+		width == OperandWidth::dword ?
+			native::uml_x86_64_gadget_push_segment_32 :
+			native::uml_x86_64_gadget_push_segment_64;
 	stream.push_back(entry_address(entry));
 	stream.push_back(static_cast<std::uintptr_t>(*selector) |
 		(static_cast<std::uintptr_t>(instruction.length) << 56U));
@@ -4793,49 +4777,6 @@ struct FlagState final {
 	stream.push_back(descriptor);
 	stream.push_back(gadget.address);
 	return true;
-}
-
-[[nodiscard]] NativeEntry far_transfer_entry(
-	Operation operation, OperandWidth width) noexcept
-{
-	const bool call = operation == Operation::far_call;
-	switch (width) {
-	case OperandWidth::word:
-		return call ? native::uml_x86_64_gadget_far_call_16 :
-			native::uml_x86_64_gadget_far_jump_16;
-	case OperandWidth::dword:
-		return call ? native::uml_x86_64_gadget_far_call_32 :
-			native::uml_x86_64_gadget_far_jump_32;
-	case OperandWidth::qword:
-		return call ? native::uml_x86_64_gadget_far_call_64 :
-			native::uml_x86_64_gadget_far_jump_64;
-	default: return nullptr;
-	}
-}
-
-[[nodiscard]] bool append_far_transfer(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
-{
-	const auto encoded = encode_memory(gadget, gadget.instruction.source, 0);
-	const auto entry = far_transfer_entry(gadget.instruction.operation,
-		gadget.instruction.source.width);
-	if (!encoded || entry == nullptr)
-		return false;
-	append_memory_words(stream, entry_address(entry), *encoded, gadget);
-	return true;
-}
-
-[[nodiscard]] NativeEntry far_return_entry(OperandWidth width) noexcept
-{
-	switch (width) {
-	case OperandWidth::word:
-		return native::uml_x86_64_gadget_far_return_16;
-	case OperandWidth::dword:
-		return native::uml_x86_64_gadget_far_return_32;
-	case OperandWidth::qword:
-		return native::uml_x86_64_gadget_far_return_64;
-	default: return nullptr;
-	}
 }
 
 /* 64-bit mode pops SS:RSP at every operand size, compat32 only on a return
@@ -5827,6 +5768,14 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	/* The decoder admits LOCK only on memory-destination read-modify-write
 	 * operations (lock_allowed), and each of those has an atomic gadget. */
 	const auto &instruction = gadget.instruction;
+	/* An access through FS or GS in compatibility mode that the general
+	 * address tail does not check, and any through CS, wait for the
+	 * runtime's exact check. */
+	if (mode == ExecutionMode::compat32 && segment_guarded(instruction)) {
+		stream.push_back(entry_address(
+			native::uml_x86_64_gadget_segment_guard));
+		stream.push_back(gadget.address);
+	}
 	if (append_baked(stream, gadget, mode, state, produced)) {
 		/* A baked entry that executes no flag-setting host instruction
 		 * leaves the producer's NZCV for a later consumer. The bank's
@@ -6178,9 +6127,23 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		stream.push_back(entry_address(native::uml_x86_64_gadget_sahf));
 		return true;
 	case Operation::segment_move:
-		return append_segment_move(stream, gadget);
 	case Operation::segment_stack:
-		return append_segment_stack(stream, gadget);
+	case Operation::load_far_pointer:
+	case Operation::far_call:
+	case Operation::far_jump:
+	case Operation::far_ret:
+	case Operation::load_access_rights:
+	case Operation::verify_segment:
+	case Operation::store_segment_table:
+		if (segment_instruction(instruction)) {
+			stream.push_back(entry_address(
+				native::uml_x86_64_gadget_segment_instruction));
+			stream.push_back(gadget.address);
+			return true;
+		}
+		return instruction.operation == Operation::segment_move ?
+			append_segment_move(stream, gadget) :
+			append_segment_stack(stream, gadget);
 	case Operation::set_condition: {
 		if (instruction.destination.kind == OperandKind::memory) {
 			const auto encoded = encode_memory(gadget, instruction.destination, 0);
@@ -6534,9 +6497,6 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			stream.push_back(reinterpret_cast<std::uintptr_t>(site));
 		return true;
 	}
-	case Operation::far_call:
-	case Operation::far_jump:
-		return append_far_transfer(stream, gadget);
 	case Operation::ret: {
 		const bool linked = links.resolve != nullptr;
 		stream.push_back(entry_address(mode == ExecutionMode::compat32 ?
@@ -6545,17 +6505,6 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			(linked ? native::uml_x86_64_gadget_return_cached :
 				native::uml_x86_64_gadget_return)));
 		stream.push_back(instruction.source.immediate);
-		stream.push_back(gadget.address);
-		return true;
-	}
-	case Operation::far_ret: {
-		const auto entry = far_return_entry(instruction.destination.width);
-		if (entry == nullptr)
-			return false;
-		const auto adjustment = instruction.source.kind == OperandKind::immediate ?
-			instruction.source.immediate : 0;
-		stream.push_back(entry_address(entry));
-		stream.push_back(adjustment);
 		stream.push_back(gadget.address);
 		return true;
 	}

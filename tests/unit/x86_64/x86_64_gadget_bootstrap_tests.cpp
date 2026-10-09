@@ -9,6 +9,7 @@
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/gadgets/x87_math.hpp"
+#include "cpu/x86_64/segments.hpp"
 #include "memory/guest_address_space.hpp"
 #include "require.hpp"
 
@@ -3369,7 +3370,13 @@ read_test_sequences(void *context) noexcept
 	memory.load(0x50, {0xc5, 0x41, 0x58, 0xc1});       // lds eax, [ecx+0x58]
 	for (const auto address : {0x40U, 0x50U}) {
 		const auto alias = decode(memory, address, ExecutionMode::compat32);
-		if (!expect(alias.status == DecodeStatus::illegal_instruction,
+		const auto &instruction = alias.instruction;
+		if (!expect(alias.status == DecodeStatus::decoded &&
+			instruction.operation == Operation::load_far_pointer &&
+			instruction.vector_group == (address == 0x40U ? 0U : 3U) &&
+			instruction.destination.reg.index == 0 &&
+			instruction.source.memory.base == 1 &&
+			instruction.length == (address == 0x40U ? 2U : 3U),
 			"compat32 LES/LDS form decoded as a VEX prefix"))
 			return false;
 	}
@@ -3518,6 +3525,20 @@ read_test_sequences(void *context) noexcept
 }
 
 
+/* The segment registers Linux gives a task in `mode`, their descriptor
+ * caches loaded as at an entry from the kernel. */
+void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
+	uml::cpu::x86_64::ExecutionMode mode)
+{
+	using namespace uml::cpu::x86_64;
+	const bool compat = mode == ExecutionMode::compat32;
+	cpu.execution_mode = mode;
+	cpu.segment_selectors = {compat ? std::uint16_t{0x2b} : std::uint16_t{0},
+		compat ? std::uint16_t{0x23} : std::uint16_t{0x33}, 0x2b,
+		compat ? std::uint16_t{0x2b} : std::uint16_t{0}, 0, 0};
+	(void)enter_segments(cpu);
+}
+
 [[nodiscard]] bool execute_compat32_legacy_segment_stack()
 {
 	using namespace uml::cpu::x86_64;
@@ -3528,7 +3549,7 @@ read_test_sequences(void *context) noexcept
 	});
 	memory.load(0x200, {0x2b, 0x00, 0x00, 0x00});
 	CpuState cpu{};
-	cpu.execution_mode = ExecutionMode::compat32;
+	linux_user_segments(cpu, ExecutionMode::compat32);
 	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
 	const auto pop_ds = require_built(
 		gadgets::build( memory, 0, ExecutionMode::compat32, 1),
@@ -3551,7 +3572,7 @@ read_test_sequences(void *context) noexcept
 		0x07, // pop es
 	});
 	cpu = CpuState{};
-	cpu.execution_mode = ExecutionMode::compat32;
+	linux_user_segments(cpu, ExecutionMode::compat32);
 	cpu.gpr(Register::rsp) = 0x204;
 	cpu.segment_selectors[3] = 0x33;
 	const auto round_trip = require_built(
@@ -3866,12 +3887,15 @@ read_test_sequences(void *context) noexcept
 		0x8e, 0xe8,                               // mov gs, ax
 	});
 	/* An x86-64 kernel's TLS entries are 12 to 14; the second, selector
-	 * 0x6b, holds the base, and 0x33, entry 6, is none of them. */
+	 * 0x6b, holds a 4 GiB data segment based at 0xfffff000, and 0x33,
+	 * entry 6, is the 64-bit code segment, readable and based at zero. */
 	CpuState cpu{};
-	cpu.execution_mode = ExecutionMode::compat32;
-	cpu.compat_tls_bases[1] = 0xffff'f000;
-	cpu.compat_tls_present = 2;
-	cpu.compat_tls_first = 12;
+	cpu.segment_selectors = {0x2b, 0x23, 0x2b, 0x2b, 0, 0};
+	cpu.tls_descriptors[1] = 0xffcf'f3ff'f000'ffffULL;
+	if (!expect(!enter_segments(cpu) &&
+		cpu.execution_mode == ExecutionMode::compat32,
+		"compat32 entry segments did not load"))
+		return false;
 	cpu.gpr(Register::rbp) = 0x1080;
 	const auto built = require_built(
 		gadgets::build( memory, 0, ExecutionMode::compat32, 3),
@@ -8404,12 +8428,6 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 			low & 0xffffffffU, 0x01234567U, low >> 32U},
 		Form{"lock cmpxchg8b, unequal", {0xf0, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
 			1, 0x01234567U, low >> 32U},
-		Form{"lock cmpxchg16b, equal",
-			{0xf0, 0x48, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
-			low, 0x0123456789abcdefULL, high},
-		Form{"lock cmpxchg16b, unequal",
-			{0xf0, 0x48, 0x0f, 0xc7, 0x0e, 0x0f, 0x05},
-			low, 0x0123456789abcdefULL, high + 1},
 	};
 	struct Outcome {
 		std::array<std::uint64_t, 2> operand;
@@ -8466,6 +8484,70 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 			if (!expect(run(form, address, outcome) &&
 				outcome == reference, form.name))
 				return false;
+		}
+	}
+	return true;
+}
+
+/* CMPXCHG16B compares and stores an aligned operand, and raises #GP(0) for
+ * any other before it reads or writes anything, as a Xeon does, locked or
+ * not. */
+[[nodiscard]] bool compare_exchange_pair_requires_alignment()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t low = 0x8877665544332211ULL;
+	constexpr std::uint64_t high = 0x0ff0e0d0c0b0a099ULL;
+	for (const auto locked : {true, false}) {
+		for (const auto address : locked_operand_addresses) {
+			for (const auto equal : {true, false}) {
+				TestMemory memory;
+				std::vector<std::uint8_t> code{0x48, 0x0f, 0xc7, 0x0e,
+					0x0f, 0x05};
+				if (locked)
+					code.insert(code.begin(), 0xf0);
+				memory.fill(0, std::as_bytes(std::span{code}));
+				std::array<std::byte, 16> image{};
+				std::memcpy(image.data(), &low, sizeof(low));
+				std::memcpy(image.data() + 8, &high, sizeof(high));
+				memory.fill(address, image);
+				const auto built = require_built(gadgets::build(memory, 0),
+					"CMPXCHG16B block did not build");
+				CpuState cpu{};
+				cpu.gpr(Register::rax) = low;
+				cpu.gpr(Register::rdx) = equal ? high : high + 1;
+				cpu.gpr(Register::rbx) = 0x0fedcba987654321ULL;
+				cpu.gpr(Register::rcx) = 0x0123456789abcdefULL;
+				cpu.gpr(Register::rsi) = address;
+				const auto result =
+					gadgets::execute(built.program, cpu, memory, 64);
+				const bool aligned = (address & 15U) == 0;
+				const auto stored = memory.qword(address);
+				const auto stored_high = memory.qword(address + 8);
+				if (!aligned) {
+					if (!expect(result.event ==
+							uml::cpu::EngineEvent::general_protection &&
+							result.retired_instructions == 0 &&
+							cpu.rip == 0 && stored == low &&
+							stored_high == high &&
+							cpu.gpr(Register::rdx) ==
+								(equal ? high : high + 1),
+						"misaligned CMPXCHG16B did not raise #GP(0)"))
+						return false;
+					continue;
+				}
+				materialize_flags(cpu);
+				const bool zero = (cpu.rflags & 0x40U) != 0;
+				if (!expect(result.event ==
+						uml::cpu::EngineEvent::system_call &&
+						zero == equal &&
+						stored == (equal ? 0x0fedcba987654321ULL : low) &&
+						stored_high == (equal ? 0x0123456789abcdefULL :
+							high) &&
+						cpu.gpr(Register::rax) == low &&
+						cpu.gpr(Register::rdx) == high,
+					"aligned CMPXCHG16B did not compare and exchange"))
+					return false;
+			}
 		}
 	}
 	return true;
@@ -8977,6 +9059,7 @@ int main()
 		cmpxchg_survives_concurrent_vcpus() &&
 		locked_increment_survives_concurrent_vcpus() &&
 		locked_forms_agree_at_every_operand_address() &&
+		compare_exchange_pair_requires_alignment() &&
 		unaligned_locked_increment_survives_concurrent_vcpus() &&
 		mask_store_uses_its_segment_and_address_size() &&
 		mask_store_keeps_concurrent_unselected_bytes() &&
