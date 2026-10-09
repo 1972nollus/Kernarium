@@ -679,6 +679,31 @@ constexpr word user_debugreg = 252;
  * one raises #MF at the next waiting instruction. Each case leaves MXCSR or
  * the x87 status word as the handler returned them in probe_fp_saved[0],
  * and XMM0 or the FISTP destination in probe_fp_saved[1]. */
+/* An x87 instruction that needs a free register, run on a full stack of
+ * seven 1.0 and pi on top with invalid operation unmasked. The overflow it
+ * raises is checked before it computes anything: nothing is pushed, and the
+ * waiting instruction after it takes #MF. pi, stored as a single, shows the
+ * stack as the handler left it. */
+#define PROBE_MF_FULL_STACK(name, insn) \
+	".global probe_mf_" name "\n" \
+	"probe_mf_" name ":\n" \
+	"	fninit\n" \
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n" \
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n" \
+	"	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n" \
+	"	fldpi\n" \
+	"	" insn "\n" \
+	".global probe_mf_" name "_insn\n" \
+	"probe_mf_" name "_insn:\n" \
+	"	fwait\n" \
+	".global probe_mf_" name "_end\n" \
+	"probe_mf_" name "_end:\n" \
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n" \
+	"	fnclex\n" \
+	"	fstps probe_fp_saved+4" PROBE_RIP "\n" \
+	"	fninit\n" \
+	"	ret\n"
+
 __asm__(".text\n"
 	".global probe_xm_div\n"
 	"probe_xm_div:\n"
@@ -845,6 +870,9 @@ __asm__(".text\n"
 	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
 	"	fninit\n"
 	"	ret\n"
+	PROBE_MF_FULL_STACK("fxtract", "fxtract")
+	PROBE_MF_FULL_STACK("fptan", "fptan")
+	PROBE_MF_FULL_STACK("fsincos", "fsincos")
 	".global probe_mf_unmask\n"
 	"probe_mf_unmask:\n"
 	"	fninit\n"
@@ -3895,6 +3923,15 @@ extern "C" char probe_mf_inv_end[];
 extern "C" void probe_mf_stack();
 extern "C" char probe_mf_stack_insn[];
 extern "C" char probe_mf_stack_end[];
+extern "C" void probe_mf_fxtract();
+extern "C" char probe_mf_fxtract_insn[];
+extern "C" char probe_mf_fxtract_end[];
+extern "C" void probe_mf_fptan();
+extern "C" char probe_mf_fptan_insn[];
+extern "C" char probe_mf_fptan_end[];
+extern "C" void probe_mf_fsincos();
+extern "C" char probe_mf_fsincos_insn[];
+extern "C" char probe_mf_fsincos_end[];
 extern "C" void probe_mf_unmask();
 extern "C" char probe_mf_unmask_insn[];
 extern "C" char probe_mf_unmask_end[];
@@ -3977,8 +4014,10 @@ bool floating_point_exceptions()
 		word trapno;
 		u32 state;
 		u32 value;
+		const char *value_of = nullptr;
 	};
-	/* A `value` of zero is not checked. */
+	/* A `value` of zero is not checked; `value_of` names it when it is
+	 * neither XMM0 nor a FISTP destination. */
 	const Case cases[] = {
 		{"DIVSS by zero", probe_xm_div, probe_xm_div_insn, probe_xm_div_end,
 		 fpe_fltdiv, 19, 0x1d84, 0x3f800000},
@@ -3996,6 +4035,15 @@ bool floating_point_exceptions()
 		 probe_mf_inv_end, fpe_fltinv, 16, 0xb881, 0},
 		{"x87 stack overflow", probe_mf_stack, probe_mf_stack_insn,
 		 probe_mf_stack_end, fpe_fltinv, 16, 0x82c1, 0},
+		{"FXTRACT on a full stack", probe_mf_fxtract,
+		 probe_mf_fxtract_insn, probe_mf_fxtract_end, fpe_fltinv, 16,
+		 0x82c1, 0x40490fdb, "x87 top of stack after"},
+		{"FPTAN on a full stack", probe_mf_fptan, probe_mf_fptan_insn,
+		 probe_mf_fptan_end, fpe_fltinv, 16, 0x82c1, 0x40490fdb,
+		 "x87 top of stack after"},
+		{"FSINCOS on a full stack", probe_mf_fsincos,
+		 probe_mf_fsincos_insn, probe_mf_fsincos_end, fpe_fltinv, 16,
+		 0x82c1, 0x40490fdb, "x87 top of stack after"},
 		{"FLDCW unmasking a pending flag", probe_mf_unmask,
 		 probe_mf_unmask_insn, probe_mf_unmask_end, fpe_fltdiv, 16,
 		 0xb884, 0},
@@ -4031,7 +4079,8 @@ bool floating_point_exceptions()
 					"x87 status after", probe_fp_saved[0],
 				 one.state);
 		if (one.value != 0)
-			one_ok &= expect(one.trapno == 19 ? "XMM0 after" :
+			one_ok &= expect(one.value_of ? one.value_of :
+					 one.trapno == 19 ? "XMM0 after" :
 						"FISTP destination after",
 					 probe_fp_saved[1], one.value);
 		one_ok &= expect("handler MXCSR", handler_mxcsr, 0x1f80);

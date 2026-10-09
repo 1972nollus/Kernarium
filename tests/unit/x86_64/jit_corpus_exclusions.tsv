@@ -3,9 +3,3 @@
 # <record name><TAB><class>. Each class is a correctness gap of the engine,
 # not of the record; the JIT corpus test fails when a listed record passes,
 # so a fix removes its rows in the same change.
-
-# XSAVE and XRSTOR of MXCSR, XMM and XSTATE_BV: the JIT loads MXCSR when
-# XSTATE_BV selects the SSE component, where the hardware loads it when RFBM
-# selects the SSE or AVX component; it keeps XMM and YMM_Hi128 for a clear
-# XSTATE_BV bit, and XSAVE does not merge the bits outside RFBM into XSTATE_BV.
-repository/xsave-moves-mxcsr-with-the-sse-and-avx-components.s	xsave-mxcsr
