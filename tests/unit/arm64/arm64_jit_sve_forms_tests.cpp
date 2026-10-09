@@ -29,6 +29,7 @@
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/arm64/jit/jit_publication.hpp"
 #include "cpu/arm64/jit/jit_semantic_sve.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
@@ -471,21 +472,92 @@ void place_base(const arm64::detail::SmeEncoding &row, std::uint32_t word,
   default:
     break;
   }
+  const bool vector_base =
+      operands[memory.base_operand].kind == arm64::detail::SmeOperandKind::z;
   const auto base_register =
       arm64::detail::sme_operand_number(operands[memory.base_operand], word);
-  if (memory.index_operand != arm64::detail::sme_no_operand) {
+  if (memory.index_operand != arm64::detail::sme_no_operand &&
+      operands[memory.index_operand].kind != arm64::detail::SmeOperandKind::z) {
     const auto index_register =
         arm64::detail::sme_operand_number(operands[memory.index_operand], word);
-    initial.registers[index_register] = random.next() % 4U;
+    if (index_register != 31U)
+      initial.registers[index_register] = random.next() % 4U;
   }
   if (random.next() % 4U == 0U) {
     initial.tbi_enabled = true;
     base |= (random.next() & 0xffU) << 56;
   }
+  if (vector_base)
+    return;
   if (base_register == 31U)
     initial.sp = base & ~std::uint64_t{15};
   else
     initial.registers[base_register] = base;
+}
+
+/* The vector operands of a gather or scatter: each element's base address or
+ * offset. `clean` keeps every access inside one mapped page; otherwise a lane
+ * is sometimes at a page's end, unmapped or random, and a 32-bit offset gets
+ * junk in its element's high word, which the form must ignore. */
+void place_vectors(const arm64::detail::SmeEncoding &row, std::uint32_t word,
+                   Random &random, arm64::CpuState &initial, bool clean) {
+  const auto &memory = arm64::detail::sme_encoding_memory[row.memory - 1U];
+  if (memory.shape != arm64::detail::SmeMemoryShape::gather &&
+      memory.shape != arm64::detail::SmeMemoryShape::gather_first_fault)
+    return;
+  const auto *const operands = arm64::detail::sme_encoding_operands_of(row);
+  const unsigned esize = arm64::detail::sme_memory_esize(memory, word) / 8U;
+  const bool vector_base =
+      operands[memory.base_operand].kind == arm64::detail::SmeOperandKind::z;
+  const bool vector_index = memory.offset == arm64::detail::SmeAddressOffset::vector_index;
+  const bool signed_index =
+      vector_index && memory.index_bits < 64U &&
+      arm64::detail::sme_segment_value(memory.index_sign, word) != 0U;
+  const auto place = [&](unsigned number, bool address) {
+    auto &vector = initial.vectors[number & 31U];
+    for (unsigned lane = 0; lane < 16U / esize; ++lane) {
+      /* Each lane draws its own case, so an access in the middle of a
+       * scatter can be the one that faults. */
+      const unsigned mode =
+          clean ? 0U : static_cast<unsigned>(random.next() % 8U);
+      std::uint64_t value;
+      if (address) {
+        value = code_base + mapped / 2U + page / 2U + random.next() % 256U;
+        if (mode == 1U)
+          value = code_base + 2U * page - random.next() % 8U;
+        else if (mode == 2U)
+          value = code_base + mapped + random.next() % page;
+        else if (mode == 3U)
+          value = random.next();
+        if (!clean && initial.tbi_enabled)
+          value |= (random.next() & 0xffU) << 56;
+        if (esize == 4U)
+          value &= 0xffff'ffffU;
+      } else {
+        /* A small offset, negative where the form sign-extends it. */
+        std::int64_t small = static_cast<std::int64_t>(random.next() % 32U);
+        if ((signed_index || memory.index_bits == 64U) && random.next() % 2U == 0U)
+          small = -small;
+        value = static_cast<std::uint64_t>(small);
+        if (mode == 1U)
+          value = random.next() % (page * 2U);
+        else if (mode == 2U)
+          value = random.next();
+        if (memory.index_bits == 32U && esize == 8U)
+          value = (value & 0xffff'ffffU) |
+                  (clean || mode == 0U ? random.next() << 32 : value & ~0xffff'ffffULL);
+        if (esize == 4U)
+          value &= 0xffff'ffffU;
+      }
+      std::memcpy(vector.bytes.data() + lane * esize, &value, esize);
+    }
+  };
+  if (vector_base)
+    place(arm64::detail::sme_operand_number(operands[memory.base_operand], word),
+          true);
+  if (vector_index)
+    place(arm64::detail::sme_operand_number(operands[memory.index_operand], word),
+          false);
 }
 
 /* A base and index that nothing sends to the library: a register base 16-byte
@@ -555,8 +627,10 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
       for (unsigned n = 0; n < 16; ++n)
         if (random.next() % 2U == 0U)
           initial.sve_p[n] = arm64::sve_predicate_mask(0xffffU);
-      if (memory)
+      if (memory) {
         place_base(row, word, random, initial);
+        place_vectors(row, word, random, initial, false);
+      }
       /* Whether this word runs inline: a library word ends its block, an
        * inline one is followed by the rest. */
       if (!lowered) {
@@ -629,8 +703,15 @@ void lowered_words_stay_inline(const HostCapabilities &host, Tally &tally) {
       initial.sve_ffr = arm64::sve_predicate_mask(0xffffU);
       initial.tbi_enabled = false;
       initial.vectors[31].bytes = {};
-      if (row.memory != 0U && !place_clean_base(row, word, random, initial))
-        continue;
+      if (row.memory != 0U) {
+        if (!place_clean_base(row, word, random, initial))
+          continue;
+        place_vectors(row, word, random, initial, true);
+      }
+      /* A gather's translations never call the bridge, so a page the TLB
+       * lacks sends it to the library once, which fills the TLB. */
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
       const auto before = arm64::jit::semantic::sve_library_exits(index);
       compare(machine, slot, word, index, Variant::alone, initial, data, false,
               tally);
@@ -670,6 +751,133 @@ void lowered_words_stay_inline(const HostCapabilities &host, Tally &tally) {
   require(arm64::jit::semantic::sve_library_exit_total() == 0U);
   arm64::jit::semantic::count_sve_library_exits(false);
   std::printf("%zu lowered words stay inline from a clean state\n", checked);
+}
+
+/* A gather or scatter with one element that cannot be reached, or with every
+ * element at one address: the lane that faults decides what a scatter has
+ * written by then, and elements at one address are written in order. The
+ * rest of the accesses are valid, so the JIT's own accesses run up to the
+ * lane that sends the word to the library. */
+void gather_lane_faults(const HostCapabilities &host, Tally &tally) {
+  Random random{0x6a17'5e07U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if (row.memory == 0U ||
+        arm64::detail::sme_encoding_memory[row.memory - 1U].shape !=
+            arm64::detail::SmeMemoryShape::gather ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    const auto &memory = arm64::detail::sme_encoding_memory[row.memory - 1U];
+    const auto *const operands = arm64::detail::sme_encoding_operands_of(row);
+    Machine machine{host};
+    for (std::size_t slot = 0; slot < 16U; ++slot) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      const auto *decoded = arm64::detail::decode_sve_non_streaming(word, features);
+      if (decoded != &row)
+        continue;
+      std::vector<std::byte> data(mapped);
+      for (std::size_t offset = 0; offset < mapped; offset += 8) {
+        const auto value = random.next();
+        std::memcpy(data.data() + offset, &value, 8);
+      }
+      auto initial = random_state(random, false);
+      for (auto &predicate : initial.sve_p)
+        predicate = arm64::sve_predicate_mask(0xffffU);
+      initial.tbi_enabled = false;
+      if (!place_clean_base(row, word, random, initial))
+        continue;
+      place_vectors(row, word, random, initial, true);
+      const unsigned esize = arm64::detail::sme_memory_esize(memory, word) / 8U;
+      const unsigned lanes = 16U / esize;
+      const bool vector_base =
+          operands[memory.base_operand].kind == arm64::detail::SmeOperandKind::z;
+      const unsigned number = arm64::detail::sme_operand_number(
+          operands[vector_base ? memory.base_operand : memory.index_operand],
+          word);
+      auto &vector = initial.vectors[number & 31U];
+      const unsigned lane = static_cast<unsigned>(random.next() % lanes);
+      std::uint64_t value = 0;
+      if (slot % 2U == 0U) {
+        /* One lane out of reach: far beyond the mapping. */
+        value = vector_base ? code_base + mapped + (random.next() % page)
+                            : (std::uint64_t{1} << 24) + (random.next() % page);
+        std::memcpy(vector.bytes.data() + lane * esize, &value, esize);
+      } else {
+        /* Every lane the same: the first lane's. */
+        std::memcpy(&value, vector.bytes.data(), esize);
+        for (unsigned other = 1; other < lanes; ++other)
+          std::memcpy(vector.bytes.data() + other * esize, &value, esize);
+      }
+      /* The first run leaves the TLB the accesses before the faulting lane
+       * need, so the second makes them inline and leaves at the faulting
+       * one. */
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
+      ++checked;
+    }
+  }
+  std::printf("%zu gathers and scatters with one lane out of reach or all at "
+              "one address match the library\n",
+              checked);
+}
+
+/* While another vCPU holds an exclusive reservation every store is tracked,
+ * and a scatter, which the tracked variant leaves to the library, must still
+ * leave what the library leaves. */
+void scatters_with_tracked_stores(const HostCapabilities &host, Tally &tally) {
+  Random random{0x6a17'5e09U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  arm64::CpuState holder;
+  require(arm64::begin_jit_reservation(holder));
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if (row.memory == 0U ||
+        arm64::detail::sme_encoding_memory[row.memory - 1U].shape !=
+            arm64::detail::SmeMemoryShape::gather ||
+        arm64::detail::sme_encoding_memory[row.memory - 1U].direction !=
+            arm64::detail::SmeMemoryDirection::store ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    Machine machine{host};
+    for (std::size_t slot = 0; slot < 4U; ++slot) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      const auto *decoded = arm64::detail::decode_sve_non_streaming(word, features);
+      if (decoded != &row)
+        continue;
+      std::vector<std::byte> data(mapped);
+      for (std::size_t offset = 0; offset < mapped; offset += 8) {
+        const auto value = random.next();
+        std::memcpy(data.data() + offset, &value, 8);
+      }
+      auto initial = random_state(random, false);
+      for (auto &predicate : initial.sve_p)
+        predicate = arm64::sve_predicate_mask(0xffffU);
+      initial.tbi_enabled = false;
+      if (!place_clean_base(row, word, random, initial))
+        continue;
+      place_vectors(row, word, random, initial, true);
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
+      compare(machine, slot, word, index, Variant::alone, initial, data, false,
+              tally);
+      ++checked;
+    }
+  }
+  arm64::end_jit_reservation(holder);
+  std::printf("%zu scatters run while another vCPU's reservation tracks "
+              "stores\n",
+              checked);
 }
 
 /* A predicate that PTRUE made all-active stops being known so as soon as
@@ -790,6 +998,8 @@ int main() {
   writers_forget_fullness(sve_host());
   forms_match_the_library(sve_host(), tally);
   lowered_words_stay_inline(sve_host(), tally);
+  gather_lane_faults(sve_host(), tally);
+  scatters_with_tracked_stores(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);
   std::printf("%zu runs over %zu rows (%zu inline) match the library, %zu of "

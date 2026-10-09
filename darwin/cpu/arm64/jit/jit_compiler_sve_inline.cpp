@@ -1038,11 +1038,14 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
                                   std::uint64_t pc) {
   using Shape = detail::SmeMemoryShape;
   const auto &memory = *detail::sme_encoding_memory_of(row);
-  if (memory.shape == Shape::prefetch) {
+  if (memory.shape == Shape::prefetch ||
+      memory.shape == Shape::gather_prefetch) {
     /* A prefetch moves nothing and cannot fault. */
     begin_sve_word();
     return true;
   }
+  if (memory.shape == Shape::gather)
+    return emit_sve_gather(row, instruction, pc);
   if (memory.shape != Shape::contiguous && memory.shape != Shape::structure &&
       memory.shape != Shape::replicate &&
       memory.shape != Shape::replicate_quad && memory.shape != Shape::fill_z)
@@ -1184,6 +1187,140 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
   }
   if (store)
     clear_local_exclusive_monitor();
+  return true;
+}
+
+bool JitCompiler::emit_sve_gather(const detail::SmeEncoding &row,
+                                  std::uint32_t instruction,
+                                  std::uint64_t pc) {
+  using Offset = detail::SmeAddressOffset;
+  const auto &memory = *detail::sme_encoding_memory_of(row);
+  const bool store = memory.direction == detail::SmeMemoryDirection::store;
+  /* A tracked block records one store range per instruction, and a scatter
+   * writes up to four; the library, which invalidates each, runs it. The
+   * word still counts as a direct store, so that the tracked translation
+   * and the untracked one agree on which instructions store. */
+  if (store && track_direct_stores_) {
+    mark_direct_memory_write();
+    return false;
+  }
+  const auto *operands = detail::sme_encoding_operands_of(row);
+  const unsigned esize = jit::sme_memory_element_bytes(memory, instruction);
+  const unsigned msize = memory.msize / 8U;
+  if (msize > esize)
+    return false;
+  const unsigned elements = sve_vector_length / esize;
+
+  unsigned transfer = 0;
+  unsigned governing = 0;
+  for (unsigned index = 0; index < row.operand_count; ++index) {
+    if (index == memory.base_operand || index == memory.index_operand)
+      continue;
+    if (operands[index].kind == detail::SmeOperandKind::z)
+      transfer = detail::sme_operand_number(operands[index], instruction);
+    else if (operands[index].kind == detail::SmeOperandKind::p)
+      governing = detail::sme_operand_number(operands[index], instruction);
+  }
+  const auto &base_operand = operands[memory.base_operand];
+  const bool vector_base = base_operand.kind == detail::SmeOperandKind::z;
+  const unsigned base_number =
+      detail::sme_operand_number(base_operand, instruction);
+  const bool sp_base = !vector_base && base_number == 31U;
+  const bool vector_index = memory.offset == Offset::vector_index;
+  const unsigned index_number =
+      memory.index_operand == detail::sme_no_operand
+          ? 0U
+          : detail::sme_operand_number(operands[memory.index_operand],
+                                       instruction);
+  const unsigned log_esize = static_cast<unsigned>(std::countr_zero(esize));
+  const unsigned log_msize = static_cast<unsigned>(std::countr_zero(msize));
+  const unsigned steps = log_esize - log_msize;
+  const unsigned index_bits = memory.index_bits;
+  const bool index_signed =
+      vector_index && index_bits < 64U &&
+      detail::sme_segment_value(memory.index_sign, instruction) != 0U;
+  const auto immediate = static_cast<std::int64_t>(
+      jit::sme_memory_offset(memory, instruction, sve_vector_length, 0));
+  const auto access = store ? Access::write : Access::read;
+
+  if (store)
+    mark_direct_memory_write();
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
+  begin_sve_word();
+  emit_sve_full_guard(governing, esize, slow);
+
+  /* The registers an address is built from stay put through every element:
+   * a translation here never calls the bridge, so it clobbers only x0-x2 and
+   * x9, and a miss leaves the block for the library. */
+  unsigned base_host = 0;
+  if (!vector_base) {
+    base_host = read_native_gpr(base_number, true, 10U).host;
+    if (sp_base) {
+      emit_misalignment_check(base_host, 16, slow);
+    } else {
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+      emitter_.compare_zero(slow, 0, false, true);
+    }
+  } else {
+    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+    emitter_.compare_zero(slow, 0, false, true);
+  }
+  unsigned vector_host = 0;
+  if (vector_base)
+    vector_host = read_native_vector(base_number, 1U).host;
+  else if (vector_index)
+    vector_host = read_native_vector(index_number, 1U).host;
+  unsigned offset_host = 31;
+  if (memory.offset == Offset::register_byte && index_number != 31U)
+    offset_host = read_native_gpr(index_number, false, 11U).host;
+  unsigned source = scratch_a;
+  if (store) {
+    source = read_native_vector(transfer, 0U).host;
+    for (unsigned step = 0; step < steps; ++step) {
+      emitter_.emit(narrow(log_esize - 1U - step, scratch_a, source));
+      source = scratch_a;
+    }
+  }
+
+  for (unsigned element = 0; element < elements; ++element) {
+    if (vector_base) {
+      emitter_.emit(esize == 8U ? umov_d(8, vector_host, element)
+                                : umov_s(8, vector_host, element));
+      if (memory.offset == Offset::immediate_element && immediate != 0)
+        emitter_.add_immediate(8, 8, static_cast<unsigned>(immediate));
+      else if (offset_host != 31U)
+        emitter_.emit(add_x(8, 8, offset_host));
+    } else {
+      /* A 32-bit offset is the low word of its element. */
+      if (index_bits == 64U) {
+        emitter_.emit(umov_d(9, vector_host, element));
+        emitter_.add_shifted(8, base_host, 9, memory.index_shift);
+      } else {
+        emitter_.emit(umov_s(9, vector_host, esize == 8U ? 2U * element
+                                                          : element));
+        emitter_.emit(add_extended_word(index_signed, 8, base_host, 9,
+                                        memory.index_shift));
+      }
+    }
+    emit_translate(8, access, slow, slow, msize, false);
+    emitter_.emit(lane_memory(!store, log_msize, element, source, 8));
+  }
+
+  if (store) {
+    clear_local_exclusive_monitor();
+    return true;
+  }
+  const auto out = write_native_vector(transfer, false, 0U);
+  if (steps == 0U) {
+    emitter_.emit(vector_move(out.host, scratch_a));
+  } else {
+    emitter_.emit(
+        extend_long(memory.sign_extend, log_msize, out.host, scratch_a));
+    for (unsigned step = 1; step < steps; ++step)
+      emitter_.emit(extend_long(memory.sign_extend, log_msize + step, out.host,
+                                out.host));
+  }
+  commit_native_vector(out, transfer);
   return true;
 }
 

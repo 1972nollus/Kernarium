@@ -111,6 +111,13 @@ constexpr unsigned cond_le = 13U;
 [[nodiscard]] constexpr std::uint32_t uxtw(unsigned d, unsigned n) noexcept {
   return 0x2a00'03e0U | (n << 16) | d;
 }
+/* ADD Xd, Xn, Wm, SXTW #shift and ADD Xd, Xn, Wm, UXTW #shift. */
+[[nodiscard]] constexpr std::uint32_t add_extended_word(
+    bool is_signed, unsigned d, unsigned n, unsigned m,
+    unsigned shift) noexcept {
+  return 0x8b20'0000U | (m << 16) | ((is_signed ? 6U : 2U) << 13) |
+         (shift << 10) | (n << 5) | d;
+}
 constexpr std::uint32_t msr_nzcv_x11 = 0xd51b'420bU;
 
 /* AdvSIMD, 16 bytes. */
@@ -223,6 +230,43 @@ constexpr std::uint32_t vector_umin = 0x6e20'6c00U;
                                                  : 0x0000U;
   return (load ? 0x4c40'0000U : 0x4c00'0000U) | opcode | (size << 10) |
          (n << 5) | t;
+}
+/* UMOV Wd, Vn.S[index] and UMOV Xd, Vn.D[index]. */
+[[nodiscard]] constexpr std::uint32_t umov_s(unsigned d, unsigned n,
+                                             unsigned index) noexcept {
+  return 0x0e04'3c00U | (index << 19) | (n << 5) | d;
+}
+[[nodiscard]] constexpr std::uint32_t umov_d(unsigned d, unsigned n,
+                                             unsigned index) noexcept {
+  return 0x4e08'3c00U | (index << 20) | (n << 5) | d;
+}
+/* LD1 and ST1 (single structure) of the lane `index` of a 16-byte Vt at
+ * [Xn], zero offset, the lane 1 << log_size bytes wide (0 B to 3 D). */
+[[nodiscard]] constexpr std::uint32_t lane_memory(bool load,
+                                                  unsigned log_size,
+                                                  unsigned index, unsigned t,
+                                                  unsigned n) noexcept {
+  /* Q:S:size packs the index: a byte's is Q:S:size, a halfword's Q:S:size<1>,
+   * a word's Q:S and a doubleword's Q. */
+  const unsigned opcode = log_size == 0U ? 0U : log_size == 1U ? 2U : 4U;
+  unsigned q = index;
+  unsigned s = 0;
+  unsigned size = 1;
+  if (log_size == 0U) {
+    q = index >> 3;
+    s = (index >> 2) & 1U;
+    size = index & 3U;
+  } else if (log_size == 1U) {
+    q = index >> 2;
+    s = (index >> 1) & 1U;
+    size = (index & 1U) << 1;
+  } else if (log_size == 2U) {
+    q = index >> 1;
+    s = index & 1U;
+    size = 0;
+  }
+  return (load ? 0x0d40'0000U : 0x0d00'0000U) | (q << 30) | (opcode << 13) |
+         (s << 12) | (size << 10) | (n << 5) | t;
 }
 /* Scalar loads into Wt or Xt at [Xn], zero offset, for LD1R's extending
  * forms: LDRB, LDRH, LDR W and LDR X, then LDRSB W, LDRSB X, LDRSH W,

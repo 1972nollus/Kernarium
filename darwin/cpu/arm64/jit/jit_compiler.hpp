@@ -322,6 +322,10 @@ private:
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
+  /* The gathers and scatters, one translated access per element. */
+  [[nodiscard]] bool emit_sve_gather(const detail::SmeEncoding &row,
+                                     std::uint32_t instruction,
+                                     std::uint64_t pc);
   /* The block's first SVE word marks the task live (sve_live), and every
    * one makes the FP state current. */
   void begin_sve_word();

@@ -653,7 +653,10 @@ with `DARWIN_UML_GUEST_SVE=1`.
 `arm64-jit-sve-control` checks the JIT's control core against the
 pseudocode on injected SVE hosts under either policy, and
 `arm64-jit-sve-forms` checks every row of the profile through the JIT
-against the semantic library on random states.
+against the semantic library on random states, requires a lowered word to stay
+out of the library from a clean state, and runs gathers and scatters with a
+lane out of reach, and scatters while another vCPU's reservation tracks
+stores.
 
 ## x86 instruction conformance
 
