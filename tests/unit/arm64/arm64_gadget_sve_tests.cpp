@@ -114,6 +114,14 @@ void clear(HostCapabilities &host, std::initializer_list<ArmFeature> features)
 	return host;
 }
 
+/* Whether the probed host implements FEAT_AFP, so that a random FPCR may
+ * carry FIZ, AH and NEP. */
+[[nodiscard]] bool afp_implemented()
+{
+	static const bool afp = arm64::implements_afp(sve_host());
+	return afp;
+}
+
 /* SVE with an injected SME2 profile at `svl`, which never claims the
  * hardware. */
 [[nodiscard]] HostCapabilities sve_sme_host(unsigned svl = 64)
@@ -1707,8 +1715,12 @@ void fill_lanes(Random &random, Bytes &bytes)
 	cpu.sve_ffr = arm64::sve_predicate_mask(random.predicate());
 	cpu.sve_live = 1;
 	cpu.nzcv = static_cast<std::uint32_t>(random.next() & 0xfU) << 28;
+	/* FIZ, AH and NEP only where the virtual CPU implements FEAT_AFP: the
+	 * gadgets run the guest's FPCR natively, so a form lowered to AdvSIMD
+	 * must agree with the library under them too. */
 	cpu.fpcr = static_cast<std::uint32_t>(random.next()) &
-		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19));
+		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19) |
+		 (afp_implemented() ? arm64::fpcr_afp_controls : 0U));
 	cpu.fpsr = static_cast<std::uint32_t>(random.next()) & 0x0800'009fU;
 	return cpu;
 }
