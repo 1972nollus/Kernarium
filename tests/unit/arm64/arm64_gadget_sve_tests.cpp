@@ -19,8 +19,10 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "cpu/arm64/gadgets/sve_helpers.hpp"
 #include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
@@ -30,13 +32,24 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <compare>
+#include <crt_externs.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <mach-o/dyld.h>
 #include <memory_resource>
+#include <set>
+#include <spawn.h>
 #include <span>
+#include <sstream>
+#include <string>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 extern "C" {
@@ -511,6 +524,33 @@ public:
 		executor_.end_execution();
 		gadgets::restore_native_fp_environment(cpu);
 		return event;
+	}
+
+	/* Guest bytes at code_base + offset, in the mapped pages. */
+	void put64(std::size_t offset, std::uint64_t value)
+	{
+		backing_.put64(offset, value);
+	}
+
+	[[nodiscard]] std::uint64_t fault_address() const
+	{
+		return executor_.fault_address();
+	}
+
+	/* The mapped pages' bytes. */
+	void get(std::size_t offset, std::span<std::byte> bytes) const
+	{
+		backing_.get(offset, bytes);
+	}
+
+	void put(std::size_t offset, std::span<const std::byte> bytes)
+	{
+		backing_.put(offset, bytes);
+	}
+
+	[[nodiscard]] std::uint32_t floating_point_syndrome() const
+	{
+		return executor_.floating_point_syndrome();
 	}
 
 	arm64::CpuState cpu{};
@@ -1406,9 +1446,557 @@ void live_marker_and_fp_access()
 	}
 }
 
-/* Words the virtual CPU does not implement end the block: without SVE;
- * a form outside the control core; a row whose feature the host lacks; a
- * reserved immediate; a word of no row, and an SME row, without SME. */
+/* Guest memory for a reference run of the library that touches none. */
+class NoMemory final : public arm64::detail::SveMemory {
+public:
+	std::byte *translate(std::uint64_t,
+		uml::memory::MemoryAccess) noexcept override
+	{
+		return nullptr;
+	}
+	void stored(std::byte *, std::size_t) noexcept override {}
+};
+
+/* The state the semantic library leaves for `word` on `cpu`. */
+[[nodiscard]] arm64::CpuState library_after(arm64::CpuState cpu,
+	std::uint32_t word, arm64::detail::SveEvent expected =
+		arm64::detail::SveEvent::retired,
+	std::uint32_t *syndrome = nullptr)
+{
+	const auto *row = arm64::detail::decode_sve_non_streaming(word,
+		arm64::detail::implemented_sve_features(sve_host()));
+	require(row != nullptr);
+	NoMemory memory;
+	const auto result = arm64::detail::execute_sve(cpu, word, *row, memory);
+	require(result.event == expected);
+	if (syndrome != nullptr)
+		*syndrome = result.syndrome;
+	return cpu;
+}
+
+void require_same_registers(const arm64::CpuState &actual,
+	const arm64::CpuState &expected)
+{
+	for (unsigned n = 0; n < 32; ++n)
+		require(actual.vectors[n].bytes == expected.vectors[n].bytes);
+	require(actual.sve_p == expected.sve_p);
+	require(actual.sve_ffr == expected.sve_ffr);
+	require(actual.nzcv == expected.nzcv);
+}
+
+/* Words no generated gadget lowers run through the semantic library, in
+ * the middle of a block: the state after them is the library's on the
+ * same state, NZCV included, and behind a native FP gadget the cumulative
+ * FPSR flags of both carry over, and an FPCR write in the block governs
+ * the library's rounding. A load reaches guest memory through the
+ * TLB on a page and across two, and reports a fault at its own PC. While
+ * an FPCR trap enable is set the executor runs the word through the
+ * library itself, which decides the trap. */
+void library_words()
+{
+	Random random{0x5ec7'0001U};
+	const auto randomize = [&](arm64::CpuState &cpu) {
+		for (unsigned n = 0; n < 8; ++n) {
+			Bytes bytes{};
+			for (auto &byte : bytes)
+				byte = static_cast<std::uint8_t>(random.next());
+			set_vec(cpu, n, bytes);
+		}
+		set_pred(cpu, 1, static_cast<std::uint16_t>(random.next()));
+		cpu.nzcv = nzcv_v;
+	};
+	for (const auto word : {0x0422'0020U /* add z0.b, z1.b, z2.b */,
+		     0x2403'a440U /* cmpeq p0.b, p1/z, z2.b, z3.b */}) {
+		for (int round = 0; round < 64; ++round) {
+			arm64::CpuState initial{};
+			randomize(initial);
+			const auto cpu = after(word, [&](arm64::CpuState &state) {
+				state = initial;
+			});
+			require_same_registers(cpu,
+				library_after(initial, word));
+		}
+	}
+
+	/* fadd s4, s4, s5 activates the native FP environment and raises
+	 * IXC; fadd z0.s, z1.s, z2.s then raises OFC through the library. */
+	{
+		const std::array code{0x1e25'2884U, 0x6582'0020U, svc};
+		Block block{code};
+		arm64::CpuState cpu{};
+		const auto one = std::bit_cast<std::uint32_t>(1.0F);
+		const auto tiny = std::bit_cast<std::uint32_t>(0x1p-30F);
+		const auto large = std::bit_cast<std::uint32_t>(0x1.fffffep127F);
+		Bytes s4{}, s5{}, big{};
+		std::memcpy(s4.data(), &one, 4);
+		std::memcpy(s5.data(), &tiny, 4);
+		for (unsigned lane = 0; lane < 4; ++lane)
+			std::memcpy(big.data() + 4 * lane, &large, 4);
+		set_vec(cpu, 4, s4);
+		set_vec(cpu, 5, s5);
+		set_vec(cpu, 1, big);
+		set_vec(cpu, 2, big);
+		block.run(cpu);
+		constexpr std::uint32_t ofc = 1U << 2;
+		constexpr std::uint32_t ixc = 1U << 4;
+		require((cpu.fpsr & (ofc | ixc)) == (ofc | ixc));
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::uint32_t value = 0;
+			std::memcpy(&value, cpu.vectors[0].bytes.data() + 4 * lane,
+				4);
+			require(value == 0x7f80'0000U);
+		}
+	}
+
+	/* msr fpcr, x1 to round toward zero behind an active native FP
+	 * environment: fadd z0.s through the library rounds 1 + 0.75 ULP
+	 * down, where the reset rounding would round it up. */
+	{
+		const std::array code{0x1e25'2884U, 0xd51b'4401U, 0x6582'0020U,
+			svc};
+		Block block{code};
+		arm64::CpuState cpu{};
+		const auto one = std::bit_cast<std::uint32_t>(1.0F);
+		const auto small = std::bit_cast<std::uint32_t>(0x1.8p-24F);
+		Bytes ones{}, smalls{};
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::memcpy(ones.data() + 4 * lane, &one, 4);
+			std::memcpy(smalls.data() + 4 * lane, &small, 4);
+		}
+		set_vec(cpu, 4, ones);
+		set_vec(cpu, 5, smalls);
+		set_vec(cpu, 1, ones);
+		set_vec(cpu, 2, smalls);
+		cpu.registers[1] = 3U << 22;
+		block.run(cpu);
+		require(cpu.fpcr == 3U << 22);
+		for (unsigned lane = 0; lane < 4; ++lane) {
+			std::uint32_t value = 0;
+			std::memcpy(&value, cpu.vectors[0].bytes.data() + 4 * lane,
+				4);
+			require(value == one);
+		}
+		std::uint32_t s4 = 0;
+		std::memcpy(&s4, cpu.vectors[4].bytes.data(), 4);
+		require(s4 == one + 1U);
+	}
+
+	/* ld1b {z0.b}, p0/z, [x1]: within a page, across two, and at an
+	 * unmapped address. */
+	constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	for (const std::uint64_t offset : {std::uint64_t{0x800}, page - 8U}) {
+		const std::array code{ptrue(0, 0, 31), 0xa400'a020U, svc};
+		Machine machine{code, sve_host()};
+		machine.put64(offset, 0x0706'0504'0302'0100U);
+		machine.put64(offset + 8U, 0x0f0e'0d0c'0b0a'0908U);
+		machine.cpu.registers[1] = code_base + offset;
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.retired == 3U);
+		for (unsigned index = 0; index < 16; ++index)
+			require(machine.cpu.vectors[0].bytes[index] ==
+				std::byte{static_cast<std::uint8_t>(index)});
+	}
+	{
+		const std::array code{ptrue(0, 0, 31), 0xa400'a020U, svc};
+		Machine machine{code, sve_host()};
+		const std::uint64_t unmapped = code_base + 0x40'0000U;
+		machine.cpu.registers[1] = unmapped;
+		require(machine.run() == EngineEvent::memory_fault);
+		require(machine.cpu.pc == code_base + 4U);
+		require(machine.fault_address() == unmapped);
+		require(pred(machine.cpu, 0) == 0xffffU);
+	}
+
+	/* fadd z0.s, z1.s, z2.s with FPCR.IOE and a signalling NaN: the
+	 * library's trap, which leaves Z0 and FPSR as they were. */
+	{
+		const std::array code{0x6582'0020U, svc};
+		Machine machine{code, sve_host()};
+		Bytes nan{}, zero{};
+		const std::uint32_t signalling = 0x7f80'0001U;
+		for (unsigned lane = 0; lane < 4; ++lane)
+			std::memcpy(nan.data() + 4 * lane, &signalling, 4);
+		set_vec(machine.cpu, 1, nan);
+		set_vec(machine.cpu, 2, zero);
+		set_vec(machine.cpu, 0, nan);
+		machine.cpu.fpcr = 1U << 8;
+		std::uint32_t syndrome = 0;
+		const auto expected = library_after(machine.cpu, 0x6582'0020U,
+			arm64::detail::SveEvent::floating_point_trap, &syndrome);
+		require(machine.run() == EngineEvent::floating_point_trap);
+		require(machine.cpu.pc == code_base);
+		require(machine.floating_point_syndrome() == syndrome);
+		require(machine.cpu.vectors[0].bytes ==
+			expected.vectors[0].bytes);
+		require(machine.cpu.fpsr == expected.fpsr);
+	}
+}
+
+/* A random element value for a differential run: raw bits, a normal FP16,
+ * FP32 or FP64 value near one, a small integer, or an extreme. */
+void fill_lanes(Random &random, Bytes &bytes)
+{
+	const auto kind = random.next() % 6U;
+	if (kind == 0U) {
+		bytes = random.bytes();
+		return;
+	}
+	static constexpr unsigned sizes[]{2, 2, 4, 8, 1};
+	const unsigned esize = sizes[kind - 1U];
+	for (unsigned index = 0; index < 16U / esize; ++index) {
+		std::uint64_t value = random.next();
+		switch (kind) {
+		case 1: /* FP16 with exponent 13-17. */
+			value = (value & 0x83ffU) | ((13U + value % 5U) << 10);
+			break;
+		case 2: /* FP16 integers and extremes. */
+			value = std::array<std::uint64_t, 6>{0x0000U, 0x8000U,
+				0x3c00U, 0x7bffU, 0x0001U, 0xc500U}[value % 6U];
+			break;
+		case 3: /* FP32 with exponent 124-130. */
+			value = (value & 0x807f'ffffU) |
+				((124U + value % 7U) << 23);
+			break;
+		case 4: /* FP64 with exponent 1020-1026. */
+			value = (value & 0x800f'ffff'ffff'ffffULL) |
+				((1020ULL + value % 7U) << 52);
+			break;
+		default: /* Small integers and byte extremes. */
+			value = std::array<std::uint64_t, 6>{0x00U, 0x01U, 0x7fU,
+				0x80U, 0xffU, value % 9U}[value % 6U];
+			break;
+		}
+		for (unsigned byte = 0; byte < esize; ++byte)
+			bytes[index * esize + byte] =
+				static_cast<std::uint8_t>(value >> (8U * byte));
+	}
+}
+
+/* Random architectural state for a differential run. FPCR takes a random
+ * rounding mode, FZ, DN and FZ16, with no trap enable. */
+[[nodiscard]] arm64::CpuState random_state(Random &random)
+{
+	arm64::CpuState cpu{};
+	for (auto &value : cpu.registers) {
+		const auto raw = random.next();
+		switch (raw % 4U) {
+		case 0:
+			value = raw >> 58;
+			break;
+		case 1:
+			value = ~(raw >> 58);
+			break;
+		case 2:
+			value = (raw & 1U) != 0U ? 0x7fff'ffff'ffff'ffffULL - (raw >> 60) :
+				0x8000'0000'0000'0000ULL + (raw >> 60);
+			break;
+		default:
+			value = raw;
+			break;
+		}
+	}
+	cpu.sp = random.next() & ~std::uint64_t{15};
+	for (unsigned n = 0; n < 32; ++n) {
+		Bytes bytes{};
+		fill_lanes(random, bytes);
+		set_vec(cpu, n, bytes);
+	}
+	for (unsigned n = 0; n < 16; ++n)
+		set_pred(cpu, n, random.predicate());
+	cpu.sve_ffr = arm64::sve_predicate_mask(random.predicate());
+	cpu.sve_live = 1;
+	cpu.nzcv = static_cast<std::uint32_t>(random.next() & 0xfU) << 28;
+	cpu.fpcr = static_cast<std::uint32_t>(random.next()) &
+		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19));
+	cpu.fpsr = static_cast<std::uint32_t>(random.next()) & 0x0800'009fU;
+	return cpu;
+}
+
+/* Whether the gadget engine leaves `expected` after running `code`, which
+ * ends in an SVC, from `initial`; reports `word` otherwise. */
+void require_library_state(std::span<const std::uint32_t> code,
+	const arm64::CpuState &initial, const arm64::CpuState &expected,
+	std::uint32_t word, std::size_t index, bool fp_active)
+{
+	const auto host = sve_host();
+	const auto built = build(code, host);
+	arm64::CpuState cpu = initial;
+	cpu.pc = code_base;
+	uml::memory::Tlb tlb;
+	std::size_t executed = 0;
+	const auto event = gadgets::execute(built.program, cpu, tlb, executed);
+	gadgets::restore_native_fp_environment(cpu);
+	bool same = event == EngineEvent::system_call &&
+		executed == code.size() &&
+		cpu.registers == expected.registers &&
+		cpu.sp == expected.sp && cpu.sve_p == expected.sve_p &&
+		cpu.sve_ffr == expected.sve_ffr && cpu.nzcv == expected.nzcv &&
+		cpu.fpsr == expected.fpsr && cpu.fpcr == expected.fpcr &&
+		cpu.sve_live == expected.sve_live;
+	unsigned differing = 32;
+	for (unsigned n = 0; n < 32 && same; ++n)
+		if (cpu.vectors[n].bytes != expected.vectors[n].bytes) {
+			differing = n;
+			same = false;
+		}
+	if (same)
+		return;
+	const auto &row = arm64::detail::sme_encodings[index];
+	std::fprintf(stderr, "word %08x (row %zu, SVE-%04u%s): the gadget "
+		"leaves another state than the library (event %d, executed "
+		"%zu, Z%u, nzcv %08x/%08x, fpsr %08x/%08x, fpcr %08x)\n", word,
+		index, row.form & 0x7fffU, fp_active ? ", FP active" : "",
+		static_cast<int>(event), executed, differing, cpu.nzcv,
+		expected.nzcv, cpu.fpsr, expected.fpsr, initial.fpcr);
+	if (differing < 32U) {
+		std::fprintf(stderr, "  Z%u gadget ", differing);
+		for (const auto byte : cpu.vectors[differing].bytes)
+			std::fprintf(stderr, "%02x", static_cast<unsigned>(byte));
+		std::fprintf(stderr, "\n  Z%u library ", differing);
+		for (const auto byte : expected.vectors[differing].bytes)
+			std::fprintf(stderr, "%02x", static_cast<unsigned>(byte));
+		std::fprintf(stderr, "\n");
+	}
+	require(false);
+}
+
+/* Every generated form agrees with the semantic library: random words of
+ * each register-only row a generated gadget runs, each alone in a block on
+ * a random state, leave the library's registers, P, FFR, NZCV and FPSR;
+ * and so does each behind an FP instruction that leaves the guest's
+ * environment active in the host's FP registers. */
+void generated_forms_match_the_library()
+{
+	/* fadd s31, s31, s31 on 1.0: exact, so it raises nothing. */
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	Random random{0x5ec7'0002U};
+	const auto host = sve_host();
+	std::size_t runs = 0;
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory != 0U)
+			continue;
+		++rows;
+		for (int sample = 0; sample < 48; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word, host,
+				0);
+			if (decoded.kind != gadgets::SveWord::implemented ||
+			    decoded.row != &row)
+				continue;
+			auto initial = random_state(random);
+			const std::array alone{word, svc};
+			require_library_state(alone, initial,
+				library_after(initial, word), word, index, false);
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
+			auto activated = initial;
+			set_vec(activated, 31, two);
+			const std::array behind{activate, word, svc};
+			require_library_state(behind, initial,
+				library_after(activated, word), word, index, true);
+			runs += 2;
+		}
+	}
+	require(rows > 0U && runs > rows);
+	std::printf("%zu generated-form runs over %zu rows match the "
+		"library\n", runs, rows);
+}
+
+/* Guest memory for a reference run of the library: the machine's mapped
+ * pages, copied. */
+class CopiedMemory final : public arm64::detail::SveMemory {
+public:
+	explicit CopiedMemory(std::vector<std::byte> &bytes) : bytes_{bytes} {}
+
+	std::byte *translate(std::uint64_t address,
+		uml::memory::MemoryAccess) noexcept override
+	{
+		if (address < code_base || address - code_base >= bytes_.size())
+			return nullptr;
+		return bytes_.data() + (address - code_base);
+	}
+	void stored(std::byte *, std::size_t) noexcept override {}
+
+private:
+	std::vector<std::byte> &bytes_;
+};
+
+/* Every generated memory form agrees with the semantic library: random
+ * words of each contiguous row, each alone in a block on a two-page mapping
+ * of random bytes and again behind an FP instruction that leaves the
+ * guest's environment active, from bases inside a page, at a page's end,
+ * across into the unmapped page after them, and tagged under TBI, leave
+ * the library's state, event, fault address and memory. Predicates are
+ * all-true half the time, so both a store's fast path and the library's
+ * partial store run. */
+void memory_forms_match_the_library()
+{
+	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr std::size_t mapped = mapped_pages * page;
+	/* fadd s31, s31, s31 on 1.0, as in generated_forms_match_the_library. */
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	Random random{0x5ec7'0003U};
+	const auto host = sve_host();
+	std::size_t runs = 0;
+	std::size_t faults = 0;
+	std::size_t rows = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		if (gadgets::sve::row_forms[index] == gadgets::sve::no_form ||
+		    row.memory == 0U)
+			continue;
+		const auto &memory = arm64::detail::sme_encoding_memory[
+			row.memory - 1U];
+		const auto *const operands =
+			arm64::detail::sme_encoding_operands_of(row);
+		++rows;
+		for (int sample = 0; sample < 12; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word, host,
+				0);
+			if (decoded.kind != gadgets::SveWord::implemented ||
+			    decoded.row != &row)
+				continue;
+			std::vector<std::byte> bytes(mapped);
+			for (std::size_t offset = 0; offset < mapped; offset += 8) {
+				const auto value = random.next();
+				std::memcpy(bytes.data() + offset, &value, 8);
+			}
+			auto initial = random_state(random);
+			for (unsigned n = 0; n < 16; ++n)
+				if (random.next() % 2U == 0U)
+					set_pred(initial, n, 0xffffU);
+			/* The base: mostly inside the second page, sometimes at
+			 * the end of a page, or unmapped. */
+			std::uint64_t base = code_base + page +
+				random.next() % (page - 64U);
+			switch (random.next() % 8U) {
+			case 0:
+				base = code_base + page - random.next() % 48U;
+				break;
+			case 1:
+				base = code_base + mapped - random.next() % 48U;
+				break;
+			case 2:
+				base = code_base + mapped + random.next() % page;
+				break;
+			default:
+				break;
+			}
+			const auto base_register = arm64::detail::sme_operand_number(
+				operands[memory.base_operand], word);
+			if (memory.index_operand != arm64::detail::sme_no_operand) {
+				const auto index_register =
+					arm64::detail::sme_operand_number(
+						operands[memory.index_operand], word);
+				initial.registers[index_register] =
+					random.next() % 4U;
+			}
+			if (random.next() % 4U == 0U) {
+				initial.tbi_enabled = true;
+				base |= (random.next() & 0xffU) << 56;
+			}
+			if (base_register == 31U)
+				initial.sp = base & ~std::uint64_t{15};
+			else
+				initial.registers[base_register] = base;
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
+
+			for (const bool behind : {false, true}) {
+				const std::array alone{word, svc};
+				const std::array activated{activate, word, svc};
+				const std::span<const std::uint32_t> code = behind ?
+					std::span<const std::uint32_t>{activated} :
+					std::span<const std::uint32_t>{alone};
+				std::vector<std::byte> before = bytes;
+				std::memcpy(before.data(), code.data(),
+					code.size_bytes());
+				Machine machine{code, host};
+				machine.put(0, before);
+				machine.cpu = initial;
+				const auto event = machine.run();
+				std::vector<std::byte> after(mapped);
+				machine.get(0, after);
+
+				auto expected = initial;
+				if (behind)
+					set_vec(expected, 31, two);
+				CopiedMemory reference{before};
+				const auto result = arm64::detail::execute_sve(
+					expected, word, row, reference);
+				const bool faulted = result.event ==
+					arm64::detail::SveEvent::memory_fault;
+				const auto at = code_base + (behind ? 4U : 0U);
+				faults += faulted ? 1U : 0U;
+				bool same = event == (faulted ?
+						EngineEvent::memory_fault :
+						EngineEvent::system_call) &&
+					(!faulted || (machine.cpu.pc == at &&
+						machine.fault_address() ==
+							result.fault_address)) &&
+					result.event !=
+						arm64::detail::SveEvent::fatal &&
+					machine.cpu.registers == expected.registers &&
+					machine.cpu.sp == expected.sp &&
+					machine.cpu.sve_p == expected.sve_p &&
+					machine.cpu.sve_ffr == expected.sve_ffr &&
+					machine.cpu.nzcv == expected.nzcv &&
+					machine.cpu.fpsr == expected.fpsr &&
+					after == before;
+				for (unsigned n = 0; n < 32 && same; ++n)
+					same = machine.cpu.vectors[n].bytes ==
+						expected.vectors[n].bytes;
+				if (!same) {
+					std::fprintf(stderr, "word %08x (row %zu, "
+						"SVE-%04u%s) at %#llx: the gadget "
+						"leaves another state than the "
+						"library (event %d, library %d, "
+						"fault %#llx/%#llx, fpsr %08x/%08x, "
+						"memory %s)\n", word, index,
+						row.form & 0x7fffU,
+						behind ? ", FP active" : "",
+						static_cast<unsigned long long>(base),
+						static_cast<int>(event),
+						static_cast<int>(result.event),
+						static_cast<unsigned long long>(
+							machine.fault_address()),
+						static_cast<unsigned long long>(
+							result.fault_address),
+						machine.cpu.fpsr, expected.fpsr,
+						after == before ? "same" : "differs");
+					require(false);
+				}
+				++runs;
+			}
+		}
+	}
+	require(rows > 0U && runs > rows && faults > 0U);
+	std::printf("%zu memory-form runs over %zu rows match the library, "
+		"%zu of them faulting\n", runs, rows, faults);
+}
+
+/* Words the virtual CPU does not implement end the block: without SVE; a
+ * row whose feature the host lacks; a reserved immediate, of a generated
+ * form (DUPM, DUP) and of one the library runs (AND); a word of no row,
+ * and an SME row, without SME. */
 void unimplemented_words()
 {
 	struct Case final {
@@ -1427,9 +2015,10 @@ void unimplemented_words()
 	require(unallocated != 0U);
 	const std::array cases{
 		Case{ptrue(0, 0, 31), sve_host(false)},
-		Case{0x0420'0000U /* add z0.b, z0.b, z0.b */, sve_host()},
 		Case{0x4522'e000U /* aese z0.b, z0.b, z0.b */, sve_host()},
 		Case{0x05c0'0000U | (0x103fU << 5) /* dupm, reserved */,
+			sve_host()},
+		Case{0x0580'0000U | (0x103fU << 5) /* and, reserved */,
 			sve_host()},
 		Case{0x2538'e000U /* dup z0.b, #0, lsl #8 */, sve_host()},
 		Case{unallocated, sve_host()},
@@ -1447,13 +2036,31 @@ void unimplemented_words()
 	}
 }
 
-/* No program translated for SVCR.SM = 1 names an entry of the SVE part,
- * and no program for SM = 0 a streaming SVE entry, whatever the word, on
- * hosts with SVE alone and with SVE and SME. Some SM = 0 programs do
- * select the SVE part. Program words are untyped, but no operand word
- * here can equal a gadget entry: they are CpuState offsets, immediates,
- * and stack and table addresses. */
-void streaming_safety()
+/* A word of a translated program that names an entry outside its mode:
+ * for SVCR.SM = 1 one of the SVE part, for SM = 0 a streaming SVE entry or
+ * a streaming twin. The entry is its offset from the SVE part, which no
+ * address-space slide changes. */
+struct EntryFinding final {
+	unsigned host;
+	unsigned mode;
+	std::uint32_t word;
+	std::size_t index;
+	std::uintptr_t offset;
+	auto operator<=>(const EntryFinding &) const = default;
+};
+
+struct EntryScan final {
+	std::set<EntryFinding> findings;
+	std::size_t selected_sve{};
+};
+
+/* Every such word of the programs translated from sampled words on hosts
+ * with SVE alone and with SVE and SME, in each SVCR mode the host has, and
+ * how many words at SM = 0 name the SVE part. Program words are untyped:
+ * an operand word, such as a packed immediate or an ADRP result, can
+ * equal an entry's address under this process's slide, and is found too;
+ * under another slide it names another offset. */
+[[nodiscard]] EntryScan scan_entries()
 {
 	const auto sve_begin = reinterpret_cast<std::uintptr_t>(
 		uml_arm64_gadget_sve_section_begin);
@@ -1487,7 +2094,8 @@ void streaming_safety()
 				 ~row.mask));
 	gadgets::BlockLink link{};
 	gadgets::IndirectLink site{};
-	std::size_t selected_sve = 0;
+	EntryScan scan;
+	unsigned host_index = 0;
 	for (const auto &host : {sve_host(), sve_sme_host()}) {
 		const bool sme = arm64::implements_sme(host);
 		for (const std::uint8_t mode : {0, 1, 2, 3}) {
@@ -1506,32 +2114,149 @@ void streaming_safety()
 					options);
 				require(!streaming_mode ||
 					!built.program.holds_sve());
-				for (const auto entry : built.program.words()) {
+				const auto stream = built.program.words();
+				for (std::size_t index = 0; index < stream.size();
+				     ++index) {
+					const auto entry = stream[index];
 					const bool in_sve = entry >= sve_begin &&
 						entry < sve_end;
-					if (streaming_mode && in_sve) {
-						std::fprintf(stderr, "SM=1 word "
-							"%08x selects the SVE part\n",
-							word);
-						require(false);
-					}
-					if (!streaming_mode &&
-					    (std::ranges::binary_search(streaming,
-						     entry) ||
-					     (entry >= twins_begin &&
-					      entry < twins_end))) {
-						std::fprintf(stderr, "SM=0 word "
-							"%08x selects a streaming "
-							"entry\n", word);
-						require(false);
-					}
-					selected_sve += in_sve ? 1U : 0U;
+					const bool outside = streaming_mode ?
+						in_sve :
+						std::ranges::binary_search(
+							streaming, entry) ||
+							(entry >= twins_begin &&
+							 entry < twins_end);
+					if (outside)
+						scan.findings.insert({host_index,
+							mode, word, index,
+							entry - sve_begin});
+					if (!streaming_mode && in_sve)
+						++scan.selected_sve;
 				}
 			}
 		}
+		++host_index;
 	}
-	require(selected_sve > 0U);
-	std::printf("%zu SVE part entries selected at SM = 0\n", selected_sve);
+	return scan;
+}
+
+constexpr const char *scan_variable = "UML_GADGET_SVE_ENTRY_SCAN";
+
+/* The findings of this test binary run in a new process, which has its own
+ * address-space slide, and that slide's SVE part address. */
+[[nodiscard]] std::pair<std::set<EntryFinding>, std::uintptr_t>
+findings_in_another_process()
+{
+	std::array<char, 4096> path{};
+	auto size = static_cast<std::uint32_t>(path.size());
+	require(_NSGetExecutablePath(path.data(), &size) == 0);
+	std::array<int, 2> pipe_ends{};
+	require(pipe(pipe_ends.data()) == 0);
+	posix_spawn_file_actions_t actions;
+	require(posix_spawn_file_actions_init(&actions) == 0);
+	require(posix_spawn_file_actions_adddup2(&actions, pipe_ends[1],
+			STDOUT_FILENO) == 0);
+	require(posix_spawn_file_actions_addclose(&actions, pipe_ends[0]) == 0);
+	std::vector<std::string> variables;
+	for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+		variables.emplace_back(*entry);
+	variables.push_back(std::string{scan_variable} + "=1");
+	std::vector<char *> environment;
+	for (auto &variable : variables)
+		environment.push_back(variable.data());
+	environment.push_back(nullptr);
+	char *const arguments[] = {path.data(), nullptr};
+	pid_t child = 0;
+	require(posix_spawn(&child, path.data(), &actions, nullptr, arguments,
+			environment.data()) == 0);
+	posix_spawn_file_actions_destroy(&actions);
+	close(pipe_ends[1]);
+	std::string output;
+	std::array<char, 4096> buffer{};
+	for (ssize_t got; (got = read(pipe_ends[0], buffer.data(),
+				  buffer.size())) != 0;) {
+		if (got < 0 && errno == EINTR)
+			continue;
+		require(got > 0);
+		output.append(buffer.data(), static_cast<std::size_t>(got));
+	}
+	close(pipe_ends[0]);
+	int status = 0;
+	while (waitpid(child, &status, 0) < 0)
+		require(errno == EINTR);
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	std::set<EntryFinding> findings;
+	std::uintptr_t base = 0;
+	std::istringstream lines{output};
+	for (std::string line; std::getline(lines, line);) {
+		unsigned long long a = 0, b = 0, c = 0, d = 0, e = 0;
+		if (std::sscanf(line.c_str(), "sve %llx", &a) == 1)
+			base = a;
+		else if (std::sscanf(line.c_str(),
+				 "finding %llu %llu %llx %llu %llx", &a, &b, &c,
+				 &d, &e) == 5)
+			findings.insert({static_cast<unsigned>(a),
+				static_cast<unsigned>(b),
+				static_cast<std::uint32_t>(c),
+				static_cast<std::size_t>(d),
+				static_cast<std::uintptr_t>(e)});
+	}
+	require(base != 0);
+	return {findings, base};
+}
+
+/* No program translated for SVCR.SM = 1 names an entry of the SVE part,
+ * and no program for SM = 0 a streaming SVE entry or twin, at any position
+ * of its stream, on hosts with SVE alone and with SVE and SME; some SM = 0
+ * programs do select the SVE part. A finding counts only when a process
+ * with another slide makes it too: an entry has the same offset from the
+ * SVE part under every slide, and an operand word does not. */
+void streaming_safety()
+{
+	const auto scan = scan_entries();
+	require(scan.selected_sve > 0U);
+	std::printf("%zu SVE part entries selected at SM = 0\n",
+		scan.selected_sve);
+	if (scan.findings.empty())
+		return;
+	const auto base = reinterpret_cast<std::uintptr_t>(
+		uml_arm64_gadget_sve_section_begin);
+	for (int attempt = 0; attempt < 4; ++attempt) {
+		const auto [other, other_base] = findings_in_another_process();
+		if (other_base == base)
+			continue;
+		bool failed = false;
+		for (const auto &finding : scan.findings) {
+			if (!other.contains(finding))
+				continue;
+			std::fprintf(stderr, "host %u SVCR %u word %08x names "
+				"SVE-part offset %#lx at word %zu, outside its "
+				"mode's entries\n", finding.host, finding.mode,
+				finding.word,
+				static_cast<unsigned long>(finding.offset),
+				finding.index);
+			failed = true;
+		}
+		require(!failed);
+		std::printf("%zu operand words matched entries under this "
+			"slide only\n", scan.findings.size());
+		return;
+	}
+	std::fputs("no process with another slide\n", stderr);
+	require(false);
+}
+
+/* The sweep alone, for streaming_safety() in the parent process. */
+int report_entry_findings()
+{
+	std::printf("sve %#lx\n", static_cast<unsigned long>(
+		reinterpret_cast<std::uintptr_t>(
+			uml_arm64_gadget_sve_section_begin)));
+	for (const auto &finding : scan_entries().findings)
+		std::printf("finding %u %u %08x %zu %#lx\n", finding.host,
+			finding.mode, finding.word, finding.index,
+			static_cast<unsigned long>(finding.offset));
+	return 0;
 }
 
 /* An SM change zeroes P and FFR: only where the host runs streaming
@@ -1560,6 +2285,8 @@ void streaming_mode_changes_zero_predicates()
 int main()
 {
 	const uml::testing::RuntimeTestRoute runtime_route;
+	if (std::getenv(scan_variable) != nullptr)
+		return report_entry_findings();
 	std::printf("gadget SVE support: %s\n",
 		gadgets::sve_support == arm64::SveSupport::none ? "none" :
 		gadgets::sve_support == arm64::SveSupport::control ? "control" :
@@ -1575,6 +2302,9 @@ int main()
 	while_forms();
 	fused_while_branch();
 	live_marker_and_fp_access();
+	library_words();
+	generated_forms_match_the_library();
+	memory_forms_match_the_library();
 	unimplemented_words();
 	streaming_safety();
 	streaming_mode_changes_zero_predicates();

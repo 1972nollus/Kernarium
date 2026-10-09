@@ -38,17 +38,20 @@
     set(UML_ARM64_RUNTIME_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     set(UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
     set(UML_ARM64_STATIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -88,7 +91,7 @@
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
 
-    # The checked-in A64 instruction corpus runs through the production gadget
+    # The generated A64 instruction corpus runs through the production gadget
     # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
     # the pack format and its regeneration.
     add_executable(uml_arm64_instruction_corpus_tests
@@ -99,16 +102,17 @@
         ${_uml_arm64_corpus_zlib})
     target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
+    add_dependencies(uml_arm64_instruction_corpus_tests uml_arm64_instruction_corpus)
     uml_add_unit_test(NAME arm64-instruction-corpus
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
+            ${UML_ARM64_INSTRUCTION_CORPUS})
     # The same pack translated as for a host with FEAT_AFP and every feature
     # implements_afp() needs, which selects the FEAT_AFP twins on any host.
     # Without the hardware feature only the cases whose FPCR leaves FIZ, AH
     # and NEP clear run, and the twins must match the base entries on them.
     uml_add_unit_test(NAME arm64-instruction-corpus-afp-twins
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            ${UML_ARM64_INSTRUCTION_CORPUS}
             --assume-host-feature afp --assume-host-feature fp16
             --assume-host-feature fhm --assume-host-feature bf16
             --assume-host-feature frintts --assume-host-feature fcma
@@ -119,13 +123,9 @@
     # translates through the JIT's test API.
     target_sources(uml_arm64_instruction_corpus_tests PRIVATE
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
-    # Its library lane runs the SVE cases through the shared semantic
-    # library, which no product links yet.
-    target_sources(uml_arm64_instruction_corpus_tests PRIVATE
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>)
     uml_add_unit_test(NAME arm64-emitted-registers
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            ${UML_ARM64_INSTRUCTION_CORPUS}
             --emitted-registers)
 
     uml_add_arm64_unit_test(engine_test_support NAME arm64-engine-harness
@@ -277,6 +277,10 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv)
 
+    # The JIT's non-streaming SVE support (cpu/arm64/jit, sve_support).
+    uml_add_arm64_unit_test(jit_sve_control WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
     uml_add_arm64_unit_test(counter_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
@@ -337,6 +341,7 @@
             OBJECTS
                 $<TARGET_OBJECTS:uml_static_mmu>
                 $<TARGET_OBJECTS:uml_arm64_gadgets>
+                $<TARGET_OBJECTS:uml_arm64_sve_semantics>
                 $<TARGET_OBJECTS:uml_arm64_execution_helpers>
                 ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     endforeach()

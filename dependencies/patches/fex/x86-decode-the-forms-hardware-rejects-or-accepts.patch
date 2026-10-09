@@ -28,10 +28,10 @@ Several encodings decoded differently from hardware:
  11 files changed, 167 insertions(+), 91 deletions(-)
 
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95693ee160 100644
+index 1d562463a0ff3ada30a778d89037e54387dc7408..75fa7c78371d6ab0000dd44795537d1f92c07dc0 100644
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -1396,6 +1396,26 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+@@ -1401,6 +1401,26 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
    // The loads here also load the selector, NOT the base
  
    if (ToSeg) {
@@ -58,7 +58,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
      Ref Src = LoadSourceGPR_WithOpSize(Op, Op->Src[0], OpSize::i16Bit, Op->Flags);
  
      switch (Op->Dest.Data.GPR.GPR) {
-@@ -1409,16 +1429,6 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
+@@ -1414,16 +1434,6 @@ void OpDispatchBuilder::MOVSegOp(OpcodeArgs, bool ToSeg) {
        _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, ds_idx));
        UpdatePrefixFromSegment(Src, FEXCore::X86Tables::DecodeFlags::FLAG_DS_PREFIX);
        break;
@@ -75,7 +75,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
      case FEXCore::X86State::REG_RDX: // SS
      case FEXCore::X86State::REG_R10: // SS
        _StoreContextGPR(OpSize::i16Bit, Src, offsetof(FEXCore::Core::CPUState, ss_idx));
-@@ -1558,6 +1568,12 @@ uint32_t OpDispatchBuilder::GetConstantShift(X86Tables::DecodedOp Op, bool Is1Bi
+@@ -1563,6 +1573,12 @@ uint32_t OpDispatchBuilder::GetConstantShift(X86Tables::DecodedOp Op, bool Is1Bi
  }
  
  void OpDispatchBuilder::XGetBVOp(OpcodeArgs) {
@@ -88,7 +88,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
    Ref Function = LoadGPRRegister(X86State::REG_RCX);
  
    auto RAX = _AllocateGPR(false);
-@@ -5250,9 +5266,9 @@ void OpDispatchBuilder::CLFLUSHOPT(OpcodeArgs) {
+@@ -5255,9 +5271,9 @@ void OpDispatchBuilder::CLFLUSHOPT(OpcodeArgs) {
    _CacheLineClear(DestMem, false);
  }
  
@@ -100,7 +100,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
      _Fence(FenceType::Load);
    } else {
      XRstorOpImpl(Op);
-@@ -5260,8 +5276,8 @@ void OpDispatchBuilder::LoadFenceOrXRSTOR(OpcodeArgs) {
+@@ -5265,8 +5281,8 @@ void OpDispatchBuilder::LoadFenceOrXRSTOR(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::MemFenceOrXSAVEOPT(OpcodeArgs) {
@@ -111,7 +111,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
      _Fence(FenceType::LoadStore);
    } else {
      XSaveOp(Op);
-@@ -5269,8 +5285,8 @@ void OpDispatchBuilder::MemFenceOrXSAVEOPT(OpcodeArgs) {
+@@ -5274,8 +5290,8 @@ void OpDispatchBuilder::MemFenceOrXSAVEOPT(OpcodeArgs) {
  }
  
  void OpDispatchBuilder::StoreFenceOrCLFlush(OpcodeArgs) {
@@ -122,7 +122,7 @@ index 4bbc4fbe8b5aaa1543bc7b0d918b0adf2cd6e8f2..a2f0001623e4b70249355934a15e3d95
      _Fence(FenceType::Store);
    } else {
      // This is a CLFlush
-@@ -5435,6 +5451,40 @@ void OpDispatchBuilder::UnimplementedOp(OpcodeArgs) {
+@@ -5440,6 +5456,40 @@ void OpDispatchBuilder::UnimplementedOp(OpcodeArgs) {
                });
  }
  

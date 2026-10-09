@@ -32,14 +32,25 @@ block caches are keyed by guest RIP alone. A compat32 context decodes and comput
 A compat32 address wraps at 4 GiB, segment base and offset alike: the TLB holds
 only wrapped addresses, so the miss path wraps the 64-bit sum the backend
 forms, and the string helper wraps each element. The guest kernel's task size,
-0xffffe000, bounds the user range. CS is only data: a far transfer, IRET or
-selector load changes no decode mode. A load of FS or GS takes its base from
-the guest kernel's TLS descriptors, by GDT entry, and any other selector loads
-base 0; no selector load faults. These match the gadget engine. compat32 code
-makes system calls with INT 0x80; SYSCALL and SYSENTER raise `#UD` there, as
-they do in the gadget engine. A compat32 dispatch leaves the upper halves of
-the general registers it does not write as it found them, as the gadget engine
-does.
+0xffffe000, bounds the user range. compat32 code makes system calls with INT
+0x80; SYSCALL and SYSENTER raise `#UD` there, as they do in the gadget engine.
+A compat32 dispatch leaves the upper halves of the general registers it does
+not write as it found them, as the gadget engine does.
+
+Segmentation belongs to the model both engines share
+([`segments.hpp`](../segments.hpp)). FEXCore ends the dispatch, unretired,
+before MOV or POP to a segment register, LDS, LES, LSS, LFS, LGS, a far CALL,
+JMP or RET, IRET, LAR, LSL, VERR, VERW, SLDT and STR, and the engine runs the
+instruction through the model, which completes it or raises its fault. A
+change of CS that changes the execution mode ends the run, and the next
+dispatch takes the context for the new mode. A compat32 access through FS or
+GS first checks its offset against the segment's limit; an access that check
+cannot cover, or one that fails it, leaves for the model's exact check, which
+raises the fault, completes the instruction, or has the engine run it alone
+with every check passing. While ES, SS or DS is anything but flat writable
+data, the space is a segmented context, whose operands add their segment's
+base, and the engine runs it one instruction at a time, each after the
+model's exact check.
 
 FEXCore's generated code reaches guest memory through an inline software TLB. A
 miss calls the engine, which fills the entry from the static MMU or ends the
@@ -53,7 +64,9 @@ an ordinary load and store of the bounce buffer under the process-wide
 split-operand lock, faulting before anything is stored. A VEX gather translates
 its elements one at a time into a temporary, so on a fault the engine itself
 gathers the elements before the faulting one into the guest state and leaves
-the mask as x86 does.
+the mask as x86 does. A code fetch the static MMU refuses ends the dispatch
+with a fault at the first byte it refused, as the refusal named it: a fork on
+another vCPU can map the page again before the engine reports the fault.
 FEXCore allocates and publishes code only through the executable-memory owner's
 hooks, and its call-return stack, which generated code addresses without a
 bounds check, sits in that owner's guarded data reservation, so running off it
@@ -80,11 +93,15 @@ block's end. A fault leaves the state as its instruction found it, because
 the guest resolves the fault, a copy-on-write store among them, and runs the
 instruction again: a load whose bytes the same instruction then stores takes
 write permission, so a read-modify-write faults before it changes a register
-or a flag; POP to memory, PUSHA, a far CALL and ENTER store before they move
-RSP; POPA, FLDENV, FRSTOR, FXRSTOR, XRSTOR and IRET probe their whole operand
-before they load state from it; and register allocation never commits a value
+or a flag; POP to memory, PUSHA and ENTER store before they move RSP; POPA,
+FLDENV, FRSTOR, FXRSTOR and XRSTOR probe their whole operand before they load
+state from it; the segment model commits nothing before an instruction's last
+access; and register allocation never commits a value
 to a guest register before a later access of the same instruction, or an
-earlier instruction's value before such an access. A load whose value goes
+earlier instruction's value before such an access, and never folds an
+earlier instruction's move into an access that can fault, as it would
+"mov %edi, %eax; xchg %eax, (%ebx)", glibc's release of the malloc arenas
+after a fork. A load whose value goes
 unused, such as a compare whose flags are dead, still faults, and so does a
 rotate through carry by zero. The exceptions probe's fault-state mode holds
 both engines to that. Each dispatch also:
@@ -109,7 +126,8 @@ once however many elements spent the budget. A unit's entry, and a loop back
 to it, spend the budget for every instruction the unit runs; an exit from
 inside the unit hands back the ones it did not reach, and a repeated element
 spends a unit that retires nothing. The `--retirement` cases of the corpus
-runners hold both engines to the same counts.
+runners hold both engines to the same counts, and to the RAX a faulting
+exchange runs again with.
 
 A signal handler without SA_RESTORER returns to the sigreturn trampoline,
 `DARWIN_UML_SIGRETURN_TRAMPOLINE`, which no guest page backs on the x86-64
@@ -314,13 +332,13 @@ aligned to 16 bytes, and XSAVE, XSAVEOPT and XRSTOR for one not aligned to
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
 failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
 undefined set follows hardware, except that compat32 code raises `#UD` for
-0x82, LES, LDS, LSS, LFS, LGS, direct far CALL and JMP, SYSCALL and SYSENTER,
-as it does on the gadget engine. The system instructions follow the gadget
-engine's [model](../gadgets/README.md#system-instructions) of Linux at CPL 3
-with UMIP: the privileged ones raise `#GP` before they touch memory, SIDT
-stores Linux's UMIP values, and LSL reads its selector, from memory too,
-and the flat user entries, the per-CPU entry and a TLS entry the host
-installed (`Embedder.SegmentPresent`).
+SYSCALL and SYSENTER, as it does on the gadget engine. The system
+instructions follow the gadget engine's
+[model](../gadgets/README.md#system-instructions) of Linux at CPL 3 with
+UMIP: the privileged ones raise `#GP` before they touch memory, SIDT stores
+Linux's UMIP values, and the segment model answers LSL, LAR, VERR, VERW,
+SLDT and STR. CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16
+bytes, locked or not, as on the gadget engine.
 
 ## Memory order
 
@@ -373,7 +391,8 @@ again on the same engines, as the mark comes and goes.
 ## Instruction corpus
 
 `x86-64-jit-instruction-corpus` runs the x86-64 instruction corpus through the
-engine in the unit suite. The checked-in corpus has no compat32 records; the
+engine in the unit suite. The unit corpus has no compat32 records but one
+repository case that far-transfers into compatibility mode and back; the
 JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 `--retirement` cases go through the engine too.
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)

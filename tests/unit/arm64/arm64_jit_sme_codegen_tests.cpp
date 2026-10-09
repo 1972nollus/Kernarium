@@ -20,9 +20,11 @@
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/jit/jit_sme_transition.hpp"
+#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <algorithm>
@@ -78,10 +80,13 @@ struct Witness final {
 
 /* The host's own profile with the SME2 (or SME1-only) profile at `svl`,
  * or without SME at svl 0, and without FEAT_CSSC, so CNT takes its
- * fallback as on the M4. */
+ * fallback as on the M4. Like the runtime (engine_host_capabilities), it
+ * carries the SVE profile only from a JIT at sve_support complete, so the
+ * guest-SVE policy leaves these checks unchanged. */
 [[nodiscard]] uml::cpu::HostCapabilities sme_host(unsigned svl,
                                                   bool sme2 = true) {
-  auto host = uml::cpu::host_capabilities();
+  auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
+                                          arm64::jit::sve_support);
   for (const auto feature :
        {uml::cpu::ArmFeature::sme, uml::cpu::ArmFeature::sme2,
         uml::cpu::ArmFeature::sme_f64f64, uml::cpu::ArmFeature::sme_i16i64})

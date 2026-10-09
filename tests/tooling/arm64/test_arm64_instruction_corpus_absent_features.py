@@ -7,7 +7,7 @@ absent-feature-corpus.py, its feature list, and its failing list, and the
 pack encoder rejects the removed features' state fields, harness options,
 events, validators, allocation tags, FPCR.EBF, and FEAT_AFP controls without
 the native requirement. This test checks the rest of the rewrite's contract
-on the checked-in pack:
+on the generated pack:
 
 - no case exercises a removed feature, and no case that does not expect the
   undefined-instruction trap holds one of its encodings;
@@ -170,7 +170,7 @@ def main() -> int:
     rewrite = load_rewrite()
     builder = rewrite.corpus
     corpus, tokens = builder.decode_pack(
-        (builder.CORPUS / builder.PACK_NAME).read_bytes())
+        pathlib.Path(sys.argv[1]).read_bytes())
     records = [item for item in map(json.loads,
                                     builder.dump_corpus(corpus, tokens))
                if "cases" in item]

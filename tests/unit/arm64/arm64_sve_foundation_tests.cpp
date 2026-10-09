@@ -190,9 +190,10 @@ void process_profile_honours_environment()
 
 /* Below complete an engine presents no SVE token and changes nothing else;
  * at complete it presents the host as given. The gadget engine is at
- * control and the JIT at none, so each presents today's virtual CPU under
- * either policy, and so do the entry points the guest kernel reads outside
- * a run. */
+ * complete and the JIT at control, so under the policy the gadget engine
+ * presents SVE and the JIT does not; the entry points the guest kernel
+ * reads outside a run present what both engines implement, so no SVE
+ * either way until the JIT is complete too. */
 void engines_present_sve_only_when_complete()
 {
 	using arm64::SveSupport;
@@ -206,18 +207,18 @@ void engines_present_sve_only_when_complete()
 		     SveSupport::complete})
 		require(arm64::sve_host_for_support(without, support) == without);
 
-	require(arm64::gadgets::sve_support == SveSupport::control &&
-		arm64::jit::sve_support == SveSupport::none);
-	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
-		     ::uml::cpu::EngineKind::jit}) {
-		const auto presented = ::uml::cpu::engine_host_capabilities(kind,
-			host);
-		require(!reports_any_sve(presented));
-		require(presented == arm64::sme_host_for_support(without,
-			kind == ::uml::cpu::EngineKind::jit ?
-				arm64::jit::sme_support :
-				arm64::gadgets::sme_support));
-	}
+	require(arm64::gadgets::sve_support == SveSupport::complete &&
+		arm64::jit::sve_support == SveSupport::control);
+	const auto gadgets = ::uml::cpu::engine_host_capabilities(
+		::uml::cpu::EngineKind::gadgets, host);
+	require(gadgets == arm64::sme_host_for_support(host,
+		arm64::gadgets::sme_support));
+	require(arm64::implements_sve(gadgets));
+	const auto jit = ::uml::cpu::engine_host_capabilities(
+		::uml::cpu::EngineKind::jit, host);
+	require(!reports_any_sve(jit));
+	require(jit == arm64::sme_host_for_support(without,
+		arm64::jit::sme_support));
 	require((darwin_uml_guest_hwcap() & sve_hwcap) == 0 &&
 		(darwin_uml_guest_hwcap2() & sve_hwcap2) == 0,
 		"the guest kernel was told of SVE");

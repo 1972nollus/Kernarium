@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Normalize pinned K and FEX x86-64 cases, and the repository's own cases,
-into the checked-in unit corpus."""
+into the generated unit corpus."""
 
 from __future__ import annotations
 
@@ -171,6 +171,21 @@ EXCLUDED_FEX_SOURCES = {
     "X87/X87MMXInteraction.asm": "expects FEX's tag word, which FNSAVE stores "
     "as valid for every full register where x86 tags zeros and special "
     "values; upstream lists it as a known failure on native hosts",
+    "Primary/Primary_8C.asm": "expects FEX's selector loads, which accept "
+    "selectors beyond the GDT or naming an absent LDT where x86 raises #GP; "
+    "upstream disables it on native hosts",
+    "Primary/Primary_8C_2.asm": "expects FEX's selector loads under REX.R, "
+    "which accept selectors beyond the GDT or naming an absent LDT where x86 "
+    "raises #GP; upstream disables it on native hosts",
+    "PrimaryGroup/5_FF_05.asm": "expects AMD's REX.W far JMP, which reads "
+    "m16:32, where Intel reads m16:64 and takes the null selector after it "
+    "to #GP(0)",
+    "PrimaryGroup/5_FF_05_03_o64.asm": "expects AMD's REX.W far CALL, which "
+    "reads m16:32, where Intel reads m16:64 and takes the null selector "
+    "after it to #GP(0)",
+    "PrimaryGroup/5_FF_05_03_o64_imm.asm": "expects AMD's REX.W far CALL, "
+    "which reads m16:32, where Intel reads m16:64 and takes the null "
+    "selector after it to #GP(0)",
 }
 
 # HLT is the FEX test terminator and is not part of a case's userspace form.
@@ -1511,7 +1526,7 @@ def write_outputs(
         for name, contents in generated.items():
             path = output / name
             if not path.is_file() or path.read_bytes() != contents:
-                fail(f"checked-in corpus is stale: {path}")
+                fail(f"generated corpus is stale: {path}")
         print(f"verified {provenance['cases']} checked-in x86 instruction cases")
         return
     output.mkdir(parents=True, exist_ok=True)
@@ -1554,7 +1569,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=pathlib.Path,
-        default=REPOSITORY / "tests" / "unit" / "x86_64" / "corpus",
+        default=REPOSITORY / ".build/corpora/x86_64",
     )
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "executor.hpp"
+#include "sve_helpers.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
@@ -1813,6 +1814,30 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 	return finish_block(programs, built, event, cpu, executed);
 }
 
+::uml::cpu::EngineEvent GadgetExecutor::run_library_instruction(
+	arm64::CpuState &cpu, std::uint32_t instruction,
+	const arm64::detail::SmeEncoding &row, std::size_t &executed)
+{
+	const auto result =
+		arm64::gadgets::execute_sve_word(cpu, tlb_, instruction, row);
+	switch (result.event) {
+	case arm64::detail::SveEvent::retired:
+		cpu.pc += 4U;
+		executed = 1;
+		return ::uml::cpu::EngineEvent::continued;
+	case arm64::detail::SveEvent::memory_fault:
+		return ::uml::cpu::EngineEvent::memory_fault;
+	case arm64::detail::SveEvent::floating_point_trap:
+		floating_point_syndrome_ = result.syndrome;
+		return ::uml::cpu::EngineEvent::floating_point_trap;
+	case arm64::detail::SveEvent::undefined:
+		return ::uml::cpu::EngineEvent::illegal_instruction;
+	case arm64::detail::SveEvent::fatal:
+		break;
+	}
+	return ::uml::cpu::EngineEvent::fatal;
+}
+
 ::uml::cpu::EngineEvent GadgetExecutor::run_trap_enabled_instruction(
 	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
 {
@@ -1838,6 +1863,19 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 
 	auto options = build_options_;
 	options.svcr = static_cast<std::uint8_t>(cpu.svcr & arm64::svcr_mask);
+	/* An SVE word outside streaming mode runs through the semantic
+	 * library, which decides a floating-point form's trap and the flags it
+	 * commits (detail::decide_floating_exception); a generated gadget runs
+	 * with the trap enables clear. */
+	if ((options.svcr & arm64::svcr_sm) == 0U &&
+	    arm64::implements_sve(options.host_capabilities)) {
+		const auto decoded = arm64::gadgets::decode_sve_word(instruction,
+			options.host_capabilities, options.svcr);
+		if (decoded.kind == arm64::gadgets::SveWord::implemented &&
+		    arm64::detail::sve_semantics_covers(*decoded.row))
+			return run_library_instruction(cpu, instruction,
+				*decoded.row, executed);
+	}
 	auto built = arm64::gadgets::Builder{}.build(
 		cpu.pc, std::span{&instruction, 1}, {},
 		std::pmr::get_default_resource(), {}, options);
@@ -1907,8 +1945,10 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 		return event;
 	}
 
-	const auto decision = arm64::detail::decide_floating_exception(
-		cpu.fpcr, original_fpsr, isolated.fpsr);
+	const auto decision = arm64::detail::decide_a64_floating_exception(
+		cpu.fpcr, original_fpsr, isolated.fpsr, instruction,
+		cpu.vectors[(instruction >> 5U) & 31U].bytes,
+		isolated.vectors[instruction & 31U].bytes);
 	if (decision.traps()) {
 		cpu.fpsr = decision.committed_fpsr;
 		floating_point_syndrome_ = decision.syndrome;

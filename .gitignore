@@ -32,6 +32,9 @@ xcuserdata/
 *~
 __pycache__/
 *.pyc
+/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+/tests/unit/x86_64/corpus/x86_64_v3.pack
+/tests/unit/x86_64/masked_flags/xeon-flags.bin
 /tmp/
 *.pdf
 /external/*

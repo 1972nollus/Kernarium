@@ -258,11 +258,13 @@ Lx86_cmpxchg_pair_8_unequal:
 	compare_exchange_pair_flags
 	retire_and_next
 
+/* CMPXCHG16B raises #GP for an operand that is not 16-byte aligned, before
+ * it reads anything. */
 gadget cmpxchg_pair_16
 	effective_address
 	mov x25, x7
 	tst x7, #15
-	b.ne Lx86_cmpxchg_pair_16_split
+	b.ne Lx86_general_protection
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	ldr x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr x11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -281,64 +283,6 @@ gadget cmpxchg_pair_16
 	finish_store 16
 2:
 	clrex
-	mov w19, wzr
-	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
-	compare_exchange_pair_flags
-	retire_and_next
-Lx86_cmpxchg_pair_16_split:
-	split_lock_enter
-	page_cross_check 16, Lx86_cmpxchg_pair_16_read_cross
-	translate 0, UML_X86_64_TLB_READ_PAGE, 16
-	ldp x24, x26, [x7]
-	b Lx86_cmpxchg_pair_16_loaded
-Lx86_cmpxchg_pair_16_read_cross:
-	sub sp, sp, #16
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbnz w0, Lx86_cmpxchg_pair_16_cross_loaded
-	add sp, sp, #16
-	b Lx86_memory_fault
-Lx86_cmpxchg_pair_16_cross_loaded:
-	ldp x24, x26, [sp]
-	add sp, sp, #16
-Lx86_cmpxchg_pair_16_loaded:
-	ldr x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
-	ldr x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
-	cmp x8, x24
-	b.ne Lx86_cmpxchg_pair_16_unequal
-	cmp x9, x26
-	b.ne Lx86_cmpxchg_pair_16_unequal
-	mov w19, #1
-	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
-	ldr x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
-	mov x7, x25
-	page_cross_check 16, Lx86_cmpxchg_pair_16_write_cross
-	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
-	stp x27, x16, [x7]
-	b Lx86_cmpxchg_pair_16_written
-Lx86_cmpxchg_pair_16_write_cross:
-	sub sp, sp, #16
-	stp x27, x16, [sp]
-	mov x0, _context
-	mov x1, x25
-	mov x2, sp
-	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
-	cbnz w0, Lx86_cmpxchg_pair_16_cross_written
-	add sp, sp, #16
-	b Lx86_memory_fault
-Lx86_cmpxchg_pair_16_cross_written:
-	add sp, sp, #16
-Lx86_cmpxchg_pair_16_written:
-	split_lock_leave
-	compare_exchange_pair_flags
-	finish_store 16
-Lx86_cmpxchg_pair_16_unequal:
-	split_lock_leave
 	mov w19, wzr
 	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Build, check, dump, and re-pack the checked-in A64 instruction corpus."""
+"""Build, check, dump, and re-pack the generated A64 instruction corpus."""
 
 from __future__ import annotations
 
@@ -1632,6 +1632,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "absent_features" in corpus.meta else {}),
         **({"sme_native": corpus.meta["sme_native"]}
            if "sme_native" in corpus.meta else {}),
+        **({"floating_trap_native": corpus.meta["floating_trap_native"]}
+           if "floating_trap_native" in corpus.meta else {}),
         **({"sve_native": corpus.meta["sve_native"]}
            if "sve_native" in corpus.meta else {}),
         **({"sve_sme": corpus.meta["sve_sme"]}
@@ -1786,6 +1788,12 @@ def check(options: argparse.Namespace) -> int:
         if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the native "
                          "records)")
+    # So are the native floating-point trap records.
+    trap = corpus.meta.get("floating_trap_native")
+    if trap is not None and sha256(
+            (REPOSITORY / trap["script"]).read_bytes()) != trap["sha256"]:
+        stale.append(trap["script"] + " (not the native trap records' "
+                     "script)")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     # Every inventory entry has a case, or an illegal-instruction case.
@@ -1843,7 +1851,8 @@ def repack(options: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=pathlib.Path, default=CORPUS,
+    parser.add_argument("--output", type=pathlib.Path,
+                        default=REPOSITORY / ".build/corpora/arm64",
                         help="corpus directory (default: %(default)s)")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--export-16k", type=pathlib.Path,
