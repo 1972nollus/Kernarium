@@ -23,6 +23,9 @@
  * each one. Its own helper calls take veneers appended to the island's end.
  * The SVE part, the non-streaming SVE forms lowered onto AdvSIMD, follows the
  * SME part for the same reason and so moves neither it nor any base entry.
+ * Its one helper, the semantic library's entry, took the veneer that filled
+ * the island's last 64-byte line, so the SME part kept its offset too; a
+ * further veneer would move it.
  * The names are the arm64 engine's own, so the x86-64 engine's sections never
  * interleave with them in an image that carries both. */
 #define GADGET_SECTION_BANK __TEXT,__a64_bank,regular,pure_instructions

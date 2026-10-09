@@ -35,6 +35,10 @@ foreach(_uml_performance_probe_row IN LISTS _uml_performance_probe_rows)
         set(_uml_performance_probe_architecture armv8-a)
     elseif(_uml_performance_probe_feature STREQUAL "lse")
         set(_uml_performance_probe_architecture armv8.1-a+lse)
+    elseif(_uml_performance_probe_feature STREQUAL "fp16")
+        set(_uml_performance_probe_architecture armv8.2-a+fp16)
+    elseif(_uml_performance_probe_feature STREQUAL "sve")
+        set(_uml_performance_probe_architecture armv8.2-a+fp16+sve)
     else()
         message(FATAL_ERROR
             "Unknown performance probe feature: ${_uml_performance_probe_feature}")
@@ -89,6 +93,7 @@ add_executable(uml-gadget-ceiling-bench EXCLUDE_FROM_ALL
     gadget_ceiling_workload.S
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
+    $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 target_include_directories(uml-gadget-ceiling-bench PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)

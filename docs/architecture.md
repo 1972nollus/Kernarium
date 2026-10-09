@@ -541,15 +541,48 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
 non-streaming SVE word is the illegal-instruction exit.
 
-The gadget engine is at `control`: for SVCR.SM = 0, on capabilities that
-carry the profile, it runs PTRUE, PTRUES, PFALSE and PTEST, the predicate
+The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
+carry the profile, it runs every word of the profile, so under the
+guest-SVE policy it presents the profile to its guest. Generated gadgets
+run the control forms (PTRUE, PTRUES, PFALSE and PTEST, the predicate
 logical operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL,
-ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY,
-FCPY, SEL and the unpredicated logical forms; every other non-streaming SVE
-word is its illegal-instruction exit. Since it presents no SVE to a guest
-below `complete`, only tests and corpus runs that hand it the profile reach
-these forms. Its SVE part follows the SME part, so it moves no base or SME
-entry and re-encodes no veneer call, and holds no SVE or SME instruction:
+ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY
+and SEL) and the register-only hot set: the unpredicated, predicated and
+immediate integer arithmetic, logical, multiply, min/max and shift forms,
+including the shifts by wide elements, the SVE2 widening (also indexed),
+narrowing, high-half and shift-accumulate forms, the unsigned saturating
+forms, BSL, BSL1N, BSL2N, NBSL, EOR3, EORBT, EORTB, XAR, ZIP, UZP and TRN
+of vectors and predicates, REV, EXT, TBL of one or two registers, the dot
+products, the integer compares, and the floating-point arithmetic
+(also by immediate), multiply-add, indexed, rounding and same-size
+conversion forms. A predicated
+floating-point form tests its governing predicate for all-true and then
+runs the unpredicated AdvSIMD form; under a partial predicate it first
+replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
+they raise nothing, and merges under the lane mask, which a predicated
+integer form always does since that costs less than the test. A
+saturating form saturates by compare and select, since AdvSIMD's
+saturating forms set FPSR.QC and SVE's never do, and a shift by an
+immediate has a gadget per value of tsz:imm3. A contiguous load or store
+(LD1*, ST1*, LDNT1*, STNT1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, and LDR and
+STR of a Z or P register) whose footprint lies in one guest page the TLB
+holds runs on the host address: a load reads the whole footprint and
+zeroes the inactive elements, and a store runs only under an all-true
+predicate, as one store. A crossing, a page the TLB cannot fill, a fault, a partial
+store or an SP base runs through the semantic library, which decides
+faults and partial writes. SVE prefetches are NOPs. A size or index a
+form's gadgets leave out runs through the semantic library. Every other
+word runs through the semantic library from the
+`sve_library` gadget, which stores the guest's NZCV and, while the native FP
+environment is active, its cumulative FPSR flags to `CpuState`, calls the
+library with guest memory through the TLB, and reloads both; a library
+fault leaves through the memory-fault exit. A reserved bitmask immediate of
+AND, ORR, EOR or DUPM ends the block in front of it as the
+illegal-instruction exit. While an FPCR trap enable is set, the executor's
+one-instruction mode runs each non-streaming SVE word through the library,
+which decides a trap, so a trapping word commits nothing. Its SVE part
+follows the SME part, so it moves no base or SME entry and re-encodes no
+veneer call, and holds no SVE or SME instruction:
 `engine/generate_sve.py` writes its gadgets at build time from the encoding
 table, one per value of the bits that select a form's lowering, and each
 loads the registers its stream names from `CpuState`, P and FFR in mask
@@ -564,7 +597,11 @@ inline. CNT*, INC*, DEC*, RDVL, ADDVL and ADDPL select base
 entries on a constant the builder computes. A program holding one of these
 words accesses the FP state before it runs, since P and FFR travel with it,
 and enters through `sve_link_entry`, which also sets `CpuState::sve_live`.
-`arm64-gadget-sve` checks the forms against the pseudocode, and that no
+`arm64-gadget-sve` checks the control forms against the pseudocode and
+every generated form against the semantic library on random states, with
+the native FP environment inactive and active: the memory forms from bases
+inside a page, across pages, unmapped and tagged, comparing memory and
+faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 
