@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "jit_compiler_families.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 #include "jit_emitter.hpp"
 #include "jit_linking.hpp"
 #include "jit_runtime_contract.hpp"
@@ -264,10 +265,25 @@ JitCompilerFamilies::find_vector_slot(unsigned guest) const noexcept {
 
 std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
     std::uint32_t instruction) const noexcept {
+  const auto &host = host_capabilities();
+
+  /*
+   * SVE FMLA and FMLS by element lower to the AdvSIMD form, whose Zm is
+   * one of Z0-Z7 (half and single) or Z0-Z15 (double): the same
+   * constraint, which must agree with emit_sve_floating's acceptance.
+   */
+  if (host.floating_point && host.advanced_simd && implements_sve(host)) {
+    const auto sve_indexed = instruction & 0xffe0'f800U;
+    if (sve_indexed == 0x64a0'0000U)
+      return (instruction >> 16U) & 7U;
+    if (sve_indexed == 0x64e0'0000U)
+      return (instruction >> 16U) & 15U;
+    if ((instruction & 0xffa0'f800U) == 0x6420'0000U && host.fp16)
+      return (instruction >> 16U) & 7U;
+  }
+
   if (!floating_or_vector_primary_class(instruction))
     return std::nullopt;
-
-  const auto &host = host_capabilities();
 
   const auto half_long =
       arm64::detail::decode_half_fused_long(instruction);
@@ -505,6 +521,7 @@ JitCompilerFamilies::read_native_predicate(unsigned index,
 JitCompilerFamilies::NativeVector
 JitCompilerFamilies::write_native_predicate(unsigned index, bool reads_old,
                                             unsigned fallback) {
+  sve_full_[index] = 0U;
   return write_native_vector(predicate_identity + index, reads_old,
                              fallback);
 }
