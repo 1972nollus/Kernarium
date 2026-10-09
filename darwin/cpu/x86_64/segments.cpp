@@ -1309,7 +1309,6 @@ void record_subtract(CpuState &cpu, std::uint64_t left, std::uint64_t right,
 	switch (instruction.operation) {
 	case Operation::lea:
 	case Operation::nop:
-	case Operation::cache_zero:
 		return 0;
 	case Operation::compare:
 	case Operation::test:
