@@ -408,6 +408,32 @@ template<typename Run>
 	return event;
 }
 
+#if DARWIN_UML_X86_64_JIT
+[[nodiscard]] bool tier_generation_live(unsigned long generation) noexcept
+{
+	return darwin_uml_static_vm_generation_live(generation) != 0;
+}
+
+/* The tier state of `generation` for this vCPU, or null when the run has no
+ * tier threshold. The vCPU keeps the one it last used, which it asks the
+ * table for again only when it moves to another address space. */
+[[nodiscard]] ::uml::runtime::X86TierState *x86_tier_state(
+	::uml::runtime::Context &context,
+	::uml::runtime::ThreadExecutionState &runtime,
+	unsigned long generation) noexcept
+{
+	auto *table = context.x86_tier_table(&tier_generation_live);
+	if (table == nullptr)
+		return nullptr;
+	if (runtime.x86_tier == nullptr ||
+	    runtime.x86_tier_generation != generation) {
+		runtime.x86_tier = table->acquire(generation);
+		runtime.x86_tier_generation = generation;
+	}
+	return runtime.x86_tier.get();
+}
+#endif
+
 template<uml::cpu::EngineKind Kind>
 int run_x86_guest(darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp,
@@ -437,17 +463,36 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 #if DARWIN_UML_X86_64_JIT
 	/* The x86-64 product runs long64 and compat32 code on the JIT when
 	 * its selection names it. The gadget instantiation, the product's
-	 * default, compiles none of this. */
+	 * default, compiles none of this. With a tier threshold the JIT takes an
+	 * address space over only after it has retired that many instructions on
+	 * the gadget engine. */
+	::uml::runtime::X86TierState::Entry tier;
 	if constexpr (Kind == uml::cpu::EngineKind::jit) {
-		auto run = ::uml::runtime::run_x86_jit(cpu, runtime.memory,
-			runtime.x86_jit, generation,
-			stepping ? 1 : dispatch_budget, {
-			.sequence = registered_interrupt.sequence,
-			.snapshot = registered_interrupt.snapshot,
-			.stop = context.stop_token(),
-		}, runtime.x86_mm_shared);
-		return finish_x86_run(registers, fp, context, cpu, stepping,
-			run);
+		if (auto *state = x86_tier_state(context, runtime, generation)) {
+			tier = state->enter([&]() noexcept {
+				return context.stop_requested();
+			});
+			if (tier.abandoned()) {
+				/* The run is stopping while the address space changes
+				 * engine; the kernel sees an interrupt, as it does when
+				 * one arrives before a dispatch. */
+				::uml::runtime::X86GadgetRunResult run{};
+				run.execution.reason = uml::cpu::ExitReason::interrupt;
+				return finish_x86_run(registers, fp, context, cpu,
+					stepping, run);
+			}
+		}
+		if (tier.engine() == ::uml::runtime::X86TierState::Engine::jit) {
+			auto run = ::uml::runtime::run_x86_jit(cpu, runtime.memory,
+				runtime.x86_jit, generation,
+				stepping ? 1 : dispatch_budget, {
+				.sequence = registered_interrupt.sequence,
+				.snapshot = registered_interrupt.snapshot,
+				.stop = context.stop_token(),
+			}, runtime.x86_mm_shared);
+			return finish_x86_run(registers, fp, context, cpu, stepping,
+				run);
+		}
 	}
 #else
 	(void)Kind;
@@ -462,6 +507,9 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		.snapshot = registered_interrupt.snapshot,
 		.stop = context.stop_token(),
 	});
+#if DARWIN_UML_X86_64_JIT
+	tier.leave(run.execution.retired_instructions);
+#endif
 	return finish_x86_run(registers, fp, context, cpu, stepping, run);
 }
 #endif

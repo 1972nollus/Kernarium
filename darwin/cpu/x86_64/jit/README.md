@@ -22,6 +22,41 @@ FEAT_LSE2). The JIT runs both long64 and compat32 tasks. The arm64 product's
 x86 test guest builds the engine for its unit tests only and runs x86 code on
 the gadget engine.
 
+## Tiered execution
+
+`--jit-tier=N` starts each x86-64 address space on the gadget engine and gives
+it to the JIT once the gadgets have retired N instructions in it. N is a
+property of the engine, not of a workload: a process that exits first never
+pays the JIT's compile cost, and one that stays pays it once. Zero, the
+default, runs the JIT from the first instruction; the option applies only
+where `--execution-engine jit` selected the JIT on the x86-64 product.
+
+The count is per address space, so a fork or exec starts again on the gadgets,
+and the threads of one address space share it. Neither engine keeps state of
+its own across a dispatch: both read and write the vCPU's architectural state
+and the address space, and the runtime saves that state at the end of every
+dispatch, which settles the gadgets' deferred flags. The engine can therefore
+change between dispatches, provided no gadget dispatch is still running in the
+address space: a JIT store publishes a code change only for a page its own
+registry holds, which a gadget translation does not appear in. The handover
+drains. Once the address space crosses its threshold no dispatch of it starts
+on the gadgets, each one running leaves, and the last to leave opens the JIT;
+dispatches that begin meanwhile wait, which costs one gadget dispatch's length
+at most, once in the life of an address space ([`x86_tier.hpp`](../../../runtime/x86_tier.hpp)).
+The JIT never hands a space back.
+
+`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` hold the
+handover to the engines' own results: the corpus and the retirement cases run
+on the gadgets for the first K retired instructions and then on the JIT, for
+every K from 1 to 8 and then each doubling until the case ends first, and
+each must end as the engines alone do, with the same retirement counts.
+[`tier_switch_exclusions.tsv`](../../../../tests/unit/x86_64/tier_switch_exclusions.tsv)
+lists the one record a handover changes, with its class: AF after TEST, AND,
+OR or XOR is architecturally undefined, the gadget engine clears it as hardware
+does, and the JIT, like FEXCore upstream, leaves what the instruction before
+made it. The x86 guest runners take `UML_TEST_JIT_TIER=N` to run on the
+tiered JIT unchanged.
+
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread

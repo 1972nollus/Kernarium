@@ -337,12 +337,16 @@ probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
 exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
 against native x86 Linux's values. The smoke, RFLAGS and exception runners
 take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
-instead of the default gadget engine; run them on both engines when a change
-reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
-checks that the host sees an address space as shared exactly when the
-kernel's contract in the [common kernel README](../kernel/common/README.md)
-says so, including when the sharing ends, and on the JIT that exactly the
-marked dispatches run ordered code.
+instead of the default gadget engine, and `UML_TEST_JIT_TIER=N` runs the JIT
+as the [tiered engine](../darwin/cpu/x86_64/jit/README.md#tiered-execution),
+except that the checks of which dispatches the JIT ran need it from the first
+instruction, since a tiered space may leave before it reaches the JIT; run
+them on both engines when a change reaches either.
+`run_guest_x86_64_mm_shared.py`, which takes the same options, checks that
+the host sees an address space as shared exactly when the kernel's contract in
+the [common kernel README](../kernel/common/README.md) says so, including
+when the sharing ends, and on the JIT that exactly the marked dispatches run
+ordered code.
 `run_guest_x86_64_fork_cow.py` forks from a busy multi-threaded process on
 four vCPUs, as glibc's fork() does, and checks that the workers keep their
 counts and that the parent's releases of the locks it held across the fork
@@ -695,6 +699,12 @@ engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
 running it. `x86-64-jit-space-recycling` has an engine make a gone address
 space's space over for the next one and requires the new bytes to run.
+`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
+and the retirement cases on the gadget engine for the first K retired
+instructions and on the JIT for the rest, over a sweep of K, and require each
+case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
+lists the one record that differs, in a result the architecture leaves
+undefined.
 `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel

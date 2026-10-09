@@ -182,6 +182,39 @@ if(TARGET uml_x86_64_jit)
         NAME x86-64-jit-retirement
         COMMAND uml_x86_64_fex_asm_jit_runner --retirement
         LABELS cpu;x86-64)
+    # Tiered execution: the corpus and the retirement counts again from every
+    # handover of the gadget engine to the JIT, at every instruction boundary
+    # of a short case and a ladder of them in a long one, which must end as
+    # either engine alone does.
+    add_executable(uml_x86_64_fex_asm_switch_runner
+        fex_asm_runner.cpp)
+    target_compile_definitions(uml_x86_64_fex_asm_switch_runner PRIVATE
+        UML_FEX_ASM_JIT=1 UML_FEX_ASM_SWITCH=1)
+    target_link_libraries(uml_x86_64_fex_asm_switch_runner PRIVATE
+        uml_x86_64_target
+        uml_x86_64_gadgets
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_fex_asm_switch_runner PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    set_target_properties(uml_x86_64_fex_asm_switch_runner PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+    add_dependencies(uml_x86_64_fex_asm_switch_runner
+        uml_x86_64_instruction_corpus)
+    uml_add_unit_test(
+        NAME x86-64-tier-switch-corpus
+        COMMAND uml_x86_64_fex_asm_switch_runner
+            --exclusions "${CMAKE_CURRENT_SOURCE_DIR}/tier_switch_exclusions.tsv"
+            --switch-sweep "${_uml_x86_64_instruction_corpus}"
+        LABELS cpu;x86-64)
+    set_tests_properties(x86-64-tier-switch-corpus PROPERTIES TIMEOUT 1800)
+    uml_add_unit_test(
+        NAME x86-64-tier-switch-retirement
+        COMMAND uml_x86_64_fex_asm_switch_runner --switch-sweep --retirement
+        LABELS cpu;x86-64)
     # Message passing between two engines on two host threads: a space that
     # orders stores never shows the flag without the data, and one that
     # does not shows it, so the check would see the order go missing.

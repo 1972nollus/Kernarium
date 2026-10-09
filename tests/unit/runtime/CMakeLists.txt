@@ -33,3 +33,11 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME runtime-sequential-run-unclaimed-first-run
     COMMAND uml_runtime_sequential_run_tests unclaimed-first-run)
+
+add_executable(uml_runtime_x86_tier_tests x86_tier_tests.cpp)
+target_include_directories(uml_runtime_x86_tier_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+uml_add_unit_test(
+    NAME runtime-x86-tier
+    COMMAND uml_runtime_x86_tier_tests
+    LABELS tsan)
