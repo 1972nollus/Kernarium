@@ -580,18 +580,19 @@ def trig_square(e: int) -> list:
 
 def trig_select(e: int) -> list:
     """FTSSEL: v0 := 1.0 when Zm's bit 0 is set, else Zn, with the sign
-    flipped (Zn) or set (1.0) by Zm's bit 1 (FPTrigSSel()). Integer only."""
+    set (1.0) or Zn negated (FNEG, which leaves a NaN alone under FPCR.AH)
+    by Zm's bit 1 (FPTrigSSel()). FNEG raises nothing."""
     a = ARRANGEMENTS[e]
     bits = 8 * e
     one = {2: "movi v5.8h, #0x3c, lsl #8", 4: "fmov v5.4s, #1.0",
            8: "fmov v5.2d, #1.0"}[e]
     return [f"shl v0.{a}, v2.{a}, #{bits - 1}",
             f"sshr v0.{a}, v0.{a}, #{bits - 1}",
-            f"shl v4.{a}, v2.{a}, #{bits - 2}",
-            f"ushr v4.{a}, v4.{a}, #{bits - 1}",
-            f"shl v4.{a}, v4.{a}, #{bits - 1}", one,
-            "orr v5.16b, v5.16b, v4.16b", "eor v1.16b, v1.16b, v4.16b",
-            "bsl v0.16b, v5.16b, v1.16b"]
+            f"shl v3.{a}, v2.{a}, #{bits - 2}",
+            f"sshr v3.{a}, v3.{a}, #{bits - 1}",
+            f"shl v4.{a}, v3.{a}, #{bits - 1}", one,
+            "orr v5.16b, v5.16b, v4.16b", f"fneg v6.{a}, v1.{a}",
+            "bit v1.16b, v6.16b, v3.16b", "bsl v0.16b, v5.16b, v1.16b"]
 
 
 def exponential_accelerator(e: int):
@@ -887,7 +888,7 @@ FP_INDEXED = {
 
 THREE_REGISTER.update({
     "ftsmul_z_zz_": (fp_sized(trig_square), False, True),
-    "ftssel_z_zz_": (fp_sized(trig_select), False, False),
+    "ftssel_z_zz_": (fp_sized(trig_select), False, True),
     "fadd_z_zz_": (fp_sized(same_size("fadd")), False, True),
     "fsub_z_zz_": (fp_sized(same_size("fsub")), False, True),
     "fmul_z_zz_": (fp_sized(same_size("fmul")), False, True),
