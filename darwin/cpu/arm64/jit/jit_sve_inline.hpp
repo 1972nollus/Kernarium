@@ -29,6 +29,10 @@ inline constexpr std::uint16_t fmla_p = form_of(0x65a2'0020U);
 inline constexpr std::uint16_t fmls_p = form_of(0x65a2'2020U);
 inline constexpr std::uint16_t fmad_p = form_of(0x65a2'8020U);
 inline constexpr std::uint16_t fmsb_p = form_of(0x65a2'a020U);
+inline constexpr std::uint16_t fnmla_p = form_of(0x65a2'4020U);
+inline constexpr std::uint16_t fnmls_p = form_of(0x65a2'6020U);
+inline constexpr std::uint16_t fnmad_p = form_of(0x65a2'c020U);
+inline constexpr std::uint16_t fnmsb_p = form_of(0x65a2'e020U);
 inline constexpr std::uint16_t fmla_i = form_of(0x64aa'0020U);
 inline constexpr std::uint16_t fmls_i = form_of(0x64aa'0420U);
 inline constexpr std::uint16_t fadd_u = form_of(0x6582'0020U);
@@ -133,6 +137,14 @@ inline constexpr std::uint16_t subhnb = form_of(0x4562'7020U);
 inline constexpr std::uint16_t subhnt = form_of(0x4562'7420U);
 inline constexpr std::uint16_t rsubhnb = form_of(0x4562'7820U);
 inline constexpr std::uint16_t rsubhnt = form_of(0x4562'7c20U);
+inline constexpr std::uint16_t add_i = form_of(0x2520'c020U);
+inline constexpr std::uint16_t sub_i = form_of(0x2521'c020U);
+inline constexpr std::uint16_t subr_i = form_of(0x2523'c020U);
+inline constexpr std::uint16_t uaddv_p = form_of(0x0401'2020U);
+inline constexpr std::uint16_t sunpk = form_of(0x0570'3820U);
+inline constexpr std::uint16_t uunpk = form_of(0x0572'3820U);
+inline constexpr std::uint16_t punpk = form_of(0x0530'4020U);
+inline constexpr std::uint16_t rev_v = form_of(0x0538'3820U);
 inline constexpr std::uint16_t umulh = form_of(0x0422'6c20U);
 inline constexpr std::uint16_t smulh = form_of(0x0422'6820U);
 inline constexpr std::uint16_t smullb = form_of(0x4542'7020U);
@@ -155,6 +167,17 @@ inline constexpr std::uint16_t sdot = form_of(0x4482'0020U);
 inline constexpr std::uint16_t udot = form_of(0x4482'0420U);
 inline constexpr std::uint16_t sdot_i = form_of(0x44a2'0020U);
 inline constexpr std::uint16_t udot_i = form_of(0x44a2'0420U);
+
+/* Floating-point compares into a predicate: two vectors (FCMGE, FCMGT,
+ * FCMEQ, FCMNE, FCMUO), the absolute compares, and a vector against 0.0. */
+inline constexpr std::uint16_t fcmp_vector = form_of(0x6583'4440U);
+inline constexpr std::uint16_t facmp = form_of(0x6583'c450U);
+inline constexpr std::uint16_t fcmp_zero = form_of(0x6590'2440U);
+
+/* Predicate permutes. */
+inline constexpr std::uint16_t zip_p = form_of(0x0522'4020U);
+inline constexpr std::uint16_t uzp_p = form_of(0x0522'4820U);
+inline constexpr std::uint16_t trn_p = form_of(0x0522'5020U);
 
 /* Integer compares into a predicate: two vectors, or a vector and an
  * immediate. */

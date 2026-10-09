@@ -937,6 +937,54 @@ void saturating_counts_at_their_limits(const HostCapabilities &host,
               checked);
 }
 
+/* TBL of one table and of two, at every element size, with indices that
+ * land in the tables (and just past them): a random index almost never
+ * does. */
+void table_lookups_with_small_indices(const HostCapabilities &host,
+                                      Tally &tally) {
+  Random random{0x6a17'5e0cU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t checked = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    const bool single = (row.value & 0xff20'fc00U) == 0x0520'3000U;
+    const bool pair = (row.value & 0xff20'fc00U) == 0x0520'2800U;
+    if ((!single && !pair) || (row.mask & 0xff20'fc00U) != 0xff20'fc00U ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    for (std::size_t sample = 0; sample < 48U; ++sample) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row)
+        continue;
+      const unsigned size = (word >> 22) & 3U;
+      const unsigned element = 1U << size;
+      const unsigned tables = pair ? 2U : 1U;
+      /* A machine per word: it translates the program once, at slot 0. */
+      Machine machine{host};
+      for (unsigned round = 0; round < 12U; ++round) {
+        std::vector<std::byte> data(mapped);
+        auto initial = random_state(random, false);
+        auto &indices = initial.vectors[(word >> 16) & 31U].bytes;
+        for (unsigned at = 0; at < 16U; at += element) {
+          std::uint64_t value = random.next() % (16U / element * tables + 3U);
+          /* Now and then a wild index: a high bit or a wide value. */
+          if (random.next() % 8U == 0U)
+            value |= random.next() << (8U * (random.next() % element));
+          std::memcpy(indices.data() + at, &value, element);
+        }
+        compare(machine, 0, word, index, Variant::alone, initial, data, false,
+                tally);
+        ++checked;
+      }
+    }
+  }
+  std::printf("%zu table lookups with indices in range match the library\n",
+              checked);
+}
+
 /* A predicate that PTRUE made all-active stops being known so as soon as
  * anything writes it: each writer below makes P0 partial for some state,
  * and the consumer after it, which the translation lowered for P0 all-active
@@ -1058,6 +1106,7 @@ int main() {
   gather_lane_faults(sve_host(), tally);
   scatters_with_tracked_stores(sve_host(), tally);
   saturating_counts_at_their_limits(sve_host(), tally);
+  table_lookups_with_small_indices(sve_host(), tally);
   require(tally.rows > 400U && tally.runs > tally.rows && tally.faults > 0U &&
           tally.traps > 0U);
   std::printf("%zu runs over %zu rows (%zu inline) match the library, %zu of "

@@ -618,12 +618,13 @@ onto AdvSIMD for an all-active governing predicate
 ([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
 the forms are listed in
 [`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
-multiply-add, arithmetic (divide, square root and rounding included) and
-same-size conversion forms, the integer arithmetic, logical, shift (by a
-vector, by an immediate and merging), halving, difference, widening,
-narrowing, high-half and dot-product forms, ZIP, UZP, TRN, TBL of any element
-size, EXT, REV and INDEX, SQINC, SQDEC, UQINC and UQDEC of
-a general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
+multiply-add (negated forms included), arithmetic (divide, square root and
+rounding included), compare (into a predicate, flags untouched) and same-size
+conversion forms, the integer arithmetic, logical, shift (by a vector, by an
+immediate and merging), halving, difference, widening, narrowing, high-half,
+dot-product and UADDV forms, ZIP, UZP, TRN (also of predicates), TBL of any
+element size (one or two tables), unpacks, EXT, REV and INDEX, SQINC, SQDEC,
+UQINC and UQDEC of a general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
 LDR and STR of a Z or P register whose footprint lies in one guest page the TLB
 holds, and the gathers and scatters (LD1*, LDNT1*, ST1* and STNT1* with an
 address per element) whose every access does. A gather or scatter translates

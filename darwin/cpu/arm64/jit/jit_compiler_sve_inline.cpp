@@ -60,6 +60,11 @@ constexpr FloatingOp op_fcvtzs{0x4ef9'b800U, 0x4ea1'b800U};
 constexpr FloatingOp op_fcvtzu{0x6ef9'b800U, 0x6ea1'b800U};
 constexpr FloatingOp op_fdiv{0x6e40'3c00U, 0x6e20'fc00U};
 constexpr FloatingOp op_fsqrt{0x6ef9'f800U, 0x6ea1'f800U};
+constexpr FloatingOp op_fcmeq{0x4e40'2400U, 0x4e20'e400U};
+constexpr FloatingOp op_fcmge{0x6e40'2400U, 0x6e20'e400U};
+constexpr FloatingOp op_fcmgt{0x6ec0'2400U, 0x6ea0'e400U};
+constexpr FloatingOp op_facge{0x6e40'2c00U, 0x6e20'ec00U};
+constexpr FloatingOp op_facgt{0x6ec0'2c00U, 0x6ea0'ec00U};
 constexpr FloatingOp op_frintn{0x4e79'8800U, 0x4e21'8800U};
 constexpr FloatingOp op_frintp{0x4ef9'8800U, 0x4ea1'8800U};
 constexpr FloatingOp op_frintm{0x4e79'9800U, 0x4e21'9800U};
@@ -195,8 +200,10 @@ bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
     return false;
   if (row.memory != 0U)
     return emit_sve_memory(row, instruction, pc);
-  if (row.form == inl::cmp_vector || row.form == inl::cmp_immediate)
-    return emit_sve_compare(row.form, instruction);
+  if (row.form == inl::cmp_vector || row.form == inl::cmp_immediate ||
+      row.form == inl::fcmp_vector || row.form == inl::facmp ||
+      row.form == inl::fcmp_zero)
+    return emit_sve_compare(row.form, instruction, pc);
   return emit_sve_floating(row.form, instruction, pc) ||
          emit_sve_integer(row.form, instruction, pc) ||
          emit_sve_narrow(row.form, instruction) ||
@@ -259,6 +266,44 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     emitter_.emit(vector_move(scratch_a, accumulator.host));
     emitter_.emit(three(floating_word(form == inl::fmad_p ? op_fmla : op_fmls,
                                       size),
+                        scratch_a, multiplicand.host, multiplier.host));
+    const auto out = write_native_vector(d, false, 3U);
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::fnmla_p || form == inl::fnmls_p || form == inl::fnmad_p ||
+      form == inl::fnmsb_p) {
+    /* The negated addend, then the fused multiply-add or -subtract: FNMLA
+     * and FNMAD are -addend - product, FNMLS and FNMSB product - addend. */
+    if (!supported)
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const bool destructive_multiplicand =
+        form == inl::fnmad_p || form == inl::fnmsb_p;
+    const bool subtract = form == inl::fnmla_p || form == inl::fnmad_p;
+    NativeVector addend;
+    NativeVector multiplicand;
+    NativeVector multiplier;
+    if (destructive_multiplicand) {
+      /* Zdn = Zdn * Zm - Za: Zm is bits 5-9, Za 16-20. */
+      addend = read_native_vector(m, 0U);
+      multiplicand = read_native_vector(d, 1U);
+      multiplier = n == d   ? multiplicand
+                   : n == m ? addend
+                            : read_native_vector(n, 2U);
+    } else {
+      /* Zda = Zn * Zm - Zda. */
+      addend = read_native_vector(d, 0U);
+      multiplicand = n == d ? addend : read_native_vector(n, 1U);
+      multiplier = m == d   ? addend
+                   : m == n ? multiplicand
+                            : read_native_vector(m, 2U);
+    }
+    emitter_.emit(three(floating_word(op_fneg, size), scratch_a, addend.host, 0));
+    emitter_.emit(three(floating_word(subtract ? op_fmls : op_fmla, size),
                         scratch_a, multiplicand.host, multiplier.host));
     const auto out = write_native_vector(d, false, 3U);
     emitter_.emit(vector_move(out.host, scratch_a));
@@ -527,6 +572,40 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
                         : form == jit::sve_forms::eor_immediate ? vector_eor
                                                                 : vector_and,
                         out.host, first.host, scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::add_i:
+  case inl::sub_i:
+  case inl::subr_i: {
+    /* Zdn = Zdn +/- #imm8 (shifted left 8 by bit 13, not for bytes). */
+    const bool shifted = field(instruction, 13, 1) != 0U;
+    if (shifted && size == 0U)
+      return false;
+    const std::uint64_t immediate = std::uint64_t{field(instruction, 5, 8)}
+                                    << (shifted ? 8U : 0U);
+    begin_sve_word();
+    emit_sve_element_constant(scratch_b, immediate, 1U << size);
+    const auto first = read_native_vector(d, 0U);
+    const auto out = write_native_vector(d, false, 1U);
+    if (form == inl::subr_i)
+      emitter_.emit(vector_add(true, size, out.host, scratch_b, first.host));
+    else
+      emitter_.emit(vector_add(form == inl::sub_i, size, out.host, first.host,
+                               scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::uaddv_p: {
+    /* UADDV Dd, Pg, Zn: the zero-extended sum of the elements, in a zeroed
+     * register. */
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(size == 3U ? 0x5ef1'b800U | (source.host << 5) | out.host
+                             : 0x6e30'3800U | (size << 22) |
+                                   (source.host << 5) | out.host);
     commit_native_vector(out, d);
     return true;
   }
@@ -1044,6 +1123,73 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
                               false);
     return true;
   }
+  case inl::sunpk:
+  case inl::uunpk: {
+    /* SUNPKLO, SUNPKHI, UUNPKLO and UUNPKHI Zd.T, Zn.<T/2>: the low or high
+     * half widened (SXTL, UXTL, and the second-half forms). */
+    if (size == 0U)
+      return false;
+    begin_sve_word();
+    const auto source = read_native_vector(n, 0U);
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(extend_long(form == inl::sunpk, size - 1U, out.host,
+                              source.host) |
+                  (field(instruction, 16, 1) != 0U ? 0x4000'0000U : 0U));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::rev_v: {
+    /* REV Zd.T, Zn.T: every element reversed, REV64 within each half and
+     * the halves swapped; a doubleword is only the swap. */
+    begin_sve_word();
+    const auto source = read_native_vector(n, 0U);
+    unsigned swapped = source.host;
+    if (size != 3U) {
+      emitter_.emit((size == 0U   ? 0x4e20'0800U
+                     : size == 1U ? 0x4e60'0800U
+                                  : 0x4ea0'0800U) |
+                    (source.host << 5) | scratch_a); // rev64
+      swapped = scratch_a;
+    }
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(ext_half(out.host, swapped, swapped));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::zip_p:
+  case inl::uzp_p:
+  case inl::trn_p: {
+    /* The predicate's mask form is a vector of its elements, whole: the
+     * vector permute of the same element size. */
+    const unsigned pd = field(instruction, 0, 4);
+    const unsigned pn = field(instruction, 5, 4);
+    const unsigned pm = field(instruction, 16, 4);
+    begin_sve_word();
+    const auto first = read_native_predicate(pn, 0U);
+    const auto second = pm == pn ? first : read_native_predicate(pm, 1U);
+    const std::uint32_t base = form == inl::zip_p   ? 0x4e00'3800U
+                               : form == inl::uzp_p ? 0x4e00'1800U
+                                                    : 0x4e00'2800U;
+    const auto out = write_native_predicate(pd, false, 2U);
+    emitter_.emit(three(sized(base | (field(instruction, 10, 1) << 14), size),
+                        out.host, first.host, second.host));
+    commit_native_predicate(out, pd);
+    return true;
+  }
+  case inl::punpk: {
+    /* PUNPKLO and PUNPKHI Pd.H, Pn.B: each of the low or high eight bytes
+     * of the mask form, then a clear byte. */
+    const unsigned pd = field(instruction, 0, 4);
+    const unsigned pn = field(instruction, 5, 4);
+    begin_sve_word();
+    const auto source = read_native_predicate(pn, 0U);
+    emitter_.emit(movi_bytes(true, scratch_b, 0U));
+    const auto out = write_native_predicate(pd, false, 1U);
+    emitter_.emit(three(0x4e00'3800U | (field(instruction, 16, 1) << 14),
+                        out.host, source.host, scratch_b));
+    commit_native_predicate(out, pd);
+    return true;
+  }
   case inl::tbl: {
     /* TBL Zd.B, {Zn.B}, Zm.B; the SVE2 TBL with two registers, and TBX,
      * which keeps Zd for an index out of range. */
@@ -1052,13 +1198,17 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
       /* AdvSIMD indexes bytes: an element's index becomes the indices of
        * its bytes (index * element size + 0, 1, ...) and an index past the
        * last element, which reads zero, becomes bytes AdvSIMD also reads
-       * as zero. */
-      if (operation != 0x0cU)
+       * as zero. With two tables there are twice the elements. */
+      const bool pair = operation == 0x0aU;
+      if (operation != 0x0cU && !pair)
         return false;
       begin_sve_word();
-      const unsigned elements = sve_vector_length >> size;
+      const unsigned elements = (sve_vector_length >> size) * (pair ? 2U : 1U);
       const auto table = read_native_vector(n, 0U);
-      const auto index = read_native_vector(m, 1U);
+      NativeVector high;
+      if (pair)
+        high = read_native_vector((n + 1U) & 31U, 1U);
+      const auto index = read_native_vector(m, 2U);
       std::uint64_t offsets = 0;
       for (unsigned byte = 0; byte < (1U << size); ++byte)
         offsets |= static_cast<std::uint64_t>(byte) << (8U * byte);
@@ -1089,8 +1239,17 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
       }
       emit_sve_element_constant(scratch_b, offsets, 1U << size);
       emitter_.emit(vector_add(false, 0U, scratch_a, scratch_a, scratch_b));
-      const auto out = write_native_vector(d, false, 2U);
-      emitter_.emit(three(0x4e00'0000U, out.host, table.host, scratch_a));
+      if (pair) {
+        /* The two tables in consecutive registers, v2 and v3 (the index is
+         * spent). */
+        emitter_.emit(vector_move(2U, table.host));
+        emitter_.emit(vector_move(3U, high.host));
+      }
+      const auto out = write_native_vector(d, false, 3U);
+      emitter_.emit(pair ? 0x4e00'2000U | (scratch_a << 16) | (2U << 5) |
+                               out.host
+                         : three(0x4e00'0000U, out.host, table.host,
+                                 scratch_a));
       commit_native_vector(out, d);
       return true;
     }
@@ -1267,7 +1426,11 @@ bool JitCompiler::emit_sve_index(std::uint16_t form,
 }
 
 bool JitCompiler::emit_sve_compare(std::uint16_t form,
-                                   std::uint32_t instruction) {
+                                   std::uint32_t instruction,
+                                   std::uint64_t pc) {
+  if (form == inl::fcmp_vector || form == inl::facmp ||
+      form == inl::fcmp_zero)
+    return emit_sve_floating_compare(form, instruction, pc);
   /*
    * CMP<cc> Pd.T, Pg/Z, Zn.T, <Zm.T | #imm>, flags from PredTest(Pg, Pd).
    * The NEON compare gives all-ones lanes; the predicate keeps only each
@@ -1353,6 +1516,15 @@ bool JitCompiler::emit_sve_compare(std::uint16_t form,
                       swapped ? first.host : second));
   if (condition == Condition::ne)
     emitter_.emit(0x6e20'5800U | (scratch_a << 5) | scratch_a); // not
+  finish_sve_compare(g, d, esize, true);
+  return true;
+}
+
+void JitCompiler::finish_sve_compare(unsigned g, unsigned d, unsigned esize,
+                                     bool sets_flags) {
+  /* The lane mask is in scratch_a: keep Pg's lanes and each element's
+   * lowest byte, set the flags from PredTest(Pg, Pd) (the integer compares;
+   * the floating-point ones leave them), write Pd. */
   const auto governing = read_native_predicate(g, 2U);
   emitter_.emit(three(vector_and, scratch_a, scratch_a, governing.host));
   const auto out = write_native_predicate(d, false, 3U);
@@ -1360,12 +1532,100 @@ bool JitCompiler::emit_sve_compare(std::uint16_t form,
   if (esize != 1U) {
     emit_sve_element_constant(scratch_b, 0xffU, esize);
     emitter_.emit(three(vector_and, scratch_a, scratch_a, scratch_b));
-    emitter_.emit(three(vector_and, out.host, governing.host, scratch_b));
-    mask = out.host;
+    if (sets_flags) {
+      emitter_.emit(three(vector_and, out.host, governing.host, scratch_b));
+      mask = out.host;
+    }
   }
-  emit_sve_predicate_test(mask, scratch_a);
+  if (sets_flags)
+    emit_sve_predicate_test(mask, scratch_a);
   emitter_.emit(vector_move(out.host, scratch_a));
   commit_native_predicate(out, d);
+}
+
+bool JitCompiler::emit_sve_floating_compare(std::uint16_t form,
+                                            std::uint32_t instruction,
+                                            std::uint64_t pc) {
+  /*
+   * FCM<cc> and FAC<cc> Pd.T, Pg/Z, Zn.T, <Zm.T | #0.0>. AdvSIMD's
+   * compares raise the exceptions SVE's do (the ordered compares on any
+   * NaN, FCMEQ and the unordered forms on a signalling one), but also for a
+   * lane Pg leaves inactive, so a predicate that is not all-active takes
+   * the library.
+   */
+  const auto &host = host_capabilities();
+  const unsigned size = field(instruction, 22, 2);
+  if (!host.floating_point || size == 0U || (size == 1U && !host.fp16))
+    return false;
+  const unsigned esize = 1U << size;
+  const unsigned d = field(instruction, 0, 4);
+  const unsigned g = field(instruction, 10, 3);
+  const unsigned n = field(instruction, 5, 5);
+  enum class Condition { eq, ne, ge, gt, lt, le, uo, acge, acgt };
+  Condition condition;
+  const bool zero = form == inl::fcmp_zero;
+  if (zero) {
+    const unsigned high = field(instruction, 16, 3);
+    const unsigned low = field(instruction, 4, 1);
+    if (high == 0U)
+      condition = low != 0U ? Condition::gt : Condition::ge;
+    else if (high == 1U)
+      condition = low != 0U ? Condition::le : Condition::lt;
+    else if (high == 2U && low == 0U)
+      condition = Condition::eq;
+    else if (high == 3U && low == 0U)
+      condition = Condition::ne;
+    else
+      return false;
+  } else {
+    switch ((field(instruction, 13, 3) << 1) | field(instruction, 4, 1)) {
+    case 0x4: condition = Condition::ge; break;
+    case 0x5: condition = Condition::gt; break;
+    case 0x6: condition = Condition::eq; break;
+    case 0x7: condition = Condition::ne; break;
+    case 0xc: condition = Condition::uo; break;
+    case 0xd: condition = Condition::acge; break;
+    case 0xf: condition = Condition::acgt; break;
+    default: return false;
+    }
+  }
+  begin_sve_word();
+  emit_sve_guard(g, esize, instruction, pc);
+  const auto first = read_native_vector(n, 0U);
+  unsigned second;
+  if (zero) {
+    emitter_.emit(movi_bytes(true, scratch_b, 0U));
+    second = scratch_b;
+  } else {
+    second = field(instruction, 16, 5) == n
+                 ? first.host
+                 : read_native_vector(field(instruction, 16, 5), 1U).host;
+  }
+  const bool swapped = condition == Condition::lt || condition == Condition::le;
+  if (condition == Condition::uo) {
+    /* Unordered when either operand is a NaN: neither equals itself. */
+    emitter_.emit(three(floating_word(op_fcmeq, size), scratch_a, first.host,
+                        first.host));
+    emitter_.emit(three(floating_word(op_fcmeq, size), scratch_b, second,
+                        second));
+    emitter_.emit(three(vector_and, scratch_a, scratch_a, scratch_b));
+  } else {
+    const FloatingOp &op = condition == Condition::eq || condition == Condition::ne
+                               ? op_fcmeq
+                           : condition == Condition::ge ||
+                                   condition == Condition::le
+                               ? op_fcmge
+                           : condition == Condition::acge ? op_facge
+                           : condition == Condition::acgt ? op_facgt
+                                                          : op_fcmgt;
+    emitter_.emit(three(floating_word(op, size), scratch_a,
+                        swapped ? second : first.host,
+                        swapped ? first.host : second));
+  }
+  if (condition == Condition::ne || condition == Condition::uo)
+    emitter_.emit(0x6e20'5800U | (scratch_a << 5) | scratch_a); // not
+  mark_native_fp();
+  finish_sve_compare(g, d, esize, false);
   return true;
 }
 

@@ -318,7 +318,15 @@ private:
   [[nodiscard]] bool emit_sve_index(std::uint16_t form,
                                     std::uint32_t instruction);
   [[nodiscard]] bool emit_sve_compare(std::uint16_t form,
-                                      std::uint32_t instruction);
+                                      std::uint32_t instruction,
+                                      std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_floating_compare(std::uint16_t form,
+                                               std::uint32_t instruction,
+                                               std::uint64_t pc);
+  /* The tail the compares share: the lane mask in scratch_a becomes Pd and,
+   * for the integer compares, the PredTest flags. */
+  void finish_sve_compare(unsigned governing, unsigned destination,
+                          unsigned esize, bool sets_flags);
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
