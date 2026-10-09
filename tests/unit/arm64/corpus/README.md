@@ -126,11 +126,15 @@ region   = address:u64 size:u32 flags:u8 blob:u32
 index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
-2 broad) in bits 2-3. The invalid-encoding bit means that the virtual CPU
-decodes the word as no instruction in any state, as for an unallocated word
-or a reserved operand value; a clear bit on an illegal-instruction case
-means a valid encoding that traps for its exception level, mode, or state,
-or for a missing feature. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
+2 broad) in bits 2-3. The invalid-encoding bit means that no virtual-CPU
+configuration decodes the word as an instruction: an unallocated word, a
+reserved or CONSTRAINED UNPREDICTABLE operand value, a permanently undefined
+word, or an encoding of a feature the virtual CPU never implements. A clear
+bit on an illegal-instruction case means a valid encoding that traps for its
+exception level, mode, or state, or because a feature that some virtual-CPU
+configuration implements (SVE, SME, FEAT_AFP) is absent from this one;
+[`invalid-encoding-corpus.py`](#invalid-encoding-bits) decides it.
+`profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
 Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, bit 10 (`without_afp`) translates the record for a virtual
@@ -321,12 +325,14 @@ records, and appends them, so the steps run in one order, followed by one
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
 [native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
-[SVE FEAT_AFP](#sve-feat_afp-cases), and [SVE trap](#sve-trap-cases). A
+[SVE FEAT_AFP](#sve-feat_afp-cases), [SVE trap](#sve-trap-cases), and
+[invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
-SVE trap step derives its records from the native SVE records and stays
-last. Deriving trap records from the SVE/SME `m4` and SVE FEAT_AFP records
-as well needs a source predicate that admits the rows that need SME.
+SVE trap step derives its records from the native SVE records, and the
+invalid-encoding step stays last. Deriving trap records from the SVE/SME `m4`
+and SVE FEAT_AFP records as well needs a source predicate that admits the
+rows that need SME.
 
 ## LSE2 alignment cases
 
@@ -760,14 +766,13 @@ FMUL and FRECPE flushes under FZ and FZ16 complete. A native case cannot
 show an exact tiny intermediate result, so a derived case sets UFE only
 when it raised underflow with FZ and FZ16 clear.
 
-The step needs no hardware. It is the last step of the chain and reruns
-after any change to the native records or to the script, on `sve-afp.jsonl`
-or on the pack's own `--dump`:
+The step needs no hardware. It precedes the
+[invalid-encoding step](#invalid-encoding-bits) and reruns after any change to
+the native records or to the script, on `sve-afp.jsonl` or on the pack's own
+`--dump`:
 
 ```sh
 python3 -B tools/arm64-tests/sve-trap-corpus.py sve-afp.jsonl sve-trap.jsonl
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve-trap.jsonl \
-  --output .build/corpora/arm64
 ```
 
 `provenance.json` records the script and table hashes and the case counts
@@ -775,6 +780,61 @@ under `sve_trap`; `build-unit-corpus.py --check` verifies the hashes, and
 the `arm64-instruction-corpus-sve-trap` tooling test re-derives every
 record from the pack's native records and checks each case against the
 contract.
+
+## Invalid-encoding bits
+
+[`tools/arm64-tests/invalid-encoding-corpus.py`](../../../../tools/arm64-tests/invalid-encoding-corpus.py)
+owns every case's invalid-encoding bit, so no producer needs to compute it:
+the exported checks set it wherever they expect an undefined-instruction
+trap, and this step rewrites it. It is the last step of the chain. It reads
+the SVE trap step's dump and, for each illegal-instruction case that retires
+nothing, sets the bit from the answer of
+[`invalid_encoding.py`](../../../../tools/arm64-tests/invalid_encoding.py),
+which decides it from the checked-in decode partitions, allocation table, and
+SVE/SME encoding table:
+
+- set: a word the partitions leave unallocated; a reserved bitmask immediate
+  or Advanced SIMD arrangement; an SVE or SME row that no mode of any
+  virtual-CPU configuration executes (the withheld FEAT_SVE_BitPerm and
+  FEAT_SVE_SM4 forms and the rows outside both profiles); and an encoding of
+  a feature the virtual CPU never implements (the features of the
+  [absent-feature](#absent-feature-cases) list and FEAT_PAuth_LR, and
+  FEAT_D128 with its SYSP, MRRS, and MSRR forms);
+- clear: a generic system or exception word (MRS and MSR register, SYS,
+  SYSL, HVC, SMC, HLT, DCPS, ERET, DRPS), which decodes for every operand
+  and traps at EL0, a register or operation that nothing defines included; a
+  word of a record under `without_sme` or `without_sve`, which a
+  configuration with the feature executes; and an SVE or SME row that some
+  mode of some configuration executes, in a mode or configuration that traps
+  it (an SVE-only row in streaming mode or without SVE).
+
+A word the tables do not settle keeps its producer's bit: a reserved operand
+value or CONSTRAINED UNPREDICTABLE combination inside an allocated encoding
+(LDP with Rt == Rt2, MOPS register overlap, a nonzero should-be-zero field),
+a permanently undefined word, and MSR (immediate) with a reserved PSTATE
+field stay set; a named system instruction that EL0 does not execute (AT, DC,
+IC, TLBI, GIC), a state that traps a valid word, and a malformed MOPS
+epilogue stay clear. The absent-feature and sme-native scripts write their
+own cases through the same classifier. A case that retires an instruction
+before it traps keeps its bit, since the tables do not name its trapping
+word.
+
+```sh
+python3 -B tools/arm64-tests/invalid-encoding-corpus.py \
+  sve-trap.jsonl invalid.jsonl
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack invalid.jsonl \
+  --output .build/corpora/arm64
+```
+
+`provenance.json` records the script, classifier, and table hashes and the
+case counts under `invalid_encoding`; `build-unit-corpus.py --check` verifies
+the hashes. The `arm64-instruction-corpus-invalid-encoding` tooling test
+requires every case that the classifier settles to carry its bit and its
+feature lists to cover every allocation-table feature token, the absent-feature
+script, and the SVE profile. Its `arm64-instruction-corpus-invalid-encoding-llvm`
+test is opt-in with the pinned LLVM MC, like the A64 oracle freshness test,
+and requires every word with a clear bit to be a valid encoding to it, which
+catches a reserved word that a producer wrongly leaves clear.
 
 ## FEAT_AFP cases
 
