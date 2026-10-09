@@ -158,6 +158,17 @@ void JitCompiler::emit_sve_full_guard(unsigned predicate, unsigned esize,
   note_sve_predicate_full(predicate, esize);
 }
 
+void JitCompiler::emit_sve_guard(unsigned predicate, unsigned esize,
+                                 std::uint32_t instruction,
+                                 std::uint64_t pc) {
+  /* The cold exit is made only when a check is emitted, and before any
+   * binding it would not flush. */
+  if (!sve_predicate_known_full(predicate, esize))
+    emit_sve_full_guard(
+        predicate, esize,
+        cold_exit(instruction, pc, ColdPath::Action::sve_slow));
+}
+
 bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
                                   std::uint32_t instruction,
                                   std::uint64_t pc) {
@@ -191,9 +202,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
       continue;
     if (!supported)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     /* Zdn is bits 0-4 and Zm bits 5-9. */
     emit_native_vector_binary(
         three(floating_word(op.fp, size), d, op.reversed ? n : d,
@@ -206,9 +216,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
   if (form == inl::fmla_p || form == inl::fmls_p) {
     if (!supported)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     emit_native_vector_accumulate(
         three(floating_word(form == inl::fmla_p ? op_fmla : op_fmls, size), d,
               n, m),
@@ -220,9 +229,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     /* Zdn = Zdn * Zm + Za (FMSB: Za - Zdn * Zm); Zm is bits 5-9, Za 16-20. */
     if (!supported)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     const auto accumulator = read_native_vector(m, 0U);
     const auto multiplicand = read_native_vector(d, 1U);
     const auto multiplier = n == d   ? multiplicand
@@ -279,9 +287,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
   if (form == inl::fabs_p || form == inl::fneg_p) {
     if (!supported)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     emit_native_vector_unary(
         three(floating_word(form == inl::fabs_p ? op_fabs : op_fneg, size), d,
               n, 0),
@@ -291,9 +298,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
   if (form == inl::fadda_p || form == inl::faddv_p) {
     if (!supported)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     const auto vector = read_native_vector(n, 0U);
     if (form == inl::fadda_p) {
       /* Vdn = Vdn + each element of Zm in turn, the scalar adds the
@@ -337,9 +343,8 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
      * integer's, bits 22-23 the float's) are one NEON instruction. */
     if (!supported || field(instruction, 17, 2) != size)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     const auto &op = form == inl::scvtf_p    ? op_scvtf
                      : form == inl::ucvtf_p  ? op_ucvtf
                      : form == inl::fcvtzs_p ? op_fcvtzs
@@ -366,9 +371,8 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
       continue;
     if (!op.doubleword && size == 3U)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     /* Zdn is bits 0-4 and Zm bits 5-9. */
     const auto opcode = op.sized ? sized(op.opcode, size) : op.opcode;
     emit_native_vector_binary(
@@ -428,9 +432,8 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
   case inl::mls_p: {
     if (size == 3U)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     emit_native_vector_accumulate(
         three(sized(form == inl::mla_p ? 0x4e20'9400U : 0x6e20'9400U, size), d,
               n, m),
@@ -442,9 +445,8 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     /* Zdn = Zdn * Zm + Za (MSB: Za - Zdn * Zm); Zm is bits 16-20, Za 5-9. */
     if (size == 3U)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     const auto accumulator = read_native_vector(n, 0U);
     const auto multiplicand = read_native_vector(d, 1U);
     const auto multiplier = m == d   ? multiplicand
@@ -486,9 +488,8 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     const unsigned code = shift_code(instruction, 8, 5);
     if (shift_log_size(code) > 3U)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << shift_log_size(code), slow);
+    emit_sve_guard(g, 1U << shift_log_size(code), instruction, pc);
     emit_native_vector_unary(0x6f00'2400U | (code << 16) | (d << 5) | d,
                              false);
     return true;
@@ -501,9 +502,8 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     if (log_size > 3U)
       return false;
     const unsigned shift = code - (8U << log_size);
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << log_size, slow);
+    emit_sve_guard(g, 1U << log_size, instruction, pc);
     if (shift == 0U)
       return true;
     const auto source = read_native_vector(d, 0U);
@@ -799,9 +799,8 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
     const unsigned operation = field(instruction, 16, 2);
     if (operation == 3U || size <= operation)
       return false;
-    const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
     begin_sve_word();
-    emit_sve_full_guard(g, 1U << size, slow);
+    emit_sve_guard(g, 1U << size, instruction, pc);
     /* REVB reverses bytes within size-wide elements (REV16, 32, 64 on
      * bytes), REVH halfwords within words or doublewords (on halves), REVW
      * words within doublewords (on words). */

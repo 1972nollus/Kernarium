@@ -329,6 +329,10 @@ private:
    * esize bytes; known after an all-active PTRUE or a passed guard. */
   void emit_sve_full_guard(unsigned predicate, unsigned esize,
                            Arm64Emitter::Label slow);
+  /* As above with a cold exit to the library for the word, made only when
+   * the check is emitted. */
+  void emit_sve_guard(unsigned predicate, unsigned esize,
+                      std::uint32_t instruction, std::uint64_t pc);
   void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_move_form(std::uint16_t form, std::uint32_t instruction);
