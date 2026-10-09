@@ -8293,27 +8293,39 @@ private:
 /* Model the compare/exchange retry used by glibc and libstdc++ locks. A failed
  * CMPXCHG supplies the newly observed value through EAX; the next attempt uses
  * it without reading shared memory non-atomically in the test harness.
+ *
+ * A compare/exchange retry is lock-free: some thread succeeds, but not every
+ * thread within any number of attempts. Threads that run at different speeds
+ * (a slower core, a preempted vCPU) leave the slowest to lose every race
+ * while the others still have work, so the test bounds no thread's retries.
+ * It fails a thread that keeps failing while no thread at all succeeds. Each
+ * failure means another thread changed the word, and that thread counts its
+ * success before it can change the word again, so at most one change per
+ * other thread goes uncounted; a count that stays still across many failures
+ * means the failure path itself returns the wrong value or flags.
  */
 [[nodiscard]] bool cmpxchg_survives_concurrent_vcpus()
 {
 	using namespace uml::cpu::x86_64;
 	constexpr unsigned thread_count = 4;
 	constexpr unsigned iterations = 5000;
-	constexpr unsigned retry_limit = 10000;
+	constexpr unsigned stall_limit = 1000;
 	constexpr std::uint64_t counter = 0x800;
 	TestMemory memory;
 	memory.load(0, {0xf0, 0x0f, 0xb1, 0x0b, 0x0f, 0x05});
 	const auto built = require_built(gadgets::build(memory, 0),
 		"contended CMPXCHG block did not build");
+	std::atomic<std::uint64_t> exchanges{0};
 	const bool all_healthy = on_vcpus(thread_count, [&](auto &healthy) {
 		CpuState cpu{};
 		cpu.gpr(Register::rbx) = counter;
 		std::uint32_t expected = 0;
 		for (unsigned step = 0; step < iterations; ++step) {
 			bool exchanged = false;
-			for (unsigned retry = 0;
-			     retry < retry_limit &&
-				 healthy.load(std::memory_order_relaxed); ++retry) {
+			auto seen = exchanges.load(std::memory_order_relaxed);
+			unsigned stalled = 0;
+			while (healthy.load(std::memory_order_relaxed) &&
+			       stalled < stall_limit) {
 				const auto desired = expected + 1;
 				cpu.rip = 0;
 				cpu.gpr(Register::rax) = expected;
@@ -8326,12 +8338,20 @@ private:
 				}
 				materialize_flags(cpu);
 				if ((cpu.rflags & rflags_zero) != 0) {
+					exchanges.fetch_add(1, std::memory_order_relaxed);
 					expected = desired;
 					exchanged = true;
 					break;
 				}
 				expected = static_cast<std::uint32_t>(
 					cpu.gpr(Register::rax));
+				const auto now = exchanges.load(std::memory_order_relaxed);
+				if (now != seen) {
+					seen = now;
+					stalled = 0;
+				} else {
+					++stalled;
+				}
 			}
 			if (!exchanged) {
 				healthy.store(false, std::memory_order_relaxed);
@@ -8340,7 +8360,7 @@ private:
 		}
 	});
 	return expect(all_healthy,
-		"a contended CMPXCHG retry did not make progress") &&
+		"a contended CMPXCHG retry failed with no thread succeeding") &&
 		expect(memory.dword(counter) == thread_count * iterations,
 			"concurrent CMPXCHG lost successful updates");
 }
