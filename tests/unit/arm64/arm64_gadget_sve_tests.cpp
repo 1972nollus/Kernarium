@@ -1846,6 +1846,70 @@ void library_exit_report()
 	std::printf("the library-exit report counts translations and exits\n");
 }
 
+constexpr const char *report_child_variable = "UML_GADGET_SVE_REPORT_CHILD";
+
+/* The emulator leaves through _Exit, which runs no atexit handler, so a
+ * process that asked for the report with DARWIN_UML_SVE_LIBRARY_EXITS must
+ * write it as its executors retire. The child counts from its start (the
+ * variable is read before main), runs one word through the library on an
+ * executor and leaves through _Exit once the executor is gone; the parent
+ * reads what it left. */
+[[noreturn]] void report_child()
+{
+	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	{
+		const std::array code{frecpx, svc};
+		Machine machine{code, sve_host()};
+		require(machine.run() == EngineEvent::system_call);
+	}
+	std::_Exit(0);
+}
+
+void library_exit_report_survives_exit()
+{
+	const char *temporary = std::getenv("TMPDIR");
+	std::string report = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	report += "/sve-library-report-exit.XXXXXX";
+	const int descriptor = mkstemp(report.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	std::array<char, 4096> path{};
+	auto size = static_cast<std::uint32_t>(path.size());
+	require(_NSGetExecutablePath(path.data(), &size) == 0);
+	std::vector<std::string> variables;
+	for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+		if (std::strncmp(*entry, "DARWIN_UML_SVE_LIBRARY_EXITS=", 29) != 0)
+			variables.emplace_back(*entry);
+	variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
+	variables.push_back(std::string{report_child_variable} + "=1");
+	std::vector<char *> environment;
+	for (auto &variable : variables)
+		environment.push_back(variable.data());
+	environment.push_back(nullptr);
+	char *const arguments[] = {path.data(), nullptr};
+	pid_t child = 0;
+	require(posix_spawn(&child, path.data(), nullptr, nullptr, arguments,
+			environment.data()) == 0);
+	int status = 0;
+	while (waitpid(child, &status, 0) < 0)
+		require(errno == EINTR);
+	require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	std::ifstream file{report};
+	std::string line;
+	std::vector<std::string> lines;
+	while (std::getline(file, line))
+		lines.push_back(line);
+	file.close();
+	unlink(report.c_str());
+	/* Two comment lines, then FRECPX with its translation, its word sent
+	 * to the library and its one execution. */
+	require(lines.size() >= 3U);
+	require(lines[0] == "# SVE library exits: total 1");
+	require(lines[2].ends_with("\t1\t1\t1"));
+	std::printf("the library-exit report survives _Exit\n");
+}
+
 /* Every generated form agrees with the semantic library: random words of
  * each register-only row a generated gadget runs, each alone in a block on
  * a random state, leave the library's registers, P, FFR, NZCV and FPSR;
@@ -2978,6 +3042,10 @@ int main()
 	const uml::testing::RuntimeTestRoute runtime_route;
 	if (std::getenv(scan_variable) != nullptr)
 		return report_entry_findings();
+	if (std::getenv(report_child_variable) != nullptr)
+		report_child();
+	std::printf("random FPCR carries FIZ, AH and NEP: %s\n",
+		afp_implemented() ? "yes" : "no (the host lacks FEAT_AFP)");
 	std::printf("gadget SVE support: %s\n",
 		gadgets::sve_support == arm64::SveSupport::none ? "none" :
 		gadgets::sve_support == arm64::SveSupport::control ? "control" :
@@ -2995,6 +3063,7 @@ int main()
 	live_marker_and_fp_access();
 	library_words();
 	library_exit_report();
+	library_exit_report_survives_exit();
 	sve_sme_forms_at_sm_0();
 	remaining_forms_on_edge_values();
 	generated_forms_match_the_library();
