@@ -60,6 +60,7 @@ constexpr FloatingOp op_fcvtzs{0x4ef9'b800U, 0x4ea1'b800U};
 constexpr FloatingOp op_fcvtzu{0x6ef9'b800U, 0x6ea1'b800U};
 constexpr FloatingOp op_fdiv{0x6e40'3c00U, 0x6e20'fc00U};
 constexpr FloatingOp op_fsqrt{0x6ef9'f800U, 0x6ea1'f800U};
+constexpr FloatingOp op_fabd{0x6ec0'1400U, 0x6ea0'd400U};
 constexpr FloatingOp op_fcmeq{0x4e40'2400U, 0x4e20'e400U};
 constexpr FloatingOp op_fcmge{0x6e40'2400U, 0x6e20'e400U};
 constexpr FloatingOp op_fcmgt{0x6ec0'2400U, 0x6ea0'e400U};
@@ -129,6 +130,7 @@ constexpr std::array destructive_ops{
     floating_op(inl::fadd_p, op_fadd, false),
     floating_op(inl::fsub_p, op_fsub, false),
     floating_op(inl::fsubr_p, op_fsub, true),
+    floating_op(inl::fabd_p, op_fabd, false),
     floating_op(inl::fmul_p, op_fmul, false),
     floating_op(inl::fmaxnm_p, op_fmaxnm, false),
     floating_op(inl::fminnm_p, op_fminnm, false),
@@ -311,27 +313,33 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     mark_native_fp();
     return true;
   }
-  if (form == inl::fmla_i || form == inl::fmls_i) {
-    /* Zm is 3 bits (4 for doubles) from bit 16; the index follows. */
-    if (!supported)
+  if (form == inl::fmla_i || form == inl::fmls_i || form == inl::fmul_i) {
+    /* Zm is 3 bits (4 for doubles) from bit 16; the index follows. The
+     * element size is bit 23 and the index's top bit: half has bit 23
+     * clear, with the index's top bit at bit 22. */
+    const unsigned type = field(instruction, 23, 1) != 0U
+                              ? 2U + field(instruction, 22, 1)
+                              : 1U;
+    if (type == 1U && !host.fp16)
       return false;
     begin_sve_word();
     std::uint32_t word;
-    const bool subtract = form == inl::fmls_i;
-    if (size == 1U) {
+    /* FMLA 1000, FMLS 5000, FMUL 9000 in bits 12-15. */
+    const std::uint32_t operation = form == inl::fmls_i   ? 0x5000U
+                                    : form == inl::fmul_i ? 0x9000U
+                                                          : 0x1000U;
+    if (type == 1U) {
       const unsigned index =
           (field(instruction, 22, 1) << 2) | field(instruction, 19, 2);
-      word = (subtract ? 0x4f00'5000U : 0x4f00'1000U) |
-             (field(instruction, 16, 3) << 16) | ((index & 1U) << 20) |
-             (((index >> 1) & 1U) << 21) | ((index >> 2) << 11);
-    } else if (size == 2U) {
+      word = (0x4f00'0000U | operation) | (field(instruction, 16, 3) << 16) |
+             ((index & 1U) << 20) | (((index >> 1) & 1U) << 21) |
+             ((index >> 2) << 11);
+    } else if (type == 2U) {
       const unsigned index = field(instruction, 19, 2);
-      word = (subtract ? 0x4f80'5000U : 0x4f80'1000U) |
-             (field(instruction, 16, 3) << 16) | ((index & 1U) << 21) |
-             ((index >> 1) << 11);
+      word = (0x4f80'0000U | operation) | (field(instruction, 16, 3) << 16) |
+             ((index & 1U) << 21) | ((index >> 1) << 11);
     } else {
-      word = (subtract ? 0x4fc0'5000U : 0x4fc0'1000U) |
-             (field(instruction, 16, 4) << 16) |
+      word = (0x4fc0'0000U | operation) | (field(instruction, 16, 4) << 16) |
              (field(instruction, 20, 1) << 11);
     }
     emit_native_vector_by_element(word | (n << 5) | d);
@@ -572,6 +580,76 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
                         : form == jit::sve_forms::eor_immediate ? vector_eor
                                                                 : vector_and,
                         out.host, first.host, scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::abs_p:
+  case inl::neg_p:
+  case inl::not_p:
+  case inl::cls_p:
+  case inl::clz_p: {
+    /* Zd, Pg/M, Zn, all lanes: AdvSIMD's unary form of the element size
+     * (CLS and CLZ have none for doublewords). */
+    if ((form == inl::cls_p || form == inl::clz_p) && size == 3U)
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const std::uint32_t opcode = form == inl::abs_p   ? 0x4e20'b800U
+                                 : form == inl::neg_p ? 0x6e20'b800U
+                                 : form == inl::not_p ? 0x6e20'5800U
+                                 : form == inl::cls_p ? 0x4e20'4800U
+                                                      : 0x6e20'4800U;
+    emit_native_vector_unary(
+        three(form == inl::not_p ? opcode : sized(opcode, size), d, n, 0),
+        false);
+    return true;
+  }
+  case inl::cnot_p:
+  case inl::cnt_p: {
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    if (form == inl::cnot_p) {
+      /* 1 where the element is zero: an all-ones compare shifted down. */
+      emitter_.emit(sized(0x4e20'9800U, size) | (source.host << 5) |
+                    scratch_a); // cmeq #0
+      emitter_.emit(0x6f00'0400U | (((8U << size) + 1U) << 16) |
+                    (scratch_a << 5) | scratch_a); // ushr #(bits - 1)
+    } else {
+      /* Population counts of the bytes, pairs added up to the element. */
+      emitter_.emit(0x4e20'5800U | (source.host << 5) | scratch_a); // cnt
+      for (unsigned step = 1; step <= size; ++step)
+        emitter_.emit(sized(0x6e20'2800U, step - 1U) | (scratch_a << 5) |
+                      scratch_a); // uaddlp
+    }
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::sxt_p:
+  case inl::uxt_p: {
+    /* SXTB, SXTH and SXTW (bits 17-18: 0, 1, 2), and the unsigned forms:
+     * the low 8, 16 or 32 bits of each element extended, shifted up and
+     * back down. */
+    const bool is_signed = form == inl::sxt_p;
+    const unsigned source_log = field(instruction, 17, 2);
+    if (source_log == 3U)
+      return false;
+    if (size <= source_log)
+      return false;
+    const unsigned bits = 8U << size;
+    const unsigned amount = bits - (8U << source_log);
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    emitter_.emit(0x4f00'5400U | ((bits + amount) << 16) |
+                  (source.host << 5) | scratch_a); // shl
+    emitter_.emit((is_signed ? 0x4f00'0400U : 0x6f00'0400U) |
+                  ((2U * bits - amount) << 16) | (scratch_a << 5) |
+                  scratch_a); // sshr or ushr
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(vector_move(out.host, scratch_a));
     commit_native_vector(out, d);
     return true;
   }
