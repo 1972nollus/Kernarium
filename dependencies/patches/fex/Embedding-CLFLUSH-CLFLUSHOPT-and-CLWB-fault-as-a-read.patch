@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 23:18:08 +0900
+Subject: [PATCH] Embedding: CLFLUSH, CLFLUSHOPT and CLWB fault as a read
+
+x86 checks the byte a cache-line operation names as a read, so a line
+the guest cannot read raises #PF with a read error and a cache
+maintenance of an unmapped line never completes. An embedding host
+ordered memory and stopped there. Embedded, each of them probes the byte
+first.
+---
+ FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp | 11 +++++++++++
+ FEXCore/Source/Interface/Core/OpcodeDispatcher.h   |  2 ++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index 56c024fdc19507f412f2b8b3072023adf4133230..645e4d8a0f5a1429f2679cda867cd1675e4d44ff 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -5285,6 +5285,7 @@ void OpDispatchBuilder::MOVBEOp(OpcodeArgs) {
+ void OpDispatchBuilder::CLWBOrTPause(OpcodeArgs) {
+   if (DestIsMem(Op)) {
+     Ref DestMem = MakeSegmentAddress(Op, Op->Dest);
++    EmbedderCacheLineProbe(DestMem);
+     _CacheLineClean(DestMem);
+   } else {
+     if (!CTX->HostFeatures.SupportsWFXT) {
+@@ -5304,8 +5305,17 @@ void OpDispatchBuilder::CLWBOrTPause(OpcodeArgs) {
+   }
+ }
+ 
++// CLFLUSH, CLFLUSHOPT and CLWB fault as a read of the byte they name, and
++// the host's cache is not the guest's.
++void OpDispatchBuilder::EmbedderCacheLineProbe(Ref Addr) {
++  if (CTX->Embedded) {
++    _EmbedderProbe(Addr, 1);
++  }
++}
++
+ void OpDispatchBuilder::CLFLUSHOPT(OpcodeArgs) {
+   Ref DestMem = MakeSegmentAddress(Op, Op->Dest);
++  EmbedderCacheLineProbe(DestMem);
+   _CacheLineClear(DestMem, false);
+ }
+ 
+@@ -5334,6 +5344,7 @@ void OpDispatchBuilder::StoreFenceOrCLFlush(OpcodeArgs) {
+   } else {
+     // This is a CLFlush
+     Ref DestMem = MakeSegmentAddress(Op, Op->Dest);
++    EmbedderCacheLineProbe(DestMem);
+     _CacheLineClear(DestMem, true);
+   }
+ }
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+index fd0efbcaa495530a3e71356354ad08bcb5506555..5b81a1888ae4488379addd49293ac004ef42e391 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.h
+@@ -1519,6 +1519,8 @@ private:
+   // Alignment, as FXSAVE, FXRSTOR, XSAVE and XRSTOR do for their image. It
+   // ends the block, so the caller computes its values after it.
+   void EmbedderRequireAlignment(OpcodeArgs, Ref Addr, uint32_t Alignment);
++  // Embedded: faults as a read of the byte at Addr, as CLFLUSH, CLFLUSHOPT and CLWB do.
++  void EmbedderCacheLineProbe(Ref Addr);
+   // Embedded, while the x87 control word unmasks an exception: x87 checks.
+   bool EmbedderX87Checks() const;
+   // With x87 checks, EmbedderX87Commit(Mask).

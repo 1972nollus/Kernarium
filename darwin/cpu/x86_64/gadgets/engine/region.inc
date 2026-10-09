@@ -69,7 +69,6 @@
 	gadget_slot vector_float,              116, 0x022500,   8, 0x0ac80
 	gadget_slot vector_convert,             76, 0x002f00, 112, 0x01000
 	gadget_slot vector_scalar_convert,      68, 0x002700,   8, 0x00d80
-	gadget_slot vector_3dnow,              124, 0x002a80,  64, 0x01180
 	gadget_slot vector_fma,                 76, 0x021d00,  88, 0x2dd00
 	gadget_slot vector_aes,                104, 0x001180,  72, 0x00680
 	gadget_slot vector_sha,                120, 0x000f00, 100, 0x00600
@@ -87,7 +86,6 @@
 	gadget_slot vector_extract,              0, 0x000b00,  40, 0x00500
 	gadget_slot vector_test,                 8, 0x001000,  92, 0x00600
 	gadget_slot vector_compare,              4, 0x000c00,  68, 0x00580
-	gadget_slot vector_bitfield,            68, 0x000500,   0, 0x00000
 	gadget_slot vector_mask_store,         108, 0x000900,  52, 0x00500
 	gadget_slot control,                    64, 0x008500,  44, 0x02600
 	gadget_slot legacy_control,              8, 0x002980, 108, 0x00780

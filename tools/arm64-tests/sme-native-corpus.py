@@ -61,9 +61,12 @@ whose legality in streaming mode differs from the table's AdvSIMD flag, is a
 finding about the table: the script reports each one and writes nothing.
 The table also decides that an operand case's word is UNDEFINED in every
 mode when no row decodes it or its row's bitmask immediate is one that
-DecodeBitMasks reserves. Such a case, like a row outside the profile or a
-Debug-state form, is an invalid encoding; a case that is UNDEFINED only for
-its mode or a missing feature is not.
+DecodeBitMasks reserves. Such a case is an invalid encoding, and so is a case
+whose row no mode of any virtual-CPU configuration executes and a
+Debug-state form; a case that is UNDEFINED only for its mode or a missing
+feature is not, including a row that only the SVE profile executes outside
+streaming mode. invalid_encoding.py decides each case's bit from the table,
+and the case's own expectation stands where it does not.
 
 Oracle request (little-endian):
 
@@ -138,6 +141,7 @@ def _load(name: str, path: pathlib.Path):
 
 corpus = _load("build_unit_corpus", HERE / "build-unit-corpus.py")
 sme_table = _load("sme_encoding_table", HERE / "sme_encoding_table.py")
+invalid_encoding = _load("invalid_encoding", HERE / "invalid_encoding.py")
 
 SITE = "tools/arm64-tests/sme-native-corpus.py"
 PRODUCER = "arm64-sme-native"
@@ -805,8 +809,7 @@ def classify_drafts(table) -> list[Draft]:
                     group="classify",
                     name=f"{row_name(row, word)} outside the profile, "
                          f"{svcr_name(svcr)}",
-                    words=(word,), svcr=svcr, expect="illegal",
-                    invalid=True))
+                    words=(word,), svcr=svcr, expect="illegal"))
             continue
         need = mode_svcr(row)
         modes = [need] if need & SM else [need, need | SM]
@@ -847,7 +850,7 @@ def fpsimd_drafts(table) -> list[Draft]:
         if row.stable_id in absent:
             continue
         word = row.witness
-        if word & 0x3C40_0000 == 0x2C40_0000 and \
+        if load_store(word) and word & 0x3C40_0000 == 0x2C40_0000 and \
                 word >> 10 & 31 == word & 31:
             # A SIMD&FP load pair with Rt == Rt2 is CONSTRAINED
             # UNPREDICTABLE, and the host makes it UNDEFINED.
@@ -1189,13 +1192,24 @@ def retired_count(name: str, event: str, pc_offset: int) -> int:
     return pc_offset // 4 + RETIRES[event]
 
 
+def invalid_flag(draft: Draft) -> bool:
+    """The case's invalid-encoding bit: the shared classifier's for an
+    illegal-instruction case whose first word the tables settle, else the
+    draft's."""
+    if draft.expect != "illegal":
+        return draft.invalid
+    decision = invalid_encoding.classifier().decide(
+        draft.words[0], record_key(draft)[1])
+    return draft.invalid if decision is None else decision.invalid
+
+
 def case_skeleton(draft: Draft, case: WireCase, program: int) -> dict:
     """The record case without what the hardware decides: its event,
     expected state, retired count, fault, and expected bytes."""
     initial = Dense.base(SVL).apply(case.state)
     item = {
         "name": draft.name, "program": program, "ordinals": [0, 0],
-        "invalid_encoding": draft.invalid, "minimization": "full",
+        "invalid_encoding": invalid_flag(draft), "minimization": "full",
         "native": list(draft.native),
         "initial": initial_fields(draft, initial),
     }

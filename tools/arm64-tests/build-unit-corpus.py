@@ -32,6 +32,7 @@ PARTITIONS = UNIT / "a64_instruction_decode_partitions.tsv"
 BINDINGS = UNIT / "a64_instruction_evidence_bindings.tsv"
 FEATURES = REPOSITORY / "darwin" / "platform" / "host_capabilities.hpp"
 ABSENT_FEATURES_SCRIPT = "tools/arm64-tests/absent-feature-corpus.py"
+INVALID_ENCODING_SCRIPT = "tools/arm64-tests/invalid-encoding-corpus.py"
 
 PACK_MAGIC = b"UMLA64C\0"
 PACK_VERSION = 3
@@ -1642,6 +1643,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "sve_afp" in corpus.meta else {}),
         **({"sve_trap": corpus.meta["sve_trap"]}
            if "sve_trap" in corpus.meta else {}),
+        **({"invalid_encoding": corpus.meta["invalid_encoding"]}
+           if "invalid_encoding" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],
@@ -1788,6 +1791,24 @@ def check(options: argparse.Namespace) -> int:
         if sha256((REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the native "
                          "records)")
+    # The last step sets the invalid-encoding bits from the current
+    # classifier and the current tables.
+    step = corpus.meta.get("invalid_encoding")
+    if step is None or step["script"] != INVALID_ENCODING_SCRIPT or \
+            sha256((REPOSITORY / step["script"]).read_bytes()) != \
+            step["sha256"]:
+        stale.append(INVALID_ENCODING_SCRIPT + " (not the last step of the "
+                     "pack)")
+    else:
+        classifier = step["classifier"]
+        if sha256((REPOSITORY / classifier["file"]).read_bytes()) != \
+                classifier["sha256"]:
+            stale.append(classifier["file"] + " (not the pack's classifier)")
+        for table in step["tables"]:
+            if sha256((REPOSITORY / table["file"]).read_bytes()) != \
+                    table["sha256"]:
+                stale.append(table["file"] + " (changed since the "
+                             "invalid-encoding step)")
     # So are the native floating-point trap records.
     trap = corpus.meta.get("floating_trap_native")
     if trap is not None and sha256(

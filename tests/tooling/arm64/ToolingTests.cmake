@@ -78,6 +78,26 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 300)
 
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-invalid-encoding
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_invalid_encoding.py
+        ${UML_ARM64_INSTRUCTION_CORPUS}
+    LABELS cpu
+    TIMEOUT 300)
+
+# Opt-in: the pinned LLVM MC is not a managed dependency. A case with a clear
+# invalid-encoding bit names a valid encoding, so LLVM must decode its word.
+uml_add_tooling_test(
+    NAME arm64-instruction-corpus-invalid-encoding-llvm
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_invalid_encoding.py
+        ${UML_ARM64_INSTRUCTION_CORPUS} --llvm
+    LABELS cpu
+    TIMEOUT 300)
+set_tests_properties(arm64-instruction-corpus-invalid-encoding-llvm PROPERTIES
+    SKIP_RETURN_CODE 77)
+
 # The native oracle records the SME corpus cases on an SME host; this test
 # drives its exception path and state transfer with base A64 cases.
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

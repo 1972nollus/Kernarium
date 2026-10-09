@@ -47,8 +47,6 @@
 #include "engine/vector_convert.inc"
 	gadget_group vector_scalar_convert
 #include "engine/vector_scalar_convert.inc"
-	gadget_group vector_3dnow
-#include "engine/vector_3dnow.inc"
 	gadget_group vector_fma
 #include "engine/vector_fma.inc"
 	gadget_group vector_aes
@@ -83,8 +81,6 @@
 #include "engine/vector_test.inc"
 	gadget_group vector_compare
 #include "engine/vector_compare.inc"
-	gadget_group vector_bitfield
-#include "engine/vector_bitfield.inc"
 	gadget_group vector_mask_store
 #include "engine/vector_mask_store.inc"
 	gadget_group control

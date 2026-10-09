@@ -401,6 +401,25 @@ Lx86_push_all_done\@:
 	finish_store (8 * (\width / 8))
 .endm
 
+/* One element of a POP[A] block that crosses a page: load `width` bits at
+ * x25 + index * width / 8, and, unless `slot` is -1, store them into the
+ * guest register in CpuState's slot `slot`. */
+.macro pop_all_cross_element width, index, slot
+	mov x0, _context
+	add x1, x25, #(\index * (\width / 8))
+	mov w2, #(\width / 8)
+	helper_call uml_x86_64_gadget_cross_page_load
+	cbz x1, Lx86_memory_fault
+	.if \slot >= 0
+	.if \width == 32
+	mov w0, w0
+	str x0, [_cpu, #(UML_X86_64_CPU_REGISTERS + \slot * 8)]
+	.else
+	strh w0, [_cpu, #(UML_X86_64_CPU_REGISTERS + \slot * 8)]
+	.endif
+	.endif
+.endm
+
 .macro pop_all width
 gadget pop_all_\width
 	ldr x22, [_stream], #8
@@ -425,55 +444,19 @@ gadget pop_all_\width
 	.endif
 	b Lx86_pop_all_commit\@
 Lx86_pop_all_cross\@:
-	sub sp, sp, #32
-	mov x0, _context
-	mov x1, x25
-	mov w2, #8
-	helper_call uml_x86_64_gadget_cross_page_load
-	cbz x1, Lx86_pop_all_cross_fault\@
-	str x0, [sp]
-	mov x0, _context
-	add x1, x25, #8
-	mov w2, #8
-	helper_call uml_x86_64_gadget_cross_page_load
-	cbz x1, Lx86_pop_all_cross_fault\@
-	str x0, [sp, #8]
-	.if \width == 32
-	mov x0, _context
-	add x1, x25, #16
-	mov w2, #8
-	helper_call uml_x86_64_gadget_cross_page_load
-	cbz x1, Lx86_pop_all_cross_fault\@
-	str x0, [sp, #16]
-	mov x0, _context
-	add x1, x25, #24
-	mov w2, #8
-	helper_call uml_x86_64_gadget_cross_page_load
-	cbz x1, Lx86_pop_all_cross_fault\@
-	str x0, [sp, #24]
-	ldr w8, [sp]
-	ldr w9, [sp, #4]
-	ldr w10, [sp, #8]
-	ldr w11, [sp, #12]
-	ldr w12, [sp, #16]
-	ldr w13, [sp, #20]
-	ldr w14, [sp, #24]
-	ldr w15, [sp, #28]
-	.else
-	ldrh w8, [sp]
-	ldrh w9, [sp, #2]
-	ldrh w10, [sp, #4]
-	ldrh w11, [sp, #6]
-	ldrh w12, [sp, #8]
-	ldrh w13, [sp, #10]
-	ldrh w14, [sp, #12]
-	ldrh w15, [sp, #14]
-	.endif
-	add sp, sp, #32
-	b Lx86_pop_all_commit\@
-Lx86_pop_all_cross_fault\@:
-	add sp, sp, #32
-	b Lx86_memory_fault
+	/* A block across a page loads in x86's order, EDI, ESI, EBP, the skipped
+	 * ESP slot, EBX, EDX, ECX and EAX, and each register takes its value
+	 * before the next load: a fault leaves the earlier registers loaded and
+	 * ESP where it was. */
+	pop_all_cross_element \width, 0, 7
+	pop_all_cross_element \width, 1, 6
+	pop_all_cross_element \width, 2, 5
+	pop_all_cross_element \width, 3, -1
+	pop_all_cross_element \width, 4, 3
+	pop_all_cross_element \width, 5, 2
+	pop_all_cross_element \width, 6, 1
+	pop_all_cross_element \width, 7, 0
+	b Lx86_pop_all_advance\@
 Lx86_pop_all_commit\@:
 	.if \width == 32
 	str x8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
@@ -492,6 +475,7 @@ Lx86_pop_all_commit\@:
 	strh w14, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	strh w15, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	.endif
+Lx86_pop_all_advance\@:
 	add w25, w25, #(8 * (\width / 8))
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	retire_and_next
@@ -503,6 +487,7 @@ pop_all 16
 pop_all 32
 
 .purgem pop_all
+.purgem pop_all_cross_element
 .purgem push_all
 
 .macro push_segment_compat32
