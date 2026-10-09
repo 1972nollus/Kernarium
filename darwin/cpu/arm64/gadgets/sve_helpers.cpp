@@ -14,6 +14,8 @@
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -63,9 +65,47 @@ SveWordDecode decode_sve_word(std::uint32_t word,
 	return {.kind = SveWord::implemented, .row = row};
 }
 
+namespace {
+
+/* The words run through the library per table row, while counting. */
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+	library_exits{};
+std::atomic<bool> counting{false};
+
+} // namespace
+
+void count_sve_library_exits(bool enable) noexcept
+{
+	counting.store(enable, std::memory_order_relaxed);
+}
+
+std::uint64_t sve_library_exits(std::size_t row) noexcept
+{
+	return row < library_exits.size() ?
+		library_exits[row].load(std::memory_order_relaxed) : 0U;
+}
+
+std::uint64_t sve_library_exit_total() noexcept
+{
+	std::uint64_t total = 0;
+	for (const auto &count : library_exits)
+		total += count.load(std::memory_order_relaxed);
+	return total;
+}
+
+void reset_sve_library_exits() noexcept
+{
+	for (auto &count : library_exits)
+		count.store(0, std::memory_order_relaxed);
+}
+
 detail::SveResult execute_sve_word(CpuState &cpu, memory::Tlb &tlb,
 	std::uint32_t word, const detail::SmeEncoding &row) noexcept
 {
+	if (counting.load(std::memory_order_relaxed))
+		library_exits[static_cast<std::size_t>(
+			&row - detail::sme_encodings.data())]
+			.fetch_add(1, std::memory_order_relaxed);
 	GadgetMemory memory{tlb};
 	const auto result = detail::execute_sve(cpu, word, row, memory);
 	if (result.event == detail::SveEvent::memory_fault) {
