@@ -303,10 +303,11 @@ gadget mxcsr_load
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
 Lx86_mxcsr_load_done:
-	/* MXCSR holds what the guest loads, masks and flags included, as
-	 * STMXCSR shows; its reserved high half reads as zero. The loaded
-	 * flags replace the host's. */
-	and w24, w24, #0xffff
+	/* A value with a reserved bit, one of 31:16, raises #GP(0) and loads
+	 * nothing. MXCSR holds what the guest loads, masks and flags included,
+	 * as STMXCSR shows. The loaded flags replace the host's. */
+	tst w24, #0xffff0000
+	b.ne Lx86_general_protection
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
 	msr fpsr, xzr
 	refresh_simd_exact w24, 9, 10

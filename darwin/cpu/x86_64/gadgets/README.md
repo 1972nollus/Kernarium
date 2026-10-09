@@ -547,6 +547,14 @@ whatever RFLAGS.AC holds, as the JIT does. Neither engine raises the #GP x86
 raises for a misaligned operand of an aligned SSE form, such as MOVAPS,
 MOVNTPS or a legacy SSE operation's 16-byte memory source.
 
+LDMXCSR, VLDMXCSR, FXRSTOR and XRSTOR raise #GP(0) for an MXCSR with a
+reserved bit, 31 to 16, before they change any state. XRSTOR loads MXCSR from
+its image whenever RFBM selects the SSE or the AVX component, whatever
+XSTATE_BV holds, and XSAVE and XSAVEOPT store MXCSR and MXCSR_MASK under the
+same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
+as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
+header, and the AVX component only when RFBM selects it.
+
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
 arithmetic runs about 25 times slower while MXCSR unmasks underflow, precision
 or a denormal operand. Memory access while AC is set runs about 25 times slower

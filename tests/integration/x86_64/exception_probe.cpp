@@ -658,13 +658,17 @@ constexpr word user_debugreg = 252;
 #define PROBE_SP "%rsp"
 #define PROBE_BP "%rbp"
 #define PROBE_ARG_AX "	movq %rdi, %rax\n"
+#define PROBE_ARG_CX_AX "	movq %rdi, %rcx\n	movl %esi, %eax\n"
 #define PROBE_AX "%rax"
+#define PROBE_CX "%rcx"
 #else
 #define PROBE_RIP ""
 #define PROBE_SP "%esp"
 #define PROBE_BP "%ebp"
 #define PROBE_ARG_AX "	movl 4(%esp), %eax\n"
+#define PROBE_ARG_CX_AX "	movl 4(%esp), %ecx\n	movl 8(%esp), %eax\n"
 #define PROBE_AX "%eax"
+#define PROBE_CX "%ecx"
 #endif
 
 /* An unmasked SIMD exception raises #XM at its instruction; an unmasked x87
@@ -1926,6 +1930,90 @@ bool alignment_faults()
 	return ok;
 }
 
+/* XSAVE, XSAVEOPT and XRSTOR with RFBM in (eax) at (ecx) and FXSAVE and
+ * FXRSTOR touch only the bytes their components occupy: the legacy area and
+ * the header, and the AVX component only when RFBM selects it. */
+#define EXTENT_CASES(X)                                                      \
+	X(xsave, "xsave (" PROBE_CX ")")                                     \
+	X(xsaveopt, "xsaveopt (" PROBE_CX ")")                               \
+	X(xrstor, "xrstor (" PROBE_CX ")")                                   \
+	X(fxsave, "fxsave (" PROBE_CX ")")                                   \
+	X(fxrstor, "fxrstor (" PROBE_CX ")")
+#define EMIT_EXTENT(name, instruction)                                       \
+	".global probe_extent_" #name "\n"                                   \
+	"probe_extent_" #name ":\n"                                          \
+	PROBE_ARG_CX_AX                                                      \
+	"	xorl %edx, %edx\n"                                          \
+	".global probe_extent_" #name "_insn\n"                              \
+	"probe_extent_" #name "_insn:\n"                                     \
+	"	" instruction "\n"                                          \
+	".global probe_extent_" #name "_end\n"                               \
+	"probe_extent_" #name "_end:\n"                                      \
+	"	ret\n"
+__asm__(".text\n" EXTENT_CASES(EMIT_EXTENT));
+#undef EMIT_EXTENT
+#define DECLARE_EXTENT(name, instruction)                                    \
+	extern "C" void probe_extent_##name(word address, word rfbm);        \
+	extern "C" char probe_extent_##name##_end[];
+EXTENT_CASES(DECLARE_EXTENT)
+#undef DECLARE_EXTENT
+
+#if defined(__x86_64__)
+constexpr long nr_mprotect_extent = 10;
+#else
+constexpr long nr_mprotect_extent = 125;
+#endif
+alignas(4096) unsigned char extent_pages[2 * 4096];
+word extent_address;
+word extent_rfbm;
+#define EXTENT_WORK(name, instruction)                                       \
+	void extent_##name() { probe_extent_##name(extent_address, extent_rfbm); }
+EXTENT_CASES(EXTENT_WORK)
+#undef EXTENT_WORK
+
+bool state_area_extents()
+{
+	unsigned char *const guard = extent_pages + 4096;
+	if (raw_syscall(nr_mprotect_extent, reinterpret_cast<long>(guard), 4096,
+			0) != 0) {
+		put("  mprotect failed\n");
+		return false;
+	}
+	bool ok = install_fault_handlers();
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *end;
+		word length;
+		word rfbm;
+	};
+#define EXTENT_ENTRY(name, length, rfbm)                                     \
+	{#name " with RFBM " #rfbm " in " #length " bytes", extent_##name,   \
+	 probe_extent_##name##_end, length, rfbm}
+	const Case cases[] = {
+		EXTENT_ENTRY(xsave, 576, 0), EXTENT_ENTRY(xsave, 576, 1),
+		EXTENT_ENTRY(xsave, 576, 3), EXTENT_ENTRY(xsaveopt, 576, 3),
+		EXTENT_ENTRY(xrstor, 576, 3), EXTENT_ENTRY(xrstor, 576, 0),
+		EXTENT_ENTRY(fxsave, 512, 0), EXTENT_ENTRY(fxrstor, 512, 0),
+	};
+#undef EXTENT_ENTRY
+	for (const Case &one : cases) {
+		/* The image restored is a valid one: an x87 control word of
+		 * 0x37f, MXCSR 0x1f80, and nothing marked in use. */
+		unsigned char *const area = guard - one.length;
+		for (word offset = 0; offset < one.length; ++offset)
+			area[offset] = 0;
+		area[0] = 0x7f;
+		area[1] = 0x03;
+		area[24] = 0x80;
+		area[25] = 0x1f;
+		extent_address = reinterpret_cast<word>(area);
+		extent_rfbm = one.rfbm;
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	}
+	return ok;
+}
+
 extern "C" void probe_pf_read(word address);
 extern "C" char probe_pf_read_insn[];
 extern "C" char probe_pf_read_end[];
@@ -2889,7 +2977,16 @@ bool gathers()
 	X(fbld, "fninit; fld1", "", "fbld (%r10)")                           \
 	X(fadd_load, "fninit; fld1", "", "faddl (%r10)")                     \
 	X(fldcw, "fninit; fld1", "", "fldcw (%r10)")                         \
-	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")                     \
+	X(ldmxcsr_reserved, "fninit; fld1", "", "ldmxcsr 0x318(%r8)")        \
+	X(fxrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",        \
+	  "fxrstor 0x300(%r8)")                                              \
+	X(xrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax",\
+	  "", "xrstor 0x300(%r8)")                                           \
+	X(xrstor_sse_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $2, %eax", "", "xrstor 0x300(%r8)")                          \
+	X(xrstor_avx_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $4, %eax", "", "xrstor 0x300(%r8)")
 
 #define EMIT_STATE(name, setup, stack, instruction)                          \
 	PROBE_STATE(name, setup, stack, instruction)
@@ -2985,6 +3082,14 @@ bool fault_state()
 	image[24] = 0x80;
 	image[25] = 0x1f;
 	image[512] = 7;
+	/* The MXCSR cases restore a zeroed image at 0x400 of the read-only page,
+	 * with XSTATE_BV 0 and a reserved bit in its MXCSR. */
+	unsigned char *const reserved_mxcsr = read_only + 0x400;
+	for (word offset = 0; offset < 832; ++offset)
+		reserved_mxcsr[offset] = 0;
+	reserved_mxcsr[0] = 0x7f;
+	reserved_mxcsr[1] = 0x02;
+	reserved_mxcsr[26] = 1;
 	/* IRETQ's RIP, CS and RFLAGS slots, before its RSP on the unmapped
 	 * page. */
 	const word iret_frame[3] = {reinterpret_cast<word>(state_pages), 0x33,
@@ -3220,7 +3325,16 @@ bool fault_state()
 	X(fild, "fninit; fld1", "", "fildl (%esi)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%esi)")                           \
 	X(fldcw, "fninit; fld1", "", "fldcw (%esi)")                         \
-	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%esi)")
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%esi)")                     \
+	X(ldmxcsr_reserved, "fninit; fld1", "", "ldmxcsr 0x318(%edx)")       \
+	X(fxrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",        \
+	  "fxrstor 0x300(%edx)")                                             \
+	X(xrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax",\
+	  "", "xrstor 0x300(%edx)")                                          \
+	X(xrstor_sse_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $2, %eax", "", "xrstor 0x300(%edx)")                         \
+	X(xrstor_avx_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $4, %eax", "", "xrstor 0x300(%edx)")
 
 #define EMIT_STATE(name, setup, stack, instruction)                          \
 	PROBE_STATE(name, setup, stack, instruction)
@@ -3363,6 +3477,14 @@ bool fault_state()
 	pointers[0] = reinterpret_cast<word>(&probe_return_only);
 	pointers[1] = 0x1234;
 	read_only_pointers = pointers;
+	/* The MXCSR cases restore a zeroed image at 0x400 of the read-only page,
+	 * with XSTATE_BV 0 and a reserved bit in its MXCSR. */
+	unsigned char *const reserved_mxcsr = read_only + 0x400;
+	for (word offset = 0; offset < 832; ++offset)
+		reserved_mxcsr[offset] = 0;
+	reserved_mxcsr[0] = 0x7f;
+	reserved_mxcsr[1] = 0x02;
+	reserved_mxcsr[26] = 1;
 	if (raw_syscall(nr_mprotect, reinterpret_cast<long>(read_only),
 			page_bytes, prot_read) != 0 ||
 	    raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
@@ -4736,6 +4858,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-faults"));
 	report("i386 a misaligned extended-state image raises #GP",
 	       in_child(i386_probe, "alignment-faults"));
+	report("x86-64 XSAVE and XRSTOR touch only the components RFBM names",
+	       in_child(self, "state-area"));
+	report("i386 XSAVE and XRSTOR touch only the components RFBM names",
+	       in_child(i386_probe, "state-area"));
 	report("x86-64 masked x87 exceptions set sticky status flags",
 	       in_child(self, "x87-status"));
 	report("i386 masked x87 exceptions set sticky status flags",
@@ -4786,6 +4912,8 @@ extern "C" int probe_main(word *stack)
 			return floating_point_exceptions() ? 0 : 1;
 		if (equal(mode, "alignment-faults"))
 			return alignment_faults() ? 0 : 1;
+		if (equal(mode, "state-area"))
+			return state_area_extents() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
 		if (equal(mode, "x87-status"))

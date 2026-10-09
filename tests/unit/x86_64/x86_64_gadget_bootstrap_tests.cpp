@@ -7397,7 +7397,11 @@ struct FlagCase {
 		!expect(cpu.gpr(Register::r13) == 0,
 			"a conversion after LDMXCSR set DAZ kept its denormal input"))
 		return false;
+	/* An XSTATE_BV of zero initializes the vector registers, and RFBM still
+	 * selects the SSE component, so XRSTOR loads the image's MXCSR; the
+	 * image now holds one with DAZ clear over the DAZ set before it. */
 	put(0x1000 + 512, std::uint64_t{0});
+	put(0x1000 + 24, std::uint32_t{0x1f80});
 	const auto initial = require_built(gadgets::build(memory, 0x400),
 		"XRSTOR initializing block did not build");
 	cpu = CpuState{};
@@ -7410,7 +7414,8 @@ struct FlagCase {
 	return expect(cleared.event == uml::cpu::EngineEvent::system_call &&
 			cpu.mxcsr == 0x1f80 &&
 			cpu.gpr(Register::r8) == denormal_single_widened,
-		"a conversion after XRSTOR initialized MXCSR flushed its input");
+		"a conversion after XRSTOR loaded an MXCSR with DAZ clear "
+		"flushed its input");
 }
 
 /* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as

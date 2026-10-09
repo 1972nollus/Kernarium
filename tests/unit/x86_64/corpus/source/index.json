@@ -9730,6 +9730,10 @@
     {
       "name": "repository/x87-unmasked-underflow-rebiases-remainders-and-quotients.s",
       "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/xsave-moves-mxcsr-with-the-sse-and-avx-components.s",
+      "file": "repository-cases.jsonl"
     }
   ]
 }
