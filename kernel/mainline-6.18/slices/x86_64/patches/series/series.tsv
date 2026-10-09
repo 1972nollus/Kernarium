@@ -6,3 +6,5 @@ patch	arm64-add-i386-userspace-task-support.patch
 patch	arm64-describe-the-emulated-x86-CPU-in-proc-cpuinfo.patch
 patch	arm64-use-x86-layouts-for-x86-64-ptrace-register-access.patch
 patch	arm64-single-step-x86-64-tasks-with-RFLAGS.TF.patch
+patch	arm64-implement-modify_ldt-for-x86-tasks.patch
+patch	arm64-keep-an-x86-64-task-s-CS-and-SS-through-its-signals.patch

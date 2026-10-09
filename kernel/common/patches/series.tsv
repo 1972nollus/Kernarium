@@ -63,3 +63,4 @@ patch	um-keep-asynchronous-host-signals-off-Darwin-SME-carriers.patch
 patch	uml-retire-the-Darwin-stack-quarter-bridge-entries.patch
 patch	uml-tell-the-Darwin-host-when-a-task-s-mm-is-shared.patch
 patch	arm64-um-give-every-task-NT_ARM_TLS.patch
+patch	uml-hand-x86-tasks-LDT-and-TLS-to-the-Darwin-host-bridge-ABI-20.patch

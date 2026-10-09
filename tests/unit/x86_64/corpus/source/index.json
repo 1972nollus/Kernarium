@@ -1884,14 +1884,6 @@
       "file": "fex-Primary.jsonl"
     },
     {
-      "name": "fex/Primary/Primary_8C.asm",
-      "file": "fex-Primary.jsonl"
-    },
-    {
-      "name": "fex/Primary/Primary_8C_2.asm",
-      "file": "fex-Primary.jsonl"
-    },
-    {
       "name": "fex/Primary/Primary_8D.asm",
       "file": "fex-Primary.jsonl"
     },
@@ -3040,23 +3032,11 @@
       "file": "fex-PrimaryGroup.jsonl"
     },
     {
-      "name": "fex/PrimaryGroup/5_FF_05.asm",
-      "file": "fex-PrimaryGroup.jsonl"
-    },
-    {
       "name": "fex/PrimaryGroup/5_FF_05_03_o32.asm",
       "file": "fex-PrimaryGroup.jsonl"
     },
     {
       "name": "fex/PrimaryGroup/5_FF_05_03_o32_imm.asm",
-      "file": "fex-PrimaryGroup.jsonl"
-    },
-    {
-      "name": "fex/PrimaryGroup/5_FF_05_03_o64.asm",
-      "file": "fex-PrimaryGroup.jsonl"
-    },
-    {
-      "name": "fex/PrimaryGroup/5_FF_05_03_o64_imm.asm",
       "file": "fex-PrimaryGroup.jsonl"
     },
     {
@@ -9572,6 +9552,10 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/far-transfers-switch-long-and-compatibility-mode.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/fma-follows-x86-nan-and-flush-rules.s",
       "file": "repository-cases.jsonl"
     },
@@ -9597,6 +9581,10 @@
     },
     {
       "name": "repository/pushf-stores-no-resume-flag.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/segment-selectors-load-and-describe-linux-segments.s",
       "file": "repository-cases.jsonl"
     },
     {
