@@ -186,6 +186,9 @@ EXCLUDED_FEX_SOURCES = {
     "PrimaryGroup/5_FF_05_03_o64_imm.asm": "expects AMD's REX.W far CALL, "
     "which reads m16:32, where Intel reads m16:64 and takes the null "
     "selector after it to #GP(0)",
+    "modrm_oob/DDD.asm": "runs the AMD-only 3DNow! family, which upstream "
+    "does not annotate with its 3DNOW feature; an Intel core and the guest "
+    "raise #UD",
 }
 
 # HLT is the FEX test terminator and is not part of a case's userspace form.

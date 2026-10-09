@@ -47,7 +47,10 @@ Lx86_x87_stack_fault_masked\@:
 	and \physical, \physical, #7
 .endm
 
-.macro x87_load_stack logical, significand, exponent
+/* A load of an empty register is a stack underflow: it reads as the QNaN
+ * indefinite. With `empty` the instruction goes on there with it loaded,
+ * where the present value would have been changed. */
+.macro x87_load_stack logical, significand, exponent, empty=
 	x87_physical \logical, w14
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_TAG]
 	lsl w16, w14, #1
@@ -62,7 +65,11 @@ Lx86_x87_stack_fault_masked\@:
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov \significand, #0xc000000000000000
 	mov \exponent, #0xffff
+	.ifb \empty
 	b Lx86_x87_load_done\@
+	.else
+	b \empty
+	.endif
 Lx86_x87_load_present\@:
 	add x15, _cpu, #UML_X86_64_CPU_X87
 	add x15, x15, w14, uxtw #4
