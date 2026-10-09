@@ -582,6 +582,14 @@ under the trap contract the M1's records fix. The
 `arm64-instruction-corpus-sve-trap` tooling test re-derives them from the
 native records.
 
+The `arm64-instruction-corpus-invalid-encoding` tooling test requires every
+illegal-instruction case that the decode partitions, the allocation table, and
+the SVE/SME encoding table settle to carry the invalid-encoding bit that
+`tools/arm64-tests/invalid_encoding.py` decides (see the corpus README's
+[invalid-encoding bits](../tests/unit/arm64/corpus/README.md#invalid-encoding-bits)).
+Its `-llvm` sibling is opt-in with the pinned LLVM MC and requires LLVM to
+decode the word of every case whose bit is clear.
+
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
 `-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`

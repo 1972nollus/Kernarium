@@ -662,19 +662,48 @@ constexpr word user_debugreg = 252;
 #define PROBE_SP "%rsp"
 #define PROBE_BP "%rbp"
 #define PROBE_ARG_AX "	movq %rdi, %rax\n"
+#define PROBE_ARG_CX_AX "	movq %rdi, %rcx\n	movl %esi, %eax\n"
 #define PROBE_AX "%rax"
+#define PROBE_CX "%rcx"
 #else
 #define PROBE_RIP ""
 #define PROBE_SP "%esp"
 #define PROBE_BP "%ebp"
 #define PROBE_ARG_AX "	movl 4(%esp), %eax\n"
+#define PROBE_ARG_CX_AX "	movl 4(%esp), %ecx\n	movl 8(%esp), %eax\n"
 #define PROBE_AX "%eax"
+#define PROBE_CX "%ecx"
 #endif
 
 /* An unmasked SIMD exception raises #XM at its instruction; an unmasked x87
  * one raises #MF at the next waiting instruction. Each case leaves MXCSR or
  * the x87 status word as the handler returned them in probe_fp_saved[0],
  * and XMM0 or the FISTP destination in probe_fp_saved[1]. */
+/* An x87 instruction that needs a free register, run on a full stack of
+ * seven 1.0 and pi on top with invalid operation unmasked. The overflow it
+ * raises is checked before it computes anything: nothing is pushed, and the
+ * waiting instruction after it takes #MF. pi, stored as a single, shows the
+ * stack as the handler left it. */
+#define PROBE_MF_FULL_STACK(name, insn) \
+	".global probe_mf_" name "\n" \
+	"probe_mf_" name ":\n" \
+	"	fninit\n" \
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n" \
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n" \
+	"	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n	fld1\n" \
+	"	fldpi\n" \
+	"	" insn "\n" \
+	".global probe_mf_" name "_insn\n" \
+	"probe_mf_" name "_insn:\n" \
+	"	fwait\n" \
+	".global probe_mf_" name "_end\n" \
+	"probe_mf_" name "_end:\n" \
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n" \
+	"	fnclex\n" \
+	"	fstps probe_fp_saved+4" PROBE_RIP "\n" \
+	"	fninit\n" \
+	"	ret\n"
+
 __asm__(".text\n"
 	".global probe_xm_div\n"
 	"probe_xm_div:\n"
@@ -841,6 +870,9 @@ __asm__(".text\n"
 	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
 	"	fninit\n"
 	"	ret\n"
+	PROBE_MF_FULL_STACK("fxtract", "fxtract")
+	PROBE_MF_FULL_STACK("fptan", "fptan")
+	PROBE_MF_FULL_STACK("fsincos", "fsincos")
 	".global probe_mf_unmask\n"
 	"probe_mf_unmask:\n"
 	"	fninit\n"
@@ -1173,6 +1205,19 @@ __asm__(".text\n"
 	X(movq2dq_memory, "0xf3, 0x0f, 0xd6, 0x00")                          \
 	X(movdq2q_memory, "0xf2, 0x0f, 0xd6, 0x00")                          \
 	X(clflushopt_register, "0x66, 0x0f, 0xae, 0xf8")                     \
+	X(clzero, "0x0f, 0x01, 0xfc")                                        \
+	X(femms, "0x0f, 0x0e")                                               \
+	X(pi2fw, "0x0f, 0x0f, 0xc1, 0x0c")                                   \
+	X(pfadd, "0x0f, 0x0f, 0xc1, 0x9e")                                   \
+	X(pswapd, "0x0f, 0x0f, 0xc1, 0xbb")                                  \
+	X(pavgusb_memory, "0x0f, 0x0f, 0x00, 0xbf")                          \
+	X(amd_3dnow_ff, "0x0f, 0x0f, 0xc1, 0xff")                            \
+	X(extrq_immediate, "0x66, 0x0f, 0x78, 0xc1, 0x08, 0x04")             \
+	X(extrq_register, "0x66, 0x0f, 0x79, 0xc1")                          \
+	X(insertq_immediate, "0xf2, 0x0f, 0x78, 0xc1, 0x08, 0x04")           \
+	X(insertq_register, "0xf2, 0x0f, 0x79, 0xc1")                        \
+	X(movntss, "0xf3, 0x0f, 0x2b, 0x00")                                 \
+	X(movntsd, "0xf2, 0x0f, 0x2b, 0x00")                                 \
 	UNDEFINED_MODE_CASES(X)
 /* Each takes an unmapped address in AX, which they raise #GP before
  * reading. */
@@ -1935,6 +1980,154 @@ bool alignment_faults()
 	return ok;
 }
 
+/* Each takes its operand's address in AX. CLFLUSH, CLFLUSHOPT and CLWB read
+ * their line as far as paging goes: an operand on an unmapped page raises
+ * #PF for a read, at the operand's own address and not its line's. CLDEMOTE
+ * and the prefetches are hints that never fault. */
+#define CACHE_LINE_FAULT_CASES(X)                                            \
+	X(clflush, "0x0f, 0xae, 0x38")                                       \
+	X(clflushopt, "0x66, 0x0f, 0xae, 0x38")                              \
+	X(clwb, "0x66, 0x0f, 0xae, 0x30")
+#define CACHE_LINE_HINT_CASES(X)                                             \
+	X(cldemote, "0x0f, 0x1c, 0x00")                                      \
+	X(prefetcht0, "0x0f, 0x18, 0x08")                                    \
+	X(prefetchnta, "0x0f, 0x18, 0x00")                                   \
+	X(prefetchw, "0x0f, 0x0d, 0x08")
+#define EMIT_CACHE_LINE(name, bytes)                                         \
+	".global probe_line_" #name "\n"                                     \
+	"probe_line_" #name ":\n"                                            \
+	PROBE_ARG_AX                                                         \
+	".global probe_line_" #name "_insn\n"                                \
+	"probe_line_" #name "_insn:\n"                                       \
+	"	.byte " bytes "\n"                                           \
+	".global probe_line_" #name "_end\n"                                 \
+	"probe_line_" #name "_end:\n"                                        \
+	"	ret\n"
+__asm__(".text\n" CACHE_LINE_FAULT_CASES(EMIT_CACHE_LINE)
+	CACHE_LINE_HINT_CASES(EMIT_CACHE_LINE));
+#undef EMIT_CACHE_LINE
+#define DECLARE_CACHE_LINE(name, bytes)                                      \
+	extern "C" void probe_line_##name(word address);                    \
+	extern "C" char probe_line_##name##_insn[];                          \
+	extern "C" char probe_line_##name##_end[];
+CACHE_LINE_FAULT_CASES(DECLARE_CACHE_LINE)
+CACHE_LINE_HINT_CASES(DECLARE_CACHE_LINE)
+#undef DECLARE_CACHE_LINE
+
+constexpr word cache_line_operand = 0x10025;
+#define CACHE_LINE_WORK(name, bytes)                                         \
+	void line_##name() { probe_line_##name(cache_line_operand); }
+CACHE_LINE_FAULT_CASES(CACHE_LINE_WORK)
+CACHE_LINE_HINT_CASES(CACHE_LINE_WORK)
+#undef CACHE_LINE_WORK
+
+bool cache_line_flushes()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+#define CACHE_LINE_ENTRY(name, bytes)                                        \
+	{#name, line_##name, probe_line_##name##_insn, probe_line_##name##_end},
+	const Case faulting[] = {CACHE_LINE_FAULT_CASES(CACHE_LINE_ENTRY)};
+	const Case hints[] = {CACHE_LINE_HINT_CASES(CACHE_LINE_ENTRY)};
+#undef CACHE_LINE_ENTRY
+	bool ok = install_fault_handlers();
+	for (const Case &one : faulting)
+		ok &= delivers(one.what, one.work, address_of(one.end),
+			       {sigsegv, segv_maperr, cache_line_operand,
+				address_of(one.insn), 14, true, 4});
+	for (const Case &one : hints)
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	return ok;
+}
+
+/* XSAVE, XSAVEOPT and XRSTOR with RFBM in (eax) at (ecx) and FXSAVE and
+ * FXRSTOR touch only the bytes their components occupy: the legacy area and
+ * the header, and the AVX component only when RFBM selects it. */
+#define EXTENT_CASES(X)                                                      \
+	X(xsave, "xsave (" PROBE_CX ")")                                     \
+	X(xsaveopt, "xsaveopt (" PROBE_CX ")")                               \
+	X(xrstor, "xrstor (" PROBE_CX ")")                                   \
+	X(fxsave, "fxsave (" PROBE_CX ")")                                   \
+	X(fxrstor, "fxrstor (" PROBE_CX ")")
+#define EMIT_EXTENT(name, instruction)                                       \
+	".global probe_extent_" #name "\n"                                   \
+	"probe_extent_" #name ":\n"                                          \
+	PROBE_ARG_CX_AX                                                      \
+	"	xorl %edx, %edx\n"                                          \
+	".global probe_extent_" #name "_insn\n"                              \
+	"probe_extent_" #name "_insn:\n"                                     \
+	"	" instruction "\n"                                          \
+	".global probe_extent_" #name "_end\n"                               \
+	"probe_extent_" #name "_end:\n"                                      \
+	"	ret\n"
+__asm__(".text\n" EXTENT_CASES(EMIT_EXTENT));
+#undef EMIT_EXTENT
+#define DECLARE_EXTENT(name, instruction)                                    \
+	extern "C" void probe_extent_##name(word address, word rfbm);        \
+	extern "C" char probe_extent_##name##_end[];
+EXTENT_CASES(DECLARE_EXTENT)
+#undef DECLARE_EXTENT
+
+#if defined(__x86_64__)
+constexpr long nr_mprotect_extent = 10;
+#else
+constexpr long nr_mprotect_extent = 125;
+#endif
+alignas(4096) unsigned char extent_pages[2 * 4096];
+word extent_address;
+word extent_rfbm;
+#define EXTENT_WORK(name, instruction)                                       \
+	void extent_##name() { probe_extent_##name(extent_address, extent_rfbm); }
+EXTENT_CASES(EXTENT_WORK)
+#undef EXTENT_WORK
+
+bool state_area_extents()
+{
+	unsigned char *const guard = extent_pages + 4096;
+	if (raw_syscall(nr_mprotect_extent, reinterpret_cast<long>(guard), 4096,
+			0) != 0) {
+		put("  mprotect failed\n");
+		return false;
+	}
+	bool ok = install_fault_handlers();
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *end;
+		word length;
+		word rfbm;
+	};
+#define EXTENT_ENTRY(name, length, rfbm)                                     \
+	{#name " with RFBM " #rfbm " in " #length " bytes", extent_##name,   \
+	 probe_extent_##name##_end, length, rfbm}
+	const Case cases[] = {
+		EXTENT_ENTRY(xsave, 576, 0), EXTENT_ENTRY(xsave, 576, 1),
+		EXTENT_ENTRY(xsave, 576, 3), EXTENT_ENTRY(xsaveopt, 576, 3),
+		EXTENT_ENTRY(xrstor, 576, 3), EXTENT_ENTRY(xrstor, 576, 0),
+		EXTENT_ENTRY(fxsave, 512, 0), EXTENT_ENTRY(fxrstor, 512, 0),
+	};
+#undef EXTENT_ENTRY
+	for (const Case &one : cases) {
+		/* The image restored is a valid one: an x87 control word of
+		 * 0x37f, MXCSR 0x1f80, and nothing marked in use. */
+		unsigned char *const area = guard - one.length;
+		for (word offset = 0; offset < one.length; ++offset)
+			area[offset] = 0;
+		area[0] = 0x7f;
+		area[1] = 0x03;
+		area[24] = 0x80;
+		area[25] = 0x1f;
+		extent_address = reinterpret_cast<word>(area);
+		extent_rfbm = one.rfbm;
+		ok &= delivers_nothing(one.what, one.work, address_of(one.end));
+	}
+	return ok;
+}
+
 extern "C" void probe_pf_read(word address);
 extern "C" char probe_pf_read_insn[];
 extern "C" char probe_pf_read_end[];
@@ -2368,12 +2561,9 @@ alignas(4096) unsigned char mask_pages[3 * page_bytes];
 
 void mask_load() { probe_mask_load(mask_state); }
 void mask_store() { probe_mask_store(mask_state); }
-/* Eight and four bytes before the unmapped page: the operands run onto it. */
-void maskmovdqu_zero()
-{
-	probe_maskmovdqu_zero(mask_pages + 2 * page_bytes - 8);
-}
-void maskmovq_zero() { probe_maskmovq_zero(mask_pages + 2 * page_bytes - 4); }
+unsigned char *maskmov_target;
+void maskmovdqu_zero() { probe_maskmovdqu_zero(maskmov_target); }
+void maskmovq_zero() { probe_maskmovq_zero(maskmov_target); }
 
 void set_mask_state(const unsigned char *address, unsigned lanes)
 {
@@ -2397,6 +2587,13 @@ bool expect_lanes(const char *what, const unsigned char *bytes,
 		ok &= expect(what, values[lane],
 			     (lanes >> lane) & 1U ? 0x11111111U * (lane + 1) : 0);
 	return ok;
+}
+
+void clear_below(unsigned char *page)
+{
+	volatile unsigned char *bytes = page - 32;
+	for (unsigned offset = 0; offset < 32; ++offset)
+		bytes[offset] = 0;
 }
 
 /* VMASKMOV and VPMASKMOV access only their enabled lanes: a disabled lane
@@ -2433,27 +2630,120 @@ bool masked_moves()
 			       address_of(probe_mask_load_end));
 	ok &= expect_lanes("loaded lane", loaded, 0x0f);
 
-	set_mask_state(edge, 0x1f);
-	ok &= delivers("VMASKMOVPS onto an unmapped page", mask_store,
-		       address_of(probe_mask_store_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_mask_store_insn), 14, true, 6});
+	/* A masked store writes nothing when it faults. x86 reports the first
+	 * byte of the lowest enabled lane when that misses; when only the
+	 * second page does and some enabled lane starts below it, the last byte
+	 * of the highest enabled lane, whichever lane that is, and the lane
+	 * that straddles the edge counts as starting below. A load reports the
+	 * lowest enabled lane that reaches the page, from the page's own first
+	 * byte if that lane starts before it. */
+	constexpr long nr_mprotect_pages = 10;
+	constexpr long segv_accerr = 2;
+	const auto unmapped_address = reinterpret_cast<word>(unmapped);
+	const auto store_at = [&](const char *what, unsigned char *address,
+				  unsigned lanes, word fault) {
+		clear_below(unmapped);
+		set_mask_state(address, lanes);
+		return delivers(what, mask_store,
+				address_of(probe_mask_store_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_mask_store_insn), 14, true, 6});
+	};
+	ok &= store_at("VMASKMOVPS across the page edge", edge, 0x1f,
+		       unmapped_address + 3);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS onto the page from its start", edge, 0x30,
+		       unmapped_address);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS across the edge to its last lane", edge,
+		       0x8f, unmapped_address + 15);
+	ok &= expect_lanes("lane of a store that faulted", edge, 0, 4);
+	ok &= store_at("VMASKMOVPS with a lane over the edge", unmapped - 2,
+		       0x01, unmapped_address + 1);
+	ok &= expect_lanes("byte of a store that faulted", unmapped - 8, 0, 2);
 	set_mask_state(edge, 0x1f);
 	ok &= delivers("VPMASKMOVD from an unmapped page", mask_load,
 		       address_of(probe_mask_load_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
+		       {sigsegv, segv_maperr, unmapped_address,
 			address_of(probe_mask_load_insn), 14, true, 4});
-	/* MASKMOVDQU and MASKMOVQ check every page their operand touches,
-	 * whatever the mask selects. (The Xeon reports the operand's address
-	 * plus 8 for one wholly on an unmapped page, which these avoid.) */
-	ok &= delivers("MASKMOVDQU with a zero mask onto an unmapped page",
-		       maskmovdqu_zero, address_of(probe_maskmovdqu_zero_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_maskmovdqu_zero_insn), 14, true, 6});
-	ok &= delivers("MASKMOVQ with a zero mask onto an unmapped page",
-		       maskmovq_zero, address_of(probe_maskmovq_zero_end),
-		       {sigsegv, segv_maperr, reinterpret_cast<word>(unmapped),
-			address_of(probe_maskmovq_zero_insn), 14, true, 6});
+	set_mask_state(unmapped - 2, 0x01);
+	ok &= delivers("VPMASKMOVD with a lane over the edge", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, unmapped_address,
+			address_of(probe_mask_load_insn), 14, true, 4});
+	set_mask_state(unmapped + 8, 0x06);
+	ok &= delivers("VPMASKMOVD from inside the unmapped page", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_maperr, unmapped_address + 12,
+			address_of(probe_mask_load_insn), 14, true, 4});
+
+	/* With the lower page the one that misses, only a lane that starts on
+	 * it can fault. */
+	unsigned char *const lower = mask_pages;
+	unsigned char *const upper = mask_pages + page_bytes;
+	unsigned char *const seam = upper - 16;
+	if (raw_syscall(nr_mprotect_pages, reinterpret_cast<long>(lower),
+			page_bytes, 0) != 0) {
+		put("  mprotect failed\n");
+		return false;
+	}
+	set_mask_state(seam, 0x1e);
+	ok &= delivers("VMASKMOVPS into the page below", mask_store,
+		       address_of(probe_mask_store_end),
+		       {sigsegv, segv_accerr,
+			reinterpret_cast<word>(seam) + 4,
+			address_of(probe_mask_store_insn), 14, true, 6});
+	set_mask_state(seam, 0x1e);
+	ok &= delivers("VPMASKMOVD from the page below", mask_load,
+		       address_of(probe_mask_load_end),
+		       {sigsegv, segv_accerr,
+			reinterpret_cast<word>(seam) + 4,
+			address_of(probe_mask_load_insn), 14, true, 4});
+	set_mask_state(seam, 0x30);
+	ok &= delivers_nothing("VMASKMOVPS wholly above the page below",
+			       mask_store, address_of(probe_mask_store_end));
+	const auto *above = reinterpret_cast<const volatile u32 *>(upper);
+	ok &= expect("lane above", above[0], 0x55555555U);
+	ok &= expect("lane above", above[1], 0x66666666U);
+
+	/* MASKMOVDQU and MASKMOVQ, unlike them, fault on any page their operand
+	 * touches, whatever the mask selects, and a zero mask does too.
+	 * MASKMOVDQU checks its high quadword first, then the low one, and a
+	 * quadword's first byte before its last. */
+	const auto maskmovdqu_at = [&](const char *what, unsigned char *address,
+				       word fault) {
+		maskmov_target = address;
+		return delivers(what, maskmovdqu_zero,
+				address_of(probe_maskmovdqu_zero_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_maskmovdqu_zero_insn), 14,
+				 true, 6});
+	};
+	const auto maskmovq_at = [&](const char *what, unsigned char *address,
+				     word fault) {
+		maskmov_target = address;
+		return delivers(what, maskmovq_zero,
+				address_of(probe_maskmovq_zero_end),
+				{sigsegv, segv_maperr, fault,
+				 address_of(probe_maskmovq_zero_insn), 14, true,
+				 6});
+	};
+	ok &= maskmovdqu_at("MASKMOVDQU with a zero mask onto an unmapped page",
+			    unmapped - 8, unmapped_address);
+	ok &= maskmovdqu_at("MASKMOVDQU with its high quadword over the edge",
+			    unmapped - 12, unmapped_address);
+	ok &= maskmovdqu_at("MASKMOVDQU with its low quadword over the edge",
+			    unmapped - 4, unmapped_address + 4);
+	ok &= maskmovdqu_at("MASKMOVDQU inside an unmapped page", unmapped + 4,
+			    unmapped_address + 12);
+	maskmov_target = unmapped - 16;
+	ok &= delivers_nothing("MASKMOVDQU up to the unmapped page",
+			       maskmovdqu_zero,
+			       address_of(probe_maskmovdqu_zero_end));
+	ok &= maskmovq_at("MASKMOVQ with a zero mask onto an unmapped page",
+			  unmapped - 4, unmapped_address);
+	ok &= maskmovq_at("MASKMOVQ inside an unmapped page", unmapped + 3,
+			  unmapped_address + 3);
 	return ok;
 }
 
@@ -2778,21 +3068,24 @@ bool gathers()
 	"	pop %rbx\n"                                                  \
 	"	ret\n"
 /* A repeated compare whose third element meets the unmapped page has run
- * two or three: the setup runs those elements alone, so the expected state
- * is theirs, and the restart moves the pointers and count back and sets
- * every arithmetic flag, which the elements' own flags must replace. The
- * REPE elements compare equal quadwords, the REPNE ones unequal bytes, the
- * last 0x80 with 0. */
+ * two or three: the setup runs those elements alone, so the expected pointers
+ * and count are theirs, and then sets every arithmetic flag. The restart
+ * moves the pointers and count back, so the instruction runs the elements
+ * again from the flags the setup left. x86 keeps those flags while a
+ * repeated compare faults on a later element, whatever the elements before it
+ * compared, so the expected flags are not theirs. The REPE elements compare
+ * equal quadwords, the REPNE ones unequal bytes, the last 0x80 with 0. */
 #define CMPS_MIDWAY_REPE                                                     \
 	"movq $0x33, -12(%r9); movq $0x246, -4(%r9); leaq -12(%r9), %rsi; "  \
 	"leaq -16(%r10), %rdi; movl $5, %ecx; cmpsq; cmpsq; "                \
-	"leaq -2(%rcx), %rcx"
+	"leaq -2(%rcx), %rcx; pushq $0x8d5; popfq"
 #define CMPS_MIDWAY_REPNE                                                    \
 	"movl $0x00800201, (%r9); movq %r9, %rsi; leaq -3(%r10), %rdi; "     \
-	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx"
+	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx; "          \
+	"pushq $0x8d5; popfq"
 #define CMPS_MIDWAY_RESTART(bytes, elements)                                 \
 	"leaq -" #bytes "(%rsi), %rsi; leaq -" #bytes "(%rdi), %rdi; "        \
-	"leaq " #elements "(%rcx), %rcx; pushq $0x8d5; popfq"
+	"leaq " #elements "(%rcx), %rcx"
 /* REP MOVSB through FS, whose base the run sets to 0x1000, from the end of
  * the read-only page into the writable one: its third element meets the
  * unmapped page. The setup moves the first two alone, and the restart moves
@@ -2891,14 +3184,22 @@ bool gathers()
 	X(movnt_unread, "", "", "movntps %xmm0, (%r8); addq %rcx, %rcx")     \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%r10), %xmm1; addq %rcx, %rcx")                         \
-	X(clzero_unread, "movq %r8, %rax", "", "clzero; addq %rcx, %rcx")    \
 	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
 	X(fbld, "fninit; fld1", "", "fbld (%r10)")                           \
 	X(fadd_load, "fninit; fld1", "", "faddl (%r10)")                     \
 	X(fldcw, "fninit; fld1", "", "fldcw (%r10)")                         \
-	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%r10)")                     \
+	X(ldmxcsr_reserved, "fninit; fld1", "", "ldmxcsr 0x318(%r8)")        \
+	X(fxrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",        \
+	  "fxrstor 0x300(%r8)")                                              \
+	X(xrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax",\
+	  "", "xrstor 0x300(%r8)")                                           \
+	X(xrstor_sse_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $2, %eax", "", "xrstor 0x300(%r8)")                          \
+	X(xrstor_avx_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $4, %eax", "", "xrstor 0x300(%r8)")
 
 #define EMIT_STATE(name, setup, stack, instruction)                          \
 	PROBE_STATE(name, setup, stack, instruction)
@@ -2994,6 +3295,14 @@ bool fault_state()
 	image[24] = 0x80;
 	image[25] = 0x1f;
 	image[512] = 7;
+	/* The MXCSR cases restore a zeroed image at 0x400 of the read-only page,
+	 * with XSTATE_BV 0 and a reserved bit in its MXCSR. */
+	unsigned char *const reserved_mxcsr = read_only + 0x400;
+	for (word offset = 0; offset < 832; ++offset)
+		reserved_mxcsr[offset] = 0;
+	reserved_mxcsr[0] = 0x7f;
+	reserved_mxcsr[1] = 0x02;
+	reserved_mxcsr[26] = 1;
 	/* IRETQ's RIP, CS and RFLAGS slots, before its RSP on the unmapped
 	 * page. */
 	const word iret_frame[3] = {reinterpret_cast<word>(state_pages), 0x33,
@@ -3123,6 +3432,18 @@ bool fault_state()
 /* The stores meet the read-only page, or for a _midway case the unmapped
  * one below the writable page after the instruction's first stores; the
  * loads meet the last page, after the first loads for a multi-part one. */
+/* POPAD and POPAW load EDI, ESI and EBP from the three slots below the
+ * unmapped page, skip ESP's, and meet the page at EBX's. x86 loads the
+ * registers in that order, so the three keep what they loaded when the
+ * fourth load faults, and ESP stays. The setup stashes the three in XMM1 to
+ * XMM3, which the case does not compare, and loads them as POPA does; the
+ * restart puts them back. */
+#define POPA_PARTIAL                                                         \
+	"movd %edi, %xmm1; movd %ebp, %xmm2; movd %esi, %xmm3; "             \
+	"movl -16(%esi), %edi; movl -8(%esi), %ebp; movl -12(%esi), %esi"
+#define POPAW_PARTIAL                                                        \
+	"movd %edi, %xmm1; movd %ebp, %xmm2; movd %esi, %xmm3; "             \
+	"movw -8(%esi), %di; movw -4(%esi), %bp; movw -6(%esi), %si"
 /* REP MOVSB through GS, whose TLS base the run sets to 0x1000, from the
  * end of the read-only page into the writable one: its third element meets
  * the unmapped page. ESI is an offset from the GS base. */
@@ -3198,8 +3519,10 @@ bool fault_state()
 	X(pop_ds, "", "movl %esi, %esp", "popl %ds")                         \
 	X(pop_fs, "", "movl %esi, %esp", "popl %fs")                         \
 	X(pop_gs, "", "movl %esi, %esp", "popl %gs")                         \
-	X(popa, "", "leal -16(%esi), %esp", "popal")                         \
-	X(popaw, "", "leal -8(%esi), %esp", "popaw")                         \
+	X(popa, POPA_PARTIAL, "movd %xmm1, %edi; movd %xmm2, %ebp; "          \
+	  "movd %xmm3, %esi; leal -16(%esi), %esp", "popal")                 \
+	X(popaw, POPAW_PARTIAL, "movd %xmm1, %edi; movd %xmm2, %ebp; "        \
+	  "movd %xmm3, %esi; leal -8(%esi), %esp", "popaw")                  \
 	X(bound, "", "", "bound %eax, -4(%esi)")                             \
 	X(push_load, "", "", "pushl (%esi)")                                 \
 	X(lods, "", "", "lodsl")                                             \
@@ -3224,12 +3547,20 @@ bool fault_state()
 	X(movnt_unread, "", "", "movntps %xmm0, (%edx); addl %ecx, %ecx")    \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%esi), %xmm1; addl %ecx, %ecx")                         \
-	X(clzero_unread, "movl %edx, %eax", "", "clzero; addl %ecx, %ecx")   \
 	X(fld, "fninit; fld1", "", "fldl (%esi)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%esi)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%esi)")                           \
 	X(fldcw, "fninit; fld1", "", "fldcw (%esi)")                         \
-	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%esi)")
+	X(ldmxcsr, "fninit; fld1", "", "ldmxcsr (%esi)")                     \
+	X(ldmxcsr_reserved, "fninit; fld1", "", "ldmxcsr 0x318(%edx)")       \
+	X(fxrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0", "",        \
+	  "fxrstor 0x300(%edx)")                                             \
+	X(xrstor_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; movl $7, %eax",\
+	  "", "xrstor 0x300(%edx)")                                          \
+	X(xrstor_sse_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $2, %eax", "", "xrstor 0x300(%edx)")                         \
+	X(xrstor_avx_reserved, "fninit; fld1; pcmpeqd %xmm0, %xmm0; "        \
+	  "movl $4, %eax", "", "xrstor 0x300(%edx)")
 
 #define EMIT_STATE(name, setup, stack, instruction)                          \
 	PROBE_STATE(name, setup, stack, instruction)
@@ -3372,6 +3703,14 @@ bool fault_state()
 	pointers[0] = reinterpret_cast<word>(&probe_return_only);
 	pointers[1] = 0x1234;
 	read_only_pointers = pointers;
+	/* The MXCSR cases restore a zeroed image at 0x400 of the read-only page,
+	 * with XSTATE_BV 0 and a reserved bit in its MXCSR. */
+	unsigned char *const reserved_mxcsr = read_only + 0x400;
+	for (word offset = 0; offset < 832; ++offset)
+		reserved_mxcsr[offset] = 0;
+	reserved_mxcsr[0] = 0x7f;
+	reserved_mxcsr[1] = 0x02;
+	reserved_mxcsr[26] = 1;
 	if (raw_syscall(nr_mprotect, reinterpret_cast<long>(read_only),
 			page_bytes, prot_read) != 0 ||
 	    raw_syscall(nr_munmap, reinterpret_cast<long>(unmapped),
@@ -3584,6 +3923,15 @@ extern "C" char probe_mf_inv_end[];
 extern "C" void probe_mf_stack();
 extern "C" char probe_mf_stack_insn[];
 extern "C" char probe_mf_stack_end[];
+extern "C" void probe_mf_fxtract();
+extern "C" char probe_mf_fxtract_insn[];
+extern "C" char probe_mf_fxtract_end[];
+extern "C" void probe_mf_fptan();
+extern "C" char probe_mf_fptan_insn[];
+extern "C" char probe_mf_fptan_end[];
+extern "C" void probe_mf_fsincos();
+extern "C" char probe_mf_fsincos_insn[];
+extern "C" char probe_mf_fsincos_end[];
 extern "C" void probe_mf_unmask();
 extern "C" char probe_mf_unmask_insn[];
 extern "C" char probe_mf_unmask_end[];
@@ -3666,8 +4014,10 @@ bool floating_point_exceptions()
 		word trapno;
 		u32 state;
 		u32 value;
+		const char *value_of = nullptr;
 	};
-	/* A `value` of zero is not checked. */
+	/* A `value` of zero is not checked; `value_of` names it when it is
+	 * neither XMM0 nor a FISTP destination. */
 	const Case cases[] = {
 		{"DIVSS by zero", probe_xm_div, probe_xm_div_insn, probe_xm_div_end,
 		 fpe_fltdiv, 19, 0x1d84, 0x3f800000},
@@ -3685,6 +4035,15 @@ bool floating_point_exceptions()
 		 probe_mf_inv_end, fpe_fltinv, 16, 0xb881, 0},
 		{"x87 stack overflow", probe_mf_stack, probe_mf_stack_insn,
 		 probe_mf_stack_end, fpe_fltinv, 16, 0x82c1, 0},
+		{"FXTRACT on a full stack", probe_mf_fxtract,
+		 probe_mf_fxtract_insn, probe_mf_fxtract_end, fpe_fltinv, 16,
+		 0x82c1, 0x40490fdb, "x87 top of stack after"},
+		{"FPTAN on a full stack", probe_mf_fptan, probe_mf_fptan_insn,
+		 probe_mf_fptan_end, fpe_fltinv, 16, 0x82c1, 0x40490fdb,
+		 "x87 top of stack after"},
+		{"FSINCOS on a full stack", probe_mf_fsincos,
+		 probe_mf_fsincos_insn, probe_mf_fsincos_end, fpe_fltinv, 16,
+		 0x82c1, 0x40490fdb, "x87 top of stack after"},
 		{"FLDCW unmasking a pending flag", probe_mf_unmask,
 		 probe_mf_unmask_insn, probe_mf_unmask_end, fpe_fltdiv, 16,
 		 0xb884, 0},
@@ -3720,7 +4079,8 @@ bool floating_point_exceptions()
 					"x87 status after", probe_fp_saved[0],
 				 one.state);
 		if (one.value != 0)
-			one_ok &= expect(one.trapno == 19 ? "XMM0 after" :
+			one_ok &= expect(one.value_of ? one.value_of :
+					 one.trapno == 19 ? "XMM0 after" :
 						"FISTP destination after",
 					 probe_fp_saved[1], one.value);
 		one_ok &= expect("handler MXCSR", handler_mxcsr, 0x1f80);
@@ -3947,9 +4307,9 @@ bool x87_status_flags()
 		u16 status;
 		u16 expected;
 	};
-	u16 status[9] = {};
+	u16 status[10] = {};
 	short stored = 0;
-	X87Value value[3] = {};
+	X87Value value[5] = {};
 	__asm__ volatile("fninit\n\tfldz\n\tfld1\n\tfdivp\n\t"
 			 "fnstsw %0\n\tfnclex\n\tfnstsw %1"
 			 : "=m"(status[0]), "=m"(status[1]) : : "memory");
@@ -3978,6 +4338,13 @@ bool x87_status_flags()
 			 : "=m"(value[0]), "=m"(value[1]), "=m"(value[2])
 			 : "m"(x87_three), "m"(x87_minus_six)
 			 : "memory");
+	/* An empty register is a stack underflow: FSTP ST(0) pops it with IE
+	 * and SF set, and FCHS and FABS leave the indefinite it reads as. */
+	__asm__ volatile("fninit\n\tfstp %%st(0)\n\tfnstsw %0\n\tfninit"
+			 : "=m"(status[9]) : : "memory");
+	__asm__ volatile("fninit\n\tfchs\n\tfstpt %0\n\tfninit\n\t"
+			 "fabs\n\tfstpt %1\n\tfninit"
+			 : "=m"(value[3]), "=m"(value[4]) : : "memory");
 	const Case cases[] = {
 		{"FDIVP of 1 by 0 sets ZE", status[0], 0x3804},
 		{"FNCLEX clears the flags", status[1], 0x3800},
@@ -3988,6 +4355,8 @@ bool x87_status_flags()
 		{"FUCOM of a quiet NaN leaves IE clear", status[6], 0x7500},
 		{"FISTP m16 out of range sets only IE", status[7], 0x0001},
 		{"FSTP m32 of pi sets PE and C1", status[8], 0x0220},
+		{"FSTP ST(0) of an empty register sets IE and SF", status[9],
+		 0x0841},
 	};
 	bool ok = true;
 	for (const Case &one : cases) {
@@ -4009,6 +4378,20 @@ bool x87_status_flags()
 			put("  ");
 			put(zeros[index]);
 			put(" is not -0: ");
+			put_hex(value[index].sign_exponent);
+			put(" ");
+			put_hex(value[index].significand);
+			put("\n");
+			ok = false;
+		}
+	}
+	const char *const underflows[] = {"FCHS", "FABS"};
+	for (unsigned index = 3; index < 5; ++index) {
+		if (value[index].sign_exponent != 0xffff ||
+		    value[index].significand != 0xc000000000000000ULL) {
+			put("  ");
+			put(underflows[index - 3]);
+			put(" of an empty register is not the indefinite: ");
 			put_hex(value[index].sign_exponent);
 			put(" ");
 			put_hex(value[index].significand);
@@ -5185,6 +5568,14 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "alignment-faults"));
 	report("i386 a misaligned extended-state image raises #GP",
 	       in_child(i386_probe, "alignment-faults"));
+	report("x86-64 CLFLUSH, CLFLUSHOPT and CLWB fault on an unmapped line",
+	       in_child(self, "cache-line"));
+	report("i386 CLFLUSH, CLFLUSHOPT and CLWB fault on an unmapped line",
+	       in_child(i386_probe, "cache-line"));
+	report("x86-64 XSAVE and XRSTOR touch only the components RFBM names",
+	       in_child(self, "state-area"));
+	report("i386 XSAVE and XRSTOR touch only the components RFBM names",
+	       in_child(i386_probe, "state-area"));
 	report("x86-64 masked x87 exceptions set sticky status flags",
 	       in_child(self, "x87-status"));
 	report("i386 masked x87 exceptions set sticky status flags",
@@ -5239,6 +5630,10 @@ extern "C" int probe_main(word *stack)
 			return floating_point_exceptions() ? 0 : 1;
 		if (equal(mode, "alignment-faults"))
 			return alignment_faults() ? 0 : 1;
+		if (equal(mode, "cache-line"))
+			return cache_line_flushes() ? 0 : 1;
+		if (equal(mode, "state-area"))
+			return state_area_extents() ? 0 : 1;
 		if (equal(mode, "alignment-check"))
 			return alignment_checks() ? 0 : 1;
 		if (equal(mode, "x87-status"))

@@ -8,8 +8,11 @@
  * bit set first, so an unselected byte costs nothing.  x86 checks that every
  * page the operand touches is writable whatever the mask selects, so a write
  * translation of each comes first, and a zero mask faults as a full one
- * does.  The address is DS:(E/R)DI with any segment override and address
- * size, from the descriptor.
+ * does.  MASKMOVDQU checks its high quadword before its low one, and each
+ * quadword's first byte before its last, so a fault reports what an Intel
+ * core reports: the byte that missed, or the start of the page that its
+ * quadword's last byte reached.  The address is DS:(E/R)DI with any segment
+ * override and address size, from the descriptor.
  *
  * x19 holds the bytes still to store, x24 and x26 the last page translated
  * and its host displacement, x25 the address and x27 the data.
@@ -36,9 +39,22 @@ gadget vector_mask_store_\width
 	lsr x9, x9, #56
 	orr x19, x19, x9, lsl #8
 	.endif
+	.if \width == 128
+	/* The high quadword is checked first, then the low one. */
+	add x7, x25, #8
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
+	add x9, x25, #8
+	add x7, x25, #15
+	eor x9, x9, x7
+	tst x9, #0xfffffffffffff000
+	b.eq Lx86_vector_mask_store_low\@
+	and x7, x7, #0xfffffffffffff000
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
+Lx86_vector_mask_store_low\@:
+	.endif
 	mov x7, x25
 	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, 1, Lx86_memory_fault
-	add x7, x25, #((\width / 8) - 1)
+	add x7, x25, #7
 	eor x9, x7, x25
 	tst x9, #0xfffffffffffff000
 	b.eq Lx86_vector_mask_store_checked\@

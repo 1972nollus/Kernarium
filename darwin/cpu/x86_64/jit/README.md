@@ -93,9 +93,10 @@ block's end. A fault leaves the state as its instruction found it, because
 the guest resolves the fault, a copy-on-write store among them, and runs the
 instruction again: a load whose bytes the same instruction then stores takes
 write permission, so a read-modify-write faults before it changes a register
-or a flag; POP to memory, PUSHA and ENTER store before they move RSP; POPA,
-FLDENV, FRSTOR, FXRSTOR and XRSTOR probe their whole operand before they load
-state from it; the segment model commits nothing before an instruction's last
+or a flag; POP to memory, PUSHA and ENTER store before they move RSP; FLDENV,
+FRSTOR, FXRSTOR and XRSTOR probe their whole operand before they load state
+from it, and POPA loads EDI, ESI and EBP before a fault in a later register,
+as x86 does; the segment model commits nothing before an instruction's last
 access; and register allocation never commits a value
 to a guest register before a later access of the same instruction, or an
 earlier instruction's value before such an access, and never folds an
@@ -116,8 +117,9 @@ both engines to that. Each dispatch also:
 REP MOVS and REP STOS run element by element in page-bounded chunks, spend the
 budget as they go and stop between elements, with RF, when it is spent or an
 interrupt is pending. A fault leaves RCX, RSI and RDI with the progress made.
-Repeated CMPS and SCAS compute each element's flags as it completes, so a
-stop between elements shows the flags of the last compare.
+Repeated CMPS and SCAS keep the last compared pair and compute their flags
+when the instruction ends, so a stop between elements shows the flags it was
+entered with, as x86 does.
 
 A dispatch reports as retired only the instructions that completed, as the
 gadget engine does: a fault, `#UD` or `#DE` retires nothing of its instruction,
@@ -234,20 +236,22 @@ uncached.
 
 MXCSR keeps every bit LDMXCSR, FXRSTOR and XRSTOR load, the exception flags
 included, and FXSAVE and XSAVE store an MXCSR_MASK of 0xFFFF, as the gadget
-engine does. Its exception flags are sticky, and the JIT keeps them while
-the guest masks the exceptions. The host's cumulative FPSR flags hold them
-through a dispatch: IOC, DZC, OFC, UFC and IXC are x86's invalid operation,
-division by zero, overflow, underflow and precision. A dispatch clears them
-as it starts and adds them to MXCSR as it ends; STMXCSR, FXSAVE and XSAVE
-add them to the MXCSR they store, and LDMXCSR, FXRSTOR and XRSTOR clear
-them with the flags they load. IDC is never a denormal operand: FPCR.FZ
-raises it for an input DAZ flushes, where x86 raises nothing. Under all
-checks the model settles every instruction's flags into MXCSR, and FPSR's
-are left out. Host code a dispatch runs leaves FPSR as it found it:
-FEXCore's compiler and block linker, and the model, which computes with
-host arithmetic. The x87 helpers compute in software, and a 3DNow!
-instruction, which MXCSR does not govern, puts back FPSR and MXCSR after
-itself.
+engine does. A set bit above 15 raises `#GP(0)` in those loads and in VLDMXCSR
+before any state changes. XRSTOR loads MXCSR whenever RFBM selects the SSE or
+the AVX component, whatever XSTATE_BV holds, XSAVE and XSAVEOPT store it under
+the same condition, and XSAVE adds RFBM to XSTATE_BV and leaves the rest of the
+header as it found it. MXCSR's exception flags are sticky, and the JIT keeps
+them while the guest masks the exceptions. The host's cumulative FPSR flags
+hold them through a dispatch: IOC, DZC, OFC, UFC and IXC are x86's invalid
+operation, division by zero, overflow, underflow and precision. A dispatch
+clears them as it starts and adds them to MXCSR as it ends; STMXCSR, FXSAVE and
+XSAVE add them to the MXCSR they store, and LDMXCSR, FXRSTOR and XRSTOR clear
+them with the flags they load. IDC is never a denormal operand: FPCR.FZ raises
+it for an input DAZ flushes, where x86 raises nothing. Under all checks the
+model settles every instruction's flags into MXCSR, and FPSR's are left out.
+Host code a dispatch runs leaves FPSR as it found it: FEXCore's compiler and
+block linker, and the model, which computes with host arithmetic. The x87
+helpers compute in software.
 
 Where the host's flags are not x86's, the translation chooses another host
 instruction. COMIS compares with FCMPE and UCOMIS with FCMP, and scalar MIN
@@ -290,8 +294,9 @@ a full one an overflow, each raising invalid operation with the stack-fault
 flag and going on with the QNaN indefinite, and FXAM classifies its operand
 from the 80-bit format. FPTAN, FSINCOS and FXTRACT check the register of
 their second result first and on a full stack compute nothing, as on the
-gadget engine, and FSIN, FCOS, FPTAN and FSINCOS leave an operand of 2^63 or
-more as it is, with C2 set, in a branch of their own. A sine, cosine,
+gadget engine; with invalid operation unmasked they raise the stack overflow
+and change nothing else. FSIN, FCOS, FPTAN and FSINCOS leave an operand of
+2^63 or more as it is, with C2 set, in a branch of their own. A sine, cosine,
 tangent or arctangent of a finite nonzero operand raises precision, and
 FXTRACT normalizes a denormal operand. FNSAVE and FNSTENV tag each full register from its
 value, as zero, special or valid, as an Intel host does at the store. C1
@@ -329,16 +334,27 @@ Whatever RFLAGS.AC holds, FXSAVE and FXRSTOR raise `#GP` for an image not
 aligned to 16 bytes, and XSAVE, XSAVEOPT and XRSTOR for one not aligned to
 64, as on the gadget engine.
 
+CLFLUSH, CLFLUSHOPT and CLWB fault as a read at the operand's own address.
+A masked vector store probes for writing the first byte of the lowest
+enabled element and then the last byte of the highest, before it stores
+any element, and an operand with no enabled element accesses nothing;
+MASKMOVQ and MASKMOVDQU probe every page their operand touches, whatever
+the mask selects, MASKMOVDQU its high quadword first. XSAVE, XSAVEOPT and
+XRSTOR probe the legacy area and header and, when RFBM selects the AVX
+component, its image. All as on the gadget engine.
+
 An encoding the decoder or the dispatcher refuses raises `#UD`, never a host
-failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F. The
-undefined set follows hardware, except that compat32 code raises `#UD` for
-SYSCALL and SYSENTER, as it does on the gadget engine. The system
-instructions follow the gadget engine's
-[model](../gadgets/README.md#system-instructions) of Linux at CPL 3 with
-UMIP: the privileged ones raise `#GP` before they touch memory, SIDT stores
-Linux's UMIP values, and the segment model answers LSL, LAR, VERR, VERW,
-SLDT and STR. CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16
-bytes, locked or not, as on the gadget engine.
+failure, and so do FEXCore's own reserved escapes, 0F 3E and 0F 3F, and AMD's
+3DNow!, FEMMS, SSE4a (EXTRQ, INSERTQ, MOVNTSS, MOVNTSD) and CLZERO, as on an
+Intel core. The undefined set follows hardware, except that compat32 code
+raises `#UD` for SYSCALL and SYSENTER, as it does on the gadget engine. The
+system instructions follow the gadget engine's
+[model](../gadgets/README.md#system-instructions) of Linux at CPL 3 with UMIP:
+the privileged ones raise `#GP` before they touch memory, SIDT stores Linux's
+UMIP values, and the segment model answers LSL, LAR, VERR, VERW, SLDT and STR.
+CMPXCHG16B raises `#GP(0)` for an operand not aligned to 16 bytes, locked or
+not, as on the gadget engine. RDPID, RDTSCP's ECX and the per-CPU entry's limit
+all report processor 0 of node 0, as the gadget engine does.
 
 ## Memory order
 
