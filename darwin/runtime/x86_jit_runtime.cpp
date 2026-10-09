@@ -26,6 +26,14 @@ using ::uml::memory::StaticGuestMemory;
 constexpr std::size_t mapping_change_capacity = 4096;
 constexpr std::size_t code_change_capacity = 1024;
 
+/* A generation the engine holds a space for ends with its process; the
+ * engine then makes the space of the next generation out of it. A host that
+ * cannot say counts as live. */
+bool generation_live(unsigned long generation) noexcept
+{
+	return darwin_uml_static_vm_generation_live(generation) != 0;
+}
+
 /* Hands the engine what changed in the address space since it last ran in
  * it: the ranges while the address space can still name them, everything
  * once it cannot. */
@@ -123,7 +131,8 @@ X86JitRunResult run_x86_jit(x86_64::CpuState &cpu, StaticGuestMemory &memory,
 	}
 	if (!engine) {
 		engine.reset(new (std::nothrow) x86_64::jit::FexEngine(
-			::uml::platform::apple::probed_host_capabilities()));
+			::uml::platform::apple::probed_host_capabilities(),
+			{.generation_live = &generation_live}));
 		if (!engine)
 			return run;
 	}

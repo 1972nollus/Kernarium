@@ -619,6 +619,18 @@ public:
 		return 0;
 	}
 
+	/* Whether the generation still has an address space: destroying one
+	 * removes its state, and a generation never comes back. */
+	int generation_live(std::uint64_t generation)
+	{
+		if (generation == 0)
+			return 1;
+		std::shared_lock lock{states_mutex_};
+		const auto found = states_.find(generation);
+		return found != states_.end() &&
+			!found->second->retired.load(std::memory_order_acquire);
+	}
+
 	int destroy(std::uint64_t generation)
 	{
 		if (generation == 0)
@@ -1997,6 +2009,12 @@ extern "C" int darwin_uml_static_vm_destroy(unsigned long generation)
 {
 	return with_address_space(
 		[&](auto &space) { return space.destroy(generation); });
+}
+
+extern "C" int darwin_uml_static_vm_generation_live(unsigned long generation)
+{
+	return with_address_space(
+		[&](auto &space) { return space.generation_live(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_discard_if_stale(unsigned long address,

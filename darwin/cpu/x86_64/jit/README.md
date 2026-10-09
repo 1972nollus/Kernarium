@@ -173,6 +173,13 @@ the space's own vCPU runs in its context, which is what makes overwriting safe.
 A buffer therefore grows, to twice its size up to 128 MiB, only when the
 translations of one space fill it.
 
+A process that ends leaves its spaces behind, and building a context costs
+milliseconds. The runtime tells the engine which address spaces still exist
+(`FexEngineOptions::generation_live`; a generation is never reused), and a space
+of one that is gone becomes the next address space's, with the same mode, store
+order and floating-point mode, once its code, holds and TLB are dropped. When
+the engine is full, a gone space is released before the least recently used.
+
 ## Guest-visible model
 
 CPUID comes from `../cpuid.hpp`, with nothing withheld; AVX and AVX2 run as

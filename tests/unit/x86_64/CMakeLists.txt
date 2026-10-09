@@ -201,4 +201,21 @@ if(TARGET uml_x86_64_jit)
         LABELS cpu;x86-64
         PROCESSORS 2
         TIMEOUT 300)
+    # An engine makes a gone address space's space over for the next one,
+    # which must translate the new bytes.
+    add_executable(uml_x86_64_jit_space_tests
+        x86_64_jit_space_tests.cpp)
+    target_link_libraries(uml_x86_64_jit_space_tests PRIVATE
+        uml_x86_64_target
+        uml_x86_64_jit
+        uml_cpu_executable_memory
+        UML::ThirdPartyFEXCore
+        UML::CpuContract)
+    target_include_directories(uml_x86_64_jit_space_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin)
+    uml_add_unit_test(
+        NAME x86-64-jit-space-recycling
+        COMMAND uml_x86_64_jit_space_tests
+        LABELS cpu;x86-64
+        TIMEOUT 300)
 endif()

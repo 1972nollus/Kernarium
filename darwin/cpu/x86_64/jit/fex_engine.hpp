@@ -82,6 +82,10 @@ struct FexEngineOptions final {
 	 * twice as much, so a small value costs only compile time; a test lowers
 	 * it to make every large unit grow. */
 	std::uint32_t code_bytes_per_node{};
+	/* Whether an address space is still there. A generation that is gone
+	 * never runs again, so its space gives way to the next one the engine
+	 * needs; without this every generation counts as live. */
+	bool (*generation_live)(unsigned long generation) noexcept{};
 };
 
 class FexEngine final {
@@ -116,6 +120,8 @@ public:
 
 	/* Compiles this engine restarted with a larger code buffer. */
 	[[nodiscard]] std::uint64_t code_buffer_restarts() const noexcept;
+	/* How many spaces were made over a gone generation's instead of built. */
+	[[nodiscard]] std::uint64_t recycled_spaces() const noexcept;
 
 	struct Impl;
 

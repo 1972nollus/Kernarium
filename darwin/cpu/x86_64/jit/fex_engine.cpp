@@ -447,6 +447,32 @@ struct Space final {
 		release_code_pages();
 	}
 
+	/* Makes this space another address space's: its generation is gone, so
+	 * nothing it translated, held or cached is anyone's now, and what the
+	 * context itself is -- its dispatcher, its mode, its store order and
+	 * floating-point mode -- is what the new generation needs. */
+	void retarget(unsigned long next) noexcept
+	{
+		release_code_pages();
+		if (registry)
+			registry->leave(participant);
+		registry.reset();
+		clear_code();
+		flush_tlb();
+		generation = next;
+		mapping_sequence = 0;
+		code_sequence = 0;
+		split_address = 0;
+		split_size = 0;
+		gather_fault = false;
+		fetch_fault.reset();
+		pending_fp = {};
+		fp_fault_vector = 0;
+		fp_fault_error = 0;
+		fp_retrying = false;
+		join_registry();
+	}
+
 	[[nodiscard]] std::uint64_t code_changes() const noexcept
 	{
 		return registry ? registry->changes() : 0;
@@ -477,10 +503,18 @@ struct FexEngine::Impl final {
 	const std::uint32_t code_bytes_per_node;
 	/* Code-buffer restarts of the spaces already released. */
 	std::uint64_t released_restarts{};
+	bool (*const generation_live)(unsigned long) noexcept;
+	std::uint64_t recycled{};
 
 	Impl(const ::uml::platform::HostCapabilities &host, const FexEngineOptions &options)
-		: host_features{fex_host_features(host)}, code_bytes_per_node{options.code_bytes_per_node}
+		: host_features{fex_host_features(host)}, code_bytes_per_node{options.code_bytes_per_node},
+		  generation_live{options.generation_live}
 	{}
+
+	[[nodiscard]] bool gone(const Space &space) const noexcept
+	{
+		return generation_live != nullptr && !generation_live(space.generation);
+	}
 
 	[[nodiscard]] static std::uint64_t restarts(const Space &space) noexcept
 	{
@@ -1305,9 +1339,32 @@ Space *FexEngine::Impl::create(unsigned long generation, ExecutionMode mode, boo
 	std::uint32_t fp_mode) noexcept
 {
 	initialize_fex_once();
+	/* A space of a generation that is gone can never run again: one made for
+	 * the same mode, order and floating-point mode becomes the new
+	 * generation's without building a context, and when the engine is full
+	 * another gone space is the one to release. */
+	Space *spare = nullptr;
+	std::vector<std::unique_ptr<Space>>::iterator departed = spaces.end();
+	for (auto it = spaces.begin(); it != spaces.end(); ++it) {
+		auto &space = **it;
+		if (!gone(space))
+			continue;
+		if (space.mode == mode && space.orders_stores == orders_stores && space.fp_mode == fp_mode &&
+			(spare == nullptr || space.last_use < spare->last_use))
+			spare = &space;
+		if (departed == spaces.end() || space.last_use < (*departed)->last_use)
+			departed = it;
+	}
+	if (spare != nullptr) {
+		spare->retarget(generation);
+		spare->last_use = ++clock;
+		++recycled;
+		return spare;
+	}
 	if (spaces.size() >= maximum_spaces) {
-		auto oldest = std::min_element(spaces.begin(), spaces.end(),
-			[](const auto &left, const auto &right) { return left->last_use < right->last_use; });
+		auto oldest = departed != spaces.end() ? departed :
+			std::min_element(spaces.begin(), spaces.end(),
+				[](const auto &left, const auto &right) { return left->last_use < right->last_use; });
 		released_restarts += restarts(**oldest);
 		spaces.erase(oldest);
 	}
@@ -1403,6 +1460,11 @@ std::uint64_t FexEngine::code_buffer_restarts() const noexcept
 	for (const auto &space : impl_->spaces)
 		total += Impl::restarts(*space);
 	return total;
+}
+
+std::uint64_t FexEngine::recycled_spaces() const noexcept
+{
+	return impl_ ? impl_->recycled : 0;
 }
 
 bool FexEngine::consumed_sequences(unsigned long generation, ExecutionMode mode,
