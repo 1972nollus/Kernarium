@@ -3,6 +3,7 @@
 #include "jit_executor_internal.hpp"
 
 #include "jit_semantic_reservation.hpp"
+#include "jit_semantic_sve.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -389,6 +390,22 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   std::uint32_t instruction{};
   if (!fetch_instruction(memory, cpu.pc, instruction))
     return Event::memory_fault;
+
+  /* An SVE word outside streaming mode runs through the semantic library
+   * whatever its form: translated code runs with the trap enables clear
+   * and cannot decide a trap, while the library does (design 4.1). */
+  if ((cpu.svcr & svcr_sm) == 0U && implements_sve(host_capabilities_)) {
+    if (const auto run = jit::semantic::run_sve_word(
+            cpu, tlb_, instruction, host_capabilities_)) {
+      executed = run->executed;
+      if (run->event == Event::floating_point_trap)
+        floating_point_syndrome_ = run->syndrome;
+      if (run->event == Event::memory_fault)
+        tlb_.discard(tlb_.fault_address);
+      reconcile_reservation(cpu);
+      return run->event;
+    }
+  }
 
   /* The transaction below runs on a copy of CpuState, which would alias
    * the SME register file; streaming mode needs none, as it never traps. */

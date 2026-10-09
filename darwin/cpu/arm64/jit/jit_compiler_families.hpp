@@ -126,6 +126,20 @@ protected:
                                                     unsigned fallback);
   void commit_native_predicate(NativeVector value, unsigned index);
   /*
+   * Whether a predicate is known to be all-active, for elements of esize
+   * bytes, along the straight line translated so far: an all-active PTRUE
+   * or a guard that passed since the predicate was last written. Knowledge
+   * for one element size holds for every larger one (the significant bytes
+   * of the larger size are among the smaller's), and any write forgets it.
+   */
+  [[nodiscard]] bool sve_predicate_known_full(unsigned index,
+                                              unsigned esize) const noexcept {
+    return sve_full_[index] != 0U && sve_full_[index] <= esize;
+  }
+  void note_sve_predicate_full(unsigned index, unsigned esize) noexcept {
+    sve_full_[index] = static_cast<std::uint8_t>(esize);
+  }
+  /*
    * These emit instruction with its Rn (bits 5-9), Rm and Rd (bits 0-4)
    * fields naming native vector bindings. Operands bind in the order
    * listed, each from the fallback host register given when the cache is
@@ -375,6 +389,9 @@ private:
   IndirectLinkResolver indirect_link_resolver_{};
   std::size_t indirect_link_refusals_{};
   std::uint8_t sme_mode_{};
+  /* Per predicate (P0-P15, FFR): the smallest element size in bytes it is
+   * known all-active for, or 0. */
+  std::array<std::uint8_t, 17> sve_full_{};
 };
 
 } // namespace uml::cpu::arm64::jit
