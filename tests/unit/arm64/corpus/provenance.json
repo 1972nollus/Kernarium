@@ -86,18 +86,18 @@
     "stripped_cases": 109494,
     "tbi_replacement_cases": 4284
   },
-  "cases": 214214,
+  "cases": 217006,
   "cases_by_event": {
     "breakpoint": 78,
     "floating-point-trap": 6279,
     "illegal-instruction": 34280,
     "instruction-budget": 186,
     "memory-fault": 11843,
-    "system-call": 161548
+    "system-call": 164340
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 158622,
+    "16k+4k": 161414,
     "4k": 27977
   },
   "coverage": {
@@ -182,8 +182,8 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3357,
-  "pack_bytes": 15243322,
-  "pack_sha256": "37fb4b7d5ceb4c0b876b7560c5cc13ea53e7208efc53d518039018d525ebf965",
+  "pack_bytes": 15268900,
+  "pack_sha256": "5c2047193c77a7264fc1facd03c2ff435eeed8393736d06e0d7fcc4f9db160cd",
   "producer_commit": "121d0e3191264927d6d480915d86db74cc8f1eed",
   "programs": 157685,
   "records": 1120,
@@ -213,20 +213,20 @@
     }
   },
   "state_minimization": {
-    "full": 72855,
+    "full": 75647,
     "narrow": 141359
   },
   "sve_afp": {
-    "cases": 2313,
+    "cases": 5105,
     "host_features": [
       "FEAT_SME",
       "FEAT_SME2",
       "FEAT_SME_F64F64",
       "FEAT_SME_I16I64"
     ],
-    "request_sha256": "b902a35b7a2b4dd89948818cdaea1264ec4f8b406c7a66d6c9956819109cf1ba",
+    "request_sha256": "ee01910ae89d02ef65c41ad2f65c7cef87bb3e1c74b5693389d658a24d4bc8ed",
     "script": "tools/arm64-tests/sve-afp-corpus.py",
-    "sha256": "fa4945f99f582864ad2afe03d3c79a26b854c1e3bbd4ad7741cf76829e8a1ace",
+    "sha256": "89e9c0fe834734f362db1a78ca4ce803d760faa8e1c63e075045c8be4e0f1161",
     "svl": 64,
     "table": {
       "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",

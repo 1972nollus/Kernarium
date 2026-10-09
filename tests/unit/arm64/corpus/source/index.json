@@ -310,16 +310,16 @@
       }
     },
     "sve_afp": {
-      "cases": 2313,
+      "cases": 5105,
       "host_features": [
         "FEAT_SME",
         "FEAT_SME2",
         "FEAT_SME_F64F64",
         "FEAT_SME_I16I64"
       ],
-      "request_sha256": "b902a35b7a2b4dd89948818cdaea1264ec4f8b406c7a66d6c9956819109cf1ba",
+      "request_sha256": "ee01910ae89d02ef65c41ad2f65c7cef87bb3e1c74b5693389d658a24d4bc8ed",
       "script": "tools/arm64-tests/sve-afp-corpus.py",
-      "sha256": "fa4945f99f582864ad2afe03d3c79a26b854c1e3bbd4ad7741cf76829e8a1ace",
+      "sha256": "89e9c0fe834734f362db1a78ca4ce803d760faa8e1c63e075045c8be4e0f1161",
       "svl": 64,
       "table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
