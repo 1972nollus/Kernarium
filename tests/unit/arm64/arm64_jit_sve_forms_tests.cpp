@@ -625,7 +625,7 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
       const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
                                      ~row.mask);
       const auto *decoded = arm64::detail::decode_sve_non_streaming(word, features);
-      if (decoded != &row || arm64::jit::sve_word_reserved(row.form, word))
+      if (decoded != &row || arm64::jit::sve_word_reserved(row, word))
         continue;
       std::vector<std::byte> data(mapped);
       for (std::size_t offset = 0; offset < mapped; offset += 8) {
@@ -694,7 +694,7 @@ void lowered_words_stay_inline(const HostCapabilities &host, Tally &tally) {
       const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
                                      ~row.mask);
       const auto *decoded = arm64::detail::decode_sve_non_streaming(word, features);
-      if (decoded != &row || arm64::jit::sve_word_reserved(row.form, word))
+      if (decoded != &row || arm64::jit::sve_word_reserved(row, word))
         continue;
       const std::array probe{word, nop, nop};
       bool lowered = false;

@@ -187,7 +187,7 @@ std::optional<SveWordRun> run_sve_word(
        (cpu.svcr & svcr_za) == 0U) ||
       !sve_detail::sve_semantics_covers(*row))
     return std::nullopt;
-  if (jit::sve_word_reserved(row->form, word))
+  if (jit::sve_word_reserved(*row, word))
     return SveWordRun{Event::illegal_instruction, 0, 0};
   restore_native_fp_environment(cpu);
   const auto result = execute_sve_word(cpu, tlb, word, *row);
