@@ -91,7 +91,7 @@
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
 
-    # The checked-in A64 instruction corpus runs through the production gadget
+    # The generated A64 instruction corpus runs through the production gadget
     # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
     # the pack format and its regeneration.
     add_executable(uml_arm64_instruction_corpus_tests
@@ -102,16 +102,17 @@
         ${_uml_arm64_corpus_zlib})
     target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
+    add_dependencies(uml_arm64_instruction_corpus_tests uml_arm64_instruction_corpus)
     uml_add_unit_test(NAME arm64-instruction-corpus
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
+            ${UML_ARM64_INSTRUCTION_CORPUS})
     # The same pack translated as for a host with FEAT_AFP and every feature
     # implements_afp() needs, which selects the FEAT_AFP twins on any host.
     # Without the hardware feature only the cases whose FPCR leaves FIZ, AH
     # and NEP clear run, and the twins must match the base entries on them.
     uml_add_unit_test(NAME arm64-instruction-corpus-afp-twins
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            ${UML_ARM64_INSTRUCTION_CORPUS}
             --assume-host-feature afp --assume-host-feature fp16
             --assume-host-feature fhm --assume-host-feature bf16
             --assume-host-feature frintts --assume-host-feature fcma
@@ -124,7 +125,7 @@
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>)
     uml_add_unit_test(NAME arm64-emitted-registers
         COMMAND uml_arm64_instruction_corpus_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            ${UML_ARM64_INSTRUCTION_CORPUS}
             --emitted-registers)
 
     uml_add_arm64_unit_test(engine_test_support NAME arm64-engine-harness

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Runs the checked-in A64 instruction corpus through the production gadget
+ * Runs the generated A64 instruction corpus through the production gadget
  * and JIT engines in one process. tests/unit/arm64/corpus/README.md owns the
  * pack format, the state encoding, and the named validator relations.
  */

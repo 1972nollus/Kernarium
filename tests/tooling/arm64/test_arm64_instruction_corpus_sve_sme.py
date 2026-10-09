@@ -124,8 +124,7 @@ def check_m4_path(gen) -> None:
 def main() -> int:
     gen = load_generator()
     builder = gen.corpus
-    pack = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else \
-        builder.CORPUS / builder.PACK_NAME
+    pack = pathlib.Path(sys.argv[1])
     corpus, tokens = builder.decode_pack(pack.read_bytes())
     lines = list(builder.dump_corpus(corpus, tokens))
     records = [item for item in map(json.loads, lines)

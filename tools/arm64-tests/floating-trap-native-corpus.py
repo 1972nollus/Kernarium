@@ -45,10 +45,12 @@ trap changes any state.
 
 A second request holds the cases that need FEAT_AFP or FEAT_BF16, which the
 M1 lacks: FPCR.AH, which detects tininess after rounding, flushes with an
-Inexact exception, leaves FMAX and FMIN unflushed and makes the estimate
-and step forms raise nothing; FPCR.FIZ and FPCR.NEP; and the BFloat16
-conversions and widening multiply-add. --afp-request writes it, and
---afp-response adds its records from a FEAT_AFP and FEAT_BF16 host:
+Inexact exception, leaves FMAX and FMIN unflushed, makes the estimate and
+step forms raise nothing, and reports a denormal single- or
+double-precision input as Input Denormal; FPCR.FIZ and FPCR.NEP; and the
+BFloat16 conversions and widening multiply-add. --afp-request writes it,
+and --afp-response adds its records from a FEAT_AFP and FEAT_BF16 host,
+the M4:
 
     floating-trap-native-corpus.py --afp-request afp.request
 
@@ -450,8 +452,8 @@ def afp_drafts() -> list[Draft]:
     add("FMUL S rounding to the minimum normal, AH UFE: not tiny",
         FMUL_S, AH | UFE,
         {1: s(single(1.0 + 2.0 ** -23)), 2: s(0x007F_FFFF)}, SCALAR, 0)
-    add("FMUL S subnormal input, AH FZ IDE: not flushed", FMUL_S,
-        AH | FZ | IDE, {1: s(SUBNORMAL), 2: s(ONE)}, SCALAR, 0)
+    add("FMUL S subnormal input, AH FZ IDE: unflushed, Input Denormal",
+        FMUL_S, AH | FZ | IDE, {1: s(SUBNORMAL), 2: s(ONE)}, SCALAR, IDC)
     add("FMUL S subnormal input, FIZ IDE: flushed without IDC", FMUL_S,
         FIZ | IDE, {1: s(SUBNORMAL), 2: s(ONE)}, SCALAR, 0)
     add("FRECPS S signalling NaN, AH IOE: no exceptions", FRECPS_S,

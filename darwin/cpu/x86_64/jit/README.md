@@ -373,7 +373,7 @@ again on the same engines, as the mark comes and goes.
 ## Instruction corpus
 
 `x86-64-jit-instruction-corpus` runs the x86-64 instruction corpus through the
-engine in the unit suite. The checked-in corpus has no compat32 records; the
+engine in the unit suite. The unit corpus has no compat32 records; the
 JIT runner runs compat32 code, so the pinned FEX i386 corpus and the compat32
 `--retirement` cases go through the engine too.
 [`jit_corpus_exclusions.tsv`](../../../../tests/unit/x86_64/jit_corpus_exclusions.tsv)
