@@ -51,6 +51,22 @@ inline constexpr std::uint16_t ucvtf_p = form_of(0x6553'a020U);
 inline constexpr std::uint16_t fcvtzs_p = form_of(0x655a'a020U);
 inline constexpr std::uint16_t fcvtzu_p = form_of(0x655b'a020U);
 
+/* Floating point by an immediate (0.5, 1.0, 2.0 or 0.0, by bit 5), and the
+ * rest of the predicated arithmetic AdvSIMD has directly. */
+inline constexpr std::uint16_t fadd_imm = form_of(0x6558'8000U);
+inline constexpr std::uint16_t fsub_imm = form_of(0x6559'8000U);
+inline constexpr std::uint16_t fmul_imm = form_of(0x655a'8000U);
+inline constexpr std::uint16_t fsubr_imm = form_of(0x655b'8000U);
+inline constexpr std::uint16_t fmaxnm_imm = form_of(0x655c'8000U);
+inline constexpr std::uint16_t fminnm_imm = form_of(0x655d'8000U);
+inline constexpr std::uint16_t fmax_imm = form_of(0x655e'8000U);
+inline constexpr std::uint16_t fmin_imm = form_of(0x655f'8000U);
+inline constexpr std::uint16_t fdiv_p = form_of(0x654d'8020U);
+inline constexpr std::uint16_t fdivr_p = form_of(0x654c'8020U);
+inline constexpr std::uint16_t fsqrt_p = form_of(0x654d'a020U);
+inline constexpr std::uint16_t frint_p = form_of(0x6540'a020U);
+inline constexpr std::uint16_t fcadd_p = form_of(0x6440'8020U);
+
 /* Integer. */
 inline constexpr std::uint16_t add_u = form_of(0x0422'0020U);
 inline constexpr std::uint16_t sub_u = form_of(0x0422'0420U);
@@ -84,6 +100,39 @@ inline constexpr std::uint16_t xar = form_of(0x042f'3420U);
 inline constexpr std::uint16_t eor3 = form_of(0x0421'3840U);
 inline constexpr std::uint16_t bcax = form_of(0x0461'3840U);
 inline constexpr std::uint16_t bsl = form_of(0x0421'3c40U);
+inline constexpr std::uint16_t mul_u = form_of(0x0420'6020U);
+inline constexpr std::uint16_t asr_v = form_of(0x0450'8020U);
+inline constexpr std::uint16_t lsr_v = form_of(0x0451'8020U);
+inline constexpr std::uint16_t lsl_v = form_of(0x0453'8020U);
+inline constexpr std::uint16_t asrr_v = form_of(0x0454'8020U);
+inline constexpr std::uint16_t lsrr_v = form_of(0x0455'8020U);
+inline constexpr std::uint16_t lslr_v = form_of(0x0457'8020U);
+inline constexpr std::uint16_t asr_pi = form_of(0x0400'83e0U);
+inline constexpr std::uint16_t lsr_pi = form_of(0x0401'83e0U);
+inline constexpr std::uint16_t lsl_pi = form_of(0x0403'8220U);
+inline constexpr std::uint16_t asrd_pi = form_of(0x0404'83e0U);
+inline constexpr std::uint16_t addp_p = form_of(0x4451'a020U);
+inline constexpr std::uint16_t usqadd_p = form_of(0x445d'8020U);
+inline constexpr std::uint16_t sabd_p = form_of(0x040c'0020U);
+inline constexpr std::uint16_t uabd_p = form_of(0x040d'0020U);
+inline constexpr std::uint16_t shadd_p = form_of(0x4410'8020U);
+inline constexpr std::uint16_t uhadd_p = form_of(0x4411'8020U);
+inline constexpr std::uint16_t shsub_p = form_of(0x4412'8020U);
+inline constexpr std::uint16_t uhsub_p = form_of(0x4413'8020U);
+inline constexpr std::uint16_t srhadd_p = form_of(0x4414'8020U);
+inline constexpr std::uint16_t urhadd_p = form_of(0x4415'8020U);
+inline constexpr std::uint16_t shsubr_p = form_of(0x4416'8020U);
+inline constexpr std::uint16_t uhsubr_p = form_of(0x4417'8020U);
+inline constexpr std::uint16_t shrnb = form_of(0x452d'1020U);
+inline constexpr std::uint16_t shrnt = form_of(0x452d'1420U);
+inline constexpr std::uint16_t rshrnb = form_of(0x452d'1820U);
+inline constexpr std::uint16_t rshrnt = form_of(0x452d'1c20U);
+inline constexpr std::uint16_t raddhnb = form_of(0x4562'6820U);
+inline constexpr std::uint16_t raddhnt = form_of(0x4562'6c20U);
+inline constexpr std::uint16_t subhnb = form_of(0x4562'7020U);
+inline constexpr std::uint16_t subhnt = form_of(0x4562'7420U);
+inline constexpr std::uint16_t rsubhnb = form_of(0x4562'7820U);
+inline constexpr std::uint16_t rsubhnt = form_of(0x4562'7c20U);
 inline constexpr std::uint16_t umulh = form_of(0x0422'6c20U);
 inline constexpr std::uint16_t smulh = form_of(0x0422'6820U);
 inline constexpr std::uint16_t smullb = form_of(0x4542'7020U);
@@ -104,6 +153,8 @@ inline constexpr std::uint16_t uqshrnb = form_of(0x452f'3020U);
 inline constexpr std::uint16_t uqshrnt = form_of(0x452f'3420U);
 inline constexpr std::uint16_t sdot = form_of(0x4482'0020U);
 inline constexpr std::uint16_t udot = form_of(0x4482'0420U);
+inline constexpr std::uint16_t sdot_i = form_of(0x44a2'0020U);
+inline constexpr std::uint16_t udot_i = form_of(0x44a2'0420U);
 
 /* Integer compares into a predicate: two vectors, or a vector and an
  * immediate. */

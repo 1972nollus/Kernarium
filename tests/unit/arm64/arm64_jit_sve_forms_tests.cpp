@@ -439,6 +439,8 @@ void compare(Machine &machine, std::size_t slot, std::uint32_t word,
     print_bytes("jit    ", machine.cpu.vectors[differing].bytes);
     print_bytes("library", expected.vectors[differing].bytes);
     std::fprintf(stderr, "  in Z%u\n", differing);
+  }
+  if (differing < 32U || machine.cpu.fpsr != expected.fpsr) {
     /* The words' conventional operand fields, before the run. */
     for (const unsigned low : {0U, 5U, 16U}) {
       const unsigned n = (word >> low) & 31U;

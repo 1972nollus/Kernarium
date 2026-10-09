@@ -322,6 +322,15 @@ private:
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
+  /* The doubleword forms AdvSIMD lacks: MUL, MLA, MLS, MAD and MSB, and the
+   * integer maxima and minima. */
+  [[nodiscard]] bool emit_sve_doubleword(std::uint16_t form,
+                                         std::uint32_t instruction,
+                                         std::uint64_t pc);
+  /* SHRN, RSHRN, RADDHN, SUBHN and RSUBHN, bottom and top: the narrowed
+   * halves go to the even or odd elements of the destination. */
+  [[nodiscard]] bool emit_sve_narrow(std::uint16_t form,
+                                     std::uint32_t instruction);
   /* SQINC, SQDEC, UQINC and UQDEC of a general register by an element
    * count. */
   [[nodiscard]] bool emit_sve_saturating_count(std::uint32_t instruction);

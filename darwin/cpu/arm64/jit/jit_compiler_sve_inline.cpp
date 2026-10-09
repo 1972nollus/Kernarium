@@ -58,6 +58,15 @@ constexpr FloatingOp op_scvtf{0x4e79'd800U, 0x4e21'd800U};
 constexpr FloatingOp op_ucvtf{0x6e79'd800U, 0x6e21'd800U};
 constexpr FloatingOp op_fcvtzs{0x4ef9'b800U, 0x4ea1'b800U};
 constexpr FloatingOp op_fcvtzu{0x6ef9'b800U, 0x6ea1'b800U};
+constexpr FloatingOp op_fdiv{0x6e40'3c00U, 0x6e20'fc00U};
+constexpr FloatingOp op_fsqrt{0x6ef9'f800U, 0x6ea1'f800U};
+constexpr FloatingOp op_frintn{0x4e79'8800U, 0x4e21'8800U};
+constexpr FloatingOp op_frintp{0x4ef9'8800U, 0x4ea1'8800U};
+constexpr FloatingOp op_frintm{0x4e79'9800U, 0x4e21'9800U};
+constexpr FloatingOp op_frintz{0x4ef9'9800U, 0x4ea1'9800U};
+constexpr FloatingOp op_frinta{0x6e79'8800U, 0x6e21'8800U};
+constexpr FloatingOp op_frintx{0x6e79'9800U, 0x6e21'9800U};
+constexpr FloatingOp op_frinti{0x6ef9'9800U, 0x6ea1'9800U};
 
 /* The NEON word for SVE element size `size` (1 half, 2 single, 3
  * double), registers zero. */
@@ -98,6 +107,16 @@ constexpr std::array destructive_ops{
     integer_op(inl::umax_p, 0x6e20'6400U, true, false, false),
     integer_op(inl::smin_p, 0x4e20'6c00U, true, false, false),
     integer_op(inl::smax_p, 0x4e20'6400U, true, false, false),
+    integer_op(inl::sabd_p, 0x4e20'7400U, true, false, false),
+    integer_op(inl::uabd_p, 0x6e20'7400U, true, false, false),
+    integer_op(inl::shadd_p, 0x4e20'0400U, true, false, false),
+    integer_op(inl::uhadd_p, 0x6e20'0400U, true, false, false),
+    integer_op(inl::shsub_p, 0x4e20'2400U, true, false, false),
+    integer_op(inl::uhsub_p, 0x6e20'2400U, true, false, false),
+    integer_op(inl::shsubr_p, 0x4e20'2400U, true, false, true),
+    integer_op(inl::uhsubr_p, 0x6e20'2400U, true, false, true),
+    integer_op(inl::srhadd_p, 0x4e20'1400U, true, false, false),
+    integer_op(inl::urhadd_p, 0x6e20'1400U, true, false, false),
     integer_op(inl::orr_zp, 0x4ea0'1c00U, false, true, false),
     integer_op(inl::eor_zp, 0x6e20'1c00U, false, true, false),
     integer_op(inl::and_zp, 0x4e20'1c00U, false, true, false),
@@ -180,6 +199,7 @@ bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
     return emit_sve_compare(row.form, instruction);
   return emit_sve_floating(row.form, instruction, pc) ||
          emit_sve_integer(row.form, instruction, pc) ||
+         emit_sve_narrow(row.form, instruction) ||
          emit_sve_permute(row.form, instruction, pc);
 }
 
@@ -344,6 +364,101 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     mark_native_fp();
     return true;
   }
+  if (form == inl::fdiv_p || form == inl::fdivr_p) {
+    if (!supported)
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    /* Zdn is bits 0-4 and Zm bits 5-9; FDIVR divides Zm by Zdn. */
+    const bool reversed = form == inl::fdivr_p;
+    emit_native_vector_binary(
+        three(floating_word(op_fdiv, size), d, reversed ? n : d,
+              reversed ? d : n),
+        false);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::fsqrt_p || form == inl::frint_p) {
+    if (!supported)
+      return false;
+    /* FRINT<x>'s mode is bits 16-18: N, P, M, Z, A, (unallocated), X, I. */
+    constexpr std::array frint_ops{&op_frintn, &op_frintp, &op_frintm,
+                                   &op_frintz, &op_frinta, &op_frintn,
+                                   &op_frintx, &op_frinti};
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto &op = form == inl::fsqrt_p
+                         ? op_fsqrt
+                         : *frint_ops[field(instruction, 16, 3)];
+    emit_native_vector_unary(three(floating_word(op, size), d, n, 0), false);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::fcadd_p) {
+    /* Zdn, Pg/M, Zdn, Zm, #90 or #270 (bit 16): the complex add. */
+    if (!supported || !host.has(ArmFeature::fcma))
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    emit_native_vector_binary(
+        three(0x6e00'e400U | (size << 22) | (field(instruction, 16, 1) << 12), d,
+              d, n),
+        false);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::fadd_imm || form == inl::fsub_imm || form == inl::fmul_imm ||
+      form == inl::fsubr_imm || form == inl::fmaxnm_imm ||
+      form == inl::fminnm_imm || form == inl::fmax_imm ||
+      form == inl::fmin_imm) {
+    if (!supported)
+      return false;
+    /* Zdn, Pg/M, Zdn, #imm: bit 5 picks the second constant of the pair. */
+    const bool second = field(instruction, 5, 1) != 0U;
+    const bool arithmetic = form == inl::fadd_imm || form == inl::fsub_imm ||
+                            form == inl::fsubr_imm;
+    const bool extremum = !arithmetic && form != inl::fmul_imm;
+    const double value = extremum     ? (second ? 1.0 : 0.0)
+                         : arithmetic ? (second ? 1.0 : 0.5)
+                                      : (second ? 2.0 : 0.5);
+    std::uint64_t bits;
+    if (size == 1U) {
+      bits = value == 0.0 ? 0x0000U
+             : value == 0.5 ? 0x3800U
+             : value == 1.0 ? 0x3c00U
+                            : 0x4000U;
+    } else if (size == 2U) {
+      bits = value == 0.0 ? 0U
+             : value == 0.5 ? 0x3f00'0000U
+             : value == 1.0 ? 0x3f80'0000U
+                            : 0x4000'0000U;
+    } else {
+      bits = value == 0.0 ? 0U
+             : value == 0.5 ? 0x3fe0'0000'0000'0000ULL
+             : value == 1.0 ? 0x3ff0'0000'0000'0000ULL
+                            : 0x4000'0000'0000'0000ULL;
+    }
+    const FloatingOp &op = form == inl::fadd_imm    ? op_fadd
+                           : form == inl::fsub_imm  ? op_fsub
+                           : form == inl::fsubr_imm ? op_fsub
+                           : form == inl::fmul_imm  ? op_fmul
+                           : form == inl::fmaxnm_imm ? op_fmaxnm
+                           : form == inl::fminnm_imm ? op_fminnm
+                           : form == inl::fmax_imm   ? op_fmax
+                                                     : op_fmin;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    emit_sve_element_constant(scratch_b, bits, 1U << size);
+    const auto first = read_native_vector(d, 0U);
+    const auto out = write_native_vector(d, false, 2U);
+    const bool reversed = form == inl::fsubr_imm;
+    emitter_.emit(three(floating_word(op, size), out.host,
+                        reversed ? scratch_b : first.host,
+                        reversed ? first.host : scratch_b));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
   if (form == inl::scvtf_p || form == inl::ucvtf_p || form == inl::fcvtzs_p ||
       form == inl::fcvtzu_p) {
     /* Only the conversions that keep the element size (bits 17-18 name the
@@ -376,6 +491,9 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
   /* SQINC, SQDEC, UQINC and UQDEC of Xdn or Wdn: bits 15-12 are 1111. */
   if ((instruction & 0xff20'f000U) == 0x0420'f000U)
     return emit_sve_saturating_count(instruction);
+
+  if (size == 3U && emit_sve_doubleword(form, instruction, pc))
+    return true;
 
   for (const auto &op : destructive_ops) {
     if (op.form != form || op.floating)
@@ -591,6 +709,130 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     commit_native_vector(out, d);
     return true;
   }
+  case inl::addp_p: {
+    /* Zdn, Pg/M, Zdn, Zm: element 2i of the result adds Zdn's pair i, and
+     * 2i+1 Zm's. AdvSIMD's ADDP puts the first operand's pairs in the low
+     * half and the second's in the high one, which ZIP1 of the halves
+     * interleaves. */
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto first = read_native_vector(d, 0U);
+    const auto second = n == d ? first : read_native_vector(n, 1U);
+    const auto out = write_native_vector(d, false, 2U);
+    if (size == 3U) {
+      emitter_.emit(three(sized(0x4e20'bc00U, size), out.host, first.host,
+                          second.host));
+    } else {
+      emitter_.emit(three(sized(0x4e20'bc00U, size), scratch_a, first.host,
+                          second.host));
+      emitter_.emit(ext_half(scratch_b, scratch_a, scratch_a));
+      emitter_.emit(three(sized(0x4e00'3800U, size), out.host, scratch_a,
+                          scratch_b));
+    }
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::usqadd_p: {
+    /* Zdn (unsigned) plus Zm (signed), saturating without FPSR.QC: the
+     * wrapped sum, then the lanes that overflowed upward (Zm >= 0) set and
+     * those that underflowed (Zm < 0) cleared. */
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto x = read_native_vector(d, 0U);
+    const auto y = n == d ? x : read_native_vector(n, 1U);
+    emitter_.emit(vector_add(false, size, scratch_a, x.host, y.host));
+    emitter_.emit(three(sized(vector_cmhi, size), scratch_b, x.host, scratch_a));
+    emitter_.emit(three(sized(vector_cmhi, size), 3U, scratch_a, x.host));
+    emitter_.emit(sized(0x4e20'a800U, size) | (y.host << 5) | 2U); // cmlt #0
+    emitter_.emit(three(vector_bic, scratch_b, scratch_b, 2U));
+    emitter_.emit(three(vector_and, 3U, 3U, 2U));
+    emitter_.emit(three(vector_orr, scratch_a, scratch_a, scratch_b));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(three(vector_bic, out.host, scratch_a, 3U));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::asr_v:
+  case inl::lsr_v:
+  case inl::lsl_v:
+  case inl::asrr_v:
+  case inl::lsrr_v:
+  case inl::lslr_v: {
+    /* The count is the whole element, unsigned; AdvSIMD's is a signed byte.
+     * Clamping it to 64 keeps any larger one shifting everything out, and a
+     * right shift is a left shift by the negated count. */
+    const bool reversed =
+        form == inl::asrr_v || form == inl::lsrr_v || form == inl::lslr_v;
+    const bool right = form != inl::lsl_v && form != inl::lslr_v;
+    const bool arithmetic = form == inl::asr_v || form == inl::asrr_v;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const unsigned value_register = reversed ? n : d;
+    const unsigned count_register = reversed ? d : n;
+    const auto value = read_native_vector(value_register, 0U);
+    const auto count = count_register == value_register
+                           ? value
+                           : read_native_vector(count_register, 1U);
+    emit_sve_element_constant(scratch_b, 64U, 1U << size);
+    unsigned amount = scratch_a;
+    if (size == 3U) {
+      emitter_.emit(three(sized(vector_cmhi, 3U), 3U, count.host, scratch_b));
+      emitter_.emit(three(0x6e60'1c00U, 3U, scratch_b, count.host)); // bsl
+      amount = 3U;
+    } else {
+      emitter_.emit(three(sized(vector_umin, size), scratch_a, count.host,
+                          scratch_b));
+    }
+    if (right)
+      emitter_.emit(sized(0x6e20'b800U, size) | (amount << 5) | amount); // neg
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(three(sized(arithmetic ? 0x4e20'4400U : 0x6e20'4400U, size),
+                        out.host, value.host, amount));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::asr_pi:
+  case inl::lsr_pi:
+  case inl::lsl_pi:
+  case inl::asrd_pi: {
+    /* Zdn, Pg/M, Zdn, #shift: tszl is bits 8-9, imm3 bits 5-7. */
+    const unsigned code = shift_code(instruction, 8, 5);
+    const unsigned log_size = shift_log_size(code);
+    if (log_size > 3U)
+      return false;
+    const unsigned bits = 8U << log_size;
+    const bool left = form == inl::lsl_pi;
+    const unsigned shift = left ? code - bits : 2U * bits - code;
+    if (form == inl::asrd_pi && shift == bits)
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 1U << log_size, instruction, pc);
+    if (form != inl::asrd_pi) {
+      const std::uint32_t opcode = left                 ? 0x4f00'5400U
+                                   : form == inl::lsr_pi ? 0x6f00'0400U
+                                                        : 0x4f00'0400U;
+      emit_native_vector_unary(opcode | (code << 16) | (d << 5) | d, false);
+      return true;
+    }
+    /* Round towards zero: add 2^shift - 1 to a negative value first. */
+    const auto source = read_native_vector(d, 0U);
+    emitter_.emit(0x4f00'0400U | ((2U * bits - (bits - 1U)) << 16) |
+                  (source.host << 5) | scratch_a); // sshr #(bits - 1)
+    emitter_.emit(0x6f00'0400U | ((2U * bits - (bits - shift)) << 16) |
+                  (scratch_a << 5) | scratch_a); // ushr #(bits - shift)
+    emitter_.emit(vector_add(false, log_size, scratch_a, source.host, scratch_a));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(0x4f00'0400U | (code << 16) | (scratch_a << 5) | out.host);
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::mul_u: {
+    if (size == 3U)
+      return false;
+    begin_sve_word();
+    emit_native_vector_binary(three(sized(0x4e20'9c00U, size), d, n, m), false);
+    return true;
+  }
   case inl::umulh:
   case inl::smulh: {
     /* The high half of each product: the widened products of the two
@@ -719,12 +961,58 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     return true;
   }
   case inl::sdot:
-  case inl::udot: {
-    if (size != 2U || !host.has(ArmFeature::dotprod))
+  case inl::udot:
+  case inl::sdot_i:
+  case inl::udot_i: {
+    const bool is_unsigned = form == inl::udot || form == inl::udot_i;
+    const bool indexed = form == inl::sdot_i || form == inl::udot_i;
+    if (size < 2U)
       return false;
+    if (size == 2U) {
+      /* Four bytes into each word: the dot-product instruction. The
+       * indexed form's Zm is 3 bits and its index (L:H of NEON's) the 2
+       * bits above. */
+      if (!host.has(ArmFeature::dotprod))
+        return false;
+      begin_sve_word();
+      if (!indexed) {
+        emit_native_vector_accumulate(
+            three(is_unsigned ? 0x6e80'9400U : 0x4e80'9400U, d, n, m), true);
+        return true;
+      }
+      const unsigned index = field(instruction, 19, 2);
+      emit_native_vector_by_element(
+          (is_unsigned ? 0x6f80'e000U : 0x4f80'e000U) | ((index & 1U) << 21) |
+          ((index >> 1) << 11) | (field(instruction, 16, 3) << 16) | (n << 5) |
+          d);
+      return true;
+    }
+    /* Four halfwords into each doubleword, which AdvSIMD lacks: the products
+     * of each half of the vector, pairs added into doublewords, and the two
+     * halves' sums added. */
     begin_sve_word();
-    emit_native_vector_accumulate(
-        three(form == inl::sdot ? 0x4e80'9400U : 0x6e80'9400U, d, n, m), true);
+    const auto first = read_native_vector(n, 0U);
+    unsigned second;
+    if (indexed) {
+      /* The 4 halfwords at index (bit 20) of Zm (4 bits) for every group. */
+      const auto selected = read_native_vector(field(instruction, 16, 4), 1U);
+      emitter_.emit(dup_element(3U, field(instruction, 20, 1), 3U,
+                                selected.host));
+      second = 3U;
+    } else {
+      second = (m == n ? first : read_native_vector(m, 1U)).host;
+    }
+    const std::uint32_t low = is_unsigned ? 0x2e60'c000U : 0x0e60'c000U;
+    const std::uint32_t high = is_unsigned ? 0x6e60'c000U : 0x4e60'c000U;
+    const std::uint32_t pairs = is_unsigned ? 0x6ea0'2800U : 0x4ea0'2800U;
+    emitter_.emit(three(low, scratch_a, first.host, second));
+    emitter_.emit(three(high, scratch_b, first.host, second));
+    emitter_.emit(pairs | (scratch_a << 5) | scratch_a);
+    emitter_.emit(pairs | (scratch_b << 5) | scratch_b);
+    emitter_.emit(three(0x4ee0'bc00U, scratch_a, scratch_a, scratch_b)); // addp
+    const auto out = write_native_vector(d, true, 2U);
+    emitter_.emit(vector_add(false, 3U, out.host, out.host, scratch_a));
+    commit_native_vector(out, d);
     return true;
   }
   default:
@@ -759,9 +1047,53 @@ bool JitCompiler::emit_sve_permute(std::uint16_t form,
   case inl::tbl: {
     /* TBL Zd.B, {Zn.B}, Zm.B; the SVE2 TBL with two registers, and TBX,
      * which keeps Zd for an index out of range. */
-    if (size != 0U)
-      return false;
     const unsigned operation = field(instruction, 10, 6);
+    if (size != 0U) {
+      /* AdvSIMD indexes bytes: an element's index becomes the indices of
+       * its bytes (index * element size + 0, 1, ...) and an index past the
+       * last element, which reads zero, becomes bytes AdvSIMD also reads
+       * as zero. */
+      if (operation != 0x0cU)
+        return false;
+      begin_sve_word();
+      const unsigned elements = sve_vector_length >> size;
+      const auto table = read_native_vector(n, 0U);
+      const auto index = read_native_vector(m, 1U);
+      std::uint64_t offsets = 0;
+      for (unsigned byte = 0; byte < (1U << size); ++byte)
+        offsets |= static_cast<std::uint64_t>(byte) << (8U * byte);
+      if (size == 3U) {
+        /* No 64-bit minimum or multiply: an index past the last element
+         * becomes all ones, the low byte of the index is repeated over
+         * its element's bytes, and each byte is scaled by eight. */
+        emit_sve_element_constant(scratch_a, elements - 1U, 8U);
+        emitter_.emit(three(sized(vector_cmhi, 3U), scratch_a, index.host,
+                            scratch_a));
+        emitter_.emit(three(vector_orr, scratch_a, scratch_a, index.host));
+        emit_sve_vector_constant(scratch_b, 0U, 0x0808'0808'0808'0808ULL);
+        emitter_.emit(three(0x4e00'0000U, scratch_a, scratch_a, scratch_b));
+        emitter_.emit(0x4f00'5400U | ((8U + 3U) << 16) | (scratch_a << 5) |
+                      scratch_a); // shl #3
+      } else {
+        /* The index, clamped to one past the last element, times the
+         * element size in every byte of its element. */
+        std::uint64_t scale = 0;
+        for (unsigned byte = 0; byte < (1U << size); ++byte)
+          scale = (scale << 8) | (1U << size);
+        emit_sve_element_constant(scratch_b, elements, 1U << size);
+        emitter_.emit(three(sized(vector_umin, size), scratch_a, index.host,
+                            scratch_b));
+        emit_sve_element_constant(scratch_b, scale, 1U << size);
+        emitter_.emit(three(sized(0x4e20'9c00U, size), scratch_a, scratch_a,
+                            scratch_b)); // mul
+      }
+      emit_sve_element_constant(scratch_b, offsets, 1U << size);
+      emitter_.emit(vector_add(false, 0U, scratch_a, scratch_a, scratch_b));
+      const auto out = write_native_vector(d, false, 2U);
+      emitter_.emit(three(0x4e00'0000U, out.host, table.host, scratch_a));
+      commit_native_vector(out, d);
+      return true;
+    }
     if (operation == 0x0cU) {
       begin_sve_word();
       emit_native_vector_binary(three(0x4e00'0000U, d, n, m), false);
@@ -1443,6 +1775,154 @@ bool JitCompiler::emit_sve_saturating_count(std::uint32_t instruction) {
     emitter_.emit(csel_x(x, 10, x, decrement ? cond_lt : cond_gt));
   }
   commit_native_gpr(out, d, false);
+  return true;
+}
+
+bool JitCompiler::emit_sve_narrow(std::uint16_t form,
+                                  std::uint32_t instruction) {
+  const bool shift = form == inl::shrnb || form == inl::shrnt ||
+                     form == inl::rshrnb || form == inl::rshrnt;
+  const bool arithmetic =
+      form == inl::raddhnb || form == inl::raddhnt || form == inl::subhnb ||
+      form == inl::subhnt || form == inl::rsubhnb || form == inl::rsubhnt;
+  if (!shift && !arithmetic)
+    return false;
+  const unsigned d = field(instruction, 0, 5);
+  const unsigned n = field(instruction, 5, 5);
+  const unsigned m = field(instruction, 16, 5);
+  /* Bit 10 picks the top half; bit 11 of the shifts and bit 11 and 12 of
+   * the others pick the rounding and the subtraction. */
+  const bool top = (instruction & 0x400U) != 0U;
+  std::uint32_t narrowing;
+  unsigned log_size;
+  if (shift) {
+    /* The destination element: tszh:tszl (bit 22, bits 20:19). */
+    const unsigned code = (field(instruction, 22, 1) << 5) |
+                          (field(instruction, 19, 2) << 3) |
+                          field(instruction, 16, 3);
+    const unsigned tsz = code >> 3;
+    if (tsz == 0U)
+      return false;
+    log_size = tsz == 1U ? 0U : tsz < 4U ? 1U : 2U;
+    const bool rounding = (instruction & 0x800U) != 0U;
+    narrowing = (rounding ? 0x0f00'8c00U : 0x0f00'8400U) | (code << 16);
+  } else {
+    const unsigned source = field(instruction, 22, 2);
+    if (source == 0U)
+      return false;
+    log_size = source - 1U;
+    const bool rounding = (instruction & 0x800U) != 0U;
+    const bool subtract = (instruction & 0x1000U) != 0U;
+    narrowing = (subtract ? 0x0e20'6000U : 0x0e20'4000U) |
+                (rounding ? 0x2000'0000U : 0U) | (log_size << 22);
+  }
+  begin_sve_word();
+  const auto first = read_native_vector(n, 0U);
+  if (!shift) {
+    const auto second = m == n ? first : read_native_vector(m, 1U);
+    narrowing |= second.host << 16;
+  }
+  /* The narrowed elements fill the low half of scratch_a. */
+  emitter_.emit(narrowing | (first.host << 5) | scratch_a);
+  if (!top) {
+    emitter_.emit(movi_bytes(true, scratch_b, 0U));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(three(sized(0x4e00'3800U, log_size), out.host, scratch_a,
+                        scratch_b));
+    commit_native_vector(out, d);
+    return true;
+  }
+  /* The old even elements, packed, then interleaved with the narrowed. */
+  const auto old = read_native_vector(d, 2U);
+  emitter_.emit(three(sized(0x4e00'1800U, log_size), scratch_b, old.host,
+                      old.host));
+  const auto out = write_native_vector(d, false, 3U);
+  emitter_.emit(three(sized(0x4e00'3800U, log_size), out.host, scratch_b,
+                      scratch_a));
+  commit_native_vector(out, d);
+  return true;
+}
+
+bool JitCompiler::emit_sve_doubleword(std::uint16_t form,
+                                      std::uint32_t instruction,
+                                      std::uint64_t pc) {
+  const unsigned d = field(instruction, 0, 5);
+  const unsigned n = field(instruction, 5, 5);
+  const unsigned m = field(instruction, 16, 5);
+  const unsigned g = field(instruction, 10, 3);
+  const bool maximum = form == inl::smax_p || form == inl::umax_p;
+  const bool minimum = form == inl::smin_p || form == inl::umin_p;
+  if (maximum || minimum) {
+    /* Zdn, Pg/M, Zdn, Zm (Zm is bits 5-9): the compare's mask selects. */
+    begin_sve_word();
+    emit_sve_guard(g, 8U, instruction, pc);
+    const auto first = read_native_vector(d, 0U);
+    const auto second = n == d ? first : read_native_vector(n, 1U);
+    const bool is_unsigned = form == inl::umax_p || form == inl::umin_p;
+    /* The mask is set where the first operand is the result. */
+    emitter_.emit(three(sized(is_unsigned ? vector_cmhi : 0x4e20'3400U, 3U),
+                        scratch_a, maximum ? first.host : second.host,
+                        maximum ? second.host : first.host));
+    emitter_.emit(three(0x6e60'1c00U, scratch_a, first.host, second.host));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    return true;
+  }
+  if (form != inl::mul_p && form != inl::mla_p && form != inl::mls_p &&
+      form != inl::mad_p && form != inl::msb_p && form != inl::mul_u)
+    return false;
+
+  /* A product modulo 2^64, with no 64-bit AdvSIMD multiply: the low halves'
+   * full product plus the cross products' low words shifted up. */
+  begin_sve_word();
+  if (form != inl::mul_u)
+    emit_sve_guard(g, 8U, instruction, pc);
+  unsigned multiplicand;
+  unsigned multiplier;
+  unsigned addend = 0;
+  bool has_addend = true;
+  bool subtract = form == inl::mls_p || form == inl::msb_p;
+  NativeVector first;
+  NativeVector second;
+  NativeVector third;
+  if (form == inl::mul_p) {
+    /* Zdn, Pg/M, Zdn, Zm: Zm is bits 5-9. */
+    first = read_native_vector(d, 0U);
+    second = n == d ? first : read_native_vector(n, 1U);
+    has_addend = false;
+  } else if (form == inl::mul_u) {
+    first = read_native_vector(n, 0U);
+    second = m == n ? first : read_native_vector(m, 1U);
+    has_addend = false;
+  } else if (form == inl::mla_p || form == inl::mls_p) {
+    /* Zda, Pg/M, Zn, Zm: Zn is bits 5-9, Zm bits 16-20. */
+    first = read_native_vector(n, 0U);
+    second = m == n ? first : read_native_vector(m, 1U);
+    third = d == n ? first : d == m ? second : read_native_vector(d, 2U);
+  } else {
+    /* MAD, MSB: Zdn, Pg/M, Zm, Za with Zm bits 16-20 and Za bits 5-9. */
+    first = read_native_vector(d, 0U);
+    second = m == d ? first : read_native_vector(m, 1U);
+    third = n == d ? first : n == m ? second : read_native_vector(n, 2U);
+  }
+  multiplicand = first.host;
+  multiplier = second.host;
+  if (has_addend)
+    addend = third.host;
+  constexpr unsigned extra = 3U;
+  emitter_.emit(0x4ea0'0800U | (multiplier << 5) | scratch_a); // rev64 .4s
+  emitter_.emit(three(0x4ea0'9c00U, scratch_a, scratch_a, multiplicand));
+  emitter_.emit(0x6ea0'2800U | (scratch_a << 5) | scratch_a); // uaddlp .2d
+  emitter_.emit(0x4f60'5400U | (scratch_a << 5) | scratch_a); // shl #32
+  emitter_.emit(narrow(2U, scratch_b, multiplicand));
+  emitter_.emit(narrow(2U, extra, multiplier));
+  emitter_.emit(three(0x2ea0'8000U, scratch_a, scratch_b, extra)); // umlal
+  if (has_addend)
+    emitter_.emit(vector_add(subtract, 3U, scratch_a, addend, scratch_a));
+  const auto out = write_native_vector(d, false, 3U);
+  emitter_.emit(vector_move(out.host, scratch_a));
+  commit_native_vector(out, d);
   return true;
 }
 

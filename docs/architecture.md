@@ -618,9 +618,11 @@ onto AdvSIMD for an all-active governing predicate
 ([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
 the forms are listed in
 [`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
-multiply-add, arithmetic and same-size conversion forms, the integer
-arithmetic, logical, shift, widening, narrowing, high-half and dot-product
-forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, SQINC, SQDEC, UQINC and UQDEC of
+multiply-add, arithmetic (divide, square root and rounding included) and
+same-size conversion forms, the integer arithmetic, logical, shift (by a
+vector, by an immediate and merging), halving, difference, widening,
+narrowing, high-half and dot-product forms, ZIP, UZP, TRN, TBL of any element
+size, EXT, REV and INDEX, SQINC, SQDEC, UQINC and UQDEC of
 a general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
 LDR and STR of a Z or P register whose footprint lies in one guest page the TLB
 holds, and the gathers and scatters (LD1*, LDNT1*, ST1* and STNT1* with an
@@ -636,7 +638,10 @@ element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
 not do, when the predicate is partial.
 The saturating forms saturate by compare and select, since AdvSIMD's set
-FPSR.QC and SVE's never do. A word that lowering declines (an element size
+FPSR.QC and SVE's never do. A 64-bit multiply, minimum or maximum, which
+AdvSIMD lacks, is built from 32-bit multiplies or a compare and select, and
+a shift by a count of a whole element or more is clamped to the element's
+width. A word that lowering declines (an element size
 AdvSIMD lacks, a crossing or missing page, an SP base or a tagged one) and
 every other word of the profile ends its block in a terminal helper
 ([`cpu/arm64/jit/jit_semantic_sve.cpp`](../darwin/cpu/arm64/jit/jit_semantic_sve.cpp)),
