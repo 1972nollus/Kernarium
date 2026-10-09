@@ -192,7 +192,10 @@ work -- elements, or 64-byte blocks of a page-bounded run -- with RIP still
 naming it, and `execute` reports that yield. The dispatch charges the same
 amount to its instruction budget, so a loop of long REP strings returns to the
 kernel about as often as ordinary code does; the kernel services its
-cooperative timer only there. A step keeps its exact budget.
+cooperative timer only there. A step keeps its exact budget. A repeated CMPS
+or SCAS commits its flags when it finishes: a stop between elements, whether
+for an interrupt, a fault or a step, shows the flags it was entered with, as
+x86 does.
 
 A step of a repeated string instruction is one iteration, as x86 raises #DB
 after each. `execute` given `single_step` enters the instruction through its

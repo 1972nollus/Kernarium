@@ -2921,21 +2921,24 @@ bool gathers()
 	"	pop %rbx\n"                                                  \
 	"	ret\n"
 /* A repeated compare whose third element meets the unmapped page has run
- * two or three: the setup runs those elements alone, so the expected state
- * is theirs, and the restart moves the pointers and count back and sets
- * every arithmetic flag, which the elements' own flags must replace. The
- * REPE elements compare equal quadwords, the REPNE ones unequal bytes, the
- * last 0x80 with 0. */
+ * two or three: the setup runs those elements alone, so the expected pointers
+ * and count are theirs, and then sets every arithmetic flag. The restart
+ * moves the pointers and count back, so the instruction runs the elements
+ * again from the flags the setup left. x86 keeps those flags while a
+ * repeated compare faults on a later element, whatever the elements before it
+ * compared, so the expected flags are not theirs. The REPE elements compare
+ * equal quadwords, the REPNE ones unequal bytes, the last 0x80 with 0. */
 #define CMPS_MIDWAY_REPE                                                     \
 	"movq $0x33, -12(%r9); movq $0x246, -4(%r9); leaq -12(%r9), %rsi; "  \
 	"leaq -16(%r10), %rdi; movl $5, %ecx; cmpsq; cmpsq; "                \
-	"leaq -2(%rcx), %rcx"
+	"leaq -2(%rcx), %rcx; pushq $0x8d5; popfq"
 #define CMPS_MIDWAY_REPNE                                                    \
 	"movl $0x00800201, (%r9); movq %r9, %rsi; leaq -3(%r10), %rdi; "     \
-	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx"
+	"movl $5, %ecx; cmpsb; cmpsb; cmpsb; leaq -3(%rcx), %rcx; "          \
+	"pushq $0x8d5; popfq"
 #define CMPS_MIDWAY_RESTART(bytes, elements)                                 \
 	"leaq -" #bytes "(%rsi), %rsi; leaq -" #bytes "(%rdi), %rdi; "        \
-	"leaq " #elements "(%rcx), %rcx; pushq $0x8d5; popfq"
+	"leaq " #elements "(%rcx), %rcx"
 /* REP MOVSB through FS, whose base the run sets to 0x1000, from the end of
  * the read-only page into the writable one: its third element meets the
  * unmapped page. The setup moves the first two alone, and the restart moves
@@ -3034,7 +3037,6 @@ bool gathers()
 	X(movnt_unread, "", "", "movntps %xmm0, (%r8); addq %rcx, %rcx")     \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%r10), %xmm1; addq %rcx, %rcx")                         \
-	X(clzero_unread, "movq %r8, %rax", "", "clzero; addq %rcx, %rcx")    \
 	X(fld, "fninit; fld1", "", "fldl (%r10)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%r10)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%r10)")                           \
@@ -3283,6 +3285,18 @@ bool fault_state()
 /* The stores meet the read-only page, or for a _midway case the unmapped
  * one below the writable page after the instruction's first stores; the
  * loads meet the last page, after the first loads for a multi-part one. */
+/* POPAD and POPAW load EDI, ESI and EBP from the three slots below the
+ * unmapped page, skip ESP's, and meet the page at EBX's. x86 loads the
+ * registers in that order, so the three keep what they loaded when the
+ * fourth load faults, and ESP stays. The setup stashes the three in XMM1 to
+ * XMM3, which the case does not compare, and loads them as POPA does; the
+ * restart puts them back. */
+#define POPA_PARTIAL                                                         \
+	"movd %edi, %xmm1; movd %ebp, %xmm2; movd %esi, %xmm3; "             \
+	"movl -16(%esi), %edi; movl -8(%esi), %ebp; movl -12(%esi), %esi"
+#define POPAW_PARTIAL                                                        \
+	"movd %edi, %xmm1; movd %ebp, %xmm2; movd %esi, %xmm3; "             \
+	"movw -8(%esi), %di; movw -4(%esi), %bp; movw -6(%esi), %si"
 /* REP MOVSB through GS, whose TLS base the run sets to 0x1000, from the
  * end of the read-only page into the writable one: its third element meets
  * the unmapped page. ESI is an offset from the GS base. */
@@ -3358,8 +3372,10 @@ bool fault_state()
 	X(pop_ds, "", "movl %esi, %esp", "popl %ds")                         \
 	X(pop_fs, "", "movl %esi, %esp", "popl %fs")                         \
 	X(pop_gs, "", "movl %esi, %esp", "popl %gs")                         \
-	X(popa, "", "leal -16(%esi), %esp", "popal")                         \
-	X(popaw, "", "leal -8(%esi), %esp", "popaw")                         \
+	X(popa, POPA_PARTIAL, "movd %xmm1, %edi; movd %xmm2, %ebp; "          \
+	  "movd %xmm3, %esi; leal -16(%esi), %esp", "popal")                 \
+	X(popaw, POPAW_PARTIAL, "movd %xmm1, %edi; movd %xmm2, %ebp; "        \
+	  "movd %xmm3, %esi; leal -8(%esi), %esp", "popaw")                  \
 	X(bound, "", "", "bound %eax, -4(%esi)")                             \
 	X(push_load, "", "", "pushl (%esi)")                                 \
 	X(lods, "", "", "lodsl")                                             \
@@ -3384,7 +3400,6 @@ bool fault_state()
 	X(movnt_unread, "", "", "movntps %xmm0, (%edx); addl %ecx, %ecx")    \
 	X(movntdqa_unread, "", "",                                           \
 	  "movntdqa (%esi), %xmm1; addl %ecx, %ecx")                         \
-	X(clzero_unread, "movl %edx, %eax", "", "clzero; addl %ecx, %ecx")   \
 	X(fld, "fninit; fld1", "", "fldl (%esi)")                            \
 	X(fild, "fninit; fld1", "", "fildl (%esi)")                          \
 	X(fldt, "fninit; fld1", "", "fldt (%esi)")                           \
