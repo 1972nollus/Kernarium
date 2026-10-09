@@ -271,27 +271,6 @@ static_assert(while_tables<true>[1][1].predicate[14] == 0xffU &&
               while_tables<true>[1][1].nzcv == 0U);
 static_assert(while_tables<true>[3][9].nzcv == 0x8000'0000U);
 
-/* A word of a control-core form that is UNDEFINED nonetheless: a reserved
- * DUPM immediate, a shifted byte immediate, or a byte-sized form without
- * one. */
-[[nodiscard]] bool sve_word_reserved(std::uint16_t form,
-                                     std::uint32_t instruction) noexcept {
-  const unsigned size = field(instruction, 22, 2);
-  if (form == forms::dupm)
-    return !detail::decode_logical_immediate(true, field(instruction, 17, 1),
-                                             field(instruction, 11, 6),
-                                             field(instruction, 5, 6))
-                .has_value();
-  if (form == forms::dup_immediate || form == forms::cpy_merging ||
-      form == forms::cpy_zeroing)
-    return size == 0U && field(instruction, 13, 1) != 0U;
-  if (form == forms::fdup || form == forms::fcpy ||
-      form == forms::inc_vector || form == forms::dec_vector ||
-      form == forms::incp_vector || form == forms::decp_vector)
-    return size == 0U;
-  return false;
-}
-
 /* DUP and CPY (immediate): the signed byte, shifted by 8 when sh is set,
  * as an element of esize bytes. */
 [[nodiscard]] constexpr std::uint64_t integer_element(std::uint32_t instruction,
@@ -351,8 +330,20 @@ JitCompiler::emit_sve_instruction(std::uint32_t instruction,
        (sme_mode() & svcr_za) == 0U))
     return Action::unsupported;
   const auto form = row->form;
-  if (!jit::implements_sve_form(form) || sve_word_reserved(form, instruction))
+  if (jit::sve_word_reserved(form, instruction))
     return Action::unsupported;
+  /* Every other row the profile implements runs through the semantic
+   * library: a terminal helper, as the SME slow paths are. */
+  if (!jit::implements_sve_form(form)) {
+    if (row->memory != 0U &&
+        detail::sme_encoding_memory_of(*row)->direction ==
+            detail::SmeMemoryDirection::store)
+      mark_memory_write();
+    emit_terminal_helper(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_sve),
+        instruction, pc, count_ + 1U);
+    return Action::terminate;
+  }
   /* P, FFR and Z are FP state: the executor makes it current first (design
    * 2.2). The first SVE word of the block marks the task as using SVE, so
    * a context switch saves its predicates. */
@@ -498,7 +489,10 @@ void JitCompiler::emit_sve_predicate_form(std::uint16_t form,
                              predicate_half(image.predicate, 1));
     commit_native_predicate(out, d);
     if (form == forms::ptrues) {
-      emitter_.load_constant(11, image.nzcv);
+      /* PTRUES tests its result under itself, not under the all-true
+       * predicate a WHILE* result is tested under: N when any element is
+       * active, Z and C when none is. */
+      emitter_.load_constant(11, count != 0U ? 0x8000'0000U : 0x6000'0000U);
       emit_sve_flags_from_w11();
     }
     return;

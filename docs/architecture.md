@@ -314,8 +314,9 @@ exact tiny results follow FPRoundBase() as above. An enabled exception
 restores Z, V and P, commits nothing, and gives the floating-point trap
 with one cause. The cryptographic and integer matrix
 forms are computed in software. `sve_semantics_covers()` holds for every row
-the table routes; any other word is a fatal internal error. No product links
-the library until an engine calls it.
+the table routes; any other word is a fatal internal error. Both engines call
+it: the gadget engine through its `sve_library` gadget and the JIT through a
+terminal helper.
 
 The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
 the bank, the sections its gadgets push forwarding variants, cold paths and
@@ -539,7 +540,8 @@ implements outside streaming mode, `none`, `control` or `complete`, and
 `cpu::engine_host_capabilities` presents the profile only from an engine at
 `complete`. Below that, under either policy, ID_AA64PFR0_EL1.SVE and
 ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
-non-streaming SVE word is the illegal-instruction exit.
+non-streaming SVE word is the illegal-instruction exit. Both engines are at
+`complete`.
 
 The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
 carry the profile, it runs every word of the profile, so under the
@@ -605,25 +607,38 @@ faults too. It also checks that no
 program translated for SM = 1 selects an SVE-part entry and none for SM = 0
 a streaming one.
 
-The JIT is at `control`: for SVCR.SM = 0, on capabilities that carry the
+The JIT is at `complete`: for SVCR.SM = 0, on capabilities that carry the
 profile, it lowers PTRUE, PTRUES, PFALSE and PTEST, the predicate logical
 operations, CNTP, INCP and DECP, WHILE*, CNT*, INC*, DEC*, RDVL, ADDVL and
 ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP, CPY, FCPY, SEL
 and the unpredicated logical forms onto AdvSIMD and general registers
-([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp));
-every other non-streaming SVE word is its illegal-instruction exit. Since it
-presents no SVE to a guest below `complete`, only tests that hand it the
-profile reach these forms. No translation holds an SVE word, and SM=1
-translations and translations without an SVE word are unchanged. Z is V in
-the block-local vector bindings, and P and FFR are bound beside them in mask
+([`cpu/arm64/jit/jit_compiler_sve.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve.cpp)),
+and ends its block in a terminal helper for every other word of the profile
+([`cpu/arm64/jit/jit_semantic_sve.cpp`](../darwin/cpu/arm64/jit/jit_semantic_sve.cpp)),
+which runs the word through the semantic library on `CpuState` as the SME
+slow paths do: the library marks the SVE state live, reports a fault at the
+word's PC, clears the local exclusive monitor on a store and invalidates the
+software reservations the store wrote. A reserved bitmask or shifted byte
+immediate, and a row the capabilities lack, are the illegal-instruction
+exit. No translation holds an SVE word, and SM=1 translations and
+translations without an SVE word are unchanged. While an FPCR trap enable
+is set, or a single step is pending, the executor runs each SVE word through
+the library itself, which decides the trap, the flags it commits and the one
+cause it reports, as the gadget engine's trapped mode does. Z is V in the
+block-local vector bindings, and P and FFR are bound beside them in mask
 form and written back at every exit. A flag-setting form computes PredTest
-into the guest's NZCV. A WHILE* reads its predicate and NZCV from a table
+into the guest's NZCV (PTRUES tests its result under itself, a WHILE* under
+the all-true predicate). A WHILE* reads its predicate and NZCV from a table
 indexed by its active count clamped to 16, and one followed in the block by
 a B.cond on N, Z or C branches on that bit of the table's NZCV and ends the
-block with the pair. A block holding an SVE word accesses the FP state
-before it runs, since P and FFR travel with it, and stores
-`CpuState::sve_live`. `arm64-jit-sve-control` checks the forms against the
-pseudocode on injected hosts.
+block with the pair. A block holding an inline SVE word accesses the FP
+state before it runs, since P and FFR travel with it, and stores
+`CpuState::sve_live`. `arm64-jit-sve-control` checks the control forms
+against the pseudocode on injected hosts, and `arm64-jit-sve-forms` checks
+every row of the profile against the library on random states: alone in a
+block, behind an FP instruction that leaves the native environment active,
+from memory bases inside a page, across pages, unmapped and tagged, and
+under random FPCR trap enables.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

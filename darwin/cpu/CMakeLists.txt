@@ -293,6 +293,8 @@ set(_uml_cpu_jit_sme_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_sme_transition.S)
 set(_uml_cpu_jit_executor_sme_sources
     arm64/jit/jit_semantic_sme.cpp)
+set(_uml_cpu_jit_executor_sve_sources
+    arm64/jit/jit_semantic_sve.cpp)
 
 # JIT non-streaming SVE sources, owned by SVE lane V4.
 set(_uml_cpu_jit_sve_sources
@@ -338,7 +340,8 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_semantic_reservation.cpp
     arm64/jit/jit_shared_translations.cpp
-    ${_uml_cpu_jit_executor_sme_sources})
+    ${_uml_cpu_jit_executor_sme_sources}
+    ${_uml_cpu_jit_executor_sve_sources})
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})
@@ -348,7 +351,8 @@ target_link_libraries(uml_arm64_jit_executor PRIVATE
     UML::CpuContract)
 target_link_libraries(uml_arm64_jit_executor PUBLIC
     uml_arm64_jit
-    uml_arm64_execution_helpers)
+    uml_arm64_execution_helpers
+    uml_arm64_sve_semantics)
 target_include_directories(uml_arm64_jit_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_arm64_jit_executor PRIVATE
@@ -368,7 +372,8 @@ if(UML_BUILD_UNIT_TESTS)
         UML::CpuContract)
     target_link_libraries(uml_arm64_jit_diagnostics_executor PUBLIC
         uml_arm64_jit
-        uml_arm64_execution_helpers)
+        uml_arm64_execution_helpers
+        uml_arm64_sve_semantics)
     target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
@@ -474,6 +479,7 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
+    $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
 # The CPU-owned implementation carrier deliberately excludes memory objects.

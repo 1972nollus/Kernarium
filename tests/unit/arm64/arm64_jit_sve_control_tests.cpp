@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * The JIT's non-streaming SVE control core (jit::sve_support = control):
- * PTRUE, PTRUES, PFALSE and PTEST, the predicate logical operations, CNTP,
+ * The JIT's non-streaming SVE control core, the forms an SM=0 translation
+ * lowers inline however the rest of the profile runs (jit::sve_support =
+ * complete sends every other row to the semantic library, which
+ * arm64-jit-sve-forms checks against it): PTRUE, PTRUES, PFALSE and PTEST, the predicate logical operations, CNTP,
  * INCP and DECP, WHILE* and its fusion with B.cond, CNT*, INC*, DEC*, RDVL,
  * ADDVL and ADDPL, SETFFR, RDFFR and WRFFR, and MOVPRFX, DUP, DUPM, FDUP,
  * CPY, FCPY, SEL and the unpredicated logical forms, lowered onto AdvSIMD
@@ -12,15 +14,16 @@
  * P and FFR in their mask form, Z as `vectors`. A reference interpreter
  * follows the A64 pseudocode element by element, independently of the
  * lowering, and runs random programs beside the JIT. The code checks
- * compile every row of the encoding table: at SM=0 exactly the control
- * core translates, and no translation holds an SVE word; SM=1
- * translations, and translations without an SVE word, are the same with
- * the profile and without it.
+ * compile every row of the encoding table: at SM=0 every implemented row
+ * translates except a reserved encoding, and no translation holds an SVE
+ * word; SM=1 translations, and translations without an SVE word, are the
+ * same with the profile and without it.
  */
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
@@ -487,7 +490,7 @@ bool Reference::sve(std::uint32_t word) {
             : first_elements(esize, pattern_count(field(word, 5, 5), elements));
     p[pd] = result;
     if (form == forms::ptrues)
-      s_.nzcv = pred_test(all_true(esize), result, esize);
+      s_.nzcv = pred_test(result, result, esize);
     return true;
   }
   if (form == forms::ptest) {
@@ -1173,22 +1176,21 @@ void fp_access_and_live_marker(const HostCapabilities &host) {
   }
 }
 
-/* An SVE word outside the control core is the illegal-instruction exit,
- * at its own PC, after the block's earlier words retire. */
-void outside_the_core_is_illegal(const HostCapabilities &host) {
+/* A reserved encoding is the illegal-instruction exit, at its own PC,
+ * after the block's earlier words retire: a DUPM, AND, ORR or EOR
+ * immediate the pseudocode rejects, and a shifted byte immediate. */
+void reserved_words_are_illegal(const HostCapabilities &host) {
   for (const std::uint32_t word :
-       {0x0420'0000U,   // add z0.b, z0.b, z0.b
-        0x0430'f000U,   // sqincb x0
-        0xa400'a000U,   // ld1b {z0.b}, p0/z, [x0]
-        0x2550'4000U,   // brkas p0.b, p0/z, p0.b
-        0x2558'c000U,   // pfirst
-        0x05c0'07e0U,   // dupm with a reserved immediate
+       {0x05c0'07e0U,   // dupm with a reserved immediate
+        0x0580'07e0U,   // and z0.s, z0.s, #imm with a reserved immediate
+        0x0500'07e0U,   // orr, likewise
+        0x0540'07e0U,   // eor, likewise
         0x2538'e000U}) { // dup z0.b, #0, lsl #8
+    /* The table may allocate the row (the bitmask immediates) or leave
+     * the word without one (the shifted byte immediate). */
     const auto *row = arm64::detail::find_sme_encoding(word);
-    if (row == nullptr ||
-        (row->non_streaming_requirement & arm64::detail::sme_feature_sve) ==
-            0U)
-      continue;
+    require(row == nullptr ||
+            arm64::jit::sve_word_reserved(row->form, word));
     const std::array program{ptrue(1, 0), word, svc};
     State initial{};
     initial.pc = code_base;
@@ -1224,16 +1226,18 @@ void outside_the_core_is_illegal(const HostCapabilities &host) {
   return false;
 }
 
-/* For SM=0, a row translates exactly when it is in the control core and the
- * profile, holds no SVE word, and accesses the FP state; elsewhere it is
- * the illegal exit. For SM=1, a translation is the same with the SVE profile
- * and without it, and so is one without an SVE word for SM=0. */
-void rows_translate_where_the_core_runs() {
+/* For SM=0, a row of the profile translates unless its encoding is
+ * reserved, and then holds no SVE word: a control-core row accesses the FP
+ * state, any other row ends the block in a call to the semantic library.
+ * A row the virtual CPU lacks, or one that needs ZA while it is clear, is
+ * the illegal exit. For SM=1, a translation is the same with the SVE
+ * profile and without it, and so is one without an SVE word for SM=0. */
+void rows_translate_where_the_profile_runs() {
   const auto with = sve_host();
   const auto with_sme = sve_sme_host();
   const auto without_sme = sve_sme_host(false);
-  const auto features = arm64::implemented_sve_features(with);
-  std::size_t translated = 0;
+  std::size_t inline_rows = 0;
+  std::size_t library_rows = 0;
   std::size_t illegal = 0;
   std::size_t streaming = 0;
   for (const auto &row : arm64::detail::sme_encodings) {
@@ -1241,29 +1245,41 @@ void rows_translate_where_the_core_runs() {
     const bool sve_row =
         (row.non_streaming_requirement & arm64::detail::sme_feature_sve) != 0U;
     if (sve_row) {
-      const bool reserved =
-          row.form == forms::dupm &&
-          !arm64::detail::decode_logical_immediate(
-              true, field(row.value, 17, 1), field(row.value, 11, 6),
-              field(row.value, 5, 6));
-      const bool runs =
-          arm64::jit::implements_sve_form(row.form) && !reserved &&
-          (row.non_streaming_requirement & features) ==
-              row.non_streaming_requirement &&
-          (row.mode & arm64::detail::sme_mode_za) == 0U;
-      for (const auto *host : {&with, &with_sme})
+      for (const auto *host : {&with, &with_sme}) {
+        const auto features = arm64::implemented_sve_features(*host);
+        const bool implemented =
+            (row.non_streaming_requirement & features) ==
+                row.non_streaming_requirement &&
+            (row.mode & arm64::detail::sme_mode_za) == 0U;
+        const bool runs =
+            implemented && !arm64::jit::sve_word_reserved(row.form, row.value);
+        const bool inlined = runs && arm64::jit::implements_sve_form(row.form);
+        /* Every implemented row is one the library covers. */
+        if (implemented && !arm64::detail::sve_semantics_covers(row)) {
+          std::fprintf(stderr, "row %08x form %u: the library lacks it\n",
+                       row.value, row.form);
+          require(false);
+        }
         for (const auto shape :
              {jit_test::LinkShape::unlinked, jit_test::LinkShape::tracked}) {
           const auto code = compile(*host, program, 0, shape);
           if (code.guest_illegal == runs || holds_sve_word(code) ||
-              (runs && !code.accesses_fp_state)) {
+              (inlined && !code.accesses_fp_state)) {
             std::fprintf(stderr, "row %08x form %u: illegal %d sve word %d\n",
                          row.value, row.form, code.guest_illegal,
                          holds_sve_word(code));
             require(false);
           }
         }
-      (runs ? translated : illegal) += 1U;
+        if (host != &with)
+          continue;
+        if (!runs)
+          ++illegal;
+        else if (inlined)
+          ++inline_rows;
+        else
+          ++library_rows;
+      }
     }
     for (const std::uint8_t mode :
          {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)}) {
@@ -1281,9 +1297,21 @@ void rows_translate_where_the_core_runs() {
       require(false);
     }
   }
-  std::printf("rows: %zu translate, %zu illegal; %zu streaming compared\n",
-              translated, illegal, streaming);
-  require(translated > 60U && illegal > 900U && streaming > 2000U);
+  std::printf("rows: %zu inline, %zu library, %zu illegal; %zu streaming "
+              "compared\n",
+              inline_rows, library_rows, illegal, streaming);
+  require(inline_rows > 60U && library_rows > 300U && streaming > 2000U);
+  /* Every immediate of the bitmask forms agrees with the decoder. */
+  for (const std::uint32_t base :
+       {0x0500'0000U, 0x0540'0000U, 0x0580'0000U, 0x05c0'0000U})
+    for (std::uint32_t immediate = 0; immediate < 0x2000U; immediate += 7U) {
+      const std::array program{base | (immediate << 5), svc};
+      const bool reserved =
+          !arm64::detail::decode_logical_immediate(
+              true, field(immediate, 12, 1), field(immediate, 6, 6),
+              field(immediate, 0, 6));
+      require(compile(with, program).guest_illegal == reserved);
+    }
   /* Blocks without an SVE word. */
   for (const auto &program : std::initializer_list<std::vector<std::uint32_t>>{
            {add_immediate(0, 1, 5), 0x8b02'0020U, svc},
@@ -1299,7 +1327,7 @@ void rows_translate_where_the_core_runs() {
 
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
-  rows_translate_where_the_core_runs();
+  rows_translate_where_the_profile_runs();
   if (!jit_available()) {
     std::printf("run-time checks skipped: the JIT does not run here\n");
     return 0;
@@ -1307,7 +1335,7 @@ int main() {
   for (const auto &[host, label] :
        {std::pair{sve_host(), "sve"}, std::pair{sve_sme_host(), "sve+sme"}}) {
     fp_access_and_live_marker(host);
-    outside_the_core_is_illegal(host);
+    reserved_words_are_illegal(host);
     whiles_match_at_the_bounds(host);
     fused_loop_counts_iterations(host);
     random_programs_match_the_reference(host, label);

@@ -535,12 +535,12 @@ The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
-and its FZ, DN, and FZ16 controls. The gadget engine is at `sve_support`
-`complete`, so its lane runs them with the guest-SVE policy on; the JIT
-lane skips them until it is `complete` too. The corpus's library lane runs
-them through the gadget engine with the SVE semantic library behind its
-illegal-instruction exit, and the library covers every form the encoding
-table routes. The `arm64-instruction-corpus-sve-native` tooling
+and its FZ, DN, and FZ16 controls. Both engines are at `sve_support`
+`complete`, so their lanes run them with the guest-SVE policy on. The
+corpus's library lane runs them through the gadget engine with the SVE
+semantic library behind its illegal-instruction exit, and the library covers
+every form the encoding table routes; the JIT lane is checked against the
+records directly. The `arm64-instruction-corpus-sve-native` tooling
 test re-derives their cases from their generator, and
 `arm64-sve-native-oracle` drives the native oracle with base A64 cases on any
 arm64 Mac, and with SVE cases where the host has SVE at that length.
@@ -643,10 +643,12 @@ that with the policy off the probe sees no SME.
 `arm64-sve-foundation` checks the guest-SVE policy, the host features each
 part of the SVE profile needs, the engines' support levels, the predicate
 mask form and the SM-change reset, with injected hosts. Unit binaries take
-that policy from their environment as well; until an engine implements SVE
-the suites must hold unchanged with `DARWIN_UML_GUEST_SVE=1`.
-`arm64-jit-sve-control` checks the JIT's control core on injected SVE hosts
-under either policy.
+that policy from their environment as well; the suites must hold unchanged
+with `DARWIN_UML_GUEST_SVE=1`.
+`arm64-jit-sve-control` checks the JIT's control core against the
+pseudocode on injected SVE hosts under either policy, and
+`arm64-jit-sve-forms` checks every row of the profile through the JIT
+against the semantic library on random states.
 
 ## x86 instruction conformance
 
