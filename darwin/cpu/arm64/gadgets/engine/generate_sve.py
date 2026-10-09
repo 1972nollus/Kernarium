@@ -1622,8 +1622,9 @@ def memory_form(row):
 # Gathers and scatters, and the first-fault gathers. One access per active
 # element, 2 (.D) or 4 (.S) of them, each translated alone: an address
 # whose page the TLB holds (sve_element_translate) is read or written at
-# once; a miss, a crossing, TBI, or an SP base leaves for the semantic
-# library through sve_library with the whole instruction undone. That is
+# once, untagged first under TBI (x17 holds the bits it clears); a miss or
+# a crossing leaves for the semantic library through sve_library with the
+# whole instruction undone. That is
 # exact because nothing but memory has changed by then and a scatter's
 # stores are idempotent: the library repeats them in order and stops at
 # the element that faults, as the hardware does, and a load writes its
@@ -1659,8 +1660,9 @@ def gather_gadget(memory, signed_index: bool) -> list:
             "ubfx x20, x8, #16, #16", "ubfx x13, x8, #32, #16"]
     if scalar or register_offset:
         body.append("lsr x14, x8, #48")
+    # x17: the address bits the top-byte-ignore mode clears.
     body += ["ldrb w10, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]",
-             f"cbnz w10, {slow}"]
+             "neg x17, x10", "and x17, x17, #0xff00000000000000"]
     if scalar:
         body += ["ldr x5, [_cpu, x13]", "add x6, _cpu, x14"]
     else:
@@ -1687,6 +1689,7 @@ def gather_gadget(memory, signed_index: bool) -> list:
         else:
             body += [f"ldr {'x7' if e == 8 else 'w7'}, [x6, #{byte}]",
                      "add x7, x7, x4"]
+        body.append("bic x7, x7, x17")
         body.append(f"sve_element_translate {page}, {second}, {m}, x7, "
                     f"{slow}")
         if not load:

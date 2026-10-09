@@ -1857,9 +1857,11 @@ private:
  * the machine's two mapped pages, some in the unmapped page after them, some
  * raw. The offset a form adds (a small immediate or register) leaves most
  * of them mapped. A clean run keeps them all within a kilobyte inside the
- * second page. */
+ * second page, and `tag` in the top byte of each (a .S element has no
+ * top byte to tag). */
 void fill_vector_base(arm64::CpuState &cpu, const arm64::detail::SmeMemory &memory,
-	std::uint32_t word, unsigned n, Random &random, bool clean)
+	std::uint32_t word, unsigned n, Random &random, bool clean,
+	std::uint64_t tag)
 {
 	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
 	constexpr std::size_t mapped = mapped_pages * page;
@@ -1885,6 +1887,7 @@ void fill_vector_base(arm64::CpuState &cpu, const arm64::detail::SmeMemory &memo
 		default:
 			break;
 		}
+		value |= tag;
 		for (unsigned byte = 0; byte < esize; ++byte)
 			bytes[element * esize + byte] =
 				static_cast<std::uint8_t>(value >> (8U * byte));
@@ -2004,17 +2007,11 @@ void memory_forms_match_the_library()
 			    decoded.row != &row)
 				continue;
 			/* A third of the runs are clean: a base in the middle of
-			 * the second page, no TBI, an addressable register base,
+			 * the second page, no TBI, an aligned SP,
 			 * predicates that are all-true or a prefix, and every
 			 * gather element addressing that page. Where the library
 			 * faults nowhere, such a run must stay on the gadgets. */
 			const bool clean = sample % 3 == 0;
-			const auto base_kind = operands[memory.base_operand].kind;
-			if (clean && base_kind ==
-				    arm64::detail::SmeOperandKind::gpr_or_sp &&
-			    arm64::detail::sme_operand_number(
-				    operands[memory.base_operand], word) == 31U)
-				continue;
 			const unsigned element_bytes =
 				arm64::detail::sme_memory_esize(memory, word) / 8U;
 			std::vector<std::byte> bytes(mapped);
@@ -2071,15 +2068,32 @@ void memory_forms_match_the_library()
 			}
 			if (clean)
 				base = code_base + page + page / 4U;
+			/* Every other clean run has the top byte ignored and
+			 * tagged addresses, which a gadget untags. An SP base is
+			 * never untagged, so its run keeps no tag. */
+			const bool tagged = clean && sample % 2 == 1 &&
+				base_register != 31U && (vector_base ?
+					element_bytes == 8U : true);
+			std::uint64_t tag = 0;
+			if (tagged) {
+				initial.tbi_enabled = true;
+				tag = (1U + random.next() % 254U) << 56;
+				if (!vector_base)
+					base |= tag;
+			}
 			if (!clean && random.next() % 4U == 0U) {
 				initial.tbi_enabled = true;
 				base |= (random.next() & 0xffU) << 56;
 			}
 			if (vector_base)
 				fill_vector_base(initial, memory, word, base_register,
-					random, clean);
+					random, clean, tag);
 			else if (base_register == 31U)
-				initial.sp = base & ~std::uint64_t{15};
+				/* Mostly aligned, as an SP base must be; a
+				 * misaligned one faults. */
+				initial.sp = (base & ~std::uint64_t{15}) |
+					(!clean && random.next() % 8U == 0U ?
+						random.next() % 16U : 0U);
 			else
 				initial.registers[base_register] = base;
 			if (vector_index)

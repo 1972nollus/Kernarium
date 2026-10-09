@@ -95,6 +95,23 @@ gadget sve_library
 	csel w0, w0, w9, eq
 	b uml_arm64_gadget_leave
 
+/* In front of a memory word whose base is SP: the access needs SP 16-byte
+ * aligned (the library raises the alignment fault), and an SP base is never
+ * untagged, so a top byte that is not clear would reach another address
+ * than the gadget's untagging does. A base that fails sends the word to the
+ * library through the memory gadget's own slow path: the gadget's stream is
+ * [entry][slots][immediate offset][library operand][PC]. */
+gadget sve_sp_check
+	ldr x8, [_cpu, #UML_GADGET_CPU_SP]
+	tst x8, #15
+	lsr x9, x8, #56
+	ccmp x9, #0, #0, eq
+	b.ne 1f
+	next_gadget
+1:
+	add _stream, _stream, #24
+	b NAME(uml_arm64_gadget_sve_library)
+
 /* v\reg := the element pattern of \esize bytes, 0xff in each element's
  * lowest byte: the bits of a predicate a consumer of that size reads. */
 .macro sve_element_pattern esize, reg

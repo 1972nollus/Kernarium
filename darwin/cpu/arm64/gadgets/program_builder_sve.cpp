@@ -45,6 +45,7 @@ extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries[];
 extern const std::uintptr_t uml_arm64_gadget_sve_generated_entries_end[];
 void uml_arm64_gadget_sve_generated_absent();
 void uml_arm64_gadget_sve_library();
+void uml_arm64_gadget_sve_sp_check();
 }
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
@@ -485,17 +486,16 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 	const auto *const memory = form.lowering == Lowering::memory ?
 		detail::sme_encoding_memory_of(detail::sme_encodings[index]) :
 		nullptr;
+	const auto start = context.words.size();
 	if (memory != nullptr) {
-		/* An SP base, whose 16-byte alignment the access checks, runs
-		 * through the library. */
+		/* An SP base is checked first (sve_sp_check). */
 		const auto *const operands = detail::sme_encoding_operands_of(
 			detail::sme_encodings[index]);
 		const auto &base = operands[memory->base_operand];
 		if (base.kind == SmeOperandKind::gpr_or_sp &&
 		    detail::sme_operand_number(base, word) == 31U)
-			return emit_library(context, index);
+			emit(context.words, uml_arm64_gadget_sve_sp_check);
 	}
-	const auto start = context.words.size();
 	emit(context.words, entry);
 	const auto operand = context.words.size();
 	if (form.slot_count != 0U)
@@ -512,6 +512,7 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
 			static_cast<std::uint64_t>(index));
 		emit(context.words, context.address);
+		/* Five words with the entry, as sve_sp_check relies on. */
 	}
 	if (!fused)
 		return DecodeResult::decoded;
