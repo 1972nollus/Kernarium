@@ -202,7 +202,7 @@
       },
       "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
       "script": "tools/arm64-tests/absent-feature-corpus.py",
-      "sha256": "08b742ac4ec2c54f894d2a069b223f2763888638befbb8a0a80cc502af361ca5",
+      "sha256": "8f113f2f561a71e07095b48cb061714640eeb7f157edbecf782eeb0045b32395",
       "sme_table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
         "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
@@ -278,6 +278,30 @@
       "file": "tests/unit/arm64/corpus/forced-cases.tsv",
       "sha256": "218c08a25f6fa3001f64a275e84eb5583c263a83747aa7f96fdd43ba7b2a78ef"
     },
+    "invalid_encoding": {
+      "classifier": {
+        "file": "tools/arm64-tests/invalid_encoding.py",
+        "sha256": "16add068ee0994217a90f2f716482f7fefbf00325fee0a2733381ab1af090cc0"
+      },
+      "decided_cases": 24096,
+      "illegal_cases": 34280,
+      "script": "tools/arm64-tests/invalid-encoding-corpus.py",
+      "sha256": "e74fef4a7e0165fb1f2491104388cab8ff1c0edca09ba18e869a2db502de3308",
+      "tables": [
+        {
+          "file": "tests/unit/arm64/a64_instruction_allocations.tsv",
+          "sha256": "725abe6ed1e8aa53088bd0302191be07dd4a6c01d69d5df7f3d5b2e5e17cb580"
+        },
+        {
+          "file": "tests/unit/arm64/a64_instruction_decode_partitions.tsv",
+          "sha256": "924288d535e6756769a31da404afd314a33c43e30b97c2991296ced268c90b1b"
+        },
+        {
+          "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
+          "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
+        }
+      ]
+    },
     "lse2_alignment": {
       "added_cases": 106,
       "removed_cases": 78,
@@ -300,9 +324,9 @@
         "FEAT_SME_F64F64",
         "FEAT_SME_I16I64"
       ],
-      "request_sha256": "ebd53ddeac2f15b35f6ab50ac9d52992c83c988dcffb89acefa752ff86207707",
+      "request_sha256": "51b09afd774c8f9f43a9384a75c3d13027796a79e046ccc90d220adc1d8f16dc",
       "script": "tools/arm64-tests/sme-native-corpus.py",
-      "sha256": "2c6243d6965d29b3e88c8c6a36645505feb43244ac72b58dd7f7bccefe408bca",
+      "sha256": "0f272b4b1c6e84e95bc445698f52bd8732f5e560cbab86484175aa8f903a86eb",
       "svl": 64,
       "table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
