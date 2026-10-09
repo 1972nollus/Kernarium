@@ -15,6 +15,7 @@
 #include "scratch_backing.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -307,6 +308,49 @@ void test_mapping_and_unmapping_pages()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* exit_mmap() unmaps a task's whole user range in one call, 64 TiB or more.
+ * The cost follows the pages mapped, not the range: a walk of every page of
+ * it takes half a minute per exit. The pages inside go, those outside stay,
+ * and the code range spans the translatable pages that went. */
+void test_unmapping_a_sparse_user_range_costs_by_the_pages_mapped()
+{
+	constexpr unsigned long generation = 509;
+	constexpr unsigned long below = 0x140'0000;
+	constexpr unsigned long range_start = DARWIN_UML_NATIVE_ADDRESS_END;
+	constexpr unsigned long range_end = DARWIN_UML_GUEST_ADDRESS_LIMIT;
+	constexpr unsigned long inside = range_start + page;
+	constexpr unsigned long above = range_end / 2;
+	ScratchBacking backing{backing_name, 4 * page};
+	map(generation, below, backing, 0, 1, rwx, 1);
+	map(generation, inside, backing, page, 1, rwx, 1);
+	map(generation, above, backing, 2 * page, 1, rx, 1);
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	Observer seen{generation};
+
+	const auto started = std::chrono::steady_clock::now();
+	unmap(generation, range_start, (range_end - range_start) / page);
+	require(std::chrono::steady_clock::now() - started <
+		std::chrono::seconds{5});
+	seen.consume();
+	require_code(seen, inside, (above + page - inside) / page);
+
+	/* What was below stays mapped, and what was inside is gone. */
+	unmap(generation, inside, 1);
+	unmap(generation, above, 1);
+	seen.consume();
+	require_code(seen, 0, 0);
+	unmap(generation, below, 1);
+	seen.consume();
+	require_code(seen, below, 1);
+
+	/* An empty generation costs the same: nothing to find. */
+	const auto empty_started = std::chrono::steady_clock::now();
+	unmap(generation, range_start, (range_end - range_start) / page);
+	require(std::chrono::steady_clock::now() - empty_started <
+		std::chrono::seconds{5});
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 /* A batch judges each page against the mapping it replaces, once, and a
  * change that does not touch a translation costs a reader nothing. */
 void test_a_batch_publishes_what_it_changes()
@@ -446,6 +490,7 @@ int main()
 	test_losing_execute_publishes_the_pages_that_lose_it();
 	test_remapping_an_executable_page_publishes_it();
 	test_mapping_and_unmapping_pages();
+	test_unmapping_a_sparse_user_range_costs_by_the_pages_mapped();
 	test_a_batch_publishes_what_it_changes();
 	test_a_flush_publishes_the_whole_address_space();
 	test_discarding_a_stale_page_publishes_it();

@@ -1472,18 +1472,30 @@ private:
 		std::uint64_t address,
 		std::uint64_t length)
 	{
+		/* exit_mmap() unmaps the whole user range of a generation that has
+		 * few pages mapped, often none: walk the table when the range is
+		 * wider than it, as the batch path does, instead of every page. */
+		const auto end = address + length;
+		const bool sparse = length / page_size > state.mappings.size();
 		bool changed = false;
 		CodeSpan code;
-		for (std::uint64_t position = 0; position < length;
-		     position += page_size) {
-			auto mapping = state.mappings.find(address + position);
-			if (mapping == state.mappings.end())
-				continue;
+		const auto note = [&](std::uint64_t page, const Mapping &mapping) {
 			changed = true;
-			if (can_hold_translation(mapping->second)) {
-				code.add(address + position);
-				mapping->second.backing->retire_code_page(
-					mapping->second.offset);
+			if (can_hold_translation(mapping)) {
+				code.add(page);
+				mapping.backing->retire_code_page(mapping.offset);
+			}
+		};
+		if (sparse) {
+			for (const auto &[page, mapping] : state.mappings)
+				if (page >= address && page < end)
+					note(page, mapping);
+		} else {
+			for (std::uint64_t position = 0; position < length;
+			     position += page_size) {
+				auto mapping = state.mappings.find(address + position);
+				if (mapping != state.mappings.end())
+					note(address + position, mapping->second);
 			}
 		}
 		if (!changed)
@@ -1491,9 +1503,19 @@ private:
 		const std::array changes{
 			MappingChangePlan{address, length, code}};
 		PendingMappingChanges pending{state, changes};
-		for (std::uint64_t position = 0; position < length;
-		     position += page_size)
-			state.mappings.erase(address + position);
+		if (sparse) {
+			for (auto page = state.mappings.begin();
+			     page != state.mappings.end();) {
+				if (page->first >= address && page->first < end)
+					page = state.mappings.erase(page);
+				else
+					++page;
+			}
+		} else {
+			for (std::uint64_t position = 0; position < length;
+			     position += page_size)
+				state.mappings.erase(address + position);
+		}
 		pending.commit();
 		return true;
 	}
