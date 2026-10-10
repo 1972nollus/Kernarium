@@ -37,6 +37,20 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME rootfs-starter-release-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_starter_release.py
+    LABELS rootfs;audit
+    TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME rootfs-elf-audit
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_elf_audit.py
+    LABELS rootfs;audit
+    TIMEOUT 60)
+
+uml_add_tooling_test(
     NAME rootfs-boot-base-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_boot_base.py

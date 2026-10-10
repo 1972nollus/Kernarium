@@ -1,8 +1,8 @@
 # Mainline Linux starter images
 
 This directory owns the producer for writable mainline Linux starter disks
-and for the guest boot base archives. The products are two base archives and
-three raw GPT disks:
+and for the guest boot base archives. The default products are two base
+archives and three raw GPT disks:
 
 - `uml-boot-base-aarch64.cpio.gz` and `uml-boot-base-x86_64.cpio.gz` are the
   static BusyBox and e2fsprogs base every Linux guest boots through, with a
@@ -58,17 +58,20 @@ remains a boot error.
 
 The producer runs natively on arm64 Linux and requires `sudo`, Buildroot's
 ordinary build prerequisites (including `cpio` and `bc`), `debootstrap`,
-`e2fsprogs`, and GPT fdisk. It downloads pinned Buildroot and Alpine inputs and
-current Debian 13 packages. A container host is sufficient only when its root
-can create character device nodes and mount `proc` and `sysfs` inside the work
-tree, because `debootstrap` and the chroot package installs need both; the
-producer has no fakeroot path for a container that forbids them.
+`e2fsprogs`, and GPT fdisk, plus `qemu-user` for the armhf image. It
+downloads pinned Buildroot and Alpine inputs and current Debian 13 packages. A
+container host is sufficient only when its root can create character device
+nodes and mount `proc` and `sysfs` inside the work tree, because `debootstrap`
+and the chroot package installs need both; the producer has no fakeroot path
+for a container that forbids them.
 The canonical entry point is:
 
 ```sh
 tools/rootfs/starter/build-all.sh \
   --work /path/to/work --output /path/to/release
 ```
+
+`--product NAME` (repeatable) builds only the named products.
 
 `release-manifest.json` and the adjacent package inventories record the exact
 inputs and results. Build trees and release artifacts stay outside the source
@@ -99,3 +102,42 @@ explicit legacy-image launch. An ext4 filesystem selects the starter policy
 unless `--image-profile legacy` names an ext4 derivative of the unified EROFS
 image, which keeps that image's unpartitioned root, SDDM session, getty masks
 and [seed](../boot-ramdisk/README.md#harness-session).
+
+## The armhf image
+
+`debian-13-minimal-armhf.img` is the 32-bit Arm twin of
+`debian-13-minimal.img`, for AArch32 guests. It is built only on request
+(`--product debian-13-minimal-armhf`), into a release of its own; the default
+release does not hold it. It installs the same package list through
+`debootstrap` alone, so no ARM program needs the network, and the twin has one
+package more: `adduser`, which `debootstrap` resolves from a dependency
+alternative where apt keeps the installed `systemd-sysusers`.
+
+The first stage runs natively. The second stage, which runs the packages'
+maintainer scripts, is the only ARM code the build runs, and
+[`armhf-run.sh`](armhf-run.sh) runs it under Debian's `qemu-user` with no
+network. It never uses the host's `binfmt_misc`, which a container usually
+cannot register in: the command runs in new user, mount, PID and network
+namespaces, with a private `binfmt_misc` instance (Linux 6.7 or newer) that
+holds the one `qemu-arm` format and ends with the command. `armhf-run.sh
+--check` is the producer's preflight.
+
+Inputs are pinned by the Debian archive's own chain, checked by
+[`debootstrap-pins.py`](debootstrap-pins.py): the signed `InRelease` names the
+`Packages` index, which names every downloaded package. The release manifest
+records the index digests and the download totals, and
+`debian-13-minimal-armhf.img.packages.tsv` lists each installed package with
+its version, architecture, size and SHA-256.
+
+[`audit-elf.py`](audit-elf.py) checks every ELF file of the image against the
+guest page profiles `--armhf-profiles` names (`16k,4k` or `4k`; both by
+default), and `debian-13-minimal-armhf.img.elf.tsv` reports each file. A file
+that a required profile cannot map fails the build. Stock Debian armhf does
+not meet `16k`: `find`, `grep`, `hostname`, `xargs`, and the libraries
+`libacl`, `libbsd`, `libbz2`, `libdb`, `libelf`, `libgmp` and `libz` are laid
+out for 4 KiB pages only, and systemd's shared library needs `libacl` and
+`libz`. The image is therefore built with `--armhf-profiles 4k`, and its
+manifest entry records `page_profiles` as `["4k"]`.
+[`armhf-verify.sh`](armhf-verify.sh) then runs the image's systemd, getty and
+core programs under `qemu-arm` and resolves the libraries of every dynamic
+program.

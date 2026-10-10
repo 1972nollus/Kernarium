@@ -1857,6 +1857,11 @@ constexpr const char *report_child_variable = "UML_GADGET_SVE_REPORT_CHILD";
 [[noreturn]] void report_child()
 {
 	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	/* A process that ran no gadget executor, as one running only the JIT
+	 * does: it exits normally, so the exit handler runs, and must leave
+	 * the file alone. */
+	if (std::strcmp(std::getenv(report_child_variable), "idle") == 0)
+		std::exit(0);
 	{
 		const std::array code{frecpx, svc};
 		Machine machine{code, sve_host()};
@@ -1913,8 +1918,22 @@ void library_exit_report_survives_exit()
 	require(lines.size() >= 3U);
 	require(lines[0] == "# SVE library exits: total 1");
 	require(lines[2].ends_with("\t1\t1\t1"));
+	/* A process that ran no gadget executor leaves another engine's report
+	 * alone: the JIT writes the same file in the same format. */
+	{
+		std::ofstream marker{report, std::ios::trunc};
+		marker << "kept\n";
+	}
+	require(run_report_child(report, "idle"));
+	std::ifstream kept{report};
+	lines.clear();
+	while (std::getline(kept, line))
+		lines.push_back(line);
+	kept.close();
 	unlink(report.c_str());
-	std::printf("the library-exit report survives _Exit\n");
+	require(lines.size() == 1U && lines[0] == "kept");
+	std::printf("the library-exit report survives _Exit and leaves "
+		    "another engine's alone\n");
 }
 
 /* Every generated form agrees with the semantic library: random words of

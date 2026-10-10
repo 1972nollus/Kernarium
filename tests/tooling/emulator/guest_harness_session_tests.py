@@ -321,6 +321,59 @@ class AttachedGuestSessionTests(unittest.TestCase):
         guest.close()
         self.assertFalse(staging.exists(), "the staged guest files outlived the run")
 
+    def test_an_ext4_root_and_no_guest_network_reach_the_launcher(self) -> None:
+        record = self.recording_emulator()
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/images/rootfs.ext4"),
+            memory="2G",
+            workspace="tmpfs",
+            overlay_shell=True,
+            root_type="ext4",
+            network="image",
+        )
+        self.addCleanup(guest.close)
+        self.wait_for(record / "done")
+        self.assertEqual(
+            (record / "file-0").read_text().splitlines(),
+            [
+                "UML_BOOT_ENTRY=/usr/local/libexec/uml-session",
+                "UML_BOOT_ROOT_TYPE=ext4",
+            ],
+        )
+        self.assertEqual(
+            (record / "file-2").read_text().splitlines(),
+            [
+                "UML_SESSION_ENTRY=/bin/sh",
+                "UML_SESSION_RESOLVER=image",
+                "UML_SESSION_RUNTIME_MOUNTS=1",
+                "UML_SESSION_NETWORK=image",
+                "UML_SESSION_WORKSPACE=tmpfs",
+            ],
+        )
+        arguments = (record / "arguments").read_text().splitlines()
+        self.assertIn("ubd0c=/images/rootfs.ext4", arguments)
+
+    def test_root_and_network_options_are_validated(self) -> None:
+        for options in (
+            {"root_type": "ext3"},
+            {"network": "bridge"},
+        ):
+            with (
+                self.subTest(options=options),
+                self.assertRaises(ValueError),
+                self.private_temporary_directory(),
+            ):
+                guest_support.Guest(
+                    emulator=self.emulator,
+                    rootfs=pathlib.Path("/images/rootfs.erofs"),
+                    memory="2G",
+                    workspace="tmpfs",
+                    overlay_shell=True,
+                    **options,
+                )
+        self.assertEqual(list(self.temporary.iterdir()), [])
+
     def test_a_bare_shell_session_names_only_its_entry(self) -> None:
         self.assertEqual(
             guest_support.session_parameters(

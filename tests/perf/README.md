@@ -37,6 +37,31 @@ python3 tests/perf/run_guest_geekbench.py \
   --console-log console.log
 ```
 
+A 32-bit Arm guest runs Geekbench 5's `geekbench_armv7`, which the workload
+finds by name beside Geekbench 6's `geekbench6` and runs with the same options.
+The armhf starter disk carries no Geekbench: [`make_geekbench_images.py`](make_geekbench_images.py) packages the
+release, checked by the SHA-256 of its
+program, into images that stay local and that the tool refuses to write into
+the repository outside `.build`. It makes two kinds. `payload` is the EROFS
+image `--payload` attaches, with `geekbench_armv7` and `geekbench.plar` at its
+root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
+cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
+which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
+installs the release under `/opt/geekbench`, for a device with no second disk
+such as the iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
+passes `--no-network`, and a measurement never needs a network anyway:
+
+```sh
+python3 tests/perf/make_geekbench_images.py payload \
+  --release-dir RELEASE --program-sha256 DIGEST --output .build/gb5.erofs
+python3 tests/perf/make_geekbench_images.py rootfs \
+  --starter-image debian-13-minimal-armhf.img --output .build/armhf.ext4
+python3 tests/perf/run_guest_geekbench.py --emulator EMULATOR \
+  --rootfs .build/armhf.ext4 --root-type ext4 --no-network \
+  --payload .build/gb5.erofs --payload-sha256 PAYLOAD-DIGEST \
+  --console-log console.log
+```
+
 On a physical device, `run_ios_device_workload.py` runs the same script, or
 any POSIX shell script with `--script` and the files it reads with `--file`,
 in Kernarium. The script and its files reach the guest as a boot payload,
