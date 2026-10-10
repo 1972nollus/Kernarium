@@ -204,22 +204,28 @@ private:
 	::uml::cpu::arm64::gadgets::GadgetExecutor executor_;
 };
 
-/* The decoder's view of the program, to skip a case that needs a level the
- * engine does not implement. */
+/* The decoder's view of the program, to skip a case that needs a level, or an
+ * optional extension (half-precision arithmetic, say), the engine does not
+ * implement: the engine decodes against its level and no optional feature, so
+ * a word the whole profile accepts and the engine's profile rejects is above
+ * the engine. */
 [[nodiscard]] bool needs_higher_level(const corpus::Case &test,
 				      decode::Level level)
 {
 	const auto profile = decode::Profile::at(decode::Level::complete);
+	const decode::Profile engine{level, decode::FeatureSet{}};
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
 	decode::ItState it;
 	for (std::size_t half = 0; half < test.halves.size();) {
 		decode::Instruction instruction;
+		decode::Instruction known;
 		if (!thumb) {
 			if (half + 1 >= test.halves.size())
 				break;
-			instruction = decode::decode_a32(
-				std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half],
-				profile);
+			const std::uint32_t word =
+				std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
+			instruction = decode::decode_a32(word, profile);
+			known = decode::decode_a32(word, engine);
 			half += 2;
 		} else {
 			const std::uint16_t first = test.halves[half];
@@ -230,11 +236,13 @@ private:
 				std::uint32_t{first} << 16 | test.halves[half + 1] :
 				std::uint32_t{first} << 16;
 			instruction = decode::decode_thumb(word, it, profile);
+			known = decode::decode_thumb(word, it, engine);
 			it = instruction.next_it;
 			half += length / 2;
 		}
 		if (instruction.legal() &&
-		    static_cast<int>(instruction.info().level) > static_cast<int>(level))
+		    (static_cast<int>(instruction.info().level) > static_cast<int>(level) ||
+		     !known.legal()))
 			return true;
 	}
 	return false;

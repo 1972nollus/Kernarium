@@ -25,6 +25,10 @@ set the standard FPSCR value and restore the guest's.
 
 from __future__ import annotations
 
+import re
+
+import a32_neon
+
 # The families this module adds, after generate_a32.py's own.
 FAMILIES = [
     "vfp3",       # VADD VSUB VMUL VDIV VNMUL; aux bit 0 = double
@@ -37,6 +41,7 @@ FAMILIES = [
     "vfpsys",     # VMRS VMSR
     "vfpmem",     # VLDR VSTR
     "vfpblock",   # VLDM VSTM VPUSH VPOP FLDMX FSTMX
+    "neon",       # Advanced SIMD data processing; sub = a32_neon.py group
 ]
 
 # Mnemonics whose forms are VFP when the encoding is the A2/T2 one (A1/T1 is
@@ -125,6 +130,12 @@ def plan_of_simd(name: str, mnemonic: str):
         stem = name.rsplit("_", 1)[0]
         if stem in core:
             return ("vfpcore", core[stem], 0)
+    # The structure loads and stores are the semantic library's.
+    if re.match(r"V(LD|ST)[1-4]_", name):
+        return ("library", 0, 0)
+    neon = a32_neon.plan_of(name)
+    if neon is not None:
+        return ("neon", neon[0], neon[1])
     return None
 
 
@@ -570,6 +581,7 @@ def emit_vfp_memory(asm) -> None:
 
 
 def emit(asm) -> None:
+    a32_neon.emit(asm)
     emit_vfp_arithmetic(asm)
     emit_vfp_immediate(asm)
     emit_vfp_convert(asm)
@@ -585,6 +597,8 @@ def header_tables(names: set[str]) -> list[str]:
         return f"G::{name}" if name in names else "G::count"
 
     out = []
+    out += a32_neon.header_tables(names)
+    out.append("")
     out.append("/* VFP: [operation][double]. */")
     out.append("inline constexpr G kVfp3[5][2] = {")
     for op in VFP3_NAMES:

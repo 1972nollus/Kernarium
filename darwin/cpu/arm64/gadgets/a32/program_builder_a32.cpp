@@ -173,6 +173,9 @@ namespace detail {
 
 void Translator::close_run()
 {
+	/* The standard FPSCR value of Advanced SIMD floating point never spans
+	 * runs: it ends in the run it was opened in. */
+	close_standard_fpcr();
 	if (!run_active_)
 		return;
 	words_[run_operand_] =
@@ -183,7 +186,8 @@ void Translator::close_run()
 void Translator::begin_instruction(unsigned cond)
 {
 	if (cond >= 14) {
-		close_run();
+		if (run_active_)
+			close_run();
 		return;
 	}
 	if (run_active_ && run_cond_ == cond && !run_dirty_)
@@ -275,6 +279,13 @@ void Translator::emit_fallthrough()
 		push_external(uml_arm64_gadget_interrupt);
 		push(next);
 	}
+}
+
+void Translator::emit_illegal()
+{
+	close_standard_fpcr();
+	push_external(uml_arm64_gadget_illegal);
+	push(key_);
 }
 
 /* An instruction the profile cannot run ends the block at the illegal
@@ -1107,6 +1118,8 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::vfpmem:
 	case Family::vfpblock:
 		return emit_vfp(in, plan);
+	case Family::neon:
+		return emit_neon(in, plan);
 	case Family::udf:
 	case Family::none:
 		break;
@@ -1192,6 +1205,7 @@ BuildOutput Translator::run()
 			}
 			if (cond < 14) {
 				begin_instruction(cond);
+				close_standard_fpcr();
 				push_external(uml_arm64_gadget_illegal);
 				push(key_);
 				it_ = it_.advance();
@@ -1217,6 +1231,8 @@ BuildOutput Translator::run()
 				close_run();
 			else
 				begin_instruction(in.cond);
+			if (plan.family != Family::neon)
+				close_standard_fpcr();
 			const Result result = emit(in, plan);
 			if (result.flags)
 				flags_written();

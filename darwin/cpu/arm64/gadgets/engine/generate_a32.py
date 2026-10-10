@@ -1244,7 +1244,7 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             f"G::ldm_{c}" for c in range(1, 17)) + "};",
         "inline constexpr G kStm[17] = {G::count, " + ", ".join(
             f"G::stm_{c}" for c in range(1, 17)) + "};", ""]
-    out += a32_simd.header_tables(set(names))
+    out += a32_simd.header_tables(index)
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))
 

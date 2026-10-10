@@ -143,6 +143,15 @@ private:
 	Result emit_vfp_convert(const Instruction &in, const FormPlan &plan);
 	Result emit_vfp_core(const Instruction &in, const FormPlan &plan);
 	Result emit_vfp_memory(const Instruction &in, const FormPlan &plan);
+	/* Advanced SIMD: program_builder_a32_neon.cpp. */
+	Result emit_neon(const Instruction &in, const FormPlan &plan);
+	/* The standard FPSCR value for Advanced SIMD floating point is open from
+	 * the first such instruction of a run to the next instruction of any
+	 * other kind, the end of the run or the end of the block. */
+	void open_standard_fpcr();
+	void close_standard_fpcr();
+	/* The illegal-instruction exit at the current instruction. */
+	void emit_illegal();
 	void emit_indirect(std::uintptr_t source, bool interwork, bool returns);
 	void emit_direct_exit(std::uint64_t target);
 	void emit_fallthrough();
@@ -180,6 +189,7 @@ private:
 	/* The block holds an instruction that reads or writes V (and so is
 	 * entered through the FP state link). */
 	bool uses_fp_{};
+	bool standard_fpcr_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets::a32::detail
