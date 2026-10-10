@@ -14,6 +14,7 @@
         $<TARGET_OBJECTS:uml_arm64_gadget_executor>
         $<TARGET_OBJECTS:uml_cpu_executable_memory>
         $<TARGET_OBJECTS:uml_arm64_jit>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_runtime_context>)
@@ -273,6 +274,14 @@
     endforeach()
 
     uml_add_arm64_unit_test(jit_fp_link_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
+    # The JIT's AArch32 support (cpu/arm64/jit/a32).
+    uml_add_arm64_unit_test(jit_a32_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_data_processing WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_memory WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     # The JIT's SME support (cpu/arm64/jit, sme_support).

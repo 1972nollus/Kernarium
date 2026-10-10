@@ -25,6 +25,10 @@
 
 namespace uml::cpu::arm64 {
 
+namespace jit::a32 {
+struct Result;
+}
+
 using ::uml::memory::Access;
 using ::uml::memory::StaticGuestMemory;
 using ::uml::memory::Tlb;
@@ -52,6 +56,11 @@ public:
   [[nodiscard]] Event run_block(CpuState &cpu, StaticGuestMemory &memory,
                                 unsigned long generation,
                                 std::size_t &executed);
+  /* As run_block, for the translation the AArch32 key in cpu.pc names
+   * (jit_executor_a32.cpp). */
+  [[nodiscard]] Event run_a32_block(CpuState &cpu, StaticGuestMemory &memory,
+                                    unsigned long generation,
+                                    std::size_t &executed);
   [[nodiscard]] bool preempted() const noexcept;
   void set_single_step(bool enabled) noexcept { single_step_ = enabled; }
   [[nodiscard]] std::uint64_t fault_address() const noexcept;
@@ -198,6 +207,40 @@ private:
                               bool guest_illegal
   );
   void clear_cache() noexcept;
+
+  // The AArch32 entry (jit_executor_a32.cpp). The guest bytes a block reads
+  // are fetched as halfwords or words from the key's address; a T32 block
+  // counts its saved halfwords apart from its instructions.
+  [[nodiscard]] std::size_t fetch_a32_bytes(StaticGuestMemory &memory,
+                                            std::uint64_t key,
+                                            std::span<std::byte> bytes);
+  CompiledBlock &store_native_a32(
+      unsigned long generation, std::uint64_t changes, std::uint64_t key,
+      JitFunction function, std::uintptr_t internal_entry,
+      JitBlockLink *target_link, std::span<const JitRelocation> relocations,
+      std::span<const std::uint32_t> guest_elements,
+      std::shared_ptr<const std::uint32_t[]> saved_guest_words,
+      std::size_t instruction_count, std::size_t units,
+      std::uint64_t memory_write_mask, std::uint64_t direct_memory_write_mask,
+      bool accesses_fp_state, bool link_target_safe, bool native_fp,
+      bool guest_illegal);
+  [[nodiscard]] CompiledBlock *install_shared_translation_a32(
+      unsigned long generation, std::uint64_t changes, std::uint64_t key,
+      std::span<const std::uint32_t> guest_elements);
+  [[nodiscard]] std::shared_ptr<const SharedTranslation>
+  publish_shared_translation_a32(std::uint64_t key,
+                                 std::span<const std::uint32_t> guest_elements,
+                                 const jit::a32::Result &result);
+  [[nodiscard]] JitFunction
+  tracked_store_function_a32(CompiledBlock &block, StaticGuestMemory &memory);
+  [[nodiscard]] std::optional<SingleInstructionTranslation>
+  translate_a32_single(std::uint64_t key, std::span<const std::byte> bytes,
+                       std::uint8_t itstate, bool track_direct_stores);
+  [[nodiscard]] Event run_a32_single(CpuState &cpu, StaticGuestMemory &memory,
+                                     std::size_t &executed);
+  [[nodiscard]] Event run_deferred_a32_exclusive(CpuState &cpu,
+                                                 std::uint32_t word,
+                                                 std::size_t &executed);
 
   struct LinkContext final {
     unsigned long generation{};

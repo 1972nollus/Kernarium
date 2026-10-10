@@ -2,7 +2,7 @@
 #include "cpu/arm64/engine_adapters.hpp"
 
 #include "cpu/arm64/engine_execution.hpp"
-#include "cpu/arm64/jit/jit_a32_support.hpp"
+#include "cpu/arm64/jit/a32/a32_loop.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_executor_pool.hpp"
@@ -54,7 +54,23 @@ public:
 	[[nodiscard]] ExecutionResult run_aarch32(
 		ExecutionRequest &request) noexcept override
 	{
-		return run_translated_aarch32<jit::a32_support>(request);
+		if (!native_jit_available())
+			return {.reason = ExitReason::fatal};
+		try {
+			if (session_ == 0)
+				return standalone_ == nullptr ?
+					ExecutionResult{.reason = ExitReason::fatal} :
+					jit::a32::run_a32_loop(*standalone_, request);
+			if (!pool_configuration_admitted_)
+				return {.reason = ExitReason::fatal};
+			auto borrowed = borrow_jit_executor(session_, preferred_slot_);
+			if (!borrowed)
+				return {.reason = ExitReason::fatal};
+			preferred_slot_ = borrowed.slot();
+			return jit::a32::run_a32_loop(borrowed.executor(), request);
+		} catch (...) {
+			return {.reason = ExitReason::fatal};
+		}
 	}
 
 private:
