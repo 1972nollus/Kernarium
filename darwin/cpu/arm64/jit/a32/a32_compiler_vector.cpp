@@ -140,6 +140,8 @@ A32Compiler::Flow A32Compiler::emit_vector(const OpInfo &info) {
     exit_illegal();
     return Flow::end;
   }
+  if (vector_memory(v.mnemonic))
+    return emit_vector_memory(v);
   if (v.vfp)
     return emit_vfp(info, v);
   return emit_neon(v);

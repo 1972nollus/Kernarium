@@ -321,6 +321,7 @@ set(_uml_cpu_jit_a32_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon_misc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon_shift.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_vmem.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_operations.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_transfer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_vector_operations.cpp)

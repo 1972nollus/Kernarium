@@ -73,11 +73,13 @@ constexpr Spelled variants[] = {
   }
 }
 
-/* Mnemonics whose A2 encodings are the NEON by-scalar forms. */
+/* Mnemonics whose A2 encodings are NEON: the by-scalar forms, the 16-bit
+ * modified immediates and the floating-point compares. */
 [[nodiscard]] bool neon_scalar_only(VM mnemonic) noexcept {
   switch (mnemonic) {
   case VM::vqdmulh: case VM::vqrdmulh: case VM::vqdmull: case VM::vqdmlal:
-  case VM::vqdmlsl:
+  case VM::vqdmlsl: case VM::vbic: case VM::vorr: case VM::vmvn:
+  case VM::vceq: case VM::vcge: case VM::vcgt:
     return true;
   default:
     return false;
@@ -177,29 +179,27 @@ const VInfo &vector_info(aarch32::Form form) noexcept {
   return table()[static_cast<std::size_t>(form)];
 }
 
-bool vector_lowered(aarch32::Form form) noexcept {
-  const auto &v = vector_info(form);
-  if (v.mnemonic == VM::none)
-    return false;
-  if (v.vfp) {
-    switch (v.mnemonic) {
-    case VM::vabs: case VM::vneg: case VM::vsqrt: case VM::vadd: case VM::vsub:
-    case VM::vmul: case VM::vdiv: case VM::vnmul: case VM::vmla: case VM::vmls:
-    case VM::vnmla: case VM::vnmls: case VM::vfma: case VM::vfms:
-    case VM::vfnma: case VM::vfnms: case VM::vcmp: case VM::vcmpe:
-    case VM::vcvt: case VM::vcvtb: case VM::vcvtt: case VM::vcvtr:
-    case VM::vmov: case VM::vmrs: case VM::vmsr:
-      return true;
-    default:
-      return false;
-    }
-  }
-  switch (v.mnemonic) {
-  case VM::vld1: case VM::vld2: case VM::vld3: case VM::vld4: case VM::vst1:
-  case VM::vst2: case VM::vst3: case VM::vst4:
-    return false;
-  default:
+bool vector_memory(VM mnemonic) noexcept {
+  switch (mnemonic) {
+  case VM::vldr: case VM::vstr: case VM::vldm: case VM::vldmdb:
+  case VM::vstm: case VM::vstmdb: case VM::fldmiax: case VM::fldmdbx:
+  case VM::fstmiax: case VM::fstmdbx: case VM::vld1: case VM::vld2:
+  case VM::vld3: case VM::vld4: case VM::vst1: case VM::vst2: case VM::vst3:
+  case VM::vst4:
     return true;
+  default:
+    return false;
+  }
+}
+
+bool vector_store(VM mnemonic) noexcept {
+  switch (mnemonic) {
+  case VM::vstr: case VM::vstm: case VM::vstmdb: case VM::fstmiax:
+  case VM::fstmdbx: case VM::vst1: case VM::vst2: case VM::vst3:
+  case VM::vst4:
+    return true;
+  default:
+    return false;
   }
 }
 

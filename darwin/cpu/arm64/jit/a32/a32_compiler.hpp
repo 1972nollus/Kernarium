@@ -286,6 +286,18 @@ private:
   void restore_fp_for_exit();
   [[nodiscard]] std::uint32_t neon_word() const noexcept;
 
+  // Vector memory (a32_compiler_vmem.cpp).
+  [[nodiscard]] Flow emit_vector_memory(const VInfo &v);
+  [[nodiscard]] Flow emit_vector_register_transfer(bool store);
+  [[nodiscard]] Flow emit_vector_block_transfer(bool store);
+  [[nodiscard]] Flow emit_vector_structure(const VInfo &v);
+  [[nodiscard]] Flow vmem_through_helper(bool store);
+  void vmem_granule(bool load, unsigned log2_size, unsigned index,
+                    unsigned offset);
+  void vmem_run(bool load, bool single, unsigned first, unsigned count);
+  void vmem_d_from(unsigned dreg, unsigned source, unsigned half);
+  void vmem_d_into(unsigned dreg, unsigned scratch, unsigned half);
+
   // VFP (a32_compiler_vfp.cpp).
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
   [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);

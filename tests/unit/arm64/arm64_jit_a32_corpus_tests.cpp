@@ -218,7 +218,7 @@ std::uint32_t apsr_of(const arm64::CpuState &cpu) {
 }
 
 struct Totals final {
-  std::size_t run = 0, skipped = 0, pending = 0, failed = 0, retried = 0;
+  std::size_t run = 0, skipped = 0, failed = 0, retried = 0;
   std::map<std::string, std::size_t> failed_forms;
 };
 
@@ -419,35 +419,22 @@ bool within_level(const Case &test, const dec::Profile &profile) {
   return true;
 }
 
-/* Whether the compiler lowers every simd-level instruction of the program. */
-bool lowered(const Case &test, const dec::Profile &profile) {
-  const bool thumb = test.flags & kFlagThumb;
-  dec::ItState it;
-  for (unsigned half = 0; half < test.halves.size();) {
-    dec::Instruction instruction;
-    if (!thumb) {
-      if (half + 1 >= test.halves.size())
-        break;
-      instruction = dec::decode_a32(
-          std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
-      half += 2;
-    } else {
-      const std::uint16_t first = test.halves[half];
-      const unsigned length = dec::thumb_length(first);
-      if (half + length / 2 > test.halves.size())
-        break;
-      const std::uint32_t word = length == 4
-                                     ? std::uint32_t{first} << 16 | test.halves[half + 1]
-                                     : std::uint32_t{first} << 16;
-      instruction = dec::decode_thumb(word, it, profile);
-      it = instruction.next_it;
-      half += length / 2;
+/* The compiler classifies every vector form the simd level has, so that none
+ * reaches the illegal-instruction exit for want of lowering. */
+void require_vector_forms_classified() {
+  using ::uml::cpu::arm64::jit::a32::Op;
+  using ::uml::cpu::arm64::jit::a32::VM;
+  for (std::size_t index = 0; index < dec::kFormCount; ++index) {
+    const auto form = static_cast<dec::Form>(index);
+    if (dec::kForms[index].level != dec::Level::simd ||
+        ::uml::cpu::arm64::jit::a32::op_info(form).op != Op::vector)
+      continue;
+    if (::uml::cpu::arm64::jit::a32::vector_info(form).mnemonic == VM::none) {
+      std::fprintf(stderr, "%s is a simd form the compiler does not name\n",
+                   dec::kForms[index].name);
+      require(false);
     }
-    if (instruction.legal() && instruction.info().level == dec::Level::simd &&
-        !::uml::cpu::arm64::jit::a32::vector_lowered(instruction.form))
-      return false;
   }
-  return true;
 }
 
 /* Whether the instruction under test always executes in the case: a
@@ -653,6 +640,7 @@ int main(int argc, char **argv) {
   require(path != nullptr);
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
+  require_vector_forms_classified();
   const auto pack = read_pack(read_file(path));
   const auto profile = dec::Profile::at(dec::Level::complete);
 
@@ -677,10 +665,6 @@ int main(int argc, char **argv) {
         continue;
       if (!within_level(test, profile)) {
         ++totals.skipped;
-        continue;
-      }
-      if (!lowered(test, profile)) {
-        ++totals.pending;
         continue;
       }
       ++totals.run;
@@ -717,9 +701,8 @@ int main(int argc, char **argv) {
     }
   }
   std::printf("AArch32 corpus on the JIT: %zu cases run, %zu skipped below the level, "
-              "%zu pending, %zu failed (%zu exclusive retried)\n",
-              totals.run, totals.skipped, totals.pending, totals.failed,
-              totals.retried);
+              "%zu failed (%zu exclusive retried)\n",
+              totals.run, totals.skipped, totals.failed, totals.retried);
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
       std::printf("  %s: %zu\n", form.c_str(), count);

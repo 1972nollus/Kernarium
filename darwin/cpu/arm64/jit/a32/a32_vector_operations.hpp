@@ -53,9 +53,9 @@ struct VInfo final {
 
 [[nodiscard]] const VInfo &vector_info(aarch32::Form form) noexcept;
 
-/* Whether the compiler lowers the form. While the simd level is being
- * completed a form it does not lower raises the illegal-instruction exit,
- * which the corpus lane skips and counts as pending. */
-[[nodiscard]] bool vector_lowered(aarch32::Form form) noexcept;
+/* Whether the mnemonic transfers vector registers to or from memory, and
+ * whether it stores. */
+[[nodiscard]] bool vector_memory(VM mnemonic) noexcept;
+[[nodiscard]] bool vector_store(VM mnemonic) noexcept;
 
 } // namespace uml::cpu::arm64::jit::a32
