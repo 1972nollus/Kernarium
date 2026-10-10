@@ -41,19 +41,27 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -1566,12 +1574,138 @@ void scale_lane_classes(const HostCapabilities &host, Tally &tally) {
               fast, slow);
 }
 
+constexpr const char *report_child_variable = "UML_JIT_SVE_REPORT_WORD";
+
+/* The emulator leaves through _Exit, which runs no exit handler, so a
+ * process that asked for the report with DARWIN_UML_SVE_LIBRARY_EXITS must
+ * write it as its executors retire. The child counts from its start (the
+ * variable is read before main), runs one word the translation sends to the
+ * library on an executor and leaves through _Exit once the executor is
+ * gone; the parent reads what it left. */
+[[noreturn]] void report_child(std::uint32_t word) {
+  {
+    Random random{0x6a17'5e0fU};
+    Machine machine{sve_host()};
+    std::vector<std::byte> data(mapped);
+    const std::array code{word, svc};
+    std::memcpy(data.data(), code.data(), sizeof code);
+    machine.put(0, data);
+    machine.cpu = random_state(random, false);
+    for (auto &predicate : machine.cpu.sve_p)
+      predicate = arm64::sve_predicate_mask(0xffffU);
+    std::size_t retired = 0;
+    require(machine.run(code_base, retired) == Event::system_call);
+  }
+  std::_Exit(0);
+}
+
+/* A register-only word of the profile that a translation ends the block at,
+ * for the library, and the row it belongs to. */
+[[nodiscard]] std::pair<std::uint32_t, std::size_t>
+library_word(const HostCapabilities &host) {
+  Random random{0x6a17'5e10U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if ((row.non_streaming_requirement & arm64::detail::sme_feature_sve) == 0U ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement ||
+        (row.mode & arm64::detail::sme_mode_za) != 0U || row.memory != 0U)
+      continue;
+    for (unsigned attempt = 0; attempt < 8U; ++attempt) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          arm64::jit::sve_word_reserved(row, word))
+        continue;
+      const std::array probe{word, nop, nop};
+      if (jit_test::compile_block_in_mode(code_base, probe, 0,
+                                          jit_test::LinkShape::unlinked)
+              .code.guest_instructions == 1U)
+        return {word, index};
+    }
+  }
+  require(false);
+  return {};
+}
+
+void library_exit_report_survives_exit(const HostCapabilities &host) {
+  const auto [word, index] = library_word(host);
+  const char *temporary = std::getenv("TMPDIR");
+  std::string report = temporary != nullptr && temporary[0] != '\0'
+                           ? temporary
+                           : "/tmp";
+  report += "/sve-jit-library-report.XXXXXX";
+  const int descriptor = mkstemp(report.data());
+  require(descriptor >= 0);
+  close(descriptor);
+  std::array<char, 4096> path{};
+  auto size = static_cast<std::uint32_t>(path.size());
+  require(_NSGetExecutablePath(path.data(), &size) == 0);
+  std::vector<std::string> variables;
+  for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+    if (std::strncmp(*entry, "DARWIN_UML_SVE_LIBRARY_EXITS=", 29) != 0 &&
+        std::strncmp(*entry, report_child_variable,
+                     std::strlen(report_child_variable)) != 0)
+      variables.emplace_back(*entry);
+  variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
+  char hex[16];
+  std::snprintf(hex, sizeof hex, "%08x", word);
+  variables.push_back(std::string{report_child_variable} + "=" + hex);
+  std::vector<char *> environment;
+  for (auto &variable : variables)
+    environment.push_back(variable.data());
+  environment.push_back(nullptr);
+  char *const arguments[] = {path.data(), nullptr};
+  pid_t child = 0;
+  require(posix_spawn(&child, path.data(), nullptr, nullptr, arguments,
+                      environment.data()) == 0);
+  int status = 0;
+  while (waitpid(child, &status, 0) < 0)
+    require(errno == EINTR);
+  require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  std::ifstream file{report};
+  std::string line;
+  std::vector<std::string> lines;
+  while (std::getline(file, line))
+    lines.push_back(line);
+  file.close();
+  unlink(report.c_str());
+  /* Two comment lines, then the word's row: its form, index, encoding, the
+   * translations (all of them to the library) and its one execution. */
+  require(lines.size() == 3U);
+  require(lines[0] == "# SVE library exits: total 1");
+  require(lines[1] == "# form\trow\tmask\tvalue\ttranslated\t"
+                      "translated_to_library\texits");
+  std::vector<std::string> fields;
+  std::istringstream split{lines[2]};
+  while (std::getline(split, line, '\t'))
+    fields.push_back(line);
+  require(fields.size() == 7U);
+  const auto &row = arm64::detail::sme_encodings[index];
+  char form[16];
+  std::snprintf(form, sizeof form, "SVE-%04u", row.form & 0x7fffU);
+  char mask[16];
+  std::snprintf(mask, sizeof mask, "%08x", static_cast<unsigned>(row.mask));
+  char value[16];
+  std::snprintf(value, sizeof value, "%08x", static_cast<unsigned>(row.value));
+  require(fields[0] == form && fields[1] == std::to_string(index) &&
+          fields[2] == mask && fields[3] == value);
+  require(std::stoull(fields[4]) >= 1U && fields[5] == fields[4] &&
+          fields[6] == "1");
+  std::printf("the library-exit report survives _Exit\n");
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   if (!jit_available()) {
     std::printf("skipped: the JIT does not run here\n");
     return 0;
   }
+  if (const char *word = std::getenv(report_child_variable))
+    report_child(static_cast<std::uint32_t>(std::strtoul(word, nullptr, 16)));
   require(arm64::jit::sve_support == arm64::SveSupport::complete);
   Tally tally;
   writers_forget_fullness(sve_host());
@@ -1595,6 +1729,7 @@ int main() {
   lowered_words_stay_inline(sve_host(), tally);
   scale_lane_classes(sve_host(), tally);
   conversion_boundaries(sve_host(), tally);
+  library_exit_report_survives_exit(sve_host());
   gather_lane_faults(sve_host(), tally);
   scatters_with_tracked_stores(sve_host(), tally);
   saturating_counts_at_their_limits(sve_host(), tally);

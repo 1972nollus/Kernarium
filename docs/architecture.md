@@ -678,8 +678,11 @@ slow paths do: the library marks the SVE state live, reports a fault at the
 word's PC, clears the local exclusive monitor on a store and invalidates the
 software reservations the store wrote. While library-exit counting is on,
 which it is not by default (`semantic::count_sve_library_exits`), the helper
-and the trapped mode count each row's library runs and keep its last word;
-the counts name the words a workload sends to the library. A reserved bitmask or shifted byte
+and the trapped mode count each row's library runs and keep its last word, and
+the compiler counts each row's translations and those that ended in the
+library; the counts name the words a workload sends to the library.
+`DARWIN_UML_SVE_LIBRARY_EXITS` writes them as the gadget engine's report, from
+each retiring executor too. A reserved bitmask or shifted byte
 immediate, and a row the capabilities lack, are the illegal-instruction
 exit. No translation holds an SVE word, and SM=1 translations and
 translations without an SVE word are unchanged. While an FPCR trap enable
