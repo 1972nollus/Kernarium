@@ -1631,16 +1631,9 @@ library_word(const HostCapabilities &host) {
   return {};
 }
 
-void library_exit_report_survives_exit(const HostCapabilities &host) {
-  const auto [word, index] = library_word(host);
-  const char *temporary = std::getenv("TMPDIR");
-  std::string report = temporary != nullptr && temporary[0] != '\0'
-                           ? temporary
-                           : "/tmp";
-  report += "/sve-jit-library-report.XXXXXX";
-  const int descriptor = mkstemp(report.data());
-  require(descriptor >= 0);
-  close(descriptor);
+/* Runs this test binary as the report child with `mode`, the report going
+ * to `report`; returns whether the child exited with status 0. */
+bool run_report_child(const std::string &report, const char *mode) {
   std::array<char, 4096> path{};
   auto size = static_cast<std::uint32_t>(path.size());
   require(_NSGetExecutablePath(path.data(), &size) == 0);
@@ -1651,9 +1644,7 @@ void library_exit_report_survives_exit(const HostCapabilities &host) {
                      std::strlen(report_child_variable)) != 0)
       variables.emplace_back(*entry);
   variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
-  char hex[16];
-  std::snprintf(hex, sizeof hex, "%08x", word);
-  variables.push_back(std::string{report_child_variable} + "=" + hex);
+  variables.push_back(std::string{report_child_variable} + "=" + mode);
   std::vector<char *> environment;
   for (auto &variable : variables)
     environment.push_back(variable.data());
@@ -1665,14 +1656,28 @@ void library_exit_report_survives_exit(const HostCapabilities &host) {
   int status = 0;
   while (waitpid(child, &status, 0) < 0)
     require(errno == EINTR);
-  require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+void library_exit_report_survives_exit(const HostCapabilities &host) {
+  const auto [word, index] = library_word(host);
+  const char *temporary = std::getenv("TMPDIR");
+  std::string report = temporary != nullptr && temporary[0] != '\0'
+                           ? temporary
+                           : "/tmp";
+  report += "/sve-jit-library-report.XXXXXX";
+  const int descriptor = mkstemp(report.data());
+  require(descriptor >= 0);
+  close(descriptor);
+  char hex[16];
+  std::snprintf(hex, sizeof hex, "%08x", word);
+  require(run_report_child(report, hex));
   std::ifstream file{report};
   std::string line;
   std::vector<std::string> lines;
   while (std::getline(file, line))
     lines.push_back(line);
   file.close();
-  unlink(report.c_str());
   /* Two comment lines, then the word's row: its form, index, encoding, the
    * translations (all of them to the library) and its one execution. */
   require(lines.size() == 3U);
@@ -1695,10 +1700,30 @@ void library_exit_report_survives_exit(const HostCapabilities &host) {
           fields[2] == mask && fields[3] == value);
   require(std::stoull(fields[4]) >= 1U && fields[5] == fields[4] &&
           fields[6] == "1");
-  std::printf("the library-exit report survives _Exit\n");
+  /* A process that ran no JIT executor leaves another engine's report
+   * alone: the gadget engine writes the same file in the same format. It
+   * exits normally, so the exit handler runs. */
+  {
+    std::ofstream marker{report, std::ios::trunc};
+    marker << "kept\n";
+  }
+  require(run_report_child(report, "idle"));
+  std::ifstream kept{report};
+  lines.clear();
+  while (std::getline(kept, line))
+    lines.push_back(line);
+  kept.close();
+  unlink(report.c_str());
+  require(lines.size() == 1U && lines[0] == "kept");
+  std::printf("the library-exit report survives _Exit and leaves another "
+              "engine's alone\n");
 }
 
 int main() {
+  /* The idle report child runs no executor and leaves through exit(). */
+  if (const char *mode = std::getenv(report_child_variable);
+      mode != nullptr && std::strcmp(mode, "idle") == 0)
+    std::exit(0);
   const uml::testing::RuntimeTestRoute runtime_route;
   if (!jit_available()) {
     std::printf("skipped: the JIT does not run here\n");

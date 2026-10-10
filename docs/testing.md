@@ -686,7 +686,9 @@ tab-separated line per row, most exits first, with the form, the row, its
 encoding, the translations, those that ended the block in the library and the
 exits. The words a workload sends there are the ones worth lowering.
 `arm64-jit-sve-forms` runs a child process through `_Exit` and reads the
-report it leaves.
+report it leaves, and one that exits having run no JIT executor and requires
+it to leave a report already in the file alone, since either engine's process
+may write it.
 
 ## x86 instruction conformance
 
