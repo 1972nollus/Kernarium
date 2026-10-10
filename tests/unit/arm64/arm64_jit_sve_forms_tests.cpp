@@ -1540,6 +1540,264 @@ void tbi_check_is_made_once_per_block(const HostCapabilities &host) {
               "tagged accesses match the library\n");
 }
 
+/* The words of the window tests (jit_compiler_sve_inline.cpp,
+ * plan_sve_window), by their fields: LD1D and LD1W (scalar plus immediate,
+ * MUL VL), LD1RD, LD1RW and LD1RB (the immediate scaled by the element),
+ * LDR Z (scalar plus immediate, MUL VL), FMLA and FADD. */
+[[nodiscard]] constexpr std::uint32_t ld1d(unsigned zt, unsigned pg,
+                                           unsigned xn, int imm = 0) {
+  return 0xa5e0'a000U | ((static_cast<std::uint32_t>(imm) & 15U) << 16) |
+         (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t ld1w(unsigned zt, unsigned pg,
+                                           unsigned xn, int imm = 0) {
+  return 0xa540'a000U | ((static_cast<std::uint32_t>(imm) & 15U) << 16) |
+         (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t ld1rd(unsigned zt, unsigned pg,
+                                            unsigned xn, unsigned imm = 0) {
+  return 0x85c0'e000U | (imm << 16) | (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t ld1rw(unsigned zt, unsigned pg,
+                                            unsigned xn, unsigned imm = 0) {
+  return 0x8540'c000U | (imm << 16) | (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t ld1rb(unsigned zt, unsigned pg,
+                                            unsigned xn, unsigned imm = 0) {
+  return 0x8440'8000U | (imm << 16) | (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t ldr_z(unsigned zt, unsigned xn,
+                                            int imm = 0) {
+  const auto field = static_cast<std::uint32_t>(imm) & 0x1ffU;
+  return 0x8580'4000U | ((field >> 3U) << 16) | ((field & 7U) << 10) |
+         (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t st1d(unsigned zt, unsigned pg,
+                                           unsigned xn, int imm = 0) {
+  return 0xe5e0'e000U | ((static_cast<std::uint32_t>(imm) & 15U) << 16) |
+         (pg << 10) | (xn << 5) | zt;
+}
+[[nodiscard]] constexpr std::uint32_t fmla_d(unsigned zda, unsigned pg,
+                                             unsigned zn, unsigned zm) {
+  return 0x65e0'0000U | (zm << 16) | (pg << 10) | (zn << 5) | zda;
+}
+[[nodiscard]] constexpr std::uint32_t fadd_d(unsigned zd, unsigned zn,
+                                             unsigned zm) {
+  return 0x65c0'0000U | (zm << 16) | (zn << 5) | zd;
+}
+constexpr std::uint32_t cntd_x1 = 0x04e0'e3e1U;
+constexpr std::uint32_t add_x1_32 = 0x9100'8021U;
+constexpr std::uint32_t neon_move = 0x4ea1'1c20U; /* mov v0.16b, v1.16b */
+
+/* A run of SVE loads from one base shares a translation (the window of
+ * plan_sve_window), however many SVE words that name no general register
+ * sit between them: the TLB lookup of the block is counted, against what a
+ * block of the same words in a window of one costs. Then the same programs
+ * run from bases inside a page, across the page's end, across the end of the
+ * mapped pages, and tagged, against the library. */
+void loads_share_a_translation(const HostCapabilities &host) {
+  /* eor x2, x2, x1 compares a TLB tag, on the hit path and, with 16 KiB
+   * pages, in the second way. */
+  constexpr std::uint32_t tag_compare = 0xca01'0042U;
+  const auto lookups = [&](std::span<const std::uint32_t> program) {
+    const uml::cpu::HostCapabilitiesScope scope{host};
+    const auto compiled = jit_test::compile_block_in_mode(
+        code_base, program, 0, jit_test::LinkShape::unlinked);
+    unsigned count = 0;
+    for (std::size_t index = 0; index < compiled.code.executable_words; ++index)
+      count += compiled.code.words[index] == tag_compare;
+    return count;
+  };
+  const unsigned empty = lookups(std::array{ptrue_b, nop});
+  const unsigned one = lookups(std::array{ptrue_b, ld1d(0, 0, 1), nop}) - empty;
+  require(one != 0U);
+  const auto translations = [&](std::span<const std::uint32_t> program) {
+    const auto count = lookups(program) - empty;
+    require(count % one == 0U);
+    return count / one;
+  };
+
+  /* Alone, next to a word of another base, and split by a store. */
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), nop}) == 1U);
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), nop,
+                                  ld1d(1, 0, 1, 1)}) == 2U);
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), ld1d(1, 0, 2),
+                                  ld1d(2, 0, 1, 1), nop}) == 3U);
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), st1d(0, 0, 1, 2),
+                                  ld1d(1, 0, 1, 1), nop}) == 3U);
+  /* Words of one base share, however the offsets and shapes differ. */
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), ld1d(1, 0, 1, 1),
+                                  ld1d(2, 0, 1, -2), ldr_z(3, 1, 3),
+                                  ld1rw(4, 0, 1, 1), ld1rb(5, 0, 1, 1),
+                                  nop}) == 1U);
+  /* Arithmetic between the loads, as a kernel interleaves it. */
+  require(translations(std::array{ptrue_b, ld1rd(3, 0, 1, 0),
+                                  fmla_d(11, 0, 12, 13), fmla_d(14, 0, 12, 15),
+                                  ld1rd(4, 0, 1, 1), fmla_d(11, 0, 12, 4),
+                                  ld1rd(5, 0, 1, 2), fadd_d(16, 17, 18),
+                                  nop}) == 1U);
+  /* A word that names a general register ends the window, whether it
+   * changes the base or not. */
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), add_x1_32,
+                                  ld1d(1, 0, 1), nop}) == 2U);
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), cntd_x1,
+                                  ld1d(1, 0, 1), nop}) == 2U);
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 1), neon_move,
+                                  ld1d(1, 0, 1), nop}) == 2U);
+  /* The span of a window is at most 256 bytes, its words at most 17. */
+  require(translations(std::array{ptrue_b, ldr_z(0, 1, 0), ldr_z(1, 1, 15),
+                                  nop}) == 1U);
+  require(translations(std::array{ptrue_b, ldr_z(0, 1, 0), ldr_z(1, 1, 16),
+                                  nop}) == 2U);
+  for (const unsigned words : {17U, 18U}) {
+    std::vector<std::uint32_t> program{ptrue_b};
+    for (unsigned n = 0; n < words; ++n)
+      program.push_back(ld1rd(n, 0, 1, n));
+    program.push_back(nop);
+    require(translations(program) == (words == 17U ? 1U : 2U));
+  }
+  /* The stack pointer is never the base of a window. */
+  require(translations(std::array{ptrue_b, ld1d(0, 0, 31), ld1d(1, 0, 31, 1),
+                                  nop}) == 2U);
+
+  const std::vector<std::vector<std::uint32_t>> programs{
+      {ld1d(0, 0, 1), ld1d(1, 0, 1, 1), ld1d(2, 0, 1, -2), ld1d(3, 0, 1, 3)},
+      {ld1rd(3, 0, 1, 0), fmla_d(11, 0, 12, 13), fmla_d(14, 0, 12, 15),
+       ld1rd(4, 0, 1, 1), fmla_d(11, 0, 12, 4), ld1rd(5, 1, 1, 3),
+       fmla_d(14, 1, 12, 5), fadd_d(16, 17, 18)},
+      {ldr_z(8, 1), ldr_z(9, 1, 3), ld1rw(6, 0, 1, 1), ld1rb(7, 0, 1, 1),
+       ld1d(2, 1, 1, 2), ld1w(10, 0, 1, -1)},
+      {ld1d(0, 0, 1), ld1d(1, 0, 2), ld1d(2, 0, 1, 1), ld1d(3, 0, 2, 1),
+       ld1d(4, 0, 1, 2)},
+      {ld1d(0, 0, 1), add_x1_32, ld1d(1, 0, 1), cntd_x1, ld1d(2, 0, 1, 1),
+       ld1d(3, 0, 1, 2)},
+      {ld1d(0, 0, 1), ld1d(1, 0, 1, 1), st1d(0, 0, 2, 2), ld1d(2, 0, 2),
+       ld1d(3, 0, 2, 1), st1d(3, 0, 1, 3), ld1d(4, 0, 1)},
+      {ld1d(0, 0, 1), fadd_d(0, 0, 0), ld1d(0, 0, 1, 1), neon_move,
+       ld1d(5, 0, 1, 2), ld1d(0, 0, 1)},
+      {ld1rd(0, 0, 1, 0),  ld1rd(1, 0, 1, 1),  ld1rd(2, 0, 1, 2),
+       ld1rd(3, 0, 1, 3),  ld1rd(4, 0, 1, 4),  ld1rd(5, 0, 1, 5),
+       ld1rd(6, 0, 1, 6),  ld1rd(7, 0, 1, 7),  ld1rd(8, 0, 1, 8),
+       ld1rd(9, 0, 1, 9),  ld1rd(10, 0, 1, 10), ld1rd(11, 0, 1, 11),
+       ld1rd(12, 0, 1, 12), ld1rd(13, 0, 1, 13), ld1rd(14, 0, 1, 14),
+       ld1rd(15, 0, 1, 15), ld1rd(16, 0, 1, 16), ld1rd(17, 0, 1, 17),
+       fmla_d(18, 0, 0, 1)},
+  };
+
+  Random random{0x6a17'5e0cU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t runs = 0;
+  std::size_t faults = 0;
+  for (std::size_t number = 0; number < programs.size(); ++number) {
+    for (const bool full : {true, false}) {
+      for (const bool tagged : {false, true}) {
+        std::vector<std::uint32_t> program;
+        if (full)
+          program.push_back(ptrue_b);
+        program.insert(program.end(), programs[number].begin(),
+                       programs[number].end());
+        program.push_back(svc);
+        Machine machine{host};
+        for (unsigned sample = 0; sample < 48U; ++sample) {
+          std::vector<std::byte> data(mapped);
+          for (std::size_t at = 0; at < mapped; at += 8) {
+            const auto value = random.next();
+            std::memcpy(data.data() + at, &value, 8);
+          }
+          auto initial = random_state(random, false);
+          initial.tbi_enabled = tagged;
+          for (unsigned n = 1; n < 4U; ++n) {
+            /* Inside a page, across its end, across the end of the mapped
+             * pages, and in the unmapped page after them. */
+            std::uint64_t address =
+                code_base + page + 64U + random.next() % (page - 512U);
+            switch (random.next() % 6U) {
+            case 0:
+              address = code_base + page * (1U + random.next() % 3U) -
+                        random.next() % 320U;
+              break;
+            case 1:
+              address = code_base + mapped - random.next() % 320U;
+              break;
+            case 2:
+              address = code_base + mapped + random.next() % 64U;
+              break;
+            default:
+              break;
+            }
+            initial.registers[n] =
+                tagged ? address | (std::uint64_t{0x5a} << 56) : address;
+          }
+          std::vector<std::byte> before = data;
+          std::memcpy(before.data(), program.data(),
+                      program.size() * sizeof(std::uint32_t));
+          machine.put(0, before);
+          machine.cpu = initial;
+          std::size_t retired = 0;
+          const auto event = machine.run(code_base, retired);
+          std::vector<std::byte> after(mapped);
+          machine.get(0, after);
+
+          auto expected = initial;
+          std::vector<std::byte> reference_bytes = before;
+          CopiedMemory reference{reference_bytes};
+          bool faulted = false;
+          std::size_t at = 0;
+          arm64::detail::SveResult result{};
+          for (; at + 1U < program.size(); ++at) {
+            const auto word = program[at];
+            if (arm64::detail::sme_encoding_space(word)) {
+              const auto *row =
+                  arm64::detail::decode_sve_non_streaming(word, features);
+              require(row != nullptr);
+              result = arm64::detail::execute_sve(expected, word, *row,
+                                                  reference);
+              if (result.event == arm64::detail::SveEvent::memory_fault) {
+                faulted = true;
+                break;
+              }
+              require(result.event == arm64::detail::SveEvent::retired);
+            } else if (word == add_x1_32) {
+              expected.registers[1] += 32U;
+            } else if (word == neon_move) {
+              expected.vectors[0].bytes = expected.vectors[1].bytes;
+            }
+          }
+          bool same =
+              event == (faulted ? Event::memory_fault : Event::system_call) &&
+              (!faulted || (machine.cpu.pc == code_base + at * 4U &&
+                            machine.fault_address() == result.fault_address &&
+                            machine.fault_alignment() == result.alignment)) &&
+              (faulted || retired == program.size()) &&
+              machine.cpu.registers == expected.registers &&
+              machine.cpu.sve_p == expected.sve_p &&
+              machine.cpu.sve_ffr == expected.sve_ffr &&
+              machine.cpu.fpsr == expected.fpsr && after == reference_bytes;
+          faults += faulted ? 1U : 0U;
+          for (unsigned n = 0; n < 32U && same; ++n)
+            same = machine.cpu.vectors[n].bytes == expected.vectors[n].bytes;
+          if (!same) {
+            std::fprintf(stderr,
+                         "program %zu, %s predicate, tagged=%d, sample %u: the "
+                         "JIT leaves another state than the library (event "
+                         "%d, retired %zu of %zu, fault word %zu)\n",
+                         number, full ? "full" : "random",
+                         static_cast<int>(tagged), sample,
+                         static_cast<int>(event), retired, program.size(),
+                         faulted ? at : program.size());
+            require(false);
+          }
+          ++runs;
+        }
+      }
+    }
+  }
+  require(faults > 0U);
+  std::printf("%zu runs of SVE load windows share a translation and match the "
+              "library, %zu of them faulting\n",
+              runs, faults);
+}
+
 } // namespace
 
 /* The breaks, COMPACT and SPLICE read the whole shape of a governing
@@ -1841,6 +2099,7 @@ int main() {
   Tally tally;
   writers_forget_fullness(sve_host());
   tbi_check_is_made_once_per_block(sve_host());
+  loads_share_a_translation(sve_host());
   forms_match_the_library(sve_host(), tally);
   /* The SCLAMP class: 29 forms in 33 rows, 4 forms in 7 rows with FEAT_SME
    * beside FEAT_SVE and the rest with FEAT_SME2 too; none of them on

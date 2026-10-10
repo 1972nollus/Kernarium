@@ -334,6 +334,41 @@ private:
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
+  /* The access itself, on the host address in x8 plus `displacement`. */
+  void emit_sve_access(const detail::SmeMemory &memory,
+                       std::uint32_t instruction, unsigned transfer,
+                       bool store, std::uint64_t displacement);
+  /*
+   * A window of SVE loads: a load whose base is a general register other
+   * than SP and whose offset is a constant, and the loads of the same base
+   * behind it in the block, with between them only SVE words that name no
+   * general register and no memory, so that none changes the base. The
+   * window's first word proves that its bytes lie in one page, translates
+   * the lowest of them once and keeps the host address in
+   * JitChainState::sve_window_anchor; each later word reads it back in place
+   * of translating. The words stay in program order, so a word that leaves
+   * the block, the first word's proof or a later word's predicate guard,
+   * leaves every word before it executed, and the library runs it.
+   */
+  struct SveWindowLoad final {
+    unsigned base{};
+    std::int64_t offset{};
+    std::uint64_t bytes{};
+  };
+  [[nodiscard]] bool decode_sve_window_load(std::uint32_t instruction,
+                                            SveWindowLoad &load) const;
+  [[nodiscard]] static bool sve_window_transparent(std::uint32_t instruction);
+  /* Fills sve_window_ from the words behind the one at count_, which loads
+   * `first` from `base`, and returns the window's lowest offset and the
+   * number of bytes it spans, or nothing when the word is alone. */
+  struct SveWindow final {
+    std::int64_t lowest{};
+    std::uint64_t span{};
+  };
+  [[nodiscard]] std::optional<SveWindow>
+  plan_sve_window(const SveWindowLoad &first);
+  [[nodiscard]] const std::uint64_t *sve_window_displacement(std::size_t index)
+      const noexcept;
   /* The doubleword forms AdvSIMD lacks: MUL, MLA, MLS, MAD and MSB, and the
    * integer maxima and minima. */
   [[nodiscard]] bool emit_sve_doubleword(std::uint16_t form,
@@ -542,6 +577,15 @@ private:
   /* An SVE memory word in this block has emitted the top-byte-ignore check
    * (emit_sve_tbi_check). */
   bool sve_tbi_checked_{};
+  /* The words behind the first of an SVE load window, by their index in the
+   * block, and their offsets from the window's lowest byte. */
+  struct SveWindowMember final {
+    std::size_t index{};
+    std::uint64_t displacement{};
+  };
+  static constexpr std::size_t sve_window_capacity = 16;
+  std::array<SveWindowMember, sve_window_capacity> sve_window_{};
+  std::size_t sve_window_size_{};
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

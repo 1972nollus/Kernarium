@@ -26,9 +26,12 @@
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
+#include <optional>
+#include <utility>
 
 namespace uml::cpu::arm64 {
 
@@ -2272,8 +2275,23 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
   const auto bytes = static_cast<std::size_t>(
       jit::sme_memory_span(memory, instruction, sve_vector_length));
   const auto access = store ? Access::write : Access::read;
-  const unsigned log_esize = static_cast<unsigned>(std::countr_zero(esize));
   const unsigned log_msize = static_cast<unsigned>(std::countr_zero(msize));
+
+  /* A load behind the first word of a window reads the host address that
+   * word translated (plan_sve_window), and cannot itself leave the block but
+   * by its predicate guard. */
+  SveWindowLoad first{};
+  const bool windowed = !store && decode_sve_window_load(instruction, first);
+  if (windowed) {
+    if (const auto *displacement = sve_window_displacement(count_)) {
+      begin_sve_word();
+      if (predicated)
+        emit_sve_guard(governing, esize, instruction, pc);
+      emitter_.load_x(8, 19, offsetof(JitChainState, sve_window_anchor));
+      emit_sve_access(memory, instruction, transfer, false, *displacement);
+      return true;
+    }
+  }
 
   if (store)
     mark_direct_memory_write();
@@ -2289,43 +2307,195 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
   } else {
     emit_sve_tbi_check(slow);
   }
+  const auto add_offset = [&](std::int64_t offset) {
+    if (offset == 0)
+      return;
+    const auto magnitude =
+        static_cast<std::uint64_t>(offset < 0 ? -offset : offset);
+    if (magnitude <= 0xfffU) {
+      if (offset < 0)
+        emitter_.subtract_immediate(8, 8, static_cast<unsigned>(magnitude));
+      else
+        emitter_.add_immediate(8, 8, static_cast<unsigned>(magnitude));
+    } else {
+      emitter_.load_constant(9, magnitude);
+      emitter_.emit(offset < 0 ? sub_x(8, 8, 9) : add_x(8, 8, 9));
+    }
+  };
+  const auto offset = static_cast<std::int64_t>(
+      jit::sme_memory_offset(memory, instruction, sve_vector_length, 0));
+
+  std::optional<SveWindow> window;
+  if (windowed)
+    window = plan_sve_window(first);
+  if (window) {
+    /* Every byte of the window lies in the page of its lowest, or the
+     * first word goes to the library and the rest follow it one by one. */
+    add_offset(window->lowest);
+    if (window->span > 1U) {
+      const auto last = window->span - 1U;
+      if (last <= 0xfffU) {
+        emitter_.add_immediate(0, 8, static_cast<unsigned>(last));
+      } else {
+        emitter_.load_constant(0, last);
+        emitter_.add_shifted(0, 8, 0, 0);
+      }
+      emitter_.emit(0xca08'0000U); // eor x0, x0, x8
+      emitter_.test_zero(slow, 0, page_shift, true);
+    }
+    emit_translate(8, Access::read, slow, slow, 1);
+    emitter_.store_x(8, 19, offsetof(JitChainState, sve_window_anchor));
+    emit_sve_access(memory, instruction, transfer, false,
+                    static_cast<std::uint64_t>(offset - window->lowest));
+    return true;
+  }
+
   if (indexed) {
     const auto index = read_native_gpr(index_register, false, 9U);
     emitter_.add_shifted(8, 8, index.host, log_msize);
   } else {
-    const auto offset = static_cast<std::int64_t>(
-        jit::sme_memory_offset(memory, instruction, sve_vector_length, 0));
-    if (offset != 0) {
-      const auto magnitude =
-          static_cast<std::uint64_t>(offset < 0 ? -offset : offset);
-      if (magnitude <= 0xfffU) {
-        if (offset < 0)
-          emitter_.subtract_immediate(8, 8, static_cast<unsigned>(magnitude));
-        else
-          emitter_.add_immediate(8, 8, static_cast<unsigned>(magnitude));
-      } else {
-        emitter_.load_constant(9, magnitude);
-        emitter_.emit(offset < 0 ? sub_x(8, 8, 9) : add_x(8, 8, 9));
-      }
-    }
+    add_offset(offset);
   }
   emit_translate(8, access, slow, slow, bytes);
   if (store)
     track_direct_store(8, bytes);
 
+  emit_sve_access(memory, instruction, transfer, store, 0U);
+  if (store)
+    clear_local_exclusive_monitor();
+  return true;
+}
+
+bool JitCompiler::decode_sve_window_load(std::uint32_t instruction,
+                                         SveWindowLoad &load) const {
+  using Shape = detail::SmeMemoryShape;
+  const auto *row = detail::find_sme_encoding(instruction);
+  if (row == nullptr || row->memory == 0U ||
+      (row->non_streaming_requirement & detail::sme_feature_sve) == 0U)
+    return false;
+  const auto &memory = *detail::sme_encoding_memory_of(*row);
+  if (memory.direction != detail::SmeMemoryDirection::load ||
+      (memory.shape != Shape::contiguous && memory.shape != Shape::replicate &&
+       memory.shape != Shape::replicate_quad && memory.shape != Shape::fill_z) ||
+      (memory.shape == Shape::contiguous && memory.registers != 1U) ||
+      memory.offset == detail::SmeAddressOffset::register_element ||
+      memory.offset == detail::SmeAddressOffset::vector_index ||
+      memory.offset == detail::SmeAddressOffset::register_byte)
+    return false;
+  if (jit::sme_memory_element_bytes(memory, instruction) < memory.msize / 8U)
+    return false;
+  const auto *operands = detail::sme_encoding_operands_of(*row);
+  const unsigned base =
+      detail::sme_operand_number(operands[memory.base_operand], instruction);
+  if (base == 31U)
+    return false;
+  load.base = base;
+  load.offset = static_cast<std::int64_t>(
+      jit::sme_memory_offset(memory, instruction, sve_vector_length, 0));
+  load.bytes = jit::sme_memory_span(memory, instruction, sve_vector_length);
+  return true;
+}
+
+bool JitCompiler::sve_window_transparent(std::uint32_t instruction) {
+  const auto *row = detail::find_sme_encoding(instruction);
+  if (row == nullptr || row->memory != 0U ||
+      (row->non_streaming_requirement & detail::sme_feature_sve) == 0U)
+    return false;
+  const auto *operands = detail::sme_encoding_operands_of(*row);
+  for (unsigned index = 0; index < row->operand_count; ++index) {
+    const auto kind = operands[index].kind;
+    if (kind != detail::SmeOperandKind::z && kind != detail::SmeOperandKind::p &&
+        kind != detail::SmeOperandKind::v)
+      return false;
+  }
+  return true;
+}
+
+std::optional<JitCompiler::SveWindow>
+JitCompiler::plan_sve_window(const SveWindowLoad &first) {
+  /* A window that fails its proof sends its first word to the library, so
+   * the wider it is the likelier a page boundary falls inside it. */
+  constexpr std::uint64_t maximum_span = 256;
+  constexpr std::size_t maximum_scan = 64;
+  sve_window_size_ = 0;
+  std::array<std::pair<std::size_t, std::int64_t>, sve_window_capacity> found{};
+  std::size_t members = 0;
+  auto lowest = first.offset;
+  auto highest = first.offset + static_cast<std::int64_t>(first.bytes);
+  for (std::size_t index = count_ + 1U;
+       index < block_.size() && index <= count_ + maximum_scan; ++index) {
+    const auto word = block_[index];
+    if (sve_window_transparent(word))
+      continue;
+    SveWindowLoad load{};
+    if (!decode_sve_window_load(word, load) || load.base != first.base ||
+        members == found.size())
+      break;
+    const auto next_lowest = std::min(lowest, load.offset);
+    const auto next_highest =
+        std::max(highest, load.offset + static_cast<std::int64_t>(load.bytes));
+    if (static_cast<std::uint64_t>(next_highest - next_lowest) > maximum_span)
+      break;
+    lowest = next_lowest;
+    highest = next_highest;
+    found[members++] = {index, load.offset};
+  }
+  if (members == 0)
+    return std::nullopt;
+  for (std::size_t member = 0; member < members; ++member)
+    sve_window_[member] = {found[member].first,
+                           static_cast<std::uint64_t>(found[member].second -
+                                                      lowest)};
+  sve_window_size_ = members;
+  return SveWindow{lowest, static_cast<std::uint64_t>(highest - lowest)};
+}
+
+const std::uint64_t *
+JitCompiler::sve_window_displacement(std::size_t index) const noexcept {
+  for (std::size_t member = 0; member < sve_window_size_; ++member)
+    if (sve_window_[member].index == index)
+      return &sve_window_[member].displacement;
+  return nullptr;
+}
+
+void JitCompiler::emit_sve_access(const detail::SmeMemory &memory,
+                                  std::uint32_t instruction, unsigned transfer,
+                                  bool store, std::uint64_t displacement) {
+  using Shape = detail::SmeMemoryShape;
+  const unsigned esize = jit::sme_memory_element_bytes(memory, instruction);
+  const unsigned msize = memory.msize / 8U;
+  const unsigned log_esize = static_cast<unsigned>(std::countr_zero(esize));
+  const unsigned log_msize = static_cast<unsigned>(std::countr_zero(msize));
+  /* The footprint's host address is x8, or x8 and a displacement for a word
+   * of a load window (plan_sve_window); a form without an immediate offset
+   * takes the sum in x10. */
+  const auto displaced = [&]() -> unsigned {
+    if (displacement == 0U)
+      return 8U;
+    if (displacement <= 0xfffU) {
+      emitter_.add_immediate(10, 8, static_cast<unsigned>(displacement));
+    } else {
+      emitter_.load_constant(10, displacement);
+      emitter_.emit(add_x(10, 8, 10));
+    }
+    return 10U;
+  };
   switch (memory.shape) {
   case Shape::replicate: {
+    const unsigned address = displaced();
     const auto out = write_native_vector(transfer, false, 0U);
     if (msize == esize) {
-      emitter_.emit(ld1r(log_esize, out.host, 8));
+      emitter_.emit(ld1r(log_esize, out.host, address));
     } else {
-      emitter_.emit(load_scalar(log_msize, memory.sign_extend, esize == 8U, 9, 8));
+      emitter_.emit(load_scalar(log_msize, memory.sign_extend, esize == 8U,
+                                9, address));
       emitter_.emit(dup_general(log_esize, out.host, 9));
     }
     commit_native_vector(out, transfer);
     break;
   }
   case Shape::structure: {
+    /* No window holds a structure access. */
     const unsigned registers = memory.registers;
     if (!store) {
       emitter_.emit(neon_structure(true, registers, log_esize, 0, 8));
@@ -2351,9 +2521,14 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
      * widen on a load or narrow on a store. */
     const unsigned steps = log_esize - log_msize;
     const unsigned width = 4U - steps;
+    const bool scaled = (displacement & ((1U << width) - 1U)) == 0U &&
+                        (displacement >> width) < 4096U;
+    const unsigned address = scaled ? 8U : displaced();
+    const unsigned scaled_offset =
+        scaled ? static_cast<unsigned>(displacement >> width) : 0U;
     if (!store) {
       const auto out = write_native_vector(transfer, false, 0U);
-      emitter_.emit(ldr_simd(width, out.host, 8));
+      emitter_.emit(ldr_simd(width, out.host, address, scaled_offset));
       for (unsigned step = 0; step < steps; ++step)
         emitter_.emit(extend_long(memory.sign_extend, log_msize + step,
                                   out.host, out.host));
@@ -2365,14 +2540,11 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
         emitter_.emit(narrow(log_esize - 1U - step, scratch_a, from));
         from = scratch_a;
       }
-      emitter_.emit(str_simd(width, from, 8));
+      emitter_.emit(str_simd(width, from, address, scaled_offset));
     }
     break;
   }
   }
-  if (store)
-    clear_local_exclusive_monitor();
-  return true;
 }
 
 bool JitCompiler::emit_sve_gather(const detail::SmeEncoding &row,
