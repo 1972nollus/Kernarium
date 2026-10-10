@@ -23,7 +23,7 @@ scripts/              launch, packaging, bundle assembly, and automation tools
 ## Runtimes and runs
 
 Kernarium uses `6.18`-series runtime frameworks for 16 KiB Linux, 4 KiB Linux,
-and 16 KiB Android. Their names stay stable across patch releases and kernel
+and 4 KiB Android. Their names stay stable across patch releases and kernel
 commits, and each carries its kernel ELF in signed Mach-O `__TEXT` (see the
 [architecture](../docs/architecture.md#memory-and-executable-code)). The
 application embeds every framework, links none at launch, and loads exactly
@@ -38,7 +38,7 @@ thread, which leaves the main thread to UIKit and MetalKit.
 Kernarium defaults to 16 KiB Linux, the processor count `NSProcessInfo`
 reports, and 4 GiB of guest memory where the process is given the host's
 memory (Designed for iPad on a Mac) or 2 GiB on a physical device, whose jetsam
-limit a 4 GiB guest would cross. Android fixes the page profile at 16 KiB.
+limit a 4 GiB guest would cross. Android fixes the page profile at 4 KiB.
 
 ## Guest storage
 

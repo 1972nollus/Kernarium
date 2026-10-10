@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Check the ELF geometry of a 16 KiB Android kernel image.
+"""Check the ELF geometry of a 4 KiB Android kernel image.
 
 This is the kernel artifact verifier's geometry check. Its bridge imports are
 checked by the kernel build, and a release keeps the bridge identity it was
@@ -25,10 +25,10 @@ def main() -> None:
     args = parser.parse_args()
     verify_elf_geometry(
         args.kernel.read_bytes(),
-        16384,
+        4096,
         lambda message: SystemExit(f"Android kernel ELF verifier: {message}"),
     )
-    print("verified 16 KiB AArch64 ET_DYN Android kernel ELF")
+    print("verified 4 KiB AArch64 ET_DYN Android kernel ELF")
 
 
 if __name__ == "__main__":

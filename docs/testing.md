@@ -214,7 +214,7 @@ and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture,
 imported dma-buf capture, timestamps, source-change and EOS events, and rejects
 kernel faults or failed shutdown. Run it on both Linux
-page profiles; Android uses its own 16 KiB guest and deployment workflow.
+page profiles; Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
@@ -403,7 +403,7 @@ scripts/build-xcframework.sh
 ```
 
 Kernarium is an iOS device product with runtime presets for 16 KiB and 4 KiB
-Linux and 16 KiB Android and no Simulator variant; see
+Linux and 4 KiB Android and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for

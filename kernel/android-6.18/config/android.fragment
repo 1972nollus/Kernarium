@@ -3,8 +3,8 @@
 # policy in kernel/common/config/darwin-uml.fragment. It lists only the
 # settings in which this line differs from mainline.
 # android/aosp-17/build/build-kernel.sh applies it after the shared policy and
-# before kernel/common/config/page-16k.fragment, then runs `olddefconfig`
-# against the pinned ACK source. There is no Android 4 KiB profile.
+# before kernel/common/config/page-4k.fragment, then runs `olddefconfig`
+# against the pinned ACK source. There is no Android 16 KiB profile.
 
 # --- Boot, init, and image identity -----------------------------------------
 # Android init consumes bootconfig when one is supplied by the image builder.

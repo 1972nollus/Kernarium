@@ -77,10 +77,13 @@ PRODUCT_MODEL := Darwin UML
 # the uncompressed ext4 path so this guest never depends on EROFS at runtime.
 PRODUCT_DEFAULT_APEX_PAYLOAD_TYPE := ext4
 
+# The kernel runs 4 KiB pages. The userspace stays page-agnostic, so a 16 KiB
+# maximum alignment keeps every 64-bit ELF valid on a kernel of either size.
+# BoardConfig.mk clears the inherited TARGET_BOOTS_16K, because the parent
+# product assigns it after this file is read.
 PRODUCT_MAX_PAGE_SIZE_SUPPORTED := 16384
 PRODUCT_NO_BIONIC_PAGE_SIZE_MACRO := true
 PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
-TARGET_BOOTS_16K := true
 PRODUCT_16K_DEVELOPER_OPTION := false
 
 PRODUCT_BUILD_VENDOR_DLKM_IMAGE := false

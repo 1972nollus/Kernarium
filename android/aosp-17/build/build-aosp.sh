@@ -1,6 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: Apache-2.0
-# Build the fixed AOSP 17 arm64-only page-agnostic UML product.
+# Build the fixed AOSP 17 arm64-only UML product: page-agnostic userspace on
+# the 4 KiB kernel.
 set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -191,14 +192,14 @@ lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIAN
 	fail "lunch selected the wrong product"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
 [[ -z "$(get_build_var TARGET_2ND_ARCH)" ]] || fail "product has a 32-bit secondary ABI"
-[[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$ANDROID17_PAGE_SIZE" ]] ||
+[[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$ANDROID17_MAX_PAGE_SIZE_SUPPORTED" ]] ||
 	fail "product maximum page size differs from metadata"
 [[ "$(get_build_var TARGET_NO_BIONIC_PAGE_SIZE_MACRO)" == true ]] ||
 	fail "product exposes a compile-time bionic page-size macro"
 [[ "$(get_build_var TARGET_CHECK_PREBUILT_MAX_PAGE_SIZE)" == true ]] ||
 	fail "product does not check prebuilt ELF alignment"
-[[ "$(get_build_var TARGET_BOOTS_16K)" == true ]] ||
-	fail "product does not select the 16 KiB boot contract"
+[[ "$(get_build_var TARGET_BOOTS_16K)" != true ]] ||
+	fail "product selects the 16 KiB boot contract on a 4 KiB kernel"
 for variable in \
 	BOARD_SYSTEMIMAGE_FILE_SYSTEM_TYPE \
 	BOARD_SYSTEM_EXTIMAGE_FILE_SYSTEM_TYPE \

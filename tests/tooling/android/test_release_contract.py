@@ -96,7 +96,7 @@ def main() -> None:
         "ANDROID17_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
-        "ANDROID17_ACCEPTED_PAGE_SIZE": "16384",
+        "ANDROID17_ACCEPTED_PAGE_SIZE": "4096",
     }
     for key, value in tracked_expected.items():
         if tracked_acceptance.get(key) != value:
@@ -206,7 +206,7 @@ def main() -> None:
             "patch_count": kernel_patch_count,
             "patch_manifest_sha256": kernel_patch_digest,
             "release": "6.18.21-fixture",
-            "page_size": 16384,
+            "page_size": 4096,
             "abi_version": int(abi["DARWIN_UML_ABI_VERSION"]),
             "abi_fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
             "elf_role": "darwin-uml",
@@ -268,7 +268,7 @@ def main() -> None:
                 f"ANDROID17_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
                 f"ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
-                "ANDROID17_ACCEPTED_PAGE_SIZE=16384",
+                "ANDROID17_ACCEPTED_PAGE_SIZE=4096",
                 f"ANDROID17_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
                 f"ANDROID17_ACCEPTED_ABI_FINGERPRINT='{manifest['kernel']['abi_fingerprint']}'",
                 "",
@@ -347,11 +347,11 @@ def main() -> None:
         payload.write_bytes(b"x")
 
         original = copy.deepcopy(manifest)
-        manifest["kernel"]["page_size"] = 4096
+        manifest["kernel"]["page_size"] = 16384
         manifest_path.write_text(json.dumps(manifest))
         expect_failure(
             lambda: verify_release(release_root, android_root, semantic=False),
-            "a 4 KiB Android kernel",
+            "a 16 KiB Android kernel",
         )
         manifest = copy.deepcopy(original)
         manifest["jelly"]["patch_manifest_sha256"] = "e" * 64

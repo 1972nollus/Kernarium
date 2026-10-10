@@ -20,11 +20,11 @@ The host exposes hardware decoding through V4L2 independently of the GPU.
 
 ## Product contract
 
-The line has one 16 KiB ARM64 configuration: the shared
+The line has one 4 KiB ARM64 configuration: the shared
 [`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
 policy, this line's overlay [`config/android.fragment`](config/android.fragment),
-and the shared 16 KiB page fragment. It is built-in-only:
-`CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 4 KiB variant. The
+and the shared 4 KiB page fragment. It is built-in-only:
+`CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 16 KiB variant. The
 kernel build and the release verifier require every symbol in
 [`config/required-builtins.txt`](config/required-builtins.txt) to be `y` and
 every symbol in [`config/forbidden-options.txt`](config/forbidden-options.txt)
@@ -72,7 +72,9 @@ Android's Ethernet IpClient acquires the SLiRP lease, default route, and DNS
 configuration after init starts, so the kernel does not perform IP
 autoconfiguration. Recovery independently assigns its fixed local endpoint for
 the host-forwarded ADB contract; external recovery routing is not a product
-requirement. This Android product has no 4 KiB profile.
+requirement. This Android product has no 16 KiB profile: Android's 32-bit
+libraries are 4 KiB aligned, so the kernel page size is 4 KiB, while the
+64-bit userspace stays page-agnostic.
 
 The shared series supplies the Darwin carrier, memory, device, and lifecycle
 behaviour this line runs on, with the same contracts as the mainline line:
@@ -108,13 +110,13 @@ clean ACK result into the common compact artifact format. It strips DWARF from
 the published `vmlinux`. That drops only the `STT_FILE` symbols and
 debug-section locals, and keeps `.BTF`, every function and data symbol,
 `.dynsym`, and `System.map`.
-[`artifacts/accepted-16k.env`](artifacts/accepted-16k.env) selects the reviewed
+[`artifacts/accepted-4k.env`](artifacts/accepted-4k.env) selects the reviewed
 local bundle below `.build/kernel/artifacts`.
 
 Kernel publication is independent of AOSP/rootfs publication. Advancing the
 accepted ACK artifact must not rebuild or rename the rootfs release, recreate a
 `.kern` bundle, or invalidate its persistent disk. Apple consumers validate the
-bridge ABI, 16 KiB page profile, Android family, and `6.18` series at build
+bridge ABI, 4 KiB page profile, Android family, and `6.18` series at build
 time; patch releases and commit identities are provenance, not runtime gates.
 
 ## Patch maintenance

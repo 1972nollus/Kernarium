@@ -205,7 +205,7 @@ Apple products consume accepted kernel bundles and never invoke Kbuild. The
 arm64 userspace product uses the same accepted 16 KiB or 4 KiB mainline
 artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
-separate accepted 16 KiB ACK artifact.
+separate accepted 4 KiB ACK artifact.
 
 Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
 gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
@@ -902,7 +902,7 @@ identities, and producer provenance do not become runtime compatibility keys.
 release, and producer tools. Kernel and rootfs releases are selected
 independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
-opens one directly writable supplied GPT and has no 4 KiB variant.
+opens one directly writable supplied GPT and has no 16 KiB variant.
 
 Guest bundles, disk capacity, and compressed rootfs delivery belong to the
 application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime

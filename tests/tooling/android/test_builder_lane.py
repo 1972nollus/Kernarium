@@ -144,7 +144,7 @@ def synthetic_apex(filesystem: str = "ext4") -> bytes:
 
 
 def synthetic_kernel_elf() -> bytearray:
-    """Return a 16 KiB AArch64 ET_DYN kernel: R+X and R+W loads and a GNU stack."""
+    """Return a 4 KiB AArch64 ET_DYN kernel: R+X and R+W loads and a GNU stack."""
     payload = bytearray(64 + 56 * 3)
     payload[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HHI", payload, 16, 3, 183, 1)
@@ -152,8 +152,8 @@ def synthetic_kernel_elf() -> bytearray:
     struct.pack_into("<HHH", payload, 52, 64, 56, 3)
     for index, (kind, flags, address, size, alignment) in enumerate(
         (
-            (1, 5, 0, len(payload), 0x4000),
-            (1, 6, 0x10000, len(payload), 0x4000),
+            (1, 5, 0, len(payload), 0x1000),
+            (1, 6, 0x10000, len(payload), 0x1000),
             (0x6474E551, 6, 0, 0, 16),
         )
     ):
@@ -193,7 +193,7 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
             ("<Q", data + 8, 0x40000, "segment 1 is outside the file"),
             ("<I", stack + 4, 7, "GNU stack is executable"),
             ("<I", data + 4, 7, "load segment 1 is writable and executable"),
-            ("<Q", load + 48, 0x1000, "load segment 0 has invalid alignment 0x1000"),
+            ("<Q", load + 48, 0x800, "load segment 0 has invalid alignment 0x800"),
             ("<Q", load + 48, 0x6000, "load segment 0 has invalid alignment 0x6000"),
             ("<Q", data + 16, 0x10010, "alignment congruence"),
             ("<I", data, 0, "separated executable and writable"),
@@ -220,7 +220,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel.write_bytes(synthetic_aarch64_elf())
         kernel_config = root / "kernel/config"
         kernel_config.write_text(
-            "CONFIG_ARM64_16K_PAGES=y\n# CONFIG_MODULES is not set\n"
+            "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n"
         )
         kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
@@ -273,7 +273,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("META/init_boot_filesystem_config.txt", "")
                 archive.writestr(
                     "META/kernel_configs.txt",
-                    "CONFIG_ARM64_16K_PAGES=n\n"
+                    "CONFIG_PAGE_SIZE_4KB=n\n"
                     if wrong_kernel_config
                     else kernel_config.read_bytes(),
                 )

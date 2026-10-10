@@ -32,8 +32,8 @@ safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 3
-PRODUCT_FAMILY = "android-17-ack-6.18-16k"
-DIRECTORY_PREFIX = "android17-ack6.18-16k-"
+PRODUCT_FAMILY = "android-17-ack-6.18-4k"
+DIRECTORY_PREFIX = "android17-ack6.18-4k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 PAYLOAD_SPECS = {
@@ -217,7 +217,7 @@ def validate_manifest(value: object) -> dict:
     if directory_name != DIRECTORY_PREFIX + release_id:
         fail("release directory name does not match the release ID")
     if manifest["product_family"] != PRODUCT_FAMILY:
-        fail("release product family is not Android 17 ACK 6.18 16 KiB")
+        fail("release product family is not Android 17 ACK 6.18 4 KiB")
     if manifest["acceptance"] != "accepted":
         fail("release is not marked accepted")
     require_string(manifest["published_at_utc"], "publication timestamp")
@@ -308,8 +308,8 @@ def validate_manifest(value: object) -> dict:
         require_hex(kernel[key], 40, f"kernel.{key}")
     require_hex(kernel["patch_manifest_sha256"], 64, "kernel patch manifest SHA-256")
     require_integer(kernel["patch_count"], "kernel patch count", minimum=1)
-    if require_integer(kernel["page_size"], "kernel page size") != 16384:
-        fail("kernel page size is not 16384")
+    if require_integer(kernel["page_size"], "kernel page size") != 4096:
+        fail("kernel page size is not 4096")
     require_integer(kernel["abi_version"], "kernel ABI version", minimum=1)
     abi_fingerprint = require_string(kernel["abi_fingerprint"], "kernel ABI fingerprint")
     if re.fullmatch(r"0x[0-9a-f]{16}", abi_fingerprint) is None:
@@ -858,8 +858,8 @@ def verify_semantics(
             structural=not enforce_tracked_policy,
         )
 
-    if manifest["kernel"]["page_size"] != 16384:
-        fail("semantic verification received a non-16-KiB kernel")
+    if manifest["kernel"]["page_size"] != 4096:
+        fail("semantic verification received a non-4-KiB kernel")
     schema = android_root / "support/release/release-manifest.schema.json"
     if not schema.is_file():
         fail("tracked release-manifest schema is missing")
