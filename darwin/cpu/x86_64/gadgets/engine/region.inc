@@ -94,7 +94,7 @@
 	gadget_slot x87_common,                 56, 0x000480,   0, 0x00000
 	gadget_slot x87_state,                  68, 0x001500,   0, 0x00000
 	gadget_slot x87_memory,                 20, 0x003700, 112, 0x01600
-	gadget_slot x87_arithmetic,             36, 0x006d80, 120, 0x01480
+	gadget_slot x87_arithmetic,             36, 0x007880, 120, 0x01480
 	gadget_slot x87_transcendental,         92, 0x001c00,   0, 0x00000
 	gadget_slot system,                     16, 0x000d80, 120, 0x00580
 
