@@ -24,6 +24,7 @@ add_library(uml_arm64_aarch32_semantics OBJECT
     semantics_neon_integer.cpp
     semantics_neon_shift.cpp
     semantics_table.cpp
+    semantics_vector_float.cpp
     semantics_vector_memory.cpp
     semantics_vector_move.cpp)
 uml_declare_architecture_target(uml_arm64_aarch32_semantics cpu shared)

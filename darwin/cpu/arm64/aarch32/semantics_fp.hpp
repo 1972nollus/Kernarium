@@ -22,6 +22,9 @@ inline constexpr std::uint32_t fpcr_fz = 1U << 24;
 inline constexpr std::uint32_t fpcr_dn = 1U << 25;
 inline constexpr std::uint32_t fpcr_ahp = 1U << 26;
 inline constexpr std::uint32_t fpcr_rounding = 3U << 22;
+/* Cumulative exception flags in the FPSR. */
+inline constexpr std::uint32_t invalid_flag = 1U << 0;
+inline constexpr std::uint32_t inexact_flag = 1U << 4;
 
 /* The FPCR an Advanced SIMD floating-point operation runs under: the
  * Standard FPSCR value, flush-to-zero and default NaN with round to nearest,
@@ -108,8 +111,6 @@ UML_A32_FP_BINARY(min, "fmin")
 UML_A32_FP_BINARY(max_number, "fmaxnm")
 UML_A32_FP_BINARY(min_number, "fminnm")
 UML_A32_FP_BINARY(abd, "fabd")
-UML_A32_FP_BINARY(recip_step, "frecps")
-UML_A32_FP_BINARY(rsqrt_step, "frsqrts")
 /* The comparison masks: all ones when true. */
 UML_A32_FP_BINARY(compare_eq, "fcmeq")
 UML_A32_FP_BINARY(compare_ge, "fcmge")
@@ -124,6 +125,49 @@ UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
 #undef UML_A32_FP_BINARY
 #undef UML_A32_FP_UNARY
 
+/* VRECPS and VRSQRTS are not the fused A64 steps: AArch32 FPRecipStep and
+ * FPRSqrtStep round the product first, treat infinity times zero (a
+ * denormal is zero under the Standard FPSCR value's flush) as a zero
+ * product, and halve the RSqrt result exactly. These run under the
+ * Standard FPSCR value. */
+[[nodiscard]] inline bool step_is_nan(std::uint32_t v) noexcept
+{
+	return (v >> 23 & 0xffU) == 0xffU && (v & 0x7fffffU) != 0U;
+}
+[[nodiscard]] inline bool step_is_infinity(std::uint32_t v) noexcept
+{
+	return (v >> 23 & 0xffU) == 0xffU && (v & 0x7fffffU) == 0U;
+}
+[[nodiscard]] inline bool step_is_zero(std::uint32_t v) noexcept
+{
+	return (v >> 23 & 0xffU) == 0U;
+}
+[[nodiscard]] inline std::uint32_t step_product(std::uint32_t a, std::uint32_t b, bool &nan) noexcept
+{
+	nan = step_is_nan(a) || step_is_nan(b);
+	if (nan)
+		return mul(a, b);
+	if ((step_is_infinity(a) && step_is_zero(b)) || (step_is_zero(a) && step_is_infinity(b))) {
+		/* FPUnpack flushes a denormal operand and records it. */
+		(void)add(a, std::uint32_t{0});
+		(void)add(b, std::uint32_t{0});
+		return 0U;
+	}
+	return mul(a, b);
+}
+[[nodiscard]] inline std::uint32_t recip_step(std::uint32_t a, std::uint32_t b) noexcept
+{
+	bool nan;
+	const std::uint32_t product = step_product(a, b, nan);
+	return nan ? product : sub(0x4000'0000U, product);
+}
+[[nodiscard]] inline std::uint32_t rsqrt_step(std::uint32_t a, std::uint32_t b) noexcept
+{
+	bool nan;
+	const std::uint32_t product = step_product(a, b, nan);
+	return nan ? product : mul(sub(0x4040'0000U, product), 0x3f00'0000U);
+}
+
 /* The fused multiply-adds: addend + a * b (FMADD with the addend last). */
 [[nodiscard]] inline std::uint32_t fused(std::uint32_t addend, std::uint32_t a,
 	std::uint32_t b) noexcept
@@ -133,7 +177,7 @@ UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
 			 "fmadd s0, s2, s3, s1\n\tfmov %w0, s0"
 			 : "=r"(r)
 			 : "r"(addend), "r"(a), "r"(b)
-			 : "v0", "v1", "v2", "s3");
+			 : "v0", "v1", "v2", "v3");
 	return r;
 }
 [[nodiscard]] inline std::uint64_t fused(std::uint64_t addend, std::uint64_t a,
@@ -144,7 +188,7 @@ UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
 			 "fmadd d0, d2, d3, d1\n\tfmov %0, d0"
 			 : "=r"(r)
 			 : "r"(addend), "r"(a), "r"(b)
-			 : "v0", "v1", "v2", "d3");
+			 : "v0", "v1", "v2", "v3");
 	return r;
 }
 
