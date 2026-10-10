@@ -72,9 +72,8 @@ void copy_out(std::byte *host, const void *source, std::size_t size) noexcept
 
 } // namespace
 
-bool Exec::condition_passed() const noexcept
+bool Exec::condition_holds(unsigned cond) const noexcept
 {
-	const unsigned cond = inst.cond;
 	bool result;
 	switch (cond >> 1) {
 	case 0: result = flag_z(); break;

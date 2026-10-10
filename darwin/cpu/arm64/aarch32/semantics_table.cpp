@@ -7,6 +7,7 @@
 #include "cpu/arm64/aarch32/semantics_internal.hpp"
 
 #include <array>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -86,6 +87,7 @@ constexpr Named named_ops[] = {
 	{"CPS", Op::nop}, {"CPSID", Op::nop}, {"CPSIE", Op::nop},
 	{"NOP", Op::nop}, {"DBG", Op::nop}, {"CLRBHB", Op::nop},
 	{"CSDB", Op::nop}, {"ESB", Op::nop}, {"TSB", Op::nop}, {"SEV", Op::nop},
+	{"SB", Op::nop},
 	{"SEVL", Op::nop}, {"WFE", Op::nop}, {"WFI", Op::nop},
 	{"YIELD", Op::nop}, {"DMB", Op::dmb}, {"DSB", Op::dsb},
 	{"SSBB", Op::dsb}, {"PSSBB", Op::dsb}, {"ISB", Op::isb}, {"IT", Op::it},
@@ -158,6 +160,14 @@ constexpr Named named_ops[] = {
 		add_stems(entries, count);
 		entries = vector_float_entries(count);
 		add_stems(entries, count);
+		entries = armv8_float_entries(count);
+		add_stems(entries, count);
+		entries = armv8_integer_entries(count);
+		add_stems(entries, count);
+		entries = crypto_entries(count);
+		add_stems(entries, count);
+		entries = bf16_entries(count);
+		add_stems(entries, count);
 		for (std::size_t index = 0; index < kFormCount; ++index) {
 			const std::string_view name = kForms[index].mnemonic;
 			const std::string_view form = kForms[index].name;
@@ -170,13 +180,21 @@ constexpr Named named_ops[] = {
 			 * its stem, the name up to the encoding tag. */
 			if (info.op == Op::none) {
 				std::string_view stem = form;
+				std::string_view tail;
 				for (std::size_t at = 0; at + 2U < form.size(); ++at)
 					if (form[at] == '_' && (form[at + 1U] == 'A' || form[at + 1U] == 'T')
 						&& form[at + 2U] >= '0' && form[at + 2U] <= '9') {
 						stem = form.substr(0, at);
+						tail = form.substr(at + 3U);
 						break;
 					}
-				if (const auto found = by_stem.find(stem); found != by_stem.end()) {
+				/* A tag followed by a BF16 name part (VCVTB_A1_bfs) selects
+				 * the handler registered under the stem and that part, and
+				 * never the handler of the stem alone. */
+				const auto found = tail.starts_with("_b")
+					? by_stem.find(std::string(stem) + std::string(tail))
+					: by_stem.find(stem);
+				if (found != by_stem.end()) {
 					info.op = Op::vector;
 					info.vector = found->second;
 				}

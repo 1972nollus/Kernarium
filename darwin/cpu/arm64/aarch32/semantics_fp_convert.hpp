@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/a32_encodings.hpp"
+
 #include <cstdint>
 #include <utility>
 
@@ -56,6 +58,12 @@ namespace uml::cpu::arm64::aarch32::detail::fp {
  * toward zero (z), to nearest even (n), toward plus infinity (p), toward
  * minus infinity (m); signed (s) or unsigned (u). */
 #define UML_A32_FP_TO_INT(name, insn)                                                        \
+	[[nodiscard]] inline std::uint32_t name(std::uint16_t a) noexcept                    \
+	{                                                                                    \
+		std::uint32_t r;                                                             \
+		__asm__ volatile("fmov s1, %w1\n\t" insn " %w0, h1" : "=r"(r) : "r"(std::uint32_t{a}) : "v1"); \
+		return r;                                                                    \
+	}                                                                                    \
 	[[nodiscard]] inline std::uint32_t name(std::uint32_t a) noexcept                    \
 	{                                                                                    \
 		std::uint32_t r;                                                             \
@@ -113,6 +121,8 @@ UML_A32_INT_TO_FP(s32_to_single, "scvtf", "s", std::uint32_t, "fmov %w0, s0")
 UML_A32_INT_TO_FP(u32_to_single, "ucvtf", "s", std::uint32_t, "fmov %w0, s0")
 UML_A32_INT_TO_FP(s32_to_double, "scvtf", "d", std::uint64_t, "fmov %0, d0")
 UML_A32_INT_TO_FP(u32_to_double, "ucvtf", "d", std::uint64_t, "fmov %0, d0")
+UML_A32_INT_TO_FP(s32_to_half, "scvtf", "h", std::uint32_t, "fmov %w0, s0")
+UML_A32_INT_TO_FP(u32_to_half, "ucvtf", "h", std::uint32_t, "fmov %w0, s0")
 
 #undef UML_A32_INT_TO_FP
 
@@ -136,6 +146,10 @@ UML_A32_FIXED_OP(FixedSToSingle, std::uint32_t, std::uint32_t, "scvtf s0, %w1, #
 UML_A32_FIXED_OP(FixedUToSingle, std::uint32_t, std::uint32_t, "ucvtf s0, %w1, #%2\n\tfmov %w0, s0")
 UML_A32_FIXED_OP(FixedSToDouble, std::uint32_t, std::uint64_t, "scvtf d0, %w1, #%2\n\tfmov %0, d0")
 UML_A32_FIXED_OP(FixedUToDouble, std::uint32_t, std::uint64_t, "ucvtf d0, %w1, #%2\n\tfmov %0, d0")
+UML_A32_FIXED_OP(HalfToFixedS, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzs %w0, h1, #%2")
+UML_A32_FIXED_OP(HalfToFixedU, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzu %w0, h1, #%2")
+UML_A32_FIXED_OP(FixedSToHalf, std::uint32_t, std::uint32_t, "scvtf h0, %w1, #%2\n\tfmov %w0, s0")
+UML_A32_FIXED_OP(FixedUToHalf, std::uint32_t, std::uint32_t, "ucvtf h0, %w1, #%2\n\tfmov %w0, s0")
 
 #undef UML_A32_FIXED_OP
 
@@ -153,6 +167,57 @@ template<template<int> typename Op, typename In, typename Out>
 [[nodiscard]] inline Out fixed_convert(unsigned fraction, In a) noexcept
 {
 	return fixed_dispatch<Op, In, Out>(fraction, a, std::make_index_sequence<32>{});
+}
+
+/* A 16-bit conversion the host made in 32 bits overflowed the 16-bit range:
+ * the result saturates, and the exception is an invalid operation, not an
+ * inexact one. Called inside the local-FPCR region. */
+inline void report_overflow() noexcept
+{
+	std::uint64_t value;
+	__asm__ volatile("mrs %0, fpsr\n\tbic %0, %0, #16\n\torr %0, %0, #1\n\tmsr fpsr, %0"
+			 : "=&r"(value) : : "memory");
+}
+
+/* A 32-bit conversion result narrowed to a 16-bit integer: out of range
+ * saturates and is an invalid operation. Called inside the local-FPCR
+ * region. */
+[[nodiscard]] inline std::uint16_t narrow_integer(std::uint32_t result, bool is_unsigned) noexcept
+{
+	if (is_unsigned) {
+		if (result > 0xffffU) {
+			fp::report_overflow();
+			return 0xffffU;
+		}
+		return static_cast<std::uint16_t>(result);
+	}
+	const auto value = static_cast<std::int32_t>(result);
+	if (value > 0x7fff || value < -0x8000) {
+		fp::report_overflow();
+		return value > 0 ? std::uint16_t{0x7fff} : std::uint16_t{0x8000};
+	}
+	return static_cast<std::uint16_t>(value);
+}
+
+/* Floating point to a 32-bit integer under a rounding the instruction names
+ * (FPDecodeRM): nearest even, plus infinity, minus infinity, zero, or
+ * nearest with ties away. */
+template<typename Float>
+[[nodiscard]] inline std::uint32_t to_int_rounded(Float value, bool is_unsigned,
+	FPRounding rounding) noexcept
+{
+	switch (rounding) {
+	case FPRounding::POSINF:
+		return is_unsigned ? to_int_pu(value) : to_int_ps(value);
+	case FPRounding::NEGINF:
+		return is_unsigned ? to_int_mu(value) : to_int_ms(value);
+	case FPRounding::ZERO:
+		return is_unsigned ? to_int_zu(value) : to_int_zs(value);
+	case FPRounding::TIEAWAY:
+		return is_unsigned ? to_int_au(value) : to_int_as(value);
+	default:
+		return is_unsigned ? to_int_nu(value) : to_int_ns(value);
+	}
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail::fp
