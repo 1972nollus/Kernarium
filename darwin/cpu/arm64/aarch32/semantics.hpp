@@ -50,6 +50,34 @@ public:
 		::uml::memory::MemoryAccess access) noexcept = 0;
 	virtual void stored(std::byte *host, std::size_t size) noexcept = 0;
 
+	/*
+	 * The exclusive monitor, which an engine with its own reservation model
+	 * overrides (a versioned reservation its fused exclusives and tracked
+	 * stores share, for one). The library has checked the alignment and
+	 * translated the address by the time it calls these: `address` is the
+	 * 32-bit guest address, `host` its translation for the access, `size` 1,
+	 * 2, 4 or 8.
+	 *
+	 * load_exclusive() loads the value (with acquire ordering for LDAEX) and
+	 * records the reservation. store_exclusive() stores `value` (with release
+	 * ordering for STLEX) and returns true when the reservation held, or
+	 * returns false and stores nothing; either way the reservation is gone.
+	 * After a store_exclusive() that returned true the library calls
+	 * stored(). clear_exclusive() is CLREX. The ordinary loads and stores,
+	 * LDA and STL included, never call them.
+	 *
+	 * The defaults are CpuState's record (exclusive_address, exclusive_key,
+	 * exclusive_value, exclusive_value2, exclusive_version and
+	 * exclusive_size) and a host compare-and-swap of the value the load
+	 * recorded: the gadget engine's mechanism. Ordinary stores leave that
+	 * monitor alone; the engine clears it where its own model does.
+	 */
+	[[nodiscard]] virtual std::uint64_t load_exclusive(CpuState &cpu,
+		std::uint32_t address, std::byte *host, unsigned size, bool acquire) noexcept;
+	[[nodiscard]] virtual bool store_exclusive(CpuState &cpu, std::uint32_t address,
+		std::byte *host, unsigned size, std::uint64_t value, bool release) noexcept;
+	virtual void clear_exclusive(CpuState &cpu) noexcept;
+
 protected:
 	A32Memory() = default;
 	~A32Memory() = default;
@@ -121,11 +149,9 @@ struct StepResult final {
  *
  * A taken branch to an A32 target with bit 1 set leaves that target in the
  * PC key, which is not a canonical key: the engine's next fetch raises the
- * PC alignment exit (guest_key.hpp). The exclusive monitor is CpuState's
- * record (exclusive_address, exclusive_key, exclusive_value and
- * exclusive_size); a store-exclusive completes as a host compare-and-swap
- * against the value the load-exclusive recorded. Ordinary stores leave the
- * monitor alone; the engine clears it where its own model does.
+ * PC alignment exit (guest_key.hpp). The exclusive monitor is A32Memory's
+ * hooks, by default CpuState's record and a host compare-and-swap against
+ * the value the load-exclusive recorded.
  */
 [[nodiscard]] StepResult execute_a32(CpuState &cpu,
 	const Instruction &instruction, A32Memory &memory) noexcept;

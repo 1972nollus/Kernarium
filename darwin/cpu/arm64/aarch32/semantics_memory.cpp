@@ -300,7 +300,7 @@ bool exec_exclusive(Exec &x, const OpInfo &info)
 {
 	const Operands &o = x.o;
 	if (info.op == Op::clrex) {
-		clear_monitor(x.cpu);
+		x.mem.clear_exclusive(x.cpu);
 		return true;
 	}
 	const Exclusive kind = exclusive_of(info.op);
@@ -317,16 +317,9 @@ bool exec_exclusive(Exec &x, const OpInfo &info)
 		return false;
 
 	if (kind.load) {
-		const std::uint64_t value = atomic_load(host, size,
-			kind.ordered ? __ATOMIC_ACQUIRE : __ATOMIC_RELAXED);
-		if (kind.monitor) {
-			x.cpu.exclusive_address = address;
-			x.cpu.exclusive_key = reinterpret_cast<std::uintptr_t>(host);
-			x.cpu.exclusive_value = value;
-			x.cpu.exclusive_value2 = 0;
-			x.cpu.exclusive_version = 0;
-			x.cpu.exclusive_size = static_cast<std::uint8_t>(size);
-		}
+		const std::uint64_t value = kind.monitor
+			? x.mem.load_exclusive(x.cpu, address, host, size, kind.ordered)
+			: atomic_load(host, size, __ATOMIC_ACQUIRE);
 		x.set_reg(o.t, static_cast<std::uint32_t>(value));
 		if (size == 8U)
 			x.set_reg(o.t2, static_cast<std::uint32_t>(value >> 32));
@@ -342,22 +335,49 @@ bool exec_exclusive(Exec &x, const OpInfo &info)
 		x.note_stored(host, size);
 		return true;
 	}
-	/* A store-exclusive passes when the monitor holds this address and the
-	 * location still holds the value the load-exclusive read: one host
-	 * compare-and-swap. The monitor is cleared either way. */
-	const bool held = x.cpu.exclusive_size == size && x.cpu.exclusive_address == address
-		&& x.cpu.exclusive_key == reinterpret_cast<std::uintptr_t>(host);
-	const std::uint64_t expected = x.cpu.exclusive_value;
-	clear_monitor(x.cpu);
-	bool passed = false;
-	if (held) {
-		passed = atomic_swap(host, size, expected, value,
-			kind.ordered ? __ATOMIC_RELEASE : __ATOMIC_RELAXED);
-		if (passed)
-			x.note_stored(host, size);
-	}
+	const bool passed = x.mem.store_exclusive(x.cpu, address, host, size, value, kind.ordered);
+	if (passed)
+		x.note_stored(host, size);
 	x.set_reg(o.d, passed ? 0U : 1U);
 	return true;
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail
+
+namespace uml::cpu::arm64::aarch32 {
+
+/* The default monitor: CpuState's record and a compare-and-swap. */
+std::uint64_t A32Memory::load_exclusive(CpuState &cpu, std::uint32_t address,
+	std::byte *host, unsigned size, bool acquire) noexcept
+{
+	const std::uint64_t value = detail::atomic_load(host, size,
+		acquire ? __ATOMIC_ACQUIRE : __ATOMIC_RELAXED);
+	cpu.exclusive_address = address;
+	cpu.exclusive_key = reinterpret_cast<std::uintptr_t>(host);
+	cpu.exclusive_value = value;
+	cpu.exclusive_value2 = 0;
+	cpu.exclusive_version = 0;
+	cpu.exclusive_size = static_cast<std::uint8_t>(size);
+	return value;
+}
+
+/* A store-exclusive passes when the monitor holds this address and the
+ * location still holds the value the load-exclusive read: one host
+ * compare-and-swap. The monitor is cleared either way. */
+bool A32Memory::store_exclusive(CpuState &cpu, std::uint32_t address, std::byte *host,
+	unsigned size, std::uint64_t value, bool release) noexcept
+{
+	const bool held = cpu.exclusive_size == size && cpu.exclusive_address == address
+		&& cpu.exclusive_key == reinterpret_cast<std::uintptr_t>(host);
+	const std::uint64_t expected = cpu.exclusive_value;
+	detail::clear_monitor(cpu);
+	return held && detail::atomic_swap(host, size, expected, value,
+		release ? __ATOMIC_RELEASE : __ATOMIC_RELAXED);
+}
+
+void A32Memory::clear_exclusive(CpuState &cpu) noexcept
+{
+	detail::clear_monitor(cpu);
+}
+
+} // namespace uml::cpu::arm64::aarch32
