@@ -36,6 +36,10 @@ constexpr std::uint32_t kCodeBase = 0x4F000000;
 constexpr std::uint32_t kCodeSize = 0x4000;
 constexpr std::uint32_t kArmExit = kCodeBase + 0x800;   /* finishes in A32 state */
 constexpr std::uint32_t kThumbExit = kCodeBase + 0x900; /* finishes in Thumb state */
+/* A stub is `ldr pc, [pc, #-4]` (Thumb: `ldr.w pc, [pc]`, f8df f000) and then one of these
+ * words; a program that loads a stub reads them. The stub at the end of a program is the same. */
+constexpr std::uint32_t kArmEpilogue = kCodeBase + 0x3F00;
+constexpr std::uint32_t kThumbEpilogue = kCodeBase + 0x3F08;
 constexpr std::uint32_t kDataBase = 0x50000000;
 constexpr std::uint32_t kDataSize = 0x8000;
 constexpr std::uint32_t kReadOnlyBase = 0x50008000;

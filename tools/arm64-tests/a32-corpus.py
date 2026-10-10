@@ -35,9 +35,11 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPOSITORY / "tests/tooling/arm64"))
 sys.path.insert(0, str(REPOSITORY / "tools/instruction-corpus"))
 
+import a32_corpus_armv8 as armv8  # noqa: E402
 import a32_corpus_control as control  # noqa: E402
 import a32_corpus_memory as memory  # noqa: E402
 import a32_corpus_plan as plan  # noqa: E402
+import a32_corpus_simd as simd  # noqa: E402
 import a32_corpus_system as system  # noqa: E402
 import a32_corpus_wire as wire  # noqa: E402
 import aarch32 as corpus  # noqa: E402
@@ -45,12 +47,14 @@ import aarch32 as corpus  # noqa: E402
 DIRECTORY = REPOSITORY / "tests/unit/arm64/aarch32_corpus"
 INVENTORY = REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv"
 CHUNK = 1500
-SUITES = {**plan.SUITES, **memory.SUITES, **control.SUITES, **system.SUITES}
+SUITES = {**plan.SUITES, **memory.SUITES, **control.SUITES, **system.SUITES, **simd.SUITES,
+          **armv8.SUITES}
 HEADER_DEFAULTS = {"k": 1}
 # Suites whose golden only hardware can settle: the multi-word accesses at
 # unaligned addresses, which qemu-arm refuses and an arm64 Linux kernel fixes
-# up for a compat task.
-HARDWARE_ONLY = {"unaligned"}
+# up for a compat task, and the FPSCR bits (Stride, Len, FZ16) an
+# implementation may or may not hold.
+HARDWARE_ONLY = {"unaligned", "fpscr-reserved"}
 
 
 def json_line(value) -> str:
@@ -251,6 +255,39 @@ def finish(arguments) -> int:
     return 0
 
 
+def compare(arguments) -> int:
+    """Differences between two source directories' observations of the same cases."""
+    def load(directory: pathlib.Path) -> dict[str, dict[str, dict]]:
+        records = {}
+        for path in sorted(directory.glob("*.jsonl")):
+            if path.name != "states.jsonl":
+                records[path.name.rsplit("-", 1)[0]] = {
+                    row["n"]: row for row in corpus.read_jsonl(path)[1:]}
+        return records
+    left, right = load(pathlib.Path(arguments.left)), load(pathlib.Path(arguments.right))
+    keys = ("e", "fi", "fa", "k", "x", "m")
+    different = 0
+    for suite in sorted(left.keys() & right.keys()):
+        shown = 0
+        differing, same = [], 0
+        for name, row in left[suite].items():
+            other = right[suite].get(name)
+            if other is None:
+                continue
+            if row["p"] != other["p"] or any(row.get(key) != other.get(key) for key in keys):
+                differing.append((name, [key for key in keys if row.get(key) != other.get(key)]))
+            else:
+                same += 1
+        different += len(differing)
+        print(f"{suite}: {same} agree, {len(differing)} differ, "
+              f"{len(left[suite].keys() - right[suite].keys())} only left, "
+              f"{len(right[suite].keys() - left[suite].keys())} only right")
+        for name, fields in differing[:arguments.show]:
+            print(f"  {name}: {','.join(fields)}")
+            shown += 1
+    return 1 if different else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -266,8 +303,12 @@ def main() -> int:
             command.add_argument("--limit", type=int, default=0)
         else:
             command.add_argument("--directory", default=str(DIRECTORY))
+    command = commands.add_parser("compare")
+    command.add_argument("--left", default=str(DIRECTORY / "source"))
+    command.add_argument("--right", required=True)
+    command.add_argument("--show", type=int, default=20)
     arguments = parser.parse_args()
-    return {"observe": observe, "finish": finish}[arguments.command](arguments)
+    return {"observe": observe, "finish": finish, "compare": compare}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

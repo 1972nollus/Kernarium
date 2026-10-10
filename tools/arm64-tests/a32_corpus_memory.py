@@ -97,7 +97,7 @@ def solve(operands: dict, address: int, apsr: int, choice: int):
         offset = shift_value(value, operands.get("shift_t", "SRType_LSL"),
                              operands.get("shift_n", 0), apsr >> 29 & 1)
     else:
-        offset = operands["imm32"] & MASK
+        offset = operands.get("imm32", 0) & MASK  # LDA, STL and the exclusives have none
     signed = offset if operands.get("add", True) else -offset
     index = operands.get("index", not operands.get("postindex", False))
     assignments[f"r{n}"] = (address - signed if index else address) & MASK
@@ -275,13 +275,13 @@ def program_units(word: int, isa: str) -> list[int]:
     return [word >> 16] if isa == "T16" else [word >> 16, word & 0xFFFF]
 
 
-def suite_exclusive(context: Context) -> list[Case]:
+def suite_exclusive(context: Context, suite="exclusive", load_stem="LDREX", store_stem="STREX") -> list[Case]:
     cases = []
     for state, suffix in (("A", "A1"), ("T", "T1")):
         letter = "a" if state == "A" else "t"
         for size_name in EXCLUSIVE_SIZES:
             size = {"": 4, "B": 1, "H": 2, "D": 8}[size_name]
-            load_name, store_name = f"LDREX{size_name}_{suffix}", f"STREX{size_name}_{suffix}"
+            load_name, store_name = f"{load_stem}{size_name}_{suffix}", f"{store_stem}{size_name}_{suffix}"
             wide = size_name == "D"
             pair = {"Rt2": 3} if wide else {}  # Rt2 is SBO in the byte and halfword forms
             loads = exclusive_word(context, load_name, Rn=4, Rt=2 if wide else 1, **pair)
@@ -306,7 +306,7 @@ def suite_exclusive(context: Context) -> list[Case]:
                     units = [unit for part in parts for unit in part]
                     target = [i for i, part in enumerate(parts) if part is strex][0]
                     recipe = f"{('edges', 'pattern')[index % 2]}-{letter}"
-                    cases.append(Case("exclusive", f"{store_name}/{shape}.{scenario}", store_name, state,
+                    cases.append(Case(suite, f"{store_name}/{shape}.{scenario}", store_name, state,
                                       tuple(units), target, recipe, {**aim, "r5": 9}))
             # A load that faults: unmapped, or misaligned (an alignment fault, which
             # no kernel fixes up for an exclusive).
@@ -318,7 +318,7 @@ def suite_exclusive(context: Context) -> list[Case]:
             if size == 4:
                 faulting.update(u3=D + 0x1043)
             for scenario, address in faulting.items():
-                cases.append(Case("exclusive", f"{load_name}/load.{scenario}", load_name, state,
+                cases.append(Case(suite, f"{load_name}/load.{scenario}", load_name, state,
                                   tuple(ldrex), 0, f"edges-{letter}", aimed(address, 0)))
     return cases
 

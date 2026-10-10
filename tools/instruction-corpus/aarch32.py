@@ -34,6 +34,9 @@ CODE_BASE = 0x4F000000
 CODE_SIZE = 0x4000
 ARM_EXIT = CODE_BASE + 0x800
 THUMB_EXIT = CODE_BASE + 0x900
+# The word after a stub's load: the oracle's trampolines to its own epilogues.
+ARM_EPILOGUE = CODE_BASE + 0x3F00
+THUMB_EPILOGUE = CODE_BASE + 0x3F08
 DATA_BASE = 0x50000000
 DATA_SIZE = 0x8000
 READ_ONLY_BASE = 0x50008000
@@ -315,6 +318,7 @@ def generate(root: pathlib.Path, index: dict) -> bytes:
     names = [record_name for record_name in index["records"]]
     meta = {"schema": 1, "records": names, "oracle_memory_map": {
         "code": [CODE_BASE, CODE_SIZE], "arm_exit": ARM_EXIT, "thumb_exit": THUMB_EXIT,
+        "arm_epilogue": ARM_EPILOGUE, "thumb_epilogue": THUMB_EPILOGUE,
         "data": [DATA_BASE, DATA_SIZE], "read_only": [READ_ONLY_BASE, READ_ONLY_SIZE]}}
     body = str32(json.dumps(meta, sort_keys=True, separators=(",", ":")))
     body += struct.pack("<I", len(recipes))

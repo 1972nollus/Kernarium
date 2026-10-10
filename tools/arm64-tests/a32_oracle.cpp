@@ -44,7 +44,12 @@ constexpr u32 kCodeBase = 0x4f000000;
 constexpr u32 kCodeSize = 0x4000;
 constexpr u32 kArmExit = kCodeBase + 0x800;
 constexpr u32 kThumbExit = kCodeBase + 0x900;
-constexpr u32 kLaunch = kCodeBase + 0xa00;
+/* The stubs jump through these, so the word after a stub's load is the same
+ * for every oracle; the harness's own epilogues, which have no fixed address,
+ * are behind them. A program cannot read them by a literal load. */
+constexpr u32 kArmEpilogue = kCodeBase + 0x3f00;
+constexpr u32 kThumbEpilogue = kCodeBase + 0x3f08;
+constexpr u32 kLaunch = kCodeBase + 0x3f80;
 constexpr u32 kDataBase = 0x50000000;
 constexpr u32 kDataSize = 0x8000;
 constexpr u32 kReadOnlyBase = 0x50008000;
@@ -408,7 +413,7 @@ void put_half(u32 address, u16 value)
 }
 
 /* The exit stub of an instruction set at address: a load of the epilogue's
- * address into the PC, which touches no register. Thumb needs a 4-byte
+ * trampoline into the PC, which touches no register. Thumb needs a 4-byte
  * aligned address; the caller aligns it. */
 void write_arm_stub(u32 address, u32 target)
 {
@@ -433,12 +438,14 @@ void prepare_code(const u8 *program, u32 bytes, bool thumb)
 		if (end % 4)
 			put_half(end, 0xbf00); /* nop, so the stub is word aligned */
 		end = (end + 3) & ~3U;
-		write_thumb_stub(end, reinterpret_cast<u32>(&a32_exit_thumb));
+		write_thumb_stub(end, kThumbEpilogue);
 	} else {
-		write_arm_stub(end, reinterpret_cast<u32>(&a32_exit_arm));
+		write_arm_stub(end, kArmEpilogue);
 	}
-	write_arm_stub(kArmExit, reinterpret_cast<u32>(&a32_exit_arm));
-	write_thumb_stub(kThumbExit, reinterpret_cast<u32>(&a32_exit_thumb));
+	write_arm_stub(kArmEpilogue, reinterpret_cast<u32>(&a32_exit_arm));
+	write_arm_stub(kThumbEpilogue, reinterpret_cast<u32>(&a32_exit_thumb));
+	write_arm_stub(kArmExit, kArmEpilogue);
+	write_thumb_stub(kThumbExit, kThumbEpilogue);
 	write_arm_stub(kLaunch, kCodeBase | (thumb ? 1U : 0U));
 	sys(kSysCacheflush, kCodeBase, kCodeBase + kCodeSize, 0);
 }

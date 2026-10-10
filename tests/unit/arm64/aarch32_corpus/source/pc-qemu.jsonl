@@ -43,10 +43,10 @@
 {"n":"CMP_r_A1/e15f0001.1","f":"CMP_r_A1","i":"A","p":"e320f000e15f0001ea0001fc","t":1,"s":"pattern-a","x":{"apsr":"90000000"},"k":3}
 {"n":"CMP_r_A1/e15f0001.2","f":"CMP_r_A1","i":"A","p":"e320f000e320f000e15f0001ea0001fb","t":2,"s":"edges3-a","k":4}
 {"n":"CMP_r_A1/e15f0001.3","f":"CMP_r_A1","i":"A","p":"e320f000e320f000e320f000e15f0001ea0001fa","t":3,"s":"pattern1-a","x":{"apsr":"90000000"},"k":5}
-{"n":"LDRD_l_A1/e1cf00d0.0","f":"LDRD_l_A1","i":"A","p":"e1cf00d0ea0001fd","t":0,"s":"edges-a","x":{"r0":"e51ff004","r1":"4e8000b4"},"k":2}
-{"n":"LDRD_l_A1/e1cf00d0.1","f":"LDRD_l_A1","i":"A","p":"e320f000e1cf00d0ea0001fc","t":1,"s":"pattern-a","x":{"r0":"e51ff004","r1":"4e8000b4"},"k":3}
-{"n":"LDRD_l_A1/e1cf00d0.2","f":"LDRD_l_A1","i":"A","p":"e320f000e320f000e1cf00d0ea0001fb","t":2,"s":"edges3-a","x":{"r0":"e51ff004","r1":"4e8000b4"},"k":4}
-{"n":"LDRD_l_A1/e1cf00d0.3","f":"LDRD_l_A1","i":"A","p":"e320f000e320f000e320f000e1cf00d0ea0001fa","t":3,"s":"pattern1-a","x":{"r0":"e51ff004","r1":"4e8000b4"},"k":5}
+{"n":"LDRD_l_A1/e1cf00d0.0","f":"LDRD_l_A1","i":"A","p":"e1cf00d0ea0001fd","t":0,"s":"edges-a","x":{"r0":"e51ff004","r1":"4f003f00"},"k":2}
+{"n":"LDRD_l_A1/e1cf00d0.1","f":"LDRD_l_A1","i":"A","p":"e320f000e1cf00d0ea0001fc","t":1,"s":"pattern-a","x":{"r0":"e51ff004","r1":"4f003f00"},"k":3}
+{"n":"LDRD_l_A1/e1cf00d0.2","f":"LDRD_l_A1","i":"A","p":"e320f000e320f000e1cf00d0ea0001fb","t":2,"s":"edges3-a","x":{"r0":"e51ff004","r1":"4f003f00"},"k":4}
+{"n":"LDRD_l_A1/e1cf00d0.3","f":"LDRD_l_A1","i":"A","p":"e320f000e320f000e320f000e1cf00d0ea0001fa","t":3,"s":"pattern1-a","x":{"r0":"e51ff004","r1":"4f003f00"},"k":5}
 {"n":"LDRH_l_A1/e1df00b0.0","f":"LDRH_l_A1","i":"A","p":"e1df00b0ea0001fd","t":0,"s":"edges-a","x":{"r0":"f004"},"k":2}
 {"n":"LDRH_l_A1/e1df00b0.1","f":"LDRH_l_A1","i":"A","p":"e320f000e1df00b0ea0001fc","t":1,"s":"pattern-a","x":{"r0":"f004"},"k":3}
 {"n":"LDRH_l_A1/e1df00b0.2","f":"LDRH_l_A1","i":"A","p":"e320f000e320f000e1df00b0ea0001fb","t":2,"s":"edges3-a","x":{"r0":"f004"},"k":4}
