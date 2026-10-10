@@ -413,6 +413,9 @@ loop for the kernel, whose next entry clears the record, and the loop retries
 from its head. The JIT's fused regions check both mappings before the
 monitor, and its semantic path keeps a software reservation; its ordinary
 stores clear the monitor, as the architecture permits.
+`arm64-exclusive-progress` and `arm64-tlb` check the gadget contract on both
+engines in both page profiles, and `guest-exclusive-progress-gadgets` and
+`guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
 so no wait ever depends on an event. AT_HWCAP therefore always carries
