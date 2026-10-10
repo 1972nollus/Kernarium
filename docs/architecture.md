@@ -760,6 +760,47 @@ all-active, no trap enable, an aligned base inside a page) requires the
 library-exit count of every lowered word's row to stay zero, so a lowering
 that always bailed to the library cannot pass as a match.
 
+The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
+with interworking and IT, for the armhf userspace of Debian and Android's
+armeabi-v7a, which needs hardware VFPv4-D32 and Advanced SIMD, so there is no
+soft-float-only profile. The profile, derived from the host as the SVE and
+SME profiles are, is in
+[`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
+Each engine's `a32_support` names how far it implements it, `none`, `base`
+(the integer core), `simd` or `complete`, and `base` and `simd` are
+milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
+is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
+engine below `base` takes the new entry as the illegal-instruction exit
+without touching the state. The development policy
+`DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
+`a32_presented_support` gives the level a run presents, nothing with the
+policy off and the engine's level with it on, and the AArch32 identification
+registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
+and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
+are zero below `base`. The default turns on once both engines are complete.
+
+An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
+the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
+appended to `CpuState` after the SVE block (GE, the sticky Q flag, ITSTATE,
+FPSCR's flags, TPIDRURO, CP15BEN and an entry marker), so no earlier offset
+moves. The PC is a translation key
+([`cpu/arm64/aarch32/guest_key.hpp`](../darwin/cpu/arm64/aarch32/guest_key.hpp))
+for the whole entry, which lets one gadget program cache, one JIT arena and
+one shared tier serve A64, A32 and T32 without a second instance of any of
+them. An A64 key is the address with the SME mode in its two low bits. An A32
+key is bit 63 with the word address; a T32 key adds bit 62 and shifts the
+halfword address left one bit, so that bit 2, where every cache hash starts,
+varies between adjacent instructions. A branch target's bit 0 selects T32, so
+the key carries PSTATE.T and no stub switches the state. A valid AArch32 key
+has both low bits clear, so no key reaches the SME mode the JIT reads from an
+A64 key, is the all-ones empty cell, or is a fault position, and an A32 target
+with bit 1 set is a PC-alignment exit before it is a key. The IT state is not
+part of a key because no block ends inside an IT block. A translation records
+its ISA and counts its saved guest units in that ISA's unit, a word for A64
+and A32 and a halfword for T32, so one page-bounded validation serves the
+gadget cache's validating lookups, the JIT's stale lookups and the shared
+tier, whose entries must carry the ISA of the key they are stored under.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

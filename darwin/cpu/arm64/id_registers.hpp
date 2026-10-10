@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
+#include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
@@ -328,6 +329,193 @@ inline constexpr HwcapField hwcap_fields[]{
 		if (((emulated_id_register_value(bit.id_register) >>
 		      bit.shift) & ((1U << bit.width) - 1U)) >= bit.minimum)
 			words[bit.hwcap / 64U] |= 1UL << (bit.hwcap % 64U);
+	return words;
+}
+
+/* The AArch32 identification registers of the virtual CPU. EL0 cannot read
+ * them -- MRC of an ID register is UNDEFINED at PL0, and arm64 Linux emulates
+ * only the AArch64 MRS space -- so they exist to derive the compat HWCAPs
+ * (guest_compat_hwcaps), as arm64 Linux does, and to document the profile.
+ * The values follow a Cortex-A72 in AArch32 state, adjusted to the profile
+ * (cpu/arm64/aarch32/a32_profile.hpp): the base level presents the integer
+ * ISA, the simd level adds VFP and Advanced SIMD, and the complete level the
+ * Armv8 additions, each of them where its A64 host predicate holds
+ * (a32_features). A level below base presents no AArch32, and every register
+ * reads zero. */
+enum class A32IdRegister : std::uint8_t {
+	midr,
+	pfr0,
+	pfr1,
+	pfr2,
+	isar0,
+	isar1,
+	isar2,
+	isar3,
+	isar4,
+	isar5,
+	isar6,
+	mvfr0,
+	mvfr1,
+	mvfr2,
+};
+
+[[nodiscard]] inline std::uint32_t a32_id_register_value(
+	const HostCapabilities &host, A32Support support,
+	A32IdRegister which) noexcept
+{
+	const auto features = a32_features(host, support);
+	if (!features.aarch32)
+		return 0;
+	const auto field = [](unsigned value, unsigned position) noexcept {
+		return static_cast<std::uint32_t>(value) << position;
+	};
+	const auto flag = [](bool present) noexcept {
+		return present ? 1U : 0U;
+	};
+	switch (which) {
+	case A32IdRegister::midr:
+		/* One identity for both views. */
+		return static_cast<std::uint32_t>(emulated_midr_el1);
+	case A32IdRegister::pfr0:
+		/* State0 A32, State1 T32 with Thumb-2, State2 trivial Jazelle
+		 * (BXJ is BX); State3 (ThumbEE) and DIT are absent. */
+		return field(1, 0) | field(3, 4) | field(1, 8);
+	case A32IdRegister::pfr1:
+		/* GenTimer: the generic timer registers at EL0. */
+		return field(1, 16);
+	case A32IdRegister::pfr2:
+		/* No SSBS. */
+		return 0;
+	case A32IdRegister::isar0:
+		/* Divide 2 (SDIV and UDIV in A32 and T32), Debug, CmpBranch,
+		 * BitField, BitCount; Swap 0, since SWP is UNDEFINED. */
+		return field(2, 24) | field(1, 20) | field(1, 12) |
+			field(1, 8) | field(1, 4);
+	case A32IdRegister::isar1:
+		/* Jazelle, Interwork 3, Immediate, IfThen, Extend 2, Except_AR,
+		 * Except, Endian (SETEND is UNDEFINED at EL0). */
+		return field(1, 28) | field(3, 24) | field(1, 20) | field(1, 16) |
+			field(2, 12) | field(1, 8) | field(1, 4) | field(1, 0);
+	case A32IdRegister::isar2:
+		/* Reversal 2, PSR_AR, MultU 2, MultS 3, Mult 2, MemHint 4, and
+		 * LoadStore 1 (LDRD, STRD) or 2 with LDA and STL. */
+		return field(2, 28) | field(1, 24) | field(2, 20) | field(3, 16) |
+			field(2, 12) | field(4, 4) | field(features.armv8 ? 2 : 1, 0);
+	case A32IdRegister::isar3:
+		/* TrueNOP, T32Copy, TabBranch, SynchPrim 2 (LDREXD), SVC, SIMD 3
+		 * (the Armv6 packed forms), Saturate; T32EE 0. */
+		return field(1, 24) | field(1, 20) | field(1, 16) | field(2, 12) |
+			field(1, 8) | field(3, 4) | field(1, 0);
+	case A32IdRegister::isar4:
+		/* Barrier, SMC, Writeback, WithShifts 4, Unpriv 2. */
+		return field(1, 16) | field(1, 12) | field(1, 8) | field(4, 4) |
+			field(2, 0);
+	case A32IdRegister::isar5:
+		/* VCMA, RDM, CRC32, SHA2, SHA1, AES (2 with PMULL), SEVL. */
+		return field(flag(features.fcma), 28) |
+			field(flag(features.rdm), 24) |
+			field(flag(features.crc32), 16) |
+			field(flag(features.sha2), 12) |
+			field(flag(features.sha1), 8) |
+			field(features.aes ? (features.pmull ? 2 : 1) : 0, 4) |
+			field(flag(features.armv8), 0);
+	case A32IdRegister::isar6:
+		/* I8MM, BF16, SB, FHM, DP and JSCVT; SPECRES stays 0. */
+		return field(flag(features.i8mm), 24) |
+			field(flag(features.bf16), 20) |
+			field(flag(features.sb), 12) |
+			field(flag(features.fhm), 8) |
+			field(flag(features.dotprod), 4) |
+			field(flag(features.jscvt), 0);
+	case A32IdRegister::mvfr0:
+		/* FPRound, FPSqrt, FPDivide, FPDP 2 and FPSP 2 (VFPv3 and later)
+		 * and SIMDReg 2 (32 doubleword registers); FPShVec 0, since
+		 * short vectors are RAZ/WI, and FPTrap 0, since the trap enables
+		 * are. */
+		return features.vfp ? field(1, 28) | field(1, 20) | field(1, 16) |
+			field(2, 8) | field(2, 4) | field(2, 0) : 0U;
+	case A32IdRegister::mvfr1:
+		/* FPFtZ, FPDNaN, SIMDLS, SIMDInt, SIMDSP, SIMDFMAC (VFPv4), and
+		 * the half-precision fields: FPHP 1 for the single-precision
+		 * conversions, 2 with the double-precision ones, 3 with FP16
+		 * arithmetic; SIMDHP 1 for the conversions, 2 with arithmetic. */
+		if (!features.vfp)
+			return 0;
+		return field(1, 28) |
+			field(features.fp16 ? 3 : features.armv8 ? 2 : 1, 24) |
+			field(features.fp16 ? 2 : 1, 20) | field(1, 16) |
+			field(1, 12) | field(1, 8) | field(1, 4) | field(1, 0);
+	case A32IdRegister::mvfr2:
+		/* FPMisc 4 (VSEL, VMAXNM, VMINNM, VRINT, VCVT with a rounding
+		 * mode) and SIMDMisc 3 for their Advanced SIMD forms. */
+		return features.armv8 && features.vfp ? field(4, 4) | field(3, 0) :
+			0U;
+	}
+	return 0;
+}
+
+/* A bit of AT_HWCAP or AT_HWCAP2 of a 32-bit task, and the field it is read
+ * from; HwcapField's, for the AArch32 identification registers. */
+struct A32HwcapField final {
+	A32IdRegister id_register;
+	unsigned shift;
+	unsigned minimum;
+	unsigned hwcap;
+};
+
+/* arm64 Linux's compat_elf_hwcaps (arch/arm64/kernel/cpufeature.c), bit
+ * numbers as COMPAT_HWCAP_* with COMPAT_HWCAP2_* as 32 + n, less the SSBS bit
+ * the profile has no register for and NEON, which is three fields at once
+ * (compat_has_neon, below). */
+inline constexpr A32HwcapField a32_hwcap_fields[]{
+	{A32IdRegister::mvfr1, 28, 1, 16},	/* SIMDFMAC: VFPv4 */
+	{A32IdRegister::mvfr0, 8, 2, 6},	/* FPDP: VFP */
+	{A32IdRegister::mvfr0, 8, 2, 13},	/* FPDP: VFPv3 */
+	{A32IdRegister::mvfr1, 24, 3, 22},	/* FPHP: FPHP */
+	{A32IdRegister::mvfr1, 20, 2, 23},	/* SIMDHP: ASIMDHP */
+	{A32IdRegister::isar5, 4, 2, 32 + 1},	/* AES: PMULL */
+	{A32IdRegister::isar5, 4, 1, 32 + 0},	/* AES */
+	{A32IdRegister::isar5, 8, 1, 32 + 2},	/* SHA1 */
+	{A32IdRegister::isar5, 12, 1, 32 + 3},	/* SHA2 */
+	{A32IdRegister::isar5, 16, 1, 32 + 4},	/* CRC32 */
+	{A32IdRegister::isar6, 4, 1, 24},	/* DP: ASIMDDP */
+	{A32IdRegister::isar6, 8, 1, 25},	/* FHM: ASIMDFHM */
+	{A32IdRegister::isar6, 12, 1, 32 + 5},	/* SB */
+	{A32IdRegister::isar6, 20, 1, 26},	/* BF16: ASIMDBF16 */
+	{A32IdRegister::isar6, 24, 1, 27},	/* I8MM */
+};
+
+/* COMPAT_ELF_HWCAP_DEFAULT: HALF, THUMB, FAST_MULT, EDSP, TLS, IDIVA, IDIVT
+ * and LPAE, which arm64 Linux sets for every 32-bit task; and EVTSTRM, the
+ * promise that WFE wakes once per event-stream period, which holds because
+ * both engines complete WFE at once. The profile has no SWP, so no
+ * COMPAT_HWCAP_SWP, and arm64 Linux never sets VFPD32. */
+inline constexpr unsigned long a32_default_hwcap = (1UL << 1) | (1UL << 2) |
+	(1UL << 4) | (1UL << 7) | (1UL << 15) | (1UL << 17) | (1UL << 18) |
+	(1UL << 20) | (1UL << 21);
+inline constexpr unsigned long a32_hwcap_neon = 1UL << 12;
+
+/* AT_HWCAP and AT_HWCAP2 for a 32-bit task, which the kernel returns through
+ * `darwin_uml_guest_compat_hwcap()` and `..._hwcap2()`. Each word is read from
+ * the AArch32 identification registers exactly as arm64 Linux reads it. A
+ * level below base presents no AArch32 and gives zero in both words, so
+ * production, which presents none, is unchanged. */
+[[nodiscard]] inline std::array<unsigned long, 2> guest_compat_hwcaps(
+	const HostCapabilities &host, A32Support support) noexcept
+{
+	if (support < A32Support::base)
+		return {0, 0};
+	std::array<unsigned long, 2> words{a32_default_hwcap, 0};
+	for (const auto &bit : a32_hwcap_fields)
+		if (((a32_id_register_value(host, support, bit.id_register) >>
+		      bit.shift) & 15U) >= bit.minimum)
+			words[bit.hwcap / 32U] |= 1UL << (bit.hwcap % 32U);
+	/* compat_has_neon(): MVFR1.SIMDSP, SIMDInt and SIMDLS all nonzero. */
+	const auto mvfr1 = a32_id_register_value(host, support,
+		A32IdRegister::mvfr1);
+	if (((mvfr1 >> 16) & 15U) != 0U && ((mvfr1 >> 12) & 15U) != 0U &&
+	    ((mvfr1 >> 8) & 15U) != 0U)
+		words[0] |= a32_hwcap_neon;
 	return words;
 }
 
