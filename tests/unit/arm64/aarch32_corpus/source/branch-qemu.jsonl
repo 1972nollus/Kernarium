@@ -254,7 +254,7 @@
 {"n":"BL_i_A2/h0","f":"BL_i_A2","i":"A","p":"fa000000e28bb001bc7af000","t":0,"s":"edges-a","x":{"r14":"4f000004"},"k":2,"fl":"x"}
 {"n":"BL_i_A2/h1","f":"BL_i_A2","i":"A","p":"fb000000e28bb001f000bf00bf00bc79","t":0,"s":"pattern-a","x":{"r14":"4f000004"},"k":2,"fl":"x"}
 {"n":"BL_i_T2/l0","f":"BL_i_T2","i":"T","p":"f000e802f10b0b0101fcea00","t":0,"s":"edges3-t","x":{"r14":"4f000005"},"k":2}
-{"n":"BL_i_T2/l1","f":"BL_i_T2","i":"T","p":"bf00f000e804f10b0b01bf0001fbea00","t":1,"s":"pattern1-t","x":{"r14":"4f000007"},"k":2}
+{"n":"BL_i_T2/l1","f":"BL_i_T2","i":"T","p":"bf00f000e804f10b0b01bf0001fbea00","t":1,"s":"pattern1-t","x":{"r14":"4f000007"},"k":3}
 {"n":"BX_A1/1A","f":"BX_A1","i":"A","p":"e12fff11e28bb001ea0001fc","t":0,"s":"edges-a","si":{"r1":"4f000008"},"k":2}
 {"n":"BX_A1/1T","f":"BX_A1","i":"A","p":"e12fff11e28bb001bc7af000","t":0,"s":"pattern-a","si":{"r1":"4f000009"},"k":2,"fl":"x"}
 {"n":"BX_A1/2A","f":"BX_A1","i":"A","p":"e12fff19e28bb001ea0001fc","t":0,"s":"edges3-a","si":{"r9":"4f000008"},"k":2}

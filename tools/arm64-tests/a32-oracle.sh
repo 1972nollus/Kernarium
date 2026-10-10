@@ -57,7 +57,7 @@ flags=(--target=armv7a-linux-gnueabihf -marm -mfloat-abi=soft -O2 -ffreestanding
 "$llvm/bin/clang" "${flags[@]}" -c "$here/a32_oracle_entry.S" -o "$work/a32_oracle_entry.o"
 "$llvm/bin/clang" --target=armv7a-linux-gnueabihf -nostdlib -static -fuse-ld=lld \
 	-Wl,-T,"$here/a32_oracle.ld" -Wl,-z,max-page-size=4096 -Wl,-z,nognustack \
-	-Wl,--defsym=A32_LAUNCH=0x4f000a00 "$work/a32_oracle_entry.o" "$work/a32_oracle.o" \
+	-Wl,--defsym=A32_LAUNCH=0x4f003f80 "$work/a32_oracle_entry.o" "$work/a32_oracle.o" \
 	-o "$work/a32_oracle"
 chmod +x "$work/a32_oracle"
 

@@ -270,7 +270,8 @@ def thumb_branches(context, suite, results):
         prog.insn(word, "T32").fill(THUMB)
         while prog.here < landing:
             prog.half(NOP_T)
-        make(results, suite, f"BL_i_T2/l{lead}", "BL_i_T2", THUMB, prog.tail(ARM), {}, target=lead)
+        make(results, suite, f"BL_i_T2/l{lead}", "BL_i_T2", THUMB, prog.tail(ARM), {}, target=lead,
+             retired=2 + lead)  # the leading NOPs, BLX and the branch to the stub
 
 
 def register_branches(context, suite, results):

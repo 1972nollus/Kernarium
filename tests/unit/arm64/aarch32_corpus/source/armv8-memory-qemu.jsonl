@@ -170,8 +170,8 @@
 {"n":"VLDR_l_A1_H/2.a","f":"VLDR_l_A1_H","i":"A","p":"ed5fc9fe","t":0,"s":"edges5-a","si":{"apsr":"20000000"},"e":11,"fa":"4efffe0c","fi":0,"k":0,"fl":"s"}
 {"n":"VLDR_l_A1_H/3.zero","f":"VLDR_l_A1_H","i":"A","p":"eddff9ff","t":0,"s":"edges-a","si":{"apsr":"40000000"},"x":{"d15":"0000000000000001"},"fl":"s"}
 {"n":"VLDR_l_A1_H/3.x16","f":"VLDR_l_A1_H","i":"A","p":"eddff9ff","t":0,"s":"int8-a","x":{"d15":"00000000ff02fe7f"},"fl":"s"}
-{"n":"VLDR_l_A1_H/4.a","f":"VLDR_l_A1_H","i":"A","p":"ed1f0900","t":0,"s":"int8-a","si":{"apsr":"40000000"},"x":{"d0":"7eff02fe000000b4"},"fl":"s"}
-{"n":"VLDR_l_A1_H/4.zero","f":"VLDR_l_A1_H","i":"A","p":"ed1f0900","t":0,"s":"pattern-a","si":{"apsr":"40000000"},"x":{"d0":"7752fec6000000b4"},"fl":"s"}
+{"n":"VLDR_l_A1_H/4.a","f":"VLDR_l_A1_H","i":"A","p":"ed1f0900","t":0,"s":"int8-a","si":{"apsr":"40000000"},"x":{"d0":"7eff02fe00003f00"},"fl":"s"}
+{"n":"VLDR_l_A1_H/4.zero","f":"VLDR_l_A1_H","i":"A","p":"ed1f0900","t":0,"s":"pattern-a","si":{"apsr":"40000000"},"x":{"d0":"7752fec600003f00"},"fl":"s"}
 {"n":"VLDR_l_A1_H/5.ro","f":"VLDR_l_A1_H","i":"A","p":"ed9f69af","t":0,"s":"pattern-a","si":{"apsr":"80000000"},"x":{"d6":"13b9f41400000000"},"fl":"s"}
 {"n":"VLDR_l_A1_H/5.x4","f":"VLDR_l_A1_H","i":"A","p":"ed9f69af","t":0,"s":"int16-a","si":{"apsr":"80000000"},"x":{"d6":"7ffe800000000000"},"fl":"s"}
 {"n":"VLDR_l_T1_H/0.a","f":"VLDR_l_T1_H","i":"T","p":"ed1f0900","t":0,"s":"pattern1-t","si":{"apsr":"80000000"},"x":{"d0":"b27ee76d0000f8df"},"fl":"sx"}

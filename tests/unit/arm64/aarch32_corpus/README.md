@@ -27,11 +27,16 @@ the instruction set the case names. The memory map is the oracle's:
 | `0x4f000000` | 16 KiB | the program, read-write-execute |
 | `0x4f000800` | | exit stub that finishes in A32 state |
 | `0x4f000900` | | exit stub that finishes in Thumb state |
+| `0x4f003f00`, `0x4f003f08` | | the oracle's trampolines to its epilogues: the words after the stubs' loads |
 | `0x50000000` | 32 KiB | data, read-write, refilled before each case |
 | `0x50008000` | 16 KiB | read-only data |
 
-Everything else is unmapped. A program ends by falling off its last
-instruction into a stub, by branching to one (a program that branches ends in
+Everything else is unmapped. A stub is `ldr pc, [pc, #-4]` (Thumb:
+`ldr.w pc, [pc]`) followed by `0x4f003f00` (A32) or `0x4f003f08` (Thumb), the
+same at the end of a program as at `0x4f000800` and `0x4f000900`, so a program
+that loads from a stub reads words every oracle shares; an engine lane puts
+its own exit code at the two trampolines. A program ends by falling off its
+last instruction into a stub, by branching to one (a program that branches ends in
 an explicit `b` or `b.w` to the stub of its instruction set), or by raising an
 event. Every register is the test's: the oracle loads r0-r14, APSR, FPSCR,
 TPIDRURO, TPIDRURW and D0-D31, runs the program, and records the same state
