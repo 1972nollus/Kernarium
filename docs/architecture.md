@@ -782,7 +782,7 @@ Each engine's `a32_support` names how far it implements it, `none`, `base`
 milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
 AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
 new entry as the illegal-instruction exit without touching the state. The
-gadget engine is at `none`; the JIT is at `base` on macOS. The development policy
+gadget engine is at `none`; the JIT is at `simd` on macOS. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
