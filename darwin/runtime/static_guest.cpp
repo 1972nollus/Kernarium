@@ -557,20 +557,30 @@ std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
 	return runtime.engines.slot<Kind>();
 }
 
+/* A thread's engine is created by its first entry; every later entry finds
+ * it. Kept out of line and cold so that the entry's frame and hot path do not
+ * carry the creation. */
+template<uml::cpu::EngineKind Kind>
+[[gnu::cold, gnu::noinline]] void create_common_engine(
+	std::unique_ptr<uml::cpu::CpuEngine> &slot)
+{
+	slot = uml::cpu::make_cpu_engine(Kind,
+		uml::cpu::EngineConfiguration{
+			.host_capabilities =
+				::uml::runtime::guest_host_capabilities(
+					Kind == uml::cpu::EngineKind::jit ?
+						::uml::runtime::ExecutionEngine::jit :
+						::uml::runtime::ExecutionEngine::gadgets),
+		});
+}
+
 template<uml::cpu::EngineKind Kind>
 uml::cpu::CpuEngine *common_engine(
 	::uml::runtime::ThreadExecutionState &runtime)
 {
 	auto &slot = engine_slot<Kind>(runtime);
-	if (!slot)
-		slot = uml::cpu::make_cpu_engine(Kind,
-			uml::cpu::EngineConfiguration{
-				.host_capabilities =
-					::uml::runtime::guest_host_capabilities(
-						Kind == uml::cpu::EngineKind::jit ?
-							::uml::runtime::ExecutionEngine::jit :
-							::uml::runtime::ExecutionEngine::gadgets),
-			});
+	if (!slot) [[unlikely]]
+		create_common_engine<Kind>(slot);
 	return slot.get();
 }
 
@@ -597,10 +607,10 @@ void debug_check_host_streaming_state() noexcept
  * AArch32 task at all -- and only in a state the kernel may hand over;
  * anything else is a kernel invariant violation and fatal.
  *
- * Kept out of line: an AArch64 entry reaches it only through the one test
- * of PSTATE.nRW in run_common_guest(). */
+ * Kept out of line and cold: an AArch64 entry reaches it only through the
+ * one test of PSTATE.nRW in run_common_guest(). */
 template<uml::cpu::EngineKind Kind>
-[[gnu::noinline]] int run_aarch32_guest(
+[[gnu::cold, gnu::noinline]] int run_aarch32_guest(
 	darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp,
 	const darwin_uml_guest_sve_registers &sve,
