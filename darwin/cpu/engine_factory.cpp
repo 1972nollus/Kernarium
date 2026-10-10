@@ -2,8 +2,10 @@
 #include "engine_factory.hpp"
 
 #include "cpu/arm64/engine_adapters.hpp"
+#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/gadgets/sve_support.hpp"
+#include "cpu/arm64/jit/jit_a32_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
@@ -47,6 +49,12 @@ HostCapabilities engine_host_capabilities(
 			jit ? arm64::jit::sme_support :
 			      arm64::gadgets::sme_support),
 		jit ? arm64::jit::sve_support : arm64::gadgets::sve_support);
+}
+
+arm64::A32Support engine_a32_support(EngineKind kind) noexcept
+{
+	return kind == EngineKind::jit ? arm64::jit::a32_support :
+					 arm64::gadgets::a32_support;
 }
 
 void materialize_architectural_state(arm64::CpuState &cpu) noexcept

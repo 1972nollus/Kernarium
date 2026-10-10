@@ -707,6 +707,20 @@ guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
 6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
 check that with the policy off the probe sees no SVE and PTRUE is undefined.
 
+## Guest AArch32 foundation
+
+`arm64-a32-foundation` checks the state `CpuState` appends and its assembly
+offsets, the guest-AArch32 policy, the engines' support levels and what a
+policy presents of them, the AArch32 identification registers and compat
+HWCAP words at each level over every subset of the host features they follow,
+and that both engines take the AArch32 entry as the illegal-instruction exit
+without changing the state. `arm64-a32-guest-key` checks the tagged
+translation keys (round trips, interworking, that no key collides with an A64
+key, the empty cell or a fault position, and the hash-visible bit) and the
+key-aware validation of saved guest units across page boundaries of both
+guest page sizes. Unit binaries take the policy from their environment as
+well; the suites must hold unchanged with `DARWIN_UML_GUEST_AARCH32=1`.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites

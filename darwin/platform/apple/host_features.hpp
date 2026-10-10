@@ -182,6 +182,36 @@ inline constexpr const char *guest_sve_policy_variable = "DARWIN_UML_GUEST_SVE";
 	return policy;
 }
 
+/* Whether the virtual CPU may run AArch32 (A32 and T32) EL0 tasks. Off by
+ * default until both engines implement the profile completely and the
+ * default is turned on; setting DARWIN_UML_GUEST_AARCH32 to exactly "1"
+ * turns it on for development. Unlike the SME and SVE policies it adds no
+ * host token: AArch32 uses the A64 features the host already reports, so the
+ * policy and each engine's level (cpu/arm64/aarch32/a32_profile.hpp,
+ * a32_presented_support) are all that decide what a run presents. */
+enum class GuestAarch32Policy : std::uint8_t {
+	off,
+	on,
+};
+
+inline constexpr const char *guest_aarch32_policy_variable =
+	"DARWIN_UML_GUEST_AARCH32";
+
+[[nodiscard]] inline GuestAarch32Policy parse_guest_aarch32_policy(
+	const char *value) noexcept
+{
+	return value != nullptr && std::strcmp(value, "1") == 0 ?
+		GuestAarch32Policy::on : GuestAarch32Policy::off;
+}
+
+/* Read once, as the guest-SME and guest-SVE policies are. */
+[[nodiscard]] inline GuestAarch32Policy guest_aarch32_policy() noexcept
+{
+	static const GuestAarch32Policy policy = parse_guest_aarch32_policy(
+		std::getenv(guest_aarch32_policy_variable));
+	return policy;
+}
+
 /* The SVE tokens, which only the guest-SVE policy lets the prober report. */
 inline constexpr std::array sve_policy_features{ArmFeature::sve,
 	ArmFeature::sve2, ArmFeature::sve_aes, ArmFeature::sve_pmull128,
