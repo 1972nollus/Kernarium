@@ -22,6 +22,7 @@ add_library(uml_arm64_aarch32_semantics OBJECT
     semantics_integer.cpp
     semantics_memory.cpp
     semantics_neon_integer.cpp
+    semantics_neon_shift.cpp
     semantics_table.cpp
     semantics_vector_memory.cpp
     semantics_vector_move.cpp)

@@ -16,50 +16,6 @@ namespace uml::cpu::arm64::aarch32::detail {
 
 namespace {
 
-using Raw = std::uint64_t;
-
-[[nodiscard]] unsigned element_bits(const Exec &x) noexcept
-{
-	return static_cast<unsigned>(x.o.esize);
-}
-
-[[nodiscard]] i128 absolute(i128 value) noexcept
-{
-	return value < 0 ? -value : value;
-}
-
-/* A function of the n, m and old d elements of each D register of a D or Q
- * form, all elements esize wide. */
-template<typename Function>
-bool lanewise(Exec &x, Function &&function)
-{
-	const unsigned bits = element_bits(x);
-	const Raw mask = lane_mask(bits);
-	return for_each_register(x, [&](Raw n, Raw m, Raw d) -> Raw {
-		Raw out = 0;
-		for (unsigned offset = 0; offset < 64U; offset += bits)
-			out |= (function(n >> offset & mask, m >> offset & mask, d >> offset & mask) & mask)
-				<< offset;
-		return out;
-	});
-}
-
-/* The same with the m operand one element of D(m): the by-scalar forms. */
-template<typename Function>
-bool lanewise_scalar(Exec &x, Function &&function)
-{
-	const unsigned bits = element_bits(x);
-	const Raw mask = lane_mask(bits);
-	const Raw scalar = lane(x.d_reg(static_cast<unsigned>(x.o.m)),
-		static_cast<unsigned>(x.o.index_value), bits);
-	return for_each_register(x, [&](Raw n, Raw, Raw d) -> Raw {
-		Raw out = 0;
-		for (unsigned offset = 0; offset < 64U; offset += bits)
-			out |= (function(n >> offset & mask, scalar, d >> offset & mask) & mask) << offset;
-		return out;
-	});
-}
-
 [[nodiscard]] i128 element_value(const Exec &x, Raw raw) noexcept
 {
 	return lane_value(raw, element_bits(x), !x.o.unsigned_);
@@ -387,34 +343,6 @@ bool vmla_s(Exec &x)
 	return lanewise_scalar(x, [&](Raw n, Raw m, Raw d) { return add ? d + n * m : d - n * m; });
 }
 
-/* The long forms: D operands, a Q result of twice-as-wide elements. `wide`
- * is a Q first operand (VADDW, VSUBW); `scalar` takes the second operand
- * from one element of D(m). The function receives the n element, the m
- * element and the old d element, and returns the wide result. */
-template<typename Function>
-bool long_lanes(Exec &x, bool wide, bool scalar, Function &&function)
-{
-	const Operands &o = x.o;
-	const unsigned bits = element_bits(x);
-	const unsigned elements = 64U / bits;
-	const unsigned d = static_cast<unsigned>(o.d);
-	const unsigned n = static_cast<unsigned>(o.n);
-	const unsigned m = static_cast<unsigned>(o.m);
-	const u128 old_d = q_reg(x, d);
-	const u128 wide_n = wide ? q_reg(x, n) : u128{0};
-	const Raw narrow_n = wide ? Raw{0} : x.d_reg(n);
-	const Raw source_m = x.d_reg(m);
-	u128 out = 0;
-	for (unsigned e = 0; e < elements; ++e) {
-		const Raw first = wide ? lane128(wide_n, e, 2U * bits) : lane(narrow_n, e, bits);
-		const Raw second = scalar ? lane(source_m, static_cast<unsigned>(o.index_value), bits)
-					   : lane(source_m, e, bits);
-		out = with_lane128(out, e, 2U * bits, function(first, second, lane128(old_d, e, 2U * bits)));
-	}
-	set_q_reg(x, d, out);
-	return true;
-}
-
 bool vaddl(Exec &x)
 {
 	const unsigned bits = element_bits(x);
@@ -541,25 +469,6 @@ bool vmovl(Exec &x)
 	return long_lanes(x, false, false, [&](Raw, Raw m, Raw) {
 		return lane_bits(lane_value(m, bits, is_signed), 2U * bits);
 	});
-}
-
-/* The narrow forms: Q operands, a D result of half-width elements. The
- * function receives the n and m elements (twice esize wide) and returns the
- * result element. */
-template<typename Function>
-bool narrow_lanes(Exec &x, Function &&function)
-{
-	const Operands &o = x.o;
-	const unsigned bits = element_bits(x);
-	const unsigned elements = 64U / bits;
-	const u128 first = q_reg(x, static_cast<unsigned>(o.n));
-	const u128 second = q_reg(x, static_cast<unsigned>(o.m));
-	Raw out = 0;
-	for (unsigned e = 0; e < elements; ++e)
-		out = with_lane(out, e, bits,
-			function(lane128(first, e, 2U * bits), lane128(second, e, 2U * bits)));
-	x.set_d_reg(static_cast<unsigned>(o.d), out);
-	return true;
 }
 
 bool vmovn(Exec &x)
