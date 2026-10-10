@@ -397,7 +397,7 @@ Lx86_vector_fp_to_pi_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_fp_to_pi_cross_fault\@
 	ldr q1, [sp]
 	add sp, sp, #16

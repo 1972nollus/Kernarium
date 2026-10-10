@@ -279,7 +279,7 @@ Lx86_vector_map3_shuffle_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #Lx86_vector_map3_shuffle_input_size
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_map3_shuffle_cross_fault\@
 	.if Lx86_vector_map3_shuffle_input_size == 8
 	ldr d1, [sp]

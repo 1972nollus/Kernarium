@@ -14,7 +14,7 @@
 	mov x1, x25
 	mov x2, x19
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_bulk_load)
+	helper_call uml_x86_64_gadget_bulk_load
 	cbnz w0, Lx86_extended_load_done\@
 	add sp, sp, #Lx86_extended_size
 	b Lx86_memory_fault
@@ -40,7 +40,7 @@ Lx86_extended_load_done\@:
 	mov x1, x25
 	mov x2, x19
 	mov w3, w26
-	bl NAME(uml_x86_64_gadget_bulk_load)
+	helper_call uml_x86_64_gadget_bulk_load
 	cbnz w0, Lx86_extended_load_done\@
 	add sp, sp, #Lx86_extended_size
 	b Lx86_memory_fault
@@ -151,7 +151,7 @@ Lx86_extended_save_avx_done\@:
 	mov x1, x25
 	mov x2, x19
 	mov w3, w26
-	bl NAME(uml_x86_64_gadget_bulk_store)
+	helper_call uml_x86_64_gadget_bulk_store
 	cbnz w0, Lx86_extended_write_done\@
 	add sp, sp, #Lx86_extended_size
 	b Lx86_memory_fault
@@ -162,7 +162,7 @@ Lx86_extended_write_done\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, w26
-	bl NAME(uml_x86_64_gadget_publish_code_write)
+	helper_call uml_x86_64_gadget_publish_code_write
 Lx86_extended_published\@:
 	add sp, sp, #Lx86_extended_size
 	ubfx x8, x23, #56, #4
@@ -180,7 +180,7 @@ Lx86_extended_published\@:
 	mov x1, x25
 	mov x2, x19
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_bulk_store)
+	helper_call uml_x86_64_gadget_bulk_store
 	cbnz w0, Lx86_extended_write_done\@
 	add sp, sp, #Lx86_extended_size
 	b Lx86_memory_fault

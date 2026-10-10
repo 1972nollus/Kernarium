@@ -234,7 +234,7 @@ Lx86_bmi_ternary_read_cross\@:
 	mov x0, _context
 	mov x1, x27
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x26, x0
 Lx86_bmi_ternary_loaded\@:
