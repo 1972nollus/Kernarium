@@ -246,6 +246,7 @@ uml_declare_architecture_target(uml_arm64_a32_forms cpu gadget)
 target_include_directories(uml_arm64_a32_forms INTERFACE ${_uml_arm64_a32_dir})
 set(_uml_arm64_gadget_a32_sources
     arm64/gadgets/a32/program_builder_a32.cpp
+    arm64/gadgets/a32/memory_helpers.cpp
     arm64/gadgets/a32/tail_helpers.cpp
     ${_uml_arm64_a32_dir}/a32_forms.hpp)
 

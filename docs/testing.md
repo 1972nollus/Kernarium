@@ -794,8 +794,14 @@ the CP15 and counter reads, and LDM, STM and LDRD across a page, mapped and
 not. `arm64-gadget-a32-forms` runs every stored sample word of the decoder's
 data and the whole 16-bit Thumb space and requires the engine to raise the
 illegal-instruction exit exactly where the decoder, at the engine's level,
-rejects the word. Both run in both page profiles. Instruction semantics
-belong to the instruction corpus, not to these tests.
+rejects the word. `arm64-gadget-a32-corpus` runs the cases of the AArch32
+corpus whose instructions the engine's level implements in the oracle's
+memory map and compares the signal or system call, the instruction and
+address it was raised at, the registers, flags, Q, GE, the data region and
+the retired count; the `unaligned` and `fpscr-reserved` suites are
+unrecorded until a hardware oracle exists, so nothing here invents
+expectations for them. All three run in both page profiles. Instruction
+semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
 the architectural positions of the status word's fields, the load and save of

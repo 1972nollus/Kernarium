@@ -112,17 +112,20 @@ public:
 		for (std::size_t half = 0; half < test.halves.size(); ++half)
 			put16(corpus::kCodeBase + origin + 2U * static_cast<std::uint32_t>(half),
 			      test.halves[half]);
-		std::uint32_t end = corpus::kCodeBase + origin +
+		/* The stub after the program exists only when it fits in the
+		 * region, so a program at the end of the region falls off it. */
+		const std::uint32_t end = corpus::kCodeBase + origin +
 			2U * static_cast<std::uint32_t>(test.halves.size());
-		if (end + 8 <= corpus::kCodeBase + corpus::kCodeSize) {
-			if (thumb) {
+		const std::uint32_t limit = corpus::kCodeBase + corpus::kCodeSize;
+		if (thumb) {
+			const auto stub = (end + 3U) & ~3U;
+			if (stub + 8 <= limit) {
 				if (end % 4 != 0)
 					put16(end, 0xbf00); /* nop */
-				end = (end + 3U) & ~3U;
-				thumb_stub(end, corpus::kThumbEpilogue);
-			} else {
-				arm_stub(end, corpus::kArmEpilogue);
+				thumb_stub(stub, corpus::kThumbEpilogue);
 			}
+		} else if (end + 8 <= limit) {
+			arm_stub(end, corpus::kArmEpilogue);
 		}
 		put32(corpus::kArmEpilogue, svc_word);
 		put32(corpus::kThumbEpilogue, svc_word);
@@ -243,14 +246,19 @@ struct Outcome final {
 
 [[nodiscard]] Outcome classify(Machine &machine,
 			       const ::uml::cpu::arm64::CpuState &cpu,
-			       const ExecutionResult &result)
+			       const ExecutionResult &result,
+			       std::uint32_t entry, std::size_t halves)
 {
 	Outcome outcome;
 	outcome.retired = result.retired_instructions;
 	const auto pc = decode::key_pc(cpu.pc);
 	const bool thumb = decode::key_is_thumb(cpu.pc);
-	const auto half_of = [](std::uint32_t address) {
-		return (address - corpus::kCodeBase) / 2U;
+	/* The pack numbers halfwords from the start of the program, and
+	 * records 0 for a PC outside it: the fetch fault of a branch to an
+	 * unfetchable target or of a program that falls off the region. */
+	const auto half_of = [entry, halves](std::uint32_t address) {
+		return address >= entry && (address - entry) / 2U < halves ?
+			(address - entry) / 2U : 0U;
 	};
 	switch (result.reason) {
 	case ExitReason::system_call:
@@ -267,11 +275,7 @@ struct Outcome final {
 	case ExitReason::memory_fault:
 		outcome.event = result.fault.alignment ? corpus::kSigBus :
 							 corpus::kSigSegv;
-		/* A fetch fault is the target's; the branch that went there is
-		 * the last instruction retired, which the pack names and the
-		 * engine does not. */
-		outcome.half = result.fault.access == ::uml::memory::MemoryAccess::execute ?
-			~0U : half_of(pc);
+		outcome.half = half_of(pc);
 		outcome.address = static_cast<std::uint32_t>(result.fault.address);
 		break;
 	case ExitReason::illegal_instruction:
@@ -303,7 +307,7 @@ struct Outcome final {
 }
 
 void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
-		bool thumb)
+		bool thumb, std::uint32_t entry)
 {
 	for (unsigned index = 0; index < corpus::kRegisters; ++index)
 		cpu.registers[index] = state.r[index];
@@ -318,8 +322,7 @@ void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
 	cpu.a32_tpidruro = state.tpidruro;
 	cpu.a32_cp15ben = 1;
 	cpu.a32 = 1;
-	cpu.pc = thumb ? decode::t32_key(corpus::kCodeBase)
-		       : decode::a32_key(corpus::kCodeBase);
+	cpu.pc = thumb ? decode::t32_key(entry) : decode::a32_key(entry);
 }
 
 [[nodiscard]] std::uint32_t apsr_of(const ::uml::cpu::arm64::CpuState &cpu)
@@ -395,7 +398,7 @@ void check_case(Machine &machine, const corpus::Record &record,
 		return;
 	}
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
-	const std::uint32_t origin = 0;
+	const std::uint32_t origin = test.origin;
 	auto initial_data = corpus::data_fill(test.fill);
 	for (const auto &patch : test.data_patches)
 		std::copy(patch.bytes.begin(), patch.bytes.end(),
@@ -408,9 +411,11 @@ void check_case(Machine &machine, const corpus::Record &record,
 	machine.install(test, origin);
 	machine.set_data(initial_data);
 	::uml::cpu::arm64::CpuState cpu{};
-	load_state(cpu, test.initial, thumb);
+	load_state(cpu, test.initial, thumb, corpus::kCodeBase + origin);
 	const auto result = machine.run(cpu);
-	const auto outcome = classify(machine, cpu, result);
+	const auto outcome = classify(machine, cpu, result,
+				      corpus::kCodeBase + origin,
+				      test.halves.size());
 	++totals.run;
 
 	std::string diffs;

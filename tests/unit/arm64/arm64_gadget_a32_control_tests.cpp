@@ -890,7 +890,7 @@ void a_double_word_load_crosses_a_page_boundary()
 	require(reg(cpu, 2) == 0xaaaa'0001U && reg(cpu, 3) == 0xbbbb'0002U);
 }
 
-void a_block_transfer_into_an_unmapped_page_faults_before_any_effect()
+void a_block_transfer_into_an_unmapped_page_faults_at_that_page()
 {
 	/* The data ends where the second data page ends; the next page is
 	 * not mapped. */
@@ -911,14 +911,15 @@ void a_block_transfer_into_an_unmapped_page_faults_before_any_effect()
 		require(result.retired_instructions == 0);
 		require(cpu.pc == aarch32::a32_key(code_base));
 		require(result.fault.access == ::uml::memory::MemoryAccess::write);
-		/* The fault is in the page that is not mapped. */
-		require(result.fault.address >= data_base + data_pages * page);
-		require(result.fault.address < data_base + data_pages * page + 16);
-		/* The base is not written back and the mapped part is not
-		 * stored: the instruction can be restarted. */
+		/* The fault is at the first word in the page that is not
+		 * mapped. */
+		require(result.fault.address == data_base + data_pages * page);
+		/* The base is not written back, so the instruction can be
+		 * restarted; the words ahead of the fault are in memory, as
+		 * a sequence of word stores leaves them. */
 		require(reg(cpu, 0) == data_base + last);
-		require(guest.data32(last) == 0xdead'0000U);
-		require(guest.data32(last + 4) == 0xdead'0004U);
+		require(guest.data32(last) == 0x11);
+		require(guest.data32(last + 4) == 0x22);
 	}
 	{
 		Guest guest{979};
@@ -968,7 +969,7 @@ int main()
 	reading_the_status_register_gives_flags_q_ge_and_user_mode();
 	block_transfers_cross_a_page_boundary();
 	a_double_word_load_crosses_a_page_boundary();
-	a_block_transfer_into_an_unmapped_page_faults_before_any_effect();
+	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;
 }

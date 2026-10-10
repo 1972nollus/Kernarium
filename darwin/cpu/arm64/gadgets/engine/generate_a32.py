@@ -767,7 +767,8 @@ def emit_double(asm: Assembly) -> None:
 # addresses. The start address must be word aligned; a transfer within one
 # page runs from the translated host address, and one that crosses a page
 # goes through a stack buffer, so that a load changes no register unless
-# every page was readable.
+# every page was readable; a store that crosses stores word by word, so the
+# words ahead of a fault are in memory (memory_helpers.cpp).
 def block_registers(count: int, access_load: bool, base: str) -> list[str]:
     """The transfers of `count` registers between the host address in `base`
     and CpuState; the register offsets are at [_stream, #8*k]."""
@@ -830,8 +831,8 @@ def block_gadget(count: int, access_load: bool) -> str:
     else:
         lines += block_registers(count, False, "sp")
         lines += ["stp x1, x2, [sp, #80]", "mov x0, x2", "mov x1, x7",
-                  "mov x2, sp", f"mov x3, #{size}", "mov w4, #1",
-                  "helper_call uml_arm64_memory_transfer",
+                  "mov x2, sp", f"mov x3, #{size}",
+                  "helper_call uml_arm64_a32_store_block",
                   "ldp x1, x2, [sp, #80]", f"cbz w0, Lfail_{name}",
                   "add sp, sp, #96"]
     lines += block_epilogue(count)
