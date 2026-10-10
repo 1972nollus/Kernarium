@@ -23,7 +23,6 @@
 #include <fstream>
 #include <iterator>
 #include <map>
-#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,13 +40,10 @@ using ::uml::cpu::ExitReason;
 
 using namespace ::uml::testing::aarch32_corpus;
 
-/* The oracle's exit stubs load the epilogue's address into the PC. Here each
- * stub loads the address of an svc instead, which ends the run; a stub's
- * target tells which stub the program used. */
-constexpr std::uint32_t kEndArmSvc = kCodeBase + 0x3f00;
-constexpr std::uint32_t kEndThumbSvc = kCodeBase + 0x3f10;
-constexpr std::uint32_t kExitArmSvc = kCodeBase + 0x3f20;
-constexpr std::uint32_t kExitThumbSvc = kCodeBase + 0x3f30;
+/* The oracle's exit stubs load the address of one of its two epilogues into
+ * the PC. Here each epilogue is an svc, which ends the run, and the epilogue
+ * reached tells whether the program finished in A32 or in Thumb state (the
+ * Thumb stub's target has bit 0 clear, so both epilogues run in A32 state). */
 
 // --- The machine ----------------------------------------------------------------
 
@@ -84,14 +80,14 @@ public:
       put16(static_cast<std::uint32_t>(2 * index), test.halves[index]);
     std::uint32_t end = static_cast<std::uint32_t>(2 * test.halves.size());
     padded = false;
-    const auto arm_stub = [&](std::uint32_t at, std::uint32_t target) {
+    const auto arm_stub = [&](std::uint32_t at) {
       put32(at, 0xe51ff004U); // ldr pc, [pc, #-4]
-      put32(at + 4, target);
+      put32(at + 4, kArmEpilogue);
     };
-    const auto thumb_stub = [&](std::uint32_t at, std::uint32_t target) {
+    const auto thumb_stub = [&](std::uint32_t at) {
       put16(at, 0xf8df); // ldr.w pc, [pc, #0]
       put16(at + 2, 0xf000);
-      put32(at + 4, target | 1U);
+      put32(at + 4, kThumbEpilogue);
     };
     if (thumb) {
       if (end % 4 != 0) {
@@ -99,16 +95,14 @@ public:
         put16(end, 0xbf00); // nop, so the stub is word aligned
         end += 2;
       }
-      thumb_stub(end, kEndThumbSvc);
+      thumb_stub(end);
     } else {
-      arm_stub(end, kEndArmSvc);
+      arm_stub(end);
     }
-    arm_stub(0x800, kExitArmSvc);
-    thumb_stub(0x900, kExitThumbSvc);
-    put32(kEndArmSvc - kCodeBase, 0xef0000ffU);
-    put16(kEndThumbSvc - kCodeBase, 0xdfff);
-    put32(kExitArmSvc - kCodeBase, 0xef0000ffU);
-    put16(kExitThumbSvc - kCodeBase, 0xdfff);
+    arm_stub(kArmExit - kCodeBase);
+    thumb_stub(kThumbExit - kCodeBase);
+    put32(kArmEpilogue - kCodeBase, 0xef0000ffU);
+    put32(kThumbEpilogue - kCodeBase, 0xef0000ffU);
     stub_address = kCodeBase + end;
     code_.put(0, code);
     /* The program replaces the last case's: retire the blocks translated
@@ -197,21 +191,8 @@ std::uint32_t apsr_of(const arm64::CpuState &cpu) {
   return apsr;
 }
 
-/* Cases whose expectation the corpus producer has to correct: the first two
- * read the oracle binary's own exit address (the high word of the stub), and
- * the last was counted one instruction short. Remove when the pack changes. */
-const std::set<std::string> &known_corpus_defects() {
-  static const std::set<std::string> names{
-      "memory-qemu/LDRD_l_T1/0.lit", "memory-qemu/LDRD_l_T1/3.lit",
-      "pc-qemu/LDRD_l_A1/e1cf00d0.0", "pc-qemu/LDRD_l_A1/e1cf00d0.1",
-      "pc-qemu/LDRD_l_A1/e1cf00d0.2", "pc-qemu/LDRD_l_A1/e1cf00d0.3",
-      "branch-qemu/BL_i_T2/l1",
-  };
-  return names;
-}
-
 struct Totals final {
-  std::size_t run = 0, skipped = 0, excluded = 0, failed = 0, retried = 0;
+  std::size_t run = 0, skipped = 0, failed = 0, retried = 0;
   std::map<std::string, std::size_t> failed_forms;
 };
 
@@ -240,15 +221,14 @@ std::string check(Machine &machine, const Case &test) {
   case ExitReason::system_call: {
     // pc is past the svc: a stub's svc is a finished program.
     const std::uint32_t svc = pc - (at_thumb ? 2U : 4U);
-    if (svc == kEndArmSvc || svc == kEndThumbSvc || svc == kExitArmSvc ||
-        svc == kExitThumbSvc) {
+    if (!at_thumb && (svc == kArmEpilogue || svc == kThumbEpilogue)) {
       event = 0;
       if (retired < 2)
         return fail("the stub exit retired too little");
       retired -= 2; // the stub's load of the PC and its svc
-      if (padded && (svc == kEndArmSvc || svc == kEndThumbSvc))
+      if (padded && (test.flags & kFlagStraight) != 0)
         --retired; // the nop that aligns a Thumb stub the program fell into
-      if (((test.flags & kFlagExitThumb) != 0) != at_thumb)
+      if (((test.flags & kFlagExitThumb) != 0) != (svc == kThumbEpilogue))
         return fail("finished in the wrong instruction set");
     } else {
       event = kEventSvc;
@@ -419,10 +399,6 @@ int main(int argc, char **argv) {
     for (const auto &test : record.cases) {
       if (!only_case.empty() && test.name != only_case)
         continue;
-      if (known_corpus_defects().contains(record.name + "/" + test.name)) {
-        ++totals.excluded;
-        continue;
-      }
       if (!within_level(test, profile)) {
         ++totals.skipped;
         continue;
@@ -461,8 +437,8 @@ int main(int argc, char **argv) {
     }
   }
   std::printf("AArch32 corpus on the JIT: %zu cases run, %zu skipped below the level, "
-              "%zu excluded as corpus defects, %zu failed (%zu exclusive retried)\n",
-              totals.run, totals.skipped, totals.excluded, totals.failed,
+              "%zu failed (%zu exclusive retried)\n",
+              totals.run, totals.skipped, totals.failed,
               totals.retried);
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
