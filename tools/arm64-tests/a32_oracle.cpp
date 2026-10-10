@@ -9,7 +9,8 @@
  *
  * A case is a program of A32 words or Thumb halfwords, an initial state
  * (r0-r14, APSR, FPSCR, TPIDRURO, TPIDRURW, D0-D31) and an initial data
- * region. The program runs at CODE_BASE in the instruction set the case
+ * region. The program runs at CODE_BASE plus the case's origin (0 unless it
+ * tests instruction fetch near a line) in the instruction set the case
  * names, and ends by falling into or branching to an exit stub, which
  * records the final state; or it raises a signal, whose handler records the
  * state at the fault. Nothing else is observed: the corpus asks of a
@@ -24,7 +25,7 @@
  *
  * Request (little endian): "A32ORQ1\0", u32 cases, u32 0, then per case
  *   u32 size, u8 flags (bit 0: Thumb entry), u8 data fill, u16 program bytes,
- *   u16 patches, u16 0, State (336 bytes), the program padded to 4 bytes, and
+ *   u16 patches, u16 origin (bytes), State (336 bytes), the program padded to 4 bytes, and
  *   per patch u32 offset, u32 length, bytes padded to 4.
  * Response: "A32ORS1\0", u32 cases, u32 AT_HWCAP, u32 AT_HWCAP2, u32 0, then
  *   per case u32 size, u32 signal (0 if the program finished), u32 si_code,
@@ -428,25 +429,29 @@ void write_thumb_stub(u32 address, u32 target)
 	put_word(address + 4, target);
 }
 
-void prepare_code(const u8 *program, u32 bytes, bool thumb)
+void prepare_code(const u8 *program, u32 bytes, u32 origin, bool thumb)
 {
 	auto *code = reinterpret_cast<u8 *>(kCodeBase);
 	memset(code, 0, kCodeSize);
-	memcpy(code, program, bytes);
-	u32 end = kCodeBase + bytes;
+	memcpy(code + origin, program, bytes);
+	const u32 entry = kCodeBase + origin;
+	const u32 limit = kCodeBase + kCodeSize;
+	u32 end = entry + bytes;
 	if (thumb) {
-		if (end % 4)
-			put_half(end, 0xbf00); /* nop, so the stub is word aligned */
-		end = (end + 3) & ~3U;
-		write_thumb_stub(end, kThumbEpilogue);
-	} else {
-		write_arm_stub(end, kArmEpilogue);
+		const u32 stub = (end + 3) & ~3U;
+		if (stub + 8 <= limit) {
+			if (end % 4)
+				put_half(end, 0xbf00); /* nop, so the stub is word aligned */
+			write_thumb_stub(stub, kThumbEpilogue);
+		}
+	} else if (end + 8 <= limit) {
+		write_arm_stub(end, kArmEpilogue); /* a program at the end of the region falls off it */
 	}
 	write_arm_stub(kArmEpilogue, reinterpret_cast<u32>(&a32_exit_arm));
 	write_arm_stub(kThumbEpilogue, reinterpret_cast<u32>(&a32_exit_thumb));
 	write_arm_stub(kArmExit, kArmEpilogue);
 	write_thumb_stub(kThumbExit, kThumbEpilogue);
-	write_arm_stub(kLaunch, kCodeBase | (thumb ? 1U : 0U));
+	write_arm_stub(kLaunch, entry | (thumb ? 1U : 0U));
 	sys(kSysCacheflush, kCodeBase, kCodeBase + kCodeSize, 0);
 }
 
@@ -458,7 +463,7 @@ struct CaseHeader {
 	u8 fill;
 	u16 program_bytes;
 	u16 patches;
-	u16 reserved;
+	u16 origin; /* byte offset of the program in the code region */
 };
 
 bool run_case(const u8 *record, Buffer &response, u8 *pristine)
@@ -487,7 +492,9 @@ bool run_case(const u8 *record, Buffer &response, u8 *pristine)
 	const bool thumb = header.flags & 1;
 	if (header.program_bytes > kMaxProgram)
 		return false;
-	prepare_code(program, header.program_bytes, thumb);
+	if ((header.origin & (thumb ? 1U : 3U)) != 0 || header.origin + header.program_bytes > kCodeSize)
+		return false;
+	prepare_code(program, header.program_bytes, header.origin, thumb);
 	sys(kSysSetTls, initial.tpidruro);
 
 	g_fault = Fault{};

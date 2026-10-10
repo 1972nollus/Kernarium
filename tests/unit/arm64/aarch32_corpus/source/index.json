@@ -12,12 +12,14 @@
     "branch-qemu.jsonl",
     "conditions-qemu.jsonl",
     "exclusive-qemu.jsonl",
+    "fetch-qemu.jsonl",
     "fpscr-qemu.jsonl",
     "memory-qemu.jsonl",
     "pc-qemu.jsonl",
     "prefetch-qemu.jsonl",
     "simd-memory-qemu.jsonl",
     "simd-qemu.jsonl",
+    "straddle-qemu.jsonl",
     "system-qemu.jsonl"
   ],
   "records": [
@@ -30,12 +32,14 @@
     "branch-qemu",
     "conditions-qemu",
     "exclusive-qemu",
+    "fetch-qemu",
     "fpscr-qemu",
     "memory-qemu",
     "pc-qemu",
     "prefetch-qemu",
     "simd-memory-qemu",
     "simd-qemu",
+    "straddle-qemu",
     "system-qemu"
   ]
 }
