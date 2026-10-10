@@ -190,6 +190,8 @@ lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIAN
 
 [[ "$(get_build_var TARGET_PRODUCT)" == "$ANDROID17_PRODUCT" ]] ||
 	fail "lunch selected the wrong product"
+[[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$ANDROID17_BUILD_VARIANT" ]] ||
+	fail "lunch selected the wrong build variant"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
 [[ -z "$(get_build_var TARGET_2ND_ARCH)" ]] || fail "product has a 32-bit secondary ABI"
 [[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$ANDROID17_MAX_PAGE_SIZE_SUPPORTED" ]] ||

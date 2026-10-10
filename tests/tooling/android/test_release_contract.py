@@ -58,6 +58,7 @@ def main() -> None:
     android_root = root / "android/aosp-17"
     sys.path.insert(0, str(android_root / "tools"))
     from release_common import (  # noqa: PLC0415
+        BUILD_VARIANTS,
         DIRECTORY_PREFIX,
         PAYLOAD_SPECS,
         PRODUCT_FAMILY,
@@ -98,6 +99,8 @@ def main() -> None:
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
         "ANDROID17_ACCEPTED_PAGE_SIZE": "4096",
     }
+    if tracked_acceptance["ANDROID17_ACCEPTED_BUILD_VARIANT"] not in BUILD_VARIANTS:
+        fail("tracked acceptance descriptor names an unsupported build variant")
     for key, value in tracked_expected.items():
         if tracked_acceptance.get(key) != value:
             fail(f"tracked acceptance descriptor differs at {key}")
@@ -253,6 +256,7 @@ def main() -> None:
                 f"ANDROID17_ACCEPTED_DIRECTORY_NAME='{directory_name}'",
                 f"ANDROID17_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
                 "ANDROID17_ACCEPTED_ANDROID_MAJOR=17",
+                f"ANDROID17_ACCEPTED_BUILD_VARIANT='{manifest['android']['build_variant']}'",
                 f"ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT='{manifest['aosp']['manifest_commit']}'",
                 f"ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256='{manifest['aosp']['base_manifest_sha256']}'",
                 f"ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256='{manifest['aosp']['projects_manifest_sha256']}'",
@@ -353,6 +357,19 @@ def main() -> None:
             lambda: verify_release(release_root, android_root, semantic=False),
             "a 16 KiB Android kernel",
         )
+        tracked_variant = original["android"]["build_variant"]
+        for variant, label in (
+            (next(name for name in BUILD_VARIANTS if name != tracked_variant),
+             "a build variant other than the tracked one"),
+            ("eng", "an unsupported build variant"),
+        ):
+            manifest = copy.deepcopy(original)
+            manifest["android"]["build_variant"] = variant
+            manifest_path.write_text(json.dumps(manifest))
+            expect_failure(
+                lambda: verify_release(release_root, android_root, semantic=False),
+                label,
+            )
         manifest = copy.deepcopy(original)
         manifest["jelly"]["patch_manifest_sha256"] = "e" * 64
         manifest_path.write_text(json.dumps(manifest))

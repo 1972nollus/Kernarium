@@ -317,10 +317,12 @@ PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += system/bin/kernarium_vk_presen
 PRODUCT_PACKAGE_OVERLAYS += device/kernarium/darwin/overlay
 
 # ADB is available over the inherited TCP port even though this machine has no
-# USB controller. A user build retains the stock shell privilege boundary;
-# Apple hosts select authorization through the immutable
-# ro.boot.kernarium.adb_auth property on each boot. That boot policy overrides
-# Cuttlefish's user-build ro.adb.secure default inside adbd.
+# USB controller. A user build retains the stock shell privilege boundary; a
+# userdebug build also lets `adb root` restart adbd as root, so whoever can
+# reach the port without authorization is root in the guest. Apple hosts select
+# authorization through the immutable ro.boot.kernarium.adb_auth property on
+# each boot, and that boot policy overrides the build type's ro.adb.secure
+# default inside adbd.
 PRODUCT_PRODUCT_PROPERTIES := $(filter-out \
     persist.sys.usb.config=%,$(PRODUCT_PRODUCT_PROPERTIES))
 PRODUCT_PRODUCT_PROPERTIES += \

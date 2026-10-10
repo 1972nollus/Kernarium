@@ -213,6 +213,11 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
 
 
 def verify_target_files_fixtures(verifier: Path) -> None:
+    sys.path.insert(0, str(verifier.parent))
+    from release_common import BUILD_VARIANTS, configured_build_variant
+
+    tracked_variant = configured_build_variant(verifier.parents[1])
+    other_variant = next(name for name in BUILD_VARIANTS if name != tracked_variant)
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
         (root / "kernel").mkdir()
@@ -266,6 +271,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           mesa_gles_alignment: int = 16384,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
+                          build_variant: str = tracked_variant,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -316,9 +322,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.product.cpu.abi=arm64-v8a\n"
                     "ro.product.cpu.abilist=arm64-v8a\n"
                     f"ro.product.cpu.abilist32={abilist32}\n"
-                    "ro.build.type=user\n"
-                    "ro.debuggable=0\n"
-                    f"{virtual_ab_property}",
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in BUILD_VARIANTS[build_variant].items()
+                    )
+                    + f"{virtual_ab_property}",
                 )
                 archive.writestr(
                     "PRODUCT/etc/build.prop",
@@ -588,6 +596,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ],
             check=True,
         )
+        # Every supported variant verifies as itself and is rejected as any
+        # other: the build-type properties follow the requested variant.
+        for variant in BUILD_VARIANTS:
+            for requested in BUILD_VARIANTS:
+                fixture = root / f"{variant}-as-{requested}.zip"
+                write_fixture(fixture, build_variant=variant)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(verifier),
+                        "--target-files",
+                        str(fixture),
+                        "--build-variant",
+                        requested,
+                        *kernel_options,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                if (result.returncode == 0) != (variant == requested):
+                    fail(
+                        f"a {variant} build verified as {requested}: "
+                        f"{result.returncode} {result.stdout}"
+                    )
 
         for label, options in (
             ("module", {"module": True}),
@@ -598,6 +632,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("virtual-ab", {"virtual_ab": True}),
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
+            ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),
