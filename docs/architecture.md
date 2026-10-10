@@ -695,9 +695,9 @@ library. A predicated form checks its governing predicate once per block and
 element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
 not do, when the predicate is partial. A memory word with a register base
-checks `CpuState::tbi_enabled` once per block, at the first such word: the
-state changes only at a kernel entry, and a tagged task leaves the block at
-that word for the library, which untags. The breaks, COMPACT and SPLICE, which
+checks `CpuState::tbi_enabled` once per block, at the first such word: no
+guest instruction changes it, and with top-byte ignore enabled the block
+leaves at that word for the library, which untags. The breaks, COMPACT and SPLICE, which
 raise nothing, take any governing predicate: a prefix OR of the mask form, a
 table of the active-element masks (COMPACT) and a TBL index built from the first
 and last active byte (SPLICE).

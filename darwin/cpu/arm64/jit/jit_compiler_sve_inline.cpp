@@ -256,12 +256,12 @@ void JitCompiler::emit_sve_guard(unsigned predicate, unsigned esize,
 }
 
 void JitCompiler::emit_sve_tbi_check(Arm64Emitter::Label slow) {
-  /* CpuState::tbi_enabled is set between guest instructions only: the task
-   * switch, prctl and exec that change it end the block. A block runs from
-   * its first word to its last or leaves it by a cold exit, so the check at
-   * its first memory word with a non-SP base is evaluated before every
-   * later one. With the state set, that word goes to the library, as each
-   * later one would. */
+  /* CpuState::tbi_enabled comes from the emulator's top-byte-ignore
+   * setting when the vCPU state is loaded, and no guest instruction changes
+   * it. A block runs from its first word to its last or leaves it by a cold
+   * exit, so the check at its first memory word with a non-SP base is
+   * evaluated before every later one. With the state set, that word goes to
+   * the library, as each later one would. */
   if (sve_tbi_checked_)
     return;
   emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));

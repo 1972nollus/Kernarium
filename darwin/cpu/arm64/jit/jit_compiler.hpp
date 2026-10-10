@@ -373,9 +373,9 @@ private:
    * the check is emitted. */
   void emit_sve_guard(unsigned predicate, unsigned esize,
                       std::uint32_t instruction, std::uint64_t pc);
-  /* Branches to `slow` when the task has top-byte-ignore enabled, which the
-   * library handles by untagging. The state cannot change inside a block, so
-   * the block's first check covers its later SVE memory words. */
+  /* Branches to `slow` when top-byte ignore is enabled, which the library
+   * handles by untagging. No guest instruction changes the state, so the
+   * block's first check covers its later SVE memory words. */
   void emit_sve_tbi_check(Arm64Emitter::Label slow);
   void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
