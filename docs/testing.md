@@ -838,7 +838,7 @@ runner print every line of the guest's output, passes included.
 ## AArch32 JIT
 
 The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
-`arm64-jit-a32-corpus` runs every simd-level case of the AArch32 corpus pack
+`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
 registers, changed data, event, fault address and retired count; a failing
@@ -846,10 +846,10 @@ exclusive case runs once more, because a host store-exclusive may fail without
 cause. It then requires every lowered form to stay out of the slow helper from a
 clean state: each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
-page or write back over the loaded register). The parallel
-arithmetic that the semantic library runs must take it in all of them, and every
-vector form of the level must have a lowering. (Cases that need the half-precision
-or Armv8 extensions are skipped until the JIT's level reaches them.) `arm64-jit-a32-runtime`,
+page or write back over the loaded register). The forms that the semantic
+library runs (the parallel arithmetic and the Armv8 extensions the compiler does
+not lower) must take it in all of them, and every vector form of the simd level
+must have a lowering. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
 programs against an independent reference of the instruction forms (the corpus
 carries T32).

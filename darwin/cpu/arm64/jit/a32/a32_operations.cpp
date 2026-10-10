@@ -148,6 +148,8 @@ constexpr Named named_ops[] = {
         (void)parallel_mnemonic(name, info);
       if (aarch32::kForms[index].level == aarch32::Level::simd)
         info.op = Op::vector;
+      else if (aarch32::kForms[index].level == aarch32::Level::complete)
+        info.op = Op::library;
       info.sp_base = form.find("_SP_") != std::string_view::npos;
       if (form.find("_rr_") != std::string_view::npos)
         info.shape = Shape::reg_shifted;
@@ -173,7 +175,7 @@ OpInfo op_info(aarch32::Form form) noexcept {
 bool is_library_form(aarch32::Form form) noexcept {
   switch (op_info(form).op) {
   case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8:
+  case Op::usada8: case Op::library:
     return true;
   default:
     return false;

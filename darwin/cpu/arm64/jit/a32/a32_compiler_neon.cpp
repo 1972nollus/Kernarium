@@ -111,8 +111,40 @@ void A32Compiler::neon_put(unsigned reg, bool quad, unsigned result) {
 // ---------------------------------------------------------------------------
 // The dispatch.
 
+/* Whether the instruction is a half-precision variant of an Advanced SIMD
+ * floating-point form. The variants share the form (and the mnemonic) of the
+ * single-precision ones and differ in the operands' esize (16), so the
+ * single-precision lowering cannot run them. */
+bool A32Compiler::neon_half_precision(const VInfo &v) const {
+  const auto &o = cur().inst.operands;
+  if (o.esize != 16)
+    return false;
+  switch (v.mnemonic) {
+  case VM::vfma: case VM::vfms: case VM::vacge: case VM::vacgt:
+  case VM::vrecps: case VM::vrsqrts:
+    return true;
+  case VM::vceq:
+    return v.variant == Variant::i ? o.floating_point : !o.int_operation;
+  case VM::vcge:
+    return v.variant == Variant::i ? o.floating_point
+                                   : o.vtype_vcge == aarch32::VCGEType::fp;
+  case VM::vcgt:
+    return v.variant == Variant::i ? o.floating_point
+                                   : o.vtype_vcgt == aarch32::VCGTtype::fp;
+  case VM::vcle: case VM::vclt: case VM::vabs: case VM::vneg: case VM::vrecpe:
+  case VM::vrsqrte:
+    return o.floating_point;
+  case VM::vcvt:
+    return v.variant == Variant::is || v.variant == Variant::xs;
+  default:
+    return v.variant == Variant::f || o.floating_point;
+  }
+}
+
 A32Compiler::Flow A32Compiler::emit_neon(const VInfo &v) {
   const auto &o = cur().inst.operands;
+  if (neon_half_precision(v))
+    return emit_arith_through_helper();
   switch (v.mnemonic) {
   case VM::vmul: case VM::vmla: case VM::vmls: case VM::vmlal:
   case VM::vmlsl: case VM::vmull: case VM::vqdmulh: case VM::vqrdmulh:

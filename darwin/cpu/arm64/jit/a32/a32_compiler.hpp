@@ -308,6 +308,7 @@ private:
 
   // Advanced SIMD (a32_compiler_neon*.cpp).
   [[nodiscard]] Flow emit_neon(const VInfo &v);
+  [[nodiscard]] bool neon_half_precision(const VInfo &v) const;
   [[nodiscard]] Flow emit_neon_same(const VInfo &v);
   [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
                                     unsigned n, unsigned m);

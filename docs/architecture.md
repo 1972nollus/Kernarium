@@ -875,6 +875,11 @@ registers. They share the scalar transfers' TLB sequence and alignment rule,
 and a page crossing, a faulting alignment, a PC base or a list past the
 register file runs the instruction in the semantic library instead.
 
+At the complete level the JIT presents the Armv8 extensions as well. A form of
+that level that the compiler does not lower runs in the semantic library, and
+so does a half-precision variant of an Advanced SIMD floating-point form, which
+shares the form of the single-precision one and differs in the operands' esize.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

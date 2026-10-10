@@ -38,6 +38,9 @@ enum class Op : std::uint8_t {
   svc, bkpt, udf, mrs, msr, coprocessor, nop, dmb, dsb, isb, clrex, it,
   // VFP and Advanced SIMD (a32_vector_operations.hpp names the mnemonic).
   vector,
+  // The Armv8 extensions of the complete level that the compiler does not
+  // lower: the semantic library runs them.
+  library,
 };
 
 /* The suffix of a parallel add or subtract, with its signedness and mode. */
@@ -72,7 +75,7 @@ struct OpInfo final {
 
 /* The forms the compiler sends to the AArch32 semantic library every time
  * rather than lowering: the parallel add and subtract family, SSAT16, USAT16
- * and USAD8/USADA8. */
+ * and USAD8/USADA8, and the complete-level forms it leaves to the library. */
 [[nodiscard]] bool is_library_form(aarch32::Form form) noexcept;
 
 /* Whether the instruction ends a block: it writes the PC, raises an event or
@@ -81,7 +84,7 @@ struct OpInfo final {
 
 /* The decoder level the compiler implements. */
 [[nodiscard]] constexpr aarch32::Level a32_level() noexcept {
-  return aarch32::Level::simd;
+  return aarch32::Level::complete;
 }
 
 } // namespace uml::cpu::arm64::jit::a32
