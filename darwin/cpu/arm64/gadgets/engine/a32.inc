@@ -73,6 +73,14 @@ La32veneer_\symbol:
  * exit, an internal error as the fatal event. */
 .macro a32_library_call
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	/* The live FPSR is the host register while the native environment is
+	 * active: commit it to CpuState for the library, which merges the flags
+	 * it raises into CpuState, and reinstall it after (fpsr_model_helper). */
+	ldrb w16, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w16, 96f
+	mrs x17, fpsr
+	str w17, [_cpu, #UML_GADGET_CPU_FPSR]
+96:
 	mov x19, x1
 	mov x20, x2
 	mov x0, x1
@@ -82,6 +90,11 @@ La32veneer_\symbol:
 	helper_call uml_arm64_gadget_a32_execute
 	mov x1, x19
 	mov x2, x20
+	ldrb w16, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w16, 95f
+	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x17
+95:
 	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, 97f
 	cmp w0, #UML_GADGET_A32_LIBRARY_FAULT

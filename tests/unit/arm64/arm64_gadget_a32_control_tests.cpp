@@ -1135,6 +1135,29 @@ void advanced_simd_floating_point_uses_the_standard_fpscr()
 	}
 }
 
+/* The library runs an instruction whose floating point it models in
+ * software, so the cumulative flags the native instructions of the block
+ * raised before it must reach CpuState first and the flags it raises must
+ * survive the native instructions after it. */
+void a_library_floating_point_instruction_keeps_the_flags_around_it()
+{
+	Guest guest{995};
+	/* vdiv.f32 s8, s2, s4 (divide by zero) ; vrecps.f32 d5, d6, d7
+	 * (overflow and inexact, in the library) ; vadd.f32 s9, s6, s6 (exact) */
+	guest.a32(0, {0xee81'4a02U, 0xf206'5f17U, 0xee73'4a03U, a::svc});
+	auto cpu = a32_state();
+	set_d(cpu, 1, 0x3f80'0000ULL); /* s2 = 1.0, s3 = 0 */
+	set_d(cpu, 2, 0);              /* s4 = 0.0 */
+	set_d(cpu, 3, 0x3f80'0000ULL); /* s6 = 1.0 */
+	set_d(cpu, 6, 0x7f7f'ffff'7f7f'ffffULL);
+	set_d(cpu, 7, 0x7f7f'ffff'7f7f'ffffULL);
+	const auto result = guest.run(cpu);
+	require(result.reason == ExitReason::system_call);
+	require(result.retired_instructions == 4);
+	require((cpu.fpsr & 0x9fU) == (0x02U | 0x04U | 0x10U)); /* DZC OFC IXC */
+	require(static_cast<std::uint32_t>(get_d(cpu, 4) >> 32) == 0x4000'0000U);
+}
+
 /* A VFP word is illegal at the base level: the level is what makes it so. */
 void a_vfp_word_is_illegal_at_the_base_level()
 {
@@ -1335,6 +1358,7 @@ int main()
 	a_double_word_load_crosses_a_page_boundary();
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	advanced_simd_floating_point_uses_the_standard_fpscr();
+	a_library_floating_point_instruction_keeps_the_flags_around_it();
 	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;
