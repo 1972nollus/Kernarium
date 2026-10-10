@@ -524,10 +524,12 @@ def block_copy(bytes_: int, source: str, destination: str) -> list[str]:
 
 
 def vfp_block(asm, load: bool, bytes_: int) -> None:
-    """VLDM and VSTM of `bytes_` bytes. [key][word]: Rn's offset in bits
-    0-14, writeback in bit 15, the signed displacement from Rn of the
-    first address in bits 16-31 and of the written-back Rn in bits 32-47,
-    and the offset of the first register in bits 48-63."""
+    """VLDM and VSTM of `bytes_` bytes. [key][word][library operand]: Rn's
+    offset in bits 0-14, writeback in bit 15, the signed displacement from Rn
+    of the first address in bits 16-31 and of the written-back Rn in bits
+    32-47, and the offset of the first register in bits 48-63. A transfer
+    that crosses a page is the semantic library's, run as the whole
+    instruction through the operand the stream ends with."""
     name = f"vfp_{'ldm' if load else 'stm'}_{bytes_}"
     direction = 0 if load else 1
     page = "UML_GADGET_TLB_ENTRY_READ_PAGE" if load else \
@@ -535,7 +537,6 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
     translate = (f"{direction}, {page}, {bytes_}, x7, Lcold_{name},"
                  f" Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
-    buffer = 192
     lines = ["ldp x21, x19, [_stream], #16",
              "and x9, x19, #0x7fff", "ldr w9, [_cpu, x9]",
              "sbfx x10, x19, #16, #16", "add w7, w9, w10",
@@ -548,29 +549,12 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
     else:
         lines += block_copy(bytes_, "x13", "x7")
     lines += ["tbz x19, #15, 1f", "and x9, x19, #0x7fff",
-              "str w22, [_cpu, x9]", "1:", "next_gadget",
+              "str w22, [_cpu, x9]", "1:", "add _stream, _stream, #8",
+              "next_gadget",
               "transfer_translate_cold " + translate,
-              f"Lcross_{name}:", f"sub sp, sp, #{buffer}"]
-    lines += ["ubfx x13, x19, #48, #16", "add x13, _cpu, x13"]
-    if load:
-        lines += [f"stp x1, x2, [sp, #{buffer - 16}]", "mov x0, x2",
-                  "mov x1, x7", "mov x2, sp", f"mov x3, #{bytes_}",
-                  "helper_call uml_arm64_a32_load_block",
-                  f"ldp x1, x2, [sp, #{buffer - 16}]",
-                  f"cbz w0, Lfail_{name}",
-                  "ubfx x13, x19, #48, #16", "add x13, _cpu, x13"]
-        lines += block_copy(bytes_, "sp", "x13")
-    else:
-        lines += block_copy(bytes_, "x13", "sp")
-        lines += [f"stp x1, x2, [sp, #{buffer - 16}]", "mov x0, x2",
-                  "mov x1, x7", "mov x2, sp", f"mov x3, #{bytes_}",
-                  "helper_call uml_arm64_a32_store_block",
-                  f"ldp x1, x2, [sp, #{buffer - 16}]",
-                  f"cbz w0, Lfail_{name}"]
-    lines += [f"add sp, sp, #{buffer}", "tbz x19, #15, 1f",
-              "and x9, x19, #0x7fff", "str w22, [_cpu, x9]", "1:",
-              "next_gadget", f"Lfail_{name}:", f"add sp, sp, #{buffer}",
-              "b La32_memory_fault", f"Lalign_{name}:",
+              f"Lcross_{name}:", "ldr x8, [_stream], #8",
+              "a32_library_call", "next_gadget",
+              f"Lalign_{name}:",
               "b La32_alignment_fault_" + ("read" if load else "write")]
     asm.gadget(name, "\n".join(lines))
 

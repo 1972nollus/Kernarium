@@ -227,7 +227,8 @@ Translator::Result Translator::emit_vfp_memory(const Instruction &in,
 	}
 	/* VLDM, VSTM, VPUSH, VPOP and the FLDMX and FSTMX forms: the registers
 	 * are consecutive in CpuState, so the transfer is a copy of
-	 * 4 or 8 bytes a register. */
+	 * 4 or 8 bytes a register. A transfer that crosses a page is the
+	 * semantic library's. */
 	const bool load = plan.sub == 0;
 	const unsigned bytes = static_cast<unsigned>(o.regs) *
 			       (o.single_regs ? 4U : 8U);
@@ -244,6 +245,7 @@ Translator::Result Translator::emit_vfp_memory(const Instruction &in,
 	push(std::uint64_t{rn} | (o.wback ? std::uint64_t{1} << 15 : 0U) |
 	     std::uint64_t{start & 0xffffU} << 16 |
 	     std::uint64_t{written & 0xffffU} << 32 | first << 48);
+	push(library_operand(in));
 	return {};
 }
 

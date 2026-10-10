@@ -1291,8 +1291,8 @@ bool may_reach_library(aarch32::Form form) noexcept
 {
 	const auto family =
 		kFormPlans[static_cast<std::size_t>(form)].family;
-	return family == Family::library ||
-	       family == Family::ldm || family == Family::stm;
+	return family == Family::library || family == Family::ldm ||
+	       family == Family::stm || family == Family::vfpblock;
 }
 
 std::uint8_t thumb_itstate(std::span<const std::byte> halfwords,
