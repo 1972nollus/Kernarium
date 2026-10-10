@@ -20,6 +20,7 @@ add_library(uml_arm64_aarch32_semantics OBJECT
     semantics.cpp
     semantics_armv8_float.cpp
     semantics_armv8_integer.cpp
+    semantics_bf16.cpp
     semantics_control.cpp
     semantics_crypto.cpp
     semantics_integer.cpp
