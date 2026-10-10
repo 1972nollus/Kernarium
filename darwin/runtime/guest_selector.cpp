@@ -16,6 +16,20 @@ extern "C" unsigned long darwin_uml_guest_hwcap(void)
 		::uml::runtime::current_guest_host_capabilities())[0];
 }
 
+/* The AArch32 words of a task, zero while no engine executes AArch32 EL0:
+ * the kernel then refuses 32-bit ELF images, and run_common_guest() returns
+ * DARWIN_UML_EVENT_FATAL for an AArch32 entry. An engine's profile supplies
+ * them once the engine runs AArch32. */
+extern "C" unsigned long darwin_uml_guest_compat_hwcap(void)
+{
+	return 0;
+}
+
+extern "C" unsigned long darwin_uml_guest_compat_hwcap2(void)
+{
+	return 0;
+}
+
 extern "C" const char *darwin_uml_guest_cpu_model_name(void)
 {
 	/*

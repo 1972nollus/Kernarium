@@ -80,7 +80,10 @@ Each run exports its slice's series, named by topic subject, and records the
 final tree. The arm64 run exports the shared series too; a shared change then
 needs the Android refresh in [its README](../android-6.18/README.md) in the
 same change. The x86_64 run first rebases its overlay onto the current arm64
-branch. A patch file changes only when its own topic does. Never edit patch
+branch. The slice replaces the arm64 port's ptrace, signal, TLS, syscall and
+ELF files wholesale, so a shared topic that edits them is resolved against the
+slice's own versions in the same change, and the slice's artifact is rebuilt. A
+patch file changes only when its own topic does. Never edit patch
 files, `series.tsv`, or the final tree by hand.
 
 `check-next-version.sh --work-root PATH --ref REF` (see `--help`) rebases a
@@ -149,16 +152,19 @@ and no address, `#OF` after the instruction and the two faults at it; INT n of
 a vector user mode may not use names that vector's IDT entry, `(n << 3) | 2`,
 in the error code. A long-mode access to a non-canonical address raises `#GP`,
 or `#SS`, `SIGBUS` with `SI_KERNEL`, when the stack segment forms the address.
-A page fault's error code carries the user bit. With RFLAGS.AC set a misaligned
+A page fault's error code carries the user bit, and the present bit when the
+task has the page mapped and present and the access broke its protection: 7
+for a store to a read-only page and 0x15 for a fetch from one without execute
+permission, against 6 and 0x14 for a page that is not there, a PROT_NONE one
+included. With RFLAGS.AC set a misaligned
 access raises `#AC`, `SIGBUS` with `BUS_ADRALN` and no address. An unmasked
 SIMD floating-point exception raises `#XM` at its instruction, and an unmasked
 x87 exception `#MF` at the next waiting instruction; both are `SIGFPE` with the
 code of the highest-priority unmasked flag, which the slice derives from MXCSR
 or the x87 status and control words the host reports as the error code, as
 Linux does. The host's limits on these are the gadget engine's
-([README](../../darwin/cpu/x86_64/gadgets/README.md)). A protection fault's
-error code lacks the present bit, and a branch to a non-canonical target faults
-at the target rather than at the branch.
+([README](../../darwin/cpu/x86_64/gadgets/README.md)). A branch to a
+non-canonical target faults at the target rather than at the branch.
 
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of
@@ -198,7 +204,12 @@ Android build none of them.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate
-guest qualification. Both normal arm64 profiles accept `EM_AARCH64` only.
+guest qualification. The slice accepts no AArch32 executable (its
+`UML_ARM64_AARCH32` is off); both normal arm64 profiles accept `EM_AARCH64` and,
+once the run's engine implements AArch32, 32-bit ARM EABI executables. The
+4 KiB profile runs stock armhf userspace, and the 16 KiB one runs only 32-bit
+programs whose segments are 16 KiB congruent, as the
+[shared README](../common/README.md) says.
 Android does not consume the x86_64 overlay. The slice's overlay turns off
 `UML_ARM64_SME`, so it builds none of the shared SME and SVE task state,
 which x86 tasks do not have; the shared mm-shared mark stays, for the x86-64

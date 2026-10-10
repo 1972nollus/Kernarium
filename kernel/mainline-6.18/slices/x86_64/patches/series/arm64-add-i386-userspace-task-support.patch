@@ -8,12 +8,14 @@ Add the complete i386 process ABI to the dedicated x86-family UML slice: ELF loa
 Generate the i386 dispatch table from the canonical Linux 6.18 syscall specification, retaining slice-owned adapters where x86 ABI layouts or argument order differ, and dispatch long-mode INT 0x80 through it. Keep this isolated from normal arm64 and Android configurations.
 ---
  arch/Kconfig                                |   4 +
- arch/arm64/um/Kconfig                       |  17 +-
+ arch/arm64/um/Kconfig                       |  16 +-
  arch/arm64/um/Makefile                      |  11 +-
- arch/arm64/um/asm/elf.h                     |  81 ++-
+ arch/arm64/um/asm/compat-abi.h              |  66 ++-
+ arch/arm64/um/asm/elf.h                     |  80 ++-
+ arch/arm64/um/asm/processor.h               |  11 +
  arch/arm64/um/asm/ptrace.h                  |   6 +
  arch/arm64/um/asm/seccomp.h                 |  42 ++
- arch/arm64/um/asm/syscall.h                 |  10 +-
+ arch/arm64/um/asm/syscall.h                 |  17 +-
  arch/arm64/um/asm/unistd.h                  |  13 +
  arch/arm64/um/asm/user.h                    |  27 +
  arch/arm64/um/mmap.c                        |   9 +
@@ -26,31 +28,24 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  arch/arm64/um/x86_64_syscalls.c             | 198 ++-----
  arch/arm64/um/x86_syscall_abi.h             |  76 +++
  arch/arm64/um/x86_syscall_tables.c          |  50 ++
- arch/um/include/asm/Kbuild                  |   1 -
- arch/um/include/asm/compat.h                | 105 ++++
- arch/um/include/asm/pgtable-2level.h        |   4 +
- arch/um/include/asm/pgtable-3level.h        |   4 +
- arch/um/include/asm/pgtable-4level.h        |   4 +
- arch/um/include/asm/processor-generic.h     |  21 +
- arch/um/include/asm/thread_info.h           |   8 +
+ arch/um/include/asm/compat.h                |  11 +
+ arch/um/include/asm/thread_info.h           |   6 +
  arch/um/include/shared/kern_util.h          |   1 +
  arch/um/include/uapi/asm/fcntl.h            |   8 +
  arch/um/include/uapi/asm/signal.h           |  12 +
  arch/um/kernel/ptrace.c                     |   9 +
- arch/um/kernel/signal.c                     |   7 +-
  arch/um/kernel/skas/process.c               |   9 +
- arch/um/kernel/skas/syscall.c               |  17 +-
+ arch/um/kernel/skas/syscall.c               |  10 +-
  arch/um/os-Darwin/skas/process.c            |   4 +
  include/linux/syscall_user_dispatch.h       |   8 +-
  include/linux/syscall_user_dispatch_types.h |   2 +-
  kernel/entry/Makefile                       |   3 +-
  net/ethtool/ioctl.c                         |   1 +
- 38 files changed, 1802 insertions(+), 189 deletions(-)
+ 34 files changed, 1740 insertions(+), 189 deletions(-)
  create mode 100644 arch/arm64/um/asm/seccomp.h
  create mode 100644 arch/arm64/um/x86_32.h
  create mode 100644 arch/arm64/um/x86_32_syscalls.c
  create mode 100644 arch/arm64/um/x86_syscall_abi.h
- create mode 100644 arch/um/include/asm/compat.h
  create mode 100644 arch/um/include/uapi/asm/fcntl.h
  create mode 100644 arch/um/include/uapi/asm/signal.h
 
@@ -73,10 +68,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 2295cd7fc89ddae90c5e1efe28702ac605a1facb..78c1c5d0c0a400a752f1ca2201270d446038c904 100644
+index ffc12d2116c5df9b8ea53744a524a9fe9ca42fbe..80d192ff857006c4c8bd28c1970b0244fa9a5125 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -31,12 +31,23 @@ config UML_ARM64_SME
+@@ -31,12 +31,20 @@ config UML_ARM64_SME
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -95,22 +90,28 @@ index 2295cd7fc89ddae90c5e1efe28702ac605a1facb..78c1c5d0c0a400a752f1ca2201270d44
 +	  userspace executables are rejected.  This slice requires 4 KiB guest
 +	  pages and must not be selected by a native arm64 slice.
 +
-+config COMPAT
-+	def_bool UML_X86_64_USERSPACE_ONLY
-+
 +config COMPAT_FOR_U64_ALIGNMENT
-+	def_bool COMPAT
++	def_bool UML_X86_64_USERSPACE_ONLY
  
- config ARCH_MMAP_RND_BITS_MIN
- 	int
+ # Every arm64 task may run AArch32 code (armhf and Android's armeabi-v7a) as
+ # arm64 Linux's COMPAT does, once the host's engine implements it.  Until
+@@ -54,7 +62,7 @@ config UML_ARM64_AARCH32
+ 	select OLD_SIGSUSPEND3
+ 
+ config COMPAT
+-	def_bool UML_ARM64_AARCH32
++	def_bool UML_ARM64_AARCH32 || UML_X86_64_USERSPACE_ONLY
+ 
+ config KUSER_HELPERS
+ 	bool "Enable kuser helpers page for 32-bit applications"
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 3bd3cb1086c79190ea0fc41293255a3b019c0be3..c9851f6e70ed197395c0a990198778befc4220b6 100644
+index c91e868233ae0f78f1c3bd080fecceb5dddcf50e..6c7af7f398e9fc93c4a001b53ed7417013b2c3b3 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -4,22 +4,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
- 	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
- 	x86_64_syscalls.o
+@@ -6,22 +6,29 @@ obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
  obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
+ obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
+ 	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
 +obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
  obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
  
@@ -139,18 +140,112 @@ index 3bd3cb1086c79190ea0fc41293255a3b019c0be3..c9851f6e70ed197395c0a990198778be
  
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
+diff --git a/arch/arm64/um/asm/compat-abi.h b/arch/arm64/um/asm/compat-abi.h
+index 2b50984d56d48945c5485c230fdf7348b6963e33..6fd5df2e757ef1b0e51b8bd1e312e73dc5c206d2 100644
+--- a/arch/arm64/um/asm/compat-abi.h
++++ b/arch/arm64/um/asm/compat-abi.h
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+ /*
+- * The 32-bit ABI types of an AArch32 task, from arch/arm64/include/asm/compat.h.
++ * The 32-bit ABI types of a compat task: an i386 task's in the x86-64 slice,
++ * otherwise an AArch32 task's, from arch/arm64/include/asm/compat.h.
+  *
+  * Copyright (C) 2012 ARM Ltd.
+  */
+@@ -9,6 +10,67 @@
+ 
+ #include <linux/types.h>
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++/* An i386 task's 32-bit types, from arch/x86/include/asm/compat.h. */
++#define compat_mode_t compat_mode_t
++typedef u16		compat_mode_t;
++
++#define __compat_uid_t	__compat_uid_t
++typedef u16		__compat_uid_t;
++typedef u16		__compat_gid_t;
++
++#define compat_dev_t	compat_dev_t
++typedef u16		compat_dev_t;
++
++#define compat_ipc_pid_t compat_ipc_pid_t
++typedef u16		compat_ipc_pid_t;
++
++#define compat_statfs	compat_statfs
++
++#include <asm-generic/compat.h>
++
++#define COMPAT_UTS_MACHINE	"i686\0\0"
++
++typedef u16		compat_nlink_t;
++
++struct compat_stat {
++	u32		st_dev;
++	compat_ino_t	st_ino;
++	compat_mode_t	st_mode;
++	compat_nlink_t	st_nlink;
++	__compat_uid_t	st_uid;
++	__compat_gid_t	st_gid;
++	u32		st_rdev;
++	u32		st_size;
++	u32		st_blksize;
++	u32		st_blocks;
++	u32		st_atime;
++	u32		st_atime_nsec;
++	u32		st_mtime;
++	u32		st_mtime_nsec;
++	u32		st_ctime;
++	u32		st_ctime_nsec;
++	u32		__unused4;
++	u32		__unused5;
++};
++
++#define __ARCH_NEED_COMPAT_FLOCK64_PACKED
++
++struct compat_statfs {
++	int		f_type;
++	int		f_bsize;
++	int		f_blocks;
++	int		f_bfree;
++	int		f_bavail;
++	int		f_files;
++	int		f_ffree;
++	compat_fsid_t	f_fsid;
++	int		f_namelen;
++	int		f_frsize;
++	int		f_flags;
++	int		f_spare[4];
++};
++#else
+ #define compat_mode_t compat_mode_t
+ typedef u16		compat_mode_t;
+ 
+@@ -65,4 +127,6 @@ struct compat_statfs {
+ 	int		f_spare[4];
+ };
+ 
++#endif /* CONFIG_UML_X86_64_USERSPACE_ONLY */
++
+ #endif
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index e363e0173077a4e211dce250028f9d4e17096580..ebaddf7f62604ce71600278956eadc155c4cbbd0 100644
+index 3bfa08cbdb8451ae06f112a645439aa7fccbdbf6..171f0559dc68a7c4cf56c1f95f9025a0d68b3847 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
-@@ -32,9 +32,14 @@
+@@ -32,8 +32,8 @@
  #define ELF_HWCAP2 0
  #define ELF_EXEC_PAGESIZE PAGE_SIZE
  #define ELF_ET_DYN_BASE (TASK_SIZE * 2 / 3)
--#define STACK_RND_MASK (0x3ffff >> (PAGE_SHIFT - 12))
-+#define STACK_RND_MASK (test_thread_flag(TIF_32BIT) ? \
-+	(0x7ff >> (PAGE_SHIFT - 12)) : \
-+	(0x3ffff >> (PAGE_SHIFT - 12)))
+-#ifdef CONFIG_UML_ARM64_AARCH32
+-/* 8 MiB of VA for an AArch32 task's stack, 1 GiB for an AArch64 one. */
++#ifdef CONFIG_COMPAT
++/* 8 MiB of VA for a 32-bit task's stack, 1 GiB for a 64-bit one. */
+ #define STACK_RND_MASK \
+ 	(test_thread_flag(TIF_32BIT) ? 0x7ff >> (PAGE_SHIFT - 12) : \
+ 	 0x3ffff >> (PAGE_SHIFT - 12))
+@@ -41,7 +41,10 @@
+ #define STACK_RND_MASK (0x3ffff >> (PAGE_SHIFT - 12))
+ #endif
  
 -#define elf_check_arch(header) ((header)->e_machine == EM_X86_64)
 +#define elf_check_arch(header) \
@@ -160,13 +255,9 @@ index e363e0173077a4e211dce250028f9d4e17096580..ebaddf7f62604ce71600278956eadc15
  
  /* x86-64 starts a task with the flat 64-bit code and stack selectors and
   * with RFLAGS IF and bit 1, as Linux's start_thread(); the data selectors
-@@ -48,9 +53,81 @@
+@@ -65,6 +68,77 @@
  } while (0)
- 
- #define SET_PERSONALITY(executable) do { \
-+	clear_thread_flag(TIF_32BIT); \
- 	current->personality &= ~READ_IMPLIES_EXEC; \
- } while (0)
+ #endif
  
 +#ifdef CONFIG_COMPAT
 +#define COMPAT_ELF_PLATFORM "i686"
@@ -242,6 +333,28 @@ index e363e0173077a4e211dce250028f9d4e17096580..ebaddf7f62604ce71600278956eadc15
  typedef unsigned long elf_greg_t;
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
+diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
+index 4041ad87142823ec92cc0afc65d49e97933b13a9..da8bed3f15d86281657a038f0d4306aa91f61442 100644
+--- a/arch/arm64/um/asm/processor.h
++++ b/arch/arm64/um/asm/processor.h
+@@ -99,6 +99,17 @@ static __always_inline void cpu_relax(void)
+ #endif
+ 
+ #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++/*
++ * An i386 task's address space, as x86's: the top 8 KiB of 4 GiB belong to
++ * the kernel, the stack ends two pages below that, and the legacy mmap area
++ * starts a third of the way up.
++ */
++#define UML_X86_32_TASK_SIZE		0xffffe000UL
++#define UML_COMPAT_TASK_SIZE		UML_X86_32_TASK_SIZE
++#define UML_COMPAT_STACK_TOP		(UML_X86_32_TASK_SIZE - 2 * PAGE_SIZE)
++#define UML_COMPAT_TASK_UNMAPPED_BASE \
++	PAGE_ALIGN(UML_X86_32_TASK_SIZE / 3)
++
+ extern int uml_x86_64_get_tsc_mode(unsigned long address);
+ extern int uml_x86_64_set_tsc_mode(unsigned int mode);
+ 
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 index b132ad664ae559e1adf5bf0f63d65c7b55eea115..50bb312cff0f0d9e22d268238c92cc5e6aa1a5be 100644
 --- a/arch/arm64/um/asm/ptrace.h
@@ -308,10 +421,26 @@ index 0000000000000000000000000000000000000000..0a18146580cafbf787d4480fc3590777
 +
 +#endif
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
-index ac47265672c80b9f30b18270b40e98ad1159a67b..4562c63382ffb082a51d35da24544e7c446c5f1d 100644
+index 4b693f9c17a44cf36913cf91ca080661b5efe504..cb86e2e833d370030817b0a0b358733af0eb917f 100644
 --- a/arch/arm64/um/asm/syscall.h
 +++ b/arch/arm64/um/asm/syscall.h
-@@ -14,13 +14,19 @@ static inline int syscall_get_arch(struct task_struct *task)
+@@ -15,25 +15,32 @@ extern const sys_call_ptr_t sys_call_table[];
+  * and compat tasks, the i386 table. handle_syscall() picks them with these.
+  */
+ #define UML_SYSCALL_TABLE(r) \
+-	(UPT_X86_64_COMPAT_SYSCALL(r) ? sys_call_table : \
++	(UPT_X86_64_COMPAT_SYSCALL(r) ? uml_x86_32_sys_call_table : \
+ 	 uml_x86_64_sys_call_table)
+ #define UML_SYSCALL_COUNT(r) \
+-	(UPT_X86_64_COMPAT_SYSCALL(r) ? __NR_syscalls : UML_X86_64_NR_SYSCALLS)
++	(UPT_X86_64_COMPAT_SYSCALL(r) ? UML_X86_32_NR_SYSCALLS : \
++	 UML_X86_64_NR_SYSCALLS)
+ #define UML_SYSCALL_SCHED_YIELD(r) \
+-	(UPT_X86_64_COMPAT_SYSCALL(r) ? __NR_sched_yield : 24)
++	(UPT_X86_64_COMPAT_SYSCALL(r) ? 158 : 24)
+ #define UML_SYSCALL_OUT_OF_TABLE(r, nr) (-ENOSYS)
+ 
+ static inline int syscall_get_arch(struct task_struct *task)
  {
  	struct uml_pt_regs *regs = &task->thread.regs.regs;
  
@@ -565,10 +694,10 @@ index 9b5193e03c41bc20f551bb236f9d96f70ed2926c..e8d509dab1e4e87fe0d4d9db8e065385
  	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index 51d035e8b6af242cc740041ecf2ec2985ff35cca..a8eed0c855de99366240e2da52e826129e59fd1f 100644
+index d233d6e25a6672ef1f94c0df52d51b1be3d230de..1bf8f6133e9acb1fb5e3bb9577617bd06f9bde8e 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -82,6 +82,7 @@ struct uml_pt_regs {
+@@ -88,6 +88,7 @@ struct uml_pt_regs {
  #define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
  #define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
  #define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
@@ -576,7 +705,7 @@ index 51d035e8b6af242cc740041ecf2ec2985ff35cca..a8eed0c855de99366240e2da52e82612
  /* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
  #define UML_X86_64_TSC_SIGSEGV (1UL << 34)
  
-@@ -93,6 +94,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
+@@ -99,6 +100,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
  #define UPT_X86_64_COMPAT_SYSCALL(regs) \
  	upt_x86_64_compat_syscall(regs)
  
@@ -2284,111 +2413,16 @@ index eee25b1ba9e6fc18f88a0f1312f76d25a931a598..0dbb3fe44d9a8504c9728870c56911a4
 +#undef __SYSCALL_WITH_COMPAT
 +#undef __SYSCALL_COMPAT_NORETURN
 +#undef __SYSCALL_NORETURN
-diff --git a/arch/um/include/asm/Kbuild b/arch/um/include/asm/Kbuild
-index ef01d6006da988e31168473ef9bcbc643de009b7..424190cc8fce471fff02fca7353c8ce595f9a95f 100644
---- a/arch/um/include/asm/Kbuild
-+++ b/arch/um/include/asm/Kbuild
-@@ -1,6 +1,5 @@
- # SPDX-License-Identifier: GPL-2.0
- generic-y += bug.h
--generic-y += compat.h
- generic-y += device.h
- generic-y += dma-mapping.h
- generic-y += emergency-restart.h
 diff --git a/arch/um/include/asm/compat.h b/arch/um/include/asm/compat.h
-new file mode 100644
-index 0000000000000000000000000000000000000000..c0fc986f2b159a92feef53ac5c5ed6070a2c5cac
---- /dev/null
+index b70b8823331e8b3b018af8fd5d24772cd96f79b7..624869cfb2a7f708b51fea141d9aba64df31e9b7 100644
+--- a/arch/um/include/asm/compat.h
 +++ b/arch/um/include/asm/compat.h
-@@ -0,0 +1,105 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
-+#ifndef __UM_COMPAT_H
-+#define __UM_COMPAT_H
+@@ -35,6 +35,17 @@ static inline int is_compat_thread(struct thread_info *thread)
+ {
+ 	return test_ti_thread_flag(thread, TIF_32BIT);
+ }
 +
-+#ifndef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#include <asm-generic/compat.h>
-+#else
-+
-+#include <linux/types.h>
-+
-+#define compat_mode_t compat_mode_t
-+typedef u16 compat_mode_t;
-+
-+#define __compat_uid_t __compat_uid_t
-+typedef u16 __compat_uid_t;
-+typedef u16 __compat_gid_t;
-+
-+#define compat_dev_t compat_dev_t
-+typedef u16 compat_dev_t;
-+
-+#define compat_ipc_pid_t compat_ipc_pid_t
-+typedef u16 compat_ipc_pid_t;
-+
-+#define compat_statfs compat_statfs
-+
-+#include <asm-generic/compat.h>
-+
-+#define COMPAT_UTS_MACHINE "i686\0\0"
-+
-+typedef u16 compat_nlink_t;
-+
-+struct compat_stat {
-+	u32 st_dev;
-+	compat_ino_t st_ino;
-+	compat_mode_t st_mode;
-+	compat_nlink_t st_nlink;
-+	__compat_uid_t st_uid;
-+	__compat_gid_t st_gid;
-+	u32 st_rdev;
-+	u32 st_size;
-+	u32 st_blksize;
-+	u32 st_blocks;
-+	u32 st_atime;
-+	u32 st_atime_nsec;
-+	u32 st_mtime;
-+	u32 st_mtime_nsec;
-+	u32 st_ctime;
-+	u32 st_ctime_nsec;
-+	u32 __unused4;
-+	u32 __unused5;
-+};
-+
-+#define __ARCH_NEED_COMPAT_FLOCK64_PACKED
-+
-+struct compat_statfs {
-+	int f_type;
-+	int f_bsize;
-+	int f_blocks;
-+	int f_bfree;
-+	int f_bavail;
-+	int f_files;
-+	int f_ffree;
-+	compat_fsid_t f_fsid;
-+	int f_namelen;
-+	int f_frsize;
-+	int f_flags;
-+	int f_spare[4];
-+};
-+
-+#ifdef CONFIG_COMPAT
-+#include <linux/sched.h>
-+#include <linux/sched/task_stack.h>
-+#include <asm/processor.h>
-+
-+#define compat_user_stack_pointer() \
-+	(user_stack_pointer(task_pt_regs(current)))
-+#define COMPAT_MINSIGSTKSZ 2048
-+
-+static inline int is_compat_task(void)
-+{
-+	return test_thread_flag(TIF_32BIT);
-+}
-+
-+static inline int is_compat_thread(struct thread_info *thread)
-+{
-+	return test_ti_thread_flag(thread, TIF_32BIT);
-+}
-+
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +bool uml_x86_in_compat_syscall(void);
 +
 +static inline bool in_compat_syscall(void)
@@ -2397,133 +2431,29 @@ index 0000000000000000000000000000000000000000..c0fc986f2b159a92feef53ac5c5ed607
 +}
 +#define in_compat_syscall in_compat_syscall
 +#define compat_need_64bit_alignment_fixup in_compat_syscall
-+#else
-+static inline int is_compat_thread(struct thread_info *thread)
-+{
-+	return 0;
-+}
 +#endif
-+
-+#endif
-+#endif
-diff --git a/arch/um/include/asm/pgtable-2level.h b/arch/um/include/asm/pgtable-2level.h
-index 14ec16f92ce4086eafa5ca774f52c79df2b0b88c..8706382ab84a31ee6882fa75e26285bc0a94e465 100644
---- a/arch/um/include/asm/pgtable-2level.h
-+++ b/arch/um/include/asm/pgtable-2level.h
-@@ -21,7 +21,11 @@
-  * we don't really have any PMD directory physically.
-  */
- #define PTRS_PER_PTE	1024
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#else
- #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#endif
- #define PTRS_PER_PGD	1024
+ #endif
  
- #define pte_ERROR(e) \
-diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
-index 277e84d1866403690341e16db6d5f04fa152b74d..bfa922f20ed6fe9f920f85f709e5aed7f929f04f 100644
---- a/arch/um/include/asm/pgtable-3level.h
-+++ b/arch/um/include/asm/pgtable-3level.h
-@@ -22,7 +22,11 @@
- #define PTRS_PER_PMD	(1U << UML_PGTABLE_SHIFT)
- #define PTRS_PER_PGD	(1U << UML_PGTABLE_SHIFT)
- 
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#else
- #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#endif
- 
- #define pte_ERROR(e) \
- 	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
-diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
-index 17649aefd6922012de5f30349361bf2dc50466e7..d5b69726ced58e7a9290cfe58dc3d66a9d7fbb08 100644
---- a/arch/um/include/asm/pgtable-4level.h
-+++ b/arch/um/include/asm/pgtable-4level.h
-@@ -42,7 +42,11 @@
- #define PTRS_PER_PUD (1U << UML_PGTABLE_SHIFT)
- #define PTRS_PER_PGD (1U << UML_PGTABLE_SHIFT)
- 
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#else
- #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
-+#endif
- 
- #define pte_ERROR(e) \
-         printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
-diff --git a/arch/um/include/asm/processor-generic.h b/arch/um/include/asm/processor-generic.h
-index 9e9f2c7f127f78532c554ee958d458884077d630..6b03af4c1e6785d2c9c011d34a7b6ab8c46bb689 100644
---- a/arch/um/include/asm/processor-generic.h
-+++ b/arch/um/include/asm/processor-generic.h
-@@ -50,7 +50,17 @@ struct thread_struct {
-  */
- extern unsigned long task_size;
- 
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define UML_X86_32_TASK_SIZE 0xffffe000UL
-+#define TASK_SIZE \
-+	(test_thread_flag(TIF_32BIT) ? UML_X86_32_TASK_SIZE : task_size)
-+#define TASK_SIZE_OF(task) \
-+	(test_tsk_thread_flag((task), TIF_32BIT) ? \
-+	 UML_X86_32_TASK_SIZE : task_size)
-+#else
- #define TASK_SIZE (task_size)
-+#define TASK_SIZE_OF(task) TASK_SIZE
-+#endif
- 
- #undef STACK_TOP
- #undef STACK_TOP_MAX
-@@ -59,7 +69,11 @@ extern unsigned long stacksizelim;
- 
- #define STACK_ROOM	(stacksizelim)
- #define STACK_TOP	(TASK_SIZE - 2 * PAGE_SIZE)
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define STACK_TOP_MAX	(task_size - 2 * PAGE_SIZE)
-+#else
- #define STACK_TOP_MAX	STACK_TOP
-+#endif
- 
- /* This decides where the kernel will search for a free chunk of vm
-  * space during mmap's.
-@@ -71,7 +85,14 @@ extern unsigned long stacksizelim;
-  * above that host reservation.  Linux still owns the guest virtual address
-  * space; the Darwin shadow-MMU maps these addresses into this process.
-  */
-+#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define TASK_UNMAPPED_BASE \
-+	(test_thread_flag(TIF_32BIT) ? \
-+	 PAGE_ALIGN(UML_X86_32_TASK_SIZE / 3) : \
-+	 UML_DARWIN_TASK_UNMAPPED_BASE)
-+#else
- #define TASK_UNMAPPED_BASE	(UML_DARWIN_TASK_UNMAPPED_BASE)
-+#endif
- #else
- #define TASK_UNMAPPED_BASE	(0x40000000)
  #endif
 diff --git a/arch/um/include/asm/thread_info.h b/arch/um/include/asm/thread_info.h
-index 7a6f4dc99fa1639a259b12baccbad2218b43c3d9..fb031ad15657a5650a9d5701111d3a8b502cdf5f 100644
+index f16b3b64d7b90b824a6d9b688227db446dab7a2a..81e930c8dc2c490746c882108790acf3b0adb0c2 100644
 --- a/arch/um/include/asm/thread_info.h
 +++ b/arch/um/include/asm/thread_info.h
-@@ -44,6 +44,10 @@ struct thread_info {
- #define TIF_SECCOMP		9	/* secure computing */
- #define TIF_SINGLESTEP		10	/* single stepping userspace */
- #define TIF_SYSCALL_TRACEPOINT	11	/* syscall tracepoint instrumentation */
+@@ -47,6 +47,9 @@ struct thread_info {
+ #ifdef CONFIG_COMPAT
+ #define TIF_32BIT		12	/* 32-bit userspace task */
+ #endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define TIF_32BIT		12	/* i386 userspace task */
 +#define TIF_SYSCALL_USER_DISPATCH 13	/* syscall user dispatch active */
 +#endif
  
  
  #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
-@@ -55,6 +59,10 @@ struct thread_info {
- #define _TIF_NOTIFY_RESUME	(1 << TIF_NOTIFY_RESUME)
- #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
- #define _TIF_SINGLESTEP		(1 << TIF_SINGLESTEP)
+@@ -61,6 +64,9 @@ struct thread_info {
+ #ifdef CONFIG_COMPAT
+ #define _TIF_32BIT		(1 << TIF_32BIT)
+ #endif
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+#define _TIF_32BIT		(1 << TIF_32BIT)
 +#define _TIF_SYSCALL_USER_DISPATCH (1 << TIF_SYSCALL_USER_DISPATCH)
 +#endif
  
@@ -2600,31 +2530,6 @@ index fdbb37b5c3996188d92cf307d31eeaeca1f0acce..51b9576fc57b297eea4c3dc61f945e3d
  static void send_sigtrap(struct uml_pt_regs *regs, int error_code)
  {
  	/* Send us the fake SIGTRAP */
-diff --git a/arch/um/kernel/signal.c b/arch/um/kernel/signal.c
-index a56b44522766fec85a945ad8788b2b3019b4673b..6b47c070ba5187841e244107a754b48fba985732 100644
---- a/arch/um/kernel/signal.c
-+++ b/arch/um/kernel/signal.c
-@@ -14,6 +14,10 @@
- #include <kern_util.h>
- #include <os.h>
- 
-+#ifndef PT_REGS_RESTART_SYSCALL_NR
-+#define PT_REGS_RESTART_SYSCALL_NR(regs) __NR_restart_syscall
-+#endif
-+
- EXPORT_SYMBOL(block_signals);
- EXPORT_SYMBOL(unblock_signals);
- 
-@@ -114,7 +118,8 @@ void do_signal(struct pt_regs *regs)
- 			PT_REGS_RESTART_SYSCALL(regs);
- 			break;
- 		case -ERESTART_RESTARTBLOCK:
--			PT_REGS_ORIG_SYSCALL(regs) = __NR_restart_syscall;
-+			PT_REGS_ORIG_SYSCALL(regs) =
-+				PT_REGS_RESTART_SYSCALL_NR(regs);
- 			PT_REGS_RESTART_SYSCALL(regs);
- 			break;
- 		}
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
 index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f69591faf844 100644
 --- a/arch/um/kernel/skas/process.c
@@ -2646,7 +2551,7 @@ index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f695
  {
  	current->thread.arch.tpidr_el0 = tls;
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe456c2c54fd 100644
+index 9ff2fa2288c4a59014725de16b21af4e5816ba23..766807e1ee60ea42848e8159bdfc51232548c7f3 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
 @@ -6,6 +6,7 @@
@@ -2657,7 +2562,7 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  #include <kern_util.h>
  #include <sysdep/ptrace.h>
  #include <sysdep/ptrace_user.h>
-@@ -23,6 +24,11 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -47,6 +48,11 @@ void handle_syscall(struct uml_pt_regs *r)
  	/* Initialize the syscall number and default return value. */
  	UPT_SYSCALL_NR(r) = UPT_SYSCALL_ARCH_NR(r);
  	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
@@ -2669,7 +2574,7 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  	if (syscall_trace_enter(regs))
  		goto out;
-@@ -41,12 +47,10 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -65,12 +71,10 @@ void handle_syscall(struct uml_pt_regs *r)
  			goto out;
  		}
  	}
@@ -2683,29 +2588,11 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
-@@ -55,14 +59,13 @@ void handle_syscall(struct uml_pt_regs *r)
- 	 */
- 	if ((time_travel_mode == TT_MODE_INFCPU ||
- 	     time_travel_mode == TT_MODE_EXTERNAL) &&
--	    ((!compat && syscall == 24) ||
--	     (compat && syscall == __NR_sched_yield)))
-+	    ((!compat && syscall == 24) || (compat && syscall == 158)))
- 		tt_extra_sched_jiffies += 1;
- 
--	if (syscall >= 0 && syscall < (compat ? __NR_syscalls :
-+	if (syscall >= 0 && syscall < (compat ? UML_X86_32_NR_SYSCALLS :
- 					       UML_X86_64_NR_SYSCALLS)) {
- 		unsigned long ret;
--		const sys_call_ptr_t *table = compat ? sys_call_table :
-+		const sys_call_ptr_t *table = compat ? uml_x86_32_sys_call_table :
- 			uml_x86_64_sys_call_table;
- 
- 		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 7c3e69d64e95667d076ccef8e843cac3ea07be1e..fc8b4348cb0576c3cbec1f021044c243a28676f8 100644
+index ac307fbcc5fd0af2913508930b1d7bb7e2457bfa..414ca37f659257aa5fb11713d9d4ccd6e2933292 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -450,6 +450,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -458,6 +458,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

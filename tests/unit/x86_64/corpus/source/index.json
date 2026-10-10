@@ -9648,11 +9648,23 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/x87-fbstp-stores-the-bcd-indefinite-and-f2xm1-keeps-large-operands.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/x87-fcmov-of-an-empty-register-is-a-stack-fault.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/x87-fprem-handles-small-quotients-and-nans.s",
       "file": "repository-cases.jsonl"
     },
     {
       "name": "repository/x87-fprem-reports-quotient-bits-and-partial-remainders.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/x87-fptan-of-an-operand-without-a-tangent.s",
       "file": "repository-cases.jsonl"
     },
     {
@@ -9676,6 +9688,10 @@
       "file": "repository-cases.jsonl"
     },
     {
+      "name": "repository/x87-masked-stack-underflow-leaves-the-indefinite.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
       "name": "repository/x87-saved-images-hold-the-stack-and-computed-tags.s",
       "file": "repository-cases.jsonl"
     },
@@ -9693,6 +9709,10 @@
     },
     {
       "name": "repository/x87-transcendentals-of-nonzero-operands-are-inexact.s",
+      "file": "repository-cases.jsonl"
+    },
+    {
+      "name": "repository/x87-trigonometry-and-logarithms-follow-the-microcode.s",
       "file": "repository-cases.jsonl"
     },
     {

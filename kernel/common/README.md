@@ -230,8 +230,8 @@ An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
 prints it for a 64-bit task, and both engines give the same bytes. Each online
 CPU has a block of `processor`, `BogoMIPS`, `Features`, `CPU implementer`,
 `CPU architecture`, `CPU variant`, `CPU part` and `CPU revision` lines, ended
-by a blank line. There is no `model name`: arm64 Linux prints one only to a
-32-bit task. `BogoMIPS` is what arm64 Linux derives from its architected timer,
+by a blank line. arm64 Linux prints a `model name` only under `PER_LINUX32`.
+`BogoMIPS` is what arm64 Linux derives from its architected timer,
 `DIV_ROUND_CLOSEST(CNTFRQ_EL0, HZ)` taken as `loops_per_jiffy`, for the counter
 frequency a task reads; UML's calibrated delay loop still times `udelay()` but
 no longer reaches the file. `Features` names exactly the AT_HWCAP and AT_HWCAP2
@@ -245,6 +245,51 @@ with it llvmpipe and `-mcpu=native`, reads the `Features` line.
 auxiliary vector, MRS and the kernel's `CONFIG_HZ`, and require LLVM to see the
 host's NEON. The x86_64-userspace slice describes its emulated x86 CPU
 instead.
+
+The normal arm64 kernels run AArch32 tasks, armhf (ARMv7-A and Armv8 AArch32
+with VFPv4-D32 and NEON, EABI hard-float) and Android's armeabi-v7a, beside
+AArch64 ones, as arm64 Linux's `COMPAT` does. Two shared topics carry it. The
+generic `arch/um` topic gives a task its own ABI: `TIF_32BIT` with its own
+`TASK_SIZE`, `STACK_TOP` and mmap base, a syscall table, count, `sched_yield`
+number and out-of-table handler picked per task through the `UML_SYSCALL_*`
+hooks of `skas/syscall.c`, and an `asm/compat.h` that includes the port's
+`asm/compat-abi.h`; the x86_64 slice's i386 support uses the same hooks. The
+arm64 topic supplies the port's AArch32 support in `arch/arm64/um`: ELF32
+loading, the kuser helpers page and the signal-return page as ordinary code
+pages the kernel installs, 32-bit signal frames and system calls, the
+ARM-private calls, `cacheflush()` through `flush_icache_remote_user_range()`
+and `darwin_uml_vm_invalidate_code()`, the `NT_PRSTATUS`, `NT_ARM_VFP` and
+`NT_ARM_TLS` regsets with arch/arm's ptrace requests (`GETREGS`, `GETVFPREGS`,
+`GET_THREAD_AREA`, `SET_SYSCALL`), and a compat `vm.mmap_rnd_compat_bits` of 9 (16 KiB) or
+11 (4 KiB) up to 16. Both Android and mainline build it (`CONFIG_COMPAT`,
+`CONFIG_KUSER_HELPERS`); the x86_64 slice turns `UML_ARM64_AARCH32` off.
+
+Bridge ABI 22 carries the task: nRW in `pstate`, R0-R14 in x0-x14, D0-D31 in
+V0-V15, FPSCR split between `fpsr` and `fpcr`, TPIDRURW in `tls` and the new
+`tpidrro` for TPIDRURO. The comments on `struct darwin_uml_guest_registers`
+in [`abi/darwin_uml_abi.h`](abi/darwin_uml_abi.h) define the registers and what
+each event means, and `abi.cp15_barrier` (0 to 2, default 1) is passed as
+`DARWIN_UML_DISPATCH_A32_CP15BEN`. SWP, SWPB and SETEND are UNDEFINED.
+AArch32 is on only when `darwin_uml_guest_compat_hwcap()` is non-zero. That
+word always names the architecture's baseline, so it is the single source of
+truth and no separate query exists. While it is zero, as in a run without an
+AArch32 engine, a 32-bit ELF file fails with `ENOEXEC` and
+`personality(PER_LINUX32)` with `EINVAL`, as on an arm64 CPU without 32-bit EL0,
+and an AArch32 entry is `FATAL`. The word must not set `VFPD32`, which arm64
+Linux's `hwcap_str` has no name for; `/proc/cpuinfo` would warn.
+
+Under `PER_LINUX32`, whatever the reader's width, `uname()` reports `armv8l`
+and `/proc/cpuinfo` is arm64 Linux's layout for a 32-bit task: each block
+adds `model name : ARMv8 Processor rev N (v8l)` after `processor`, and
+`Features` names the compat hardware capabilities.
+
+A 16 KiB guest runs only 32-bit programs whose segments are 16 KiB congruent.
+Any other fails cleanly: the kernel kills a new process it cannot map with
+`SIGSEGV`, as for any binary of the wrong alignment, and the dynamic loader
+reports a library it cannot map from `dlopen()`. A 4 KiB guest has no such
+limit, and stock Debian armhf userspace contains files laid out for 4 KiB, so
+it runs on the 4 KiB profile only. `tests/integration/aarch32` checks the exec
+failure with a program laid out so.
 
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value

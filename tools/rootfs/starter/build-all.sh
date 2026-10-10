@@ -14,6 +14,16 @@ BUSYBOX_SHA256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
 ALPINE_VERSION=3.24.2
 ALPINE_SHA256=9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773
 DEBIAN_SUITE=trixie
+DEBIAN_MIRROR=http://deb.debian.org/debian
+# The armhf twin of debian-13-minimal installs the same package list through
+# debootstrap alone, so that no ARM code needs the network. debootstrap
+# resolves a dependency alternative to its first package, where apt keeps one
+# that is already installed, so the twin has one package more: adduser, from
+# dbus-system-bus-common's "adduser | systemd-sysusers", which systemd
+# provides. --exclude cannot drop it, because the dependency pulls it back.
+ARMHF_INCLUDE=systemd-sysv,systemd-resolved,udev,kmod,dbus,ca-certificates,libbpf1
+DEFAULT_PRODUCTS="boot-base-aarch64 boot-base-x86_64 alpine debian-13-minimal debian-13-plasma-wayland"
+KNOWN_PRODUCTS="$DEFAULT_PRODUCTS debian-13-minimal-armhf"
 
 fail()
 {
@@ -25,10 +35,20 @@ usage()
 {
 	cat <<'EOF'
 Usage: tools/rootfs/starter/build-all.sh --work PATH --output PATH [--jobs N]
+       [--product NAME]... [--armhf-profiles LIST]
 
 Run as an ordinary user with passwordless sudo on native arm64 Linux. PATHs
 must be absolute and distinct outside the source tree. The output path must
 not exist; the completed release directory is published atomically.
+
+--product builds only the named products, each at most once; by default the
+release holds every product but the armhf one:
+  boot-base-aarch64 boot-base-x86_64 alpine debian-13-minimal
+  debian-13-plasma-wayland debian-13-minimal-armhf
+
+debian-13-minimal-armhf runs ARM programs under qemu-arm (Debian's qemu-user)
+in private namespaces. --armhf-profiles names the guest page profiles, 16k
+and 4k, that every ELF file of that image must support; the default is both.
 EOF
 }
 
@@ -36,6 +56,8 @@ EOF
 work_dir=
 output_dir=
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n')
+products=
+armhf_profiles=16k,4k
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--work)
@@ -51,6 +73,23 @@ while [ "$#" -gt 0 ]; do
 	--jobs)
 		[ "$#" -ge 2 ] || fail "--jobs requires a positive integer"
 		jobs=$2
+		shift 2
+		;;
+	--product)
+		[ "$#" -ge 2 ] || fail "--product requires a name"
+		case " $KNOWN_PRODUCTS " in
+		*" $2 "*) ;;
+		*) fail "unknown product: $2" ;;
+		esac
+		case " $products " in
+		*" $2 "*) fail "product named twice: $2" ;;
+		esac
+		products="$products $2"
+		shift 2
+		;;
+	--armhf-profiles)
+		[ "$#" -ge 2 ] || fail "--armhf-profiles requires a list"
+		armhf_profiles=$2
 		shift 2
 		;;
 	-h|--help)
@@ -72,8 +111,23 @@ esac
 [ "$work_dir" != "$output_dir" ] || fail "work and output directories must differ"
 case "$jobs" in ''|*[!0-9]*) fail "--jobs must be a positive integer" ;; esac
 [ "$jobs" -gt 0 ] || fail "--jobs must be a positive integer"
+case "$armhf_profiles" in
+16k,4k|4k) ;;
+*) fail "--armhf-profiles must be 16k,4k or 4k" ;;
+esac
+[ -n "$products" ] || products=$DEFAULT_PRODUCTS
+
+wants()
+{
+	case " $products " in *" $1 "*) return 0 ;; esac
+	return 1
+}
+
 producer_require_host aarch64 chroot cpio curl debootstrap e2fsck gzip make \
 	mkfs.ext4 python3 resize2fs sgdisk sha256sum sudo tar
+if wants debian-13-minimal-armhf; then
+	sudo -n -- sh "$SCRIPT_DIR/armhf-run.sh" --check
+fi
 
 requested_output_dir=$output_dir
 output_parent=$(dirname -- "$requested_output_dir")
@@ -351,11 +405,10 @@ build_alpine()
 	cp "$work_dir/alpine.packages.tsv" "$destination.packages.tsv"
 }
 
-configure_debian_base()
+# Everything an image's package set needs before its packages are installed.
+prepare_debian_base()
 {
 	root=$1
-	hostname=$2
-	autologin_user=$3
 	write_root_file "$root/etc/apt/sources.list" 0644 <<EOF
 deb http://deb.debian.org/debian $DEBIAN_SUITE main
 deb http://deb.debian.org/debian $DEBIAN_SUITE-updates main
@@ -365,6 +418,11 @@ EOF
 #!/bin/sh
 exit 101
 EOF
+}
+
+install_debian_base()
+{
+	root=$1
 	as_root cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get update
@@ -374,6 +432,15 @@ EOF
 		apt-get install -y --no-install-recommends \
 		systemd-sysv systemd-resolved udev kmod dbus ca-certificates \
 		libbpf1
+}
+
+# The image's own policy, written and enabled from the host: it executes
+# nothing from the root, so it serves every architecture alike.
+configure_debian_base()
+{
+	root=$1
+	hostname=$2
+	autologin_user=$3
 	write_root_file "$root/etc/hostname" 0644 <<EOF
 $hostname
 EOF
@@ -425,7 +492,6 @@ EOF
 prune_debian()
 {
 	root=$1
-	as_root chroot "$root" apt-get clean
 	as_root rm -f -- "$root/usr/sbin/policy-rc.d"
 	as_root rm -rf -- "$root/var/lib/apt/lists"/* "$root/var/cache/apt"/* \
 		"$root/tmp"/* "$root/var/tmp"/* "$root/run"/*
@@ -454,6 +520,8 @@ build_debian_minimal()
 	root=$roots_dir/debian-minimal
 	debootstrap_root "$root"
 	mount_chroot_proc "$root"
+	prepare_debian_base "$root"
+	install_debian_base "$root"
 	configure_debian_base "$root" debian root
 	as_root chroot "$root" /usr/bin/passwd -d root
 	as_root systemctl --root="$root" set-default multi-user.target
@@ -619,11 +687,14 @@ build_debian_plasma()
 	root=$roots_dir/debian-plasma
 	debootstrap_root "$root"
 	mount_chroot_proc "$root"
+	prepare_debian_base "$root"
+	install_debian_base "$root"
 	configure_debian_base "$root" debian debian
 	configure_plasma_user "$root"
 	as_root chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | \
 		sort > "$work_dir/debian-plasma.packages.tsv"
 	unmount_chroot_proc
+	cat "$root/etc/debian_version" > "$work_dir/debian.version"
 	prune_debian "$root"
 	destination=$(artifact_path debian-13-plasma-wayland.img)
 	as_root python3 "$SCRIPT_DIR/make-gpt-image.py" \
@@ -633,22 +704,115 @@ build_debian_plasma()
 	cp "$work_dir/debian-plasma.packages.tsv" "$destination.packages.tsv"
 }
 
-prepare_busybox_config
-build_boot_base aarch64
-build_boot_base x86_64
-build_alpine
-build_debian_minimal
-build_debian_plasma
-python3 "$SCRIPT_DIR/write-manifest.py" \
-	--output "$output_dir" \
-	--buildroot-version "$BUILDROOT_VERSION" \
-	--buildroot-sha256 "$BUILDROOT_SHA256" \
-	--busybox-version "$BUSYBOX_VERSION" \
-	--busybox-sha256 "$BUSYBOX_SHA256" \
-	--alpine-version "$ALPINE_VERSION" \
-	--alpine-sha256 "$ALPINE_SHA256" \
-	--debian-suite "$DEBIAN_SUITE" \
-	--debian-version "$(cat "$work_dir/debian.version")"
+# The armhf twin of debian-13-minimal. debootstrap's first stage only
+# downloads and unpacks, so it runs natively. Its second stage, which runs the
+# packages' maintainer scripts, is the only step that executes ARM code. It
+# runs under qemu-arm in private namespaces (armhf-run.sh), with no network,
+# from the packages the first stage kept in $cache. Everything else is done
+# from the host.
+build_debian_minimal_armhf()
+{
+	printf '%s\n' "==> Building Debian 13 minimal armhf GPT image"
+	root=$roots_dir/debian-minimal-armhf
+	cache=$work_dir/debootstrap-armhf-cache
+	as_root rm -rf -- "$cache"
+	mkdir -p -- "$cache"
+	reset_root_directory "$root"
+	as_root debootstrap --foreign --arch=armhf --variant=minbase \
+		--components=main --include="$ARMHF_INCLUDE" \
+		--cache-dir="$cache" \
+		"$DEBIAN_SUITE" "$root" "$DEBIAN_MIRROR"
+	prepare_debian_base "$root"
+	as_root sh "$SCRIPT_DIR/armhf-run.sh" "$root" /usr/bin/env -i \
+		PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+		HOME=/root TERM=dumb LANG=C DEBIAN_FRONTEND=noninteractive \
+		/debootstrap/debootstrap --second-stage
+	configure_debian_base "$root" debian-armhf root
+	# passwd -d root, without running ARM code: an empty password field.
+	as_root sed -i \
+		"s/^root:[^:]*:[0-9]*:/root::$(($(date +%s) / 86400)):/" \
+		"$root/etc/shadow"
+	as_root grep -q '^root::' "$root/etc/shadow" || \
+		fail "could not clear the root password"
+	as_root systemctl --root="$root" set-default multi-user.target
+	python3 -I "$SCRIPT_DIR/debootstrap-pins.py" --root "$root" \
+		--cache "$cache" --architecture armhf --suite "$DEBIAN_SUITE" \
+		--inventory "$work_dir/debian-minimal-armhf.packages.tsv" \
+		--pins "$work_dir/debian-minimal-armhf.pins.json"
+	cat "$root/etc/debian_version" > "$work_dir/debian.version"
+	prune_debian "$root"
+	as_root python3 -I "$SCRIPT_DIR/audit-elf.py" --root "$root" \
+		--output "$work_dir/debian-minimal-armhf.elf.tsv" \
+		--machine arm --closed --profiles "$armhf_profiles"
+	as_root chown "$owner_uid:$owner_gid" \
+		"$work_dir/debian-minimal-armhf.elf.tsv"
+	# The dynamic programs are the audit's rows that name an interpreter.
+	awk -F '\t' '$6 != "-" { print $1 }' \
+		"$work_dir/debian-minimal-armhf.elf.tsv" | \
+		as_root sh "$SCRIPT_DIR/armhf-run.sh" "$root" /bin/sh -c \
+		"$(cat "$SCRIPT_DIR/armhf-verify.sh")" armhf-verify
+	destination=$(artifact_path debian-13-minimal-armhf.img)
+	as_root python3 "$SCRIPT_DIR/make-gpt-image.py" \
+		--root "$root" --output "$destination" --label debian-min-armhf \
+		--headroom-mib 96
+	as_root chown "$owner_uid:$owner_gid" "$destination"
+	cp "$work_dir/debian-minimal-armhf.packages.tsv" \
+		"$destination.packages.tsv"
+	cp "$work_dir/debian-minimal-armhf.elf.tsv" "$destination.elf.tsv"
+	as_root rm -rf -- "$cache"
+}
+
+if wants boot-base-aarch64 || wants boot-base-x86_64; then
+	prepare_busybox_config
+fi
+if wants boot-base-aarch64; then
+	build_boot_base aarch64
+fi
+if wants boot-base-x86_64; then
+	build_boot_base x86_64
+fi
+if wants alpine; then
+	build_alpine
+fi
+if wants debian-13-minimal; then
+	build_debian_minimal
+fi
+if wants debian-13-plasma-wayland; then
+	build_debian_plasma
+fi
+if wants debian-13-minimal-armhf; then
+	build_debian_minimal_armhf
+fi
+set --
+for product in $products; do
+	set -- "$@" --product "$product"
+done
+if wants debian-13-minimal-armhf; then
+	set -- "$@" \
+		--debian-armhf-pins "$work_dir/debian-minimal-armhf.pins.json" \
+		--armhf-profiles "$armhf_profiles" \
+		--armhf-include "$ARMHF_INCLUDE" \
+		--debian-mirror "$DEBIAN_MIRROR" \
+		--debootstrap-version "$(debootstrap --version)" \
+		--emulator-version "$(qemu-arm --version | sed 1q)"
+fi
+if wants boot-base-aarch64 || wants boot-base-x86_64; then
+	set -- "$@" \
+		--buildroot-version "$BUILDROOT_VERSION" \
+		--buildroot-sha256 "$BUILDROOT_SHA256" \
+		--busybox-version "$BUSYBOX_VERSION" \
+		--busybox-sha256 "$BUSYBOX_SHA256"
+fi
+if wants alpine; then
+	set -- "$@" --alpine-version "$ALPINE_VERSION" \
+		--alpine-sha256 "$ALPINE_SHA256"
+fi
+if wants debian-13-minimal || wants debian-13-plasma-wayland || \
+	wants debian-13-minimal-armhf; then
+	set -- "$@" --debian-suite "$DEBIAN_SUITE" \
+		--debian-version "$(cat "$work_dir/debian.version")"
+fi
+python3 "$SCRIPT_DIR/write-manifest.py" --output "$output_dir" "$@"
 producer_publish "$output_dir" "$final_output_dir"
 producer_finish
 printf '%s\n' "Built starter release: $final_output_dir"

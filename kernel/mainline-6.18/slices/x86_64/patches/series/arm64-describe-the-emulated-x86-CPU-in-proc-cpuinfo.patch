@@ -59,7 +59,7 @@ index c224dfb5c3ac46768c8ac1e0304ee6224193df36..3cb07f3bc42f64756253629f30dd397b
  
  #endif
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 7408e51525d40fef0245583ad2ad07fa9c83cead..87cd74720ba427763b3af99d864c5262daa607ba 100644
+index 91ca504ee7c0373209921d732188d8de2d662b68..9caa5929948c87da0855203c155adbbedb7489f8 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -20,7 +20,13 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \
@@ -77,10 +77,10 @@ index 7408e51525d40fef0245583ad2ad07fa9c83cead..87cd74720ba427763b3af99d864c5262
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 4103b571fa6e1795b8117faa58cac7462c5f994a..98a9e7ad7db999ce41cbf403672cd2488e358bb0 100644
+index 2a4a85f24530ca8a2eb08e9209349dd0db66844d..9173cc135ce8d7423dad6d9b6af06489efc76c0b 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -87,7 +87,7 @@ static const char * __maybe_unused uml_cpu_model_name(void)
+@@ -88,7 +88,7 @@ static const char * __maybe_unused uml_cpu_model_name(void)
  #endif
  }
  
@@ -89,7 +89,7 @@ index 4103b571fa6e1795b8117faa58cac7462c5f994a..98a9e7ad7db999ce41cbf403672cd248
  /*
   * arm64 userspace reads this file in arm64 Linux's format
   * (arch/arm64/kernel/cpuinfo.c), and software chooses its instructions from
-@@ -162,6 +162,57 @@ static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
+@@ -198,6 +198,57 @@ static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
  }
  #endif
  
@@ -147,7 +147,7 @@ index 4103b571fa6e1795b8117faa58cac7462c5f994a..98a9e7ad7db999ce41cbf403672cd248
  static int show_cpuinfo(struct seq_file *m, void *v)
  {
  	int i = 0;
-@@ -172,12 +223,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -208,12 +259,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
  		return 0;
  #endif
  
@@ -170,7 +170,7 @@ index 4103b571fa6e1795b8117faa58cac7462c5f994a..98a9e7ad7db999ce41cbf403672cd248
  	seq_printf(m, "mode\t\t: skas\n");
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
-@@ -523,7 +583,11 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -559,7 +619,11 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
  

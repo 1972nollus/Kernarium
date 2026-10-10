@@ -5096,7 +5096,8 @@ void linux_user_segments(uml::cpu::x86_64::CpuState &cpu,
 		if (!expect(same(result, zero),
 			"FSINCOS changed a zero sine's sign"))
 			return false;
-		gadgets::uml_x86_64_x87_tangent(&cpu, &zero, &result);
+		X87Register second{};
+		gadgets::uml_x86_64_x87_tangent(&cpu, &zero, &result, &second);
 		if (!expect(same(result, zero), "FPTAN changed a zero's sign"))
 			return false;
 	}
