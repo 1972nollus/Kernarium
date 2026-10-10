@@ -107,10 +107,15 @@ x87_compare_register status_pop2, 0, 2
 x87_compare_register integer_keep, 1, 0
 x87_compare_register integer_pop, 1, 1
 
+/* FCMOVcc: an empty ST0 or ST(i) is a stack fault whichever way the
+ * condition goes, and masked, leaves the QNaN indefinite in ST0. */
 .macro x87_conditional_move condition
 gadget x87_conditional_move_\condition
 	ldr w24, [_stream], #8
 	bl uml_x86_64_gadget_materialize_flags
+	x87_load_stack w24, x11, w12, empty=Lx86_x87_conditional_fault\@
+	mov w13, #0
+	x87_load_stack w13, x9, w10, empty=Lx86_x87_conditional_destination_fault\@
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.if \condition == 0
 	tbz x9, #0, Lx86_x87_conditional_done\@
@@ -132,10 +137,18 @@ gadget x87_conditional_move_\condition
 	tbnz x9, #2, Lx86_x87_conditional_done\@
 	.endif
 Lx86_x87_conditional_take\@:
-	x87_load_stack w24, x9, w10
+	mov w13, #0
+	x87_store_stack w13, x11, w12
+Lx86_x87_conditional_done\@:
+	retire_and_next
+Lx86_x87_conditional_fault\@:
+	/* ST(i) is empty, so ST0 takes the indefinite it read as. */
+	mov w13, #0
+	x87_store_stack w13, x11, w12
+	retire_and_next
+Lx86_x87_conditional_destination_fault\@:
 	mov w13, #0
 	x87_store_stack w13, x9, w10
-Lx86_x87_conditional_done\@:
 	retire_and_next
 .endm
 
