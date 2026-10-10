@@ -89,6 +89,19 @@ static_assert(sizeof(CpuState::sve_p) ==
 static_assert(UML_ARM64_CPU_SVE_LIVE < 0x1'0000);
 static_assert(UML_ARM64_CPU_SVE_P % 16 == 0 &&
 	UML_ARM64_CPU_SVE_FFR % 16 == 0 && UML_ARM64_CPU_SVE_FFR < 4096 * 16);
+static_assert(offsetof(CpuState, a32_ge_mask) == UML_ARM64_CPU_A32_GE_MASK);
+static_assert(offsetof(CpuState, a32_fpscr_nzcv) ==
+	UML_ARM64_CPU_A32_FPSCR_NZCV);
+static_assert(offsetof(CpuState, a32_tpidruro) == UML_ARM64_CPU_A32_TPIDRURO);
+static_assert(offsetof(CpuState, a32_q) == UML_ARM64_CPU_A32_Q);
+static_assert(offsetof(CpuState, a32_itstate) == UML_ARM64_CPU_A32_ITSTATE);
+static_assert(offsetof(CpuState, a32_cp15ben) == UML_ARM64_CPU_A32_CP15BEN);
+static_assert(offsetof(CpuState, a32) == UML_ARM64_CPU_A32);
+/* The AArch32 block follows the SVE block and every earlier offset stands, so
+ * no existing gadget or emitted instruction changes; its last byte fits the
+ * 16-bit operand a gadget carries. */
+static_assert(UML_ARM64_CPU_A32_GE_MASK > UML_ARM64_CPU_SVE_LIVE &&
+	UML_ARM64_CPU_A32 < 0x1'0000);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

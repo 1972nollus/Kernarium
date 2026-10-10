@@ -156,6 +156,31 @@ struct CpuState final {
 	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
 	alignas(16) SvePredicate sve_ffr{};
 	std::uint8_t sve_live{};
+	/* AArch32 EL0 state (cpu/arm64/aarch32/a32_profile.hpp), appended so that
+	 * no earlier offset moves. An AArch32 task keeps R0-R14 in registers[0..14]
+	 * zero-extended, N, Z, C and V in nzcv, D0-D31 in the low sixteen vectors,
+	 * FPSCR's control bits in fpcr and its status bits in fpsr, TPIDRURW in
+	 * tls, and its PC in key form (aarch32/guest_key.hpp) for the whole entry;
+	 * these are the parts that have no A64 field. The runtime writes every one
+	 * of them on each AArch32 entry and an A64 entry never reads them.
+	 *
+	 * a32 marks an AArch32 entry for assertions and the sampler. a32_q is the
+	 * sticky Q flag. a32_ge_mask is GE[3:0] with each flag widened to the byte
+	 * lane it governs (0xff when set), so SEL is one bitwise select.
+	 * a32_itstate is ITSTATE; it is zero at every cached block boundary, and
+	 * an entry in the middle of an IT block runs one instruction at a time.
+	 * a32_fpscr_nzcv holds FPSCR.N, Z, C and V in bits 31:28: the hosts
+	 * implement FPSR[31:28] as RAZ/WI, so a VCMP's flags live here.
+	 * a32_tpidruro is TPIDRURO, which EL0 can read but not write. a32_cp15ben
+	 * is 1 when the CP15 barrier instructions are enabled (SCTLR.CP15BEN) and
+	 * 0 when they are UNDEFINED. */
+	std::uint32_t a32_ge_mask{};
+	std::uint32_t a32_fpscr_nzcv{};
+	std::uint32_t a32_tpidruro{};
+	std::uint8_t a32_q{};
+	std::uint8_t a32_itstate{};
+	std::uint8_t a32_cp15ben{};
+	std::uint8_t a32{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{

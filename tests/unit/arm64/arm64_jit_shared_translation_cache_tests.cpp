@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/jit/jit_shared_translations.hpp"
 #include "allocation_failure.hpp"
 #include "require.hpp"
@@ -18,6 +19,7 @@
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
+namespace aarch32 = uml::cpu::arm64::aarch32;
 
 using uml::testing::require;
 
@@ -519,6 +521,99 @@ void lookup_identity_stops_at_the_compiled_prefix()
 	cache.remove_executor();
 }
 
+/* A translation is stored under the ISA of its key: A32 words count as A64
+ * words do, and T32 halfwords are packed into the 32-bit elements of
+ * guest_words, so the identity is the halfword bytes and any padding in the
+ * last element is no part of it. The isa a translation carries must be its
+ * key's, and no key of one ISA finds another's translation. */
+void aarch32_translations_are_keyed_and_sized_by_isa()
+{
+	arm64::SharedTranslationCache cache;
+	cache.add_executor();
+	cache.add_executor();
+	const arm64::SharedTranslationCache::CodegenProfile profile{};
+	constexpr std::uint32_t address = 0x17c'0000;
+	const auto a32 = aarch32::a32_key(address);
+	const auto t32 = aarch32::t32_key(address);
+	const std::array a32_words{0xe3a0'0001U, 0xef00'0000U};
+	/* Three halfwords: a 32-bit Thumb instruction and a 16-bit one. */
+	const std::array t32_words{0xe92d'4ff0U, 0x0000'bd00U};
+
+	const auto aarch32_translation = [](auto words, std::uint8_t isa,
+		std::size_t units, std::size_t instructions) {
+		auto translation = make_translation(words, 1);
+		translation->isa = isa;
+		translation->guest_word_count = units;
+		translation->guest_instructions = instructions;
+		return translation;
+	};
+
+	/* The ISA must be the key's. */
+	for (const auto isa : {std::uint8_t{0}, std::uint8_t{2}, std::uint8_t{3}})
+		require(cache.insert(profile, a32, a32_words,
+			aarch32_translation(std::span{a32_words}, isa, 2, 2)) ==
+			nullptr);
+	for (const auto isa : {std::uint8_t{0}, std::uint8_t{1}, std::uint8_t{3}})
+		require(cache.insert(profile, t32, t32_words,
+			aarch32_translation(std::span{t32_words}, isa, 3, 2)) ==
+			nullptr);
+	require(cache.insert(profile, address, a32_words,
+		aarch32_translation(std::span{a32_words}, 1, 2, 2)) == nullptr,
+		"an A32 translation was stored under an A64 key");
+	require(cache.statistics().malformed_rejected == 7);
+	require(cache.statistics().entries == 0);
+
+	/* The unit count: one word per A32 instruction; one or two halfwords
+	 * per T32 instruction; the elements that hold them are what the lookup
+	 * span carries. */
+	require(cache.insert(profile, a32, a32_words,
+		aarch32_translation(std::span{a32_words}, 1, 3, 2)) == nullptr);
+	for (const std::size_t units : {std::size_t{1}, std::size_t{5}})
+		require(cache.insert(profile, t32, t32_words,
+			aarch32_translation(std::span{t32_words}, 2, units, 2)) ==
+			nullptr, "a T32 unit count outside its instructions' range");
+	const std::array three_elements{t32_words[0], t32_words[1], 0U};
+	require(cache.insert(profile, t32, three_elements,
+		aarch32_translation(std::span{three_elements}, 2, 3, 2)) == nullptr,
+		"a T32 span with more elements than its units need");
+	require(cache.statistics().entries == 0);
+
+	const auto admitted_a32 = cache.insert(profile, a32, a32_words,
+		aarch32_translation(std::span{a32_words}, 1, 2, 2));
+	const auto admitted_t32 = cache.insert(profile, t32, t32_words,
+		aarch32_translation(std::span{t32_words}, 2, 3, 2));
+	require(admitted_a32 != nullptr && admitted_t32 != nullptr);
+	require(admitted_a32 != admitted_t32);
+	require(cache.statistics().entries == 2);
+
+	/* The same address under another ISA's key is a different entry. */
+	require(cache.find(profile, a32, a32_words) == admitted_a32);
+	require(cache.find(profile, t32, t32_words) == admitted_t32);
+	require(cache.find(profile, address, a32_words) == nullptr);
+	require(cache.find(profile, aarch32::t32_key(address + 2U),
+		t32_words) == nullptr);
+
+	/* The identity of the Thumb translation is its three halfwords: a
+	 * different padding halfword matches; a different third halfword or a
+	 * longer fetch with the same prefix of elements does not change that. */
+	const std::array other_padding{t32_words[0], 0x1234'bd00U};
+	require(cache.find(profile, t32, other_padding) == admitted_t32,
+		"padding after the identity is part of it");
+	const std::array third_changed{t32_words[0], 0x0000'bd01U};
+	require(cache.find(profile, t32, third_changed) == nullptr);
+	const std::array second_changed{t32_words[0] ^ 0x0001'0000U,
+		t32_words[1]};
+	require(cache.find(profile, t32, second_changed) == nullptr);
+	const std::array longer{t32_words[0], t32_words[1], 0xdead'beefU};
+	require(cache.find(profile, t32, longer) == admitted_t32);
+
+	/* An exact re-insert returns the canonical translation. */
+	require(cache.insert(profile, t32, t32_words,
+		aarch32_translation(std::span{t32_words}, 2, 3, 2)) == admitted_t32);
+	cache.remove_executor();
+	cache.remove_executor();
+}
+
 void codegen_profile_partitions_the_cache_identity()
 {
 	arm64::SharedTranslationCache cache;
@@ -882,6 +977,7 @@ int main()
 	private_validation_words_and_materialization_owners_pin_entries();
 	capacity_degraded_translation_leaves_the_key_publishable();
 	lookup_identity_stops_at_the_compiled_prefix();
+	aarch32_translations_are_keyed_and_sized_by_isa();
 	codegen_profile_partitions_the_cache_identity();
 	concurrent_publication_keeps_one_canonical_owner();
 	return 0;

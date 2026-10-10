@@ -39,6 +39,11 @@ struct CompiledBlock final {
   bool link_target_safe{};
   bool native_fp{};
   bool guest_illegal{};
+  /* The guest units saved_guest_words holds, in what padding left: words for
+   * A64 and A32, halfwords for T32 (aarch32::isa_unit_bytes of the key's
+   * ISA), at most twice maximum_block_instructions. For A64 and A32 it is
+   * instruction_count. */
+  std::uint8_t saved_units{};
 };
 
 struct CacheSet final {

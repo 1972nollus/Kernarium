@@ -71,6 +71,16 @@ uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
 uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+# The AArch32 foundation: the state CpuState appends, the guest-AArch32
+# policy, the engines' levels, the AArch32 identification registers and
+# compat HWCAPs, and the engines' AArch32 entry.
+uml_add_arm64_unit_test(a32_foundation WITHOUT_HARNESS
+    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
+# The tagged translation key both engines' caches share across A64, A32 and
+# T32, and the key-aware validation of a translation's saved guest units.
+uml_add_arm64_unit_test(a32_guest_key WITHOUT_HARNESS NO_OBJECTS)
+
 # The AArch32 decoder: its generated table, the IT rules, the profile's gates
 # and the operands of the Decode pseudocode, against the generator's
 # independent answers and LLVM MC on stored samples. It composes the decoder
