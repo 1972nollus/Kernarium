@@ -794,7 +794,7 @@ Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
 milestones, not products. `CpuEngine::run_aarch32` is the entry for a task
 in AArch32 state and the A64 `run` is unchanged. The gadget engine is at
-`base` and the JIT at `none`; an engine below `base` takes the new entry as
+`simd` and the JIT at `none`; an engine below `base` takes the new entry as
 the illegal-instruction exit without touching the state. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
@@ -857,6 +857,24 @@ register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
 exclusive gadgets and share their forward-progress mechanism; LDA and STL are
 the A64 ordered ones. The library-exit counters name any lowered form that
 reaches the library, and the unit tests require none does.
+
+VFP and Advanced SIMD are lowered onto the A64 instructions with the same
+lanes. D0-D31 and S0-S31 are byte offsets into `CpuState::vectors`, and a
+gadget stores only the bytes the A32 destination has. VFP runs under the
+guest's FPCR in the native FP environment. Advanced SIMD floating point runs
+under the standard FPSCR value (flush to zero, default NaN, round to nearest):
+the builder opens it with `fpcr_standard` in front of the first such
+instruction of a conditional run and closes it with `fpcr_guest` before any
+other kind of instruction, at the end of the run and at the end of the block,
+so no exit leaves it on. The A32 shifts by an immediate use the A64
+shift-by-register instructions with a replicated signed amount, so a gadget
+serves every amount; the forms that exist in A64 only with an immediate
+(SQSHLU, the converts with a fraction width, VEXT) have a gadget per
+immediate. The structure loads and stores, VRECPS and VRSQRTS (AArch32's
+unfused steps, not the fused A64 ones) and VLDM and VSTM that cross a page
+run through the semantic library. A saturating instruction leaves QC in the
+cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
+`engine/a32_simd.py` document the groups and the operand words.
 The level the engine translates at is `a32_support`; a test or a bring-up
 names another one in `BuildOptions::a32_level`, and the runtime never does.
 `arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`

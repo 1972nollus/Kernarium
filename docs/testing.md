@@ -810,7 +810,11 @@ the instruction budget, single step, code that changes in place, the
 exclusives and the Armv8 acquire and release forms (including loops whose
 plain stores share the target's TLB set and the compare-and-swap helpers of
 the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
-LDRD across a page, mapped and not. `arm64-gadget-a32-forms` runs every
+LDRD across a page, mapped and not, and that Advanced SIMD floating point
+runs under the standard FPSCR value while VFP keeps the guest's (in either
+order, in a skipped conditional run and across a block that ends inside a
+run), and that a VFP word is illegal when the engine translates at the base
+level. `arm64-gadget-a32-forms` runs every
 stored sample word of the decoder's data and the whole 16-bit Thumb space and
 requires the engine to raise the illegal-instruction exit exactly where the
 decoder, at the engine's level, rejects the word. Both also hold the

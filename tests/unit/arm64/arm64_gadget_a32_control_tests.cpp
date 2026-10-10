@@ -306,12 +306,11 @@ void a_conditional_undefined_word_is_skipped_when_its_condition_fails()
 {
 	/* An unallocated coprocessor word under a condition that fails
 	 * retires like any skipped instruction; one that passes is the
-	 * undefined-instruction exit. mrc p10 (VFP) is not in the base
-	 * profile. */
-	const std::uint32_t vmov_s0_r0 = 0x0e00'0a10U; /* vmoveq s0, r0 */
+	 * undefined-instruction exit. Coprocessor 7 is in no profile. */
+	const std::uint32_t mrc_p7 = 0x0e10'0710U; /* mrceq p7, 0, r0, c0, c0, 0 */
 	for (const bool pass : {false, true}) {
 		Guest guest{pass ? 946UL : 947UL};
-		guest.a32(0, {a::cmp_r0_0, vmov_s0_r0, a::svc});
+		guest.a32(0, {a::cmp_r0_0, mrc_p7, a::svc});
 		auto cpu = a32_state();
 		cpu.registers[0] = pass ? 0 : 1;
 		const auto result = guest.run(cpu);
@@ -1064,6 +1063,90 @@ void reading_the_status_register_gives_flags_q_ge_and_user_mode()
 	require(reg(cpu, 0) == (0x6000'0000U | 1U << 27 | 0b0101U << 16 | 0x10U));
 }
 
+/* ------------------------------------------------- VFP and Advanced SIMD */
+
+/* D(n) is the low or high half of V(n / 2). */
+void set_d(arm64::CpuState &cpu, unsigned n, std::uint64_t value)
+{
+	std::memcpy(cpu.vectors[n / 2].bytes.data() + 8U * (n % 2U), &value,
+		    sizeof(value));
+}
+
+[[nodiscard]] std::uint64_t get_d(const arm64::CpuState &cpu, unsigned n)
+{
+	std::uint64_t value;
+	std::memcpy(&value, cpu.vectors[n / 2].bytes.data() + 8U * (n % 2U),
+		    sizeof(value));
+	return value;
+}
+
+namespace v {
+constexpr std::uint32_t vadd_f32_d0_d1_d2 = 0xf201'0d02U; /* Advanced SIMD */
+constexpr std::uint32_t vadd_f32_s8_s2_s4 = 0xee31'4a02U; /* VFP */
+} // namespace v
+
+/* Advanced SIMD floating point runs under the standard FPSCR value (flush to
+ * zero), VFP under the guest's: a denormal sum is flushed by one and kept by
+ * the other, in either order, in a skipped conditional run, and across the
+ * end of a block that ends inside a run of Advanced SIMD instructions. */
+void advanced_simd_floating_point_uses_the_standard_fpscr()
+{
+	const std::uint64_t denormals = 0x0000'0001'0000'0001ULL;
+	for (const unsigned variant : {0U, 1U, 2U, 3U}) {
+		Guest guest{990 + variant};
+		std::uint32_t offset = 0;
+		switch (variant) {
+		case 0: /* Advanced SIMD, then VFP */
+			guest.a32(0, {v::vadd_f32_d0_d1_d2, v::vadd_f32_s8_s2_s4, a::svc});
+			break;
+		case 1: /* VFP, then Advanced SIMD, then VFP again */
+			guest.a32(0, {v::vadd_f32_s8_s2_s4, v::vadd_f32_d0_d1_d2,
+				      v::vadd_f32_s8_s2_s4, a::svc});
+			break;
+		case 2: { /* a run of Advanced SIMD longer than a block */
+			for (unsigned count = 0; count < 70; ++count, offset += 4)
+				guest.a32(offset, {v::vadd_f32_d0_d1_d2});
+			guest.a32(offset, {v::vadd_f32_s8_s2_s4, a::svc});
+			break;
+		}
+		default: /* a conditional Advanced SIMD instruction, in T32 */
+			guest.t32(0, {t::cmp_r0_0, 0xbf18U /* it ne */,
+				      0xef01U, 0x0d02U /* vaddne.f32 d0, d1, d2 */,
+				      0xee31U, 0x4a02U /* vadd.f32 s8, s2, s4 */,
+				      t::svc});
+			break;
+		}
+		for (const bool taken : {true, false}) {
+			if (variant != 3 && !taken)
+				continue;
+			auto cpu = variant == 3 ? t32_state() : a32_state();
+			cpu.registers[0] = taken ? 1 : 0;
+			set_d(cpu, 0, 0x5555'5555'5555'5555ULL);
+			set_d(cpu, 1, denormals);
+			set_d(cpu, 2, denormals);
+			const auto result = guest.run(cpu);
+			require(result.reason == ExitReason::system_call);
+			const bool simd_ran = variant != 3 || taken;
+			require(get_d(cpu, 0) ==
+				(simd_ran ? 0ULL : 0x5555'5555'5555'5555ULL));
+			/* S8, the low word of D4, kept its denormal: 1 + 1. */
+			require(static_cast<std::uint32_t>(get_d(cpu, 4)) == 2U);
+		}
+	}
+}
+
+/* A VFP word is illegal at the base level: the level is what makes it so. */
+void a_vfp_word_is_illegal_at_the_base_level()
+{
+	Guest guest{994, arm64::A32Support::base};
+	guest.a32(0, {a::mov_r0_1, v::vadd_f32_s8_s2_s4, a::svc});
+	auto cpu = a32_state();
+	const auto result = guest.run(cpu);
+	require(result.reason == ExitReason::illegal_instruction);
+	require(result.retired_instructions == 1);
+	require(cpu.pc == aarch32::a32_key(code_base + 4));
+}
+
 /* ------------------------------------------------------------ pages */
 
 void block_transfers_cross_a_page_boundary()
@@ -1251,6 +1334,8 @@ int main()
 	a_conditional_block_transfer_across_a_page_follows_its_condition();
 	a_double_word_load_crosses_a_page_boundary();
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
+	advanced_simd_floating_point_uses_the_standard_fpscr();
+	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;
 }

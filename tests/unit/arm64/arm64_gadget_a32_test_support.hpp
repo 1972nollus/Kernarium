@@ -13,6 +13,7 @@
 #include "cpu/arm64/aarch32/semantics.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/gadgets/a32/a32_builder.hpp"
+#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "static_mmu_test_support.hpp"
 
@@ -43,15 +44,26 @@ constexpr std::uint32_t data_base = 0x5000'0000U;
 constexpr std::uint32_t unmapped = 0x6000'0000U;
 constexpr std::size_t data_pages = 2;
 
+[[nodiscard]] inline gadgets::BuildOptions options_at(arm64::A32Support level)
+{
+	gadgets::BuildOptions options;
+	options.a32_level = level;
+	return options;
+}
+
 /* The guest of one test: two code pages (writable, so a test can change
  * its code) and two data pages, under a generation of their own. The page
  * after the data is unmapped. */
 class Guest final {
 public:
-	explicit Guest(unsigned long generation)
+	/* `level` is the AArch32 level the engine translates at (the engine's
+	 * own by default). */
+	explicit Guest(unsigned long generation,
+		       arm64::A32Support level = gadgets::a32_support)
 		: generation_{generation}
 		, code_{data_pages}
 		, data_{data_pages}
+		, executor_{options_at(level)}
 	{
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_map(
