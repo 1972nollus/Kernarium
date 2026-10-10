@@ -1120,6 +1120,38 @@ void vector_encoders_match_llvm_mc() {
     check("sha1h s3, s4", enc::vec::sha2(vec::sha1h, 3, 4), 0x5e280883U);
     check("sha1su1 v3.4s, v4.4s", enc::vec::sha2(vec::sha1su1, 3, 4), 0x5e281883U);
     check("sha256su0 v3.4s, v4.4s", enc::vec::sha2(vec::sha256su0, 3, 4), 0x5e282883U);
+    check("sdot v0.2s, v1.8b, v2.8b", enc::vec::dot(false, false, 0, 1, 2), 0x0e829420U);
+    check("sdot v3.4s, v4.16b, v5.16b", enc::vec::dot(true, false, 3, 4, 5), 0x4e859483U);
+    check("udot v0.4s, v1.16b, v2.16b", enc::vec::dot(true, true, 0, 1, 2), 0x6e829420U);
+    check("sdot v0.2s, v1.8b, v2.4b[1]", enc::vec::dot_element(false, false, 0, 1, 2, 1), 0x0fa2e020U);
+    check("sdot v0.4s, v1.16b, v18.4b[3]", enc::vec::dot_element(true, false, 0, 1, 18, 3), 0x4fb2e820U);
+    check("udot v0.4s, v1.16b, v18.4b[2]", enc::vec::dot_element(true, true, 0, 1, 18, 2), 0x6f92e820U);
+    check("sqrdmlah v0.4h, v1.4h, v2.4h", enc::vec::rdm(false, false, 1, 0, 1, 2), 0x2e428420U);
+    check("sqrdmlah v0.4s, v1.4s, v2.4s", enc::vec::rdm(true, false, 2, 0, 1, 2), 0x6e828420U);
+    check("sqrdmlsh v0.8h, v1.8h, v2.8h", enc::vec::rdm(true, true, 1, 0, 1, 2), 0x6e428c20U);
+    check("sqrdmlsh v0.2s, v1.2s, v2.2s", enc::vec::rdm(false, true, 2, 0, 1, 2), 0x2e828c20U);
+    check("sqrdmlah v0.4h, v1.4h, v2.h[3]", enc::vec::element(false, vec::elem_sqrdmlah, 1, 0, 1, 2, 3), 0x2f72d020U);
+    check("sqrdmlah v0.4s, v1.4s, v18.s[3]", enc::vec::element(true, vec::elem_sqrdmlah, 2, 0, 1, 18, 3), 0x6fb2d820U);
+    check("sqrdmlsh v0.8h, v1.8h, v2.h[7]", enc::vec::element(true, vec::elem_sqrdmlsh, 1, 0, 1, 2, 7), 0x6f72f820U);
+    check("sqrdmlsh v0.2s, v1.2s, v18.s[1]", enc::vec::element(false, vec::elem_sqrdmlsh, 2, 0, 1, 18, 1), 0x2fb2f020U);
+    check("fcmla v0.4s, v1.4s, v2.4s, #0", enc::vec::fcmla(true, 2, 0, 0, 1, 2), 0x6e82c420U);
+    check("fcmla v0.4s, v1.4s, v2.4s, #90", enc::vec::fcmla(true, 2, 1, 0, 1, 2), 0x6e82cc20U);
+    check("fcmla v0.2s, v1.2s, v2.2s, #180", enc::vec::fcmla(false, 2, 2, 0, 1, 2), 0x2e82d420U);
+    check("fcmla v0.4s, v1.4s, v2.4s, #270", enc::vec::fcmla(true, 2, 3, 0, 1, 2), 0x6e82dc20U);
+    check("fcmla v0.8h, v1.8h, v2.8h, #90", enc::vec::fcmla(true, 1, 1, 0, 1, 2), 0x6e42cc20U);
+    check("fcmla v0.4h, v1.4h, v2.4h, #90", enc::vec::fcmla(false, 1, 1, 0, 1, 2), 0x2e42cc20U);
+    check("fcadd v0.4s, v1.4s, v2.4s, #90", enc::vec::fcadd(true, 2, 0, 0, 1, 2), 0x6e82e420U);
+    check("fcadd v0.2s, v1.2s, v2.2s, #270", enc::vec::fcadd(false, 2, 1, 0, 1, 2), 0x2e82f420U);
+    check("fcadd v0.8h, v1.8h, v2.8h, #270", enc::vec::fcadd(true, 1, 1, 0, 1, 2), 0x6e42f420U);
+    check("fcadd v0.4h, v1.4h, v2.4h, #90", enc::vec::fcadd(false, 1, 0, 0, 1, 2), 0x2e42e420U);
+    check("fcmla v0.4s, v1.4s, v18.s[1], #0", enc::vec::fcmla_element(true, 2, 0, 0, 1, 18, 1), 0x6f921820U);
+    check("fcmla v0.4s, v1.4s, v18.s[0], #270", enc::vec::fcmla_element(true, 2, 3, 0, 1, 18, 0), 0x6f927020U);
+    check("fcmla v0.4s, v1.4s, v18.s[1], #90", enc::vec::fcmla_element(true, 2, 1, 0, 1, 18, 1), 0x6f923820U);
+    check("fcmla v0.8h, v1.8h, v2.h[0], #0", enc::vec::fcmla_element(true, 1, 0, 0, 1, 2, 0), 0x6f421020U);
+    check("fcmla v0.8h, v1.8h, v2.h[1], #0", enc::vec::fcmla_element(true, 1, 0, 0, 1, 2, 1), 0x6f621020U);
+    check("fcmla v0.8h, v1.8h, v2.h[2], #0", enc::vec::fcmla_element(true, 1, 0, 0, 1, 2, 2), 0x6f421820U);
+    check("fcmla v0.8h, v1.8h, v2.h[3], #0", enc::vec::fcmla_element(true, 1, 0, 0, 1, 2, 3), 0x6f621820U);
+    check("fcmla v0.8h, v1.8h, v18.h[3], #0", enc::vec::fcmla_element(true, 1, 0, 0, 1, 18, 3), 0x6f721820U);
   require(mismatches == 0);
 }
 

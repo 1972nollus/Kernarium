@@ -28,6 +28,7 @@ constexpr unsigned fallback_m = 10;
 constexpr unsigned vector_n = 0;
 constexpr unsigned vector_m = 1;
 constexpr unsigned vector_result = 5;
+constexpr unsigned vector_acc = 2;
 
 /* The host's condition code for a VSEL mnemonic. */
 constexpr unsigned vsel_condition(std::string_view mnemonic) noexcept {
@@ -62,6 +63,18 @@ A32Compiler::Flow A32Compiler::emit_extension(const OpInfo &) {
     return emit_vcvt_round();
   case Ext::vjcvt:
     return emit_vjcvt();
+  case Ext::dot:
+    return emit_dot(false);
+  case Ext::dot_element:
+    return emit_dot(true);
+  case Ext::rdm:
+    return emit_rdm();
+  case Ext::vcadd:
+    return emit_vcadd();
+  case Ext::vcmla:
+    return emit_vcmla(false);
+  case Ext::vcmla_element:
+    return emit_vcmla(true);
   case Ext::sb:
     // The speculation barrier: DSB and ISB are a conforming implementation.
     emit(enc::dsb_sy());
@@ -325,6 +338,158 @@ A32Compiler::Flow A32Compiler::emit_vjcvt() {
   emitter_.store_w(1, 15, offsetof(CpuState, a32_fpscr_nzcv));
   emit(enc::vec::float_int(enc::vec::fmov_from_w, 0, false, scratch_result, 0));
   s_write(static_cast<unsigned>(o.d), scratch_result);
+  return Flow::next;
+}
+
+// ---------------------------------------------------------------------------
+// VSDOT and VUDOT. The element register is a D register of the 128-bit one
+// the instruction names, so its group of four bytes is the (m & 1) * 2 + index
+// group of that register.
+
+A32Compiler::Flow A32Compiler::emit_dot(bool by_element) {
+  const auto &o = cur().inst.operands;
+  const bool quad = o.regs == 2;
+  const bool is_unsigned = !o.signed_;
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  touch_vectors();
+  if (!by_element) {
+    neon_op3(enc::vec::dot(quad, is_unsigned, 0, 0, 0), quad, false, d, n, m,
+             true);
+    return Flow::next;
+  }
+  const unsigned index = (m & 1U) * 2U + static_cast<unsigned>(o.index_value);
+  const unsigned scalar = q_use(m >> 1, vector_m);
+  if (quad) {
+    const unsigned first = q_use(n >> 1, vector_n);
+    const auto dest = q_def(d >> 1, true, vector_result);
+    emit(enc::vec::dot_element(true, is_unsigned, dest.host, first, scalar,
+                               index));
+    q_done(dest, d >> 1);
+    return Flow::next;
+  }
+  const unsigned first = d_use(n, vector_n);
+  vmov(vector_result, d_use(d, vector_acc));
+  emit(enc::vec::dot_element(false, is_unsigned, vector_result, first, scalar,
+                             index));
+  d_write(d, vector_result);
+  return Flow::next;
+}
+
+// ---------------------------------------------------------------------------
+// VQRDMLAH and VQRDMLSH, by vector or by element. They saturate, so the block
+// owns the native floating-point environment for QC.
+
+A32Compiler::Flow A32Compiler::emit_rdm() {
+  const auto &o = cur().inst.operands;
+  const bool subtract = std::string_view{aarch32::kForms[static_cast<std::size_t>(
+                            cur().inst.form)].mnemonic} == "VQRDMLSH";
+  const bool quad = o.regs == 2;
+  const unsigned size = esize_log2(o.esize);
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  touch_vectors();
+  touch_fp_environment();
+  if (!o.scalar_form) {
+    neon_op3(enc::vec::rdm(quad, subtract, size, 0, 0, 0), quad, false, d, n,
+             m, true);
+    return Flow::next;
+  }
+  const unsigned lanes = 64U / static_cast<unsigned>(o.esize);
+  const unsigned index =
+      (m & 1U) * lanes + static_cast<unsigned>(o.index_value);
+  // The element register: a halfword element must be in V0-V15.
+  unsigned scalar = q_use(m >> 1, vector_m);
+  if (size == 1U && scalar >= 16U) {
+    vmov(vector_m, scalar);
+    scalar = vector_m;
+  }
+  const auto op = subtract ? enc::vec::elem_sqrdmlsh : enc::vec::elem_sqrdmlah;
+  if (quad) {
+    const unsigned first = q_use(n >> 1, vector_n);
+    const auto dest = q_def(d >> 1, true, vector_result);
+    emit(enc::vec::element(true, op, size, dest.host, first, scalar, index));
+    q_done(dest, d >> 1);
+    return Flow::next;
+  }
+  const unsigned first = d_use(n, vector_n);
+  vmov(vector_result, d_use(d, vector_acc));
+  emit(enc::vec::element(false, op, size, vector_result, first, scalar, index));
+  d_write(d, vector_result);
+  return Flow::next;
+}
+
+// ---------------------------------------------------------------------------
+// VCADD and VCMLA, single or half precision, under the Standard FPSCR value.
+
+A32Compiler::Flow A32Compiler::emit_vcadd() {
+  const auto &o = cur().inst.operands;
+  const bool half = o.esize == 16;
+  if (half && !::uml::cpu::host_capabilities().has(::uml::cpu::ArmFeature::fp16))
+    return emit_arith_through_helper();
+  const bool quad = o.regs == 2;
+  const unsigned rotation = (cur().inst.word >> 24) & 1U;
+  touch_vectors();
+  touch_fp_environment();
+  set_fp_mode(true);
+  neon_op3(enc::vec::fcadd(quad, half ? 1U : 2U, rotation, 0, 0, 0), quad,
+           false, static_cast<unsigned>(o.d), static_cast<unsigned>(o.n),
+           static_cast<unsigned>(o.m), false);
+  return Flow::next;
+}
+
+A32Compiler::Flow A32Compiler::emit_vcmla(bool by_element) {
+  const auto &o = cur().inst.operands;
+  const bool half = o.esize == 16;
+  if (half && !::uml::cpu::host_capabilities().has(::uml::cpu::ArmFeature::fp16))
+    return emit_arith_through_helper();
+  const bool quad = o.regs == 2;
+  const unsigned size = half ? 1U : 2U;
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  touch_vectors();
+  touch_fp_environment();
+  set_fp_mode(true);
+  if (!by_element) {
+    const unsigned rotation = (cur().inst.word >> 23) & 3U;
+    neon_op3(enc::vec::fcmla(quad, size, rotation, 0, 0, 0), quad, false, d, n,
+             m, true);
+    return Flow::next;
+  }
+  // The element is a pair of D(m); its place in the 128-bit register is
+  // counted in pairs.
+  const unsigned rotation = (cur().inst.word >> 20) & 3U;
+  const unsigned pairs = half ? 2U : 1U;
+  const unsigned index =
+      (m & 1U) * pairs + static_cast<unsigned>(o.index_value);
+  const unsigned scalar = q_use(m >> 1, vector_m);
+  if (quad) {
+    const unsigned first = q_use(n >> 1, vector_n);
+    const auto dest = q_def(d >> 1, true, vector_result);
+    emit(enc::vec::fcmla_element(true, size, rotation, dest.host, first,
+                                 scalar, index));
+    q_done(dest, d >> 1);
+    return Flow::next;
+  }
+  if (half && index < 2U) {
+    const unsigned first = d_use(n, vector_n);
+    vmov(vector_result, d_use(d, vector_acc));
+    emit(enc::vec::fcmla_element(false, size, rotation, vector_result, first,
+                                 scalar, index));
+    d_write(d, vector_result);
+    return Flow::next;
+  }
+  // A64 has no 64-bit arrangement of the single-precision form, nor one of
+  // the half-precision form for a pair in the upper half of the element
+  // register: the 128-bit one runs on the doubleword in both halves.
+  const unsigned first = d_use_twice(n, vector_n);
+  vmov(vector_result, d_use_twice(d, vector_acc));
+  emit(enc::vec::fcmla_element(true, size, rotation, vector_result, first,
+                               scalar, index));
+  d_write(d, vector_result);
   return Flow::next;
 }
 

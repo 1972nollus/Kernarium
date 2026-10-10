@@ -78,6 +78,7 @@ struct OpInfo final {
  * them) run in the semantic library. */
 enum class Ext : std::uint8_t {
   none, crc32, aes, sha, vsel, vmaxnm, vrint, vcvt_round, vjcvt, sb,
+  dot, dot_element, rdm, vcadd, vcmla, vcmla_element,
 };
 [[nodiscard]] Ext extension_of(aarch32::Form form) noexcept;
 /* Whether the compiler lowers the form on this host (its A64 instruction

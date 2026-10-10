@@ -170,6 +170,7 @@ enum Element : unsigned {
 	elem_mul = 0x08, elem_fmul = 0x09, elem_smull = 0x0a, elem_sqdmull = 0x0b,
 	elem_sqdmulh = 0x0c, elem_sqrdmulh = 0x0d,
 	elem_umlal = 0x12, elem_umlsl = 0x16, elem_umull = 0x1a,
+	elem_sqrdmlah = 0x1d, elem_sqrdmlsh = 0x1f,
 };
 [[nodiscard]] constexpr std::uint32_t element(bool q, Element op,
 	unsigned size, unsigned d, unsigned n, unsigned m,
@@ -387,6 +388,58 @@ enum Sha2 : unsigned { sha1h = 0x5e28'0800U, sha1su1 = 0x5e28'1800U,
 [[nodiscard]] constexpr std::uint32_t sha2(Sha2 op, unsigned d, unsigned n) noexcept
 {
 	return op | (n << 5) | d;
+}
+
+/* SDOT and UDOT, by vector: 0 Q U 01110 10 0 Rm 1001 01 Rn Rd. */
+[[nodiscard]] constexpr std::uint32_t dot(bool q, bool is_unsigned,
+	unsigned d, unsigned n, unsigned m) noexcept
+{
+	return 0x0e80'9400U | (q ? 1U << 30 : 0U) | (is_unsigned ? 1U << 29 : 0U) |
+	       (m << 16) | (n << 5) | d;
+}
+/* SDOT and UDOT by element: 0 Q U 01111 10 L M Rm 1110 H 0 Rn Rd. `index`
+ * (0-3) names the group of four bytes of the 128-bit register `m` (0-31). */
+[[nodiscard]] constexpr std::uint32_t dot_element(bool q, bool is_unsigned,
+	unsigned d, unsigned n, unsigned m, unsigned index) noexcept
+{
+	return 0x0f80'e000U | (q ? 1U << 30 : 0U) | (is_unsigned ? 1U << 29 : 0U) |
+	       ((index & 1U) << 21) | (((index >> 1) & 1U) << 11) | (m << 16) |
+	       (n << 5) | d;
+}
+/* SQRDMLAH and SQRDMLSH, by vector: 0 Q 1 01110 size 0 Rm 1000 S 1 Rn Rd. */
+[[nodiscard]] constexpr std::uint32_t rdm(bool q, bool subtract,
+	unsigned size, unsigned d, unsigned n, unsigned m) noexcept
+{
+	return 0x2e00'8400U | (q ? 1U << 30 : 0U) | (size << 22) |
+	       (subtract ? 1U << 11 : 0U) | (m << 16) | (n << 5) | d;
+}
+/* FCMLA, by vector: 0 Q 1 01110 size 0 Rm 11 rot 1 Rn Rd, with size 1 for
+ * half and 2 for single precision, and the rotation in quarter turns. */
+[[nodiscard]] constexpr std::uint32_t fcmla(bool q, unsigned size,
+	unsigned rotation, unsigned d, unsigned n, unsigned m) noexcept
+{
+	return 0x2e00'c400U | (q ? 1U << 30 : 0U) | (size << 22) | (m << 16) |
+	       (rotation << 11) | (n << 5) | d;
+}
+/* FCMLA by element: 0 Q 1 01111 size L M Rm 0 rot 1 H 0 Rn Rd. `index`
+ * names the pair of elements of the 128-bit register `m` (0-31): 0-3 for
+ * half and 0-1 for single precision. */
+[[nodiscard]] constexpr std::uint32_t fcmla_element(bool q, unsigned size,
+	unsigned rotation, unsigned d, unsigned n, unsigned m,
+	unsigned index) noexcept
+{
+	const unsigned h = size == 1U ? (index >> 1) & 1U : index & 1U;
+	const unsigned l = size == 1U ? index & 1U : 0U;
+	return 0x2f00'1000U | (q ? 1U << 30 : 0U) | (size << 22) | (l << 21) |
+	       (m << 16) | (rotation << 13) | (h << 11) | (n << 5) | d;
+}
+/* FCADD: 0 Q 1 01110 size 0 Rm 111 rot 01 Rn Rd, the rotation 0 for 90
+ * degrees and 1 for 270. */
+[[nodiscard]] constexpr std::uint32_t fcadd(bool q, unsigned size,
+	unsigned rotation, unsigned d, unsigned n, unsigned m) noexcept
+{
+	return 0x2e00'e400U | (q ? 1U << 30 : 0U) | (size << 22) | (m << 16) |
+	       (rotation << 12) | (n << 5) | d;
 }
 
 /* Conversions between a general register and floating point (integer, sf =

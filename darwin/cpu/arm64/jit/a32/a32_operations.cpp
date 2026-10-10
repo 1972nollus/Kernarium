@@ -206,14 +206,44 @@ constexpr ExtNamed extension_mnemonics[] = {
 
 } // namespace
 
-Ext extension_of(aarch32::Form form) noexcept {
-  const auto &info = aarch32::kForms[static_cast<std::size_t>(form)];
+namespace {
+
+/* The extension a complete-level form belongs to, from its mnemonic and,
+ * for the by-element forms that share one, its name. */
+Ext classify_extension(const aarch32::FormInfo &info) noexcept {
   if (info.level != aarch32::Level::complete)
     return Ext::none;
+  const std::string_view name = info.name;
+  const bool by_element = name.find("_s_") != std::string_view::npos;
+  const std::string_view mnemonic = info.mnemonic;
+  if (mnemonic == "VSDOT" || mnemonic == "VUDOT")
+    return by_element ? Ext::dot_element : Ext::dot;
+  if (mnemonic == "VQRDMLAH" || mnemonic == "VQRDMLSH")
+    return Ext::rdm;
+  if (mnemonic == "VCADD")
+    return Ext::vcadd;
+  if (mnemonic == "VCMLA")
+    return by_element ? Ext::vcmla_element : Ext::vcmla;
   for (const auto &named : extension_mnemonics)
-    if (named.mnemonic == info.mnemonic)
+    if (named.mnemonic == mnemonic)
       return named.ext;
   return Ext::none;
+}
+
+const std::array<Ext, aarch32::kFormCount> &extension_table() {
+  static const auto table = [] {
+    std::array<Ext, aarch32::kFormCount> result{};
+    for (std::size_t index = 0; index < aarch32::kFormCount; ++index)
+      result[index] = classify_extension(aarch32::kForms[index]);
+    return result;
+  }();
+  return table;
+}
+
+} // namespace
+
+Ext extension_of(aarch32::Form form) noexcept {
+  return extension_table()[static_cast<std::size_t>(form)];
 }
 
 bool extension_lowered(aarch32::Form form) noexcept {
@@ -236,6 +266,15 @@ bool extension_lowered(aarch32::Form form) noexcept {
   }
   case Ext::vjcvt:
     return host.has(::uml::cpu::ArmFeature::jscvt);
+  case Ext::dot:
+  case Ext::dot_element:
+    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::dotprod);
+  case Ext::rdm:
+    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::rdm);
+  case Ext::vcadd:
+  case Ext::vcmla:
+  case Ext::vcmla_element:
+    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::fcma);
   default:
     return host.advanced_simd;
   }

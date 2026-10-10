@@ -880,15 +880,19 @@ lowers the ones that are the host's own instruction on the same operands when
 the host has them: CRC32, the AES and SHA-1 and SHA-256 instructions, VSEL
 (FCSEL on the guest flags), VMAXNM and VMINNM, VRINT and VCVT with a named
 rounding (scalar under the guest's FPCR, Advanced SIMD under the Standard
-FPSCR value) and SB (a DSB and an ISB). VJCVT is FJCVTZS with its Z flag taken
-into FPSCR; on a host whose FJCVTZS reports a flushed subnormal as exact, the
-A64 JIT's correction (a subnormal input is never exact) applies here too. The
-rest of the level runs in the semantic library: the half-precision forms, the
-dot products, the by-element and complex-number multiply-accumulates, the
-fused widening half-precision multiply-accumulates, the BFloat16 and 8-bit
-matrix forms, and a half-precision variant of an Advanced SIMD floating-point
-form, which shares the form of the single-precision one and differs in the
-operands' esize.
+FPSCR value), the signed and unsigned dot products, VQRDMLAH and VQRDMLSH,
+VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB and an
+ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
+FJCVTZS reports a flushed subnormal as exact, the A64 JIT's correction (a
+subnormal input is never exact) applies here too. A D-register form that A64
+has no 64-bit arrangement for (single-precision VCMLA by element) runs on the
+128-bit arrangement with the doubleword in both halves, which raises the same
+flags. The rest of the level runs in the semantic library: the other
+half-precision forms, the fused widening half-precision multiply-accumulates,
+the BFloat16 and 8-bit matrix forms and the mixed-sign dot products, and a
+half-precision variant of an Advanced SIMD floating-point form that the
+compiler does not lower, which shares the form of the single-precision one and
+differs in the operands' esize.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

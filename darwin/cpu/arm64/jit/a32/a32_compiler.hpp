@@ -307,6 +307,10 @@ private:
   [[nodiscard]] Flow emit_vrint();
   [[nodiscard]] Flow emit_vcvt_round();
   [[nodiscard]] Flow emit_vjcvt();
+  [[nodiscard]] Flow emit_dot(bool by_element);
+  [[nodiscard]] Flow emit_rdm();
+  [[nodiscard]] Flow emit_vcadd();
+  [[nodiscard]] Flow emit_vcmla(bool by_element);
 
   // VFP (a32_compiler_vfp.cpp).
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
