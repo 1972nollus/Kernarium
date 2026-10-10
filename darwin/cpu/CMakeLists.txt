@@ -345,12 +345,12 @@ target_link_libraries(uml_arm64_jit PRIVATE
     UML::BridgeAbi
     UML::CpuContract
     uml_cpu_executable_memory
-    uml_arm64_aarch32_decoder)
+    uml_arm64_aarch32_decoder
+    uml_arm64_aarch32_semantics)
 target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
 set(_uml_cpu_jit_executor_sources
-    arm64/jit/a32/a32_arith.cpp
     arm64/jit/a32/a32_execute.cpp
     arm64/jit/a32/a32_loop.cpp
     arm64/jit/jit_cache_geometry.cpp
@@ -507,6 +507,7 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -529,6 +530,7 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>

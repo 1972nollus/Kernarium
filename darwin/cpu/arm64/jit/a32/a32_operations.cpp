@@ -170,6 +170,16 @@ OpInfo op_info(aarch32::Form form) noexcept {
   return table()[static_cast<std::size_t>(form)];
 }
 
+bool is_library_form(aarch32::Form form) noexcept {
+  switch (op_info(form).op) {
+  case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
+  case Op::usada8:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool ends_block(const aarch32::Instruction &inst) noexcept {
   if (inst.status == aarch32::Status::undefined)
     return true;

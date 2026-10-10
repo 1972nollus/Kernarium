@@ -13,7 +13,6 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
-#include "cpu/arm64/jit/a32/a32_arith.hpp"
 #include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
 #include "cpu/arm64/jit/a32/a32_vector_operations.hpp"
@@ -525,7 +524,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
 /* Requires every form the compiler lowers to stay out of the helper from a
  * clean state: some case in which it always executes takes no helper exit
  * (the others cross a page, write back over the loaded register and so on).
- * The interim helper arithmetic takes it every time, which keeps the
+ * The forms the library always runs take it every time, which keeps the
  * predicate that names it honest, and the exclusives are measured by their
  * own test. */
 void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
@@ -546,9 +545,9 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
     const auto decisive = tally.executed != 0 ? tally.executed : tally.cases;
     const auto decisive_clean =
         tally.executed != 0 ? tally.executed_clean : tally.clean;
-    if (::uml::cpu::arm64::jit::a32::is_helper_arithmetic_form(form)) {
+    if (::uml::cpu::arm64::jit::a32::is_library_form(form)) {
       if (decisive_clean != 0) {
-        std::fprintf(stderr, "%s runs inline but is named a helper form\n",
+        std::fprintf(stderr, "%s runs inline but is named a library form\n",
                      name.c_str());
         require(false);
       }
@@ -565,7 +564,7 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
     ++inline_forms;
   }
   std::printf("%zu lowered forms stay inline from a clean state; %zu run in "
-              "the interim helper\n",
+              "the semantic library\n",
               inline_forms, helper_forms);
 }
 

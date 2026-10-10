@@ -841,8 +841,8 @@ exclusive case runs once more, because a host store-exclusive may fail without
 cause. It then requires every lowered form to stay out of the slow helper from a
 clean state: each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
-page or write back over the loaded register). The parallel arithmetic that the
-interim helper runs must take it in all of them. `arm64-jit-a32-runtime`,
+page or write back over the loaded register). The parallel
+arithmetic that the semantic library runs must take it in all of them. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
 programs against an independent reference of the instruction forms (the corpus
 carries T32).

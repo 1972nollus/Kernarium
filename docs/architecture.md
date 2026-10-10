@@ -843,9 +843,12 @@ monitor is the host's; a failed store leaves the status to the guest's retry
 loop. What the lowering declines (an access across a page or one that must
 fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
 block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
-instruction in C++ with exact fault ordering. An entry in the middle of an IT block and a
-single step run one instruction in the single-instruction arena, with the IT
-state the exit recorded. Translations validate their saved guest bytes in
+instruction in the AArch32 semantic library over the TLB, with the library's
+fault ordering. The exclusives stay in the helper: their guest monitor is the
+JIT's versioned software reservation, which the library's compare-and-swap
+monitor does not share. An entry in the middle of an IT block and a single
+step run one instruction in the single-instruction arena, with the IT state
+the exit recorded. Translations validate their saved guest bytes in
 the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
 translation is seen. Executable memory comes only from the arena the A64 JIT
 already uses; the A32 files allocate and publish none.
@@ -996,8 +999,8 @@ one instruction at a time with the architecture's fault ordering.
 `a32_semantics_covers()` holds for every form up to its level, and a word
 outside it is a fatal internal error. The gadget engine and the JIT route
 their slow paths and long tails to it, and the corpus's model lane runs the
-instruction corpus through it. Until an engine calls it, no product binary
-links it.
+instruction corpus through it. The JIT links it for what its lowering
+declines.
 
 ## Kernel and Android ownership
 

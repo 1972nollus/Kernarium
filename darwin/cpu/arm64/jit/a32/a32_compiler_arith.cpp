@@ -4,8 +4,8 @@
 // bit-field and byte-order operations, extension, packing and SEL,
 // saturation, and the DSP multiplies. All arithmetic is on W registers; the
 // 64-bit forms use the host's long multiplies. The parallel add and subtract
-// forms, SSAT16, USAT16 and the sum of absolute differences run in the slow
-// helper (a32_arith.cpp).
+// forms, SSAT16, USAT16 and the sum of absolute differences run in the AArch32
+// semantic library, through the slow helper (a32_execute.cpp).
 //
 // Registers: an operand lives in its resident register or a fallback (x9 for
 // Rn, x10 for Rm, x2 for Ra or RdLo, x8 for RdHi), x0, x1, x2, x8 and x16

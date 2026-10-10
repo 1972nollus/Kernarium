@@ -15,6 +15,7 @@
         $<TARGET_OBJECTS:uml_cpu_executable_memory>
         $<TARGET_OBJECTS:uml_arm64_jit>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_runtime_context>)
