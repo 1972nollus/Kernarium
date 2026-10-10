@@ -75,7 +75,7 @@ Lx86_vector_gather_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #\data
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_vector_gather_fault\@
 	.if \data == 4
 	str w0, [x19, x26, lsl #2]

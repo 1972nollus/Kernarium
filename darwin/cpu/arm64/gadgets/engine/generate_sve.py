@@ -1473,16 +1473,28 @@ def fp_comparison(operation: str, invert: bool, zero: bool = False,
     per element, setting no flags: slots Pd (x3), Zn (x4), Zm (x5) unless
     `zero`, Pg last. AdvSIMD compares as SVE does (FCMEQ, and so the forms
     built from it, quietly; the others and FAC* signalling); a partial
-    predicate sets the inactive elements to +0.0 first, which raise nothing."""
+    predicate sets the inactive elements to +0.0 first, which raise nothing.
+    FCMUO runs FCMEQ for its exceptions alone, which FCMUO raises exactly
+    (FPCompareUN; a self-compare of a lone operand would flag a subnormal
+    one beside a NaN under FEAT_AFP), and takes the NaNs from the integer
+    test that an element's magnitude bits exceed infinity's."""
     def lines(e: int) -> list:
         a = ARRANGEMENTS[e]
         governing = "x5" if zero else "x6"
+        # Infinity shifted left by one, which only a NaN's shifted bits exceed.
+        shifted_infinity = {2: ("w9", 0xf800), 4: ("w9", 0xff000000),
+                            8: ("x9", 0xffe0000000000000)}
 
         def compare() -> list:
             if unordered:
-                return [f"fcmeq v4.{a}, v1.{a}, v1.{a}",
-                        f"fcmeq v5.{a}, v2.{a}, v2.{a}",
-                        "and v3.16b, v4.16b, v5.16b", "not v3.16b, v3.16b"]
+                register, bits = shifted_infinity[e]
+                return [f"fcmeq v3.{a}, v1.{a}, v2.{a}",
+                        f"mov {register}, #{bits:#x}",
+                        f"dup v6.{a}, {register}",
+                        f"shl v4.{a}, v1.{a}, #1", f"shl v5.{a}, v2.{a}, #1",
+                        f"cmhi v4.{a}, v4.{a}, v6.{a}",
+                        f"cmhi v5.{a}, v5.{a}, v6.{a}",
+                        "orr v3.16b, v4.16b, v5.16b"]
             body = [f"{operation} v3.{a}, v1.{a}, " +
                     ("#0.0" if zero else f"v2.{a}")]
             return body + (["not v3.16b, v3.16b"] if invert else [])

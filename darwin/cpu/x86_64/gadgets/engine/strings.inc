@@ -51,7 +51,7 @@ Lx86_string_load_cross\@:
 	mov x0, _context
 	mov x1, x\address
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
 Lx86_string_load_done\@:
@@ -68,7 +68,7 @@ Lx86_string_store_cross\@:
 	mov x1, x26
 	mov x2, x27
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 Lx86_string_store_done\@:
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
@@ -86,7 +86,7 @@ Lx86_string_store_check_overlap\@:
 	b.ls Lx86_string_store_ready\@
 	mov x0, _context
 	mov x1, x26
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	helper_call uml_x86_64_gadget_invalidate_code
 	orr x23, x23, #0x100000000
 Lx86_string_store_ready\@:
 .endm
@@ -482,7 +482,7 @@ Lx86_string_bulk_copy\@:
 	mov x0, _context
 	mov x1, x26
 	mov w2, w19
-	bl NAME(uml_x86_64_gadget_publish_code_write)
+	helper_call uml_x86_64_gadget_publish_code_write
 Lx86_string_bulk_exits\@:
 	orr x23, x23, #0x100000000
 	b Lx86_string_bulk_retire\@
@@ -496,7 +496,7 @@ Lx86_string_bulk_overlap\@:
 	b.ls Lx86_string_bulk_retire\@
 	mov x0, _context
 	mov x1, x26
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	helper_call uml_x86_64_gadget_invalidate_code
 	orr x23, x23, #0x100000000
 Lx86_string_bulk_retire\@:
 	/* Retire the run into architectural state before starting another, so a

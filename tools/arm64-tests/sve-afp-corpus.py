@@ -28,7 +28,11 @@ class in every source, with the class's FPCR samples:
 - NaNs, whose propagation AH changes: AH, and AH with FZ, FZ16, and DN;
 - signed zeros, which AH changes FMAX and FMIN for: AH;
 - ties, which the BF16 forms round to nearest under AH whatever the
-  rounding mode: AH with RZ, which every other form follows.
+  rounding mode: AH with RZ, which every other form follows;
+- subnormals beside NaNs, in each order and, where a form has a third
+  source, beside a one: AH reports a subnormal operand (IDC) only when no
+  operand is a NaN, so a subnormal beside a NaN differs from a subnormal
+  beside a number. FIZ alone, AH, AH with FIZ, and AH with FZ, FZ16, and DN.
 
 NEP affects only AdvSIMD scalar forms, so one sample pins it as a no-op.
 FPCR must read back as the case set it, so a host whose FPCR holds AH, FIZ
@@ -91,12 +95,18 @@ SVL = sve_sme.SVL
 FIZ, AH, NEP = 1 << 0, 1 << 1, 1 << 2
 FLUSH_DN = 1 << native.FPCR_FZ | 1 << native.FPCR_FZ16 | \
     1 << native.FPCR_DN
+MIXED_SAMPLES = (FIZ, AH, AH | FIZ, AH | FLUSH_DN)
 CLASS_SAMPLES = {
     "subnormals": (FIZ, AH, AH | FIZ, AH | FIZ | NEP, AH | FLUSH_DN),
     "NaNs": (AH, AH | FLUSH_DN),
     "zeros": (AH,),
     "ties": (AH | 3 << native.FPCR_RMODE,),
 }
+# Which of a form's first sources hold a subnormal (S), a NaN (N) or a one
+# (O) in a mixed case, by the number of sources the form has: each order of
+# a subnormal and a NaN, with the third source a one.
+MIXED_ORDERS = {2: ("SN", "NS"),
+                3: ("SNO", "SON", "NSO", "NOS", "OSN", "ONS")}
 REDUCTIONS = ("faddv_", "fmaxv_", "fminv_", "fmaxnmv_", "fminnmv_",
               "fadda_")
 # The features beside SME that a streaming row may need, which the M4 has.
@@ -132,6 +142,24 @@ def classes(form: tuple[int, int]) -> tuple[tuple[str, list], ...]:
     zeros = [0, sign, sign, 0, one, sign, 0, one | sign]
     return tuple(item for item in native.float_classes(form)
                  if item[0] != "overflow") + (("zeros", zeros),)
+
+
+def mixed(form: tuple[int, int]) -> dict[str, list]:
+    """The lanes of a mixed case's subnormals, NaNs (quiet and signalling,
+    both signs) and ones."""
+    exponent, fraction = form
+    sign = 1 << exponent + fraction
+    top = ((1 << exponent) - 1) << fraction
+    one = ((1 << exponent - 1) - 1) << fraction
+    quiet = 1 << fraction - 1
+    tiny, widest = 1, (1 << fraction) - 1
+    return {
+        "S": [tiny, widest | sign, tiny | sign, widest, 3 * tiny, tiny,
+              widest | sign, tiny | sign],
+        "N": [top | quiet | 1, top | 1, top | quiet | sign | 2, top | sign | 3,
+              top | 1, top | quiet | 1, top | sign | 3, top | quiet | 2],
+        "O": [one, one | sign, one, one | sign, one, one, one | sign, one],
+    }
 
 
 def requirement(row, word: int, fpcr: int) -> tuple[str, ...]:
@@ -170,6 +198,22 @@ def drafts() -> tuple:
                 for fpcr in CLASS_SAMPLES[label]:
                     draft = native.base_draft(
                         GROUP, row, word, f"{label}, FPCR {fpcr:#010x}")
+                    draft.fpcr = fpcr
+                    draft.v.update(vectors)
+                    draft.native = requirement(row, word, fpcr)
+                    items.append(native.with_predicates(
+                        draft, row, word, native.ALL_TRUE))
+            lanes = mixed(form)
+            for order in MIXED_ORDERS.get(len(sources), ()):
+                vectors = {
+                    number: b"".join(
+                        lanes[kind][lane % 8].to_bytes(bits // 8, "little")
+                        for lane in range(VL * 8 // bits))
+                    for number, kind in zip(sources, order)}
+                for fpcr in MIXED_SAMPLES:
+                    draft = native.base_draft(
+                        GROUP, row, word,
+                        f"mixed {order}, FPCR {fpcr:#010x}")
                     draft.fpcr = fpcr
                     draft.v.update(vectors)
                     draft.native = requirement(row, word, fpcr)

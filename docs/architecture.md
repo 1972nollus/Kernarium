@@ -355,6 +355,26 @@ region, can therefore still change its odds when an unrelated image changes
 size, so an iPad layout comparison logs each launch's load address and counts
 modes per arm.
 
+The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
+too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
+order file. It follows the arm64 region in an image that carries both and
+starts `__text` in one that does not, and each part starts on a 16 KiB page.
+Each part is a run of fixed slots, one per group, from the table in
+`engine/region.inc`; the groups are the common entry code, a veneer island
+like the arm64 one, each baked family and each `engine/*.inc` file. A group
+begins at its slot's start plus its 128-byte phase and every slot is whole
+128-byte lines, so a group that changes size within its slot moves no other
+group's bytes, and one that outgrows it moves the later groups by whole lines,
+keeping every gadget's phase. The bytes between groups follow an
+unconditional branch and are never reached. The region's bytes, but for the
+island's branches out of it, therefore depend on the engine's sources alone,
+and its image offset moves only in whole pages, when the arm64 region ahead of
+it crosses one.
+`x86-64-gadget-region-layout` checks this contract on the images each tree
+builds, and the region layout section of the
+[x86-64 gadget README](../darwin/cpu/x86_64/gadgets/README.md) says what a
+change to a group moves.
+
 Data-alignment faults retain the effective data address and the faulting PC.
 The host exports a distinct bridge event, and both kernel lines deliver
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
@@ -651,23 +671,56 @@ onto AdvSIMD for an all-active governing predicate
 ([`cpu/arm64/jit/jit_compiler_sve_inline.cpp`](../darwin/cpu/arm64/jit/jit_compiler_sve_inline.cpp);
 the forms are listed in
 [`cpu/arm64/jit/jit_sve_inline.hpp`](../darwin/cpu/arm64/jit/jit_sve_inline.hpp)): the floating-point
-multiply-add, arithmetic and same-size conversion forms, the integer
-arithmetic, logical, shift, widening, narrowing, high-half and dot-product
-forms, ZIP, UZP, TRN, TBL, EXT, REV and INDEX, and LD1*, ST1*, LD1R*,
-LD1RQ*, LD2-LD4, ST2-ST4 and LDR and STR of a Z register whose footprint lies
-in one guest page the TLB holds. A predicated form checks its governing
-predicate once per block and element size, after a PTRUE that sets every
-element it checks nothing, and leaves the block for the library, which alone
-knows what an inactive lane must not do, when the predicate is partial.
+multiply-add (negated forms included), arithmetic (divide, square root and
+rounding included), compare (into a predicate, flags untouched; FCMUO through FCMEQ for its
+exceptions and integer compares for its NaNs)
+and same-size conversion forms, FCVT between single and double precision
+(half precision stays in the library, since AdvSIMD's FCVT honours FPCR.AHP
+and SVE's does not), the 32-bit integer conversions of a double (SCVTF and
+UCVTF into doubles, FCVTZS and FCVTZU out of them), FSCALE for normal elements
+whose results stay normal (an exponent add; any other element sends the word
+to the library), FTSMUL and FTSSEL, the integer arithmetic, unary (negate,
+count, extend), logical, shift (by a vector, UQSHL included, by an immediate
+and merging), halving, difference, widening, narrowing, high-half, dot-product
+(USDOT and SUDOT where the host has FEAT_I8MM) and UADDV forms, ZIP,
+UZP and TRN (also of predicates), TBL of any element size (one or two
+tables), unpacks, EXT, REV and INDEX, BRKA and BRKB (flag-setting forms
+included), COMPACT, SPLICE, EORBT and EORTB, SQINC, SQDEC, UQINC and UQDEC of a
+general register, and LD1*, ST1*, LD1R*, LD1RQ*, LD2-LD4, ST2-ST4, PRF* and
+LDR and STR of a Z or P register whose footprint lies in one guest page the TLB
+holds, and the gathers and scatters (LD1*, LDNT1*, ST1* and STNT1* with an
+address per element) whose every access does. A gather or scatter translates
+one element at a time without the bridge, so a page the TLB lacks sends the
+word to the library, which fills the TLB; a gather loads into scratch and
+writes Z last, a scatter writes its elements in order, and either leaves the
+block before it changes anything the library would not repeat. A tracked block
+(another vCPU holds an exclusive reservation) leaves scatters to the library,
+since it records one store range per instruction. LDFF1 and LDNF1 stay in the
+library. A predicated form checks its governing predicate once per block and
+element size, after a PTRUE that sets every element it checks nothing, and
+leaves the block for the library, which alone knows what an inactive lane must
+not do, when the predicate is partial. The breaks, COMPACT and SPLICE, which
+raise nothing, take any governing predicate: a prefix OR of the mask form, a
+table of the active-element masks (COMPACT) and a TBL index built from the first
+and last active byte (SPLICE).
 The saturating forms saturate by compare and select, since AdvSIMD's set
-FPSR.QC and SVE's never do. A word that lowering declines (an element size
+FPSR.QC and SVE's never do. A 64-bit multiply, minimum or maximum, which
+AdvSIMD lacks, is built from 32-bit multiplies or a compare and select, and
+a shift by a count of a whole element or more is clamped to the element's
+width. A word that lowering declines (an element size
 AdvSIMD lacks, a crossing or missing page, an SP base or a tagged one) and
 every other word of the profile ends its block in a terminal helper
 ([`cpu/arm64/jit/jit_semantic_sve.cpp`](../darwin/cpu/arm64/jit/jit_semantic_sve.cpp)),
 which runs the word through the semantic library on `CpuState` as the SME
 slow paths do: the library marks the SVE state live, reports a fault at the
 word's PC, clears the local exclusive monitor on a store and invalidates the
-software reservations the store wrote. A reserved bitmask or shifted byte
+software reservations the store wrote. While library-exit counting is on,
+which it is not by default (`semantic::count_sve_library_exits`), the helper
+and the trapped mode count each row's library runs and keep its last word, and
+the compiler counts each row's translations and those that ended in the
+library; the counts name the words a workload sends to the library.
+`DARWIN_UML_SVE_LIBRARY_EXITS` writes them as the gadget engine's report, from
+each retiring executor too. A reserved bitmask or shifted byte
 immediate, and a row the capabilities lack, are the illegal-instruction
 exit. No translation holds an SVE word, and SM=1 translations and
 translations without an SVE word are unchanged. While an FPCR trap enable
@@ -689,7 +742,10 @@ block, behind an FP instruction that leaves the native environment active,
 behind PTRUE of P0-P7, and after every writer of a predicate that a PTRUE
 made all-active, from memory bases inside a page, across pages, unmapped and tagged, and
 under random FPCR trap enables and, where the host implements FEAT_AFP, random
-FIZ, AH and NEP.
+FIZ, AH and NEP. A pass from a clean state (every predicate and FFR
+all-active, no trap enable, an aligned base inside a page) requires the
+library-exit count of every lowered word's row to stay zero, so a lowering
+that always bailed to the library cannot pass as a match.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
