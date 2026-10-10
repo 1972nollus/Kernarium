@@ -74,6 +74,16 @@ constexpr FloatingOp op_frinta{0x6e79'8800U, 0x6e21'8800U};
 constexpr FloatingOp op_frintx{0x6e79'9800U, 0x6e21'9800U};
 constexpr FloatingOp op_frinti{0x6ef9'9800U, 0x6ea1'9800U};
 
+/* AdvSIMD integer opcodes the conversions and the variable shifts use,
+ * Q = 1, with the element size in bits 22-23 where it has one. */
+constexpr std::uint32_t vector_cmgt = 0x4e20'3400U;
+constexpr std::uint32_t vector_cmgt_zero = 0x4e20'8800U;
+constexpr std::uint32_t vector_smin = 0x4e20'6c00U;
+constexpr std::uint32_t vector_smax = 0x4e20'6400U;
+constexpr std::uint32_t vector_neg = 0x6e20'b800U;
+constexpr std::uint32_t vector_ushl = 0x6e20'4400U;
+constexpr std::uint32_t vector_bsl = 0x6e60'1c00U;
+
 /* The NEON word for SVE element size `size` (1 half, 2 single, 3
  * double), registers zero. */
 [[nodiscard]] constexpr std::uint32_t floating_word(const FloatingOp &op,
@@ -563,9 +573,146 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     mark_native_fp();
     return true;
   }
+  if (form == inl::fcvt_p) {
+    /* Bits 16-23: 0xcb widens the singles in the low halves of the
+     * doubleword containers (the even elements gather for FCVTL), 0xca
+     * narrows into the low halves with the upper halves zero. The
+     * half-precision forms stay in the library: AdvSIMD's FCVT honours
+     * FPCR.AHP, SVE's does not. */
+    const unsigned code = field(instruction, 16, 8);
+    if (code != 0xcbU && code != 0xcaU)
+      return false;
+    begin_sve_word();
+    emit_sve_guard(g, 8U, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    if (code == 0xcbU) {
+      emitter_.emit(narrow(2U, scratch_a, source.host));
+      const auto out = write_native_vector(d, false, 1U);
+      emitter_.emit(0x0e61'7800U | (scratch_a << 5) | out.host); // fcvtl 2d
+      commit_native_vector(out, d);
+    } else {
+      emitter_.emit(0x0e61'6800U | (source.host << 5) | scratch_a); // fcvtn 2s
+      const auto out = write_native_vector(d, false, 1U);
+      emitter_.emit(extend_long(false, 2U, out.host, scratch_a));
+      commit_native_vector(out, d);
+    }
+    mark_native_fp();
+    return true;
+  }
+  if ((form == inl::scvtf_p || form == inl::ucvtf_p) && size == 3U &&
+      field(instruction, 17, 2) == 0U) {
+    /* SCVTF and UCVTF Zd.D, Pg/M, Zn.S: the 32-bit integer in the low half
+     * of each doubleword, extended in place, is exact in a double, so the
+     * conversion raises nothing and takes no FP environment. */
+    const bool is_signed = form == inl::scvtf_p;
+    begin_sve_word();
+    emit_sve_guard(g, 8U, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    emitter_.emit(0x4f00'5400U | ((64U + 32U) << 16) | (source.host << 5) |
+                  scratch_a); // shl #32
+    emitter_.emit((is_signed ? 0x4f00'0400U : 0x6f00'0400U) |
+                  ((128U - 32U) << 16) | (scratch_a << 5) |
+                  scratch_a); // sshr or ushr #32
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(floating_word(is_signed ? op_scvtf : op_ucvtf, 3U) |
+                  (scratch_a << 5) | out.host);
+    commit_native_vector(out, d);
+    return true;
+  }
+  if ((form == inl::fcvtzs_p || form == inl::fcvtzu_p) && size == 3U &&
+      field(instruction, 17, 2) == 0U) {
+    /* FCVTZS and FCVTZU Zd.S, Pg/M, Zn.D: a 32-bit result in the low half
+     * of each doubleword, sign-extended for FCVTZS and zero in the upper
+     * half for FCVTZU. AdvSIMD's vector conversion saturates at 64 bits, so
+     * the scalar one, which saturates and flags at 32, runs per element. */
+    const bool is_signed = form == inl::fcvtzs_p;
+    const std::uint32_t convert = is_signed ? 0x1e78'0000U : 0x1e79'0000U;
+    begin_sve_word();
+    emit_sve_guard(g, 8U, instruction, pc);
+    const auto source = read_native_vector(n, 0U);
+    emitter_.emit(convert | (source.host << 5) | 8U);
+    emitter_.emit(0x5e18'0400U | (source.host << 5) | scratch_a); // dup d4, D[1]
+    emitter_.emit(convert | (scratch_a << 5) | 9U);
+    if (is_signed) {
+      emitter_.emit(sxtw(8, 8));
+      emitter_.emit(sxtw(9, 9));
+    }
+    const auto out = write_native_vector(d, false, 1U);
+    emitter_.emit(fmov_d_x(out.host, 8));
+    emitter_.emit(ins_high(out.host, 9));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::ftsmul) {
+    /* Zn squared with the sign of bit 0 of Zm, unless the square is a NaN
+     * (FPTrigSMul). The NaN test is on the integers, so it raises
+     * nothing whatever the FPCR. */
+    if (!supported)
+      return false;
+    constexpr std::uint64_t infinity[]{0x7c00U, 0x7f80'0000U,
+                                       0x7ff0'0000'0000'0000ULL};
+    const unsigned bits = 8U << size;
+    begin_sve_word();
+    const auto first = read_native_vector(n, 0U);
+    const auto second = m == n ? first : read_native_vector(m, 1U);
+    emitter_.emit(three(floating_word(op_fmul, size), scratch_a, first.host,
+                        first.host)); // v4 = Zn * Zn
+    emitter_.emit(0x4f00'5400U | ((bits + 1U) << 16) | (scratch_a << 5) |
+                  scratch_b); // shl #1
+    emitter_.emit(0x6f00'0400U | ((2U * bits - 1U) << 16) | (scratch_b << 5) |
+                  scratch_b); // ushr #1: the magnitude bits
+    emit_sve_element_constant(3U, infinity[size - 1U], 1U << size);
+    emitter_.emit(three(sized(0x6e20'3c00U, size), 3U, 3U,
+                        scratch_b)); // cmhs: not a NaN
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(0x4f00'5400U | ((bits + bits - 1U) << 16) |
+                  (second.host << 5) | out.host); // shl #(bits - 1): the sign
+    emitter_.emit(three(vector_orr, scratch_b, scratch_b, out.host));
+    emitter_.emit(three(vector_bit, scratch_a, scratch_b, 3U));
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::ftssel) {
+    /* Bit 0 of Zm selects 1.0 for Zn, and bit 1 negates the result: Zn
+     * through FNEG, which leaves a NaN alone under FPCR.AH, or 1.0 with its
+     * sign set (FPTrigSSel). */
+    if (!supported)
+      return false;
+    constexpr std::uint64_t one[]{0x3c00U, 0x3f80'0000U, 0x3ff0'0000'0000'0000ULL};
+    const unsigned bits = 8U << size;
+    begin_sve_word();
+    const auto first = read_native_vector(n, 0U);
+    const auto second = m == n ? first : read_native_vector(m, 1U);
+    emitter_.emit(0x4f00'5400U | ((bits + bits - 2U) << 16) |
+                  (second.host << 5) | scratch_b); // shl: bit 1 to the top
+    emitter_.emit(0x4f00'0400U | ((2U * bits - (bits - 1U)) << 16) |
+                  (scratch_b << 5) | scratch_b); // sshr: mask of bit 1
+    emitter_.emit(0x4f00'5400U | ((bits + bits - 1U) << 16) |
+                  (scratch_b << 5) | scratch_a); // the sign where bit 1
+    emit_sve_element_constant(3U, one[size - 1U], 1U << size);
+    emitter_.emit(three(vector_orr, 3U, 3U, scratch_a)); // 1.0 or -1.0
+    emitter_.emit(three(floating_word(op_fneg, size), scratch_a, first.host, 0));
+    emitter_.emit(three(vector_bsl, scratch_b, scratch_a, first.host));
+    // v5 = bit 1 ? -Zn : Zn
+    emitter_.emit(0x4f00'5400U | ((bits + bits - 1U) << 16) |
+                  (second.host << 5) | scratch_a); // shl: bit 0 to the top
+    emitter_.emit(0x4f00'0400U | ((2U * bits - (bits - 1U)) << 16) |
+                  (scratch_a << 5) | scratch_a); // sshr: mask of bit 0
+    emitter_.emit(three(vector_bsl, scratch_a, 3U, scratch_b));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(vector_move(out.host, scratch_a));
+    commit_native_vector(out, d);
+    mark_native_fp();
+    return true;
+  }
+  if (form == inl::fscale_p)
+    return emit_sve_scale(instruction, pc);
   if (form == inl::scvtf_p || form == inl::ucvtf_p || form == inl::fcvtzs_p ||
       form == inl::fcvtzu_p) {
-    /* Only the conversions that keep the element size (bits 17-18 name the
+    /* The other conversions that keep the element size (bits 17-18 name the
      * integer's, bits 22-23 the float's) are one NEON instruction. */
     if (!supported || field(instruction, 17, 2) != size)
       return false;
@@ -580,6 +727,58 @@ bool JitCompiler::emit_sve_floating(std::uint16_t form,
     return true;
   }
   return false;
+}
+
+bool JitCompiler::emit_sve_scale(std::uint32_t instruction,
+                                 std::uint64_t pc) {
+  const unsigned size = field(instruction, 22, 2);
+  if (size == 0U)
+    return false;
+  const unsigned d = field(instruction, 0, 5);
+  const unsigned n = field(instruction, 5, 5);
+  const unsigned g = field(instruction, 10, 3);
+  const unsigned esize = 1U << size;
+  const unsigned bits = esize * 8U;
+  const unsigned fraction = size == 1U ? 10U : size == 2U ? 23U : 52U;
+  const std::uint64_t exponent_ones = size == 1U ? 31U : size == 2U ? 255U : 2047U;
+  /*
+   * Zdn * 2^Zm for a normal element whose result is normal is the element
+   * with Zm added to its exponent field: exactly Zdn + (Zm << fraction),
+   * with no flag and no rounding. Zm is a signed element, and the sum in the
+   * element's width is in range exactly when the true sum is, since the
+   * exponent is small. Any other element (a zero, an infinity, a NaN, a
+   * denormal, or a result that overflows or underflows) sends the whole word
+   * to the library before anything changes.
+   */
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sve_slow);
+  begin_sve_word();
+  emit_sve_full_guard(g, esize, slow);
+  const auto x = read_native_vector(d, 0U);
+  const auto s = n == d ? x : read_native_vector(n, 1U);
+  emitter_.emit(0x4f00'5400U | ((bits + 1U) << 16) | (x.host << 5) |
+                scratch_a); // shl #1
+  emitter_.emit(0x6f00'0400U | ((2U * bits - (fraction + 1U)) << 16) |
+                (scratch_a << 5) | scratch_a); // ushr: the exponent field
+  emitter_.emit(vector_add(false, size, scratch_b, scratch_a, s.host));
+  emit_sve_element_constant(3U, 1U, esize);
+  emitter_.emit(vector_add(true, size, scratch_a, scratch_a, 3U));
+  emitter_.emit(vector_add(true, size, scratch_b, scratch_b, 3U));
+  emit_sve_element_constant(3U, exponent_ones - 1U, esize);
+  /* Normal: one to the largest finite exponent, so exponent - 1 is below
+   * the largest minus one. */
+  emitter_.emit(three(sized(vector_cmhi, size), scratch_a, 3U, scratch_a));
+  emitter_.emit(three(sized(vector_cmhi, size), scratch_b, 3U, scratch_b));
+  emitter_.emit(three(vector_and, scratch_a, scratch_a, scratch_b));
+  emitter_.emit(uminv_b(scratch_b, scratch_a));
+  emitter_.emit(umov_b0(8, scratch_b));
+  emitter_.emit(add_w_one(8, 8));
+  emitter_.test_zero(slow, 8, 8, false);
+  emitter_.emit(0x4f00'5400U | ((bits + fraction) << 16) | (s.host << 5) |
+                scratch_a); // shl #fraction
+  const auto out = write_native_vector(d, false, 2U);
+  emitter_.emit(vector_add(false, size, out.host, x.host, scratch_a));
+  commit_native_vector(out, d);
+  return true;
 }
 
 bool JitCompiler::emit_sve_integer(std::uint16_t form,
@@ -1220,6 +1419,69 @@ bool JitCompiler::emit_sve_integer(std::uint16_t form,
     emitter_.emit(three(0x4ee0'bc00U, scratch_a, scratch_a, scratch_b)); // addp
     const auto out = write_native_vector(d, true, 2U);
     emitter_.emit(vector_add(false, 3U, out.host, out.host, scratch_a));
+    commit_native_vector(out, d);
+    return true;
+  }
+  case inl::usdot:
+  case inl::usdot_i:
+  case inl::sudot_i: {
+    /* The mixed-sign dot products are FEAT_I8MM's, which the virtual CPU has
+     * only where the host does; the indexed forms' Zm is 3 bits and the
+     * index the 2 bits above, as for SDOT. */
+    if (!host.has(ArmFeature::i8mm))
+      return false;
+    begin_sve_word();
+    if (form == inl::usdot) {
+      emit_native_vector_accumulate(three(0x4e80'9c00U, d, n, m), true);
+      return true;
+    }
+    const unsigned index = field(instruction, 19, 2);
+    emit_native_vector_by_element(
+        (form == inl::usdot_i ? 0x4f80'f000U : 0x4f00'f000U) |
+        ((index & 1U) << 21) | ((index >> 1) << 11) |
+        (field(instruction, 16, 3) << 16) | (n << 5) | d);
+    return true;
+  }
+  case inl::uqshl_v: {
+    /*
+     * UQSHL Zdn, Pg/M, Zdn, Zm: Zdn shifted left by the signed element of
+     * Zm, right when negative, and saturated to all ones when bits are lost.
+     * AdvSIMD's sets FPSR.QC, which SVE's does not, and reads only the low
+     * byte of the shift, so: the shift clamped to a signed byte (which
+     * changes no result, as the element is at most 64 bits), the unsigned
+     * shift, the shift back by the negation, and every element with a
+     * positive shift that did not return to itself replaced by all ones.
+     */
+    begin_sve_word();
+    emit_sve_guard(g, 1U << size, instruction, pc);
+    const auto value = read_native_vector(d, 0U);
+    const auto amount = n == d ? value : read_native_vector(n, 1U);
+    unsigned shift = amount.host;
+    if (size == 1U || size == 2U) {
+      emit_sve_element_constant(3U, 127U, 1U << size);
+      emitter_.emit(three(sized(vector_smin, size), scratch_b, shift, 3U));
+      emit_sve_element_constant(3U, (std::uint64_t{1} << (8U << size)) - 128U,
+                                1U << size);
+      emitter_.emit(three(sized(vector_smax, size), scratch_b, scratch_b, 3U));
+      shift = scratch_b;
+    } else if (size == 3U) {
+      emit_sve_element_constant(3U, 127U, 8U);
+      emitter_.emit(vector_move(scratch_b, shift));
+      emitter_.emit(three(sized(vector_cmgt, 3U), scratch_a, shift, 3U));
+      emitter_.emit(three(vector_bit, scratch_b, 3U, scratch_a));
+      emit_sve_element_constant(3U, ~std::uint64_t{127}, 8U);
+      emitter_.emit(three(sized(vector_cmgt, 3U), scratch_a, 3U, scratch_b));
+      emitter_.emit(three(vector_bit, scratch_b, 3U, scratch_a));
+      shift = scratch_b;
+    }
+    emitter_.emit(three(sized(vector_ushl, size), scratch_a, value.host, shift));
+    emitter_.emit(sized(vector_neg, size) | (shift << 5) | 3U);
+    emitter_.emit(three(sized(vector_ushl, size), 3U, scratch_a, 3U));
+    emitter_.emit(three(sized(vector_cmeq, size), 3U, 3U, value.host));
+    emitter_.emit(sized(vector_cmgt_zero, size) | (shift << 5) | scratch_b);
+    emitter_.emit(three(vector_bic, scratch_b, scratch_b, 3U));
+    const auto out = write_native_vector(d, false, 2U);
+    emitter_.emit(three(vector_orr, out.host, scratch_a, scratch_b));
     commit_native_vector(out, d);
     return true;
   }

@@ -36,6 +36,11 @@ kernel replay. The host-only contracts `darwin/include/uml_darwin_guest.h`,
 `uml_darwin_static_mmu.h`, and `uml_elf64.h` are authored in place and are not
 sync outputs.
 
+Every arm64 task's register tail is its FP registers, then its SME registers,
+then its SVE registers, 592 bytes whether or not the run implements SME or
+SVE; an x86_64-userspace task's tail is its FP registers alone. The host
+requires exactly the slice's size on every entry.
+
 For an intentional bridge declaration change:
 
 1. set the new version and the computed kernel fingerprint in `identity.env`;

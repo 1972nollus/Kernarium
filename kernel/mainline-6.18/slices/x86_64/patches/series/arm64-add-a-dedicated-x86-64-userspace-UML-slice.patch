@@ -24,7 +24,7 @@ adapters remain rejected.
 Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/um/Kconfig                 |  15 +-
+ arch/arm64/um/Kconfig                 |  13 +-
  arch/arm64/um/Makefile                |  19 +-
  arch/arm64/um/asm/elf.h               |  98 ++--
  arch/arm64/um/asm/mman.h              |   5 +
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 253 ++++----
+ arch/arm64/um/ptrace.c                | 275 ++++-----
  arch/arm64/um/shared/sysdep/ptrace.h  | 150 ++++-
  arch/arm64/um/signal.c                | 616 +++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
@@ -51,23 +51,21 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 2000 insertions(+), 409 deletions(-)
+ 27 files changed, 1999 insertions(+), 430 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
  create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 3f5956ef66d2146c3d29243eb3194eda227cdae2..03f5938d4e5ac3de2819283b7e2282c1c8c2bf71 100644
+index a1bc989a4b1f5e02f21dbc2b8525f19b8472c48a..2295cd7fc89ddae90c5e1efe28702ac605a1facb 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -23,9 +23,20 @@ config UML_ARM64
- 	select UML_SUBARCH_SUPPORTS_SMP
+@@ -24,8 +24,19 @@ config UML_ARM64
  
- # Every arm64 task carries SME registers in its Darwin bridge tail, and gets
--# SME task state when the host implements SME for the run.
-+# SME task state when the host implements SME for the run.  x86-64 tasks have
-+# neither.
+ # Every arm64 task carries SME and SVE registers in its Darwin bridge tail, and
+ # gets SME and SVE task state when the host implements them for the run.
++# x86-64 tasks have neither.
  config UML_ARM64_SME
 -	def_bool y
 +	def_bool !UML_X86_64_USERSPACE_ONLY
@@ -85,7 +83,7 @@ index 3f5956ef66d2146c3d29243eb3194eda227cdae2..03f5938d4e5ac3de2819283b7e2282c1
  config ARCH_MMAP_RND_BITS_MIN
  	int
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 8fb8cd5c5933244bf3a8889ff565b177da73d682..2c4bfc313ba3ac50461ad94bd72d2044148ba6b0 100644
+index c805aee161a3fd5e8415064fa34445b0134ca3a4..3bd3cb1086c79190ea0fc41293255a3b019c0be3 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -1,8 +1,25 @@
@@ -95,7 +93,7 @@ index 8fb8cd5c5933244bf3a8889ff565b177da73d682..2c4bfc313ba3ac50461ad94bd72d2044
 -	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
 +	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
 +	x86_64_syscalls.o
- obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
+ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
 +obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
 +
 +x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
@@ -116,7 +114,7 @@ index 8fb8cd5c5933244bf3a8889ff565b177da73d682..2c4bfc313ba3ac50461ad94bd72d2044
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 0a1ed25d8ee34401c84f359b868b25654df5ebc7..e363e0173077a4e211dce250028f9d4e17096580 100644
+index de061e2d957d4e3d9a875efe11504d5e91539348..e363e0173077a4e211dce250028f9d4e17096580 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -4,12 +4,7 @@
@@ -237,8 +235,8 @@ index 0a1ed25d8ee34401c84f359b868b25654df5ebc7..e363e0173077a4e211dce250028f9d4e
  
 -#ifdef CONFIG_UML_ARM64_SME
 -/*
-- * With SME, AT_MINSIGSTKSZ gives the stack the largest signal frame needs,
-- * as on native arm64; without it the vector stays as it was.
+- * With SVE or SME, AT_MINSIGSTKSZ gives the stack the largest signal frame
+- * needs, as on native arm64; without them the vector stays as it was.
 - */
 -extern unsigned long uml_arm64_minsigstksz;
 -#define ARCH_DLINFO do { \
@@ -273,10 +271,10 @@ index 2a075458f6d6e6a70a6c3429ab0aa809048ef4ae..f188b1fb4cd91c918ba1b4301edd8c80
  
  #ifdef UML_HOST_DARWIN
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index c2b6adefd7bb47d9d13846bc2fe51664c6e0f067..409d6747437a88e1fbf0da971dababf41e61f2bd 100644
+index 2c22cebbdd40e3be84943d8c6328e7b0ea95db0c..a672d67bb04201c5ab2523dbb14bd4160e27ea30 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -53,8 +53,9 @@ extern int uml_arm64_sme_get_current_vl(void);
+@@ -61,8 +61,9 @@ extern int uml_arm64_sve_get_current_vl(void);
  
  /* Seccomp exposes KSTK_EIP as si_call_addr, so use the guest user PC. */
  #define KSTK_EIP(task) UPT_IP(&(task)->thread.regs.regs)
@@ -288,7 +286,7 @@ index c2b6adefd7bb47d9d13846bc2fe51664c6e0f067..409d6747437a88e1fbf0da971dababf4
  
  #ifdef UML_HOST_DARWIN
  void darwin_cpu_relax(void);
-@@ -76,6 +77,14 @@ static __always_inline void cpu_relax(void)
+@@ -84,6 +85,14 @@ static __always_inline void cpu_relax(void)
  
  #define task_pt_regs(task) (&(task)->thread.regs)
  
@@ -563,10 +561,10 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
+index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -1,78 +1,111 @@
+@@ -1,80 +1,111 @@
  // SPDX-License-Identifier: GPL-2.0
  
 -#include <linux/bits.h>
@@ -582,9 +580,11 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
 -#endif
 -#include "sme.h"
 -
--/* Native arm64's third regset, after the two asm/ptrace.h names. */
+-/* Native arm64's third regset, after the two asm/ptrace.h names, then
+- * NT_ARM_SVE, which a view has only with SVE or SME. */
 -enum {
 -	REGSET_TLS = REGSET_FP + 1,
+-	REGSET_SVE,
 -};
  
  static int register_index(int regno)
@@ -723,7 +723,7 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -102,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -104,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -736,7 +736,7 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -112,27 +147,21 @@ static int genregs_set(struct task_struct *target,
+@@ -114,27 +147,21 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
@@ -773,13 +773,14 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
  	return 0;
  }
  
-@@ -142,42 +171,10 @@ static int fpregs_set(struct task_struct *target,
+@@ -144,42 +171,10 @@ static int fpregs_set(struct task_struct *target,
  		      const void *kbuf, const void __user *ubuf)
  {
  	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
 -		target->thread.regs.regs.fp, 0, sizeof(elf_fpregset_t));
--}
--
++		target->thread.regs.regs.fp, 0, host_fp_size);
+ }
+ 
 -/* NT_ARM_TLS, as native: TPIDR_EL0, then TPIDR2_EL0, which reads as zero
 - * and ignores writes while the virtual CPU has no SME. */
 -static int tls_get(struct task_struct *target,
@@ -810,15 +811,14 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
 -	if (uml_arm64_sme_vl)
 -		uml_arm64_sme_registers(target)->tpidr2 = tls[1];
 -	return 0;
-+		target->thread.regs.regs.fp, 0, host_fp_size);
- }
- 
+-}
+-
 -static const struct user_regset uml_arm64_regsets[] = {
 +static const struct user_regset uml_x86_64_regsets[] = {
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -194,69 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -196,89 +191,17 @@ static const struct user_regset uml_arm64_regsets[] = {
  		.regset_get = fpregs_get,
  		.set = fpregs_set,
  	},
@@ -831,7 +831,18 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
 -		.set = tls_set,
 -	},
 -#ifdef CONFIG_UML_ARM64_SME
--	/* Only the SME view below has these, as native arm64 with SME. */
+-	/* Only the vector views below have these, as native arm64 with SVE,
+-	 * and with SME the ones after NT_ARM_SVE, which then fails without
+-	 * SVE as natively. */
+-	[REGSET_SVE] = {
+-		USER_REGSET_NOTE_TYPE(ARM_SVE),
+-		.n = DIV_ROUND_UP(SVE_PT_SIZE(UML_ARM64_SVE_VQ,
+-					      SVE_PT_REGS_SVE), SVE_VQ_BYTES),
+-		.size = SVE_VQ_BYTES,
+-		.align = SVE_VQ_BYTES,
+-		.regset_get = uml_arm64_sve_get,
+-		.set = uml_arm64_sve_set,
+-	},
 -	{
 -		USER_REGSET_NOTE_TYPE(ARM_SSVE),
 -		.n = DIV_ROUND_UP(SVE_PT_SIZE(UML_ARM64_SME_VQ_MAX,
@@ -868,9 +879,16 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
 -	.e_machine = EM_AARCH64,
 -	.regsets = uml_arm64_regsets,
 -	.n = REGSET_TLS + 1,
+-};
+-
+-#ifdef CONFIG_UML_ARM64_SME
+-static const struct user_regset_view uml_arm64_sve_view = {
+-	.name = "aarch64",
+-	.e_machine = EM_AARCH64,
+-	.regsets = uml_arm64_regsets,
+-	.n = REGSET_SVE + 1,
  };
  
--#ifdef CONFIG_UML_ARM64_SME
 -static const struct user_regset_view uml_arm64_sme_view = {
 -	.name = "aarch64",
 -	.e_machine = EM_AARCH64,
@@ -890,6 +908,8 @@ index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..9b5193e03c41bc20f551bb236f9d96f7
 -#ifdef CONFIG_UML_ARM64_SME
 -	if (uml_arm64_sme_vl)
 -		return &uml_arm64_sme_view;
+-	if (uml_arm64_sve_vl)
+-		return &uml_arm64_sve_view;
 -#endif
 -	return &uml_arm64_view;
 +	return &uml_x86_64_view;
@@ -1068,7 +1088,7 @@ index 3a493972d6b40e4f5500325140850a61069660e4..51d035e8b6af242cc740041ecf2ec298
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 134007a2cbb6bf0b2c6c035d67d0f17681fb97d2..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
+index 291efec44e2f99f3b8ab7db1813fbfbdf6d93d40..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,9 +1,6 @@
@@ -1584,7 +1604,7 @@ index 134007a2cbb6bf0b2c6c035d67d0f17681fb97d2..775f7b80119886229c864f2b7dd16f9b
 -	error |= get_user(PT_REGS_PSTATE(regs), &context->pstate);
 -	if (!error && !uml_arm64_valid_user_pstate(&PT_REGS_PSTATE(regs)))
 -		error = -EINVAL;
--	if (!error && uml_arm64_sme_vl)
+-	if (!error && uml_arm64_vector_sigframes())
 -		error = uml_arm64_sme_restore_sigframe(regs, (void __user *)
 -			((char __user *)context -
 -			 offsetof(struct uml_arm64_rt_sigframe, uc.uc_mcontext)));
@@ -1644,7 +1664,7 @@ index 134007a2cbb6bf0b2c6c035d67d0f17681fb97d2..775f7b80119886229c864f2b7dd16f9b
  	unsigned long restorer;
  	int error = 0;
  
--	if (uml_arm64_sme_vl) {
+-	if (uml_arm64_vector_sigframes()) {
 -		long size = uml_arm64_sme_sigframe_size();
 -
 -		if (size < 0)
@@ -1677,7 +1697,7 @@ index 134007a2cbb6bf0b2c6c035d67d0f17681fb97d2..775f7b80119886229c864f2b7dd16f9b
 -	error |= save_mcontext(&frame->uc.uc_mcontext, regs);
 -	if (ksig->ka.sa.sa_flags & SA_SIGINFO)
 -		error |= copy_siginfo_to_user(&frame->info, &ksig->info);
--	if (!error && uml_arm64_sme_vl)
+-	if (!error && uml_arm64_vector_sigframes())
 -		error = uml_arm64_sme_save_sigframe(frame, regs);
 -	if (error)
 -		return error;
@@ -2774,10 +2794,10 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed65a5c46e 100644
+index 52a043c536756c34606a4baf78af176b4f0983ba..7c3e69d64e95667d076ccef8e843cac3ea07be1e 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -74,12 +74,24 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
+@@ -88,12 +88,24 @@ _Static_assert(offsetof(struct uml_arm64_sve_registers, ffr) ==
  #define DARWIN_GUEST_SIGBUS 7
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
@@ -2802,7 +2822,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed
  /* PSTATE.SS, and the ESR exception class of the software-step exception it
   * raises: the engine retires one instruction and reports that class. */
  #define DARWIN_GUEST_PSTATE_SS (1UL << 21)
-@@ -347,6 +359,39 @@ static int floating_point_signal_code(unsigned int syndrome)
+@@ -361,6 +373,39 @@ static int floating_point_signal_code(unsigned int syndrome)
  	return DARWIN_GUEST_FPE_FLTUNK;
  }
  
@@ -2842,16 +2862,16 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed
  void userspace(struct uml_pt_regs *registers)
  {
  	/* Deliver the host timer only at kernel/guest boundaries.  Allowing a
-@@ -454,7 +499,7 @@ void userspace(struct uml_pt_regs *registers)
- 			if (registers->svcr & UML_ARM64_SVCR_SM)
- 				uml_arm64_sme_syscall_enter();
+@@ -471,7 +516,7 @@ void userspace(struct uml_pt_regs *registers)
+ 			    UML_ARM64_SVE_LIVE)
+ 				uml_arm64_sve_syscall_enter();
  #endif
 -			registers->orig_x0 = UPT_X(registers, 0);
 +			UPT_SAVE_ORIGINAL_SYSCALL(registers);
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -488,6 +533,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -505,6 +550,10 @@ void userspace(struct uml_pt_regs *registers)
  				if (retry > 0)
  					break;
  			}
@@ -2862,7 +2882,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
  			if (fault >= 4096 && uml_darwin_guest_range(fault, 1)) {
-@@ -524,13 +573,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -541,13 +590,24 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2887,7 +2907,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -551,10 +611,17 @@ void userspace(struct uml_pt_regs *registers)
+@@ -568,10 +628,17 @@ void userspace(struct uml_pt_regs *registers)
  			 */
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -2906,7 +2926,7 @@ index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..641b75cf446198453998a4032d7137ed
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -614,16 +681,52 @@ void userspace(struct uml_pt_regs *registers)
+@@ -631,16 +698,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  

@@ -669,17 +669,49 @@ with `DARWIN_UML_GUEST_SVE=1`.
 pseudocode on injected SVE hosts under either policy, and
 `arm64-jit-sve-forms` checks every row of the profile through the JIT
 against the semantic library on random states, requires a lowered word to stay
-out of the library from a clean state, and runs gathers and scatters with a
+out of the library from a clean state, runs FSCALE with each kind of element
+(zeros, infinities, NaNs, denormals, scales that overflow, underflow or wrap)
+and requires exactly those to take the library, runs the conversions between
+precisions and UQSHL at the values they turn on, and runs gathers and scatters with a
 lane out of reach, scatters while another vCPU's reservation tracks stores,
 the saturating counts at their limits, table lookups with indices that land
 in the tables, and the governing-predicate shapes (none, one, all but one, runs,
-every subset of the narrow sizes) of the breaks, COMPACT and SPLICE.
+every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
+also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
+(the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
+injected profile with SME and again with SME2.
+`arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
+as well) and every evidence witness at SM = 0 in both ZA states and every
+link shape, and requires that no translation holds an SVE or SME word.
 
 `DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
-words that leave translated code for the semantic library, and appends to the
-file, as the process ends, one line per table row (form, row index, count, last
-word), most frequent first. The words a workload sends there are the ones
-worth lowering.
+words that leave translated code for the semantic library, per table row, and
+writes the report to the file as each executor retires and as the process ends
+(the emulator leaves through `_Exit`; the last write is the complete one). The
+JIT and the gadget engine write the same report: a header and one
+tab-separated line per row, most exits first, with the form, the row, its
+encoding, the translations, those that ended the block in the library and the
+exits. The words a workload sends there are the ones worth lowering.
+`arm64-jit-sve-forms` runs a child process through `_Exit` and reads the
+report it leaves, and one that exits having run no JIT executor and requires
+it to leave a report already in the file alone, since either engine's process
+may write it.
+
+`guest-sve-gadgets` and `guest-sve-jit` check the guest kernel's SVE contract
+under the policy on. Each skips, naming its reason, unless its engine's SVE
+support is `complete`. The freestanding `sve_probe.cpp` boots as `/init` and
+checks signal frames, sigreturn and its invalid frames, the live state across
+system calls, preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at
+signal and syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`,
+prctl and the sysctl; on an SME host a second boot adds the SME policy and
+the streaming-mode checks. The same binary runs as an ordinary program on
+arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
+every check must pass there too; its expected values came from such a run on
+Linux 6.12, and checks where native Linux may keep a discarded state live
+with zero registers accept either outcome. Where 6.12 differs from the
+guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
+6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
+check that with the policy off the probe sees no SVE and PTRUE is undefined.
 
 ## x86 instruction conformance
 
