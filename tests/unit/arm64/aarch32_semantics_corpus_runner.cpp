@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * The AArch32 instruction corpus on the semantic library: the corpus's model
- * lane. Every case of the pack that the library's level covers runs through
- * decode_a32() / decode_thumb() and execute_a32() on the oracle's memory map,
- * and its final registers, APSR, TPIDRs, data bytes, event, fault address and
- * retired count are compared with what the oracle observed, as the engines'
- * lanes compare them. tests/unit/arm64/aarch32_corpus/README.md owns the
- * pack and its format.
+ * lane. Every case of the pack whose instructions the library covers
+ * (a32_semantics_covers) runs through decode_a32() / decode_thumb() and
+ * execute_a32() on the oracle's memory map, and its final registers, APSR,
+ * FPSCR, D registers, TPIDRs, data bytes, event, fault address and retired
+ * count are compared with what the oracle observed, as the engines' lanes
+ * compare them. tests/unit/arm64/aarch32_corpus/README.md owns the pack and
+ * its format.
  *
  * The model's guest pages are separate host allocations, so a library that
  * assumed two guest pages are adjacent in the host would fail here.
@@ -46,6 +47,11 @@ using namespace ::uml::testing::aarch32_corpus;
 constexpr std::uint32_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 /* Not an event of the pack: the library refused the word. */
 constexpr unsigned kFatal = 0xfe;
+/* The FPSCR halves the virtual CPU holds: AHP, DN, FZ, RMode and FZ16 in
+ * fpcr; QC and the cumulative flags in fpsr; N, Z, C and V in
+ * a32_fpscr_nzcv. */
+constexpr std::uint32_t kFpscrControlMask = 0x07c8'0000U;
+constexpr std::uint32_t kFpscrStatusMask = 0x0800'009fU;
 
 /* --- The machine ---------------------------------------------------------------- */
 
@@ -210,7 +216,18 @@ CpuState cpu_from(const State &state, bool thumb, std::uint32_t entry)
 	cpu.a32_cp15ben = 1;
 	cpu.a32_tpidruro = state.tpidruro;
 	cpu.tls = state.tpidrurw;
+	for (unsigned d = 0; d < 16 * 2; ++d)
+		std::memcpy(cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), &state.d[d], 8);
+	cpu.fpcr = state.fpscr & kFpscrControlMask;
+	cpu.fpsr = state.fpscr & kFpscrStatusMask;
+	cpu.a32_fpscr_nzcv = state.fpscr & 0xf000'0000U;
 	return cpu;
+}
+
+std::uint32_t fpscr_of(const CpuState &cpu)
+{
+	return (cpu.fpcr & kFpscrControlMask) | (cpu.fpsr & kFpscrStatusMask) |
+		(cpu.a32_fpscr_nzcv & 0xf000'0000U);
 }
 
 std::uint32_t apsr_of(const CpuState &cpu)
@@ -359,6 +376,20 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 	}
 	if (cpu.a32_tpidruro != test.final.tpidruro || cpu.tls != test.final.tpidrurw)
 		return "a thread register changed";
+	for (unsigned d = 0; d < kVectors; ++d) {
+		std::uint64_t value;
+		std::memcpy(&value, cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), 8);
+		if (value != test.final.d[d]) {
+			std::snprintf(text, sizeof text, "d%u = %016llx, expected %016llx", d,
+				static_cast<unsigned long long>(value),
+				static_cast<unsigned long long>(test.final.d[d]));
+			return text;
+		}
+	}
+	if (fpscr_of(cpu) != test.final.fpscr) {
+		std::snprintf(text, sizeof text, "fpscr %08x, expected %08x", fpscr_of(cpu), test.final.fpscr);
+		return text;
+	}
 	const auto expected = machine.expected_memory(test);
 	const auto actual = machine.read_data();
 	if (expected != actual) {
@@ -372,8 +403,8 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 	return {};
 }
 
-/* Whether the library's level covers every legal instruction of the program. */
-bool within_level(const Case &test, const Profile &profile)
+/* Whether the library covers every legal instruction of the program. */
+bool within_coverage(const Case &test)
 {
 	const bool thumb = test.flags & kFlagThumb;
 	ItState it;
@@ -396,7 +427,7 @@ bool within_level(const Case &test, const Profile &profile)
 			it = instruction.next_it;
 			half += length / 2;
 		}
-		if (instruction.legal() && static_cast<int>(instruction.info().level) > static_cast<int>(profile.level))
+		if (instruction.legal() && !a32_semantics_covers(instruction.form))
 			return false;
 	}
 	return true;
@@ -433,7 +464,9 @@ int main(int argc, char **argv)
 	require(path != nullptr, "usage: PACK [--record NAME] [--case NAME] [--form PREFIX]");
 	g_trace = trace;
 	const Pack pack = read_pack(read_file(path));
-	const Profile profile = Profile::at(a32_semantics_level());
+	/* The product profile: the cases a form above the library's coverage
+	 * appears in are skipped, so the library never sees one. */
+	const Profile profile = Profile::at(Level::complete);
 
 	Machine machine;
 	Totals totals;
@@ -445,7 +478,7 @@ int main(int argc, char **argv)
 				continue;
 			if (!only_form.empty() && !test.form.starts_with(only_form))
 				continue;
-			if (!within_level(test, profile)) {
+			if (!within_coverage(test)) {
 				++totals.skipped;
 				continue;
 			}
@@ -470,7 +503,7 @@ int main(int argc, char **argv)
 			}
 		}
 	}
-	std::printf("AArch32 corpus on the semantic library: %zu cases run, %zu skipped above the level, "
+	std::printf("AArch32 corpus on the semantic library: %zu cases run, %zu skipped, "
 		    "%zu failed\n", totals.run, totals.skipped, totals.failed);
 	for (const auto &[form, count] : totals.failed_forms)
 		std::printf("  %s: %zu\n", form.c_str(), count);

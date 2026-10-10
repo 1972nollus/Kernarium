@@ -91,6 +91,14 @@ bool Exec::condition_passed() const noexcept
 
 bool Exec::read(std::uint32_t address, void *destination, std::size_t size) noexcept
 {
+	/* The common access lies in one page. */
+	if (size <= page_remaining(address)) [[likely]] {
+		const std::byte *host = mem.translate(address, MemoryAccess::read);
+		if (host == nullptr) [[unlikely]]
+			return raise_fault(address, MemoryAccess::read);
+		copy_in(destination, host, size);
+		return true;
+	}
 	auto *out = static_cast<std::byte *>(destination);
 	while (size != 0U) {
 		const std::size_t count = std::min(size, page_remaining(address));
@@ -107,6 +115,14 @@ bool Exec::read(std::uint32_t address, void *destination, std::size_t size) noex
 
 bool Exec::write(std::uint32_t address, const void *source, std::size_t size) noexcept
 {
+	if (size <= page_remaining(address)) [[likely]] {
+		std::byte *host = mem.translate(address, MemoryAccess::write);
+		if (host == nullptr) [[unlikely]]
+			return raise_fault(address, MemoryAccess::write);
+		copy_out(host, source, size);
+		mem.stored(host, size);
+		return true;
+	}
 	/* A store is one access: translate every page it touches before the
 	 * first host store, so a fault on a later page exposes no partial
 	 * update. A transfer spans at most two pages. */
@@ -176,10 +192,25 @@ std::atomic<bool> counting_exits{false};
 std::atomic<std::uint64_t> exit_total{0};
 std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
 
-[[nodiscard]] bool covered_op(Op op) noexcept
+/* The forms above the library's level that it covers already: the VFP and
+ * Advanced SIMD memory group, which needs no floating-point arithmetic. */
+[[nodiscard]] constexpr bool early_simd_op(Op op) noexcept
 {
-	return op != Op::none;
+	return op == Op::vldr || op == Op::vstr || op == Op::vldm || op == Op::vstm
+		|| op == Op::vld || op == Op::vst;
 }
+
+}
+
+[[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept
+{
+	if (form.availability != Availability::implemented || info.op == Op::none)
+		return false;
+	return form.level <= a32_semantics_level()
+		|| (form.level == Level::simd && early_simd_op(info.op));
+}
+
+namespace {
 
 /* The family that executes an operation. */
 bool dispatch(Exec &x, const OpInfo &info)
@@ -234,6 +265,9 @@ bool dispatch(Exec &x, const OpInfo &info)
 	case Op::coprocessor: case Op::nop: case Op::dmb: case Op::dsb:
 	case Op::isb: case Op::it:
 		return exec_system(x, info);
+	case Op::vldr: case Op::vstr: case Op::vldm: case Op::vstm: case Op::vld:
+	case Op::vst:
+		return exec_vector_memory(x, info);
 	}
 	return x.raise_fatal();
 }
@@ -246,11 +280,8 @@ bool a32_semantics_covers(Form form) noexcept
 {
 	if (form == Form::Undefined || form == Form::ReservedHint)
 		return true;
-	const FormInfo &info = kForms[static_cast<std::size_t>(form)];
-	if (info.availability != Availability::implemented
-		|| info.level > a32_semantics_level())
-		return false;
-	return detail::covered_op(detail::op_info(form).op);
+	return detail::covered(kForms[static_cast<std::size_t>(form)],
+		detail::op_info(form));
 }
 
 StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
@@ -264,23 +295,20 @@ StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
 	}
 	StepResult fatal;
 	fatal.event = StepEvent::fatal;
-	if (!key_is_aarch32(cpu.pc))
+	if (!key_is_aarch32(cpu.pc)) [[unlikely]]
 		return fatal;
-	if (instruction.status == Status::undefined)
+	if (instruction.status == Status::undefined) [[unlikely]]
 		return StepResult{.event = StepEvent::undefined};
-	if (!a32_semantics_covers(instruction.form))
+	const FormInfo &form = instruction.info();
+	const OpInfo &info = op_info(instruction.form);
+	/* A reserved hint is a pseudo-form that retires as a NOP; every other
+	 * form is a table row, which the library covers up to its level. */
+	if (instruction.form != Form::ReservedHint && !covered(form, info)) [[unlikely]]
 		return fatal;
 
 	Exec x(cpu, instruction, memory);
-	bool completed;
-	if (instruction.status == Status::nop) {
-		completed = true;
-	} else {
-		const OpInfo &info = op_info(instruction.form);
-		completed = instruction.info().conditional && !x.condition_passed()
-			? true
-			: dispatch(x, info);
-	}
+	const bool completed = instruction.status == Status::nop
+		|| (form.conditional && !x.condition_passed()) || dispatch(x, info);
 	if (!completed)
 		return x.result;
 	if (!x.pc_written)
