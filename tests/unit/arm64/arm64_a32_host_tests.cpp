@@ -599,9 +599,13 @@ void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long genera
 		const auto before = registers;
 		const auto fp_before = fp;
 		unsigned long tls = 0x77;
-		require(darwin_uml_static_vm_activate(generation) == 0);
-		const int event = enter(&registers, &fp, sizeof(fp), generation, &tls);
-		require(darwin_uml_static_vm_destroy(generation) == 0);
+		/* A generation is never reused: an engine may cache the context it
+		 * built for one, so the Thumb entry gets its own. */
+		const unsigned long entry_generation = generation + (thumb ? 1 : 0);
+		require(darwin_uml_static_vm_activate(entry_generation) == 0);
+		const int event = enter(&registers, &fp, sizeof(fp),
+			entry_generation, &tls);
+		require(darwin_uml_static_vm_destroy(entry_generation) == 0);
 		if (level < arm64::A32Support::base) {
 			require(event == DARWIN_UML_EVENT_FATAL,
 				"an AArch32 entry ran with no engine that runs it");
@@ -656,7 +660,7 @@ int main(int argc, char **argv)
 	the_presented_level_is_the_engine_level_under_the_policy();
 	compat_hwcaps_follow_the_presented_level();
 	entries_follow_the_level(darwin_uml_static_enter_guest,
-		EngineKind::gadgets, 811);
+		EngineKind::gadgets, 810);
 	if (::uml::cpu::cpu_engine_available(EngineKind::jit))
 		entries_follow_the_level(darwin_uml_jit_enter_guest,
 			EngineKind::jit, 812);
