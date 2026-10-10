@@ -128,10 +128,20 @@ and reaches guest memory only through the caller's `A32Memory`.
   `a32_semantics_level()`; any other word reaching `execute_a32()` is `fatal`,
   an internal error. The library-exit counters count each call by form.
 
-The library covers `base`, A32 and T32: integer, memory (single, multiple,
-exclusive, acquire/release), branch, IT and system forms. Above it, it covers
-the VFP and Advanced SIMD memory forms (VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX,
-VLDn and VSTn), whose structure loads and stores read all their memory before
-they change a register and gather it all before they store, and whose VSTM and
-FSTMX store the words ahead of a fault like STM. The VFP and NEON arithmetic
-and the Armv8 extension levels follow.
+The library covers `base` and `simd`, A32 and T32: integer, memory (single,
+multiple, exclusive, acquire/release), branch, IT and system forms, and the
+VFP and Advanced SIMD moves, bitwise, permute, integer, shift, floating-point,
+conversion and memory forms. The structure loads and stores read all their
+memory before they change a register and gather it all before they store, and
+VSTM and FSTMX store the words ahead of a fault like STM.
+
+Floating point runs the host's own scalar instruction on bit patterns under
+the FPCR the form defines, the guest's control bits for VFP and the Standard
+FPSCR value for Advanced SIMD, and merges the cumulative flags it raised into
+`fpsr`. FPSCR is split across `CpuState` as the engines hold it: the control
+bits in `fpcr`, the cumulative flags and QC in `fpsr`, and N, Z, C and V in
+`a32_fpscr_nzcv`; Len, Stride and the trap enables read as zero and ignore
+writes. VRECPS and VRSQRTS are AArch32's unfused steps, not the A64 fused
+ones, and the fixed-point VCVT to floating point rounds to nearest even as
+its pseudocode says. The half-precision forms, the Armv8 floating-point
+additions and the other extensions are the `complete` level and follow.
