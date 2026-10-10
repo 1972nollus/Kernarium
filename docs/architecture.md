@@ -834,14 +834,16 @@ and publication: R0-R14 are resident host registers written back at every
 exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
 condition is a branch over the body, and a link's target is the key. Memory
 takes the shared inline TLB sequence after a 32-bit address and the alignment
-rule of the form. A load-exclusive, up to four register instructions and the
-store-exclusive on the same address at the start of a block become one host
-load-exclusive and store-exclusive, so the guest's monitor is the host's; a
-failed store leaves the status to the guest's retry loop. What the lowering
-declines (an access across a page or one that must fault, an exclusive that
-does not fuse, the parallel arithmetic) leaves the block through
-`uml_arm64_jit_a32_execute`, a terminal helper that runs the one instruction
-in C++ with exact fault ordering. An entry in the middle of an IT block and a
+rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
+byte and halfword forms) are an alignment-checked LDAR and STLR. A
+load-exclusive, up to four register instructions and the store-exclusive
+(acquire and release forms included) on the same address at the start of a
+block become one host load-exclusive and store-exclusive, so the guest's
+monitor is the host's; a failed store leaves the status to the guest's retry
+loop. What the lowering declines (an access across a page or one that must
+fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
+block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
+instruction in C++ with exact fault ordering. An entry in the middle of an IT block and a
 single step run one instruction in the single-instruction arena, with the IT
 state the exit recorded. Translations validate their saved guest bytes in
 the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a

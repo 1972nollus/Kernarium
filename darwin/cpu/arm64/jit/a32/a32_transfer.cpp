@@ -24,10 +24,26 @@ struct Size final {
   case Op::ldrh: case Op::ldrht: size = {2, false, true}; return true;
   case Op::ldrsb: case Op::ldrsbt: size = {1, true, true}; return true;
   case Op::ldrsh: case Op::ldrsht: size = {2, true, true}; return true;
+  case Op::lda: size = {4, false, true}; return true;
+  case Op::ldab: size = {1, false, true}; return true;
+  case Op::ldah: size = {2, false, true}; return true;
+  case Op::stl: size = {4, false, false}; return true;
+  case Op::stlb: size = {1, false, false}; return true;
+  case Op::stlh: size = {2, false, false}; return true;
   case Op::str: case Op::strt: size = {4, false, false}; return true;
   case Op::strb: case Op::strbt: size = {1, false, false}; return true;
   case Op::strh: case Op::strht: size = {2, false, false}; return true;
   default: return false;
+  }
+}
+
+[[nodiscard]] bool ordered(Op op) noexcept {
+  switch (op) {
+  case Op::lda: case Op::ldab: case Op::ldah: case Op::stl: case Op::stlb:
+  case Op::stlh:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -63,6 +79,12 @@ Transfer describe_transfer(const Instruction &inst) noexcept {
       return transfer;
     }
     transfer.n = static_cast<std::uint8_t>(o.n);
+    if (ordered(info.op)) {
+      /* [Rn] alone. */
+      transfer.add = true;
+      transfer.ordered = true;
+      return transfer;
+    }
     if (unprivileged(info.op)) {
       transfer.index = !o.postindex;
       transfer.wback = o.postindex;
@@ -138,19 +160,39 @@ Transfer describe_transfer(const Instruction &inst) noexcept {
     return transfer;
   case Op::ldrex: case Op::ldrexb: case Op::ldrexh: case Op::ldrexd:
   case Op::strex: case Op::strexb: case Op::strexh: case Op::strexd:
+  case Op::ldaex: case Op::ldaexb: case Op::ldaexh: case Op::ldaexd:
+  case Op::stlex: case Op::stlexb: case Op::stlexh: case Op::stlexd: {
     transfer.kind = Transfer::Kind::exclusive;
-    transfer.load = info.op == Op::ldrex || info.op == Op::ldrexb ||
-                    info.op == Op::ldrexh || info.op == Op::ldrexd;
-    transfer.bytes = (info.op == Op::ldrexb || info.op == Op::strexb) ? 1
-                     : (info.op == Op::ldrexh || info.op == Op::strexh) ? 2
-                     : (info.op == Op::ldrexd || info.op == Op::strexd) ? 8
-                                                                        : 4;
+    const bool load = info.op == Op::ldrex || info.op == Op::ldrexb ||
+                      info.op == Op::ldrexh || info.op == Op::ldrexd ||
+                      info.op == Op::ldaex || info.op == Op::ldaexb ||
+                      info.op == Op::ldaexh || info.op == Op::ldaexd;
+    transfer.load = load;
+    transfer.acquire = info.op == Op::ldaex || info.op == Op::ldaexb ||
+                       info.op == Op::ldaexh || info.op == Op::ldaexd;
+    transfer.release = info.op == Op::stlex || info.op == Op::stlexb ||
+                       info.op == Op::stlexh || info.op == Op::stlexd;
+    switch (info.op) {
+    case Op::ldrexb: case Op::strexb: case Op::ldaexb: case Op::stlexb:
+      transfer.bytes = 1;
+      break;
+    case Op::ldrexh: case Op::strexh: case Op::ldaexh: case Op::stlexh:
+      transfer.bytes = 2;
+      break;
+    case Op::ldrexd: case Op::strexd: case Op::ldaexd: case Op::stlexd:
+      transfer.bytes = 8;
+      break;
+    default:
+      transfer.bytes = 4;
+      break;
+    }
     transfer.t = static_cast<std::uint8_t>(o.t);
     transfer.t2 = static_cast<std::uint8_t>(o.t2);
     transfer.n = static_cast<std::uint8_t>(o.n);
     transfer.d = static_cast<std::uint8_t>(o.d);
     transfer.imm = static_cast<std::uint32_t>(o.imm32);
     return transfer;
+  }
   case Op::prefetch:
     transfer.kind = Transfer::Kind::prefetch;
     return transfer;

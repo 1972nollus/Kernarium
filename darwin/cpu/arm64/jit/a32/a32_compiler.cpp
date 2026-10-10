@@ -178,7 +178,7 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
    * store block, so it cannot run inside a publication an earlier
    * instruction or a linked predecessor began: such an instruction opens its
    * own block, which no predecessor chains into (as the A64 compiler does). */
-  if (op_info(inst.form).op >= Op::ldrex && op_info(inst.form).op <= Op::strexd) {
+  if (is_exclusive_op(op_info(inst.form).op)) {
     if (count_ != 0U) {
       exit_continue_at(key_of(d), d.it, count_);
       return Flow::split;

@@ -286,6 +286,13 @@ private:
   [[nodiscard]] Outcome single() {
     const auto where = addressing();
     const unsigned bytes = transfer_.bytes;
+    /* LDA and STL fault unless aligned to the size, and order the access. */
+    if (transfer_.ordered) {
+      if ((where.address & (bytes - 1U)) != 0U)
+        return alignment_fault(where.address, !transfer_.load);
+      if (!transfer_.load)
+        std::atomic_thread_fence(std::memory_order_release);
+    }
     if (transfer_.load) {
       std::uint64_t value;
       if (!load_value(where.address, bytes, value))
@@ -298,6 +305,8 @@ private:
                            : static_cast<std::uint32_t>(
                                  static_cast<std::int32_t>(
                                      static_cast<std::int16_t>(word)));
+      if (transfer_.ordered)
+        std::atomic_thread_fence(std::memory_order_acquire);
       if (transfer_.wback)
         write(transfer_.n, where.written_back);
       if (transfer_.t == 15U)
@@ -307,6 +316,8 @@ private:
     }
     if (!store_value(where.address, bytes, read(transfer_.t)))
       return memory_fault(true);
+    if (transfer_.ordered)
+      std::atomic_thread_fence(std::memory_order_seq_cst);
     if (transfer_.wback)
       write(transfer_.n, where.written_back);
     return retire();
@@ -432,7 +443,10 @@ private:
       std::uint64_t value = 0;
       std::uintptr_t key = 0;
       if (!sem::atomic_load_value(memory_, address, bytes,
-                                  std::memory_order_relaxed, value, key))
+                                  transfer_.acquire
+                                      ? std::memory_order_acquire
+                                      : std::memory_order_relaxed,
+                                  value, key))
         return memory_fault(false);
       write(transfer_.t, static_cast<std::uint32_t>(value));
       if (bytes == 8U)
@@ -471,8 +485,10 @@ private:
     if (success) {
       std::uintptr_t stored_key = 0;
       const auto result = sem::atomic_store_value(
-          memory_, address, bytes, value, std::memory_order_relaxed, &key,
-          stored_key);
+          memory_, address, bytes, value,
+          transfer_.release ? std::memory_order_release
+                            : std::memory_order_relaxed,
+          &key, stored_key);
       if (result == sem::AtomicStoreResult::fault)
         return memory_fault(true);
       if (result == sem::AtomicStoreResult::stored)

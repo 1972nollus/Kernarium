@@ -6,7 +6,7 @@
  * tests/unit/arm64/aarch32_corpus/README.md owns the pack and its format.
  *
  *   uml_arm64_jit_a32_corpus_tests PACK [--record NAME] [--case NAME]
- *                                       [--list-failures]
+ *                                       [--form PREFIX] [--list-failures]
  */
 #include "aarch32_corpus_pack.hpp"
 #include "arm64_jit_a32_test_support.hpp"
@@ -476,7 +476,7 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
         form = static_cast<dec::Form>(index);
     const auto op = ::uml::cpu::arm64::jit::a32::op_info(form).op;
     using ::uml::cpu::arm64::jit::a32::Op;
-    if (op >= Op::ldrex && op <= Op::strexd)
+    if (::uml::cpu::arm64::jit::a32::is_exclusive_op(op))
       continue;
     /* The cases that decide: those in which the instruction executes, or all
      * of them for a form whose cases are all conditional. */
@@ -516,6 +516,7 @@ int main(int argc, char **argv) {
   bool trace = false;
   bool all_failures = false;
   bool exit_report = false;
+  std::string only_form;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--record" && index + 1 < argc)
@@ -530,6 +531,8 @@ int main(int argc, char **argv) {
       all_failures = true;
     else if (argument == "--exit-report")
       exit_report = true;
+    else if (argument == "--form" && index + 1 < argc)
+      only_form = argv[++index];
     else
       path = argv[index];
   }
@@ -556,6 +559,8 @@ int main(int argc, char **argv) {
     for (const auto &test : record.cases) {
       if (!only_case.empty() && test.name != only_case)
         continue;
+      if (!only_form.empty() && !test.form.starts_with(only_form))
+        continue;
       if (!within_level(test, profile)) {
         ++totals.skipped;
         continue;
@@ -573,7 +578,7 @@ int main(int argc, char **argv) {
        * the oracle's never does. A guest retries; a lone corpus case cannot,
        * so a failing exclusive case runs once more and must then agree
        * completely. */
-      if (!problem.empty() && record.name.starts_with("exclusive")) {
+      if (!problem.empty() && record.name.find("exclusive") != std::string::npos) {
         problem = check(machine, test);
         if (problem.empty()) {
           ++totals.retried;
@@ -600,7 +605,8 @@ int main(int argc, char **argv) {
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
       std::printf("  %s: %zu\n", form.c_str(), count);
-  if (totals.failed == 0 && only_record.empty() && only_case.empty())
+  if (totals.failed == 0 && only_record.empty() && only_case.empty() &&
+      only_form.empty())
     require_lowered_forms_stay_inline(machine, pack, profile);
   return totals.failed == 0 ? 0 : 1;
 }

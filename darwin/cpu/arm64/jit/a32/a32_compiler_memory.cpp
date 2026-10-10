@@ -286,17 +286,28 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   const auto slow = cold_exit(ColdPath::Kind::slow);
   const auto fault = cold_exit(ColdPath::Kind::memory_fault);
   form_address(transfer);
+  /* A load-acquire and a store-release fault unless aligned to the size; the
+   * helper reports it. */
+  if (transfer.ordered)
+    emit_alignment_check(address_register, transfer.bytes, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
                  fault, transfer.bytes);
+  const unsigned size_field = transfer.bytes == 1U ? 0U
+                              : transfer.bytes == 2U ? 1U
+                                                     : 2U;
   if (store) {
     track_direct_store(address_register, transfer.bytes);
     const unsigned value =
         transfer.t == 15U ? (load_u32(fallback_n, pc_read()), fallback_n)
                           : use(transfer.t, fallback_n);
-    switch (transfer.bytes) {
-    case 1: emit(enc::strb(value, address_register, 0)); break;
-    case 2: emit(enc::strh(value, address_register, 0)); break;
-    default: emit(enc::str_w(value, address_register, 0)); break;
+    if (transfer.ordered) {
+      emit(enc::stlr(size_field, value, address_register));
+    } else {
+      switch (transfer.bytes) {
+      case 1: emit(enc::strb(value, address_register, 0)); break;
+      case 2: emit(enc::strh(value, address_register, 0)); break;
+      default: emit(enc::str_w(value, address_register, 0)); break;
+      }
     }
     clear_exclusive_monitor();
     if (transfer.wback)
@@ -310,18 +321,22 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
     dest = def(transfer.t, false, fallback_n);
     target = dest.native.host;
   }
-  switch (transfer.bytes) {
-  case 1:
-    emit(transfer.sign_extend ? enc::ldrsb(target, address_register, 0)
-                              : enc::ldrb(target, address_register, 0));
-    break;
-  case 2:
-    emit(transfer.sign_extend ? enc::ldrsh(target, address_register, 0)
-                              : enc::ldrh(target, address_register, 0));
-    break;
-  default:
-    emit(enc::ldr_w(target, address_register, 0));
-    break;
+  if (transfer.ordered) {
+    emit(enc::ldar(size_field, target, address_register));
+  } else {
+    switch (transfer.bytes) {
+    case 1:
+      emit(transfer.sign_extend ? enc::ldrsb(target, address_register, 0)
+                                : enc::ldrb(target, address_register, 0));
+      break;
+    case 2:
+      emit(transfer.sign_extend ? enc::ldrsh(target, address_register, 0)
+                                : enc::ldrh(target, address_register, 0));
+      break;
+    default:
+      emit(enc::ldr_w(target, address_register, 0));
+      break;
+    }
   }
   if (!writes_pc)
     done(dest);

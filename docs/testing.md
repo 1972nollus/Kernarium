@@ -811,7 +811,10 @@ carries T32).
 `arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
 idiom, the monitor rules, fault and alignment exits, two threads counting
 exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call. `arm64-jit-a32-control` runs IT blocks whole, a
+loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+STL with their byte and halfword forms, the always-checked alignment, the fused
+and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
+helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
 step at a time and from the middle, long blocks under a small budget, and code
 rewritten under translations. `arm64-jit-a32-encoder` compares the compiler's
 A64 encoders with LLVM MC.

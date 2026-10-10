@@ -30,7 +30,8 @@ enum class Op : std::uint8_t {
   // Memory.
   ldr, ldrb, ldrh, ldrsb, ldrsh, ldrd, ldm, str, strb, strh, strd, stm,
   ldrt, ldrbt, ldrht, ldrsbt, ldrsht, strt, strbt, strht, ldrex, ldrexb,
-  ldrexh, ldrexd, strex, strexb, strexh, strexd, tb, prefetch,
+  ldrexh, ldrexd, strex, strexb, strexh, strexd, ldaex, ldaexb, ldaexh, ldaexd,
+  stlex, stlexb, stlexh, stlexd, lda, ldab, ldah, stl, stlb, stlh, tb, prefetch,
   // Branches.
   b, bl, blx, bx, cbz, cbnz,
   // System.
@@ -60,6 +61,12 @@ struct OpInfo final {
 };
 
 [[nodiscard]] OpInfo op_info(aarch32::Form form) noexcept;
+
+/* The load-exclusive and store-exclusive operations, with the acquire and
+ * release forms. */
+[[nodiscard]] constexpr bool is_exclusive_op(Op op) noexcept {
+  return op >= Op::ldrex && op <= Op::stlexd;
+}
 
 /* Whether the instruction ends a block: it writes the PC, raises an event or
  * is not an instruction. */

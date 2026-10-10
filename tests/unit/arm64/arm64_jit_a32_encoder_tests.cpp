@@ -272,6 +272,14 @@ void encoders_match_llvm_mc() {
     check("stlxr w6, w3, [x4]", enc::stxr(2, 6, 3, 4, true), 0x8806fc83U);
     check("ldxr x3, [x4]", enc::ldxr(3, 3, 4), 0xc85f7c83U);
     check("stxr w6, x3, [x4]", enc::stxr(3, 6, 3, 4), 0xc8067c83U);
+    check("ldarb w3, [x4]", enc::ldar(0, 3, 4), 0x08dffc83U);
+    check("stlrb w3, [x4]", enc::stlr(0, 3, 4), 0x089ffc83U);
+    check("ldarh w3, [x4]", enc::ldar(1, 3, 4), 0x48dffc83U);
+    check("stlrh w3, [x4]", enc::stlr(1, 3, 4), 0x489ffc83U);
+    check("ldar w3, [x4]", enc::ldar(2, 3, 4), 0x88dffc83U);
+    check("stlr w3, [x4]", enc::stlr(2, 3, 4), 0x889ffc83U);
+    check("ldar x3, [x4]", enc::ldar(3, 3, 4), 0xc8dffc83U);
+    check("stlr x3, [x4]", enc::stlr(3, 3, 4), 0xc89ffc83U);
     check("nop", enc::nop(), 0xd503201fU);
     check("dmb ish", enc::dmb_ish(), 0xd5033bbfU);
     check("dmb ishld", enc::dmb_ishld(), 0xd50339bfU);

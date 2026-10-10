@@ -16,7 +16,7 @@ struct Transfer final {
   enum class Kind : std::uint8_t {
     none,
     /* LDR, LDRB, LDRH, LDRSB, LDRSH and the stores, with the unprivileged
-     * forms, which at EL0 are the same accesses. */
+     * forms, which at EL0 are the same accesses, and LDA and STL. */
     single,
     /* LDRD and STRD. */
     pair,
@@ -24,7 +24,7 @@ struct Transfer final {
     multiple,
     /* TBB and TBH. */
     table,
-    /* LDREX, STREX and their B, H and D forms. */
+    /* LDREX, STREX, LDAEX, STLEX and their B, H and D forms. */
     exclusive,
     /* PLD, PLDW and PLI, which never fault. */
     prefetch,
@@ -40,6 +40,12 @@ struct Transfer final {
   /* The address is the literal pool's: Align(PC, 4) plus or minus imm. */
   bool literal{};
   bool register_offset{};
+  /* LDA, LDAB, LDAH, STL, STLB, STLH: the address must be aligned to the
+   * size, and the access is a load-acquire or a store-release. */
+  bool ordered{};
+  /* A load-exclusive with acquire, a store-exclusive with release. */
+  bool acquire{};
+  bool release{};
   /* Offset or pre-indexed addressing: the address includes the offset. */
   bool index{true};
   bool add{true};

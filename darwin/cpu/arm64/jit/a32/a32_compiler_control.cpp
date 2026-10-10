@@ -86,7 +86,10 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::ldrsbt: case Op::ldrsht: case Op::strt: case Op::strbt:
   case Op::strht: case Op::ldrex: case Op::ldrexb: case Op::ldrexh:
   case Op::ldrexd: case Op::strex: case Op::strexb: case Op::strexh:
-  case Op::strexd: case Op::tb: case Op::prefetch:
+  case Op::strexd: case Op::ldaex: case Op::ldaexb: case Op::ldaexh:
+  case Op::ldaexd: case Op::stlex: case Op::stlexb: case Op::stlexh:
+  case Op::stlexd: case Op::lda: case Op::ldab: case Op::ldah: case Op::stl:
+  case Op::stlb: case Op::stlh: case Op::tb: case Op::prefetch:
     return emit_memory(info);
   case Op::mrs:
   case Op::msr:

@@ -564,6 +564,18 @@ namespace detail {
 		| (n << 5) | t;
 }
 
+/* Load-acquire and store-release (size as above). */
+[[nodiscard]] constexpr std::uint32_t ldar(unsigned size, unsigned t,
+	unsigned n) noexcept
+{
+	return 0x08df'fc00U | (size << 30) | (n << 5) | t;
+}
+[[nodiscard]] constexpr std::uint32_t stlr(unsigned size, unsigned t,
+	unsigned n) noexcept
+{
+	return 0x089f'fc00U | (size << 30) | (n << 5) | t;
+}
+
 [[nodiscard]] constexpr std::uint32_t nop() noexcept { return 0xd503'201fU; }
 [[nodiscard]] constexpr std::uint32_t dmb_ish() noexcept { return 0xd503'3bbfU; }
 [[nodiscard]] constexpr std::uint32_t dmb_ishld() noexcept { return 0xd503'39bfU; }

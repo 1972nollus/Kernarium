@@ -66,7 +66,7 @@ std::size_t A32Compiler::try_fuse_exclusive() {
     if (d.it != 0U || inst.status != Status::ok)
       return 0;
     const auto info = op_info(inst.form);
-    if (info.op >= Op::ldrex && info.op <= Op::strexd) {
+    if (is_exclusive_op(info.op)) {
       store = describe_transfer(inst);
       if (store.load || store.bytes != load.bytes || store.n != load.n ||
           store.imm != load.imm || store.t == 15U || store.d == 15U)
@@ -186,7 +186,7 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   const auto status = write_native_gpr(store.d, false, conditional, fallback_n);
   const auto loaded = write_native_gpr(load.t, false, false, fallback_n);
   // The interval: the host load, the instructions, the host store.
-  emit(enc::ldxr(size_field(bytes), loaded.host, host_address));
+  emit(enc::ldxr(size_field(bytes), loaded.host, host_address, load.acquire));
   commit_native_gpr(loaded, load.t, false);
   link_target_safe_ = false;
   count_ = 1;
@@ -201,7 +201,8 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   }
   mark_direct_memory_write();
   const auto source = read_native_gpr(store.t, false, fallback_m);
-  emit(enc::stxr(size_field(bytes), status.host, source.host, host_address));
+  emit(enc::stxr(size_field(bytes), status.host, source.host, host_address,
+                 store.release));
   commit_native_gpr(status, store.d, false);
   if (conditional)
     bind(resume);
