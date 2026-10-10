@@ -684,8 +684,7 @@ writes the report to the file as each executor retires and as the process ends
 JIT and the gadget engine write the same report: a header and one
 tab-separated line per row, most exits first, with the form, the row, its
 encoding, the translations, those that ended the block in the library and the
-exits. `tools/arm64-tests/sve-library-report.py` names and ranks the forms.
-The words a workload sends there are the ones worth lowering.
+exits. The words a workload sends there are the ones worth lowering.
 `arm64-jit-sve-forms` runs a child process through `_Exit` and reads the
 report it leaves.
 
