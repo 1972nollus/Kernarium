@@ -53,7 +53,8 @@ The `restricted` entries decode, and their fields select what an EL0
 program may touch. MRC, MCR and MRRC reach only TPIDRURO and TPIDRURW,
 CNTFRQ, CNTVCT (the virtual count) and the CP15 barrier operations, the last
 only while the guest's CP15BEN is set, which is its default. MRS and MSR
-reach the APSR only, and VMRS and VMSR reach FPSCR only. CPS is a NOP and
+reach the APSR only, and VMRS and VMSR reach FPSCR only; an MSR whose x field
+would write PSTATE.E is undefined. CPS is a NOP and
 BXJ behaves as BX. FPSCR's exception trap enables, Len and Stride read as
 zero and ignore writes.
 

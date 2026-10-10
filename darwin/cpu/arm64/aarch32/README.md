@@ -53,14 +53,19 @@ The decoder implements these choices on top of the XML:
   user-register forms of MRS, MSR, LDM and STM, and LDC and STC are undefined
   at EL0;
 - MRS and MSR reach the APSR only, and VMRS and VMSR reach FPSCR only
-  (including `VMRS APSR_nzcv, FPSCR`);
+  (including `VMRS APSR_nzcv, FPSCR`); an MSR whose x field (mask bit 1) is
+  set would write PSTATE.E, which the profile does not implement (SETEND is
+  undefined), so it is undefined, and its c field is ignored at EL0;
 - CPS is a NOP at EL0 and BXJ behaves as BX;
 - an A32 data-processing instruction with S set and Rd 15 (an exception
   return) is UNPREDICTABLE at EL0, hence undefined;
 - an encoding the XML marks should-be-zero or should-be-one that differs is
   UNPREDICTABLE, hence undefined;
 - the hint encodings of features the profile lacks (ESB, TSB, CLRBHB) are
-  NOPs, as are the reserved hint encodings.
+  NOPs, as are the reserved hint encodings whose should-be bits (SBO in an A32
+  hint's bits 15:12; in a T32 hint, SBO in the first halfword's low nibble
+  and SBZ in bit 13 and bits 11:8 of the second) hold; one that differs is
+  UNPREDICTABLE, hence undefined.
 
 ## The table
 
