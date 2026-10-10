@@ -872,7 +872,9 @@ serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
 immediate. The structure loads and stores, VRECPS and VRSQRTS (AArch32's
 unfused steps, not the fused A64 ones) and VLDM and VSTM that cross a page
-run through the semantic library. A saturating instruction leaves QC in the
+run through the semantic library, whose exit commits the live FPSR to
+CpuState before the call and reinstalls it after, as the A64 engine's
+software floating-point helpers do. A saturating instruction leaves QC in the
 cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
 `engine/a32_simd.py` document the groups and the operand words.
 The level the engine translates at is `a32_support`; a test or a bring-up
