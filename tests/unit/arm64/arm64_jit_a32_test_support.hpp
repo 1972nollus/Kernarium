@@ -80,6 +80,10 @@ public:
     }
     code_written(first, offset - first);
   }
+  void code_byte(std::size_t offset, std::byte value) {
+    code_.put(offset, std::span{&value, 1});
+    code_written(offset, 1);
+  }
   void data32(std::size_t offset, std::uint32_t value) {
     data_.put32(offset, value);
   }
