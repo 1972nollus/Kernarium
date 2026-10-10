@@ -12,9 +12,12 @@ add_library(uml_x86_64_gadgets OBJECT
     program.cpp
     x87_math.cpp)
 uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
+# Every image that links these objects places their gadget region
+# (engine/region.inc).
 target_link_libraries(uml_x86_64_gadgets
     PUBLIC uml_x86_64_target UML::BridgeAbi UML::ThirdPartyCephes128
-    PRIVATE UML::CpuContract)
+    PRIVATE UML::CpuContract
+    INTERFACE UML::GadgetRegionLayout)
 target_include_directories(uml_x86_64_gadgets PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_x86_64_gadgets PRIVATE

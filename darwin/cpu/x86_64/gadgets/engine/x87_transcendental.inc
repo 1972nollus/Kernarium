@@ -10,7 +10,7 @@ gadget x87_\name
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
-	bl NAME(uml_x86_64_x87_\helper)
+	helper_call uml_x86_64_x87_\helper
 	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
@@ -45,7 +45,7 @@ gadget x87_\name
 	add x2, sp, #16
 	.endif
 	add x3, sp, #32
-	bl NAME(uml_x86_64_x87_\helper)
+	helper_call uml_x86_64_x87_\helper
 	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
@@ -73,7 +73,7 @@ gadget x87_tangent
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
-	bl NAME(uml_x86_64_x87_tangent)
+	helper_call uml_x86_64_x87_tangent
 	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
@@ -108,7 +108,7 @@ gadget x87_extract
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
-	bl NAME(uml_x86_64_x87_extract)
+	helper_call uml_x86_64_x87_extract
 	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
@@ -130,7 +130,7 @@ gadget x87_sincos
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
-	bl NAME(uml_x86_64_x87_sincos)
+	helper_call uml_x86_64_x87_sincos
 	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
@@ -164,7 +164,7 @@ NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
 	mov x1, sp
 	add x2, sp, #16
 	add x3, sp, #32
-	bl NAME(uml_x86_64_x87_\name)
+	helper_call uml_x86_64_x87_\name
 	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10

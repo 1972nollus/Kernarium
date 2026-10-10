@@ -238,26 +238,29 @@ target_include_directories(uml_arm64_gadgets PRIVATE
 target_link_libraries(uml_arm64_gadgets PUBLIC
     UML::GadgetHistogramConfiguration)
 
-# Every image that carries uml_arm64_gadgets links this, including those that
-# compose its objects directly. It merges the gadget region's sections into
-# __TEXT,__text and orders them first, so the region keeps one image offset
-# and its own bytes whatever else the image holds (engine.S).
-add_library(uml_arm64_gadget_region_layout INTERFACE)
-add_library(UML::GadgetRegionLayout ALIAS uml_arm64_gadget_region_layout)
-uml_declare_architecture_target(uml_arm64_gadget_region_layout cpu gadget)
+# Every image that carries uml_arm64_gadgets or uml_x86_64_gadgets links this,
+# including those that compose their objects directly. It merges each engine's
+# gadget region sections into __TEXT,__text and orders them first, the arm64
+# region before the x86-64 one, so each region keeps its own bytes and its
+# place whatever else the image holds (arm64/gadgets/engine.S and
+# x86_64/gadgets/engine/region.inc).
+add_library(uml_gadget_region_layout INTERFACE)
+add_library(UML::GadgetRegionLayout ALIAS uml_gadget_region_layout)
+uml_declare_architecture_target(uml_gadget_region_layout cpu gadget)
 if(APPLE)
     set(_uml_gadget_region_order
-        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/gadget_region.order)
+        ${CMAKE_CURRENT_SOURCE_DIR}/gadget_region.order)
     set(_uml_gadget_region_options)
-    foreach(_uml_gadget_region_part IN ITEMS
-            bank forward vforward cold afp veneer sme sve)
+    foreach(_uml_gadget_region_section IN ITEMS
+            __a64_bank __a64_forward __a64_vforward __a64_cold __a64_afp
+            __a64_veneer __a64_sme __a64_sve __x86_bank __x86_cold)
         list(APPEND _uml_gadget_region_options
-            "LINKER:-rename_section,__TEXT,__a64_${_uml_gadget_region_part},__TEXT,__text")
+            "LINKER:-rename_section,__TEXT,${_uml_gadget_region_section},__TEXT,__text")
     endforeach()
-    target_link_options(uml_arm64_gadget_region_layout INTERFACE
+    target_link_options(uml_gadget_region_layout INTERFACE
         ${_uml_gadget_region_options}
         "LINKER:-order_file,${_uml_gadget_region_order}")
-    set_property(TARGET uml_arm64_gadget_region_layout APPEND PROPERTY
+    set_property(TARGET uml_gadget_region_layout APPEND PROPERTY
         INTERFACE_LINK_DEPENDS ${_uml_gadget_region_order})
 endif()
 

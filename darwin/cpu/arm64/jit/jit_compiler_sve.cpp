@@ -12,6 +12,7 @@
  * values; x8-x11 and x16 general.
  */
 #include "jit_compiler.hpp"
+#include "jit_semantic_sve.hpp"
 #include "jit_sve_encoders.hpp"
 #include "jit_sve_support.hpp"
 
@@ -186,15 +187,20 @@ JitCompiler::emit_sve_instruction(std::uint32_t instruction,
        (sme_mode() & svcr_za) == 0U))
     return Action::unsupported;
   const auto form = row->form;
-  if (jit::sve_word_reserved(form, instruction))
+  if (jit::sve_word_reserved(*row, instruction))
     return Action::unsupported;
   /* The hot set lowers inline for the all-active predicate; every other
    * row the profile implements, and a word the lowering declines, runs
    * through the semantic library: a terminal helper, as the SME slow paths
    * are. */
+  const auto row_index =
+      static_cast<std::size_t>(row - detail::sme_encodings.data());
   if (!jit::implements_sve_form(form)) {
-    if (emit_sve_inline(*row, instruction, pc))
+    if (emit_sve_inline(*row, instruction, pc)) {
+      jit::semantic::note_sve_translation(row_index, false);
       return Action::keep_going;
+    }
+    jit::semantic::note_sve_translation(row_index, true);
     if (row->memory != 0U &&
         detail::sme_encoding_memory_of(*row)->direction ==
             detail::SmeMemoryDirection::store)
@@ -204,6 +210,7 @@ JitCompiler::emit_sve_instruction(std::uint32_t instruction,
         instruction, pc, count_ + 1U);
     return Action::terminate;
   }
+  jit::semantic::note_sve_translation(row_index, false);
   begin_sve_word();
   if (while_form(form))
     return emit_sve_while(form, instruction, pc) ? Action::terminate

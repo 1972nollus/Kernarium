@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
 #include <cstdint>
@@ -134,25 +135,18 @@ inline constexpr std::uint16_t whilerw = form_of(0x2520'3010U);
   return false;
 }
 
-/* Whether `word`, of table form `form`, is UNDEFINED although the table
- * allocates its row: a reserved bitmask immediate (AND, ORR, EOR and DUPM
- * share the decoder), a shifted byte immediate of DUP or CPY, or a
- * byte-sized FDUP, FCPY or vector INC and DEC. Both the translation and
- * the executor's trapped-exception mode ask. */
-[[nodiscard]] inline bool sve_word_reserved(std::uint16_t form,
+/* Whether `word`, of table row `row`, is UNDEFINED although the table
+ * allocates its row: a reserved bitmask immediate (AND, ORR, EOR and DUPM;
+ * the library's own test, which the gadget engine shares), a shifted byte
+ * immediate of DUP or CPY, or a byte-sized FDUP, FCPY or vector INC and
+ * DEC. Both the translation and the executor's trapped-exception mode ask. */
+[[nodiscard]] inline bool sve_word_reserved(const detail::SmeEncoding &row,
                                             std::uint32_t word) noexcept {
   using namespace sve_forms;
   const unsigned size = (word >> 22) & 3U;
-  /* TODO(SVE V5): call detail::sve_reserved_encoding, the shared test the
-   * gadget engine's lane is adding to the library, once it is on main;
-   * this is the temporary local form of its bitmask part (the immediate
-   * decoder is the shared primitive). */
-  if (form == dupm || form == orr_immediate || form == eor_immediate ||
-      form == and_immediate)
-    return !detail::decode_logical_immediate(true, (word >> 17) & 1U,
-                                             (word >> 11) & 0x3fU,
-                                             (word >> 5) & 0x3fU)
-                .has_value();
+  const auto form = row.form;
+  if (detail::sve_reserved_encoding(word, row))
+    return true;
   if (form == dup_immediate || form == cpy_merging || form == cpy_zeroing)
     return size == 0U && ((word >> 13) & 1U) != 0U;
   if (form == fdup || form == fcpy || form == inc_vector ||

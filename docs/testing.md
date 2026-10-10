@@ -661,7 +661,32 @@ with `DARWIN_UML_GUEST_SVE=1`.
 `arm64-jit-sve-control` checks the JIT's control core against the
 pseudocode on injected SVE hosts under either policy, and
 `arm64-jit-sve-forms` checks every row of the profile through the JIT
-against the semantic library on random states.
+against the semantic library on random states, requires a lowered word to stay
+out of the library from a clean state, runs FSCALE with each kind of element
+(zeros, infinities, NaNs, denormals, scales that overflow, underflow or wrap)
+and requires exactly those to take the library, runs the conversions between
+precisions and UQSHL at the values they turn on, and runs gathers and scatters with a
+lane out of reach, scatters while another vCPU's reservation tracks stores,
+the saturating counts at their limits, table lookups with indices that land
+in the tables, and the governing-predicate shapes (none, one, all but one, runs,
+every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
+also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
+(the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
+injected profile with SME and again with SME2.
+`arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
+as well) and every evidence witness at SM = 0 in both ZA states and every
+link shape, and requires that no translation holds an SVE or SME word.
+
+`DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
+words that leave translated code for the semantic library, per table row, and
+writes the report to the file as each executor retires and as the process ends
+(the emulator leaves through `_Exit`; the last write is the complete one). The
+JIT and the gadget engine write the same report: a header and one
+tab-separated line per row, most exits first, with the form, the row, its
+encoding, the translations, those that ended the block in the library and the
+exits. The words a workload sends there are the ones worth lowering.
+`arm64-jit-sve-forms` runs a child process through `_Exit` and reads the
+report it leaves.
 
 ## x86 instruction conformance
 

@@ -13,19 +13,75 @@ _executed .req x29
 	.set Lx86_guest_memory_gadget, 0
 	.set Lx86_simd_status_gadget, 0
 
-/* Name the start of the cold section, whose own labels are temporary, so a
- * host sample of a cold path names this section rather than whatever precedes
- * it in the image. It emits no bytes. */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-NAME(uml_x86_64_gadget_cold_section_begin):
-	.popsection
-
 .macro gadget name
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
 NAME(uml_x86_64_gadget_\name):
 	.set Lx86_guest_memory_gadget, 0
 	.set Lx86_simd_status_gadget, 0
+.endm
+
+/* A call from the engine to a helper outside it branches to the helper's
+ * veneer, one branch in the island gadget_veneers emits, so no other word of
+ * the engine encodes a distance to code that moves with the rest of the
+ * image. A helper the island does not list is an undefined temporary label. */
+.macro helper_call symbol
+	bl Lveneer_\symbol
+.endm
+
+.macro veneer symbol
+Lveneer_\symbol:
+	b NAME(\symbol)
+.endm
+
+/* The island, in a fixed order: a new helper is appended. */
+.macro gadget_veneers
+	veneer uml_x86_64_gadget_tlb_miss
+	veneer uml_x86_64_gadget_cross_page_load
+	veneer uml_x86_64_gadget_cross_page_store
+	veneer uml_x86_64_gadget_cross_page_vector_load
+	veneer uml_x86_64_gadget_cross_page_vector_store
+	veneer uml_x86_64_gadget_bulk_load
+	veneer uml_x86_64_gadget_bulk_store
+	veneer uml_x86_64_gadget_publish_code_write
+	veneer uml_x86_64_gadget_invalidate_code
+	veneer uml_x86_64_gadget_code_link_safe
+	veneer uml_x86_64_gadget_split_lock_enter
+	veneer uml_x86_64_gadget_split_lock_leave
+	veneer uml_x86_64_gadget_segment_limit
+	veneer uml_x86_64_gadget_random_value
+	veneer uml_x86_64_x87_add
+	veneer uml_x86_64_x87_subtract
+	veneer uml_x86_64_x87_multiply
+	veneer uml_x86_64_x87_divide
+	veneer uml_x86_64_x87_compare
+	veneer uml_x86_64_x87_sqrt
+	veneer uml_x86_64_x87_round
+	veneer uml_x86_64_x87_scale
+	veneer uml_x86_64_x87_extract
+	veneer uml_x86_64_x87_fprem
+	veneer uml_x86_64_x87_fprem1
+	veneer uml_x86_64_x87_from_i32
+	veneer uml_x86_64_x87_from_i64
+	veneer uml_x86_64_x87_from_f32
+	veneer uml_x86_64_x87_from_f64
+	veneer uml_x86_64_x87_from_bcd
+	veneer uml_x86_64_x87_to_i16
+	veneer uml_x86_64_x87_to_i32
+	veneer uml_x86_64_x87_to_i64
+	veneer uml_x86_64_x87_to_f32
+	veneer uml_x86_64_x87_to_f64
+	veneer uml_x86_64_x87_to_bcd
+	veneer uml_x86_64_x87_image_tags
+	veneer uml_x86_64_x87_sine
+	veneer uml_x86_64_x87_cosine
+	veneer uml_x86_64_x87_sincos
+	veneer uml_x86_64_x87_tangent
+	veneer uml_x86_64_x87_atan
+	veneer uml_x86_64_x87_f2xm1
+	veneer uml_x86_64_x87_fyl2x
+	veneer uml_x86_64_x87_fyl2xp1
+	veneer uml_x86_64_gadget_run_segment_instruction
 .endm
 
 /* Publish the guest's rounding mode as the host's.
@@ -892,7 +948,7 @@ Lx86_lazy_ready\@:
 	 * instructions in the entry and its whole body in the cold section, so a
 	 * bank this size keeps only the plain form in the hot stream.
 	 */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
@@ -1004,7 +1060,7 @@ Lx86_segment_ready\@:
 	mov x1, x7
 	mov w2, #\access
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_tlb_miss)
+	helper_call uml_x86_64_gadget_tlb_miss
 	cbz x0, Lx86_memory_fault
 	mov x7, x0
 	b Lx86_tlb_done\@
@@ -1048,7 +1104,7 @@ Lx86_tlb_done\@:
 	 * program's publications, which is exactly when `write_code` says nothing
 	 * is owed.
 	 */
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_tlb_write_code_owed\@:
 	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 	eor x14, x9, x14
@@ -1083,7 +1139,7 @@ Lx86_tlb_write_code_kept\@:
 	mov x1, x7
 	mov w2, #\access
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_tlb_miss)
+	helper_call uml_x86_64_gadget_tlb_miss
 	cbz x0, \fault
 	mov x7, x0
 	b Lx86_plain_tlb_done\@
@@ -1099,7 +1155,7 @@ Lx86_plain_tlb_done\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 .endm
 
@@ -1108,7 +1164,7 @@ Lx86_plain_tlb_done\@:
 	mov x1, x25
 	mov x2, \value
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 .endm
 
@@ -1162,13 +1218,13 @@ Lx86_read_loaded\@:
  */
 .macro split_lock_enter
 	mov x0, _context
-	bl NAME(uml_x86_64_gadget_split_lock_enter)
+	helper_call uml_x86_64_gadget_split_lock_enter
 	mov x7, x25
 .endm
 
 .macro split_lock_leave
 	mov x0, _context
-	bl NAME(uml_x86_64_gadget_split_lock_leave)
+	helper_call uml_x86_64_gadget_split_lock_leave
 .endm
 
 /* The head of a locked gadget's fallback: x7 still holds the guest address,
@@ -1213,7 +1269,7 @@ Lx86_read_loaded\@:
 	mov x0, _context
 	mov x1, \address
 	mov w2, #\size
-	bl NAME(uml_x86_64_gadget_publish_code_write)
+	helper_call uml_x86_64_gadget_publish_code_write
 Lx86_code_published\@:
 .endm
 
@@ -1231,7 +1287,7 @@ Lx86_store_check_overlap\@:
 	cbnz w8, Lx86_store_code_exit\@
 	mov x0, _context
 	mov x1, x25
-	bl NAME(uml_x86_64_gadget_invalidate_code)
+	helper_call uml_x86_64_gadget_invalidate_code
 Lx86_store_code_exit\@:
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
@@ -1262,7 +1318,7 @@ Lx86_store_done\@:
 	ldrb w9, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 	cbz w9, Lx86_link_code_ready\@
 	mov x0, _context
-	bl NAME(uml_x86_64_gadget_code_link_safe)
+	helper_call uml_x86_64_gadget_code_link_safe
 	cbz w0, Lx86_link_code_exit\@
 	strb wzr, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 	/* Those publications are settled, so the page they covered is no longer
@@ -1331,7 +1387,6 @@ Lx86_indirect_follow\@:
 	follow_block_link x8
 .endm
 
-.text
 .p2align 4
 .globl NAME(uml_x86_64_gadget_enter)
 NAME(uml_x86_64_gadget_enter):
