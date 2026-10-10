@@ -273,12 +273,16 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
    * constraint, which must agree with emit_sve_floating's acceptance.
    */
   if (host.floating_point && host.advanced_simd && implements_sve(host)) {
+    /* FMLA and FMLS (bits 15-11 clear) and FMUL (bits 15-10 001000). */
     const auto sve_indexed = instruction & 0xffe0'f800U;
-    if (sve_indexed == 0x64a0'0000U)
+    const auto sve_multiply = instruction & 0xffe0'fc00U;
+    if (sve_indexed == 0x64a0'0000U || sve_multiply == 0x64a0'2000U)
       return (instruction >> 16U) & 7U;
-    if (sve_indexed == 0x64e0'0000U)
+    if (sve_indexed == 0x64e0'0000U || sve_multiply == 0x64e0'2000U)
       return (instruction >> 16U) & 15U;
-    if ((instruction & 0xffa0'f800U) == 0x6420'0000U && host.fp16)
+    if (((instruction & 0xffa0'f800U) == 0x6420'0000U ||
+         (instruction & 0xffa0'fc00U) == 0x6420'2000U) &&
+        host.fp16)
       return (instruction >> 16U) & 7U;
   }
 

@@ -15,9 +15,18 @@
 
 #include "cpu/arm64/fp_environment.hpp"
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <span>
+#include <utility>
+#include <vector>
+
+#include <unistd.h>
 
 namespace uml::cpu::arm64 {
 
@@ -51,9 +60,113 @@ private:
 
 namespace jit::semantic {
 
+namespace {
+
+/* The words run through the library per table row, and the last of them,
+ * while counting. */
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+    library_exits{};
+std::array<std::atomic<std::uint32_t>, detail::sme_encodings.size()>
+    library_exit_words{};
+std::atomic<bool> counting{false};
+
+/*
+ * DARWIN_UML_SVE_LIBRARY_EXITS names a file that receives, as the process
+ * ends, one line per table row that took the library (the row's SVE-nnnn
+ * form, its index, the run count and the last word), the most frequent
+ * first, after a header with the process and the total. The lines are
+ * appended, so every process of a run reports into the same file. Setting
+ * it counts the whole run; the evidence picks the words worth lowering.
+ */
+class LibraryExitReport final {
+public:
+  LibraryExitReport() noexcept {
+    const char *name = std::getenv("DARWIN_UML_SVE_LIBRARY_EXITS");
+    if (name != nullptr && *name != '\0') {
+      path_ = name;
+      counting.store(true, std::memory_order_relaxed);
+    }
+  }
+  ~LibraryExitReport() {
+    if (path_ == nullptr)
+      return;
+    std::vector<std::pair<std::uint64_t, std::size_t>> rows;
+    std::uint64_t total = 0;
+    for (std::size_t row = 0; row < library_exits.size(); ++row) {
+      const auto count = library_exits[row].load(std::memory_order_relaxed);
+      if (count != 0U)
+        rows.emplace_back(count, row);
+      total += count;
+    }
+    std::sort(rows.begin(), rows.end(), [](const auto &left, const auto &right) {
+      return left.first != right.first ? left.first > right.first
+                                       : left.second < right.second;
+    });
+    std::FILE *out = std::fopen(path_, "ae");
+    if (out == nullptr)
+      return;
+    std::fprintf(out, "# pid %ld total %llu rows %zu\n",
+                 static_cast<long>(::getpid()),
+                 static_cast<unsigned long long>(total), rows.size());
+    for (const auto &[count, row] : rows)
+      std::fprintf(out, "SVE-%04u\t%zu\t%llu\t%08x\n",
+                   detail::sme_encodings[row].form & 0x7fffU, row,
+                   static_cast<unsigned long long>(count),
+                   library_exit_words[row].load(std::memory_order_relaxed));
+    std::fclose(out);
+  }
+  LibraryExitReport(const LibraryExitReport &) = delete;
+  LibraryExitReport &operator=(const LibraryExitReport &) = delete;
+
+private:
+  const char *path_{};
+};
+
+const LibraryExitReport library_exit_report;
+
+} // namespace
+
+void count_sve_library_exits(bool enable) noexcept {
+  counting.store(enable, std::memory_order_relaxed);
+}
+
+std::uint64_t sve_library_exits(std::size_t row) noexcept {
+  return row < library_exits.size()
+             ? library_exits[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+std::uint32_t sve_library_exit_word(std::size_t row) noexcept {
+  return row < library_exit_words.size()
+             ? library_exit_words[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+std::uint64_t sve_library_exit_total() noexcept {
+  std::uint64_t total = 0;
+  for (const auto &count : library_exits)
+    total += count.load(std::memory_order_relaxed);
+  return total;
+}
+
+void reset_sve_library_exits() noexcept {
+  for (auto &count : library_exits)
+    count.store(0, std::memory_order_relaxed);
+  for (auto &word : library_exit_words)
+    word.store(0, std::memory_order_relaxed);
+}
+
 sve_detail::SveResult execute_sve_word(CpuState &cpu, Tlb &tlb,
                                    std::uint32_t word,
                                    const sve_detail::SmeEncoding &row) noexcept {
+  if (counting.load(std::memory_order_relaxed)) {
+    const auto index =
+        static_cast<std::size_t>(&row - detail::sme_encodings.data());
+    if (index < library_exits.size()) {
+      library_exits[index].fetch_add(1, std::memory_order_relaxed);
+      library_exit_words[index].store(word, std::memory_order_relaxed);
+    }
+  }
   JitSveMemory memory{tlb};
   const auto result = sve_detail::execute_sve(cpu, word, row, memory);
   if (result.event == sve_detail::SveEvent::memory_fault) {
@@ -74,7 +187,7 @@ std::optional<SveWordRun> run_sve_word(
        (cpu.svcr & svcr_za) == 0U) ||
       !sve_detail::sve_semantics_covers(*row))
     return std::nullopt;
-  if (jit::sve_word_reserved(row->form, word))
+  if (jit::sve_word_reserved(*row, word))
     return SveWordRun{Event::illegal_instruction, 0, 0};
   restore_native_fp_environment(cpu);
   const auto result = execute_sve_word(cpu, tlb, word, *row);
