@@ -114,7 +114,7 @@ artifact.
 The normal arm64-userspace profiles are:
 
 - 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
-- 4 KiB pages from `config/page-4k.fragment` (compatibility).
+- 4 KiB pages from `kernel/common/config/page-4k.fragment` (compatibility).
 
 The separate x86_64-userspace slice is 4 KiB only. Its
 `slices/x86_64/config/userspace.fragment` follows the shared policy, this
