@@ -68,10 +68,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index ffc12d2116c5df9b8ea53744a524a9fe9ca42fbe..80d192ff857006c4c8bd28c1970b0244fa9a5125 100644
+index 67fe81d06be4c8069a707adb5a846c8f833f8515..30111d4827d58517e1bbd440ecbb86ff0af9737a 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -31,12 +31,20 @@ config UML_ARM64_SME
+@@ -30,12 +30,20 @@ config UML_ARM64_SME
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -95,7 +95,7 @@ index ffc12d2116c5df9b8ea53744a524a9fe9ca42fbe..80d192ff857006c4c8bd28c1970b0244
  
  # Every arm64 task may run AArch32 code (armhf and Android's armeabi-v7a) as
  # arm64 Linux's COMPAT does, once the host's engine implements it.  Until
-@@ -54,7 +62,7 @@ config UML_ARM64_AARCH32
+@@ -53,7 +61,7 @@ config UML_ARM64_AARCH32
  	select OLD_SIGSUSPEND3
  
  config COMPAT

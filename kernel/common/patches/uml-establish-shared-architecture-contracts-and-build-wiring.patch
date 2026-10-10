@@ -19,7 +19,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/asm/mmu.h               |  20 ++++
  arch/um/include/asm/pgtable-3level.h    |  75 ++++++++++++++
  arch/um/include/asm/pgtable-4level.h    |  16 +--
- arch/um/include/asm/pgtable.h           | 128 ++++++++++++++++++++++--
+ arch/um/include/asm/pgtable.h           | 131 ++++++++++++++++++++++--
  arch/um/include/asm/processor-generic.h |  10 ++
  arch/um/include/asm/smp.h               |  21 +++-
  arch/um/include/asm/syscall-generic.h   |   6 +-
@@ -27,7 +27,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/asm/tlbflush.h          |  15 +++
  arch/um/include/asm/topology.h          |  21 ++++
  arch/um/include/asm/xor.h               |   9 ++
- arch/um/include/linux/smp-internal.h    |  17 ++++
+ arch/um/include/linux/smp-internal.h    |  17 +++
  arch/um/include/linux/time-internal.h   |   3 +
  arch/um/include/shared/darwin_net.h     |  10 ++
  arch/um/include/shared/kern_util.h      |   1 +
@@ -37,7 +37,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/skas/skas.h      |   6 ++
  arch/um/include/shared/smp.h            |  21 ++++
  arch/um/kernel/dyn.lds.S                |  13 +++
- 32 files changed, 701 insertions(+), 36 deletions(-)
+ 32 files changed, 704 insertions(+), 36 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/mm_hooks.h
  create mode 100644 arch/um/include/asm/pgtable-3level.h
@@ -626,7 +626,7 @@ index 7a271b7b83d2bdb6fa05231fabd3ef379671501e..17649aefd6922012de5f30349361bf2d
  #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
  
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 24fdea6f88c37f4672876f76e9d5067610a87c2f..96a91a038928cc7cd6a253f42d1e51bbe4543a80 100644
+index 24fdea6f88c37f4672876f76e9d5067610a87c2f..b5f6a8bfcffbc1218514d4e584b8a6e022c78549 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -13,6 +13,8 @@
@@ -790,17 +790,20 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..96a91a038928cc7cd6a253f42d1e51bb
  	}
  
  	um_tlb_mark_sync(mm, addr, addr + length);
-@@ -286,11 +373,20 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
+@@ -286,11 +373,23 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
   */
  #define pmd_page_vaddr(pmd) ((unsigned long) __va(pmd_val(pmd) & PAGE_MASK))
  
 -struct mm_struct;
 -extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
 +#ifdef UML_HOST_DARWIN
-+/* Darwin implements each 4 KiB Linux PTE with a private quarter of a 16 KiB
-+ * host mapping.  A writable shadow can therefore be newer than the physical
-+ * backing page which Linux migration is about to copy.  Flush it at the
-+ * generic migration/swap hook before the backing page moves.
++/* The host maps a user page from its backing page, so migration and swap
++ * need only its mapping removed, at the generic hook, before the page moves.
++ * A kernel alias is different under 4 KiB pages: init_mm shares memory with
++ * the other aliases of its frames only where its 16 KiB host slot maps one
++ * aligned group of four consecutive frames.  Any other slot is a private
++ * copy, which flush_kernel_vmap_range() and invalidate_kernel_vmap_range()
++ * keep in step.
 + */
 +#define __HAVE_ARCH_UNMAP_ONE
 +int arch_unmap_one(struct mm_struct *mm, struct vm_area_struct *vma,
@@ -813,7 +816,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..96a91a038928cc7cd6a253f42d1e51bb
  
  /*
   * Encode/decode swap entries and swap PTEs. Swap PTEs are all PTEs that
-@@ -303,6 +399,7 @@ extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
+@@ -303,6 +402,7 @@ extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
   *   <--------------- offset ----------------> E < type -> 0 0 0 1 0
   *
   *   E is the exclusive marker that is not stored in swap entries.
@@ -821,7 +824,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..96a91a038928cc7cd6a253f42d1e51bb
   *   _PAGE_NEEDSYNC (bit 1) is always set to 1 in set_pte().
   */
  #define __swp_type(x)			(((x).val >> 5) & 0x1f)
-@@ -331,4 +428,23 @@ static inline pte_t pte_swp_clear_exclusive(pte_t pte)
+@@ -331,4 +431,23 @@ static inline pte_t pte_swp_clear_exclusive(pte_t pte)
  	return pte;
  }
  
