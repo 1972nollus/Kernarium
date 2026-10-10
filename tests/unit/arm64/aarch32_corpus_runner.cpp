@@ -60,9 +60,11 @@ struct Decoded final {
 	unsigned half; /* halfword index of its first halfword */
 };
 
-std::vector<Decoded> decode_program(const std::string &context, const Case &test, const Profile &profile)
+std::vector<Decoded> decode_program(const std::string &context, const Case &test, const Profile &profile,
+	bool &truncated)
 {
 	std::vector<Decoded> result;
+	truncated = false;
 	const bool thumb = test.flags & kFlagThumb;
 	ItState it;
 	for (unsigned half = 0; half < test.halves.size();) {
@@ -81,8 +83,10 @@ std::vector<Decoded> decode_program(const std::string &context, const Case &test
 		const std::uint16_t first = test.halves[half];
 		const unsigned length = thumb_length(first);
 		if (half + length / 2 > test.halves.size()) {
-			/* The words of A32 code a program branches into end this way. */
+			/* The words of A32 code a program branches into end this way, and so does a
+			 * Thumb-2 instruction cut off by the end of the code region. */
 			require_in(context, !(test.flags & kFlagStraight), "a Thumb program ends inside an instruction");
+			truncated = true;
 			break;
 		}
 		const std::uint32_t word =
@@ -126,10 +130,27 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 		std::fprintf(stderr, "%s: %s\n", context.c_str(), what);
 		std::abort();
 	};
-	const auto program = decode_program(context, test, profile);
+	bool truncated = false;
+	const auto program = decode_program(context, test, profile, truncated);
 	const auto named = forms_by_name().find(test.form);
 	if (named == forms_by_name().end())
 		fail("names a form the decoder does not have");
+	if (truncated && test.target == program.size() && (test.flags & kFlagThumb)) {
+		/* The first halfword of a 32-bit instruction is the last one mapped: the fetch
+		 * of the second faults, at the first byte past the code region, before the
+		 * instruction runs. */
+		if (test.origin + 2U * test.halves.size() != kCodeSize || test.event != kSigSegv ||
+			test.fault_address != kCodeBase + kCodeSize || test.retired != program.size())
+			fail("a cut-off fetch faults at the end of the code region");
+		if (static_cast<int>(kForms[static_cast<std::size_t>(named->second)].level) > static_cast<int>(level)) {
+			++totals.skipped;
+			return;
+		}
+		++totals.events;
+		++totals.cases;
+		++totals.per_oracle[record.oracle];
+		return;
+	}
 	if (test.target >= program.size())
 		fail("the instruction under test is not in the program");
 	const Instruction &target = program[test.target].instruction;
@@ -176,7 +197,7 @@ void check_case(const Record &record, const Case &test, const Profile &profile, 
 				/* UDF decodes and its execution is the undefined instruction. */
 				if (faulting.legal() && !std::string_view(faulting.info().name).starts_with("UDF"))
 					fail("SIGILL at an instruction the decoder accepts");
-				if (test.fault_address != kCodeBase + 2U * test.fault_instruction)
+				if (test.fault_address != kCodeBase + test.origin + 2U * test.fault_instruction)
 					fail("SIGILL reports the instruction's address");
 			} else if (test.event == kSigTrap) {
 				if (!is_linux_breakpoint(faulting) &&

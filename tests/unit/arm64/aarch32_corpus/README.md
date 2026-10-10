@@ -19,8 +19,9 @@ and compares what the pack records; the inventory's `engine_status` moves from
 
 ## A case
 
-A program is A32 words or Thumb halfwords placed at `0x4f000000`, entered in
-the instruction set the case names. The memory map is the oracle's:
+A program is A32 words or Thumb halfwords placed at `0x4f000000` plus the
+case's origin (0 unless it tests instruction fetch near a line), entered in the
+instruction set the case names. The memory map is the oracle's:
 
 | Address | Size | Contents |
 | --- | --- | --- |
@@ -62,6 +63,7 @@ Each `source/<suite>-<oracle>.jsonl` starts with a header (`record`,
 | `n`, `f` | case name and the inventory encoding of the instruction under test |
 | `i`, `p` | `A` or `T`, and the program in hexadecimal (words, or halfwords) |
 | `t` | ordinal of the instruction under test |
+| `o` | byte offset of the program from `0x4f000000` (default 0) |
 | `s`, `si` | recipe and changes to it |
 | `d`, `dp` | data fill (default `hash32`) and data patches `[offset, bytes]` |
 | `x` | registers that differ from the start when the program ends or faults |
@@ -105,6 +107,18 @@ no floating point or SIMD):
 - `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
   encodings raise SIGILL; SVC raises the system-call event.
 
+On a boundary (any level):
+
+- `fetch`: every Thumb-2 form once with its two halfwords on either side of
+  the 4 KiB line at `0x4f001000` (origin `0xffe`); a 32-bit instruction whose
+  second halfword is past the end of the 16 KiB code region (SIGSEGV at
+  `0x4f004000`, pc at the instruction, none retired); and programs that run
+  to the end of the region and fall off it (SIGSEGV, pc and fault address
+  `0x4f004000`);
+- `straddle`: STM, PUSH, VSTM and FSTMX whose block crosses from the data
+  region into the read-only region. The words ahead of the faulting one are
+  stored, and the base register is as before.
+
 The `simd` level (VFPv4-D32 and Advanced SIMD):
 
 - `simd`: every register form, each word started in D registers of
@@ -135,7 +149,8 @@ Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
 implementation may or may not hold). The producer refuses to record them as
 `qemu` and nothing derives them from rules, so they are unrecorded until a
 hardware oracle exists, and so is the hardware cross-check of the `qemu`
-records (`compare`, below).
+records (`compare`, below), in particular of the fault addresses of the
+`fetch` and `straddle` suites.
 
 ## What the oracle's answers rest on
 
