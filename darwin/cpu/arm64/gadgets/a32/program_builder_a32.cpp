@@ -1212,25 +1212,39 @@ BuildOutput Translator::run()
 		}
 		next_key_ = key_ + 4U * length;
 		const FormPlan plan = kFormPlans[static_cast<std::size_t>(in.form)];
-		/* An instruction the profile leaves out, and a coprocessor access
-		 * it does not accept, are undefined only when their condition
-		 * passes (the pseudocode tests ConditionPassed first); an
-		 * unallocated or UNPREDICTABLE encoding is undefined whatever the
-		 * condition. The decoder reports a coprocessor word it rejects as
-		 * the generic undefined form, so its condition is the word's. */
+		/* A coprocessor access the profile does not accept, and a
+		 * coprocessor instruction of a level above the engine's, are
+		 * undefined only when their condition passes (the pseudocode
+		 * tests ConditionPassed first). Every other undefined word is
+		 * undefined whatever the condition: the profile leaves it out at
+		 * decode time, it is unallocated, or it is UNPREDICTABLE, and
+		 * so is a coprocessor word the full profile finds UNPREDICTABLE
+		 * (an encoding that is only valid under AL). The decoder
+		 * reports an undefined word's condition as 14, so a conditional
+		 * one takes the word's own field. */
 		if (in.status == Status::undefined) {
 			unsigned cond = 14;
+			const auto full = Profile::at(Level::complete);
 			if (thumb_) {
 				if (in.in_it && (in.reason == Reason::profile ||
-						 in.reason == Reason::feature))
-					cond = in.cond;
+						 in.reason == Reason::feature)) {
+					const auto whole = decode_thumb(raw, it_, full);
+					if (whole.status != Status::undefined ||
+					    whole.reason != Reason::unpredictable)
+						cond = in.cond;
+				}
 			} else {
 				const bool coprocessor = (raw >> 25 & 7U) == 6U ||
 							 (raw >> 24 & 15U) == 14U;
-				if (in.reason == Reason::profile ||
-				    in.reason == Reason::feature ||
-				    (in.reason == Reason::unallocated && coprocessor))
-					cond = raw >> 28;
+				if (coprocessor && (raw >> 28) < 14U &&
+				    (in.reason == Reason::profile ||
+				     in.reason == Reason::feature ||
+				     in.reason == Reason::unallocated)) {
+					const auto whole = decode_a32(raw, full);
+					if (whole.status != Status::undefined ||
+					    whole.reason != Reason::unpredictable)
+						cond = raw >> 28;
+				}
 			}
 			if (cond < 14) {
 				begin_instruction(cond);
