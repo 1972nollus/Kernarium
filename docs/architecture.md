@@ -962,6 +962,18 @@ semantic library link the same one, and it implements the Armv8-A AArch32 EL0
 profile: whatever the profile lacks is undefined, never guessed. Its
 [README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
 
+The AArch32 semantic library
+([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))
+is shared C++ semantics rather than another engine, in the SVE library's
+mould: it includes no engine header, works on `CpuState` alone, reaches guest
+memory only through the caller's `A32Memory`, and executes any covered word
+one instruction at a time with the architecture's fault ordering.
+`a32_semantics_covers()` holds for every form up to its level, and a word
+outside it is a fatal internal error. The gadget engine and the JIT route
+their slow paths and long tails to it, and the corpus's model lane runs the
+instruction corpus through it. Until an engine calls it, no product binary
+links it.
+
 ## Kernel and Android ownership
 
 `kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned

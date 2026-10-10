@@ -854,6 +854,10 @@ def generate_masked(root: pathlib.Path, index: dict) -> bytes:
     return bytes(data)
 
 
+def generate_aarch32(root: pathlib.Path, index: dict) -> bytes:
+    return load("aarch32", pathlib.Path(__file__).with_name("aarch32.py")).generate(root, index)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=pathlib.Path)
@@ -890,7 +894,8 @@ def main() -> int:
     provenance = args.source.parent / "provenance.json"
     metadata = json.loads(provenance.read_text())
     data = {"arm64": generate_arm64, "x86": generate_x86,
-            "masked-flags": generate_masked}[index["kind"]](args.source, index)
+            "masked-flags": generate_masked,
+            "aarch32": generate_aarch32}[index["kind"]](args.source, index)
     if hashlib.sha256(data).hexdigest() != metadata.get("pack_sha256", metadata.get("subset_sha256")):
         raise ValueError("generated corpus differs from its accepted provenance")
     args.output.mkdir(parents=True, exist_ok=True)
@@ -899,7 +904,8 @@ def main() -> int:
         if path.is_file():
             shutil.copyfile(path, args.output / name)
     destination = args.output / {"arm64": "a64_instruction_corpus.pack",
-        "x86": "x86_64_v3.pack", "masked-flags": "xeon-flags.bin"}[index["kind"]]
+        "x86": "x86_64_v3.pack", "masked-flags": "xeon-flags.bin",
+        "aarch32": "a32_instruction_corpus.pack"}[index["kind"]]
     temporary = destination.with_suffix(".tmp")
     temporary.write_bytes(data)
     temporary.replace(destination)
