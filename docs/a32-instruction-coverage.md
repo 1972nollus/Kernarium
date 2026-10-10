@@ -16,15 +16,18 @@ tooling test) checks it against the generated decoder table, and checks that
 the next two sentences state its counts.
 
 `tests/unit/arm64/a32_instruction_inventory.tsv` lists 2,220 encodings (912 Base and 1,308 FP&SIMD): 2,165 `pending`, 0 `verified` and 55 `absent`.
-By level there are 867 `base`, 948 `simd` and 405 `complete` encodings.
+By level there are 898 `base`, 948 `simd` and 374 `complete` encodings.
 
 ## Levels and features
 
 A guest sees the level the engine's `A32Support` says: `base` is the integer
-core with Thumb-2, `simd` adds VFPv4-D32 and Advanced SIMD, and `complete`
-adds the Armv8 additions (load-acquire and store-release, VSEL, VMAXNM,
-VMINNM, VRINT*, VCVT[ANPM], the double/half conversions) and the optional
-extensions. Below `complete` an encoding of a higher level is UNDEFINED.
+core with Thumb-2 and the Armv8 load-acquire and store-release group (LDA,
+STL, LDAEX, STLEX in every size, and SEVL), which every Armv8 AArch32 EL0
+has and which arm64 Linux's compat kuser helpers execute; `simd` adds
+VFPv4-D32 and Advanced SIMD, and `complete` adds the other Armv8 additions
+(VSEL, VMAXNM, VMINNM, VRINT*, VCVT[ANPM], the double/half conversions) and
+the optional extensions. Below `complete` an encoding of a higher level is
+UNDEFINED.
 
 The optional extensions are FEAT_FP16, FEAT_AES, FEAT_PMULL, FEAT_SHA1,
 FEAT_SHA256, FEAT_CRC32, FEAT_DotProd, FEAT_FHM, FEAT_AA32BF16,

@@ -275,7 +275,7 @@ def program_units(word: int, isa: str) -> list[int]:
     return [word >> 16] if isa == "T16" else [word >> 16, word & 0xFFFF]
 
 
-def suite_exclusive(context: Context, suite="exclusive", load_stem="LDREX", store_stem="STREX") -> list[Case]:
+def exclusive_cases(context: Context, suite: str, load_stem: str, store_stem: str) -> list[Case]:
     cases = []
     for state, suffix in (("A", "A1"), ("T", "T1")):
         letter = "a" if state == "A" else "t"
@@ -321,6 +321,12 @@ def suite_exclusive(context: Context, suite="exclusive", load_stem="LDREX", stor
                 cases.append(Case(suite, f"{load_name}/load.{scenario}", load_name, state,
                                   tuple(ldrex), 0, f"edges-{letter}", aimed(address, 0)))
     return cases
+
+
+def suite_exclusive(context: Context) -> list[Case]:
+    """LDREX/STREX and the acquire/release LDAEX/STLEX, which are base too."""
+    return (exclusive_cases(context, "exclusive", "LDREX", "STREX")
+            + exclusive_cases(context, "exclusive", "LDAEX", "STLEX"))
 
 
 SUITES = {"memory": suite_memory, "unaligned": suite_unaligned, "exclusive": suite_exclusive,

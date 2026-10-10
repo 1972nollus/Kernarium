@@ -73,11 +73,11 @@ NEVER_EXECUTED = {
 NOP_AT_EL0 = {"CPS"}
 
 # Pages that are Armv8 additions to the AArch32 profile, required at level
-# complete (A32Support::complete) and not at simd.
+# complete (A32Support::complete) and not at simd. The load-acquire and
+# store-release group (LDA, STL, LDAEX, STLEX and their sizes) and SEVL are
+# not here: every Armv8 AArch32 EL0 has them, and arm64 Linux's compat kuser
+# helpers run STLEX and STLEXD, so they are level base.
 ARMV8_PAGES = {
-    "LDA", "LDAB", "LDAH", "LDAEX", "LDAEXB", "LDAEXH", "LDAEXD",
-    "STL", "STLB", "STLH", "STLEX", "STLEXB", "STLEXH", "STLEXD",
-    "SEVL_a32",
     "VSEL", "VMAXNM", "VMINNM",
     "VRINTA_asimd", "VRINTM_asimd", "VRINTN_asimd", "VRINTP_asimd",
     "VRINTX_asimd", "VRINTZ_asimd",
