@@ -5023,8 +5023,10 @@ constexpr long nr_modify_ldt = 123;
 /* The LDT the case installs: a 256-byte data segment over segment_buffer,
  * a flat 32-bit code segment, a data segment that is not present, a
  * read-only data segment over segment_buffer, an expand-down data segment
- * whose lowest offset, 0x1000, is segment_buffer, and a 128-byte stack
- * segment over segment_stack. */
+ * whose lowest offset, 0x1000, is segment_buffer, a 128-byte stack
+ * segment over segment_stack, and data segments of 512, 576 and 832 bytes
+ * over segment_buffer: the extents of FXSAVE, of XSAVE without the AVX
+ * component and of XSAVE with it. */
 constexpr u32 ldt_data = 0x07;
 constexpr u32 ldt_code32 = 0x0f;
 constexpr u32 ldt_absent = 0x17;
@@ -5052,7 +5054,10 @@ bool install_ldt()
 	    write_ldt(2, buffer, 0xff, ldt_32bit | ldt_not_present) &&
 	    write_ldt(3, buffer, 0xff, ldt_32bit | ldt_read_only) &&
 	    write_ldt(4, buffer - 0x1000, 0xfff, ldt_32bit | ldt_expand_down) &&
-	    write_ldt(5, reinterpret_cast<word>(segment_stack), 0x7f, ldt_32bit))
+	    write_ldt(5, reinterpret_cast<word>(segment_stack), 0x7f, ldt_32bit) &&
+	    write_ldt(6, buffer, 0x1ff, ldt_32bit) &&
+	    write_ldt(7, buffer, 0x23f, ldt_32bit) &&
+	    write_ldt(8, buffer, 0x33f, ldt_32bit))
 		return true;
 	put("  modify_ldt failed\n");
 	return false;
@@ -5061,7 +5066,7 @@ bool install_ldt()
 /* modify_ldt reads back the descriptors it wrote, accessed and at DPL 3. */
 bool ldt_reads_back()
 {
-	u64 table[8] = {};
+	u64 table[10] = {};
 	const long bytes = raw_syscall(nr_modify_ldt, 0,
 				       reinterpret_cast<long>(table),
 				       sizeof(table));
@@ -5072,7 +5077,7 @@ bool ldt_reads_back()
 			 sizeof(table));
 	ok &= expect("LDT entry 0", table[0], data);
 	ok &= expect("LDT entry 1", table[1], 0x00cffb000000ffffULL);
-	ok &= expect("LDT entry 6", table[6], 0);
+	ok &= expect("LDT entry 9", table[9], 0);
 	return ok;
 }
 
@@ -5197,6 +5202,17 @@ __asm__(".text\n"
 	"probe_seg_es_read: mov 4(%esp), %eax\n mov 8(%esp), %ecx\n mov %eax, %es\n"
 	"probe_seg_es_read_insn: mov %es:(%ecx), %eax\n"
 	"probe_seg_es_read_end: mov $0x2b, %ecx\n mov %ecx, %es\n ret\n"
+	/* XSAVE, XRSTOR and FXSAVE of ES:0 with RFBM in EDX:EAX, the second
+	 * argument, through the selector in the first. */
+	"probe_seg_xsave: mov 4(%esp), %ecx\n mov 8(%esp), %eax\n mov %ecx, %es\n xor %edx, %edx\n xor %ecx, %ecx\n"
+	"probe_seg_xsave_insn: xsave %es:(%ecx)\n"
+	"probe_seg_xsave_end: mov $0x2b, %ecx\n mov %ecx, %es\n ret\n"
+	"probe_seg_xrstor: mov 4(%esp), %ecx\n mov 8(%esp), %eax\n mov %ecx, %es\n xor %edx, %edx\n xor %ecx, %ecx\n"
+	"probe_seg_xrstor_insn: xrstor %es:(%ecx)\n"
+	"probe_seg_xrstor_end: mov $0x2b, %ecx\n mov %ecx, %es\n ret\n"
+	"probe_seg_fxsave: mov 4(%esp), %ecx\n mov %ecx, %es\n xor %ecx, %ecx\n"
+	"probe_seg_fxsave_insn: fxsave %es:(%ecx)\n"
+	"probe_seg_fxsave_end: mov $0x2b, %ecx\n mov %ecx, %es\n ret\n"
 	/* REP STOSB from ES:0xf0 for 0x20 bytes, across the limit 0xff. */
 	"probe_seg_stos: push %edi\n mov $0x07, %eax\n mov %eax, %es\n mov $0xf0, %edi\n"
 	"	mov $0x20, %ecx\n mov $0x5a, %al\n cld\n"
@@ -5252,6 +5268,15 @@ __asm__(".text\n"
 extern "C" word probe_seg_es_read(word selector, word offset);
 extern "C" char probe_seg_es_read_insn[];
 extern "C" char probe_seg_es_read_end[];
+extern "C" void probe_seg_xsave(word selector, word rfbm);
+extern "C" char probe_seg_xsave_insn[];
+extern "C" char probe_seg_xsave_end[];
+extern "C" void probe_seg_xrstor(word selector, word rfbm);
+extern "C" char probe_seg_xrstor_insn[];
+extern "C" char probe_seg_xrstor_end[];
+extern "C" void probe_seg_fxsave(word selector);
+extern "C" char probe_seg_fxsave_insn[];
+extern "C" char probe_seg_fxsave_end[];
 extern "C" void probe_seg_stos();
 extern "C" char probe_seg_stos_insn[];
 extern "C" char probe_seg_stos_end[];
@@ -5278,11 +5303,81 @@ extern "C" word probe_seg_group1_82();
 
 word segment_offset;
 word segment_selector;
+word segment_rfbm;
 void seg_es_read() { probe_seg_es_read(segment_selector, segment_offset); }
+void seg_xsave() { probe_seg_xsave(segment_selector, segment_rfbm); }
+void seg_xrstor() { probe_seg_xrstor(segment_selector, segment_rfbm); }
+void seg_fxsave() { probe_seg_fxsave(segment_selector); }
 void seg_cs_write() { probe_seg_cs_write(segment_buffer + 0x200); }
 void seg_null_ds() { probe_seg_null_ds(segment_buffer); }
 word segment_stack_pointer;
 void seg_ss_push() { probe_seg_ss_push(segment_stack_pointer); }
+#endif
+
+#if !defined(__x86_64__)
+constexpr u32 ldt_legacy_area = 0x37;
+constexpr u32 ldt_header_area = 0x3f;
+constexpr u32 ldt_avx_area = 0x47;
+
+/* FXSAVE and FXRSTOR touch 512 bytes through a segment, XSAVE, XSAVEOPT and
+ * XRSTOR the legacy area and the header, 576, and the AVX component, up to
+ * 832, only when RFBM selects it, so a segment limit below the extent of
+ * the RFBM raises #GP(0) and one at it does not. */
+bool segment_state_areas()
+{
+	/* A valid image: an x87 control word of 0x37f, MXCSR 0x1f80, and no
+	 * component marked in use. */
+	for (word index = 0; index < 1024; ++index)
+		segment_buffer[index] = 0;
+	segment_buffer[0] = 0x7f;
+	segment_buffer[1] = 0x03;
+	segment_buffer[24] = 0x80;
+	segment_buffer[25] = 0x1f;
+	bool ok = true;
+	const word xsave_insn = address_of(probe_seg_xsave_insn);
+	const word xsave_end = address_of(probe_seg_xsave_end);
+	const word xrstor_insn = address_of(probe_seg_xrstor_insn);
+	const word xrstor_end = address_of(probe_seg_xrstor_end);
+	const word fxsave_insn = address_of(probe_seg_fxsave_insn);
+	const word fxsave_end = address_of(probe_seg_fxsave_end);
+	segment_selector = ldt_legacy_area;
+	ok &= delivers_nothing("FXSAVE in 512 bytes", seg_fxsave, fxsave_end);
+	segment_selector = ldt_data;
+	ok &= delivers("FXSAVE beyond 256 bytes", seg_fxsave, fxsave_end,
+		       {sigsegv, si_kernel, 0, fxsave_insn, 13, true, 0});
+	segment_selector = ldt_legacy_area;
+	segment_rfbm = 0;
+	ok &= delivers("XSAVE with RFBM 0 in 512 bytes", seg_xsave, xsave_end,
+		       {sigsegv, si_kernel, 0, xsave_insn, 13, true, 0});
+	segment_selector = ldt_header_area;
+	const word without_avx[] = {0, 1, 3};
+	const word with_avx[] = {4, 7};
+	for (const word rfbm : without_avx) {
+		segment_rfbm = rfbm;
+		ok &= delivers_nothing("XSAVE without AVX in 576 bytes",
+				       seg_xsave, xsave_end);
+		ok &= delivers_nothing("XRSTOR without AVX in 576 bytes",
+				       seg_xrstor, xrstor_end);
+	}
+	for (const word rfbm : with_avx) {
+		segment_rfbm = rfbm;
+		ok &= delivers("XSAVE with AVX in 576 bytes", seg_xsave,
+			       xsave_end,
+			       {sigsegv, si_kernel, 0, xsave_insn, 13, true, 0});
+		ok &= delivers("XRSTOR with AVX in 576 bytes", seg_xrstor,
+			       xrstor_end,
+			       {sigsegv, si_kernel, 0, xrstor_insn, 13, true, 0});
+	}
+	segment_selector = ldt_avx_area;
+	for (const word rfbm : with_avx) {
+		segment_rfbm = rfbm;
+		ok &= delivers_nothing("XSAVE with AVX in 832 bytes", seg_xsave,
+				       xsave_end);
+		ok &= delivers_nothing("XRSTOR with AVX in 832 bytes",
+				       seg_xrstor, xrstor_end);
+	}
+	return ok;
+}
 #endif
 
 /* Selector loads check the descriptor they name: SS takes no null
@@ -5296,8 +5391,9 @@ void seg_ss_push() { probe_seg_ss_push(segment_stack_pointer); }
  * every access checks its segment's limit -- an expand-down one from below --
  * a REP STOSB stops at the first element beyond it with ECX and EDI there,
  * a store through a read-only segment or CS raises #GP(0), DS and SS add
- * their bases, a push beyond SS's limit raises #SS(0), and far JMPs reach
- * 64-bit code and come back. */
+ * their bases, a push beyond SS's limit raises #SS(0), FXSAVE, XSAVE and
+ * XRSTOR check the extent their RFBM selects (see segment_state_areas), and
+ * far JMPs reach 64-bit code and come back. */
 bool segments()
 {
 	bool ok = install_fault_handlers() && install_ldt();
@@ -5435,6 +5531,7 @@ bool segments()
 	ok &= delivers("a push beyond SS's limit", seg_ss_push,
 		       address_of(probe_seg_ss_push_end),
 		       {sigbus, si_kernel, 0, push_insn, 12, true, 0});
+	ok &= segment_state_areas();
 #endif
 	return ok;
 }

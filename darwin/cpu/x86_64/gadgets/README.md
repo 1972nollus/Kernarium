@@ -621,7 +621,14 @@ its image whenever RFBM selects the SSE or the AVX component, whatever
 XSTATE_BV holds, and XSAVE and XSAVEOPT store MXCSR and MXCSR_MASK under the
 same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
 as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
-header, and the AVX component only when RFBM selects it.
+header, and the AVX component only when RFBM selects it; a compat32 segment's
+limit is checked against that extent, 576 bytes or 832 with the AVX component
+(FXSAVE and FXRSTOR: 512), as the Xeon does. Beside a page that is not mapped,
+an Intel core reports the last byte of the extent first -- XRSTOR reads the
+header's XCOMP_BV before that -- and the engines report the first inaccessible
+byte or the operand's base, the gadget engine as a read for XSAVE, which loads
+the image it updates. That deviation in the faulting address of a partly
+mapped area remains.
 
 CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
 address when its page is unmapped or unreadable. CLDEMOTE and the prefetches
