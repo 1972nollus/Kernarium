@@ -36,6 +36,7 @@ import a32_llvm_data as data
 import a32_llvm_oracle as llvm
 import a32_profile_policy as policy
 import a32_expected as expected
+import a32_inventory as inventory
 import a32_table_model as tm
 import a32_table_render as render
 from a64_bounded_generation import (
@@ -56,6 +57,7 @@ OUTPUTS = (
     "tests/unit/arm64/aarch32_decoder/operands_digest.hpp",
     "tests/unit/arm64/aarch32_decoder/samples.tsv",
     "tests/unit/arm64/aarch32_decoder/t16_reference.tsv",
+    "tests/unit/arm64/a32_instruction_inventory.tsv",
 )
 SAMPLE_COLUMNS = (
     "isa", "word", "kind", "form", "clean", "violation", "llvm", "soft",
@@ -174,6 +176,23 @@ def t16_rows(runs) -> list[dict[str, str]]:
     ]
 
 
+def inventory_rows(model: tm.Model) -> list[dict[str, str]]:
+    """One inventory row per decoded (non-alias) XML encoding, in index order."""
+    for name in policy.NEVER_EXECUTED:
+        if name not in model.by_name:
+            raise ValueError(f"profile policy names unknown encoding {name}")
+    entries = [
+        (
+            form.encoding.section, form.encoding.form, form.name, form.isa,
+            form.encoding.mnemonic, form.level, form.feature,
+            form.availability, form.check or "none", form.nop,
+        )
+        for form in model.forms
+        if form.encoding is not None
+    ]
+    return inventory.rows(entries)
+
+
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--architecture-archive", type=Path, required=True)
@@ -222,6 +241,7 @@ def main() -> int:
     t16_table = t16_rows(runs)
     payloads.append(render_tsv(SAMPLE_COLUMNS, sample_table))
     payloads.append(render_tsv(T16_COLUMNS, t16_table))
+    payloads.append(render_tsv(inventory.COLUMNS, inventory_rows(model)))
 
     def exact(expected: bytes):
         def validate(observed: bytes) -> None:

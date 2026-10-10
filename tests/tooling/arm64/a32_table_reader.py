@@ -112,6 +112,9 @@ class Tables:
                 "should_mask": number(should_mask),
                 "should_value": number(should_value),
                 "program": NO_PROGRAM if program == "kNoProgram" else int(program),
+                "traits": [t.strip().removeprefix("trait::") for t in traits.split("|")
+                           if t.strip() != "0"],
+                "feature": None if feature == "kNoFeature" else int(feature),
                 "isa": isa,
                 "level": level,
                 "availability": availability,

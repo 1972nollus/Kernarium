@@ -650,9 +650,28 @@ release, run `tests/tooling/arm64/generate_a32_encoding_table.py
 --architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
 LLVM MC 22.1.8 and takes a few minutes. Configure with
 `-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
-`arm64-a32-encoding-table-freshness` tooling test, which regenerates the six
-outputs and requires the checked-in bytes; without the archive or that LLVM MC
-it skips.
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the
+outputs (the tables, the test data and the instruction inventory) and
+requires the checked-in bytes; without the archive or that LLVM MC it skips.
+The `arm64-a32-instruction-inventory` tooling test checks the inventory against
+the decoder's table and the counts in
+[`a32-instruction-coverage.md`](a32-instruction-coverage.md).
+
+## AArch32 corpus
+
+`arm64-aarch32-corpus` (unit, both page profiles) checks every case of the
+generated AArch32 corpus against the decoder: the program decodes in order,
+in the IT state its instructions leave, to legal forms except at the
+instruction that raised an event; the instruction under test is the form the
+case names; the event is one its kind can raise; and the retired count, fault
+position, state changes and memory runs agree. A case whose forms need a level
+above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
+the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
+`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
+checked-in bytes, and requires cases for every executed base inventory entry.
+Neither needs an oracle. The corpus README owns the format, the oracles and how
+to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
+`qemu-arm` on a build host over ssh and is opt-in.
 
 ## Guest SME policy
 
