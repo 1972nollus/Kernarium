@@ -288,6 +288,7 @@
     uml_add_arm64_unit_test(jit_a32_acquire_release WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_encoder WITHOUT_HARNESS NO_OBJECTS)
+    uml_add_arm64_unit_test(jit_a32_vector_encoder WITHOUT_HARNESS NO_OBJECTS)
     uml_add_arm64_unit_test(jit_a32_control WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     # The AArch32 instruction corpus (aarch32_corpus/README.md) on the JIT.
