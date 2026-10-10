@@ -90,3 +90,41 @@ tooling-time oracle that no build uses. Never edit them.
   against `a32_expected.py`, an independent evaluation of the same pseudocode
   and rules, and against what LLVM MC decodes
   (`tests/unit/arm64/aarch32_decoder/`). `docs/testing.md` has the commands.
+
+## The semantic library
+
+`uml_arm64_aarch32_semantics` is the one C++ implementation of what the
+decoder accepts, for the engines' slow paths and long tails and for the
+corpus's model lane (`semantics.hpp`). It follows the SVE library: a
+CPU-layer `shared` target that includes no engine, works on `CpuState` alone
+and reaches guest memory only through the caller's `A32Memory`.
+
+- `execute_a32(cpu, instruction, memory)` runs one decoded instruction;
+  `step_a32(cpu, memory, profile)` fetches, decodes in `cpu.a32_itstate`
+  and executes one, which is the single-instruction entry for what an engine
+  cannot translate as a block. Calling it until ITSTATE is zero leaves an IT
+  block as the architecture does.
+- `A32Memory::translate()` returns the host address of a guest byte, valid to
+  the end of its guest page, or nothing. The library splits every access at
+  a page and reports the address and the access of a fault itself, so an
+  engine records it where its own exit convention wants it. `stored()` reports
+  each host range a store wrote, for the engine's reservation and code
+  invalidation.
+- The result is a `StepEvent`: `retired`, `supervisor_call` (PC and ITSTATE
+  advanced), `breakpoint` (PC and ITSTATE unchanged), `undefined`,
+  `memory_fault` (the 32-bit architectural address, translation or
+  alignment), `pc_alignment` and `fatal`. A fault leaves the registers, PC and
+  ITSTATE as the instruction found them, except that STM and PUSH store the
+  words ahead of the faulting one and leave the base register unchanged.
+- The exclusives use `CpuState`'s record (`exclusive_address`,
+  `exclusive_key`, `exclusive_value`, `exclusive_value2`, `exclusive_size`):
+  a load-exclusive records the host address and the value, and a
+  store-exclusive is a host compare-and-swap against it. Ordinary stores leave
+  the monitor to the engine.
+- `a32_semantics_covers(form)` holds for every form up to
+  `a32_semantics_level()`; any other word reaching `execute_a32()` is `fatal`,
+  an internal error. The library-exit counters count each call by form.
+
+The library is at `base`: A32 and T32 integer, memory (single, multiple,
+exclusive, acquire/release), branch, IT and system forms. The VFP and NEON
+and the Armv8 extension levels follow.
