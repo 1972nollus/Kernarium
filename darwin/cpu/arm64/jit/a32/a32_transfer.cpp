@@ -149,6 +149,7 @@ Transfer describe_transfer(const Instruction &inst) noexcept {
     transfer.t2 = static_cast<std::uint8_t>(o.t2);
     transfer.n = static_cast<std::uint8_t>(o.n);
     transfer.d = static_cast<std::uint8_t>(o.d);
+    transfer.imm = static_cast<std::uint32_t>(o.imm32);
     return transfer;
   case Op::prefetch:
     transfer.kind = Transfer::Kind::prefetch;

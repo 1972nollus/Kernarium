@@ -283,6 +283,11 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_a32_memory WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    # The AArch32 instruction corpus (aarch32_corpus/README.md) on the JIT.
+    uml_add_arm64_unit_test(jit_a32_corpus WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        ARGS ${UML_ARM64_AARCH32_CORPUS})
+    add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
 
     # The JIT's SME support (cpu/arm64/jit, sme_support).
     uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS

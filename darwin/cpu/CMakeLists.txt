@@ -311,6 +311,7 @@ set(_uml_cpu_jit_sve_sources
 set(_uml_cpu_jit_a32_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_alu.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_arith.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_cold.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_control.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_memory.cpp
@@ -345,6 +346,7 @@ target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
 set(_uml_cpu_jit_executor_sources
+    arm64/jit/a32/a32_arith.cpp
     arm64/jit/a32/a32_execute.cpp
     arm64/jit/a32/a32_loop.cpp
     arm64/jit/jit_cache_geometry.cpp

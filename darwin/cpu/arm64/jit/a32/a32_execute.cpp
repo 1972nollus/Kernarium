@@ -13,6 +13,8 @@
 
 #include "a32_helpers.hpp"
 
+#include "a32_arith.hpp"
+
 #include "a32_operations.hpp"
 #include "a32_transfer.hpp"
 
@@ -401,7 +403,7 @@ private:
   }
 
   [[nodiscard]] Outcome exclusive() {
-    const std::uint32_t address = read(transfer_.n);
+    const std::uint32_t address = read(transfer_.n) + transfer_.imm;
     const unsigned bytes = transfer_.bytes;
     if ((address & (bytes - 1U)) != 0U)
       return alignment_fault(address, !transfer_.load);
@@ -516,9 +518,18 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
                 word, aarch32::ItState{static_cast<std::uint8_t>(itstate)},
                 profile)
           : aarch32::decode_a32(word, profile);
+  if (a32::is_helper_arithmetic(inst)) {
+    a32::run_helper_arithmetic(*cpu, inst);
+    cpu->pc = aarch32::key_is_thumb(key)
+                  ? aarch32::t32_key(aarch32::key_pc(key) + inst.length)
+                  : aarch32::a32_key(aarch32::key_pc(key) + inst.length);
+    cpu->a32_itstate = inst.next_it.bits();
+    return pack_jit_result(Event::continued, 1);
+  }
   const auto transfer = a32::describe_transfer(inst);
-  /* Generated code routes only transfers here; anything else is an internal
-   * error and is never interpreted. */
+  /* Generated code routes only transfers and the arithmetic forms of
+   * a32_arith.hpp here; anything else is an internal error and is never
+   * interpreted. */
   if (transfer.kind == Transfer::Kind::none)
     return pack_jit_result(Event::fatal, 0);
   if (transfer.kind != Transfer::Kind::exclusive)

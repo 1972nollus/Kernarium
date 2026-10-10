@@ -82,9 +82,10 @@ private:
     enum class Kind : std::uint8_t {
       /* The access faulted: report it at the instruction. */
       memory_fault,
-      /* The memory instruction the hot path declined (unaligned,
-       * crossing a page, or in need of a helper): the C++ helper runs it. */
-      memory_slow,
+      /* The instruction the hot path declined (a memory access that is
+       * unaligned, crosses a page or needs the helper, or a form with no
+       * inline lowering): the C++ helper runs it. */
+      slow,
       /* The exclusive the hot path declined: the C++ helper runs it. */
       exclusive_slow,
       /* Retry exit of a fused exclusive region. */
@@ -213,6 +214,23 @@ private:
   void mark_direct_memory_write() noexcept;
   void track_direct_store(unsigned address, std::size_t size);
   void clear_exclusive_monitor();
+
+  // Multiplies, bit manipulation, extension, saturation and DSP forms
+  // (a32_compiler_arith.cpp).
+  [[nodiscard]] Flow emit_multiply(const OpInfo &info);
+  [[nodiscard]] Flow emit_bit_operation(const OpInfo &info);
+  [[nodiscard]] Flow emit_extend(const OpInfo &info);
+  [[nodiscard]] Flow emit_saturate(const OpInfo &info);
+  [[nodiscard]] Flow emit_dsp_multiply(const OpInfo &info);
+  /* The whole instruction in the slow helper. */
+  [[nodiscard]] Flow emit_arith_through_helper();
+  void emit_extract(unsigned out, unsigned source, bool is_signed,
+                    unsigned bits, unsigned rotation);
+  void emit_half(unsigned out, unsigned source, unsigned index);
+  void or_q(unsigned flag);
+  void saturating_add(unsigned out, unsigned a, unsigned b, bool subtract,
+                      bool accumulate);
+  void set_q_on_overflow();
 
   // Control (a32_compiler_control.cpp).
   [[nodiscard]] Flow emit_branch(const OpInfo &info);

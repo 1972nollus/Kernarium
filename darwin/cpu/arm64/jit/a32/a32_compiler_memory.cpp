@@ -174,7 +174,7 @@ A32Compiler::Flow A32Compiler::emit_through_helper() {
     mark_memory_write();
     emitter_.branch(cold_exit(ColdPath::Kind::exclusive_slow));
   } else {
-    emitter_.branch(cold_exit(ColdPath::Kind::memory_slow));
+    emitter_.branch(cold_exit(ColdPath::Kind::slow));
   }
   return Flow::end;
 }
@@ -283,7 +283,7 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   const bool store = !transfer.load;
   if (store)
     mark_direct_memory_write();
-  const auto slow = cold_exit(ColdPath::Kind::memory_slow);
+  const auto slow = cold_exit(ColdPath::Kind::slow);
   const auto fault = cold_exit(ColdPath::Kind::memory_fault);
   form_address(transfer);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
@@ -344,7 +344,7 @@ A32Compiler::Flow A32Compiler::emit_pair(const Transfer &transfer) {
   const bool store = !transfer.load;
   if (store)
     mark_direct_memory_write();
-  const auto slow = cold_exit(ColdPath::Kind::memory_slow);
+  const auto slow = cold_exit(ColdPath::Kind::slow);
   const auto fault = cold_exit(ColdPath::Kind::memory_fault);
   form_address(transfer);
   /* MemA: a doubleword transfer faults unless word aligned; the helper
@@ -382,7 +382,7 @@ A32Compiler::Flow A32Compiler::emit_multiple(const Transfer &transfer) {
   const bool store = !transfer.load;
   if (store)
     mark_direct_memory_write();
-  const auto slow = cold_exit(ColdPath::Kind::memory_slow);
+  const auto slow = cold_exit(ColdPath::Kind::slow);
   const auto fault = cold_exit(ColdPath::Kind::memory_fault);
   const unsigned n = use(transfer.n, fallback_n);
   switch (transfer.mode) {
@@ -446,7 +446,7 @@ A32Compiler::Flow A32Compiler::emit_multiple(const Transfer &transfer) {
 // TBB and TBH.
 
 A32Compiler::Flow A32Compiler::emit_table(const Transfer &transfer) {
-  const auto slow = cold_exit(ColdPath::Kind::memory_slow);
+  const auto slow = cold_exit(ColdPath::Kind::slow);
   const auto fault = cold_exit(ColdPath::Kind::memory_fault);
   const unsigned n = use(transfer.n, fallback_n);
   const unsigned m = use(transfer.m, fallback_m);

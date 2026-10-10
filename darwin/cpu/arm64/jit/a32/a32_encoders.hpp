@@ -603,6 +603,21 @@ namespace x {
 {
 	return orr(d, 31, m);
 }
+/* TST Xn, Xm and CMP Xn, Xm. */
+[[nodiscard]] constexpr std::uint32_t tst(unsigned n, unsigned m) noexcept
+{
+	return detail::three(0xea00'0000U, 31, n, m);
+}
+[[nodiscard]] constexpr std::uint32_t cmp(unsigned n, unsigned m) noexcept
+{
+	return detail::three(0xeb00'0000U, 31, n, m);
+}
+/* ADD Xd, Xn, Wm, SXTW #amount (0-4). */
+[[nodiscard]] constexpr std::uint32_t add_sxtw(unsigned d, unsigned n,
+	unsigned m, unsigned amount = 0) noexcept
+{
+	return 0x8b20'c000U | (m << 16) | (amount << 10) | (n << 5) | d;
+}
 [[nodiscard]] constexpr std::uint32_t lslv(unsigned d, unsigned n, unsigned m) noexcept
 {
 	return detail::three(0x9ac0'2000U, d, n, m);

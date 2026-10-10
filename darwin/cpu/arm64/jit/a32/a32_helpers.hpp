@@ -14,7 +14,8 @@ namespace uml::cpu::arm64 {
  * generated code spilled, and returns a packed JIT result for it. The
  * instruction is either retired, with CpuState's PC key and ITSTATE
  * advanced past it or to its branch target, or it faults and changes
- * nothing. Only the memory and exclusive classes are routed here. */
+ * nothing. Only the memory and exclusive classes and the arithmetic forms of
+ * a32_arith.hpp are routed here. */
 extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     CpuState *cpu, ::uml::memory::Tlb *tlb, std::uint32_t word,
     std::uint64_t key, std::uint32_t itstate) noexcept;

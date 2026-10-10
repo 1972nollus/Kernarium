@@ -29,7 +29,7 @@ void A32Compiler::emit_cold_paths() {
     case ColdPath::Kind::illegal:
       exit_event(Event::illegal_instruction, key_of(d), d.it);
       break;
-    case ColdPath::Kind::memory_slow:
+    case ColdPath::Kind::slow:
       emit_slow_helper(cold);
       break;
     case ColdPath::Kind::exclusive_slow:

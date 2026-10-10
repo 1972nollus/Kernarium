@@ -33,6 +33,28 @@ A32Compiler::Flow A32Compiler::emit_operation() {
     return emit_data_processing(info);
   case Op::adr: case Op::add_w: case Op::sub_w: case Op::movw: case Op::movt:
     return emit_address_forms(info);
+  case Op::mul: case Op::mla: case Op::mls: case Op::umull: case Op::umlal:
+  case Op::smull: case Op::smlal: case Op::umaal: case Op::sdiv: case Op::udiv:
+    return emit_multiply(info);
+  case Op::bfc: case Op::bfi: case Op::sbfx: case Op::ubfx: case Op::clz:
+  case Op::rbit: case Op::rev: case Op::rev16: case Op::revsh:
+    return emit_bit_operation(info);
+  case Op::sxtb: case Op::sxth: case Op::uxtb: case Op::uxth: case Op::sxtab:
+  case Op::sxtah: case Op::uxtab: case Op::uxtah: case Op::sxtb16:
+  case Op::uxtb16: case Op::sxtab16: case Op::uxtab16: case Op::pkh:
+  case Op::sel:
+    return emit_extend(info);
+  case Op::qadd: case Op::qsub: case Op::qdadd: case Op::qdsub: case Op::ssat:
+  case Op::usat:
+    return emit_saturate(info);
+  case Op::smla_xy: case Op::smul_xy: case Op::smlal_xy: case Op::smlaw:
+  case Op::smulw: case Op::smlad: case Op::smlsd: case Op::smuad:
+  case Op::smusd: case Op::smlald: case Op::smlsld: case Op::smmla:
+  case Op::smmls: case Op::smmul:
+    return emit_dsp_multiply(info);
+  case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
+  case Op::usada8:
+    return emit_arith_through_helper();
   case Op::b: case Op::bl: case Op::blx: case Op::bx: case Op::cbz:
   case Op::cbnz:
     return emit_branch(info);
@@ -211,6 +233,8 @@ A32Compiler::Flow A32Compiler::emit_status_register(const OpInfo &info) {
     emit(enc::lsr_i(0, 0, 8));
     emit(enc::and_i(0, 0, *enc::logical_immediate_field(0x000f'0000U)));
     emit(enc::orr(d, d, 0));
+    // A read of the status register at EL0 shows User mode (M = 0b10000).
+    emit(enc::orr_i(d, d, *enc::logical_immediate_field(0x10U)));
     done(dest);
     return Flow::next;
   }
