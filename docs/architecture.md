@@ -563,6 +563,19 @@ ID_AA64ZFR0_EL1 read zero, the SVE HWCAP bits are clear, and every
 non-streaming SVE word is the illegal-instruction exit. Both engines are at
 `complete`.
 
+The guest kernel learns the same answer from
+`darwin_uml_guest_sve_vector_length()`, 16 exactly when the selected engine
+presents the profile, and gives tasks SVE state only then. A task's P0-P15
+and FFR travel in its bridge tail after the SME registers, packed 16 bits
+each, with a live flag, the image of native `TIF_SVE`. Each entry takes
+`CpuState::sve_live` from the tail and unpacks P and FFR only for a live
+task; each return packs them back only while `sve_live` is set and zeroes the
+vCPU's copies, so a task that is not live finds them zero when it executes
+SVE. The engines set `sve_live` and never clear it; the kernel clears the
+flag where native Linux stops tracking the state, as the
+[shared kernel README](../kernel/common/README.md) describes. A tail whose
+flags are anything but clear or live at the run's vector length is fatal.
+
 The gadget engine is at `complete`: for SVCR.SM = 0, on capabilities that
 carry the profile, it runs every word of the profile, so under the
 guest-SVE policy it presents the profile to its guest. Generated gadgets
