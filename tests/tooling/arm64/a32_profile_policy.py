@@ -58,6 +58,16 @@ CHECKED_PAGES = {
     "VMSR": "fpscr",
 }
 
+# Encodings the table decodes but whose every word the profile rejects: the
+# coprocessor has no 64-bit register an EL0 program may write, and a Thumb
+# exception return is UNPREDICTABLE at EL0 for every operand. The inventory
+# marks them absent, and the corpus expects an illegal instruction.
+NEVER_EXECUTED = {
+    "MCRR_A1": "no 64-bit coprocessor register is writable at EL0",
+    "MCRR_T1": "no 64-bit coprocessor register is writable at EL0",
+    "SUBS_PC_T5_AS": "an exception return is UNPREDICTABLE at EL0",
+}
+
 # Pages that execute as a NOP at EL0 once decoded (CPS changes only mode and
 # interrupt masks, which EL0 cannot).
 NOP_AT_EL0 = {"CPS"}

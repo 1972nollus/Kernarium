@@ -44,8 +44,9 @@ engine, holds no state, and is a CPU-layer `shared` target.
   hints, exceptions) scanned from the XML's Execute pseudocode.
 
 The profile is Armv8-A AArch32 at EL0 (see
-[`../../../../docs/architecture.md`](../../../../docs/architecture.md)). The
-decoder implements these choices on top of the XML:
+[`../../../../docs/architecture.md`](../../../../docs/architecture.md) and
+[`../../../../docs/a32-instruction-coverage.md`](../../../../docs/a32-instruction-coverage.md)).
+The decoder implements these choices on top of the XML:
 
 - SWP and SWPB, which Armv8 AArch32 does not have, decode as unallocated;
   SETEND, SETPAN, SRS, RFE, ERET, HVC, SMC, HLT, DCPS, the banked-register and

@@ -650,9 +650,12 @@ release, run `tests/tooling/arm64/generate_a32_encoding_table.py
 --architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
 LLVM MC 22.1.8 and takes a few minutes. Configure with
 `-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
-`arm64-a32-encoding-table-freshness` tooling test, which regenerates the six
-outputs and requires the checked-in bytes; without the archive or that LLVM MC
-it skips.
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the
+outputs (the tables, the test data and the instruction inventory) and
+requires the checked-in bytes; without the archive or that LLVM MC it skips.
+The `arm64-a32-instruction-inventory` tooling test checks the inventory against
+the decoder's table and the counts in
+[`a32-instruction-coverage.md`](a32-instruction-coverage.md).
 
 ## Guest SME policy
 

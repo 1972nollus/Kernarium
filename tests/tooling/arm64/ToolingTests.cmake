@@ -142,6 +142,13 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 120)
 
+uml_add_tooling_test(
+    NAME arm64-a32-instruction-inventory
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/validate_a32_instruction_inventory.py
+    LABELS cpu
+    TIMEOUT 120)
+
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
     "Pinned Arm A64 XML archive for the A64 oracle and SME table freshness tests")
