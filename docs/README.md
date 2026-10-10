@@ -16,6 +16,7 @@ investigation date.
 | A64 instruction corpus | [`../tests/unit/arm64/corpus/README.md`](../tests/unit/arm64/corpus/README.md) |
 | A32 instruction coverage | [`a32-instruction-coverage.md`](a32-instruction-coverage.md) and `tests/unit/arm64/a32_instruction_inventory.tsv` |
 | AArch32 decoder and encoding table | [`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md) |
+| AArch32 instruction corpus and its oracle | [`../tests/unit/arm64/aarch32_corpus/README.md`](../tests/unit/arm64/aarch32_corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
 | Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
 | x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |

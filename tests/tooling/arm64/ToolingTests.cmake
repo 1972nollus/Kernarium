@@ -149,6 +149,15 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 120)
 
+# The AArch32 corpus's source tables generate the pack their provenance
+# records, and its derived tables and coverage agree with them (offline).
+uml_add_tooling_test(
+    NAME arm64-a32-corpus
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_corpus.py
+    LABELS cpu
+    TIMEOUT 300)
+
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
     "Pinned Arm A64 XML archive for the A64 oracle and SME table freshness tests")

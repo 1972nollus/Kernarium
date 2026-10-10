@@ -1,0 +1,10 @@
+record	oracle	cases
+absent-profile	profile	751
+alu-qemu	qemu	7684
+branch-qemu	qemu	454
+conditions-qemu	qemu	1816
+exclusive-qemu	qemu	128
+memory-qemu	qemu	1774
+pc-qemu	qemu	88
+prefetch-qemu	qemu	144
+system-qemu	qemu	318

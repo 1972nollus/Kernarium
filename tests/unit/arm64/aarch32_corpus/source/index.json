@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "kind": "aarch32",
+  "files": [
+    "states.jsonl",
+    "absent-profile.jsonl",
+    "alu-qemu.jsonl",
+    "branch-qemu.jsonl",
+    "conditions-qemu.jsonl",
+    "exclusive-qemu.jsonl",
+    "memory-qemu.jsonl",
+    "pc-qemu.jsonl",
+    "prefetch-qemu.jsonl",
+    "system-qemu.jsonl"
+  ],
+  "records": [
+    "absent-profile",
+    "alu-qemu",
+    "branch-qemu",
+    "conditions-qemu",
+    "exclusive-qemu",
+    "memory-qemu",
+    "pc-qemu",
+    "prefetch-qemu",
+    "system-qemu"
+  ]
+}
