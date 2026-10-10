@@ -18,7 +18,8 @@ import pathlib
 import struct
 
 PACK_MAGIC = b"UMLA32C\0"
-PACK_VERSION = 1
+# 2: each case holds the byte offset of its program in the code region.
+PACK_VERSION = 2
 GPRS = 15
 D_REGISTERS = 32
 STATE_SIZE = 336
@@ -34,6 +35,8 @@ CODE_BASE = 0x4F000000
 CODE_SIZE = 0x4000
 ARM_EXIT = CODE_BASE + 0x800
 THUMB_EXIT = CODE_BASE + 0x900
+# Code-region ranges the harness owns: the exit stubs, the trampolines and the launch.
+RESERVED_CODE = ((0x800, 0x908), (0x3F00, 0x3F90))
 # The word after a stub's load: the oracle's trampolines to its own epilogues.
 ARM_EPILOGUE = CODE_BASE + 0x3F00
 THUMB_EPILOGUE = CODE_BASE + 0x3F08
@@ -53,7 +56,7 @@ FLAG_NAMES = {"t": FLAG_THUMB, "s": FLAG_STRAIGHT, "u": FLAG_MEMORY_UNCHECKED, "
 # Events are signal numbers; 0 is a program that reached an exit stub, and
 # SVC (a syscall event) is 255.
 EVENTS = {0: "none", 4: "SIGILL", 5: "SIGTRAP", 7: "SIGBUS", 8: "SIGFPE", 11: "SIGSEGV", 255: "svc"}
-CASE_KEYS = {"n", "f", "i", "p", "t", "s", "si", "d", "dp", "x", "e", "fi", "fa", "k", "m", "fl"}
+CASE_KEYS = {"n", "f", "i", "p", "t", "s", "si", "d", "dp", "x", "e", "fi", "fa", "k", "m", "fl", "o"}
 
 
 class CorpusError(ValueError):
@@ -252,6 +255,12 @@ def case_wire(row: dict, recipes: dict[str, dict[str, int]], recipe_ids: dict[st
     require(event in EVENTS, f"{name}: unknown event {event}")
     target = row["t"]
     require(isinstance(target, int) and 0 <= target < len(halves), f"{name}: target out of range")
+    origin = row.get("o", 0)
+    require(isinstance(origin, int) and origin % (2 if thumb else 4) == 0
+            and 0 <= origin and origin + 2 * len(halves) <= CODE_SIZE, f"{name}: program origin")
+    if origin:  # the exit stubs, their trampolines and the launch are the harness's
+        for low, high in RESERVED_CODE:
+            require(origin + 2 * len(halves) <= low or origin >= high, f"{name}: program overlaps {low:#x}")
     fault_instruction = row.get("fi", 0)
     require(isinstance(fault_instruction, int) and 0 <= fault_instruction < len(halves),
             f"{name}: fault instruction out of range")
@@ -260,7 +269,7 @@ def case_wire(row: dict, recipes: dict[str, dict[str, int]], recipe_ids: dict[st
     fault_address = number(row.get("fa", "0"), 32, f"{name}.fa")
     fill = row.get("d", FILL_HASH32)
     require(fill in (FILL_ZERO, FILL_HASH32), f"{name}: unknown data fill")
-    data = str16(name) + str16(row["f"]) + struct.pack("<BH", flags, target)
+    data = str16(name) + str16(row["f"]) + struct.pack("<BHH", flags, target, origin)
     data += struct.pack("<H", len(halves)) + b"".join(struct.pack("<H", half) for half in halves)
     data += struct.pack("<H", recipe_ids[recipe]) + delta_wire(
         {key: value for key, value in initial.items() if value != recipes[recipe][key]})
@@ -396,7 +405,7 @@ def parse_pack(data: bytes) -> dict:
         record["cases"] = []
         for _ in range(count):
             case = {"name": reader.str16(), "form": reader.str16()}
-            case["flags"], case["target"] = reader.unpack("<BH")
+            case["flags"], case["target"], case["origin"] = reader.unpack("<BHH")
             halves = reader.unpack("<H")
             case["halfwords"] = list(struct.unpack(f"<{halves}H", reader.take(2 * halves)))
             case["recipe"] = names[reader.unpack("<H")]

@@ -10,8 +10,8 @@
  * applied: `Case::initial` is the complete starting state), with the data
  * region filled by `data_fill(case.fill)` and then `case.data_patches`, the
  * read-only region holding `read_only_fill()`, and the program placed at
- * kCodeBase. `Case::final` is the complete state after the program, and
- * `Case::memory_patches` the data bytes it changed.
+ * kCodeBase + `Case::origin`. `Case::final` is the complete state after the
+ * program, and `Case::memory_patches` the data bytes it changed.
  */
 #pragma once
 
@@ -32,6 +32,7 @@
 namespace uml::testing::aarch32_corpus {
 
 /* The memory map every case runs in (tools/arm64-tests/a32_oracle.cpp). */
+constexpr std::uint32_t kPackVersion = 2; /* 2: a case holds its program origin */
 constexpr std::uint32_t kCodeBase = 0x4F000000;
 constexpr std::uint32_t kCodeSize = 0x4000;
 constexpr std::uint32_t kArmExit = kCodeBase + 0x800;   /* finishes in A32 state */
@@ -181,6 +182,7 @@ struct Case final {
 	std::string name, form;
 	std::uint8_t flags{};
 	std::uint16_t target{};
+	std::uint16_t origin{}; /* byte offset of the program from kCodeBase */
 	std::vector<std::uint16_t> halves;
 	std::uint16_t recipe{};
 	State initial, final;
@@ -209,7 +211,7 @@ inline Pack read_pack(const std::vector<std::uint8_t> &data)
 	const auto version = reader.get<std::uint32_t>();
 	reader.skip(4);
 	const auto length = reader.get<std::uint64_t>();
-	require(version == 1 && data.size() == 24 + length, "the pack header is wrong");
+	require(version == kPackVersion && data.size() == 24 + length, "the pack header or its version is wrong");
 	reader.str32(); /* the memory map and record names, for tools */
 	Pack pack;
 	const auto recipes = reader.get<std::uint32_t>();
@@ -230,6 +232,7 @@ inline Pack read_pack(const std::vector<std::uint8_t> &data)
 			test.form = reader.str16();
 			test.flags = reader.get<std::uint8_t>();
 			test.target = reader.get<std::uint16_t>();
+			test.origin = reader.get<std::uint16_t>();
 			const auto halves = reader.get<std::uint16_t>();
 			require(halves != 0 && halves <= kMaxHalfwords, "a program has a wrong length");
 			for (unsigned half = 0; half < halves; ++half)
