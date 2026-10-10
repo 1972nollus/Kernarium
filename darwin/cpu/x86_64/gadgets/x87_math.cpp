@@ -209,17 +209,22 @@ void denormal_operand(softfloat_state &state,
 	return {0xc000000000000000ULL, 0x7fffU};
 }
 
-[[nodiscard]] X87Register invalid_result(CpuState &cpu) noexcept
+/* A pseudo-infinity, pseudo-NaN or unnormal, which x86 does not accept as an
+ * operand. */
+[[nodiscard]] constexpr bool is_unsupported(
+	const X87Register &value) noexcept
 {
-	auto state = soft_state(cpu, true);
-	state.exceptionFlags |= softfloat_flag_invalid;
-	commit_exceptions(cpu, state);
-	return quiet_nan();
+	return (value.sign_exponent & 0x7fffU) != 0 &&
+		(value.significand >> 63U) == 0;
 }
 
 [[nodiscard]] float128_t to_float128(softfloat_state &state,
 	X87Register value) noexcept
 {
+	/* A pseudo-denormal has the value its significand has with exponent 1. */
+	if ((value.sign_exponent & 0x7fffU) == 0 &&
+		(value.significand >> 63U) != 0)
+		value.sign_exponent |= 1U;
 	return extF80_to_f128(&state, to_soft(value));
 }
 
@@ -274,7 +279,7 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] bool reducible(CpuState &cpu, const X87Register &value) noexcept
 {
 	if ((value.sign_exponent & 0x7fffU) >= 0x3fffU + 63U &&
-		!is_nan(value) && !is_infinity(value)) {
+		!is_nan(value) && !is_infinity(value) && !is_unsupported(value)) {
 		cpu.x87_status = static_cast<std::uint16_t>(
 			(cpu.x87_status | status_c2) & ~status_c1);
 		return false;
@@ -286,84 +291,50 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register transcendental(CpuState &cpu,
 	TranscendentalOperation operation, X87Register value) noexcept
 {
-	if (is_infinity(value))
-		return invalid_result(cpu);
-	/* FSIN and FPTAN return a zero operand unchanged, sign included; the
-	 * 128-bit sine does not keep a negative zero's sign. */
-	if (is_zero(value) && operation != TranscendentalOperation::cosine)
-		return value;
 	auto state = soft_state(cpu, true);
 	denormal_operand(state, value);
-	const auto input = to_float128(state, value);
-	float128_t result{};
+	extFloat80_t result{};
 	switch (operation) {
 	case TranscendentalOperation::sine:
-		result = FEXCore::cephes_128bit::sinl(input);
+		result = FEXCore::cephes_128bit::x87_fsin(&state, to_soft(value));
 		break;
 	case TranscendentalOperation::cosine:
-		result = FEXCore::cephes_128bit::cosl(input);
+		result = FEXCore::cephes_128bit::x87_fcos(&state, to_soft(value));
 		break;
 	case TranscendentalOperation::tangent:
-		result = FEXCore::cephes_128bit::tanl(input);
+		result = FEXCore::cephes_128bit::x87_ftan(&state, to_soft(value));
 		break;
 	}
-	/* Every function of a finite nonzero operand is inexact. */
-	return inexact_result(cpu, state, result,
-		is_zero(value) || is_nan(value) ? Inexact::never :
-			Inexact::always);
+	commit_exceptions(cpu, state);
+	return from_soft(result);
 }
 
+/* F2XM1: 2^x - 1, where an operand beyond one is returned as it is. */
 [[nodiscard]] X87Register f2xm1(CpuState &cpu,
 	X87Register value) noexcept
 {
 	auto state = soft_state(cpu, true);
 	denormal_operand(state, value);
-	const float128_t one{0, 0x3fff000000000000ULL};
-	const auto result = f128_sub(&state,
-		FEXCore::cephes_128bit::exp2l(to_float128(state, value)), one);
-	const auto converted = from_float128(state, result);
+	const auto result = FEXCore::cephes_128bit::x87_f2xm1(
+		&state, to_soft(value));
 	commit_exceptions(cpu, state);
-	return converted;
+	return from_soft(result);
 }
 
+/* FYL2X and FYL2XP1: y * log2(x) and y * log2(x + 1). */
 [[nodiscard]] X87Register fyl2x(CpuState &cpu, X87Register value,
 	X87Register multiplier, bool plus_one) noexcept
 {
 	auto state = soft_state(cpu, true);
-	denormal_operand(state, value);
-	denormal_operand(state, multiplier);
-	/* log2 of zero is an infinity, of which a factor other than zero or
-	 * an infinity raises division by zero; a zero factor of it and the
-	 * logarithm of a number below zero are invalid. */
-	if (!plus_one && !is_nan(value) && !is_nan(multiplier)) {
-		const bool negative = (value.sign_exponent & 0x8000U) != 0;
-		const bool multiplier_negative =
-			(multiplier.sign_exponent & 0x8000U) != 0;
-		if ((is_zero(value) && is_zero(multiplier)) ||
-			(negative && !is_zero(value))) {
-			state.exceptionFlags |= softfloat_flag_invalid;
-			commit_exceptions(cpu, state);
-			return {0xc000000000000000ULL, 0xffffU};
-		}
-		if (is_zero(value)) {
-			if (!is_infinity(multiplier))
-				state.exceptionFlags |= softfloat_flag_infinite;
-			commit_exceptions(cpu, state);
-			return {0x8000000000000000ULL,
-				static_cast<std::uint16_t>(multiplier_negative ?
-					0x7fffU : 0xffffU)};
-		}
+	/* A NaN takes precedence over a denormal operand. */
+	if (!is_nan(value) && !is_nan(multiplier)) {
+		denormal_operand(state, value);
+		denormal_operand(state, multiplier);
 	}
-	auto input = to_float128(state, value);
-	if (plus_one) {
-		const float128_t one{0, 0x3fff000000000000ULL};
-		input = f128_add(&state, input, one);
-	}
-	const auto result = f128_mul(&state, to_float128(state, multiplier),
-		FEXCore::cephes_128bit::log2l(input));
-	const auto converted = from_float128(state, result);
+	const auto result = FEXCore::cephes_128bit::x87_fyl2x(&state,
+		to_soft(value), to_soft(multiplier), plus_one);
 	commit_exceptions(cpu, state);
-	return converted;
+	return from_soft(result);
 }
 
 [[nodiscard]] X87Register fpatan(CpuState &cpu, X87Register y,
@@ -558,17 +529,41 @@ enum class CompareResult : std::uint8_t {
 	return result;
 }
 
+/* FBSTP: a value that rounds to 18 decimal digits or fewer, inexact if it
+ * rounded; any other, a NaN, an infinity and an unsupported encoding store
+ * the packed BCD indefinite and raise invalid. */
 void packed_bcd_store(CpuState &cpu, X87Register value,
 	std::span<std::byte, 10> bytes) noexcept
 {
+	constexpr std::uint64_t limit = 1000000000000000000ULL;
 	auto state = soft_state(cpu);
 	const bool negative = (value.sign_exponent & 0x8000U) != 0;
-	value = from_soft(extF80_roundToInt(&state, to_soft(value),
-		state.roundingMode, false));
-	value.sign_exponent &= 0x7fffU;
-	auto integer = extF80_to_ui64(&state, to_soft(value),
-		state.roundingMode, false);
+	std::uint64_t integer{};
+	bool valid = !is_unsupported(value) && !is_nan(value) &&
+		!is_infinity(value);
+	if (valid) {
+		value = from_soft(extF80_roundToInt(&state, to_soft(value),
+			state.roundingMode, true));
+		value.sign_exponent &= 0x7fffU;
+		integer = extF80_to_ui64(&state, to_soft(value),
+			state.roundingMode, false);
+		valid = integer < limit &&
+			(state.exceptionFlags & softfloat_flag_invalid) == 0;
+	}
+	if (!valid) {
+		state.exceptionFlags = static_cast<std::uint8_t>(
+			(state.exceptionFlags & ~(softfloat_flag_inexact |
+			softfloat_flag_roundedUp)) | softfloat_flag_invalid);
+	}
 	commit_exceptions(cpu, state);
+	if (!valid) {
+		for (std::size_t index = 0; index < 7; ++index)
+			bytes[index] = std::byte{};
+		bytes[7] = std::byte{0xc0};
+		bytes[8] = std::byte{0xff};
+		bytes[9] = std::byte{0xff};
+		return;
+	}
 	for (std::size_t index = 0; index < 9; ++index) {
 		const auto low = integer % 10U;
 		integer /= 10U;
@@ -729,12 +724,19 @@ extern "C" void uml_x86_64_x87_fyl2xp1(CpuState *cpu,
 	*result = fyl2x(*cpu, *value, *multiplier, true);
 }
 
+/* FPTAN's second result, the one it pushes, is 1.0 for a tangent; for an
+ * operand that has none, the same NaN or indefinite again. */
 extern "C" void uml_x86_64_x87_tangent(CpuState *cpu,
-	const X87Register *input, X87Register *result) noexcept
+	const X87Register *input, X87Register *result,
+	X87Register *second) noexcept
 {
-	*result = reducible(*cpu, *input) ?
-		transcendental(*cpu, TranscendentalOperation::tangent, *input) :
-		*input;
+	if (!reducible(*cpu, *input)) {
+		*result = *input;
+		return;
+	}
+	*result = transcendental(*cpu, TranscendentalOperation::tangent, *input);
+	*second = is_nan(*result) ? *result :
+		X87Register{0x8000000000000000ULL, 0x3fffU};
 }
 
 extern "C" void uml_x86_64_x87_atan(CpuState *cpu,
