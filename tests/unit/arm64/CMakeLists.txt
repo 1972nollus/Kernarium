@@ -78,6 +78,15 @@ uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
 uml_add_arm64_unit_test(a32_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+# The host runtime side of AArch32: the formats an AArch32 task's status and
+# FPSCR travel in, the load and save around an engine's AArch32 entry, the
+# bridge event of each exit, and the entry points and compat HWCAPs against
+# what the run presents. Run with the guest-AArch32 policy off and on.
+uml_add_arm64_unit_test(a32_host WITHOUT_HARNESS
+    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS} ARGS policy-off)
+uml_add_unit_test(NAME arm64-a32-host-policy-on
+    COMMAND uml_arm64_a32_host_tests policy-on)
+
 # The tagged translation key both engines' caches share across A64, A32 and
 # T32, and the key-aware validation of a translation's saved guest units.
 uml_add_arm64_unit_test(a32_guest_key WITHOUT_HARNESS NO_OBJECTS)

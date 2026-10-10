@@ -15,6 +15,7 @@
 #include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
+#include "runtime/aarch32_guest.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
 #include "uml_darwin_guest.h"
@@ -556,20 +557,30 @@ std::unique_ptr<uml::cpu::CpuEngine> &engine_slot(
 	return runtime.engines.slot<Kind>();
 }
 
+/* A thread's engine is created by its first entry; every later entry finds
+ * it. Kept out of line and cold so that the entry's frame and hot path do not
+ * carry the creation. */
+template<uml::cpu::EngineKind Kind>
+[[gnu::cold, gnu::noinline]] void create_common_engine(
+	std::unique_ptr<uml::cpu::CpuEngine> &slot)
+{
+	slot = uml::cpu::make_cpu_engine(Kind,
+		uml::cpu::EngineConfiguration{
+			.host_capabilities =
+				::uml::runtime::guest_host_capabilities(
+					Kind == uml::cpu::EngineKind::jit ?
+						::uml::runtime::ExecutionEngine::jit :
+						::uml::runtime::ExecutionEngine::gadgets),
+		});
+}
+
 template<uml::cpu::EngineKind Kind>
 uml::cpu::CpuEngine *common_engine(
 	::uml::runtime::ThreadExecutionState &runtime)
 {
 	auto &slot = engine_slot<Kind>(runtime);
-	if (!slot)
-		slot = uml::cpu::make_cpu_engine(Kind,
-			uml::cpu::EngineConfiguration{
-				.host_capabilities =
-					::uml::runtime::guest_host_capabilities(
-						Kind == uml::cpu::EngineKind::jit ?
-							::uml::runtime::ExecutionEngine::jit :
-							::uml::runtime::ExecutionEngine::gadgets),
-			});
+	if (!slot) [[unlikely]]
+		create_common_engine<Kind>(slot);
 	return slot.get();
 }
 
@@ -586,6 +597,62 @@ void debug_check_host_streaming_state() noexcept
 	arm64::debug_check_host_streaming_state(
 		::uml::platform::apple::probed_host_capabilities());
 #endif
+}
+
+/* An AArch32 task's entry (runtime/aarch32_guest.hpp): the engine's
+ * run_aarch32() between load_a32_cpu() and save_a32_cpu(). A task is entered
+ * only while the run presents AArch32 -- its engine implements the profile
+ * to at least the integer core, and the guest-AArch32 policy is on, which is
+ * exactly when the compat HWCAPs are not zero and the kernel runs an
+ * AArch32 task at all -- and only in a state the kernel may hand over;
+ * anything else is a kernel invariant violation and fatal.
+ *
+ * Kept out of line and cold: an AArch64 entry reaches it only through the
+ * one test of PSTATE.nRW in run_common_guest(). */
+template<uml::cpu::EngineKind Kind>
+[[gnu::cold, gnu::noinline]] int run_aarch32_guest(
+	darwin_uml_guest_registers &registers,
+	darwin_uml_guest_fp_registers &fp,
+	const darwin_uml_guest_sve_registers &sve,
+	unsigned long generation, unsigned long *tls,
+	::uml::runtime::Context &context,
+	::uml::runtime::ThreadExecutionState &runtime)
+{
+	namespace a32 = ::uml::runtime::aarch32;
+	if (::uml::runtime::guest_a32_support(Kind) < arm64::A32Support::base ||
+	    !a32::entry_is_valid(registers, sve))
+		return DARWIN_UML_EVENT_FATAL;
+	auto *engine = common_engine<Kind>(runtime);
+	if (engine == nullptr)
+		return DARWIN_UML_EVENT_FATAL;
+	auto &cpu = runtime.cpu;
+	a32::load_a32_cpu(cpu, registers, fp, *tls, restored_fpcr_mask());
+	if constexpr (Kind != uml::cpu::EngineKind::gadgets)
+		cpu.access_fp_state();
+	const auto &interrupt = runtime.interrupt;
+	/* No signal-return trampoline: a 32-bit task returns through its
+	 * sigpage or its restorer, which are ordinary code. */
+	uml::cpu::ExecutionRequest request{
+		.cpu = cpu,
+		.memory = runtime.memory,
+		.translated_memory = &runtime.memory,
+		.generation = generation,
+		.instruction_budget = dispatch_budget,
+		.interrupt = {
+			.sequence = interrupt.sequence,
+			.snapshot = interrupt.snapshot,
+			.stop = context.stop_token(),
+		},
+		.single_step = (registers.pstate & pstate_ss) != 0,
+	};
+	debug_check_host_streaming_state();
+	const auto result = engine->run_aarch32(request);
+	debug_check_host_streaming_state();
+	::uml::cpu::materialize_architectural_state(cpu);
+	a32::save_a32_cpu(cpu, registers, fp, *tls);
+	return a32::exit_event(registers, cpu, result,
+		result.reason == uml::cpu::ExitReason::interrupt &&
+			context.stop_requested());
 }
 
 template<uml::cpu::EngineKind Kind>
@@ -620,11 +687,13 @@ int run_common_guest(
 	 * registers, whether or not the run implements either. */
 	if (fp_size != DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE)
 		return DARWIN_UML_EVENT_FATAL;
-	/* No engine executes AArch32 EL0 yet: its entry is a kernel invariant
-	 * violation, because the kernel runs an AArch32 task only while
-	 * darwin_uml_guest_compat_hwcap() is non-zero. */
+	/* A 32-bit task: PSTATE.nRW in the SPSR layout the kernel hands over. */
 	if (mutable_registers.pstate & pstate_mode32) [[unlikely]]
-		return DARWIN_UML_EVENT_FATAL;
+		return run_aarch32_guest<Kind>(mutable_registers, fp,
+			*reinterpret_cast<const darwin_uml_guest_sve_registers *>(
+				static_cast<std::byte *>(fp_pointer) +
+				DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET),
+			generation, tls, *context, *runtime);
 	auto &sme = *reinterpret_cast<darwin_uml_guest_sme_registers *>(
 		static_cast<std::byte *>(fp_pointer) +
 		DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET);
