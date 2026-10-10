@@ -11,7 +11,8 @@
  * - interworking branches in both directions and the A32 target with
  *   bit 1 set;
  * - the instruction budget, single step and code that changes in place;
- * - exclusives, the CP15 and counter reads, the system forms; and
+ * - exclusives, the Armv8 acquire and release forms, the CP15 and counter
+ *   reads and the system forms; and
  * - LDM, STM and LDRD across a page boundary, mapped and not.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
@@ -48,6 +49,22 @@ constexpr std::uint32_t blx_r1 = 0xe12f'ff31U;
 constexpr std::uint32_t ldrex_r1_r2 = 0xe192'1f9fU;
 constexpr std::uint32_t strex_r3_r1_r2 = 0xe182'3f91U;
 constexpr std::uint32_t clrex = 0xf57f'f01fU;
+constexpr std::uint32_t sevl = 0xe320'f005U;
+/* The Armv8 acquire and release forms, on [r2]. */
+constexpr std::uint32_t lda_r1_r2 = 0xe192'1c9fU;
+constexpr std::uint32_t ldab_r1_r2 = 0xe1d2'1c9fU;
+constexpr std::uint32_t ldah_r1_r2 = 0xe1f2'1c9fU;
+constexpr std::uint32_t stl_r1_r2 = 0xe182'fc91U;
+constexpr std::uint32_t stlb_r1_r2 = 0xe1c2'fc91U;
+constexpr std::uint32_t stlh_r1_r2 = 0xe1e2'fc91U;
+constexpr std::uint32_t ldaex_r1_r2 = 0xe192'1e9fU;
+constexpr std::uint32_t ldaexb_r1_r2 = 0xe1d2'1e9fU;
+constexpr std::uint32_t ldaexh_r1_r2 = 0xe1f2'1e9fU;
+constexpr std::uint32_t ldaexd_r6_r7_r2 = 0xe1b2'6e9fU;
+constexpr std::uint32_t stlex_r3_r1_r2 = 0xe182'3e91U;
+constexpr std::uint32_t stlexb_r3_r1_r2 = 0xe1c2'3e91U;
+constexpr std::uint32_t stlexh_r3_r1_r2 = 0xe1e2'3e91U;
+constexpr std::uint32_t stlexd_r3_r6_r7_r2 = 0xe1a2'3e96U;
 constexpr std::uint32_t cmp_r3_0 = 0xe353'0000U;
 constexpr std::uint32_t mrc_tpidruro = 0xee1d'0f70U;
 constexpr std::uint32_t mrc_tpidrurw = 0xee1d'0f50U;
@@ -79,6 +96,7 @@ constexpr std::uint16_t bkpt_42 = 0xbe42;
 constexpr std::uint16_t bx_r0 = 0x4700;
 constexpr std::uint16_t mov_r0_pc = 0x4678;
 constexpr std::uint16_t b_self = 0xe7fe;
+constexpr std::uint16_t sevl = 0xbf50;
 } // namespace t
 
 /* ------------------------------------------------------------ retirement */
@@ -674,6 +692,7 @@ void exclusive_loops_progress_with_colliding_pages()
 {
 	enum class Form { word, byte, half, pair };
 	unsigned long generation = 1000;
+	for (const bool ordered : {false, true})
 	for (const bool thumb : {false, true})
 	for (const bool inside : {false, true})
 	for (const auto form : {Form::word, Form::byte, Form::half, Form::pair}) {
@@ -696,18 +715,21 @@ void exclusive_loops_progress_with_colliding_pages()
 		};
 		if (!inside)
 			plain_stores();
+		/* The acquire forms of the same loads. */
 		switch (form) {
 		case Form::word:
-			code.add(thumb ? 0xe852'1f00U : a::ldrex_r1_r2);
+			code.add(thumb ? (ordered ? 0xe8d2'1fefU : 0xe852'1f00U) :
+					 (ordered ? a::ldaex_r1_r2 : a::ldrex_r1_r2));
 			break;
 		case Form::byte:
-			code.add(0xe1d2'1f9fU); /* ldrexb r1,[r2] */
-			break;
+			code.add(ordered ? a::ldaexb_r1_r2 : 0xe1d2'1f9fU);
+			break; /* ldrexb r1,[r2] */
 		case Form::half:
-			code.add(0xe1f2'1f9fU); /* ldrexh r1,[r2] */
-			break;
+			code.add(ordered ? a::ldaexh_r1_r2 : 0xe1f2'1f9fU);
+			break; /* ldrexh r1,[r2] */
 		case Form::pair:
-			code.add(thumb ? 0xe8d2'677fU : 0xe1b2'6f9fU);
+			code.add(thumb ? (ordered ? 0xe8d2'67ffU : 0xe8d2'677fU) :
+					 (ordered ? a::ldaexd_r6_r7_r2 : 0xe1b2'6f9fU));
 			break; /* ldrexd r6,r7,[r2] */
 		}
 		if (inside)
@@ -720,16 +742,18 @@ void exclusive_loops_progress_with_colliding_pages()
 		}
 		switch (form) {
 		case Form::word:
-			code.add(thumb ? 0xe842'1300U : a::strex_r3_r1_r2);
+			code.add(thumb ? (ordered ? 0xe8c2'1fe3U : 0xe842'1300U) :
+					 (ordered ? a::stlex_r3_r1_r2 : a::strex_r3_r1_r2));
 			break;
 		case Form::byte:
-			code.add(0xe1c2'3f91U); /* strexb r3,r1,[r2] */
-			break;
+			code.add(ordered ? a::stlexb_r3_r1_r2 : 0xe1c2'3f91U);
+			break; /* strexb r3,r1,[r2] */
 		case Form::half:
-			code.add(0xe1e2'3f91U); /* strexh r3,r1,[r2] */
-			break;
+			code.add(ordered ? a::stlexh_r3_r1_r2 : 0xe1e2'3f91U);
+			break; /* strexh r3,r1,[r2] */
 		case Form::pair:
-			code.add(thumb ? 0xe8c2'6773U : 0xe1a2'3f96U);
+			code.add(thumb ? (ordered ? 0xe8c2'67f3U : 0xe8c2'6773U) :
+					 (ordered ? a::stlexd_r3_r6_r7_r2 : 0xe1a2'3f96U));
 			break; /* strexd r3,r6,r7,[r2] */
 		}
 		code.add(thumb ? t::cmp_r3_0 : a::cmp_r3_0);
@@ -777,6 +801,192 @@ void a_misaligned_exclusive_faults_as_an_alignment_fault()
 	require(result.fault.address == data_base + 0x22);
 	require(result.retired_instructions == 1);
 	require(cpu.pc == aarch32::a32_key(code_base + 4));
+}
+
+/* ------------------------------------------- acquire and release (Armv8) */
+
+/* LDA*, STL*: the store writes only its width, the load zero-extends, in
+ * both instruction sets. */
+void acquire_loads_and_release_stores_round_trip()
+{
+	struct Size {
+		std::uint32_t a32_store, a32_load, t32_store, t32_load;
+		std::uint32_t mask;
+	};
+	constexpr Size sizes[] = {
+		{a::stl_r1_r2, a::lda_r1_r2, 0xe8c2'1fafU, 0xe8d2'1fafU,
+		 0xffff'ffffU},
+		{a::stlb_r1_r2, a::ldab_r1_r2, 0xe8c2'1f8fU, 0xe8d2'1f8fU,
+		 0xffU},
+		{a::stlh_r1_r2, a::ldah_r1_r2, 0xe8c2'1f9fU, 0xe8d2'1f9fU,
+		 0xffffU}};
+	unsigned long generation = 1040;
+	for (const bool thumb : {false, true})
+	for (const auto &size : sizes) {
+		Guest guest{generation++};
+		if (thumb)
+			guest.t32(0, {static_cast<std::uint16_t>(size.t32_store >> 16),
+				      static_cast<std::uint16_t>(size.t32_store),
+				      0x2100 /* movs r1,#0 */,
+				      static_cast<std::uint16_t>(size.t32_load >> 16),
+				      static_cast<std::uint16_t>(size.t32_load),
+				      t::svc});
+		else
+			guest.a32(0, {size.a32_store, 0xe3a0'1000U /* mov r1,#0 */,
+				      size.a32_load, a::svc});
+		guest.data32(0x20, 0xaabb'ccddU);
+		auto cpu = thumb ? t32_state() : a32_state();
+		cpu.registers[1] = 0x1122'3344U;
+		cpu.registers[2] = data_base + 0x20;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == 4);
+		require(reg(cpu, 1) == (0x1122'3344U & size.mask));
+		require(guest.data32(0x20) ==
+			((0xaabb'ccddU & ~size.mask) | (0x1122'3344U & size.mask)));
+	}
+}
+
+void an_unaligned_acquire_or_release_is_an_alignment_fault()
+{
+	struct Case {
+		std::uint32_t word;
+		std::uint32_t address;
+		bool write;
+	};
+	const Case cases[] = {
+		{a::lda_r1_r2, 0x22, false}, {a::lda_r1_r2, 0x21, false},
+		{a::ldah_r1_r2, 0x21, false}, {a::stl_r1_r2, 0x22, true},
+		{a::stlh_r1_r2, 0x21, true}, {a::ldaex_r1_r2, 0x21, false},
+		{a::ldaexh_r1_r2, 0x21, false},
+		{a::ldaexd_r6_r7_r2, 0x24, false},
+		{a::stlex_r3_r1_r2, 0x22, true},
+		{a::stlexh_r3_r1_r2, 0x21, true},
+		{a::stlexd_r3_r6_r7_r2, 0x24, true}};
+	unsigned long generation = 1050;
+	for (const auto &item : cases) {
+		Guest guest{generation++};
+		guest.a32(0, {a::mov_r0_1, item.word, a::svc});
+		auto cpu = a32_state();
+		cpu.registers[1] = 0x77;
+		cpu.registers[2] = data_base + item.address;
+		cpu.registers[3] = 0x55;
+		cpu.registers[6] = 0x66;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.fault.alignment);
+		require(result.fault.address == data_base + item.address);
+		require(result.retired_instructions == 1);
+		require(cpu.pc == aarch32::a32_key(code_base + 4));
+		require(reg(cpu, 1) == 0x77 && reg(cpu, 3) == 0x55 &&
+			reg(cpu, 6) == 0x66);
+	}
+}
+
+void an_acquire_or_release_to_unmapped_memory_faults_without_effect()
+{
+	unsigned long generation = 1070;
+	for (const auto word : {a::lda_r1_r2, a::stl_r1_r2, a::ldaex_r1_r2,
+				a::stlex_r3_r1_r2}) {
+		Guest guest{generation++};
+		guest.a32(0, {a::mov_r0_1, word, a::svc});
+		auto cpu = a32_state();
+		cpu.registers[1] = 0x1111;
+		cpu.registers[2] = unmapped + 0x40;
+		cpu.registers[3] = 0x2222;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(!result.fault.alignment);
+		require(result.fault.address == unmapped + 0x40);
+		require(result.retired_instructions == 1);
+		require(cpu.pc == aarch32::a32_key(code_base + 4));
+		require(reg(cpu, 1) == 0x1111 && reg(cpu, 3) == 0x2222);
+	}
+}
+
+void a_release_store_without_a_reservation_fails()
+{
+	Guest lone{1061};
+	lone.a32(0, {a::stlex_r3_r1_r2, a::svc});
+	lone.data32(0x20, 41);
+	auto unreserved = a32_state();
+	unreserved.registers[1] = 99;
+	unreserved.registers[2] = data_base + 0x20;
+	require(lone.run(unreserved).reason == ExitReason::system_call);
+	require(reg(unreserved, 3) == 1);
+	require(lone.data32(0x20) == 41);
+
+	/* An acquire load reserves for either kind of store, and CLREX takes
+	 * the reservation away. */
+	Guest cleared{1062};
+	cleared.a32(0, {a::ldaex_r1_r2, a::clrex, a::stlex_r3_r1_r2, a::svc});
+	cleared.data32(0x20, 41);
+	auto after_clear = a32_state();
+	after_clear.registers[2] = data_base + 0x20;
+	require(cleared.run(after_clear).reason == ExitReason::system_call);
+	require(reg(after_clear, 3) == 1);
+	require(cleared.data32(0x20) == 41);
+}
+
+/* The compare-and-swap helpers of arm64 Linux's compat kuser page, which
+ * are conditional release-exclusives in a retry loop:
+ *   1: ldaex r3,[r2] ; subs r3,r3,r0 ; stlexeq r3,r1,[r2] ; teqeq r3,#1 ;
+ *      beq 1b ; rsbs r0,r3,#0 ; svc
+ * and the 64-bit one on a register pair. */
+void the_kuser_compare_and_swap_succeeds_or_reports_a_mismatch()
+{
+	for (const bool match : {true, false}) {
+		Guest guest{match ? 1063UL : 1064UL};
+		guest.a32(0, {0xe192'3e9fU, 0xe053'3000U, 0x0182'3e91U,
+			      0x0333'0001U, 0x0aff'fffaU, 0xe273'0000U, a::svc});
+		guest.data32(0x20, 41);
+		auto cpu = a32_state();
+		cpu.registers[0] = match ? 41 : 40;
+		cpu.registers[1] = 42;
+		cpu.registers[2] = data_base + 0x20;
+		require(guest.run(cpu, 20'000).reason == ExitReason::system_call);
+		require((reg(cpu, 0) == 0) == match);
+		require(guest.data32(0x20) == (match ? 42U : 41U));
+	}
+	for (const bool match : {true, false}) {
+		Guest guest{match ? 1065UL : 1066UL};
+		guest.a32(0, {0xe1b2'6e9fU, 0xe026'8000U, 0xe027'9001U,
+			      0xe198'8009U, 0x01a2'3e94U, 0x0333'0001U,
+			      0x0aff'fff8U, 0xe273'0000U, a::svc});
+		guest.data32(0x20, 0xfffffff0U);
+		guest.data32(0x24, 7);
+		auto cpu = a32_state();
+		cpu.registers[0] = match ? 0xfffffff0U : 0xfffffff1U;
+		cpu.registers[1] = 7;
+		cpu.registers[3] = 1; /* the status a mismatch leaves */
+		cpu.registers[4] = 5;
+		cpu.registers[5] = 6;
+		cpu.registers[2] = data_base + 0x20;
+		require(guest.run(cpu, 20'000).reason == ExitReason::system_call);
+		require((reg(cpu, 0) == 0) == match);
+		require(guest.data32(0x20) == (match ? 5U : 0xfffffff0U));
+		require(guest.data32(0x24) == (match ? 6U : 7U));
+	}
+}
+
+void set_event_local_is_a_hint()
+{
+	{
+		Guest guest{1067};
+		guest.a32(0, {a::sevl, a::mov_r0_1, a::svc});
+		auto cpu = a32_state();
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == 3 && reg(cpu, 0) == 1);
+	}
+	{
+		Guest guest{1068};
+		guest.t32(0, {t::sevl, t::movs_r0_1, t::svc});
+		auto cpu = t32_state();
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == 3 && reg(cpu, 0) == 1);
+	}
 }
 
 void coprocessor_and_counter_reads()
@@ -963,6 +1173,12 @@ int main()
 	a_store_without_a_reservation_fails();
 	exclusive_loops_progress_with_colliding_pages();
 	a_misaligned_exclusive_faults_as_an_alignment_fault();
+	acquire_loads_and_release_stores_round_trip();
+	an_unaligned_acquire_or_release_is_an_alignment_fault();
+	an_acquire_or_release_to_unmapped_memory_faults_without_effect();
+	a_release_store_without_a_reservation_fails();
+	the_kuser_compare_and_swap_succeeds_or_reports_a_mismatch();
+	set_event_local_is_a_hint();
 	coprocessor_and_counter_reads();
 	the_counter_does_not_run_backwards();
 	cp15_barriers_follow_the_enable();
