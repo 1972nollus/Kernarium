@@ -397,6 +397,7 @@ void group_ill();
 void group_ptrace();
 void group_atomics();
 void group_simd();
+void group_armv8_fp();
 void group_absent();
 void group_complete();
 
