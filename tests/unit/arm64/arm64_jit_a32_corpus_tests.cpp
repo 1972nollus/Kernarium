@@ -13,6 +13,8 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/jit/a32/a32_arith.hpp"
+#include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
 
 #include <algorithm>
@@ -360,6 +362,96 @@ bool within_level(const Case &test, const dec::Profile &profile) {
   return true;
 }
 
+/* The library-exit gate: a form the compiler lowers stays out of the slow
+ * helper from a clean state. Every event-free case of a form runs twice (the
+ * first run warms the translation and the TLB) and the second run's helper
+ * exits for the form under test are counted. */
+struct ExitTally final {
+  std::size_t cases = 0, clean = 0;
+};
+
+std::map<std::string, ExitTally> measure_helper_exits(
+    Machine &machine, const Pack &pack, const dec::Profile &profile,
+    bool report) {
+  std::map<std::string, dec::Form> forms;
+  for (std::size_t index = 0; index < dec::kFormCount; ++index)
+    forms.emplace(dec::kForms[index].name, static_cast<dec::Form>(index));
+  std::map<std::string, ExitTally> tallies;
+  ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
+  for (const auto &record : pack.records) {
+    if ((record.profiles & kProfileBit) == 0)
+      continue;
+    for (const auto &test : record.cases) {
+      if (test.event != 0 || !within_level(test, profile))
+        continue;
+      const auto form = forms.find(test.form);
+      require(form != forms.end());
+      const bool thumb = test.flags & kFlagThumb;
+      std::uint32_t stub = 0;
+      bool padded = false;
+      std::size_t before = 0;
+      for (unsigned pass = 0; pass < 2; ++pass) {
+        machine.load(test, stub, padded);
+        auto cpu = cpu_from(test.initial, thumb);
+        before = ::uml::cpu::arm64::jit::a32::helper_exits(form->second);
+        (void)machine.run(cpu);
+      }
+      const auto taken =
+          ::uml::cpu::arm64::jit::a32::helper_exits(form->second) - before;
+      auto &tally = tallies[test.form];
+      ++tally.cases;
+      tally.clean += taken == 0 ? 1U : 0U;
+      if (report && taken != 0)
+        std::fprintf(stderr, "exit %s %s/%s: %zu\n", test.form.c_str(),
+                     record.name.c_str(), test.name.c_str(),
+                     static_cast<std::size_t>(taken));
+    }
+  }
+  ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
+  return tallies;
+}
+
+/* Requires every form the compiler lowers to stay out of the helper from a
+ * clean state: at least half of its event-free cases take no helper exit (the
+ * rest cross a page, write back over the loaded register and so on). The
+ * interim helper arithmetic takes it every time, which keeps the predicate
+ * that names it honest, and the exclusives are measured by their own test. */
+void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
+                                       const dec::Profile &profile) {
+  const auto tallies = measure_helper_exits(machine, pack, profile, false);
+  std::size_t inline_forms = 0, helper_forms = 0;
+  for (const auto &[name, tally] : tallies) {
+    dec::Form form{};
+    for (std::size_t index = 0; index < dec::kFormCount; ++index)
+      if (name == dec::kForms[index].name)
+        form = static_cast<dec::Form>(index);
+    const auto op = ::uml::cpu::arm64::jit::a32::op_info(form).op;
+    using ::uml::cpu::arm64::jit::a32::Op;
+    if (op >= Op::ldrex && op <= Op::strexd)
+      continue;
+    if (::uml::cpu::arm64::jit::a32::is_helper_arithmetic_form(form)) {
+      if (tally.clean != 0) {
+        std::fprintf(stderr, "%s runs inline but is named a helper form\n",
+                     name.c_str());
+        require(false);
+      }
+      ++helper_forms;
+      continue;
+    }
+    if (tally.clean * 2 < tally.cases) {
+      std::fprintf(stderr,
+                   "%s is lowered but took the helper from a clean state in "
+                   "%zu of %zu cases\n",
+                   name.c_str(), tally.cases - tally.clean, tally.cases);
+      require(false);
+    }
+    ++inline_forms;
+  }
+  std::printf("%zu lowered forms stay inline from a clean state; %zu run in "
+              "the interim helper\n",
+              inline_forms, helper_forms);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -369,6 +461,7 @@ int main(int argc, char **argv) {
   bool list_failures = false;
   bool trace = false;
   bool all_failures = false;
+  bool exit_report = false;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--record" && index + 1 < argc)
@@ -381,6 +474,8 @@ int main(int argc, char **argv) {
       trace = true;
     else if (argument == "--all-failures")
       all_failures = true;
+    else if (argument == "--exit-report")
+      exit_report = true;
     else
       path = argv[index];
   }
@@ -391,6 +486,14 @@ int main(int argc, char **argv) {
   const auto profile = dec::Profile::at(dec::Level::complete);
 
   Machine machine{0x1a32'0300};
+  if (exit_report) {
+    const auto tallies = measure_helper_exits(machine, pack, profile, true);
+    for (const auto &[form, tally] : tallies)
+      if (tally.clean != tally.cases)
+        std::printf("%s: %zu of %zu cases clean\n", form.c_str(), tally.clean,
+                    tally.cases);
+    return 0;
+  }
   Totals totals;
   for (const auto &record : pack.records) {
     if ((record.profiles & kProfileBit) == 0 ||
@@ -443,5 +546,7 @@ int main(int argc, char **argv) {
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
       std::printf("  %s: %zu\n", form.c_str(), count);
+  if (totals.failed == 0 && only_record.empty() && only_case.empty())
+    require_lowered_forms_stay_inline(machine, pack, profile);
   return totals.failed == 0 ? 0 : 1;
 }

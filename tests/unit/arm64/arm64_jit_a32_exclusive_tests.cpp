@@ -5,6 +5,7 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
+#include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 
 #include <atomic>
@@ -84,8 +85,13 @@ void atomic_add_loop_fuses_and_counts(unsigned long generation) {
   fixture.data32(0, 5);
   auto cpu = Fixture::task(false);
   cpu.registers[0] = data_base;
+  ::uml::cpu::arm64::jit::a32::reset_helper_exits();
+  ::uml::cpu::arm64::jit::a32::count_helper_exits(true);
   const auto result = fixture.run(cpu, 1u << 20);
+  ::uml::cpu::arm64::jit::a32::count_helper_exits(false);
   require(result.reason == ExitReason::system_call);
+  // The fused pair never reaches the helper.
+  require(::uml::cpu::arm64::jit::a32::helper_exit_total() == 0);
   require(fixture.read32(0) == 1005);
   require(cpu.registers[2] == 1005);
   require(cpu.registers[3] == 0);

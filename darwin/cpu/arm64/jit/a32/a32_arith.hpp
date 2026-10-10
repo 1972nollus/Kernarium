@@ -11,6 +11,7 @@ namespace uml::cpu::arm64::jit::a32 {
  * USAD8/USADA8. */
 [[nodiscard]] bool is_helper_arithmetic(
     const aarch32::Instruction &inst) noexcept;
+[[nodiscard]] bool is_helper_arithmetic_form(aarch32::Form form) noexcept;
 
 /* Executes such an instruction on the register file: Rd, and GE or Q where
  * the form sets them. The caller advances the PC key and the ITSTATE. */

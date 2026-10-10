@@ -132,7 +132,11 @@ void parallel(CpuState &cpu, const aarch32::Instruction &inst,
 } // namespace
 
 bool is_helper_arithmetic(const aarch32::Instruction &inst) noexcept {
-  switch (op_info(inst.form).op) {
+  return is_helper_arithmetic_form(inst.form);
+}
+
+bool is_helper_arithmetic_form(aarch32::Form form) noexcept {
+  switch (op_info(form).op) {
   case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
   case Op::usada8:
     return true;

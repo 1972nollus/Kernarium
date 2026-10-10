@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstring>
 #include <mutex>
@@ -502,7 +503,34 @@ private:
   return pack_jit_result(Event::illegal_instruction, 0);
 }
 
+std::atomic<bool> counting_exits{false};
+std::atomic<std::uint64_t> exit_total{0};
+std::array<std::atomic<std::uint64_t>, aarch32::kFormCount> form_exits{};
+
 } // namespace
+
+namespace jit::a32 {
+
+void count_helper_exits(bool enable) noexcept {
+  counting_exits.store(enable, std::memory_order_relaxed);
+}
+
+std::uint64_t helper_exits(aarch32::Form form) noexcept {
+  return form_exits[static_cast<std::size_t>(form)].load(
+      std::memory_order_relaxed);
+}
+
+std::uint64_t helper_exit_total() noexcept {
+  return exit_total.load(std::memory_order_relaxed);
+}
+
+void reset_helper_exits() noexcept {
+  exit_total.store(0, std::memory_order_relaxed);
+  for (auto &count : form_exits)
+    count.store(0, std::memory_order_relaxed);
+}
+
+} // namespace jit::a32
 
 extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     CpuState *cpu, Tlb *tlb, std::uint32_t word, std::uint64_t key,
@@ -518,6 +546,11 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
                 word, aarch32::ItState{static_cast<std::uint8_t>(itstate)},
                 profile)
           : aarch32::decode_a32(word, profile);
+  if (counting_exits.load(std::memory_order_relaxed)) {
+    form_exits[static_cast<std::size_t>(inst.form)].fetch_add(
+        1, std::memory_order_relaxed);
+    exit_total.fetch_add(1, std::memory_order_relaxed);
+  }
   if (a32::is_helper_arithmetic(inst)) {
     a32::run_helper_arithmetic(*cpu, inst);
     cpu->pc = aarch32::key_is_thumb(key)
