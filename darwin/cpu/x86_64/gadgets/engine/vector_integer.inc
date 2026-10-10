@@ -390,7 +390,7 @@ Lx86_vector_integer_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_integer_cross_fault\@
 	.if \width == 64
 	ldr d1, [sp]

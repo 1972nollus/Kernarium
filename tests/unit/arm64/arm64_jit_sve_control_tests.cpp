@@ -1190,7 +1190,7 @@ void reserved_words_are_illegal(const HostCapabilities &host) {
      * the word without one (the shifted byte immediate). */
     const auto *row = arm64::detail::find_sme_encoding(word);
     require(row == nullptr ||
-            arm64::jit::sve_word_reserved(row->form, word));
+            arm64::jit::sve_word_reserved(*row, word));
     const std::array program{ptrue(1, 0), word, svc};
     State initial{};
     initial.pc = code_base;
@@ -1252,7 +1252,7 @@ void rows_translate_where_the_profile_runs() {
                 row.non_streaming_requirement &&
             (row.mode & arm64::detail::sme_mode_za) == 0U;
         const bool runs =
-            implemented && !arm64::jit::sve_word_reserved(row.form, row.value);
+            implemented && !arm64::jit::sve_word_reserved(row, row.value);
         const bool inlined = runs && arm64::jit::implements_sve_form(row.form);
         /* Every implemented row is one the library covers. */
         if (implemented && !arm64::detail::sve_semantics_covers(row)) {

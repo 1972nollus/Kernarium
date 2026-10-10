@@ -24,7 +24,7 @@ gadget x87_load_\name
 		.endif
 	mov x1, sp
 	.endif
-	bl NAME(uml_x86_64_x87_\helper)
+	helper_call uml_x86_64_x87_\helper
 	.if \has_cpu
 	x87_leave_if_raised
 	.endif
@@ -61,7 +61,7 @@ gadget x87_load_bcd
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
-	bl NAME(uml_x86_64_x87_from_bcd)
+	helper_call uml_x86_64_x87_from_bcd
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
 	add sp, sp, #32
@@ -81,7 +81,7 @@ gadget x87_store_\name
 	x87_store_value sp, x9, w10
 	mov x0, _cpu
 	mov x1, sp
-	bl NAME(uml_x86_64_x87_to_\helper)
+	helper_call uml_x86_64_x87_to_\helper
 	x87_leave_if_raised
 	mov x9, x0
 	add sp, sp, #16
@@ -108,7 +108,7 @@ gadget x87_store_\name
 	mov x0, _cpu
 	mov x1, sp
 	mov w2, #\truncate
-	bl NAME(uml_x86_64_x87_to_\helper)
+	helper_call uml_x86_64_x87_to_\helper
 	x87_leave_if_raised
 	mov x9, x0
 	add sp, sp, #16
@@ -154,7 +154,7 @@ gadget x87_store_bcd_pop
 	mov x0, _cpu
 	mov x1, sp
 	add x2, sp, #16
-	bl NAME(uml_x86_64_x87_to_bcd)
+	helper_call uml_x86_64_x87_to_bcd
 	x87_leave_if_raised
 	add x11, sp, #16
 	x87_bulk_store 10, x11, Lx86_x87_store_bcd_fault
@@ -266,7 +266,7 @@ Lx86_x87_environment_clear_loop\@:
 	/* The image tags each register that is not empty by what it
 	 * holds, which an MMX instruction's all-valid tags do not say. */
 	mov x0, _cpu
-	bl NAME(uml_x86_64_x87_image_tags)
+	helper_call uml_x86_64_x87_image_tags
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	strh w9, [sp]
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]

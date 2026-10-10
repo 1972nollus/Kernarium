@@ -134,7 +134,7 @@ Lx86_vector_convert_inputs_ready\@:
 	.endif
 	b Lx86_vector_convert_tiny\@
 Lx86_vector_convert_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_convert_tiny\@:
 	mrs x15, fpsr
 	mov x14, #0x43f0000000000000
@@ -360,7 +360,7 @@ Lx86_vector_convert_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\input_size
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_convert_cross_fault\@
 	ldr q1, [sp]
 	.if \input_size == 32

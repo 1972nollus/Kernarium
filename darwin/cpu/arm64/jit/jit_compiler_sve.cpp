@@ -186,7 +186,7 @@ JitCompiler::emit_sve_instruction(std::uint32_t instruction,
        (sme_mode() & svcr_za) == 0U))
     return Action::unsupported;
   const auto form = row->form;
-  if (jit::sve_word_reserved(form, instruction))
+  if (jit::sve_word_reserved(*row, instruction))
     return Action::unsupported;
   /* The hot set lowers inline for the all-active predicate; every other
    * row the profile implements, and a word the lowering declines, runs

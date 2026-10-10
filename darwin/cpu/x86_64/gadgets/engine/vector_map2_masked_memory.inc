@@ -36,7 +36,7 @@ Lx86_vector_map2_mask_load_cross\@:
 	mov x0, _context
 	add x1, x25, x19
 	mov w2, #(\element / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_vector_map2_mask_load_fault\@
 	.if \element == 32
 	str w0, [sp, x19]
@@ -138,7 +138,7 @@ Lx86_vector_map2_mask_store_cross\@:
 	add x1, x25, x19
 	mov x2, x24
 	mov w3, #(\element / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 Lx86_vector_map2_mask_store_next\@:
 	add x19, x19, #(\element / 8)

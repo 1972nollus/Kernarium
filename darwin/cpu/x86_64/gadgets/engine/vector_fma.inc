@@ -387,7 +387,7 @@ Lx86_vector_fma_ready\@:
 	simd_save_status_path Lx86_vector_fma_save\@
 Lx86_vector_fma_unusual_stub\@:
 	b Lx86_vector_fma_unusual\@
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_fma_unusual\@:
 	.if \scalar
 	simd_special_scalar \element_bits, 6, Lx86_vector_fma_nan_ready\@, lo
@@ -522,7 +522,7 @@ Lx86_vector_fma_unusual_ready\@:
 	b \special\()_cold
 \exact:
 	vector_fma_exact \form, \operation, \element_bits, \width, \scalar, \exact_back
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 \special\()_cold:
 	vector_fma_x86_nan \form, \operation, \element_bits, \width, \scalar
 	b \special_back
@@ -603,7 +603,7 @@ Lx86_vector_fma_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #Lx86_vector_fma_input_size\@
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_fma_cross_fault\@
 	ldr q2, [sp]
 	.if \width == 256

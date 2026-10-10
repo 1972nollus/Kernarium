@@ -12,10 +12,44 @@ This file records the contracts that are not obvious from the code.
 Private labels take the Mach-O assembler-temporary prefix `L`, which keeps
 them out of the symbol table. A branch to one from another section encodes its
 distance past the nearest named symbol before it as a signed 24-bit addend, so
-such a target must lie within 8 MiB of one; the cold section names only its
-start and is 0.5 MB. The assembler rejects a larger addend, and a named local
+such a target must lie within 8 MiB of one; the cold part names only its
+start and is 0.7 MB. The assembler rejects a larger addend, and a named local
 symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
 a `.L` symbol in the engine object.
+
+## Region layout
+
+The engine's code is a pinned region, a bank and a cold part, each a run of
+fixed slots from the table in `engine/region.inc`; the contract is in
+[`docs/architecture.md`](../../../../docs/architecture.md). A group is the
+common entry code, the veneer island, one baked family or one `engine/*.inc`
+file. What a change moves:
+
+- A group that grows or shrinks within its slot moves nothing outside itself:
+  every other group keeps its offset and its bytes, so a measurement against
+  the base sees the change's code and the shift of that group's own later
+  gadgets.
+- A group that outgrows its slot fails assembly at
+  `.org Lx86_bank_end_<group>` or `.org Lx86_cold_end_<group>`, and every
+  group after it fails too. `engine/fit_slots.py --build-dir <tree>` lists
+  each group that no longer fits with the slot it needs, its phase and new
+  size plus 1 KiB rounded up to a 128-byte line; set those rows' slots to
+  it. Every later group then moves by whole lines and keeps its phase, which
+  GX1 measured as neutral: a 2,480-byte shift of most gadgets cost File
+  Compression and Clang 2 to 4 percent, and padding it to 2,560 bytes
+  recovered both. Such a change needs no pad control, but its commit says
+  which slots grew.
+- A phase never changes; it is what keeps the measured layout.
+- A new group takes a new row with phase 0, a new `engine/*.inc` file's at
+  the end of the table and a new baked family's after the last baked one, and
+  moves only the groups after it, by whole lines.
+- A call to a helper outside the engine is a `helper_call`, and a new helper
+  is appended to the island's list in `engine/common.inc`.
+
+Within the group a change edits, the gadgets after the change still move by
+its size. To separate its code from that shift, a pad of unreachable bytes
+after the changed gadget's last branch that restores the next gadget's offset
+modulo 128 is the control, for that group alone.
 
 ## Engine selection
 

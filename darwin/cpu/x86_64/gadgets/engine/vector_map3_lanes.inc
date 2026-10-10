@@ -109,7 +109,7 @@ Lx86_vector_map3_extract_128_cross:
 	mov x1, x25
 	mov x2, x24
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	cbz w0, Lx86_memory_fault
 	finish_store 16
 

@@ -28,6 +28,23 @@ namespace sve_detail = ::uml::cpu::arm64::detail;
     CpuState &cpu, ::uml::memory::Tlb &tlb, std::uint32_t word,
     const sve_detail::SmeEncoding &row) noexcept;
 
+/*
+ * The library-exit report: how many words of each table row the JIT's
+ * engines in this process have run through the semantic library, by the
+ * terminal helper or the executor's trapped-exception mode, while counting
+ * is enabled and since the last reset. A word the translation lowers
+ * inline, and a word it ends in the illegal-instruction exit, is not
+ * counted. Counting is off by default, so that no vCPU shares a counter
+ * unless a report asks. Index rows as detail::sme_encodings; a row's last
+ * word is kept so that a report can name what ran. Counts are relaxed:
+ * read them when the engines are quiet.
+ */
+void count_sve_library_exits(bool enable) noexcept;
+[[nodiscard]] std::uint64_t sve_library_exits(std::size_t row) noexcept;
+[[nodiscard]] std::uint32_t sve_library_exit_word(std::size_t row) noexcept;
+[[nodiscard]] std::uint64_t sve_library_exit_total() noexcept;
+void reset_sve_library_exits() noexcept;
+
 /* The outcome of one SVE word run on its own. */
 struct SveWordRun final {
   Event event;
