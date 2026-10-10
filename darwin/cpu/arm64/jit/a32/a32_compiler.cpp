@@ -184,6 +184,11 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
       return Flow::split;
     }
     link_target_safe_ = false;
+    /* A load-exclusive that opens the block may fuse with its store. */
+    if (const auto consumed = try_fuse_exclusive(); consumed != 0U) {
+      count_ = consumed - 1U;
+      return Flow::next;
+    }
   }
   const unsigned condition = inst.cond;
   if (inst.status == Status::nop || condition >= 14U)

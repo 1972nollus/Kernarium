@@ -65,22 +65,29 @@ public:
   Fixture &operator=(const Fixture &) = delete;
 
   void code32(std::size_t offset, std::initializer_list<std::uint32_t> words) {
+    const auto first = offset;
     for (const auto word : words) {
       code_.put32(offset, word);
       offset += 4;
     }
+    code_written(first, offset - first);
   }
   void code16(std::size_t offset, std::initializer_list<std::uint16_t> halves) {
+    const auto first = offset;
     for (const auto half : halves) {
       code_.put(offset, std::as_bytes(std::span{&half, 1}));
       offset += 2;
     }
+    code_written(first, offset - first);
   }
   void data32(std::size_t offset, std::uint32_t value) {
     data_.put32(offset, value);
   }
   void data_bytes(std::size_t offset, std::span<const std::byte> bytes) {
     data_.put(offset, bytes);
+  }
+  void read_code(std::size_t offset, std::span<std::byte> bytes) const {
+    code_.get(offset, bytes);
   }
   [[nodiscard]] std::vector<std::byte> read_data(std::size_t offset,
                                                  std::size_t size) const {
@@ -112,6 +119,18 @@ public:
   ::uml::cpu::ExecutionResult run(arm64::CpuState &cpu,
                                   std::size_t budget = 4096,
                                   bool single_step = false) {
+    return run_on(*engine_, cpu, budget, single_step);
+  }
+
+  /* A further engine over the same address space, for a second thread. */
+  [[nodiscard]] static std::unique_ptr<::uml::cpu::CpuEngine> new_engine() {
+    return ::uml::cpu::make_cpu_engine(::uml::cpu::EngineKind::jit);
+  }
+
+  ::uml::cpu::ExecutionResult run_on(::uml::cpu::CpuEngine &engine,
+                                     arm64::CpuState &cpu,
+                                     std::size_t budget = 4096,
+                                     bool single_step = false) {
     ::uml::memory::StaticGuestMemory memory;
     const auto sequences = darwin_uml_static_vm_sequences(generation_);
     memory.prepare(generation_, sequences.mapping_changes);
@@ -123,12 +142,19 @@ public:
         .instruction_budget = budget,
         .single_step = single_step,
     };
-    return engine_->run_aarch32(request);
+    return engine.run_aarch32(request);
   }
 
   [[nodiscard]] unsigned long generation() const noexcept { return generation_; }
 
 private:
+  /* A guest store to code publishes this; a write through the backing does
+   * not, so a test that rewrites code says so. */
+  void code_written(std::size_t offset, std::size_t length) {
+    require(darwin_uml_static_vm_invalidate_code_generation(
+                generation_, code_base + offset, length) == 0);
+  }
+
   unsigned long generation_;
   JitBacking code_;
   JitBacking data_;

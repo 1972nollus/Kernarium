@@ -102,6 +102,13 @@ private:
     GuestFlagsState flags{GuestFlagsState::memory};
   };
 
+  /* The skipped arm of a fused conditional store: it clears the monitor and
+   * resumes after the store. */
+  struct ResumePath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+  };
+
   struct TranslationColdPath final {
     Arm64Emitter::Label label;
     Arm64Emitter::Label continuation;
@@ -213,6 +220,10 @@ private:
   void mark_memory_write() noexcept;
   void mark_direct_memory_write() noexcept;
   void track_direct_store(unsigned address, std::size_t size);
+  /* LL/SC fusion (a32_compiler_exclusive.cpp): the number of instructions of
+   * the block's start it lowered to a host load-exclusive/store-exclusive
+   * run, or 0 when it declined. */
+  [[nodiscard]] std::size_t try_fuse_exclusive();
   void clear_exclusive_monitor();
 
   // Multiplies, bit manipulation, extension, saturation and DSP forms
@@ -249,6 +260,7 @@ private:
   std::vector<Decoded> block_;
   std::vector<ColdPath> cold_;
   std::vector<TranslationColdPath> translation_cold_;
+  std::vector<ResumePath> resume_cold_;
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};

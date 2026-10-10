@@ -211,7 +211,7 @@ const std::set<std::string> &known_corpus_defects() {
 }
 
 struct Totals final {
-  std::size_t run = 0, skipped = 0, excluded = 0, failed = 0;
+  std::size_t run = 0, skipped = 0, excluded = 0, failed = 0, retried = 0;
   std::map<std::string, std::size_t> failed_forms;
 };
 
@@ -434,7 +434,19 @@ int main(int argc, char **argv) {
           std::fprintf(stderr, " %04x", half);
         std::fprintf(stderr, "\n");
       }
-      const auto problem = check(machine, test);
+      auto problem = check(machine, test);
+      /* A store-exclusive may fail without cause (the architecture allows
+       * it, and the host's does on the first fused pair a process runs), and
+       * the oracle's never does. A guest retries; a lone corpus case cannot,
+       * so a failing exclusive case runs once more and must then agree
+       * completely. */
+      if (!problem.empty() && record.name.starts_with("exclusive")) {
+        problem = check(machine, test);
+        if (problem.empty()) {
+          ++totals.retried;
+          continue;
+        }
+      }
       if (problem.empty())
         continue;
       ++totals.failed;
@@ -449,8 +461,9 @@ int main(int argc, char **argv) {
     }
   }
   std::printf("AArch32 corpus on the JIT: %zu cases run, %zu skipped below the level, "
-              "%zu excluded as corpus defects, %zu failed\n",
-              totals.run, totals.skipped, totals.excluded, totals.failed);
+              "%zu excluded as corpus defects, %zu failed (%zu exclusive retried)\n",
+              totals.run, totals.skipped, totals.excluded, totals.failed,
+              totals.retried);
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)
       std::printf("  %s: %zu\n", form.c_str(), count);

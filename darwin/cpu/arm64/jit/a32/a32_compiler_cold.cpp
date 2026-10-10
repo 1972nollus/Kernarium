@@ -12,6 +12,11 @@ namespace uml::cpu::arm64::jit::a32 {
 void A32Compiler::emit_cold_paths() {
   for (const auto &path : translation_cold_)
     emit_translation_cold(path);
+  for (const auto &path : resume_cold_) {
+    bind(path.label);
+    emit(0xd503'3f5fU); // clrex
+    emitter_.branch(path.continuation);
+  }
   for (const auto &cold : cold_) {
     set_exit_gpr_mask(cold.dirty_gprs);
     set_exit_vector_mask(cold.dirty_vectors);
