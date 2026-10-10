@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * The AArch32 instruction corpus on the semantic library: the corpus's model
- * lane. Every case of the pack whose instructions the library covers
- * (a32_semantics_covers) runs through decode_a32() / decode_thumb() and
- * execute_a32() on the oracle's memory map, and its final registers, APSR,
+ * lane. Every case of the pack runs through decode_a32() / decode_thumb()
+ * and execute_a32() on the oracle's memory map, and its final registers, APSR,
  * FPSCR, D registers, TPIDRs, data bytes, event, fault address and retired
  * count are compared with what the oracle observed, as the engines' lanes
  * compare them. tests/unit/arm64/aarch32_corpus/README.md owns the pack and
@@ -403,25 +402,21 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 	return {};
 }
 
-/* Whether the library covers every legal instruction of the program: the
- * form must be covered, and the word must be legal at the library's level (a
- * half-precision floating-point form is not, until the level reaches the
- * Armv8 extensions). */
+/* Whether the library covers every legal instruction of the program. The
+ * library implements the whole profile, so a case that is not within
+ * coverage is a failure of the lane, not a case to leave out. */
 bool within_coverage(const Case &test)
 {
 	const bool thumb = test.flags & kFlagThumb;
 	const Profile complete = Profile::at(Level::complete);
-	const Profile library = Profile::at(a32_semantics_level());
 	ItState it;
 	for (unsigned half = 0; half < test.halves.size();) {
 		Instruction instruction;
-		Instruction limited;
 		if (!thumb) {
 			if (half + 1 >= test.halves.size())
 				break;
 			const std::uint32_t word = std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
 			instruction = decode_a32(word, complete);
-			limited = decode_a32(word, library);
 			half += 2;
 		} else {
 			const std::uint16_t first = test.halves[half];
@@ -431,12 +426,10 @@ bool within_coverage(const Case &test)
 			const std::uint32_t word = length == 4
 				? std::uint32_t{first} << 16 | test.halves[half + 1] : std::uint32_t{first} << 16;
 			instruction = decode_thumb(word, it, complete);
-			limited = decode_thumb(word, it, library);
 			it = instruction.next_it;
 			half += length / 2;
 		}
-		if (instruction.legal() &&
-			(!a32_semantics_covers(instruction.form) || !limited.legal()))
+		if (instruction.legal() && !a32_semantics_covers(instruction.form))
 			return false;
 	}
 	return true;
@@ -477,8 +470,7 @@ int main(int argc, char **argv)
 	require(path != nullptr, "usage: PACK [--record NAME] [--case NAME] [--form PREFIX]");
 	g_trace = trace;
 	const Pack pack = read_pack(read_file(path));
-	/* The product profile: the cases a form above the library's coverage
-	 * appears in are skipped, so the library never sees one. */
+	/* The whole profile: the library implements all of it. */
 	const Profile profile = Profile::at(Level::complete);
 
 	Machine machine;
@@ -529,5 +521,9 @@ int main(int argc, char **argv)
 	if (list_skipped)
 		for (const auto &[form, count] : totals.skipped_forms)
 			std::printf("  skipped %s: %zu\n", form.c_str(), count);
-	return totals.failed == 0 ? 0 : 1;
+	/* A case the library does not cover is a gap in the library. */
+	if (totals.skipped != 0)
+		std::fprintf(stderr, "%zu cases hold a form the library does not cover (see --skipped)\n",
+			totals.skipped);
+	return totals.failed == 0 && totals.skipped == 0 ? 0 : 1;
 }
