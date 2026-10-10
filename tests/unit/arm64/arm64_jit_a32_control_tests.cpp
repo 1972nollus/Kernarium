@@ -196,9 +196,27 @@ void rewritten_a32_words() {
 
 } // namespace
 
+/* An entry whose first fetch is unmapped faults at the PC with an execute
+ * access and retires nothing, in either instruction set. */
+void unmapped_entry() {
+  Fixture fixture{0x1a32'0c05};
+  for (const bool thumb : {false, true}) {
+    auto cpu = Fixture::task(thumb);
+    cpu.pc = thumb ? key::t32_key(0x0070'0000U) : key::a32_key(0x0070'0000U);
+    const auto before = cpu.pc;
+    const auto result = fixture.run(cpu);
+    require(result.reason == ExitReason::memory_fault);
+    require(result.fault.address == 0x0070'0000U);
+    require(result.fault.access == ::uml::memory::MemoryAccess::execute);
+    require(result.retired_instructions == 0);
+    require(cpu.pc == before);
+  }
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
+  unmapped_entry();
   it_blocks_whole_stepped_and_entered_mid_block();
   long_blocks_and_the_budget();
   rewritten_t32_halfwords();
