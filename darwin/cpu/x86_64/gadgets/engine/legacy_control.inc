@@ -30,7 +30,7 @@ Lx86_enter_load_cross\@:
 	mov x0, _context
 	mov x1, x24
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x27, x0
 Lx86_enter_load_done\@:
@@ -110,7 +110,7 @@ Lx86_segment_instruction:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov x0, _context
 	mov x1, _cpu
-	bl NAME(uml_x86_64_gadget_run_segment_instruction)
+	helper_call uml_x86_64_gadget_run_segment_instruction
 	cbz w0, Lx86_segment_next
 	cmp w0, #UML_X86_64_SEGMENT_LEAVE
 	b.eq Lx86_segment_leave
@@ -144,7 +144,7 @@ Lx86_iret_load_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
 Lx86_iret_load_done\@:

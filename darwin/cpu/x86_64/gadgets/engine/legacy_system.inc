@@ -344,7 +344,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	ldr w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
 	mov w9, w26
@@ -352,7 +352,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	add x1, x25, #8
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	ldr w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldr w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -360,7 +360,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	add x1, x25, #16
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	ldr w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	ldr w9, [_cpu, #UML_X86_64_CPU_REGISTERS]
@@ -368,7 +368,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	add x1, x25, #24
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	.else
 	ldrh w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 7 * 8)]
@@ -381,7 +381,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	ldrh w8, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldrh w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -393,7 +393,7 @@ Lx86_push_all_cross\@:
 	mov x0, _context
 	add x1, x25, #8
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	.endif
 Lx86_push_all_done\@:
@@ -408,7 +408,7 @@ Lx86_push_all_done\@:
 	mov x0, _context
 	add x1, x25, #(\index * (\width / 8))
 	mov w2, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_load)
+	helper_call uml_x86_64_gadget_cross_page_load
 	cbz x1, Lx86_memory_fault
 	.if \slot >= 0
 	.if \width == 32
@@ -576,7 +576,7 @@ Lx86_xlat_load:
  * Zero is as valid a result as any other. */
 gadget random_\width
 	bl uml_x86_64_gadget_materialize_flags
-	bl NAME(uml_x86_64_gadget_random_value)
+	helper_call uml_x86_64_gadget_random_value
 	ldr x8, [_stream], #8
 	.if \width == 32
 	mov w0, w0
@@ -622,7 +622,7 @@ Lx86_store_\name\()_cross:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	add sp, sp, #16
 	cbz w0, Lx86_memory_fault
 	b Lx86_store_\name\()_done
@@ -654,7 +654,7 @@ gadget load_segment_limit_r
 	ldrh w1, [_cpu, x8]
 	ldr x2, [_stream], #8
 	mov x0, _cpu
-	bl NAME(uml_x86_64_gadget_segment_limit)
+	helper_call uml_x86_64_gadget_segment_limit
 	retire_and_next
 
 gadget load_segment_limit_m
@@ -664,5 +664,5 @@ gadget load_segment_limit_m
 	read_operand 2, ldrh, w, 1, w
 	and w2, w23, #0xffff
 	mov x0, _cpu
-	bl NAME(uml_x86_64_gadget_segment_limit)
+	helper_call uml_x86_64_gadget_segment_limit
 	retire_and_next

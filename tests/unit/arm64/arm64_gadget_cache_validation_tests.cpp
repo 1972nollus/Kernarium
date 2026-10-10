@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #ifndef UML_GADGET_CACHE_SLOTS
@@ -341,8 +342,8 @@ constexpr std::size_t cache_sets = UML_GADGET_CACHE_SLOTS / cache_ways;
  * link record.
  *
  * A slot memoises the record its translation publishes into, and all
- * activate() can ask of that memo is the record's guest PC and the cache
- * epoch -- neither of which changes when the slot is taken by a *different*
+ * activate() can ask of that memo is the record's guest PC -- which does
+ * not change when the slot is taken by a *different*
  * address space at the same guest PC. Reusing it there publishes the new
  * occupant's translation into the previous owner's record, so the previous
  * owner's own code branches straight into another address space's
@@ -461,6 +462,120 @@ void a_replaced_slot_drops_the_previous_owner_link()
 	require(executor->cache_diagnostics().validation_attempts == 0);
 }
 
+/* An evicted block is gone from its slot, and the link that named it is reset.
+ *
+ * The test above takes a slot across address spaces; this takes one inside a
+ * single address space, by capacity. Five blocks are chosen to share a set, so
+ * the fifth store finds all four ways occupied and replaces the first one's.
+ * The evicted block must then be translated again rather than found in the
+ * slot it left, its predecessor must stop following the link to it, and the
+ * three blocks that kept their ways must still answer from the cache. The
+ * block that the re-translation replaces in turn proves that the replacement
+ * pointer moved on and that the slot is refilled instead of skipped.
+ */
+void an_evicted_block_misses_and_its_predecessor_link_is_reset()
+{
+	constexpr auto target = code_base + 0x100;
+	constexpr std::size_t blocks = cache_ways + 1;
+
+	/* The predecessor must not compete for the target's set. */
+	unsigned long generation = 960;
+	while (cache_set(generation, code_base) == cache_set(generation, target))
+		++generation;
+
+	std::vector<std::uint64_t> pcs{target};
+	for (std::uint64_t word = 0x80; pcs.size() < blocks; ++word) {
+		const auto pc = code_base + word * sizeof(std::uint32_t);
+		if (cache_set(generation, pc) == cache_set(generation, target))
+			pcs.push_back(pc);
+		require(word < (1U << 22));
+	}
+	const auto extent = pcs.back() + 2 * sizeof(std::uint32_t) - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+
+	JitBacking backing{pages};
+	backing.put32(0, branch(code_base, target));
+	for (std::size_t index = 0; index < pcs.size(); ++index) {
+		backing.put32(pcs[index] - code_base,
+			move_immediate(0, static_cast<unsigned>(index + 1)));
+		backing.put32(pcs[index] - code_base + 4, system_call);
+	}
+	JitMapping mapping{generation, code_base, backing, pages};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+
+	const auto run_block = [&](std::size_t index) {
+		arm64::CpuState cpu{};
+		cpu.pc = pcs[index];
+		const auto outcome = run_once(executor, memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(cpu.registers[0] == index + 1);
+	};
+	const auto translations = [&] {
+		return executor.cache_diagnostics().translations;
+	};
+	const auto run_predecessor = [&] {
+		arm64::CpuState cpu{};
+		cpu.pc = code_base;
+		return std::pair{run_once(executor, memory, generation, cpu), cpu};
+	};
+
+	/* The target and its predecessor are translated, and the live link
+	 * carries the predecessor straight through. */
+	run_block(0);
+	require(translations() == 1);
+	{
+		const auto [linked, cpu] = run_predecessor();
+		require(linked.event == ::uml::cpu::EngineEvent::system_call);
+		require(linked.executed == 3);
+		require(cpu.registers[0] == 1);
+	}
+	require(translations() == 2);
+
+	/* The next three fill the set; each is a miss that finds a free way. */
+	for (std::size_t index = 1; index < cache_ways; ++index)
+		run_block(index);
+	require(translations() == 2 + cache_ways - 1);
+
+	/* The fifth takes the target's way. */
+	run_block(cache_ways);
+	const auto full = translations();
+	require(full == 2 + cache_ways);
+
+	/* The target went with its way: the predecessor has to exit at its
+	 * address instead of continuing into a translation that is gone. */
+	{
+		const auto [reset, cpu] = run_predecessor();
+		require(reset.event == ::uml::cpu::EngineEvent::continued);
+		require(reset.executed == 1);
+		require(cpu.pc == target);
+	}
+
+	/* The blocks that kept their ways still answer from the cache. */
+	for (std::size_t index = 1; index <= cache_ways; ++index)
+		run_block(index);
+	require(translations() == full);
+
+	/* The evicted one is translated again, taking the next way in turn,
+	 * and the predecessor links to it once more. */
+	run_block(0);
+	require(translations() == full + 1);
+	{
+		const auto [relinked, cpu] = run_predecessor();
+		require(relinked.event == ::uml::cpu::EngineEvent::system_call);
+		require(relinked.executed == 3);
+		require(cpu.registers[0] == 1);
+	}
+	run_block(1);
+	require(translations() == full + 2);
+
+	/* Nothing here changed a guest word or the code-change sequence, so
+	 * no lookup revalidated: every miss above was an empty or evicted
+	 * slot, not a discarded one. */
+	require(executor.cache_diagnostics().validation_attempts == 0);
+}
+
 } // namespace
 
 int main()
@@ -472,5 +587,6 @@ int main()
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
 	a_replaced_slot_drops_the_previous_owner_link();
+	an_evicted_block_misses_and_its_predecessor_link_is_reset();
 	return 0;
 }

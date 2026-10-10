@@ -247,7 +247,7 @@ Lx86_vector_map3_round_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\input_size
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_map3_round_cross_fault\@
 	ldr q1, [sp]
 	.if \input_size == 32
@@ -381,7 +381,7 @@ Lx86_vector_map3_half_cross\@:
 	mov x1, x25
 	fmov x2, d4
 	mov w3, #8
-	bl NAME(uml_x86_64_gadget_cross_page_store)
+	helper_call uml_x86_64_gadget_cross_page_store
 	cbz w0, Lx86_memory_fault
 	.else
 	sub sp, sp, #16
@@ -390,7 +390,7 @@ Lx86_vector_map3_half_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
-	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
+	helper_call uml_x86_64_gadget_cross_page_vector_store
 	add sp, sp, #16
 	cbz w0, Lx86_memory_fault
 	.endif

@@ -33,3 +33,44 @@ if(TARGET uml_x86_64_fex_asm_runner)
         LABELS cpu;x86-64
         TIMEOUT 120)
 endif()
+
+# The pinned x86-64 gadget region (darwin/cpu/x86_64/gadgets/engine/region.inc)
+# in the linked images this tree builds: the product, an image composed from
+# the gadget objects alone and one linked through the emulator archive behind
+# the arm64 region.
+set(_uml_x86_64_gadget_region_images)
+if(TARGET uml_x86_64_gadgets)
+    foreach(_uml_x86_64_gadget_region_image IN ITEMS
+            uml-darwin
+            uml_x86_64_fex_asm_runner
+            uml_emulator_api_tests)
+        if(TARGET ${_uml_x86_64_gadget_region_image})
+            list(APPEND _uml_x86_64_gadget_region_images
+                $<TARGET_FILE:${_uml_x86_64_gadget_region_image}>)
+        endif()
+    endforeach()
+endif()
+if(_uml_x86_64_gadget_region_images AND APPLE)
+    uml_add_tooling_test(
+        NAME x86-64-gadget-region-layout
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/x86_64/test_gadget_region_layout.py
+            ${_uml_x86_64_gadget_region_images}
+        LABELS cpu;x86-64
+        TIMEOUT 120)
+endif()
+
+# fit_slots.py reports the slot each group of the engine needs from an assembly
+# of engine.S with the flags of the tree's Ninja build.
+if(_uml_x86_64_gadget_region_images AND APPLE AND CMAKE_GENERATOR MATCHES "Ninja")
+    uml_add_tooling_test(
+        NAME x86-64-gadget-fit-slots
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/x86_64/test_fit_slots.py
+            --tool ${PROJECT_SOURCE_DIR}/darwin/cpu/x86_64/gadgets/engine/fit_slots.py
+            --region ${PROJECT_SOURCE_DIR}/darwin/cpu/x86_64/gadgets/engine/region.inc
+            --build-dir ${CMAKE_BINARY_DIR}
+            --ninja ${CMAKE_MAKE_PROGRAM}
+        LABELS cpu;x86-64
+        TIMEOUT 600)
+endif()

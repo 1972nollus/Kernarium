@@ -70,7 +70,7 @@ Lx86_vector_horizontal_nan_ready\@:
 	simd_flush_denormal_results \element, 4
 	.endif
 Lx86_vector_horizontal_ftz_ready\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_horizontal_repair\@:
 	simd_leave_computed_if_checking
 	vector_horizontal_nan \operation, \element, 4, 0, 1
@@ -163,7 +163,7 @@ Lx86_vector_horizontal_common\@:
 	simd_nan_lanes \element, Lx86_vector_horizontal_nan\@, 4
 	.endif
 Lx86_vector_horizontal_done\@:
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+	.pushsection GADGET_SECTION_COLD
 Lx86_vector_horizontal_nan\@:
 	vector_horizontal_nan \operation, \element, 4, 0, 1
 	.if \width == 256
@@ -296,7 +296,7 @@ Lx86_vector_shuffle_cross\@:
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
-	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
+	helper_call uml_x86_64_gadget_cross_page_vector_load
 	cbz w0, Lx86_vector_shuffle_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256
