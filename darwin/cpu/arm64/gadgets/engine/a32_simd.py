@@ -133,6 +133,8 @@ def plan_of_simd(name: str, mnemonic: str):
     # The structure loads and stores are the semantic library's.
     if re.match(r"V(LD|ST)[1-4]_", name):
         return ("library", 0, 0)
+    if re.match(r"V(RECPS|RSQRTS)_", name):
+        return ("library", 0, 0)
     neon = a32_neon.plan_of(name)
     if neon is not None:
         return ("neon", neon[0], neon[1])

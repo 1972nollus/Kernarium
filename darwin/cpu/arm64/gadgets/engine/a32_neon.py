@@ -426,8 +426,9 @@ def define_groups() -> None:
                d_only=True)
     float_same("vpmin_f", ["VPMIN_f"], ["fminp v0.%T, v1.%T, v2.%T"],
                d_only=True)
-    float_same("vrecps", ["VRECPS"], ["frecps v0.%T, v1.%T, v2.%T"])
-    float_same("vrsqrts", ["VRSQRTS"], ["frsqrts v0.%T, v1.%T, v2.%T"])
+    # VRECPS and VRSQRTS are AArch32's unfused steps (the product is rounded
+    # first, and infinity times zero is a zero product), not the fused A64
+    # FRECPS and FRSQRTS: the semantic library's.
     float_same("vacge", ["VACGE"], ["facge v0.%T, v1.%T, v2.%T"])
     float_same("vacgt", ["VACGT"], ["facgt v0.%T, v1.%T, v2.%T"])
 
