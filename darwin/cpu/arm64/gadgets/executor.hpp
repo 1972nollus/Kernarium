@@ -151,7 +151,6 @@ private:
 	unsigned long execution_generation_{};
 	bool preempted_{};
 	bool single_step_{};
-	std::uint32_t breakpoint_immediate_{};
 	std::uint32_t floating_point_syndrome_{};
 	BuildOptions build_options_;
 	GadgetCacheDiagnostics cache_diagnostics_{};
@@ -168,6 +167,8 @@ private:
 		std::uint64_t changes{};
 	};
 	std::array<SmeModeCache, 3> sme_caches_{};
+	/* BKPT's immediate, after the last A64 member so that none moves. */
+	std::uint32_t breakpoint_immediate_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets
