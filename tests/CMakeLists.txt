@@ -3,6 +3,7 @@
 # Instruction assets are build outputs shared by unit and tooling consumers.
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_TOOLING_TESTS)
     add_subdirectory(unit/arm64/corpus)
+    add_subdirectory(unit/arm64/aarch32_corpus)
 endif()
 if(UML_BUILD_UNIT_TESTS AND TARGET uml_x86_64_gadgets)
     add_subdirectory(unit/x86_64/corpus)
@@ -108,7 +109,8 @@ if(UML_BUILD_UNIT_TESTS AND UML_BUILD_GPU)
 endif()
 if(UML_BUILD_TOOLING_TESTS)
     uml_finalize_suite_binary_target(tooling tooling-test-binaries)
-    add_dependencies(tooling-test-binaries uml_arm64_instruction_corpus)
+    add_dependencies(tooling-test-binaries uml_arm64_instruction_corpus
+        uml_arm64_aarch32_corpus)
 endif()
 if(UML_BUILD_INTEGRATION_TESTS)
     uml_finalize_suite_binary_target(integration integration-test-binaries)
