@@ -73,6 +73,17 @@ struct OpInfo final {
   return op >= Op::ldrex && op <= Op::stlexd;
 }
 
+/* The Armv8 extensions the compiler lowers, by instruction group. The forms
+ * of the complete level outside these (and the half-precision ones inside
+ * them) run in the semantic library. */
+enum class Ext : std::uint8_t {
+  none, crc32, aes, sha, vsel, vmaxnm, vrint, vcvt_round, vjcvt, sb,
+};
+[[nodiscard]] Ext extension_of(aarch32::Form form) noexcept;
+/* Whether the compiler lowers the form on this host (its A64 instruction
+ * needs a host feature that the host may lack). */
+[[nodiscard]] bool extension_lowered(aarch32::Form form) noexcept;
+
 /* The forms the compiler sends to the AArch32 semantic library every time
  * rather than lowering: the parallel add and subtract family, SSAT16, USAT16
  * and USAD8/USADA8, and the complete-level forms it leaves to the library. */

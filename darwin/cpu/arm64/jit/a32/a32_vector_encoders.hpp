@@ -352,6 +352,43 @@ enum Float3 : unsigned { fmadd = 0, fmsub = 1, fnmadd = 2, fnmsub = 3 };
 {
 	return 0x1e20'1000U | (type << 22) | (imm8 << 13) | d;
 }
+/* FCSEL: Rd = condition ? Rn : Rm, on type 0 (single), 1 (double) or 3
+ * (half). */
+[[nodiscard]] constexpr std::uint32_t fcsel(unsigned type, unsigned d,
+	unsigned n, unsigned m, unsigned condition) noexcept
+{
+	return 0x1e20'0c00U | (type << 22) | (m << 16) | (condition << 12) |
+	       (n << 5) | d;
+}
+/* FJCVTZS Wd, Dn. */
+[[nodiscard]] constexpr std::uint32_t fjcvtzs(unsigned d, unsigned n) noexcept
+{
+	return 0x1e7e'0000U | (n << 5) | d;
+}
+/* The cryptographic extension: AESE, AESD, AESMC and AESIMC (0-3) on
+ * 16-byte blocks, and the SHA-1 and SHA-256 instructions of two and three
+ * registers. */
+enum Aes : unsigned { aese = 0x4e28'4800U, aesd = 0x4e28'5800U,
+	aesmc = 0x4e28'6800U, aesimc = 0x4e28'7800U };
+[[nodiscard]] constexpr std::uint32_t aes(Aes op, unsigned d, unsigned n) noexcept
+{
+	return op | (n << 5) | d;
+}
+enum Sha3 : unsigned { sha1c = 0x5e00'0000U, sha1p = 0x5e00'1000U,
+	sha1m = 0x5e00'2000U, sha1su0 = 0x5e00'3000U, sha256h = 0x5e00'4000U,
+	sha256h2 = 0x5e00'5000U, sha256su1 = 0x5e00'6000U };
+[[nodiscard]] constexpr std::uint32_t sha3(Sha3 op, unsigned d, unsigned n,
+	unsigned m) noexcept
+{
+	return op | (m << 16) | (n << 5) | d;
+}
+enum Sha2 : unsigned { sha1h = 0x5e28'0800U, sha1su1 = 0x5e28'1800U,
+	sha256su0 = 0x5e28'2800U };
+[[nodiscard]] constexpr std::uint32_t sha2(Sha2 op, unsigned d, unsigned n) noexcept
+{
+	return op | (n << 5) | d;
+}
+
 /* Conversions between a general register and floating point (integer, sf =
  * 0 for W). rmode:opcode as the class defines. */
 enum FloatInt : unsigned {

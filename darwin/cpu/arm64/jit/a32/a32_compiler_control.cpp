@@ -53,8 +53,10 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::smmls: case Op::smmul:
     return emit_dsp_multiply(info);
   case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8: case Op::library:
+  case Op::usada8:
     return emit_arith_through_helper();
+  case Op::library:
+    return emit_extension(info);
   case Op::b: case Op::bl: case Op::blx: case Op::bx: case Op::cbz:
   case Op::cbnz:
     return emit_branch(info);

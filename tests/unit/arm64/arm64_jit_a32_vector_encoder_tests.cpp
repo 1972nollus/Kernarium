@@ -1101,6 +1101,25 @@ void vector_encoders_match_llvm_mc() {
     check("ld4r {v3.8h, v4.8h, v5.8h, v6.8h}, [x5]", enc::vec::structure_replicate(true, 4, 1, 3, 5), 0x4d60e4a3U);
     check("ld4r {v3.4s, v4.4s, v5.4s, v6.4s}, [x5]", enc::vec::structure_replicate(true, 4, 2, 3, 5), 0x4d60e8a3U);
     check("ld4r {v3.2d, v4.2d, v5.2d, v6.2d}, [x5]", enc::vec::structure_replicate(true, 4, 3, 3, 5), 0x4d60eca3U);
+    check("fcsel s3, s4, s5, eq", enc::vec::fcsel(0, 3, 4, 5, 0), 0x1e250c83U);
+    check("fcsel d3, d4, d5, vs", enc::vec::fcsel(1, 3, 4, 5, 6), 0x1e656c83U);
+    check("fcsel h3, h4, h5, ge", enc::vec::fcsel(3, 3, 4, 5, 10), 0x1ee5ac83U);
+    check("fcsel s3, s4, s5, gt", enc::vec::fcsel(0, 3, 4, 5, 12), 0x1e25cc83U);
+    check("fjcvtzs w3, d4", enc::vec::fjcvtzs(3, 4), 0x1e7e0083U);
+    check("aese v3.16b, v4.16b", enc::vec::aes(vec::aese, 3, 4), 0x4e284883U);
+    check("aesd v3.16b, v4.16b", enc::vec::aes(vec::aesd, 3, 4), 0x4e285883U);
+    check("aesmc v3.16b, v4.16b", enc::vec::aes(vec::aesmc, 3, 4), 0x4e286883U);
+    check("aesimc v3.16b, v4.16b", enc::vec::aes(vec::aesimc, 3, 4), 0x4e287883U);
+    check("sha1c q3, s4, v5.4s", enc::vec::sha3(vec::sha1c, 3, 4, 5), 0x5e050083U);
+    check("sha1p q3, s4, v5.4s", enc::vec::sha3(vec::sha1p, 3, 4, 5), 0x5e051083U);
+    check("sha1m q3, s4, v5.4s", enc::vec::sha3(vec::sha1m, 3, 4, 5), 0x5e052083U);
+    check("sha1su0 v3.4s, v4.4s, v5.4s", enc::vec::sha3(vec::sha1su0, 3, 4, 5), 0x5e053083U);
+    check("sha256h q3, q4, v5.4s", enc::vec::sha3(vec::sha256h, 3, 4, 5), 0x5e054083U);
+    check("sha256h2 q3, q4, v5.4s", enc::vec::sha3(vec::sha256h2, 3, 4, 5), 0x5e055083U);
+    check("sha256su1 v3.4s, v4.4s, v5.4s", enc::vec::sha3(vec::sha256su1, 3, 4, 5), 0x5e056083U);
+    check("sha1h s3, s4", enc::vec::sha2(vec::sha1h, 3, 4), 0x5e280883U);
+    check("sha1su1 v3.4s, v4.4s", enc::vec::sha2(vec::sha1su1, 3, 4), 0x5e281883U);
+    check("sha256su0 v3.4s, v4.4s", enc::vec::sha2(vec::sha256su0, 3, 4), 0x5e282883U);
   require(mismatches == 0);
 }
 

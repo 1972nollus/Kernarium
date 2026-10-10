@@ -875,10 +875,20 @@ registers. They share the scalar transfers' TLB sequence and alignment rule,
 and a page crossing, a faulting alignment, a PC base or a list past the
 register file runs the instruction in the semantic library instead.
 
-At the complete level the JIT presents the Armv8 extensions as well. A form of
-that level that the compiler does not lower runs in the semantic library, and
-so does a half-precision variant of an Advanced SIMD floating-point form, which
-shares the form of the single-precision one and differs in the operands' esize.
+At the complete level the JIT presents the Armv8 extensions as well. It
+lowers the ones that are the host's own instruction on the same operands when
+the host has them: CRC32, the AES and SHA-1 and SHA-256 instructions, VSEL
+(FCSEL on the guest flags), VMAXNM and VMINNM, VRINT and VCVT with a named
+rounding (scalar under the guest's FPCR, Advanced SIMD under the Standard
+FPSCR value) and SB (a DSB and an ISB). VJCVT is FJCVTZS with its Z flag taken
+into FPSCR; on a host whose FJCVTZS reports a flushed subnormal as exact, the
+A64 JIT's correction (a subnormal input is never exact) applies here too. The
+rest of the level runs in the semantic library: the half-precision forms, the
+dot products, the by-element and complex-number multiply-accumulates, the
+fused widening half-precision multiply-accumulates, the BFloat16 and 8-bit
+matrix forms, and a half-precision variant of an Advanced SIMD floating-point
+form, which shares the form of the single-precision one and differs in the
+operands' esize.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

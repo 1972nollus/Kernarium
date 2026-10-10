@@ -205,6 +205,12 @@ void encoders_match_llvm_mc() {
     check("msub x3, x4, x5, x6", enc::x::msub(3, 4, 5, 6), 0x9b059883U);
     check("udiv w3, w4, w5", enc::udiv(3, 4, 5), 0x1ac50883U);
     check("sdiv w3, w4, w5", enc::sdiv(3, 4, 5), 0x1ac50c83U);
+    check("crc32b w3, w4, w5", enc::crc32(0, false, 3, 4, 5), 0x1ac54083U);
+    check("crc32h w3, w4, w5", enc::crc32(1, false, 3, 4, 5), 0x1ac54483U);
+    check("crc32w w3, w4, w5", enc::crc32(2, false, 3, 4, 5), 0x1ac54883U);
+    check("crc32cb w3, w4, w5", enc::crc32(0, true, 3, 4, 5), 0x1ac55083U);
+    check("crc32ch w3, w4, w5", enc::crc32(1, true, 3, 4, 5), 0x1ac55483U);
+    check("crc32cw w3, w4, w5", enc::crc32(2, true, 3, 4, 5), 0x1ac55883U);
     check("clz w3, w4", enc::clz(3, 4), 0x5ac01083U);
     check("rbit w3, w4", enc::rbit(3, 4), 0x5ac00083U);
     check("rev w3, w4", enc::rev(3, 4), 0x5ac00883U);

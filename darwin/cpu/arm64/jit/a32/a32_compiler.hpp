@@ -298,6 +298,16 @@ private:
   void vmem_d_from(unsigned dreg, unsigned source, unsigned half);
   void vmem_d_into(unsigned dreg, unsigned scratch, unsigned half);
 
+  // The Armv8 extensions (a32_compiler_armv8.cpp).
+  [[nodiscard]] Flow emit_extension(const OpInfo &info);
+  [[nodiscard]] Flow emit_crc32();
+  [[nodiscard]] Flow emit_crypto();
+  [[nodiscard]] Flow emit_vsel();
+  [[nodiscard]] Flow emit_vmaxnm();
+  [[nodiscard]] Flow emit_vrint();
+  [[nodiscard]] Flow emit_vcvt_round();
+  [[nodiscard]] Flow emit_vjcvt();
+
   // VFP (a32_compiler_vfp.cpp).
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
   [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);

@@ -2,6 +2,8 @@
 
 #include "a32_operations.hpp"
 
+#include "cpu/host_capabilities.hpp"
+
 #include <array>
 #include <string_view>
 #include <unordered_map>
@@ -172,11 +174,80 @@ OpInfo op_info(aarch32::Form form) noexcept {
   return table()[static_cast<std::size_t>(form)];
 }
 
+namespace {
+
+struct ExtNamed final {
+  std::string_view mnemonic;
+  Ext ext;
+};
+
+constexpr ExtNamed extension_mnemonics[] = {
+    {"CRC32B", Ext::crc32},   {"CRC32H", Ext::crc32},
+    {"CRC32W", Ext::crc32},   {"CRC32CB", Ext::crc32},
+    {"CRC32CH", Ext::crc32},  {"CRC32CW", Ext::crc32},
+    {"AESE", Ext::aes},       {"AESD", Ext::aes},
+    {"AESMC", Ext::aes},      {"AESIMC", Ext::aes},
+    {"SHA1C", Ext::sha},      {"SHA1P", Ext::sha},
+    {"SHA1M", Ext::sha},      {"SHA1H", Ext::sha},
+    {"SHA1SU0", Ext::sha},    {"SHA1SU1", Ext::sha},
+    {"SHA256H", Ext::sha},    {"SHA256H2", Ext::sha},
+    {"SHA256SU0", Ext::sha},  {"SHA256SU1", Ext::sha},
+    {"VSELEQ", Ext::vsel},    {"VSELGE", Ext::vsel},
+    {"VSELGT", Ext::vsel},    {"VSELVS", Ext::vsel},
+    {"VMAXNM", Ext::vmaxnm},  {"VMINNM", Ext::vmaxnm},
+    {"VRINTA", Ext::vrint},   {"VRINTN", Ext::vrint},
+    {"VRINTP", Ext::vrint},   {"VRINTM", Ext::vrint},
+    {"VRINTX", Ext::vrint},   {"VRINTZ", Ext::vrint},
+    {"VRINTR", Ext::vrint},   {"VCVTA", Ext::vcvt_round},
+    {"VCVTN", Ext::vcvt_round}, {"VCVTP", Ext::vcvt_round},
+    {"VCVTM", Ext::vcvt_round}, {"VJCVT", Ext::vjcvt},
+    {"SB", Ext::sb},
+};
+
+} // namespace
+
+Ext extension_of(aarch32::Form form) noexcept {
+  const auto &info = aarch32::kForms[static_cast<std::size_t>(form)];
+  if (info.level != aarch32::Level::complete)
+    return Ext::none;
+  for (const auto &named : extension_mnemonics)
+    if (named.mnemonic == info.mnemonic)
+      return named.ext;
+  return Ext::none;
+}
+
+bool extension_lowered(aarch32::Form form) noexcept {
+  const auto ext = extension_of(form);
+  if (ext == Ext::none)
+    return false;
+  const std::string_view name = aarch32::kForms[static_cast<std::size_t>(form)].name;
+  /* The half-precision scalar forms are the library's. */
+  if (name.ends_with("_H"))
+    return false;
+  const auto &host = ::uml::cpu::host_capabilities();
+  switch (ext) {
+  case Ext::crc32:
+    return host.crc32;
+  case Ext::aes:
+    return host.aes;
+  case Ext::sha: {
+    const std::string_view mnemonic = aarch32::kForms[static_cast<std::size_t>(form)].mnemonic;
+    return mnemonic.starts_with("SHA1") ? host.sha1 : host.sha2;
+  }
+  case Ext::vjcvt:
+    return host.has(::uml::cpu::ArmFeature::jscvt);
+  default:
+    return host.advanced_simd;
+  }
+}
+
 bool is_library_form(aarch32::Form form) noexcept {
   switch (op_info(form).op) {
   case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8: case Op::library:
+  case Op::usada8:
     return true;
+  case Op::library:
+    return !extension_lowered(form);
   default:
     return false;
   }

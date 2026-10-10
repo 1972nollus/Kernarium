@@ -849,7 +849,9 @@ in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The forms that the semantic
 library runs (the parallel arithmetic and the Armv8 extensions the compiler does
 not lower) must take it in all of them, and every vector form of the simd level
-must have a lowering. `arm64-jit-a32-runtime`,
+must have a lowering. The corpus's VJCVT cases include a flush-to-zero
+subnormal input, which exercises the correction for a host whose FJCVTZS
+reports it as exact. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
 programs against an independent reference of the instruction forms (the corpus
 carries T32).
