@@ -231,6 +231,18 @@ void engines_present_sve_only_when_complete()
 		"the guest kernel's SVE2 word does not follow the policy");
 }
 
+/* The guest kernel takes SVE task state from the bridge's vector length
+ * and userspace learns of SVE from the HWCAPs, so the two come from the
+ * same profile: the length is the profile's exactly when HWCAP_SVE is set,
+ * under either policy and at any engine's support level. */
+void vector_length_follows_hwcaps()
+{
+	const unsigned long vl = darwin_uml_guest_sve_vector_length();
+	require(vl == 0 || vl == arm64::sve_vector_length);
+	require((vl != 0) == ((darwin_uml_guest_hwcap() & sve_hwcap) != 0),
+		"the bridge's SVE vector length and HWCAP_SVE disagree");
+}
+
 /* The mask form maps one to one onto the 16 predicate bits. */
 void predicate_masks_round_trip()
 {
@@ -388,6 +400,7 @@ int main()
 	prober_follows_policy();
 	process_profile_honours_environment();
 	engines_present_sve_only_when_complete();
+	vector_length_follows_hwcaps();
 	predicate_masks_round_trip();
 	leading_predicates_follow_predtest();
 	streaming_mode_changes_reset_predicates();
