@@ -793,7 +793,8 @@ HWCAP words it sees, and an extension the words leave out must raise `SIGILL`.
 Every SIGILL is counted: one the probe did not expect fails the run. A test
 skips, naming its reason, while its engine implements no AArch32 (the level
 `uml-a32-engine-support` prints is `none`). `A32_PROBE_GROUPS` selects groups
-by hand through the runner's `--groups`.
+by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
+runner print every line of the guest's output, passes included.
 
 ## x86 instruction conformance
 

@@ -48,7 +48,7 @@ SUMMARY = re.compile(
 )
 DETECTED = re.compile(r"a32-engine-probe: level (\w+)")
 # The probe's own lines are not host crashes, whatever they name.
-PROBE_LINE = re.compile(r"^(PASS|FAIL|SKIP) |^a32-engine-probe: ")
+PROBE_LINE = re.compile(r"^(PASS|FAIL|SKIP|NOTE) |^a32-engine-probe: ")
 HOST_CRASH = re.compile(
     r"SIGILL|[Ii]llegal instruction|host fault|Kernel panic|"
     r"Attempted to kill init|segfault at")
@@ -82,9 +82,12 @@ def run_probe(arguments: argparse.Namespace, label: str,
         guest.wait_for_exit(60)
         output = guest.output()
     lines = output.splitlines()
+    verbose = bool(os.environ.get("A32_PROBE_VERBOSE"))
     for line in lines:
-        # Failures and skips are the news; the passes are a count.
-        if line.startswith(("FAIL ", "SKIP ", "a32-engine-probe: ")):
+        # Failures and skips are the news; the passes are a count, unless
+        # A32_PROBE_VERBOSE asks for every line of the guest's output.
+        if verbose or line.startswith(
+                ("FAIL ", "SKIP ", "NOTE ", "a32-engine-probe: ")):
             print(line)
     crashes = [line for line in lines
                if HOST_CRASH.search(line) and not PROBE_LINE.match(line)]

@@ -72,6 +72,28 @@ u32 itstate_of(u32 cpsr)
 	return (((cpsr >> 10) & 0x3f) << 2) | ((cpsr >> 25) & 3);
 }
 
+/* A step that did not stop with SIGTRAP: where, as a NOTE line. */
+void note_bad_step(long child, u32 step, const Stop &stop)
+{
+	u32 info[32] = {};
+	u32 regs[18] = {};
+	sys(nr_ptrace, ptrace_getsiginfo, child, 0, addr(info));
+	get_registers(child, regs);
+	put("NOTE ptrace step ");
+	put_dec(step);
+	put(" status ");
+	put_hex(static_cast<u32>(stop.status));
+	put(" si_code ");
+	put_hex(info[2]);
+	put(" si_addr ");
+	put_hex(info[3]);
+	put(" pc ");
+	put_hex(regs[15]);
+	put(" cpsr ");
+	put_hex(regs[16]);
+	put("\n");
+}
+
 /* Forks a child that asks to be traced and stops itself; returns its pid with
  * the tracer past the SIGSTOP and the child about to run its routine. */
 long start_traced(long (*routine)(), word tls)
@@ -204,6 +226,7 @@ void group_ptrace()
 				stop = wait_for_stop(child);
 				if (!stop.stopped || stop.signal != sigtrap) {
 					++not_stopped;
+					note_bad_step(child, step, stop);
 					break;
 				}
 				get_registers(child, regs);
@@ -247,14 +270,17 @@ void group_ptrace()
 				stop = wait_for_stop(child);
 				if (!stop.stopped || stop.signal != sigtrap) {
 					++not_stopped;
+					note_bad_step(child, step, stop);
 					break;
 				}
 				get_registers(child, regs);
 				if (regs[15] != expected_pc[step])
 					++wrong_pc;
 				const bool thumb = step >= 8;
-				if (((regs[16] & psr_thumb) != 0) != thumb)
+				if (((regs[16] & psr_thumb) != 0) != thumb) {
 					++wrong_state;
+					note_bad_step(child, step, stop);
+				}
 				if (step == 5)
 					pid_seen = regs[0];
 			}

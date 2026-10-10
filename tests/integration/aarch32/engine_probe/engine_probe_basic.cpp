@@ -80,10 +80,11 @@ void group_basic()
 	check_eq(static_cast<u32>(sys(nr_pipe2, addr(fds), 0)), 0, "pipe2");
 	check_eq(static_cast<u32>(sys(nr_write, fds[1], 0x10, 8)), static_cast<u32>(-efault),
 		 "write from an unmapped buffer is EFAULT");
-	check_eq(static_cast<u32>(sys(nr_read, fds[0], 0x10, 8)), static_cast<u32>(-efault),
-		 "read into an unmapped buffer is EFAULT");
 	check_eq(static_cast<u32>(sys(nr_write, fds[1], addr("pipe"), 4)), 4,
 		 "write to a pipe");
+	/* With data waiting: an empty pipe would block before it looks at the buffer. */
+	check_eq(static_cast<u32>(sys(nr_read, fds[0], 0x10, 8)), static_cast<u32>(-efault),
+		 "read into an unmapped buffer is EFAULT");
 	char back[8] = {};
 	check_eq(static_cast<u32>(sys(nr_read, fds[0], addr(back), 8)), 4, "read from a pipe");
 	check_mem(back, "pipe", 4, "the bytes arrive");
