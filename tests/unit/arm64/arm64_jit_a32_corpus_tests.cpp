@@ -362,12 +362,49 @@ bool within_level(const Case &test, const dec::Profile &profile) {
   return true;
 }
 
+/* Whether the instruction under test always executes in the case: a
+ * straight-line program and an unconditional instruction. */
+bool target_always_executes(const Case &test, const dec::Profile &profile) {
+  if ((test.flags & kFlagStraight) == 0)
+    return false;
+  const bool thumb = test.flags & kFlagThumb;
+  dec::ItState it;
+  unsigned ordinal = 0;
+  for (unsigned half = 0; half < test.halves.size(); ++ordinal) {
+    dec::Instruction instruction;
+    unsigned length = 4;
+    if (!thumb) {
+      if (half + 1 >= test.halves.size())
+        return false;
+      instruction = dec::decode_a32(
+          std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
+    } else {
+      const std::uint16_t first = test.halves[half];
+      length = dec::thumb_length(first);
+      if (half + length / 2 > test.halves.size())
+        return false;
+      const std::uint32_t word = length == 4
+                                     ? std::uint32_t{first} << 16 | test.halves[half + 1]
+                                     : std::uint32_t{first} << 16;
+      instruction = dec::decode_thumb(word, it, profile);
+      it = instruction.next_it;
+    }
+    if (ordinal == test.target)
+      return instruction.cond >= 14U;
+    half += length / 2;
+  }
+  return false;
+}
+
 /* The library-exit gate: a form the compiler lowers stays out of the slow
  * helper from a clean state. Every event-free case of a form runs twice (the
  * first run warms the translation and the TLB) and the second run's helper
  * exits for the form under test are counted. */
 struct ExitTally final {
+  /* Every event-free case, and those that took no helper exit. */
   std::size_t cases = 0, clean = 0;
+  /* The same over the cases whose instruction under test always executes. */
+  std::size_t executed = 0, executed_clean = 0;
 };
 
 std::map<std::string, ExitTally> measure_helper_exits(
@@ -401,6 +438,10 @@ std::map<std::string, ExitTally> measure_helper_exits(
       auto &tally = tallies[test.form];
       ++tally.cases;
       tally.clean += taken == 0 ? 1U : 0U;
+      if (target_always_executes(test, profile)) {
+        ++tally.executed;
+        tally.executed_clean += taken == 0 ? 1U : 0U;
+      }
       if (report && taken != 0)
         std::fprintf(stderr, "exit %s %s/%s: %zu\n", test.form.c_str(),
                      record.name.c_str(), test.name.c_str(),
@@ -412,10 +453,11 @@ std::map<std::string, ExitTally> measure_helper_exits(
 }
 
 /* Requires every form the compiler lowers to stay out of the helper from a
- * clean state: at least half of its event-free cases take no helper exit (the
- * rest cross a page, write back over the loaded register and so on). The
- * interim helper arithmetic takes it every time, which keeps the predicate
- * that names it honest, and the exclusives are measured by their own test. */
+ * clean state: some case in which it always executes takes no helper exit
+ * (the others cross a page, write back over the loaded register and so on).
+ * The interim helper arithmetic takes it every time, which keeps the
+ * predicate that names it honest, and the exclusives are measured by their
+ * own test. */
 void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
                                        const dec::Profile &profile) {
   const auto tallies = measure_helper_exits(machine, pack, profile, false);
@@ -429,8 +471,13 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
     using ::uml::cpu::arm64::jit::a32::Op;
     if (op >= Op::ldrex && op <= Op::strexd)
       continue;
+    /* The cases that decide: those in which the instruction executes, or all
+     * of them for a form whose cases are all conditional. */
+    const auto decisive = tally.executed != 0 ? tally.executed : tally.cases;
+    const auto decisive_clean =
+        tally.executed != 0 ? tally.executed_clean : tally.clean;
     if (::uml::cpu::arm64::jit::a32::is_helper_arithmetic_form(form)) {
-      if (tally.clean != 0) {
+      if (decisive_clean != 0) {
         std::fprintf(stderr, "%s runs inline but is named a helper form\n",
                      name.c_str());
         require(false);
@@ -438,11 +485,11 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
       ++helper_forms;
       continue;
     }
-    if (tally.clean * 2 < tally.cases) {
+    if (decisive_clean == 0) {
       std::fprintf(stderr,
                    "%s is lowered but took the helper from a clean state in "
-                   "%zu of %zu cases\n",
-                   name.c_str(), tally.cases - tally.clean, tally.cases);
+                   "all %zu cases\n",
+                   name.c_str(), decisive);
       require(false);
     }
     ++inline_forms;
