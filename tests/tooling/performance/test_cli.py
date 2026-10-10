@@ -179,6 +179,8 @@ def run_geekbench_shutdown_case(
     workloads: str | None = None,
     payload: pathlib.Path | None = None,
     payload_sha256: str | None = None,
+    root_type: str = "erofs",
+    no_network: bool = False,
 ) -> tuple[int | None, RuntimeError | None, mock.Mock, mock.Mock]:
     module = load_runner_module("run_guest_geekbench.py")
     directory = tempfile.TemporaryDirectory(prefix="uml-geekbench-cli-")
@@ -190,6 +192,8 @@ def run_geekbench_shutdown_case(
         workloads=workloads,
         payload=payload,
         payload_sha256=payload_sha256,
+        root_type=root_type,
+        no_network=no_network,
         kernel_argument=[],
         memory="8G",
         cpus=10,
@@ -434,6 +438,48 @@ def verify_geekbench_payload_image() -> None:
                 f"Geekbench accepted payload={payload} with "
                 f"payload_sha256={payload_sha256!r}"
             )
+
+
+def verify_geekbench_boot_options() -> None:
+    """The root type and network choices reach the Guest only when made."""
+    options = parse_runner_arguments(
+        "run_guest_geekbench.py", ["--console-log", "console.log"]
+    )
+    if options.root_type != "erofs" or options.no_network:
+        raise RuntimeError("Geekbench must boot the usual guest by default")
+    _, _, _, constructor = run_geekbench_shutdown_case(0, True, 0)
+    unusual = {"root_type", "network"} & set(constructor.call_args.kwargs)
+    if unusual:
+        raise RuntimeError(
+            f"the default Geekbench guest was given {sorted(unusual)}"
+        )
+    for case, expected in (
+        ({"root_type": "ext4"}, {"root_type": "ext4"}),
+        ({"no_network": True}, {"network": "image"}),
+        (
+            {"root_type": "ext4", "no_network": True},
+            {"root_type": "ext4", "network": "image"},
+        ),
+    ):
+        status, error, _, constructor = run_geekbench_shutdown_case(
+            0, True, 0, **case
+        )
+        passed = {
+            name: value
+            for name, value in constructor.call_args.kwargs.items()
+            if name in ("root_type", "network")
+        }
+        if status != 0 or error is not None or passed != expected:
+            raise RuntimeError(
+                f"Geekbench with {case} built {passed}: status={status}, "
+                f"error={error}"
+            )
+    parsed = parse_runner_arguments(
+        "run_guest_geekbench.py",
+        ["--console-log", "console.log", "--root-type", "ext4", "--no-network"],
+    )
+    if parsed.root_type != "ext4" or not parsed.no_network:
+        raise RuntimeError("Geekbench ignored --root-type or --no-network")
 
 
 # The guest scripts the exec and link benches time, at two workers. Recorded
@@ -724,6 +770,7 @@ def main() -> int:
     verify_guest_shell_shutdown_contract()
     verify_geekbench_payloads()
     verify_geekbench_payload_image()
+    verify_geekbench_boot_options()
     verify_timed_sessions()
     verify_no_root_device_option()
     verify_core_class_launcher()
