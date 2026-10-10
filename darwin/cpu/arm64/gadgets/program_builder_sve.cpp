@@ -24,6 +24,7 @@
 
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
+#include "cpu/arm64/detail/sve_trig_tables.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
@@ -506,6 +507,29 @@ DecodeResult emit_base(DecodeContext &context, const Form &form)
 		emit(context.words, reinterpret_cast<std::uintptr_t>(
 			&sve_tables));
 		return true;
+	case Lowering::exponential:
+		/* FEXPA: the fraction bits of the element size's table. */
+		emit(context.words, reinterpret_cast<std::uintptr_t>(
+			esize == 2U ? static_cast<const void *>(
+					      detail::sve_exponential_16.data()) :
+			esize == 4U ? static_cast<const void *>(
+					      detail::sve_exponential_32.data()) :
+				      static_cast<const void *>(
+					      detail::sve_exponential_64.data())));
+		return true;
+	case Lowering::trig_coefficients: {
+		/* FTMAD: the entry the immediate names; the gadget reads the
+		 * one eight entries on for a negative element. */
+		const unsigned index = (word >> 16) & 7U;
+		emit(context.words, reinterpret_cast<std::uintptr_t>(
+			esize == 2U ? static_cast<const void *>(
+					      &detail::sve_trig_16[index]) :
+			esize == 4U ? static_cast<const void *>(
+					      &detail::sve_trig_32[index]) :
+				      static_cast<const void *>(
+					      &detail::sve_trig_64[index])));
+		return true;
+	}
 	case Lowering::float_immediate:
 		emit_words(context, replicate(selection::expand_vfp_immediate(
 			static_cast<std::uint8_t>((word >> 5) & 0xffU), esize * 8U),
@@ -612,6 +636,16 @@ DecodeResult emit_form(DecodeContext &context, const Form &form,
 			static_cast<std::uint64_t>(index));
 		emit(context.words, context.address);
 		/* Five words with the entry, as sve_sp_check relies on. */
+	} else if ((form.flags & sve::library_tail) != 0U) {
+		/* The stream of sve_library, which the gadget enters for a
+		 * lane off its fast path. */
+		if (!detail::sve_semantics_covers(detail::sme_encodings[index])) {
+			context.words.truncate(start);
+			return implementation_gap(context);
+		}
+		emit(context.words, (static_cast<std::uint64_t>(word) << 32) |
+			static_cast<std::uint64_t>(index));
+		emit(context.words, context.address);
 	}
 	if (!fused)
 		return DecodeResult::decoded;
@@ -652,6 +686,7 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 	const auto index =
 		static_cast<std::size_t>(row - detail::sme_encodings.data());
 	const auto number = sve::row_forms[index];
+	const auto first_word = context.words.size();
 	DecodeResult decoded = DecodeResult::decoded;
 	/* Every other form, and a generated form's absent variant, runs
 	 * through the semantic library, which implements every row the
@@ -663,6 +698,12 @@ std::optional<DecodeResult> decode_sve_space(DecodeContext &context)
 	if (decoded == DecodeResult::decoded) {
 		context.program_accesses_fp_state = true;
 		context.program_holds_sve = true;
+		/* The library report: a word that goes to the library whole, not
+		 * one whose gadget may leave for it at run time. */
+		note_sve_translation(index,
+			context.words.size() > first_word &&
+			context.words[first_word] == reinterpret_cast<
+				std::uintptr_t>(uml_arm64_gadget_sve_library));
 	}
 	return decoded;
 }

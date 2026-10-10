@@ -510,6 +510,24 @@ stores nothing. FSCALE adds the truncated scale to the exponent and rounds
 once (`extF80_scale`), so a result in range is exact however large the
 scale.
 
+FSIN, FCOS, FPTAN, FSINCOS, F2XM1, FYL2X and FYL2XP1 compute as an Intel core
+does, in FEX's `cephes/X87Math.cpp`, which the JIT's interpreter fallbacks
+share. The trigonometric functions reduce an operand below 2^63 by pi/2 taken
+to 66 bits, so the sine of the 64-bit pi is the sine of a remainder from a
+slightly wrong pi; an odd quadrant's tangent is minus the cotangent of the
+remainder, and a magnitude below 2^-68 is returned as it is. F2XM1 returns an
+operand outside -1 to 1 unchanged, and a tiny operand of F2XM1 and FYL2XP1
+keeps every bit of its result. PE is set for every computed result, exact
+ones included. FPTAN and FSINCOS push the NaN of an operand without a tangent
+or sine in place of 1.0 or the cosine, FCMOVcc with an empty register is a
+stack fault whichever way its condition goes, and FBSTP stores the packed BCD
+indefinite for an operand of 10^18 or more, a NaN or an infinity. The Xeon's
+microcode rounding noise, which does not depend on the operand, is not
+reproduced: a few percent of the results of F2XM1, FYL2X, FYL2XP1 and FPTAN,
+and fewer of FSIN's and FCOS's, differ in the last bit, and about 1% in C1
+alone. A result within 2^-113 of a 64-bit number, the cosine of 2^-30 for one,
+may also round the other way in a directed mode.
+
 `uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
 field, so entry needs no slot for the caller's copy. Every path into it has the
 stack pointer back at the entry frame, from which it restores the callee-saved
@@ -637,7 +655,14 @@ its image whenever RFBM selects the SSE or the AVX component, whatever
 XSTATE_BV holds, and XSAVE and XSAVEOPT store MXCSR and MXCSR_MASK under the
 same condition; XSAVE adds RFBM to XSTATE_BV and leaves the rest of the header
 as it found it. XSAVE, XSAVEOPT and XRSTOR access the legacy area and the
-header, and the AVX component only when RFBM selects it.
+header, and the AVX component only when RFBM selects it; a compat32 segment's
+limit is checked against that extent, 576 bytes or 832 with the AVX component
+(FXSAVE and FXRSTOR: 512), as the Xeon does. Beside a page that is not mapped,
+an Intel core reports the last byte of the extent first -- XRSTOR reads the
+header's XCOMP_BV before that -- and the engines report the first inaccessible
+byte or the operand's base, the gadget engine as a read for XSAVE, which loads
+the image it updates. That deviation in the faulting address of a partly
+mapped area remains.
 
 CLFLUSH, CLFLUSHOPT and CLWB raise #PF for a read at the operand's own
 address when its page is unmapped or unreadable. CLDEMOTE and the prefetches

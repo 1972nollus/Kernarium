@@ -172,8 +172,15 @@ def session_parameters(
     swap: bool,
     cgroup1: str | None,
     cgroup2_nsdelegate: bool,
+    network: str = "user-network",
 ) -> str:
-    """The session file for a harness shell; see tools/rootfs/boot-ramdisk."""
+    """The session file for a harness shell; see tools/rootfs/boot-ramdisk.
+
+    ``network`` is how an overlay shell gets its address and resolver: the
+    SLiRP lease by default, or whatever the image configures itself, which
+    for a guest with no network is nothing."""
+    if network not in ("user-network", "image"):
+        raise ValueError(f"unknown network {network!r}")
     if workspace not in ("tmpfs", "ext2"):
         raise ValueError(f"unknown workspace {workspace!r}")
     if workspace != "tmpfs" and not overlay_shell:
@@ -181,9 +188,9 @@ def session_parameters(
     lines = ["UML_SESSION_ENTRY=/bin/sh"]
     if overlay_shell:
         lines += [
-            "UML_SESSION_RESOLVER=user-network",
+            f"UML_SESSION_RESOLVER={network}",
             "UML_SESSION_RUNTIME_MOUNTS=1",
-            "UML_SESSION_NETWORK=user-network",
+            f"UML_SESSION_NETWORK={network}",
             f"UML_SESSION_WORKSPACE={workspace}",
         ]
     if swap:
@@ -199,10 +206,19 @@ def stage_guest_files(
     directory: pathlib.Path,
     session: str,
     payloads: Mapping[str, GuestFile],
+    root_type: str | None = None,
 ) -> list[tuple[str, pathlib.Path]]:
-    """Write a harness session's initramfs inputs and return their pairs."""
+    """Write a harness session's initramfs inputs and return their pairs.
+
+    The root on ``/dev/ubda`` is an EROFS image unless ``root_type`` says it
+    is an unpartitioned ext4 filesystem."""
+    if root_type is not None and root_type not in ("erofs", "ext4"):
+        raise ValueError(f"unknown root type {root_type!r}")
     boot = directory / "boot.env"
-    boot.write_text(f"UML_BOOT_ENTRY={SESSION_GUEST_PATH}\n")
+    boot_lines = [f"UML_BOOT_ENTRY={SESSION_GUEST_PATH}\n"]
+    if root_type is not None:
+        boot_lines.append(f"UML_BOOT_ROOT_TYPE={root_type}\n")
+    boot.write_text("".join(boot_lines))
     parameters = directory / "session.env"
     parameters.write_text(session)
     files = [
@@ -671,6 +687,12 @@ class Guest(ConsoleProcess):
     init would: runtime mounts, the SLiRP address and resolver, and the
     ``workspace`` under /tmp. ``init_shell`` gives a bare shell on the same
     overlay. Swap and cgroup hierarchies are ready before the prompt.
+
+    The root is an EROFS image on /dev/ubda; ``root_type="ext4"`` makes it
+    an ext4 filesystem instead, which the overlay still mounts read-only.
+    ``network="image"`` leaves the guest without the SLiRP address and
+    resolver, as an image without ``ip`` or a measurement that must not touch
+    a network needs.
     """
 
     def __init__(
@@ -690,6 +712,8 @@ class Guest(ConsoleProcess):
         pass_fds: Sequence[int] = (),
         console_sink: BinaryIO | None = None,
         payloads: Mapping[str, GuestFile] = {},
+        root_type: str | None = None,
+        network: str = "user-network",
     ) -> None:
         if init_shell == overlay_shell:
             raise ValueError(
@@ -705,13 +729,16 @@ class Guest(ConsoleProcess):
                 swap=swap_size is not None,
                 cgroup1=cgroup1,
                 cgroup2_nsdelegate=cgroup2_nsdelegate,
+                network=network,
             )
             self._swap_path = create_swap_image(swap_size) if swap_size else None
             cleanup_stale_guest_files()
             self._staging = pathlib.Path(
                 tempfile.mkdtemp(prefix=f"{STAGING_PREFIX}{os.getpid()}-")
             )
-            guest_files = stage_guest_files(self._staging, session, payloads)
+            guest_files = stage_guest_files(
+                self._staging, session, payloads, root_type
+            )
             super().__init__(
                 emulator_arguments(
                     emulator,

@@ -350,14 +350,19 @@ conversion of a single or double, which raises invalid operation for a
 signaling NaN and a denormal operand for a denormal. The embedded stack follows
 the tag word: a read of an empty register is a stack underflow and a push onto
 a full one an overflow, each raising invalid operation with the stack-fault
-flag and going on with the QNaN indefinite, and FXAM classifies its operand
+flag and going on with the QNaN indefinite, which a masked underflow also
+leaves, valid, in the register the instruction writes -- one an earlier FFREE
+or pop emptied in the same block included -- and FXAM classifies its operand
 from the 80-bit format. FPTAN, FSINCOS and FXTRACT check the register of
 their second result first and on a full stack compute nothing, as on the
 gadget engine; with invalid operation unmasked they raise the stack overflow
 and change nothing else. FSIN, FCOS, FPTAN and FSINCOS leave an operand of
 2^63 or more as it is, with C2 set, in a branch of their own. A sine, cosine,
 tangent or arctangent of a finite nonzero operand raises precision, and
-FXTRACT normalizes a denormal operand. FNSAVE and FNSTENV tag each full register from its
+FXTRACT normalizes a denormal operand. The transcendentals, FBSTP and FPTAN's
+second result follow the Intel core as the [gadget engine](gadgets/README.md)
+documents them; FCMOVcc with an empty register is a stack fault whichever way
+the condition goes. FNSAVE and FNSTENV tag each full register from its
 value, as zero, special or valid, as an Intel host does at the store. C1
 says whether rounding increased a result's magnitude, and an instruction
 that rounds nothing clears or keeps it, as on the gadget engine, and FPREM and FPREM1 compute x87's exact remainders, partial ones

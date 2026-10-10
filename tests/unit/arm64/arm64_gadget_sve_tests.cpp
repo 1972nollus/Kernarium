@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <mach-o/dyld.h>
 #include <memory_resource>
 #include <set>
@@ -112,6 +113,14 @@ void clear(HostCapabilities &host, std::initializer_list<ArmFeature> features)
 		for (const auto feature : {ArmFeature::sve, ArmFeature::sve2})
 			host.supported.set(static_cast<std::size_t>(feature));
 	return host;
+}
+
+/* Whether the probed host implements FEAT_AFP, so that a random FPCR may
+ * carry FIZ, AH and NEP. */
+[[nodiscard]] bool afp_implemented()
+{
+	static const bool afp = arm64::implements_afp(sve_host());
+	return afp;
 }
 
 /* SVE with an injected SME2 profile at `svl`, which never claims the
@@ -1462,10 +1471,11 @@ public:
 [[nodiscard]] arm64::CpuState library_after(arm64::CpuState cpu,
 	std::uint32_t word, arm64::detail::SveEvent expected =
 		arm64::detail::SveEvent::retired,
-	std::uint32_t *syndrome = nullptr)
+	std::uint32_t *syndrome = nullptr,
+	const HostCapabilities &host = sve_host())
 {
 	const auto *row = arm64::detail::decode_sve_non_streaming(word,
-		arm64::detail::implemented_sve_features(sve_host()));
+		arm64::detail::implemented_sve_features(host));
 	require(row != nullptr);
 	NoMemory memory;
 	const auto result = arm64::detail::execute_sve(cpu, word, *row, memory);
@@ -1707,8 +1717,12 @@ void fill_lanes(Random &random, Bytes &bytes)
 	cpu.sve_ffr = arm64::sve_predicate_mask(random.predicate());
 	cpu.sve_live = 1;
 	cpu.nzcv = static_cast<std::uint32_t>(random.next() & 0xfU) << 28;
+	/* FIZ, AH and NEP only where the virtual CPU implements FEAT_AFP: the
+	 * gadgets run the guest's FPCR natively, so a form lowered to AdvSIMD
+	 * must agree with the library under them too. */
 	cpu.fpcr = static_cast<std::uint32_t>(random.next()) &
-		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19));
+		((3U << 22) | (1U << 24) | (1U << 25) | (1U << 19) |
+		 (afp_implemented() ? arm64::fpcr_afp_controls : 0U));
 	cpu.fpsr = static_cast<std::uint32_t>(random.next()) & 0x0800'009fU;
 	return cpu;
 }
@@ -1717,9 +1731,9 @@ void fill_lanes(Random &random, Bytes &bytes)
  * ends in an SVC, from `initial`; reports `word` otherwise. */
 void require_library_state(std::span<const std::uint32_t> code,
 	const arm64::CpuState &initial, const arm64::CpuState &expected,
-	std::uint32_t word, std::size_t index, bool fp_active)
+	std::uint32_t word, std::size_t index, bool fp_active,
+	const HostCapabilities &host = sve_host())
 {
-	const auto host = sve_host();
 	const auto built = build(code, host);
 	arm64::CpuState cpu = initial;
 	cpu.pc = code_base;
@@ -1759,6 +1773,167 @@ void require_library_state(std::span<const std::uint32_t> code,
 		std::fprintf(stderr, "\n");
 	}
 	require(false);
+}
+
+/* The library-exit report names the words the builder translated, how many
+ * went to the library for want of a generated gadget, and how often the
+ * library ran them: a vector ADD stays on its gadget, and FRECPX, which has
+ * none, counts its translation and its executions. */
+void library_exit_report()
+{
+	constexpr std::uint32_t add_vectors = 0x0422'0020U;
+	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	const auto host = sve_host();
+	const auto row_of = [&](std::uint32_t word) {
+		const auto decoded = gadgets::decode_sve_word(word, host, 0);
+		require(decoded.kind == gadgets::SveWord::implemented);
+		return static_cast<std::size_t>(decoded.row -
+			arm64::detail::sme_encodings.data());
+	};
+	const auto add_row = row_of(add_vectors);
+	const auto frecpx_row = row_of(frecpx);
+	require(gadgets::sve::row_forms[add_row] != gadgets::sve::no_form);
+	require(gadgets::sve::row_forms[frecpx_row] == gadgets::sve::no_form);
+
+	gadgets::count_sve_library_exits(true);
+	gadgets::reset_sve_library_exits();
+	{
+		const std::array code{add_vectors, frecpx, frecpx, svc};
+		Block block{code};
+		for (int run = 0; run < 3; ++run) {
+			arm64::CpuState cpu{};
+			block.run(cpu);
+		}
+	}
+	require(gadgets::sve_translated(add_row) == 1U);
+	require(gadgets::sve_translated_to_library(add_row) == 0U);
+	require(gadgets::sve_library_exits(add_row) == 0U);
+	require(gadgets::sve_translated(frecpx_row) == 2U);
+	require(gadgets::sve_translated_to_library(frecpx_row) == 2U);
+	require(gadgets::sve_library_exits(frecpx_row) == 6U);
+	require(gadgets::sve_library_exit_total() == 6U);
+
+	const char *temporary = std::getenv("TMPDIR");
+	std::string path = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	path += "/sve-library-report.XXXXXX";
+	const int descriptor = mkstemp(path.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	require(gadgets::write_sve_library_report(path.c_str()));
+	std::ifstream file{path};
+	std::string line;
+	std::vector<std::string> lines;
+	while (std::getline(file, line))
+		lines.push_back(line);
+	file.close();
+	unlink(path.c_str());
+	gadgets::count_sve_library_exits(false);
+	gadgets::reset_sve_library_exits();
+
+	/* Two comment lines, then FRECPX (it has exits) before ADD. */
+	require(lines.size() == 4U);
+	require(lines[0] == "# SVE library exits: total 6");
+	const auto &row = arm64::detail::sme_encodings[frecpx_row];
+	char expected[128];
+	std::snprintf(expected, sizeof expected,
+		"SVE-%04u\t%zu\t%08x\t%08x\t2\t2\t6",
+		static_cast<unsigned>(row.form & 0x7fffU), frecpx_row,
+		static_cast<unsigned>(row.mask),
+		static_cast<unsigned>(row.value));
+	require(lines[2] == expected);
+	require(lines[3].ends_with("\t1\t0\t0"));
+	std::printf("the library-exit report counts translations and exits\n");
+}
+
+constexpr const char *report_child_variable = "UML_GADGET_SVE_REPORT_CHILD";
+
+/* The emulator leaves through _Exit, which runs no atexit handler, so a
+ * process that asked for the report with DARWIN_UML_SVE_LIBRARY_EXITS must
+ * write it as its executors retire. The child counts from its start (the
+ * variable is read before main), runs one word through the library on an
+ * executor and leaves through _Exit once the executor is gone; the parent
+ * reads what it left. */
+[[noreturn]] void report_child()
+{
+	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	/* A process that ran no gadget executor, as one running only the JIT
+	 * does: it exits normally, so the exit handler runs, and must leave
+	 * the file alone. */
+	if (std::strcmp(std::getenv(report_child_variable), "idle") == 0)
+		std::exit(0);
+	{
+		const std::array code{frecpx, svc};
+		Machine machine{code, sve_host()};
+		require(machine.run() == EngineEvent::system_call);
+	}
+	std::_Exit(0);
+}
+
+/* Runs this test binary as the report child with `mode`, the report going to
+ * `report`; returns whether the child exited with status 0. */
+bool run_report_child(const std::string &report, const char *mode)
+{
+	std::array<char, 4096> path{};
+	auto size = static_cast<std::uint32_t>(path.size());
+	require(_NSGetExecutablePath(path.data(), &size) == 0);
+	std::vector<std::string> variables;
+	for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+		if (std::strncmp(*entry, "DARWIN_UML_SVE_LIBRARY_EXITS=", 29) != 0)
+			variables.emplace_back(*entry);
+	variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
+	variables.push_back(std::string{report_child_variable} + "=" + mode);
+	std::vector<char *> environment;
+	for (auto &variable : variables)
+		environment.push_back(variable.data());
+	environment.push_back(nullptr);
+	char *const arguments[] = {path.data(), nullptr};
+	pid_t child = 0;
+	require(posix_spawn(&child, path.data(), nullptr, nullptr, arguments,
+			environment.data()) == 0);
+	int status = 0;
+	while (waitpid(child, &status, 0) < 0)
+		require(errno == EINTR);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+void library_exit_report_survives_exit()
+{
+	const char *temporary = std::getenv("TMPDIR");
+	std::string report = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	report += "/sve-library-report-exit.XXXXXX";
+	const int descriptor = mkstemp(report.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	require(run_report_child(report, "1"));
+	std::ifstream file{report};
+	std::string line;
+	std::vector<std::string> lines;
+	while (std::getline(file, line))
+		lines.push_back(line);
+	file.close();
+	/* Two comment lines, then FRECPX with its translation, its word sent
+	 * to the library and its one execution. */
+	require(lines.size() >= 3U);
+	require(lines[0] == "# SVE library exits: total 1");
+	require(lines[2].ends_with("\t1\t1\t1"));
+	/* A process that ran no gadget executor leaves another engine's report
+	 * alone: the JIT writes the same file in the same format. */
+	{
+		std::ofstream marker{report, std::ios::trunc};
+		marker << "kept\n";
+	}
+	require(run_report_child(report, "idle"));
+	std::ifstream kept{report};
+	lines.clear();
+	while (std::getline(kept, line))
+		lines.push_back(line);
+	kept.close();
+	unlink(report.c_str());
+	require(lines.size() == 1U && lines[0] == "kept");
+	std::printf("the library-exit report survives _Exit and leaves "
+		    "another engine's alone\n");
 }
 
 /* Every generated form agrees with the semantic library: random words of
@@ -1832,6 +2007,337 @@ void generated_forms_match_the_library()
 	require(stuck == 0U);
 	std::printf("%zu generated-form runs over %zu rows match the "
 		"library\n", runs, rows);
+}
+
+/* The SVE encodings that FEAT_SME or FEAT_SME2 admit at SM = 0 (SCLAMP,
+ * UCLAMP, PSEL, REVD, the predicate-pair WHILEs, FCLAMP, the BFMLSL and
+ * FDOT forms and the rest of that class) have no generated gadget; with
+ * the SVE profile and the SME profile they run through the library at
+ * SM = 0 and leave its state, behind an FP instruction too. Without SME
+ * none of them is a word of the virtual CPU, and without SME2 the SME2 ones
+ * are not either. */
+void sve_sme_forms_at_sm_0()
+{
+	Random random{0x5ec7'0004U};
+	const auto sme2_host = sve_sme_host();
+	auto sme_host = sme2_host;
+	clear(sme_host, {ArmFeature::sme2});
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	std::size_t rows = 0, sme2_rows = 0, runs = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		const auto requirement = row.non_streaming_requirement;
+		if ((requirement & arm64::detail::sme_feature_sve) == 0U ||
+		    (requirement & arm64::detail::sme_feature_sme) == 0U)
+			continue;
+		const bool sme2 =
+			(requirement & arm64::detail::sme_feature_sme2) != 0U;
+		++rows;
+		sme2_rows += sme2 ? 1U : 0U;
+		require(gadgets::sve::row_forms[index] == gadgets::sve::no_form);
+		std::size_t sampled = 0;
+		for (int sample = 0; sample < 48; ++sample) {
+			const auto word = row.value |
+				(static_cast<std::uint32_t>(random.next()) &
+				 ~row.mask);
+			const auto decoded = gadgets::decode_sve_word(word,
+				sme2_host, 0);
+			if (decoded.row != &row ||
+			    decoded.kind != gadgets::SveWord::implemented)
+				continue;
+			++sampled;
+			require(gadgets::decode_sve_word(word, sve_host(), 0)
+					.kind != gadgets::SveWord::implemented);
+			require((gadgets::decode_sve_word(word, sme_host, 0)
+					.kind == gadgets::SveWord::implemented) !=
+				sme2);
+			if (sme2) {
+				const std::array code{movz(0, 1), word, svc};
+				arm64::CpuState cpu{};
+				std::size_t executed = 0;
+				require(run_illegal(code, sme_host, executed,
+						cpu) ==
+					EngineEvent::illegal_instruction);
+				require(cpu.pc == code_base + 4U);
+			}
+			auto initial = random_state(random);
+			const std::array alone{word, svc};
+			require_library_state(alone, initial,
+				library_after(initial, word,
+					arm64::detail::SveEvent::retired,
+					nullptr, sme2_host),
+				word, index, false, sme2_host);
+			Bytes one{}, two{};
+			const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+			const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+			std::memcpy(one.data(), &one_bits, 4);
+			std::memcpy(two.data(), &two_bits, 4);
+			set_vec(initial, 31, one);
+			auto activated = initial;
+			set_vec(activated, 31, two);
+			const std::array behind{activate, word, svc};
+			require_library_state(behind, initial,
+				library_after(activated, word,
+					arm64::detail::SveEvent::retired,
+					nullptr, sme2_host),
+				word, index, true, sme2_host);
+			runs += 2;
+		}
+		require(sampled > 0U);
+	}
+	require(rows == 33U && sme2_rows != 0U && sme2_rows < rows);
+	std::printf("%zu runs of the %zu SVE rows SME admits at SM = 0 "
+		"(%zu of them SME2) match the library\n", runs, rows,
+		sme2_rows);
+}
+
+/* A random element of `esize` bytes that stresses floating-point code:
+ * zeros, denormals, numbers near one, the extreme exponents, infinities,
+ * signaling and quiet NaNs of any payload, small integers (a scale, a
+ * selector), the integer extremes, and raw bits; either sign. */
+[[nodiscard]] std::uint64_t edge_element(Random &random, unsigned esize)
+{
+	const unsigned bits = 8U * esize;
+	const unsigned fraction = esize == 2U ? 10U : esize == 4U ? 23U : 52U;
+	const std::uint64_t full = bits == 64U ? ~std::uint64_t{0} :
+		(std::uint64_t{1} << bits) - 1U;
+	const std::uint64_t sign = std::uint64_t{1} << (bits - 1U);
+	const std::uint64_t fraction_mask =
+		(std::uint64_t{1} << fraction) - 1U;
+	const std::uint64_t exponent_max =
+		(std::uint64_t{1} << (bits - 1U - fraction)) - 1U;
+	const auto raw = random.next();
+	const auto payload = random.next() & fraction_mask;
+	std::uint64_t value = 0;
+	switch (raw % 11U) {
+	case 0:
+		break;
+	case 1:
+		value = payload;
+		break;
+	case 2:
+		value = (exponent_max << fraction) |
+			((raw >> 8 & 1U) != 0U ? payload : 0U);
+		break;
+	case 3:
+		value = (((exponent_max >> 1) - 2U + (raw >> 8) % 5U)
+			 << fraction) | payload;
+		break;
+	case 4:
+		value = (std::uint64_t{1} << fraction) | payload;
+		break;
+	case 5:
+		value = ((exponent_max - 1U) << fraction) | payload;
+		break;
+	case 6:
+		value = static_cast<std::uint64_t>(
+			static_cast<std::int64_t>((raw >> 8) % 600U) - 300);
+		break;
+	case 7:
+		value = (raw >> 8 & 1U) != 0U ? sign + (raw >> 9 & 7U) :
+			sign - 1U - (raw >> 9 & 7U);
+		break;
+	default:
+		value = random.next();
+		break;
+	}
+	if ((raw >> 40 & 1U) != 0U)
+		value ^= sign;
+	return value & full;
+}
+
+/* A field of a word the edge test randomizes: `limit` values from `low`. */
+struct EdgeField final {
+	unsigned low;
+	std::uint32_t limit;
+};
+
+/* FSCALE's operands: scales that put the exponent on and around the edges
+ * of the normal range (to zero, one, the largest finite exponent and the
+ * infinity's), on mostly normal elements so that the gadget's fast path
+ * runs; the rest of the vectors keep their edge values. */
+void prepare_scale(Random &random, arm64::CpuState &cpu, std::uint32_t word)
+{
+	const unsigned bytes = 1U << ((word >> 22) & 3U);
+	const unsigned fraction = bytes == 2U ? 10U : bytes == 4U ? 23U : 52U;
+	const std::int64_t maximum =
+		(std::int64_t{1} << (8U * bytes - 1U - fraction)) - 1;
+	const unsigned dn = word & 31U;
+	const unsigned m = (word >> 5) & 31U;
+	if (dn == m)
+		return;
+	const bool mostly_fast = random.next() % 2U == 0U;
+	for (unsigned lane = 0; lane < 16U / bytes; ++lane) {
+		std::uint64_t value = 0;
+		std::memcpy(&value, cpu.vectors[dn].bytes.data() + lane * bytes,
+			bytes);
+		const auto scenario = mostly_fast ? random.next() % 5U :
+			random.next() % 8U;
+		if (scenario >= 5U)
+			continue;
+		const std::uint64_t exponent_mask =
+			static_cast<std::uint64_t>(maximum) << fraction;
+		const std::int64_t exponent = 1 + static_cast<std::int64_t>(
+			random.next() % static_cast<std::uint64_t>(maximum - 1));
+		value = (value & ~exponent_mask) |
+			(static_cast<std::uint64_t>(exponent) << fraction);
+		const std::array<std::int64_t, 7> edges{0, 1, 2, maximum - 2,
+			maximum - 1, maximum, maximum + 1};
+		const auto pick = random.next() % 9U;
+		const std::int64_t target = pick < edges.size() ? edges[pick] :
+			1 + static_cast<std::int64_t>(random.next() %
+				static_cast<std::uint64_t>(maximum - 1));
+		const auto scale = static_cast<std::uint64_t>(target - exponent);
+		std::memcpy(cpu.vectors[dn].bytes.data() + lane * bytes, &value,
+			bytes);
+		std::memcpy(cpu.vectors[m].bytes.data() + lane * bytes, &scale,
+			bytes);
+	}
+}
+
+/* `iterations` words of one form (`base` with random fields), each run alone
+ * and sometimes behind an FP instruction on states whose Z0-Z3 hold edge
+ * elements of `data_bytes` bytes, leave the library's state: its registers,
+ * P, FFR, NZCV and the FPSR flags, under a random FPCR. */
+void edge_values_match_the_library(const char *name, std::uint32_t base,
+	std::initializer_list<EdgeField> fields, unsigned data_bytes,
+	int iterations, std::uint64_t seed, unsigned container_bytes = 0,
+	void (*prepare)(Random &, arm64::CpuState &, std::uint32_t) = nullptr)
+{
+	constexpr std::uint32_t activate = 0x1e3f'2bffU;
+	Random random{seed};
+	const auto host = sve_host();
+	const unsigned container = container_bytes != 0U ? container_bytes :
+		data_bytes;
+	int runs = 0;
+	for (int round = 0; round < iterations; ++round) {
+		auto word = base;
+		for (const auto &field : fields)
+			word |= static_cast<std::uint32_t>(
+				random.next() % field.limit) << field.low;
+		const auto decoded = gadgets::decode_sve_word(word, host, 0);
+		/* A field combination no row decodes (a reserved tsz). */
+		if (decoded.kind != gadgets::SveWord::implemented)
+			continue;
+		++runs;
+		const auto index = static_cast<std::size_t>(decoded.row -
+			arm64::detail::sme_encodings.data());
+		auto initial = random_state(random);
+		for (unsigned n = 0; n < 4U; ++n) {
+			Bytes bytes{};
+			for (unsigned element = 0; element < 16U / container;
+			     ++element) {
+				/* The value in the low bytes of a container,
+				 * raw bits above it. */
+				std::uint64_t value = edge_element(random,
+					data_bytes);
+				if (container > data_bytes)
+					value |= random.next() << (8U * data_bytes);
+				std::memcpy(bytes.data() + element * container,
+					&value, container);
+			}
+			set_vec(initial, n, bytes);
+		}
+		if (prepare != nullptr)
+			prepare(random, initial, word);
+		const std::array alone{word, svc};
+		require_library_state(alone, initial,
+			library_after(initial, word), word, index, false);
+		if (round % 4 != 0)
+			continue;
+		Bytes one{}, two{};
+		const auto one_bits = std::bit_cast<std::uint32_t>(1.0F);
+		const auto two_bits = std::bit_cast<std::uint32_t>(2.0F);
+		std::memcpy(one.data(), &one_bits, 4);
+		std::memcpy(two.data(), &two_bits, 4);
+		set_vec(initial, 31, one);
+		auto activated = initial;
+		set_vec(activated, 31, two);
+		const std::array behind{activate, word, svc};
+		require_library_state(behind, initial,
+			library_after(activated, word), word, index, true);
+	}
+	require(runs * 2 >= iterations);
+	std::printf("%s: %d edge-value runs match the library\n", name, runs);
+}
+
+/* The forms the gadget engine lowered after the hot set, on their edge
+ * cases (NaNs and infinities, denormals under FZ and FIZ, every rounding
+ * mode, all selector and index bits, a scale past the exponent range, the
+ * integer extremes and saturation): FEXPA, FTSSEL, FTSMUL and FTMAD at every
+ * precision, then FCADD, FSCALE, the single/double FCVT, the 32-bit
+ * integer/double SCVTF, UCVTF, FCVTZS and FCVTZU, ASRD and UQINC/UQDEC of a
+ * scalar. */
+void remaining_forms_on_edge_values()
+{
+	constexpr int iterations = 1536;
+	const std::initializer_list<EdgeField> two_registers{{0, 4}, {5, 4}};
+	const std::initializer_list<EdgeField> three_registers{
+		{0, 4}, {5, 4}, {16, 4}};
+	const std::initializer_list<EdgeField> with_immediate{
+		{0, 4}, {5, 4}, {16, 8}};
+	struct Precision final {
+		const char *name;
+		std::uint32_t size;
+		unsigned bytes;
+	};
+	for (const auto &precision : {Precision{"h", 1U, 2U},
+		     Precision{"s", 2U, 4U}, Precision{"d", 3U, 8U}}) {
+		const auto size = precision.size << 22;
+		const auto label = [&](const char *form) {
+			return std::string{form} + "." + precision.name;
+		};
+		edge_values_match_the_library(label("fexpa").c_str(),
+			0x0420'b800U | size, two_registers, precision.bytes,
+			iterations, 0x5ec7'1001U + precision.size);
+		edge_values_match_the_library(label("ftssel").c_str(),
+			0x0420'b000U | size, three_registers, precision.bytes,
+			iterations, 0x5ec7'1011U + precision.size);
+		edge_values_match_the_library(label("ftsmul").c_str(),
+			0x6500'0c00U | size, three_registers, precision.bytes,
+			iterations, 0x5ec7'1021U + precision.size);
+		/* The immediate field is bits 16-18. */
+		edge_values_match_the_library(label("ftmad").c_str(),
+			0x6510'8000U | size, with_immediate,
+			precision.bytes, iterations, 0x5ec7'1031U + precision.size);
+		edge_values_match_the_library(label("fcadd").c_str(),
+			0x6400'8000U | size, {{0, 4}, {5, 4}, {10, 8}, {16, 2}},
+			precision.bytes, iterations, 0x5ec7'1041U + precision.size);
+		edge_values_match_the_library(label("fscale").c_str(),
+			0x6509'8000U | size, {{0, 4}, {5, 4}, {10, 8}},
+			precision.bytes, iterations, 0x5ec7'1051U + precision.size,
+			0, prepare_scale);
+	}
+	const std::initializer_list<EdgeField> predicated{
+		{0, 4}, {5, 4}, {10, 8}};
+	edge_values_match_the_library("fcvt.s2d", 0x65cb'a000U, predicated, 4,
+		iterations, 0x5ec7'1061U, 8);
+	edge_values_match_the_library("fcvt.d2s", 0x65ca'a000U, predicated, 8,
+		iterations, 0x5ec7'1062U);
+	edge_values_match_the_library("scvtf.w2d", 0x65d0'a000U, predicated, 4,
+		iterations, 0x5ec7'1063U, 8);
+	edge_values_match_the_library("ucvtf.w2d", 0x65d1'a000U, predicated, 4,
+		iterations, 0x5ec7'1064U, 8);
+	edge_values_match_the_library("fcvtzs.d2w", 0x65d8'a000U, predicated, 8,
+		iterations, 0x5ec7'1065U);
+	edge_values_match_the_library("fcvtzu.d2w", 0x65d9'a000U, predicated, 8,
+		iterations, 0x5ec7'1066U);
+	/* ASRD's tsz:imm3 picks the element size and the shift: random bits
+	 * reach every size, whatever the data's width. */
+	for (const unsigned bytes : {1U, 2U, 4U, 8U})
+		edge_values_match_the_library(
+			(std::string{"asrd."} + std::to_string(bytes)).c_str(),
+			0x0404'8000U, {{0, 4}, {5, 8}, {8, 4}, {10, 8}, {22, 4}},
+			bytes, iterations, 0x5ec7'1070U + bytes);
+	/* UQINC and UQDEC of Xdn and Wdn; the register holds edge values. */
+	for (const std::uint32_t base : {0x0420'fc00U, 0x0430'fc00U,
+		     0x0420'f400U, 0x0430'f400U})
+		edge_values_match_the_library(
+			(std::string{"uq"} + ((base & 0x800U) != 0U ? "dec" : "inc") +
+			 ((base & 0x10'0000U) != 0U ? ".x" : ".uw")).c_str(),
+			base, {{0, 32}, {5, 32}, {16, 16}, {22, 4}}, 8, iterations,
+			0x5ec7'1080U + (base >> 20 & 1U) + (base >> 10 & 2U));
 }
 
 /* Guest memory for a reference run of the library: the machine's mapped
@@ -2562,6 +3068,10 @@ int main()
 	const uml::testing::RuntimeTestRoute runtime_route;
 	if (std::getenv(scan_variable) != nullptr)
 		return report_entry_findings();
+	if (std::getenv(report_child_variable) != nullptr)
+		report_child();
+	std::printf("random FPCR carries FIZ, AH and NEP: %s\n",
+		afp_implemented() ? "yes" : "no (the host lacks FEAT_AFP)");
 	std::printf("gadget SVE support: %s\n",
 		gadgets::sve_support == arm64::SveSupport::none ? "none" :
 		gadgets::sve_support == arm64::SveSupport::control ? "control" :
@@ -2578,6 +3088,10 @@ int main()
 	fused_while_branch();
 	live_marker_and_fp_access();
 	library_words();
+	library_exit_report();
+	library_exit_report_survives_exit();
+	sve_sme_forms_at_sm_0();
+	remaining_forms_on_edge_values();
 	generated_forms_match_the_library();
 	memory_forms_match_the_library();
 	unimplemented_words();

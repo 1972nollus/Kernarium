@@ -1419,6 +1419,7 @@ GadgetExecutor::~GadgetExecutor()
 {
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_unregister(*sampling_);
+	write_sve_library_report_from_environment();
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	diagnostics::execution_histogram_forget_executor(&cache_diagnostics_);
 #endif

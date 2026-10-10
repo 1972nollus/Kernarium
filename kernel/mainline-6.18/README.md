@@ -149,16 +149,19 @@ and no address, `#OF` after the instruction and the two faults at it; INT n of
 a vector user mode may not use names that vector's IDT entry, `(n << 3) | 2`,
 in the error code. A long-mode access to a non-canonical address raises `#GP`,
 or `#SS`, `SIGBUS` with `SI_KERNEL`, when the stack segment forms the address.
-A page fault's error code carries the user bit. With RFLAGS.AC set a misaligned
+A page fault's error code carries the user bit, and the present bit when the
+task has the page mapped and present and the access broke its protection: 7
+for a store to a read-only page and 0x15 for a fetch from one without execute
+permission, against 6 and 0x14 for a page that is not there, a PROT_NONE one
+included. With RFLAGS.AC set a misaligned
 access raises `#AC`, `SIGBUS` with `BUS_ADRALN` and no address. An unmasked
 SIMD floating-point exception raises `#XM` at its instruction, and an unmasked
 x87 exception `#MF` at the next waiting instruction; both are `SIGFPE` with the
 code of the highest-priority unmasked flag, which the slice derives from MXCSR
 or the x87 status and control words the host reports as the error code, as
 Linux does. The host's limits on these are the gadget engine's
-([README](../../darwin/cpu/x86_64/gadgets/README.md)). A protection fault's
-error code lacks the present bit, and a branch to a non-canonical target faults
-at the target rather than at the branch.
+([README](../../darwin/cpu/x86_64/gadgets/README.md)). A branch to a
+non-canonical target faults at the target rather than at the branch.
 
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of
