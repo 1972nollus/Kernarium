@@ -1266,6 +1266,122 @@ void structure_loads_and_stores_move_the_elements_and_write_back()
 	}
 }
 
+/* The runtime loads a task's vectors lazily (CpuState::defer_fp_load) and a
+ * program loads them, once, only when it is marked as touching them. A
+ * block whose only vector instructions are structure loads or stores, or
+ * ones the semantic library runs, is such a program: unmarked, it writes
+ * the vectors ahead of a load that overwrites them, and the task's saved
+ * state never sees its writes. */
+using Vectors = decltype(arm64::CpuState::vectors);
+
+void put_image_d(Vectors &image, unsigned n, std::uint64_t value)
+{
+	std::memcpy(image[n / 2].bytes.data() + 8U * (n % 2U), &value,
+		    sizeof(value));
+}
+
+/* What the task's context switch does around a stop: the vectors go back to
+ * the saved image if the task wrote them, and the next entry defers them
+ * again. */
+void save_and_defer_again(arm64::CpuState &cpu, Vectors &image)
+{
+	if (cpu.fp_dirty)
+		image = cpu.vectors;
+	cpu.defer_fp_load(image.data(), 0, 0, arm64::fpcr_writable_mask);
+}
+
+void structure_and_library_blocks_load_the_deferred_vectors()
+{
+	constexpr std::uint32_t vld1_64_d16_d17_r0 = 0xf460'0acfU;
+	constexpr std::uint32_t vst1_64_d16_d17_r1 = 0xf441'0acfU;
+	constexpr std::uint32_t vadd_i32_q8_q8_q8 = 0xf260'08e0U;
+	constexpr std::uint32_t vrecps_f32_d5_d6_d7 = 0xf206'5f17U;
+	constexpr std::uint32_t b_next = 0xeaff'ffffU;
+	constexpr std::uint32_t source = 0x40;
+	constexpr std::uint32_t target = 0x80;
+	constexpr std::uint64_t kept = 0x0123'4567'89ab'cdefULL;
+	constexpr std::uint64_t stale = 0xfedc'ba98'7654'3210ULL;
+	constexpr std::uint64_t first = 0x2222'2222'1111'1111ULL;
+	constexpr std::uint64_t second = 0x4444'4444'3333'3333ULL;
+	const auto fill_source = [](Guest &guest) {
+		for (std::uint32_t index = 0; index < 4; ++index)
+			guest.data32(source + 4 * index, 0x1111'1111U * (index + 1));
+	};
+	Vectors image{};
+	put_image_d(image, 4, kept);
+	put_image_d(image, 16, stale);
+	put_image_d(image, 17, stale);
+	put_image_d(image, 6, 0x3f80'0000'3f80'0000ULL);
+	put_image_d(image, 7, 0x3f80'0000'3f80'0000ULL);
+
+	{
+		/* A block of one structure load loads the vectors and marks them
+		 * written. */
+		Guest guest{1010};
+		guest.a32(0, {vld1_64_d16_d17_r0, a::svc});
+		fill_source(guest);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source;
+		cpu.defer_fp_load(image.data(), 0, 0, arm64::fpcr_writable_mask);
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(cpu.fp_loaded && cpu.fp_dirty);
+		require(get_d(cpu, 16) == first && get_d(cpu, 17) == second);
+		require(get_d(cpu, 4) == kept, "the other vectors did not load");
+	}
+	{
+		/* A structure load in a block of its own, then a block that loads
+		 * the vectors for another reason: the load's result survives. */
+		Guest guest{1011};
+		guest.a32(0, {vld1_64_d16_d17_r0, b_next, vadd_i32_q8_q8_q8,
+			      vst1_64_d16_d17_r1, a::svc});
+		fill_source(guest);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source;
+		cpu.registers[1] = data_base + target;
+		cpu.defer_fp_load(image.data(), 0, 0, arm64::fpcr_writable_mask);
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(get_d(cpu, 16) == 2U * first && get_d(cpu, 17) == 2U * second);
+		for (std::uint32_t index = 0; index < 4; ++index)
+			require(guest.data32(target + 4 * index) ==
+				0x2222'2222U * (index + 1));
+	}
+	{
+		/* A store that faults after the load, a stop that saves and defers
+		 * the vectors again, and the resumed store: the load survived the
+		 * stop. */
+		Guest guest{1012};
+		guest.a32(0, {vld1_64_d16_d17_r0, vst1_64_d16_d17_r1, a::svc});
+		fill_source(guest);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source;
+		cpu.registers[1] = unmapped;
+		auto saved = image;
+		cpu.defer_fp_load(saved.data(), 0, 0, arm64::fpcr_writable_mask);
+		const auto stopped = guest.run(cpu);
+		require(stopped.reason == ExitReason::memory_fault);
+		require(stopped.fault.address == unmapped);
+		require(cpu.fp_loaded && cpu.fp_dirty);
+		save_and_defer_again(cpu, saved);
+		cpu.registers[1] = data_base + target;
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		for (std::uint32_t index = 0; index < 4; ++index)
+			require(guest.data32(target + 4 * index) ==
+				0x1111'1111U * (index + 1));
+		require(get_d(cpu, 4) == kept);
+	}
+	{
+		/* A library instruction alone reads the loaded vectors, not zeros,
+		 * and its result is marked written. */
+		Guest guest{1013};
+		guest.a32(0, {vrecps_f32_d5_d6_d7, a::svc});
+		auto cpu = a32_state();
+		cpu.defer_fp_load(image.data(), 0, 0, arm64::fpcr_writable_mask);
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(cpu.fp_loaded && cpu.fp_dirty);
+		require(get_d(cpu, 5) == 0x3f80'0000'3f80'0000ULL, "2 - 1 * 1");
+	}
+}
+
 /* A VFP word is illegal at the base level: the level is what makes it so. */
 void a_vfp_word_is_illegal_at_the_base_level()
 {
@@ -1469,6 +1585,7 @@ int main()
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
 	the_fp_environment_follows_the_instruction_kind();
 	structure_loads_and_stores_move_the_elements_and_write_back();
+	structure_and_library_blocks_load_the_deferred_vectors();
 	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;

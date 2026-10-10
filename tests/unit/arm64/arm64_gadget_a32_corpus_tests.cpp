@@ -328,8 +328,12 @@ struct Outcome final {
 	return outcome;
 }
 
-void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
-		bool thumb, std::uint32_t entry)
+/* The task's saved vectors: CpuState holds only a pointer to them until a
+ * program that touches them loads them, as the runtime enters a task. */
+using SavedVectors = decltype(::uml::cpu::arm64::CpuState::vectors);
+
+void load_state(::uml::cpu::arm64::CpuState &cpu, SavedVectors &saved,
+		const corpus::State &state, bool thumb, std::uint32_t entry)
 {
 	for (unsigned index = 0; index < corpus::kRegisters; ++index)
 		cpu.registers[index] = state.r[index];
@@ -343,10 +347,11 @@ void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
 	cpu.tls = state.tpidrurw;
 	cpu.a32_tpidruro = state.tpidruro;
 	for (unsigned index = 0; index < corpus::kVectors; ++index)
-		std::memcpy(cpu.vectors[index / 2].bytes.data() + 8 * (index % 2),
+		std::memcpy(saved[index / 2].bytes.data() + 8 * (index % 2),
 			    &state.d[index], 8);
-	cpu.fpcr = state.fpscr & decode::fpscr_control_mask;
-	cpu.fpsr = state.fpscr & ::uml::cpu::arm64::fpsr_writable_mask;
+	cpu.defer_fp_load(saved.data(), state.fpscr & decode::fpscr_control_mask,
+			  state.fpscr & ::uml::cpu::arm64::fpsr_writable_mask,
+			  ::uml::cpu::arm64::fpcr_writable_mask);
 	cpu.a32_fpscr_nzcv = state.fpscr & decode::fpscr_nzcv;
 	cpu.a32_cp15ben = 1;
 	cpu.a32 = 1;
@@ -452,8 +457,13 @@ void check_case(Machine &machine, const corpus::Record &record,
 	machine.install(test, origin);
 	machine.set_data(initial_data);
 	::uml::cpu::arm64::CpuState cpu{};
-	load_state(cpu, test.initial, thumb, corpus::kCodeBase + origin);
+	SavedVectors saved{};
+	load_state(cpu, saved, test.initial, thumb, corpus::kCodeBase + origin);
 	const auto result = machine.run(cpu);
+	/* What the task's context switch saves: the vectors a program wrote,
+	 * which only a program marked as touching them can have. */
+	if (cpu.fp_dirty)
+		saved = cpu.vectors;
 	const auto outcome = classify(machine, cpu, result,
 				      corpus::kCodeBase + origin,
 				      test.halves.size());
@@ -521,15 +531,15 @@ void check_case(Machine &machine, const corpus::Record &record,
 			note("apsr %#x vs %#x", test.final.apsr & 0xf80f'0000U, apsr);
 		for (unsigned index = 0; index < corpus::kVectors; ++index) {
 			std::uint64_t value;
-			std::memcpy(&value, cpu.vectors[index / 2].bytes.data() +
+			std::memcpy(&value, saved[index / 2].bytes.data() +
 					    8 * (index % 2), 8);
 			if (value != test.final.d[index])
 				note("d%u %#llx vs %#llx", index,
 				     static_cast<unsigned long long>(test.final.d[index]),
 				     static_cast<unsigned long long>(value));
 		}
-		const std::uint32_t fpscr = (cpu.fpcr & decode::fpscr_control_mask) |
-			(cpu.fpsr & ::uml::cpu::arm64::fpsr_writable_mask) |
+		const std::uint32_t fpscr = (cpu.effective_fpcr() & decode::fpscr_control_mask) |
+			(cpu.effective_fpsr() & ::uml::cpu::arm64::fpsr_writable_mask) |
 			(cpu.a32_fpscr_nzcv & decode::fpscr_nzcv);
 		const std::uint32_t fpscr_mask = decode::fpscr_control_mask |
 			::uml::cpu::arm64::fpsr_writable_mask | decode::fpscr_nzcv;

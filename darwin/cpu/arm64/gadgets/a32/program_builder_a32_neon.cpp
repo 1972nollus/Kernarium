@@ -152,6 +152,10 @@ Translator::Result Translator::emit_structure(const Instruction &in,
 					      const FormPlan &plan)
 {
 	const auto &o = in.operands;
+	/* The gadgets move elements to and from the D registers in the guest
+	 * state, and the library fallback does the same: either way the
+	 * program needs the deferred floating-point state loaded. */
+	uses_fp_ = true;
 	const unsigned store = plan.sub & 1U;
 	const unsigned shape = plan.sub >> 1 & 3U;
 	const unsigned structs = (plan.sub >> 3 & 3U) + 1U;
