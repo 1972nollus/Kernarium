@@ -21,6 +21,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <utility>
@@ -70,59 +72,47 @@ std::array<std::atomic<std::uint32_t>, detail::sme_encodings.size()>
     library_exit_words{};
 std::atomic<bool> counting{false};
 
-/*
- * DARWIN_UML_SVE_LIBRARY_EXITS names a file that receives, as the process
- * ends, one line per table row that took the library (the row's SVE-nnnn
- * form, its index, the run count and the last word), the most frequent
- * first, after a header with the process and the total. The lines are
- * appended, so every process of a run reports into the same file. Setting
- * it counts the whole run; the evidence picks the words worth lowering.
- */
-class LibraryExitReport final {
-public:
-  LibraryExitReport() noexcept {
-    const char *name = std::getenv("DARWIN_UML_SVE_LIBRARY_EXITS");
-    if (name != nullptr && *name != '\0') {
-      path_ = name;
-      counting.store(true, std::memory_order_relaxed);
-    }
-  }
-  ~LibraryExitReport() {
-    if (path_ == nullptr)
-      return;
-    std::vector<std::pair<std::uint64_t, std::size_t>> rows;
-    std::uint64_t total = 0;
-    for (std::size_t row = 0; row < library_exits.size(); ++row) {
-      const auto count = library_exits[row].load(std::memory_order_relaxed);
-      if (count != 0U)
-        rows.emplace_back(count, row);
-      total += count;
-    }
-    std::sort(rows.begin(), rows.end(), [](const auto &left, const auto &right) {
-      return left.first != right.first ? left.first > right.first
-                                       : left.second < right.second;
-    });
-    std::FILE *out = std::fopen(path_, "ae");
-    if (out == nullptr)
-      return;
-    std::fprintf(out, "# pid %ld total %llu rows %zu\n",
-                 static_cast<long>(::getpid()),
-                 static_cast<unsigned long long>(total), rows.size());
-    for (const auto &[count, row] : rows)
-      std::fprintf(out, "SVE-%04u\t%zu\t%llu\t%08x\n",
-                   detail::sme_encodings[row].form & 0x7fffU, row,
-                   static_cast<unsigned long long>(count),
-                   library_exit_words[row].load(std::memory_order_relaxed));
-    std::fclose(out);
-  }
-  LibraryExitReport(const LibraryExitReport &) = delete;
-  LibraryExitReport &operator=(const LibraryExitReport &) = delete;
+/* The translations of each row, and those that ended in the library. */
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()> translated{};
+std::array<std::atomic<std::uint64_t>, detail::sme_encodings.size()>
+    translated_to_library{};
 
-private:
-  const char *path_{};
+/*
+ * DARWIN_UML_SVE_LIBRARY_EXITS names the file that receives the report
+ * (jit_semantic_sve.hpp): the process counts from its start and writes it as
+ * it ends and again as each executor retires, since the emulator leaves
+ * through _Exit, which runs no exit handler. The report is cumulative, so
+ * the last write is the complete one. A path of another process is not
+ * appended to: give each process its own.
+ */
+char report_path[1024];
+std::mutex report_mutex;
+
+void write_report_from_environment() noexcept {
+  if (report_path[0] == '\0')
+    return;
+  try {
+    const std::lock_guard guard{report_mutex};
+    (void)jit::semantic::write_sve_library_report(report_path);
+  } catch (...) {
+  }
+}
+
+void write_report_at_exit() noexcept { write_report_from_environment(); }
+
+struct ReportFromEnvironment final {
+  ReportFromEnvironment() noexcept {
+    const char *path = std::getenv("DARWIN_UML_SVE_LIBRARY_EXITS");
+    if (path == nullptr || *path == '\0' ||
+        std::strlen(path) >= sizeof report_path)
+      return;
+    std::strcpy(report_path, path);
+    counting.store(true, std::memory_order_relaxed);
+    std::atexit(write_report_at_exit);
+  }
 };
 
-const LibraryExitReport library_exit_report;
+const ReportFromEnvironment report_from_environment;
 
 } // namespace
 
@@ -154,6 +144,79 @@ void reset_sve_library_exits() noexcept {
     count.store(0, std::memory_order_relaxed);
   for (auto &word : library_exit_words)
     word.store(0, std::memory_order_relaxed);
+  for (auto &count : translated)
+    count.store(0, std::memory_order_relaxed);
+  for (auto &count : translated_to_library)
+    count.store(0, std::memory_order_relaxed);
+}
+
+void note_sve_translation(std::size_t row, bool library) noexcept {
+  if (row >= translated.size() || !counting.load(std::memory_order_relaxed))
+    return;
+  translated[row].fetch_add(1, std::memory_order_relaxed);
+  if (library)
+    translated_to_library[row].fetch_add(1, std::memory_order_relaxed);
+}
+
+std::uint64_t sve_translated(std::size_t row) noexcept {
+  return row < translated.size()
+             ? translated[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+std::uint64_t sve_translated_to_library(std::size_t row) noexcept {
+  return row < translated_to_library.size()
+             ? translated_to_library[row].load(std::memory_order_relaxed)
+             : 0U;
+}
+
+bool write_sve_library_report(const char *path) noexcept {
+  struct Line final {
+    std::size_t row;
+    std::uint64_t translated;
+    std::uint64_t to_library;
+    std::uint64_t exits;
+  };
+  std::FILE *file = std::fopen(path, "w");
+  if (file == nullptr)
+    return false;
+  std::vector<Line> lines;
+  try {
+    for (std::size_t row = 0; row < library_exits.size(); ++row) {
+      const Line line{row, sve_translated(row), sve_translated_to_library(row),
+                      sve_library_exits(row)};
+      if (line.translated != 0U || line.exits != 0U)
+        lines.push_back(line);
+    }
+    std::ranges::sort(lines, [](const Line &a, const Line &b) {
+      return a.exits != b.exits             ? a.exits > b.exits
+             : a.translated != b.translated ? a.translated > b.translated
+                                            : a.row < b.row;
+    });
+  } catch (...) {
+    std::fclose(file);
+    return false;
+  }
+  std::fprintf(file,
+               "# SVE library exits: total %llu\n"
+               "# form\trow\tmask\tvalue\ttranslated\t"
+               "translated_to_library\texits\n",
+               static_cast<unsigned long long>(sve_library_exit_total()));
+  for (const auto &line : lines) {
+    const auto &row = detail::sme_encodings[line.row];
+    std::fprintf(file, "SVE-%04u\t%zu\t%08x\t%08x\t%llu\t%llu\t%llu\n",
+                 static_cast<unsigned>(row.form & 0x7fffU), line.row,
+                 static_cast<unsigned>(row.mask),
+                 static_cast<unsigned>(row.value),
+                 static_cast<unsigned long long>(line.translated),
+                 static_cast<unsigned long long>(line.to_library),
+                 static_cast<unsigned long long>(line.exits));
+  }
+  return std::fclose(file) == 0;
+}
+
+void write_sve_library_report_from_environment() noexcept {
+  write_report_from_environment();
 }
 
 sve_detail::SveResult execute_sve_word(CpuState &cpu, Tlb &tlb,

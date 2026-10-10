@@ -72,6 +72,12 @@ inline constexpr std::uint16_t fdivr_p = form_of(0x654c'8020U);
 inline constexpr std::uint16_t fsqrt_p = form_of(0x654d'a020U);
 inline constexpr std::uint16_t frint_p = form_of(0x6540'a020U);
 inline constexpr std::uint16_t fcadd_p = form_of(0x6440'8020U);
+/* FCVT between single and double, FSCALE and the trigonometric helpers
+ * FTSMUL and FTSSEL. */
+inline constexpr std::uint16_t fcvt_p = form_of(0x65cb'a020U);
+inline constexpr std::uint16_t fscale_p = form_of(0x6549'8020U);
+inline constexpr std::uint16_t ftsmul = form_of(0x6542'0c20U);
+inline constexpr std::uint16_t ftssel = form_of(0x0462'b020U);
 
 /* Integer. */
 inline constexpr std::uint16_t add_u = form_of(0x0422'0020U);
@@ -179,6 +185,11 @@ inline constexpr std::uint16_t sdot = form_of(0x4482'0020U);
 inline constexpr std::uint16_t udot = form_of(0x4482'0420U);
 inline constexpr std::uint16_t sdot_i = form_of(0x44a2'0020U);
 inline constexpr std::uint16_t udot_i = form_of(0x44a2'0420U);
+/* The mixed-sign dot products FEAT_I8MM adds, and UQSHL by a vector. */
+inline constexpr std::uint16_t usdot = form_of(0x4482'7820U);
+inline constexpr std::uint16_t usdot_i = form_of(0x44a2'1820U);
+inline constexpr std::uint16_t sudot_i = form_of(0x44a2'1c20U);
+inline constexpr std::uint16_t uqshl_v = form_of(0x4449'8020U);
 
 /* Floating-point compares into a predicate: two vectors (FCMGE, FCMGT,
  * FCMEQ, FCMNE, FCMUO), the absolute compares, and a vector against 0.0. */

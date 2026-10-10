@@ -31,6 +31,7 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_publication.hpp"
 #include "cpu/arm64/jit/jit_semantic_sve.hpp"
+#include "cpu/arm64/jit/jit_sve_inline.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
@@ -40,16 +41,27 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include <crt_externs.h>
+#include <mach-o/dyld.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace {
 
@@ -83,8 +95,9 @@ constexpr std::size_t variants = 3;
 constexpr std::uint32_t ptrue_b = 0x2518'e3e0U;
 
 /* The probed host without SME and with every SVE token injected, plus the
- * BF16 and I8MM tokens their SVE forms need; the library implements
- * those forms whatever the host does. */
+ * BF16 token its SVE forms need; the library implements those forms whatever
+ * the host does. FEAT_I8MM stays as probed: the JIT runs USDOT and SUDOT on
+ * the host's own instructions, which a host without them cannot. */
 [[nodiscard]] HostCapabilities sve_host() {
   auto host = uml::cpu::host_capabilities();
   for (const auto feature : {ArmFeature::sme, ArmFeature::sme2,
@@ -94,8 +107,23 @@ constexpr std::uint32_t ptrue_b = 0x2518'e3e0U;
   host.sme_hardware = false;
   for (const auto feature : arm64::sve_features)
     host.supported.set(static_cast<std::size_t>(feature));
-  for (const auto feature : {ArmFeature::bf16, ArmFeature::i8mm})
+  host.supported.set(static_cast<std::size_t>(ArmFeature::bf16));
+  return host;
+}
+
+/* The same profile with the SME profile beside it at the M4's streaming
+ * vector length, and FEAT_SME2 as well when `sme2`: the 29 forms that
+ * FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (PSEL, REVD, SCLAMP, UCLAMP
+ * and 25 that need SME2) execute at SM = 0 there, and are UNDEFINED on
+ * sve_host(). */
+[[nodiscard]] HostCapabilities sve_sme_host(bool sme2) {
+  auto host = sve_host();
+  for (const auto feature : {ArmFeature::sme, ArmFeature::sme_f64f64,
+                             ArmFeature::sme_i16i64})
     host.supported.set(static_cast<std::size_t>(feature));
+  host.supported.set(static_cast<std::size_t>(ArmFeature::sme2), sme2);
+  host.sme_svl_bytes = 64;
+  host.sme_hardware = false;
   return host;
 }
 
@@ -605,18 +633,34 @@ bool place_clean_base(const arm64::detail::SmeEncoding &row, std::uint32_t word,
   return true;
 }
 
-/* Every row the virtual CPU implements agrees with the library. */
-void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
-  Random random{0x6a17'5e01U};
+/* The rows the virtual CPU executes at SM = 0 only because it has FEAT_SME
+ * beside FEAT_SVE: the SCLAMP class. */
+[[nodiscard]] bool sme_admitted_row(const arm64::detail::SmeEncoding &row) {
+  return (row.non_streaming_requirement & arm64::detail::sme_feature_sve) !=
+             0U &&
+         (row.non_streaming_requirement & arm64::detail::sme_feature_sme) !=
+             0U;
+}
+
+/* Every row the virtual CPU implements agrees with the library; with
+ * `sme_rows`, only the rows that FEAT_SME admits at SM = 0, and a profile
+ * with SME also runs every other row (the first pass runs those without
+ * it). Returns how many rows it ran. */
+std::size_t forms_match_the_library(const HostCapabilities &host, Tally &tally,
+                                    bool sme_rows = false) {
+  Random random{sme_rows ? 0x6a17'5e02U : 0x6a17'5e01U};
   const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t ran = 0;
   for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
        ++index) {
     const auto &row = arm64::detail::sme_encodings[index];
     if ((row.non_streaming_requirement & arm64::detail::sme_feature_sve) == 0U ||
         (row.non_streaming_requirement & features) !=
             row.non_streaming_requirement ||
-        (row.mode & arm64::detail::sme_mode_za) != 0U)
+        (row.mode & arm64::detail::sme_mode_za) != 0U ||
+        (sme_rows && !sme_admitted_row(row)))
       continue;
+    ++ran;
     const bool memory = row.memory != 0U;
     ++tally.rows;
     bool lowered = false;
@@ -670,6 +714,298 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
     if (lowered)
       ++tally.inline_rows;
   }
+  return ran;
+}
+
+/* FSCALE's operands: every element of Zdn normal and every scale one that
+ * leaves the result normal, or, with `slow_class` 0 to 9, one element of a
+ * kind the fast path leaves to the library: a zero, an infinity, a quiet
+ * and a signalling NaN, a denormal, a scale that overflows or underflows,
+ * the largest and smallest scales, and one that wraps the element's width. */
+void place_scale_lanes(arm64::CpuState &state, std::uint32_t word,
+                       Random &random, int slow_class) {
+  const unsigned size = (word >> 22) & 3U;
+  const unsigned element = 1U << size;
+  const unsigned bits = 8U * element;
+  const unsigned fraction = size == 1U ? 10U : size == 2U ? 23U : 52U;
+  const std::uint64_t ones = size == 1U ? 31U : size == 2U ? 255U : 2047U;
+  const std::uint64_t mask =
+      element == 8U ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1U;
+  auto &values = state.vectors[word & 31U].bytes;
+  auto &scales = state.vectors[(word >> 5) & 31U].bytes;
+  const unsigned lanes = 16U / element;
+  const unsigned slow_lane =
+      slow_class >= 0 ? static_cast<unsigned>(random.next() % lanes) : lanes;
+  for (unsigned lane = 0; lane < lanes; ++lane) {
+    /* The ends of the range get their share. */
+    const auto pick = [&] {
+      switch (random.next() % 6U) {
+      case 0:
+        return std::uint64_t{1};
+      case 1:
+        return ones - 1U;
+      default:
+        return 1U + random.next() % (ones - 1U);
+      }
+    };
+    const std::uint64_t exponent = pick();
+    const std::uint64_t target = pick();
+    std::uint64_t value = ((random.next() & 1U) << (bits - 1U)) |
+                          (exponent << fraction) |
+                          (random.next() & ((std::uint64_t{1} << fraction) - 1U));
+    std::int64_t scale =
+        static_cast<std::int64_t>(target) - static_cast<std::int64_t>(exponent);
+    if (lane == slow_lane) {
+      const std::uint64_t sign = value & (std::uint64_t{1} << (bits - 1U));
+      const std::uint64_t payload = (random.next() | 1U) &
+                                    ((std::uint64_t{1} << fraction) - 1U);
+      switch (slow_class) {
+      case 0:
+        value = sign;
+        break;
+      case 1:
+        value = sign | (ones << fraction);
+        break;
+      case 2:
+        value = sign | (ones << fraction) | (std::uint64_t{1} << (fraction - 1U)) |
+                (payload >> 1);
+        break;
+      case 3:
+        value = sign | (ones << fraction) | 1U;
+        break;
+      case 4:
+        value = sign | payload;
+        break;
+      case 5:
+        scale = static_cast<std::int64_t>(ones - exponent) +
+                static_cast<std::int64_t>(random.next() % 3U);
+        break;
+      case 6:
+        scale = -static_cast<std::int64_t>(exponent) -
+                static_cast<std::int64_t>(random.next() % 3U);
+        break;
+      case 7:
+        scale = static_cast<std::int64_t>(mask >> 1);
+        break;
+      case 8:
+        scale = -static_cast<std::int64_t>(mask >> 1) - 1;
+        break;
+      default:
+        scale = static_cast<std::int64_t>(mask >> 1) -
+                static_cast<std::int64_t>(random.next() % 8U);
+        break;
+      }
+    }
+    const std::uint64_t scale_bits = static_cast<std::uint64_t>(scale) & mask;
+    std::memcpy(values.data() + lane * element, &value, element);
+    std::memcpy(scales.data() + lane * element, &scale_bits, element);
+  }
+}
+
+/* The boundary values the width-changing conversions and UQSHL turn on, in
+ * a lane of `bits` bits. */
+[[nodiscard]] std::uint64_t boundary_double(Random &random) {
+  static const double values[]{
+      0.0,
+      1.0,
+      0.5,
+      0.9999999999999999,
+      2147483647.0,
+      2147483647.5,
+      2147483648.0,
+      2147483648.5,
+      4294967295.0,
+      4294967295.5,
+      4294967296.0,
+      9223372036854775807.0,
+      1e300,
+      1e-300,
+      4.9e-324,
+      2.2250738585072009e-308,
+      2.225073858507201e-308,
+      3.4028234663852886e38,
+      3.4028235677973362e38,
+      3.4028235677973366e38,
+      1.1754943508222875e-38,
+      1.1754942106924411e-38,
+      1.401298464324817e-45,
+      7.006492321624085e-46,
+      7.006492321624086e-46,
+      std::numeric_limits<double>::infinity(),
+      std::numeric_limits<double>::quiet_NaN(),
+  };
+  auto value = values[random.next() % std::size(values)];
+  switch (random.next() % 4U) {
+  case 0:
+    value = std::nextafter(value, 0.0);
+    break;
+  case 1:
+    value = std::nextafter(value, std::numeric_limits<double>::infinity());
+    break;
+  default:
+    break;
+  }
+  auto bits = std::bit_cast<std::uint64_t>(value);
+  switch (random.next() % 9U) {
+  case 0:
+    bits |= 0x8000'0000'0000'0000ULL;
+    break;
+  case 1: /* A signalling NaN or a NaN with a payload. */
+    if (std::isnan(value))
+      bits = 0x7ff0'0000'0000'0000ULL | (random.next() & 0x000f'ffff'ffff'ffffULL) |
+             1U;
+    break;
+  case 2:
+    if (std::isnan(value))
+      bits |= 0x8000'0000'0000'0000ULL;
+    break;
+  default:
+    break;
+  }
+  return bits;
+}
+
+[[nodiscard]] std::uint64_t boundary_single(Random &random) {
+  static const std::uint32_t values[]{
+      0x0000'0000U, 0x8000'0000U, 0x3f80'0000U, 0x7f80'0000U, 0xff80'0000U,
+      0x7fc0'0000U, 0x7f80'0001U, 0x7fff'ffffU, 0xffc0'0001U, 0x0000'0001U,
+      0x007f'ffffU, 0x8000'0001U, 0x0080'0000U, 0x7f7f'ffffU, 0xff7f'ffffU,
+      0x4f00'0000U, 0x4f7f'ffffU, 0xcf00'0000U, 0x4b00'0000U};
+  return values[random.next() % std::size(values)];
+}
+
+[[nodiscard]] std::uint64_t boundary_integer(Random &random, unsigned bits) {
+  const std::uint64_t mask =
+      bits == 64U ? ~std::uint64_t{0} : (std::uint64_t{1} << bits) - 1U;
+  const std::uint64_t sign = std::uint64_t{1} << (bits - 1U);
+  switch (random.next() % 8U) {
+  case 0:
+    return 0;
+  case 1:
+    return mask;
+  case 2:
+    return sign;
+  case 3:
+    return sign - 1U;
+  case 4:
+    return sign + 1U;
+  case 5:
+    return random.next() % 5U;
+  case 6:
+    return (mask - random.next() % 5U) & mask;
+  default:
+    return random.next() & mask;
+  }
+}
+
+void put_lane(std::array<std::byte, 16> &bytes, unsigned lane,
+              unsigned element, std::uint64_t value) {
+  std::memcpy(bytes.data() + lane * element, &value, element);
+}
+
+/* Zdn and Zm (or Zn) of the width-changing conversions and UQSHL at the
+ * values their lowerings decide on. */
+void place_boundary_lanes(arm64::CpuState &state, const arm64::detail::SmeEncoding &row,
+                          std::uint32_t word, Random &random) {
+  using arm64::jit::sve_inline_forms::fcvt_p;
+  using arm64::jit::sve_inline_forms::fcvtzs_p;
+  using arm64::jit::sve_inline_forms::fcvtzu_p;
+  using arm64::jit::sve_inline_forms::scvtf_p;
+  using arm64::jit::sve_inline_forms::ucvtf_p;
+  using arm64::jit::sve_inline_forms::uqshl_v;
+  const unsigned size = (word >> 22) & 3U;
+  const auto n = (word >> 5) & 31U;
+  const auto d = word & 31U;
+  auto &source = state.vectors[row.form == uqshl_v ? d : n].bytes;
+  if (row.form == fcvtzs_p || row.form == fcvtzu_p) {
+    for (unsigned lane = 0; lane < 2U; ++lane)
+      put_lane(source, lane, 8U, boundary_double(random));
+  } else if (row.form == scvtf_p || row.form == ucvtf_p) {
+    for (unsigned lane = 0; lane < 2U; ++lane)
+      put_lane(source, lane, 8U,
+               boundary_integer(random, 32U) | (random.next() << 32));
+  } else if (row.form == fcvt_p) {
+    for (unsigned lane = 0; lane < 2U; ++lane)
+      put_lane(source, lane, 8U,
+               ((word >> 16) & 0xffU) == 0xcbU
+                   ? boundary_single(random) | (random.next() << 32)
+                   : boundary_double(random));
+  } else if (row.form == uqshl_v) {
+    const unsigned element = 1U << size;
+    const unsigned bits = 8U * element;
+    auto &amounts = state.vectors[n].bytes;
+    for (unsigned lane = 0; lane < 16U / element; ++lane) {
+      put_lane(source, lane, element, boundary_integer(random, bits));
+      std::int64_t amount;
+      switch (random.next() % 6U) {
+      case 0:
+        amount = static_cast<std::int64_t>(random.next() % (bits + 3U));
+        break;
+      case 1:
+        amount = -static_cast<std::int64_t>(random.next() % (bits + 3U));
+        break;
+      case 2:
+        amount = static_cast<std::int64_t>(125U + random.next() % 6U);
+        break;
+      case 3:
+        amount = -static_cast<std::int64_t>(125U + random.next() % 6U);
+        break;
+      case 4:
+        amount = static_cast<std::int64_t>(random.next() % 3U) - 1;
+        break;
+      default:
+        amount = static_cast<std::int64_t>(boundary_integer(random, bits));
+        break;
+      }
+      put_lane(amounts, lane, element, static_cast<std::uint64_t>(amount));
+    }
+  }
+}
+
+/* The conversions and UQSHL from the values they turn on, all predicates
+ * all-active, against the library. */
+void conversion_boundaries(const HostCapabilities &host, Tally &tally) {
+  using arm64::jit::sve_inline_forms::fcvt_p;
+  using arm64::jit::sve_inline_forms::fcvtzs_p;
+  using arm64::jit::sve_inline_forms::fcvtzu_p;
+  using arm64::jit::sve_inline_forms::scvtf_p;
+  using arm64::jit::sve_inline_forms::ucvtf_p;
+  using arm64::jit::sve_inline_forms::uqshl_v;
+  Random random{0x6a17'5e0eU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t runs = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if (row.form != fcvt_p && row.form != fcvtzs_p && row.form != fcvtzu_p &&
+        row.form != scvtf_p && row.form != ucvtf_p && row.form != uqshl_v)
+      continue;
+    if ((row.non_streaming_requirement & features) !=
+        row.non_streaming_requirement)
+      continue;
+    Machine machine{host};
+    for (std::size_t sample = 0; sample < 10U; ++sample) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          arm64::jit::sve_word_reserved(row, word))
+        continue;
+      for (unsigned round = 0; round < 48U; ++round) {
+        std::vector<std::byte> data(mapped);
+        auto initial = random_state(random, round % 8U == 7U);
+        for (auto &predicate : initial.sve_p)
+          predicate = arm64::sve_predicate_mask(0xffffU);
+        place_boundary_lanes(initial, row, word, random);
+        compare(machine, sample, word, index, Variant::alone, initial,
+                data, round % 8U == 7U, tally);
+        ++runs;
+      }
+    }
+  }
+  require(runs > 1000U);
+  std::printf("%zu conversion and UQSHL runs at their boundaries match the "
+              "library\n",
+              runs);
 }
 
 /* A word the translation lowers stays inline from a state in which nothing
@@ -716,6 +1052,13 @@ void lowered_words_stay_inline(const HostCapabilities &host, Tally &tally) {
       initial.sve_ffr = arm64::sve_predicate_mask(0xffffU);
       initial.tbi_enabled = false;
       initial.vectors[31].bytes = {};
+      if (row.form == arm64::jit::sve_inline_forms::fscale_p) {
+        /* FSCALE's fast path asks for normal elements and scales that keep
+         * them so; scale_lane_classes covers the rest. */
+        if (((word >> 22) & 3U) == 0U || (word & 31U) == ((word >> 5) & 31U))
+          continue;
+        place_scale_lanes(initial, word, random, -1);
+      }
       if (row.memory != 0U) {
         if (!place_clean_base(row, word, random, initial))
           continue;
@@ -1173,17 +1516,220 @@ void predicate_shapes_for_breaks_and_compaction(const HostCapabilities &host,
               checked);
 }
 
+
+/* FSCALE adds Zm to the exponent fields when every element is normal and
+ * stays so, and the library runs the word otherwise: from a state of normal
+ * elements the row's library-exit counter stays put, from one with an
+ * element of any other kind it moves once. */
+void scale_lane_classes(const HostCapabilities &host, Tally &tally) {
+  Random random{0x6a17'5e0dU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  arm64::jit::semantic::count_sve_library_exits(true);
+  std::size_t fast = 0;
+  std::size_t slow = 0;
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if (row.form != arm64::jit::sve_inline_forms::fscale_p ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement)
+      continue;
+    for (std::size_t sample = 0; sample < 24U; ++sample) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          ((word >> 22) & 3U) == 0U || (word & 31U) == ((word >> 5) & 31U))
+        continue;
+      Machine machine{host};
+      for (unsigned round = 0; round < 40U; ++round) {
+        const int slow_class = round % 4U == 0U ? -1
+                                                : static_cast<int>(round % 10U);
+        std::vector<std::byte> data(mapped);
+        auto initial = random_state(random, false);
+        for (auto &predicate : initial.sve_p)
+          predicate = arm64::sve_predicate_mask(0xffffU);
+        place_scale_lanes(initial, word, random, slow_class);
+        /* The first run translates; the second is the one counted. */
+        compare(machine, 0, word, index, Variant::alone, initial, data, false,
+                tally);
+        const auto before = arm64::jit::semantic::sve_library_exits(index);
+        compare(machine, 0, word, index, Variant::alone, initial, data, false,
+                tally);
+        const auto taken = arm64::jit::semantic::sve_library_exits(index) - before;
+        if (taken != (slow_class < 0 ? 0U : 1U)) {
+          std::fprintf(stderr,
+                       "word %08x (class %d) took the library %llu times\n",
+                       word, slow_class, static_cast<unsigned long long>(taken));
+          require(false);
+        }
+        (slow_class < 0 ? fast : slow) += 1U;
+      }
+    }
+  }
+  arm64::jit::semantic::reset_sve_library_exits();
+  arm64::jit::semantic::count_sve_library_exits(false);
+  require(fast > 100U && slow > 300U);
+  std::printf("%zu FSCALE states of normal elements stay inline and %zu with "
+              "another kind take the library once, as it computes\n",
+              fast, slow);
+}
+
+constexpr const char *report_child_variable = "UML_JIT_SVE_REPORT_WORD";
+
+/* The emulator leaves through _Exit, which runs no exit handler, so a
+ * process that asked for the report with DARWIN_UML_SVE_LIBRARY_EXITS must
+ * write it as its executors retire. The child counts from its start (the
+ * variable is read before main), runs one word the translation sends to the
+ * library on an executor and leaves through _Exit once the executor is
+ * gone; the parent reads what it left. */
+[[noreturn]] void report_child(std::uint32_t word) {
+  {
+    Random random{0x6a17'5e0fU};
+    Machine machine{sve_host()};
+    std::vector<std::byte> data(mapped);
+    const std::array code{word, svc};
+    std::memcpy(data.data(), code.data(), sizeof code);
+    machine.put(0, data);
+    machine.cpu = random_state(random, false);
+    for (auto &predicate : machine.cpu.sve_p)
+      predicate = arm64::sve_predicate_mask(0xffffU);
+    std::size_t retired = 0;
+    require(machine.run(code_base, retired) == Event::system_call);
+  }
+  std::_Exit(0);
+}
+
+/* A register-only word of the profile that a translation ends the block at,
+ * for the library, and the row it belongs to. */
+[[nodiscard]] std::pair<std::uint32_t, std::size_t>
+library_word(const HostCapabilities &host) {
+  Random random{0x6a17'5e10U};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+       ++index) {
+    const auto &row = arm64::detail::sme_encodings[index];
+    if ((row.non_streaming_requirement & arm64::detail::sme_feature_sve) == 0U ||
+        (row.non_streaming_requirement & features) !=
+            row.non_streaming_requirement ||
+        (row.mode & arm64::detail::sme_mode_za) != 0U || row.memory != 0U)
+      continue;
+    for (unsigned attempt = 0; attempt < 8U; ++attempt) {
+      const auto word = row.value | (static_cast<std::uint32_t>(random.next()) &
+                                     ~row.mask);
+      if (arm64::detail::decode_sve_non_streaming(word, features) != &row ||
+          arm64::jit::sve_word_reserved(row, word))
+        continue;
+      const std::array probe{word, nop, nop};
+      if (jit_test::compile_block_in_mode(code_base, probe, 0,
+                                          jit_test::LinkShape::unlinked)
+              .code.guest_instructions == 1U)
+        return {word, index};
+    }
+  }
+  require(false);
+  return {};
+}
+
+void library_exit_report_survives_exit(const HostCapabilities &host) {
+  const auto [word, index] = library_word(host);
+  const char *temporary = std::getenv("TMPDIR");
+  std::string report = temporary != nullptr && temporary[0] != '\0'
+                           ? temporary
+                           : "/tmp";
+  report += "/sve-jit-library-report.XXXXXX";
+  const int descriptor = mkstemp(report.data());
+  require(descriptor >= 0);
+  close(descriptor);
+  std::array<char, 4096> path{};
+  auto size = static_cast<std::uint32_t>(path.size());
+  require(_NSGetExecutablePath(path.data(), &size) == 0);
+  std::vector<std::string> variables;
+  for (char **entry = *_NSGetEnviron(); *entry != nullptr; ++entry)
+    if (std::strncmp(*entry, "DARWIN_UML_SVE_LIBRARY_EXITS=", 29) != 0 &&
+        std::strncmp(*entry, report_child_variable,
+                     std::strlen(report_child_variable)) != 0)
+      variables.emplace_back(*entry);
+  variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
+  char hex[16];
+  std::snprintf(hex, sizeof hex, "%08x", word);
+  variables.push_back(std::string{report_child_variable} + "=" + hex);
+  std::vector<char *> environment;
+  for (auto &variable : variables)
+    environment.push_back(variable.data());
+  environment.push_back(nullptr);
+  char *const arguments[] = {path.data(), nullptr};
+  pid_t child = 0;
+  require(posix_spawn(&child, path.data(), nullptr, nullptr, arguments,
+                      environment.data()) == 0);
+  int status = 0;
+  while (waitpid(child, &status, 0) < 0)
+    require(errno == EINTR);
+  require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  std::ifstream file{report};
+  std::string line;
+  std::vector<std::string> lines;
+  while (std::getline(file, line))
+    lines.push_back(line);
+  file.close();
+  unlink(report.c_str());
+  /* Two comment lines, then the word's row: its form, index, encoding, the
+   * translations (all of them to the library) and its one execution. */
+  require(lines.size() == 3U);
+  require(lines[0] == "# SVE library exits: total 1");
+  require(lines[1] == "# form\trow\tmask\tvalue\ttranslated\t"
+                      "translated_to_library\texits");
+  std::vector<std::string> fields;
+  std::istringstream split{lines[2]};
+  while (std::getline(split, line, '\t'))
+    fields.push_back(line);
+  require(fields.size() == 7U);
+  const auto &row = arm64::detail::sme_encodings[index];
+  char form[16];
+  std::snprintf(form, sizeof form, "SVE-%04u", row.form & 0x7fffU);
+  char mask[16];
+  std::snprintf(mask, sizeof mask, "%08x", static_cast<unsigned>(row.mask));
+  char value[16];
+  std::snprintf(value, sizeof value, "%08x", static_cast<unsigned>(row.value));
+  require(fields[0] == form && fields[1] == std::to_string(index) &&
+          fields[2] == mask && fields[3] == value);
+  require(std::stoull(fields[4]) >= 1U && fields[5] == fields[4] &&
+          fields[6] == "1");
+  std::printf("the library-exit report survives _Exit\n");
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   if (!jit_available()) {
     std::printf("skipped: the JIT does not run here\n");
     return 0;
   }
+  if (const char *word = std::getenv(report_child_variable))
+    report_child(static_cast<std::uint32_t>(std::strtoul(word, nullptr, 16)));
   require(arm64::jit::sve_support == arm64::SveSupport::complete);
   Tally tally;
   writers_forget_fullness(sve_host());
   forms_match_the_library(sve_host(), tally);
+  /* The SCLAMP class: 29 forms in 33 rows, 4 forms in 7 rows with FEAT_SME
+   * beside FEAT_SVE and the rest with FEAT_SME2 too; none of them on
+   * sve_host(). */
+  std::array<bool, 0x8000> admitted_forms{};
+  std::size_t admitted = 0;
+  std::size_t forms = 0;
+  for (const auto &row : arm64::detail::sme_encodings) {
+    if (!sme_admitted_row(row))
+      continue;
+    ++admitted;
+    forms += admitted_forms[row.form & 0x7fffU] ? 0U : 1U;
+    admitted_forms[row.form & 0x7fffU] = true;
+  }
+  require(admitted == 33U && forms == 29U);
+  require(forms_match_the_library(sve_sme_host(false), tally, true) == 7U);
+  require(forms_match_the_library(sve_sme_host(true), tally, true) == 33U);
   lowered_words_stay_inline(sve_host(), tally);
+  scale_lane_classes(sve_host(), tally);
+  conversion_boundaries(sve_host(), tally);
+  library_exit_report_survives_exit(sve_host());
   gather_lane_faults(sve_host(), tally);
   scatters_with_tracked_stores(sve_host(), tally);
   saturating_counts_at_their_limits(sve_host(), tally);
