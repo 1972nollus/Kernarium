@@ -226,6 +226,27 @@ The optional `guest-futex-atomic` test checks the futex contract in
 probe's shell tools. Run it on both Linux page profiles and the maintained
 Android kernel.
 
+`guest-aarch32-kernel` checks the kernel's AArch32 task support in
+[`../kernel/common/README.md`](../kernel/common/README.md) on both Linux page
+profiles, and needs `python3` in the rootfs. The build generates a freestanding
+armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
+configured compiler's ARM backend, wraps it into an ELF32 executable with
+`make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
+and in one for 4 KiB pages only, and never commits either. While no engine
+implements AArch32 (`UML_AARCH32_EXPECT=unsupported`, the default) the test
+requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
+and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
+`abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
+helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+views, restarts and exec between ABIs; threads through `clone` and `clone3`,
+fault signals and stack growth, the time64 and socket calls with
+`SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
+tracer's session (registers, system call and single-step stops, signal-frame
+VFP state), a core dump and many runs at once, and requires the 4 KiB-only
+program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
+16 KiB one, leaving the guest working. The tooling test
+`aarch32-elf32-wrapper` checks the two layouts the wrapper writes.
+
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
 and restart. It requires access to macOS audio services.

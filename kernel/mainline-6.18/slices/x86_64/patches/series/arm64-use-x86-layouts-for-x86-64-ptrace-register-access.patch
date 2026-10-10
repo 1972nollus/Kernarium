@@ -46,7 +46,7 @@ breakpoint.
  create mode 100644 arch/arm64/um/x86_fpstate.h
 
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index a672d67bb04201c5ab2523dbb14bd4160e27ea30..c7614c4d7980fc87fffae573af2c4fa2936da5d4 100644
+index da8bed3f15d86281657a038f0d4306aa91f61442..a40a79af7129ea2c2fac3f75df2dce2b73bbc568 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
 @@ -7,6 +7,24 @@

@@ -4,5 +4,7 @@ darwin_uml_vm_sync_from_backing	4k-only	Refresh a 4 KiB native shadow from share
 darwin_uml_vm_sync_from_buffer	4k-only	Publish a bounded write from a 4 KiB native shadow
 darwin_uml_guest_hwcap	arm64-only	Expose arm64 userspace HWCAP bits only to the normal arm64 kernel slices
 darwin_uml_guest_hwcap2	arm64-only	Expose arm64 userspace HWCAP2 bits only to the normal arm64 kernel slices
+darwin_uml_guest_compat_hwcap	arm64-only	Expose AArch32 userspace HWCAP bits only to the normal arm64 kernel slices
+darwin_uml_guest_compat_hwcap2	arm64-only	Expose AArch32 userspace HWCAP2 bits only to the normal arm64 kernel slices
 darwin_uml_guest_sme_vector_length	arm64-only	Size arm64 SME task state only in the normal arm64 kernel slices
 darwin_uml_guest_sve_vector_length	arm64-only	Size arm64 SVE task state only in the normal arm64 kernel slices
