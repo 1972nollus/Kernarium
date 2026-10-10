@@ -245,7 +245,8 @@ tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
 program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
 16 KiB one, leaving the guest working. The tooling test
-`aarch32-elf32-wrapper` checks the two layouts the wrapper writes.
+`aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
+`aarch32-elf32-linker` the multi-object linker of the engine probe below.
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
@@ -791,6 +792,28 @@ the bridge event of every exit, and that the compat HWCAPs and the guest entry
 points follow the level the run presents, with the policy off and on. An
 engine that has reached `base` makes the policy-on run enter it for real: an
 entry at an unmapped PC must fault there.
+
+`guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
+probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
+that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
+compiles it with the configured compiler's ARM backend and links it with
+`link_elf32.py`, in a layout for any page size and in one for 4 KiB pages
+only, which a 4 KiB guest also runs. Its groups cover system calls and errno,
+A32/T32 interworking, signal frames with VFP state through the sigpage and
+`SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
+self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
+SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
+BKPT and `udf #16` under ptrace and a single step through an IT block,
+LDREX/STREX and the kuser cmpxchg under contention across threads and
+processes, VFP, Advanced SIMD and FPSCR semantics, and the crypto, CRC32,
+dot-product and half-precision extensions against known answers. A group
+needing a higher level than the engine's is skipped inside the probe from the
+HWCAP words it sees, and an extension the words leave out must raise `SIGILL`.
+Every SIGILL is counted: one the probe did not expect fails the run. A test
+skips, naming its reason, while its engine implements no AArch32 (the level
+`uml-a32-engine-support` prints is `none`). `A32_PROBE_GROUPS` selects groups
+by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
+runner print every line of the guest's output, passes included.
 
 ## AArch32 JIT
 
