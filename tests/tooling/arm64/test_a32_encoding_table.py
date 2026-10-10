@@ -30,6 +30,7 @@ import re
 import sys
 from pathlib import Path
 
+from a32_profile_policy import NEVER_EXECUTED
 from a32_table_reader import (
     DATA,
     ISAS,
@@ -42,15 +43,6 @@ from a32_table_reader import (
     require,
     read,
 )
-
-
-# Forms every word of which the profile rejects, without being undefined at
-# EL0 by page: the stored samples of these must all be undefined.
-ALWAYS_REJECTED = {
-    "MCRR_A1": "no 64-bit coprocessor register is writable at EL0",
-    "MCRR_T1": "no 64-bit coprocessor register is writable at EL0",
-    "SUBS_PC_T5_AS": "an exception return is UNPREDICTABLE at EL0",
-}
 
 
 def read_tsv(path: Path, columns: tuple[str, ...]) -> list[dict[str, str]]:
@@ -92,7 +84,7 @@ def check_samples(tables: Tables) -> None:
     for index, form in enumerate(tables.forms):
         if index < 2 or form["availability"] == "undefined_at_el0":
             continue
-        if form["name"] in ALWAYS_REJECTED:
+        if form["name"] in NEVER_EXECUTED:
             require(form["name"] not in accepted, f"{form['name']} has an accepted sample")
             continue
         require(form["name"] in accepted, f"no accepted sample for {form['name']}")

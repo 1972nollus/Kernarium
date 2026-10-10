@@ -411,7 +411,7 @@ const FormInfo kForms[kFormCount] = {
 	{"MSR_br_T1_AS", "MSR", 0xf3888020u, 0x000020cfu, 0x00000000u, kNoProgram, 0, Isa::t32, Level::base, Availability::undefined_at_el0, Check::none, kNoFeature, kNoCond, true, false, false},
 	{"MSR_i_A1_AS", "MSR", 0x0321fec7u, 0x0000f000u, 0x0000f000u, 180, 0, Isa::a32, Level::base, Availability::implemented, Check::apsr, kNoFeature, 28, true, false, false},
 	{"MSR_r_A1_AS", "MSR", 0x8121f009u, 0x0000fd00u, 0x0000f000u, 181, 0, Isa::a32, Level::base, Availability::implemented, Check::apsr, kNoFeature, 28, true, false, false},
-	{"MSR_r_T1_AS", "MSR", 0xf38c8300u, 0x000020dfu, 0x00000000u, 182, 0, Isa::t32, Level::base, Availability::implemented, Check::apsr, kNoFeature, kNoCond, true, false, false},
+	{"MSR_r_T1_AS", "MSR", 0xf3898500u, 0x000020dfu, 0x00000000u, 182, 0, Isa::t32, Level::base, Availability::implemented, Check::apsr, kNoFeature, kNoCond, true, false, false},
 	{"MULS_A1", "MULS", 0x00150798u, 0x0000f000u, 0x00000000u, 183, 0, Isa::a32, Level::base, Availability::implemented, Check::none, kNoFeature, 28, true, false, false},
 	{"MUL_A1", "MUL", 0xe0010499u, 0x0000f000u, 0x00000000u, 183, 0, Isa::a32, Level::base, Availability::implemented, Check::none, kNoFeature, 28, true, false, false},
 	{"MUL_T1", "MUL", 0x43400000u, 0x00000000u, 0x00000000u, 184, 0, Isa::t16, Level::base, Availability::implemented, Check::none, kNoFeature, kNoCond, true, false, false},
