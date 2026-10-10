@@ -75,6 +75,10 @@ pinned Arm AArch32 XML release, the profile's choices
 (`tests/tooling/arm64/a32_profile_policy.py`) and LLVM MC 22.1.8, a
 tooling-time oracle that no build uses. Never edit them.
 
+- Form names are the XML's, with one correction: Arm's 2026-06 XML names the
+  A32 VRSRA encodings against their own Q field, so the catalog swaps them
+  (`XML_NAME_ERRATA` in `a32_architecture_oracle.py`, which fails the
+  generation once the XML is corrected).
 - A `Form` is one XML encoding. A `Row` is one partition of the A32 or T32
   encoding space that the XML's encoding index allocates to a form; the index
   partitions the space exactly, so the rows that remain after the unallocated

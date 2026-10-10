@@ -143,6 +143,43 @@ void zero_one_two_three_and_many_links() {
   direct_chain_length(32, 8305, 0xe1'0000);
 }
 
+/* A straight run of more words than the fetch window holds is several
+ * blocks, and each one's exit asks for a link to the next like a branch's,
+ * so a chain carries on across them. */
+void fetch_window_blocks_chain() {
+  constexpr unsigned long generation = 8320;
+  constexpr std::uint64_t base = 0xf0'0000;
+  constexpr std::size_t window = 64;
+  constexpr std::size_t words = 2U * window + 22U;
+  JitBacking backing{1};
+  for (std::size_t index = 0; index < words; ++index)
+    backing.put32(index * 4U, 0x9100'0400U); // add x0, x0, #1
+  backing.put32(words * 4U, system_call);
+  JitMapping mapping{generation, base, backing, 1};
+  JitExecutor executor;
+  StaticGuestMemory memory;
+  arm64::CpuState cpu{};
+  cpu.pc = base + 2U * window * 4U;
+  require(executor.begin_execution(generation, cpu.pc));
+
+  /* The last block first, so each earlier one links to a translated
+   * successor. */
+  auto run = run_block(executor, memory, generation, cpu);
+  require(run.event == ::uml::cpu::EngineEvent::system_call &&
+          run.executed == words - 2U * window + 1U);
+  cpu.pc = base + window * 4U;
+  run = run_block(executor, memory, generation, cpu);
+  require(run.event == ::uml::cpu::EngineEvent::system_call);
+
+  cpu.pc = base;
+  cpu.registers[0] = 0;
+  run = run_block(executor, memory, generation, cpu);
+  require(run.event == ::uml::cpu::EngineEvent::system_call);
+  require(run.executed == words + 1U);
+  require(cpu.registers[0] == words);
+  executor.end_execution();
+}
+
 void exact_fairness_commit_boundary() {
   constexpr unsigned long generation = 8306;
   constexpr std::uint64_t base = 0xe2'0000;
@@ -780,6 +817,7 @@ int main() {
   require(jit_available() == 1);
   host_callee_saved_registers_are_restored();
   zero_one_two_three_and_many_links();
+  fetch_window_blocks_chain();
   exact_fairness_commit_boundary();
   non_dividing_fairness_quantum_restores_the_source();
   direct_and_pic_links_carry_x8_x9();
