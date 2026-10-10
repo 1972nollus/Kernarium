@@ -62,6 +62,8 @@ constexpr std::uint32_t pstate_dit = 0x0100'0000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
 /* PSTATE.SS: the kernel asks for one instruction, as for a stepped eret. */
 constexpr std::uint32_t pstate_ss = 0x0020'0000U;
+/* PSTATE.nRW, set in the SPSR layout of an exception taken from AArch32. */
+constexpr std::uint32_t pstate_mode32 = 0x0000'0010U;
 /* Trap numbers the kernel turns into SIGTRAP/TRAP_TRACE: the x86 #DB vector
  * and the arm64 software-step exception class. */
 #if DARWIN_UML_X86_64_GUEST
@@ -665,6 +667,11 @@ int run_common_guest(
 	/* An arm64 task's tail is its FP registers and then its SME and SVE
 	 * registers, whether or not the run implements either. */
 	if (fp_size != DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE)
+		return DARWIN_UML_EVENT_FATAL;
+	/* No engine executes AArch32 EL0 yet: its entry is a kernel invariant
+	 * violation, because the kernel runs an AArch32 task only while
+	 * darwin_uml_guest_compat_hwcap() is non-zero. */
+	if (mutable_registers.pstate & pstate_mode32) [[unlikely]]
 		return DARWIN_UML_EVENT_FATAL;
 	auto &sme = *reinterpret_cast<darwin_uml_guest_sme_registers *>(
 		static_cast<std::byte *>(fp_pointer) +

@@ -30,6 +30,12 @@ kernel build and the release verifier require every symbol in
 every symbol in [`config/forbidden-options.txt`](config/forbidden-options.txt)
 to be absent.
 
+`CONFIG_COMPAT` and `CONFIG_KUSER_HELPERS` are required builtins: the kernel
+carries the shared AArch32 task support described in
+[`kernel/common`](../common/README.md), so an armeabi-v7a process runs once the
+host's engine implements AArch32. With 16 KiB pages it runs only when its
+segments are 16 KiB congruent, and any other fails cleanly at exec or `dlopen`.
+
 The configuration includes the Android Binder, SELinux/audit, cgroups, storage,
 DMA-BUF heaps, networking, BPF interpreter, Virtio devices, and Darwin UML
 scheduling support required by the product. The overlay holds only what
