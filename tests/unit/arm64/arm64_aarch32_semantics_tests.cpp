@@ -190,15 +190,6 @@ constexpr std::uint32_t stl_r1_r0 = 0xe180fc91;
 constexpr std::uint32_t ldaex_r1_r0 = 0xe1901e9f;
 constexpr std::uint32_t stlex_r2_r1_r0 = 0xe1802e91;
 
-[[nodiscard]] bool vector_memory_mnemonic(std::string_view name)
-{
-	return name == "VLDR" || name == "VSTR" || name == "VLDM" || name == "VLDMDB" ||
-		name == "VSTM" || name == "VSTMDB" || name == "FLDMIAX" || name == "FLDMDBX" ||
-		name == "FSTMIAX" || name == "FSTMDBX" ||
-		(name.size() == 4 && (name.starts_with("VLD") || name.starts_with("VST")) &&
-			name[3] >= '1' && name[3] <= '4');
-}
-
 void test_coverage()
 {
 	std::size_t covered = 0;
@@ -206,22 +197,14 @@ void test_coverage()
 		const auto form = static_cast<Form>(index);
 		const FormInfo &info = kForms[index];
 		const bool pseudo = form == Form::Undefined || form == Form::ReservedHint;
-		const bool implemented = info.availability == Availability::implemented;
-		if (pseudo || info.level <= a32_semantics_level()) {
-			/* Everything up to the library's level. */
-			require(a32_semantics_covers(form) == (pseudo || implemented),
-				"the coverage predicate follows the level");
-		} else if (info.level == Level::simd && implemented) {
-			/* The VFP and Advanced SIMD group is covered form by form while
-			 * it is added; the memory forms are all in. */
-			if (vector_memory_mnemonic(info.mnemonic))
-				require(a32_semantics_covers(form), "the SIMD memory group is covered");
-		} else {
-			require(!a32_semantics_covers(form), "a form above the library's level is not covered");
-		}
+		/* Every implemented form up to the library's level, and nothing above. */
+		const bool expected = pseudo || (info.availability == Availability::implemented &&
+							info.level <= a32_semantics_level());
+		require(a32_semantics_covers(form) == expected,
+			"the coverage predicate follows the level");
 		covered += a32_semantics_covers(form) ? 1 : 0;
 	}
-	require(covered > 1000, "the library covers the base level and the SIMD group so far");
+	require(covered > 1500, "the library covers the base and SIMD levels");
 }
 
 void test_events()
@@ -229,17 +212,17 @@ void test_events()
 	Fixture f;
 	/* A form above the library's level is fatal, and changes nothing. */
 	f.cpu.registers[0] = 0x1234;
-	const auto vadd = decode_a32(0xf2000d00, Profile::at(Level::complete));
-	require(vadd.legal(), "vadd decodes at complete");
-	f.machine.put(code_base, std::uint32_t{0xf2000d00});
+	const auto crc32b = decode_a32(0xe1010042, Profile::at(Level::complete));
+	require(crc32b.legal(), "crc32b decodes at complete");
+	f.machine.put(code_base, std::uint32_t{0xe1010042});
 	f.set_pc(code_base, false);
-	auto result = execute_a32(f.cpu, vadd, f.machine);
+	auto result = execute_a32(f.cpu, crc32b, f.machine);
 	require(result.event == StepEvent::fatal && f.pc() == code_base && f.r(0) == 0x1234,
 		"a form above the level is fatal and changes nothing");
 
 	/* A word the decoder rejects is undefined. */
 	f.cpu.a32_itstate = 0;
-	result = f.step_a32_word(0xf2000d00);
+	result = f.step_a32_word(0xe1010042);
 	require(result.event == StepEvent::undefined && f.pc() == code_base,
 		"a word above the profile's level is undefined at the PC");
 
@@ -936,6 +919,149 @@ void test_counters()
 
 } // namespace
 
+/* The FPSCR split, the rounding and flush controls that VFP honours and
+ * Advanced SIMD does not, the cumulative flags, and a few integer forms. */
+void test_floating_point()
+{
+	Fixture f;
+	f.profile = Profile::at(Level::complete);
+	constexpr std::uint32_t qc = 1U << 27;
+
+	/* VMSR keeps the control, status and flag bits; Len, Stride and the
+	 * trap enables read as zero. */
+	f.cpu.registers[0] = 0xffff'ffff;
+	require(f.step_a32_word(0xeee10a10).event == StepEvent::retired); /* vmsr fpscr, r0 */
+	require(f.step_a32_word(0xeef11a10).event == StepEvent::retired && f.r(1) == 0xffc8'009f,
+		"FPSCR reads back only the bits that are implemented");
+	require(f.step_a32_word(0xeef1fa10).event == StepEvent::retired && (f.cpu.nzcv >> 28) == 0xf,
+		"VMRS APSR_nzcv copies the FPSCR flags");
+
+	/* Advanced SIMD adds under the Standard FPSCR value, VFP under the
+	 * guest's: round to zero changes only the VFP result. */
+	f.cpu.fpcr = 0x00c0'0000;
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x3f80'0000'3f80'0000);
+	f.set_d(2, 0x3380'0001'3380'0001);
+	require(f.step_a32_word(0xf2010d02).event == StepEvent::retired && /* vadd.f32 d0, d1, d2 */
+			f.d(0) == 0x3f80'0001'3f80'0001 && (f.cpu.fpsr & 0x10U) != 0U,
+		"Advanced SIMD floating point rounds to nearest whatever the FPSCR says");
+	f.set_d(0, 0x3f80'0000'0000'0000);
+	f.set_d(1, 0x0000'0000'3380'0001);
+	require(f.step_a32_word(0xee300a81).event == StepEvent::retired && /* vadd.f32 s0, s1, s2 */
+			f.s(0) == 0x3f80'0000 && f.s(1) == 0x3f80'0000,
+		"VFP honours the rounding mode");
+
+	/* Default NaN: VFP only when DN is set, Advanced SIMD always. */
+	f.cpu.fpcr = 0;
+	f.set_d(0, 0x7fc1'2345'0000'0000);
+	f.set_d(1, 0x0000'0000'3f80'0000);
+	require(f.step_a32_word(0xee300a81).event == StepEvent::retired && f.s(0) == 0x7fc1'2345,
+		"VFP propagates the NaN payload with DN clear");
+	f.cpu.fpcr = 1U << 25;
+	f.set_d(0, 0x7fc1'2345'0000'0000);
+	require(f.step_a32_word(0xee300a81).event == StepEvent::retired && f.s(0) == 0x7fc0'0000,
+		"VFP returns the default NaN with DN set");
+	f.cpu.fpcr = 0;
+	f.set_d(1, 0x7fc1'2345'7fc1'2345);
+	f.set_d(2, 0x3f80'0000'3f80'0000);
+	require(f.step_a32_word(0xf2010d02).event == StepEvent::retired &&
+			f.d(0) == 0x7fc0'0000'7fc0'0000,
+		"Advanced SIMD returns the default NaN");
+
+	/* Saturation sets QC, which VMRS reads in FPSCR[27]. */
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x7f7f'7f7f'7f7f'7f7f);
+	f.set_d(2, 0x0101'0101'0101'0101);
+	require(f.step_a32_word(0xf2010012).event == StepEvent::retired && /* vqadd.s8 d0, d1, d2 */
+			f.d(0) == 0x7f7f'7f7f'7f7f'7f7f && (f.cpu.fpsr & qc) != 0U,
+		"VQADD saturates and sets QC");
+	require(f.step_a32_word(0xeef11a10).event == StepEvent::retired && (f.r(1) & qc) != 0U,
+		"VMRS reads QC");
+
+	/* VCMP puts its result in the FPSCR flags; only VCMPE signals a quiet NaN. */
+	f.cpu.fpsr = 0;
+	f.set_d(0, 0x4000'0000'3f80'0000); /* s0 = 1.0, s1 = 2.0 */
+	require(f.step_a32_word(0xeeb40a60).event == StepEvent::retired && /* vcmp.f32 s0, s1 */
+			f.cpu.a32_fpscr_nzcv == 0x8000'0000,
+		"VCMP less than");
+	f.set_d(0, 0x7fc0'0000'3f80'0000);
+	require(f.step_a32_word(0xeeb40a60).event == StepEvent::retired &&
+			f.cpu.a32_fpscr_nzcv == 0x3000'0000 && (f.cpu.fpsr & 1U) == 0U,
+		"VCMP with a quiet NaN is unordered and quiet");
+	require(f.step_a32_word(0xeeb40ae0).event == StepEvent::retired && (f.cpu.fpsr & 1U) != 0U,
+		"VCMPE signals a quiet NaN");
+
+	/* VCVT truncates; VCVTR rounds by the FPSCR. */
+	f.cpu.fpsr = 0;
+	f.set_d(0, 0x3fc0'0000'0000'0000); /* s1 = 1.5 */
+	require(f.step_a32_word(0xeebd0ae0).event == StepEvent::retired && f.s(0) == 1 &&
+			(f.cpu.fpsr & 0x10U) != 0U,
+		"VCVT rounds toward zero and is inexact");
+	f.set_d(0, 0x3fc0'0000'0000'0000);
+	require(f.step_a32_word(0xeebd0a60).event == StepEvent::retired && f.s(0) == 2,
+		"VCVTR rounds to nearest even by default");
+	f.cpu.fpcr = 2U << 22;
+	f.set_d(0, 0x3fc0'0000'0000'0000);
+	require(f.step_a32_word(0xeebd0a60).event == StepEvent::retired && f.s(0) == 1,
+		"VCVTR rounds toward minus infinity under RMode 2");
+
+	/* VMLA rounds the product, VFMA does not. */
+	f.cpu.fpcr = 0;
+	f.set_d(0, 0x3f80'0800'bf80'1000); /* s0 = -(1 + 2^-11), s1 = 1 + 2^-12 */
+	f.set_d(1, 0x0000'0000'3f80'0800);
+	require(f.step_a32_word(0xee000a81).event == StepEvent::retired && f.s(0) == 0,
+		"VMLA rounds the product before the addition");
+	f.set_d(0, 0x3f80'0800'bf80'1000);
+	require(f.step_a32_word(0xeea00a81).event == StepEvent::retired && f.s(0) == 0x3380'0000,
+		"VFMA keeps the exact product");
+
+	/* VRECPS treats infinity times zero as a zero product, without a flag. */
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x7f80'0000'7f80'0000);
+	f.set_d(2, 0);
+	require(f.step_a32_word(0xf2010f12).event == StepEvent::retired &&
+			f.d(0) == 0x4000'0000'4000'0000 && (f.cpu.fpsr & 1U) == 0U,
+		"VRECPS of infinity and zero is two");
+
+	/* Double precision. */
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0xbff0'0000'0000'0000);
+	require(f.step_a32_word(0xeeb00bc1).event == StepEvent::retired && f.d(0) == 0x3ff0'0000'0000'0000,
+		"VABS.F64");
+	f.set_d(1, 0x4010'0000'0000'0000);
+	require(f.step_a32_word(0xeeb10bc1).event == StepEvent::retired && f.d(0) == 0x4000'0000'0000'0000,
+		"VSQRT.F64");
+	f.set_d(1, 0x3ff0'0000'0000'0000);
+	f.set_d(2, 0x4008'0000'0000'0000);
+	require(f.step_a32_word(0xee810b02).event == StepEvent::retired &&
+			f.d(0) == 0x3fd5'5555'5555'5555 && (f.cpu.fpsr & 0x10U) != 0U,
+		"VDIV.F64 is inexact");
+
+	/* Integer forms: a by-register shift with a negative count, a long
+	 * multiply, a rounding saturating multiply and a pairwise add. */
+	f.set_d(1, 0x8080'8080'8080'8080);
+	f.set_d(2, 0xfefe'fefe'fefe'fefe);
+	require(f.step_a32_word(0xf2020401).event == StepEvent::retired && /* vshl.s8 d0, d1, d2 */
+			f.d(0) == 0xe0e0'e0e0'e0e0'e0e0,
+		"VSHL by a negative count shifts right arithmetically");
+	f.set_d(2, 0xffff'0003'0002'0001);
+	f.set_d(3, 0x0028'001e'0014'000a);
+	require(f.step_a32_word(0xf2920c03).event == StepEvent::retired && /* vmull.s16 q0, d2, d3 */
+			f.d(0) == 0x0000'0028'0000'000a && f.d(1) == 0xffff'ffd8'0000'005a,
+		"VMULL widens the products");
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x0000'0000'0000'8000);
+	f.set_d(2, 0x0000'0000'0000'8000);
+	require(f.step_a32_word(0xf3110b02).event == StepEvent::retired && /* vqrdmulh.s16 d0, d1, d2 */
+			(f.d(0) & 0xffff) == 0x7fff && (f.cpu.fpsr & qc) != 0U,
+		"VQRDMULH saturates the one overflowing product");
+	f.set_d(1, 0x0004'0003'0002'0001);
+	f.set_d(2, 0x0028'001e'0014'000a);
+	require(f.step_a32_word(0xf2110b12).event == StepEvent::retired && /* vpadd.i16 d0, d1, d2 */
+			f.d(0) == 0x0046'001e'0007'0003,
+		"VPADD adds adjacent pairs");
+}
+
 int main()
 {
 	test_coverage();
@@ -951,6 +1077,7 @@ int main()
 	test_it_udf();
 	test_vector_memory();
 	test_vector_structures();
+	test_floating_point();
 	test_system();
 	test_counters();
 	return 0;

@@ -405,16 +405,13 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 
 /* Whether the library covers every legal instruction of the program: the
  * form must be covered, and the word must be legal at the library's level (a
- * floating-point form at half precision is not, until the level reaches the
+ * half-precision floating-point form is not, until the level reaches the
  * Armv8 extensions). */
 bool within_coverage(const Case &test)
 {
 	const bool thumb = test.flags & kFlagThumb;
 	const Profile complete = Profile::at(Level::complete);
-	/* The Advanced SIMD and VFP group is under way; its words decode as
-	 * the group's level until the library's level reaches it. */
-	const Profile library = Profile::at(
-		a32_semantics_level() < Level::simd ? Level::simd : a32_semantics_level());
+	const Profile library = Profile::at(a32_semantics_level());
 	ItState it;
 	for (unsigned half = 0; half < test.halves.size();) {
 		Instruction instruction;

@@ -192,22 +192,13 @@ std::atomic<bool> counting_exits{false};
 std::atomic<std::uint64_t> exit_total{0};
 std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
 
-/* The forms above the library's level that it covers already: the VFP and
- * Advanced SIMD memory group, which needs no floating-point arithmetic. */
-[[nodiscard]] constexpr bool early_simd_op(Op op) noexcept
-{
-	return op == Op::vldr || op == Op::vstr || op == Op::vldm || op == Op::vstm
-		|| op == Op::vld || op == Op::vst;
-}
-
 }
 
 [[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept
 {
 	if (form.availability != Availability::implemented || info.op == Op::none)
 		return false;
-	return form.level <= a32_semantics_level()
-		|| (form.level == Level::simd && (early_simd_op(info.op) || info.op == Op::vector));
+	return form.level <= a32_semantics_level();
 }
 
 namespace {
