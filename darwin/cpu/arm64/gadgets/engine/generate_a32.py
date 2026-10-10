@@ -117,7 +117,8 @@ FAMILIES = [
     "stored",        # STRD
     "ldm",           # LDM and its variants, POP
     "stm",           # STM and its variants, PUSH
-    "exclusive",     # LDREX* STREX*
+    "exclusive",     # LDREX* STREX*, LDAEX* STLEX*
+    "ordered",       # LDA LDAB LDAH STL STLB STLH
     "branch",        # B
     "bl",            # BL BLX (immediate)
     "bx",            # BX BXJ
@@ -276,11 +277,17 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
         return ("ldm" if mnemonic in ("LDM", "POP") else "stm", mode,
                 1 if mnemonic in ("POP", "PUSH") else 0)
     if mnemonic in ("LDREX", "LDREXB", "LDREXH", "LDREXD", "STREX",
-                    "STREXB", "STREXH", "STREXD"):
-        size = {"": 2, "B": 0, "H": 1, "D": 3}[mnemonic[5:] if
-                                               mnemonic.startswith("LDREX")
-                                               else mnemonic[5:]]
-        return ("exclusive", size, 1 if mnemonic.startswith("STREX") else 0)
+                    "STREXB", "STREXH", "STREXD", "LDAEX", "LDAEXB",
+                    "LDAEXH", "LDAEXD", "STLEX", "STLEXB", "STLEXH",
+                    "STLEXD"):
+        size = {"": 2, "B": 0, "H": 1, "D": 3}[mnemonic[5:]]
+        # aux: bit 0 store, bit 1 acquire (load) or release (store)
+        return ("exclusive", size,
+                (1 if mnemonic[:3] in ("STR", "STL") else 0) |
+                (2 if mnemonic[2] in ("A", "L") else 0))
+    if mnemonic in ("LDA", "LDAB", "LDAH", "STL", "STLB", "STLH"):
+        return ("ordered", {"": 2, "B": 0, "H": 1}[mnemonic[3:]],
+                1 if mnemonic.startswith("STL") else 0)
     if mnemonic == "B":
         return ("branch", 0, 0)
     if mnemonic in ("BL", "BLX") and "_i_" in name:
@@ -301,7 +308,7 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
         return ("bkpt", 0, 0)
     if mnemonic == "UDF":
         return ("udf", 0, 0)
-    if mnemonic in ("NOP", "YIELD", "WFE", "WFI", "SEV", "DBG", "CSDB",
+    if mnemonic in ("NOP", "YIELD", "WFE", "WFI", "SEV", "SEVL", "DBG", "CSDB",
                     "ESB", "TSB", "CLRBHB", "SSBB", "PSSBB", "PLD", "PLDW",
                     "PLI", "CPS", "CPSID", "CPSIE"):
         return ("hint", 0, 1 if mnemonic in ("YIELD", "WFE", "WFI") else 0)

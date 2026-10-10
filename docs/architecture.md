@@ -850,14 +850,15 @@ time until ITSTATE is zero. LDM and LDRD that cross a page read through the
 A64 memory-transfer helper and change no register unless every page was
 readable; STM and PUSH store word by word, so the words ahead of a fault are
 in memory, the fault is at the first word of the page that cannot be
-written and the base register is as before. LDREX and STREX are the A64
-exclusive gadgets and share their forward-progress mechanism. The rare integer forms (parallel arithmetic, SEL, USAD8, the
-dual multiplies, the 16-bit saturates and extends, QADD and its relatives)
-are one tail helper. `arm64-gadget-a32-control` checks the contract above,
-`arm64-gadget-a32-forms` that the engine defines exactly what the decoder
-defines at its level, `arm64-gadget-a32-corpus` that it matches the AArch32
-corpus records of that level, and `arm64-gadget-region-layout` the part's
-placement.
+written and the base register is as before. LDREX and STREX, and LDAEX and
+STLEX, are the A64 exclusive gadgets and share their forward-progress
+mechanism; LDA and STL are the A64 ordered ones. The rare integer forms
+(parallel arithmetic, SEL, USAD8, the dual multiplies, the 16-bit saturates
+and extends, QADD and its relatives) are one tail helper.
+`arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`
+that the engine defines exactly what the decoder defines at its level,
+`arm64-gadget-a32-corpus` that it matches the AArch32 corpus records of that
+level, and `arm64-gadget-region-layout` the part's placement.
 
 The runtime enters an AArch32 task through `run_aarch32` only while the run
 presents AArch32, which `guest_a32_support()` decides in one place: the

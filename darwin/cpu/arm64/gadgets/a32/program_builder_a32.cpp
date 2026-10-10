@@ -65,6 +65,20 @@ void uml_arm64_gadget_exclusive_store_relaxed_h_rr();
 void uml_arm64_gadget_exclusive_store_relaxed_w_rr();
 void uml_arm64_gadget_exclusive_pair_load_relaxed_w_rr();
 void uml_arm64_gadget_exclusive_pair_store_relaxed_w_rrr();
+void uml_arm64_gadget_exclusive_load_acquire_b_r();
+void uml_arm64_gadget_exclusive_load_acquire_h_r();
+void uml_arm64_gadget_exclusive_load_acquire_w_r();
+void uml_arm64_gadget_exclusive_store_release_b_rr();
+void uml_arm64_gadget_exclusive_store_release_h_rr();
+void uml_arm64_gadget_exclusive_store_release_w_rr();
+void uml_arm64_gadget_exclusive_pair_load_acquire_w_rr();
+void uml_arm64_gadget_exclusive_pair_store_release_w_rrr();
+void uml_arm64_gadget_ordered_load_acquire_b_r();
+void uml_arm64_gadget_ordered_load_acquire_h_r();
+void uml_arm64_gadget_ordered_load_acquire_w_r();
+void uml_arm64_gadget_ordered_store_release_b_r();
+void uml_arm64_gadget_ordered_store_release_h_r();
+void uml_arm64_gadget_ordered_store_release_w_r();
 }
 
 namespace uml::cpu::arm64::gadgets::a32 {
@@ -250,6 +264,7 @@ private:
 	Result emit_double(const Instruction &in, const FormPlan &plan);
 	Result emit_block_transfer(const Instruction &in, const FormPlan &plan);
 	Result emit_exclusive(const Instruction &in, const FormPlan &plan);
+	Result emit_ordered(const Instruction &in, const FormPlan &plan);
 	Result emit_branch(const Instruction &in, const FormPlan &plan);
 	Result emit_system(const Instruction &in, const FormPlan &plan);
 	Result emit_tail(const Instruction &in, const FormPlan &plan);
@@ -872,7 +887,10 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 					      const FormPlan &plan)
 {
 	const auto &o = in.operands;
-	const bool store = plan.aux != 0;
+	const bool store = (plan.aux & 1U) != 0;
+	/* LDAEX and STLEX are the same operations with the host's acquire and
+	 * release forms. */
+	const bool ordered = (plan.aux & 2U) != 0;
 	const unsigned size = plan.sub;
 	const auto t = static_cast<std::uint64_t>(o.t) * 8U;
 	const auto t2 = static_cast<std::uint64_t>(o.t2) * 8U;
@@ -888,29 +906,69 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 	}
 	if (!store) {
 		if (size == 3) {
-			push_external(
+			push_external(ordered ?
+				uml_arm64_gadget_exclusive_pair_load_acquire_w_rr :
 				uml_arm64_gadget_exclusive_pair_load_relaxed_w_rr);
 			push(t | t2 << 16 | n << 32);
 		} else {
-			push_external(size == 0 ?
-				uml_arm64_gadget_exclusive_load_relaxed_b_r :
-				size == 1 ?
-				uml_arm64_gadget_exclusive_load_relaxed_h_r :
-				uml_arm64_gadget_exclusive_load_relaxed_w_r);
+			push_external(ordered ?
+				(size == 0 ?
+				 uml_arm64_gadget_exclusive_load_acquire_b_r :
+				 size == 1 ?
+				 uml_arm64_gadget_exclusive_load_acquire_h_r :
+				 uml_arm64_gadget_exclusive_load_acquire_w_r) :
+				(size == 0 ?
+				 uml_arm64_gadget_exclusive_load_relaxed_b_r :
+				 size == 1 ?
+				 uml_arm64_gadget_exclusive_load_relaxed_h_r :
+				 uml_arm64_gadget_exclusive_load_relaxed_w_r));
 			push(t | n << 16);
 		}
 	} else if (size == 3) {
-		push_external(
+		push_external(ordered ?
+			uml_arm64_gadget_exclusive_pair_store_release_w_rrr :
 			uml_arm64_gadget_exclusive_pair_store_relaxed_w_rrr);
 		push(t | t2 << 16 | d << 32 | n << 48);
 	} else {
-		push_external(size == 0 ?
-			uml_arm64_gadget_exclusive_store_relaxed_b_rr :
-			size == 1 ?
-			uml_arm64_gadget_exclusive_store_relaxed_h_rr :
-			uml_arm64_gadget_exclusive_store_relaxed_w_rr);
+		push_external(ordered ?
+			(size == 0 ?
+			 uml_arm64_gadget_exclusive_store_release_b_rr :
+			 size == 1 ?
+			 uml_arm64_gadget_exclusive_store_release_h_rr :
+			 uml_arm64_gadget_exclusive_store_release_w_rr) :
+			(size == 0 ?
+			 uml_arm64_gadget_exclusive_store_relaxed_b_rr :
+			 size == 1 ?
+			 uml_arm64_gadget_exclusive_store_relaxed_h_rr :
+			 uml_arm64_gadget_exclusive_store_relaxed_w_rr));
 		push(t | d << 16 | n << 32);
 	}
+	push(key_);
+	return {};
+}
+
+/* LDA, LDAB, LDAH, STL, STLB and STLH: the host's load-acquire and
+ * store-release, whose alignment rule is the exclusives'. The operands are
+ * the register and the register holding the address. */
+Translator::Result Translator::emit_ordered(const Instruction &in,
+					    const FormPlan &plan)
+{
+	const auto &o = in.operands;
+	const auto t = static_cast<std::uint64_t>(o.t) * 8U;
+	const auto n = static_cast<std::uint64_t>(o.n) * 8U;
+	if (plan.aux == 0)
+		push_external(plan.sub == 0 ?
+			uml_arm64_gadget_ordered_load_acquire_b_r :
+			plan.sub == 1 ?
+			uml_arm64_gadget_ordered_load_acquire_h_r :
+			uml_arm64_gadget_ordered_load_acquire_w_r);
+	else
+		push_external(plan.sub == 0 ?
+			uml_arm64_gadget_ordered_store_release_b_r :
+			plan.sub == 1 ?
+			uml_arm64_gadget_ordered_store_release_h_r :
+			uml_arm64_gadget_ordered_store_release_w_r);
+	push(t | n << 16);
 	push(key_);
 	return {};
 }
@@ -1145,6 +1203,8 @@ Translator::Result Translator::emit(const Instruction &in,
 		return emit_block_transfer(in, plan);
 	case Family::exclusive:
 		return emit_exclusive(in, plan);
+	case Family::ordered:
+		return emit_ordered(in, plan);
 	case Family::branch:
 	case Family::bl:
 	case Family::bx:
