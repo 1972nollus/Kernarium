@@ -373,6 +373,10 @@ private:
    * the check is emitted. */
   void emit_sve_guard(unsigned predicate, unsigned esize,
                       std::uint32_t instruction, std::uint64_t pc);
+  /* Branches to `slow` when the task has top-byte-ignore enabled, which the
+   * library handles by untagging. The state cannot change inside a block, so
+   * the block's first check covers its later SVE memory words. */
+  void emit_sve_tbi_check(Arm64Emitter::Label slow);
   void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
   void emit_sve_move_form(std::uint16_t form, std::uint32_t instruction);
@@ -535,6 +539,9 @@ private:
   std::span<const std::uint32_t> block_{};
   /* An SVE word in this block has marked the task live (sve_live). */
   bool sve_marked_{};
+  /* An SVE memory word in this block has emitted the top-byte-ignore check
+   * (emit_sve_tbi_check). */
+  bool sve_tbi_checked_{};
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

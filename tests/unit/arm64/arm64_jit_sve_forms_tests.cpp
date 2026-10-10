@@ -1434,6 +1434,112 @@ void writers_forget_fullness(const HostCapabilities &host) {
   std::printf("%zu writer/consumer programs match the library\n", checked);
 }
 
+
+/* The top-byte-ignore check of an SVE memory word with a register base is
+ * emitted once per block, at the first such word. The block's words behind
+ * it go without, and with the state set each of them still reaches the
+ * library, which untags the address. */
+void tbi_check_is_made_once_per_block(const HostCapabilities &host) {
+  constexpr std::uint32_t tbi_state_load =
+      0x3940'0000U |
+      (static_cast<std::uint32_t>(offsetof(arm64::CpuState, tbi_enabled))
+       << 10U) |
+      (15U << 5U);
+  const auto checks = [&](std::span<const std::uint32_t> program) {
+    const uml::cpu::HostCapabilitiesScope scope{host};
+    const auto compiled = jit_test::compile_block_in_mode(
+        code_base, program, 0, jit_test::LinkShape::unlinked);
+    unsigned count = 0;
+    for (std::size_t index = 0; index < compiled.code.executable_words; ++index)
+      count += compiled.code.words[index] == tbi_state_load;
+    return count;
+  };
+  /* ld1b {z0.b}, p0/z, [x1]; ld1b {z1.b}, p0/z, [sp]; ldr p1, [x2];
+   * ldr z2, [x3]; str z2, [x4]; st1b {z1.b}, p0, [x5]. */
+  constexpr std::uint32_t ld1b_x1 = 0xa400'a020U;
+  constexpr std::uint32_t ld1b_sp = 0xa400'a3e1U;
+  constexpr std::uint32_t ldr_p1 = 0x8580'0041U;
+  constexpr std::uint32_t ldr_z2 = 0x8580'4062U;
+  constexpr std::uint32_t str_z2 = 0xe580'4082U;
+  constexpr std::uint32_t st1b_x5 = 0xe400'e0a1U;
+  require(checks(std::array{ptrue_b, ld1b_x1, ld1b_x1, nop}) == 1U);
+  require(checks(std::array{ptrue_b, ld1b_sp, nop}) == 0U);
+  require(checks(std::array{ptrue_b, ld1b_sp, ld1b_x1, ld1b_x1, nop}) == 1U);
+  require(checks(std::array{ptrue_b, ldr_p1, ld1b_x1, ldr_z2, str_z2,
+                            st1b_x5, nop}) == 1U);
+
+  /* Run with the state clear and set: the words match the library, with the
+   * addresses tagged when it is set. */
+  Random random{0x6a17'5e0bU};
+  const auto features = arm64::detail::implemented_sve_features(host);
+  const std::array<std::uint32_t, 8> program{
+      ptrue_b,
+      0xa400'a080U, /* ld1b {z0.b}, p0/z, [x4] */
+      0xa400'a0a1U, /* ld1b {z1.b}, p0/z, [x5] */
+      0x8580'00c1U, /* ldr p1, [x6] */
+      0x8580'40c2U, /* ldr z2, [x6] */
+      0xe400'e0e1U, /* st1b {z1.b}, p0, [x7] */
+      0xe580'4102U, /* str z2, [x8] */
+      svc};
+  for (const bool tagged : {false, true}) {
+    Machine machine{host};
+    for (unsigned sample = 0; sample < 12U; ++sample) {
+      std::vector<std::byte> data(mapped);
+      for (std::size_t at = 0; at < mapped; at += 8) {
+        const auto value = random.next();
+        std::memcpy(data.data() + at, &value, 8);
+      }
+      auto initial = random_state(random, false);
+      initial.tbi_enabled = tagged;
+      for (unsigned n = 1; n < 16U; ++n)
+        initial.sve_p[n] = arm64::sve_predicate_mask(random.predicate());
+      for (unsigned n = 4; n < 9U; ++n) {
+        const std::uint64_t address =
+            code_base + page + 64U + random.next() % (page - 256U);
+        initial.registers[n] =
+            tagged ? address | (std::uint64_t{0x5a} << 56) : address;
+      }
+      std::vector<std::byte> before = data;
+      std::memcpy(before.data(), program.data(), sizeof program);
+      machine.put(0, before);
+      machine.cpu = initial;
+      std::size_t retired = 0;
+      const auto event = machine.run(code_base, retired);
+      std::vector<std::byte> after(mapped);
+      machine.get(0, after);
+
+      auto expected = initial;
+      std::vector<std::byte> reference_bytes = before;
+      CopiedMemory reference{reference_bytes};
+      for (std::size_t index = 0; index + 1U < program.size(); ++index) {
+        const auto *row =
+            arm64::detail::decode_sve_non_streaming(program[index], features);
+        require(row != nullptr);
+        require(arm64::detail::execute_sve(expected, program[index], *row,
+                                           reference)
+                    .event == arm64::detail::SveEvent::retired);
+      }
+      bool same = event == Event::system_call && retired == program.size() &&
+                  machine.cpu.registers == expected.registers &&
+                  machine.cpu.sve_p == expected.sve_p &&
+                  machine.cpu.sve_ffr == expected.sve_ffr &&
+                  after == reference_bytes;
+      for (unsigned n = 0; n < 32U && same; ++n)
+        same = machine.cpu.vectors[n].bytes == expected.vectors[n].bytes;
+      if (!same) {
+        std::fprintf(stderr,
+                     "tagged=%d sample %u: the JIT leaves another state than "
+                     "the library (event %d, retired %zu)\n",
+                     static_cast<int>(tagged), sample, static_cast<int>(event),
+                     retired);
+        require(false);
+      }
+    }
+  }
+  std::printf("the TBI check of SVE memory words is made once per block and "
+              "tagged accesses match the library\n");
+}
+
 } // namespace
 
 /* The breaks, COMPACT and SPLICE read the whole shape of a governing
@@ -1734,6 +1840,7 @@ int main() {
   require(arm64::jit::sve_support == arm64::SveSupport::complete);
   Tally tally;
   writers_forget_fullness(sve_host());
+  tbi_check_is_made_once_per_block(sve_host());
   forms_match_the_library(sve_host(), tally);
   /* The SCLAMP class: 29 forms in 33 rows, 4 forms in 7 rows with FEAT_SME
    * beside FEAT_SVE and the rest with FEAT_SME2 too; none of them on

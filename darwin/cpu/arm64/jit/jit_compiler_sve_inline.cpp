@@ -255,6 +255,20 @@ void JitCompiler::emit_sve_guard(unsigned predicate, unsigned esize,
         cold_exit(instruction, pc, ColdPath::Action::sve_slow));
 }
 
+void JitCompiler::emit_sve_tbi_check(Arm64Emitter::Label slow) {
+  /* CpuState::tbi_enabled is set between guest instructions only: the task
+   * switch, prctl and exec that change it end the block. A block runs from
+   * its first word to its last or leaves it by a cold exit, so the check at
+   * its first memory word with a non-SP base is evaluated before every
+   * later one. With the state set, that word goes to the library, as each
+   * later one would. */
+  if (sve_tbi_checked_)
+    return;
+  emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+  emitter_.compare_zero(slow, 0, false, true);
+  sve_tbi_checked_ = true;
+}
+
 bool JitCompiler::emit_sve_inline(const detail::SmeEncoding &row,
                                   std::uint32_t instruction,
                                   std::uint64_t pc) {
@@ -2273,8 +2287,7 @@ bool JitCompiler::emit_sve_memory(const detail::SmeEncoding &row,
   if (base == 31U) {
     emit_misalignment_check(8, 16, slow);
   } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
+    emit_sve_tbi_check(slow);
   }
   if (indexed) {
     const auto index = read_native_gpr(index_register, false, 9U);
@@ -2430,12 +2443,10 @@ bool JitCompiler::emit_sve_gather(const detail::SmeEncoding &row,
     if (sp_base) {
       emit_misalignment_check(base_host, 16, slow);
     } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
+      emit_sve_tbi_check(slow);
     }
   } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
+    emit_sve_tbi_check(slow);
   }
   unsigned vector_host = 0;
   if (vector_base)
@@ -2523,8 +2534,7 @@ bool JitCompiler::emit_sve_predicate_fill(const detail::SmeEncoding &row,
   if (base == 31U) {
     emit_misalignment_check(8, 16, slow);
   } else {
-    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-    emitter_.compare_zero(slow, 0, false, true);
+    emit_sve_tbi_check(slow);
   }
   if (offset != 0) {
     const auto magnitude =

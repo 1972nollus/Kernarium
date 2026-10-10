@@ -670,9 +670,11 @@ lane out of reach, scatters while another vCPU's reservation tracks stores,
 the saturating counts at their limits, table lookups with indices that land
 in the tables, and the governing-predicate shapes (none, one, all but one, runs,
 every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
-also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
-(the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
-injected profile with SME and again with SME2.
+requires a block of SVE memory words to check the top-byte-ignore state once,
+runs the words with tagged and untagged bases, and also runs the 29 forms
+that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (the SCLAMP class), which
+execute at SM = 0 only with SME beside SVE, on an injected profile with SME and
+again with SME2.
 `arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
 as well) and every evidence witness at SM = 0 in both ZA states and every
 link shape, and requires that no translation holds an SVE or SME word.
