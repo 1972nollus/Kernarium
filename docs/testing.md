@@ -756,10 +756,11 @@ GPU conformance, SMP stress, official A64 semantics, and connected-device runs
 are opt-in. Run them only when the change or question crosses that boundary.
 
 Geekbench runs the image-local payload, or an attached payload image checked
-by its SHA-256 for an image without one, such as every x86-64 image, through
-the checked-in workload script with `--no-upload` and requires no Internet
-preflight. Manual performance tools and the probe inventory are under
-[`../tests/perf/README.md`](../tests/perf/README.md). Record conclusions in
+by its SHA-256 for an image without one, such as every x86-64 and armhf image,
+through the checked-in workload script with `--no-upload` and requires no
+Internet preflight. The workload runs Geekbench 6, or Geekbench 5's armv7
+build on an armhf image. Manual performance tools and the probe inventory are
+under [`../tests/perf/README.md`](../tests/perf/README.md). Record conclusions in
 [`optimization-history.md`](optimization-history.md), not raw logs or a new
 investigation document.
 
