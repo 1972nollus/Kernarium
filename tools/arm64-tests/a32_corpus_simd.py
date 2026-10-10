@@ -22,6 +22,9 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import random  # noqa: E402
+
+import a32_corpus_plan as plan  # noqa: E402
 from a32_corpus_memory import D, READ_ONLY, solve  # noqa: E402
 from a32_corpus_plan import (  # noqa: E402
     FLAGS, ISA_LETTER, Case, Context, candidate_words, fields_of, get_field, pattern, set_field, usable,
@@ -47,6 +50,34 @@ MEMORY_OR_SYSTEM = {"loads", "stores", "exclusive", "barrier", "hint", "prefetch
 def variant_fields(form):
     return [(field.low, field.width) for field in form.encoding.fields
             if field.name not in NOT_VARIANT and field.width <= 4]
+
+
+# Operands that pick a lane, a shift amount or an offset: every value of each, per element size.
+WATCH = ("index", "shift_amount", "position", "length", "frac_bits", "lsb", "sel", "lowbit")
+
+
+def operand_words(context: Context, form, chosen, limit: int = 12):
+    """Words that add values of the watched operands to those of the chosen words."""
+    keys = [key for key in WATCH if key in chosen[0][1]]
+    if not keys:
+        return []
+
+    def signature(operands):
+        return {(key, str(operands.get(key)), operands.get("esize"), operands.get("ebytes")) for key in keys}
+
+    seen = set()
+    for _word, operands in chosen:
+        seen |= signature(operands)
+    rng = random.Random(f"{plan.SEED}:{form.name}:operands")
+    extra = []
+    for row in plan.rows_of(context, form):
+        for _attempt in range(160):
+            word = plan.data._fill(rng, row, form, "random", True)
+            found = None if word is None else usable(context, form, word)
+            if found is not None and signature(found[1]) - seen and len(extra) < limit:
+                seen |= signature(found[1])
+                extra.append(found)
+    return extra
 
 
 def pick_words(context: Context, form, count: int):
@@ -80,7 +111,8 @@ def pick_words(context: Context, form, count: int):
     for found in candidates[1:]:
         if len(chosen) < count and found[0] not in [w for w, _ in chosen]:
             chosen.append(found)
-    return chosen
+    return chosen + [found for found in operand_words(context, form, chosen)
+                     if found[0] not in [w for w, _ in chosen]]
 
 
 def simd_forms(context: Context, levels=("simd",)):
