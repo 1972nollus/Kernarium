@@ -2169,6 +2169,70 @@ bool page_faults_are_user()
 	return ok;
 }
 
+#if defined(__x86_64__)
+constexpr long nr_mprotect_protection = 10;
+#else
+constexpr long nr_mprotect_protection = 125;
+#endif
+alignas(4096) unsigned char protection_pages[3 * 4096];
+word protection_address;
+void pf_protection_write() { probe_pf_write(protection_address); }
+void pf_protection_read() { probe_pf_read(protection_address); }
+void pf_protection_fetch() { probe_pf_fetch(protection_address); }
+
+/* A fault on a page the task has mapped and touched sets P, 1, in its error
+ * code when the access broke the page's protection -- a store to a read-only
+ * page, a fetch from one without execute permission -- and leaves it clear
+ * when the page is not accessible at all, as a PROT_NONE page is. */
+bool page_fault_protection()
+{
+	unsigned char *const read_only = protection_pages;
+	unsigned char *const no_access = protection_pages + 4096;
+	unsigned char *const data = protection_pages + 2 * 4096;
+	for (word page = 0; page < 3; ++page) {
+		protection_pages[page * 4096 + 5] = 1;
+		protection_pages[page * 4096 + 6] =
+			protection_pages[page * 4096 + 5];
+	}
+	if (raw_syscall(nr_mprotect_protection,
+			reinterpret_cast<long>(read_only), 4096, 1) != 0 ||
+	    raw_syscall(nr_mprotect_protection,
+			reinterpret_cast<long>(no_access), 4096, 0) != 0 ||
+	    raw_syscall(nr_mprotect_protection, reinterpret_cast<long>(data),
+			4096, 3) != 0) {
+		put("  mprotect failed\n");
+		return false;
+	}
+	constexpr long segv_accerr = 2;
+	bool ok = install_fault_handlers();
+	const word store_insn = address_of(probe_pf_write_insn);
+	const word load_insn = address_of(probe_pf_read_insn);
+	protection_address = reinterpret_cast<word>(read_only) + 5;
+	ok &= delivers("store to a present read-only page", pf_protection_write,
+		       address_of(probe_pf_write_end),
+		       {sigsegv, segv_accerr, protection_address, store_insn, 14,
+			true, 7});
+	protection_address = reinterpret_cast<word>(no_access) + 5;
+	ok &= delivers("load from a PROT_NONE page", pf_protection_read,
+		       address_of(probe_pf_read_end),
+		       {sigsegv, segv_accerr, protection_address, load_insn, 14,
+			true, 4});
+	ok &= delivers("store to a PROT_NONE page", pf_protection_write,
+		       address_of(probe_pf_write_end),
+		       {sigsegv, segv_accerr, protection_address, store_insn, 14,
+			true, 6});
+	ok &= delivers("fetch from a PROT_NONE page", pf_protection_fetch,
+		       address_of(probe_pf_fetch_end),
+		       {sigsegv, segv_accerr, protection_address,
+			protection_address, 14, true, 0x14});
+	protection_address = reinterpret_cast<word>(data) + 5;
+	ok &= delivers("fetch from a present page without execute",
+		       pf_protection_fetch, address_of(probe_pf_fetch_end),
+		       {sigsegv, segv_accerr, protection_address,
+			protection_address, 14, true, 0x15});
+	return ok;
+}
+
 extern "C" void probe_int_1();
 extern "C" char probe_int_1_end[];
 extern "C" void probe_int_2();
@@ -5621,6 +5685,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "page-fault"));
 	report("i386 #PF error codes carry the user bit",
 	       in_child(i386_probe, "page-fault"));
+	report("x86-64 a page fault sets P for a protection violation",
+	       in_child(self, "page-fault-protection"));
+	report("i386 a page fault sets P for a protection violation",
+	       in_child(i386_probe, "page-fault-protection"));
 	report("x86-64 tracer reads and writes the debug registers",
 	       in_child(self, "tracer-debug"));
 	report("i386 tracer reads and writes the debug registers",
@@ -5717,6 +5785,8 @@ extern "C" int probe_main(word *stack)
 			return undefined_faults() ? 0 : 1;
 		if (equal(mode, "page-fault"))
 			return page_faults_are_user() ? 0 : 1;
+		if (equal(mode, "page-fault-protection"))
+			return page_fault_protection() ? 0 : 1;
 		if (equal(mode, "tracer-debug"))
 			return tracer_debug_registers() ? 0 : 1;
 		if (equal(mode, "int-n"))
