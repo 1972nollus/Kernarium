@@ -503,7 +503,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots) {
-				if (slot.epoch != epoch_ || slot.body == nullptr)
+				if (slot.body == nullptr)
 					continue;
 				const auto &body = *slot.body;
 				std::uint64_t digest = 0xcbf29ce484222325ULL;
@@ -538,7 +538,7 @@ public:
 			if (!slab)
 				continue;
 			for (const auto &slot : slab->slots)
-				if (slot.epoch == epoch_ && slot.body != nullptr)
+				if (slot.body != nullptr)
 					++occupied;
 		}
 		return occupied;
@@ -609,9 +609,8 @@ public:
 		}
 		for (std::size_t way = 0; way < ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
-			if (slot.epoch != epoch_ || slot.pc != pc ||
-			    slot.generation != current_generation_ ||
-			    slot.body == nullptr)
+			if (slot.body == nullptr || slot.pc != pc ||
+			    slot.generation != current_generation_)
 				continue;
 			if (slot.validated_changes == changes) {
 				return slot.body->result();
@@ -771,7 +770,7 @@ public:
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < ways; ++way) {
 			const auto &slot = slab->slots[location.offset + way];
-			if (slot.epoch != epoch_) {
+			if (slot.body == nullptr) {
 				selected = way;
 				break;
 			}
@@ -805,14 +804,11 @@ public:
 		    validation_words <= guest_words.size())
 			validation = guest_words.first(validation_words);
 		auto *replacement_body = new_body(result, validation);
-		/* An epoch this slot no longer belongs to means its former owner
-		 * is already gone, so only a current occupant has a link record
-		 * left to reset -- but either way the body it holds is this
-		 * cache's to release. */
+		/* Whatever occupied the slot has a link record to reset, and a
+		 * body for this cache to release. */
 		if (slot.body != nullptr) {
-			if (slot.epoch == epoch_)
-				deactivate(slot.generation, slot.pc,
-					slot.body->link_entry());
+			deactivate(slot.generation, slot.pc,
+				slot.body->link_entry());
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
@@ -827,11 +823,9 @@ public:
 		 * reactivation of an unchanged owner keeps the memo.
 		 */
 		slot.link = nullptr;
-		slot.link_epoch = 0;
 		slot.body = replacement_body;
 		slot.pc = pc;
 		slot.generation = current_generation_;
-		slot.epoch = epoch_;
 		slot.validated_changes = changes;
 #if UML_GADGET_CACHE_CENSUS
 		++stores_;
@@ -960,6 +954,8 @@ private:
 		"a stored block's counts fit the body's narrow fields");
 
 	struct Slot final {
+		/* The translation this slot indexes. A slot is occupied exactly
+		 * while this is non-null. */
 		Body *body{};
 		/* The address space this translation belongs to. A guest virtual
 		 * address only means something inside one, so a slot is a match
@@ -969,24 +965,22 @@ private:
 		 */
 		unsigned long generation{};
 		std::uint64_t pc{};
-		std::uint64_t epoch{};
 		/* Reactivation resolves the same link record every time, so its
 		 * address is memoised here rather than hashed again on each pass.
 		 * The owning address space keeps its records in chunks that never
 		 * move, so the address stays valid while the slot holds this
 		 * translation: store() and release() reset the memo, and retiring
-		 * the address space clears this slot's epoch in the same pass that
+		 * the address space releases this slot in the same pass that
 		 * destroys the map.
 		 *
 		 * The memo is only ever valid for the address space named by
 		 * `generation`, and nothing about the record itself says which
 		 * one that is: the guest PC it carries is equal across all of
 		 * them. Ordinary slot replacement does not keep the owner, so
-		 * store() resets this pair rather than letting activate() decide
+		 * store() resets the memo rather than letting activate() decide
 		 * from the record alone.
 		 */
 		LinkRecord *link{};
-		std::uint64_t link_epoch{};
 		std::uint64_t validated_changes{};
 	};
 
@@ -994,7 +988,7 @@ private:
 	 * the tag size multiplies by slot_count: at 65,536 slots every eight
 	 * bytes here is half a mebibyte per executor. Anything that belongs to
 	 * one translation belongs in its Body. */
-	static_assert(sizeof(Slot) <= 56,
+	static_assert(sizeof(Slot) <= 40,
 		"cache slots index translations; they do not hold them");
 
 	struct Slab final {
@@ -1181,12 +1175,10 @@ private:
 
 	void release(Slot &slot, unsigned long generation) noexcept
 	{
-		if (slot.epoch != epoch_ || slot.generation != generation ||
-		    slot.body == nullptr)
+		if (slot.body == nullptr || slot.generation != generation)
 			return;
 		delete_body(slot.body);
 		slot.body = nullptr;
-		slot.epoch = 0;
 		slot.link = nullptr;
 	}
 
@@ -1275,7 +1267,6 @@ private:
 			delete_body(slot.body);
 			slot.body = nullptr;
 		}
-		slot.epoch = 0;
 		slot.validated_changes = 0;
 	}
 
@@ -1340,11 +1331,8 @@ private:
 		const auto &body = *slot.body;
 		if (!body.complete || body.instruction_count == 0)
 			return;
-		if (slot.link == nullptr || slot.link_epoch != epoch_ ||
-		    slot.link->link.guest_pc != pc) {
+		if (slot.link == nullptr || slot.link->link.guest_pc != pc)
 			slot.link = &link_record(pc);
-			slot.link_epoch = epoch_;
-		}
 		auto &record = *slot.link;
 		if (!record.listed) {
 			record.listed = true;
@@ -1416,7 +1404,6 @@ private:
 #endif
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
-	std::uint64_t epoch_{1};
 };
 
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
