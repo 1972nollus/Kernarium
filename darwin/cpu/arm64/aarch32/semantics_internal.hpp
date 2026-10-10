@@ -60,6 +60,9 @@ enum class Op : std::uint8_t {
 	/* VFP and Advanced SIMD memory: VLDR, VSTR, VLDM, VSTM (FLDMX and FSTMX
 	 * included) and the structure loads and stores. */
 	vldr, vstr, vldm, vstm, vld, vst,
+	/* VFP and Advanced SIMD data processing and moves, executed by the
+	 * handler the form's table row names (OpInfo::vector). */
+	vector,
 };
 
 /* The suffix of a parallel add or subtract, with its signedness and mode. */
@@ -81,6 +84,13 @@ enum class Mode : std::uint8_t { ia, ib, da, db };
  * structure to one lane, or one structure to all lanes (loads only). */
 enum class StructureKind : std::uint8_t { multiple, single_lane, all_lanes };
 
+class Exec;
+
+/* A handler for the VFP and Advanced SIMD forms that share a pseudocode
+ * body (one XML file); it executes an instruction whose condition has
+ * passed, as the family handlers do. */
+using VectorHandler = bool (*)(Exec &x);
+
 struct OpInfo final {
 	Op op{Op::none};
 	ParallelKind kind{};
@@ -95,7 +105,22 @@ struct OpInfo final {
 	/* A VLDn or VSTn: n, from 1 to 4, and the shape. */
 	std::uint8_t structs{};
 	StructureKind structure{StructureKind::multiple};
+	/* For Op::vector: the handler. */
+	VectorHandler vector{};
 };
+
+/* A stem of the decoder's form names (the name up to its encoding tag, as
+ * VADD_f for VADD_f_A1_D) and the handler of the forms that share it. */
+struct VectorEntry final {
+	const char *stem;
+	VectorHandler handler;
+};
+
+/* The handlers each source file defines. */
+[[nodiscard]] const VectorEntry *vector_move_entries(std::size_t &count) noexcept;
+[[nodiscard]] const VectorEntry *neon_integer_entries(std::size_t &count) noexcept;
+[[nodiscard]] const VectorEntry *neon_shift_entries(std::size_t &count) noexcept;
+[[nodiscard]] const VectorEntry *vector_float_entries(std::size_t &count) noexcept;
 
 [[nodiscard]] const OpInfo &op_info(Form form) noexcept;
 

@@ -21,8 +21,10 @@ add_library(uml_arm64_aarch32_semantics OBJECT
     semantics_control.cpp
     semantics_integer.cpp
     semantics_memory.cpp
+    semantics_neon_integer.cpp
     semantics_table.cpp
-    semantics_vector_memory.cpp)
+    semantics_vector_memory.cpp
+    semantics_vector_move.cpp)
 uml_declare_architecture_target(uml_arm64_aarch32_semantics cpu shared)
 target_link_libraries(uml_arm64_aarch32_semantics PRIVATE
     UML::BridgeAbi

@@ -207,7 +207,7 @@ std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
 	if (form.availability != Availability::implemented || info.op == Op::none)
 		return false;
 	return form.level <= a32_semantics_level()
-		|| (form.level == Level::simd && early_simd_op(info.op));
+		|| (form.level == Level::simd && (early_simd_op(info.op) || info.op == Op::vector));
 }
 
 namespace {
@@ -268,6 +268,8 @@ bool dispatch(Exec &x, const OpInfo &info)
 	case Op::vldr: case Op::vstr: case Op::vldm: case Op::vstm: case Op::vld:
 	case Op::vst:
 		return exec_vector_memory(x, info);
+	case Op::vector:
+		return info.vector(x);
 	}
 	return x.raise_fatal();
 }

@@ -403,18 +403,28 @@ std::string check(Machine &machine, const Case &test, const Profile &profile)
 	return {};
 }
 
-/* Whether the library covers every legal instruction of the program. */
+/* Whether the library covers every legal instruction of the program: the
+ * form must be covered, and the word must be legal at the library's level (a
+ * floating-point form at half precision is not, until the level reaches the
+ * Armv8 extensions). */
 bool within_coverage(const Case &test)
 {
 	const bool thumb = test.flags & kFlagThumb;
+	const Profile complete = Profile::at(Level::complete);
+	/* The Advanced SIMD and VFP group is under way; its words decode as
+	 * the group's level until the library's level reaches it. */
+	const Profile library = Profile::at(
+		a32_semantics_level() < Level::simd ? Level::simd : a32_semantics_level());
 	ItState it;
 	for (unsigned half = 0; half < test.halves.size();) {
 		Instruction instruction;
+		Instruction limited;
 		if (!thumb) {
 			if (half + 1 >= test.halves.size())
 				break;
-			instruction =
-				decode_a32(std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], Profile::at(Level::complete));
+			const std::uint32_t word = std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half];
+			instruction = decode_a32(word, complete);
+			limited = decode_a32(word, library);
 			half += 2;
 		} else {
 			const std::uint16_t first = test.halves[half];
@@ -423,11 +433,13 @@ bool within_coverage(const Case &test)
 				break;
 			const std::uint32_t word = length == 4
 				? std::uint32_t{first} << 16 | test.halves[half + 1] : std::uint32_t{first} << 16;
-			instruction = decode_thumb(word, it, Profile::at(Level::complete));
+			instruction = decode_thumb(word, it, complete);
+			limited = decode_thumb(word, it, library);
 			it = instruction.next_it;
 			half += length / 2;
 		}
-		if (instruction.legal() && !a32_semantics_covers(instruction.form))
+		if (instruction.legal() &&
+			(!a32_semantics_covers(instruction.form) || !limited.legal()))
 			return false;
 	}
 	return true;

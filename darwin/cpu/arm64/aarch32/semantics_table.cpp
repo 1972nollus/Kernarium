@@ -144,6 +144,16 @@ constexpr Named named_ops[] = {
 		std::unordered_map<std::string_view, Op> by_name;
 		for (const auto &named : named_ops)
 			by_name.emplace(named.mnemonic, named.op);
+		std::unordered_map<std::string_view, VectorHandler> by_stem;
+		const auto add_stems = [&](const VectorEntry *entries, std::size_t count) {
+			for (std::size_t index = 0; index < count; ++index)
+				by_stem.emplace(entries[index].stem, entries[index].handler);
+		};
+		std::size_t count = 0;
+		const VectorEntry *entries = vector_move_entries(count);
+		add_stems(entries, count);
+		entries = neon_integer_entries(count);
+		add_stems(entries, count);
 		for (std::size_t index = 0; index < kFormCount; ++index) {
 			const std::string_view name = kForms[index].mnemonic;
 			const std::string_view form = kForms[index].name;
@@ -152,6 +162,21 @@ constexpr Named named_ops[] = {
 				info.op = found->second;
 			else
 				(void)parallel_mnemonic(name, info);
+			/* A VFP or Advanced SIMD data-processing form: the handler of
+			 * its stem, the name up to the encoding tag. */
+			if (info.op == Op::none) {
+				std::string_view stem = form;
+				for (std::size_t at = 0; at + 2U < form.size(); ++at)
+					if (form[at] == '_' && (form[at + 1U] == 'A' || form[at + 1U] == 'T')
+						&& form[at + 2U] >= '0' && form[at + 2U] <= '9') {
+						stem = form.substr(0, at);
+						break;
+					}
+				if (const auto found = by_stem.find(stem); found != by_stem.end()) {
+					info.op = Op::vector;
+					info.vector = found->second;
+				}
+			}
 			/* BLX (immediate) shares BL's encoding file and links the same way. */
 			if (info.op == Op::blx && form.starts_with("BL_i"))
 				info.op = Op::bl;
