@@ -71,6 +71,14 @@ uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
 uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+# The AArch32 decoder: its generated table, the IT rules, the profile's gates
+# and the operands of the Decode pseudocode, against the generator's
+# independent answers and LLVM MC on stored samples. It composes the decoder
+# alone, which no engine links yet.
+uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
+    OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
+
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
 uml_add_arm64_unit_test(base_bit_allocation)

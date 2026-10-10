@@ -11,6 +11,9 @@ target_link_libraries(uml_cpu_contract INTERFACE
 # Executable memory has one owner, which the JIT engines share.
 add_subdirectory(jit_memory)
 
+# The AArch32 decoder both arm64 engines and the semantic library share.
+add_subdirectory(arm64/aarch32)
+
 # A private cache holds one translation per slot, so the slot count is the
 # working set an executor can keep. Counted on Geekbench 6 Clang, the workload
 # with the largest code footprint, one executor reaches about 194,000 distinct
