@@ -73,6 +73,17 @@ constexpr Spelled variants[] = {
   }
 }
 
+/* Mnemonics whose A2 encodings are the NEON by-scalar forms. */
+[[nodiscard]] bool neon_scalar_only(VM mnemonic) noexcept {
+  switch (mnemonic) {
+  case VM::vqdmulh: case VM::vqrdmulh: case VM::vqdmull: case VM::vqdmlal:
+  case VM::vqdmlsl:
+    return true;
+  default:
+    return false;
+  }
+}
+
 [[nodiscard]] VInfo build(std::string_view name) noexcept {
   VInfo info;
   const auto first = name.find('_');
@@ -136,8 +147,13 @@ constexpr Spelled variants[] = {
       info.vfp = info.encoding == 2U;
       break;
     }
+  } else if (neon_scalar_only(info.mnemonic)) {
+    info.vfp = false;
   } else {
-    info.vfp = info.encoding == 2U;
+    // The A2 encodings of the arithmetic mnemonics are the VFP ones, whose
+    // names end in the precision (S or D); the NEON A2 forms of the
+    // saturating multiplies are by scalar.
+    info.vfp = info.encoding == 2U && (last == "S" || last == "D");
   }
   info.dp = info.vfp && last == "D";
   return info;
@@ -178,7 +194,13 @@ bool vector_lowered(aarch32::Form form) noexcept {
       return false;
     }
   }
-  return false;
+  switch (v.mnemonic) {
+  case VM::vld1: case VM::vld2: case VM::vld3: case VM::vld4: case VM::vst1:
+  case VM::vst2: case VM::vst3: case VM::vst4:
+    return false;
+  default:
+    return true;
+  }
 }
 
 } // namespace uml::cpu::arm64::jit::a32

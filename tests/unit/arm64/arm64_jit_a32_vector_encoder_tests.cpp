@@ -429,6 +429,10 @@ void vector_encoders_match_llvm_mc() {
     check("cmge v3.4s, v4.4s, #0", enc::vec::misc(true, vec::cmge0, 2, 3, 4), 0x6ea08883U);
     check("cmle v3.4h, v4.4h, #0", enc::vec::misc(false, vec::cmle0, 1, 3, 4), 0x2e609883U);
     check("cmle v3.4s, v4.4s, #0", enc::vec::misc(true, vec::cmle0, 2, 3, 4), 0x6ea09883U);
+    check("urecpe v3.2s, v4.2s", enc::vec::misc(false, vec::urecpe, 2, 3, 4), 0x0ea1c883U);
+    check("urecpe v3.4s, v4.4s", enc::vec::misc(true, vec::urecpe, 2, 3, 4), 0x4ea1c883U);
+    check("ursqrte v3.2s, v4.2s", enc::vec::misc(false, vec::ursqrte, 2, 3, 4), 0x2ea1c883U);
+    check("ursqrte v3.4s, v4.4s", enc::vec::misc(true, vec::ursqrte, 2, 3, 4), 0x6ea1c883U);
     check("not v3.8b, v4.8b", enc::vec::misc(false, vec::not_, 0, 3, 4), 0x2e205883U);
     check("not v3.16b, v4.16b", enc::vec::misc(true, vec::not_, 0, 3, 4), 0x6e205883U);
     check("xtn v3.8b, v4.8h", enc::vec::misc(false, vec::xtn, 0, 3, 4), 0x0e212883U);
@@ -925,6 +929,12 @@ void vector_encoders_match_llvm_mc() {
     check("str d3, [x4, #24]", enc::vec::str_simd(3, 3, 4, 24), 0xfd000c83U);
     check("ldr q3, [x4, #16]", enc::vec::ldr_simd(4, 3, 4, 16), 0x3dc00483U);
     check("str q3, [x4, #48]", enc::vec::str_simd(4, 3, 4, 48), 0x3d800c83U);
+    check("ldur s3, [x4, #-12]", enc::vec::ldur_simd(2, 3, 4, -12), 0xbc5f4083U);
+    check("stur s3, [x4, #20]", enc::vec::stur_simd(2, 3, 4, 20), 0xbc014083U);
+    check("ldur d3, [x4, #-24]", enc::vec::ldur_simd(3, 3, 4, -24), 0xfc5e8083U);
+    check("stur d3, [x4, #40]", enc::vec::stur_simd(3, 3, 4, 40), 0xfc028083U);
+    check("ldur q3, [x4, #-48]", enc::vec::ldur_simd(4, 3, 4, -48), 0x3cdd0083U);
+    check("stur q3, [x4, #80]", enc::vec::stur_simd(4, 3, 4, 80), 0x3c850083U);
     check("ldp q3, q6, [x4, #32]", enc::vec::ldp_q(3, 6, 4, 32), 0xad411883U);
     check("stp q3, q6, [x4, #-48]", enc::vec::stp_q(3, 6, 4, -48), 0xad3e9883U);
     check("ld1 {v3.8b}, [x5]", enc::vec::structure_multiple(false, true, vec::ld1_1, 0, 3, 5), 0x0c4070a3U);

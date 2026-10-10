@@ -142,8 +142,7 @@ A32Compiler::Flow A32Compiler::emit_vector(const OpInfo &info) {
   }
   if (v.vfp)
     return emit_vfp(info, v);
-  exit_illegal();
-  return Flow::end;
+  return emit_neon(v);
 }
 
 } // namespace uml::cpu::arm64::jit::a32

@@ -294,6 +294,39 @@ private:
   [[nodiscard]] Flow emit_vfp_move(const VInfo &v);
   [[nodiscard]] Flow emit_fpscr(const VInfo &v);
 
+  // Advanced SIMD (a32_compiler_neon*.cpp).
+  [[nodiscard]] Flow emit_neon(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_same(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
+                                    unsigned n, unsigned m);
+  [[nodiscard]] Flow emit_neon_logic(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_misc(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_convert(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_immediate(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_permute(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_table(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_shift(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_diff(const VInfo &v);
+  [[nodiscard]] Flow emit_neon_scalar(const VInfo &v);
+  [[nodiscard]] static unsigned esize_log2(int esize) noexcept;
+  /* An A64 vector instruction with its register fields clear, given them. */
+  void emit_vec3(std::uint32_t base, unsigned rd, unsigned rn, unsigned rm) {
+    emit(base | rd | (rn << 5) | (rm << 16));
+  }
+  void emit_vec2(std::uint32_t base, unsigned rd, unsigned rn) {
+    emit(base | rd | (rn << 5));
+  }
+  /* Register copy (a no-op when they are the same register). */
+  void vmov(unsigned d, unsigned n);
+  /* The register or half register `reg` (a D or Q number) as a source. */
+  [[nodiscard]] unsigned vsrc(unsigned reg, bool quad, unsigned scratch);
+  void neon_op3(std::uint32_t base, bool quad, bool wide, unsigned d,
+                unsigned n, unsigned m, bool reads_dest);
+  void neon_op2(std::uint32_t base, bool quad, bool wide, unsigned d,
+                unsigned m, bool reads_dest);
+  void q_put(unsigned q, unsigned result);
+  void neon_put(unsigned reg, bool quad, unsigned result);
+
   // Control (a32_compiler_control.cpp).
   [[nodiscard]] Flow emit_branch(const OpInfo &info);
   [[nodiscard]] Flow emit_status_register(const OpInfo &info);

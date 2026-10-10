@@ -13,11 +13,13 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/jit/a32/a32_compiler.hpp"
 #include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
 #include "cpu/arm64/jit/a32/a32_vector_operations.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -374,6 +376,8 @@ bool within_level(const Case &test, const dec::Profile &profile) {
   dec::ItState it;
   for (unsigned half = 0; half < test.halves.size();) {
     dec::Instruction instruction;
+    const unsigned first_half = half;
+    const dec::ItState before_it = it;
     if (!thumb) {
       if (half + 1 >= test.halves.size())
         break;
@@ -396,6 +400,21 @@ bool within_level(const Case &test, const dec::Profile &profile) {
         static_cast<int>(instruction.info().level) >
             static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()))
       return false;
+    /* An encoding the oracle executes but the JIT's own profile leaves out
+     * (the half-precision variants of the simd-level forms need FP16). */
+    if (instruction.legal()) {
+      const auto own = dec::Profile::at(::uml::cpu::arm64::jit::a32::a32_level());
+      const auto word_at = [&](unsigned at) {
+        return thumb ? (dec::thumb_length(test.halves[at]) == 4
+                            ? std::uint32_t{test.halves[at]} << 16 | test.halves[at + 1]
+                            : std::uint32_t{test.halves[at]} << 16)
+                     : std::uint32_t{test.halves[at + 1]} << 16 | test.halves[at];
+      };
+      const auto again = thumb ? dec::decode_thumb(word_at(first_half), before_it, own)
+                               : dec::decode_a32(word_at(first_half), own);
+      if (!again.legal())
+        return false;
+    }
   }
   return true;
 }
@@ -570,6 +589,32 @@ void require_lowered_forms_stay_inline(Machine &machine, const Pack &pack,
 
 } // namespace
 
+/* --dump WORD [HALFWORD2]: translates one A32 word (or T32 pair) and prints
+ * the generated instructions as assembler directives. */
+void dump_translation(std::uint32_t word, bool thumb) {
+  using namespace ::uml::cpu::arm64::jit::a32;
+  A32Compiler compiler;
+  std::array<std::byte, 16> bytes{};
+  const std::uint32_t nop = 0xe320f000U;
+  if (thumb) {
+    const std::uint16_t first = static_cast<std::uint16_t>(word >> 16);
+    const std::uint16_t second = static_cast<std::uint16_t>(word);
+    std::memcpy(bytes.data(), &first, 2);
+    std::memcpy(bytes.data() + 2, &second, 2);
+  } else {
+    std::memcpy(bytes.data(), &word, 4);
+    std::memcpy(bytes.data() + 4, &nop, 4);
+  }
+  Request request;
+  request.key = thumb ? ::uml::cpu::arm64::aarch32::t32_key(0x1000)
+                      : ::uml::cpu::arm64::aarch32::a32_key(0x1000);
+  request.bytes = bytes;
+  request.single = true;
+  const auto result = compiler.compile(request);
+  for (const auto instruction : result.translation.words)
+    std::printf(".inst 0x%08x\n", instruction);
+}
+
 int main(int argc, char **argv) {
   const char *path = nullptr;
   std::string only_record;
@@ -595,6 +640,13 @@ int main(int argc, char **argv) {
       exit_report = true;
     else if (argument == "--form" && index + 1 < argc)
       only_form = argv[++index];
+    else if (argument == "--dump" && index + 1 < argc) {
+      const std::uint32_t word =
+          static_cast<std::uint32_t>(std::strtoul(argv[++index], nullptr, 16));
+      const bool thumb = index + 1 < argc && std::string_view{argv[index + 1]} == "thumb";
+      dump_translation(word, thumb);
+      return 0;
+    }
     else
       path = argv[index];
   }

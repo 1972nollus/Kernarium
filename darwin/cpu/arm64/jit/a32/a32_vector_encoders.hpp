@@ -98,6 +98,8 @@ enum Misc : unsigned {
 	rev32 = 0x20, uaddlp = 0x22, usqadd = 0x23, clz = 0x24, not_ = 0x25,
 	uadalp = 0x26, sqneg = 0x27, cmge0 = 0x28, cmle0 = 0x29, neg = 0x2b,
 	sqxtun = 0x32, shll = 0x33, uqxtn = 0x34,
+	/* The 32-bit reciprocal estimates (size 2). */
+	urecpe = 0x1c, ursqrte = 0x3c,
 };
 [[nodiscard]] constexpr std::uint32_t misc(bool q, Misc op, unsigned size,
 	unsigned d, unsigned n) noexcept
@@ -389,6 +391,24 @@ enum FloatInt : unsigned {
 	const unsigned opc = log2_size == 4U ? 2U : 0U;
 	return 0x3d00'0000U | (size << 30) | (opc << 22) |
 	       ((offset >> log2_size) << 10) | (n << 5) | t;
+}
+/* LDUR/STUR of a SIMD&FP register: the unscaled form, signed offset -256..255
+ * in bytes whatever the size. */
+[[nodiscard]] constexpr std::uint32_t ldur_simd(unsigned log2_size,
+	unsigned t, unsigned n, int offset) noexcept
+{
+	const unsigned size = log2_size == 4U ? 0U : log2_size;
+	const unsigned opc = log2_size == 4U ? 3U : 1U;
+	return 0x3c00'0000U | (size << 30) | (opc << 22) |
+	       ((static_cast<unsigned>(offset) & 0x1ffU) << 12) | (n << 5) | t;
+}
+[[nodiscard]] constexpr std::uint32_t stur_simd(unsigned log2_size,
+	unsigned t, unsigned n, int offset) noexcept
+{
+	const unsigned size = log2_size == 4U ? 0U : log2_size;
+	const unsigned opc = log2_size == 4U ? 2U : 0U;
+	return 0x3c00'0000U | (size << 30) | (opc << 22) |
+	       ((static_cast<unsigned>(offset) & 0x1ffU) << 12) | (n << 5) | t;
 }
 /* LDP/STP of Q registers, signed offset (a multiple of 16, -1024..1008). */
 [[nodiscard]] constexpr std::uint32_t ldp_q(unsigned t, unsigned t2,
