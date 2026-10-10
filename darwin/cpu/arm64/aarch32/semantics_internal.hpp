@@ -57,6 +57,9 @@ enum class Op : std::uint8_t {
 	stl, stlb, stlh, clrex,
 	/* System. */
 	prefetch, svc, bkpt, udf, mrs, msr, coprocessor, nop, dmb, dsb, isb, it,
+	/* VFP and Advanced SIMD memory: VLDR, VSTR, VLDM, VSTM (FLDMX and FSTMX
+	 * included) and the structure loads and stores. */
+	vldr, vstr, vldm, vstm, vld, vst,
 };
 
 /* The suffix of a parallel add or subtract, with its signedness and mode. */
@@ -74,6 +77,10 @@ enum class Shape : std::uint8_t { other, immediate, reg, reg_shifted, literal };
  * decrement after or before. */
 enum class Mode : std::uint8_t { ia, ib, da, db };
 
+/* The shape of a VLDn or VSTn form: multiple n-element structures, a single
+ * structure to one lane, or one structure to all lanes (loads only). */
+enum class StructureKind : std::uint8_t { multiple, single_lane, all_lanes };
+
 struct OpInfo final {
 	Op op{Op::none};
 	ParallelKind kind{};
@@ -85,9 +92,15 @@ struct OpInfo final {
 	 * is SP with writeback. */
 	Mode transfer{Mode::ia};
 	bool stack{};
+	/* A VLDn or VSTn: n, from 1 to 4, and the shape. */
+	std::uint8_t structs{};
+	StructureKind structure{StructureKind::multiple};
 };
 
 [[nodiscard]] const OpInfo &op_info(Form form) noexcept;
+
+/* Whether the library executes a form of this table row and operation. */
+[[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept;
 
 inline constexpr unsigned reg_sp = 13;
 inline constexpr unsigned reg_lr = 14;
@@ -148,6 +161,35 @@ public:
 	void set_reg(std::int32_t n, std::uint32_t value) noexcept
 	{
 		set_reg(static_cast<unsigned>(n), value);
+	}
+
+	/* The VFP and Advanced SIMD register file: D0-D31 overlay Q0-Q15 in
+	 * vectors[0..15] (D2n is the low half of vectors[n]), S0-S31 the halves
+	 * of D0-D15. */
+	[[nodiscard]] std::uint64_t d_reg(unsigned n) const noexcept
+	{
+		std::uint64_t value;
+		std::memcpy(&value, cpu.vectors[n >> 1].bytes.data() + 8U * (n & 1U), 8);
+		return value;
+	}
+	void set_d_reg(unsigned n, std::uint64_t value) noexcept
+	{
+		std::memcpy(cpu.vectors[n >> 1].bytes.data() + 8U * (n & 1U), &value, 8);
+	}
+	[[nodiscard]] std::uint32_t s_reg(unsigned n) const noexcept
+	{
+		std::uint32_t value;
+		std::memcpy(&value, cpu.vectors[n >> 2].bytes.data() + 4U * (n & 3U), 4);
+		return value;
+	}
+	void set_s_reg(unsigned n, std::uint32_t value) noexcept
+	{
+		std::memcpy(cpu.vectors[n >> 2].bytes.data() + 4U * (n & 3U), &value, 4);
+	}
+	/* The bytes of D(n) from `offset`, for the element accesses. */
+	[[nodiscard]] std::byte *d_bytes(unsigned n) noexcept
+	{
+		return cpu.vectors[n >> 1].bytes.data() + 8U * (n & 1U);
 	}
 
 	/* The condition flags. */
@@ -282,6 +324,7 @@ bool exec_single_transfer(Exec &x, const OpInfo &info);
 bool exec_multiple_transfer(Exec &x, const OpInfo &info);
 bool exec_exclusive(Exec &x, const OpInfo &info);
 bool exec_system(Exec &x, const OpInfo &info);
+bool exec_vector_memory(Exec &x, const OpInfo &info);
 
 /* Arm's shift helpers (Shift_C, AddWithCarry). */
 struct ShiftResult final {

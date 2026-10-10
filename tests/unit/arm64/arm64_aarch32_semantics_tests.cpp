@@ -17,6 +17,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #ifndef DARWIN_UML_GUEST_PAGE_SIZE
@@ -37,7 +38,7 @@ constexpr std::uint32_t data_base = 0x2000'0000;
 
 /* Guest memory of separate host pages, so a library that assumed two pages
  * adjacent in the host would fail. */
-class Machine final : public A32Memory {
+class Machine : public A32Memory {
 public:
 	std::byte *translate(std::uint64_t address, MemoryAccess access) noexcept override
 	{
@@ -105,12 +106,13 @@ private:
 	std::map<std::uint32_t, Page> pages_;
 };
 
-struct Fixture final {
-	Machine machine;
+template<typename M>
+struct BasicFixture final {
+	M machine;
 	CpuState cpu{};
 	Profile profile = Profile::at(Level::base);
 
-	Fixture()
+	BasicFixture()
 	{
 		machine.map(code_base, true, true);
 		machine.map(data_base);
@@ -129,6 +131,22 @@ struct Fixture final {
 	[[nodiscard]] std::uint32_t r(unsigned n) const
 	{
 		return static_cast<std::uint32_t>(cpu.registers[n]);
+	}
+	[[nodiscard]] std::uint64_t d(unsigned n) const
+	{
+		std::uint64_t value;
+		std::memcpy(&value, cpu.vectors[n / 2].bytes.data() + 8U * (n & 1U), 8);
+		return value;
+	}
+	void set_d(unsigned n, std::uint64_t value)
+	{
+		std::memcpy(cpu.vectors[n / 2].bytes.data() + 8U * (n & 1U), &value, 8);
+	}
+	[[nodiscard]] std::uint32_t s(unsigned n) const
+	{
+		std::uint32_t value;
+		std::memcpy(&value, cpu.vectors[n / 4].bytes.data() + 4U * (n & 3U), 4);
+		return value;
 	}
 
 	/* Places A32 words at the code page and steps the first. */
@@ -152,6 +170,8 @@ struct Fixture final {
 	}
 };
 
+using Fixture = BasicFixture<Machine>;
+
 constexpr std::uint32_t ldm_r0_r1_r3 = 0xe890000e; /* ldm r0, {r1, r2, r3} */
 constexpr std::uint32_t stmia_wb_r0_r1_r3 = 0xe8a0000e; /* stm r0!, {r1, r2, r3} */
 constexpr std::uint32_t ldr_r1_r0 = 0xe5901000;
@@ -170,6 +190,15 @@ constexpr std::uint32_t stl_r1_r0 = 0xe180fc91;
 constexpr std::uint32_t ldaex_r1_r0 = 0xe1901e9f;
 constexpr std::uint32_t stlex_r2_r1_r0 = 0xe1802e91;
 
+[[nodiscard]] bool vector_memory_mnemonic(std::string_view name)
+{
+	return name == "VLDR" || name == "VSTR" || name == "VLDM" || name == "VLDMDB" ||
+		name == "VSTM" || name == "VSTMDB" || name == "FLDMIAX" || name == "FLDMDBX" ||
+		name == "FSTMIAX" || name == "FSTMDBX" ||
+		(name.size() == 4 && (name.starts_with("VLD") || name.starts_with("VST")) &&
+			name[3] >= '1' && name[3] <= '4');
+}
+
 void test_coverage()
 {
 	std::size_t covered = 0;
@@ -177,12 +206,17 @@ void test_coverage()
 		const auto form = static_cast<Form>(index);
 		const FormInfo &info = kForms[index];
 		const bool pseudo = form == Form::Undefined || form == Form::ReservedHint;
+		/* Everything up to the library's level, and the VFP and SIMD memory
+		 * forms that need no arithmetic. */
 		const bool expected = pseudo || (info.availability == Availability::implemented &&
-							info.level <= a32_semantics_level());
-		require(a32_semantics_covers(form) == expected, "the coverage predicate follows the level");
+							(info.level <= a32_semantics_level() ||
+								(info.level == Level::simd &&
+									vector_memory_mnemonic(info.mnemonic))));
+		require(a32_semantics_covers(form) == expected,
+			"the coverage predicate follows the level and the memory group");
 		covered += a32_semantics_covers(form) ? 1 : 0;
 	}
-	require(covered > 840, "the library covers the whole base level");
+	require(covered > 1000, "the library covers the base level and the SIMD memory group");
 }
 
 void test_events()
@@ -556,6 +590,303 @@ void test_it_udf()
 		"a UDF that passes is undefined at its own ITSTATE");
 }
 
+void test_vector_memory()
+{
+	Fixture f;
+	f.profile = Profile::at(Level::complete);
+	const std::uint32_t area = data_base + 0x100;
+	f.cpu.registers[0] = area;
+	f.machine.put(area + 8, std::uint64_t{0x1122'3344'5566'7788});
+	f.machine.put(area + 4, std::uint32_t{0xcafe'f00d});
+
+	/* VLDR / VSTR, D and S. */
+	auto result = f.step_a32_word(0xed901b02); /* vldr d1, [r0, #8] */
+	require(result.event == StepEvent::retired && f.d(1) == 0x1122'3344'5566'7788, "VLDR D");
+	result = f.step_a32_word(0xedd01a01); /* vldr s3, [r0, #4] */
+	require(result.event == StepEvent::retired && f.s(3) == 0xcafe'f00d && f.d(1) >> 32 == 0xcafe'f00d,
+		"VLDR S writes only its word of the D register");
+	f.machine.put(area + 8, std::uint64_t{0});
+	result = f.step_a32_word(0xed801b02); /* vstr d1, [r0, #8] */
+	require(result.event == StepEvent::retired &&
+			f.machine.get<std::uint64_t>(area + 8) == 0xcafe'f00d'5566'7788,
+		"VSTR D");
+	result = f.step_a32_word(0xedc01a01); /* vstr s3, [r0, #4] */
+	require(result.event == StepEvent::retired && f.machine.get<std::uint32_t>(area + 4) == 0xcafe'f00d,
+		"VSTR S");
+
+	/* VLDR (literal) reads from the word-aligned PC. */
+	f.machine.put(code_base + 16, std::uint64_t{0x0102'0304'0506'0708});
+	result = f.step_a32_word(0xed9f1b02); /* vldr d1, [pc, #8] */
+	require(result.event == StepEvent::retired && f.d(1) == 0x0102'0304'0506'0708, "VLDR literal");
+
+	/* MemA: a misaligned address is an alignment fault, with nothing changed. */
+	f.cpu.registers[0] = area + 2;
+	result = f.step_a32_word(0xed901b02);
+	require(result.event == StepEvent::memory_fault && result.alignment &&
+			result.fault_address == area + 10 && f.d(1) == 0x0102'0304'0506'0708,
+		"VLDR needs word alignment");
+	result = f.step_a32_word(0xec902b06); /* vldm r0, {d2-d4} */
+	require(result.event == StepEvent::memory_fault && result.alignment && result.fault_address == area + 2,
+		"VLDM needs word alignment");
+
+	/* VLDM that runs into an unmapped page changes no register. */
+	f.machine.unmap(data_base + page);
+	f.cpu.registers[0] = data_base + page - 16;
+	f.cpu.vectors[1].bytes.fill(std::byte{0x5a});
+	result = f.step_a32_word(0xec902b06);
+	require(result.event == StepEvent::memory_fault && !result.alignment &&
+			result.access == MemoryAccess::read && result.fault_address == data_base + page &&
+			f.d(2) == 0x5a5a'5a5a'5a5a'5a5a,
+		"a faulting VLDM leaves the registers");
+
+	/* VSTM stores the words ahead of the fault and leaves the base. */
+	f.cpu.registers[0] = data_base + page - 12;
+	f.set_d(2, 0x2121'2121'2121'2121);
+	f.set_d(3, 0x3131'3131'3131'3131);
+	f.set_d(4, 0x4141'4141'4141'4141);
+	result = f.step_a32_word(0xeca02b06); /* vstmia r0!, {d2-d4} */
+	require(result.event == StepEvent::memory_fault && result.access == MemoryAccess::write &&
+			result.fault_address == data_base + page && f.r(0) == data_base + page - 12,
+		"a faulting VSTM leaves the base");
+	require(f.machine.get<std::uint32_t>(data_base + page - 12) == 0x2121'2121 &&
+			f.machine.get<std::uint32_t>(data_base + page - 8) == 0x2121'2121 &&
+			f.machine.get<std::uint32_t>(data_base + page - 4) == 0x3131'3131,
+		"the words ahead of the fault are stored");
+	f.machine.map(data_base + page);
+
+	/* VLDM with writeback; FSTMX writes the doublewords of an odd count. */
+	f.cpu.registers[0] = area;
+	for (unsigned n = 0; n < 3; ++n)
+		f.machine.put(area + 4 * n, std::uint32_t{0x100 + n});
+	result = f.step_a32_word(0xecb02a03); /* vldmia r0!, {s4-s6} */
+	require(result.event == StepEvent::retired && f.s(4) == 0x100 && f.s(5) == 0x101 &&
+			f.s(6) == 0x102 && f.r(0) == area + 12,
+		"VLDM single registers with writeback");
+	f.cpu.registers[0] = area + 0x40;
+	f.set_d(2, 0x7777'7777'7777'7777);
+	f.set_d(3, 0x7777'7777'7777'7777);
+	result = f.step_a32_word(0xec802b05); /* fstmiax r0, {d2, d3} */
+	require(result.event == StepEvent::retired && f.r(0) == area + 0x40 &&
+			f.machine.get<std::uint64_t>(area + 0x40) == 0x7777'7777'7777'7777 &&
+			f.machine.get<std::uint64_t>(area + 0x48) == 0x7777'7777'7777'7777 &&
+			f.machine.get<std::uint64_t>(area + 0x50) == 0,
+		"FSTMX stores its doublewords");
+}
+
+void test_vector_structures()
+{
+	Fixture f;
+	f.profile = Profile::at(Level::complete);
+	const std::uint32_t area = data_base + 0x200;
+	for (unsigned n = 0; n < 32; ++n)
+		f.machine.put(area + n, static_cast<std::uint8_t>(n));
+	f.cpu.registers[0] = area;
+	f.cpu.registers[1] = 24;
+
+	/* VLD1 multiple: consecutive. */
+	auto result = f.step_a32_word(0xf4200a8d); /* vld1.32 {d0, d1}, [r0]! */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0706'0504'0302'0100 &&
+			f.d(1) == 0x0f0e'0d0c'0b0a'0908 && f.r(0) == area + 16,
+		"VLD1 loads consecutive doublewords and writes back");
+	f.cpu.registers[0] = area;
+	result = f.step_a32_word(0xf4200741); /* vld1.16 {d0}, [r0], r1 */
+	require(result.event == StepEvent::retired && f.r(0) == area + 24, "post-indexed by a register");
+
+	/* VLD2, VLD3 and VLD4 de-interleave. */
+	f.cpu.registers[0] = area;
+	result = f.step_a32_word(0xf420030f); /* vld2.8 {d0-d3}, [r0] */
+	/* Four registers are two pairs (D0, D2) and (D1, D3). */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0e0c'0a08'0604'0200 &&
+			f.d(2) == 0x0f0d'0b09'0705'0301 && f.d(1) == 0x1e1c'1a18'1614'1210 &&
+			f.d(3) == 0x1f1d'1b19'1715'1311,
+		"VLD2 de-interleaves pairs");
+	result = f.step_a32_word(0xf420040f); /* vld3.8 {d0, d1, d2}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x1512'0f0c'0906'0300 &&
+			f.d(1) == 0x1613'100d'0a07'0401 && f.d(2) == 0x1714'110e'0b08'0502,
+		"VLD3 de-interleaves triples");
+	result = f.step_a32_word(0xf420000f); /* vld4.8 {d0-d3}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x1c18'1410'0c08'0400 &&
+			f.d(3) == 0x1f1b'1713'0f0b'0703,
+		"VLD4 de-interleaves quadruples");
+
+	/* VST4 interleaves it back. */
+	f.cpu.registers[0] = area + 0x80;
+	result = f.step_a32_word(0xf400000f); /* vst4.8 {d0-d3}, [r0] */
+	require(result.event == StepEvent::retired);
+	for (unsigned n = 0; n < 32; ++n)
+		require(f.machine.get<std::uint8_t>(area + 0x80 + n) == n, "VST4 interleaves");
+	result = f.step_a32_word(0xf400084f); /* vst2.16 {d0, d1}, [r0] */
+	require(result.event == StepEvent::retired &&
+			f.machine.get<std::uint16_t>(area + 0x80 + 2) == 0x0501,
+		"VST2");
+
+	/* Single lane: only that element changes. */
+	f.cpu.registers[0] = area;
+	f.cpu.vectors[0].bytes.fill(std::byte{0xee});
+	result = f.step_a32_word(0xf4a0048f); /* vld1.16 {d0[2]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0xeeee'0100'eeee'eeee,
+		"VLD1 to one lane");
+	f.cpu.registers[0] = area + 0x90;
+	result = f.step_a32_word(0xf480088f); /* vst1.32 {d0[1]}, [r0] */
+	require(result.event == StepEvent::retired &&
+			f.machine.get<std::uint32_t>(area + 0x90) == 0xeeee'0100,
+		"VST1 from one lane");
+	f.cpu.registers[0] = area;
+	f.cpu.vectors[0].bytes.fill(std::byte{0});
+	f.cpu.vectors[1].bytes.fill(std::byte{0});
+	result = f.step_a32_word(0xf4a00a8f); /* vld3.32 {d0[1], d1[1], d2[1]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0302'0100'0000'0000 &&
+			f.d(1) == 0x0706'0504'0000'0000 && f.d(2) == 0x0b0a'0908'0000'0000,
+		"VLD3 to one lane of three registers");
+
+	/* All lanes replicate. */
+	result = f.step_a32_word(0xf4a00c0f); /* vld1.8 {d0[]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0000'0000'0000'0000,
+		"VLD1 to all lanes of byte zero");
+	f.machine.put(area, std::uint16_t{0xa1b2});
+	result = f.step_a32_word(0xf4a00c6f); /* vld1.16 {d0[], d1[]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0xa1b2'a1b2'a1b2'a1b2 &&
+			f.d(1) == 0xa1b2'a1b2'a1b2'a1b2,
+		"VLD1 to all lanes of two registers");
+	f.machine.put(area, std::uint32_t{0x04030201});
+	f.machine.put(area + 4, std::uint32_t{0x08070605});
+	result = f.step_a32_word(0xf4a00d0f); /* vld2.8 {d0[], d1[]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0101'0101'0101'0101 &&
+			f.d(1) == 0x0202'0202'0202'0202,
+		"VLD2 to all lanes");
+	result = f.step_a32_word(0xf4a00f4f); /* vld4.16 {d0[], d1[], d2[], d3[]}, [r0] */
+	require(result.event == StepEvent::retired && f.d(0) == 0x0201'0201'0201'0201 &&
+			f.d(3) == 0x0807'0807'0807'0807,
+		"VLD4 to all lanes");
+
+	/* The alignment qualifier faults when the address lacks it. */
+	f.cpu.registers[0] = area + 8;
+	result = f.step_a32_word(0xf4200aaf); /* vld1.32 {d0, d1}, [r0:128] */
+	require(result.event == StepEvent::memory_fault && result.alignment && result.fault_address == area + 8,
+		"an alignment hint is enforced");
+	f.cpu.registers[0] = area + 16;
+	result = f.step_a32_word(0xf4200aaf);
+	require(result.event == StepEvent::retired, "an aligned hint passes");
+
+	/* A structure access that crosses into an unmapped page changes nothing:
+	 * a load leaves the registers, a store writes no byte. */
+	f.machine.unmap(data_base + page);
+	f.cpu.registers[0] = data_base + page - 4;
+	f.cpu.vectors[0].bytes.fill(std::byte{0x33});
+	result = f.step_a32_word(0xf420070f); /* vld1.8 {d0}, [r0] */
+	require(result.event == StepEvent::memory_fault && result.fault_address == data_base + page &&
+			f.d(0) == 0x3333'3333'3333'3333,
+		"a faulting VLD1 leaves the register");
+	result = f.step_a32_word(0xf400070f); /* vst1.8 {d0}, [r0] */
+	require(result.event == StepEvent::memory_fault && result.access == MemoryAccess::write &&
+			f.machine.get<std::uint32_t>(data_base + page - 4) == 0,
+		"a faulting VST1 stores nothing");
+}
+
+/* A reservation model of the kind an engine with versioned reservations
+ * keeps: it fails a store-exclusive when anything was stored since the
+ * load-exclusive, even if the location holds the same value, which the
+ * default compare-and-swap monitor passes. */
+class VersionedMachine final : public Machine {
+public:
+	void stored(std::byte *host, std::size_t size) noexcept override
+	{
+		++version;
+		Machine::stored(host, size);
+	}
+
+	std::uint64_t load_exclusive(CpuState &, std::uint32_t address, std::byte *host,
+		unsigned size, bool acquire) noexcept override
+	{
+		++loads;
+		last_acquire = acquire;
+		reserved_address = address;
+		reserved_version = version;
+		reserved = true;
+		std::uint64_t value = 0;
+		std::memcpy(&value, host, size);
+		return value;
+	}
+
+	bool store_exclusive(CpuState &, std::uint32_t address, std::byte *host, unsigned size,
+		std::uint64_t value, bool release) noexcept override
+	{
+		++store_attempts;
+		last_release = release;
+		const bool held = reserved && reserved_address == address && reserved_version == version;
+		reserved = false;
+		if (held)
+			std::memcpy(host, &value, size);
+		return held;
+	}
+
+	void clear_exclusive(CpuState &) noexcept override
+	{
+		++clears;
+		reserved = false;
+	}
+
+	std::uint64_t version = 0, reserved_version = 0;
+	std::uint32_t reserved_address = 0;
+	bool reserved = false, last_acquire = false, last_release = false;
+	unsigned loads = 0, store_attempts = 0, clears = 0;
+};
+
+void test_custom_monitor()
+{
+	BasicFixture<VersionedMachine> f;
+	const std::uint32_t address = data_base + 0x40;
+	f.machine.put(address, std::uint32_t{0x11});
+	f.cpu.registers[0] = address;
+	f.cpu.registers[3] = 0x22;
+
+	/* The hooks run in place of CpuState's record. */
+	auto result = f.step_a32_word(ldrex_r1_r0);
+	require(result.event == StepEvent::retired && f.r(1) == 0x11 && f.machine.loads == 1 &&
+			!f.machine.last_acquire && f.cpu.exclusive_size == 0,
+		"LDREX goes through the monitor hook and leaves CpuState's record");
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::retired && f.r(2) == 0 && f.machine.store_attempts == 1 &&
+			!f.machine.last_release && f.machine.get<std::uint32_t>(address) == 0x22 &&
+			f.machine.stores.size() == 1,
+		"STREX passes when the hook says so, and the library reports the store");
+
+	/* A store since the load fails the store-exclusive, though the value is
+	 * the same (the compare-and-swap monitor would pass it). */
+	(void)f.step_a32_word(ldrex_r1_r0);
+	f.cpu.registers[5] = 0x22;
+	f.cpu.registers[6] = address;
+	(void)f.step_a32_word(0xe5865000); /* str r5, [r6] */
+	f.machine.stores.clear();
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::retired && f.r(2) == 1 && f.machine.stores.empty() &&
+			f.machine.store_attempts == 2,
+		"STREX fails when the hook says so and nothing is stored");
+
+	/* The ordered forms pass their ordering on; CLREX reaches the hook. */
+	(void)f.step_a32_word(ldaex_r1_r0);
+	require(f.machine.last_acquire, "LDAEX asks for acquire");
+	(void)f.step_a32_word(stlex_r2_r1_r0);
+	require(f.machine.last_release, "STLEX asks for release");
+	(void)f.step_a32_word(clrex);
+	require(f.machine.clears == 1, "CLREX is the clear hook");
+
+	/* LDA and STL never use the monitor. */
+	const unsigned loads = f.machine.loads;
+	const unsigned attempts = f.machine.store_attempts;
+	(void)f.step_a32_word(lda_r1_r0);
+	(void)f.step_a32_word(stl_r1_r0);
+	require(f.machine.loads == loads && f.machine.store_attempts == attempts,
+		"LDA and STL do not touch the monitor");
+
+	/* The library still checks alignment and translation first. */
+	f.cpu.registers[0] = address + 1;
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::memory_fault && result.alignment &&
+			f.machine.store_attempts == attempts,
+		"an unaligned STREX faults before the hook");
+}
+
 void test_system()
 {
 	Fixture f;
@@ -610,8 +941,11 @@ int main()
 	test_single_store_is_all_or_nothing();
 	test_alignment_faults();
 	test_exclusives();
+	test_custom_monitor();
 	test_branches_and_stack();
 	test_it_udf();
+	test_vector_memory();
+	test_vector_structures();
 	test_system();
 	test_counters();
 	return 0;

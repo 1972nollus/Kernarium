@@ -116,15 +116,22 @@ and reaches guest memory only through the caller's `A32Memory`.
   alignment), `pc_alignment` and `fatal`. A fault leaves the registers, PC and
   ITSTATE as the instruction found them, except that STM and PUSH store the
   words ahead of the faulting one and leave the base register unchanged.
-- The exclusives use `CpuState`'s record (`exclusive_address`,
-  `exclusive_key`, `exclusive_value`, `exclusive_value2`, `exclusive_size`):
-  a load-exclusive records the host address and the value, and a
-  store-exclusive is a host compare-and-swap against it. Ordinary stores leave
-  the monitor to the engine.
+- The exclusive monitor is `A32Memory`'s: `load_exclusive()`,
+  `store_exclusive()` and `clear_exclusive()`, which an engine with its own
+  reservation model (a versioned one its fused exclusives and tracked stores
+  share) overrides. The defaults are `CpuState`'s record
+  (`exclusive_address`, `exclusive_key`, `exclusive_value`,
+  `exclusive_value2`, `exclusive_size`) and a host compare-and-swap of the
+  value the load recorded, the gadget engine's mechanism. Ordinary stores,
+  LDA and STL never use it; the library reports every store to `stored()`.
 - `a32_semantics_covers(form)` holds for every form up to
   `a32_semantics_level()`; any other word reaching `execute_a32()` is `fatal`,
   an internal error. The library-exit counters count each call by form.
 
-The library is at `base`: A32 and T32 integer, memory (single, multiple,
-exclusive, acquire/release), branch, IT and system forms. The VFP and NEON
+The library covers `base`, A32 and T32: integer, memory (single, multiple,
+exclusive, acquire/release), branch, IT and system forms. Above it, it covers
+the VFP and Advanced SIMD memory forms (VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX,
+VLDn and VSTn), whose structure loads and stores read all their memory before
+they change a register and gather it all before they store, and whose VSTM and
+FSTMX store the words ahead of a fault like STM. The VFP and NEON arithmetic
 and the Armv8 extension levels follow.

@@ -681,11 +681,12 @@ contract that the corpus cannot record: fault ordering and the unchanged
 state at a fault, the exclusive monitor, the single-instruction entry's IT
 handling, the events, the library-exit counters and the coverage predicate.
 `arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
-case of the pack within the library's level through `step_a32()` on a model
-of the oracle's address space (page by page, so a crossing access splits
-across separate host pages) and requires the recorded event, retired count,
-fault address, registers, flags, thread registers and data bytes, with 0
-failures. A case above the library's level is skipped. Run one record with
+case of the pack whose instructions the library covers through `step_a32()`
+on a model of the oracle's address space (page by page, so a crossing access
+splits across separate host pages) and requires the recorded event, retired
+count, fault address, registers, flags, FPSCR, D registers, thread registers
+and data bytes, with 0 failures. A case with an instruction the library does
+not cover is skipped. Run one record with
 `uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
 with `--case`, and `--trace` for its steps.
 
