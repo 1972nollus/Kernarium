@@ -6,6 +6,7 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -16,6 +17,8 @@ GEEKBENCH_6 = "opt/geekbench/release/geekbench6"
 GEEKBENCH_5 = "opt/geekbench/release/geekbench_armv7"
 # Prints the arguments it was run with, then exits with the status it is given
 # in $STATUS, so the test sees exactly what the script asked Geekbench to do.
+# The guest's /bin/sh is dash, so a host that has it runs both and compares.
+SHELLS = [shell for shell in ("/bin/sh", "/bin/dash") if os.path.exists(shell)]
 PROGRAM = '#!/bin/sh\necho "ran $0 $*"\nexit "${STATUS:-0}"\n'
 # Stands in for mount(8): puts a Geekbench 5 payload where the script mounts.
 MOUNT = (
@@ -54,11 +57,21 @@ class GeekbenchScriptTests(unittest.TestCase):
         path.write_text(text)
 
     def run_script(self, status: int = 0):
-        return subprocess.run(
-            ["/bin/sh", str(self.script)],
-            env={"PATH": f"{self.bin}:/usr/bin:/bin", "STATUS": str(status)},
-            cwd=self.root, capture_output=True, text=True, check=False,
-        )
+        results = [
+            subprocess.run(
+                [shell, str(self.script)],
+                env={"PATH": f"{self.bin}:/usr/bin:/bin",
+                     "STATUS": str(status)},
+                cwd=self.root, capture_output=True, text=True, check=False,
+            )
+            for shell in SHELLS
+        ]
+        for result in results[1:]:
+            self.assertEqual(
+                (result.returncode, result.stdout, result.stderr),
+                (results[0].returncode, results[0].stdout,
+                 results[0].stderr))
+        return results[0]
 
     def lines(self, result) -> list[str]:
         return [
