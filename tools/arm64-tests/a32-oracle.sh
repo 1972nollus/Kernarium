@@ -68,5 +68,5 @@ remote() {
 directory=$(remote 60 "mktemp -d \"\$HOME/$prefix.XXXXXX\"")
 [[ $directory == /* ]] || { echo "bad remote directory" >&2; exit 70; }
 timeout 600 scp -q "${ssh_options[@]}" "$work/a32_oracle" "$request" "$host:$directory/" </dev/null
-remote 3000 "cd '$directory' && chmod +x a32_oracle && $runner ./a32_oracle '$(basename "$request")' response"
+remote 3000 "CDPATH= cd -- '$directory' && chmod +x a32_oracle && $runner ./a32_oracle '$(basename "$request")' response"
 timeout 600 scp -q "${ssh_options[@]}" "$host:$directory/response" "$output" </dev/null

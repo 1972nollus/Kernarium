@@ -125,9 +125,12 @@ The `complete` level (the Armv8 additions):
 - `armv8-system`: SB and SEVL.
 
 Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
-(multi-word accesses at misaligned addresses) and `fpscr-reserved` (VMRS and
-VMSR with Stride, Len and FZ16 set, which an implementation may or may not
-hold). The producer refuses to record them as `qemu`.
+(172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`
+(144 cases: VMRS and VMSR with Stride, Len and FZ16 set, which an
+implementation may or may not hold). The producer refuses to record them as
+`qemu` and nothing derives them from rules, so they are unrecorded until a
+hardware oracle exists, and so is the hardware cross-check of the `qemu`
+records (`compare`, below).
 
 ## What the oracle's answers rest on
 
