@@ -11,13 +11,13 @@ namespace uml::cpu::arm64 {
  * runtime's state transfer and the tests (docs/architecture.md).
  *
  * The profile is Armv8-A AArch32 at EL0: the A32 and T32 instruction sets
- * with interworking and IT, VFPv4-D32 and Advanced SIMD, the Armv8 additions
- * (load-acquire and store-release, VSEL, VMAXNM, VRINT and VCVT with a
- * rounding mode), and, each where the host has the A64 feature the engines
- * lower it onto, CRC32, AES, PMULL, SHA1, SHA2, FP16 arithmetic, the dot
- * product, FHM, BF16, I8MM, SB, RDM, FCMA and JSCVT. It has no SWP, SETEND,
- * short vectors, floating-point trap enables or ThumbEE, and every encoding
- * outside it is UNDEFINED. */
+ * with interworking and IT, the Armv8 load-acquire and store-release group,
+ * VFPv4-D32 and Advanced SIMD, the Armv8 floating-point additions (VSEL,
+ * VMAXNM, VRINT and VCVT with a rounding mode), and, each where the host has
+ * the A64 feature the engines lower it onto, CRC32, AES, PMULL, SHA1, SHA2,
+ * FP16 arithmetic, the dot product, FHM, BF16, I8MM, SB, RDM, FCMA and
+ * JSCVT. It has no SWP, SETEND, short vectors, floating-point trap enables
+ * or ThumbEE, and every encoding outside it is UNDEFINED. */
 
 /* How far an engine implements the profile: nothing yet (every AArch32 entry
  * is the illegal-instruction exit), the integer core, that plus VFP and
@@ -30,7 +30,8 @@ enum class A32Support : std::uint8_t {
 	/* No AArch32. */
 	none,
 	/* A32 and T32 integer instructions, branches and interworking, memory,
-	 * exclusives, system instructions and IT. */
+	 * exclusives, system instructions and IT, with the Armv8 load-acquire
+	 * and store-release group arm64 Linux's compat kuser helpers execute. */
 	base,
 	/* Base plus VFPv4-D32 and Advanced SIMD. */
 	simd,
@@ -58,11 +59,15 @@ enum class A32Support : std::uint8_t {
  * from nothing else. */
 struct A32Features final {
 	bool aarch32{};
+	/* LDA, LDAB, LDAH, STL, STLB, STLH, LDAEX and STLEX in every size, and
+	 * SEVL: the Armv8 group that is part of the integer core, since
+	 * arm64 Linux's compat kuser helpers and its vDSO may execute it. */
+	bool acquire_release{};
 	bool vfp{};
 	bool neon{};
-	/* LDA, STL and the exclusives with acquire, SEVL, VSEL, VMAXNM, VMINNM,
-	 * VRINT, VCVT with a rounding mode and the double-precision half
-	 * conversions: the Armv8 additions every host supports. */
+	/* VSEL, VMAXNM, VMINNM, VRINT, VCVT with a rounding mode and the
+	 * double-precision half-precision conversions: the Armv8 floating-point
+	 * additions every host supports. */
 	bool armv8{};
 	bool crc32{};
 	bool aes{};
@@ -89,6 +94,7 @@ struct A32Features final {
 	if (support < A32Support::base)
 		return features;
 	features.aarch32 = true;
+	features.acquire_release = true;
 	if (support < A32Support::simd)
 		return features;
 	features.vfp = true;
