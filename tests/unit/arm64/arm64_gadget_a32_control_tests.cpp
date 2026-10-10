@@ -1154,8 +1154,8 @@ void the_fp_environment_follows_the_instruction_kind()
 				   vadd_f32_d3_d1_d2});
 		offset += 12;
 		if (through_a_branch) {
-			/* b +0: the next instruction starts a block of its own */
-			guest.a32(offset, {0xea00'0000U});
+			/* b to the next instruction: it starts a block of its own */
+			guest.a32(offset, {0xeaff'ffffU});
 			offset += 4;
 		}
 		guest.a32(offset, {vmsr_fpscr_r3, vadd_f32_d9_d1_d2,
@@ -1382,6 +1382,34 @@ void structure_and_library_blocks_load_the_deferred_vectors()
 	}
 }
 
+/* Single-stepped floating point (the path of a mid-IT entry and of ptrace)
+ * loads the deferred vectors and keeps the instruction kind's environment:
+ * Advanced SIMD flushes denormals, VFP follows the guest's FPSCR. */
+void single_stepped_floating_point_loads_the_deferred_vectors()
+{
+	constexpr std::uint64_t denormals = 0x0000'0001'0000'0001ULL;
+	Vectors image{};
+	put_image_d(image, 0, 0x5555'5555'5555'5555ULL);
+	put_image_d(image, 1, denormals);
+	put_image_d(image, 2, denormals);
+	Guest guest{1014};
+	/* cmp r0,#0 ; itt ne ; vaddne.f32 d0,d1,d2 ; vaddne.f32 s8,s2,s4 */
+	guest.t32(0, {t::cmp_r0_0, 0xbf1c, 0xef01, 0x0d02, 0xee31, 0x4a02, t::svc});
+	auto cpu = t32_state();
+	cpu.registers[0] = 1;
+	cpu.defer_fp_load(image.data(), 0, 0, arm64::fpcr_writable_mask);
+	for (int step = 0; step < 4; ++step) {
+		const auto result = guest.run(cpu, 100, true);
+		require(result.reason == ExitReason::single_step);
+		require(result.retired_instructions == 1);
+	}
+	require(cpu.a32_itstate == 0);
+	require(cpu.fp_loaded && cpu.fp_dirty);
+	require(get_d(cpu, 0) == 0, "Advanced SIMD did not flush the denormal sum");
+	require(static_cast<std::uint32_t>(get_d(cpu, 4)) == 2U,
+		"VFP did not keep the denormal");
+}
+
 /* A VFP word is illegal at the base level: the level is what makes it so. */
 void a_vfp_word_is_illegal_at_the_base_level()
 {
@@ -1586,6 +1614,7 @@ int main()
 	the_fp_environment_follows_the_instruction_kind();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	structure_and_library_blocks_load_the_deferred_vectors();
+	single_stepped_floating_point_loads_the_deferred_vectors();
 	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;
