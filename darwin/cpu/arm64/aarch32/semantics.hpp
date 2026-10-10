@@ -124,18 +124,16 @@ struct StepResult final {
 };
 
 /*
- * Whether execute_a32() implements the form: every form up to
- * a32_semantics_level(), and the VFP and Advanced SIMD memory forms (VLDR,
- * VSTR, VLDM, VSTM, FLDMX, FSTMX, VLDn and VSTn) above it. Any other form
- * executes as fatal. The corpus's model lane skips a case whose forms are
- * not covered.
+ * Whether execute_a32() implements the form: every implemented form up to
+ * a32_semantics_level(). Any other form executes as fatal. The corpus's
+ * model lane skips a case whose forms are not covered.
  */
 [[nodiscard]] bool a32_semantics_covers(Form form) noexcept;
 
 /* The highest level the library implements in full. */
 [[nodiscard]] constexpr Level a32_semantics_level() noexcept
 {
-	return Level::base;
+	return Level::simd;
 }
 
 /*

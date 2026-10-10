@@ -686,7 +686,8 @@ on a model of the oracle's address space (page by page, so a crossing access
 splits across separate host pages) and requires the recorded event, retired
 count, fault address, registers, flags, FPSCR, D registers, thread registers
 and data bytes, with 0 failures. A case with an instruction the library does
-not cover is skipped. Run one record with
+not cover, or a word that is illegal at the library's level (a half-precision
+form), is skipped. Run one record with
 `uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
 with `--case`, and `--trace` for its steps.
 
