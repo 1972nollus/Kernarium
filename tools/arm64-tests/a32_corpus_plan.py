@@ -87,6 +87,19 @@ FP_EDGES = (
 
 EDGES = (0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0x55555555,
          0xAAAAAAAA, 31, 32, 33, 0x80000001)
+# Lane values of the integer SIMD states: zero, one, the signed and unsigned
+# limits and their neighbours, and the alternating bit patterns.
+LANE_EDGES = {
+    8: (0x00, 0x01, 0x7F, 0x80, 0xFF, 0x55, 0xAA, 0xFE, 0x81, 0x7E, 0x0F, 0xF0, 0x02),
+    16: (0x0000, 0x0001, 0x7FFF, 0x8000, 0xFFFF, 0x00FF, 0xFF00, 0x8001, 0x7FFE, 0x5555, 0xAAAA, 0x0100,
+         0x00FE),
+    32: (0x00000000, 0x00000001, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0x80000001,
+         0x7FFFFFFE, 0x55555555, 0xAAAAAAAA, 0x00010000, 0xFFFFFFFE),
+}
+# Half-precision lanes: zeros, one, minus one, infinities, quiet and signalling
+# NaNs, the smallest denormal, the largest denormal and normal, and the largest.
+HALF_EDGES = (0x0000, 0x8000, 0x3C00, 0xBC00, 0x7C00, 0xFC00, 0x7E00, 0x7C01, 0x0001, 0x03FF, 0x0400, 0x7BFF,
+              0xFBFF)
 ROTATIONS = (0, 3, 5, 8)
 ALU_VARIANTS = ("edges", "edges3", "edges5", "edges8", "pattern", "pattern1")
 
@@ -112,6 +125,17 @@ def make_recipes() -> dict[str, dict[str, int]]:
                 state[f"d{index}"] = FP_EDGES[(index + rotation) % len(FP_EDGES)]
             name = "edges" if rotation == 0 else f"edges{rotation}"
             recipes[f"{name}-{suffix}"] = state
+        for width, lanes in LANE_EDGES.items():
+            state = dict(recipes[f"edges-{suffix}"])
+            for index in range(corpus.D_REGISTERS):
+                state[f"d{index}"] = sum(lanes[(index + 5 * lane) % len(lanes)] << width * lane
+                                         for lane in range(64 // width))
+            recipes[f"int{width}-{suffix}"] = state
+        state = dict(recipes[f"edges-{suffix}"])
+        for index in range(corpus.D_REGISTERS):
+            state[f"d{index}"] = sum(HALF_EDGES[(index + 5 * lane) % len(HALF_EDGES)] << 16 * lane
+                                     for lane in range(4))
+        recipes[f"half-{suffix}"] = state
         for variant in (0, 1):
             state = dict(base)
             for index in range(13):
