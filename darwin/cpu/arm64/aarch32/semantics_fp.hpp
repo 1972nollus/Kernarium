@@ -350,4 +350,52 @@ inline bool lanes32(Exec &x, Standard, Function &&function)
 	return lanes_of<std::uint32_t>(x, function);
 }
 
+template<typename Float>
+[[nodiscard]] constexpr Float sign_bit() noexcept
+{
+	return Float{1} << (sizeof(Float) * 8U - 1U);
+}
+template<typename Float>
+[[nodiscard]] constexpr Float negated(Float value) noexcept
+{
+	return value ^ sign_bit<Float>();
+}
+
+/* A VFP operation on the H, S or D registers d, n and m: `function(d, n, m)`
+ * is called with half, single or double bit patterns and returns the new d.
+ * A half-precision result zero-extends into its S register. */
+template<typename Function>
+inline bool vfp_op(Exec &x, Function &&function)
+{
+	const Operands &o = x.o;
+	const unsigned d = static_cast<unsigned>(o.d);
+	const unsigned n = static_cast<unsigned>(o.n);
+	const unsigned m = static_cast<unsigned>(o.m);
+	if (o.esize == 64) {
+		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
+			return function(x.d_reg(d), x.d_reg(n), x.d_reg(m));
+		}));
+	} else if (o.esize == 16) {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return std::uint32_t{function(static_cast<std::uint16_t>(x.s_reg(d)),
+				static_cast<std::uint16_t>(x.s_reg(n)), static_cast<std::uint16_t>(x.s_reg(m)))};
+		}));
+	} else {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return function(x.s_reg(d), x.s_reg(n), x.s_reg(m));
+		}));
+	}
+	return true;
+}
+
+/* The same function for a form that is Advanced SIMD (single-precision
+ * elements under the Standard FPSCR value) or VFP, by the form's advsimd. */
+template<typename Function>
+inline bool float_op(Exec &x, Function &&function)
+{
+	if (x.o.advsimd)
+		return fp::lanes(x, fp::standard, [&](auto n, auto m, auto d) { return function(d, n, m); });
+	return vfp_op(x, function);
+}
+
 } // namespace uml::cpu::arm64::aarch32::detail::fp

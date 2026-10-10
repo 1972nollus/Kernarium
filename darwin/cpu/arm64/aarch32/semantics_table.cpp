@@ -159,6 +159,8 @@ constexpr Named named_ops[] = {
 		add_stems(entries, count);
 		entries = vector_float_entries(count);
 		add_stems(entries, count);
+		entries = armv8_float_entries(count);
+		add_stems(entries, count);
 		for (std::size_t index = 0; index < kFormCount; ++index) {
 			const std::string_view name = kForms[index].mnemonic;
 			const std::string_view form = kForms[index].name;

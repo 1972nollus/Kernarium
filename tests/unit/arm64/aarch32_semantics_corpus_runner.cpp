@@ -501,7 +501,12 @@ int main(int argc, char **argv)
 				std::fprintf(stderr, "case %s:", test.name.c_str());
 				for (const auto half : test.halves)
 					std::fprintf(stderr, " %04x", half);
-				std::fprintf(stderr, "\n");
+				std::fprintf(stderr, "\n  fpscr %08x apsr %08x\n", test.initial.fpscr, test.initial.apsr);
+				for (unsigned d = 0; d < 32; ++d)
+					std::fprintf(stderr, "  d%u=%016llx%s", d,
+						static_cast<unsigned long long>(test.initial.d[d]), d % 4 == 3 ? "\n" : "");
+				for (unsigned r = 0; r < 15; ++r)
+					std::fprintf(stderr, "  r%u=%08x%s", r, test.initial.r[r], r % 5 == 4 ? "\n" : "");
 			}
 			const std::string problem = check(machine, test, profile);
 			if (problem.empty())

@@ -20,53 +20,9 @@ namespace {
 using std::uint32_t;
 using std::uint64_t;
 
-template<typename Float>
-[[nodiscard]] constexpr Float sign_bit() noexcept
-{
-	return Float{1} << (sizeof(Float) * 8U - 1U);
-}
-template<typename Float>
-[[nodiscard]] constexpr Float negated(Float value) noexcept
-{
-	return value ^ sign_bit<Float>();
-}
-
-/* A VFP operation on the H, S or D registers d, n and m: `function(d, n, m)`
- * is called with half, single or double bit patterns and returns the new d.
- * A half-precision result zero-extends into its S register. */
-template<typename Function>
-bool vfp_op(Exec &x, Function &&function)
-{
-	const Operands &o = x.o;
-	const unsigned d = static_cast<unsigned>(o.d);
-	const unsigned n = static_cast<unsigned>(o.n);
-	const unsigned m = static_cast<unsigned>(o.m);
-	if (o.esize == 64) {
-		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
-			return function(x.d_reg(d), x.d_reg(n), x.d_reg(m));
-		}));
-	} else if (o.esize == 16) {
-		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
-			return uint32_t{function(static_cast<uint16_t>(x.s_reg(d)),
-				static_cast<uint16_t>(x.s_reg(n)), static_cast<uint16_t>(x.s_reg(m)))};
-		}));
-	} else {
-		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
-			return function(x.s_reg(d), x.s_reg(n), x.s_reg(m));
-		}));
-	}
-	return true;
-}
-
-/* The same function for a form that is Advanced SIMD (single-precision
- * elements under the Standard FPSCR value) or VFP, by the form's advsimd. */
-template<typename Function>
-bool float_op(Exec &x, Function &&function)
-{
-	if (x.o.advsimd)
-		return fp::lanes(x, fp::standard, [&](auto n, auto m, auto d) { return function(d, n, m); });
-	return vfp_op(x, function);
-}
+using fp::float_op;
+using fp::negated;
+using fp::vfp_op;
 
 bool vadd_f(Exec &x)
 {
@@ -333,26 +289,6 @@ bool vcvt_integer(Exec &x)
 	return true;
 }
 
-/* A 32-bit conversion result narrowed to a 16-bit integer: out of range
- * saturates and is an invalid operation. Called inside the local-FPCR
- * region. */
-[[nodiscard]] uint16_t narrow_integer(uint32_t result, bool is_unsigned) noexcept
-{
-	if (is_unsigned) {
-		if (result > 0xffffU) {
-			fp::report_overflow();
-			return 0xffffU;
-		}
-		return static_cast<uint16_t>(result);
-	}
-	const auto value = static_cast<std::int32_t>(result);
-	if (value > 0x7fff || value < -0x8000) {
-		fp::report_overflow();
-		return value > 0 ? uint16_t{0x7fff} : uint16_t{0x8000};
-	}
-	return static_cast<uint16_t>(value);
-}
-
 /* VCVT between single-precision elements and 32-bit integers (Advanced
  * SIMD): to integer rounds toward zero, to floating point to nearest. */
 bool vcvt_is(Exec &x)
@@ -362,7 +298,7 @@ bool vcvt_is(Exec &x)
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
 			if (to_integer)
-				return narrow_integer(is_unsigned ? fp::to_int_zu(m) : fp::to_int_zs(m), is_unsigned);
+				return fp::narrow_integer(is_unsigned ? fp::to_int_zu(m) : fp::to_int_zs(m), is_unsigned);
 			const uint32_t integer = is_unsigned
 				? uint32_t{m}
 				: static_cast<uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(m)));
@@ -436,7 +372,7 @@ bool vcvt_xs(Exec &x)
 	if (x.o.esize == 16)
 		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
 			if (to_fixed)
-				return narrow_integer(half_to_fixed(m, fraction, is_unsigned), is_unsigned);
+				return fp::narrow_integer(half_to_fixed(m, fraction, is_unsigned), is_unsigned);
 			return static_cast<uint16_t>(fixed_to_half(extend16(m, is_unsigned), fraction, is_unsigned));
 		});
 	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {

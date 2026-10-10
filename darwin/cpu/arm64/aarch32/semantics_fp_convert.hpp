@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/a32_encodings.hpp"
+
 #include <cstdint>
 #include <utility>
 
@@ -175,6 +177,47 @@ inline void report_overflow() noexcept
 	std::uint64_t value;
 	__asm__ volatile("mrs %0, fpsr\n\tbic %0, %0, #16\n\torr %0, %0, #1\n\tmsr fpsr, %0"
 			 : "=&r"(value) : : "memory");
+}
+
+/* A 32-bit conversion result narrowed to a 16-bit integer: out of range
+ * saturates and is an invalid operation. Called inside the local-FPCR
+ * region. */
+[[nodiscard]] inline std::uint16_t narrow_integer(std::uint32_t result, bool is_unsigned) noexcept
+{
+	if (is_unsigned) {
+		if (result > 0xffffU) {
+			fp::report_overflow();
+			return 0xffffU;
+		}
+		return static_cast<std::uint16_t>(result);
+	}
+	const auto value = static_cast<std::int32_t>(result);
+	if (value > 0x7fff || value < -0x8000) {
+		fp::report_overflow();
+		return value > 0 ? std::uint16_t{0x7fff} : std::uint16_t{0x8000};
+	}
+	return static_cast<std::uint16_t>(value);
+}
+
+/* Floating point to a 32-bit integer under a rounding the instruction names
+ * (FPDecodeRM): nearest even, plus infinity, minus infinity, zero, or
+ * nearest with ties away. */
+template<typename Float>
+[[nodiscard]] inline std::uint32_t to_int_rounded(Float value, bool is_unsigned,
+	FPRounding rounding) noexcept
+{
+	switch (rounding) {
+	case FPRounding::POSINF:
+		return is_unsigned ? to_int_pu(value) : to_int_ps(value);
+	case FPRounding::NEGINF:
+		return is_unsigned ? to_int_mu(value) : to_int_ms(value);
+	case FPRounding::ZERO:
+		return is_unsigned ? to_int_zu(value) : to_int_zs(value);
+	case FPRounding::TIEAWAY:
+		return is_unsigned ? to_int_au(value) : to_int_as(value);
+	default:
+		return is_unsigned ? to_int_nu(value) : to_int_ns(value);
+	}
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail::fp

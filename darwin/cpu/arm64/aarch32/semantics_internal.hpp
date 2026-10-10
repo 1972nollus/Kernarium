@@ -121,6 +121,7 @@ struct VectorEntry final {
 [[nodiscard]] const VectorEntry *neon_integer_entries(std::size_t &count) noexcept;
 [[nodiscard]] const VectorEntry *neon_shift_entries(std::size_t &count) noexcept;
 [[nodiscard]] const VectorEntry *vector_float_entries(std::size_t &count) noexcept;
+[[nodiscard]] const VectorEntry *armv8_float_entries(std::size_t &count) noexcept;
 
 [[nodiscard]] const OpInfo &op_info(Form form) noexcept;
 
@@ -247,7 +248,12 @@ public:
 	}
 
 	/* ConditionPassed() for the instruction's condition. */
-	[[nodiscard]] bool condition_passed() const noexcept;
+	[[nodiscard]] bool condition_passed() const noexcept
+	{
+		return condition_holds(inst.cond);
+	}
+	/* ConditionHolds(): a condition code, 0 EQ to 14 AL, on the flags. */
+	[[nodiscard]] bool condition_holds(unsigned cond) const noexcept;
 
 	/* BranchWritePC(): the PC is word aligned in A32 and halfword aligned
 	 * in T32, in the current instruction set. */
