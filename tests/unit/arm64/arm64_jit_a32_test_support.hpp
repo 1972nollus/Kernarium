@@ -80,6 +80,14 @@ public:
     }
     code_written(first, offset - first);
   }
+  /* The first code page again at `address`, read-only and executable, as the
+   * kernel's page of kuser helpers is. */
+  void map_code_alias(std::uint32_t address) {
+    require(darwin_uml_static_vm_map_generation(
+                generation_, reinterpret_cast<void *>(std::uintptr_t{address}),
+                code_.descriptor(), 0, guest_page, PROT_READ | PROT_EXEC, 1,
+                1) == 0);
+  }
   void code_byte(std::size_t offset, std::byte value) {
     code_.put(offset, std::span{&value, 1});
     code_written(offset, 1);

@@ -297,10 +297,10 @@ void A32Compiler::exit_direct(std::uint64_t target_key) {
 void A32Compiler::exit_indirect(unsigned key_register) {
   const auto it = cur().inst.next_it.bits();
   if (it != 0U || single_) {
-    if (key_register != 8U)
-      emitter_.move_x(8, key_register);
+    /* The key is stored before the ITSTATE, whose store loads its constant
+     * into x8. */
+    emitter_.store_x(key_register, 15, offsetof(CpuState, pc));
     store_it(it);
-    emitter_.store_x(8, 15, offsetof(CpuState, pc));
     return_constant(Event::continued, count_ + 1U);
     return;
   }

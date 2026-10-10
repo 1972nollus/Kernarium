@@ -213,11 +213,50 @@ void unmapped_entry() {
   }
 }
 
+/* A step over BX into Thumb state and one over BX back leave the PC key of
+ * the target, tag included, and the next step runs there. */
+void single_step_over_interworking_branches() {
+  Fixture fixture{0x1a32'0c06};
+  fixture.code32(0, {0xe28f'2004U,  // add r2, pc, #4
+                     0xe382'2001U,  // orr r2, r2, #1
+                     0xe12f'ff12U}); // bx r2
+  fixture.code16(12, {0x2007,       // movs r0, #7
+                      0xdf00});     // svc #0
+  auto cpu = Fixture::task(false);
+  for (unsigned step = 0; step < 3; ++step) {
+    const auto result = fixture.run(cpu, 1, true);
+    require(result.reason == ExitReason::single_step);
+    require(result.retired_instructions == 1);
+  }
+  require(cpu.registers[2] == code_base + 12 + 1);
+  require(cpu.pc == key::t32_key(code_base + 12));
+  auto result = fixture.run(cpu, 1, true);
+  require(result.reason == ExitReason::single_step);
+  require(cpu.registers[0] == 7);
+  require(cpu.pc == key::t32_key(code_base + 14));
+  result = fixture.run(cpu, 1, true);
+  require(result.reason == ExitReason::system_call);
+  require(cpu.pc == key::t32_key(code_base + 16));
+
+  // BX the other way: Thumb to A32, one step.
+  fixture.code16(32, {0x4778,   // bx pc (to the A32 word after the nop)
+                      0xbf00});
+  fixture.code32(36, {0xe3a0'1009U}); // mov r1, #9
+  cpu = Fixture::task(true, 32);
+  auto step = fixture.run(cpu, 1, true);
+  require(step.reason == ExitReason::single_step);
+  require(cpu.pc == key::a32_key(code_base + 36));
+  step = fixture.run(cpu, 1, true);
+  require(step.reason == ExitReason::single_step);
+  require(cpu.registers[1] == 9);
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   unmapped_entry();
   it_blocks_whole_stepped_and_entered_mid_block();
+  single_step_over_interworking_branches();
   long_blocks_and_the_budget();
   rewritten_t32_halfwords();
   rewritten_a32_words();

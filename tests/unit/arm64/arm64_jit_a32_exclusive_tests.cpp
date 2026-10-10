@@ -127,6 +127,45 @@ void conditional_store_compare_and_swap(unsigned long generation) {
   require(block_instructions(fixture, 0, 5, false) == 5);
 }
 
+/* The kernel's __kuser_cmpxchg (arm64 Linux's kuser32.S), word for word,
+ * run where the kernel puts it, in a read-only page at 0xffff0fc0: ldrex,
+ * subs, a conditional strex, teqeq and a retry. The block starts at the
+ * load-exclusive and the flag-setting subs keeps it from fusing. */
+void kuser_cmpxchg_sequence(unsigned long generation) {
+  constexpr std::uint32_t kuser_page = 0xffff'0000U;
+  constexpr std::size_t helper = 0xfc0;
+  Fixture fixture{generation};
+  fixture.map_code_alias(kuser_page);
+  fixture.code32(helper, {
+      0xe192'3f9fU, // 1: ldrex r3, [r2]
+      0xe053'3000U, // subs r3, r3, r0
+      0x0182'3f91U, // strexeq r3, r1, [r2]
+      0x0333'0001U, // teqeq r3, #1
+      0x0aff'fffaU, // beq 1b
+      0xf57f'f05bU, // dmb ish
+      0xe273'0000U, // rsbs r0, r3, #0
+      0xe12f'ff1eU, // bx lr
+  });
+  fixture.code32(64, {arm_svc});
+  for (const bool match : {true, false}) {
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+      fixture.data32(0, 0x1234);
+      auto cpu = Fixture::task(false);
+      cpu.pc = key::a32_key(kuser_page + helper);
+      cpu.registers[0] = match ? 0x1234 : 0x4321; // the old value
+      cpu.registers[1] = 0x5678;                  // the new one
+      cpu.registers[2] = data_base;
+      cpu.registers[14] = code_base + 64;
+      ::uml::cpu::arm64::jit::a32::reset_helper_exits();
+      const auto result = fixture.run(cpu);
+      require(result.reason == ExitReason::system_call);
+      // r0 is 0 when the swap happened, nonzero otherwise.
+      require((cpu.registers[0] == 0) == match);
+      require(fixture.read32(0) == (match ? 0x5678U : 0x1234U));
+    }
+  }
+}
+
 void thumb_fused_add(unsigned long generation) {
   Fixture fixture{generation};
   // ldrex r2,[r0]; add r2,r1; strex r3,r2,[r0]; cmp r3,#0; bne.n 1b; svc
@@ -226,6 +265,55 @@ void faults_and_alignment(unsigned long generation) {
   require(result.retired_instructions == 0);
 }
 
+/* Two threads add through the kernel's cmpxchg helper, which does not fuse:
+ * the software reservations and the tracked stores of the slow path keep the
+ * count exact. */
+void two_threads_through_kuser_cmpxchg(unsigned long generation) {
+  constexpr std::uint32_t kuser_page = 0xffff'0000U;
+  constexpr std::size_t helper = 0xfc0;
+  Fixture fixture{generation};
+  fixture.map_code_alias(kuser_page);
+  fixture.code32(helper, {0xe192'3f9fU, 0xe053'3000U, 0x0182'3f91U,
+                          0x0333'0001U, 0x0aff'fffaU, 0xf57f'f05bU,
+                          0xe273'0000U, 0xe12f'ff1eU});
+  // old = [r2]; do { new = old + 1 } while (cmpxchg(old, new, r2) != 0)
+  fixture.code32(0, {0xe592'0000U,   // ldr r0, [r2]
+                     0xe280'1001U,   // add r1, r0, #1
+                     0xe300'cfc0U,   // movw r12, #0x0fc0
+                     0xe34f'cfffU,   // movt r12, #0xffff
+                     0xe12f'ff3cU,   // blx r12
+                     0xe350'0000U,   // cmp r0, #0
+                     arm_branch(ne, 6, 0), 0xe254'4001U,
+                     arm_branch(ne, 8, 0), arm_svc});
+  fixture.data32(0, 0);
+  constexpr unsigned iterations = 5000;
+  std::atomic<bool> go{false};
+  std::atomic<unsigned> done{0};
+  const auto worker = [&] {
+    const auto engine = Fixture::new_engine();
+    auto cpu = Fixture::task(false);
+    cpu.registers[2] = data_base;
+    cpu.registers[4] = iterations;
+    while (!go.load())
+      std::this_thread::yield();
+    for (;;) {
+      const auto result = fixture.run_on(*engine, cpu, 1u << 20);
+      if (result.reason == ExitReason::system_call)
+        break;
+      require(result.reason == ExitReason::instruction_budget ||
+              result.reason == ExitReason::interrupt);
+    }
+    ++done;
+  };
+  BigThread first{worker};
+  BigThread second{worker};
+  go = true;
+  first.join();
+  second.join();
+  require(done == 2);
+  require(fixture.read32(0) == 2 * iterations);
+}
+
 void two_threads_count_exactly(unsigned long generation) {
   Fixture fixture{generation};
   // r4 iterations of an atomic increment of [r0], then svc.
@@ -323,9 +411,11 @@ int main() {
   atomic_add_loop_fuses_and_counts(0x1a32'0401);
   conditional_store_compare_and_swap(0x1a32'0402);
   thumb_fused_add(0x1a32'0403);
+  kuser_cmpxchg_sequence(0x1a32'0409);
   byte_and_halfword_runs(0x1a32'0404);
   faults_and_alignment(0x1a32'0406);
   two_threads_count_exactly(0x1a32'0407);
+  two_threads_through_kuser_cmpxchg(0x1a32'040a);
   ordinary_store_beats_the_reservation(0x1a32'0408);
   std::puts("arm64-jit-a32-exclusive: ok");
   return 0;
