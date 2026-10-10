@@ -768,10 +768,10 @@ SME profiles are, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
 Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
-is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
-engine below `base` takes the new entry as the illegal-instruction exit
-without touching the state. The development policy
+milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
+AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
+new entry as the illegal-instruction exit without touching the state. The
+gadget engine is at `none`; the JIT is at `base` on macOS. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
@@ -800,6 +800,28 @@ its ISA and counts its saved guest units in that ISA's unit, a word for A64
 and A32 and a halfword for T32, so one page-bounded validation serves the
 gadget cache's validating lookups, the JIT's stale lookups and the shared
 tier, whose entries must carry the ISA of the key they are stored under.
+
+The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
+without changing it. An A32 or T32 block is decoded by the shared decoder and
+compiled by its own compiler, which reuses the A64 compiler's register
+residency, flag machine, cold paths, direct and indirect links, tracked stores
+and publication: R0-R14 are resident host registers written back at every
+exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
+condition is a branch over the body, and a link's target is the key. Memory
+takes the shared inline TLB sequence after a 32-bit address and the alignment
+rule of the form. A load-exclusive, up to four register instructions and the
+store-exclusive on the same address at the start of a block become one host
+load-exclusive and store-exclusive, so the guest's monitor is the host's; a
+failed store leaves the status to the guest's retry loop. What the lowering
+declines (an access across a page or one that must fault, an exclusive that
+does not fuse, the parallel arithmetic) leaves the block through
+`uml_arm64_jit_a32_execute`, a terminal helper that runs the one instruction
+in C++ with exact fault ordering. An entry in the middle of an IT block and a
+single step run one instruction in the single-instruction arena, with the IT
+state the exit recorded. Translations validate their saved guest bytes in
+the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
+translation is seen. Executable memory comes only from the arena the A64 JIT
+already uses; the A32 files allocate and publish none.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

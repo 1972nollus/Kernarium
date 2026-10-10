@@ -782,6 +782,30 @@ shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
 
+## AArch32 JIT
+
+The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
+`arm64-jit-a32-corpus` runs every base-level case of the AArch32 corpus pack
+through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
+each of the oracle's two epilogues, and compares registers, APSR, thread
+registers, changed data, event, fault address and retired count; a failing
+exclusive case runs once more, because a host store-exclusive may fail without
+cause. It then requires every lowered form to stay out of the slow helper from a
+clean state: each event-free case runs twice and, past the first run, at most
+half of a form's cases may take the helper (the rest cross a page or write
+back over the loaded register). The parallel arithmetic that the interim
+helper runs must take it in all of them. `arm64-jit-a32-runtime`,
+`arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
+programs against an independent reference of the instruction forms (the corpus
+carries T32).
+`arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
+idiom, the monitor rules, fault and alignment exits, two threads counting
+exactly and an ordinary store clearing a reservation, and requires the fused
+loop to make no helper call. `arm64-jit-a32-control` runs IT blocks whole, a
+step at a time and from the middle, long blocks under a small budget, and code
+rewritten under translations. `arm64-jit-a32-encoder` compares the compiler's
+A64 encoders with LLVM MC.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites

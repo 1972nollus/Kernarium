@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/* A32 and T32 data processing on the JIT against the reference
+/* A32 data processing on the JIT against the reference
  * (arm64_jit_a32_reference.hpp): random sequences of instructions under
- * random conditions and flags, and the directed cases that sequences do
- * not reach (the PC as an operand, writes of the PC, IT blocks). */
+ * random conditions and flags. The corpus lane carries T32, and the control
+ * test the IT blocks. */
 #include "arm64_jit_a32_reference.hpp"
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
