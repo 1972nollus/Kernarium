@@ -16,6 +16,7 @@
 #include "cpu/arm64/jit/a32/a32_arith.hpp"
 #include "cpu/arm64/jit/a32/a32_helpers.hpp"
 #include "cpu/arm64/jit/a32/a32_operations.hpp"
+#include "cpu/arm64/jit/a32/a32_vector_operations.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -34,6 +35,11 @@
 #endif
 
 namespace {
+
+/* FPSCR's control bits (AHP, DN, FZ, RMode, FZ16) and its status bits (QC and
+ * the cumulative flags); N, Z, C and V are a32_fpscr_nzcv. */
+constexpr std::uint32_t fpscr_control_mask = 0x07c8'0000U;
+constexpr std::uint32_t fpscr_status_mask = 0x0800'009fU;
 
 using namespace ::uml::emulator::tests;
 using namespace ::uml::emulator::tests::a32;
@@ -186,7 +192,18 @@ arm64::CpuState cpu_from(const State &state, bool thumb,
   cpu.a32_cp15ben = 1;
   cpu.a32_tpidruro = state.tpidruro;
   cpu.tls = state.tpidrurw;
+  for (unsigned d = 0; d < kVectors; ++d)
+    std::memcpy(cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), &state.d[d], 8);
+  /* FPSCR is split as the CpuState holds it. */
+  cpu.fpcr = state.fpscr & fpscr_control_mask;
+  cpu.fpsr = state.fpscr & fpscr_status_mask;
+  cpu.a32_fpscr_nzcv = state.fpscr & 0xf000'0000U;
   return cpu;
+}
+
+std::uint32_t fpscr_of(const arm64::CpuState &cpu) {
+  return (cpu.fpcr & fpscr_control_mask) | (cpu.fpsr & fpscr_status_mask) |
+         (cpu.a32_fpscr_nzcv & 0xf000'0000U);
 }
 
 std::uint32_t apsr_of(const arm64::CpuState &cpu) {
@@ -200,7 +217,7 @@ std::uint32_t apsr_of(const arm64::CpuState &cpu) {
 }
 
 struct Totals final {
-  std::size_t run = 0, skipped = 0, failed = 0, retried = 0;
+  std::size_t run = 0, skipped = 0, pending = 0, failed = 0, retried = 0;
   std::map<std::string, std::size_t> failed_forms;
 };
 
@@ -323,6 +340,21 @@ std::string check(Machine &machine, const Case &test) {
   }
   if (cpu.a32_tpidruro != test.final.tpidruro || cpu.tls != test.final.tpidrurw)
     return fail("a thread register changed");
+  for (unsigned d = 0; d < kVectors; ++d) {
+    std::uint64_t value;
+    std::memcpy(&value, cpu.vectors[d / 2].bytes.data() + 8U * (d & 1U), 8);
+    if (value != test.final.d[d]) {
+      std::snprintf(text, sizeof text, "d%u = %016llx, expected %016llx", d,
+                    static_cast<unsigned long long>(value),
+                    static_cast<unsigned long long>(test.final.d[d]));
+      return text;
+    }
+  }
+  if (fpscr_of(cpu) != test.final.fpscr) {
+    std::snprintf(text, sizeof text, "fpscr %08x, expected %08x", fpscr_of(cpu),
+                  test.final.fpscr);
+    return text;
+  }
   const auto expected = machine.expected_memory(test);
   const auto actual = machine.read_data();
   if (std::memcmp(expected.data(), actual.data(), kDataSize) != 0) {
@@ -364,6 +396,37 @@ bool within_level(const Case &test, const dec::Profile &profile) {
     if (instruction.legal() &&
         static_cast<int>(instruction.info().level) >
             static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()))
+      return false;
+  }
+  return true;
+}
+
+/* Whether the compiler lowers every simd-level instruction of the program. */
+bool lowered(const Case &test, const dec::Profile &profile) {
+  const bool thumb = test.flags & kFlagThumb;
+  dec::ItState it;
+  for (unsigned half = 0; half < test.halves.size();) {
+    dec::Instruction instruction;
+    if (!thumb) {
+      if (half + 1 >= test.halves.size())
+        break;
+      instruction = dec::decode_a32(
+          std::uint32_t{test.halves[half + 1]} << 16 | test.halves[half], profile);
+      half += 2;
+    } else {
+      const std::uint16_t first = test.halves[half];
+      const unsigned length = dec::thumb_length(first);
+      if (half + length / 2 > test.halves.size())
+        break;
+      const std::uint32_t word = length == 4
+                                     ? std::uint32_t{first} << 16 | test.halves[half + 1]
+                                     : std::uint32_t{first} << 16;
+      instruction = dec::decode_thumb(word, it, profile);
+      it = instruction.next_it;
+      half += length / 2;
+    }
+    if (instruction.legal() && instruction.info().level == dec::Level::simd &&
+        !::uml::cpu::arm64::jit::a32::vector_lowered(instruction.form))
       return false;
   }
   return true;
@@ -565,6 +628,10 @@ int main(int argc, char **argv) {
         ++totals.skipped;
         continue;
       }
+      if (!lowered(test, profile)) {
+        ++totals.pending;
+        continue;
+      }
       ++totals.run;
       if (trace) {
         std::fprintf(stderr, "case %s:", test.name.c_str());
@@ -599,8 +666,8 @@ int main(int argc, char **argv) {
     }
   }
   std::printf("AArch32 corpus on the JIT: %zu cases run, %zu skipped below the level, "
-              "%zu failed (%zu exclusive retried)\n",
-              totals.run, totals.skipped, totals.failed,
+              "%zu pending, %zu failed (%zu exclusive retried)\n",
+              totals.run, totals.skipped, totals.pending, totals.failed,
               totals.retried);
   if (list_failures || totals.failed != 0)
     for (const auto &[form, count] : totals.failed_forms)

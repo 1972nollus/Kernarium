@@ -7,6 +7,7 @@
 #include "cpu/arm64/jit/jit_compiler_families.hpp"
 #include "a32_operations.hpp"
 #include "a32_transfer.hpp"
+#include "a32_vector_operations.hpp"
 
 #include <array>
 #include <cstddef>
@@ -100,6 +101,8 @@ private:
     std::uint16_t dirty_gprs{};
     std::uint32_t dirty_vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
+    /* The FPCR the host holds where the path branches off. */
+    bool standard_fp{};
   };
 
   /* The skipped arm of a fused conditional store: it clears the monitor and
@@ -243,6 +246,54 @@ private:
                       bool accumulate);
   void set_q_on_overflow();
 
+  // Vectors: the register views and the floating-point environment
+  // (a32_compiler_vector.cpp).
+  [[nodiscard]] Flow emit_vector(const OpInfo &info);
+  /* Q n is CpuState vector n: its host register holds the whole register. */
+  [[nodiscard]] unsigned q_use(unsigned q, unsigned fallback);
+  [[nodiscard]] NativeVector q_def(unsigned q, bool reads_old,
+                                   unsigned fallback);
+  void q_done(NativeVector value, unsigned q);
+  /* D n is the low (even n) or high (odd n) half of Q n/2. The returned
+   * host register holds the doubleword in its low 64 bits (the rest is
+   * unspecified), staged in `scratch` when it is not already there. */
+  [[nodiscard]] unsigned d_use(unsigned d, unsigned scratch);
+  /* The doubleword in both halves of the returned register. */
+  [[nodiscard]] unsigned d_use_twice(unsigned d, unsigned scratch);
+  /* D n takes the low 64 bits of `result`; the other half is kept. */
+  void d_write(unsigned d, unsigned result);
+  /* S n is lane n%4 of Q n/4: the returned register holds it in its low 32
+   * bits. */
+  [[nodiscard]] unsigned s_use(unsigned s, unsigned scratch);
+  void s_write(unsigned s, unsigned result);
+  /* A VFP operand: a single or a double register. */
+  [[nodiscard]] unsigned fp_use(unsigned r, bool dp, unsigned scratch) {
+    return dp ? d_use(r, scratch) : s_use(r, scratch);
+  }
+  void fp_write(unsigned r, bool dp, unsigned result) {
+    if (dp)
+      d_write(r, result);
+    else
+      s_write(r, result);
+  }
+  /* The instruction reads or writes vector or floating-point state. */
+  void touch_vectors() noexcept { accesses_fp_state_ = true; }
+  /* The instruction depends on the host FPCR or FPSR, or sets FPSR. */
+  void touch_fp_environment();
+  /* Moves the host FPCR to the guest's value or to the Standard FPSCR
+   * value (FZ and DN set, round to nearest, AHP and FZ16 the guest's). */
+  void set_fp_mode(bool standard);
+  void restore_fp_for_exit();
+  [[nodiscard]] std::uint32_t neon_word() const noexcept;
+
+  // VFP (a32_compiler_vfp.cpp).
+  [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
+  [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);
+  [[nodiscard]] Flow emit_vfp_compare(const VInfo &v);
+  [[nodiscard]] Flow emit_vfp_convert(const VInfo &v);
+  [[nodiscard]] Flow emit_vfp_move(const VInfo &v);
+  [[nodiscard]] Flow emit_fpscr(const VInfo &v);
+
   // Control (a32_compiler_control.cpp).
   [[nodiscard]] Flow emit_branch(const OpInfo &info);
   [[nodiscard]] Flow emit_status_register(const OpInfo &info);
@@ -270,6 +321,10 @@ private:
   bool track_direct_stores_{};
   bool terminated_{};
   bool native_fp_{};
+  bool accesses_fp_state_{};
+  /* The host FPCR holds the Standard FPSCR value rather than the guest's
+   * where the instruction being translated starts. */
+  bool standard_fp_{};
   bool link_target_safe_{true};
   bool guest_illegal_{};
   std::uint64_t memory_write_mask_{};

@@ -146,6 +146,8 @@ constexpr Named named_ops[] = {
         info.op = found->second;
       else
         (void)parallel_mnemonic(name, info);
+      if (aarch32::kForms[index].level == aarch32::Level::simd)
+        info.op = Op::vector;
       info.sp_base = form.find("_SP_") != std::string_view::npos;
       if (form.find("_rr_") != std::string_view::npos)
         info.shape = Shape::reg_shifted;

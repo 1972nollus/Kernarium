@@ -96,6 +96,8 @@ A32Compiler::Flow A32Compiler::emit_operation() {
     return emit_status_register(info);
   case Op::coprocessor:
     return emit_coprocessor();
+  case Op::vector:
+    return emit_vector(info);
   default:
     return emit_other(info);
   }

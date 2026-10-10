@@ -36,6 +36,8 @@ enum class Op : std::uint8_t {
   b, bl, blx, bx, cbz, cbnz,
   // System.
   svc, bkpt, udf, mrs, msr, coprocessor, nop, dmb, dsb, isb, clrex, it,
+  // VFP and Advanced SIMD (a32_vector_operations.hpp names the mnemonic).
+  vector,
 };
 
 /* The suffix of a parallel add or subtract, with its signedness and mode. */
@@ -74,7 +76,7 @@ struct OpInfo final {
 
 /* The decoder level the compiler implements. */
 [[nodiscard]] constexpr aarch32::Level a32_level() noexcept {
-  return aarch32::Level::base;
+  return aarch32::Level::simd;
 }
 
 } // namespace uml::cpu::arm64::jit::a32
