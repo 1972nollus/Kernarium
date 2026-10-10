@@ -771,6 +771,47 @@ all-active, no trap enable, an aligned base inside a page) requires the
 library-exit count of every lowered word's row to stay zero, so a lowering
 that always bailed to the library cannot pass as a match.
 
+The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
+with interworking and IT, for the armhf userspace of Debian and Android's
+armeabi-v7a, which needs hardware VFPv4-D32 and Advanced SIMD, so there is no
+soft-float-only profile. The profile, derived from the host as the SVE and
+SME profiles are, is in
+[`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
+Each engine's `a32_support` names how far it implements it, `none`, `base`
+(the integer core), `simd` or `complete`, and `base` and `simd` are
+milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
+is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
+engine below `base` takes the new entry as the illegal-instruction exit
+without touching the state. The development policy
+`DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
+`a32_presented_support` gives the level a run presents, nothing with the
+policy off and the engine's level with it on, and the AArch32 identification
+registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
+and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
+are zero below `base`. The default turns on once both engines are complete.
+
+An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
+the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
+appended to `CpuState` after the SVE block (GE, the sticky Q flag, ITSTATE,
+FPSCR's flags, TPIDRURO, CP15BEN and an entry marker), so no earlier offset
+moves. The PC is a translation key
+([`cpu/arm64/aarch32/guest_key.hpp`](../darwin/cpu/arm64/aarch32/guest_key.hpp))
+for the whole entry, which lets one gadget program cache, one JIT arena and
+one shared tier serve A64, A32 and T32 without a second instance of any of
+them. An A64 key is the address with the SME mode in its two low bits. An A32
+key is bit 63 with the word address; a T32 key adds bit 62 and shifts the
+halfword address left one bit, so that bit 2, where every cache hash starts,
+varies between adjacent instructions. A branch target's bit 0 selects T32, so
+the key carries PSTATE.T and no stub switches the state. A valid AArch32 key
+has both low bits clear, so no key reaches the SME mode the JIT reads from an
+A64 key, is the all-ones empty cell, or is a fault position, and an A32 target
+with bit 1 set is a PC-alignment exit before it is a key. The IT state is not
+part of a key because no block ends inside an IT block. A translation records
+its ISA and counts its saved guest units in that ISA's unit, a word for A64
+and A32 and a halfword for T32, so one page-bounded validation serves the
+gadget cache's validating lookups, the JIT's stale lookups and the shared
+tier, whose entries must carry the ISA of the key they are stored under.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
@@ -881,6 +922,32 @@ architectures. On Darwin both call `darwin_uml_vm_invalidate_code()` for the
 target mm's generation. That call moves the code stamp of each executable page
 and publishes the range, as a guest code synchronization would. Pages mapped
 without execute permission are skipped, so data transfers publish nothing.
+
+The kernel runs AArch32 tasks (armhf and Android's armeabi-v7a: ARMv7-A and
+Armv8 AArch32 with VFPv4-D32, NEON and EABI hard-float) beside AArch64 ones, as
+arm64 Linux's `COMPAT` does. The bridge identifies one by PSTATE.nRW in the
+entry's pstate, with R0-R14 in x0-x14, D0-D31 in V0-V15, FPSCR split between
+fpsr and fpcr, TPIDRURW in the guest's TLS value and TPIDRURO in the `tpidrro`
+field. The header comment on `struct darwin_uml_guest_registers` defines the
+registers and what each event means. An AArch32 entry that carries SME or SVE
+state, or that the engine cannot execute, returns a fatal event. An engine
+reports what it can execute as the compat HWCAPs, and while they are zero the
+kernel answers a 32-bit ELF file with `ENOEXEC` and `personality(PER_LINUX32)`
+with `EINVAL`. `cacheflush()` and a tracer's code writes reach the engines
+through `darwin_uml_vm_invalidate_code()`, as any other code write does, and
+the kuser helpers and signal-return pages are ordinary code pages the kernel
+installs in the task. A 16 KiB guest runs only 32-bit programs whose segments
+are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
+userspace needs the 4 KiB profile. The
+[shared kernel README](../kernel/common/README.md) holds the kernel side.
+
+One decoder serves every AArch32 consumer: `darwin/cpu/arm64/aarch32` decodes
+A32, T16 and T32 words, in the caller's IT state, from a table generated from
+the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
+`shared` target that includes no engine, so the gadget engine, the JIT and the
+semantic library link the same one, and it implements the Armv8-A AArch32 EL0
+profile: whatever the profile lacks is undefined, never guessed. Its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
 
 ## Kernel and Android ownership
 

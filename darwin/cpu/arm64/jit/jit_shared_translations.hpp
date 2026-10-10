@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "jit_cache_geometry.hpp"
 #include "jit_runtime_contract.hpp"
 
@@ -59,10 +60,20 @@ struct SharedTranslation final {
    * retain exactly the immutable prefix the compiler consumed. Bytes fetched
    * after that prefix cannot affect this translation and are not part of its
    * identity.
+   *
+   * The identity is guest_word_count units of the translation's ISA: words
+   * for A64 and A32, where it equals guest_instructions, and halfwords for
+   * T32, where an instruction takes one or two. The bytes lie at the front
+   * of guest_words, which holds them in whole 32-bit elements, and the
+   * spans find(), preflight_publication() and insert() take hold exactly
+   * that many elements, any padding in the last one beyond the identity.
    */
   std::shared_ptr<const std::uint32_t[]> guest_words;
   std::size_t guest_word_count{};
   std::size_t guest_instructions{};
+  /* The aarch32::GuestIsa of the key the translation is stored under
+   * (insert() checks it), which gives the unit guest_word_count counts. */
+  std::uint8_t isa{};
   std::size_t hot_words{};
   std::size_t internal_entry_word{};
   std::uint64_t memory_write_mask{};

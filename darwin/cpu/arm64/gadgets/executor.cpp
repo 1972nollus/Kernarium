@@ -2,6 +2,8 @@
 #include "executor.hpp"
 #include "sve_helpers.hpp"
 
+#include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
@@ -42,6 +44,10 @@ namespace {
 #endif
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
+/* A T32 translation validates halfwords: two for each of its instructions,
+ * and the two a stopped build read without retiring. */
+constexpr std::size_t maximum_t32_validation_units =
+	2 * block_instruction_count + 2;
 
 [[nodiscard]] std::size_t fetch_instruction_window(
 	StaticGuestMemory &memory, std::uint64_t pc,
@@ -508,10 +514,13 @@ public:
 				const auto &body = *slot.body;
 				std::uint64_t digest = 0xcbf29ce484222325ULL;
 				const std::size_t sources = body.source_word_count;
-				const auto *words = body.source_words();
-				for (std::size_t index = 0; index < sources; ++index)
-					digest = (digest ^ words[index]) *
-						0x100000001b3ULL;
+				const auto *bytes = body.source_bytes();
+				const auto unit = body.source_unit();
+				for (std::size_t index = 0; index < sources; ++index) {
+					std::uint32_t value = 0;
+					std::memcpy(&value, bytes + index * unit, unit);
+					digest = (digest ^ value) * 0x100000001b3ULL;
+				}
 				std::fprintf(out,
 					"P %lu 0x%llx %zu %zu %zu 0x%llx\n",
 					slot.generation,
@@ -660,7 +669,9 @@ public:
 		diagnostics::SampledBlock &block) const noexcept
 	{
 		const auto *body = static_cast<const Body *>(bodies_.owner(stream));
-		if (body == nullptr)
+		/* The sampler describes a block by its A64 words; it does not yet
+		 * describe an AArch32 one. */
+		if (body == nullptr || body->isa != 0)
 			return false;
 		const auto *word = static_cast<const std::uintptr_t *>(stream);
 		if (word < body->link_entry() ||
@@ -761,6 +772,29 @@ public:
 		std::span<const std::uint32_t> guest_words,
 		std::uint64_t changes)
 	{
+		/* The words a validating find() will compare against guest
+		 * memory: the program's instructions, plus the word a stopped
+		 * build read without retiring. */
+		std::span<const std::uint32_t> validation;
+		const auto validation_words =
+			result.program.instruction_count() +
+			static_cast<std::size_t>(!result.complete);
+		if (validation_words != 0 &&
+		    validation_words <= block_instruction_count &&
+		    validation_words <= guest_words.size())
+			validation = guest_words.first(validation_words);
+		return store_validated(pc, result,
+			std::as_bytes(validation), changes);
+	}
+
+	/* store() for any ISA: `validation` is the guest bytes the program
+	 * stands for, in the units the key's ISA reads (aarch32::GuestIsa), so a
+	 * T32 builder supplies halfwords and everything else supplies words. */
+	[[nodiscard]] BuildResult store_validated(
+		std::uint64_t pc, const BuildResult &result,
+		std::span<const std::byte> validation, std::uint64_t changes)
+	{
+		assert(arm64::aarch32::key_is_canonical(pc));
 		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab)
@@ -792,18 +826,8 @@ public:
 				state.slots.shrink_to_fit();
 			}
 		}
-		/* The words a validating find() will compare against guest
-		 * memory: the program's instructions, plus the word a stopped
-		 * build read without retiring. */
-		std::span<const std::uint32_t> validation;
-		const auto validation_words =
-			result.program.instruction_count() +
-			static_cast<std::size_t>(!result.complete);
-		if (validation_words != 0 &&
-		    validation_words <= block_instruction_count &&
-		    validation_words <= guest_words.size())
-			validation = guest_words.first(validation_words);
-		auto *replacement_body = new_body(result, validation);
+		auto *replacement_body = new_body(result, validation,
+			arm64::aarch32::key_isa(pc));
 		/* Whatever occupied the slot has a link record to reset, and a
 		 * body for this cache to release. */
 		if (slot.body != nullptr) {
@@ -880,10 +904,16 @@ private:
 		std::uint32_t stop_instruction{};
 		std::uint32_t word_count{};
 		std::uint16_t instruction_count{};
+		/* The guest units the stream is validated against: words for
+		 * A64 and A32, halfwords for T32 (at most
+		 * maximum_t32_validation_units). */
 		std::uint8_t source_word_count{};
 		bool complete{};
 		bool accesses_fp_state{};
 		bool holds_sve{};
+		/* The translation's aarch32::GuestIsa, from its key, in what
+		 * was padding: it sizes a unit and so the validation words. */
+		std::uint8_t isa{};
 
 		/* The stream follows the body, and the guest words it is
 		 * validated against follow the stream. A block that accesses
@@ -918,19 +948,34 @@ private:
 			return reinterpret_cast<const std::uint32_t *>(
 				words() + word_count);
 		}
+		/* The validation units are bytes in a unit the ISA sizes: a
+		 * word, or for T32 a halfword. */
+		[[nodiscard]] std::size_t source_unit() const noexcept
+		{
+			return arm64::aarch32::isa_unit_bytes(
+				static_cast<arm64::aarch32::GuestIsa>(isa));
+		}
+		[[nodiscard]] std::byte *source_bytes() noexcept
+		{
+			return reinterpret_cast<std::byte *>(source_words());
+		}
+		[[nodiscard]] const std::byte *source_bytes() const noexcept
+		{
+			return reinterpret_cast<const std::byte *>(source_words());
+		}
 		/* What the arena must be given back follows from the counts, so
 		 * neither the body nor the slot that indexes it stores it.
 		 * `words` counts an FP block's entry word with its stream. */
 		[[nodiscard]] static std::size_t allocation_bytes(
-			std::size_t words, std::size_t sources) noexcept
+			std::size_t words, std::size_t source_bytes) noexcept
 		{
 			return sizeof(Body) + words * sizeof(std::uintptr_t) +
-				sources * sizeof(std::uint32_t);
+				source_bytes;
 		}
 		[[nodiscard]] std::size_t allocation_bytes() const noexcept
 		{
 			return allocation_bytes(entry_words() + word_count,
-				source_word_count);
+				source_word_count * source_unit());
 		}
 		/* The stored block as the builder produced it. The program
 		 * refers to the words behind this header rather than copying
@@ -950,6 +995,11 @@ private:
 	static_assert(sizeof(Body) == 32 &&
 		sizeof(Body) % alignof(std::uintptr_t) == 0,
 		"the stream tail follows the body at pointer alignment");
+	static_assert(offsetof(Body, holds_sve) == 29 &&
+		offsetof(Body, isa) == 30,
+		"the ISA byte sits in the body's padding, after every field");
+	static_assert(maximum_t32_validation_units < 0x100U,
+		"a T32 translation's halfword count fits the narrow field");
 	static_assert(block_instruction_count < 0xffU,
 		"a stored block's counts fit the body's narrow fields");
 
@@ -1189,11 +1239,14 @@ private:
 	 * those words to refer to rather than a second copy of them.
 	 */
 	[[nodiscard]] Body *new_body(
-		const BuildResult &built, std::span<const std::uint32_t> validation)
+		const BuildResult &built, std::span<const std::byte> validation,
+		arm64::aarch32::GuestIsa isa)
 	{
 		const auto &program = built.program;
 		const auto words = program.words();
 		assert(program.instruction_count() <= block_instruction_count);
+		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
+		assert(validation.size() % unit == 0);
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
 		const auto bytes = Body::allocation_bytes(
 			entry + words.size(), validation.size());
@@ -1205,10 +1258,11 @@ private:
 			.instruction_count = static_cast<std::uint16_t>(
 				program.instruction_count()),
 			.source_word_count =
-				static_cast<std::uint8_t>(validation.size()),
+				static_cast<std::uint8_t>(validation.size() / unit),
 			.complete = built.complete,
 			.accesses_fp_state = program.accesses_fp_state(),
 			.holds_sve = program.holds_sve(),
+			.isa = static_cast<std::uint8_t>(isa),
 		};
 		if (entry != 0)
 			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
@@ -1217,7 +1271,7 @@ private:
 					uml_arm64_gadget_fp_link_entry);
 		std::copy(words.begin(), words.end(), body->words());
 		std::copy(validation.begin(), validation.end(),
-			body->source_words());
+			body->source_bytes());
 		return body;
 	}
 
@@ -1275,41 +1329,37 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		if (slot.body->source_word_count == 0 ||
-		    slot.body->source_word_count > block_instruction_count) {
+		const auto units = std::size_t{slot.body->source_word_count};
+		const auto limit = slot.body->isa == 0 ? block_instruction_count :
+			maximum_t32_validation_units;
+		if (units == 0 || units > limit) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
 			return false;
 		}
 
-		/* The saved words are the block's instructions and, for a build
-		 * that stopped, the word it read without retiring. */
-		std::array<std::uint32_t, block_instruction_count> fetched;
-		const std::size_t remaining = slot.body->source_word_count;
-		std::size_t offset = 0;
-		while (offset < remaining) {
-			const auto address = slot.body->guest_address +
-				offset * sizeof(std::uint32_t);
-			const auto page_remaining = guest_page_size -
-				(address & (guest_page_size - 1));
-			auto run = std::min<std::size_t>(remaining - offset,
-				page_remaining / sizeof(std::uint32_t));
-			if (run == 0)
-				run = 1;
-			auto words = std::span{fetched}.subspan(offset, run);
-			if (!memory.fetch(address, std::as_writable_bytes(words))) {
-				++diagnostics.validation_faults;
-				discard(slot);
-				return false;
-			}
-			if (std::memcmp(words.data(),
-					slot.body->source_words() + offset,
-					run * sizeof(std::uint32_t)) != 0) {
-				++diagnostics.validation_mismatches;
-				discard(slot);
-				return false;
-			}
-			offset += run;
+		/* The saved units are the block's instructions and, for a build
+		 * that stopped, the one it read without retiring: words, or for
+		 * T32 halfwords, read where the key says they lie. */
+		std::array<std::uint32_t, block_instruction_count + 1> fetched;
+		const auto outcome = arm64::aarch32::validate_guest_units(
+			slot.pc, units, slot.body->source_bytes(),
+			std::as_writable_bytes(std::span{fetched}),
+			guest_page_size,
+			[&memory](std::uint64_t address,
+				  std::span<std::byte> bytes) {
+				return memory.fetch(address, bytes);
+			},
+			false);
+		if (outcome == arm64::aarch32::GuestValidation::fault) {
+			++diagnostics.validation_faults;
+			discard(slot);
+			return false;
+		}
+		if (outcome == arm64::aarch32::GuestValidation::mismatch) {
+			++diagnostics.validation_mismatches;
+			discard(slot);
+			return false;
 		}
 
 		const auto current =

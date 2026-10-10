@@ -2,6 +2,9 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/aarch32/guest_validation.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -14,8 +17,15 @@ namespace uml::cpu::arm64 {
 JitExecutor::Implementation::validate_stale_block(
     const CompiledBlock &block, std::uint64_t changes,
     StaticGuestMemory &memory) {
+  /* The saved units are the block's guest words, or for T32 its halfwords,
+   * read where the key says they lie (aarch32/guest_key.hpp). */
+  const auto isa = aarch32::key_isa(block.key);
+  const std::size_t unit_limit =
+      isa == aarch32::GuestIsa::t32 ? 2 * maximum_block_instructions
+                                    : maximum_block_instructions;
   if (block.instruction_count == 0 ||
       block.instruction_count > maximum_block_instructions ||
+      block.saved_units == 0 || block.saved_units > unit_limit ||
       block.saved_guest_words == nullptr)
     return JitCacheValidationResult::mismatch;
 
@@ -32,37 +42,20 @@ JitExecutor::Implementation::validate_stale_block(
    */
   constexpr std::uint64_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
   GuestWordBuffer fetched{};
-  std::size_t index = 0;
-  while (index < block.instruction_count) {
-    const auto address =
-        translation_key_pc(block.key) + index * sizeof(std::uint32_t);
-    const auto page_remaining =
-        guest_page_size - (address & (guest_page_size - 1));
-    auto run = std::min<std::size_t>(
-        block.instruction_count - index,
-        static_cast<std::size_t>(page_remaining / sizeof(std::uint32_t)));
-    /* A valid A64 pc is word aligned; keep a malformed one deterministic
-     * rather than constructing an empty span. */
-    if (run == 0)
-      run = 1;
-    const auto words = std::span{fetched}.subspan(index, run);
-    if (memory.fetch(address, std::as_writable_bytes(words))) {
-      if (std::memcmp(words.data(), &block.saved_guest_words[index],
-                      run * sizeof(std::uint32_t)) != 0)
-        return JitCacheValidationResult::mismatch;
-      index += run;
-      continue;
-    }
-    for (std::size_t step = 0; step < run; ++step) {
-      std::array<std::byte, sizeof(std::uint32_t)> word{};
-      if (!memory.fetch(address + step * sizeof(std::uint32_t), word))
-        return JitCacheValidationResult::fault;
-      if (std::memcmp(word.data(),
-                      &block.saved_guest_words[index + step],
-                      word.size()) != 0)
-        return JitCacheValidationResult::mismatch;
-    }
-    index += run;
+  switch (aarch32::validate_guest_units(
+      block.key, block.saved_units,
+      reinterpret_cast<const std::byte *>(block.saved_guest_words.get()),
+      std::as_writable_bytes(std::span{fetched}), guest_page_size,
+      [&memory](std::uint64_t address, std::span<std::byte> bytes) {
+        return memory.fetch(address, bytes);
+      },
+      true)) {
+  case aarch32::GuestValidation::match:
+    break;
+  case aarch32::GuestValidation::mismatch:
+    return JitCacheValidationResult::mismatch;
+  case aarch32::GuestValidation::fault:
+    return JitCacheValidationResult::fault;
   }
 
   /*
@@ -210,6 +203,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
         links_.size();
 #endif
   block.instruction_count = guest_words.size();
+  block.saved_units = static_cast<std::uint8_t>(guest_words.size());
   block.saved_guest_words = std::move(saved_guest_words);
   block.memory_write_mask = memory_write_mask;
   block.direct_memory_write_mask = direct_memory_write_mask;
@@ -395,6 +389,7 @@ JitExecutor::Implementation::publish_shared_translation(
     }
     translation->direct_link_refusals = compiled.direct_link_refusals;
     translation->indirect_link_refusals = compiled.indirect_link_refusals;
+    translation->isa = static_cast<std::uint8_t>(aarch32::key_isa(pc));
     translation->guest_words = std::move(saved_guest_words);
     translation->guest_word_count = validation_words.size();
     translation->guest_instructions = compiled.guest_instructions;

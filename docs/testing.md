@@ -226,6 +226,27 @@ The optional `guest-futex-atomic` test checks the futex contract in
 probe's shell tools. Run it on both Linux page profiles and the maintained
 Android kernel.
 
+`guest-aarch32-kernel` checks the kernel's AArch32 task support in
+[`../kernel/common/README.md`](../kernel/common/README.md) on both Linux page
+profiles, and needs `python3` in the rootfs. The build generates a freestanding
+armhf program from `tests/integration/aarch32/aarch32_probe.S` with the
+configured compiler's ARM backend, wraps it into an ELF32 executable with
+`make_elf32.py` (the toolchain has no ARM linker) in a layout for any page size
+and in one for 4 KiB pages only, and never commits either. While no engine
+implements AArch32 (`UML_AARCH32_EXPECT=unsupported`, the default) the test
+requires `ENOEXEC` for both programs, `EINVAL` for `personality(PER_LINUX32)`,
+and unchanged 64-bit `uname`, `/proc/cpuinfo`, `vm.mmap_rnd_compat_bits` and
+`abi.cp15_barrier`. With `UML_AARCH32_EXPECT=run` it runs the program (kuser
+helpers, signals and VFP state, `cacheflush`, Thumb, `mmap2`, `PER_LINUX32`
+views, restarts and exec between ABIs; threads through `clone` and `clone3`,
+fault signals and stack growth, the time64 and socket calls with
+`SCM_RIGHTS`, `vfork`, timers, `seccomp` and a 32-bit tracer), a 64-bit
+tracer's session (registers, system call and single-step stops, signal-frame
+VFP state), a core dump and many runs at once, and requires the 4 KiB-only
+program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
+16 KiB one, leaving the guest working. The tooling test
+`aarch32-elf32-wrapper` checks the two layouts the wrapper writes.
+
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
 and restart. It requires access to macOS audio services.
@@ -614,6 +635,25 @@ static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
 that needs one of these features runs only on an M4 or newer Mac.
 
+## AArch32 decoder
+
+`arm64-aarch32-decoder` (unit, both page profiles) decodes the stored sample
+words of every row of the encoding table and the whole 16-bit Thumb space. It
+compares each answer with the one `tests/tooling/arm64/a32_expected.py`
+computes from the same XML pseudocode independently of the C++ translation,
+and requires LLVM MC to have decoded whatever the decoder accepts. The
+`arm64-a32-encoding-table` tooling test checks the generated tables and the
+test data against each other offline.
+
+To change the table, the profile policy (`a32_profile_policy.py`) or the pinned
+release, run `tests/tooling/arm64/generate_a32_encoding_table.py
+--architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
+LLVM MC 22.1.8 and takes a few minutes. Configure with
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the six
+outputs and requires the checked-in bytes; without the archive or that LLVM MC
+it skips.
+
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
@@ -712,6 +752,22 @@ with zero registers accept either outcome. Where 6.12 differs from the
 guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
 6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
 check that with the policy off the probe sees no SVE and PTRUE is undefined.
+
+## Guest AArch32 foundation
+
+`arm64-a32-foundation` checks the state `CpuState` appends and its assembly
+offsets, the guest-AArch32 policy, the engines' support levels and what a
+policy presents of them, the AArch32 identification registers and compat
+HWCAP words at each level over every subset of the host features they follow,
+and that both engines take the AArch32 entry as the illegal-instruction exit
+without changing the state. `arm64-a32-guest-key` checks the tagged
+translation keys (round trips, interworking, that no key collides with an A64
+key, the empty cell or a fault position, and the hash-visible bit) and the
+key-aware validation of saved guest units across page boundaries of both
+guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
+shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
+policy from their environment as well; the suites must hold unchanged with
+`DARWIN_UML_GUEST_AARCH32=1`.
 
 ## x86 instruction conformance
 
