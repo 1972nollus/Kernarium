@@ -730,6 +730,38 @@ static void uml_static_illegal_instruction()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* From bridge ABI 22 an AArch32 task is one whose pstate has nRW set, and no
+ * engine runs it yet: the compat HWCAP words are zero, so the kernel starts
+ * none, and an entry that names one is fatal before any state is loaded. */
+static void uml_static_aarch32_entry_is_fatal()
+{
+	constexpr unsigned long generation = 133;
+	constexpr std::uint64_t base = 0x2'4000;
+	constexpr std::uint32_t pstate_aarch32_user = 0x10U;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put32(0, 0xe3a0'0001U); // mov r0, #1
+	backing.put32(4, 0xef00'0000U); // svc #0
+
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
+		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
+	darwin_uml_guest_registers registers{};
+	uml::testing::GuestFpTail fp{};
+	registers.pc = base;
+	registers.pstate = pstate_aarch32_user;
+	registers.x[0] = 0x1'2345'6789ULL;
+	unsigned long tls = 0;
+	const int event = darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(event == DARWIN_UML_EVENT_FATAL);
+	/* Nothing ran or was loaded back. */
+	require(registers.pc == base);
+	require(registers.x[0] == 0x1'2345'6789ULL);
+	require(registers.pstate == pstate_aarch32_user);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 static void uml_static_mapping_change_ranges()
 {
 	constexpr unsigned long generation = 97;
@@ -1246,6 +1278,7 @@ int main()
 	uml_static_signal_return_bridge();
 	uml_static_permission_fault();
 	uml_static_illegal_instruction();
+	uml_static_aarch32_entry_is_fatal();
 	uml_static_mapping_change_ranges();
 	uml_static_partial_uaccess_copy_preserves_sibling_writes();
 	uml_static_code_page_stamps_follow_physical_aliases();

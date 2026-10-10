@@ -66,3 +66,12 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_irq_edge.py
     LABELS kernel
     TIMEOUT 120)
+
+uml_add_tooling_test(
+    NAME aarch32-elf32-wrapper
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_make_elf32.py
+        --compiler ${CMAKE_CXX_COMPILER}
+        --wrapper ${PROJECT_SOURCE_DIR}/tests/integration/aarch32/make_elf32.py
+    LABELS kernel;aarch32
+    TIMEOUT 60)

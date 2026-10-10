@@ -912,6 +912,24 @@ target mm's generation. That call moves the code stamp of each executable page
 and publishes the range, as a guest code synchronization would. Pages mapped
 without execute permission are skipped, so data transfers publish nothing.
 
+The kernel runs AArch32 tasks (armhf and Android's armeabi-v7a: ARMv7-A and
+Armv8 AArch32 with VFPv4-D32, NEON and EABI hard-float) beside AArch64 ones, as
+arm64 Linux's `COMPAT` does. The bridge identifies one by PSTATE.nRW in the
+entry's pstate, with R0-R14 in x0-x14, D0-D31 in V0-V15, FPSCR split between
+fpsr and fpcr, TPIDRURW in the guest's TLS value and TPIDRURO in the `tpidrro`
+field. The header comment on `struct darwin_uml_guest_registers` defines the
+registers and what each event means. An AArch32 entry that carries SME or SVE
+state, or that the engine cannot execute, returns a fatal event. An engine
+reports what it can execute as the compat HWCAPs, and while they are zero the
+kernel answers a 32-bit ELF file with `ENOEXEC` and `personality(PER_LINUX32)`
+with `EINVAL`. `cacheflush()` and a tracer's code writes reach the engines
+through `darwin_uml_vm_invalidate_code()`, as any other code write does, and
+the kuser helpers and signal-return pages are ordinary code pages the kernel
+installs in the task. A 16 KiB guest runs only 32-bit programs whose segments
+are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
+userspace needs the 4 KiB profile. The
+[shared kernel README](../kernel/common/README.md) holds the kernel side.
+
 ## Kernel and Android ownership
 
 `kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned
