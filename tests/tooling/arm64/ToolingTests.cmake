@@ -133,6 +133,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         TIMEOUT 60)
 endif()
 
+# The AArch32 decoder's generated tables and test data agree with each other
+# (offline; the generator's inputs are not needed).
+uml_add_tooling_test(
+    NAME arm64-a32-encoding-table
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_encoding_table.py
+    LABELS cpu
+    TIMEOUT 120)
+
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
     "Pinned Arm A64 XML archive for the A64 oracle and SME table freshness tests")
@@ -153,6 +162,17 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 900)
 set_tests_properties(arm64-sme-encoding-table-freshness PROPERTIES
+    SKIP_RETURN_CODE 77)
+set(UML_A32_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
+    "Pinned Arm AArch32 XML archive for the AArch32 table freshness test")
+uml_add_tooling_test(
+    NAME arm64-a32-encoding-table-freshness
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_encoding_table_freshness.py
+        --architecture-archive=${UML_A32_ARCHITECTURE_ARCHIVE}
+    LABELS cpu
+    TIMEOUT 1800)
+set_tests_properties(arm64-a32-encoding-table-freshness PROPERTIES
     SKIP_RETURN_CODE 77)
 
 # The pinned gadget region (darwin/cpu/arm64/gadgets/engine.S) in the linked

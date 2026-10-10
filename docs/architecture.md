@@ -889,6 +889,14 @@ are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
 userspace needs the 4 KiB profile. The
 [shared kernel README](../kernel/common/README.md) holds the kernel side.
 
+One decoder serves every AArch32 consumer: `darwin/cpu/arm64/aarch32` decodes
+A32, T16 and T32 words, in the caller's IT state, from a table generated from
+the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
+`shared` target that includes no engine, so the gadget engine, the JIT and the
+semantic library link the same one, and it implements the Armv8-A AArch32 EL0
+profile: whatever the profile lacks is undefined, never guessed. Its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+
 ## Kernel and Android ownership
 
 `kernel/mainline-6.18` and `kernel/android-6.18` independently own their pinned
