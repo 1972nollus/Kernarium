@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 
 import a32_neon
+import a32_structure
 
 # The families this module adds, after generate_a32.py's own.
 FAMILIES = [
@@ -41,6 +42,7 @@ FAMILIES = [
     "vfpsys",     # VMRS VMSR
     "vfpmem",     # VLDR VSTR
     "vfpblock",   # VLDM VSTM VPUSH VPOP FLDMX FSTMX
+    "neonmem",    # VLD1-4 VST1-4
     "neon",       # Advanced SIMD data processing; sub = a32_neon.py group
 ]
 
@@ -130,9 +132,12 @@ def plan_of_simd(name: str, mnemonic: str):
         stem = name.rsplit("_", 1)[0]
         if stem in core:
             return ("vfpcore", core[stem], 0)
-    # The structure loads and stores are the semantic library's.
-    if re.match(r"V(LD|ST)[1-4]_", name):
-        return ("library", 0, 0)
+    structure = re.match(r"V(LD|ST)([1-4])_([m1a])_", name)
+    if structure:
+        # sub: bit 0 store, bits 1-2 the shape (m, 1, a), bits 3-4 structures - 1
+        shape = "m1a".index(structure.group(3))
+        return ("neonmem", (1 if structure.group(1) == "ST" else 0) |
+                shape << 1 | (int(structure.group(2)) - 1) << 3, 0)
     if re.match(r"V(RECPS|RSQRTS)_", name):
         return ("library", 0, 0)
     neon = a32_neon.plan_of(name)
@@ -584,6 +589,7 @@ def emit_vfp_memory(asm) -> None:
 
 def emit(asm) -> None:
     a32_neon.emit(asm)
+    a32_structure.emit(asm)
     emit_vfp_arithmetic(asm)
     emit_vfp_immediate(asm)
     emit_vfp_convert(asm)
@@ -600,6 +606,8 @@ def header_tables(names: set[str]) -> list[str]:
 
     out = []
     out += a32_neon.header_tables(names)
+    out.append("")
+    out += a32_structure.header_tables(names)
     out.append("")
     out.append("/* VFP: [operation][double]. */")
     out.append("inline constexpr G kVfp3[5][2] = {")

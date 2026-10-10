@@ -163,4 +163,86 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 	return {};
 }
 
+/* VLDn and VSTn (engine/a32_structure.py): [gadget][key][word0][slots]
+ * [library operand]. A combination the generator has no gadget for, and a
+ * register list that runs past D31, are left to the library. */
+Translator::Result Translator::emit_structure(const Instruction &in,
+					      const FormPlan &plan)
+{
+	const auto &o = in.operands;
+	const unsigned store = plan.sub & 1U;
+	const unsigned shape = plan.sub >> 1 & 3U;
+	const unsigned structs = (plan.sub >> 3 & 3U) + 1U;
+	const unsigned ebytes = static_cast<unsigned>(o.ebytes);
+	const unsigned log2 = ebytes == 2 ? 1U : ebytes == 4 ? 2U : 0U;
+	const int dregs[4] = {o.d, o.d2, o.d3, o.d4};
+	std::uint64_t slots[4] = {0, 0, 0, 0};
+	unsigned variant = 0;
+	bool in_range = true;
+	const auto slot_of = [&in_range](int reg, unsigned k, std::uint64_t byte,
+					 std::uint64_t (&out)[4]) {
+		if (reg < 0 || reg > 31)
+			in_range = false;
+		else
+			out[k] = d_register(reg) + byte;
+	};
+	switch (shape) {
+	case 0: /* multiple structures */
+		if (structs == 1) {
+			variant = static_cast<unsigned>(o.regs) - 1U;
+			if (o.d + o.regs > 32)
+				in_range = false;
+			slot_of(o.d, 0, 0, slots);
+		} else if (structs == 2) {
+			variant = static_cast<unsigned>(o.pairs) - 1U;
+			for (int pair = 0; pair < o.pairs; ++pair) {
+				slot_of(o.d + pair, 2U * static_cast<unsigned>(pair), 0, slots);
+				slot_of(o.d2 + pair, 2U * static_cast<unsigned>(pair) + 1U, 0, slots);
+			}
+		} else {
+			for (unsigned s = 0; s < structs; ++s)
+				slot_of(dregs[s], s, 0, slots);
+		}
+		break;
+	case 1: /* one lane */
+		for (unsigned s = 0; s < structs; ++s)
+			slot_of(dregs[s], s,
+				static_cast<std::uint64_t>(o.index_value) * ebytes, slots);
+		break;
+	default: /* all lanes */
+		if (structs == 1) {
+			variant = static_cast<unsigned>(o.regs) - 1U;
+			slot_of(o.d, 0, 0, slots);
+			slot_of(o.d + (o.regs - 1), 1, 0, slots);
+		} else {
+			for (unsigned s = 0; s < structs; ++s)
+				slot_of(dregs[s], s, 0, slots);
+		}
+		break;
+	}
+	G which = G::count;
+	if (in_range && variant < 4 && !(o.wback && o.n == 15))
+		which = kNeonMem[store][shape][structs - 1][log2][variant];
+	if (which == G::count)
+		return emit_library(in);
+	const std::uintptr_t rn = source(o.n, scratch0);
+	std::uintptr_t rm = 0;
+	if (o.wback && o.register_index)
+		rm = source(o.m, scratch1);
+	std::uint64_t word0 = std::uint64_t{rn} | (o.wback ? std::uint64_t{1} << 15 : 0U);
+	if (o.wback && o.register_index)
+		word0 |= std::uint64_t{rm} << 16 | std::uint64_t{1} << 31;
+	if (o.alignment > 1)
+		word0 |= static_cast<std::uint64_t>(o.alignment - 1) << 32;
+	std::uint64_t word1 = 0;
+	for (unsigned k = 0; k < 4; ++k)
+		word1 |= slots[k] << (16U * k);
+	push(which);
+	push(key_);
+	push(word0);
+	push(word1);
+	push(library_operand(in));
+	return {};
+}
+
 } // namespace uml::cpu::arm64::gadgets::a32::detail

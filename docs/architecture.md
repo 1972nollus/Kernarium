@@ -870,9 +870,13 @@ so no exit leaves it on. The A32 shifts by an immediate use the A64
 shift-by-register instructions with a replicated signed amount, so a gadget
 serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
-immediate. The structure loads and stores, VRECPS and VRSQRTS (AArch32's
-unfused steps, not the fused A64 ones) and VLDM and VSTM that cross a page
-run through the semantic library, whose exit commits the live FPSR to
+immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
+VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
+interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
+with the register or immediate writeback. VRECPS and VRSQRTS (AArch32's
+unfused steps, not the fused A64 ones), a structure access or VLDM and VSTM
+that crosses a page, and a misaligned access with an alignment hint run
+through the semantic library, whose exit commits the live FPSR to
 CpuState before the call and reinstalls it after, as the A64 engine's
 software floating-point helpers do. A saturating instruction leaves QC in the
 cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and

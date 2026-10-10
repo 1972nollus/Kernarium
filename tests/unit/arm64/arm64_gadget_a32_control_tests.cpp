@@ -1158,6 +1158,76 @@ void a_library_floating_point_instruction_keeps_the_flags_around_it()
 	require(static_cast<std::uint32_t>(get_d(cpu, 4) >> 32) == 0x4000'0000U);
 }
 
+/* VLDn and VSTn move the elements natively; a hinted access that is
+ * misaligned and one that crosses a page are the library's, and the register
+ * writeback is Rn plus the size or plus Rm. */
+void structure_loads_and_stores_move_the_elements_and_write_back()
+{
+	constexpr std::uint32_t vld1_32_d0_d1_r0_align128 = 0xf420'0aafU;
+	constexpr std::uint32_t vld1_32_d0_d1_r0_post_r2 = 0xf420'0a82U;
+	constexpr std::uint32_t vst1_32_d0_d1_r1_post = 0xf401'0a8dU;
+	constexpr std::uint32_t vld1_32_d0_d1_r0 = 0xf420'0a8fU;
+	const std::uint32_t source = 0x40;
+	{
+		/* vld1.32 {d0,d1},[r0],r2 ; vst1.32 {d0,d1},[r1]! */
+		Guest guest{996};
+		guest.a32(0, {vld1_32_d0_d1_r0_post_r2, vst1_32_d0_d1_r1_post, a::svc});
+		for (std::uint32_t index = 0; index < 4; ++index)
+			guest.data32(source + 4 * index, 0x1111'1111U * (index + 1));
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source;
+		cpu.registers[1] = data_base + 0x80;
+		cpu.registers[2] = 0x24;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(get_d(cpu, 0) == 0x2222'2222'1111'1111ULL);
+		require(get_d(cpu, 1) == 0x4444'4444'3333'3333ULL);
+		require(reg(cpu, 0) == data_base + source + 0x24U);
+		require(reg(cpu, 1) == data_base + 0x90U);
+		for (std::uint32_t index = 0; index < 4; ++index)
+			require(guest.data32(0x80 + 4 * index) ==
+				0x1111'1111U * (index + 1));
+	}
+	{
+		/* A 128-bit alignment hint on an address 8 bytes off faults. */
+		Guest guest{997};
+		guest.a32(0, {vld1_32_d0_d1_r0_align128, a::svc});
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source + 8;
+		set_d(cpu, 0, 0x5555ULL);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::memory_fault);
+		require(result.fault.alignment);
+		require(result.fault.address == data_base + source + 8);
+		require(get_d(cpu, 0) == 0x5555ULL);
+	}
+	{
+		/* Without the hint the same address loads. */
+		Guest guest{998};
+		guest.a32(0, {vld1_32_d0_d1_r0, a::svc});
+		guest.data32(source + 8, 0xaabb'ccddU);
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + source + 8;
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(static_cast<std::uint32_t>(get_d(cpu, 0)) == 0xaabb'ccddU);
+	}
+	{
+		/* A load that crosses the page loads whole and writes back; one that
+		 * ends in an unmapped page faults with the registers unchanged. */
+		Guest guest{999};
+		guest.a32(0, {0xf420'0a8dU /* vld1.32 {d0,d1},[r0]! */, a::svc});
+		const std::uint32_t boundary = page - 8;
+		for (std::uint32_t index = 0; index < 4; ++index)
+			guest.data32(boundary + 4 * index, 0x0101'0101U * (index + 1));
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + boundary;
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(get_d(cpu, 0) == 0x0202'0202'0101'0101ULL);
+		require(get_d(cpu, 1) == 0x0404'0404'0303'0303ULL);
+		require(reg(cpu, 0) == data_base + boundary + 16);
+	}
+}
+
 /* A VFP word is illegal at the base level: the level is what makes it so. */
 void a_vfp_word_is_illegal_at_the_base_level()
 {
@@ -1359,6 +1429,7 @@ int main()
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
+	structure_loads_and_stores_move_the_elements_and_write_back();
 	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;

@@ -1120,6 +1120,8 @@ Translator::Result Translator::emit(const Instruction &in,
 		return emit_vfp(in, plan);
 	case Family::neon:
 		return emit_neon(in, plan);
+	case Family::neonmem:
+		return emit_structure(in, plan);
 	case Family::udf:
 	case Family::none:
 		break;
@@ -1231,7 +1233,8 @@ BuildOutput Translator::run()
 				close_run();
 			else
 				begin_instruction(in.cond);
-			if (plan.family != Family::neon)
+			if (plan.family != Family::neon &&
+			    plan.family != Family::neonmem)
 				close_standard_fpcr();
 			const Result result = emit(in, plan);
 			if (result.flags)
@@ -1308,7 +1311,8 @@ bool may_reach_library(aarch32::Form form) noexcept
 	const auto family =
 		kFormPlans[static_cast<std::size_t>(form)].family;
 	return family == Family::library || family == Family::ldm ||
-	       family == Family::stm || family == Family::vfpblock;
+	       family == Family::stm || family == Family::vfpblock ||
+	       family == Family::neonmem;
 }
 
 std::uint8_t thumb_itstate(std::span<const std::byte> halfwords,
