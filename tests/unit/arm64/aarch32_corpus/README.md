@@ -95,7 +95,8 @@ no floating point or SIMD):
   addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
   the read-only region and in unmapped memory, with writeback;
 - `prefetch`: PLD, PLDW and PLI never fault;
-- `exclusive`: LDREX/STREX sequences, CLREX, misaligned and unmapped loads;
+- `exclusive`: LDREX/STREX and LDAEX/STLEX sequences, CLREX, misaligned and
+  unmapped loads;
 - `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
   instructions, interworking both ways, jumps to unmapped addresses;
 - `conditions`: every condition against every NZCV, and every IT block;
@@ -125,9 +126,12 @@ The `complete` level (the Armv8 additions):
   VJCVT and the dot-product, matrix-multiply and half-to-single
   multiply-accumulate forms, in the simd suite's states plus half-precision
   lanes;
-- `armv8-memory`, `armv8-exclusive`: LDA and STL, LDAEX and STLEX sequences, and
-  the half-precision VLDR and VSTR;
-- `armv8-system`: SB and SEVL.
+- `armv8-memory`: the half-precision VLDR and VSTR;
+- `armv8-system`: SB.
+
+LDA, STL, LDAEX, STLEX in every size and SEVL are base: every Armv8 AArch32
+EL0 has them, and arm64 Linux's compat kuser helpers execute STLEX and STLEXD.
+They are in the `memory`, `exclusive` and `system` suites.
 
 Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
 (172 cases: multi-word accesses at misaligned addresses) and `fpscr-reserved`

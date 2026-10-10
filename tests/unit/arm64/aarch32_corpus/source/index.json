@@ -5,7 +5,6 @@
     "states.jsonl",
     "absent-profile.jsonl",
     "alu-qemu.jsonl",
-    "armv8-exclusive-qemu.jsonl",
     "armv8-memory-qemu.jsonl",
     "armv8-qemu.jsonl",
     "armv8-system-qemu.jsonl",
@@ -23,7 +22,6 @@
   "records": [
     "absent-profile",
     "alu-qemu",
-    "armv8-exclusive-qemu",
     "armv8-memory-qemu",
     "armv8-qemu",
     "armv8-system-qemu",
