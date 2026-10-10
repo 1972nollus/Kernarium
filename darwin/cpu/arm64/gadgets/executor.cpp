@@ -105,10 +105,11 @@ constexpr std::size_t maximum_t32_validation_units =
 
 /* The profile the gadget engine decodes AArch32 against: its level and no
  * optional feature until the levels that add them. */
-[[nodiscard]] arm64::aarch32::Profile gadget_a32_profile() noexcept
+[[nodiscard]] arm64::aarch32::Profile gadget_a32_profile(
+	arm64::A32Support level) noexcept
 {
 	return arm64::aarch32::Profile{
-		static_cast<arm64::aarch32::Level>(arm64::gadgets::a32_support),
+		static_cast<arm64::aarch32::Level>(level),
 		arm64::aarch32::FeatureSet{}};
 }
 
@@ -2046,7 +2047,8 @@ private:
 			[this](std::uint64_t source_key) {
 				return programs_->indirect_link(source_key);
 			},
-			build_options_, gadget_a32_profile(),
+			build_options_,
+			gadget_a32_profile(build_options_.a32_level),
 			block_instruction_count);
 		if (output.units == 0) {
 			/* A T32 instruction whose second halfword lies on a page
@@ -2100,7 +2102,8 @@ private:
 		{.key = key, .code = bytes.first(count * unit),
 		 .it = arm64::aarch32::ItState{cpu.a32_itstate}, .single = true},
 		{}, std::pmr::get_default_resource(), {}, build_options_,
-		gadget_a32_profile(), block_instruction_count);
+		gadget_a32_profile(build_options_.a32_level),
+		block_instruction_count);
 	if (output.units == 0) {
 		std::uint16_t halfword = 0;
 		(void)memory.fetch(address + count * unit,
@@ -2161,7 +2164,8 @@ private:
 						exit->source, unit);
 					cpu.a32_itstate = a32::thumb_itstate(
 						exit->source, unit,
-						gadget_a32_profile());
+						gadget_a32_profile(
+							build_options_.a32_level));
 				} else if (unit < program.instruction_count()) {
 					position = unit;
 				}

@@ -855,6 +855,8 @@ STLEX, are the A64 exclusive gadgets and share their forward-progress
 mechanism; LDA and STL are the A64 ordered ones. The rare integer forms
 (parallel arithmetic, SEL, USAD8, the dual multiplies, the 16-bit saturates
 and extends, QADD and its relatives) are one tail helper.
+The level the engine translates at is `a32_support`; a test or a bring-up
+names another one in `BuildOptions::a32_level`, and the runtime never does.
 `arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`
 that the engine defines exactly what the decoder defines at its level,
 `arm64-gadget-a32-corpus` that it matches the AArch32 corpus records of that

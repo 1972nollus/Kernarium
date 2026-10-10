@@ -27,6 +27,7 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/aarch32/state_format.hpp"
 #include "cpu/arm64/gadgets/a32_support.hpp"
 #include "scratch_backing.hpp"
 
@@ -51,14 +52,26 @@ using ::uml::testing::ScratchBacking;
 constexpr std::uint32_t svc_word = 0xef00'0000U;
 constexpr std::size_t budget = 20'000;
 
+[[nodiscard]] ::uml::cpu::arm64::gadgets::BuildOptions options_at(
+	::uml::cpu::arm64::A32Support level)
+{
+	::uml::cpu::arm64::gadgets::BuildOptions options;
+	options.a32_level = level;
+	return options;
+}
+
 /* The oracle's memory map and exit stubs. */
 class Machine final {
 public:
-	Machine()
+	/* `level` is the AArch32 level the engine translates at: the level
+	 * of the cases that run, so a level the engine does not yet implement
+	 * can be brought up case by case. */
+	explicit Machine(::uml::cpu::arm64::A32Support level)
 		: generation_{3000}
 		, code_{"a32corpus-code.XXXXXX", corpus::kCodeSize}
 		, data_{"a32corpus-data.XXXXXX", corpus::kDataSize}
 		, read_only_{"a32corpus-ro.XXXXXX", corpus::kReadOnlySize}
+		, executor_{options_at(level)}
 	{
 		require(darwin_uml_static_vm_activate(generation_) == 0);
 		require(darwin_uml_static_vm_map(
@@ -321,6 +334,12 @@ void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
 	cpu.a32_ge_mask = mask;
 	cpu.tls = state.tpidrurw;
 	cpu.a32_tpidruro = state.tpidruro;
+	for (unsigned index = 0; index < corpus::kVectors; ++index)
+		std::memcpy(cpu.vectors[index / 2].bytes.data() + 8 * (index % 2),
+			    &state.d[index], 8);
+	cpu.fpcr = state.fpscr & decode::fpscr_control_mask;
+	cpu.fpsr = state.fpscr & ::uml::cpu::arm64::fpsr_writable_mask;
+	cpu.a32_fpscr_nzcv = state.fpscr & decode::fpscr_nzcv;
 	cpu.a32_cp15ben = 1;
 	cpu.a32 = 1;
 	cpu.pc = thumb ? decode::t32_key(entry) : decode::a32_key(entry);
@@ -483,6 +502,22 @@ void check_case(Machine &machine, const corpus::Record &record,
 		const auto apsr = apsr_of(cpu);
 		if (apsr != (test.final.apsr & 0xf80f'0000U))
 			note("apsr %#x vs %#x", test.final.apsr & 0xf80f'0000U, apsr);
+		for (unsigned index = 0; index < corpus::kVectors; ++index) {
+			std::uint64_t value;
+			std::memcpy(&value, cpu.vectors[index / 2].bytes.data() +
+					    8 * (index % 2), 8);
+			if (value != test.final.d[index])
+				note("d%u %#llx vs %#llx", index,
+				     static_cast<unsigned long long>(test.final.d[index]),
+				     static_cast<unsigned long long>(value));
+		}
+		const std::uint32_t fpscr = (cpu.fpcr & decode::fpscr_control_mask) |
+			(cpu.fpsr & ::uml::cpu::arm64::fpsr_writable_mask) |
+			(cpu.a32_fpscr_nzcv & decode::fpscr_nzcv);
+		const std::uint32_t fpscr_mask = decode::fpscr_control_mask |
+			::uml::cpu::arm64::fpsr_writable_mask | decode::fpscr_nzcv;
+		if (fpscr != (test.final.fpscr & fpscr_mask))
+			note("fpscr %#x vs %#x", test.final.fpscr & fpscr_mask, fpscr);
 		if (static_cast<std::uint32_t>(cpu.tls) != test.final.tpidrurw)
 			note("tpidrurw %#x vs %#x", test.final.tpidrurw,
 			     static_cast<std::uint32_t>(cpu.tls));
@@ -544,7 +579,7 @@ int main(int argc, char **argv)
 	}
 	require(path != nullptr, "usage: PACK [--level L] [--record NAME]");
 	const auto pack = corpus::read_pack(corpus::read_file(path));
-	Machine machine;
+	Machine machine{static_cast<::uml::cpu::arm64::A32Support>(options.level)};
 	Totals totals;
 	for (const auto &record : pack.records) {
 		if ((record.profiles & corpus::kProfileBit) == 0 ||
