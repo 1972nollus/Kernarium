@@ -23,11 +23,21 @@ Columns:
 - engine_status: absent for undefined encodings, whose corpus cases expect an
   illegal instruction; pending for the others until an engine passes the
   corpus for them (verified).
+
+engine_status is the one column the model cannot derive: an engine lane marks
+an encoding verified once the corpus passes for it. The generator therefore
+reads the statuses of the checked-in inventory (read_statuses) and keeps each
+encoding's pending or verified; absent follows the profile, and an encoding
+the inventory does not list starts pending. A regeneration from the same
+release thus reproduces the checked-in file.
 """
 
 from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
+
+import csv
+from pathlib import Path
 
 import a32_profile_policy as policy
 
@@ -51,13 +61,37 @@ def profile_of(name: str, availability: str, check: str, nop: bool) -> str:
     return "nop" if nop else "executed"
 
 
-def status_of(profile: str) -> str:
-    return "absent" if profile == "undefined" else "pending"
+def status_of(profile: str, previous: str | None = None) -> str:
+    """The engine status of an encoding with `profile`: absent when no word
+    of it executes, else the status the inventory already records for it
+    (pending or verified), pending when it records none."""
+    if profile == "undefined":
+        return "absent"
+    return previous if previous in ("pending", "verified") else "pending"
 
 
-def rows(entries) -> list[dict[str, str]]:
+def read_statuses(path: Path) -> dict[str, str]:
+    """The engine status of each encoding in the inventory at `path`, or
+    nothing when there is none yet."""
+    if not path.is_file():
+        return {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        if tuple(reader.fieldnames or ()) != COLUMNS:
+            raise ValueError(f"{path}: columns are not {COLUMNS}")
+        statuses = {}
+        for row in reader:
+            if row["engine_status"] not in ENGINE_STATUSES:
+                raise ValueError(f"{path}: {row['encoding']}: engine status {row['engine_status']!r}")
+            statuses[row["encoding"]] = row["engine_status"]
+        return statuses
+
+
+def rows(entries, statuses: dict[str, str] | None = None) -> list[dict[str, str]]:
     """Rows from (section, heading, name, isa, mnemonic, level, feature,
-    availability, check, nop) tuples in index order."""
+    availability, check, nop) tuples in index order; `statuses` carries the
+    engine status each encoding already has (read_statuses)."""
+    statuses = statuses or {}
     counts = {section: 0 for section in SECTION_PREFIXES}
     result = []
     for section, heading, name, isa, mnemonic, level, feature, availability, check, nop in entries:
@@ -73,6 +107,6 @@ def rows(entries) -> list[dict[str, str]]:
             "level": level,
             "feature": feature or "baseline",
             "profile": profile,
-            "engine_status": status_of(profile),
+            "engine_status": status_of(profile, statuses.get(name)),
         })
     return result

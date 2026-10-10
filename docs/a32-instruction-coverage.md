@@ -70,4 +70,7 @@ encodings whose cases ran), so those are `verified`. The decoder contract is
 [`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md);
 `generate_a32_encoding_table.py` derives the inventory, the decoder's table
 and its test data from the release, and `a32_profile_policy.py` is the one
-place that holds the profile's choices.
+place that holds the profile's choices. The status is the one column the
+release cannot give: a regeneration keeps each encoding's `pending` or
+`verified` from the checked-in inventory, so a lane marks an encoding
+`verified` by editing that file and the freshness test still passes.
