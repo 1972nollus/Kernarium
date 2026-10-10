@@ -592,7 +592,18 @@ products, the integer compares (also by immediate), the floating-point
 compares, PUNPK, SUNPK and UUNPK, BRKA and BRKB, INDEX, COMPACT and SPLICE,
 UADDV, FADDV and FADDA, ADDP, USQADD, URHADD, SUBHNB and SUBHNT, and the
 floating-point arithmetic (also by immediate, and with reversed operands),
-multiply-add, indexed, rounding and same-size conversion forms. A predicated
+multiply-add, indexed, rounding and same-size conversion forms, and the
+vector-math and scalar-loop helpers: FEXPA, FTMAD, FTSMUL and FTSSEL, FCADD,
+FSCALE, FCVT between single and double precision, SCVTF and UCVTF of words
+to doubles, FCVTZS and FCVTZU of doubles to words, ASRD, and UQINC and UQDEC
+of a general register. FEXPA and FTMAD read the tables of the semantic
+library (`cpu/arm64/detail/sve_trig_tables.hpp`) through a pointer in their
+stream. FSCALE adds the scale to the exponent field of every active normal
+element whose result is normal (a zero or an infinity is its own result) and
+raises nothing; any other active element, a NaN, a denormal or an overflow
+or underflow, sends the whole instruction to the semantic library from the
+gadget. The half-precision FCVT stays in the library, since AdvSIMD's
+conversions honour FPCR.AHP and SVE's do not. A predicated
 floating-point form tests its governing predicate for all-true and then
 runs the unpredicated AdvSIMD form; under a partial predicate it first
 replaces its inputs' inactive elements with +0.0 (a divisor with 1.0), so
@@ -625,8 +636,15 @@ environment is active, its cumulative FPSR flags to `CpuState`, calls the
 library with guest memory through the TLB, and reloads both; a library
 fault leaves through the memory-fault exit. While
 `count_sve_library_exits` is enabled (it is off by default), the words that
-reach the library are counted per table row, which is the library-exit
-report. A reserved bitmask immediate of
+reach the library are counted per table row, with the words the builder
+translated and sent there. That is the library-exit report:
+`DARWIN_UML_SVE_LIBRARY_EXITS=PATH` enables counting from a process's start
+and writes the report at its exit and as each executor retires (the emulator
+leaves through `_Exit`, so the last write is the complete one; a process that
+ran no gadget executor and counted nothing leaves the file to the JIT, which
+writes the same format), and
+`tools/arm64-tests/sve-library-report.py`
+sums reports and ranks the forms by exits. A reserved bitmask immediate of
 AND, ORR, EOR or DUPM ends the block in front of it as the
 illegal-instruction exit. While an FPCR trap enable is set, the executor's
 one-instruction mode runs each non-streaming SVE word through the library,

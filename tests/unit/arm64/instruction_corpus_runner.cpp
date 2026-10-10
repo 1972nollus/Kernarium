@@ -1387,6 +1387,8 @@ struct Options final {
    * still runs every case that does not need them natively, which is how the
    * FEAT_AFP twins are exercised on hosts that cannot select them. */
   std::vector<std::string_view> assumed_features;
+  /* The streaming vector length, in bytes, an assumed SME profile has. */
+  unsigned assumed_sme_svl{};
   std::vector<std::string_view> records;
   std::vector<std::string_view> producers;
   std::vector<std::string_view> cases;
@@ -1500,6 +1502,8 @@ runner_host(const Options &options) {
       throw CorpusError{"unknown feature token " + std::string{token}};
     host.supported.set(static_cast<std::size_t>(found - tokens.begin()));
   }
+  if (options.assumed_sme_svl != 0U)
+    host.sme_svl_bytes = static_cast<std::uint16_t>(options.assumed_sme_svl);
   return host;
 }
 
@@ -1597,7 +1601,7 @@ private:
    * regenerated table with a new form can produce. */
   bool library_runs(const Program &program, const ArmFeatureSet &native,
                     const std::optional<ArmFeature> &lacking,
-                    const Engines &engines) {
+                    const Engines &engines, bool profile_only) {
     const auto skip = [this](std::string_view feature) {
       ++counts_.library_skipped_host_feature;
       ++counts_.library_missing_features[feature];
@@ -1613,8 +1617,15 @@ private:
         native.test(static_cast<std::size_t>(ArmFeature::lse2)) &&
         !native_host_.has(ArmFeature::lse2))
       missing.set(static_cast<std::size_t>(ArmFeature::lse2));
-    if (missing.none())
+    if (missing.none()) {
       missing = native & engines.host().supported & ~native_host_.supported;
+      /* A record without an SVL runs no SME instruction: the SVE forms
+       * it executes at PSTATE.SM = 0 are the library's, so the hardware
+       * need not have the SME profile the virtual CPU is assumed to. */
+      if (profile_only)
+        for (const auto feature : sme_features)
+          missing.reset(static_cast<std::size_t>(feature));
+    }
     for (std::size_t feature = 0; feature < missing.size(); ++feature)
       if (missing.test(feature))
         return skip(::uml::platform::arm_feature_tokens[feature]);
@@ -1658,7 +1669,8 @@ private:
          * the rest. */
         if (!options_.run_library || !sve_case(record, native))
           continue;
-        if (!library_runs(program, native, lacking, engines))
+        if (!library_runs(program, native, lacking, engines,
+                          record.svl == 0U))
           continue;
       }
       if (lane == Lane::gadgets) {
@@ -2132,6 +2144,10 @@ void usage() {
       "                     translate as if the host had feature TOKEN\n"
       "                     (repeatable); cases needing it natively still\n"
       "                     need the real host to have it\n"
+      "  --assume-sme-svl BYTES\n"
+      "                     the streaming vector length of an assumed SME\n"
+      "                     profile; the SVE forms SME admits outside\n"
+      "                     streaming mode then run on any host\n"
       "  --max-failures N   stop after N failures (default 25, 0: never)\n"
       "  --fail-fast        stop at the first failure\n"
       "  --list             list the selected records without running them\n"
@@ -2152,7 +2168,8 @@ void usage() {
     if (argument == "--record" || argument == "--producer" ||
         argument == "--case" || argument == "--ordinal" ||
         argument == "--engine" || argument == "--max-failures" ||
-        argument == "--assume-host-feature") {
+        argument == "--assume-host-feature" ||
+        argument == "--assume-sme-svl") {
       const auto text = value();
       if (!text.has_value())
         return std::nullopt;
@@ -2179,6 +2196,12 @@ void usage() {
           if (number == 0U || number > 0xffff'ffffULL)
             return std::nullopt;
           options.ordinals.push_back(static_cast<std::uint32_t>(number));
+        } else if (argument == "--assume-sme-svl") {
+          if (!arm64::valid_streaming_vector_length(
+                  static_cast<unsigned>(number)) ||
+              number > 256U)
+            return std::nullopt;
+          options.assumed_sme_svl = static_cast<unsigned>(number);
         } else {
           options.max_failures = static_cast<std::size_t>(number);
         }
