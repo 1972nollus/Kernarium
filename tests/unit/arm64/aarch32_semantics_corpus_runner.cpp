@@ -13,7 +13,7 @@
  * assumed two guest pages are adjacent in the host would fail here.
  *
  *   uml_arm64_aarch32_semantics_corpus_tests PACK [--record NAME]
- *       [--case NAME] [--form PREFIX] [--all-failures] [--trace]
+ *       [--case NAME] [--form PREFIX] [--all-failures] [--trace] [--skipped]
  */
 #include "aarch32_corpus_pack.hpp"
 #include "cpu/arm64/aarch32/decode.hpp"
@@ -445,6 +445,7 @@ bool within_coverage(const Case &test)
 struct Totals final {
 	std::size_t run = 0, skipped = 0, failed = 0;
 	std::map<std::string, std::size_t> failed_forms;
+	std::map<std::string, std::size_t> skipped_forms;
 };
 
 } // namespace
@@ -455,6 +456,7 @@ int main(int argc, char **argv)
 	std::string only_record, only_case, only_form;
 	bool all_failures = false;
 	bool trace = false;
+	bool list_skipped = false;
 	for (int index = 1; index < argc; ++index) {
 		const std::string_view argument = argv[index];
 		if (argument == "--record" && index + 1 < argc)
@@ -467,6 +469,8 @@ int main(int argc, char **argv)
 			all_failures = true;
 		else if (argument == "--trace")
 			trace = true;
+		else if (argument == "--skipped")
+			list_skipped = true;
 		else
 			path = argv[index];
 	}
@@ -489,6 +493,7 @@ int main(int argc, char **argv)
 				continue;
 			if (!within_coverage(test)) {
 				++totals.skipped;
+				++totals.skipped_forms[test.form];
 				continue;
 			}
 			++totals.run;
@@ -516,5 +521,8 @@ int main(int argc, char **argv)
 		    "%zu failed\n", totals.run, totals.skipped, totals.failed);
 	for (const auto &[form, count] : totals.failed_forms)
 		std::printf("  %s: %zu\n", form.c_str(), count);
+	if (list_skipped)
+		for (const auto &[form, count] : totals.skipped_forms)
+			std::printf("  skipped %s: %zu\n", form.c_str(), count);
 	return totals.failed == 0 ? 0 : 1;
 }

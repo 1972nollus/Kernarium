@@ -56,6 +56,12 @@ namespace uml::cpu::arm64::aarch32::detail::fp {
  * toward zero (z), to nearest even (n), toward plus infinity (p), toward
  * minus infinity (m); signed (s) or unsigned (u). */
 #define UML_A32_FP_TO_INT(name, insn)                                                        \
+	[[nodiscard]] inline std::uint32_t name(std::uint16_t a) noexcept                    \
+	{                                                                                    \
+		std::uint32_t r;                                                             \
+		__asm__ volatile("fmov s1, %w1\n\t" insn " %w0, h1" : "=r"(r) : "r"(std::uint32_t{a}) : "v1"); \
+		return r;                                                                    \
+	}                                                                                    \
 	[[nodiscard]] inline std::uint32_t name(std::uint32_t a) noexcept                    \
 	{                                                                                    \
 		std::uint32_t r;                                                             \
@@ -113,6 +119,8 @@ UML_A32_INT_TO_FP(s32_to_single, "scvtf", "s", std::uint32_t, "fmov %w0, s0")
 UML_A32_INT_TO_FP(u32_to_single, "ucvtf", "s", std::uint32_t, "fmov %w0, s0")
 UML_A32_INT_TO_FP(s32_to_double, "scvtf", "d", std::uint64_t, "fmov %0, d0")
 UML_A32_INT_TO_FP(u32_to_double, "ucvtf", "d", std::uint64_t, "fmov %0, d0")
+UML_A32_INT_TO_FP(s32_to_half, "scvtf", "h", std::uint32_t, "fmov %w0, s0")
+UML_A32_INT_TO_FP(u32_to_half, "ucvtf", "h", std::uint32_t, "fmov %w0, s0")
 
 #undef UML_A32_INT_TO_FP
 
@@ -136,6 +144,10 @@ UML_A32_FIXED_OP(FixedSToSingle, std::uint32_t, std::uint32_t, "scvtf s0, %w1, #
 UML_A32_FIXED_OP(FixedUToSingle, std::uint32_t, std::uint32_t, "ucvtf s0, %w1, #%2\n\tfmov %w0, s0")
 UML_A32_FIXED_OP(FixedSToDouble, std::uint32_t, std::uint64_t, "scvtf d0, %w1, #%2\n\tfmov %0, d0")
 UML_A32_FIXED_OP(FixedUToDouble, std::uint32_t, std::uint64_t, "ucvtf d0, %w1, #%2\n\tfmov %0, d0")
+UML_A32_FIXED_OP(HalfToFixedS, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzs %w0, h1, #%2")
+UML_A32_FIXED_OP(HalfToFixedU, std::uint32_t, std::uint32_t, "fmov s1, %w1\n\tfcvtzu %w0, h1, #%2")
+UML_A32_FIXED_OP(FixedSToHalf, std::uint32_t, std::uint32_t, "scvtf h0, %w1, #%2\n\tfmov %w0, s0")
+UML_A32_FIXED_OP(FixedUToHalf, std::uint32_t, std::uint32_t, "ucvtf h0, %w1, #%2\n\tfmov %w0, s0")
 
 #undef UML_A32_FIXED_OP
 
@@ -153,6 +165,16 @@ template<template<int> typename Op, typename In, typename Out>
 [[nodiscard]] inline Out fixed_convert(unsigned fraction, In a) noexcept
 {
 	return fixed_dispatch<Op, In, Out>(fraction, a, std::make_index_sequence<32>{});
+}
+
+/* A 16-bit conversion the host made in 32 bits overflowed the 16-bit range:
+ * the result saturates, and the exception is an invalid operation, not an
+ * inexact one. Called inside the local-FPCR region. */
+inline void report_overflow() noexcept
+{
+	std::uint64_t value;
+	__asm__ volatile("mrs %0, fpsr\n\tbic %0, %0, #16\n\torr %0, %0, #1\n\tmsr fpsr, %0"
+			 : "=&r"(value) : : "memory");
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail::fp

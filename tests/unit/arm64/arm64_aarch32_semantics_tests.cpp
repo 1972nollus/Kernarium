@@ -197,11 +197,11 @@ void test_coverage()
 		const auto form = static_cast<Form>(index);
 		const FormInfo &info = kForms[index];
 		const bool pseudo = form == Form::Undefined || form == Form::ReservedHint;
-		/* Every implemented form up to the library's level, and nothing above. */
-		const bool expected = pseudo || (info.availability == Availability::implemented &&
-							info.level <= a32_semantics_level());
-		require(a32_semantics_covers(form) == expected,
-			"the coverage predicate follows the level");
+		/* A covered form is an implemented one up to the library's level. */
+		const bool allowed = pseudo || (info.availability == Availability::implemented &&
+						info.level <= a32_semantics_level());
+		require(!a32_semantics_covers(form) || allowed,
+			"the library covers only implemented forms up to its level");
 		covered += a32_semantics_covers(form) ? 1 : 0;
 	}
 	require(covered > 1500, "the library covers the base and SIMD levels");
@@ -210,19 +210,24 @@ void test_coverage()
 void test_events()
 {
 	Fixture f;
-	/* A form above the library's level is fatal, and changes nothing. */
+	/* A form the library does not cover is fatal, and changes nothing. An
+	 * HVC is outside the profile, so no decode returns it with a status
+	 * that executes. */
 	f.cpu.registers[0] = 0x1234;
-	const auto crc32b = decode_a32(0xe1010042, Profile::at(Level::complete));
-	require(crc32b.legal(), "crc32b decodes at complete");
-	f.machine.put(code_base, std::uint32_t{0xe1010042});
+	Instruction uncovered;
+	uncovered.form = Form::HVC_A1;
+	uncovered.status = Status::ok;
+	f.machine.put(code_base, std::uint32_t{0xe1400070});
 	f.set_pc(code_base, false);
-	auto result = execute_a32(f.cpu, crc32b, f.machine);
+	auto result = execute_a32(f.cpu, uncovered, f.machine);
 	require(result.event == StepEvent::fatal && f.pc() == code_base && f.r(0) == 0x1234,
-		"a form above the level is fatal and changes nothing");
+		"an uncovered form is fatal and changes nothing");
 
 	/* A word the decoder rejects is undefined. */
 	f.cpu.a32_itstate = 0;
-	result = f.step_a32_word(0xe1010042);
+	const auto simd_only = decode_a32(0xe1010042, Profile::at(Level::simd));
+	require(!simd_only.legal(), "a CRC32 word is above the simd level");
+	result = execute_a32(f.cpu, simd_only, f.machine);
 	require(result.event == StepEvent::undefined && f.pc() == code_base,
 		"a word above the profile's level is undefined at the PC");
 

@@ -31,6 +31,18 @@ bool exec_register_transfer(Exec &x, const OpInfo &info)
 	if ((address & (alignment - 1U)) != 0U)
 		return x.raise_alignment(address, access);
 	const unsigned d = static_cast<unsigned>(o.d);
+	if (size == 2U) {
+		/* H(d): the half word in the low 16 bits of S(d), the rest zero. */
+		if (load) {
+			std::uint16_t half;
+			if (!x.read(address, &half, 2))
+				return false;
+			x.set_s_reg(d, half);
+			return true;
+		}
+		const auto half = static_cast<std::uint16_t>(x.s_reg(d));
+		return x.write(address, &half, 2);
+	}
 	if (size == 4U) {
 		if (load) {
 			std::uint32_t word;

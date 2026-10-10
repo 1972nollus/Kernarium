@@ -31,8 +31,9 @@ template<typename Float>
 	return value ^ sign_bit<Float>();
 }
 
-/* A VFP operation on the S or D registers d, n and m: `function(d, n, m)`
- * is called with single or double bit patterns and returns the new d. */
+/* A VFP operation on the H, S or D registers d, n and m: `function(d, n, m)`
+ * is called with half, single or double bit patterns and returns the new d.
+ * A half-precision result zero-extends into its S register. */
 template<typename Function>
 bool vfp_op(Exec &x, Function &&function)
 {
@@ -43,6 +44,11 @@ bool vfp_op(Exec &x, Function &&function)
 	if (o.esize == 64) {
 		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
 			return function(x.d_reg(d), x.d_reg(n), x.d_reg(m));
+		}));
+	} else if (o.esize == 16) {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return uint32_t{function(static_cast<uint16_t>(x.s_reg(d)),
+				static_cast<uint16_t>(x.s_reg(n)), static_cast<uint16_t>(x.s_reg(m)))};
 		}));
 	} else {
 		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
@@ -58,9 +64,7 @@ template<typename Function>
 bool float_op(Exec &x, Function &&function)
 {
 	if (x.o.advsimd)
-		return fp::lanes32(x, fp::standard, [&](uint32_t n, uint32_t m, uint32_t d) {
-			return function(d, n, m);
-		});
+		return fp::lanes(x, fp::standard, [&](auto n, auto m, auto d) { return function(d, n, m); });
 	return vfp_op(x, function);
 }
 
@@ -133,13 +137,13 @@ bool vfnma(Exec &x)
 
 bool vabd_f(Exec &x)
 {
-	return fp::lanes32(x, fp::standard, [](uint32_t n, uint32_t m, uint32_t) { return fp::abd(n, m); });
+	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) { return fp::abd(n, m); });
 }
 
 bool vmax_min_f(Exec &x)
 {
 	const bool maximum = x.o.maximum;
-	return fp::lanes32(x, fp::standard, [maximum](uint32_t n, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [maximum](auto n, auto m, auto) {
 		return maximum ? fp::max(n, m) : fp::min(n, m);
 	});
 }
@@ -147,20 +151,20 @@ bool vmax_min_f(Exec &x)
 bool vacg(Exec &x)
 {
 	const bool or_equal = x.o.or_equal;
-	return fp::lanes32(x, fp::standard, [or_equal](uint32_t n, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [or_equal](auto n, auto m, auto) {
 		return or_equal ? fp::abs_compare_ge(n, m) : fp::abs_compare_gt(n, m);
 	});
 }
 
 bool vrecps(Exec &x)
 {
-	return fp::lanes32(x, fp::standard, [](uint32_t n, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) {
 		return fp::recip_step(n, m);
 	});
 }
 bool vrsqrts(Exec &x)
 {
-	return fp::lanes32(x, fp::standard, [](uint32_t n, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) {
 		return fp::rsqrt_step(n, m);
 	});
 }
@@ -183,7 +187,7 @@ bool vrecpe(Exec &x)
 {
 	if (!x.o.floating_point)
 		return for_each_register(x, [](uint64_t, uint64_t m, uint64_t) { return unsigned_recip_estimate(m); });
-	return fp::lanes32(x, fp::standard, [](uint32_t, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [](auto, auto m, auto) {
 		return fp::recip_estimate(m);
 	});
 }
@@ -191,33 +195,48 @@ bool vrsqrte(Exec &x)
 {
 	if (!x.o.floating_point)
 		return for_each_register(x, [](uint64_t, uint64_t m, uint64_t) { return unsigned_rsqrt_estimate(m); });
-	return fp::lanes32(x, fp::standard, [](uint32_t, uint32_t m, uint32_t) {
+	return fp::lanes(x, fp::standard, [](auto, auto m, auto) {
 		return fp::rsqrt_estimate(m);
 	});
 }
 
-/* VPADD, VPMAX and VPMIN on single-precision pairs. */
-template<typename Function>
-bool pairwise_f(Exec &x, Function &&function)
+/* VPADD, VPMAX and VPMIN on half or single precision pairs: adjacent pairs
+ * of n fill the low half of the result, those of m the high half. */
+template<typename Float, typename Function>
+bool pairwise_typed(Exec &x, Function &&function)
 {
 	const Operands &o = x.o;
+	constexpr unsigned bits = sizeof(Float) * 8U;
 	return fp::run_standard(x.cpu, [&]() -> bool {
 		const uint64_t n = x.d_reg(static_cast<unsigned>(o.n));
 		const uint64_t m = x.d_reg(static_cast<unsigned>(o.m));
-		const uint32_t low = function(static_cast<uint32_t>(n), static_cast<uint32_t>(n >> 32));
-		const uint32_t high = function(static_cast<uint32_t>(m), static_cast<uint32_t>(m >> 32));
-		x.set_d_reg(static_cast<unsigned>(o.d), uint64_t{high} << 32 | low);
+		constexpr unsigned half = 32U / bits;
+		uint64_t dest = 0;
+		for (unsigned e = 0; e < half; ++e) {
+			dest = with_lane(dest, e, bits,
+				function(static_cast<Float>(lane(n, 2U * e, bits)), static_cast<Float>(lane(n, 2U * e + 1U, bits))));
+			dest = with_lane(dest, e + half, bits,
+				function(static_cast<Float>(lane(m, 2U * e, bits)), static_cast<Float>(lane(m, 2U * e + 1U, bits))));
+		}
+		x.set_d_reg(static_cast<unsigned>(o.d), dest);
 		return true;
 	});
 }
+template<typename Function>
+bool pairwise_f(Exec &x, Function &&function)
+{
+	if (x.o.esize == 16)
+		return pairwise_typed<uint16_t>(x, function);
+	return pairwise_typed<uint32_t>(x, function);
+}
 bool vpadd_f(Exec &x)
 {
-	return pairwise_f(x, [](uint32_t a, uint32_t b) { return fp::add(a, b); });
+	return pairwise_f(x, [](auto a, auto b) { return fp::add(a, b); });
 }
 bool vpmax_min_f(Exec &x)
 {
 	const bool maximum = x.o.maximum;
-	return pairwise_f(x, [maximum](uint32_t a, uint32_t b) {
+	return pairwise_f(x, [maximum](auto a, auto b) {
 		return maximum ? fp::max(a, b) : fp::min(a, b);
 	});
 }
@@ -233,6 +252,10 @@ bool vcmp(Exec &x)
 	if (o.esize == 64) {
 		const uint64_t a = x.d_reg(d);
 		const uint64_t b = o.with_zero ? uint64_t{0} : x.d_reg(m);
+		flags = fp::run_effective(x.cpu, [&] { return fp::compare_flags(a, b, signal); });
+	} else if (o.esize == 16) {
+		const uint16_t a = static_cast<uint16_t>(x.s_reg(d));
+		const uint16_t b = o.with_zero ? uint16_t{0} : static_cast<uint16_t>(x.s_reg(m));
 		flags = fp::run_effective(x.cpu, [&] { return fp::compare_flags(a, b, signal); });
 	} else {
 		const uint32_t a = x.s_reg(d);
@@ -285,16 +308,22 @@ bool vcvt_integer(Exec &x)
 	const unsigned d = static_cast<unsigned>(o.d);
 	const unsigned m = static_cast<unsigned>(o.m);
 	const bool is_unsigned = o.unsigned_;
-	const bool double_precision = o.esize == 64;
 	if (o.to_integer) {
 		const unsigned mode = o.zero_rounding ? 3U : x.cpu.fpcr >> 22 & 3U;
 		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
-			return double_precision ? fp::to_int(x.d_reg(m), is_unsigned, mode)
-						: fp::to_int(x.s_reg(m), is_unsigned, mode);
+			if (o.esize == 64)
+				return fp::to_int(x.d_reg(m), is_unsigned, mode);
+			if (o.esize == 16)
+				return fp::to_int(static_cast<uint16_t>(x.s_reg(m)), is_unsigned, mode);
+			return fp::to_int(x.s_reg(m), is_unsigned, mode);
 		}));
-	} else if (double_precision) {
+	} else if (o.esize == 64) {
 		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
 			return is_unsigned ? fp::u32_to_double(x.s_reg(m)) : fp::s32_to_double(x.s_reg(m));
+		}));
+	} else if (o.esize == 16) {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return (is_unsigned ? fp::u32_to_half(x.s_reg(m)) : fp::s32_to_half(x.s_reg(m))) & 0xffffU;
 		}));
 	} else {
 		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
@@ -304,13 +333,42 @@ bool vcvt_integer(Exec &x)
 	return true;
 }
 
+/* A 32-bit conversion result narrowed to a 16-bit integer: out of range
+ * saturates and is an invalid operation. Called inside the local-FPCR
+ * region. */
+[[nodiscard]] uint16_t narrow_integer(uint32_t result, bool is_unsigned) noexcept
+{
+	if (is_unsigned) {
+		if (result > 0xffffU) {
+			fp::report_overflow();
+			return 0xffffU;
+		}
+		return static_cast<uint16_t>(result);
+	}
+	const auto value = static_cast<std::int32_t>(result);
+	if (value > 0x7fff || value < -0x8000) {
+		fp::report_overflow();
+		return value > 0 ? uint16_t{0x7fff} : uint16_t{0x8000};
+	}
+	return static_cast<uint16_t>(value);
+}
+
 /* VCVT between single-precision elements and 32-bit integers (Advanced
  * SIMD): to integer rounds toward zero, to floating point to nearest. */
 bool vcvt_is(Exec &x)
 {
 	const bool to_integer = x.o.to_integer;
 	const bool is_unsigned = x.o.unsigned_;
-	return fp::lanes32(x, fp::standard, [=](uint32_t, uint32_t m, uint32_t) {
+	if (x.o.esize == 16)
+		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
+			if (to_integer)
+				return narrow_integer(is_unsigned ? fp::to_int_zu(m) : fp::to_int_zs(m), is_unsigned);
+			const uint32_t integer = is_unsigned
+				? uint32_t{m}
+				: static_cast<uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(m)));
+			return static_cast<uint16_t>(is_unsigned ? fp::u32_to_half(integer) : fp::s32_to_half(integer));
+		});
+	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {
 		if (to_integer)
 			return is_unsigned ? fp::to_int_zu(m) : fp::to_int_zs(m);
 		return is_unsigned ? fp::u32_to_single(m) : fp::s32_to_single(m);
@@ -347,13 +405,41 @@ bool vcvt_is(Exec &x)
 			   : fp::fixed_convert<fp::FixedSToDouble, uint32_t, uint64_t>(fraction, a);
 }
 
+[[nodiscard]] uint32_t half_to_fixed(uint32_t a, unsigned fraction, bool is_unsigned) noexcept
+{
+	if (fraction == 0U)
+		return is_unsigned ? fp::to_int_zu(static_cast<uint16_t>(a)) : fp::to_int_zs(static_cast<uint16_t>(a));
+	return is_unsigned ? fp::fixed_convert<fp::HalfToFixedU, uint32_t, uint32_t>(fraction, a)
+			   : fp::fixed_convert<fp::HalfToFixedS, uint32_t, uint32_t>(fraction, a);
+}
+[[nodiscard]] uint32_t fixed_to_half(uint32_t a, unsigned fraction, bool is_unsigned) noexcept
+{
+	if (fraction == 0U)
+		return (is_unsigned ? fp::u32_to_half(a) : fp::s32_to_half(a)) & 0xffffU;
+	return is_unsigned ? fp::fixed_convert<fp::FixedUToHalf, uint32_t, uint32_t>(fraction, a) & 0xffffU
+			   : fp::fixed_convert<fp::FixedSToHalf, uint32_t, uint32_t>(fraction, a) & 0xffffU;
+}
+
+/* A 16-bit integer extended to 32 bits by its type. */
+[[nodiscard]] uint32_t extend16(uint32_t value, bool is_unsigned) noexcept
+{
+	return is_unsigned ? value & 0xffffU
+			   : static_cast<uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(value)));
+}
+
 /* VCVT between single-precision elements and fixed point (Advanced SIMD). */
 bool vcvt_xs(Exec &x)
 {
 	const bool to_fixed = x.o.to_fixed;
 	const bool is_unsigned = x.o.unsigned_;
 	const unsigned fraction = static_cast<unsigned>(x.o.frac_bits);
-	return fp::lanes32(x, fp::standard, [=](uint32_t, uint32_t m, uint32_t) {
+	if (x.o.esize == 16)
+		return fp::lanes_of<uint16_t>(x, [=](uint16_t, uint16_t m, uint16_t) {
+			if (to_fixed)
+				return narrow_integer(half_to_fixed(m, fraction, is_unsigned), is_unsigned);
+			return static_cast<uint16_t>(fixed_to_half(extend16(m, is_unsigned), fraction, is_unsigned));
+		});
+	return fp::lanes_of<uint32_t>(x, [=](uint32_t, uint32_t m, uint32_t) {
 		return to_fixed ? single_to_fixed(m, fraction, is_unsigned)
 				: fixed_to_single(m, fraction, is_unsigned);
 	});
@@ -369,26 +455,28 @@ bool vcvt_fixed(Exec &x)
 	const bool is_unsigned = o.unsigned_;
 	const unsigned fraction = static_cast<unsigned>(o.frac_bits);
 	const unsigned bits = static_cast<unsigned>(o.size);
-	const bool double_precision = o.fp_size == 64;
+	const unsigned precision = static_cast<unsigned>(o.fp_size);
 	if (!o.to_fixed) {
 		/* The integer is the low `bits` of the register, extended; the
 		 * conversion rounds to nearest even whatever the FPSCR says. */
-		const uint32_t raw = double_precision ? static_cast<uint32_t>(x.d_reg(d)) : x.s_reg(d);
-		const uint32_t integer = bits == 16U
-			? static_cast<uint32_t>(is_unsigned ? raw & 0xffffU
-							    : static_cast<std::int32_t>(static_cast<std::int16_t>(raw)))
-			: raw;
+		const uint32_t raw = precision == 64U ? static_cast<uint32_t>(x.d_reg(d)) : x.s_reg(d);
+		const uint32_t integer = bits == 16U ? extend16(raw, is_unsigned) : raw;
 		const uint32_t local = x.cpu.fpcr & fpscr_control_mask & ~fp::fpcr_rounding;
-		if (double_precision)
+		if (precision == 64U)
 			x.set_d_reg(d, fp::run(x.cpu, local, [&] { return fixed_to_double(integer, fraction, is_unsigned); }));
+		else if (precision == 16U)
+			x.set_s_reg(d, fp::run(x.cpu, local, [&] { return fixed_to_half(integer, fraction, is_unsigned); }));
 		else
 			x.set_s_reg(d, fp::run(x.cpu, local, [&] { return fixed_to_single(integer, fraction, is_unsigned); }));
 		return true;
 	}
 	const uint32_t local = x.cpu.fpcr & fpscr_control_mask;
 	const auto result = ::uml::cpu::arm64::detail::run_with_local_fpcr(local, [&] {
-		return double_precision ? double_to_fixed(x.d_reg(d), fraction, is_unsigned)
-					: single_to_fixed(x.s_reg(d), fraction, is_unsigned);
+		if (precision == 64U)
+			return double_to_fixed(x.d_reg(d), fraction, is_unsigned);
+		if (precision == 16U)
+			return half_to_fixed(x.s_reg(d) & 0xffffU, fraction, is_unsigned);
+		return single_to_fixed(x.s_reg(d), fraction, is_unsigned);
 	});
 	uint32_t value = result.value;
 	std::uint32_t raised = result.fpsr;
@@ -402,10 +490,8 @@ bool vcvt_fixed(Exec &x)
 		}
 	}
 	/* Extend{32} or Extend{64} of the result by the type. */
-	const uint32_t extended = bits == 16U && !is_unsigned
-		? static_cast<uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(value)))
-		: value;
-	if (double_precision)
+	const uint32_t extended = bits == 16U ? extend16(value, is_unsigned) : value;
+	if (precision == 64U)
 		x.set_d_reg(d, is_unsigned ? uint64_t{extended}
 					   : static_cast<uint64_t>(static_cast<std::int64_t>(static_cast<std::int32_t>(extended))));
 	else
