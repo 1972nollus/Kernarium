@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run Geekbench in a disposable overlay shell, from the image or a payload."""
+"""Run Geekbench in a disposable overlay shell, from the image or a payload.
+
+The program is Geekbench 6 on an arm64 or x86-64 image, or Geekbench 5 armv7
+on a 32-bit Arm one; the guest script finds whichever the image or payload
+carries."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -47,8 +51,9 @@ def parse_arguments() -> argparse.Namespace:
         type=pathlib.Path,
         help=(
             "attach this read-only EROFS image, which holds a Geekbench 6 "
-            "release at its root, and run that release instead of the "
-            "rootfs's own payload; no x86-64 image carries one"
+            "or Geekbench 5 armv7 release at its root, and run that release "
+            "instead of the rootfs's own payload; no x86-64 or armhf image "
+            "carries one"
         ),
     )
     parser.add_argument(
@@ -65,6 +70,24 @@ def parse_arguments() -> argparse.Namespace:
             "append one extra guest kernel argument; repeatable. Isolating a "
             "kernel policy that the config turns on by default, such as "
             "'psi=0', needs a matched pair of runs that differ only here"
+        ),
+    )
+    parser.add_argument(
+        "--root-type",
+        choices=("erofs", "ext4"),
+        default="erofs",
+        help=(
+            "the rootfs's filesystem; ext4 is an unpartitioned filesystem "
+            "image, such as the armhf image's root partition"
+        ),
+    )
+    parser.add_argument(
+        "--no-network",
+        action="store_true",
+        help=(
+            "leave the guest without the user network's address and "
+            "resolver, for an image that has no ip or a run that must not "
+            "touch a network"
         ),
     )
     parser.add_argument("--timeout", type=int, default=7200)
@@ -109,6 +132,13 @@ def main() -> int:
     if parameters:
         payloads[GUEST_PARAMETERS] = GuestFile("".join(parameters).encode())
 
+    # Only a departure from the usual guest is passed on.
+    boot_options: dict[str, str] = {}
+    if arguments.root_type != "erofs":
+        boot_options["root_type"] = arguments.root_type
+    if arguments.no_network:
+        boot_options["network"] = "image"
+
     arguments.console_log.parent.mkdir(parents=True, exist_ok=True)
     with arguments.console_log.open("wb") as console_log, Guest(
         arguments.emulator.resolve(),
@@ -125,6 +155,7 @@ def main() -> int:
         core_class=arguments.core_class,
         console_sink=console_log,
         payloads=payloads,
+        **boot_options,
     ) as guest:
         guest.boot_and_login(180)
         result = guest.run_command(GUEST_WORKLOAD, arguments.timeout)

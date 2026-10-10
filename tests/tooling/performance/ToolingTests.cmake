@@ -9,6 +9,22 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME geekbench-guest-script
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/test_geekbench_script.py
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS performance
+    TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME geekbench-image-tool
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/test_geekbench_images.py
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS performance
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME guest-sample-symbolization
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/performance/symbolize_guest_samples_tests.py
