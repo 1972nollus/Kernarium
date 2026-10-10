@@ -269,6 +269,7 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
     arm64/gadgets/software_crypto_helpers.cpp
+    arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S
     ${_uml_arm64_gadget_sme_sources}
     ${_uml_arm64_gadget_sve_sources}
