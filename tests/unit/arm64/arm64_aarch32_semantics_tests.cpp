@@ -38,7 +38,7 @@ constexpr std::uint32_t data_base = 0x2000'0000;
 
 /* Guest memory of separate host pages, so a library that assumed two pages
  * adjacent in the host would fail. */
-class Machine final : public A32Memory {
+class Machine : public A32Memory {
 public:
 	std::byte *translate(std::uint64_t address, MemoryAccess access) noexcept override
 	{
@@ -106,12 +106,13 @@ private:
 	std::map<std::uint32_t, Page> pages_;
 };
 
-struct Fixture final {
-	Machine machine;
+template<typename M>
+struct BasicFixture final {
+	M machine;
 	CpuState cpu{};
 	Profile profile = Profile::at(Level::base);
 
-	Fixture()
+	BasicFixture()
 	{
 		machine.map(code_base, true, true);
 		machine.map(data_base);
@@ -168,6 +169,8 @@ struct Fixture final {
 		return step_a32(cpu, machine, profile);
 	}
 };
+
+using Fixture = BasicFixture<Machine>;
 
 constexpr std::uint32_t ldm_r0_r1_r3 = 0xe890000e; /* ldm r0, {r1, r2, r3} */
 constexpr std::uint32_t stmia_wb_r0_r1_r3 = 0xe8a0000e; /* stm r0!, {r1, r2, r3} */
@@ -780,6 +783,110 @@ void test_vector_structures()
 		"a faulting VST1 stores nothing");
 }
 
+/* A reservation model of the kind an engine with versioned reservations
+ * keeps: it fails a store-exclusive when anything was stored since the
+ * load-exclusive, even if the location holds the same value, which the
+ * default compare-and-swap monitor passes. */
+class VersionedMachine final : public Machine {
+public:
+	void stored(std::byte *host, std::size_t size) noexcept override
+	{
+		++version;
+		Machine::stored(host, size);
+	}
+
+	std::uint64_t load_exclusive(CpuState &, std::uint32_t address, std::byte *host,
+		unsigned size, bool acquire) noexcept override
+	{
+		++loads;
+		last_acquire = acquire;
+		reserved_address = address;
+		reserved_version = version;
+		reserved = true;
+		std::uint64_t value = 0;
+		std::memcpy(&value, host, size);
+		return value;
+	}
+
+	bool store_exclusive(CpuState &, std::uint32_t address, std::byte *host, unsigned size,
+		std::uint64_t value, bool release) noexcept override
+	{
+		++store_attempts;
+		last_release = release;
+		const bool held = reserved && reserved_address == address && reserved_version == version;
+		reserved = false;
+		if (held)
+			std::memcpy(host, &value, size);
+		return held;
+	}
+
+	void clear_exclusive(CpuState &) noexcept override
+	{
+		++clears;
+		reserved = false;
+	}
+
+	std::uint64_t version = 0, reserved_version = 0;
+	std::uint32_t reserved_address = 0;
+	bool reserved = false, last_acquire = false, last_release = false;
+	unsigned loads = 0, store_attempts = 0, clears = 0;
+};
+
+void test_custom_monitor()
+{
+	BasicFixture<VersionedMachine> f;
+	const std::uint32_t address = data_base + 0x40;
+	f.machine.put(address, std::uint32_t{0x11});
+	f.cpu.registers[0] = address;
+	f.cpu.registers[3] = 0x22;
+
+	/* The hooks run in place of CpuState's record. */
+	auto result = f.step_a32_word(ldrex_r1_r0);
+	require(result.event == StepEvent::retired && f.r(1) == 0x11 && f.machine.loads == 1 &&
+			!f.machine.last_acquire && f.cpu.exclusive_size == 0,
+		"LDREX goes through the monitor hook and leaves CpuState's record");
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::retired && f.r(2) == 0 && f.machine.store_attempts == 1 &&
+			!f.machine.last_release && f.machine.get<std::uint32_t>(address) == 0x22 &&
+			f.machine.stores.size() == 1,
+		"STREX passes when the hook says so, and the library reports the store");
+
+	/* A store since the load fails the store-exclusive, though the value is
+	 * the same (the compare-and-swap monitor would pass it). */
+	(void)f.step_a32_word(ldrex_r1_r0);
+	f.cpu.registers[5] = 0x22;
+	f.cpu.registers[6] = address;
+	(void)f.step_a32_word(0xe5865000); /* str r5, [r6] */
+	f.machine.stores.clear();
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::retired && f.r(2) == 1 && f.machine.stores.empty() &&
+			f.machine.store_attempts == 2,
+		"STREX fails when the hook says so and nothing is stored");
+
+	/* The ordered forms pass their ordering on; CLREX reaches the hook. */
+	(void)f.step_a32_word(ldaex_r1_r0);
+	require(f.machine.last_acquire, "LDAEX asks for acquire");
+	(void)f.step_a32_word(stlex_r2_r1_r0);
+	require(f.machine.last_release, "STLEX asks for release");
+	(void)f.step_a32_word(clrex);
+	require(f.machine.clears == 1, "CLREX is the clear hook");
+
+	/* LDA and STL never use the monitor. */
+	const unsigned loads = f.machine.loads;
+	const unsigned attempts = f.machine.store_attempts;
+	(void)f.step_a32_word(lda_r1_r0);
+	(void)f.step_a32_word(stl_r1_r0);
+	require(f.machine.loads == loads && f.machine.store_attempts == attempts,
+		"LDA and STL do not touch the monitor");
+
+	/* The library still checks alignment and translation first. */
+	f.cpu.registers[0] = address + 1;
+	result = f.step_a32_word(strex_r2_r3_r0);
+	require(result.event == StepEvent::memory_fault && result.alignment &&
+			f.machine.store_attempts == attempts,
+		"an unaligned STREX faults before the hook");
+}
+
 void test_system()
 {
 	Fixture f;
@@ -834,6 +941,7 @@ int main()
 	test_single_store_is_all_or_nothing();
 	test_alignment_faults();
 	test_exclusives();
+	test_custom_monitor();
 	test_branches_and_stack();
 	test_it_udf();
 	test_vector_memory();
