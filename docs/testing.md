@@ -670,6 +670,9 @@ every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
 also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
 (the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
 injected profile with SME and again with SME2.
+`arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
+as well) and every evidence witness at SM = 0 in both ZA states and every
+link shape, and requires that no translation holds an SVE or SME word.
 
 `DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
 words that leave translated code for the semantic library, and appends to the
