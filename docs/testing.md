@@ -782,6 +782,16 @@ shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
 
+`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
+the architectural positions of the status word's fields, the load and save of
+every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
+split, TPIDR registers, CP15BEN; load then save is the identity over random
+states in both Thumb and ARM state), which entries the kernel may hand over,
+the bridge event of every exit, and that the compat HWCAPs and the guest entry
+points follow the level the run presents, with the policy off and on. An
+engine that has reached `base` makes the policy-on run enter it for real: an
+entry at an unmapped PC must fault there.
+
 ## AArch32 JIT
 
 The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
@@ -791,10 +801,10 @@ each of the oracle's two epilogues, and compares registers, APSR, thread
 registers, changed data, event, fault address and retired count; a failing
 exclusive case runs once more, because a host store-exclusive may fail without
 cause. It then requires every lowered form to stay out of the slow helper from a
-clean state: each event-free case runs twice and, past the first run, at most
-half of a form's cases may take the helper (the rest cross a page or write
-back over the loaded register). The parallel arithmetic that the interim
-helper runs must take it in all of them. `arm64-jit-a32-runtime`,
+clean state: each event-free case runs twice, and past the first run one case
+in which the form always executes must take no helper exit (the others cross a
+page or write back over the loaded register). The parallel arithmetic that the
+interim helper runs must take it in all of them. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
 programs against an independent reference of the instruction forms (the corpus
 carries T32).
