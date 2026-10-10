@@ -636,9 +636,15 @@ the forms are listed in
 multiply-add (negated forms included), arithmetic (divide, square root and
 rounding included), compare (into a predicate, flags untouched; FCMUO through FCMEQ for its
 exceptions and integer compares for its NaNs)
-and same-size conversion forms, the integer arithmetic, unary (negate, count,
-extend), logical, shift (by a vector, by an immediate and merging), halving,
-difference, widening, narrowing, high-half, dot-product and UADDV forms, ZIP,
+and same-size conversion forms, FCVT between single and double precision
+(half precision stays in the library, since AdvSIMD's FCVT honours FPCR.AHP
+and SVE's does not), the 32-bit integer conversions of a double (SCVTF and
+UCVTF into doubles, FCVTZS and FCVTZU out of them), FSCALE for normal elements
+whose results stay normal (an exponent add; any other element sends the word
+to the library), FTSMUL and FTSSEL, the integer arithmetic, unary (negate,
+count, extend), logical, shift (by a vector, UQSHL included, by an immediate
+and merging), halving, difference, widening, narrowing, high-half, dot-product
+(USDOT and SUDOT where the host has FEAT_I8MM) and UADDV forms, ZIP,
 UZP and TRN (also of predicates), TBL of any element size (one or two
 tables), unpacks, EXT, REV and INDEX, BRKA and BRKB (flag-setting forms
 included), COMPACT, SPLICE, EORBT and EORTB, SQINC, SQDEC, UQINC and UQDEC of a

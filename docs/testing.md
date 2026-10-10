@@ -662,7 +662,10 @@ with `DARWIN_UML_GUEST_SVE=1`.
 pseudocode on injected SVE hosts under either policy, and
 `arm64-jit-sve-forms` checks every row of the profile through the JIT
 against the semantic library on random states, requires a lowered word to stay
-out of the library from a clean state, and runs gathers and scatters with a
+out of the library from a clean state, runs FSCALE with each kind of element
+(zeros, infinities, NaNs, denormals, scales that overflow, underflow or wrap)
+and requires exactly those to take the library, runs the conversions between
+precisions and UQSHL at the values they turn on, and runs gathers and scatters with a
 lane out of reach, scatters while another vCPU's reservation tracks stores,
 the saturating counts at their limits, table lookups with indices that land
 in the tables, and the governing-predicate shapes (none, one, all but one, runs,

@@ -309,6 +309,10 @@ private:
   [[nodiscard]] bool emit_sve_floating(std::uint16_t form,
                                        std::uint32_t instruction,
                                        std::uint64_t pc);
+  /* FSCALE: the scales added to the exponent fields when every element is
+   * normal and stays so, which raises nothing; otherwise the library. */
+  [[nodiscard]] bool emit_sve_scale(std::uint32_t instruction,
+                                    std::uint64_t pc);
   [[nodiscard]] bool emit_sve_integer(std::uint16_t form,
                                       std::uint32_t instruction,
                                       std::uint64_t pc);
