@@ -690,6 +690,22 @@ report it leaves, and one that exits having run no JIT executor and requires
 it to leave a report already in the file alone, since either engine's process
 may write it.
 
+`guest-sve-gadgets` and `guest-sve-jit` check the guest kernel's SVE contract
+under the policy on. Each skips, naming its reason, unless its engine's SVE
+support is `complete`. The freestanding `sve_probe.cpp` boots as `/init` and
+checks signal frames, sigreturn and its invalid frames, the live state across
+system calls, preemption, fork, vfork, clone and exec, `NT_ARM_SVE` at
+signal and syscall-entry stops and across a traced fork, `AT_MINSIGSTKSZ`,
+prctl and the sysctl; on an SME host a second boot adds the SME policy and
+the streaming-mode checks. The same binary runs as an ordinary program on
+arm64 Linux with SVE at a 16-byte vector length, `sve-probe kernel`, and
+every check must pass there too; its expected values came from such a run on
+Linux 6.12, and checks where native Linux may keep a discarded state live
+with zero registers accept either outcome. Where 6.12 differs from the
+guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
+6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
+check that with the policy off the probe sees no SVE and PTRUE is undefined.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
