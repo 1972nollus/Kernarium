@@ -834,7 +834,7 @@ runner print every line of the guest's output, passes included.
 ## AArch32 JIT
 
 The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
-`arm64-jit-a32-corpus` runs every base-level case of the AArch32 corpus pack
+`arm64-jit-a32-corpus` runs every simd-level case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
 registers, changed data, event, fault address and retired count; a failing
@@ -843,7 +843,9 @@ cause. It then requires every lowered form to stay out of the slow helper from a
 clean state: each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The parallel
-arithmetic that the semantic library runs must take it in all of them. `arm64-jit-a32-runtime`,
+arithmetic that the semantic library runs must take it in all of them, and every
+vector form of the level must have a lowering. (Cases that need the half-precision
+or Armv8 extensions are skipped until the JIT's level reaches them.) `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
 programs against an independent reference of the instruction forms (the corpus
 carries T32).
@@ -855,8 +857,14 @@ STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
 step at a time and from the middle, long blocks under a small budget, and code
-rewritten under translations. `arm64-jit-a32-encoder` compares the compiler's
-A64 encoders with LLVM MC.
+rewritten under translations. `arm64-jit-a32-vector` covers what the corpus
+does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
+and the Standard FPSCR value for a Neon one across a conditional arm, a chained
+branch and an exit, QC across runs, and the vector memory forms staying inline
+and taking the library, with its data and faults, across a page, on a
+misalignment and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's
+A64 encoders with LLVM MC, and `arm64-jit-a32-vector-encoder` those of the
+vector instruction classes.
 
 ## x86 instruction conformance
 

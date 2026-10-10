@@ -853,6 +853,27 @@ the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
 translation is seen. Executable memory comes only from the arena the A64 JIT
 already uses; the A32 files allocate and publish none.
 
+The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
+in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
+host registers V16-V31, a D register is the low or high half of its Q and an S
+register a 32-bit lane, so a narrower operand is staged in a scratch register
+and a result is inserted into its half or lane. A VFP instruction runs under the
+guest's FPCR and FPSR, which the executor installs for a block that holds one
+(the native floating-point environment of the A64 compiler); an Advanced SIMD
+floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
+round to nearest, AHP and FZ16 the guest's), which the translation sets before
+the first one and puts back at every exit and in a conditional arm that changed
+it, so a block always begins and ends under the guest's FPCR and a link keeps
+its meaning. A saturating instruction sets QC in the host FPSR, which is the
+guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
+pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
+infinity times a zero without raising Invalid Operation. VLDR, VSTR and the
+register-list transfers move whole Q registers where the list is aligned to
+one; the structure loads and stores use the host LDn and STn on scratch
+registers. They share the scalar transfers' TLB sequence and alignment rule,
+and a page crossing, a faulting alignment, a PC base or a list past the
+register file runs the instruction in the semantic library instead.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
