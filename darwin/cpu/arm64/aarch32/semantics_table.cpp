@@ -89,6 +89,12 @@ constexpr Named named_ops[] = {
 	{"SEVL", Op::nop}, {"WFE", Op::nop}, {"WFI", Op::nop},
 	{"YIELD", Op::nop}, {"DMB", Op::dmb}, {"DSB", Op::dsb},
 	{"SSBB", Op::dsb}, {"PSSBB", Op::dsb}, {"ISB", Op::isb}, {"IT", Op::it},
+	{"VLDR", Op::vldr}, {"VSTR", Op::vstr}, {"VLDM", Op::vldm},
+	{"VLDMDB", Op::vldm}, {"FLDMIAX", Op::vldm}, {"FLDMDBX", Op::vldm},
+	{"VSTM", Op::vstm}, {"VSTMDB", Op::vstm}, {"FSTMIAX", Op::vstm},
+	{"FSTMDBX", Op::vstm}, {"VLD1", Op::vld}, {"VLD2", Op::vld},
+	{"VLD3", Op::vld}, {"VLD4", Op::vld}, {"VST1", Op::vst},
+	{"VST2", Op::vst}, {"VST3", Op::vst}, {"VST4", Op::vst},
 };
 
 /* S, Q, SH, U, UH, UQ followed by ADD16, ADD8, ASX, SAX, SUB16 or SUB8. */
@@ -150,6 +156,16 @@ constexpr Named named_ops[] = {
 			if (info.op == Op::blx && form.starts_with("BL_i"))
 				info.op = Op::bl;
 			info.sp_base = form.find("_SP_") != std::string_view::npos;
+			if (info.op == Op::vld || info.op == Op::vst) {
+				/* VLDn_m_ (multiple structures), VLDn_1_ (one lane) and
+				 * VLDn_a_ (all lanes), after the mnemonic's digit. */
+				info.structs = static_cast<std::uint8_t>(name.back() - '0');
+				info.structure = form.find("_1_") != std::string_view::npos
+					? StructureKind::single_lane
+					: form.find("_a_") != std::string_view::npos
+						? StructureKind::all_lanes
+						: StructureKind::multiple;
+			}
 			if (info.op == Op::ldm || info.op == Op::stm) {
 				info.stack = form.starts_with("PUSH") || form.starts_with("POP");
 				if (form.starts_with("LDMDA") || form.starts_with("STMDA"))

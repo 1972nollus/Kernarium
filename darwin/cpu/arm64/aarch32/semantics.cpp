@@ -192,10 +192,25 @@ std::atomic<bool> counting_exits{false};
 std::atomic<std::uint64_t> exit_total{0};
 std::array<std::atomic<std::uint64_t>, kFormCount> form_exits{};
 
-[[nodiscard]] bool covered_op(Op op) noexcept
+/* The forms above the library's level that it covers already: the VFP and
+ * Advanced SIMD memory group, which needs no floating-point arithmetic. */
+[[nodiscard]] constexpr bool early_simd_op(Op op) noexcept
 {
-	return op != Op::none;
+	return op == Op::vldr || op == Op::vstr || op == Op::vldm || op == Op::vstm
+		|| op == Op::vld || op == Op::vst;
 }
+
+}
+
+[[nodiscard]] bool covered(const FormInfo &form, const OpInfo &info) noexcept
+{
+	if (form.availability != Availability::implemented || info.op == Op::none)
+		return false;
+	return form.level <= a32_semantics_level()
+		|| (form.level == Level::simd && early_simd_op(info.op));
+}
+
+namespace {
 
 /* The family that executes an operation. */
 bool dispatch(Exec &x, const OpInfo &info)
@@ -250,6 +265,9 @@ bool dispatch(Exec &x, const OpInfo &info)
 	case Op::coprocessor: case Op::nop: case Op::dmb: case Op::dsb:
 	case Op::isb: case Op::it:
 		return exec_system(x, info);
+	case Op::vldr: case Op::vstr: case Op::vldm: case Op::vstm: case Op::vld:
+	case Op::vst:
+		return exec_vector_memory(x, info);
 	}
 	return x.raise_fatal();
 }
@@ -262,11 +280,8 @@ bool a32_semantics_covers(Form form) noexcept
 {
 	if (form == Form::Undefined || form == Form::ReservedHint)
 		return true;
-	const FormInfo &info = kForms[static_cast<std::size_t>(form)];
-	if (info.availability != Availability::implemented
-		|| info.level > a32_semantics_level())
-		return false;
-	return detail::covered_op(detail::op_info(form).op);
+	return detail::covered(kForms[static_cast<std::size_t>(form)],
+		detail::op_info(form));
 }
 
 StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
@@ -288,9 +303,7 @@ StepResult execute_a32(CpuState &cpu, const Instruction &instruction,
 	const OpInfo &info = op_info(instruction.form);
 	/* A reserved hint is a pseudo-form that retires as a NOP; every other
 	 * form is a table row, which the library covers up to its level. */
-	if (instruction.form != Form::ReservedHint
-		&& (form.availability != Availability::implemented
-			|| form.level > a32_semantics_level() || !covered_op(info.op))) [[unlikely]]
+	if (instruction.form != Form::ReservedHint && !covered(form, info)) [[unlikely]]
 		return fatal;
 
 	Exec x(cpu, instruction, memory);
