@@ -149,6 +149,11 @@ struct BasicFixture final {
 		return value;
 	}
 
+	void set_s(unsigned n, std::uint32_t value)
+	{
+		std::memcpy(cpu.vectors[n / 4].bytes.data() + 4U * (n & 3U), &value, 4);
+	}
+
 	/* Places A32 words at the code page and steps the first. */
 	StepResult step_a32_word(std::uint32_t word)
 	{
@@ -204,25 +209,31 @@ void test_coverage()
 			"the coverage predicate follows the level");
 		covered += a32_semantics_covers(form) ? 1 : 0;
 	}
-	require(covered > 1500, "the library covers the base and SIMD levels");
+	require(a32_semantics_level() == Level::complete, "the library implements the whole profile");
+	require(covered > 2100, "the library covers every implemented form");
 }
 
 void test_events()
 {
 	Fixture f;
-	/* A form above the library's level is fatal, and changes nothing. */
+	/* A form the library does not cover is fatal, and changes nothing. An
+	 * HVC is outside the profile, so no decode returns it with a status
+	 * that executes. */
 	f.cpu.registers[0] = 0x1234;
-	const auto crc32b = decode_a32(0xe1010042, Profile::at(Level::complete));
-	require(crc32b.legal(), "crc32b decodes at complete");
-	f.machine.put(code_base, std::uint32_t{0xe1010042});
+	Instruction uncovered;
+	uncovered.form = Form::HVC_A1;
+	uncovered.status = Status::ok;
+	f.machine.put(code_base, std::uint32_t{0xe1400070});
 	f.set_pc(code_base, false);
-	auto result = execute_a32(f.cpu, crc32b, f.machine);
+	auto result = execute_a32(f.cpu, uncovered, f.machine);
 	require(result.event == StepEvent::fatal && f.pc() == code_base && f.r(0) == 0x1234,
-		"a form above the level is fatal and changes nothing");
+		"an uncovered form is fatal and changes nothing");
 
 	/* A word the decoder rejects is undefined. */
 	f.cpu.a32_itstate = 0;
-	result = f.step_a32_word(0xe1010042);
+	const auto simd_only = decode_a32(0xe1010042, Profile::at(Level::simd));
+	require(!simd_only.legal(), "a CRC32 word is above the simd level");
+	result = execute_a32(f.cpu, simd_only, f.machine);
 	require(result.event == StepEvent::undefined && f.pc() == code_base,
 		"a word above the profile's level is undefined at the PC");
 
@@ -1062,6 +1073,184 @@ void test_floating_point()
 		"VPADD adds adjacent pairs");
 }
 
+/* The Armv8 extensions: half-precision arithmetic, the Armv8 floating-point
+ * additions, VJCVT, the integer, crypto and CRC32 groups, and BFloat16. */
+void test_armv8_extensions()
+{
+	Fixture f;
+	f.profile = Profile::at(Level::complete);
+	constexpr std::uint32_t z_flag = 0x4000'0000;
+
+	/* Half precision: the result zero-extends into the S register. */
+	f.set_s(1, 0x3c00);
+	f.set_s(2, 0x3c00);
+	f.set_s(0, 0xffff'ffff);
+	require(f.step_a32_word(0xee300981).event == StepEvent::retired && /* vadd.f16 s0, s1, s2 */
+			f.s(0) == 0x4000,
+		"VADD.F16 adds and clears the top half");
+	f.set_s(0, 0xaaaa'bbbb);
+	f.set_s(1, 0x3333'4444);
+	require(f.step_a32_word(0xfeb00ae0).event == StepEvent::retired && f.s(0) == 0x4444'bbbb,
+		"VINS puts Hm in the top half of Sd");
+	require(f.step_a32_word(0xfeb00a60).event == StepEvent::retired && f.s(0) == 0x3333,
+		"VMOVX moves the top half of Sm");
+	f.cpu.registers[1] = 0xabcd'1234;
+	require(f.step_a32_word(0xee001910).event == StepEvent::retired && f.s(0) == 0x1234,
+		"VMOV.F16 from a core register clears the top half");
+
+	/* VSEL tests the flags and changes none. */
+	f.set_s(1, 0x3f80'0000);
+	f.set_s(2, 0x4000'0000);
+	f.cpu.nzcv = z_flag;
+	require(f.step_a32_word(0xfe000a81).event == StepEvent::retired && f.s(0) == 0x3f80'0000 &&
+			f.cpu.nzcv == z_flag,
+		"VSELEQ selects Sn when Z is set");
+	f.cpu.nzcv = 0;
+	require(f.step_a32_word(0xfe000a81).event == StepEvent::retired && f.s(0) == 0x4000'0000,
+		"VSELEQ selects Sm when Z is clear");
+
+	/* VRINT and VCVT with a rounding: 2.5 and 1.5. */
+	f.cpu.fpsr = 0;
+	f.set_s(1, 0x4020'0000);
+	require(f.step_a32_word(0xfeb80a60).event == StepEvent::retired && f.s(0) == 0x4040'0000 &&
+			f.cpu.fpsr == 0,
+		"VRINTA rounds ties away and is exact");
+	require(f.step_a32_word(0xfeb90a60).event == StepEvent::retired && f.s(0) == 0x4000'0000,
+		"VRINTN rounds ties to even");
+	f.set_s(1, 0x3fc0'0000);
+	require(f.step_a32_word(0xeeb70a60).event == StepEvent::retired && f.s(0) == 0x4000'0000 &&
+			(f.cpu.fpsr & 0x10U) != 0U,
+		"VRINTX rounds by the FPSCR and raises Inexact");
+	f.set_s(1, 0x4020'0000);
+	require(f.step_a32_word(0xfebc0ae0).event == StepEvent::retired && f.s(0) == 3,
+		"VCVTA rounds ties away");
+	require(f.step_a32_word(0xfebd0ae0).event == StepEvent::retired && f.s(0) == 2,
+		"VCVTN rounds ties to even");
+
+	/* VMAXNM returns the number for a quiet NaN. */
+	f.set_s(1, 0x7fc0'0000);
+	f.set_s(2, 0x3f80'0000);
+	require(f.step_a32_word(0xfe800a81).event == StepEvent::retired && f.s(0) == 0x3f80'0000,
+		"VMAXNM prefers the number to a quiet NaN");
+
+	/* VJCVT wraps modulo 2^32 and sets Z only for an exact conversion. */
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x41f0'0000'0038'0000); /* 2^32 + 3.5 */
+	require(f.step_a32_word(0xeeb90bc1).event == StepEvent::retired && f.s(0) == 3 &&
+			f.cpu.a32_fpscr_nzcv == 0 && f.cpu.fpsr == 1U,
+		"VJCVT wraps a value out of range and signals Invalid Operation");
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x3ff8'0000'0000'0000); /* 1.5 */
+	require(f.step_a32_word(0xeeb90bc1).event == StepEvent::retired && f.s(0) == 1 &&
+			f.cpu.a32_fpscr_nzcv == 0 && f.cpu.fpsr == 0x10U,
+		"VJCVT of an inexact value clears Z and signals Inexact");
+	f.set_d(1, 0x4008'0000'0000'0000);
+	require(f.step_a32_word(0xeeb90bc1).event == StepEvent::retired && f.s(0) == 3 &&
+			f.cpu.a32_fpscr_nzcv == z_flag,
+		"VJCVT of an exact value sets Z");
+	f.set_d(1, 0x8000'0000'0000'0000);
+	require(f.step_a32_word(0xeeb90bc1).event == StepEvent::retired && f.s(0) == 0 &&
+			f.cpu.a32_fpscr_nzcv == 0,
+		"VJCVT of a negative zero clears Z");
+
+	/* CRC32 and CRC32C against independent values. */
+	f.cpu.registers[1] = 0;
+	f.cpu.registers[2] = 0x61;
+	require(f.step_a32_word(0xe1010042).event == StepEvent::retired && f.r(0) == 0x3ab5'51ce,
+		"CRC32B");
+	f.cpu.registers[1] = 0xffff'ffff;
+	f.cpu.registers[2] = 0x0123'4567;
+	require(f.step_a32_word(0xe1410042).event == StepEvent::retired && f.r(0) == 0xc7b5'e785,
+		"CRC32W");
+	f.cpu.registers[1] = 1;
+	f.cpu.registers[2] = 0xffff'abcd;
+	require(f.step_a32_word(0xe1210042).event == StepEvent::retired && f.r(0) == 0x264b'e222,
+		"CRC32H uses only the low half");
+	f.cpu.registers[1] = 0xffff'ffff;
+	for (const char digit : {'1', '2', '3', '4', '5', '6', '7', '8', '9'}) {
+		f.cpu.registers[2] = static_cast<std::uint32_t>(digit);
+		require(f.step_a32_word(0xe1010242).event == StepEvent::retired, "CRC32CB");
+		f.cpu.registers[1] = f.r(0);
+	}
+	require((f.r(0) ^ 0xffff'ffff) == 0xe306'9283, "CRC32C of 123456789");
+
+	/* AESE then AESMC on the FIPS-197 appendix B state. */
+	f.set_d(0, 0x8d30'5a88'a8f6'4332);
+	f.set_d(1, 0x3407'37e0'a298'3131);
+	f.set_d(2, 0xa6d2'ae28'1615'7e2b);
+	f.set_d(3, 0x3c4f'cf09'8815'f7ab);
+	require(f.step_a32_word(0xf3b00302).event == StepEvent::retired && /* aese.8 q0, q1 */
+			f.d(0) == 0xae52'b4e0'305d'bfd4 && f.d(1) == 0xe598'271e'f111'41b8,
+		"AESE");
+	f.set_d(2, f.d(0));
+	f.set_d(3, f.d(1));
+	require(f.step_a32_word(0xf3b00382).event == StepEvent::retired && /* aesmc.8 q0, q1 */
+			f.d(0) == 0x9a19'cbe0'e581'6604 && f.d(1) == 0x4c26'0628'7ad3'f848,
+		"AESMC");
+	f.set_d(2, 0x1234'5678'8000'0001);
+	f.set_d(3, 0xffff'ffff'ffff'ffff);
+	require(f.step_a32_word(0xf3b902c2).event == StepEvent::retired && /* sha1h.32 q0, q1 */
+			f.d(0) == 0x6000'0000 && f.d(1) == 0,
+		"SHA1H rotates the low word and clears the rest");
+
+	/* Complex numbers: (1 + 2i) and (3 + 4i). */
+	f.set_d(1, 0x4000'0000'3f80'0000);
+	f.set_d(2, 0x4080'0000'4040'0000);
+	require(f.step_a32_word(0xfc910802).event == StepEvent::retired && /* vcadd.f32 d0, d1, d2, #90 */
+			f.d(0) == 0x40a0'0000'c040'0000,
+		"VCADD rotates by 90 degrees");
+	f.set_d(0, 0x3e80'0000'3f00'0000); /* 0.5 + 0.25i */
+	require(f.step_a32_word(0xfc310802).event == StepEvent::retired && /* vcmla.f32 d0, d1, d2, #0 */
+			f.d(0) == 0x4088'0000'4060'0000,
+		"VCMLA accumulates the real-part products");
+
+	/* VFMAL widens the half-precision products. */
+	f.set_d(4, 0);
+	f.set_d(0, 0x4000'3c00'0000'0000); /* s1 = {1.0, 2.0} */
+	f.set_d(1, 0x0000'0000'4200'4000); /* s2 = {2.0, 3.0} */
+	require(f.step_a32_word(0xfc204891).event == StepEvent::retired && /* vfmal.f16 d4, s1, s2 */
+			f.d(4) == 0x40c0'0000'4000'0000,
+		"VFMAL");
+
+	/* VQRDMLAH: one saturating lane, one exact lane. */
+	f.cpu.fpsr = 0;
+	f.set_d(0, 0x0100'0000);
+	f.set_d(1, 0x4000'8000);
+	f.set_d(2, 0x4000'8000);
+	require(f.step_a32_word(0xf3110b12).event == StepEvent::retired && /* vqrdmlah.s16 d0, d1, d2 */
+			f.d(0) == 0x2100'7fff && (f.cpu.fpsr & (1U << 27)) != 0U,
+		"VQRDMLAH saturates and sets QC");
+
+	/* VSDOT sums four byte products per word. */
+	f.set_d(0, 0);
+	f.set_d(1, 0x0807'0605'0403'0201);
+	f.set_d(2, 0x0202'0202'0101'0101);
+	require(f.step_a32_word(0xfc210d02).event == StepEvent::retired && /* vsdot.s8 d0, d1, d2 */
+			f.d(0) == 0x0000'0034'0000'000a,
+		"VSDOT");
+
+	/* BFloat16: ties round to even in VCVT, and VDOT rounds to odd. */
+	f.cpu.fpsr = 0;
+	f.set_d(2, 0x3f81'8000'3f80'8000);
+	f.set_d(3, 0x0000'0001'7f7f'ffff);
+	require(f.step_a32_word(0xf3b60642).event == StepEvent::retired && /* vcvt.bf16.f32 d0, q1 */
+			f.d(0) == 0x0000'7f80'3f82'3f80 && f.cpu.fpsr == 0x94,
+		"VCVT.BF16 rounds to nearest even, overflows to infinity and flushes denormals");
+	f.set_d(0, 0x3080'0000);
+	f.set_d(1, 0x3f80);
+	f.set_d(2, 0x3f80'3f80'3f80'3f80);
+	require(f.step_a32_word(0xfc010d02).event == StepEvent::retired && /* vdot.bf16 d0, d1, d2 */
+			f.d(0) == 0x3f80'0001,
+		"VDOT.BF16 rounds the sum to odd");
+	f.set_s(0, 0xaaaa'0000);
+	f.set_s(1, 0x3f81'8000);
+	require(f.step_a32_word(0xeeb30960).event == StepEvent::retired && f.s(0) == 0xaaaa'3f82,
+		"VCVTB.BF16 replaces the bottom half");
+
+	/* SB retires. */
+	require(f.step_a32_word(0xf57ff070).event == StepEvent::retired, "SB retires");
+}
+
 int main()
 {
 	test_coverage();
@@ -1078,6 +1267,7 @@ int main()
 	test_vector_memory();
 	test_vector_structures();
 	test_floating_point();
+	test_armv8_extensions();
 	test_system();
 	test_counters();
 	return 0;

@@ -393,6 +393,7 @@ endif()
 # of widening code generation for every C++ target in an iOS package build.
 if(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION)
     set(_uml_inline_asm_targets
+        uml_arm64_aarch32_semantics
         uml_arm64_gadgets
         uml_arm64_jit
         uml_arm64_jit_executor
