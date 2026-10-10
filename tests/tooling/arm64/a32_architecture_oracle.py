@@ -427,6 +427,11 @@ class ArchitectureCatalog:
                 name = encoding.get("name", "")
                 if not name:
                     raise CatalogError(f"{filename}: encoding has no name")
+                if name in XML_NAME_ERRATA:
+                    name = _corrected_name(
+                        filename, name, encoding_mask, encoding_value,
+                        encoding_fields,
+                    )
                 features = tuple(
                     dict.fromkeys(class_features + _declared_features(encoding))
                 )
@@ -469,6 +474,47 @@ class ArchitectureCatalog:
         if len(set(names)) != len(names):
             raise CatalogError("Arm XML encoding names are not unique")
         return result
+
+
+# Arm's 2026-06 XML names its A32 VRSRA encodings against their own Q field:
+# "VRSRA_A1_Q" is the 64-bit encoding (Q == 0) and "VRSRA_A1_D" the 128-bit
+# one, while the T32 pair and every other D/Q pair are right. Each entry maps
+# the XML's name to the corrected name, the Q value the XML encoding actually
+# carries and the label its own encoding index gives it; an encoding or row
+# that no longer carries them means the XML was corrected, and the generation
+# fails so that the entry is removed. The index names its rows the same way,
+# so the corrected name applies there too.
+XML_NAME_ERRATA = {
+    "VRSRA_A1_Q": ("VRSRA_A1_D", 0, "64-bit SIMD vector"),
+    "VRSRA_A1_D": ("VRSRA_A1_Q", 1, "128-bit SIMD vector"),
+}
+
+
+def _corrected_row_name(iclass: str, name: str, label: str) -> str:
+    corrected, _q, expected_label = XML_NAME_ERRATA[name]
+    if label != expected_label:
+        raise CatalogError(
+            f"{iclass}: index row {name} is no longer labelled {expected_label!r}; "
+            "remove it from XML_NAME_ERRATA"
+        )
+    return corrected
+
+
+def _corrected_name(
+    filename: str,
+    name: str,
+    mask: int,
+    value: int,
+    fields: dict[str, tuple[int, int]],
+) -> str:
+    corrected, expected_q, _label = XML_NAME_ERRATA[name]
+    low, width = fields.get("Q", (-1, 0))
+    if width != 1 or not (mask >> low) & 1 or (value >> low) & 1 != expected_q:
+        raise CatalogError(
+            f"{filename}: {name} no longer carries Q == {expected_q}; "
+            "remove it from XML_NAME_ERRATA"
+        )
+    return corrected
 
 
 def encoding_mnemonic(encoding: ET.Element, page_mnemonic: str) -> str:
@@ -695,6 +741,10 @@ class DecodeIndex:
                 encname = row.get("encname", "")
                 if not encname:
                     raise CatalogError(f"{iclass}: table row has no name")
+                if encname in XML_NAME_ERRATA and isa == "A32":
+                    encname = _corrected_row_name(
+                        iclass, encname, row.get("label", "")
+                    )
                 filename = row.get("iformfile", "")
                 if filename:
                     kind = "allocated"
