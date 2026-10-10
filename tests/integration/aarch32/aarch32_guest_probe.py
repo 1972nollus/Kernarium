@@ -670,6 +670,9 @@ def main():
     parser.add_argument("--elf-4k", required=True)
     parser.add_argument("--expect", choices=("unsupported", "run"),
                         default="unsupported")
+    parser.add_argument("--deadline", type=int, default=280,
+                        metavar="SECONDS",
+                        help="in run mode, kill the probe after this long")
     arguments = parser.parse_args()
     if os.uname().machine != "aarch64":
         print("SKIP aarch32: not an arm64 guest")
@@ -679,7 +682,7 @@ def main():
     if arguments.expect == "unsupported":
         check_unsupported(arguments.elf, arguments.elf_4k)
     else:
-        signal.alarm(280)
+        signal.alarm(arguments.deadline)
         check_personality()
         check_page_layout(arguments.elf_4k)
         if run_program(arguments.elf):

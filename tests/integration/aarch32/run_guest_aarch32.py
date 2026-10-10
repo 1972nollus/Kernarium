@@ -40,9 +40,12 @@ def main() -> int:
     parser.add_argument("--expect", choices=("unsupported", "run"),
                         default="unsupported")
     parser.add_argument("--ncpus", type=int, default=2)
-    parser.add_argument("--probe-timeout", type=int, default=300,
-                        metavar="SECONDS")
+    parser.add_argument("--probe-timeout", type=int, metavar="SECONDS",
+                        help="the probe's whole run; default 300 on the JIT "
+                        "engine and 900 on the slower gadget engine")
     arguments = parser.parse_args()
+    if arguments.probe_timeout is None:
+        arguments.probe_timeout = 300 if arguments.engine == "jit" else 900
 
     with Guest(
         arguments.emulator.resolve(),
@@ -62,7 +65,8 @@ def main() -> int:
         guest.check_command("mount -t tmpfs -o mode=1777 tmpfs /tmp", 20)
         result = guest.run_command(
             f"python3 -B {GUEST_PROBE} --elf {GUEST_ELF} "
-            f"--elf-4k {GUEST_ELF_4K} --expect {arguments.expect}",
+            f"--elf-4k {GUEST_ELF_4K} --expect {arguments.expect} "
+            f"--deadline {arguments.probe_timeout - 20}",
             arguments.probe_timeout,
         )
         print(result.output.strip())
