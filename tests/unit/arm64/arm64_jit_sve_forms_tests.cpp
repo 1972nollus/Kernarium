@@ -99,6 +99,22 @@ constexpr std::uint32_t ptrue_b = 0x2518'e3e0U;
   return host;
 }
 
+/* The same profile with the SME profile beside it at the M4's streaming
+ * vector length, and FEAT_SME2 as well when `sme2`: the 29 forms that
+ * FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (PSEL, REVD, SCLAMP, UCLAMP
+ * and 25 that need SME2) execute at SM = 0 there, and are UNDEFINED on
+ * sve_host(). */
+[[nodiscard]] HostCapabilities sve_sme_host(bool sme2) {
+  auto host = sve_host();
+  for (const auto feature : {ArmFeature::sme, ArmFeature::sme_f64f64,
+                             ArmFeature::sme_i16i64})
+    host.supported.set(static_cast<std::size_t>(feature));
+  host.supported.set(static_cast<std::size_t>(ArmFeature::sme2), sme2);
+  host.sme_svl_bytes = 64;
+  host.sme_hardware = false;
+  return host;
+}
+
 class Random final {
 public:
   explicit Random(std::uint64_t seed) noexcept : state_{seed} {}
@@ -605,18 +621,34 @@ bool place_clean_base(const arm64::detail::SmeEncoding &row, std::uint32_t word,
   return true;
 }
 
-/* Every row the virtual CPU implements agrees with the library. */
-void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
-  Random random{0x6a17'5e01U};
+/* The rows the virtual CPU executes at SM = 0 only because it has FEAT_SME
+ * beside FEAT_SVE: the SCLAMP class. */
+[[nodiscard]] bool sme_admitted_row(const arm64::detail::SmeEncoding &row) {
+  return (row.non_streaming_requirement & arm64::detail::sme_feature_sve) !=
+             0U &&
+         (row.non_streaming_requirement & arm64::detail::sme_feature_sme) !=
+             0U;
+}
+
+/* Every row the virtual CPU implements agrees with the library; with
+ * `sme_rows`, only the rows that FEAT_SME admits at SM = 0, and a profile
+ * with SME also runs every other row (the first pass runs those without
+ * it). Returns how many rows it ran. */
+std::size_t forms_match_the_library(const HostCapabilities &host, Tally &tally,
+                                    bool sme_rows = false) {
+  Random random{sme_rows ? 0x6a17'5e02U : 0x6a17'5e01U};
   const auto features = arm64::detail::implemented_sve_features(host);
+  std::size_t ran = 0;
   for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
        ++index) {
     const auto &row = arm64::detail::sme_encodings[index];
     if ((row.non_streaming_requirement & arm64::detail::sme_feature_sve) == 0U ||
         (row.non_streaming_requirement & features) !=
             row.non_streaming_requirement ||
-        (row.mode & arm64::detail::sme_mode_za) != 0U)
+        (row.mode & arm64::detail::sme_mode_za) != 0U ||
+        (sme_rows && !sme_admitted_row(row)))
       continue;
+    ++ran;
     const bool memory = row.memory != 0U;
     ++tally.rows;
     bool lowered = false;
@@ -670,6 +702,7 @@ void forms_match_the_library(const HostCapabilities &host, Tally &tally) {
     if (lowered)
       ++tally.inline_rows;
   }
+  return ran;
 }
 
 /* A word the translation lowers stays inline from a state in which nothing
@@ -1183,6 +1216,22 @@ int main() {
   Tally tally;
   writers_forget_fullness(sve_host());
   forms_match_the_library(sve_host(), tally);
+  /* The SCLAMP class: 29 forms in 33 rows, 4 forms in 7 rows with FEAT_SME
+   * beside FEAT_SVE and the rest with FEAT_SME2 too; none of them on
+   * sve_host(). */
+  std::array<bool, 0x8000> admitted_forms{};
+  std::size_t admitted = 0;
+  std::size_t forms = 0;
+  for (const auto &row : arm64::detail::sme_encodings) {
+    if (!sme_admitted_row(row))
+      continue;
+    ++admitted;
+    forms += admitted_forms[row.form & 0x7fffU] ? 0U : 1U;
+    admitted_forms[row.form & 0x7fffU] = true;
+  }
+  require(admitted == 33U && forms == 29U);
+  require(forms_match_the_library(sve_sme_host(false), tally, true) == 7U);
+  require(forms_match_the_library(sve_sme_host(true), tally, true) == 33U);
   lowered_words_stay_inline(sve_host(), tally);
   gather_lane_faults(sve_host(), tally);
   scatters_with_tracked_stores(sve_host(), tally);
