@@ -87,6 +87,7 @@ constexpr Named named_ops[] = {
 	{"CPS", Op::nop}, {"CPSID", Op::nop}, {"CPSIE", Op::nop},
 	{"NOP", Op::nop}, {"DBG", Op::nop}, {"CLRBHB", Op::nop},
 	{"CSDB", Op::nop}, {"ESB", Op::nop}, {"TSB", Op::nop}, {"SEV", Op::nop},
+	{"SB", Op::nop},
 	{"SEVL", Op::nop}, {"WFE", Op::nop}, {"WFI", Op::nop},
 	{"YIELD", Op::nop}, {"DMB", Op::dmb}, {"DSB", Op::dsb},
 	{"SSBB", Op::dsb}, {"PSSBB", Op::dsb}, {"ISB", Op::isb}, {"IT", Op::it},
@@ -160,6 +161,8 @@ constexpr Named named_ops[] = {
 		entries = vector_float_entries(count);
 		add_stems(entries, count);
 		entries = armv8_float_entries(count);
+		add_stems(entries, count);
+		entries = armv8_integer_entries(count);
 		add_stems(entries, count);
 		for (std::size_t index = 0; index < kFormCount; ++index) {
 			const std::string_view name = kForms[index].mnemonic;
