@@ -712,7 +712,18 @@ since it records one store range per instruction. LDFF1 and LDNF1 stay in the
 library. A predicated form checks its governing predicate once per block and
 element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
-not do, when the predicate is partial. The breaks, COMPACT and SPLICE, which
+not do, when the predicate is partial. A memory word with a register base
+checks `CpuState::tbi_enabled` once per block, at the first such word: no
+guest instruction changes it, and with top-byte ignore enabled the block
+leaves at that word for the library, which untags. A load with such a base and
+a constant offset starts a window with the loads of the same base behind it,
+up to 17 words within 256 bytes, that follow with between them only SVE words
+that name no general register and no memory: the first word proves that the
+window lies in one guest page, translates its lowest byte once and keeps the
+host address in the chain state, and each later word reads it back in place of
+translating. Words stay in program order, so a proof that fails leaves the
+block at the first word and the library runs it, and the words behind it
+compile again as their own block. The breaks, COMPACT and SPLICE, which
 raise nothing, take any governing predicate: a prefix OR of the mask form, a
 table of the active-element masks (COMPACT) and a TBL index built from the first
 and last active byte (SPLICE).

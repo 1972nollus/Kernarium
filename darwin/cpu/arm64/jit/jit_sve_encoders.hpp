@@ -208,19 +208,21 @@ constexpr std::uint32_t vector_umin = 0x6e20'6c00U;
                                                 unsigned n) noexcept {
   return 0x1100'0400U | (n << 5) | d;
 }
-/* LDR and STR of a SIMD&FP register of 1 << log_size bytes (0 B to 4 Q),
- * unsigned offset zero. */
+/* LDR and STR of a SIMD&FP register of 1 << log_size bytes (0 B to 4 Q), at
+ * an unsigned offset of scaled_offset (below 4096) accesses. */
 [[nodiscard]] constexpr std::uint32_t ldr_simd(unsigned log_size, unsigned t,
-                                               unsigned n) noexcept {
+                                               unsigned n,
+                                               unsigned scaled_offset = 0U) noexcept {
   constexpr std::uint32_t base[]{0x3d40'0000U, 0x7d40'0000U, 0xbd40'0000U,
                                  0xfd40'0000U, 0x3dc0'0000U};
-  return base[log_size] | (n << 5) | t;
+  return base[log_size] | (scaled_offset << 10) | (n << 5) | t;
 }
 [[nodiscard]] constexpr std::uint32_t str_simd(unsigned log_size, unsigned t,
-                                               unsigned n) noexcept {
+                                               unsigned n,
+                                               unsigned scaled_offset = 0U) noexcept {
   constexpr std::uint32_t base[]{0x3d00'0000U, 0x7d00'0000U, 0xbd00'0000U,
                                  0xfd00'0000U, 0x3d80'0000U};
-  return base[log_size] | (n << 5) | t;
+  return base[log_size] | (scaled_offset << 10) | (n << 5) | t;
 }
 /* UXTL and SXTL (USHLL and SSHLL #0), Q = 0: the source's element size is
  * log_size (0 B, 1 H, 2 S). */
