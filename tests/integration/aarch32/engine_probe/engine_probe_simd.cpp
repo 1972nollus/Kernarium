@@ -274,7 +274,23 @@ const Op ops[] = {
 	{fp_cvtb_f32_f16, 0x7c00, 0, 0, rn, 0x7f800000, all32, 0, "f32 of the f16 0x7c00 is infinity (IEEE)"},
 	{fp_cvtb_f32_f16, 0x7c00, 0, 0, rn | ahp, 0x47800000, all32, 0, "f32 of the AHP half 0x7c00 is 65536"},
 	{fp_cvtb_f32_f16, 0x7fff, 0, 0, rn | ahp, 0x47ffe000, all32, 0, "f32 of the AHP half 0x7fff is 131008"},
-	/* The Armv8 floating-point additions. */
+	{fp_vmla_f32, 0x3f800800, 0x3f800800, 0xbf801000, rn, 0, all32, ixc, "VMLA rounds the product first (a chained multiply-add)"},
+	{fp_vcvt_f32_s32, 16777217, 0, 0, rn, 0x4b800000, all32, ixc, "VCVT.F32.S32 of 2^24+1 rounds to even"},
+	{fp_vcvt_f32_s32, 0xffffffff, 0, 0, rn, 0xbf800000, all32, 0, "VCVT.F32.S32 of -1 is -1.0"},
+	/* Advanced SIMD floating point: the Standard FPSCR value, whatever FPSCR says. */
+	{neon_mul_f32, 0x7fc123453f800001ULL, 0x3f8000003fc00000ULL, 0, rz, 0x7fc000003fc00002ULL, all64, ixc,
+	 "NEON multiplies to nearest even and makes the default NaN under round to zero and no DN"},
+	{neon_add_f32, 0x3f80000000000001ULL, 0, 0, rn, 0x3f80000000000000ULL, all64, idc,
+	 "NEON flushes a denormal input to zero with FZ clear"},
+	{neon_qadd_s8, 0x6464646464646464ULL, 0x6464646464646464ULL, 0, rn, 0x7f7f7f7f7f7f7f7fULL, all64, 0,
+	 "VQADD.S8 saturates"},
+	{neon_add_i32, 0x0000000100000002ULL, 0x0000000300000004ULL, 0, rn, 0x0000000400000006ULL, all64, 0,
+	 "VADD.I32"},
+};
+
+/* The Armv8 floating-point additions (VRINTx, VCVTA/N/P/M and VMAXNM/VMINNM):
+ * they exist at the complete level only. */
+const Op armv8_ops[] = {
 	{fp_vrintn_f32, 0x40200000, 0, 0, rn, 0x40000000, all32, 0, "VRINTN 2.5 is 2.0"},
 	{fp_vrintn_f32, 0x40600000, 0, 0, rn, 0x40800000, all32, 0, "VRINTN 3.5 is 4.0"},
 	{fp_vrinta_f32, 0x40200000, 0, 0, rn, 0x40400000, all32, 0, "VRINTA 2.5 is 3.0"},
@@ -294,18 +310,6 @@ const Op ops[] = {
 	{fp_vmaxnm_f32, 0x3f800000, 0x40000000, 0, rn, 0x40000000, all32, 0, "VMAXNM(1.0, 2.0) is 2.0"},
 	{fp_vminnm_f32, 0x7fc00000, 0x40400000, 0, rn, 0x40400000, all32, 0, "VMINNM(NaN, 3.0) is 3.0"},
 	{fp_vmaxnm_f32, 0x7fc00000, 0x7fc00000, 0, rn, 0x7fc00000, all32, 0, "VMAXNM(NaN, NaN) is NaN"},
-	{fp_vmla_f32, 0x3f800800, 0x3f800800, 0xbf801000, rn, 0, all32, ixc, "VMLA rounds the product first (a chained multiply-add)"},
-	{fp_vcvt_f32_s32, 16777217, 0, 0, rn, 0x4b800000, all32, ixc, "VCVT.F32.S32 of 2^24+1 rounds to even"},
-	{fp_vcvt_f32_s32, 0xffffffff, 0, 0, rn, 0xbf800000, all32, 0, "VCVT.F32.S32 of -1 is -1.0"},
-	/* Advanced SIMD floating point: the Standard FPSCR value, whatever FPSCR says. */
-	{neon_mul_f32, 0x7fc123453f800001ULL, 0x3f8000003fc00000ULL, 0, rz, 0x7fc000003fc00002ULL, all64, ixc,
-	 "NEON multiplies to nearest even and makes the default NaN under round to zero and no DN"},
-	{neon_add_f32, 0x3f80000000000001ULL, 0, 0, rn, 0x3f80000000000000ULL, all64, idc,
-	 "NEON flushes a denormal input to zero with FZ clear"},
-	{neon_qadd_s8, 0x6464646464646464ULL, 0x6464646464646464ULL, 0, rn, 0x7f7f7f7f7f7f7f7fULL, all64, 0,
-	 "VQADD.S8 saturates"},
-	{neon_add_i32, 0x0000000100000002ULL, 0x0000000300000004ULL, 0, rn, 0x0000000400000006ULL, all64, 0,
-	 "VADD.I32"},
 };
 
 bool run_op(const Op &op, FpCall &call, bool print)
@@ -787,6 +791,16 @@ void group_simd()
 		want.d[5] = 0x0123456789abcdefULL;
 		check_eq(mismatches(report->d, want.d), 0, "and sees the register the tracer wrote");
 		check_eq(*report_fpscr & 0xffc8009f, 0x03000000, "and the FPSCR the tracer wrote");
+	}
+}
+
+/* The Armv8 floating-point additions against known answers, at the complete
+ * level. Below it each is UNDEFINED, which the absent group proves. */
+void group_armv8_fp()
+{
+	for (const Op &op : armv8_ops) {
+		FpCall call;
+		check(run_op(op, call, true), op.name);
 	}
 }
 
