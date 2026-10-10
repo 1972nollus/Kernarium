@@ -1,149 +1,149 @@
 stable_id	section	heading	encoding	isa	mnemonic	level	feature	profile	engine_status
-BASE-0001	Base	ADC, ADCS (immediate)	ADC_i_A1	A32	ADC	base	baseline	executed	pending
-BASE-0002	Base	ADC, ADCS (immediate)	ADCS_i_A1	A32	ADCS	base	baseline	executed	pending
-BASE-0003	Base	ADC, ADCS (immediate)	ADC_i_T1	T32	ADC	base	baseline	executed	pending
-BASE-0004	Base	ADC, ADCS (immediate)	ADCS_i_T1	T32	ADCS	base	baseline	executed	pending
-BASE-0005	Base	ADC, ADCS (register)	ADC_r_A1_RRX	A32	ADC	base	baseline	executed	pending
-BASE-0006	Base	ADC, ADCS (register)	ADC_r_A1	A32	ADC	base	baseline	executed	pending
-BASE-0007	Base	ADC, ADCS (register)	ADCS_r_A1_RRX	A32	ADCS	base	baseline	executed	pending
-BASE-0008	Base	ADC, ADCS (register)	ADCS_r_A1	A32	ADCS	base	baseline	executed	pending
-BASE-0009	Base	ADC, ADCS (register)	ADC_r_T1	T16	ADC	base	baseline	executed	pending
-BASE-0010	Base	ADC, ADCS (register)	ADC_r_T2_RRX	T32	ADC	base	baseline	executed	pending
-BASE-0011	Base	ADC, ADCS (register)	ADC_r_T2	T32	ADC	base	baseline	executed	pending
-BASE-0012	Base	ADC, ADCS (register)	ADCS_r_T2_RRX	T32	ADCS	base	baseline	executed	pending
-BASE-0013	Base	ADC, ADCS (register)	ADCS_r_T2	T32	ADCS	base	baseline	executed	pending
-BASE-0014	Base	ADC, ADCS (register-shifted register)	ADCS_rr_A1	A32	ADCS	base	baseline	executed	pending
-BASE-0015	Base	ADC, ADCS (register-shifted register)	ADC_rr_A1	A32	ADC	base	baseline	executed	pending
-BASE-0016	Base	ADD, ADDS (immediate)	ADD_i_A1	A32	ADD	base	baseline	executed	pending
-BASE-0017	Base	ADD, ADDS (immediate)	ADDS_i_A1	A32	ADDS	base	baseline	executed	pending
-BASE-0018	Base	ADD, ADDS (immediate)	ADD_i_T1	T16	ADD	base	baseline	executed	pending
-BASE-0019	Base	ADD, ADDS (immediate)	ADD_i_T2	T16	ADD	base	baseline	executed	pending
-BASE-0020	Base	ADD, ADDS (immediate)	ADD_i_T3	T32	ADD	base	baseline	executed	pending
-BASE-0021	Base	ADD, ADDS (immediate)	ADDS_i_T3	T32	ADDS	base	baseline	executed	pending
-BASE-0022	Base	ADD, ADDS (immediate)	ADD_i_T4	T32	ADDW	base	baseline	executed	pending
-BASE-0023	Base	ADD, ADDS (register)	ADD_r_A1_RRX	A32	ADD	base	baseline	executed	pending
-BASE-0024	Base	ADD, ADDS (register)	ADD_r_A1	A32	ADD	base	baseline	executed	pending
-BASE-0025	Base	ADD, ADDS (register)	ADDS_r_A1_RRX	A32	ADDS	base	baseline	executed	pending
-BASE-0026	Base	ADD, ADDS (register)	ADDS_r_A1	A32	ADDS	base	baseline	executed	pending
-BASE-0027	Base	ADD, ADDS (register)	ADD_r_T1	T16	ADD	base	baseline	executed	pending
-BASE-0028	Base	ADD, ADDS (register)	ADD_r_T2	T16	ADD	base	baseline	executed	pending
-BASE-0029	Base	ADD, ADDS (register)	ADD_r_T3_RRX	T32	ADD	base	baseline	executed	pending
-BASE-0030	Base	ADD, ADDS (register)	ADD_r_T3	T32	ADD	base	baseline	executed	pending
-BASE-0031	Base	ADD, ADDS (register)	ADDS_r_T3_RRX	T32	ADDS	base	baseline	executed	pending
-BASE-0032	Base	ADD, ADDS (register)	ADDS_r_T3	T32	ADDS	base	baseline	executed	pending
-BASE-0033	Base	ADD, ADDS (register-shifted register)	ADDS_rr_A1	A32	ADDS	base	baseline	executed	pending
-BASE-0034	Base	ADD, ADDS (register-shifted register)	ADD_rr_A1	A32	ADD	base	baseline	executed	pending
-BASE-0035	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_A1	A32	ADD	base	baseline	executed	pending
-BASE-0036	Base	ADD, ADDS (SP plus immediate)	ADDS_SP_i_A1	A32	ADDS	base	baseline	executed	pending
-BASE-0037	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T1	T16	ADD	base	baseline	executed	pending
-BASE-0038	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T2	T16	ADD	base	baseline	executed	pending
-BASE-0039	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T3	T32	ADD	base	baseline	executed	pending
-BASE-0040	Base	ADD, ADDS (SP plus immediate)	ADDS_SP_i_T3	T32	ADDS	base	baseline	executed	pending
-BASE-0041	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T4	T32	ADDW	base	baseline	executed	pending
-BASE-0042	Base	ADD, ADDS (SP plus register)	ADD_SP_r_A1_RRX	A32	ADD	base	baseline	executed	pending
-BASE-0043	Base	ADD, ADDS (SP plus register)	ADD_SP_r_A1	A32	ADD	base	baseline	executed	pending
-BASE-0044	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_A1_RRX	A32	ADDS	base	baseline	executed	pending
-BASE-0045	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_A1	A32	ADDS	base	baseline	executed	pending
-BASE-0046	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T1	T16	ADD	base	baseline	executed	pending
-BASE-0047	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T2	T16	ADD	base	baseline	executed	pending
-BASE-0048	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T3_RRX	T32	ADD	base	baseline	executed	pending
-BASE-0049	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T3	T32	ADD	base	baseline	executed	pending
-BASE-0050	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_T3_RRX	T32	ADDS	base	baseline	executed	pending
-BASE-0051	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_T3	T32	ADDS	base	baseline	executed	pending
-BASE-0052	Base	ADR	ADR_A1	A32	ADR	base	baseline	executed	pending
-BASE-0053	Base	ADR	ADR_A2	A32	ADR	base	baseline	executed	pending
-BASE-0054	Base	ADR	ADR_T1	T16	ADR	base	baseline	executed	pending
-BASE-0055	Base	ADR	ADR_T2	T32	ADR	base	baseline	executed	pending
-BASE-0056	Base	ADR	ADR_T3	T32	ADR	base	baseline	executed	pending
-BASE-0057	Base	AND, ANDS (immediate)	AND_i_A1	A32	AND	base	baseline	executed	pending
-BASE-0058	Base	AND, ANDS (immediate)	ANDS_i_A1	A32	ANDS	base	baseline	executed	pending
-BASE-0059	Base	AND, ANDS (immediate)	AND_i_T1	T32	AND	base	baseline	executed	pending
-BASE-0060	Base	AND, ANDS (immediate)	ANDS_i_T1	T32	ANDS	base	baseline	executed	pending
-BASE-0061	Base	AND, ANDS (register)	AND_r_A1_RRX	A32	AND	base	baseline	executed	pending
-BASE-0062	Base	AND, ANDS (register)	AND_r_A1	A32	AND	base	baseline	executed	pending
-BASE-0063	Base	AND, ANDS (register)	ANDS_r_A1_RRX	A32	ANDS	base	baseline	executed	pending
-BASE-0064	Base	AND, ANDS (register)	ANDS_r_A1	A32	ANDS	base	baseline	executed	pending
-BASE-0065	Base	AND, ANDS (register)	AND_r_T1	T16	AND	base	baseline	executed	pending
-BASE-0066	Base	AND, ANDS (register)	AND_r_T2_RRX	T32	AND	base	baseline	executed	pending
-BASE-0067	Base	AND, ANDS (register)	AND_r_T2	T32	AND	base	baseline	executed	pending
-BASE-0068	Base	AND, ANDS (register)	ANDS_r_T2_RRX	T32	ANDS	base	baseline	executed	pending
-BASE-0069	Base	AND, ANDS (register)	ANDS_r_T2	T32	ANDS	base	baseline	executed	pending
-BASE-0070	Base	AND, ANDS (register-shifted register)	ANDS_rr_A1	A32	ANDS	base	baseline	executed	pending
-BASE-0071	Base	AND, ANDS (register-shifted register)	AND_rr_A1	A32	AND	base	baseline	executed	pending
-BASE-0072	Base	B	B_A1	A32	B	base	baseline	executed	pending
-BASE-0073	Base	B	B_T1	T16	B	base	baseline	executed	pending
-BASE-0074	Base	B	B_T2	T16	B	base	baseline	executed	pending
-BASE-0075	Base	B	B_T3	T32	B	base	baseline	executed	pending
-BASE-0076	Base	B	B_T4	T32	B	base	baseline	executed	pending
-BASE-0077	Base	BFC	BFC_A1	A32	BFC	base	baseline	executed	pending
-BASE-0078	Base	BFC	BFC_T1	T32	BFC	base	baseline	executed	pending
-BASE-0079	Base	BFI	BFI_A1	A32	BFI	base	baseline	executed	pending
-BASE-0080	Base	BFI	BFI_T1	T32	BFI	base	baseline	executed	pending
-BASE-0081	Base	BIC, BICS (immediate)	BIC_i_A1	A32	BIC	base	baseline	executed	pending
-BASE-0082	Base	BIC, BICS (immediate)	BICS_i_A1	A32	BICS	base	baseline	executed	pending
-BASE-0083	Base	BIC, BICS (immediate)	BIC_i_T1	T32	BIC	base	baseline	executed	pending
-BASE-0084	Base	BIC, BICS (immediate)	BICS_i_T1	T32	BICS	base	baseline	executed	pending
-BASE-0085	Base	BIC, BICS (register)	BIC_r_A1_RRX	A32	BIC	base	baseline	executed	pending
-BASE-0086	Base	BIC, BICS (register)	BIC_r_A1	A32	BIC	base	baseline	executed	pending
-BASE-0087	Base	BIC, BICS (register)	BICS_r_A1_RRX	A32	BICS	base	baseline	executed	pending
-BASE-0088	Base	BIC, BICS (register)	BICS_r_A1	A32	BICS	base	baseline	executed	pending
-BASE-0089	Base	BIC, BICS (register)	BIC_r_T1	T16	BIC	base	baseline	executed	pending
-BASE-0090	Base	BIC, BICS (register)	BIC_r_T2_RRX	T32	BIC	base	baseline	executed	pending
-BASE-0091	Base	BIC, BICS (register)	BIC_r_T2	T32	BIC	base	baseline	executed	pending
-BASE-0092	Base	BIC, BICS (register)	BICS_r_T2_RRX	T32	BICS	base	baseline	executed	pending
-BASE-0093	Base	BIC, BICS (register)	BICS_r_T2	T32	BICS	base	baseline	executed	pending
-BASE-0094	Base	BIC, BICS (register-shifted register)	BICS_rr_A1	A32	BICS	base	baseline	executed	pending
-BASE-0095	Base	BIC, BICS (register-shifted register)	BIC_rr_A1	A32	BIC	base	baseline	executed	pending
-BASE-0096	Base	BKPT	BKPT_A1	A32	BKPT	base	baseline	executed	pending
-BASE-0097	Base	BKPT	BKPT_T1	T16	BKPT	base	baseline	executed	pending
-BASE-0098	Base	BL, BLX (immediate)	BL_i_A1	A32	BL	base	baseline	executed	pending
-BASE-0099	Base	BL, BLX (immediate)	BL_i_A2	A32	BLX	base	baseline	executed	pending
-BASE-0100	Base	BL, BLX (immediate)	BL_i_T1	T32	BL	base	baseline	executed	pending
-BASE-0101	Base	BL, BLX (immediate)	BL_i_T2	T32	BLX	base	baseline	executed	pending
-BASE-0102	Base	BLX (register)	BLX_r_A1	A32	BLX	base	baseline	executed	pending
-BASE-0103	Base	BLX (register)	BLX_r_T1	T16	BLX	base	baseline	executed	pending
-BASE-0104	Base	BX	BX_A1	A32	BX	base	baseline	executed	pending
-BASE-0105	Base	BX	BX_T1	T16	BX	base	baseline	executed	pending
-BASE-0106	Base	BXJ	BXJ_A1	A32	BXJ	base	baseline	executed	pending
-BASE-0107	Base	BXJ	BXJ_T1	T32	BXJ	base	baseline	executed	pending
-BASE-0108	Base	CBNZ, CBZ	CBNZ_T1	T16	CBNZ	base	baseline	executed	pending
-BASE-0109	Base	CBNZ, CBZ	CBZ_T1	T16	CBZ	base	baseline	executed	pending
-BASE-0110	Base	CLRBHB	CLRBHB_A1	A32	CLRBHB	base	baseline	executed	pending
-BASE-0111	Base	CLRBHB	CLRBHB_T1	T32	CLRBHB	base	baseline	executed	pending
-BASE-0112	Base	CLREX	CLREX_A1	A32	CLREX	base	baseline	executed	pending
-BASE-0113	Base	CLREX	CLREX_T1	T32	CLREX	base	baseline	executed	pending
-BASE-0114	Base	CLZ	CLZ_A1	A32	CLZ	base	baseline	executed	pending
-BASE-0115	Base	CLZ	CLZ_T1	T32	CLZ	base	baseline	executed	pending
-BASE-0116	Base	CMN (immediate)	CMN_i_A1	A32	CMN	base	baseline	executed	pending
-BASE-0117	Base	CMN (immediate)	CMN_i_T1	T32	CMN	base	baseline	executed	pending
-BASE-0118	Base	CMN (register)	CMN_r_A1_RRX	A32	CMN	base	baseline	executed	pending
-BASE-0119	Base	CMN (register)	CMN_r_A1	A32	CMN	base	baseline	executed	pending
-BASE-0120	Base	CMN (register)	CMN_r_T1	T16	CMN	base	baseline	executed	pending
-BASE-0121	Base	CMN (register)	CMN_r_T2_RRX	T32	CMN	base	baseline	executed	pending
-BASE-0122	Base	CMN (register)	CMN_r_T2	T32	CMN	base	baseline	executed	pending
-BASE-0123	Base	CMN (register-shifted register)	CMN_rr_A1	A32	CMN	base	baseline	executed	pending
-BASE-0124	Base	CMP (immediate)	CMP_i_A1	A32	CMP	base	baseline	executed	pending
-BASE-0125	Base	CMP (immediate)	CMP_i_T1	T16	CMP	base	baseline	executed	pending
-BASE-0126	Base	CMP (immediate)	CMP_i_T2	T32	CMP	base	baseline	executed	pending
-BASE-0127	Base	CMP (register)	CMP_r_A1_RRX	A32	CMP	base	baseline	executed	pending
-BASE-0128	Base	CMP (register)	CMP_r_A1	A32	CMP	base	baseline	executed	pending
-BASE-0129	Base	CMP (register)	CMP_r_T1	T16	CMP	base	baseline	executed	pending
-BASE-0130	Base	CMP (register)	CMP_r_T2	T16	CMP	base	baseline	executed	pending
-BASE-0131	Base	CMP (register)	CMP_r_T3_RRX	T32	CMP	base	baseline	executed	pending
-BASE-0132	Base	CMP (register)	CMP_r_T3	T32	CMP	base	baseline	executed	pending
-BASE-0133	Base	CMP (register-shifted register)	CMP_rr_A1	A32	CMP	base	baseline	executed	pending
-BASE-0134	Base	CPS, CPSID, CPSIE	CPS_A1_AS	A32	CPS	base	baseline	nop	pending
-BASE-0135	Base	CPS, CPSID, CPSIE	CPSID_A1_AS	A32	CPSID	base	baseline	nop	pending
-BASE-0136	Base	CPS, CPSID, CPSIE	CPSID_A1_ASM	A32	CPSID	base	baseline	nop	pending
-BASE-0137	Base	CPS, CPSID, CPSIE	CPSIE_A1_AS	A32	CPSIE	base	baseline	nop	pending
-BASE-0138	Base	CPS, CPSID, CPSIE	CPSIE_A1_ASM	A32	CPSIE	base	baseline	nop	pending
-BASE-0139	Base	CPS, CPSID, CPSIE	CPSID_T1_AS	T16	CPSID	base	baseline	nop	pending
-BASE-0140	Base	CPS, CPSID, CPSIE	CPSIE_T1_AS	T16	CPSIE	base	baseline	nop	pending
-BASE-0141	Base	CPS, CPSID, CPSIE	CPS_T2_AS	T32	CPS	base	baseline	nop	pending
-BASE-0142	Base	CPS, CPSID, CPSIE	CPSID_T2_AS	T32	CPSID	base	baseline	nop	pending
-BASE-0143	Base	CPS, CPSID, CPSIE	CPSID_T2_ASM	T32	CPSID	base	baseline	nop	pending
-BASE-0144	Base	CPS, CPSID, CPSIE	CPSIE_T2_AS	T32	CPSIE	base	baseline	nop	pending
-BASE-0145	Base	CPS, CPSID, CPSIE	CPSIE_T2_ASM	T32	CPSIE	base	baseline	nop	pending
+BASE-0001	Base	ADC, ADCS (immediate)	ADC_i_A1	A32	ADC	base	baseline	executed	verified
+BASE-0002	Base	ADC, ADCS (immediate)	ADCS_i_A1	A32	ADCS	base	baseline	executed	verified
+BASE-0003	Base	ADC, ADCS (immediate)	ADC_i_T1	T32	ADC	base	baseline	executed	verified
+BASE-0004	Base	ADC, ADCS (immediate)	ADCS_i_T1	T32	ADCS	base	baseline	executed	verified
+BASE-0005	Base	ADC, ADCS (register)	ADC_r_A1_RRX	A32	ADC	base	baseline	executed	verified
+BASE-0006	Base	ADC, ADCS (register)	ADC_r_A1	A32	ADC	base	baseline	executed	verified
+BASE-0007	Base	ADC, ADCS (register)	ADCS_r_A1_RRX	A32	ADCS	base	baseline	executed	verified
+BASE-0008	Base	ADC, ADCS (register)	ADCS_r_A1	A32	ADCS	base	baseline	executed	verified
+BASE-0009	Base	ADC, ADCS (register)	ADC_r_T1	T16	ADC	base	baseline	executed	verified
+BASE-0010	Base	ADC, ADCS (register)	ADC_r_T2_RRX	T32	ADC	base	baseline	executed	verified
+BASE-0011	Base	ADC, ADCS (register)	ADC_r_T2	T32	ADC	base	baseline	executed	verified
+BASE-0012	Base	ADC, ADCS (register)	ADCS_r_T2_RRX	T32	ADCS	base	baseline	executed	verified
+BASE-0013	Base	ADC, ADCS (register)	ADCS_r_T2	T32	ADCS	base	baseline	executed	verified
+BASE-0014	Base	ADC, ADCS (register-shifted register)	ADCS_rr_A1	A32	ADCS	base	baseline	executed	verified
+BASE-0015	Base	ADC, ADCS (register-shifted register)	ADC_rr_A1	A32	ADC	base	baseline	executed	verified
+BASE-0016	Base	ADD, ADDS (immediate)	ADD_i_A1	A32	ADD	base	baseline	executed	verified
+BASE-0017	Base	ADD, ADDS (immediate)	ADDS_i_A1	A32	ADDS	base	baseline	executed	verified
+BASE-0018	Base	ADD, ADDS (immediate)	ADD_i_T1	T16	ADD	base	baseline	executed	verified
+BASE-0019	Base	ADD, ADDS (immediate)	ADD_i_T2	T16	ADD	base	baseline	executed	verified
+BASE-0020	Base	ADD, ADDS (immediate)	ADD_i_T3	T32	ADD	base	baseline	executed	verified
+BASE-0021	Base	ADD, ADDS (immediate)	ADDS_i_T3	T32	ADDS	base	baseline	executed	verified
+BASE-0022	Base	ADD, ADDS (immediate)	ADD_i_T4	T32	ADDW	base	baseline	executed	verified
+BASE-0023	Base	ADD, ADDS (register)	ADD_r_A1_RRX	A32	ADD	base	baseline	executed	verified
+BASE-0024	Base	ADD, ADDS (register)	ADD_r_A1	A32	ADD	base	baseline	executed	verified
+BASE-0025	Base	ADD, ADDS (register)	ADDS_r_A1_RRX	A32	ADDS	base	baseline	executed	verified
+BASE-0026	Base	ADD, ADDS (register)	ADDS_r_A1	A32	ADDS	base	baseline	executed	verified
+BASE-0027	Base	ADD, ADDS (register)	ADD_r_T1	T16	ADD	base	baseline	executed	verified
+BASE-0028	Base	ADD, ADDS (register)	ADD_r_T2	T16	ADD	base	baseline	executed	verified
+BASE-0029	Base	ADD, ADDS (register)	ADD_r_T3_RRX	T32	ADD	base	baseline	executed	verified
+BASE-0030	Base	ADD, ADDS (register)	ADD_r_T3	T32	ADD	base	baseline	executed	verified
+BASE-0031	Base	ADD, ADDS (register)	ADDS_r_T3_RRX	T32	ADDS	base	baseline	executed	verified
+BASE-0032	Base	ADD, ADDS (register)	ADDS_r_T3	T32	ADDS	base	baseline	executed	verified
+BASE-0033	Base	ADD, ADDS (register-shifted register)	ADDS_rr_A1	A32	ADDS	base	baseline	executed	verified
+BASE-0034	Base	ADD, ADDS (register-shifted register)	ADD_rr_A1	A32	ADD	base	baseline	executed	verified
+BASE-0035	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_A1	A32	ADD	base	baseline	executed	verified
+BASE-0036	Base	ADD, ADDS (SP plus immediate)	ADDS_SP_i_A1	A32	ADDS	base	baseline	executed	verified
+BASE-0037	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T1	T16	ADD	base	baseline	executed	verified
+BASE-0038	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T2	T16	ADD	base	baseline	executed	verified
+BASE-0039	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T3	T32	ADD	base	baseline	executed	verified
+BASE-0040	Base	ADD, ADDS (SP plus immediate)	ADDS_SP_i_T3	T32	ADDS	base	baseline	executed	verified
+BASE-0041	Base	ADD, ADDS (SP plus immediate)	ADD_SP_i_T4	T32	ADDW	base	baseline	executed	verified
+BASE-0042	Base	ADD, ADDS (SP plus register)	ADD_SP_r_A1_RRX	A32	ADD	base	baseline	executed	verified
+BASE-0043	Base	ADD, ADDS (SP plus register)	ADD_SP_r_A1	A32	ADD	base	baseline	executed	verified
+BASE-0044	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_A1_RRX	A32	ADDS	base	baseline	executed	verified
+BASE-0045	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_A1	A32	ADDS	base	baseline	executed	verified
+BASE-0046	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T1	T16	ADD	base	baseline	executed	verified
+BASE-0047	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T2	T16	ADD	base	baseline	executed	verified
+BASE-0048	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T3_RRX	T32	ADD	base	baseline	executed	verified
+BASE-0049	Base	ADD, ADDS (SP plus register)	ADD_SP_r_T3	T32	ADD	base	baseline	executed	verified
+BASE-0050	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_T3_RRX	T32	ADDS	base	baseline	executed	verified
+BASE-0051	Base	ADD, ADDS (SP plus register)	ADDS_SP_r_T3	T32	ADDS	base	baseline	executed	verified
+BASE-0052	Base	ADR	ADR_A1	A32	ADR	base	baseline	executed	verified
+BASE-0053	Base	ADR	ADR_A2	A32	ADR	base	baseline	executed	verified
+BASE-0054	Base	ADR	ADR_T1	T16	ADR	base	baseline	executed	verified
+BASE-0055	Base	ADR	ADR_T2	T32	ADR	base	baseline	executed	verified
+BASE-0056	Base	ADR	ADR_T3	T32	ADR	base	baseline	executed	verified
+BASE-0057	Base	AND, ANDS (immediate)	AND_i_A1	A32	AND	base	baseline	executed	verified
+BASE-0058	Base	AND, ANDS (immediate)	ANDS_i_A1	A32	ANDS	base	baseline	executed	verified
+BASE-0059	Base	AND, ANDS (immediate)	AND_i_T1	T32	AND	base	baseline	executed	verified
+BASE-0060	Base	AND, ANDS (immediate)	ANDS_i_T1	T32	ANDS	base	baseline	executed	verified
+BASE-0061	Base	AND, ANDS (register)	AND_r_A1_RRX	A32	AND	base	baseline	executed	verified
+BASE-0062	Base	AND, ANDS (register)	AND_r_A1	A32	AND	base	baseline	executed	verified
+BASE-0063	Base	AND, ANDS (register)	ANDS_r_A1_RRX	A32	ANDS	base	baseline	executed	verified
+BASE-0064	Base	AND, ANDS (register)	ANDS_r_A1	A32	ANDS	base	baseline	executed	verified
+BASE-0065	Base	AND, ANDS (register)	AND_r_T1	T16	AND	base	baseline	executed	verified
+BASE-0066	Base	AND, ANDS (register)	AND_r_T2_RRX	T32	AND	base	baseline	executed	verified
+BASE-0067	Base	AND, ANDS (register)	AND_r_T2	T32	AND	base	baseline	executed	verified
+BASE-0068	Base	AND, ANDS (register)	ANDS_r_T2_RRX	T32	ANDS	base	baseline	executed	verified
+BASE-0069	Base	AND, ANDS (register)	ANDS_r_T2	T32	ANDS	base	baseline	executed	verified
+BASE-0070	Base	AND, ANDS (register-shifted register)	ANDS_rr_A1	A32	ANDS	base	baseline	executed	verified
+BASE-0071	Base	AND, ANDS (register-shifted register)	AND_rr_A1	A32	AND	base	baseline	executed	verified
+BASE-0072	Base	B	B_A1	A32	B	base	baseline	executed	verified
+BASE-0073	Base	B	B_T1	T16	B	base	baseline	executed	verified
+BASE-0074	Base	B	B_T2	T16	B	base	baseline	executed	verified
+BASE-0075	Base	B	B_T3	T32	B	base	baseline	executed	verified
+BASE-0076	Base	B	B_T4	T32	B	base	baseline	executed	verified
+BASE-0077	Base	BFC	BFC_A1	A32	BFC	base	baseline	executed	verified
+BASE-0078	Base	BFC	BFC_T1	T32	BFC	base	baseline	executed	verified
+BASE-0079	Base	BFI	BFI_A1	A32	BFI	base	baseline	executed	verified
+BASE-0080	Base	BFI	BFI_T1	T32	BFI	base	baseline	executed	verified
+BASE-0081	Base	BIC, BICS (immediate)	BIC_i_A1	A32	BIC	base	baseline	executed	verified
+BASE-0082	Base	BIC, BICS (immediate)	BICS_i_A1	A32	BICS	base	baseline	executed	verified
+BASE-0083	Base	BIC, BICS (immediate)	BIC_i_T1	T32	BIC	base	baseline	executed	verified
+BASE-0084	Base	BIC, BICS (immediate)	BICS_i_T1	T32	BICS	base	baseline	executed	verified
+BASE-0085	Base	BIC, BICS (register)	BIC_r_A1_RRX	A32	BIC	base	baseline	executed	verified
+BASE-0086	Base	BIC, BICS (register)	BIC_r_A1	A32	BIC	base	baseline	executed	verified
+BASE-0087	Base	BIC, BICS (register)	BICS_r_A1_RRX	A32	BICS	base	baseline	executed	verified
+BASE-0088	Base	BIC, BICS (register)	BICS_r_A1	A32	BICS	base	baseline	executed	verified
+BASE-0089	Base	BIC, BICS (register)	BIC_r_T1	T16	BIC	base	baseline	executed	verified
+BASE-0090	Base	BIC, BICS (register)	BIC_r_T2_RRX	T32	BIC	base	baseline	executed	verified
+BASE-0091	Base	BIC, BICS (register)	BIC_r_T2	T32	BIC	base	baseline	executed	verified
+BASE-0092	Base	BIC, BICS (register)	BICS_r_T2_RRX	T32	BICS	base	baseline	executed	verified
+BASE-0093	Base	BIC, BICS (register)	BICS_r_T2	T32	BICS	base	baseline	executed	verified
+BASE-0094	Base	BIC, BICS (register-shifted register)	BICS_rr_A1	A32	BICS	base	baseline	executed	verified
+BASE-0095	Base	BIC, BICS (register-shifted register)	BIC_rr_A1	A32	BIC	base	baseline	executed	verified
+BASE-0096	Base	BKPT	BKPT_A1	A32	BKPT	base	baseline	executed	verified
+BASE-0097	Base	BKPT	BKPT_T1	T16	BKPT	base	baseline	executed	verified
+BASE-0098	Base	BL, BLX (immediate)	BL_i_A1	A32	BL	base	baseline	executed	verified
+BASE-0099	Base	BL, BLX (immediate)	BL_i_A2	A32	BLX	base	baseline	executed	verified
+BASE-0100	Base	BL, BLX (immediate)	BL_i_T1	T32	BL	base	baseline	executed	verified
+BASE-0101	Base	BL, BLX (immediate)	BL_i_T2	T32	BLX	base	baseline	executed	verified
+BASE-0102	Base	BLX (register)	BLX_r_A1	A32	BLX	base	baseline	executed	verified
+BASE-0103	Base	BLX (register)	BLX_r_T1	T16	BLX	base	baseline	executed	verified
+BASE-0104	Base	BX	BX_A1	A32	BX	base	baseline	executed	verified
+BASE-0105	Base	BX	BX_T1	T16	BX	base	baseline	executed	verified
+BASE-0106	Base	BXJ	BXJ_A1	A32	BXJ	base	baseline	executed	verified
+BASE-0107	Base	BXJ	BXJ_T1	T32	BXJ	base	baseline	executed	verified
+BASE-0108	Base	CBNZ, CBZ	CBNZ_T1	T16	CBNZ	base	baseline	executed	verified
+BASE-0109	Base	CBNZ, CBZ	CBZ_T1	T16	CBZ	base	baseline	executed	verified
+BASE-0110	Base	CLRBHB	CLRBHB_A1	A32	CLRBHB	base	baseline	executed	verified
+BASE-0111	Base	CLRBHB	CLRBHB_T1	T32	CLRBHB	base	baseline	executed	verified
+BASE-0112	Base	CLREX	CLREX_A1	A32	CLREX	base	baseline	executed	verified
+BASE-0113	Base	CLREX	CLREX_T1	T32	CLREX	base	baseline	executed	verified
+BASE-0114	Base	CLZ	CLZ_A1	A32	CLZ	base	baseline	executed	verified
+BASE-0115	Base	CLZ	CLZ_T1	T32	CLZ	base	baseline	executed	verified
+BASE-0116	Base	CMN (immediate)	CMN_i_A1	A32	CMN	base	baseline	executed	verified
+BASE-0117	Base	CMN (immediate)	CMN_i_T1	T32	CMN	base	baseline	executed	verified
+BASE-0118	Base	CMN (register)	CMN_r_A1_RRX	A32	CMN	base	baseline	executed	verified
+BASE-0119	Base	CMN (register)	CMN_r_A1	A32	CMN	base	baseline	executed	verified
+BASE-0120	Base	CMN (register)	CMN_r_T1	T16	CMN	base	baseline	executed	verified
+BASE-0121	Base	CMN (register)	CMN_r_T2_RRX	T32	CMN	base	baseline	executed	verified
+BASE-0122	Base	CMN (register)	CMN_r_T2	T32	CMN	base	baseline	executed	verified
+BASE-0123	Base	CMN (register-shifted register)	CMN_rr_A1	A32	CMN	base	baseline	executed	verified
+BASE-0124	Base	CMP (immediate)	CMP_i_A1	A32	CMP	base	baseline	executed	verified
+BASE-0125	Base	CMP (immediate)	CMP_i_T1	T16	CMP	base	baseline	executed	verified
+BASE-0126	Base	CMP (immediate)	CMP_i_T2	T32	CMP	base	baseline	executed	verified
+BASE-0127	Base	CMP (register)	CMP_r_A1_RRX	A32	CMP	base	baseline	executed	verified
+BASE-0128	Base	CMP (register)	CMP_r_A1	A32	CMP	base	baseline	executed	verified
+BASE-0129	Base	CMP (register)	CMP_r_T1	T16	CMP	base	baseline	executed	verified
+BASE-0130	Base	CMP (register)	CMP_r_T2	T16	CMP	base	baseline	executed	verified
+BASE-0131	Base	CMP (register)	CMP_r_T3_RRX	T32	CMP	base	baseline	executed	verified
+BASE-0132	Base	CMP (register)	CMP_r_T3	T32	CMP	base	baseline	executed	verified
+BASE-0133	Base	CMP (register-shifted register)	CMP_rr_A1	A32	CMP	base	baseline	executed	verified
+BASE-0134	Base	CPS, CPSID, CPSIE	CPS_A1_AS	A32	CPS	base	baseline	nop	verified
+BASE-0135	Base	CPS, CPSID, CPSIE	CPSID_A1_AS	A32	CPSID	base	baseline	nop	verified
+BASE-0136	Base	CPS, CPSID, CPSIE	CPSID_A1_ASM	A32	CPSID	base	baseline	nop	verified
+BASE-0137	Base	CPS, CPSID, CPSIE	CPSIE_A1_AS	A32	CPSIE	base	baseline	nop	verified
+BASE-0138	Base	CPS, CPSID, CPSIE	CPSIE_A1_ASM	A32	CPSIE	base	baseline	nop	verified
+BASE-0139	Base	CPS, CPSID, CPSIE	CPSID_T1_AS	T16	CPSID	base	baseline	nop	verified
+BASE-0140	Base	CPS, CPSID, CPSIE	CPSIE_T1_AS	T16	CPSIE	base	baseline	nop	verified
+BASE-0141	Base	CPS, CPSID, CPSIE	CPS_T2_AS	T32	CPS	base	baseline	nop	verified
+BASE-0142	Base	CPS, CPSID, CPSIE	CPSID_T2_AS	T32	CPSID	base	baseline	nop	verified
+BASE-0143	Base	CPS, CPSID, CPSIE	CPSID_T2_ASM	T32	CPSID	base	baseline	nop	verified
+BASE-0144	Base	CPS, CPSID, CPSIE	CPSIE_T2_AS	T32	CPSIE	base	baseline	nop	verified
+BASE-0145	Base	CPS, CPSID, CPSIE	CPSIE_T2_ASM	T32	CPSIE	base	baseline	nop	verified
 BASE-0146	Base	CRC32	CRC32B_A1	A32	CRC32B	complete	crc32	executed	pending
 BASE-0147	Base	CRC32	CRC32H_A1	A32	CRC32H	complete	crc32	executed	pending
 BASE-0148	Base	CRC32	CRC32W_A1	A32	CRC32W	complete	crc32	executed	pending
@@ -156,57 +156,57 @@ BASE-0154	Base	CRC32C	CRC32CW_A1	A32	CRC32CW	complete	crc32	executed	pending
 BASE-0155	Base	CRC32C	CRC32CB_T1	T32	CRC32CB	complete	crc32	executed	pending
 BASE-0156	Base	CRC32C	CRC32CH_T1	T32	CRC32CH	complete	crc32	executed	pending
 BASE-0157	Base	CRC32C	CRC32CW_T1	T32	CRC32CW	complete	crc32	executed	pending
-BASE-0158	Base	CSDB	CSDB_A1	A32	CSDB	base	baseline	executed	pending
-BASE-0159	Base	CSDB	CSDB_T1	T32	CSDB	base	baseline	executed	pending
-BASE-0160	Base	DBG	DBG_A1	A32	DBG	base	baseline	executed	pending
-BASE-0161	Base	DBG	DBG_T1	T32	DBG	base	baseline	executed	pending
+BASE-0158	Base	CSDB	CSDB_A1	A32	CSDB	base	baseline	executed	verified
+BASE-0159	Base	CSDB	CSDB_T1	T32	CSDB	base	baseline	executed	verified
+BASE-0160	Base	DBG	DBG_A1	A32	DBG	base	baseline	executed	verified
+BASE-0161	Base	DBG	DBG_T1	T32	DBG	base	baseline	executed	verified
 BASE-0162	Base	DCPS1	DCPS1_T1	T32	DCPS1	base	baseline	undefined	absent
 BASE-0163	Base	DCPS2	DCPS2_T1	T32	DCPS2	base	baseline	undefined	absent
 BASE-0164	Base	DCPS3	DCPS3_T1	T32	DCPS3	base	baseline	undefined	absent
-BASE-0165	Base	DMB	DMB_A1	A32	DMB	base	baseline	executed	pending
-BASE-0166	Base	DMB	DMB_T1	T32	DMB	base	baseline	executed	pending
-BASE-0167	Base	DSB	DSB_A1	A32	DSB	base	baseline	executed	pending
-BASE-0168	Base	DSB	DSB_T1	T32	DSB	base	baseline	executed	pending
-BASE-0169	Base	EOR, EORS (immediate)	EOR_i_A1	A32	EOR	base	baseline	executed	pending
-BASE-0170	Base	EOR, EORS (immediate)	EORS_i_A1	A32	EORS	base	baseline	executed	pending
-BASE-0171	Base	EOR, EORS (immediate)	EOR_i_T1	T32	EOR	base	baseline	executed	pending
-BASE-0172	Base	EOR, EORS (immediate)	EORS_i_T1	T32	EORS	base	baseline	executed	pending
-BASE-0173	Base	EOR, EORS (register)	EOR_r_A1_RRX	A32	EOR	base	baseline	executed	pending
-BASE-0174	Base	EOR, EORS (register)	EOR_r_A1	A32	EOR	base	baseline	executed	pending
-BASE-0175	Base	EOR, EORS (register)	EORS_r_A1_RRX	A32	EORS	base	baseline	executed	pending
-BASE-0176	Base	EOR, EORS (register)	EORS_r_A1	A32	EORS	base	baseline	executed	pending
-BASE-0177	Base	EOR, EORS (register)	EOR_r_T1	T16	EOR	base	baseline	executed	pending
-BASE-0178	Base	EOR, EORS (register)	EOR_r_T2_RRX	T32	EOR	base	baseline	executed	pending
-BASE-0179	Base	EOR, EORS (register)	EOR_r_T2	T32	EOR	base	baseline	executed	pending
-BASE-0180	Base	EOR, EORS (register)	EORS_r_T2_RRX	T32	EORS	base	baseline	executed	pending
-BASE-0181	Base	EOR, EORS (register)	EORS_r_T2	T32	EORS	base	baseline	executed	pending
-BASE-0182	Base	EOR, EORS (register-shifted register)	EORS_rr_A1	A32	EORS	base	baseline	executed	pending
-BASE-0183	Base	EOR, EORS (register-shifted register)	EOR_rr_A1	A32	EOR	base	baseline	executed	pending
+BASE-0165	Base	DMB	DMB_A1	A32	DMB	base	baseline	executed	verified
+BASE-0166	Base	DMB	DMB_T1	T32	DMB	base	baseline	executed	verified
+BASE-0167	Base	DSB	DSB_A1	A32	DSB	base	baseline	executed	verified
+BASE-0168	Base	DSB	DSB_T1	T32	DSB	base	baseline	executed	verified
+BASE-0169	Base	EOR, EORS (immediate)	EOR_i_A1	A32	EOR	base	baseline	executed	verified
+BASE-0170	Base	EOR, EORS (immediate)	EORS_i_A1	A32	EORS	base	baseline	executed	verified
+BASE-0171	Base	EOR, EORS (immediate)	EOR_i_T1	T32	EOR	base	baseline	executed	verified
+BASE-0172	Base	EOR, EORS (immediate)	EORS_i_T1	T32	EORS	base	baseline	executed	verified
+BASE-0173	Base	EOR, EORS (register)	EOR_r_A1_RRX	A32	EOR	base	baseline	executed	verified
+BASE-0174	Base	EOR, EORS (register)	EOR_r_A1	A32	EOR	base	baseline	executed	verified
+BASE-0175	Base	EOR, EORS (register)	EORS_r_A1_RRX	A32	EORS	base	baseline	executed	verified
+BASE-0176	Base	EOR, EORS (register)	EORS_r_A1	A32	EORS	base	baseline	executed	verified
+BASE-0177	Base	EOR, EORS (register)	EOR_r_T1	T16	EOR	base	baseline	executed	verified
+BASE-0178	Base	EOR, EORS (register)	EOR_r_T2_RRX	T32	EOR	base	baseline	executed	verified
+BASE-0179	Base	EOR, EORS (register)	EOR_r_T2	T32	EOR	base	baseline	executed	verified
+BASE-0180	Base	EOR, EORS (register)	EORS_r_T2_RRX	T32	EORS	base	baseline	executed	verified
+BASE-0181	Base	EOR, EORS (register)	EORS_r_T2	T32	EORS	base	baseline	executed	verified
+BASE-0182	Base	EOR, EORS (register-shifted register)	EORS_rr_A1	A32	EORS	base	baseline	executed	verified
+BASE-0183	Base	EOR, EORS (register-shifted register)	EOR_rr_A1	A32	EOR	base	baseline	executed	verified
 BASE-0184	Base	ERET	ERET_A1	A32	ERET	base	baseline	undefined	absent
 BASE-0185	Base	ERET	ERET_T1	T32	ERET	base	baseline	undefined	absent
-BASE-0186	Base	ESB	ESB_A1	A32	ESB	base	baseline	executed	pending
-BASE-0187	Base	ESB	ESB_T1	T32	ESB	base	baseline	executed	pending
+BASE-0186	Base	ESB	ESB_A1	A32	ESB	base	baseline	executed	verified
+BASE-0187	Base	ESB	ESB_T1	T32	ESB	base	baseline	executed	verified
 BASE-0188	Base	HLT	HLT_A1	A32	HLT	base	baseline	undefined	absent
 BASE-0189	Base	HLT	HLT_T1	T16	HLT	base	baseline	undefined	absent
 BASE-0190	Base	HVC	HVC_A1	A32	HVC	base	baseline	undefined	absent
 BASE-0191	Base	HVC	HVC_T1	T32	HVC	base	baseline	undefined	absent
-BASE-0192	Base	ISB	ISB_A1	A32	ISB	base	baseline	executed	pending
-BASE-0193	Base	ISB	ISB_T1	T32	ISB	base	baseline	executed	pending
-BASE-0194	Base	IT	IT_T1	T16	IT	base	baseline	executed	pending
-BASE-0195	Base	LDA	LDA_A1	A32	LDA	base	baseline	executed	pending
-BASE-0196	Base	LDA	LDA_T1	T32	LDA	base	baseline	executed	pending
-BASE-0197	Base	LDAB	LDAB_A1	A32	LDAB	base	baseline	executed	pending
-BASE-0198	Base	LDAB	LDAB_T1	T32	LDAB	base	baseline	executed	pending
-BASE-0199	Base	LDAEX	LDAEX_A1	A32	LDAEX	base	baseline	executed	pending
-BASE-0200	Base	LDAEX	LDAEX_T1	T32	LDAEX	base	baseline	executed	pending
-BASE-0201	Base	LDAEXB	LDAEXB_A1	A32	LDAEXB	base	baseline	executed	pending
-BASE-0202	Base	LDAEXB	LDAEXB_T1	T32	LDAEXB	base	baseline	executed	pending
-BASE-0203	Base	LDAEXD	LDAEXD_A1	A32	LDAEXD	base	baseline	executed	pending
-BASE-0204	Base	LDAEXD	LDAEXD_T1	T32	LDAEXD	base	baseline	executed	pending
-BASE-0205	Base	LDAEXH	LDAEXH_A1	A32	LDAEXH	base	baseline	executed	pending
-BASE-0206	Base	LDAEXH	LDAEXH_T1	T32	LDAEXH	base	baseline	executed	pending
-BASE-0207	Base	LDAH	LDAH_A1	A32	LDAH	base	baseline	executed	pending
-BASE-0208	Base	LDAH	LDAH_T1	T32	LDAH	base	baseline	executed	pending
+BASE-0192	Base	ISB	ISB_A1	A32	ISB	base	baseline	executed	verified
+BASE-0193	Base	ISB	ISB_T1	T32	ISB	base	baseline	executed	verified
+BASE-0194	Base	IT	IT_T1	T16	IT	base	baseline	executed	verified
+BASE-0195	Base	LDA	LDA_A1	A32	LDA	base	baseline	executed	verified
+BASE-0196	Base	LDA	LDA_T1	T32	LDA	base	baseline	executed	verified
+BASE-0197	Base	LDAB	LDAB_A1	A32	LDAB	base	baseline	executed	verified
+BASE-0198	Base	LDAB	LDAB_T1	T32	LDAB	base	baseline	executed	verified
+BASE-0199	Base	LDAEX	LDAEX_A1	A32	LDAEX	base	baseline	executed	verified
+BASE-0200	Base	LDAEX	LDAEX_T1	T32	LDAEX	base	baseline	executed	verified
+BASE-0201	Base	LDAEXB	LDAEXB_A1	A32	LDAEXB	base	baseline	executed	verified
+BASE-0202	Base	LDAEXB	LDAEXB_T1	T32	LDAEXB	base	baseline	executed	verified
+BASE-0203	Base	LDAEXD	LDAEXD_A1	A32	LDAEXD	base	baseline	executed	verified
+BASE-0204	Base	LDAEXD	LDAEXD_T1	T32	LDAEXD	base	baseline	executed	verified
+BASE-0205	Base	LDAEXH	LDAEXH_A1	A32	LDAEXH	base	baseline	executed	verified
+BASE-0206	Base	LDAEXH	LDAEXH_T1	T32	LDAEXH	base	baseline	executed	verified
+BASE-0207	Base	LDAH	LDAH_A1	A32	LDAH	base	baseline	executed	verified
+BASE-0208	Base	LDAH	LDAH_T1	T32	LDAH	base	baseline	executed	verified
 BASE-0209	Base	LDC (immediate)	LDC_i_A1_off	A32	LDC	base	baseline	undefined	absent
 BASE-0210	Base	LDC (immediate)	LDC_i_A1_post	A32	LDC	base	baseline	undefined	absent
 BASE-0211	Base	LDC (immediate)	LDC_i_A1_pre	A32	LDC	base	baseline	undefined	absent
@@ -219,450 +219,450 @@ BASE-0217	Base	LDC (literal)	LDC_l_A1	A32	LDC	base	baseline	undefined	absent
 BASE-0218	Base	LDC (literal)	LDC_l_T1	T32	LDC	base	baseline	undefined	absent
 BASE-0219	Base	LDM (exception return)	LDM_e_A1_AS	A32	LDM	base	baseline	undefined	absent
 BASE-0220	Base	LDM (User registers)	LDM_u_A1_AS	A32	LDM	base	baseline	undefined	absent
-BASE-0221	Base	LDM, LDMIA, LDMFD	LDM_A1	A32	LDM	base	baseline	executed	pending
-BASE-0222	Base	LDM, LDMIA, LDMFD	LDM_T1	T16	LDM	base	baseline	executed	pending
-BASE-0223	Base	LDM, LDMIA, LDMFD	LDM_T2	T32	LDM	base	baseline	executed	pending
-BASE-0224	Base	LDMDA, LDMFA	LDMDA_A1	A32	LDM	base	baseline	executed	pending
-BASE-0225	Base	LDMDB, LDMEA	LDMDB_A1	A32	LDM	base	baseline	executed	pending
-BASE-0226	Base	LDMDB, LDMEA	LDMDB_T1	T32	LDM	base	baseline	executed	pending
-BASE-0227	Base	LDMIB, LDMED	LDMIB_A1	A32	LDM	base	baseline	executed	pending
-BASE-0228	Base	LDR (immediate)	LDR_i_A1_off	A32	LDR	base	baseline	executed	pending
-BASE-0229	Base	LDR (immediate)	LDR_i_A1_post	A32	LDR	base	baseline	executed	pending
-BASE-0230	Base	LDR (immediate)	LDR_i_A1_pre	A32	LDR	base	baseline	executed	pending
-BASE-0231	Base	LDR (immediate)	LDR_i_T1	T16	LDR	base	baseline	executed	pending
-BASE-0232	Base	LDR (immediate)	LDR_i_T2	T16	LDR	base	baseline	executed	pending
-BASE-0233	Base	LDR (immediate)	LDR_i_T3	T32	LDR	base	baseline	executed	pending
-BASE-0234	Base	LDR (immediate)	LDR_i_T4_off	T32	LDR	base	baseline	executed	pending
-BASE-0235	Base	LDR (immediate)	LDR_i_T4_post	T32	LDR	base	baseline	executed	pending
-BASE-0236	Base	LDR (immediate)	LDR_i_T4_pre	T32	LDR	base	baseline	executed	pending
-BASE-0237	Base	LDR (literal)	LDR_l_A1	A32	LDR	base	baseline	executed	pending
-BASE-0238	Base	LDR (literal)	LDR_l_T1	T16	LDR	base	baseline	executed	pending
-BASE-0239	Base	LDR (literal)	LDR_l_T2	T32	LDR	base	baseline	executed	pending
-BASE-0240	Base	LDR (register)	LDR_r_A1_off	A32	LDR	base	baseline	executed	pending
-BASE-0241	Base	LDR (register)	LDR_r_A1_post	A32	LDR	base	baseline	executed	pending
-BASE-0242	Base	LDR (register)	LDR_r_A1_pre	A32	LDR	base	baseline	executed	pending
-BASE-0243	Base	LDR (register)	LDR_r_T1	T16	LDR	base	baseline	executed	pending
-BASE-0244	Base	LDR (register)	LDR_r_T2	T32	LDR	base	baseline	executed	pending
-BASE-0245	Base	LDRB (immediate)	LDRB_i_A1_off	A32	LDRB	base	baseline	executed	pending
-BASE-0246	Base	LDRB (immediate)	LDRB_i_A1_post	A32	LDRB	base	baseline	executed	pending
-BASE-0247	Base	LDRB (immediate)	LDRB_i_A1_pre	A32	LDRB	base	baseline	executed	pending
-BASE-0248	Base	LDRB (immediate)	LDRB_i_T1	T16	LDRB	base	baseline	executed	pending
-BASE-0249	Base	LDRB (immediate)	LDRB_i_T2	T32	LDRB	base	baseline	executed	pending
-BASE-0250	Base	LDRB (immediate)	LDRB_i_T3_off	T32	LDRB	base	baseline	executed	pending
-BASE-0251	Base	LDRB (immediate)	LDRB_i_T3_post	T32	LDRB	base	baseline	executed	pending
-BASE-0252	Base	LDRB (immediate)	LDRB_i_T3_pre	T32	LDRB	base	baseline	executed	pending
-BASE-0253	Base	LDRB (literal)	LDRB_l_A1	A32	LDRB	base	baseline	executed	pending
-BASE-0254	Base	LDRB (literal)	LDRB_l_T1	T32	LDRB	base	baseline	executed	pending
-BASE-0255	Base	LDRB (register)	LDRB_r_A1_off	A32	LDRB	base	baseline	executed	pending
-BASE-0256	Base	LDRB (register)	LDRB_r_A1_post	A32	LDRB	base	baseline	executed	pending
-BASE-0257	Base	LDRB (register)	LDRB_r_A1_pre	A32	LDRB	base	baseline	executed	pending
-BASE-0258	Base	LDRB (register)	LDRB_r_T1	T16	LDRB	base	baseline	executed	pending
-BASE-0259	Base	LDRB (register)	LDRB_r_T2	T32	LDRB	base	baseline	executed	pending
-BASE-0260	Base	LDRBT	LDRBT_A1	A32	LDRBT	base	baseline	executed	pending
-BASE-0261	Base	LDRBT	LDRBT_A2	A32	LDRBT	base	baseline	executed	pending
-BASE-0262	Base	LDRBT	LDRBT_T1	T32	LDRBT	base	baseline	executed	pending
-BASE-0263	Base	LDRD (immediate)	LDRD_i_A1_off	A32	LDRD	base	baseline	executed	pending
-BASE-0264	Base	LDRD (immediate)	LDRD_i_A1_post	A32	LDRD	base	baseline	executed	pending
-BASE-0265	Base	LDRD (immediate)	LDRD_i_A1_pre	A32	LDRD	base	baseline	executed	pending
-BASE-0266	Base	LDRD (immediate)	LDRD_i_T1_off	T32	LDRD	base	baseline	executed	pending
-BASE-0267	Base	LDRD (immediate)	LDRD_i_T1_post	T32	LDRD	base	baseline	executed	pending
-BASE-0268	Base	LDRD (immediate)	LDRD_i_T1_pre	T32	LDRD	base	baseline	executed	pending
-BASE-0269	Base	LDRD (literal)	LDRD_l_A1	A32	LDRD	base	baseline	executed	pending
-BASE-0270	Base	LDRD (literal)	LDRD_l_T1	T32	LDRD	base	baseline	executed	pending
-BASE-0271	Base	LDRD (register)	LDRD_r_A1_off	A32	LDRD	base	baseline	executed	pending
-BASE-0272	Base	LDRD (register)	LDRD_r_A1_post	A32	LDRD	base	baseline	executed	pending
-BASE-0273	Base	LDRD (register)	LDRD_r_A1_pre	A32	LDRD	base	baseline	executed	pending
-BASE-0274	Base	LDREX	LDREX_A1	A32	LDREX	base	baseline	executed	pending
-BASE-0275	Base	LDREX	LDREX_T1	T32	LDREX	base	baseline	executed	pending
-BASE-0276	Base	LDREXB	LDREXB_A1	A32	LDREXB	base	baseline	executed	pending
-BASE-0277	Base	LDREXB	LDREXB_T1	T32	LDREXB	base	baseline	executed	pending
-BASE-0278	Base	LDREXD	LDREXD_A1	A32	LDREXD	base	baseline	executed	pending
-BASE-0279	Base	LDREXD	LDREXD_T1	T32	LDREXD	base	baseline	executed	pending
-BASE-0280	Base	LDREXH	LDREXH_A1	A32	LDREXH	base	baseline	executed	pending
-BASE-0281	Base	LDREXH	LDREXH_T1	T32	LDREXH	base	baseline	executed	pending
-BASE-0282	Base	LDRH (immediate)	LDRH_i_A1_off	A32	LDRH	base	baseline	executed	pending
-BASE-0283	Base	LDRH (immediate)	LDRH_i_A1_post	A32	LDRH	base	baseline	executed	pending
-BASE-0284	Base	LDRH (immediate)	LDRH_i_A1_pre	A32	LDRH	base	baseline	executed	pending
-BASE-0285	Base	LDRH (immediate)	LDRH_i_T1	T16	LDRH	base	baseline	executed	pending
-BASE-0286	Base	LDRH (immediate)	LDRH_i_T2	T32	LDRH	base	baseline	executed	pending
-BASE-0287	Base	LDRH (immediate)	LDRH_i_T3_off	T32	LDRH	base	baseline	executed	pending
-BASE-0288	Base	LDRH (immediate)	LDRH_i_T3_post	T32	LDRH	base	baseline	executed	pending
-BASE-0289	Base	LDRH (immediate)	LDRH_i_T3_pre	T32	LDRH	base	baseline	executed	pending
-BASE-0290	Base	LDRH (literal)	LDRH_l_A1	A32	LDRH	base	baseline	executed	pending
-BASE-0291	Base	LDRH (literal)	LDRH_l_T1	T32	LDRH	base	baseline	executed	pending
-BASE-0292	Base	LDRH (register)	LDRH_r_A1_off	A32	LDRH	base	baseline	executed	pending
-BASE-0293	Base	LDRH (register)	LDRH_r_A1_post	A32	LDRH	base	baseline	executed	pending
-BASE-0294	Base	LDRH (register)	LDRH_r_A1_pre	A32	LDRH	base	baseline	executed	pending
-BASE-0295	Base	LDRH (register)	LDRH_r_T1	T16	LDRH	base	baseline	executed	pending
-BASE-0296	Base	LDRH (register)	LDRH_r_T2	T32	LDRH	base	baseline	executed	pending
-BASE-0297	Base	LDRHT	LDRHT_A1	A32	LDRHT	base	baseline	executed	pending
-BASE-0298	Base	LDRHT	LDRHT_A2	A32	LDRHT	base	baseline	executed	pending
-BASE-0299	Base	LDRHT	LDRHT_T1	T32	LDRHT	base	baseline	executed	pending
-BASE-0300	Base	LDRSB (immediate)	LDRSB_i_A1_off	A32	LDRSB	base	baseline	executed	pending
-BASE-0301	Base	LDRSB (immediate)	LDRSB_i_A1_post	A32	LDRSB	base	baseline	executed	pending
-BASE-0302	Base	LDRSB (immediate)	LDRSB_i_A1_pre	A32	LDRSB	base	baseline	executed	pending
-BASE-0303	Base	LDRSB (immediate)	LDRSB_i_T1	T32	LDRSB	base	baseline	executed	pending
-BASE-0304	Base	LDRSB (immediate)	LDRSB_i_T2_off	T32	LDRSB	base	baseline	executed	pending
-BASE-0305	Base	LDRSB (immediate)	LDRSB_i_T2_post	T32	LDRSB	base	baseline	executed	pending
-BASE-0306	Base	LDRSB (immediate)	LDRSB_i_T2_pre	T32	LDRSB	base	baseline	executed	pending
-BASE-0307	Base	LDRSB (literal)	LDRSB_l_A1	A32	LDRSB	base	baseline	executed	pending
-BASE-0308	Base	LDRSB (literal)	LDRSB_l_T1	T32	LDRSB	base	baseline	executed	pending
-BASE-0309	Base	LDRSB (register)	LDRSB_r_A1_off	A32	LDRSB	base	baseline	executed	pending
-BASE-0310	Base	LDRSB (register)	LDRSB_r_A1_post	A32	LDRSB	base	baseline	executed	pending
-BASE-0311	Base	LDRSB (register)	LDRSB_r_A1_pre	A32	LDRSB	base	baseline	executed	pending
-BASE-0312	Base	LDRSB (register)	LDRSB_r_T1	T16	LDRSB	base	baseline	executed	pending
-BASE-0313	Base	LDRSB (register)	LDRSB_r_T2	T32	LDRSB	base	baseline	executed	pending
-BASE-0314	Base	LDRSBT	LDRSBT_A1	A32	LDRSBT	base	baseline	executed	pending
-BASE-0315	Base	LDRSBT	LDRSBT_A2	A32	LDRSBT	base	baseline	executed	pending
-BASE-0316	Base	LDRSBT	LDRSBT_T1	T32	LDRSBT	base	baseline	executed	pending
-BASE-0317	Base	LDRSH (immediate)	LDRSH_i_A1_off	A32	LDRSH	base	baseline	executed	pending
-BASE-0318	Base	LDRSH (immediate)	LDRSH_i_A1_post	A32	LDRSH	base	baseline	executed	pending
-BASE-0319	Base	LDRSH (immediate)	LDRSH_i_A1_pre	A32	LDRSH	base	baseline	executed	pending
-BASE-0320	Base	LDRSH (immediate)	LDRSH_i_T1	T32	LDRSH	base	baseline	executed	pending
-BASE-0321	Base	LDRSH (immediate)	LDRSH_i_T2_off	T32	LDRSH	base	baseline	executed	pending
-BASE-0322	Base	LDRSH (immediate)	LDRSH_i_T2_post	T32	LDRSH	base	baseline	executed	pending
-BASE-0323	Base	LDRSH (immediate)	LDRSH_i_T2_pre	T32	LDRSH	base	baseline	executed	pending
-BASE-0324	Base	LDRSH (literal)	LDRSH_l_A1	A32	LDRSH	base	baseline	executed	pending
-BASE-0325	Base	LDRSH (literal)	LDRSH_l_T1	T32	LDRSH	base	baseline	executed	pending
-BASE-0326	Base	LDRSH (register)	LDRSH_r_A1_off	A32	LDRSH	base	baseline	executed	pending
-BASE-0327	Base	LDRSH (register)	LDRSH_r_A1_post	A32	LDRSH	base	baseline	executed	pending
-BASE-0328	Base	LDRSH (register)	LDRSH_r_A1_pre	A32	LDRSH	base	baseline	executed	pending
-BASE-0329	Base	LDRSH (register)	LDRSH_r_T1	T16	LDRSH	base	baseline	executed	pending
-BASE-0330	Base	LDRSH (register)	LDRSH_r_T2	T32	LDRSH	base	baseline	executed	pending
-BASE-0331	Base	LDRSHT	LDRSHT_A1	A32	LDRSHT	base	baseline	executed	pending
-BASE-0332	Base	LDRSHT	LDRSHT_A2	A32	LDRSHT	base	baseline	executed	pending
-BASE-0333	Base	LDRSHT	LDRSHT_T1	T32	LDRSHT	base	baseline	executed	pending
-BASE-0334	Base	LDRT	LDRT_A1	A32	LDRT	base	baseline	executed	pending
-BASE-0335	Base	LDRT	LDRT_A2	A32	LDRT	base	baseline	executed	pending
-BASE-0336	Base	LDRT	LDRT_T1	T32	LDRT	base	baseline	executed	pending
-BASE-0337	Base	MCR	MCR_A1	A32	MCR	base	baseline	restricted	pending
-BASE-0338	Base	MCR	MCR_T1	T32	MCR	base	baseline	restricted	pending
+BASE-0221	Base	LDM, LDMIA, LDMFD	LDM_A1	A32	LDM	base	baseline	executed	verified
+BASE-0222	Base	LDM, LDMIA, LDMFD	LDM_T1	T16	LDM	base	baseline	executed	verified
+BASE-0223	Base	LDM, LDMIA, LDMFD	LDM_T2	T32	LDM	base	baseline	executed	verified
+BASE-0224	Base	LDMDA, LDMFA	LDMDA_A1	A32	LDM	base	baseline	executed	verified
+BASE-0225	Base	LDMDB, LDMEA	LDMDB_A1	A32	LDM	base	baseline	executed	verified
+BASE-0226	Base	LDMDB, LDMEA	LDMDB_T1	T32	LDM	base	baseline	executed	verified
+BASE-0227	Base	LDMIB, LDMED	LDMIB_A1	A32	LDM	base	baseline	executed	verified
+BASE-0228	Base	LDR (immediate)	LDR_i_A1_off	A32	LDR	base	baseline	executed	verified
+BASE-0229	Base	LDR (immediate)	LDR_i_A1_post	A32	LDR	base	baseline	executed	verified
+BASE-0230	Base	LDR (immediate)	LDR_i_A1_pre	A32	LDR	base	baseline	executed	verified
+BASE-0231	Base	LDR (immediate)	LDR_i_T1	T16	LDR	base	baseline	executed	verified
+BASE-0232	Base	LDR (immediate)	LDR_i_T2	T16	LDR	base	baseline	executed	verified
+BASE-0233	Base	LDR (immediate)	LDR_i_T3	T32	LDR	base	baseline	executed	verified
+BASE-0234	Base	LDR (immediate)	LDR_i_T4_off	T32	LDR	base	baseline	executed	verified
+BASE-0235	Base	LDR (immediate)	LDR_i_T4_post	T32	LDR	base	baseline	executed	verified
+BASE-0236	Base	LDR (immediate)	LDR_i_T4_pre	T32	LDR	base	baseline	executed	verified
+BASE-0237	Base	LDR (literal)	LDR_l_A1	A32	LDR	base	baseline	executed	verified
+BASE-0238	Base	LDR (literal)	LDR_l_T1	T16	LDR	base	baseline	executed	verified
+BASE-0239	Base	LDR (literal)	LDR_l_T2	T32	LDR	base	baseline	executed	verified
+BASE-0240	Base	LDR (register)	LDR_r_A1_off	A32	LDR	base	baseline	executed	verified
+BASE-0241	Base	LDR (register)	LDR_r_A1_post	A32	LDR	base	baseline	executed	verified
+BASE-0242	Base	LDR (register)	LDR_r_A1_pre	A32	LDR	base	baseline	executed	verified
+BASE-0243	Base	LDR (register)	LDR_r_T1	T16	LDR	base	baseline	executed	verified
+BASE-0244	Base	LDR (register)	LDR_r_T2	T32	LDR	base	baseline	executed	verified
+BASE-0245	Base	LDRB (immediate)	LDRB_i_A1_off	A32	LDRB	base	baseline	executed	verified
+BASE-0246	Base	LDRB (immediate)	LDRB_i_A1_post	A32	LDRB	base	baseline	executed	verified
+BASE-0247	Base	LDRB (immediate)	LDRB_i_A1_pre	A32	LDRB	base	baseline	executed	verified
+BASE-0248	Base	LDRB (immediate)	LDRB_i_T1	T16	LDRB	base	baseline	executed	verified
+BASE-0249	Base	LDRB (immediate)	LDRB_i_T2	T32	LDRB	base	baseline	executed	verified
+BASE-0250	Base	LDRB (immediate)	LDRB_i_T3_off	T32	LDRB	base	baseline	executed	verified
+BASE-0251	Base	LDRB (immediate)	LDRB_i_T3_post	T32	LDRB	base	baseline	executed	verified
+BASE-0252	Base	LDRB (immediate)	LDRB_i_T3_pre	T32	LDRB	base	baseline	executed	verified
+BASE-0253	Base	LDRB (literal)	LDRB_l_A1	A32	LDRB	base	baseline	executed	verified
+BASE-0254	Base	LDRB (literal)	LDRB_l_T1	T32	LDRB	base	baseline	executed	verified
+BASE-0255	Base	LDRB (register)	LDRB_r_A1_off	A32	LDRB	base	baseline	executed	verified
+BASE-0256	Base	LDRB (register)	LDRB_r_A1_post	A32	LDRB	base	baseline	executed	verified
+BASE-0257	Base	LDRB (register)	LDRB_r_A1_pre	A32	LDRB	base	baseline	executed	verified
+BASE-0258	Base	LDRB (register)	LDRB_r_T1	T16	LDRB	base	baseline	executed	verified
+BASE-0259	Base	LDRB (register)	LDRB_r_T2	T32	LDRB	base	baseline	executed	verified
+BASE-0260	Base	LDRBT	LDRBT_A1	A32	LDRBT	base	baseline	executed	verified
+BASE-0261	Base	LDRBT	LDRBT_A2	A32	LDRBT	base	baseline	executed	verified
+BASE-0262	Base	LDRBT	LDRBT_T1	T32	LDRBT	base	baseline	executed	verified
+BASE-0263	Base	LDRD (immediate)	LDRD_i_A1_off	A32	LDRD	base	baseline	executed	verified
+BASE-0264	Base	LDRD (immediate)	LDRD_i_A1_post	A32	LDRD	base	baseline	executed	verified
+BASE-0265	Base	LDRD (immediate)	LDRD_i_A1_pre	A32	LDRD	base	baseline	executed	verified
+BASE-0266	Base	LDRD (immediate)	LDRD_i_T1_off	T32	LDRD	base	baseline	executed	verified
+BASE-0267	Base	LDRD (immediate)	LDRD_i_T1_post	T32	LDRD	base	baseline	executed	verified
+BASE-0268	Base	LDRD (immediate)	LDRD_i_T1_pre	T32	LDRD	base	baseline	executed	verified
+BASE-0269	Base	LDRD (literal)	LDRD_l_A1	A32	LDRD	base	baseline	executed	verified
+BASE-0270	Base	LDRD (literal)	LDRD_l_T1	T32	LDRD	base	baseline	executed	verified
+BASE-0271	Base	LDRD (register)	LDRD_r_A1_off	A32	LDRD	base	baseline	executed	verified
+BASE-0272	Base	LDRD (register)	LDRD_r_A1_post	A32	LDRD	base	baseline	executed	verified
+BASE-0273	Base	LDRD (register)	LDRD_r_A1_pre	A32	LDRD	base	baseline	executed	verified
+BASE-0274	Base	LDREX	LDREX_A1	A32	LDREX	base	baseline	executed	verified
+BASE-0275	Base	LDREX	LDREX_T1	T32	LDREX	base	baseline	executed	verified
+BASE-0276	Base	LDREXB	LDREXB_A1	A32	LDREXB	base	baseline	executed	verified
+BASE-0277	Base	LDREXB	LDREXB_T1	T32	LDREXB	base	baseline	executed	verified
+BASE-0278	Base	LDREXD	LDREXD_A1	A32	LDREXD	base	baseline	executed	verified
+BASE-0279	Base	LDREXD	LDREXD_T1	T32	LDREXD	base	baseline	executed	verified
+BASE-0280	Base	LDREXH	LDREXH_A1	A32	LDREXH	base	baseline	executed	verified
+BASE-0281	Base	LDREXH	LDREXH_T1	T32	LDREXH	base	baseline	executed	verified
+BASE-0282	Base	LDRH (immediate)	LDRH_i_A1_off	A32	LDRH	base	baseline	executed	verified
+BASE-0283	Base	LDRH (immediate)	LDRH_i_A1_post	A32	LDRH	base	baseline	executed	verified
+BASE-0284	Base	LDRH (immediate)	LDRH_i_A1_pre	A32	LDRH	base	baseline	executed	verified
+BASE-0285	Base	LDRH (immediate)	LDRH_i_T1	T16	LDRH	base	baseline	executed	verified
+BASE-0286	Base	LDRH (immediate)	LDRH_i_T2	T32	LDRH	base	baseline	executed	verified
+BASE-0287	Base	LDRH (immediate)	LDRH_i_T3_off	T32	LDRH	base	baseline	executed	verified
+BASE-0288	Base	LDRH (immediate)	LDRH_i_T3_post	T32	LDRH	base	baseline	executed	verified
+BASE-0289	Base	LDRH (immediate)	LDRH_i_T3_pre	T32	LDRH	base	baseline	executed	verified
+BASE-0290	Base	LDRH (literal)	LDRH_l_A1	A32	LDRH	base	baseline	executed	verified
+BASE-0291	Base	LDRH (literal)	LDRH_l_T1	T32	LDRH	base	baseline	executed	verified
+BASE-0292	Base	LDRH (register)	LDRH_r_A1_off	A32	LDRH	base	baseline	executed	verified
+BASE-0293	Base	LDRH (register)	LDRH_r_A1_post	A32	LDRH	base	baseline	executed	verified
+BASE-0294	Base	LDRH (register)	LDRH_r_A1_pre	A32	LDRH	base	baseline	executed	verified
+BASE-0295	Base	LDRH (register)	LDRH_r_T1	T16	LDRH	base	baseline	executed	verified
+BASE-0296	Base	LDRH (register)	LDRH_r_T2	T32	LDRH	base	baseline	executed	verified
+BASE-0297	Base	LDRHT	LDRHT_A1	A32	LDRHT	base	baseline	executed	verified
+BASE-0298	Base	LDRHT	LDRHT_A2	A32	LDRHT	base	baseline	executed	verified
+BASE-0299	Base	LDRHT	LDRHT_T1	T32	LDRHT	base	baseline	executed	verified
+BASE-0300	Base	LDRSB (immediate)	LDRSB_i_A1_off	A32	LDRSB	base	baseline	executed	verified
+BASE-0301	Base	LDRSB (immediate)	LDRSB_i_A1_post	A32	LDRSB	base	baseline	executed	verified
+BASE-0302	Base	LDRSB (immediate)	LDRSB_i_A1_pre	A32	LDRSB	base	baseline	executed	verified
+BASE-0303	Base	LDRSB (immediate)	LDRSB_i_T1	T32	LDRSB	base	baseline	executed	verified
+BASE-0304	Base	LDRSB (immediate)	LDRSB_i_T2_off	T32	LDRSB	base	baseline	executed	verified
+BASE-0305	Base	LDRSB (immediate)	LDRSB_i_T2_post	T32	LDRSB	base	baseline	executed	verified
+BASE-0306	Base	LDRSB (immediate)	LDRSB_i_T2_pre	T32	LDRSB	base	baseline	executed	verified
+BASE-0307	Base	LDRSB (literal)	LDRSB_l_A1	A32	LDRSB	base	baseline	executed	verified
+BASE-0308	Base	LDRSB (literal)	LDRSB_l_T1	T32	LDRSB	base	baseline	executed	verified
+BASE-0309	Base	LDRSB (register)	LDRSB_r_A1_off	A32	LDRSB	base	baseline	executed	verified
+BASE-0310	Base	LDRSB (register)	LDRSB_r_A1_post	A32	LDRSB	base	baseline	executed	verified
+BASE-0311	Base	LDRSB (register)	LDRSB_r_A1_pre	A32	LDRSB	base	baseline	executed	verified
+BASE-0312	Base	LDRSB (register)	LDRSB_r_T1	T16	LDRSB	base	baseline	executed	verified
+BASE-0313	Base	LDRSB (register)	LDRSB_r_T2	T32	LDRSB	base	baseline	executed	verified
+BASE-0314	Base	LDRSBT	LDRSBT_A1	A32	LDRSBT	base	baseline	executed	verified
+BASE-0315	Base	LDRSBT	LDRSBT_A2	A32	LDRSBT	base	baseline	executed	verified
+BASE-0316	Base	LDRSBT	LDRSBT_T1	T32	LDRSBT	base	baseline	executed	verified
+BASE-0317	Base	LDRSH (immediate)	LDRSH_i_A1_off	A32	LDRSH	base	baseline	executed	verified
+BASE-0318	Base	LDRSH (immediate)	LDRSH_i_A1_post	A32	LDRSH	base	baseline	executed	verified
+BASE-0319	Base	LDRSH (immediate)	LDRSH_i_A1_pre	A32	LDRSH	base	baseline	executed	verified
+BASE-0320	Base	LDRSH (immediate)	LDRSH_i_T1	T32	LDRSH	base	baseline	executed	verified
+BASE-0321	Base	LDRSH (immediate)	LDRSH_i_T2_off	T32	LDRSH	base	baseline	executed	verified
+BASE-0322	Base	LDRSH (immediate)	LDRSH_i_T2_post	T32	LDRSH	base	baseline	executed	verified
+BASE-0323	Base	LDRSH (immediate)	LDRSH_i_T2_pre	T32	LDRSH	base	baseline	executed	verified
+BASE-0324	Base	LDRSH (literal)	LDRSH_l_A1	A32	LDRSH	base	baseline	executed	verified
+BASE-0325	Base	LDRSH (literal)	LDRSH_l_T1	T32	LDRSH	base	baseline	executed	verified
+BASE-0326	Base	LDRSH (register)	LDRSH_r_A1_off	A32	LDRSH	base	baseline	executed	verified
+BASE-0327	Base	LDRSH (register)	LDRSH_r_A1_post	A32	LDRSH	base	baseline	executed	verified
+BASE-0328	Base	LDRSH (register)	LDRSH_r_A1_pre	A32	LDRSH	base	baseline	executed	verified
+BASE-0329	Base	LDRSH (register)	LDRSH_r_T1	T16	LDRSH	base	baseline	executed	verified
+BASE-0330	Base	LDRSH (register)	LDRSH_r_T2	T32	LDRSH	base	baseline	executed	verified
+BASE-0331	Base	LDRSHT	LDRSHT_A1	A32	LDRSHT	base	baseline	executed	verified
+BASE-0332	Base	LDRSHT	LDRSHT_A2	A32	LDRSHT	base	baseline	executed	verified
+BASE-0333	Base	LDRSHT	LDRSHT_T1	T32	LDRSHT	base	baseline	executed	verified
+BASE-0334	Base	LDRT	LDRT_A1	A32	LDRT	base	baseline	executed	verified
+BASE-0335	Base	LDRT	LDRT_A2	A32	LDRT	base	baseline	executed	verified
+BASE-0336	Base	LDRT	LDRT_T1	T32	LDRT	base	baseline	executed	verified
+BASE-0337	Base	MCR	MCR_A1	A32	MCR	base	baseline	restricted	verified
+BASE-0338	Base	MCR	MCR_T1	T32	MCR	base	baseline	restricted	verified
 BASE-0339	Base	MCRR	MCRR_A1	A32	MCRR	base	baseline	undefined	absent
 BASE-0340	Base	MCRR	MCRR_T1	T32	MCRR	base	baseline	undefined	absent
-BASE-0341	Base	MLA, MLAS	MLAS_A1	A32	MLAS	base	baseline	executed	pending
-BASE-0342	Base	MLA, MLAS	MLA_A1	A32	MLA	base	baseline	executed	pending
-BASE-0343	Base	MLA, MLAS	MLA_T1	T32	MLA	base	baseline	executed	pending
-BASE-0344	Base	MLS	MLS_A1	A32	MLS	base	baseline	executed	pending
-BASE-0345	Base	MLS	MLS_T1	T32	MLS	base	baseline	executed	pending
-BASE-0346	Base	MOV, MOVS (immediate)	MOV_i_A1	A32	MOV	base	baseline	executed	pending
-BASE-0347	Base	MOV, MOVS (immediate)	MOVS_i_A1	A32	MOVS	base	baseline	executed	pending
-BASE-0348	Base	MOV, MOVS (immediate)	MOV_i_A2	A32	MOVW	base	baseline	executed	pending
-BASE-0349	Base	MOV, MOVS (immediate)	MOV_i_T1	T16	MOV	base	baseline	executed	pending
-BASE-0350	Base	MOV, MOVS (immediate)	MOV_i_T2	T32	MOV	base	baseline	executed	pending
-BASE-0351	Base	MOV, MOVS (immediate)	MOVS_i_T2	T32	MOVS	base	baseline	executed	pending
-BASE-0352	Base	MOV, MOVS (immediate)	MOV_i_T3	T32	MOVW	base	baseline	executed	pending
-BASE-0353	Base	MOV, MOVS (register)	MOV_r_A1_RRX	A32	MOV	base	baseline	executed	pending
-BASE-0354	Base	MOV, MOVS (register)	MOV_r_A1	A32	MOV	base	baseline	executed	pending
-BASE-0355	Base	MOV, MOVS (register)	MOVS_r_A1_RRX	A32	MOVS	base	baseline	executed	pending
-BASE-0356	Base	MOV, MOVS (register)	MOVS_r_A1	A32	MOVS	base	baseline	executed	pending
-BASE-0357	Base	MOV, MOVS (register)	MOV_r_T1	T16	MOV	base	baseline	executed	pending
-BASE-0358	Base	MOV, MOVS (register)	MOV_r_T2	T16	MOV	base	baseline	executed	pending
-BASE-0359	Base	MOV, MOVS (register)	MOV_r_T3_RRX	T32	MOV	base	baseline	executed	pending
-BASE-0360	Base	MOV, MOVS (register)	MOV_r_T3	T32	MOV	base	baseline	executed	pending
-BASE-0361	Base	MOV, MOVS (register)	MOVS_r_T3_RRX	T32	MOVS	base	baseline	executed	pending
-BASE-0362	Base	MOV, MOVS (register)	MOVS_r_T3	T32	MOVS	base	baseline	executed	pending
-BASE-0363	Base	MOV, MOVS (register-shifted register)	MOVS_rr_A1	A32	MOVS	base	baseline	executed	pending
-BASE-0364	Base	MOV, MOVS (register-shifted register)	MOV_rr_A1	A32	MOV	base	baseline	executed	pending
-BASE-0365	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_ASR	T16	MOV	base	baseline	executed	pending
-BASE-0366	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_LSL	T16	MOV	base	baseline	executed	pending
-BASE-0367	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_LSR	T16	MOV	base	baseline	executed	pending
-BASE-0368	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_ROR	T16	MOV	base	baseline	executed	pending
-BASE-0369	Base	MOV, MOVS (register-shifted register)	MOVS_rr_T2	T32	MOVS	base	baseline	executed	pending
-BASE-0370	Base	MOV, MOVS (register-shifted register)	MOV_rr_T2	T32	MOV	base	baseline	executed	pending
-BASE-0371	Base	MOVT	MOVT_A1	A32	MOVT	base	baseline	executed	pending
-BASE-0372	Base	MOVT	MOVT_T1	T32	MOVT	base	baseline	executed	pending
-BASE-0373	Base	MRC	MRC_A1	A32	MRC	base	baseline	restricted	pending
-BASE-0374	Base	MRC	MRC_T1	T32	MRC	base	baseline	restricted	pending
-BASE-0375	Base	MRRC	MRRC_A1	A32	MRRC	base	baseline	restricted	pending
-BASE-0376	Base	MRRC	MRRC_T1	T32	MRRC	base	baseline	restricted	pending
-BASE-0377	Base	MRS	MRS_A1_AS	A32	MRS	base	baseline	restricted	pending
-BASE-0378	Base	MRS	MRS_T1_AS	T32	MRS	base	baseline	restricted	pending
+BASE-0341	Base	MLA, MLAS	MLAS_A1	A32	MLAS	base	baseline	executed	verified
+BASE-0342	Base	MLA, MLAS	MLA_A1	A32	MLA	base	baseline	executed	verified
+BASE-0343	Base	MLA, MLAS	MLA_T1	T32	MLA	base	baseline	executed	verified
+BASE-0344	Base	MLS	MLS_A1	A32	MLS	base	baseline	executed	verified
+BASE-0345	Base	MLS	MLS_T1	T32	MLS	base	baseline	executed	verified
+BASE-0346	Base	MOV, MOVS (immediate)	MOV_i_A1	A32	MOV	base	baseline	executed	verified
+BASE-0347	Base	MOV, MOVS (immediate)	MOVS_i_A1	A32	MOVS	base	baseline	executed	verified
+BASE-0348	Base	MOV, MOVS (immediate)	MOV_i_A2	A32	MOVW	base	baseline	executed	verified
+BASE-0349	Base	MOV, MOVS (immediate)	MOV_i_T1	T16	MOV	base	baseline	executed	verified
+BASE-0350	Base	MOV, MOVS (immediate)	MOV_i_T2	T32	MOV	base	baseline	executed	verified
+BASE-0351	Base	MOV, MOVS (immediate)	MOVS_i_T2	T32	MOVS	base	baseline	executed	verified
+BASE-0352	Base	MOV, MOVS (immediate)	MOV_i_T3	T32	MOVW	base	baseline	executed	verified
+BASE-0353	Base	MOV, MOVS (register)	MOV_r_A1_RRX	A32	MOV	base	baseline	executed	verified
+BASE-0354	Base	MOV, MOVS (register)	MOV_r_A1	A32	MOV	base	baseline	executed	verified
+BASE-0355	Base	MOV, MOVS (register)	MOVS_r_A1_RRX	A32	MOVS	base	baseline	executed	verified
+BASE-0356	Base	MOV, MOVS (register)	MOVS_r_A1	A32	MOVS	base	baseline	executed	verified
+BASE-0357	Base	MOV, MOVS (register)	MOV_r_T1	T16	MOV	base	baseline	executed	verified
+BASE-0358	Base	MOV, MOVS (register)	MOV_r_T2	T16	MOV	base	baseline	executed	verified
+BASE-0359	Base	MOV, MOVS (register)	MOV_r_T3_RRX	T32	MOV	base	baseline	executed	verified
+BASE-0360	Base	MOV, MOVS (register)	MOV_r_T3	T32	MOV	base	baseline	executed	verified
+BASE-0361	Base	MOV, MOVS (register)	MOVS_r_T3_RRX	T32	MOVS	base	baseline	executed	verified
+BASE-0362	Base	MOV, MOVS (register)	MOVS_r_T3	T32	MOVS	base	baseline	executed	verified
+BASE-0363	Base	MOV, MOVS (register-shifted register)	MOVS_rr_A1	A32	MOVS	base	baseline	executed	verified
+BASE-0364	Base	MOV, MOVS (register-shifted register)	MOV_rr_A1	A32	MOV	base	baseline	executed	verified
+BASE-0365	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_ASR	T16	MOV	base	baseline	executed	verified
+BASE-0366	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_LSL	T16	MOV	base	baseline	executed	verified
+BASE-0367	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_LSR	T16	MOV	base	baseline	executed	verified
+BASE-0368	Base	MOV, MOVS (register-shifted register)	MOV_rr_T1_ROR	T16	MOV	base	baseline	executed	verified
+BASE-0369	Base	MOV, MOVS (register-shifted register)	MOVS_rr_T2	T32	MOVS	base	baseline	executed	verified
+BASE-0370	Base	MOV, MOVS (register-shifted register)	MOV_rr_T2	T32	MOV	base	baseline	executed	verified
+BASE-0371	Base	MOVT	MOVT_A1	A32	MOVT	base	baseline	executed	verified
+BASE-0372	Base	MOVT	MOVT_T1	T32	MOVT	base	baseline	executed	verified
+BASE-0373	Base	MRC	MRC_A1	A32	MRC	base	baseline	restricted	verified
+BASE-0374	Base	MRC	MRC_T1	T32	MRC	base	baseline	restricted	verified
+BASE-0375	Base	MRRC	MRRC_A1	A32	MRRC	base	baseline	restricted	verified
+BASE-0376	Base	MRRC	MRRC_T1	T32	MRRC	base	baseline	restricted	verified
+BASE-0377	Base	MRS	MRS_A1_AS	A32	MRS	base	baseline	restricted	verified
+BASE-0378	Base	MRS	MRS_T1_AS	T32	MRS	base	baseline	restricted	verified
 BASE-0379	Base	MRS (Banked register)	MRS_br_A1_AS	A32	MRS	base	baseline	undefined	absent
 BASE-0380	Base	MRS (Banked register)	MRS_br_T1_AS	T32	MRS	base	baseline	undefined	absent
 BASE-0381	Base	MSR (Banked register)	MSR_br_A1_AS	A32	MSR	base	baseline	undefined	absent
 BASE-0382	Base	MSR (Banked register)	MSR_br_T1_AS	T32	MSR	base	baseline	undefined	absent
-BASE-0383	Base	MSR (immediate)	MSR_i_A1_AS	A32	MSR	base	baseline	restricted	pending
-BASE-0384	Base	MSR (register)	MSR_r_A1_AS	A32	MSR	base	baseline	restricted	pending
-BASE-0385	Base	MSR (register)	MSR_r_T1_AS	T32	MSR	base	baseline	restricted	pending
-BASE-0386	Base	MUL, MULS	MULS_A1	A32	MULS	base	baseline	executed	pending
-BASE-0387	Base	MUL, MULS	MUL_A1	A32	MUL	base	baseline	executed	pending
-BASE-0388	Base	MUL, MULS	MUL_T1	T16	MUL	base	baseline	executed	pending
-BASE-0389	Base	MUL, MULS	MUL_T2	T32	MUL	base	baseline	executed	pending
-BASE-0390	Base	MVN, MVNS (immediate)	MVN_i_A1	A32	MVN	base	baseline	executed	pending
-BASE-0391	Base	MVN, MVNS (immediate)	MVNS_i_A1	A32	MVNS	base	baseline	executed	pending
-BASE-0392	Base	MVN, MVNS (immediate)	MVN_i_T1	T32	MVN	base	baseline	executed	pending
-BASE-0393	Base	MVN, MVNS (immediate)	MVNS_i_T1	T32	MVNS	base	baseline	executed	pending
-BASE-0394	Base	MVN, MVNS (register)	MVN_r_A1_RRX	A32	MVN	base	baseline	executed	pending
-BASE-0395	Base	MVN, MVNS (register)	MVN_r_A1	A32	MVN	base	baseline	executed	pending
-BASE-0396	Base	MVN, MVNS (register)	MVNS_r_A1_RRX	A32	MVNS	base	baseline	executed	pending
-BASE-0397	Base	MVN, MVNS (register)	MVNS_r_A1	A32	MVNS	base	baseline	executed	pending
-BASE-0398	Base	MVN, MVNS (register)	MVN_r_T1	T16	MVN	base	baseline	executed	pending
-BASE-0399	Base	MVN, MVNS (register)	MVN_r_T2_RRX	T32	MVN	base	baseline	executed	pending
-BASE-0400	Base	MVN, MVNS (register)	MVN_r_T2	T32	MVN	base	baseline	executed	pending
-BASE-0401	Base	MVN, MVNS (register)	MVNS_r_T2_RRX	T32	MVNS	base	baseline	executed	pending
-BASE-0402	Base	MVN, MVNS (register)	MVNS_r_T2	T32	MVNS	base	baseline	executed	pending
-BASE-0403	Base	MVN, MVNS (register-shifted register)	MVNS_rr_A1	A32	MVNS	base	baseline	executed	pending
-BASE-0404	Base	MVN, MVNS (register-shifted register)	MVN_rr_A1	A32	MVN	base	baseline	executed	pending
-BASE-0405	Base	NOP	NOP_A1	A32	NOP	base	baseline	executed	pending
-BASE-0406	Base	NOP	NOP_T1	T16	NOP	base	baseline	executed	pending
-BASE-0407	Base	NOP	NOP_T2	T32	NOP	base	baseline	executed	pending
-BASE-0408	Base	ORN, ORNS (immediate)	ORNS_i_T1	T32	ORNS	base	baseline	executed	pending
-BASE-0409	Base	ORN, ORNS (immediate)	ORN_i_T1	T32	ORN	base	baseline	executed	pending
-BASE-0410	Base	ORN, ORNS (register)	ORN_r_T1_RRX	T32	ORN	base	baseline	executed	pending
-BASE-0411	Base	ORN, ORNS (register)	ORN_r_T1	T32	ORN	base	baseline	executed	pending
-BASE-0412	Base	ORN, ORNS (register)	ORNS_r_T1_RRX	T32	ORNS	base	baseline	executed	pending
-BASE-0413	Base	ORN, ORNS (register)	ORNS_r_T1	T32	ORNS	base	baseline	executed	pending
-BASE-0414	Base	ORR, ORRS (immediate)	ORR_i_A1	A32	ORR	base	baseline	executed	pending
-BASE-0415	Base	ORR, ORRS (immediate)	ORRS_i_A1	A32	ORRS	base	baseline	executed	pending
-BASE-0416	Base	ORR, ORRS (immediate)	ORR_i_T1	T32	ORR	base	baseline	executed	pending
-BASE-0417	Base	ORR, ORRS (immediate)	ORRS_i_T1	T32	ORRS	base	baseline	executed	pending
-BASE-0418	Base	ORR, ORRS (register)	ORR_r_A1_RRX	A32	ORR	base	baseline	executed	pending
-BASE-0419	Base	ORR, ORRS (register)	ORR_r_A1	A32	ORR	base	baseline	executed	pending
-BASE-0420	Base	ORR, ORRS (register)	ORRS_r_A1_RRX	A32	ORRS	base	baseline	executed	pending
-BASE-0421	Base	ORR, ORRS (register)	ORRS_r_A1	A32	ORRS	base	baseline	executed	pending
-BASE-0422	Base	ORR, ORRS (register)	ORR_r_T1	T16	ORR	base	baseline	executed	pending
-BASE-0423	Base	ORR, ORRS (register)	ORR_r_T2_RRX	T32	ORR	base	baseline	executed	pending
-BASE-0424	Base	ORR, ORRS (register)	ORR_r_T2	T32	ORR	base	baseline	executed	pending
-BASE-0425	Base	ORR, ORRS (register)	ORRS_r_T2_RRX	T32	ORRS	base	baseline	executed	pending
-BASE-0426	Base	ORR, ORRS (register)	ORRS_r_T2	T32	ORRS	base	baseline	executed	pending
-BASE-0427	Base	ORR, ORRS (register-shifted register)	ORRS_rr_A1	A32	ORRS	base	baseline	executed	pending
-BASE-0428	Base	ORR, ORRS (register-shifted register)	ORR_rr_A1	A32	ORR	base	baseline	executed	pending
-BASE-0429	Base	PKHBT, PKHTB	PKHBT_A1	A32	PKHBT	base	baseline	executed	pending
-BASE-0430	Base	PKHBT, PKHTB	PKHTB_A1	A32	PKHTB	base	baseline	executed	pending
-BASE-0431	Base	PKHBT, PKHTB	PKHBT_T1	T32	PKHBT	base	baseline	executed	pending
-BASE-0432	Base	PKHBT, PKHTB	PKHTB_T1	T32	PKHTB	base	baseline	executed	pending
-BASE-0433	Base	PLD (literal)	PLD_l_A1	A32	PLD	base	baseline	executed	pending
-BASE-0434	Base	PLD (literal)	PLD_l_T1	T32	PLD	base	baseline	executed	pending
-BASE-0435	Base	PLD, PLDW (immediate)	PLD_i_A1	A32	PLD	base	baseline	executed	pending
-BASE-0436	Base	PLD, PLDW (immediate)	PLDW_i_A1	A32	PLDW	base	baseline	executed	pending
-BASE-0437	Base	PLD, PLDW (immediate)	PLD_i_T1	T32	PLD	base	baseline	executed	pending
-BASE-0438	Base	PLD, PLDW (immediate)	PLDW_i_T1	T32	PLDW	base	baseline	executed	pending
-BASE-0439	Base	PLD, PLDW (immediate)	PLD_i_T2	T32	PLD	base	baseline	executed	pending
-BASE-0440	Base	PLD, PLDW (immediate)	PLDW_i_T2	T32	PLDW	base	baseline	executed	pending
-BASE-0441	Base	PLD, PLDW (register)	PLD_r_A1	A32	PLD	base	baseline	executed	pending
-BASE-0442	Base	PLD, PLDW (register)	PLD_r_A1_RRX	A32	PLD	base	baseline	executed	pending
-BASE-0443	Base	PLD, PLDW (register)	PLDW_r_A1	A32	PLDW	base	baseline	executed	pending
-BASE-0444	Base	PLD, PLDW (register)	PLDW_r_A1_RRX	A32	PLDW	base	baseline	executed	pending
-BASE-0445	Base	PLD, PLDW (register)	PLD_r_T1	T32	PLD	base	baseline	executed	pending
-BASE-0446	Base	PLD, PLDW (register)	PLDW_r_T1	T32	PLDW	base	baseline	executed	pending
-BASE-0447	Base	PLI (immediate, literal)	PLI_i_A1	A32	PLI	base	baseline	executed	pending
-BASE-0448	Base	PLI (immediate, literal)	PLI_i_T1	T32	PLI	base	baseline	executed	pending
-BASE-0449	Base	PLI (immediate, literal)	PLI_i_T2	T32	PLI	base	baseline	executed	pending
-BASE-0450	Base	PLI (immediate, literal)	PLI_i_T3	T32	PLI	base	baseline	executed	pending
-BASE-0451	Base	PLI (register)	PLI_r_A1_RRX	A32	PLI	base	baseline	executed	pending
-BASE-0452	Base	PLI (register)	PLI_r_A1	A32	PLI	base	baseline	executed	pending
-BASE-0453	Base	PLI (register)	PLI_r_T1	T32	PLI	base	baseline	executed	pending
-BASE-0454	Base	POP	POP_T1	T16	POP	base	baseline	executed	pending
-BASE-0455	Base	PSSBB	PSSBB_A1	A32	PSSBB	base	baseline	executed	pending
-BASE-0456	Base	PSSBB	PSSBB_T1	T32	PSSBB	base	baseline	executed	pending
-BASE-0457	Base	PUSH	PUSH_T1	T16	PUSH	base	baseline	executed	pending
-BASE-0458	Base	QADD	QADD_A1	A32	QADD	base	baseline	executed	pending
-BASE-0459	Base	QADD	QADD_T1	T32	QADD	base	baseline	executed	pending
-BASE-0460	Base	QADD16	QADD16_A1	A32	QADD16	base	baseline	executed	pending
-BASE-0461	Base	QADD16	QADD16_T1	T32	QADD16	base	baseline	executed	pending
-BASE-0462	Base	QADD8	QADD8_A1	A32	QADD8	base	baseline	executed	pending
-BASE-0463	Base	QADD8	QADD8_T1	T32	QADD8	base	baseline	executed	pending
-BASE-0464	Base	QASX	QASX_A1	A32	QASX	base	baseline	executed	pending
-BASE-0465	Base	QASX	QASX_T1	T32	QASX	base	baseline	executed	pending
-BASE-0466	Base	QDADD	QDADD_A1	A32	QDADD	base	baseline	executed	pending
-BASE-0467	Base	QDADD	QDADD_T1	T32	QDADD	base	baseline	executed	pending
-BASE-0468	Base	QDSUB	QDSUB_A1	A32	QDSUB	base	baseline	executed	pending
-BASE-0469	Base	QDSUB	QDSUB_T1	T32	QDSUB	base	baseline	executed	pending
-BASE-0470	Base	QSAX	QSAX_A1	A32	QSAX	base	baseline	executed	pending
-BASE-0471	Base	QSAX	QSAX_T1	T32	QSAX	base	baseline	executed	pending
-BASE-0472	Base	QSUB	QSUB_A1	A32	QSUB	base	baseline	executed	pending
-BASE-0473	Base	QSUB	QSUB_T1	T32	QSUB	base	baseline	executed	pending
-BASE-0474	Base	QSUB16	QSUB16_A1	A32	QSUB16	base	baseline	executed	pending
-BASE-0475	Base	QSUB16	QSUB16_T1	T32	QSUB16	base	baseline	executed	pending
-BASE-0476	Base	QSUB8	QSUB8_A1	A32	QSUB8	base	baseline	executed	pending
-BASE-0477	Base	QSUB8	QSUB8_T1	T32	QSUB8	base	baseline	executed	pending
-BASE-0478	Base	RBIT	RBIT_A1	A32	RBIT	base	baseline	executed	pending
-BASE-0479	Base	RBIT	RBIT_T1	T32	RBIT	base	baseline	executed	pending
-BASE-0480	Base	REV	REV_A1	A32	REV	base	baseline	executed	pending
-BASE-0481	Base	REV	REV_T1	T16	REV	base	baseline	executed	pending
-BASE-0482	Base	REV	REV_T2	T32	REV	base	baseline	executed	pending
-BASE-0483	Base	REV16	REV16_A1	A32	REV16	base	baseline	executed	pending
-BASE-0484	Base	REV16	REV16_T1	T16	REV16	base	baseline	executed	pending
-BASE-0485	Base	REV16	REV16_T2	T32	REV16	base	baseline	executed	pending
-BASE-0486	Base	REVSH	REVSH_A1	A32	REVSH	base	baseline	executed	pending
-BASE-0487	Base	REVSH	REVSH_T1	T16	REVSH	base	baseline	executed	pending
-BASE-0488	Base	REVSH	REVSH_T2	T32	REVSH	base	baseline	executed	pending
+BASE-0383	Base	MSR (immediate)	MSR_i_A1_AS	A32	MSR	base	baseline	restricted	verified
+BASE-0384	Base	MSR (register)	MSR_r_A1_AS	A32	MSR	base	baseline	restricted	verified
+BASE-0385	Base	MSR (register)	MSR_r_T1_AS	T32	MSR	base	baseline	restricted	verified
+BASE-0386	Base	MUL, MULS	MULS_A1	A32	MULS	base	baseline	executed	verified
+BASE-0387	Base	MUL, MULS	MUL_A1	A32	MUL	base	baseline	executed	verified
+BASE-0388	Base	MUL, MULS	MUL_T1	T16	MUL	base	baseline	executed	verified
+BASE-0389	Base	MUL, MULS	MUL_T2	T32	MUL	base	baseline	executed	verified
+BASE-0390	Base	MVN, MVNS (immediate)	MVN_i_A1	A32	MVN	base	baseline	executed	verified
+BASE-0391	Base	MVN, MVNS (immediate)	MVNS_i_A1	A32	MVNS	base	baseline	executed	verified
+BASE-0392	Base	MVN, MVNS (immediate)	MVN_i_T1	T32	MVN	base	baseline	executed	verified
+BASE-0393	Base	MVN, MVNS (immediate)	MVNS_i_T1	T32	MVNS	base	baseline	executed	verified
+BASE-0394	Base	MVN, MVNS (register)	MVN_r_A1_RRX	A32	MVN	base	baseline	executed	verified
+BASE-0395	Base	MVN, MVNS (register)	MVN_r_A1	A32	MVN	base	baseline	executed	verified
+BASE-0396	Base	MVN, MVNS (register)	MVNS_r_A1_RRX	A32	MVNS	base	baseline	executed	verified
+BASE-0397	Base	MVN, MVNS (register)	MVNS_r_A1	A32	MVNS	base	baseline	executed	verified
+BASE-0398	Base	MVN, MVNS (register)	MVN_r_T1	T16	MVN	base	baseline	executed	verified
+BASE-0399	Base	MVN, MVNS (register)	MVN_r_T2_RRX	T32	MVN	base	baseline	executed	verified
+BASE-0400	Base	MVN, MVNS (register)	MVN_r_T2	T32	MVN	base	baseline	executed	verified
+BASE-0401	Base	MVN, MVNS (register)	MVNS_r_T2_RRX	T32	MVNS	base	baseline	executed	verified
+BASE-0402	Base	MVN, MVNS (register)	MVNS_r_T2	T32	MVNS	base	baseline	executed	verified
+BASE-0403	Base	MVN, MVNS (register-shifted register)	MVNS_rr_A1	A32	MVNS	base	baseline	executed	verified
+BASE-0404	Base	MVN, MVNS (register-shifted register)	MVN_rr_A1	A32	MVN	base	baseline	executed	verified
+BASE-0405	Base	NOP	NOP_A1	A32	NOP	base	baseline	executed	verified
+BASE-0406	Base	NOP	NOP_T1	T16	NOP	base	baseline	executed	verified
+BASE-0407	Base	NOP	NOP_T2	T32	NOP	base	baseline	executed	verified
+BASE-0408	Base	ORN, ORNS (immediate)	ORNS_i_T1	T32	ORNS	base	baseline	executed	verified
+BASE-0409	Base	ORN, ORNS (immediate)	ORN_i_T1	T32	ORN	base	baseline	executed	verified
+BASE-0410	Base	ORN, ORNS (register)	ORN_r_T1_RRX	T32	ORN	base	baseline	executed	verified
+BASE-0411	Base	ORN, ORNS (register)	ORN_r_T1	T32	ORN	base	baseline	executed	verified
+BASE-0412	Base	ORN, ORNS (register)	ORNS_r_T1_RRX	T32	ORNS	base	baseline	executed	verified
+BASE-0413	Base	ORN, ORNS (register)	ORNS_r_T1	T32	ORNS	base	baseline	executed	verified
+BASE-0414	Base	ORR, ORRS (immediate)	ORR_i_A1	A32	ORR	base	baseline	executed	verified
+BASE-0415	Base	ORR, ORRS (immediate)	ORRS_i_A1	A32	ORRS	base	baseline	executed	verified
+BASE-0416	Base	ORR, ORRS (immediate)	ORR_i_T1	T32	ORR	base	baseline	executed	verified
+BASE-0417	Base	ORR, ORRS (immediate)	ORRS_i_T1	T32	ORRS	base	baseline	executed	verified
+BASE-0418	Base	ORR, ORRS (register)	ORR_r_A1_RRX	A32	ORR	base	baseline	executed	verified
+BASE-0419	Base	ORR, ORRS (register)	ORR_r_A1	A32	ORR	base	baseline	executed	verified
+BASE-0420	Base	ORR, ORRS (register)	ORRS_r_A1_RRX	A32	ORRS	base	baseline	executed	verified
+BASE-0421	Base	ORR, ORRS (register)	ORRS_r_A1	A32	ORRS	base	baseline	executed	verified
+BASE-0422	Base	ORR, ORRS (register)	ORR_r_T1	T16	ORR	base	baseline	executed	verified
+BASE-0423	Base	ORR, ORRS (register)	ORR_r_T2_RRX	T32	ORR	base	baseline	executed	verified
+BASE-0424	Base	ORR, ORRS (register)	ORR_r_T2	T32	ORR	base	baseline	executed	verified
+BASE-0425	Base	ORR, ORRS (register)	ORRS_r_T2_RRX	T32	ORRS	base	baseline	executed	verified
+BASE-0426	Base	ORR, ORRS (register)	ORRS_r_T2	T32	ORRS	base	baseline	executed	verified
+BASE-0427	Base	ORR, ORRS (register-shifted register)	ORRS_rr_A1	A32	ORRS	base	baseline	executed	verified
+BASE-0428	Base	ORR, ORRS (register-shifted register)	ORR_rr_A1	A32	ORR	base	baseline	executed	verified
+BASE-0429	Base	PKHBT, PKHTB	PKHBT_A1	A32	PKHBT	base	baseline	executed	verified
+BASE-0430	Base	PKHBT, PKHTB	PKHTB_A1	A32	PKHTB	base	baseline	executed	verified
+BASE-0431	Base	PKHBT, PKHTB	PKHBT_T1	T32	PKHBT	base	baseline	executed	verified
+BASE-0432	Base	PKHBT, PKHTB	PKHTB_T1	T32	PKHTB	base	baseline	executed	verified
+BASE-0433	Base	PLD (literal)	PLD_l_A1	A32	PLD	base	baseline	executed	verified
+BASE-0434	Base	PLD (literal)	PLD_l_T1	T32	PLD	base	baseline	executed	verified
+BASE-0435	Base	PLD, PLDW (immediate)	PLD_i_A1	A32	PLD	base	baseline	executed	verified
+BASE-0436	Base	PLD, PLDW (immediate)	PLDW_i_A1	A32	PLDW	base	baseline	executed	verified
+BASE-0437	Base	PLD, PLDW (immediate)	PLD_i_T1	T32	PLD	base	baseline	executed	verified
+BASE-0438	Base	PLD, PLDW (immediate)	PLDW_i_T1	T32	PLDW	base	baseline	executed	verified
+BASE-0439	Base	PLD, PLDW (immediate)	PLD_i_T2	T32	PLD	base	baseline	executed	verified
+BASE-0440	Base	PLD, PLDW (immediate)	PLDW_i_T2	T32	PLDW	base	baseline	executed	verified
+BASE-0441	Base	PLD, PLDW (register)	PLD_r_A1	A32	PLD	base	baseline	executed	verified
+BASE-0442	Base	PLD, PLDW (register)	PLD_r_A1_RRX	A32	PLD	base	baseline	executed	verified
+BASE-0443	Base	PLD, PLDW (register)	PLDW_r_A1	A32	PLDW	base	baseline	executed	verified
+BASE-0444	Base	PLD, PLDW (register)	PLDW_r_A1_RRX	A32	PLDW	base	baseline	executed	verified
+BASE-0445	Base	PLD, PLDW (register)	PLD_r_T1	T32	PLD	base	baseline	executed	verified
+BASE-0446	Base	PLD, PLDW (register)	PLDW_r_T1	T32	PLDW	base	baseline	executed	verified
+BASE-0447	Base	PLI (immediate, literal)	PLI_i_A1	A32	PLI	base	baseline	executed	verified
+BASE-0448	Base	PLI (immediate, literal)	PLI_i_T1	T32	PLI	base	baseline	executed	verified
+BASE-0449	Base	PLI (immediate, literal)	PLI_i_T2	T32	PLI	base	baseline	executed	verified
+BASE-0450	Base	PLI (immediate, literal)	PLI_i_T3	T32	PLI	base	baseline	executed	verified
+BASE-0451	Base	PLI (register)	PLI_r_A1_RRX	A32	PLI	base	baseline	executed	verified
+BASE-0452	Base	PLI (register)	PLI_r_A1	A32	PLI	base	baseline	executed	verified
+BASE-0453	Base	PLI (register)	PLI_r_T1	T32	PLI	base	baseline	executed	verified
+BASE-0454	Base	POP	POP_T1	T16	POP	base	baseline	executed	verified
+BASE-0455	Base	PSSBB	PSSBB_A1	A32	PSSBB	base	baseline	executed	verified
+BASE-0456	Base	PSSBB	PSSBB_T1	T32	PSSBB	base	baseline	executed	verified
+BASE-0457	Base	PUSH	PUSH_T1	T16	PUSH	base	baseline	executed	verified
+BASE-0458	Base	QADD	QADD_A1	A32	QADD	base	baseline	executed	verified
+BASE-0459	Base	QADD	QADD_T1	T32	QADD	base	baseline	executed	verified
+BASE-0460	Base	QADD16	QADD16_A1	A32	QADD16	base	baseline	executed	verified
+BASE-0461	Base	QADD16	QADD16_T1	T32	QADD16	base	baseline	executed	verified
+BASE-0462	Base	QADD8	QADD8_A1	A32	QADD8	base	baseline	executed	verified
+BASE-0463	Base	QADD8	QADD8_T1	T32	QADD8	base	baseline	executed	verified
+BASE-0464	Base	QASX	QASX_A1	A32	QASX	base	baseline	executed	verified
+BASE-0465	Base	QASX	QASX_T1	T32	QASX	base	baseline	executed	verified
+BASE-0466	Base	QDADD	QDADD_A1	A32	QDADD	base	baseline	executed	verified
+BASE-0467	Base	QDADD	QDADD_T1	T32	QDADD	base	baseline	executed	verified
+BASE-0468	Base	QDSUB	QDSUB_A1	A32	QDSUB	base	baseline	executed	verified
+BASE-0469	Base	QDSUB	QDSUB_T1	T32	QDSUB	base	baseline	executed	verified
+BASE-0470	Base	QSAX	QSAX_A1	A32	QSAX	base	baseline	executed	verified
+BASE-0471	Base	QSAX	QSAX_T1	T32	QSAX	base	baseline	executed	verified
+BASE-0472	Base	QSUB	QSUB_A1	A32	QSUB	base	baseline	executed	verified
+BASE-0473	Base	QSUB	QSUB_T1	T32	QSUB	base	baseline	executed	verified
+BASE-0474	Base	QSUB16	QSUB16_A1	A32	QSUB16	base	baseline	executed	verified
+BASE-0475	Base	QSUB16	QSUB16_T1	T32	QSUB16	base	baseline	executed	verified
+BASE-0476	Base	QSUB8	QSUB8_A1	A32	QSUB8	base	baseline	executed	verified
+BASE-0477	Base	QSUB8	QSUB8_T1	T32	QSUB8	base	baseline	executed	verified
+BASE-0478	Base	RBIT	RBIT_A1	A32	RBIT	base	baseline	executed	verified
+BASE-0479	Base	RBIT	RBIT_T1	T32	RBIT	base	baseline	executed	verified
+BASE-0480	Base	REV	REV_A1	A32	REV	base	baseline	executed	verified
+BASE-0481	Base	REV	REV_T1	T16	REV	base	baseline	executed	verified
+BASE-0482	Base	REV	REV_T2	T32	REV	base	baseline	executed	verified
+BASE-0483	Base	REV16	REV16_A1	A32	REV16	base	baseline	executed	verified
+BASE-0484	Base	REV16	REV16_T1	T16	REV16	base	baseline	executed	verified
+BASE-0485	Base	REV16	REV16_T2	T32	REV16	base	baseline	executed	verified
+BASE-0486	Base	REVSH	REVSH_A1	A32	REVSH	base	baseline	executed	verified
+BASE-0487	Base	REVSH	REVSH_T1	T16	REVSH	base	baseline	executed	verified
+BASE-0488	Base	REVSH	REVSH_T2	T32	REVSH	base	baseline	executed	verified
 BASE-0489	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFEDA_A1_AS	A32	RFE	base	baseline	undefined	absent
 BASE-0490	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFEDB_A1_AS	A32	RFE	base	baseline	undefined	absent
 BASE-0491	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFEIA_A1_AS	A32	RFE	base	baseline	undefined	absent
 BASE-0492	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFEIB_A1_AS	A32	RFE	base	baseline	undefined	absent
 BASE-0493	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFE_T1_AS	T32	RFE	base	baseline	undefined	absent
 BASE-0494	Base	RFE, RFEDA, RFEDB, RFEIA, RFEIB	RFE_T2_AS	T32	RFE	base	baseline	undefined	absent
-BASE-0495	Base	RSB, RSBS (immediate)	RSB_i_A1	A32	RSB	base	baseline	executed	pending
-BASE-0496	Base	RSB, RSBS (immediate)	RSBS_i_A1	A32	RSBS	base	baseline	executed	pending
-BASE-0497	Base	RSB, RSBS (immediate)	RSB_i_T1	T16	RSB	base	baseline	executed	pending
-BASE-0498	Base	RSB, RSBS (immediate)	RSB_i_T2	T32	RSB	base	baseline	executed	pending
-BASE-0499	Base	RSB, RSBS (immediate)	RSBS_i_T2	T32	RSBS	base	baseline	executed	pending
-BASE-0500	Base	RSB, RSBS (register)	RSB_r_A1_RRX	A32	RSB	base	baseline	executed	pending
-BASE-0501	Base	RSB, RSBS (register)	RSB_r_A1	A32	RSB	base	baseline	executed	pending
-BASE-0502	Base	RSB, RSBS (register)	RSBS_r_A1_RRX	A32	RSBS	base	baseline	executed	pending
-BASE-0503	Base	RSB, RSBS (register)	RSBS_r_A1	A32	RSBS	base	baseline	executed	pending
-BASE-0504	Base	RSB, RSBS (register)	RSB_r_T1_RRX	T32	RSB	base	baseline	executed	pending
-BASE-0505	Base	RSB, RSBS (register)	RSB_r_T1	T32	RSB	base	baseline	executed	pending
-BASE-0506	Base	RSB, RSBS (register)	RSBS_r_T1_RRX	T32	RSBS	base	baseline	executed	pending
-BASE-0507	Base	RSB, RSBS (register)	RSBS_r_T1	T32	RSBS	base	baseline	executed	pending
-BASE-0508	Base	RSB, RSBS (register-shifted register)	RSBS_rr_A1	A32	RSBS	base	baseline	executed	pending
-BASE-0509	Base	RSB, RSBS (register-shifted register)	RSB_rr_A1	A32	RSB	base	baseline	executed	pending
-BASE-0510	Base	RSC, RSCS (immediate)	RSC_i_A1	A32	RSC	base	baseline	executed	pending
-BASE-0511	Base	RSC, RSCS (immediate)	RSCS_i_A1	A32	RSCS	base	baseline	executed	pending
-BASE-0512	Base	RSC, RSCS (register)	RSC_r_A1_RRX	A32	RSC	base	baseline	executed	pending
-BASE-0513	Base	RSC, RSCS (register)	RSC_r_A1	A32	RSC	base	baseline	executed	pending
-BASE-0514	Base	RSC, RSCS (register)	RSCS_r_A1_RRX	A32	RSCS	base	baseline	executed	pending
-BASE-0515	Base	RSC, RSCS (register)	RSCS_r_A1	A32	RSCS	base	baseline	executed	pending
-BASE-0516	Base	RSC, RSCS (register-shifted register)	RSCS_rr_A1	A32	RSCS	base	baseline	executed	pending
-BASE-0517	Base	RSC, RSCS (register-shifted register)	RSC_rr_A1	A32	RSC	base	baseline	executed	pending
-BASE-0518	Base	SADD16	SADD16_A1	A32	SADD16	base	baseline	executed	pending
-BASE-0519	Base	SADD16	SADD16_T1	T32	SADD16	base	baseline	executed	pending
-BASE-0520	Base	SADD8	SADD8_A1	A32	SADD8	base	baseline	executed	pending
-BASE-0521	Base	SADD8	SADD8_T1	T32	SADD8	base	baseline	executed	pending
-BASE-0522	Base	SASX	SASX_A1	A32	SASX	base	baseline	executed	pending
-BASE-0523	Base	SASX	SASX_T1	T32	SASX	base	baseline	executed	pending
+BASE-0495	Base	RSB, RSBS (immediate)	RSB_i_A1	A32	RSB	base	baseline	executed	verified
+BASE-0496	Base	RSB, RSBS (immediate)	RSBS_i_A1	A32	RSBS	base	baseline	executed	verified
+BASE-0497	Base	RSB, RSBS (immediate)	RSB_i_T1	T16	RSB	base	baseline	executed	verified
+BASE-0498	Base	RSB, RSBS (immediate)	RSB_i_T2	T32	RSB	base	baseline	executed	verified
+BASE-0499	Base	RSB, RSBS (immediate)	RSBS_i_T2	T32	RSBS	base	baseline	executed	verified
+BASE-0500	Base	RSB, RSBS (register)	RSB_r_A1_RRX	A32	RSB	base	baseline	executed	verified
+BASE-0501	Base	RSB, RSBS (register)	RSB_r_A1	A32	RSB	base	baseline	executed	verified
+BASE-0502	Base	RSB, RSBS (register)	RSBS_r_A1_RRX	A32	RSBS	base	baseline	executed	verified
+BASE-0503	Base	RSB, RSBS (register)	RSBS_r_A1	A32	RSBS	base	baseline	executed	verified
+BASE-0504	Base	RSB, RSBS (register)	RSB_r_T1_RRX	T32	RSB	base	baseline	executed	verified
+BASE-0505	Base	RSB, RSBS (register)	RSB_r_T1	T32	RSB	base	baseline	executed	verified
+BASE-0506	Base	RSB, RSBS (register)	RSBS_r_T1_RRX	T32	RSBS	base	baseline	executed	verified
+BASE-0507	Base	RSB, RSBS (register)	RSBS_r_T1	T32	RSBS	base	baseline	executed	verified
+BASE-0508	Base	RSB, RSBS (register-shifted register)	RSBS_rr_A1	A32	RSBS	base	baseline	executed	verified
+BASE-0509	Base	RSB, RSBS (register-shifted register)	RSB_rr_A1	A32	RSB	base	baseline	executed	verified
+BASE-0510	Base	RSC, RSCS (immediate)	RSC_i_A1	A32	RSC	base	baseline	executed	verified
+BASE-0511	Base	RSC, RSCS (immediate)	RSCS_i_A1	A32	RSCS	base	baseline	executed	verified
+BASE-0512	Base	RSC, RSCS (register)	RSC_r_A1_RRX	A32	RSC	base	baseline	executed	verified
+BASE-0513	Base	RSC, RSCS (register)	RSC_r_A1	A32	RSC	base	baseline	executed	verified
+BASE-0514	Base	RSC, RSCS (register)	RSCS_r_A1_RRX	A32	RSCS	base	baseline	executed	verified
+BASE-0515	Base	RSC, RSCS (register)	RSCS_r_A1	A32	RSCS	base	baseline	executed	verified
+BASE-0516	Base	RSC, RSCS (register-shifted register)	RSCS_rr_A1	A32	RSCS	base	baseline	executed	verified
+BASE-0517	Base	RSC, RSCS (register-shifted register)	RSC_rr_A1	A32	RSC	base	baseline	executed	verified
+BASE-0518	Base	SADD16	SADD16_A1	A32	SADD16	base	baseline	executed	verified
+BASE-0519	Base	SADD16	SADD16_T1	T32	SADD16	base	baseline	executed	verified
+BASE-0520	Base	SADD8	SADD8_A1	A32	SADD8	base	baseline	executed	verified
+BASE-0521	Base	SADD8	SADD8_T1	T32	SADD8	base	baseline	executed	verified
+BASE-0522	Base	SASX	SASX_A1	A32	SASX	base	baseline	executed	verified
+BASE-0523	Base	SASX	SASX_T1	T32	SASX	base	baseline	executed	verified
 BASE-0524	Base	SB	SB_A1	A32	SB	complete	sb	executed	pending
 BASE-0525	Base	SB	SB_T1	T32	SB	complete	sb	executed	pending
-BASE-0526	Base	SBC, SBCS (immediate)	SBC_i_A1	A32	SBC	base	baseline	executed	pending
-BASE-0527	Base	SBC, SBCS (immediate)	SBCS_i_A1	A32	SBCS	base	baseline	executed	pending
-BASE-0528	Base	SBC, SBCS (immediate)	SBC_i_T1	T32	SBC	base	baseline	executed	pending
-BASE-0529	Base	SBC, SBCS (immediate)	SBCS_i_T1	T32	SBCS	base	baseline	executed	pending
-BASE-0530	Base	SBC, SBCS (register)	SBC_r_A1_RRX	A32	SBC	base	baseline	executed	pending
-BASE-0531	Base	SBC, SBCS (register)	SBC_r_A1	A32	SBC	base	baseline	executed	pending
-BASE-0532	Base	SBC, SBCS (register)	SBCS_r_A1_RRX	A32	SBCS	base	baseline	executed	pending
-BASE-0533	Base	SBC, SBCS (register)	SBCS_r_A1	A32	SBCS	base	baseline	executed	pending
-BASE-0534	Base	SBC, SBCS (register)	SBC_r_T1	T16	SBC	base	baseline	executed	pending
-BASE-0535	Base	SBC, SBCS (register)	SBC_r_T2_RRX	T32	SBC	base	baseline	executed	pending
-BASE-0536	Base	SBC, SBCS (register)	SBC_r_T2	T32	SBC	base	baseline	executed	pending
-BASE-0537	Base	SBC, SBCS (register)	SBCS_r_T2_RRX	T32	SBCS	base	baseline	executed	pending
-BASE-0538	Base	SBC, SBCS (register)	SBCS_r_T2	T32	SBCS	base	baseline	executed	pending
-BASE-0539	Base	SBC, SBCS (register-shifted register)	SBCS_rr_A1	A32	SBCS	base	baseline	executed	pending
-BASE-0540	Base	SBC, SBCS (register-shifted register)	SBC_rr_A1	A32	SBC	base	baseline	executed	pending
-BASE-0541	Base	SBFX	SBFX_A1	A32	SBFX	base	baseline	executed	pending
-BASE-0542	Base	SBFX	SBFX_T1	T32	SBFX	base	baseline	executed	pending
-BASE-0543	Base	SDIV	SDIV_A1	A32	SDIV	base	baseline	executed	pending
-BASE-0544	Base	SDIV	SDIV_T1	T32	SDIV	base	baseline	executed	pending
-BASE-0545	Base	SEL	SEL_A1	A32	SEL	base	baseline	executed	pending
-BASE-0546	Base	SEL	SEL_T1	T32	SEL	base	baseline	executed	pending
+BASE-0526	Base	SBC, SBCS (immediate)	SBC_i_A1	A32	SBC	base	baseline	executed	verified
+BASE-0527	Base	SBC, SBCS (immediate)	SBCS_i_A1	A32	SBCS	base	baseline	executed	verified
+BASE-0528	Base	SBC, SBCS (immediate)	SBC_i_T1	T32	SBC	base	baseline	executed	verified
+BASE-0529	Base	SBC, SBCS (immediate)	SBCS_i_T1	T32	SBCS	base	baseline	executed	verified
+BASE-0530	Base	SBC, SBCS (register)	SBC_r_A1_RRX	A32	SBC	base	baseline	executed	verified
+BASE-0531	Base	SBC, SBCS (register)	SBC_r_A1	A32	SBC	base	baseline	executed	verified
+BASE-0532	Base	SBC, SBCS (register)	SBCS_r_A1_RRX	A32	SBCS	base	baseline	executed	verified
+BASE-0533	Base	SBC, SBCS (register)	SBCS_r_A1	A32	SBCS	base	baseline	executed	verified
+BASE-0534	Base	SBC, SBCS (register)	SBC_r_T1	T16	SBC	base	baseline	executed	verified
+BASE-0535	Base	SBC, SBCS (register)	SBC_r_T2_RRX	T32	SBC	base	baseline	executed	verified
+BASE-0536	Base	SBC, SBCS (register)	SBC_r_T2	T32	SBC	base	baseline	executed	verified
+BASE-0537	Base	SBC, SBCS (register)	SBCS_r_T2_RRX	T32	SBCS	base	baseline	executed	verified
+BASE-0538	Base	SBC, SBCS (register)	SBCS_r_T2	T32	SBCS	base	baseline	executed	verified
+BASE-0539	Base	SBC, SBCS (register-shifted register)	SBCS_rr_A1	A32	SBCS	base	baseline	executed	verified
+BASE-0540	Base	SBC, SBCS (register-shifted register)	SBC_rr_A1	A32	SBC	base	baseline	executed	verified
+BASE-0541	Base	SBFX	SBFX_A1	A32	SBFX	base	baseline	executed	verified
+BASE-0542	Base	SBFX	SBFX_T1	T32	SBFX	base	baseline	executed	verified
+BASE-0543	Base	SDIV	SDIV_A1	A32	SDIV	base	baseline	executed	verified
+BASE-0544	Base	SDIV	SDIV_T1	T32	SDIV	base	baseline	executed	verified
+BASE-0545	Base	SEL	SEL_A1	A32	SEL	base	baseline	executed	verified
+BASE-0546	Base	SEL	SEL_T1	T32	SEL	base	baseline	executed	verified
 BASE-0547	Base	SETEND	SETEND_A1	A32	SETEND	base	baseline	undefined	absent
 BASE-0548	Base	SETEND	SETEND_T1	T16	SETEND	base	baseline	undefined	absent
 BASE-0549	Base	SETPAN	SETPAN_A1	A32	SETPAN	base	baseline	undefined	absent
 BASE-0550	Base	SETPAN	SETPAN_T1	T16	SETPAN	base	baseline	undefined	absent
-BASE-0551	Base	SEV	SEV_A1	A32	SEV	base	baseline	executed	pending
-BASE-0552	Base	SEV	SEV_T1	T16	SEV	base	baseline	executed	pending
-BASE-0553	Base	SEV	SEV_T2	T32	SEV	base	baseline	executed	pending
-BASE-0554	Base	SEVL	SEVL_A1	A32	SEVL	base	baseline	executed	pending
-BASE-0555	Base	SEVL	SEVL_T1	T16	SEVL	base	baseline	executed	pending
-BASE-0556	Base	SEVL	SEVL_T2	T32	SEVL	base	baseline	executed	pending
-BASE-0557	Base	SHADD16	SHADD16_A1	A32	SHADD16	base	baseline	executed	pending
-BASE-0558	Base	SHADD16	SHADD16_T1	T32	SHADD16	base	baseline	executed	pending
-BASE-0559	Base	SHADD8	SHADD8_A1	A32	SHADD8	base	baseline	executed	pending
-BASE-0560	Base	SHADD8	SHADD8_T1	T32	SHADD8	base	baseline	executed	pending
-BASE-0561	Base	SHASX	SHASX_A1	A32	SHASX	base	baseline	executed	pending
-BASE-0562	Base	SHASX	SHASX_T1	T32	SHASX	base	baseline	executed	pending
-BASE-0563	Base	SHSAX	SHSAX_A1	A32	SHSAX	base	baseline	executed	pending
-BASE-0564	Base	SHSAX	SHSAX_T1	T32	SHSAX	base	baseline	executed	pending
-BASE-0565	Base	SHSUB16	SHSUB16_A1	A32	SHSUB16	base	baseline	executed	pending
-BASE-0566	Base	SHSUB16	SHSUB16_T1	T32	SHSUB16	base	baseline	executed	pending
-BASE-0567	Base	SHSUB8	SHSUB8_A1	A32	SHSUB8	base	baseline	executed	pending
-BASE-0568	Base	SHSUB8	SHSUB8_T1	T32	SHSUB8	base	baseline	executed	pending
+BASE-0551	Base	SEV	SEV_A1	A32	SEV	base	baseline	executed	verified
+BASE-0552	Base	SEV	SEV_T1	T16	SEV	base	baseline	executed	verified
+BASE-0553	Base	SEV	SEV_T2	T32	SEV	base	baseline	executed	verified
+BASE-0554	Base	SEVL	SEVL_A1	A32	SEVL	base	baseline	executed	verified
+BASE-0555	Base	SEVL	SEVL_T1	T16	SEVL	base	baseline	executed	verified
+BASE-0556	Base	SEVL	SEVL_T2	T32	SEVL	base	baseline	executed	verified
+BASE-0557	Base	SHADD16	SHADD16_A1	A32	SHADD16	base	baseline	executed	verified
+BASE-0558	Base	SHADD16	SHADD16_T1	T32	SHADD16	base	baseline	executed	verified
+BASE-0559	Base	SHADD8	SHADD8_A1	A32	SHADD8	base	baseline	executed	verified
+BASE-0560	Base	SHADD8	SHADD8_T1	T32	SHADD8	base	baseline	executed	verified
+BASE-0561	Base	SHASX	SHASX_A1	A32	SHASX	base	baseline	executed	verified
+BASE-0562	Base	SHASX	SHASX_T1	T32	SHASX	base	baseline	executed	verified
+BASE-0563	Base	SHSAX	SHSAX_A1	A32	SHSAX	base	baseline	executed	verified
+BASE-0564	Base	SHSAX	SHSAX_T1	T32	SHSAX	base	baseline	executed	verified
+BASE-0565	Base	SHSUB16	SHSUB16_A1	A32	SHSUB16	base	baseline	executed	verified
+BASE-0566	Base	SHSUB16	SHSUB16_T1	T32	SHSUB16	base	baseline	executed	verified
+BASE-0567	Base	SHSUB8	SHSUB8_A1	A32	SHSUB8	base	baseline	executed	verified
+BASE-0568	Base	SHSUB8	SHSUB8_T1	T32	SHSUB8	base	baseline	executed	verified
 BASE-0569	Base	SMC	SMC_A1_AS	A32	SMC	base	baseline	undefined	absent
 BASE-0570	Base	SMC	SMC_T1_AS	T32	SMC	base	baseline	undefined	absent
-BASE-0571	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABB_A1	A32	SMLABB	base	baseline	executed	pending
-BASE-0572	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABT_A1	A32	SMLABT	base	baseline	executed	pending
-BASE-0573	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATB_A1	A32	SMLATB	base	baseline	executed	pending
-BASE-0574	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATT_A1	A32	SMLATT	base	baseline	executed	pending
-BASE-0575	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABB_T1	T32	SMLABB	base	baseline	executed	pending
-BASE-0576	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABT_T1	T32	SMLABT	base	baseline	executed	pending
-BASE-0577	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATB_T1	T32	SMLATB	base	baseline	executed	pending
-BASE-0578	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATT_T1	T32	SMLATT	base	baseline	executed	pending
-BASE-0579	Base	SMLAD, SMLADX	SMLAD_A1	A32	SMLAD	base	baseline	executed	pending
-BASE-0580	Base	SMLAD, SMLADX	SMLADX_A1	A32	SMLADX	base	baseline	executed	pending
-BASE-0581	Base	SMLAD, SMLADX	SMLAD_T1	T32	SMLAD	base	baseline	executed	pending
-BASE-0582	Base	SMLAD, SMLADX	SMLADX_T1	T32	SMLADX	base	baseline	executed	pending
-BASE-0583	Base	SMLAL, SMLALS	SMLALS_A1	A32	SMLALS	base	baseline	executed	pending
-BASE-0584	Base	SMLAL, SMLALS	SMLAL_A1	A32	SMLAL	base	baseline	executed	pending
-BASE-0585	Base	SMLAL, SMLALS	SMLAL_T1	T32	SMLAL	base	baseline	executed	pending
-BASE-0586	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBB_A1	A32	SMLALBB	base	baseline	executed	pending
-BASE-0587	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBT_A1	A32	SMLALBT	base	baseline	executed	pending
-BASE-0588	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTB_A1	A32	SMLALTB	base	baseline	executed	pending
-BASE-0589	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTT_A1	A32	SMLALTT	base	baseline	executed	pending
-BASE-0590	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBB_T1	T32	SMLALBB	base	baseline	executed	pending
-BASE-0591	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBT_T1	T32	SMLALBT	base	baseline	executed	pending
-BASE-0592	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTB_T1	T32	SMLALTB	base	baseline	executed	pending
-BASE-0593	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTT_T1	T32	SMLALTT	base	baseline	executed	pending
-BASE-0594	Base	SMLALD, SMLALDX	SMLALD_A1	A32	SMLALD	base	baseline	executed	pending
-BASE-0595	Base	SMLALD, SMLALDX	SMLALDX_A1	A32	SMLALDX	base	baseline	executed	pending
-BASE-0596	Base	SMLALD, SMLALDX	SMLALD_T1	T32	SMLALD	base	baseline	executed	pending
-BASE-0597	Base	SMLALD, SMLALDX	SMLALDX_T1	T32	SMLALDX	base	baseline	executed	pending
-BASE-0598	Base	SMLAWB, SMLAWT	SMLAWB_A1	A32	SMLAWB	base	baseline	executed	pending
-BASE-0599	Base	SMLAWB, SMLAWT	SMLAWT_A1	A32	SMLAWT	base	baseline	executed	pending
-BASE-0600	Base	SMLAWB, SMLAWT	SMLAWB_T1	T32	SMLAWB	base	baseline	executed	pending
-BASE-0601	Base	SMLAWB, SMLAWT	SMLAWT_T1	T32	SMLAWT	base	baseline	executed	pending
-BASE-0602	Base	SMLSD, SMLSDX	SMLSD_A1	A32	SMLSD	base	baseline	executed	pending
-BASE-0603	Base	SMLSD, SMLSDX	SMLSDX_A1	A32	SMLSDX	base	baseline	executed	pending
-BASE-0604	Base	SMLSD, SMLSDX	SMLSD_T1	T32	SMLSD	base	baseline	executed	pending
-BASE-0605	Base	SMLSD, SMLSDX	SMLSDX_T1	T32	SMLSDX	base	baseline	executed	pending
-BASE-0606	Base	SMLSLD, SMLSLDX	SMLSLD_A1	A32	SMLSLD	base	baseline	executed	pending
-BASE-0607	Base	SMLSLD, SMLSLDX	SMLSLDX_A1	A32	SMLSLDX	base	baseline	executed	pending
-BASE-0608	Base	SMLSLD, SMLSLDX	SMLSLD_T1	T32	SMLSLD	base	baseline	executed	pending
-BASE-0609	Base	SMLSLD, SMLSLDX	SMLSLDX_T1	T32	SMLSLDX	base	baseline	executed	pending
-BASE-0610	Base	SMMLA, SMMLAR	SMMLA_A1	A32	SMMLA	base	baseline	executed	pending
-BASE-0611	Base	SMMLA, SMMLAR	SMMLAR_A1	A32	SMMLAR	base	baseline	executed	pending
-BASE-0612	Base	SMMLA, SMMLAR	SMMLA_T1	T32	SMMLA	base	baseline	executed	pending
-BASE-0613	Base	SMMLA, SMMLAR	SMMLAR_T1	T32	SMMLAR	base	baseline	executed	pending
-BASE-0614	Base	SMMLS, SMMLSR	SMMLS_A1	A32	SMMLS	base	baseline	executed	pending
-BASE-0615	Base	SMMLS, SMMLSR	SMMLSR_A1	A32	SMMLSR	base	baseline	executed	pending
-BASE-0616	Base	SMMLS, SMMLSR	SMMLS_T1	T32	SMMLS	base	baseline	executed	pending
-BASE-0617	Base	SMMLS, SMMLSR	SMMLSR_T1	T32	SMMLSR	base	baseline	executed	pending
-BASE-0618	Base	SMMUL, SMMULR	SMMUL_A1	A32	SMMUL	base	baseline	executed	pending
-BASE-0619	Base	SMMUL, SMMULR	SMMULR_A1	A32	SMMULR	base	baseline	executed	pending
-BASE-0620	Base	SMMUL, SMMULR	SMMUL_T1	T32	SMMUL	base	baseline	executed	pending
-BASE-0621	Base	SMMUL, SMMULR	SMMULR_T1	T32	SMMULR	base	baseline	executed	pending
-BASE-0622	Base	SMUAD, SMUADX	SMUAD_A1	A32	SMUAD	base	baseline	executed	pending
-BASE-0623	Base	SMUAD, SMUADX	SMUADX_A1	A32	SMUADX	base	baseline	executed	pending
-BASE-0624	Base	SMUAD, SMUADX	SMUAD_T1	T32	SMUAD	base	baseline	executed	pending
-BASE-0625	Base	SMUAD, SMUADX	SMUADX_T1	T32	SMUADX	base	baseline	executed	pending
-BASE-0626	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBB_A1	A32	SMULBB	base	baseline	executed	pending
-BASE-0627	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBT_A1	A32	SMULBT	base	baseline	executed	pending
-BASE-0628	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTB_A1	A32	SMULTB	base	baseline	executed	pending
-BASE-0629	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTT_A1	A32	SMULTT	base	baseline	executed	pending
-BASE-0630	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBB_T1	T32	SMULBB	base	baseline	executed	pending
-BASE-0631	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBT_T1	T32	SMULBT	base	baseline	executed	pending
-BASE-0632	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTB_T1	T32	SMULTB	base	baseline	executed	pending
-BASE-0633	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTT_T1	T32	SMULTT	base	baseline	executed	pending
-BASE-0634	Base	SMULL, SMULLS	SMULLS_A1	A32	SMULLS	base	baseline	executed	pending
-BASE-0635	Base	SMULL, SMULLS	SMULL_A1	A32	SMULL	base	baseline	executed	pending
-BASE-0636	Base	SMULL, SMULLS	SMULL_T1	T32	SMULL	base	baseline	executed	pending
-BASE-0637	Base	SMULWB, SMULWT	SMULWB_A1	A32	SMULWB	base	baseline	executed	pending
-BASE-0638	Base	SMULWB, SMULWT	SMULWT_A1	A32	SMULWT	base	baseline	executed	pending
-BASE-0639	Base	SMULWB, SMULWT	SMULWB_T1	T32	SMULWB	base	baseline	executed	pending
-BASE-0640	Base	SMULWB, SMULWT	SMULWT_T1	T32	SMULWT	base	baseline	executed	pending
-BASE-0641	Base	SMUSD, SMUSDX	SMUSD_A1	A32	SMUSD	base	baseline	executed	pending
-BASE-0642	Base	SMUSD, SMUSDX	SMUSDX_A1	A32	SMUSDX	base	baseline	executed	pending
-BASE-0643	Base	SMUSD, SMUSDX	SMUSD_T1	T32	SMUSD	base	baseline	executed	pending
-BASE-0644	Base	SMUSD, SMUSDX	SMUSDX_T1	T32	SMUSDX	base	baseline	executed	pending
+BASE-0571	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABB_A1	A32	SMLABB	base	baseline	executed	verified
+BASE-0572	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABT_A1	A32	SMLABT	base	baseline	executed	verified
+BASE-0573	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATB_A1	A32	SMLATB	base	baseline	executed	verified
+BASE-0574	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATT_A1	A32	SMLATT	base	baseline	executed	verified
+BASE-0575	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABB_T1	T32	SMLABB	base	baseline	executed	verified
+BASE-0576	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLABT_T1	T32	SMLABT	base	baseline	executed	verified
+BASE-0577	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATB_T1	T32	SMLATB	base	baseline	executed	verified
+BASE-0578	Base	SMLABB, SMLABT, SMLATB, SMLATT	SMLATT_T1	T32	SMLATT	base	baseline	executed	verified
+BASE-0579	Base	SMLAD, SMLADX	SMLAD_A1	A32	SMLAD	base	baseline	executed	verified
+BASE-0580	Base	SMLAD, SMLADX	SMLADX_A1	A32	SMLADX	base	baseline	executed	verified
+BASE-0581	Base	SMLAD, SMLADX	SMLAD_T1	T32	SMLAD	base	baseline	executed	verified
+BASE-0582	Base	SMLAD, SMLADX	SMLADX_T1	T32	SMLADX	base	baseline	executed	verified
+BASE-0583	Base	SMLAL, SMLALS	SMLALS_A1	A32	SMLALS	base	baseline	executed	verified
+BASE-0584	Base	SMLAL, SMLALS	SMLAL_A1	A32	SMLAL	base	baseline	executed	verified
+BASE-0585	Base	SMLAL, SMLALS	SMLAL_T1	T32	SMLAL	base	baseline	executed	verified
+BASE-0586	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBB_A1	A32	SMLALBB	base	baseline	executed	verified
+BASE-0587	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBT_A1	A32	SMLALBT	base	baseline	executed	verified
+BASE-0588	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTB_A1	A32	SMLALTB	base	baseline	executed	verified
+BASE-0589	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTT_A1	A32	SMLALTT	base	baseline	executed	verified
+BASE-0590	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBB_T1	T32	SMLALBB	base	baseline	executed	verified
+BASE-0591	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALBT_T1	T32	SMLALBT	base	baseline	executed	verified
+BASE-0592	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTB_T1	T32	SMLALTB	base	baseline	executed	verified
+BASE-0593	Base	SMLALBB, SMLALBT, SMLALTB, SMLALTT	SMLALTT_T1	T32	SMLALTT	base	baseline	executed	verified
+BASE-0594	Base	SMLALD, SMLALDX	SMLALD_A1	A32	SMLALD	base	baseline	executed	verified
+BASE-0595	Base	SMLALD, SMLALDX	SMLALDX_A1	A32	SMLALDX	base	baseline	executed	verified
+BASE-0596	Base	SMLALD, SMLALDX	SMLALD_T1	T32	SMLALD	base	baseline	executed	verified
+BASE-0597	Base	SMLALD, SMLALDX	SMLALDX_T1	T32	SMLALDX	base	baseline	executed	verified
+BASE-0598	Base	SMLAWB, SMLAWT	SMLAWB_A1	A32	SMLAWB	base	baseline	executed	verified
+BASE-0599	Base	SMLAWB, SMLAWT	SMLAWT_A1	A32	SMLAWT	base	baseline	executed	verified
+BASE-0600	Base	SMLAWB, SMLAWT	SMLAWB_T1	T32	SMLAWB	base	baseline	executed	verified
+BASE-0601	Base	SMLAWB, SMLAWT	SMLAWT_T1	T32	SMLAWT	base	baseline	executed	verified
+BASE-0602	Base	SMLSD, SMLSDX	SMLSD_A1	A32	SMLSD	base	baseline	executed	verified
+BASE-0603	Base	SMLSD, SMLSDX	SMLSDX_A1	A32	SMLSDX	base	baseline	executed	verified
+BASE-0604	Base	SMLSD, SMLSDX	SMLSD_T1	T32	SMLSD	base	baseline	executed	verified
+BASE-0605	Base	SMLSD, SMLSDX	SMLSDX_T1	T32	SMLSDX	base	baseline	executed	verified
+BASE-0606	Base	SMLSLD, SMLSLDX	SMLSLD_A1	A32	SMLSLD	base	baseline	executed	verified
+BASE-0607	Base	SMLSLD, SMLSLDX	SMLSLDX_A1	A32	SMLSLDX	base	baseline	executed	verified
+BASE-0608	Base	SMLSLD, SMLSLDX	SMLSLD_T1	T32	SMLSLD	base	baseline	executed	verified
+BASE-0609	Base	SMLSLD, SMLSLDX	SMLSLDX_T1	T32	SMLSLDX	base	baseline	executed	verified
+BASE-0610	Base	SMMLA, SMMLAR	SMMLA_A1	A32	SMMLA	base	baseline	executed	verified
+BASE-0611	Base	SMMLA, SMMLAR	SMMLAR_A1	A32	SMMLAR	base	baseline	executed	verified
+BASE-0612	Base	SMMLA, SMMLAR	SMMLA_T1	T32	SMMLA	base	baseline	executed	verified
+BASE-0613	Base	SMMLA, SMMLAR	SMMLAR_T1	T32	SMMLAR	base	baseline	executed	verified
+BASE-0614	Base	SMMLS, SMMLSR	SMMLS_A1	A32	SMMLS	base	baseline	executed	verified
+BASE-0615	Base	SMMLS, SMMLSR	SMMLSR_A1	A32	SMMLSR	base	baseline	executed	verified
+BASE-0616	Base	SMMLS, SMMLSR	SMMLS_T1	T32	SMMLS	base	baseline	executed	verified
+BASE-0617	Base	SMMLS, SMMLSR	SMMLSR_T1	T32	SMMLSR	base	baseline	executed	verified
+BASE-0618	Base	SMMUL, SMMULR	SMMUL_A1	A32	SMMUL	base	baseline	executed	verified
+BASE-0619	Base	SMMUL, SMMULR	SMMULR_A1	A32	SMMULR	base	baseline	executed	verified
+BASE-0620	Base	SMMUL, SMMULR	SMMUL_T1	T32	SMMUL	base	baseline	executed	verified
+BASE-0621	Base	SMMUL, SMMULR	SMMULR_T1	T32	SMMULR	base	baseline	executed	verified
+BASE-0622	Base	SMUAD, SMUADX	SMUAD_A1	A32	SMUAD	base	baseline	executed	verified
+BASE-0623	Base	SMUAD, SMUADX	SMUADX_A1	A32	SMUADX	base	baseline	executed	verified
+BASE-0624	Base	SMUAD, SMUADX	SMUAD_T1	T32	SMUAD	base	baseline	executed	verified
+BASE-0625	Base	SMUAD, SMUADX	SMUADX_T1	T32	SMUADX	base	baseline	executed	verified
+BASE-0626	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBB_A1	A32	SMULBB	base	baseline	executed	verified
+BASE-0627	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBT_A1	A32	SMULBT	base	baseline	executed	verified
+BASE-0628	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTB_A1	A32	SMULTB	base	baseline	executed	verified
+BASE-0629	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTT_A1	A32	SMULTT	base	baseline	executed	verified
+BASE-0630	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBB_T1	T32	SMULBB	base	baseline	executed	verified
+BASE-0631	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULBT_T1	T32	SMULBT	base	baseline	executed	verified
+BASE-0632	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTB_T1	T32	SMULTB	base	baseline	executed	verified
+BASE-0633	Base	SMULBB, SMULBT, SMULTB, SMULTT	SMULTT_T1	T32	SMULTT	base	baseline	executed	verified
+BASE-0634	Base	SMULL, SMULLS	SMULLS_A1	A32	SMULLS	base	baseline	executed	verified
+BASE-0635	Base	SMULL, SMULLS	SMULL_A1	A32	SMULL	base	baseline	executed	verified
+BASE-0636	Base	SMULL, SMULLS	SMULL_T1	T32	SMULL	base	baseline	executed	verified
+BASE-0637	Base	SMULWB, SMULWT	SMULWB_A1	A32	SMULWB	base	baseline	executed	verified
+BASE-0638	Base	SMULWB, SMULWT	SMULWT_A1	A32	SMULWT	base	baseline	executed	verified
+BASE-0639	Base	SMULWB, SMULWT	SMULWB_T1	T32	SMULWB	base	baseline	executed	verified
+BASE-0640	Base	SMULWB, SMULWT	SMULWT_T1	T32	SMULWT	base	baseline	executed	verified
+BASE-0641	Base	SMUSD, SMUSDX	SMUSD_A1	A32	SMUSD	base	baseline	executed	verified
+BASE-0642	Base	SMUSD, SMUSDX	SMUSDX_A1	A32	SMUSDX	base	baseline	executed	verified
+BASE-0643	Base	SMUSD, SMUSDX	SMUSD_T1	T32	SMUSD	base	baseline	executed	verified
+BASE-0644	Base	SMUSD, SMUSDX	SMUSDX_T1	T32	SMUSDX	base	baseline	executed	verified
 BASE-0645	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRSDA_A1_AS	A32	SRSDA	base	baseline	undefined	absent
 BASE-0646	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRSDB_A1_AS	A32	SRSDB	base	baseline	undefined	absent
 BASE-0647	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRSIA_A1_AS	A32	SRS{IA}	base	baseline	undefined	absent
 BASE-0648	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRSIB_A1_AS	A32	SRSIB	base	baseline	undefined	absent
 BASE-0649	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRS_T1_AS	T32	SRSDB	base	baseline	undefined	absent
 BASE-0650	Base	SRS, SRSDA, SRSDB, SRSIA, SRSIB	SRS_T2_AS	T32	SRS{IA}	base	baseline	undefined	absent
-BASE-0651	Base	SSAT	SSAT_A1_ASR	A32	SSAT	base	baseline	executed	pending
-BASE-0652	Base	SSAT	SSAT_A1_LSL	A32	SSAT	base	baseline	executed	pending
-BASE-0653	Base	SSAT	SSAT_T1_ASR	T32	SSAT	base	baseline	executed	pending
-BASE-0654	Base	SSAT	SSAT_T1_LSL	T32	SSAT	base	baseline	executed	pending
-BASE-0655	Base	SSAT16	SSAT16_A1	A32	SSAT16	base	baseline	executed	pending
-BASE-0656	Base	SSAT16	SSAT16_T1	T32	SSAT16	base	baseline	executed	pending
-BASE-0657	Base	SSAX	SSAX_A1	A32	SSAX	base	baseline	executed	pending
-BASE-0658	Base	SSAX	SSAX_T1	T32	SSAX	base	baseline	executed	pending
-BASE-0659	Base	SSBB	SSBB_A1	A32	SSBB	base	baseline	executed	pending
-BASE-0660	Base	SSBB	SSBB_T1	T32	SSBB	base	baseline	executed	pending
-BASE-0661	Base	SSUB16	SSUB16_A1	A32	SSUB16	base	baseline	executed	pending
-BASE-0662	Base	SSUB16	SSUB16_T1	T32	SSUB16	base	baseline	executed	pending
-BASE-0663	Base	SSUB8	SSUB8_A1	A32	SSUB8	base	baseline	executed	pending
-BASE-0664	Base	SSUB8	SSUB8_T1	T32	SSUB8	base	baseline	executed	pending
+BASE-0651	Base	SSAT	SSAT_A1_ASR	A32	SSAT	base	baseline	executed	verified
+BASE-0652	Base	SSAT	SSAT_A1_LSL	A32	SSAT	base	baseline	executed	verified
+BASE-0653	Base	SSAT	SSAT_T1_ASR	T32	SSAT	base	baseline	executed	verified
+BASE-0654	Base	SSAT	SSAT_T1_LSL	T32	SSAT	base	baseline	executed	verified
+BASE-0655	Base	SSAT16	SSAT16_A1	A32	SSAT16	base	baseline	executed	verified
+BASE-0656	Base	SSAT16	SSAT16_T1	T32	SSAT16	base	baseline	executed	verified
+BASE-0657	Base	SSAX	SSAX_A1	A32	SSAX	base	baseline	executed	verified
+BASE-0658	Base	SSAX	SSAX_T1	T32	SSAX	base	baseline	executed	verified
+BASE-0659	Base	SSBB	SSBB_A1	A32	SSBB	base	baseline	executed	verified
+BASE-0660	Base	SSBB	SSBB_T1	T32	SSBB	base	baseline	executed	verified
+BASE-0661	Base	SSUB16	SSUB16_A1	A32	SSUB16	base	baseline	executed	verified
+BASE-0662	Base	SSUB16	SSUB16_T1	T32	SSUB16	base	baseline	executed	verified
+BASE-0663	Base	SSUB8	SSUB8_A1	A32	SSUB8	base	baseline	executed	verified
+BASE-0664	Base	SSUB8	SSUB8_T1	T32	SSUB8	base	baseline	executed	verified
 BASE-0665	Base	STC	STC_A1_off	A32	STC	base	baseline	undefined	absent
 BASE-0666	Base	STC	STC_A1_post	A32	STC	base	baseline	undefined	absent
 BASE-0667	Base	STC	STC_A1_pre	A32	STC	base	baseline	undefined	absent
@@ -671,246 +671,246 @@ BASE-0669	Base	STC	STC_T1_off	T32	STC	base	baseline	undefined	absent
 BASE-0670	Base	STC	STC_T1_post	T32	STC	base	baseline	undefined	absent
 BASE-0671	Base	STC	STC_T1_pre	T32	STC	base	baseline	undefined	absent
 BASE-0672	Base	STC	STC_T1_unind	T32	STC	base	baseline	undefined	absent
-BASE-0673	Base	STL	STL_A1	A32	STL	base	baseline	executed	pending
-BASE-0674	Base	STL	STL_T1	T32	STL	base	baseline	executed	pending
-BASE-0675	Base	STLB	STLB_A1	A32	STLB	base	baseline	executed	pending
-BASE-0676	Base	STLB	STLB_T1	T32	STLB	base	baseline	executed	pending
-BASE-0677	Base	STLEX	STLEX_A1	A32	STLEX	base	baseline	executed	pending
-BASE-0678	Base	STLEX	STLEX_T1	T32	STLEX	base	baseline	executed	pending
-BASE-0679	Base	STLEXB	STLEXB_A1	A32	STLEXB	base	baseline	executed	pending
-BASE-0680	Base	STLEXB	STLEXB_T1	T32	STLEXB	base	baseline	executed	pending
-BASE-0681	Base	STLEXD	STLEXD_A1	A32	STLEXD	base	baseline	executed	pending
-BASE-0682	Base	STLEXD	STLEXD_T1	T32	STLEXD	base	baseline	executed	pending
-BASE-0683	Base	STLEXH	STLEXH_A1	A32	STLEXH	base	baseline	executed	pending
-BASE-0684	Base	STLEXH	STLEXH_T1	T32	STLEXH	base	baseline	executed	pending
-BASE-0685	Base	STLH	STLH_A1	A32	STLH	base	baseline	executed	pending
-BASE-0686	Base	STLH	STLH_T1	T32	STLH	base	baseline	executed	pending
+BASE-0673	Base	STL	STL_A1	A32	STL	base	baseline	executed	verified
+BASE-0674	Base	STL	STL_T1	T32	STL	base	baseline	executed	verified
+BASE-0675	Base	STLB	STLB_A1	A32	STLB	base	baseline	executed	verified
+BASE-0676	Base	STLB	STLB_T1	T32	STLB	base	baseline	executed	verified
+BASE-0677	Base	STLEX	STLEX_A1	A32	STLEX	base	baseline	executed	verified
+BASE-0678	Base	STLEX	STLEX_T1	T32	STLEX	base	baseline	executed	verified
+BASE-0679	Base	STLEXB	STLEXB_A1	A32	STLEXB	base	baseline	executed	verified
+BASE-0680	Base	STLEXB	STLEXB_T1	T32	STLEXB	base	baseline	executed	verified
+BASE-0681	Base	STLEXD	STLEXD_A1	A32	STLEXD	base	baseline	executed	verified
+BASE-0682	Base	STLEXD	STLEXD_T1	T32	STLEXD	base	baseline	executed	verified
+BASE-0683	Base	STLEXH	STLEXH_A1	A32	STLEXH	base	baseline	executed	verified
+BASE-0684	Base	STLEXH	STLEXH_T1	T32	STLEXH	base	baseline	executed	verified
+BASE-0685	Base	STLH	STLH_A1	A32	STLH	base	baseline	executed	verified
+BASE-0686	Base	STLH	STLH_T1	T32	STLH	base	baseline	executed	verified
 BASE-0687	Base	STM (User registers)	STM_u_A1_AS	A32	STM	base	baseline	undefined	absent
-BASE-0688	Base	STM, STMIA, STMEA	STM_A1	A32	STM	base	baseline	executed	pending
-BASE-0689	Base	STM, STMIA, STMEA	STM_T1	T16	STM	base	baseline	executed	pending
-BASE-0690	Base	STM, STMIA, STMEA	STM_T2	T32	STM	base	baseline	executed	pending
-BASE-0691	Base	STMDA, STMED	STMDA_A1	A32	STM	base	baseline	executed	pending
-BASE-0692	Base	STMDB, STMFD	STMDB_A1	A32	STM	base	baseline	executed	pending
-BASE-0693	Base	STMDB, STMFD	STMDB_T1	T32	STM	base	baseline	executed	pending
-BASE-0694	Base	STMIB, STMFA	STMIB_A1	A32	STM	base	baseline	executed	pending
-BASE-0695	Base	STR (immediate)	STR_i_A1_off	A32	STR	base	baseline	executed	pending
-BASE-0696	Base	STR (immediate)	STR_i_A1_post	A32	STR	base	baseline	executed	pending
-BASE-0697	Base	STR (immediate)	STR_i_A1_pre	A32	STR	base	baseline	executed	pending
-BASE-0698	Base	STR (immediate)	STR_i_T1	T16	STR	base	baseline	executed	pending
-BASE-0699	Base	STR (immediate)	STR_i_T2	T16	STR	base	baseline	executed	pending
-BASE-0700	Base	STR (immediate)	STR_i_T3	T32	STR	base	baseline	executed	pending
-BASE-0701	Base	STR (immediate)	STR_i_T4_off	T32	STR	base	baseline	executed	pending
-BASE-0702	Base	STR (immediate)	STR_i_T4_post	T32	STR	base	baseline	executed	pending
-BASE-0703	Base	STR (immediate)	STR_i_T4_pre	T32	STR	base	baseline	executed	pending
-BASE-0704	Base	STR (register)	STR_r_A1_off	A32	STR	base	baseline	executed	pending
-BASE-0705	Base	STR (register)	STR_r_A1_post	A32	STR	base	baseline	executed	pending
-BASE-0706	Base	STR (register)	STR_r_A1_pre	A32	STR	base	baseline	executed	pending
-BASE-0707	Base	STR (register)	STR_r_T1	T16	STR	base	baseline	executed	pending
-BASE-0708	Base	STR (register)	STR_r_T2	T32	STR	base	baseline	executed	pending
-BASE-0709	Base	STRB (immediate)	STRB_i_A1_off	A32	STRB	base	baseline	executed	pending
-BASE-0710	Base	STRB (immediate)	STRB_i_A1_post	A32	STRB	base	baseline	executed	pending
-BASE-0711	Base	STRB (immediate)	STRB_i_A1_pre	A32	STRB	base	baseline	executed	pending
-BASE-0712	Base	STRB (immediate)	STRB_i_T1	T16	STRB	base	baseline	executed	pending
-BASE-0713	Base	STRB (immediate)	STRB_i_T2	T32	STRB	base	baseline	executed	pending
-BASE-0714	Base	STRB (immediate)	STRB_i_T3_offn	T32	STRB	base	baseline	executed	pending
-BASE-0715	Base	STRB (immediate)	STRB_i_T3_post	T32	STRB	base	baseline	executed	pending
-BASE-0716	Base	STRB (immediate)	STRB_i_T3_pre	T32	STRB	base	baseline	executed	pending
-BASE-0717	Base	STRB (register)	STRB_r_A1_off	A32	STRB	base	baseline	executed	pending
-BASE-0718	Base	STRB (register)	STRB_r_A1_post	A32	STRB	base	baseline	executed	pending
-BASE-0719	Base	STRB (register)	STRB_r_A1_pre	A32	STRB	base	baseline	executed	pending
-BASE-0720	Base	STRB (register)	STRB_r_T1	T16	STRB	base	baseline	executed	pending
-BASE-0721	Base	STRB (register)	STRB_r_T2	T32	STRB	base	baseline	executed	pending
-BASE-0722	Base	STRBT	STRBT_A1	A32	STRBT	base	baseline	executed	pending
-BASE-0723	Base	STRBT	STRBT_A2	A32	STRBT	base	baseline	executed	pending
-BASE-0724	Base	STRBT	STRBT_T1	T32	STRBT	base	baseline	executed	pending
-BASE-0725	Base	STRD (immediate)	STRD_i_A1_off	A32	STRD	base	baseline	executed	pending
-BASE-0726	Base	STRD (immediate)	STRD_i_A1_post	A32	STRD	base	baseline	executed	pending
-BASE-0727	Base	STRD (immediate)	STRD_i_A1_pre	A32	STRD	base	baseline	executed	pending
-BASE-0728	Base	STRD (immediate)	STRD_i_T1_off	T32	STRD	base	baseline	executed	pending
-BASE-0729	Base	STRD (immediate)	STRD_i_T1_post	T32	STRD	base	baseline	executed	pending
-BASE-0730	Base	STRD (immediate)	STRD_i_T1_pre	T32	STRD	base	baseline	executed	pending
-BASE-0731	Base	STRD (register)	STRD_r_A1_off	A32	STRD	base	baseline	executed	pending
-BASE-0732	Base	STRD (register)	STRD_r_A1_post	A32	STRD	base	baseline	executed	pending
-BASE-0733	Base	STRD (register)	STRD_r_A1_pre	A32	STRD	base	baseline	executed	pending
-BASE-0734	Base	STREX	STREX_A1	A32	STREX	base	baseline	executed	pending
-BASE-0735	Base	STREX	STREX_T1	T32	STREX	base	baseline	executed	pending
-BASE-0736	Base	STREXB	STREXB_A1	A32	STREXB	base	baseline	executed	pending
-BASE-0737	Base	STREXB	STREXB_T1	T32	STREXB	base	baseline	executed	pending
-BASE-0738	Base	STREXD	STREXD_A1	A32	STREXD	base	baseline	executed	pending
-BASE-0739	Base	STREXD	STREXD_T1	T32	STREXD	base	baseline	executed	pending
-BASE-0740	Base	STREXH	STREXH_A1	A32	STREXH	base	baseline	executed	pending
-BASE-0741	Base	STREXH	STREXH_T1	T32	STREXH	base	baseline	executed	pending
-BASE-0742	Base	STRH (immediate)	STRH_i_A1_off	A32	STRH	base	baseline	executed	pending
-BASE-0743	Base	STRH (immediate)	STRH_i_A1_post	A32	STRH	base	baseline	executed	pending
-BASE-0744	Base	STRH (immediate)	STRH_i_A1_pre	A32	STRH	base	baseline	executed	pending
-BASE-0745	Base	STRH (immediate)	STRH_i_T1	T16	STRH	base	baseline	executed	pending
-BASE-0746	Base	STRH (immediate)	STRH_i_T2	T32	STRH	base	baseline	executed	pending
-BASE-0747	Base	STRH (immediate)	STRH_i_T3_offn	T32	STRH	base	baseline	executed	pending
-BASE-0748	Base	STRH (immediate)	STRH_i_T3_post	T32	STRH	base	baseline	executed	pending
-BASE-0749	Base	STRH (immediate)	STRH_i_T3_pre	T32	STRH	base	baseline	executed	pending
-BASE-0750	Base	STRH (register)	STRH_r_A1_off	A32	STRH	base	baseline	executed	pending
-BASE-0751	Base	STRH (register)	STRH_r_A1_post	A32	STRH	base	baseline	executed	pending
-BASE-0752	Base	STRH (register)	STRH_r_A1_pre	A32	STRH	base	baseline	executed	pending
-BASE-0753	Base	STRH (register)	STRH_r_T1	T16	STRH	base	baseline	executed	pending
-BASE-0754	Base	STRH (register)	STRH_r_T2	T32	STRH	base	baseline	executed	pending
-BASE-0755	Base	STRHT	STRHT_A1	A32	STRHT	base	baseline	executed	pending
-BASE-0756	Base	STRHT	STRHT_A2	A32	STRHT	base	baseline	executed	pending
-BASE-0757	Base	STRHT	STRHT_T1	T32	STRHT	base	baseline	executed	pending
-BASE-0758	Base	STRT	STRT_A1	A32	STRT	base	baseline	executed	pending
-BASE-0759	Base	STRT	STRT_A2	A32	STRT	base	baseline	executed	pending
-BASE-0760	Base	STRT	STRT_T1	T32	STRT	base	baseline	executed	pending
-BASE-0761	Base	SUB, SUBS (immediate)	SUB_i_A1	A32	SUB	base	baseline	executed	pending
-BASE-0762	Base	SUB, SUBS (immediate)	SUBS_i_A1	A32	SUBS	base	baseline	executed	pending
-BASE-0763	Base	SUB, SUBS (immediate)	SUB_i_T1	T16	SUB	base	baseline	executed	pending
-BASE-0764	Base	SUB, SUBS (immediate)	SUB_i_T2	T16	SUB	base	baseline	executed	pending
-BASE-0765	Base	SUB, SUBS (immediate)	SUB_i_T3	T32	SUB	base	baseline	executed	pending
-BASE-0766	Base	SUB, SUBS (immediate)	SUBS_i_T3	T32	SUBS	base	baseline	executed	pending
-BASE-0767	Base	SUB, SUBS (immediate)	SUB_i_T4	T32	SUBW	base	baseline	executed	pending
+BASE-0688	Base	STM, STMIA, STMEA	STM_A1	A32	STM	base	baseline	executed	verified
+BASE-0689	Base	STM, STMIA, STMEA	STM_T1	T16	STM	base	baseline	executed	verified
+BASE-0690	Base	STM, STMIA, STMEA	STM_T2	T32	STM	base	baseline	executed	verified
+BASE-0691	Base	STMDA, STMED	STMDA_A1	A32	STM	base	baseline	executed	verified
+BASE-0692	Base	STMDB, STMFD	STMDB_A1	A32	STM	base	baseline	executed	verified
+BASE-0693	Base	STMDB, STMFD	STMDB_T1	T32	STM	base	baseline	executed	verified
+BASE-0694	Base	STMIB, STMFA	STMIB_A1	A32	STM	base	baseline	executed	verified
+BASE-0695	Base	STR (immediate)	STR_i_A1_off	A32	STR	base	baseline	executed	verified
+BASE-0696	Base	STR (immediate)	STR_i_A1_post	A32	STR	base	baseline	executed	verified
+BASE-0697	Base	STR (immediate)	STR_i_A1_pre	A32	STR	base	baseline	executed	verified
+BASE-0698	Base	STR (immediate)	STR_i_T1	T16	STR	base	baseline	executed	verified
+BASE-0699	Base	STR (immediate)	STR_i_T2	T16	STR	base	baseline	executed	verified
+BASE-0700	Base	STR (immediate)	STR_i_T3	T32	STR	base	baseline	executed	verified
+BASE-0701	Base	STR (immediate)	STR_i_T4_off	T32	STR	base	baseline	executed	verified
+BASE-0702	Base	STR (immediate)	STR_i_T4_post	T32	STR	base	baseline	executed	verified
+BASE-0703	Base	STR (immediate)	STR_i_T4_pre	T32	STR	base	baseline	executed	verified
+BASE-0704	Base	STR (register)	STR_r_A1_off	A32	STR	base	baseline	executed	verified
+BASE-0705	Base	STR (register)	STR_r_A1_post	A32	STR	base	baseline	executed	verified
+BASE-0706	Base	STR (register)	STR_r_A1_pre	A32	STR	base	baseline	executed	verified
+BASE-0707	Base	STR (register)	STR_r_T1	T16	STR	base	baseline	executed	verified
+BASE-0708	Base	STR (register)	STR_r_T2	T32	STR	base	baseline	executed	verified
+BASE-0709	Base	STRB (immediate)	STRB_i_A1_off	A32	STRB	base	baseline	executed	verified
+BASE-0710	Base	STRB (immediate)	STRB_i_A1_post	A32	STRB	base	baseline	executed	verified
+BASE-0711	Base	STRB (immediate)	STRB_i_A1_pre	A32	STRB	base	baseline	executed	verified
+BASE-0712	Base	STRB (immediate)	STRB_i_T1	T16	STRB	base	baseline	executed	verified
+BASE-0713	Base	STRB (immediate)	STRB_i_T2	T32	STRB	base	baseline	executed	verified
+BASE-0714	Base	STRB (immediate)	STRB_i_T3_offn	T32	STRB	base	baseline	executed	verified
+BASE-0715	Base	STRB (immediate)	STRB_i_T3_post	T32	STRB	base	baseline	executed	verified
+BASE-0716	Base	STRB (immediate)	STRB_i_T3_pre	T32	STRB	base	baseline	executed	verified
+BASE-0717	Base	STRB (register)	STRB_r_A1_off	A32	STRB	base	baseline	executed	verified
+BASE-0718	Base	STRB (register)	STRB_r_A1_post	A32	STRB	base	baseline	executed	verified
+BASE-0719	Base	STRB (register)	STRB_r_A1_pre	A32	STRB	base	baseline	executed	verified
+BASE-0720	Base	STRB (register)	STRB_r_T1	T16	STRB	base	baseline	executed	verified
+BASE-0721	Base	STRB (register)	STRB_r_T2	T32	STRB	base	baseline	executed	verified
+BASE-0722	Base	STRBT	STRBT_A1	A32	STRBT	base	baseline	executed	verified
+BASE-0723	Base	STRBT	STRBT_A2	A32	STRBT	base	baseline	executed	verified
+BASE-0724	Base	STRBT	STRBT_T1	T32	STRBT	base	baseline	executed	verified
+BASE-0725	Base	STRD (immediate)	STRD_i_A1_off	A32	STRD	base	baseline	executed	verified
+BASE-0726	Base	STRD (immediate)	STRD_i_A1_post	A32	STRD	base	baseline	executed	verified
+BASE-0727	Base	STRD (immediate)	STRD_i_A1_pre	A32	STRD	base	baseline	executed	verified
+BASE-0728	Base	STRD (immediate)	STRD_i_T1_off	T32	STRD	base	baseline	executed	verified
+BASE-0729	Base	STRD (immediate)	STRD_i_T1_post	T32	STRD	base	baseline	executed	verified
+BASE-0730	Base	STRD (immediate)	STRD_i_T1_pre	T32	STRD	base	baseline	executed	verified
+BASE-0731	Base	STRD (register)	STRD_r_A1_off	A32	STRD	base	baseline	executed	verified
+BASE-0732	Base	STRD (register)	STRD_r_A1_post	A32	STRD	base	baseline	executed	verified
+BASE-0733	Base	STRD (register)	STRD_r_A1_pre	A32	STRD	base	baseline	executed	verified
+BASE-0734	Base	STREX	STREX_A1	A32	STREX	base	baseline	executed	verified
+BASE-0735	Base	STREX	STREX_T1	T32	STREX	base	baseline	executed	verified
+BASE-0736	Base	STREXB	STREXB_A1	A32	STREXB	base	baseline	executed	verified
+BASE-0737	Base	STREXB	STREXB_T1	T32	STREXB	base	baseline	executed	verified
+BASE-0738	Base	STREXD	STREXD_A1	A32	STREXD	base	baseline	executed	verified
+BASE-0739	Base	STREXD	STREXD_T1	T32	STREXD	base	baseline	executed	verified
+BASE-0740	Base	STREXH	STREXH_A1	A32	STREXH	base	baseline	executed	verified
+BASE-0741	Base	STREXH	STREXH_T1	T32	STREXH	base	baseline	executed	verified
+BASE-0742	Base	STRH (immediate)	STRH_i_A1_off	A32	STRH	base	baseline	executed	verified
+BASE-0743	Base	STRH (immediate)	STRH_i_A1_post	A32	STRH	base	baseline	executed	verified
+BASE-0744	Base	STRH (immediate)	STRH_i_A1_pre	A32	STRH	base	baseline	executed	verified
+BASE-0745	Base	STRH (immediate)	STRH_i_T1	T16	STRH	base	baseline	executed	verified
+BASE-0746	Base	STRH (immediate)	STRH_i_T2	T32	STRH	base	baseline	executed	verified
+BASE-0747	Base	STRH (immediate)	STRH_i_T3_offn	T32	STRH	base	baseline	executed	verified
+BASE-0748	Base	STRH (immediate)	STRH_i_T3_post	T32	STRH	base	baseline	executed	verified
+BASE-0749	Base	STRH (immediate)	STRH_i_T3_pre	T32	STRH	base	baseline	executed	verified
+BASE-0750	Base	STRH (register)	STRH_r_A1_off	A32	STRH	base	baseline	executed	verified
+BASE-0751	Base	STRH (register)	STRH_r_A1_post	A32	STRH	base	baseline	executed	verified
+BASE-0752	Base	STRH (register)	STRH_r_A1_pre	A32	STRH	base	baseline	executed	verified
+BASE-0753	Base	STRH (register)	STRH_r_T1	T16	STRH	base	baseline	executed	verified
+BASE-0754	Base	STRH (register)	STRH_r_T2	T32	STRH	base	baseline	executed	verified
+BASE-0755	Base	STRHT	STRHT_A1	A32	STRHT	base	baseline	executed	verified
+BASE-0756	Base	STRHT	STRHT_A2	A32	STRHT	base	baseline	executed	verified
+BASE-0757	Base	STRHT	STRHT_T1	T32	STRHT	base	baseline	executed	verified
+BASE-0758	Base	STRT	STRT_A1	A32	STRT	base	baseline	executed	verified
+BASE-0759	Base	STRT	STRT_A2	A32	STRT	base	baseline	executed	verified
+BASE-0760	Base	STRT	STRT_T1	T32	STRT	base	baseline	executed	verified
+BASE-0761	Base	SUB, SUBS (immediate)	SUB_i_A1	A32	SUB	base	baseline	executed	verified
+BASE-0762	Base	SUB, SUBS (immediate)	SUBS_i_A1	A32	SUBS	base	baseline	executed	verified
+BASE-0763	Base	SUB, SUBS (immediate)	SUB_i_T1	T16	SUB	base	baseline	executed	verified
+BASE-0764	Base	SUB, SUBS (immediate)	SUB_i_T2	T16	SUB	base	baseline	executed	verified
+BASE-0765	Base	SUB, SUBS (immediate)	SUB_i_T3	T32	SUB	base	baseline	executed	verified
+BASE-0766	Base	SUB, SUBS (immediate)	SUBS_i_T3	T32	SUBS	base	baseline	executed	verified
+BASE-0767	Base	SUB, SUBS (immediate)	SUB_i_T4	T32	SUBW	base	baseline	executed	verified
 BASE-0768	Base	SUB, SUBS (immediate)	SUBS_PC_T5_AS	T32	SUBS	base	baseline	undefined	absent
-BASE-0769	Base	SUB, SUBS (register)	SUB_r_A1_RRX	A32	SUB	base	baseline	executed	pending
-BASE-0770	Base	SUB, SUBS (register)	SUB_r_A1	A32	SUB	base	baseline	executed	pending
-BASE-0771	Base	SUB, SUBS (register)	SUBS_r_A1_RRX	A32	SUBS	base	baseline	executed	pending
-BASE-0772	Base	SUB, SUBS (register)	SUBS_r_A1	A32	SUBS	base	baseline	executed	pending
-BASE-0773	Base	SUB, SUBS (register)	SUB_r_T1	T16	SUB	base	baseline	executed	pending
-BASE-0774	Base	SUB, SUBS (register)	SUB_r_T2_RRX	T32	SUB	base	baseline	executed	pending
-BASE-0775	Base	SUB, SUBS (register)	SUB_r_T2	T32	SUB	base	baseline	executed	pending
-BASE-0776	Base	SUB, SUBS (register)	SUBS_r_T2_RRX	T32	SUBS	base	baseline	executed	pending
-BASE-0777	Base	SUB, SUBS (register)	SUBS_r_T2	T32	SUBS	base	baseline	executed	pending
-BASE-0778	Base	SUB, SUBS (register-shifted register)	SUBS_rr_A1	A32	SUBS	base	baseline	executed	pending
-BASE-0779	Base	SUB, SUBS (register-shifted register)	SUB_rr_A1	A32	SUB	base	baseline	executed	pending
-BASE-0780	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_A1	A32	SUB	base	baseline	executed	pending
-BASE-0781	Base	SUB, SUBS (SP minus immediate)	SUBS_SP_i_A1	A32	SUBS	base	baseline	executed	pending
-BASE-0782	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T1	T16	SUB	base	baseline	executed	pending
-BASE-0783	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T2	T32	SUB	base	baseline	executed	pending
-BASE-0784	Base	SUB, SUBS (SP minus immediate)	SUBS_SP_i_T2	T32	SUBS	base	baseline	executed	pending
-BASE-0785	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T3	T32	SUBW	base	baseline	executed	pending
-BASE-0786	Base	SUB, SUBS (SP minus register)	SUB_SP_r_A1_RRX	A32	SUB	base	baseline	executed	pending
-BASE-0787	Base	SUB, SUBS (SP minus register)	SUB_SP_r_A1	A32	SUB	base	baseline	executed	pending
-BASE-0788	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_A1_RRX	A32	SUBS	base	baseline	executed	pending
-BASE-0789	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_A1	A32	SUBS	base	baseline	executed	pending
-BASE-0790	Base	SUB, SUBS (SP minus register)	SUB_SP_r_T1_RRX	T32	SUB	base	baseline	executed	pending
-BASE-0791	Base	SUB, SUBS (SP minus register)	SUB_SP_r_T1	T32	SUB	base	baseline	executed	pending
-BASE-0792	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_T1_RRX	T32	SUBS	base	baseline	executed	pending
-BASE-0793	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_T1	T32	SUBS	base	baseline	executed	pending
-BASE-0794	Base	SVC	SVC_A1	A32	SVC	base	baseline	executed	pending
-BASE-0795	Base	SVC	SVC_T1	T16	SVC	base	baseline	executed	pending
-BASE-0796	Base	SXTAB	SXTAB_A1	A32	SXTAB	base	baseline	executed	pending
-BASE-0797	Base	SXTAB	SXTAB_T1	T32	SXTAB	base	baseline	executed	pending
-BASE-0798	Base	SXTAB16	SXTAB16_A1	A32	SXTAB16	base	baseline	executed	pending
-BASE-0799	Base	SXTAB16	SXTAB16_T1	T32	SXTAB16	base	baseline	executed	pending
-BASE-0800	Base	SXTAH	SXTAH_A1	A32	SXTAH	base	baseline	executed	pending
-BASE-0801	Base	SXTAH	SXTAH_T1	T32	SXTAH	base	baseline	executed	pending
-BASE-0802	Base	SXTB	SXTB_A1	A32	SXTB	base	baseline	executed	pending
-BASE-0803	Base	SXTB	SXTB_T1	T16	SXTB	base	baseline	executed	pending
-BASE-0804	Base	SXTB	SXTB_T2	T32	SXTB	base	baseline	executed	pending
-BASE-0805	Base	SXTB16	SXTB16_A1	A32	SXTB16	base	baseline	executed	pending
-BASE-0806	Base	SXTB16	SXTB16_T1	T32	SXTB16	base	baseline	executed	pending
-BASE-0807	Base	SXTH	SXTH_A1	A32	SXTH	base	baseline	executed	pending
-BASE-0808	Base	SXTH	SXTH_T1	T16	SXTH	base	baseline	executed	pending
-BASE-0809	Base	SXTH	SXTH_T2	T32	SXTH	base	baseline	executed	pending
-BASE-0810	Base	TBB, TBH	TBB_T1	T32	TBB	base	baseline	executed	pending
-BASE-0811	Base	TBB, TBH	TBH_T1	T32	TBH	base	baseline	executed	pending
-BASE-0812	Base	TEQ (immediate)	TEQ_i_A1	A32	TEQ	base	baseline	executed	pending
-BASE-0813	Base	TEQ (immediate)	TEQ_i_T1	T32	TEQ	base	baseline	executed	pending
-BASE-0814	Base	TEQ (register)	TEQ_r_A1_RRX	A32	TEQ	base	baseline	executed	pending
-BASE-0815	Base	TEQ (register)	TEQ_r_A1	A32	TEQ	base	baseline	executed	pending
-BASE-0816	Base	TEQ (register)	TEQ_r_T1_RRX	T32	TEQ	base	baseline	executed	pending
-BASE-0817	Base	TEQ (register)	TEQ_r_T1	T32	TEQ	base	baseline	executed	pending
-BASE-0818	Base	TEQ (register-shifted register)	TEQ_rr_A1	A32	TEQ	base	baseline	executed	pending
-BASE-0819	Base	TSB	TSB_A1	A32	TSB	base	baseline	executed	pending
-BASE-0820	Base	TSB	TSB_T1	T32	TSB	base	baseline	executed	pending
-BASE-0821	Base	TST (immediate)	TST_i_A1	A32	TST	base	baseline	executed	pending
-BASE-0822	Base	TST (immediate)	TST_i_T1	T32	TST	base	baseline	executed	pending
-BASE-0823	Base	TST (register)	TST_r_A1_RRX	A32	TST	base	baseline	executed	pending
-BASE-0824	Base	TST (register)	TST_r_A1	A32	TST	base	baseline	executed	pending
-BASE-0825	Base	TST (register)	TST_r_T1	T16	TST	base	baseline	executed	pending
-BASE-0826	Base	TST (register)	TST_r_T2_RRX	T32	TST	base	baseline	executed	pending
-BASE-0827	Base	TST (register)	TST_r_T2	T32	TST	base	baseline	executed	pending
-BASE-0828	Base	TST (register-shifted register)	TST_rr_A1	A32	TST	base	baseline	executed	pending
-BASE-0829	Base	UADD16	UADD16_A1	A32	UADD16	base	baseline	executed	pending
-BASE-0830	Base	UADD16	UADD16_T1	T32	UADD16	base	baseline	executed	pending
-BASE-0831	Base	UADD8	UADD8_A1	A32	UADD8	base	baseline	executed	pending
-BASE-0832	Base	UADD8	UADD8_T1	T32	UADD8	base	baseline	executed	pending
-BASE-0833	Base	UASX	UASX_A1	A32	UASX	base	baseline	executed	pending
-BASE-0834	Base	UASX	UASX_T1	T32	UASX	base	baseline	executed	pending
-BASE-0835	Base	UBFX	UBFX_A1	A32	UBFX	base	baseline	executed	pending
-BASE-0836	Base	UBFX	UBFX_T1	T32	UBFX	base	baseline	executed	pending
-BASE-0837	Base	UDF	UDF_A1	A32	UDF	base	baseline	executed	pending
-BASE-0838	Base	UDF	UDF_T1	T16	UDF	base	baseline	executed	pending
-BASE-0839	Base	UDF	UDF_T2	T32	UDF	base	baseline	executed	pending
-BASE-0840	Base	UDIV	UDIV_A1	A32	UDIV	base	baseline	executed	pending
-BASE-0841	Base	UDIV	UDIV_T1	T32	UDIV	base	baseline	executed	pending
-BASE-0842	Base	UHADD16	UHADD16_A1	A32	UHADD16	base	baseline	executed	pending
-BASE-0843	Base	UHADD16	UHADD16_T1	T32	UHADD16	base	baseline	executed	pending
-BASE-0844	Base	UHADD8	UHADD8_A1	A32	UHADD8	base	baseline	executed	pending
-BASE-0845	Base	UHADD8	UHADD8_T1	T32	UHADD8	base	baseline	executed	pending
-BASE-0846	Base	UHASX	UHASX_A1	A32	UHASX	base	baseline	executed	pending
-BASE-0847	Base	UHASX	UHASX_T1	T32	UHASX	base	baseline	executed	pending
-BASE-0848	Base	UHSAX	UHSAX_A1	A32	UHSAX	base	baseline	executed	pending
-BASE-0849	Base	UHSAX	UHSAX_T1	T32	UHSAX	base	baseline	executed	pending
-BASE-0850	Base	UHSUB16	UHSUB16_A1	A32	UHSUB16	base	baseline	executed	pending
-BASE-0851	Base	UHSUB16	UHSUB16_T1	T32	UHSUB16	base	baseline	executed	pending
-BASE-0852	Base	UHSUB8	UHSUB8_A1	A32	UHSUB8	base	baseline	executed	pending
-BASE-0853	Base	UHSUB8	UHSUB8_T1	T32	UHSUB8	base	baseline	executed	pending
-BASE-0854	Base	UMAAL	UMAAL_A1	A32	UMAAL	base	baseline	executed	pending
-BASE-0855	Base	UMAAL	UMAAL_T1	T32	UMAAL	base	baseline	executed	pending
-BASE-0856	Base	UMLAL, UMLALS	UMLALS_A1	A32	UMLALS	base	baseline	executed	pending
-BASE-0857	Base	UMLAL, UMLALS	UMLAL_A1	A32	UMLAL	base	baseline	executed	pending
-BASE-0858	Base	UMLAL, UMLALS	UMLAL_T1	T32	UMLAL	base	baseline	executed	pending
-BASE-0859	Base	UMULL, UMULLS	UMULLS_A1	A32	UMULLS	base	baseline	executed	pending
-BASE-0860	Base	UMULL, UMULLS	UMULL_A1	A32	UMULL	base	baseline	executed	pending
-BASE-0861	Base	UMULL, UMULLS	UMULL_T1	T32	UMULL	base	baseline	executed	pending
-BASE-0862	Base	UQADD16	UQADD16_A1	A32	UQADD16	base	baseline	executed	pending
-BASE-0863	Base	UQADD16	UQADD16_T1	T32	UQADD16	base	baseline	executed	pending
-BASE-0864	Base	UQADD8	UQADD8_A1	A32	UQADD8	base	baseline	executed	pending
-BASE-0865	Base	UQADD8	UQADD8_T1	T32	UQADD8	base	baseline	executed	pending
-BASE-0866	Base	UQASX	UQASX_A1	A32	UQASX	base	baseline	executed	pending
-BASE-0867	Base	UQASX	UQASX_T1	T32	UQASX	base	baseline	executed	pending
-BASE-0868	Base	UQSAX	UQSAX_A1	A32	UQSAX	base	baseline	executed	pending
-BASE-0869	Base	UQSAX	UQSAX_T1	T32	UQSAX	base	baseline	executed	pending
-BASE-0870	Base	UQSUB16	UQSUB16_A1	A32	UQSUB16	base	baseline	executed	pending
-BASE-0871	Base	UQSUB16	UQSUB16_T1	T32	UQSUB16	base	baseline	executed	pending
-BASE-0872	Base	UQSUB8	UQSUB8_A1	A32	UQSUB8	base	baseline	executed	pending
-BASE-0873	Base	UQSUB8	UQSUB8_T1	T32	UQSUB8	base	baseline	executed	pending
-BASE-0874	Base	USAD8	USAD8_A1	A32	USAD8	base	baseline	executed	pending
-BASE-0875	Base	USAD8	USAD8_T1	T32	USAD8	base	baseline	executed	pending
-BASE-0876	Base	USADA8	USADA8_A1	A32	USADA8	base	baseline	executed	pending
-BASE-0877	Base	USADA8	USADA8_T1	T32	USADA8	base	baseline	executed	pending
-BASE-0878	Base	USAT	USAT_A1_ASR	A32	USAT	base	baseline	executed	pending
-BASE-0879	Base	USAT	USAT_A1_LSL	A32	USAT	base	baseline	executed	pending
-BASE-0880	Base	USAT	USAT_T1_ASR	T32	USAT	base	baseline	executed	pending
-BASE-0881	Base	USAT	USAT_T1_LSL	T32	USAT	base	baseline	executed	pending
-BASE-0882	Base	USAT16	USAT16_A1	A32	USAT16	base	baseline	executed	pending
-BASE-0883	Base	USAT16	USAT16_T1	T32	USAT16	base	baseline	executed	pending
-BASE-0884	Base	USAX	USAX_A1	A32	USAX	base	baseline	executed	pending
-BASE-0885	Base	USAX	USAX_T1	T32	USAX	base	baseline	executed	pending
-BASE-0886	Base	USUB16	USUB16_A1	A32	USUB16	base	baseline	executed	pending
-BASE-0887	Base	USUB16	USUB16_T1	T32	USUB16	base	baseline	executed	pending
-BASE-0888	Base	USUB8	USUB8_A1	A32	USUB8	base	baseline	executed	pending
-BASE-0889	Base	USUB8	USUB8_T1	T32	USUB8	base	baseline	executed	pending
-BASE-0890	Base	UXTAB	UXTAB_A1	A32	UXTAB	base	baseline	executed	pending
-BASE-0891	Base	UXTAB	UXTAB_T1	T32	UXTAB	base	baseline	executed	pending
-BASE-0892	Base	UXTAB16	UXTAB16_A1	A32	UXTAB16	base	baseline	executed	pending
-BASE-0893	Base	UXTAB16	UXTAB16_T1	T32	UXTAB16	base	baseline	executed	pending
-BASE-0894	Base	UXTAH	UXTAH_A1	A32	UXTAH	base	baseline	executed	pending
-BASE-0895	Base	UXTAH	UXTAH_T1	T32	UXTAH	base	baseline	executed	pending
-BASE-0896	Base	UXTB	UXTB_A1	A32	UXTB	base	baseline	executed	pending
-BASE-0897	Base	UXTB	UXTB_T1	T16	UXTB	base	baseline	executed	pending
-BASE-0898	Base	UXTB	UXTB_T2	T32	UXTB	base	baseline	executed	pending
-BASE-0899	Base	UXTB16	UXTB16_A1	A32	UXTB16	base	baseline	executed	pending
-BASE-0900	Base	UXTB16	UXTB16_T1	T32	UXTB16	base	baseline	executed	pending
-BASE-0901	Base	UXTH	UXTH_A1	A32	UXTH	base	baseline	executed	pending
-BASE-0902	Base	UXTH	UXTH_T1	T16	UXTH	base	baseline	executed	pending
-BASE-0903	Base	UXTH	UXTH_T2	T32	UXTH	base	baseline	executed	pending
-BASE-0904	Base	WFE	WFE_A1	A32	WFE	base	baseline	executed	pending
-BASE-0905	Base	WFE	WFE_T1	T16	WFE	base	baseline	executed	pending
-BASE-0906	Base	WFE	WFE_T2	T32	WFE	base	baseline	executed	pending
-BASE-0907	Base	WFI	WFI_A1	A32	WFI	base	baseline	executed	pending
-BASE-0908	Base	WFI	WFI_T1	T16	WFI	base	baseline	executed	pending
-BASE-0909	Base	WFI	WFI_T2	T32	WFI	base	baseline	executed	pending
-BASE-0910	Base	YIELD	YIELD_A1	A32	YIELD	base	baseline	executed	pending
-BASE-0911	Base	YIELD	YIELD_T1	T16	YIELD	base	baseline	executed	pending
-BASE-0912	Base	YIELD	YIELD_T2	T32	YIELD	base	baseline	executed	pending
+BASE-0769	Base	SUB, SUBS (register)	SUB_r_A1_RRX	A32	SUB	base	baseline	executed	verified
+BASE-0770	Base	SUB, SUBS (register)	SUB_r_A1	A32	SUB	base	baseline	executed	verified
+BASE-0771	Base	SUB, SUBS (register)	SUBS_r_A1_RRX	A32	SUBS	base	baseline	executed	verified
+BASE-0772	Base	SUB, SUBS (register)	SUBS_r_A1	A32	SUBS	base	baseline	executed	verified
+BASE-0773	Base	SUB, SUBS (register)	SUB_r_T1	T16	SUB	base	baseline	executed	verified
+BASE-0774	Base	SUB, SUBS (register)	SUB_r_T2_RRX	T32	SUB	base	baseline	executed	verified
+BASE-0775	Base	SUB, SUBS (register)	SUB_r_T2	T32	SUB	base	baseline	executed	verified
+BASE-0776	Base	SUB, SUBS (register)	SUBS_r_T2_RRX	T32	SUBS	base	baseline	executed	verified
+BASE-0777	Base	SUB, SUBS (register)	SUBS_r_T2	T32	SUBS	base	baseline	executed	verified
+BASE-0778	Base	SUB, SUBS (register-shifted register)	SUBS_rr_A1	A32	SUBS	base	baseline	executed	verified
+BASE-0779	Base	SUB, SUBS (register-shifted register)	SUB_rr_A1	A32	SUB	base	baseline	executed	verified
+BASE-0780	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_A1	A32	SUB	base	baseline	executed	verified
+BASE-0781	Base	SUB, SUBS (SP minus immediate)	SUBS_SP_i_A1	A32	SUBS	base	baseline	executed	verified
+BASE-0782	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T1	T16	SUB	base	baseline	executed	verified
+BASE-0783	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T2	T32	SUB	base	baseline	executed	verified
+BASE-0784	Base	SUB, SUBS (SP minus immediate)	SUBS_SP_i_T2	T32	SUBS	base	baseline	executed	verified
+BASE-0785	Base	SUB, SUBS (SP minus immediate)	SUB_SP_i_T3	T32	SUBW	base	baseline	executed	verified
+BASE-0786	Base	SUB, SUBS (SP minus register)	SUB_SP_r_A1_RRX	A32	SUB	base	baseline	executed	verified
+BASE-0787	Base	SUB, SUBS (SP minus register)	SUB_SP_r_A1	A32	SUB	base	baseline	executed	verified
+BASE-0788	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_A1_RRX	A32	SUBS	base	baseline	executed	verified
+BASE-0789	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_A1	A32	SUBS	base	baseline	executed	verified
+BASE-0790	Base	SUB, SUBS (SP minus register)	SUB_SP_r_T1_RRX	T32	SUB	base	baseline	executed	verified
+BASE-0791	Base	SUB, SUBS (SP minus register)	SUB_SP_r_T1	T32	SUB	base	baseline	executed	verified
+BASE-0792	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_T1_RRX	T32	SUBS	base	baseline	executed	verified
+BASE-0793	Base	SUB, SUBS (SP minus register)	SUBS_SP_r_T1	T32	SUBS	base	baseline	executed	verified
+BASE-0794	Base	SVC	SVC_A1	A32	SVC	base	baseline	executed	verified
+BASE-0795	Base	SVC	SVC_T1	T16	SVC	base	baseline	executed	verified
+BASE-0796	Base	SXTAB	SXTAB_A1	A32	SXTAB	base	baseline	executed	verified
+BASE-0797	Base	SXTAB	SXTAB_T1	T32	SXTAB	base	baseline	executed	verified
+BASE-0798	Base	SXTAB16	SXTAB16_A1	A32	SXTAB16	base	baseline	executed	verified
+BASE-0799	Base	SXTAB16	SXTAB16_T1	T32	SXTAB16	base	baseline	executed	verified
+BASE-0800	Base	SXTAH	SXTAH_A1	A32	SXTAH	base	baseline	executed	verified
+BASE-0801	Base	SXTAH	SXTAH_T1	T32	SXTAH	base	baseline	executed	verified
+BASE-0802	Base	SXTB	SXTB_A1	A32	SXTB	base	baseline	executed	verified
+BASE-0803	Base	SXTB	SXTB_T1	T16	SXTB	base	baseline	executed	verified
+BASE-0804	Base	SXTB	SXTB_T2	T32	SXTB	base	baseline	executed	verified
+BASE-0805	Base	SXTB16	SXTB16_A1	A32	SXTB16	base	baseline	executed	verified
+BASE-0806	Base	SXTB16	SXTB16_T1	T32	SXTB16	base	baseline	executed	verified
+BASE-0807	Base	SXTH	SXTH_A1	A32	SXTH	base	baseline	executed	verified
+BASE-0808	Base	SXTH	SXTH_T1	T16	SXTH	base	baseline	executed	verified
+BASE-0809	Base	SXTH	SXTH_T2	T32	SXTH	base	baseline	executed	verified
+BASE-0810	Base	TBB, TBH	TBB_T1	T32	TBB	base	baseline	executed	verified
+BASE-0811	Base	TBB, TBH	TBH_T1	T32	TBH	base	baseline	executed	verified
+BASE-0812	Base	TEQ (immediate)	TEQ_i_A1	A32	TEQ	base	baseline	executed	verified
+BASE-0813	Base	TEQ (immediate)	TEQ_i_T1	T32	TEQ	base	baseline	executed	verified
+BASE-0814	Base	TEQ (register)	TEQ_r_A1_RRX	A32	TEQ	base	baseline	executed	verified
+BASE-0815	Base	TEQ (register)	TEQ_r_A1	A32	TEQ	base	baseline	executed	verified
+BASE-0816	Base	TEQ (register)	TEQ_r_T1_RRX	T32	TEQ	base	baseline	executed	verified
+BASE-0817	Base	TEQ (register)	TEQ_r_T1	T32	TEQ	base	baseline	executed	verified
+BASE-0818	Base	TEQ (register-shifted register)	TEQ_rr_A1	A32	TEQ	base	baseline	executed	verified
+BASE-0819	Base	TSB	TSB_A1	A32	TSB	base	baseline	executed	verified
+BASE-0820	Base	TSB	TSB_T1	T32	TSB	base	baseline	executed	verified
+BASE-0821	Base	TST (immediate)	TST_i_A1	A32	TST	base	baseline	executed	verified
+BASE-0822	Base	TST (immediate)	TST_i_T1	T32	TST	base	baseline	executed	verified
+BASE-0823	Base	TST (register)	TST_r_A1_RRX	A32	TST	base	baseline	executed	verified
+BASE-0824	Base	TST (register)	TST_r_A1	A32	TST	base	baseline	executed	verified
+BASE-0825	Base	TST (register)	TST_r_T1	T16	TST	base	baseline	executed	verified
+BASE-0826	Base	TST (register)	TST_r_T2_RRX	T32	TST	base	baseline	executed	verified
+BASE-0827	Base	TST (register)	TST_r_T2	T32	TST	base	baseline	executed	verified
+BASE-0828	Base	TST (register-shifted register)	TST_rr_A1	A32	TST	base	baseline	executed	verified
+BASE-0829	Base	UADD16	UADD16_A1	A32	UADD16	base	baseline	executed	verified
+BASE-0830	Base	UADD16	UADD16_T1	T32	UADD16	base	baseline	executed	verified
+BASE-0831	Base	UADD8	UADD8_A1	A32	UADD8	base	baseline	executed	verified
+BASE-0832	Base	UADD8	UADD8_T1	T32	UADD8	base	baseline	executed	verified
+BASE-0833	Base	UASX	UASX_A1	A32	UASX	base	baseline	executed	verified
+BASE-0834	Base	UASX	UASX_T1	T32	UASX	base	baseline	executed	verified
+BASE-0835	Base	UBFX	UBFX_A1	A32	UBFX	base	baseline	executed	verified
+BASE-0836	Base	UBFX	UBFX_T1	T32	UBFX	base	baseline	executed	verified
+BASE-0837	Base	UDF	UDF_A1	A32	UDF	base	baseline	executed	verified
+BASE-0838	Base	UDF	UDF_T1	T16	UDF	base	baseline	executed	verified
+BASE-0839	Base	UDF	UDF_T2	T32	UDF	base	baseline	executed	verified
+BASE-0840	Base	UDIV	UDIV_A1	A32	UDIV	base	baseline	executed	verified
+BASE-0841	Base	UDIV	UDIV_T1	T32	UDIV	base	baseline	executed	verified
+BASE-0842	Base	UHADD16	UHADD16_A1	A32	UHADD16	base	baseline	executed	verified
+BASE-0843	Base	UHADD16	UHADD16_T1	T32	UHADD16	base	baseline	executed	verified
+BASE-0844	Base	UHADD8	UHADD8_A1	A32	UHADD8	base	baseline	executed	verified
+BASE-0845	Base	UHADD8	UHADD8_T1	T32	UHADD8	base	baseline	executed	verified
+BASE-0846	Base	UHASX	UHASX_A1	A32	UHASX	base	baseline	executed	verified
+BASE-0847	Base	UHASX	UHASX_T1	T32	UHASX	base	baseline	executed	verified
+BASE-0848	Base	UHSAX	UHSAX_A1	A32	UHSAX	base	baseline	executed	verified
+BASE-0849	Base	UHSAX	UHSAX_T1	T32	UHSAX	base	baseline	executed	verified
+BASE-0850	Base	UHSUB16	UHSUB16_A1	A32	UHSUB16	base	baseline	executed	verified
+BASE-0851	Base	UHSUB16	UHSUB16_T1	T32	UHSUB16	base	baseline	executed	verified
+BASE-0852	Base	UHSUB8	UHSUB8_A1	A32	UHSUB8	base	baseline	executed	verified
+BASE-0853	Base	UHSUB8	UHSUB8_T1	T32	UHSUB8	base	baseline	executed	verified
+BASE-0854	Base	UMAAL	UMAAL_A1	A32	UMAAL	base	baseline	executed	verified
+BASE-0855	Base	UMAAL	UMAAL_T1	T32	UMAAL	base	baseline	executed	verified
+BASE-0856	Base	UMLAL, UMLALS	UMLALS_A1	A32	UMLALS	base	baseline	executed	verified
+BASE-0857	Base	UMLAL, UMLALS	UMLAL_A1	A32	UMLAL	base	baseline	executed	verified
+BASE-0858	Base	UMLAL, UMLALS	UMLAL_T1	T32	UMLAL	base	baseline	executed	verified
+BASE-0859	Base	UMULL, UMULLS	UMULLS_A1	A32	UMULLS	base	baseline	executed	verified
+BASE-0860	Base	UMULL, UMULLS	UMULL_A1	A32	UMULL	base	baseline	executed	verified
+BASE-0861	Base	UMULL, UMULLS	UMULL_T1	T32	UMULL	base	baseline	executed	verified
+BASE-0862	Base	UQADD16	UQADD16_A1	A32	UQADD16	base	baseline	executed	verified
+BASE-0863	Base	UQADD16	UQADD16_T1	T32	UQADD16	base	baseline	executed	verified
+BASE-0864	Base	UQADD8	UQADD8_A1	A32	UQADD8	base	baseline	executed	verified
+BASE-0865	Base	UQADD8	UQADD8_T1	T32	UQADD8	base	baseline	executed	verified
+BASE-0866	Base	UQASX	UQASX_A1	A32	UQASX	base	baseline	executed	verified
+BASE-0867	Base	UQASX	UQASX_T1	T32	UQASX	base	baseline	executed	verified
+BASE-0868	Base	UQSAX	UQSAX_A1	A32	UQSAX	base	baseline	executed	verified
+BASE-0869	Base	UQSAX	UQSAX_T1	T32	UQSAX	base	baseline	executed	verified
+BASE-0870	Base	UQSUB16	UQSUB16_A1	A32	UQSUB16	base	baseline	executed	verified
+BASE-0871	Base	UQSUB16	UQSUB16_T1	T32	UQSUB16	base	baseline	executed	verified
+BASE-0872	Base	UQSUB8	UQSUB8_A1	A32	UQSUB8	base	baseline	executed	verified
+BASE-0873	Base	UQSUB8	UQSUB8_T1	T32	UQSUB8	base	baseline	executed	verified
+BASE-0874	Base	USAD8	USAD8_A1	A32	USAD8	base	baseline	executed	verified
+BASE-0875	Base	USAD8	USAD8_T1	T32	USAD8	base	baseline	executed	verified
+BASE-0876	Base	USADA8	USADA8_A1	A32	USADA8	base	baseline	executed	verified
+BASE-0877	Base	USADA8	USADA8_T1	T32	USADA8	base	baseline	executed	verified
+BASE-0878	Base	USAT	USAT_A1_ASR	A32	USAT	base	baseline	executed	verified
+BASE-0879	Base	USAT	USAT_A1_LSL	A32	USAT	base	baseline	executed	verified
+BASE-0880	Base	USAT	USAT_T1_ASR	T32	USAT	base	baseline	executed	verified
+BASE-0881	Base	USAT	USAT_T1_LSL	T32	USAT	base	baseline	executed	verified
+BASE-0882	Base	USAT16	USAT16_A1	A32	USAT16	base	baseline	executed	verified
+BASE-0883	Base	USAT16	USAT16_T1	T32	USAT16	base	baseline	executed	verified
+BASE-0884	Base	USAX	USAX_A1	A32	USAX	base	baseline	executed	verified
+BASE-0885	Base	USAX	USAX_T1	T32	USAX	base	baseline	executed	verified
+BASE-0886	Base	USUB16	USUB16_A1	A32	USUB16	base	baseline	executed	verified
+BASE-0887	Base	USUB16	USUB16_T1	T32	USUB16	base	baseline	executed	verified
+BASE-0888	Base	USUB8	USUB8_A1	A32	USUB8	base	baseline	executed	verified
+BASE-0889	Base	USUB8	USUB8_T1	T32	USUB8	base	baseline	executed	verified
+BASE-0890	Base	UXTAB	UXTAB_A1	A32	UXTAB	base	baseline	executed	verified
+BASE-0891	Base	UXTAB	UXTAB_T1	T32	UXTAB	base	baseline	executed	verified
+BASE-0892	Base	UXTAB16	UXTAB16_A1	A32	UXTAB16	base	baseline	executed	verified
+BASE-0893	Base	UXTAB16	UXTAB16_T1	T32	UXTAB16	base	baseline	executed	verified
+BASE-0894	Base	UXTAH	UXTAH_A1	A32	UXTAH	base	baseline	executed	verified
+BASE-0895	Base	UXTAH	UXTAH_T1	T32	UXTAH	base	baseline	executed	verified
+BASE-0896	Base	UXTB	UXTB_A1	A32	UXTB	base	baseline	executed	verified
+BASE-0897	Base	UXTB	UXTB_T1	T16	UXTB	base	baseline	executed	verified
+BASE-0898	Base	UXTB	UXTB_T2	T32	UXTB	base	baseline	executed	verified
+BASE-0899	Base	UXTB16	UXTB16_A1	A32	UXTB16	base	baseline	executed	verified
+BASE-0900	Base	UXTB16	UXTB16_T1	T32	UXTB16	base	baseline	executed	verified
+BASE-0901	Base	UXTH	UXTH_A1	A32	UXTH	base	baseline	executed	verified
+BASE-0902	Base	UXTH	UXTH_T1	T16	UXTH	base	baseline	executed	verified
+BASE-0903	Base	UXTH	UXTH_T2	T32	UXTH	base	baseline	executed	verified
+BASE-0904	Base	WFE	WFE_A1	A32	WFE	base	baseline	executed	verified
+BASE-0905	Base	WFE	WFE_T1	T16	WFE	base	baseline	executed	verified
+BASE-0906	Base	WFE	WFE_T2	T32	WFE	base	baseline	executed	verified
+BASE-0907	Base	WFI	WFI_A1	A32	WFI	base	baseline	executed	verified
+BASE-0908	Base	WFI	WFI_T1	T16	WFI	base	baseline	executed	verified
+BASE-0909	Base	WFI	WFI_T2	T32	WFI	base	baseline	executed	verified
+BASE-0910	Base	YIELD	YIELD_A1	A32	YIELD	base	baseline	executed	verified
+BASE-0911	Base	YIELD	YIELD_T1	T16	YIELD	base	baseline	executed	verified
+BASE-0912	Base	YIELD	YIELD_T2	T32	YIELD	base	baseline	executed	verified
 FPSIMD-0001	FP&SIMD	AESD	AESD_A1	A32	AESD	complete	aes	executed	pending
 FPSIMD-0002	FP&SIMD	AESD	AESD_T1	T32	AESD	complete	aes	executed	pending
 FPSIMD-0003	FP&SIMD	AESE	AESE_A1	A32	AESE	complete	aes	executed	pending

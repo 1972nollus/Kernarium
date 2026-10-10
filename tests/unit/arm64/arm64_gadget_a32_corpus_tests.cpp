@@ -20,7 +20,7 @@
  * records of the `memory` suite stand for the aligned and unmapped cases.
  *
  *   uml_arm64_gadget_a32_corpus_tests PACK [--level base|simd|complete]
- *       [--record NAME] [--case TEXT] [--limit N]
+ *       [--record NAME] [--case TEXT] [--limit N] [--forms FILE]
  */
 #include "aarch32_corpus_pack.hpp"
 #include "arm64_gadget_a32_test_support.hpp"
@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -337,6 +338,8 @@ void load_state(::uml::cpu::arm64::CpuState &cpu, const corpus::State &state,
 
 struct Totals final {
 	std::size_t run = 0, skipped = 0, failed = 0, printed = 0;
+	/* The encodings under test of the cases that ran, for --forms. */
+	std::set<std::string> forms;
 };
 
 struct Options final {
@@ -344,6 +347,8 @@ struct Options final {
 	std::string record, text;
 	std::size_t limit = 40;
 	bool explain = false;
+	/* Write the encodings whose cases ran, one per line, to this file. */
+	std::string forms_path;
 };
 
 /* The program's words and what the decoder says of the instruction under
@@ -417,6 +422,7 @@ void check_case(Machine &machine, const corpus::Record &record,
 				      corpus::kCodeBase + origin,
 				      test.halves.size());
 	++totals.run;
+	totals.forms.insert(test.form);
 
 	std::string diffs;
 	const auto note = [&](const char *format, auto... values) {
@@ -524,6 +530,8 @@ int main(int argc, char **argv)
 			options.record = argv[++index];
 		} else if (argument == "--case" && index + 1 < argc) {
 			options.text = argv[++index];
+		} else if (argument == "--forms" && index + 1 < argc) {
+			options.forms_path = argv[++index];
 		} else if (argument == "--explain") {
 			options.explain = true;
 		} else if (argument == "--limit" && index + 1 < argc) {
@@ -553,6 +561,13 @@ int main(int argc, char **argv)
 			    record.name.c_str(), totals.run - before.run,
 			    totals.skipped - before.skipped,
 			    totals.failed - before.failed);
+	}
+	if (!options.forms_path.empty()) {
+		std::FILE *out = std::fopen(options.forms_path.c_str(), "w");
+		require(out != nullptr, "cannot write the form list");
+		for (const auto &form : totals.forms)
+			std::fprintf(out, "%s\n", form.c_str());
+		std::fclose(out);
 	}
 	std::printf("arm64-gadget-a32-corpus: %zu cases run, %zu skipped above the "
 		    "level, %zu failed\n",
