@@ -792,10 +792,10 @@ SME profiles are, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
 Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
-is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
-engine below `base` takes the new entry as the illegal-instruction exit
-without touching the state. The development policy
+milestones, not products. `CpuEngine::run_aarch32` is the entry for a task
+in AArch32 state and the A64 `run` is unchanged. The gadget engine is at
+`base` and the JIT at `none`; an engine below `base` takes the new entry as
+the illegal-instruction exit without touching the state. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
@@ -824,6 +824,35 @@ its ISA and counts its saved guest units in that ISA's unit, a word for A64
 and A32 and a halfword for T32, so one page-bounded validation serves the
 gadget cache's validating lookups, the JIT's stale lookups and the shared
 tier, whose entries must carry the ISA of the key they are stored under.
+
+The gadget engine's AArch32 part translates A32 and T32 with the shared
+decoder into the data-only streams A64 uses, so one executor, one program
+cache and one execution boundary run both
+([`gadgets/a32`](../darwin/cpu/arm64/gadgets/a32/a32_builder.hpp);
+`run_translated_aarch32_blocks` in `cpu/arm64/engine_execution.hpp` is the
+loop an engine's `run_aarch32` takes). Its gadgets come from the decoder's
+table by `engine/generate_a32.py` and `engine/a32.inc`, in a bank, a cold
+section and a veneer island of their own after the SVE part, so no A64 entry
+moves and the part holds no SVE or SME word. A conditional instruction is a
+skip over a run of instructions sharing its condition, a conditional
+terminal gives the skipped instruction back, and a block never ends inside an
+IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
+stored. A word the decoder rejects, a coprocessor word the profile lacks and
+a form above the engine's level end the block in the illegal-instruction exit
+at the word, and under a condition they are skipped like any instruction
+whose condition fails. SVC, BKPT and a retiring exit count their instruction;
+a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
+advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
+ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
+entry with ITSTATE set, and a single step, run one uncached instruction at a
+time until ITSTATE is zero. LDM, STM and LDRD that cross a page translate
+every page before storing, in the A64 memory-transfer helper; LDREX and
+STREX are the A64 exclusive gadgets and share their forward-progress
+mechanism. The rare integer forms (parallel arithmetic, SEL, USAD8, the
+dual multiplies, the 16-bit saturates and extends, QADD and its relatives)
+are one tail helper. `arm64-gadget-a32-control` checks the contract above,
+`arm64-gadget-a32-forms` that the engine defines exactly what the decoder
+defines at its level, and `arm64-gadget-region-layout` the part's placement.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

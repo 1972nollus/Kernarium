@@ -36,7 +36,15 @@ public:
 	[[nodiscard]] ExecutionResult run_aarch32(
 		ExecutionRequest &request) noexcept override
 	{
-		return run_translated_aarch32<gadgets::a32_support>(request);
+		if constexpr (gadgets::a32_support == A32Support::none) {
+			return run_translated_aarch32<gadgets::a32_support>(request);
+		} else {
+			try {
+				return run_translated_aarch32_blocks(executor_, request);
+			} catch (...) {
+				return {.reason = ExitReason::fatal};
+			}
+		}
 	}
 
 private:

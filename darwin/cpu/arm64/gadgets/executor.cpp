@@ -5,6 +5,8 @@
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/aarch32/guest_validation.hpp"
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/gadgets/a32/a32_builder.hpp"
+#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -75,6 +77,58 @@ constexpr std::size_t maximum_t32_validation_units =
 		count += page_instructions;
 	}
 	return count;
+}
+
+/* The guest units of an AArch32 translation window starting at `address`,
+ * fetched a page at a time as fetch_instruction_window does, in units of
+ * `unit` bytes (a word for A32, a halfword for T32). A page that cannot be
+ * fetched ends the window; none at all is zero. */
+[[nodiscard]] std::size_t fetch_a32_units(StaticGuestMemory &memory,
+	std::uint64_t address, std::size_t unit, std::span<std::byte> bytes)
+{
+	const std::size_t capacity = bytes.size() / unit;
+	std::size_t count = 0;
+	while (count < capacity) {
+		const auto at = address + count * unit;
+		const auto page_remaining =
+			guest_page_size - (at & (guest_page_size - 1));
+		auto run = std::min<std::size_t>(capacity - count,
+			static_cast<std::size_t>(page_remaining / unit));
+		if (run == 0)
+			run = 1;
+		if (!memory.fetch(at, bytes.subspan(count * unit, run * unit)))
+			break;
+		count += run;
+	}
+	return count;
+}
+
+/* The profile the gadget engine decodes AArch32 against: its level and no
+ * optional feature until the levels that add them. */
+[[nodiscard]] arm64::aarch32::Profile gadget_a32_profile() noexcept
+{
+	return arm64::aarch32::Profile{
+		static_cast<arm64::aarch32::Level>(arm64::gadgets::a32_support),
+		arm64::aarch32::FeatureSet{}};
+}
+
+/* BKPT's immediate, from the instruction at `key`: imm12:imm4 for A32 and
+ * imm8 for T32. */
+[[nodiscard]] std::uint32_t read_breakpoint_immediate(
+	StaticGuestMemory &memory, std::uint64_t key) noexcept
+{
+	if (arm64::aarch32::key_is_thumb(key)) {
+		std::uint16_t halfword = 0;
+		if (!memory.fetch(arm64::aarch32::key_pc(key),
+				  std::as_writable_bytes(std::span{&halfword, 1})))
+			return 0;
+		return halfword & 0xffU;
+	}
+	std::uint32_t word = 0;
+	if (!memory.fetch(arm64::aarch32::key_pc(key),
+			  std::as_writable_bytes(std::span{&word, 1})))
+		return 0;
+	return (word >> 4 & 0xfff0U) | (word & 0xfU);
 }
 
 void correct_terminal_instruction_count(
@@ -661,6 +715,31 @@ public:
 		if (!program_contains_stream(result.program, stream))
 			return std::nullopt;
 		return result;
+	}
+
+	/* find_stream() with the guest units the translation was validated
+	 * against, for an AArch32 exit: a T32 block's instructions are found
+	 * in them. */
+	struct StreamSource final {
+		BuildResult result;
+		std::span<const std::byte> source;
+	};
+
+	[[nodiscard]] std::optional<StreamSource> find_stream_source(
+		const void *stream) const noexcept
+	{
+		if (stream == nullptr)
+			return std::nullopt;
+		const auto *body = static_cast<const Body *>(
+			bodies_.owner(stream));
+		if (body == nullptr)
+			return std::nullopt;
+		auto result = body->result();
+		if (!program_contains_stream(result.program, stream))
+			return std::nullopt;
+		return StreamSource{std::move(result),
+			{body->source_bytes(),
+			 std::size_t{body->source_word_count} * body->source_unit()}};
 	}
 
 	/* The same lookup for the guest sampler, which runs while this
@@ -1850,6 +1929,279 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 			arm64::sme_profile(build_options_.host_capabilities) ==
 				arm64::SmeProfile::sme2);
 	return finish_block(programs, built, event, cpu, executed);
+}
+
+/* ------------------------------------------------------------ AArch32 */
+
+namespace {
+
+/* Restores what an AArch32 entry changes in the TLB that an A64 entry does
+ * not set again: address tagging is set at every A64 entry, but whether an
+ * unaligned exclusive faults is configured once. AArch32 has no LSE2 form of
+ * LDREX, so every misaligned exclusive faults. */
+class A32TlbScope final {
+public:
+	A32TlbScope(::uml::memory::Tlb &tlb) noexcept
+		: tlb_{tlb}, unaligned_atomics_{tlb.unaligned_atomics}
+	{
+		tlb_.tagged_addresses = false;
+		tlb_.unaligned_atomics = false;
+	}
+	~A32TlbScope() { tlb_.unaligned_atomics = unaligned_atomics_; }
+	A32TlbScope(const A32TlbScope &) = delete;
+	A32TlbScope &operator=(const A32TlbScope &) = delete;
+
+private:
+	::uml::memory::Tlb &tlb_;
+	bool unaligned_atomics_;
+};
+
+} // namespace
+
+::uml::cpu::EngineEvent GadgetExecutor::run_a32_block(
+	arm64::CpuState &cpu, StaticGuestMemory &memory, unsigned long generation,
+	std::size_t &executed)
+{
+	executed = 0;
+	floating_point_syndrome_ = 0;
+	tlb_.fault_alignment = 0;
+	select_cpu(cpu);
+	auto *context = execution_context(generation);
+	if (context == nullptr)
+		return ::uml::cpu::EngineEvent::fatal;
+	const auto sequences =
+		darwin_uml_static_vm_execution_context_sequences(context);
+	preempted_ = sequences.execution_interrupt != 0;
+	if (preempted_)
+		return ::uml::cpu::EngineEvent::interrupt;
+	if (mapping_generation_ != generation ||
+	    mapping_changes_ != sequences.mapping_changes) {
+		memory.prepare(generation, sequences.mapping_changes);
+		tlb_.prepare(generation, sequences.mapping_changes);
+		mapping_generation_ = generation;
+		mapping_changes_ = sequences.mapping_changes;
+	}
+	/* An AArch32 task never has a streaming mode, and the profile has no
+	 * trap-enabled floating point. */
+	if (cpu.svcr != 0U)
+		return ::uml::cpu::EngineEvent::fatal;
+	const A32TlbScope tlb_scope{tlb_};
+	/* A single step, and an entry in the middle of an IT block, run one
+	 * instruction uncached until ITSTATE is zero again. */
+	if (single_step_ || cpu.a32_itstate != 0U)
+		return run_a32_instruction(cpu, memory, executed);
+	return run_a32_translation(cpu, memory, generation,
+		sequences.code_changes, executed);
+}
+
+::uml::cpu::EngineEvent GadgetExecutor::run_a32_translation(
+	arm64::CpuState &cpu, StaticGuestMemory &memory, unsigned long generation,
+	std::uint64_t code_changes, std::size_t &executed)
+{
+	if (cache_generation_ != generation) {
+		cpu.gadget_return_stack = {};
+		cpu.gadget_return_top = 0;
+	}
+	prepare_cache(generation, code_changes);
+	const auto key = cpu.pc;
+	auto selected = find(key, code_changes, memory);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	++cache_diagnostics_.block_entries;
+	if (!selected)
+		++cache_diagnostics_.cache_misses;
+#endif
+	if (!selected) {
+		const auto isa = arm64::aarch32::key_isa(key);
+		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
+		std::array<std::uint32_t, block_instruction_count> window;
+		const auto bytes = std::as_writable_bytes(std::span{window});
+		const auto address = arm64::aarch32::key_pc(key);
+		const auto count = fetch_a32_units(memory, address, unit, bytes);
+		if (count == 0) {
+			const auto fault = memory.last_fault();
+			tlb_.fault_address = fault.address;
+			tlb_.fault_access = ::uml::memory::translated_access(
+				fault.access);
+			return ::uml::cpu::EngineEvent::memory_fault;
+		}
+		++cache_diagnostics_.translations;
+		const auto output = arm64::gadgets::a32::build(
+			{.key = key, .code = bytes.first(count * unit)},
+			[this](std::uint64_t target) {
+				return programs_->link(target);
+			},
+			programs_->program_storage(),
+			[this](std::uint64_t source_key) {
+				return programs_->indirect_link(source_key);
+			},
+			build_options_, gadget_a32_profile(),
+			block_instruction_count);
+		if (output.units == 0) {
+			/* A T32 instruction whose second halfword lies on a page
+			 * that cannot be fetched: the fetch fault is at that
+			 * halfword. */
+			std::uint16_t halfword = 0;
+			(void)memory.fetch(address + count * unit,
+				std::as_writable_bytes(std::span{&halfword, 1}));
+			const auto fault = memory.last_fault();
+			tlb_.fault_address = fault.address;
+			tlb_.fault_access = ::uml::memory::translated_access(
+				fault.access);
+			return ::uml::cpu::EngineEvent::memory_fault;
+		}
+		selected.emplace(programs_->store_validated(key, output.result,
+			bytes.first(output.units * unit), cache_changes_));
+	}
+	const auto &built = *selected;
+	if (built.program.instruction_count() == 0) {
+		cpu.pc = built.stop_address;
+		return ::uml::cpu::EngineEvent::illegal_instruction;
+	}
+	cpu.gadget_target_tier = programs_->target_tier();
+	const auto event =
+		arm64::gadgets::execute_preserving_native_fp_environment(
+			built.program, cpu, tlb_, executed);
+	return finish_a32_block(*programs_, event, cpu, memory, executed);
+}
+
+/* One instruction, uncached, with the ITSTATE it is entered with. */
+::uml::cpu::EngineEvent GadgetExecutor::run_a32_instruction(
+	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
+{
+	cpu.gadget_indirect_miss = nullptr;
+	cpu.gadget_target_tier = nullptr;
+	const auto key = cpu.pc;
+	const auto isa = arm64::aarch32::key_isa(key);
+	const auto unit = arm64::aarch32::isa_unit_bytes(isa);
+	/* Two halfwords: a T32 instruction is one or two. */
+	std::array<std::uint32_t, 1> window;
+	const auto bytes = std::as_writable_bytes(std::span{window});
+	const auto address = arm64::aarch32::key_pc(key);
+	const auto count = fetch_a32_units(memory, address, unit, bytes);
+	if (count == 0) {
+		const auto fault = memory.last_fault();
+		tlb_.fault_address = fault.address;
+		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+		return ::uml::cpu::EngineEvent::memory_fault;
+	}
+	const auto output = arm64::gadgets::a32::build(
+		{.key = key, .code = bytes.first(count * unit),
+		 .it = arm64::aarch32::ItState{cpu.a32_itstate}, .single = true},
+		{}, std::pmr::get_default_resource(), {}, build_options_,
+		gadget_a32_profile(), block_instruction_count);
+	if (output.units == 0) {
+		std::uint16_t halfword = 0;
+		(void)memory.fetch(address + count * unit,
+			std::as_writable_bytes(std::span{&halfword, 1}));
+		const auto fault = memory.last_fault();
+		tlb_.fault_address = fault.address;
+		tlb_.fault_access = ::uml::memory::translated_access(fault.access);
+		return ::uml::cpu::EngineEvent::memory_fault;
+	}
+	const auto &built = output.result;
+	if (built.program.instruction_count() == 0) {
+		cpu.pc = built.stop_address;
+		return ::uml::cpu::EngineEvent::illegal_instruction;
+	}
+	const auto event = arm64::gadgets::execute(
+		built.program, cpu, tlb_, executed);
+	/* The one instruction is the whole program: a terminal that did not
+	 * retire gives it back. */
+	if (terminal_does_not_retire(event))
+		executed = 0;
+	cpu.gadget_indirect_miss = nullptr;
+	if (event == ::uml::cpu::EngineEvent::continued ||
+	    event == ::uml::cpu::EngineEvent::interrupt ||
+	    event == ::uml::cpu::EngineEvent::system_call)
+		cpu.a32_itstate = output.next_it.bits();
+	if (event == ::uml::cpu::EngineEvent::breakpoint)
+		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+	/* A one-instruction fallthrough ends in the synthetic interrupt gadget:
+	 * an internal cold boundary, not a guest-visible interrupt. */
+	return event == ::uml::cpu::EngineEvent::interrupt ?
+		::uml::cpu::EngineEvent::continued : event;
+}
+
+::uml::cpu::EngineEvent GadgetExecutor::finish_a32_block(
+	ProgramCache &programs, ::uml::cpu::EngineEvent event,
+	arm64::CpuState &cpu, StaticGuestMemory &memory, std::size_t &executed)
+{
+	/* SVC and BKPT leave the stream they ran from, which is not a cache
+	 * cell; so do the exits that did not retire. The block holding it is
+	 * found from the stream, because the exit may be in a linked successor. */
+	const bool leaves_marker =
+		event == ::uml::cpu::EngineEvent::system_call ||
+		event == ::uml::cpu::EngineEvent::breakpoint;
+	const bool does_not_retire = terminal_does_not_retire(event);
+	if (does_not_retire || leaves_marker) {
+		if (const auto exit = programs.find_stream_source(
+			    cpu.gadget_indirect_miss)) {
+			const auto &program = exit->result.program;
+			const auto guest = program.guest_address();
+			const auto position_key = cpu.pc;
+			if (position_key >= guest &&
+			    ((position_key - guest) & 3U) == 0U) {
+				const auto unit = static_cast<std::size_t>(
+					(position_key - guest) / 4U);
+				std::optional<std::size_t> position;
+				if (arm64::aarch32::key_is_thumb(guest)) {
+					position = a32::thumb_position(
+						exit->source, unit);
+					cpu.a32_itstate = a32::thumb_itstate(
+						exit->source, unit,
+						gadget_a32_profile());
+				} else if (unit < program.instruction_count()) {
+					position = unit;
+				}
+				if (does_not_retire && position &&
+				    *position < program.instruction_count()) {
+					const auto unretired =
+						program.instruction_count() - *position;
+					if (executed >= unretired)
+						executed -= unretired;
+				}
+			}
+		}
+		cpu.gadget_indirect_miss = nullptr;
+	}
+	if (event == ::uml::cpu::EngineEvent::breakpoint)
+		breakpoint_immediate_ = read_breakpoint_immediate(memory, cpu.pc);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	{
+		auto &d = cache_diagnostics_;
+		if (event == ::uml::cpu::EngineEvent::system_call)
+			++d.exits_syscall;
+		else if (event == ::uml::cpu::EngineEvent::memory_fault)
+			++d.exits_fault;
+		else if (event == ::uml::cpu::EngineEvent::interrupt)
+			++d.exits_interrupt;
+		else if (event != ::uml::cpu::EngineEvent::continued)
+			++d.exits_other;
+		else if (cpu.gadget_indirect_miss != nullptr) {
+			++d.exits_indirect_miss;
+			if (static_cast<const arm64::gadgets::IndirectLink *>(
+				    cpu.gadget_indirect_miss)->kind != 0)
+				++d.exits_indirect_miss_return;
+			if ((d.exits_indirect_miss & 4095) == 0)
+				d.miss_by_site_targets = programs.miss_distribution();
+		}
+		else if (executed >= 4096)
+			++d.exits_chain_limit;
+		else
+			++d.exits_unlinked;
+		diagnostics::execution_histogram_note_executor(&d);
+	}
+#endif
+	if (event == ::uml::cpu::EngineEvent::continued &&
+	    cpu.gadget_indirect_miss != nullptr &&
+	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
+		programs.learn_indirect(
+			*static_cast<arm64::gadgets::IndirectLink *>(
+				cpu.gadget_indirect_miss),
+			cpu.pc);
+	}
+	cpu.gadget_indirect_miss = nullptr;
+	return event;
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_library_instruction(

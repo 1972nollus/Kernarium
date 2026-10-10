@@ -753,8 +753,8 @@ check that with the policy off the probe sees no SVE and PTRUE is undefined.
 offsets, the guest-AArch32 policy, the engines' support levels and what a
 policy presents of them, the AArch32 identification registers and compat
 HWCAP words at each level over every subset of the host features they follow,
-and that both engines take the AArch32 entry as the illegal-instruction exit
-without changing the state. `arm64-a32-guest-key` checks the tagged
+and that an engine below `base` takes the AArch32 entry as the
+illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries of both
@@ -762,6 +762,21 @@ guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
 shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
+
+`arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
+engine's production AArch32 loop and checks what its translator decides:
+retirement counts (skipped conditional instructions retire, a fault or an
+undefined word does not), the key left in the PC, the architectural fault
+address, ITSTATE at an SVC, at a fault and when an entry resumes in the middle
+of a block, interworking in both directions, the A32 target with bit 1 set,
+the instruction budget, single step, code that changes in place, the
+exclusives (including loops whose plain stores share the target's TLB set),
+the CP15 and counter reads, and LDM, STM and LDRD across a page, mapped and
+not. `arm64-gadget-a32-forms` runs every stored sample word of the decoder's
+data and the whole 16-bit Thumb space and requires the engine to raise the
+illegal-instruction exit exactly where the decoder, at the engine's level,
+rejects the word. Both run in both page profiles. Instruction semantics
+belong to the instruction corpus, not to these tests.
 
 ## x86 instruction conformance
 
