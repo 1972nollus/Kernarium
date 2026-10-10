@@ -635,6 +635,25 @@ static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
 that needs one of these features runs only on an M4 or newer Mac.
 
+## AArch32 decoder
+
+`arm64-aarch32-decoder` (unit, both page profiles) decodes the stored sample
+words of every row of the encoding table and the whole 16-bit Thumb space. It
+compares each answer with the one `tests/tooling/arm64/a32_expected.py`
+computes from the same XML pseudocode independently of the C++ translation,
+and requires LLVM MC to have decoded whatever the decoder accepts. The
+`arm64-a32-encoding-table` tooling test checks the generated tables and the
+test data against each other offline.
+
+To change the table, the profile policy (`a32_profile_policy.py`) or the pinned
+release, run `tests/tooling/arm64/generate_a32_encoding_table.py
+--architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
+LLVM MC 22.1.8 and takes a few minutes. Configure with
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the six
+outputs and requires the checked-in bytes; without the archive or that LLVM MC
+it skips.
+
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
