@@ -661,7 +661,18 @@ with `DARWIN_UML_GUEST_SVE=1`.
 `arm64-jit-sve-control` checks the JIT's control core against the
 pseudocode on injected SVE hosts under either policy, and
 `arm64-jit-sve-forms` checks every row of the profile through the JIT
-against the semantic library on random states.
+against the semantic library on random states, requires a lowered word to stay
+out of the library from a clean state, and runs gathers and scatters with a
+lane out of reach, scatters while another vCPU's reservation tracks stores,
+the saturating counts at their limits, table lookups with indices that land
+in the tables, and the governing-predicate shapes (none, one, all but one, runs,
+every subset of the narrow sizes) of the breaks, COMPACT and SPLICE.
+
+`DARWIN_UML_SVE_LIBRARY_EXITS=<file>` counts, for the whole run, the SVE
+words that leave translated code for the semantic library, and appends to the
+file, as the process ends, one line per table row (form, row index, count, last
+word), most frequent first. The words a workload sends there are the ones
+worth lowering.
 
 ## x86 instruction conformance
 

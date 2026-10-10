@@ -318,8 +318,44 @@ private:
   [[nodiscard]] bool emit_sve_index(std::uint16_t form,
                                     std::uint32_t instruction);
   [[nodiscard]] bool emit_sve_compare(std::uint16_t form,
-                                      std::uint32_t instruction);
+                                      std::uint32_t instruction,
+                                      std::uint64_t pc);
+  [[nodiscard]] bool emit_sve_floating_compare(std::uint16_t form,
+                                               std::uint32_t instruction,
+                                               std::uint64_t pc);
+  /* The tail the compares share: the lane mask in scratch_a becomes Pd and,
+   * for the integer compares, the PredTest flags. */
+  void finish_sve_compare(unsigned governing, unsigned destination,
+                          unsigned esize, bool sets_flags);
   [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
+                                     std::uint32_t instruction,
+                                     std::uint64_t pc);
+  /* The doubleword forms AdvSIMD lacks: MUL, MLA, MLS, MAD and MSB, and the
+   * integer maxima and minima. */
+  [[nodiscard]] bool emit_sve_doubleword(std::uint16_t form,
+                                         std::uint32_t instruction,
+                                         std::uint64_t pc);
+  /* SHRN, RSHRN, RADDHN, SUBHN and RSUBHN, bottom and top: the narrowed
+   * halves go to the even or odd elements of the destination. */
+  [[nodiscard]] bool emit_sve_narrow(std::uint16_t form,
+                                     std::uint32_t instruction);
+  /* BRKA, BRKAS, BRKB and BRKBS, by a prefix OR of the mask form. */
+  [[nodiscard]] bool emit_sve_break(std::uint16_t form,
+                                    std::uint32_t instruction);
+  /* COMPACT by a TBL through a table of the active-element masks, and
+   * SPLICE by a TBL of the two sources with indices from the first and
+   * last active byte. */
+  [[nodiscard]] bool emit_sve_compact(std::uint32_t instruction);
+  [[nodiscard]] bool emit_sve_splice(std::uint32_t instruction);
+  /* SQINC, SQDEC, UQINC and UQDEC of a general register by an element
+   * count. */
+  [[nodiscard]] bool emit_sve_saturating_count(std::uint32_t instruction);
+  /* LDR and STR of a predicate: its 16 bits, one per byte of the vector. */
+  [[nodiscard]] bool emit_sve_predicate_fill(const detail::SmeEncoding &row,
+                                             std::uint32_t instruction,
+                                             std::uint64_t pc);
+  /* The gathers and scatters, one translated access per element. */
+  [[nodiscard]] bool emit_sve_gather(const detail::SmeEncoding &row,
                                      std::uint32_t instruction,
                                      std::uint64_t pc);
   /* The block's first SVE word marks the task live (sve_live), and every
