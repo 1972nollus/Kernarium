@@ -19,7 +19,6 @@ Translator::Result Translator::emit_vfp(const Instruction &in,
 					const FormPlan &plan)
 {
 	const auto &o = in.operands;
-	uses_fp_ = true;
 	const bool dbl = (plan.aux & 1U) != 0;
 	const auto reg = [dbl](int number) noexcept {
 		return dbl ? d_register(number) : s_register(number);

@@ -11,11 +11,19 @@
  *
  * Words with a condition are run as unconditional ones: the decoder's answer
  * does not depend on the condition, and a failing condition would skip the
- * word and hide it. */
+ * word and hide it.
+ *
+ * The task's vectors and FPSCR load lazily, once, for a program marked as
+ * touching them. The mark must be exactly the decoder table's fp_state trait
+ * (the forms that read or write S, D, Q or V registers or FPSCR, from the
+ * XML), whichever path of the engine lowers the form, so every defined word
+ * is also built alone and its program's mark is held to its form's trait,
+ * and the trait itself to the levels and mnemonics it must cover. */
 #include "arm64_gadget_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
+#include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/a32_support.hpp"
 
 #include <cstddef>
@@ -23,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <memory_resource>
 #include <set>
 #include <sstream>
 #include <string>
@@ -35,6 +44,42 @@ namespace decode = ::uml::cpu::arm64::aarch32;
 
 constexpr std::uint16_t nop = 0xbf00;
 constexpr std::size_t budget = 64;
+
+/* The trait must cover the whole FP&SIMD section, which is the simd level,
+ * every V mnemonic and the other mnemonics of the vector file (FLDMX and
+ * FSTMX, the crypto instructions); and a base form never has it. */
+void check_fp_state_trait()
+{
+	std::size_t marked = 0;
+	for (std::size_t index = 0; index < decode::kFormCount; ++index) {
+		const auto &info = decode::kForms[index];
+		const bool trait = (info.traits & decode::trait::fp_state) != 0U;
+		const std::string mnemonic = info.mnemonic == nullptr ? "" : info.mnemonic;
+		const bool vector_file = mnemonic.rfind('V', 0) == 0 ||
+			mnemonic.rfind("FLDM", 0) == 0 || mnemonic.rfind("FSTM", 0) == 0 ||
+			mnemonic.rfind("AES", 0) == 0 || mnemonic.rfind("SHA1", 0) == 0 ||
+			mnemonic.rfind("SHA256", 0) == 0;
+		const bool simd = info.level == decode::Level::simd;
+		if (simd != trait && info.level != decode::Level::complete) {
+			std::fprintf(stderr, "form %s: level %d and fp_state trait %d disagree\n",
+				info.name, static_cast<int>(info.level), trait);
+			std::abort();
+		}
+		if (vector_file && !trait) {
+			std::fprintf(stderr, "form %s names the vector file and lacks fp_state\n",
+				info.name);
+			std::abort();
+		}
+		if (trait && info.level == decode::Level::base) {
+			std::fprintf(stderr, "base form %s has fp_state\n", info.name);
+			std::abort();
+		}
+		marked += trait ? 1U : 0U;
+	}
+	require(marked != 0, "no form has the fp_state trait");
+	std::printf("arm64-gadget-a32-forms: %zu forms have the fp_state trait\n",
+		marked);
+}
 
 struct Sample final {
 	char isa; /* 'A', 'T' (T16) or 'W' (T32) */
@@ -83,6 +128,8 @@ public:
 		const auto instruction = decode::decode_a32(word, profile_);
 		guest_.a32(0, {word});
 		guest_.code_changed();
+		check_mark(instruction, decode::a32_key(code_base),
+			   std::as_bytes(std::span{&word, 1}));
 		finish(instruction, arm64_state(false), word);
 	}
 
@@ -95,14 +142,17 @@ public:
 		const auto instruction = decode::decode_thumb(
 			wide ? word : std::uint32_t{hw1} << 16, decode::ItState{},
 			profile_);
-		if (wide)
-			guest_.t32(0, {hw1, static_cast<std::uint16_t>(word)});
-		else
-			guest_.t32(0, {hw1, nop});
+		const std::uint16_t second =
+			wide ? static_cast<std::uint16_t>(word) : nop;
+		guest_.t32(0, {hw1, second});
 		guest_.code_changed();
+		const std::uint16_t halfwords[2] = {hw1, second};
+		check_mark(instruction, decode::t32_key(code_base),
+			   std::as_bytes(std::span{halfwords}));
 		finish(instruction, arm64_state(true), word);
 	}
 
+	[[nodiscard]] std::size_t marked() const noexcept { return marked_; }
 	[[nodiscard]] std::size_t checked() const noexcept { return checked_; }
 	[[nodiscard]] std::size_t accepted() const noexcept { return accepted_; }
 
@@ -117,6 +167,32 @@ private:
 		cpu.registers[13] = data_base + 0x1000;
 		cpu.registers[14] = code_base + 0x200;
 		return cpu;
+	}
+
+	/* The word built alone: its program is marked as touching the vectors
+	 * exactly when its form's trait says it does. */
+	void check_mark(const decode::Instruction &instruction, std::uint64_t key,
+			std::span<const std::byte> code)
+	{
+		if (instruction.status != decode::Status::ok)
+			return;
+		const bool trait =
+			(instruction.info().traits & decode::trait::fp_state) != 0U;
+		const auto output = ::uml::cpu::arm64::gadgets::a32::build(
+			{.key = key, .code = code, .single = true}, {},
+			std::pmr::get_default_resource(), {},
+			options_at(::uml::cpu::arm64::gadgets::a32_support), profile_,
+			budget);
+		if (output.result.program.accesses_fp_state() != trait) {
+			std::fprintf(stderr,
+				"form %s: the program is %smarked as touching the vectors "
+				"and the form's fp_state trait is %d\n",
+				instruction.info().name,
+				output.result.program.accesses_fp_state() ? "" : "not ",
+				trait);
+			std::abort();
+		}
+		marked_ += trait ? 1U : 0U;
 	}
 
 	void finish(const decode::Instruction &instruction,
@@ -158,6 +234,7 @@ private:
 	decode::Profile profile_;
 	std::size_t checked_{};
 	std::size_t accepted_{};
+	std::size_t marked_{};
 };
 
 } // namespace
@@ -168,6 +245,7 @@ int main(int argc, char **argv)
 	require(argc == 2, "usage: forms_tests DECODER_DATA_DIRECTORY");
 	aarch32::reset_a32_library_exits();
 	aarch32::count_a32_library_exits(true);
+	check_fp_state_trait();
 	Runner runner;
 	std::set<std::pair<char, std::uint32_t>> seen;
 	for (const auto &sample : read_samples(argv[1])) {
@@ -183,9 +261,10 @@ int main(int argc, char **argv)
 		runner.thumb(halfword);
 	const auto routed = check_library_exits();
 	require(routed != 0, "no form reached the semantic library");
+	require(runner.marked() != 0, "no program was marked as touching the vectors");
 	std::printf("arm64-gadget-a32-forms: %zu words, %zu accepted, "
-		    "%llu in the library\n",
-		runner.checked(), runner.accepted(),
+		    "%zu marked as touching the vectors, %llu in the library\n",
+		runner.checked(), runner.accepted(), runner.marked(),
 		static_cast<unsigned long long>(routed));
 	return 0;
 }

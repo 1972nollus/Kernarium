@@ -183,8 +183,10 @@ private:
 	/* Operands the end of the block patches: the word, and the number of
 	 * instructions translated through the one that holds it. */
 	std::vector<std::pair<std::size_t, std::size_t>> patches_;
-	/* The block holds an instruction that reads or writes V (and so is
-	 * entered through the FP state link). */
+	/* The block holds a form that reads or writes the vector registers or
+	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
+	 * entered through the FP state link: CpuState loads the task's vectors
+	 * lazily, and only for such a block. */
 	bool uses_fp_{};
 };
 

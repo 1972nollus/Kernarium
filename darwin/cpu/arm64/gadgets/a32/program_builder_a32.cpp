@@ -596,25 +596,9 @@ std::uint64_t Translator::library_operand(const Instruction &in,
 		       << UML_GADGET_A32_LIBRARY_FORM_SHIFT;
 }
 
-/* Whether a form's semantics read or write the vector registers or the
- * FPSCR: VFP and Advanced SIMD (V...), the FLDMX and FSTMX block forms and
- * the crypto extensions. The library works on the registers the guest
- * state holds, so a block that reaches it for one of these must have the
- * deferred floating-point state loaded (and marked dirty) first. */
-static bool touches_fp_state(const char *mnemonic) noexcept
-{
-	return mnemonic[0] == 'V' || std::strncmp(mnemonic, "FLDM", 4) == 0 ||
-	       std::strncmp(mnemonic, "FSTM", 4) == 0 ||
-	       std::strncmp(mnemonic, "AES", 3) == 0 ||
-	       std::strncmp(mnemonic, "SHA1", 4) == 0 ||
-	       std::strncmp(mnemonic, "SHA256", 6) == 0;
-}
-
 /* An instruction the engine leaves to the semantic library. */
 Translator::Result Translator::emit_library(const Instruction &in)
 {
-	if (touches_fp_state(in.info().mnemonic))
-		uses_fp_ = true;
 	push(G::library);
 	push(key_);
 	push(library_operand(in));
@@ -1244,6 +1228,12 @@ BuildOutput Translator::run()
 				close_run();
 			else
 				begin_instruction(in.cond);
+			/* The vectors and FPSCR load lazily, once, for a block
+			 * marked as touching them (uses_fp_): every form that
+			 * does, by the decoder table's fp_state trait, whichever
+			 * path lowers it. */
+			if ((in.info().traits & aarch32::trait::fp_state) != 0U)
+				uses_fp_ = true;
 			const Result result = emit(in, plan);
 			if (result.flags)
 				flags_written();
