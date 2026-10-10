@@ -2404,6 +2404,7 @@ inline constexpr std::uint16_t exception = 128;
 inline constexpr std::uint16_t barrier = 256;
 inline constexpr std::uint16_t hint = 512;
 inline constexpr std::uint16_t prefetch = 1024;
+inline constexpr std::uint16_t fp_state = 2048;
 } // namespace trait
 
 inline constexpr std::uint8_t kNoCond = 255;

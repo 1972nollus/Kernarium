@@ -79,6 +79,16 @@ def check_model(model: tm.Model) -> None:
     for name in ("d", "setflags", "read_spsr", "write_spsr"):
         if name not in members:
             raise ValueError(f"decode.cpp reads the operand {name}, which no program sets")
+    # The engines load the vector registers lazily for a block that holds an
+    # fp_state form, so the trait must be the XML's FP&SIMD section exactly.
+    for form in model.forms:
+        if form.encoding is None:
+            continue
+        in_section = form.encoding.section == "FP&SIMD"
+        if in_section != ("fp_state" in form.traits):
+            raise ValueError(
+                f"{form.name}: the fp_state trait disagrees with the FP&SIMD section"
+            )
 
 
 def check_cover(model: tm.Model) -> None:
