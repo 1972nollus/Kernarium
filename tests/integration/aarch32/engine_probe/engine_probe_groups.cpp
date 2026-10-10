@@ -18,6 +18,7 @@ const Group groups[] = {
 	{"atomics", 0, group_atomics},
 	{"absent", 0, group_absent},
 	{"simd", 1, group_simd},
+	{"armv8fp", 2, group_armv8_fp},
 	{"complete", 2, group_complete},
 };
 const unsigned group_count = sizeof(groups) / sizeof(groups[0]);
