@@ -125,6 +125,10 @@ and reaches guest memory only through the caller's `A32Memory`.
   `a32_semantics_level()`; any other word reaching `execute_a32()` is `fatal`,
   an internal error. The library-exit counters count each call by form.
 
-The library is at `base`: A32 and T32 integer, memory (single, multiple,
-exclusive, acquire/release), branch, IT and system forms. The VFP and NEON
+The library covers `base`, A32 and T32: integer, memory (single, multiple,
+exclusive, acquire/release), branch, IT and system forms. Above it, it covers
+the VFP and Advanced SIMD memory forms (VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX,
+VLDn and VSTn), whose structure loads and stores read all their memory before
+they change a register and gather it all before they store, and whose VSTM and
+FSTMX store the words ahead of a fault like STM. The VFP and NEON arithmetic
 and the Armv8 extension levels follow.
