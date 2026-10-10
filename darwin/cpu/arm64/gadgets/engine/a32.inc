@@ -61,6 +61,41 @@ La32veneer_\symbol:
 	.endif
 .endm
 
+#include "../a32_layout.h"
+
+/* Runs one instruction through the AArch32 semantic library
+ * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, x8 the
+ * library operand (a32_layout.h) and _stream is past the instruction's
+ * stream words. The guest's NZCV, kept in x27, goes to CpuState before the
+ * call and comes back after it; everything else the base profile touches is
+ * in CpuState already. A fault leaves through the memory-fault exit with the
+ * fault in the TLB, an UNDEFINED instruction through the illegal-instruction
+ * exit, an internal error as the fatal event. */
+.macro a32_library_call
+	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	mov x19, x1
+	mov x20, x2
+	mov x0, x1
+	mov x1, x2
+	mov x2, x8
+	mov x3, x21
+	helper_call uml_arm64_gadget_a32_execute
+	mov x1, x19
+	mov x2, x20
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	cbz w0, 97f
+	cmp w0, #UML_GADGET_A32_LIBRARY_FAULT
+	b.eq La32_memory_fault
+	cmp w0, #UML_GADGET_A32_LIBRARY_UNDEFINED
+	b.eq La32_undefined
+	sub x9, _stream, #8
+	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
+	str x21, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, #-1
+	b uml_arm64_gadget_leave
+97:
+.endm
+
 /* A direct link: follow the BlockLink \link names, giving up the chain when
  * the linked-instruction limit is reached. Scratch x9, x11. */
 .macro a32_follow_link link
@@ -378,6 +413,13 @@ a32_table_branch tbb, ldrb, 0, 1
 a32_table_branch tbh, ldrh, 1, 2
 
 .purgem a32_table_branch
+
+/* An instruction the engine does not lower: the semantic library runs it.
+ * [key][library operand] */
+gadget a32_library
+	ldp x21, x8, [_stream], #16
+	a32_library_call
+	next_gadget
 
 /* Faults the memory gadgets share: the key of the instruction is in x21 and
  * the stream is past the operand. */

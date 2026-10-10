@@ -10,12 +10,16 @@
 #include "memory/tlb.hpp"
 
 #include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/aarch32/semantics.hpp"
 #include "cpu/arm64/engine_execution.hpp"
+#include "cpu/arm64/gadgets/a32/a32_builder.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "static_mmu_test_support.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
@@ -177,6 +181,32 @@ private:
 [[nodiscard]] std::uint32_t reg(const arm64::CpuState &cpu, unsigned index)
 {
 	return static_cast<std::uint32_t>(cpu.registers[index]);
+}
+
+/* The library-exit count gate: with counting on from a clean state, only a
+ * form the engine leaves to the AArch32 semantic library, or a block transfer
+ * that crossed a page, may have reached it (gadgets::a32::may_reach_library).
+ * A lowered form that reaches it is a hot word in the long tail. Returns the
+ * exits of the forms that may. */
+[[nodiscard]] inline std::uint64_t check_library_exits()
+{
+	std::uint64_t routed = 0;
+	for (std::size_t index = 0; index < aarch32::kFormCount; ++index) {
+		const auto form = static_cast<aarch32::Form>(index);
+		const auto exits = aarch32::a32_library_exits(form);
+		if (exits == 0)
+			continue;
+		if (!gadgets::a32::may_reach_library(form)) {
+			std::fprintf(stderr,
+				"a lowered form reached the semantic library: %s "
+				"(%llu times)\n",
+				aarch32::kForms[index].name,
+				static_cast<unsigned long long>(exits));
+			std::abort();
+		}
+		routed += exits;
+	}
+	return routed;
 }
 
 } // namespace uml::emulator::tests::a32

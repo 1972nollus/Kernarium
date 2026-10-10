@@ -71,19 +71,12 @@ struct BuildOutput final {
 [[nodiscard]] std::uint8_t thumb_itstate(std::span<const std::byte> halfwords,
 	std::size_t unit, const aarch32::Profile &profile) noexcept;
 
-/* The operand word of a gadget that calls the tail helper
- * (tail_helpers.cpp): the operation in bits 0-7 and, one byte each, the
- * CpuState byte offsets of d, n, m, a, the high and low halves of a long
- * result, and an immediate. */
-namespace tail {
-inline constexpr unsigned op_shift = 0;
-inline constexpr unsigned d_shift = 8;
-inline constexpr unsigned n_shift = 16;
-inline constexpr unsigned m_shift = 24;
-inline constexpr unsigned a_shift = 32;
-inline constexpr unsigned hi_shift = 40;
-inline constexpr unsigned imm_shift = 48;
-inline constexpr unsigned lo_shift = 56;
-} // namespace tail
+/* Whether the engine leaves a form to the AArch32 semantic library
+ * (a32_library_helpers.cpp): the rare forms it does not lower, and, for the
+ * block transfers (LDM, STM, PUSH, POP) that cross a page, the instruction
+ * that does. A form that does not may never reach the library; the
+ * library-exit count gates hold the engine to that. */
+[[nodiscard]] bool routes_to_library(aarch32::Form form) noexcept;
+[[nodiscard]] bool may_reach_library(aarch32::Form form) noexcept;
 
 } // namespace uml::cpu::arm64::gadgets::a32

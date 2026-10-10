@@ -6,9 +6,8 @@
  * argument), and the whole 16-bit Thumb space, is placed in a guest, run, and
  * held to the decoder's answer for the engine's profile. A word accepted at
  * a level the engine does not yet implement therefore fails here, which is
- * what keeps the level honest. No form reaches a semantic library: the
- * gadget engine's AArch32 part has no library exit at this level, and the
- * loop it runs under (run_translated_aarch32_blocks) has no event for one.
+ * what keeps the level honest. Only the forms the engine leaves to the shared
+ * semantic library reach it (check_library_exits), and the run reaches it.
  *
  * Words with a condition are run as unconditional ones: the decoder's answer
  * does not depend on the condition, and a failing condition would skip the
@@ -167,6 +166,8 @@ int main(int argc, char **argv)
 {
 	const ::uml::testing::RuntimeTestRoute runtime_route;
 	require(argc == 2, "usage: forms_tests DECODER_DATA_DIRECTORY");
+	aarch32::reset_a32_library_exits();
+	aarch32::count_a32_library_exits(true);
 	Runner runner;
 	std::set<std::pair<char, std::uint32_t>> seen;
 	for (const auto &sample : read_samples(argv[1])) {
@@ -180,7 +181,11 @@ int main(int argc, char **argv)
 	/* Every 16-bit Thumb instruction. */
 	for (std::uint32_t halfword = 0; halfword < 0xe800; ++halfword)
 		runner.thumb(halfword);
-	std::printf("arm64-gadget-a32-forms: %zu words, %zu accepted\n",
-		runner.checked(), runner.accepted());
+	const auto routed = check_library_exits();
+	require(routed != 0, "no form reached the semantic library");
+	std::printf("arm64-gadget-a32-forms: %zu words, %zu accepted, "
+		    "%llu in the library\n",
+		runner.checked(), runner.accepted(),
+		static_cast<unsigned long long>(routed));
 	return 0;
 }

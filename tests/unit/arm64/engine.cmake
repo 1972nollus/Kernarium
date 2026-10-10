@@ -39,6 +39,7 @@
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -47,6 +48,7 @@
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -54,6 +56,7 @@
     set(UML_ARM64_STATIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -364,6 +367,7 @@
                 $<TARGET_OBJECTS:uml_static_mmu>
                 $<TARGET_OBJECTS:uml_arm64_gadgets>
                 $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+                $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
                 $<TARGET_OBJECTS:uml_arm64_sve_semantics>
                 $<TARGET_OBJECTS:uml_arm64_execution_helpers>
                 ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -374,6 +378,7 @@
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
             $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
@@ -384,6 +389,7 @@
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
             $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
