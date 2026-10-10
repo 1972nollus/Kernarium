@@ -718,8 +718,10 @@ without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries of both
-guest page sizes. Unit binaries take the policy from their environment as
-well; the suites must hold unchanged with `DARWIN_UML_GUEST_AARCH32=1`.
+guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
+shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
+policy from their environment as well; the suites must hold unchanged with
+`DARWIN_UML_GUEST_AARCH32=1`.
 
 ## x86 instruction conformance
 

@@ -795,7 +795,11 @@ the key carries PSTATE.T and no stub switches the state. A valid AArch32 key
 has both low bits clear, so no key reaches the SME mode the JIT reads from an
 A64 key, is the all-ones empty cell, or is a fault position, and an A32 target
 with bit 1 set is a PC-alignment exit before it is a key. The IT state is not
-part of a key because no block ends inside an IT block.
+part of a key because no block ends inside an IT block. A translation records
+its ISA and counts its saved guest units in that ISA's unit, a word for A64
+and A32 and a halfword for T32, so one page-bounded validation serves the
+gadget cache's validating lookups, the JIT's stale lookups and the shared
+tier, whose entries must carry the ISA of the key they are stored under.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
