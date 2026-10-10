@@ -763,6 +763,16 @@ shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
 
+`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
+the architectural positions of the status word's fields, the load and save of
+every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
+split, TPIDR registers, CP15BEN; load then save is the identity over random
+states in both Thumb and ARM state), which entries the kernel may hand over,
+the bridge event of every exit, and that the compat HWCAPs and the guest entry
+points follow the level the run presents, with the policy off and on. An
+engine that has reached `base` makes the policy-on run enter it for real: an
+entry at an unmapped PC must fault there.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
