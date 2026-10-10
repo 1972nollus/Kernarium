@@ -3,9 +3,3 @@
 {"n":"SB_A1/0.1","f":"SB_A1","i":"A","p":"f57ff070","t":0,"s":"pattern-a","si":{"apsr":"10000000"},"fl":"s"}
 {"n":"SB_T1/0.0","f":"SB_T1","i":"T","p":"f3bf8f70","t":0,"s":"edges-t","si":{"apsr":"8000000"},"fl":"sx"}
 {"n":"SB_T1/0.1","f":"SB_T1","i":"T","p":"f3bf8f70","t":0,"s":"pattern-t","si":{"apsr":"f80f0000"},"fl":"sx"}
-{"n":"SEVL_A1/0.0","f":"SEVL_A1","i":"A","p":"e320f005","t":0,"s":"edges-a","si":{"apsr":"40000000"},"fl":"s"}
-{"n":"SEVL_A1/0.1","f":"SEVL_A1","i":"A","p":"e320f005","t":0,"s":"pattern-a","si":{"apsr":"40000000"},"fl":"s"}
-{"n":"SEVL_T1/0.0","f":"SEVL_T1","i":"T","p":"bf50","t":0,"s":"edges-t","fl":"sx"}
-{"n":"SEVL_T1/0.1","f":"SEVL_T1","i":"T","p":"bf50","t":0,"s":"pattern-t","si":{"apsr":"f0000000"},"fl":"sx"}
-{"n":"SEVL_T2/0.0","f":"SEVL_T2","i":"T","p":"f3af8005","t":0,"s":"edges-t","si":{"apsr":"40000000"},"fl":"sx"}
-{"n":"SEVL_T2/0.1","f":"SEVL_T2","i":"T","p":"f3af8005","t":0,"s":"pattern-t","si":{"apsr":"60000000"},"fl":"sx"}

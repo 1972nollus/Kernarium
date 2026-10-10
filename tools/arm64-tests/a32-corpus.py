@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPOSITORY / "tests/tooling/arm64"))
 sys.path.insert(0, str(REPOSITORY / "tools/instruction-corpus"))
 
 import a32_corpus_armv8 as armv8  # noqa: E402
+import a32_corpus_boundary as boundary  # noqa: E402
 import a32_corpus_control as control  # noqa: E402
 import a32_corpus_memory as memory  # noqa: E402
 import a32_corpus_plan as plan  # noqa: E402
@@ -48,7 +49,7 @@ DIRECTORY = REPOSITORY / "tests/unit/arm64/aarch32_corpus"
 INVENTORY = REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv"
 CHUNK = 1500
 SUITES = {**plan.SUITES, **memory.SUITES, **control.SUITES, **system.SUITES, **simd.SUITES,
-          **armv8.SUITES}
+          **armv8.SUITES, **boundary.SUITES}
 HEADER_DEFAULTS = {"k": 1}
 # Suites whose golden only hardware can settle: the multi-word accesses at
 # unaligned addresses, which qemu-arm refuses and an arm64 Linux kernel fixes
@@ -96,6 +97,8 @@ def source_row(case: wire.Case, recipes, observation: wire.Observation) -> dict:
     initial = wire.initial_state(case, recipes)
     row = {"n": case.name, "f": case.form, "i": case.isa, "p": case.program_text(),
            "t": case.target, "s": case.recipe}
+    if case.origin:
+        row["o"] = case.origin
     if case.initial:
         row["si"] = {key: corpus.hex_value(key, value) for key, value in case.initial.items()
                      if value != recipes[case.recipe][key]}
@@ -125,8 +128,8 @@ def source_row(case: wire.Case, recipes, observation: wire.Observation) -> dict:
     if observation.signal:
         row["e"] = observation.signal
         row["fa"] = f"{observation.address:x}"
-        half = (observation.pc - corpus.CODE_BASE) >> 1
-        inside = observation.pc >= corpus.CODE_BASE and half < len(case.halfwords())
+        half = (observation.pc - corpus.CODE_BASE - case.origin) >> 1
+        inside = observation.pc >= corpus.CODE_BASE + case.origin and half < len(case.halfwords())
         row["fi"] = half if inside else 0
         retired = case.retired_before(row["fi"]) if case.straight else case.fault_retired
         if retired is None:
@@ -149,7 +152,7 @@ def predicted_observation(case: wire.Case, recipes) -> wire.Observation:
     """What the profile defines for a case no oracle runs: the event at the
     instruction under test, the state unchanged."""
     half = case.starts()[case.target]
-    pc = corpus.CODE_BASE + 2 * half
+    pc = corpus.CODE_BASE + case.origin + 2 * half
     return wire.Observation(case.predicted, 0, pc if case.predicted == 4 else 0, pc, 0,
                             wire.initial_data_digest(case), wire.initial_state(case, recipes), [])
 

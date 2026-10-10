@@ -274,15 +274,15 @@ void test_forms()
 
 void test_levels_and_features()
 {
-	/* Integer instructions need base; VFP and NEON need simd; the Armv8
-	 * additions need complete. */
+	/* Integer instructions and the Armv8 acquire/release group need base; VFP
+	 * and NEON need simd; the other Armv8 additions need complete. */
 	const Expectation integer{Isa::a32, 0xe0910002, "ADDS_r_A1", Status::ok, Reason::none};
 	const Expectation neon{Isa::a32, 0xf2220844, "VADD_i_A1_Q", Status::ok, Reason::none};
 	const Expectation lda{Isa::a32, 0xe1910c9f, "LDA_A1", Status::ok, Reason::none};
 	const Expectation vsel{Isa::a32, 0xfe800a81, "VMAXNM_A2_S", Status::ok, Reason::none};
 	const Level levels[] = {Level::none, Level::base, Level::simd, Level::complete};
 	const Expectation *all[] = {&integer, &neon, &lda, &vsel};
-	const unsigned needs[] = {1, 2, 3, 3};
+	const unsigned needs[] = {1, 2, 1, 3};
 	for (const Level level : levels) {
 		for (std::size_t index = 0; index < 4; ++index) {
 			const bool available = static_cast<unsigned>(level) >= needs[index];

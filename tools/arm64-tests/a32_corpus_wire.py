@@ -42,6 +42,7 @@ class Case:
     path: int | None = None  # fillers the program must execute (a check on the plan)
     expect: dict[str, int] | None = None  # register increments the plan predicts
     predicted: int | None = None  # the event the profile defines; no oracle runs the case
+    origin: int = 0  # byte offset of the program in the code region
 
     def halfwords(self) -> list[int]:
         if self.isa == "A":
@@ -98,7 +99,7 @@ def request(cases: list[Case], recipes: dict[str, dict[str, int]]) -> bytes:
         program = b"".join(struct.pack("<H", half) for half in halves)
         record = struct.pack(
             "<BBHHH", 1 if case.isa == "T" else 0, case.fill, len(program),
-            len(case.data_patches), 0)
+            len(case.data_patches), case.origin)
         record += corpus.state_wire(initial_state(case, recipes))
         record += program + bytes(-len(program) % 4)
         for offset, payload in case.data_patches:

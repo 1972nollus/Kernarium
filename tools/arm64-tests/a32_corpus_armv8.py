@@ -7,17 +7,16 @@
   VQRDMLSH, VJCVT, the dot-product, matrix-multiply and half-to-single
   multiply-accumulate forms), started in the simd suite's floating-point
   states under every FPSCR mode;
-- armv8-memory: LDA and STL (acquire and release loads and stores) and the
-  half-precision VLDR and VSTR, with the memory suites' address scenarios;
-- armv8-exclusive: LDAEX and STLEX sequences like the exclusive suite's;
-- armv8-system: SB and SEVL.
+- armv8-memory: the half-precision VLDR and VSTR, with the memory suites'
+  address scenarios (LDA, STL, LDAEX, STLEX and SEVL are base, and in the
+  memory, exclusive and system suites);
+- armv8-system: SB.
 """
 
 from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import a32_corpus_memory as memory  # noqa: E402
 import a32_corpus_simd as simd  # noqa: E402
 import a32_corpus_system as system  # noqa: E402
 from a32_corpus_plan import Case, Context  # noqa: E402
@@ -31,13 +30,8 @@ def suite_armv8(context: Context) -> list[Case]:
 
 
 def suite_armv8_memory(context: Context) -> list[Case]:
-    cases = memory.build(context, "complete", "armv8-memory", True)
-    cases += simd.suite_simd_memory(context, LEVELS, "armv8-memory")
-    return cases
-
-
-def suite_armv8_exclusive(context: Context) -> list[Case]:
-    return memory.suite_exclusive(context, "armv8-exclusive", "LDAEX", "STLEX")
+    """The half-precision VLDR and VSTR: the acquire/release loads and stores are base."""
+    return simd.suite_simd_memory(context, LEVELS, "armv8-memory")
 
 
 def suite_armv8_system(context: Context) -> list[Case]:
@@ -50,6 +44,5 @@ def suite_armv8_system(context: Context) -> list[Case]:
 SUITES = {
     "armv8": suite_armv8,
     "armv8-memory": suite_armv8_memory,
-    "armv8-exclusive": suite_armv8_exclusive,
     "armv8-system": suite_armv8_system,
 }
