@@ -748,9 +748,7 @@ public:
 		diagnostics::SampledBlock &block) const noexcept
 	{
 		const auto *body = static_cast<const Body *>(bodies_.owner(stream));
-		/* The sampler describes a block by its A64 words; it does not yet
-		 * describe an AArch32 one. */
-		if (body == nullptr || body->isa != 0)
+		if (body == nullptr)
 			return false;
 		const auto *word = static_cast<const std::uintptr_t *>(stream);
 		if (word < body->link_entry() ||
@@ -758,9 +756,23 @@ public:
 			return false;
 		block.guest_address = body->guest_address;
 		block.instruction_count = body->instruction_count;
-		block.word_count = std::min<std::uint32_t>(body->source_word_count,
-			static_cast<std::uint32_t>(diagnostics::sampled_block_words));
-		std::copy_n(body->source_words(), block.word_count, block.words);
+		if (body->isa == 0) {
+			block.word_count = std::min<std::uint32_t>(
+				body->source_word_count,
+				static_cast<std::uint32_t>(diagnostics::sampled_block_words));
+			std::copy_n(body->source_words(), block.word_count, block.words);
+			return true;
+		}
+		/* An AArch32 block's address is its key, and its words are the
+		 * guest bytes it was translated from, a T32 block's halfwords in
+		 * pairs (little-endian words, as the guest stores them). */
+		const auto bytes = std::min<std::size_t>(
+			std::size_t{body->source_word_count} * body->source_unit(),
+			diagnostics::sampled_block_words * sizeof(std::uint32_t));
+		block.word_count = static_cast<std::uint32_t>(
+			(bytes + sizeof(std::uint32_t) - 1) / sizeof(std::uint32_t));
+		std::fill_n(block.words, block.word_count, 0U);
+		std::memcpy(block.words, body->source_bytes(), bytes);
 		return true;
 	}
 
