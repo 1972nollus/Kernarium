@@ -98,8 +98,25 @@ void write_report() noexcept
 	}
 }
 
+/* Whether a gadget executor has retired: a report with nothing in it is
+ * then a result. A process that ran none, as one running only the JIT, has
+ * no result of its own, and the JIT writes the same file in the same format
+ * (its executors' report): this engine leaves it alone. */
+std::atomic<bool> executor_retired{false};
+
+bool any_translation() noexcept
+{
+	for (const auto &count : translated)
+		if (count.load(std::memory_order_relaxed) != 0U)
+			return true;
+	return false;
+}
+
 void write_report_at_exit() noexcept
 {
+	if (!executor_retired.load(std::memory_order_relaxed) &&
+	    sve_library_exit_total() == 0U && !any_translation())
+		return;
 	write_report();
 }
 
@@ -122,6 +139,7 @@ const ReportFromEnvironment report_from_environment;
 
 void write_sve_library_report_from_environment() noexcept
 {
+	executor_retired.store(true, std::memory_order_relaxed);
 	if (report_path[0] != '\0')
 		write_report();
 }

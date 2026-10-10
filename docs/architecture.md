@@ -607,7 +607,9 @@ reach the library are counted per table row, with the words the builder
 translated and sent there. That is the library-exit report:
 `DARWIN_UML_SVE_LIBRARY_EXITS=PATH` enables counting from a process's start
 and writes the report at its exit and as each executor retires (the emulator
-leaves through `_Exit`, so the last write is the complete one), and
+leaves through `_Exit`, so the last write is the complete one; a process that
+ran no gadget executor and counted nothing leaves the file to the JIT, which
+writes the same format), and
 `tools/arm64-tests/sve-library-report.py`
 sums reports and ranks the forms by exits. A reserved bitmask immediate of
 AND, ORR, EOR or DUPM ends the block in front of it as the

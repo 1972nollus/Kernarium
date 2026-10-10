@@ -1857,6 +1857,11 @@ constexpr const char *report_child_variable = "UML_GADGET_SVE_REPORT_CHILD";
 [[noreturn]] void report_child()
 {
 	constexpr std::uint32_t frecpx = 0x658c'a020U;
+	/* A process that ran no gadget executor, as one running only the JIT
+	 * does: it exits normally, so the exit handler runs, and must leave
+	 * the file alone. */
+	if (std::strcmp(std::getenv(report_child_variable), "idle") == 0)
+		std::exit(0);
 	{
 		const std::array code{frecpx, svc};
 		Machine machine{code, sve_host()};
@@ -1865,15 +1870,10 @@ constexpr const char *report_child_variable = "UML_GADGET_SVE_REPORT_CHILD";
 	std::_Exit(0);
 }
 
-void library_exit_report_survives_exit()
+/* Runs this test binary as the report child with `mode`, the report going to
+ * `report`; returns whether the child exited with status 0. */
+bool run_report_child(const std::string &report, const char *mode)
 {
-	const char *temporary = std::getenv("TMPDIR");
-	std::string report = temporary != nullptr && temporary[0] != '\0' ?
-		temporary : "/tmp";
-	report += "/sve-library-report-exit.XXXXXX";
-	const int descriptor = mkstemp(report.data());
-	require(descriptor >= 0);
-	close(descriptor);
 	std::array<char, 4096> path{};
 	auto size = static_cast<std::uint32_t>(path.size());
 	require(_NSGetExecutablePath(path.data(), &size) == 0);
@@ -1882,7 +1882,7 @@ void library_exit_report_survives_exit()
 		if (std::strncmp(*entry, "DARWIN_UML_SVE_LIBRARY_EXITS=", 29) != 0)
 			variables.emplace_back(*entry);
 	variables.push_back("DARWIN_UML_SVE_LIBRARY_EXITS=" + report);
-	variables.push_back(std::string{report_child_variable} + "=1");
+	variables.push_back(std::string{report_child_variable} + "=" + mode);
 	std::vector<char *> environment;
 	for (auto &variable : variables)
 		environment.push_back(variable.data());
@@ -1894,20 +1894,46 @@ void library_exit_report_survives_exit()
 	int status = 0;
 	while (waitpid(child, &status, 0) < 0)
 		require(errno == EINTR);
-	require(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+void library_exit_report_survives_exit()
+{
+	const char *temporary = std::getenv("TMPDIR");
+	std::string report = temporary != nullptr && temporary[0] != '\0' ?
+		temporary : "/tmp";
+	report += "/sve-library-report-exit.XXXXXX";
+	const int descriptor = mkstemp(report.data());
+	require(descriptor >= 0);
+	close(descriptor);
+	require(run_report_child(report, "1"));
 	std::ifstream file{report};
 	std::string line;
 	std::vector<std::string> lines;
 	while (std::getline(file, line))
 		lines.push_back(line);
 	file.close();
-	unlink(report.c_str());
 	/* Two comment lines, then FRECPX with its translation, its word sent
 	 * to the library and its one execution. */
 	require(lines.size() >= 3U);
 	require(lines[0] == "# SVE library exits: total 1");
 	require(lines[2].ends_with("\t1\t1\t1"));
-	std::printf("the library-exit report survives _Exit\n");
+	/* A process that ran no gadget executor leaves another engine's report
+	 * alone: the JIT writes the same file in the same format. */
+	{
+		std::ofstream marker{report, std::ios::trunc};
+		marker << "kept\n";
+	}
+	require(run_report_child(report, "idle"));
+	std::ifstream kept{report};
+	lines.clear();
+	while (std::getline(kept, line))
+		lines.push_back(line);
+	kept.close();
+	unlink(report.c_str());
+	require(lines.size() == 1U && lines[0] == "kept");
+	std::printf("the library-exit report survives _Exit and leaves "
+		    "another engine's alone\n");
 }
 
 /* Every generated form agrees with the semantic library: random words of
