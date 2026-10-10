@@ -1,6 +1,6 @@
 {
   "architecture_archive_sha256": "b389a93f41504376895b723ed6e9861ce369e2253c138e6f4c46e27e95375887",
-  "cases": 30504,
+  "cases": 30502,
   "kind": "aarch32",
   "oracles": {
     "profile": {},
@@ -11,26 +11,25 @@
       "runner": "qemu-arm -cpu max"
     }
   },
-  "pack_sha256": "0ea83d69dc41a2904f65b9bf9940fb6c6e59eefd1ea3146593251f5a078e66d9",
+  "pack_sha256": "847581e870577159b26f1c1545f49b82c190d8f2db843e415f0052ce9e692891",
   "records": {
     "absent-profile": 751,
     "alu-qemu": 7684,
-    "armv8-exclusive-qemu": 128,
-    "armv8-memory-qemu": 211,
+    "armv8-memory-qemu": 69,
     "armv8-qemu": 4182,
-    "armv8-system-qemu": 10,
+    "armv8-system-qemu": 4,
     "branch-qemu": 454,
     "conditions-qemu": 1816,
-    "exclusive-qemu": 128,
+    "exclusive-qemu": 256,
     "fetch-qemu": 994,
     "fpscr-qemu": 180,
-    "memory-qemu": 1774,
+    "memory-qemu": 1914,
     "pc-qemu": 88,
     "prefetch-qemu": 144,
     "simd-memory-qemu": 3198,
     "simd-qemu": 8384,
     "straddle-qemu": 60,
-    "system-qemu": 318
+    "system-qemu": 324
   },
   "schema": 1
 }
