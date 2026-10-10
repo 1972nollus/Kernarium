@@ -199,9 +199,7 @@ bool vceq_r(Exec &x)
 		const Raw ones = lane_mask(element_bits(x));
 		return lanewise(x, [&](Raw n, Raw m, Raw) { return n == m ? ones : Raw{0}; });
 	}
-	return fp::lanes32(x, fp::standard, [](std::uint32_t n, std::uint32_t m, std::uint32_t) {
-		return fp::compare_eq(n, m);
-	});
+	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) { return fp::compare_eq(n, m); });
 }
 
 bool vcge_r(Exec &x)
@@ -216,9 +214,7 @@ bool vcge_r(Exec &x)
 	case VCGEType::unsigned_:
 		return lanewise(x, [&](Raw n, Raw m, Raw) { return n >= m ? ones : Raw{0}; });
 	default:
-		return fp::lanes32(x, fp::standard, [](std::uint32_t n, std::uint32_t m, std::uint32_t) {
-			return fp::compare_ge(n, m);
-		});
+		return fp::lanes(x, fp::standard, [](auto n, auto m, auto) { return fp::compare_ge(n, m); });
 	}
 }
 
@@ -234,9 +230,7 @@ bool vcgt_r(Exec &x)
 	case VCGTtype::unsigned_:
 		return lanewise(x, [&](Raw n, Raw m, Raw) { return n > m ? ones : Raw{0}; });
 	default:
-		return fp::lanes32(x, fp::standard, [](std::uint32_t n, std::uint32_t m, std::uint32_t) {
-			return fp::compare_gt(n, m);
-		});
+		return fp::lanes(x, fp::standard, [](auto n, auto m, auto) { return fp::compare_gt(n, m); });
 	}
 }
 
@@ -247,18 +241,19 @@ template<ZeroTest Test>
 bool compare_with_zero(Exec &x)
 {
 	if (x.o.floating_point)
-		return fp::lanes32(x, fp::standard, [](std::uint32_t, std::uint32_t m, std::uint32_t) {
+		return fp::lanes(x, fp::standard, [](auto, auto m, auto) {
+			const decltype(m) zero{0};
 			switch (Test) {
 			case ZeroTest::eq:
-				return fp::compare_eq(m, std::uint32_t{0});
+				return fp::compare_eq(m, zero);
 			case ZeroTest::ge:
-				return fp::compare_ge(m, std::uint32_t{0});
+				return fp::compare_ge(m, zero);
 			case ZeroTest::gt:
-				return fp::compare_gt(m, std::uint32_t{0});
+				return fp::compare_gt(m, zero);
 			case ZeroTest::le:
-				return fp::compare_ge(std::uint32_t{0}, m);
+				return fp::compare_ge(zero, m);
 			default:
-				return fp::compare_gt(std::uint32_t{0}, m);
+				return fp::compare_gt(zero, m);
 			}
 		});
 	const unsigned bits = element_bits(x);
@@ -301,15 +296,16 @@ bool vabs_neg(Exec &x)
 		});
 	}
 	const auto apply = [](auto value, auto sign) { return Negate ? value ^ sign : value & ~sign; };
-	if (o.advsimd)
-		return for_each_register(x, [&](Raw, Raw m, Raw) -> Raw {
-			constexpr Raw sign = 0x8000'0000'8000'0000ULL;
-			return apply(m, sign);
-		});
+	if (o.advsimd) {
+		const Raw sign = o.esize == 16 ? 0x8000'8000'8000'8000ULL : 0x8000'0000'8000'0000ULL;
+		return for_each_register(x, [&](Raw, Raw m, Raw) -> Raw { return apply(m, sign); });
+	}
 	const unsigned d = static_cast<unsigned>(o.d);
 	const unsigned m = static_cast<unsigned>(o.m);
 	if (o.esize == 64)
 		x.set_d_reg(d, apply(x.d_reg(m), Raw{0x8000'0000'0000'0000ULL}));
+	else if (o.esize == 16)
+		x.set_s_reg(d, apply(x.s_reg(m) & 0xffffU, std::uint32_t{0x8000U}));
 	else
 		x.set_s_reg(d, apply(x.s_reg(m), std::uint32_t{0x8000'0000U}));
 	return true;
@@ -320,10 +316,11 @@ bool vabs_neg(Exec &x)
 bool vmul_s(Exec &x)
 {
 	if (x.o.floating_point) {
+		const unsigned bits = x.o.esize == 16 ? 16U : 32U;
 		const std::uint32_t scalar = static_cast<std::uint32_t>(lane(
-			x.d_reg(static_cast<unsigned>(x.o.m)), static_cast<unsigned>(x.o.index_value), 32));
-		return fp::lanes32(x, fp::standard, [&](std::uint32_t n, std::uint32_t, std::uint32_t) {
-			return fp::mul(n, scalar);
+			x.d_reg(static_cast<unsigned>(x.o.m)), static_cast<unsigned>(x.o.index_value), bits));
+		return fp::lanes(x, fp::standard, [&](auto n, auto, auto) {
+			return fp::mul(n, static_cast<decltype(n)>(scalar));
 		});
 	}
 	return lanewise_scalar(x, [](Raw n, Raw m, Raw) { return n * m; });
@@ -333,11 +330,14 @@ bool vmla_s(Exec &x)
 {
 	const bool add = x.o.add;
 	if (x.o.floating_point) {
+		const unsigned bits = x.o.esize == 16 ? 16U : 32U;
 		const std::uint32_t scalar = static_cast<std::uint32_t>(lane(
-			x.d_reg(static_cast<unsigned>(x.o.m)), static_cast<unsigned>(x.o.index_value), 32));
-		return fp::lanes32(x, fp::standard, [&](std::uint32_t n, std::uint32_t, std::uint32_t d) {
-			const std::uint32_t product = fp::mul(n, scalar);
-			return fp::add(d, add ? product : product ^ 0x8000'0000U);
+			x.d_reg(static_cast<unsigned>(x.o.m)), static_cast<unsigned>(x.o.index_value), bits));
+		return fp::lanes(x, fp::standard, [&](auto n, auto, auto d) {
+			using Float = decltype(n);
+			const Float product = fp::mul(n, static_cast<Float>(scalar));
+			const Float sign = Float{1} << (sizeof(Float) * 8U - 1U);
+			return fp::add(d, add ? product : static_cast<Float>(product ^ sign));
 		});
 	}
 	return lanewise_scalar(x, [&](Raw n, Raw m, Raw d) { return add ? d + n * m : d - n * m; });

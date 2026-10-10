@@ -12,8 +12,8 @@
  * bit patterns, run with the FPCR the AArch32 instruction defines (the
  * guest FPSCR's control bits for VFP, the Standard FPSCR value for Advanced
  * SIMD) and the cumulative flags it raises merged into the guest FPSR, as
- * the SVE library does. Overloads on std::uint32_t and std::uint64_t select
- * the single and double precision instruction.
+ * the SVE library does. Overloads on std::uint16_t, std::uint32_t and
+ * std::uint64_t select the half, single and double precision instruction.
  */
 
 namespace uml::cpu::arm64::aarch32::detail::fp {
@@ -60,46 +60,68 @@ inline auto run_standard(CpuState &cpu, Function &&function) noexcept
 	return run(cpu, standard_fpcr(cpu.fpcr), static_cast<Function &&>(function));
 }
 
-#define UML_A32_FP_BINARY(name, insn)                                                  \
+/* One operation on bit patterns, in half, single and double precision. The
+ * half-precision form needs the host's FP16 arithmetic, which every
+ * supported host has. */
+#define UML_A32_FP_BINARY(name, insn)                                                      \
+	[[nodiscard]] inline std::uint16_t name(std::uint16_t a, std::uint16_t b) noexcept \
+	{                                                                                  \
+		std::uint32_t r;                                                           \
+		__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\t" insn " h0, h1, h2\n\t" \
+				 "fmov %w0, s0"                                            \
+				 : "=r"(r)                                                 \
+				 : "r"(std::uint32_t{a}), "r"(std::uint32_t{b})            \
+				 : "v0", "v1", "v2");                                      \
+		return static_cast<std::uint16_t>(r);                                      \
+	}                                                                                  \
 	[[nodiscard]] inline std::uint32_t name(std::uint32_t a, std::uint32_t b) noexcept \
 	{                                                                                  \
-		std::uint32_t r;                                                               \
-		__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\t" insn " s0, s1, s2\n\t"     \
-				 "fmov %w0, s0"                                                        \
-				 : "=r"(r)                                                             \
-				 : "r"(a), "r"(b)                                                      \
-				 : "v0", "v1", "v2");                                                  \
-		return r;                                                                      \
+		std::uint32_t r;                                                           \
+		__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\t" insn " s0, s1, s2\n\t" \
+				 "fmov %w0, s0"                                            \
+				 : "=r"(r)                                                 \
+				 : "r"(a), "r"(b)                                          \
+				 : "v0", "v1", "v2");                                      \
+		return r;                                                                  \
 	}                                                                                  \
 	[[nodiscard]] inline std::uint64_t name(std::uint64_t a, std::uint64_t b) noexcept \
 	{                                                                                  \
-		std::uint64_t r;                                                               \
-		__asm__ volatile("fmov d1, %1\n\tfmov d2, %2\n\t" insn " d0, d1, d2\n\t"       \
-				 "fmov %0, d0"                                                         \
-				 : "=r"(r)                                                             \
-				 : "r"(a), "r"(b)                                                      \
-				 : "v0", "v1", "v2");                                                  \
-		return r;                                                                      \
+		std::uint64_t r;                                                           \
+		__asm__ volatile("fmov d1, %1\n\tfmov d2, %2\n\t" insn " d0, d1, d2\n\t"   \
+				 "fmov %0, d0"                                             \
+				 : "=r"(r)                                                 \
+				 : "r"(a), "r"(b)                                          \
+				 : "v0", "v1", "v2");                                      \
+		return r;                                                                  \
 	}
 
-#define UML_A32_FP_UNARY(name, insn)                                       \
-	[[nodiscard]] inline std::uint32_t name(std::uint32_t a) noexcept      \
-	{                                                                      \
-		std::uint32_t r;                                                   \
-		__asm__ volatile("fmov s1, %w1\n\t" insn " s0, s1\n\tfmov %w0, s0" \
-				 : "=r"(r)                                                 \
-				 : "r"(a)                                                  \
-				 : "v0", "v1");                                            \
-		return r;                                                          \
-	}                                                                      \
-	[[nodiscard]] inline std::uint64_t name(std::uint64_t a) noexcept      \
-	{                                                                      \
-		std::uint64_t r;                                                   \
-		__asm__ volatile("fmov d1, %1\n\t" insn " d0, d1\n\tfmov %0, d0"   \
-				 : "=r"(r)                                                 \
-				 : "r"(a)                                                  \
-				 : "v0", "v1");                                            \
-		return r;                                                          \
+#define UML_A32_FP_UNARY(name, insn)                                                  \
+	[[nodiscard]] inline std::uint16_t name(std::uint16_t a) noexcept             \
+	{                                                                             \
+		std::uint32_t r;                                                      \
+		__asm__ volatile("fmov s1, %w1\n\t" insn " h0, h1\n\tfmov %w0, s0"    \
+				 : "=r"(r)                                            \
+				 : "r"(std::uint32_t{a})                              \
+				 : "v0", "v1");                                       \
+		return static_cast<std::uint16_t>(r);                                 \
+	}                                                                             \
+	[[nodiscard]] inline std::uint32_t name(std::uint32_t a) noexcept             \
+	{                                                                             \
+		std::uint32_t r;                                                      \
+		__asm__ volatile("fmov s1, %w1\n\t" insn " s0, s1\n\tfmov %w0, s0"    \
+				 : "=r"(r)                                            \
+				 : "r"(a)                                             \
+				 : "v0", "v1");                                       \
+		return r;                                                             \
+	}                                                                             \
+	[[nodiscard]] inline std::uint64_t name(std::uint64_t a) noexcept             \
+	{                                                                             \
+		std::uint64_t r;                                                      \
+		__asm__ volatile("fmov d1, %1\n\t" insn " d0, d1\n\tfmov %0, d0"      \
+				 : "=r"(r)                                            \
+				 : "r"(a)                                             \
+				 : "v0", "v1");                                       \
+		return r;                                                             \
 	}
 
 UML_A32_FP_BINARY(add, "fadd")
@@ -121,54 +143,113 @@ UML_A32_FP_BINARY(abs_compare_gt, "facgt")
 UML_A32_FP_UNARY(sqrt, "fsqrt")
 UML_A32_FP_UNARY(recip_estimate, "frecpe")
 UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
+/* Round to an integral value in the same format: to nearest with ties away
+ * (a), to nearest even (n), toward plus infinity (p), toward minus infinity
+ * (m), toward zero (z), by the FPCR (i), and by the FPCR raising Inexact (x). */
+UML_A32_FP_UNARY(round_a, "frinta")
+UML_A32_FP_UNARY(round_n, "frintn")
+UML_A32_FP_UNARY(round_p, "frintp")
+UML_A32_FP_UNARY(round_m, "frintm")
+UML_A32_FP_UNARY(round_z, "frintz")
+UML_A32_FP_UNARY(round_i, "frinti")
+UML_A32_FP_UNARY(round_x, "frintx")
 
 #undef UML_A32_FP_BINARY
 #undef UML_A32_FP_UNARY
+
+/* The layout of a format, for the steps and for the sign bit. */
+template<typename Float>
+struct Format;
+template<>
+struct Format<std::uint16_t> final {
+	static constexpr unsigned fraction_bits = 10;
+	static constexpr unsigned exponent_bits = 5;
+	static constexpr std::uint16_t two = 0x4000;
+	static constexpr std::uint16_t three = 0x4200;
+	static constexpr std::uint16_t one_half = 0x3800;
+};
+template<>
+struct Format<std::uint32_t> final {
+	static constexpr unsigned fraction_bits = 23;
+	static constexpr unsigned exponent_bits = 8;
+	static constexpr std::uint32_t two = 0x4000'0000U;
+	static constexpr std::uint32_t three = 0x4040'0000U;
+	static constexpr std::uint32_t one_half = 0x3f00'0000U;
+};
+
+template<typename Float>
+[[nodiscard]] constexpr std::uint32_t exponent_of(Float v) noexcept
+{
+	return static_cast<std::uint32_t>(v >> Format<Float>::fraction_bits) & ((1U << Format<Float>::exponent_bits) - 1U);
+}
+template<typename Float>
+[[nodiscard]] constexpr std::uint32_t fraction_of(Float v) noexcept
+{
+	return static_cast<std::uint32_t>(v) & ((1U << Format<Float>::fraction_bits) - 1U);
+}
+template<typename Float>
+[[nodiscard]] constexpr bool is_nan(Float v) noexcept
+{
+	return exponent_of(v) == (1U << Format<Float>::exponent_bits) - 1U && fraction_of(v) != 0U;
+}
+template<typename Float>
+[[nodiscard]] constexpr bool is_infinity(Float v) noexcept
+{
+	return exponent_of(v) == (1U << Format<Float>::exponent_bits) - 1U && fraction_of(v) == 0U;
+}
+/* Zero, or a denormal the Standard FPSCR value's flush makes zero. */
+template<typename Float>
+[[nodiscard]] constexpr bool is_flushed_zero(Float v) noexcept
+{
+	return exponent_of(v) == 0U;
+}
 
 /* VRECPS and VRSQRTS are not the fused A64 steps: AArch32 FPRecipStep and
  * FPRSqrtStep round the product first, treat infinity times zero (a
  * denormal is zero under the Standard FPSCR value's flush) as a zero
  * product, and halve the RSqrt result exactly. These run under the
  * Standard FPSCR value. */
-[[nodiscard]] inline bool step_is_nan(std::uint32_t v) noexcept
+template<typename Float>
+[[nodiscard]] inline Float step_product(Float a, Float b, bool &nan) noexcept
 {
-	return (v >> 23 & 0xffU) == 0xffU && (v & 0x7fffffU) != 0U;
-}
-[[nodiscard]] inline bool step_is_infinity(std::uint32_t v) noexcept
-{
-	return (v >> 23 & 0xffU) == 0xffU && (v & 0x7fffffU) == 0U;
-}
-[[nodiscard]] inline bool step_is_zero(std::uint32_t v) noexcept
-{
-	return (v >> 23 & 0xffU) == 0U;
-}
-[[nodiscard]] inline std::uint32_t step_product(std::uint32_t a, std::uint32_t b, bool &nan) noexcept
-{
-	nan = step_is_nan(a) || step_is_nan(b);
+	nan = is_nan(a) || is_nan(b);
 	if (nan)
 		return mul(a, b);
-	if ((step_is_infinity(a) && step_is_zero(b)) || (step_is_zero(a) && step_is_infinity(b))) {
+	if ((is_infinity(a) && is_flushed_zero(b)) || (is_flushed_zero(a) && is_infinity(b))) {
 		/* FPUnpack flushes a denormal operand and records it. */
-		(void)add(a, std::uint32_t{0});
-		(void)add(b, std::uint32_t{0});
-		return 0U;
+		(void)add(a, Float{0});
+		(void)add(b, Float{0});
+		return Float{0};
 	}
 	return mul(a, b);
 }
-[[nodiscard]] inline std::uint32_t recip_step(std::uint32_t a, std::uint32_t b) noexcept
+template<typename Float>
+[[nodiscard]] inline Float recip_step(Float a, Float b) noexcept
 {
 	bool nan;
-	const std::uint32_t product = step_product(a, b, nan);
-	return nan ? product : sub(0x4000'0000U, product);
+	const Float product = step_product(a, b, nan);
+	return nan ? product : sub(Format<Float>::two, product);
 }
-[[nodiscard]] inline std::uint32_t rsqrt_step(std::uint32_t a, std::uint32_t b) noexcept
+template<typename Float>
+[[nodiscard]] inline Float rsqrt_step(Float a, Float b) noexcept
 {
 	bool nan;
-	const std::uint32_t product = step_product(a, b, nan);
-	return nan ? product : mul(sub(0x4040'0000U, product), 0x3f00'0000U);
+	const Float product = step_product(a, b, nan);
+	return nan ? product : mul(sub(Format<Float>::three, product), Format<Float>::one_half);
 }
 
 /* The fused multiply-adds: addend + a * b (FMADD with the addend last). */
+[[nodiscard]] inline std::uint16_t fused(std::uint16_t addend, std::uint16_t a,
+	std::uint16_t b) noexcept
+{
+	std::uint32_t r;
+	__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\tfmov s3, %w3\n\t"
+			 "fmadd h0, h2, h3, h1\n\tfmov %w0, s0"
+			 : "=r"(r)
+			 : "r"(std::uint32_t{addend}), "r"(std::uint32_t{a}), "r"(std::uint32_t{b})
+			 : "v0", "v1", "v2", "v3");
+	return static_cast<std::uint16_t>(r);
+}
 [[nodiscard]] inline std::uint32_t fused(std::uint32_t addend, std::uint32_t a,
 	std::uint32_t b) noexcept
 {
@@ -193,6 +274,18 @@ UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
 }
 
 /* FCMP / FCMPE: the NZCV result in bits 31:28. */
+[[nodiscard]] inline std::uint32_t compare_flags(std::uint16_t a, std::uint16_t b,
+	bool signal_quiet_nan) noexcept
+{
+	std::uint64_t flags;
+	if (signal_quiet_nan)
+		__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\tfcmpe h1, h2\n\tmrs %0, nzcv"
+				 : "=r"(flags) : "r"(std::uint32_t{a}), "r"(std::uint32_t{b}) : "v1", "v2", "cc");
+	else
+		__asm__ volatile("fmov s1, %w1\n\tfmov s2, %w2\n\tfcmp h1, h2\n\tmrs %0, nzcv"
+				 : "=r"(flags) : "r"(std::uint32_t{a}), "r"(std::uint32_t{b}) : "v1", "v2", "cc");
+	return static_cast<std::uint32_t>(flags) & 0xf000'0000U;
+}
 [[nodiscard]] inline std::uint32_t compare_flags(std::uint32_t a, std::uint32_t b,
 	bool signal_quiet_nan) noexcept
 {
@@ -218,31 +311,83 @@ UML_A32_FP_UNARY(rsqrt_estimate, "frsqrte")
 	return static_cast<std::uint32_t>(flags) & 0xf000'0000U;
 }
 
-
-/* Which FPCR a floating-point form runs under. */
+/* Selects the Standard FPSCR value for the lane helpers below. */
 struct Standard final {};
-struct Effective final {};
 inline constexpr Standard standard{};
-inline constexpr Effective effective{};
 
-/* A function of the n, m and old d 32-bit elements of each D register of an
- * Advanced SIMD form, run under the Standard FPSCR value. */
-template<typename Function>
-inline bool lanes32(Exec &x, Standard, Function &&function)
+/* A function of the n, m and old d elements of each D register of an
+ * Advanced SIMD form (half or single precision by the form's esize), run
+ * under the Standard FPSCR value. The function takes bit patterns of the
+ * element type. */
+template<typename Float, typename Function>
+inline bool lanes_of(Exec &x, Function &&function)
 {
+	constexpr unsigned bits = sizeof(Float) * 8U;
 	return run_standard(x.cpu, [&]() -> bool {
 		return for_each_register(x, [&](std::uint64_t n, std::uint64_t m, std::uint64_t d) -> std::uint64_t {
 			std::uint64_t out = 0;
-			for (unsigned half = 0; half < 2U; ++half) {
-				const unsigned shift = 32U * half;
-				out |= std::uint64_t{function(static_cast<std::uint32_t>(n >> shift),
-					       static_cast<std::uint32_t>(m >> shift),
-					       static_cast<std::uint32_t>(d >> shift))}
+			for (unsigned shift = 0; shift < 64U; shift += bits)
+				out |= std::uint64_t{static_cast<Float>(function(static_cast<Float>(n >> shift),
+					       static_cast<Float>(m >> shift),
+					       static_cast<Float>(d >> shift)))}
 					<< shift;
-			}
 			return out;
 		});
 	});
+}
+template<typename Function>
+inline bool lanes(Exec &x, Standard, Function &&function)
+{
+	if (x.o.esize == 16)
+		return lanes_of<std::uint16_t>(x, function);
+	return lanes_of<std::uint32_t>(x, function);
+}
+template<typename Float>
+[[nodiscard]] constexpr Float sign_bit() noexcept
+{
+	return Float{1} << (sizeof(Float) * 8U - 1U);
+}
+template<typename Float>
+[[nodiscard]] constexpr Float negated(Float value) noexcept
+{
+	return value ^ sign_bit<Float>();
+}
+
+/* A VFP operation on the H, S or D registers d, n and m: `function(d, n, m)`
+ * is called with half, single or double bit patterns and returns the new d.
+ * A half-precision result zero-extends into its S register. */
+template<typename Function>
+inline bool vfp_op(Exec &x, Function &&function)
+{
+	const Operands &o = x.o;
+	const unsigned d = static_cast<unsigned>(o.d);
+	const unsigned n = static_cast<unsigned>(o.n);
+	const unsigned m = static_cast<unsigned>(o.m);
+	if (o.esize == 64) {
+		x.set_d_reg(d, fp::run_effective(x.cpu, [&] {
+			return function(x.d_reg(d), x.d_reg(n), x.d_reg(m));
+		}));
+	} else if (o.esize == 16) {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return std::uint32_t{function(static_cast<std::uint16_t>(x.s_reg(d)),
+				static_cast<std::uint16_t>(x.s_reg(n)), static_cast<std::uint16_t>(x.s_reg(m)))};
+		}));
+	} else {
+		x.set_s_reg(d, fp::run_effective(x.cpu, [&] {
+			return function(x.s_reg(d), x.s_reg(n), x.s_reg(m));
+		}));
+	}
+	return true;
+}
+
+/* The same function for a form that is Advanced SIMD (single-precision
+ * elements under the Standard FPSCR value) or VFP, by the form's advsimd. */
+template<typename Function>
+inline bool float_op(Exec &x, Function &&function)
+{
+	if (x.o.advsimd)
+		return fp::lanes(x, fp::standard, [&](auto n, auto m, auto d) { return function(d, n, m); });
+	return vfp_op(x, function);
 }
 
 } // namespace uml::cpu::arm64::aarch32::detail::fp
