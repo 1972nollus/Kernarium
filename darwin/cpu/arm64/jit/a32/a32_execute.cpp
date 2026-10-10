@@ -2,20 +2,21 @@
 //
 // The terminal slow path of the AArch32 translation (a32_helpers.hpp): one
 // instruction the inline lowering declines, executed on the register file the
-// generated code spilled. Everything but the exclusives runs in the AArch32
-// semantic library (cpu/arm64/aarch32/semantics.hpp) over the Tlb, with the
-// library's fault ordering: a page crossing, a misalignment the architecture
-// faults on, a faulting access and the forms the compiler leaves to it.
+// generated code spilled. Every instruction runs in the AArch32 semantic
+// library (cpu/arm64/aarch32/semantics.hpp) over the Tlb, with the library's
+// fault ordering: a page crossing, a misalignment the architecture faults on,
+// a faulting access and the forms the compiler leaves to it.
 //
-// The exclusives stay here: the library's monitor is a compare-and-swap of
-// the recorded value, while the JIT's guest monitor is the versioned
-// software reservation table that its tracked stores and its fused host
-// exclusives share (jit_semantic_reservation.hpp).
+// The library's exclusive-monitor hooks are overridden here. The guest
+// monitor is the JIT's versioned software reservation table, which its tracked
+// stores and its fused host exclusives share (jit_semantic_reservation.hpp),
+// so LibraryMemory records a load-exclusive in CpuState and checks a
+// store-exclusive against that table instead of the library's
+// compare-and-swap.
 
 #include "a32_helpers.hpp"
 
 #include "a32_operations.hpp"
-#include "a32_transfer.hpp"
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
@@ -42,9 +43,7 @@ using ::uml::memory::Access;
 using ::uml::memory::Tlb;
 namespace a32 = jit::a32;
 namespace sem = jit::semantic;
-using a32::Transfer;
 using aarch32::Instruction;
-using aarch32::SRType;
 
 /* The executor's view of guest memory for one instruction: the Tlb's
  * translations, with the failing page recorded in the Tlb's fault fields as
@@ -156,10 +155,11 @@ private:
 
 /* The library's view of guest memory: the Tlb's translations, with a write
  * translation revalidated (the dynamic loader can change COW permissions
- * between accesses). The failing page is the library's to report. */
+ * between accesses). The failing page is the library's to report. The
+ * exclusive monitor is the JIT's software reservation. */
 class LibraryMemory final : public aarch32::A32Memory {
 public:
-  explicit LibraryMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
+  explicit LibraryMemory(Tlb &tlb) noexcept : tlb_{tlb}, memory_{tlb} {}
 
   std::byte *translate(std::uint64_t address,
                        ::uml::memory::MemoryAccess access) noexcept override {
@@ -177,175 +177,75 @@ public:
     sem::invalidate_store_ranges(std::span{&range, 1});
   }
 
-private:
-  Tlb &tlb_;
-};
-
-enum class Outcome : std::uint8_t {
-  retired,
-  /* A translation failed: the Tlb holds the address and access. */
-  fault,
-  /* The access was misaligned for its class. */
-  alignment,
-  illegal,
-};
-
-/* A load-exclusive or store-exclusive on the JIT's software reservation. */
-class Exclusive final {
-public:
-  Exclusive(CpuState &cpu, Tlb &tlb, const Instruction &inst,
-            std::uint64_t key, const Transfer &transfer)
-      : cpu_{cpu}, tlb_{tlb}, memory_{tlb}, inst_{inst}, transfer_{transfer},
-        thumb_{aarch32::key_is_thumb(key)}, pc_{aarch32::key_pc(key)} {}
-
-  [[nodiscard]] Outcome run() { return exclusive(); }
-
-  [[nodiscard]] std::uint64_t fault_address() const noexcept {
-    return fault_address_;
-  }
-  [[nodiscard]] bool fault_is_write() const noexcept { return fault_write_; }
-
-private:
-  /* The value a read of register r sees. */
-  [[nodiscard]] std::uint32_t read(unsigned r) const noexcept {
-    return r == 15U ? pc_ + (thumb_ ? 4U : 8U)
-                    : static_cast<std::uint32_t>(cpu_.registers[r]);
-  }
-  void write(unsigned r, std::uint32_t value) noexcept {
-    cpu_.registers[r] = value;
-  }
-
-  /* The instruction retired and execution continues after it. */
-  [[nodiscard]] Outcome retire() noexcept {
-    cpu_.pc = thumb_ ? aarch32::t32_key(pc_ + inst_.length)
-                     : aarch32::a32_key(pc_ + inst_.length);
-    return Outcome::retired;
-  }
-
-  [[nodiscard]] Outcome alignment_fault(std::uint32_t address, bool write) {
-    fault_address_ = address;
-    fault_write_ = write;
-    return Outcome::alignment;
-  }
-  [[nodiscard]] Outcome memory_fault(bool write) {
-    fault_address_ = tlb_.fault_address;
-    fault_write_ = write;
-    return Outcome::fault;
-  }
-
-  [[nodiscard]] Outcome exclusive() {
-    const std::uint32_t address = read(transfer_.n) + transfer_.imm;
-    const unsigned bytes = transfer_.bytes;
-    if ((address & (bytes - 1U)) != 0U)
-      return alignment_fault(address, !transfer_.load);
-    if (transfer_.load) {
-      std::scoped_lock lock{sem::exclusive_memory_mutex};
-      std::uint64_t value = 0;
-      std::uintptr_t key = 0;
-      if (!sem::atomic_load_value(memory_, address, bytes,
-                                  transfer_.acquire
-                                      ? std::memory_order_acquire
-                                      : std::memory_order_relaxed,
-                                  value, key))
-        return memory_fault(false);
-      write(transfer_.t, static_cast<std::uint32_t>(value));
-      if (bytes == 8U)
-        write(transfer_.t2, static_cast<std::uint32_t>(value >> 32));
-      cpu_.exclusive_address = address;
-      cpu_.exclusive_key = key;
-      cpu_.exclusive_value = value;
-      cpu_.exclusive_value2 = 0;
-      cpu_.exclusive_version = sem::reservation_version(key);
-      cpu_.exclusive_size = static_cast<std::uint8_t>(bytes);
-      return retire();
+  /* LDREX: the value and the reservation (the granule's key and version)
+   * recorded together under the lock the store-exclusive and the stores take.
+   * The library has just translated this access, so the load fails only if
+   * the mapping changed in between; the monitor is then left clear. */
+  std::uint64_t load_exclusive(CpuState &cpu, std::uint32_t address,
+                               std::byte *, unsigned size,
+                               bool acquire) noexcept override {
+    std::scoped_lock lock{sem::exclusive_memory_mutex};
+    std::uint64_t value = 0;
+    std::uintptr_t key = 0;
+    if (!sem::atomic_load_value(memory_, address, size,
+                                acquire ? std::memory_order_acquire
+                                        : std::memory_order_relaxed,
+                                value, key)) {
+      clear(cpu);
+      return 0;
     }
-    std::uint64_t value = read(transfer_.t);
-    if (bytes == 8U)
-      value |= std::uint64_t{read(transfer_.t2)} << 32;
-    else if (bytes == 1U)
-      value &= 0xffU;
-    else if (bytes == 2U)
-      value &= 0xffffU;
+    cpu.exclusive_address = address;
+    cpu.exclusive_key = key;
+    cpu.exclusive_value = value;
+    cpu.exclusive_value2 = 0;
+    cpu.exclusive_version = sem::reservation_version(key);
+    cpu.exclusive_size = static_cast<std::uint8_t>(size);
+    return value;
+  }
+
+  /* STREX passes when the monitor still names this location, no store has
+   * invalidated its granule and the location holds the value the load read;
+   * the monitor is cleared either way. */
+  bool store_exclusive(CpuState &cpu, std::uint32_t address, std::byte *,
+                       unsigned size, std::uint64_t value,
+                       bool release) noexcept override {
     std::scoped_lock lock{sem::exclusive_memory_mutex};
     std::uint64_t current = 0;
     std::uintptr_t key = 0;
-    if (!sem::atomic_load_value(memory_, address, bytes,
-                                std::memory_order_relaxed, current, key))
-      return memory_fault(true);
-    bool success = cpu_.exclusive_address == address &&
-                   cpu_.exclusive_size == bytes && cpu_.exclusive_key == key &&
-                   cpu_.exclusive_version == sem::reservation_version(key) &&
-                   cpu_.exclusive_value == current;
-    cpu_.exclusive_address = ~std::uint64_t{0};
-    cpu_.exclusive_key = 0;
-    cpu_.exclusive_value = 0;
-    cpu_.exclusive_value2 = 0;
-    cpu_.exclusive_version = 0;
-    cpu_.exclusive_size = 0;
-    if (success) {
-      std::uintptr_t stored_key = 0;
-      const auto result = sem::atomic_store_value(
-          memory_, address, bytes, value,
-          transfer_.release ? std::memory_order_release
-                            : std::memory_order_relaxed,
-          &key, stored_key);
-      if (result == sem::AtomicStoreResult::fault)
-        return memory_fault(true);
-      if (result == sem::AtomicStoreResult::stored)
-        sem::reservation_store(stored_key);
-      else
-        success = false;
-    }
-    write(transfer_.d, success ? 0U : 1U);
-    return retire();
+    bool success = sem::atomic_load_value(memory_, address, size,
+                                          std::memory_order_relaxed, current,
+                                          key) &&
+                   cpu.exclusive_address == address &&
+                   cpu.exclusive_size == size && cpu.exclusive_key == key &&
+                   cpu.exclusive_version == sem::reservation_version(key) &&
+                   cpu.exclusive_value == current;
+    clear(cpu);
+    if (!success)
+      return false;
+    std::uintptr_t stored_key = 0;
+    const auto result = sem::atomic_store_value(
+        memory_, address, size, value,
+        release ? std::memory_order_release : std::memory_order_relaxed, &key,
+        stored_key);
+    if (result != sem::AtomicStoreResult::stored)
+      return false;
+    sem::reservation_store(stored_key);
+    return true;
   }
 
-  CpuState &cpu_;
+private:
+  static void clear(CpuState &cpu) noexcept {
+    cpu.exclusive_address = ~std::uint64_t{0};
+    cpu.exclusive_key = 0;
+    cpu.exclusive_value = 0;
+    cpu.exclusive_value2 = 0;
+    cpu.exclusive_version = 0;
+    cpu.exclusive_size = 0;
+  }
+
   Tlb &tlb_;
   TlbMemory memory_;
-  const Instruction &inst_;
-  const Transfer &transfer_;
-  bool thumb_;
-  std::uint32_t pc_;
-  std::uint64_t fault_address_{};
-  bool fault_write_{};
 };
-
-[[nodiscard]] std::uint64_t finish(CpuState &cpu, Tlb &tlb,
-                                   const Instruction &inst,
-                                   std::uint32_t itstate, Outcome outcome,
-                                   std::uint64_t fault_address,
-                                   bool fault_write) noexcept {
-  switch (outcome) {
-  case Outcome::retired:
-    cpu.a32_itstate = inst.next_it.bits();
-    return pack_jit_result(Event::continued, 1);
-  case Outcome::fault:
-  case Outcome::alignment:
-    /* The instruction did not retire: the task resumes at it, in the IT
-     * state it was entered in. */
-    cpu.a32_itstate = static_cast<std::uint8_t>(itstate);
-    tlb.fault_address = fault_address;
-    tlb.fault_access = fault_write ? Access::write : Access::read;
-    tlb.fault_alignment = outcome == Outcome::alignment ? 1U : 0U;
-    return pack_jit_result(Event::memory_fault, 0);
-  case Outcome::illegal:
-    break;
-  }
-  cpu.a32_itstate = static_cast<std::uint8_t>(itstate);
-  return pack_jit_result(Event::illegal_instruction, 0);
-}
-
-[[nodiscard]] std::uint64_t execute_exclusive(CpuState &cpu, Tlb &tlb,
-                                              const Instruction &inst,
-                                              std::uint64_t key,
-                                              std::uint32_t itstate,
-                                              const Transfer &transfer) noexcept {
-  Exclusive execution{cpu, tlb, inst, key, transfer};
-  const auto outcome = execution.run();
-  return finish(cpu, tlb, inst, itstate, outcome, execution.fault_address(),
-                execution.fault_is_write());
-}
 
 /* The library's answer, as the JIT result the generated code returns. */
 [[nodiscard]] std::uint64_t execute_in_library(CpuState &cpu, Tlb &tlb,
@@ -356,9 +256,12 @@ private:
   cpu.a32_itstate = static_cast<std::uint8_t>(itstate);
   LibraryMemory memory{tlb};
   aarch32::StepResult result;
-  if ((inst.info().traits & aarch32::trait::stores) != 0U) {
+  const auto traits = inst.info().traits;
+  if ((traits & aarch32::trait::stores) != 0U &&
+      (traits & aarch32::trait::exclusive) == 0U) {
     /* A store serializes with the exclusive operations, which check the
-     * monitor and store under the same lock. */
+     * monitor and store under the same lock (the store-exclusive takes it
+     * itself). */
     std::scoped_lock lock{sem::exclusive_memory_mutex};
     result = aarch32::execute_a32(cpu, inst, memory);
   } else {
@@ -429,19 +332,19 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
         1, std::memory_order_relaxed);
     exit_total.fetch_add(1, std::memory_order_relaxed);
   }
-  const auto transfer = a32::describe_transfer(inst);
-  if (transfer.kind != Transfer::Kind::exclusive)
+  const auto traits = inst.info().traits;
+  if ((traits & aarch32::trait::exclusive) == 0U)
     return execute_in_library(*cpu, *tlb, inst, key, itstate);
 
   /* The exclusives: serialized with the other vCPUs' stores while a software
    * reservation exists, and creating one registers it (the A64 exclusive
    * helper's rules). */
-  const bool establishes = transfer.load;
+  const bool establishes = (traits & aarch32::trait::loads) != 0U;
   const bool uses_software_reservation =
       establishes || cpu->exclusive_size != 0U;
   const auto run = [&]() noexcept {
     const bool registered = establishes && begin_jit_reservation(*cpu);
-    const auto result = execute_exclusive(*cpu, *tlb, inst, key, itstate, transfer);
+    const auto result = execute_in_library(*cpu, *tlb, inst, key, itstate);
     if (establishes && cpu->exclusive_size != 0U &&
         current_jit_store_participant != nullptr)
       current_jit_store_participant->reservation_cpu.store(

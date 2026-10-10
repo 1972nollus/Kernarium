@@ -844,9 +844,10 @@ loop. What the lowering declines (an access across a page or one that must
 fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
 block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
 instruction in the AArch32 semantic library over the TLB, with the library's
-fault ordering. The exclusives stay in the helper: their guest monitor is the
-JIT's versioned software reservation, which the library's compare-and-swap
-monitor does not share. An entry in the middle of an IT block and a single
+fault ordering. The exclusives run there too, over the JIT's versioned software
+reservation: the helper overrides the library's monitor hooks, because the
+guest monitor is shared with the tracked stores and the fused host exclusives
+and the library's default compare-and-swap monitor is not. An entry in the middle of an IT block and a single
 step run one instruction in the single-instruction arena, with the IT state
 the exit recorded. Translations validate their saved guest bytes in
 the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
