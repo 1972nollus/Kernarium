@@ -1135,6 +1135,44 @@ void advanced_simd_floating_point_uses_the_standard_fpscr()
 	}
 }
 
+/* The native environment holds the Standard FPSCR value or the guest's FPCR
+ * and each gadget switches it only when the other one is there: Advanced SIMD
+ * floating point stays flushed across a library instruction and across a
+ * block, an FPSCR write ends the standard value, and VFP then runs under the
+ * guest's FPCR again. */
+void the_fp_environment_follows_the_instruction_kind()
+{
+	constexpr std::uint32_t vadd_f32_d3_d1_d2 = 0xf201'3d02U;
+	constexpr std::uint32_t vadd_f32_d9_d1_d2 = 0xf201'9d02U;
+	constexpr std::uint32_t vrecps_f32_d5_d6_d7 = 0xf206'5f17U;
+	constexpr std::uint32_t vmsr_fpscr_r3 = 0xeee1'3a10U;
+	const std::uint64_t denormals = 0x0000'0001'0000'0001ULL;
+	for (const bool through_a_branch : {false, true}) {
+		Guest guest{1100 + (through_a_branch ? 1U : 0U)};
+		std::uint32_t offset = 0;
+		guest.a32(offset, {v::vadd_f32_d0_d1_d2, vrecps_f32_d5_d6_d7,
+				   vadd_f32_d3_d1_d2});
+		offset += 12;
+		if (through_a_branch) {
+			/* b +0: the next instruction starts a block of its own */
+			guest.a32(offset, {0xea00'0000U});
+			offset += 4;
+		}
+		guest.a32(offset, {vmsr_fpscr_r3, vadd_f32_d9_d1_d2,
+				   v::vadd_f32_s8_s2_s4, a::svc});
+		auto cpu = a32_state();
+		cpu.registers[3] = 0;
+		set_d(cpu, 1, denormals);
+		set_d(cpu, 2, denormals);
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(get_d(cpu, 0) == 0 && get_d(cpu, 3) == 0 &&
+			get_d(cpu, 9) == 0);
+		/* S8 kept its denormal under the guest's FPCR: 1 + 1. */
+		require(static_cast<std::uint32_t>(get_d(cpu, 4)) == 2U);
+	}
+}
+
 /* The library runs an instruction whose floating point it models in
  * software, so the cumulative flags the native instructions of the block
  * raised before it must reach CpuState first and the flags it raises must
@@ -1429,6 +1467,7 @@ int main()
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
+	the_fp_environment_follows_the_instruction_kind();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	a_vfp_word_is_illegal_at_the_base_level();
 	std::puts("arm64-gadget-a32-control: ok");

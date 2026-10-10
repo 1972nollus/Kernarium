@@ -63,6 +63,40 @@ La32veneer_\symbol:
 
 #include "../a32_layout.h"
 
+/* The native floating-point environment holds the guest's FPCR, or the
+ * Standard FPSCR value that Advanced SIMD floating point runs under (flush to
+ * zero, default NaN, round to nearest; AHP and FZ16 from the guest);
+ * CpuState::a32_fp_standard says which. A gadget that needs one switches to
+ * it only when the environment is not in it already, so a run of
+ * instructions of one kind, across blocks, writes the FPCR once. Each macro
+ * activates the environment first when it is not active, and clobbers only
+ * x5, x6 and lr, as ensure_fp_environment does. */
+.macro a32_fp_guest
+	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w6, La32fpinactive\@
+	ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	cbz w6, La32fpdone\@
+	bl La32_fp_to_guest
+	b La32fpdone\@
+La32fpinactive\@:
+	bl uml_arm64_gadget_activate_native_fp_environment
+	strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+La32fpdone\@:
+.endm
+
+.macro a32_fp_standard
+	ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
+	cbz w6, La32fpinactive\@
+	ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	cbnz w6, La32fpdone\@
+	b La32fpswitch\@
+La32fpinactive\@:
+	bl uml_arm64_gadget_activate_native_fp_environment
+La32fpswitch\@:
+	bl La32_fp_to_standard
+La32fpdone\@:
+.endm
+
 /* Runs one instruction through the AArch32 semantic library
  * (uml_arm64_gadget_a32_execute): x21 is the instruction's key, x8 the
  * library operand (a32_layout.h) and _stream is past the instruction's
@@ -433,6 +467,29 @@ gadget a32_library
 	ldp x21, x8, [_stream], #16
 	a32_library_call
 	next_gadget
+
+/* Switch the active native environment to the Standard FPSCR value, skipping
+ * the MSR when the guest's FPCR already is that value, and to the guest's
+ * FPCR. x5 and x6 only. */
+.p2align 4
+La32_fp_to_standard:
+	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	movz w5, #0x0408, lsl #16
+	and w5, w6, w5
+	orr w5, w5, #0x03000000
+	cmp w5, w6
+	b.eq 1f
+	msr fpcr, x5
+1:	mov w5, #1
+	strb w5, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	ret
+
+.p2align 4
+La32_fp_to_guest:
+	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
+	msr fpcr, x6
+	strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]
+	ret
 
 /* Faults the memory gadgets share: the key of the instruction is in x21 and
  * the stream is past the operand. */

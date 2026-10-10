@@ -173,9 +173,6 @@ namespace detail {
 
 void Translator::close_run()
 {
-	/* The standard FPSCR value of Advanced SIMD floating point never spans
-	 * runs: it ends in the run it was opened in. */
-	close_standard_fpcr();
 	if (!run_active_)
 		return;
 	words_[run_operand_] =
@@ -283,7 +280,6 @@ void Translator::emit_fallthrough()
 
 void Translator::emit_illegal()
 {
-	close_standard_fpcr();
 	push_external(uml_arm64_gadget_illegal);
 	push(key_);
 }
@@ -1207,7 +1203,6 @@ BuildOutput Translator::run()
 			}
 			if (cond < 14) {
 				begin_instruction(cond);
-				close_standard_fpcr();
 				push_external(uml_arm64_gadget_illegal);
 				push(key_);
 				it_ = it_.advance();
@@ -1233,9 +1228,6 @@ BuildOutput Translator::run()
 				close_run();
 			else
 				begin_instruction(in.cond);
-			if (plan.family != Family::neon &&
-			    plan.family != Family::neonmem)
-				close_standard_fpcr();
 			const Result result = emit(in, plan);
 			if (result.flags)
 				flags_written();

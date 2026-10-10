@@ -173,7 +173,7 @@ def vfp_binary(asm, width: str, name: str, operation: str) -> None:
     asm.gadget(f"vfp_{name}_{'d' if width == 'd' else 's'}", "\n".join([
         "ldr x8, [_stream], #8",
         *unpack("n", "m", "d"),
-        "ensure_fp_environment",
+        "a32_fp_guest",
         f"ldr {r}0, [_cpu, x9]",
         f"ldr {r}1, [_cpu, x10]",
         f"{operation} {r}0, {r}0, {r}1",
@@ -186,7 +186,7 @@ def vfp_mac(asm, width: str, name: str, body: list[str]) -> None:
     asm.gadget(f"vfp_{name}_{'d' if width == 'd' else 's'}", "\n".join([
         "ldr x8, [_stream], #8",
         *unpack("n", "m", "d"),
-        "ensure_fp_environment",
+        "a32_fp_guest",
         f"ldr {r}0, [_cpu, x9]",
         f"ldr {r}1, [_cpu, x10]",
         f"ldr {r}3, [_cpu, x8]",
@@ -201,7 +201,7 @@ def vfp_unary(asm, width: str, name: str, operation: str | None,
     lines = ["ldr x8, [_stream], #8", *unpack("d", "n")]
     # unary operands: d[0:16] m[16:32]; unpack names the second lane "n".
     if environment:
-        lines.append("ensure_fp_environment")
+        lines.append("a32_fp_guest")
     lines.append(f"ldr {r}0, [_cpu, x9]")
     if operation is not None:
         lines.append(f"{operation} {r}0, {r}0")
@@ -213,7 +213,7 @@ def vfp_compare(asm, width: str, signaling: bool, zero: bool) -> None:
     r = width
     instruction = "fcmpe" if signaling else "fcmp"
     lines = ["ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
-             "and x8, x8, #0xffff", "ensure_fp_environment",
+             "and x8, x8, #0xffff", "a32_fp_guest",
              f"ldr {r}0, [_cpu, x8]"]
     if zero:
         lines.append(f"{instruction} {r}0, #0.0")
@@ -271,13 +271,13 @@ def emit_vfp_convert(asm) -> None:
             # integer in Sm, to a float of `width`
             asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
-                "ensure_fp_environment",
+                "a32_fp_guest",
                 "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
                 f"str {r}0, [_cpu, x8]", "next_gadget"]))
             to = "fcvtzs" if sign == "s" else "fcvtzu"
             asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
-                "ensure_fp_environment",
+                "a32_fp_guest",
                 f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
                 "str w9, [_cpu, x8]", "next_gadget"]))
             # VCVTR: one rounding, by the FPSCR mode (N, P, M, Z), so the
@@ -288,7 +288,7 @@ def emit_vfp_convert(asm) -> None:
             suffix = "s" if sign == "s" else "u"
             asm.gadget(f"vfp_cvt_tor_{sign}_{width}", "\n".join([
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
-                "ensure_fp_environment",
+                "a32_fp_guest",
                 f"ldr {r}0, [_cpu, x9]",
                 "ldr w10, [_cpu, #UML_GADGET_CPU_FPCR]",
                 "ubfx w10, w10, #22, #2",
@@ -302,21 +302,21 @@ def emit_vfp_convert(asm) -> None:
     # single <-> double
     asm.gadget("vfp_cvt_ds", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "ensure_fp_environment", "ldr s0, [_cpu, x9]", "fcvt d0, s0",
+        "a32_fp_guest", "ldr s0, [_cpu, x9]", "fcvt d0, s0",
         "str d0, [_cpu, x8]", "next_gadget"]))
     asm.gadget("vfp_cvt_sd", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "ensure_fp_environment", "ldr d0, [_cpu, x9]", "fcvt s0, d0",
+        "a32_fp_guest", "ldr d0, [_cpu, x9]", "fcvt s0, d0",
         "str s0, [_cpu, x8]", "next_gadget"]))
     # half precision, in the bottom (B) or top (T) half of a single register:
     # the offsets of the half are the builder's (+2 for the top).
     asm.gadget("vfp_cvt_sh", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "ensure_fp_environment", "ldr h0, [_cpu, x9]", "fcvt s0, h0",
+        "a32_fp_guest", "ldr h0, [_cpu, x9]", "fcvt s0, h0",
         "str s0, [_cpu, x8]", "next_gadget"]))
     asm.gadget("vfp_cvt_hs", "\n".join([
         "ldr x8, [_stream], #8", *unpack("d", "n"),
-        "ensure_fp_environment", "ldr s0, [_cpu, x9]", "fcvt h0, s0",
+        "a32_fp_guest", "ldr s0, [_cpu, x9]", "fcvt h0, s0",
         "str h0, [_cpu, x8]", "next_gadget"]))
     # fixed point: [offset][fbits at bit 16], fbits from 0 to 32; the register
     # is both the source and the destination. A conversion with an immediate
@@ -336,7 +336,7 @@ def emit_vfp_convert(asm) -> None:
                 body = [
                     "ldr x8, [_stream], #8",
                     "ubfx x13, x8, #16, #8", "and x8, x8, #0xffff",
-                    "ensure_fp_environment",
+                    "a32_fp_guest",
                     f"ldr {r}0, [_cpu, x8]",
                 ]
                 if size == 16:
@@ -372,7 +372,7 @@ def emit_vfp_convert(asm) -> None:
                 body = [
                     "ldr x8, [_stream], #8",
                     "ubfx x13, x8, #16, #8", "and x8, x8, #0xffff",
-                    "ensure_fp_environment",
+                    "a32_fp_guest",
                     ("ldr w9, [_cpu, x8]" if size == 32 else
                      ("ldrsh w9, [_cpu, x8]" if sign == "s" else
                       "ldrh w9, [_cpu, x8]")),
@@ -451,21 +451,9 @@ def emit_vfp_system(asm) -> None:
         "movk w11, #(UML_ARM64_FPSR_WRITABLE >> 16), lsl #16",
         "and w11, w9, w11", "str w11, [_cpu, #UML_GADGET_CPU_FPSR]",
         "ldrb w12, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w12, 1f",
-        "msr fpcr, x10", "msr fpsr, x11", "1:", "next_gadget"]))
-    # The standard FPSCR value for Advanced SIMD floating-point: FZ and DN
-    # set, round to nearest, AHP and FZ16 from the guest. The MSR is skipped
-    # when the guest's FPCR already is that value.
-    asm.gadget("fpcr_standard", "\n".join([
-        "ensure_fp_environment",
-        "ldr w9, [_cpu, #UML_GADGET_CPU_FPCR]",
-        "movz w10, #0x0408, lsl #16", "and w10, w9, w10",
-        "orr w10, w10, #0x03000000",
-        "cmp w9, w10", "b.eq 1f", "msr fpcr, x10", "1:", "next_gadget"]))
-    asm.gadget("fpcr_guest", "\n".join([
-        "ldr w9, [_cpu, #UML_GADGET_CPU_FPCR]",
-        "movz w10, #0x0408, lsl #16", "and w10, w9, w10",
-        "orr w10, w10, #0x03000000",
-        "cmp w9, w10", "b.eq 1f", "msr fpcr, x9", "1:", "next_gadget"]))
+        "msr fpcr, x10", "msr fpsr, x11",
+        "strb wzr, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]", "1:",
+        "next_gadget"]))
 
 
 def memory_prologue(label: str, mode: str) -> list[str]:

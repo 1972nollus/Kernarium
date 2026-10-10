@@ -17,22 +17,6 @@ namespace {
 
 } // namespace
 
-void Translator::open_standard_fpcr()
-{
-	if (standard_fpcr_)
-		return;
-	push(G::fpcr_standard);
-	standard_fpcr_ = true;
-}
-
-void Translator::close_standard_fpcr()
-{
-	if (!standard_fpcr_)
-		return;
-	push(G::fpcr_guest);
-	standard_fpcr_ = false;
-}
-
 Translator::Result Translator::emit_neon(const Instruction &in,
 					 const FormPlan &plan)
 {
@@ -127,8 +111,6 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 		return {true, false};
 	}
 	uses_fp_ = true;
-	if (group.fp == NeonFp::all || (group.fp == NeonFp::alt && alt != 0))
-		open_standard_fpcr();
 
 	const bool by_scalar = group.scalar == NeonScalar::always ||
 			       (group.scalar == NeonScalar::alt && alt != 0);

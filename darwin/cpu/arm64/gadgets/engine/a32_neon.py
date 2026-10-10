@@ -24,10 +24,10 @@ only the bytes the A32 destination has: a D register is 8 bytes, a Q register
     half, so an operation on 64-bit lanes uses the 2d arrangement and the
     zero upper lane is never stored.
   - Advanced SIMD floating point runs under the standard FPSCR value (flush
-    to zero, default NaN, round to nearest; a32_simd.py has fpcr_standard
-    and fpcr_guest). The builder opens that environment in front of the first
-    such instruction of a conditional run and closes it before any other
-    kind of instruction and at the end of the block. A saturating
+    to zero, default NaN, round to nearest). Each such gadget starts with
+    a32_fp_standard (a32.inc), which switches the native environment to it
+    when it holds the guest's FPCR, and VFP's a32_fp_guest switches back, so
+    a loop of one kind writes the FPCR once. A saturating
     instruction leaves its QC flag in FPSR bit 27, which is where the
     cumulative flags VFP keeps live, so it first makes the native FP
     environment active.
@@ -829,7 +829,7 @@ def plan_of(name: str):
     return g.ident, 1 if name.endswith("_Q") else 0
 
 
-def render(g: Group, v: Variant) -> list:
+def render(g: Group, v: Variant, floating: bool = False) -> list:
     lines: list = []
     shape = g.shape
     if shape == "dnm":
@@ -849,7 +849,9 @@ def render(g: Group, v: Variant) -> list:
     elif shape == "delem":
         lines += ["ldr x8, [_stream], #8", "ubfx x10, x8, #16, #16",
                   "and x8, x8, #0xffff"]
-    if v.qc:
+    if floating:
+        lines.append("a32_fp_standard")
+    elif v.qc:
         lines.append("ensure_fp_environment")
     if v.raw:
         lines += v.raw
@@ -900,8 +902,14 @@ def emit(asm) -> None:
     if not GROUPS:
         define_groups()
     for g in GROUPS:
-        for _index, suffix, variant in variants_of(g):
-            asm.gadget(gadget_name(g, suffix), "\n".join(render(g, variant)))
+        for index, suffix, variant in variants_of(g):
+            # The variants that run under the standard FPSCR value: all of an
+            # FP_ALL group, those with the alt bit of an FP_ALT one.
+            floating = g.fp == FP_ALL or (
+                g.fp == FP_ALT and g.index == INDEX_GENERIC and
+                (index >> 4 & 1) != 0)
+            asm.gadget(gadget_name(g, suffix),
+                       "\n".join(render(g, variant, floating)))
 
 
 def header_tables(names) -> list:

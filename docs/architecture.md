@@ -874,10 +874,11 @@ lanes. D0-D31 and S0-S31 are byte offsets into `CpuState::vectors`, and a
 gadget stores only the bytes the A32 destination has. VFP runs under the
 guest's FPCR in the native FP environment. Advanced SIMD floating point runs
 under the standard FPSCR value (flush to zero, default NaN, round to nearest):
-the builder opens it with `fpcr_standard` in front of the first such
-instruction of a conditional run and closes it with `fpcr_guest` before any
-other kind of instruction, at the end of the run and at the end of the block,
-so no exit leaves it on. The A32 shifts by an immediate use the A64
+each such gadget starts with `a32_fp_standard` and each VFP gadget with
+`a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
+`CpuState::a32_fp_standard` says the native environment holds the other one,
+so a loop of one kind switches once and the execution boundary restores the
+host's FPCR whichever it holds. The A32 shifts by an immediate use the A64
 shift-by-register instructions with a replicated signed amount, so a gadget
 serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
