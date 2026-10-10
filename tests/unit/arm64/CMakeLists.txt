@@ -124,6 +124,8 @@ uml_add_arm64_unit_test(base_immediate_memory_structure)
 uml_add_arm64_unit_test(base_load_store_register_structure)
 uml_add_arm64_unit_test(base_ordered_behavior)
 uml_add_arm64_unit_test(base_ordered_gadget)
+# Load/store-exclusive loops make progress whatever the TLB holds.
+uml_add_arm64_unit_test(exclusive_progress)
 uml_add_arm64_unit_test(simd_ordinary_memory_gadget)
 uml_add_arm64_unit_test(simd_structure_gadget)
 uml_add_arm64_unit_test(simd_baseline_inventory WITHOUT_HARNESS

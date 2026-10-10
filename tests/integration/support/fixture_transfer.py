@@ -40,12 +40,18 @@ KERNEL_FAILURE_MARKERS = (
 )
 
 
-def parse_arguments(description: str | None) -> argparse.Namespace:
-    """Parse a probe runner's command line and check that the probe is one."""
+def parse_arguments(
+    description: str | None, engines: Sequence[str] = ()
+) -> argparse.Namespace:
+    """Parse a probe runner's command line and check that the probe is one.
+
+    A runner of several engines names them and receives --engine."""
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--probe", required=True, type=pathlib.Path)
+    if engines:
+        parser.add_argument("--engine", required=True, choices=tuple(engines))
     parser.add_argument(
         "--page-size", required=True, type=int, choices=(4096, 16384)
     )

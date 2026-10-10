@@ -453,6 +453,10 @@ public:
     std::optional<std::size_t> gadget_instructions;
 
     for (const auto engine : {Engine::gadgets, Engine::jit}) {
+      if (engine == Engine::jit && test_case.gadgets_only) {
+        ++counts_.jit_skipped;
+        continue;
+      }
       if (!engine_available(engine)) {
         if (engine != Engine::jit)
           fail(test_case.name, "setup", diagnostic_instruction,
@@ -527,7 +531,9 @@ public:
              "unexpected terminal event", location);
       }
 
-      if (test_case.expected_instructions.has_value()) {
+      if (test_case.variable_instruction_count) {
+        /* Nothing to compare: see ProgramCase. */
+      } else if (test_case.expected_instructions.has_value()) {
         if (outcome.instructions != *test_case.expected_instructions) {
           std::fprintf(stderr,
                        "expected instructions=%zu actual instructions=%zu\n",
