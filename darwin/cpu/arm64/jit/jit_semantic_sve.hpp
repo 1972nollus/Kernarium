@@ -58,12 +58,11 @@ void note_sve_translation(std::size_t row, bool library) noexcept;
  * row with a count, most exits first:
  *   SVE-nnnn  row  mask  value  translated  translated_to_library  exits
  * The form number is the architecture oracle's, and the mask and value are
- * the row's encoding in hex. tools/arm64-tests/sve-library-report.py names
- * the forms. Setting DARWIN_UML_SVE_LIBRARY_EXITS to a path enables counting
- * from the process's start, writes the report there as the process ends and
- * writes it again whenever an executor retires, because the emulator leaves
- * through _Exit, which runs no exit handler: the last write is the complete
- * one. Returns false if the file cannot be written.
+ * the row's encoding in hex. Setting DARWIN_UML_SVE_LIBRARY_EXITS to a path
+ * enables counting from the process's start, writes the report there as the
+ * process ends and writes it again whenever an executor retires, because the
+ * emulator leaves through _Exit, which runs no exit handler: the last write
+ * is the complete one. Returns false if the file cannot be written.
  */
 bool write_sve_library_report(const char *path) noexcept;
 
