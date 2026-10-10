@@ -384,6 +384,46 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# Memory the kernel shares with user space, through a vmalloc or vmap alias
+# (BPF arrays and ring buffers, perf, PACKET_MMAP, io_uring), reads the same
+# from both sides. On the 4 KiB profile an alias that is not whole groups of
+# four pages is a private copy of its frames, and a ring in the application's
+# scattered pages cannot be shared and is refused.
+uml_add_guest_payload(UML_GUEST_SHARED_MEMORY_PROBE guest-shared-memory-probe
+    kernel/shared_memory_probe.cpp
+    COMMENT "Building the freestanding arm64 kernel/user shared-memory probe"
+    COMPILE_OPTIONS
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8.1-a
+        -mno-outline-atomics
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+    LINK_OPTIONS
+        -Wl,-z,max-page-size=16384
+        -Wl,-s)
+
+if(UML_GUEST_16K_PAGES)
+    set(_uml_shared_memory_page_size 16384)
+else()
+    set(_uml_shared_memory_page_size 4096)
+endif()
+uml_add_guest_integration_test(
+    NAME guest-kernel-user-shared-memory
+    SCRIPT kernel/run_guest_shared_memory.py
+    ARGS --probe ${UML_GUEST_SHARED_MEMORY_PROBE}
+        --page-size ${_uml_shared_memory_page_size}
+        --cpus 4
+    LABELS guest;kernel;memory
+    TIMEOUT 900
+    CPUS 4)
+
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
