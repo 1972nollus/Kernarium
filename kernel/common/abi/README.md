@@ -41,6 +41,15 @@ then its SVE registers, 592 bytes whether or not the run implements SME or
 SVE; an x86_64-userspace task's tail is its FP registers alone. The host
 requires exactly the slice's size on every entry.
 
+An AArch32 task of an arm64 kernel uses the same register image, which
+`struct darwin_uml_guest_registers` documents field by field, with TPIDRURO in
+its last field, `tpidrro`. The arm64-only imports
+`darwin_uml_guest_compat_hwcap()` and `darwin_uml_guest_compat_hwcap2()` give
+the task's AT_HWCAP words. The first is zero exactly when the run's engine
+does not execute AArch32, so no separate query exists, and the kernel then
+refuses 32-bit ELF files. The x86_64 slice neither imports them nor builds
+AArch32.
+
 For an intentional bridge declaration change:
 
 1. set the new version and the computed kernel fingerprint in `identity.env`;

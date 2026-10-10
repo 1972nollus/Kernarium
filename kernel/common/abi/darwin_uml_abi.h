@@ -72,6 +72,16 @@ enum {
 	 * one that sets the flag; the arm64 kernels never set it, and the
 	 * arm64 host does not read it. */
 	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
+	/* An AArch32 task may execute the CP15 barrier operations (the MCRs
+	 * to DMB, DSB and ISB of the CP15 c7 space). The kernel sets it for
+	 * an AArch32 entry while its abi.cp15_barrier setting is not 0:
+	 * arm64 Linux emulates the operations by default (1) or lets the
+	 * hardware execute them (2), and the host executes them either way.
+	 * While it is clear those MCRs are UNDEFINED and raise
+	 * DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION. The host never reads it on an
+	 * AArch64 entry, and the kernel sets it on no other. From bridge
+	 * ABI 22. */
+	DARWIN_UML_DISPATCH_A32_CP15BEN = 1U << 1,
 };
 
 enum {
@@ -107,7 +117,40 @@ struct darwin_uml_faultinfo {
 	darwin_uml_abi_s32 trailing_padding;
 };
 
-/* Prefix passed unchanged between a UML task and the native host runtime. */
+/* Prefix passed unchanged between a UML task and the native host runtime.
+ *
+ * An AArch32 task of an arm64 kernel is identified by PSTATE.nRW (pstate
+ * bit 4) set, and exists from bridge ABI 22 on. The same fields mean:
+ *   pstate  the SPSR layout of an exception taken from AArch32: M[4:0] =
+ *           0b10000 (User), T (bit 5), E (bit 9, always 0), GE (19:16),
+ *           IT[1:0] (26:25), IT[7:2] (15:10), Q (27), NZCV (31:28), SS
+ *           (21) and DIT (24); A, I, F, IL and PAN are 0.
+ *   pc      the architectural address of the next instruction, bit 0
+ *           clear; T is in pstate.
+ *   x[0-14] R0-R14 in bits 31:0 (SP_usr is x13, LR_usr is x14). The host
+ *           writes bits 63:32 as zero on return and ignores them on
+ *           entry. x[15-28], fp, lr and sp are no part of the state, and
+ *           the host leaves them as they were.
+ *   fp registers  D0-D31 in vectors[0-15], D(2n) in bits 63:0 of V(n) and
+ *           D(2n+1) in bits 127:64; vectors[16-31] are ignored on entry and
+ *           unchanged on return. fpsr holds FPSCR & 0xf800009f and fpcr
+ *           FPSCR & 0x07f79f00; FPSCR.Len and .Stride read as zero and the
+ *           floating-point trap enables read as zero and ignore writes.
+ *   tls     (the tls argument of darwin_uml_enter_guest()) TPIDRURW in
+ *           bits 31:0, read on entry and written on return.
+ *   tpidrro TPIDRURO, read on entry only.
+ * An AArch32 entry whose svcr is non-zero, whose SVE registers are live, or
+ * that the run's engine cannot execute (darwin_uml_guest_compat_hwcap() is
+ * zero) is DARWIN_UML_EVENT_FATAL. The events mean, for such a task:
+ *   SYSCALL   pc is after the SVC (4 bytes in A32, 2 or 4 in T32) and the
+ *             IT state in pstate has advanced past it; the kernel takes
+ *             the system call number from x7 and ignores the immediate.
+ *   ILLEGAL_INSTRUCTION  pc and pstate (IT included) are those of the
+ *             instruction, which has done nothing.
+ *   BREAKPOINT  a BKPT instruction at pc, or a completed single step with
+ *             fault.trap_number 0x32 and pc at the next instruction.
+ *   FAULT, DATA_ALIGNMENT, PC_ALIGNMENT  as for AArch64, with 32-bit
+ *             addresses. */
 struct darwin_uml_guest_registers {
 	darwin_uml_abi_u64 x[29];
 	/* For a task of an x86-64 userspace kernel, the address of its mm's
@@ -134,6 +177,11 @@ struct darwin_uml_guest_registers {
 	 * whichever ABI installed them, one struct user_desc each; zero for
 	 * every other task. */
 	darwin_uml_abi_u64 compat_tls[DARWIN_UML_COMPAT_TLS_COUNT][2];
+	/* TPIDRURO of an AArch32 task of an arm64 kernel, in bits 31:0: the
+	 * kernel sets it for the ARM-private set_tls call, CLONE_SETTLS and a
+	 * tracer's write, and the host reads it on entry and never writes it,
+	 * because EL0 cannot. Zero for every other task. From bridge ABI 22. */
+	darwin_uml_abi_u64 tpidrro;
 };
 
 struct darwin_uml_guest_fp_registers {
@@ -196,7 +244,8 @@ enum {
 #define DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET 304U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET 320U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET 336U
-#define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 384U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_TPIDRRO_OFFSET 384U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 392U
 #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
 #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET 528U
 #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE 24U
@@ -229,6 +278,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET);
 static_assert(offsetof(struct darwin_uml_guest_registers, compat_tls) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, tpidrro) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_TPIDRRO_OFFSET);
 static_assert(sizeof(struct darwin_uml_guest_registers) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_SIZE);
 static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);

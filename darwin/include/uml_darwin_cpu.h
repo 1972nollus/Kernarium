@@ -13,6 +13,16 @@ int darwin_uml_enter_guest(void *registers, void *fp_registers,
 			   unsigned long *tls);
 unsigned long darwin_uml_guest_hwcap(void);
 unsigned long darwin_uml_guest_hwcap2(void);
+/* The AT_HWCAP and AT_HWCAP2 words of an AArch32 task (arm64 Linux's
+ * COMPAT_HWCAP_* and COMPAT_HWCAP2_* bits) of the run's engine, from bridge
+ * ABI 22. Both are zero exactly when the engine does not execute AArch32 EL0
+ * for this run: the kernel then refuses 32-bit ELF images and
+ * personality(PER_LINUX32), and an AArch32 entry is
+ * DARWIN_UML_EVENT_FATAL. The first word always names the architecture's
+ * baseline, so it is non-zero exactly when AArch32 runs; no separate query
+ * exists. Fixed for the life of the process. */
+unsigned long darwin_uml_guest_compat_hwcap(void);
+unsigned long darwin_uml_guest_compat_hwcap2(void);
 /* The streaming vector length in bytes when the virtual CPU implements SME
  * for this run, else 0. Fixed for the life of the process. */
 unsigned long darwin_uml_guest_sme_vector_length(void);
