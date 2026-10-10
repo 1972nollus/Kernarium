@@ -11,9 +11,11 @@ verifies the SHA-256 in `provenance.json`
 ([source contract](../../../../tools/instruction-corpus/README.md)). The
 runner,
 [`../aarch32_corpus_runner.cpp`](../aarch32_corpus_runner.cpp), needs only the
-pack. Until an engine runs AArch32 it proves each case consistent with the
-decoder and with itself; an engine adds its lane to that runner and the
-inventory's `engine_status` moves from `pending` to `verified` per entry.
+pack and proves each case consistent with the decoder and with itself. An
+engine lane includes the reader,
+[`../aarch32_corpus_pack.hpp`](../aarch32_corpus_pack.hpp), runs each case
+and compares what the pack records; the inventory's `engine_status` moves from
+`pending` to `verified` per entry.
 
 ## A case
 
@@ -79,20 +81,53 @@ A record holds one suite observed by one oracle and is named
 | `profile` | no oracle ran it: the event the profile defines |
 | `pi4`, `pi5` | hardware (decision D3), when recorded |
 
-The suites, in the order the corpus grows: `alu` (data processing,
-multiplies, bit fields, extension, saturation, packing, parallel arithmetic),
-`memory` (single and multiple loads and stores at aligned and misaligned
-addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
-the read-only region and in unmapped memory, with writeback), `prefetch` (PLD,
-PLDW and PLI never fault), `exclusive` (LDREX/STREX sequences, CLREX,
-misaligned and unmapped loads), `branch` (B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH,
-PC-writing loads and ALU instructions, interworking both ways, jumps to
-unmapped addresses), `conditions` (every condition against every NZCV, and
-every IT block), `pc` (instructions that read the PC), `system` (barriers,
-hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW, the CP15 barriers, BKPT
-and the encodings Linux turns into SIGTRAP) and `absent` (UNDEFINED,
-UNPREDICTABLE, unallocated and absent-feature encodings raise SIGILL; SVC
-raises the system-call event).
+The suites, in the order the corpus grows. The base level (A32 and Thumb-2,
+no floating point or SIMD):
+
+- `alu`: data processing, multiplies, bit fields, extension, saturation,
+  packing and parallel arithmetic;
+- `memory`: single and multiple loads and stores at aligned and misaligned
+  addresses, across 4 KiB and 16 KiB lines, at the ends of the data region, in
+  the read-only region and in unmapped memory, with writeback;
+- `prefetch`: PLD, PLDW and PLI never fault;
+- `exclusive`: LDREX/STREX sequences, CLREX, misaligned and unmapped loads;
+- `branch`: B, BL, BLX, BX, CBZ/CBNZ, TBB/TBH, PC-writing loads and ALU
+  instructions, interworking both ways, jumps to unmapped addresses;
+- `conditions`: every condition against every NZCV, and every IT block;
+- `pc`: instructions that read the PC;
+- `system`: barriers, hints, CPS, the APSR instructions, TPIDRURO, TPIDRURW,
+  the CP15 barriers, BKPT and the encodings Linux turns into SIGTRAP;
+- `absent`: UNDEFINED, UNPREDICTABLE, unallocated and absent-feature
+  encodings raise SIGILL; SVC raises the system-call event.
+
+The `simd` level (VFPv4-D32 and Advanced SIMD):
+
+- `simd`: every register form, each word started in D registers of
+  floating-point edge values (zeros, infinities, NaNs, denormals, extremes),
+  of integer lane limits (8, 16 and 32 bits) or of random bits, under every
+  rounding mode, flush-to-zero, default-NaN and alternative half-precision
+  setting; the element-size and signedness variants come from the form's free
+  fields;
+- `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
+  and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
+- `fpscr`: VMRS and VMSR, including the exception trap enables the profile
+  reads as zero and ignores writes to.
+
+The `complete` level (the Armv8 additions):
+
+- `armv8`: CRC32, AES, SHA-1, SHA-2, VRINT*, VCVT[ANPM], VSEL, VMAXNM,
+  VMINNM, the half-precision arithmetic, VCADD, VCMLA, VQRDMLAH, VQRDMLSH,
+  VJCVT and the dot-product, matrix-multiply and half-to-single
+  multiply-accumulate forms, in the simd suite's states plus half-precision
+  lanes;
+- `armv8-memory`, `armv8-exclusive`: LDA and STL, LDAEX and STLEX sequences, and
+  the half-precision VLDR and VSTR;
+- `armv8-system`: SB and SEVL.
+
+Two suites are recorded only from hardware (`pi4` or `pi5`): `unaligned`
+(multi-word accesses at misaligned addresses) and `fpscr-reserved` (VMRS and
+VMSR with Stride, Len and FZ16 set, which an implementation may or may not
+hold). The producer refuses to record them as `qemu`.
 
 ## What the oracle's answers rest on
 
@@ -104,8 +139,10 @@ raises the system-call event).
   undefined-instruction encodings into SIGTRAP; every other UDF is SIGILL.
 - qemu-arm refuses misaligned multi-word accesses (LDM, STM, LDRD, STRD,
   PUSH, POP) with an alignment fault where an arm64 kernel fixes them up for a
-  compat task. The `unaligned` suite is therefore recorded only from hardware
-  (`pi4` or `pi5`); the producer refuses to record it as `qemu`.
+  compat task. The `unaligned` suite is therefore recorded only from hardware.
+- qemu-arm clears the FPSCR exception trap enables on a write (the profile's
+  read-as-zero, write-ignored) and keeps Stride, Len and FZ16; the last three
+  are the `fpscr-reserved` suite's, so the `qemu` records never set them.
 - CNTFRQ and CNTVCT depend on the host and are not in the corpus.
 
 ## Regeneration
@@ -123,3 +160,14 @@ pinned clang and lld, runs it in a private directory on the host and removes
 the directory. `finish` regenerates `provenance.json`, `manifest.tsv`,
 `coverage.tsv` (cases per inventory entry) and `excluded.tsv` (entries with no
 case). Commit the source tables and these files, never the pack.
+
+Hardware records use the same producer without `--runner`, so the harness runs
+natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry
+Pi 4 or 5 with a 64-bit kernel). `compare` then lists where another oracle's
+observations of the same cases differ from the checked-in ones:
+
+```sh
+python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
+  --suite alu --host HOST --oracle pi5 --source /tmp/a32-pi5
+python3 tools/arm64-tests/a32-corpus.py compare --right /tmp/a32-pi5
+```

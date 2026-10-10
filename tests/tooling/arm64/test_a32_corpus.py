@@ -36,9 +36,9 @@ DIRECTORY = REPOSITORY / "tests/unit/arm64/aarch32_corpus"
 INVENTORY = REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv"
 ORACLES = {"qemu", "pi4", "pi5", "profile"}
 # The inventory levels whose executed entries the corpus owes cases.
-REQUIRED_LEVELS = {"base"}
+REQUIRED_LEVELS = {"base", "simd", "complete"}
 # Suites whose golden only hardware can settle.
-HARDWARE_ONLY = {"unaligned"}
+HARDWARE_ONLY = {"unaligned", "fpscr-reserved"}
 
 
 def require(condition: bool, message: str) -> None:
