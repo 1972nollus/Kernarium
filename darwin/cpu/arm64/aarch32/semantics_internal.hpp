@@ -123,6 +123,7 @@ struct VectorEntry final {
 [[nodiscard]] const VectorEntry *vector_float_entries(std::size_t &count) noexcept;
 [[nodiscard]] const VectorEntry *armv8_float_entries(std::size_t &count) noexcept;
 [[nodiscard]] const VectorEntry *armv8_integer_entries(std::size_t &count) noexcept;
+[[nodiscard]] const VectorEntry *crypto_entries(std::size_t &count) noexcept;
 
 [[nodiscard]] const OpInfo &op_info(Form form) noexcept;
 
