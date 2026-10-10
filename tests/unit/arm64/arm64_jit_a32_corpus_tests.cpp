@@ -79,8 +79,10 @@ public:
       std::memcpy(code.data() + offset, &value, 4);
     };
     for (std::size_t index = 0; index < test.halves.size(); ++index)
-      put16(static_cast<std::uint32_t>(2 * index), test.halves[index]);
-    std::uint32_t end = static_cast<std::uint32_t>(2 * test.halves.size());
+      put16(test.origin + static_cast<std::uint32_t>(2 * index),
+            test.halves[index]);
+    std::uint32_t end =
+        test.origin + static_cast<std::uint32_t>(2 * test.halves.size());
     padded = false;
     const auto arm_stub = [&](std::uint32_t at) {
       put32(at, 0xe51ff004U); // ldr pc, [pc, #-4]
@@ -91,14 +93,17 @@ public:
       put16(at + 2, 0xf000);
       put32(at + 4, kThumbEpilogue);
     };
+    /* A program at the end of the region has no room for a stub and falls
+     * off it. */
     if (thumb) {
-      if (end % 4 != 0) {
+      if (end % 4 != 0 && end + 2 + 8 <= kCodeSize) {
         padded = true;
         put16(end, 0xbf00); // nop, so the stub is word aligned
         end += 2;
       }
-      thumb_stub(end);
-    } else {
+      if (end + 8 <= kCodeSize)
+        thumb_stub(end);
+    } else if (end + 8 <= kCodeSize) {
       arm_stub(end);
     }
     arm_stub(kArmExit - kCodeBase);
@@ -166,10 +171,11 @@ private:
 
 // --- Checking -------------------------------------------------------------------
 
-arm64::CpuState cpu_from(const State &state, bool thumb) {
+arm64::CpuState cpu_from(const State &state, bool thumb,
+                         std::uint32_t entry = kCodeBase) {
   arm64::CpuState cpu{};
   cpu.a32 = 1;
-  cpu.pc = thumb ? key::t32_key(kCodeBase) : key::a32_key(kCodeBase);
+  cpu.pc = thumb ? key::t32_key(entry) : key::a32_key(entry);
   for (unsigned index = 0; index < kRegisters; ++index)
     cpu.registers[index] = state.r[index];
   cpu.nzcv = state.apsr & 0xf000'0000U;
@@ -204,7 +210,7 @@ std::string check(Machine &machine, const Case &test) {
   std::uint32_t stub = 0;
   bool padded = false;
   machine.load(test, stub, padded);
-  auto cpu = cpu_from(test.initial, thumb);
+  auto cpu = cpu_from(test.initial, thumb, kCodeBase + test.origin);
   const auto result = machine.run(cpu);
 
   char text[512];
@@ -244,19 +250,20 @@ std::string check(Machine &machine, const Case &test) {
      * layer, as arm's): A32 0xe7f001f0, T16 0xde01 and T32 0xf7f0a000. */
     std::uint32_t word = 0;
     const std::uint32_t at = pc;
+    const std::uint32_t program = kCodeBase + test.origin;
     const auto read16 = [&](std::uint32_t address) {
-      const std::uint32_t index = address - kCodeBase;
+      const std::uint32_t index = address - program;
       return static_cast<std::uint32_t>(test.halves[index / 2]);
     };
-    if (at >= kCodeBase && at - kCodeBase < 2 * test.halves.size()) {
+    if (at >= program && at - program < 2 * test.halves.size()) {
       if (at_thumb) {
         word = read16(at);
         if (word == 0xde01U)
           event = kSigTrap;
-        else if (word == 0xf7f0U && at + 2 - kCodeBase < 2 * test.halves.size() &&
+        else if (word == 0xf7f0U && at + 2 - program < 2 * test.halves.size() &&
                  read16(at + 2) == 0xa000U)
           event = kSigTrap;
-      } else if (at + 4 - kCodeBase <= 2 * test.halves.size()) {
+      } else if (at + 4 - program <= 2 * test.halves.size()) {
         word = read16(at) | read16(at + 2) << 16;
         if (word == 0xe7f001f0U)
           event = kSigTrap;
@@ -429,7 +436,7 @@ std::map<std::string, ExitTally> measure_helper_exits(
       std::size_t before = 0;
       for (unsigned pass = 0; pass < 2; ++pass) {
         machine.load(test, stub, padded);
-        auto cpu = cpu_from(test.initial, thumb);
+        auto cpu = cpu_from(test.initial, thumb, kCodeBase + test.origin);
         before = ::uml::cpu::arm64::jit::a32::helper_exits(form->second);
         (void)machine.run(cpu);
       }

@@ -4,9 +4,10 @@
 // memory instruction executed in C++ on the register file the generated code
 // spilled. It runs what the inline lowering declines (an access that crosses
 // a page, a misaligned one that must fault, the exclusives and the rare
-// forms) with exact fault ordering: a store writes nothing before every page
-// it touches is translated, and a load changes no register before its last
-// element is read.
+// forms) with exact fault ordering: a single store writes nothing before every
+// page it touches is translated, a store-multiple writes the registers before
+// the one that faults (the pseudocode's order), and a load changes no register
+// before its last element is read.
 //
 // Interim: the AArch32 semantic library (design 3.2, lane A32-S) replaces this
 // file's execution of the transfer classes when it exists.
@@ -382,9 +383,27 @@ private:
       if ((transfer_.registers >> r & 1U) != 0U)
         words[index++] = read(r);
     std::memcpy(raw.data(), words.data(), span);
-    if (!sem::ordinary_store(memory_, start,
-                             std::span<const std::byte>{raw}.first(span)))
+    /* The pseudocode stores the registers one after another, so an abort at
+     * a register leaves the ones before it written (the base register and
+     * the PC are untouched): store the words up to the first page that
+     * cannot be written, then take the fault there. */
+    unsigned writable = count;
+    for (unsigned element = 0; element < count; ++element)
+      if (!memory_.validate_access(start + 4U * element, 4U,
+                                   ::uml::memory::MemoryAccess::write)) {
+        writable = element;
+        break;
+      }
+    if (writable != 0U &&
+        !sem::ordinary_store(memory_, start,
+                             std::span<const std::byte>{raw}.first(
+                                 4U * writable)))
       return memory_fault(true);
+    if (writable != count) {
+      (void)memory_.validate_access(start + 4U * writable, 4U,
+                                    ::uml::memory::MemoryAccess::write);
+      return memory_fault(true);
+    }
     if (transfer_.wback)
       write(transfer_.n, final_base);
     return retire();
