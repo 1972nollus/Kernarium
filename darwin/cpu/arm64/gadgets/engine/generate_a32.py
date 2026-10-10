@@ -37,6 +37,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
+
 
 class GenerationError(Exception):
     pass
@@ -135,7 +138,7 @@ FAMILIES = [
     "mrs",
     "msr",
     "cp15",          # MCR MRC MRRC with the sysreg the decoder names
-]
+] + a32_simd.FAMILIES
 
 DP_MNEMONICS = {
     "AND": "and", "EOR": "eor", "SUB": "sub", "RSB": "rsb", "ADD": "add",
@@ -205,8 +208,14 @@ def tail_ops() -> list[str]:
 
 
 def plan_of(row: FormRow) -> tuple[str, int, int]:
-    """(family, sub, aux) for a base-level form, or ("none", 0, 0)."""
-    if row.level != "base" or row.availability != "implemented":
+    """(family, sub, aux) for a form of the base or simd level, or
+    ("none", 0, 0)."""
+    if row.availability != "implemented":
+        return ("none", 0, 0)
+    if row.level == "simd":
+        return a32_simd.plan_of_simd(row.name, row.mnemonic) or \
+            ("none", 0, 0)
+    if row.level != "base":
         return ("none", 0, 0)
     name, mnemonic = row.name, row.mnemonic
     if name in ("Undefined",):
@@ -1158,6 +1167,7 @@ def build_assembly(asm: Assembly) -> None:
     emit_double(asm)
     emit_blocks(asm)
     emit_integer(asm)
+    a32_simd.emit(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1267,6 +1277,8 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
     out.append(" * kFormPlans gives. */")
     out.append("inline constexpr std::size_t kTailOperations = "
                f"{len(tail_ops())};")
+    out.append("")
+    out += a32_simd.header_tables(set(names))
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))
 

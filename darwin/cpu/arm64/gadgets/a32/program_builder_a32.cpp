@@ -1089,6 +1089,17 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::msr:
 	case Family::cp15:
 		return emit_system(in, plan);
+	case Family::vfp3:
+	case Family::vfpmac:
+	case Family::vfp2:
+	case Family::vfpcmp:
+	case Family::vfpimm:
+	case Family::vfpcvt:
+	case Family::vfpcore:
+	case Family::vfpsys:
+	case Family::vfpmem:
+	case Family::vfpblock:
+		return emit_vfp(in, plan);
 	case Family::udf:
 	case Family::none:
 		break;
@@ -1225,7 +1236,7 @@ BuildOutput Translator::run()
 
 	BuildOutput output{
 		BuildResult{Program{input_.key, compiled_, std::move(words_),
-				    false, false},
+				    uses_fp_, false},
 			    complete_, stop_address_, stop_instruction_},
 		units_, it_};
 	return output;

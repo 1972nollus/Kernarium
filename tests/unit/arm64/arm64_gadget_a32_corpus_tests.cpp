@@ -378,6 +378,15 @@ void explain(const corpus::Case &test, std::size_t target)
 	for (const auto half : test.halves)
 		std::fprintf(stderr, " %04x", half);
 	std::fprintf(stderr, "  target #%zu\n", target);
+	std::fprintf(stderr, "    initial fpscr %#x; final fpscr %#x\n",
+		     test.initial.fpscr, test.final.fpscr);
+	for (unsigned index = 0; index < corpus::kVectors; index += 4)
+		std::fprintf(stderr,
+			     "    d%-2u %016llx %016llx %016llx %016llx\n", index,
+			     static_cast<unsigned long long>(test.initial.d[index]),
+			     static_cast<unsigned long long>(test.initial.d[index + 1]),
+			     static_cast<unsigned long long>(test.initial.d[index + 2]),
+			     static_cast<unsigned long long>(test.initial.d[index + 3]));
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
 	decode::ItState it;
 	std::size_t index = 0;

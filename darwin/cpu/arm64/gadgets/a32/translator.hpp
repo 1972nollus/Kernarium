@@ -11,6 +11,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/layout/assembly_offsets.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +27,18 @@ using namespace aarch32;
  * destination PC live. */
 constexpr std::uintptr_t scratch0 = 15 * 8;
 constexpr std::uintptr_t scratch1 = 16 * 8;
+
+/* Where D0-D31 and S0-S31 are: they overlay V0-V15 (D(2n) is the low half
+ * of V(n)), so a VFP or Advanced SIMD register is a byte offset. */
+constexpr std::uint64_t vector_base = UML_GADGET_CPU_V0;
+[[nodiscard]] constexpr std::uint64_t s_register(int number) noexcept
+{
+	return vector_base + 4U * static_cast<std::uint64_t>(number);
+}
+[[nodiscard]] constexpr std::uint64_t d_register(int number) noexcept
+{
+	return vector_base + 8U * static_cast<std::uint64_t>(number);
+}
 
 template <typename Gadget>
 [[nodiscard]] std::uintptr_t address_of(Gadget gadget) noexcept
@@ -123,6 +136,11 @@ private:
 	Result emit_branch(const Instruction &in, const FormPlan &plan);
 	Result emit_system(const Instruction &in, const FormPlan &plan);
 	Result emit_tail(const Instruction &in, const FormPlan &plan);
+	/* VFP: program_builder_a32_vfp.cpp. */
+	Result emit_vfp(const Instruction &in, const FormPlan &plan);
+	Result emit_vfp_convert(const Instruction &in, const FormPlan &plan);
+	Result emit_vfp_core(const Instruction &in, const FormPlan &plan);
+	Result emit_vfp_memory(const Instruction &in, const FormPlan &plan);
 	void emit_indirect(std::uintptr_t source, bool interwork, bool returns);
 	void emit_direct_exit(std::uint64_t target);
 	void emit_fallthrough();
@@ -157,6 +175,9 @@ private:
 	/* Operands the end of the block patches: the word, and the number of
 	 * instructions translated through the one that holds it. */
 	std::vector<std::pair<std::size_t, std::size_t>> patches_;
+	/* The block holds an instruction that reads or writes V (and so is
+	 * entered through the FP state link). */
+	bool uses_fp_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets::a32::detail

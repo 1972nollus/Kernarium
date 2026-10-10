@@ -230,7 +230,9 @@ add_custom_command(
         --table ${_uml_arm64_a32_table}
         --assembly ${_uml_arm64_a32_dir}/a32_generated.inc
         --header ${_uml_arm64_a32_dir}/a32_forms.hpp
-    DEPENDS ${_uml_arm64_a32_generator} ${_uml_arm64_a32_table}
+    DEPENDS ${_uml_arm64_a32_generator}
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_simd.py
+        ${_uml_arm64_a32_table}
         ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
     COMMENT "Generating the arm64 AArch32 gadgets"
     VERBATIM)
@@ -239,6 +241,7 @@ set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
 set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
     INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
 set_source_files_properties(arm64/gadgets/a32/program_builder_a32.cpp
+    arm64/gadgets/a32/program_builder_a32_vfp.cpp
     PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
 # The generated header for the tests that check the forms against the table.
 add_library(uml_arm64_a32_forms INTERFACE)
@@ -246,6 +249,7 @@ uml_declare_architecture_target(uml_arm64_a32_forms cpu gadget)
 target_include_directories(uml_arm64_a32_forms INTERFACE ${_uml_arm64_a32_dir})
 set(_uml_arm64_gadget_a32_sources
     arm64/gadgets/a32/program_builder_a32.cpp
+    arm64/gadgets/a32/program_builder_a32_vfp.cpp
     arm64/gadgets/a32/memory_helpers.cpp
     arm64/gadgets/a32/tail_helpers.cpp
     ${_uml_arm64_a32_dir}/a32_forms.hpp)
