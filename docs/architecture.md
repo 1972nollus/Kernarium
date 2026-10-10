@@ -409,7 +409,8 @@ for a pair) of the recorded values, with status zero exactly when it
 exchanged and a failure when the recorded address or a value differs. That
 completion is value-based, so it cannot see a write that restored the value,
 and it never runs when the store hits. A fault between the pair leaves the
-loop for the kernel, whose next entry clears the record, and the loop retries
+loop for the kernel, whose next entry clears the record (an exception return
+ends the monitor; `arm64-static-runtime` checks it), and the loop retries
 from its head. The JIT's fused regions check both mappings before the
 monitor, and its semantic path keeps a software reservation; its ordinary
 stores clear the monitor, as the architecture permits.
