@@ -12,8 +12,8 @@
  * bit patterns, run with the FPCR the AArch32 instruction defines (the
  * guest FPSCR's control bits for VFP, the Standard FPSCR value for Advanced
  * SIMD) and the cumulative flags it raises merged into the guest FPSR, as
- * the SVE library does. Overloads on std::uint32_t and std::uint64_t select
- * the single and double precision instruction.
+ * the SVE library does. Overloads on std::uint16_t, std::uint32_t and
+ * std::uint64_t select the half, single and double precision instruction.
  */
 
 namespace uml::cpu::arm64::aarch32::detail::fp {
@@ -311,11 +311,9 @@ template<typename Float>
 	return static_cast<std::uint32_t>(flags) & 0xf000'0000U;
 }
 
-/* Which FPCR a floating-point form runs under. */
+/* Selects the Standard FPSCR value for the lane helpers below. */
 struct Standard final {};
-struct Effective final {};
 inline constexpr Standard standard{};
-inline constexpr Effective effective{};
 
 /* A function of the n, m and old d elements of each D register of an
  * Advanced SIMD form (half or single precision by the form's esize), run
@@ -344,12 +342,6 @@ inline bool lanes(Exec &x, Standard, Function &&function)
 		return lanes_of<std::uint16_t>(x, function);
 	return lanes_of<std::uint32_t>(x, function);
 }
-template<typename Function>
-inline bool lanes32(Exec &x, Standard, Function &&function)
-{
-	return lanes_of<std::uint32_t>(x, function);
-}
-
 template<typename Float>
 [[nodiscard]] constexpr Float sign_bit() noexcept
 {
