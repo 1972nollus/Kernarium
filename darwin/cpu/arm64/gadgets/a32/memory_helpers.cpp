@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// The page-crossing multiple transfers of the AArch32 gadget part
-// (generate_a32.py, block_gadget; a32_simd.py, vfp_block). A store multiple
-// (STM, PUSH, VSTM) is a sequence of word stores: when the second page is not
-// writable, the words ahead of the fault are in memory and the fault is
-// reported at the first word of that page, with the base register and the
-// other registers as they were, so that the instruction restarts. A load
-// multiple reads into a buffer and changes no register unless every page was
-// readable: LDM reads through uml_arm64_memory_transfer, a transfer longer
-// than its 64 bytes (VLDM) through uml_arm64_a32_load_block.
+// The page-crossing multiple transfers of the VFP part
+// (engine/a32_simd.py, vfp_block): VLDM, VSTM, VPUSH and VPOP. The
+// AArch32 semantic library covers the base profile only, so until it carries
+// VFP these are the part's own. A store multiple is a sequence of word
+// stores: when the second page is not writable, the words ahead of the fault
+// are in memory and the fault is reported at the first word of that page,
+// with the base register and the other registers as they were, so that the
+// instruction restarts. A load multiple reads into a buffer and changes no
+// register unless every page was readable.
 #include "memory/tlb.hpp"
 #include "uml_darwin_guest.h"
 

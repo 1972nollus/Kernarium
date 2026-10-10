@@ -1088,6 +1088,69 @@ void block_transfers_cross_a_page_boundary()
 			0x1000'0000U + index);
 }
 
+/* The semantic library runs a transfer that crosses a page whole, so the PC
+ * it loads reaches the branch as the scratch value a lowered load leaves. */
+void a_pop_to_pc_across_a_page_boundary_branches()
+{
+	{
+		/* pop {r1, pc} to an A32 target, then to a T32 one. */
+		Guest guest{980};
+		guest.a32(0, {0xe8bd'8002U, 0xe3a0'2001U, a::svc, 0xe3a0'3001U,
+			      0x0000'df00U});
+		const std::uint32_t boundary = page - 4;
+		guest.data32(boundary, 0x1234'5678U);
+		guest.data32(page, code_base + 8U);
+		auto cpu = a32_state();
+		cpu.registers[13] = data_base + boundary;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		/* The pop, then the svc at the target: the mov in between was
+		 * skipped. */
+		require(result.retired_instructions == 2);
+		require(reg(cpu, 1) == 0x1234'5678U && reg(cpu, 2) == 0);
+		require(reg(cpu, 13) == data_base + boundary + 8);
+		require(cpu.pc == aarch32::a32_key(code_base + 12U));
+	}
+	{
+		Guest guest{981};
+		guest.a32(0, {0xe8bd'8002U, 0xe3a0'2001U, a::svc, 0xe3a0'3001U,
+			      0x0000'df00U});
+		const std::uint32_t boundary = page - 4;
+		guest.data32(boundary, 0x1234'5678U);
+		guest.data32(page, (code_base + 16U) | 1U);
+		auto cpu = a32_state();
+		cpu.registers[13] = data_base + boundary;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == 2);
+		require(reg(cpu, 3) == 0);
+		require(cpu.pc == aarch32::t32_key(code_base + 18U));
+	}
+}
+
+/* The library decodes a T32 word in the IT state the stream carries: an
+ * instruction of an IT block that crosses a page runs when its condition
+ * passes and is skipped when it does not. */
+void a_conditional_block_transfer_across_a_page_follows_its_condition()
+{
+	const std::uint32_t boundary = page - 8;
+	for (const bool passes : {true, false}) {
+		Guest guest{passes ? 982U : 983U};
+		/* it eq ; ldmiaeq.w r0, {r1-r4} ; svc */
+		guest.t32(0, {0xbf08, 0xe890, 0x001e, 0xdf00});
+		for (std::uint32_t index = 0; index < 4; ++index)
+			guest.data32(boundary + 4 * index, 0x2000'0000U + index);
+		auto cpu = t32_state();
+		cpu.registers[0] = data_base + boundary;
+		cpu.nzcv = passes ? 0x4000'0000U : 0U;
+		const auto result = guest.run(cpu);
+		require(result.reason == ExitReason::system_call);
+		require(result.retired_instructions == 3);
+		require(reg(cpu, 1) == (passes ? 0x2000'0000U : 0U));
+		require(reg(cpu, 4) == (passes ? 0x2000'0003U : 0U));
+	}
+}
+
 void a_double_word_load_crosses_a_page_boundary()
 {
 	Guest guest{977};
@@ -1184,6 +1247,8 @@ int main()
 	cp15_barriers_follow_the_enable();
 	reading_the_status_register_gives_flags_q_ge_and_user_mode();
 	block_transfers_cross_a_page_boundary();
+	a_pop_to_pc_across_a_page_boundary_branches();
+	a_conditional_block_transfer_across_a_page_follows_its_condition();
 	a_double_word_load_crosses_a_page_boundary();
 	a_block_transfer_into_an_unmapped_page_faults_at_that_page();
 	std::puts("arm64-gadget-a32-control: ok");

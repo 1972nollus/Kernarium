@@ -113,7 +113,7 @@ FAMILIES = [
     "field",         # UBFX SBFX BFI BFC
     "sat",           # SSAT USAT
     "pkh",           # PKHBT PKHTB
-    "tail",          # the forms the C++ tail helper executes
+    "library",       # the forms the AArch32 semantic library executes
     "load",          # single loads
     "store",         # single stores
     "loadd",         # LDRD
@@ -182,20 +182,12 @@ EXTEND = {"SXTB": 0, "SXTH": 1, "UXTB": 2, "UXTH": 3,
 BITS = {"REV": 0, "REV16": 1, "REVSH": 2, "RBIT": 3, "CLZ": 4}
 FIELD = {"UBFX": 0, "SBFX": 1, "BFI": 2, "BFC": 3}
 
-# The forms the tail helper (gadgets/a32/tail_helpers.cpp) executes.
-TAIL_PREFIXES = ("SADD", "SSUB", "SASX", "SSAX", "UADD", "USUB", "UASX",
-                 "USAX", "QADD", "QSUB", "QASX", "QSAX", "UQADD", "UQSUB",
-                 "UQASX", "UQSAX", "SHADD", "SHSUB", "SHASX", "SHSAX",
-                 "UHADD", "UHSUB", "UHASX", "UHSAX")
-TAIL_OTHER = ("SEL", "USAD8", "USADA8", "SSAT16", "USAT16", "SMUAD",
-              "SMUADX", "SMUSD", "SMUSDX", "SMLAD", "SMLADX", "SMLSD",
-              "SMLSDX", "SMLALD", "SMLALDX", "SMLSLD", "SMLSLDX",
-              "SXTB16", "UXTB16", "SXTAB16", "UXTAB16", "QADD", "QSUB",
-              "QDADD", "QDSUB")
-
-
-def tail_ops() -> list[str]:
-    """The tail helper's operations, in the numbering of a32_forms.hpp."""
+# The forms the engine sends to the shared AArch32 semantic library
+# (cpu/arm64/aarch32/semantics.hpp) instead of lowering: the parallel add and
+# subtract families, SEL, USAD8, the dual 16-bit multiplies, the 16-bit
+# saturates and extends, and the saturating arithmetic of QADD and its
+# relatives. The library-exit count gates name any of them that turns hot.
+def library_mnemonics() -> list[str]:
     parallel = []
     for prefix in ("S", "Q", "SH", "U", "UQ", "UH"):
         for suffix in ("ADD16", "ASX", "SAX", "SUB16", "ADD8", "SUB8"):
@@ -259,8 +251,8 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
         return ("sat", 0 if mnemonic == "SSAT" else 1, 0)
     if mnemonic in ("PKHBT", "PKHTB"):
         return ("pkh", 0 if mnemonic == "PKHBT" else 1, 0)
-    if mnemonic in tail_ops():
-        return ("tail", tail_ops().index(mnemonic), 0)
+    if mnemonic in library_mnemonics():
+        return ("library", 0, 0)
     if mnemonic in LOAD_STORE:
         family, sub = LOAD_STORE[mnemonic]
         aux = (1 if "_l_" in name else 0) | (2 if "_r_" in name or
@@ -776,15 +768,14 @@ def emit_double(asm: Assembly) -> None:
 
 
 # LDM and STM, for each count of registers. The stream is
-#   [gadget][key][word0][register offsets, eight to a word]
+#   [gadget][key][word0][register offsets, eight to a word][library operand]
 # word0: rn[0:8], the start address's displacement from Rn (signed) [8:16],
 # the written-back Rn's displacement (signed) [16:24], writeback [24]. The
 # registers are in ascending order, which is the order of ascending
 # addresses. The start address must be word aligned; a transfer within one
-# page runs from the translated host address, and one that crosses a page
-# goes through a stack buffer, so that a load changes no register unless
-# every page was readable; a store that crosses stores word by word, so the
-# words ahead of a fault are in memory (memory_helpers.cpp).
+# page runs from the translated host address, and one that crosses a page is
+# the semantic library's, run as the whole instruction through the operand
+# the stream ends with (a32_library_call).
 def block_registers(count: int, access_load: bool, base: str) -> list[str]:
     """The transfers of `count` registers between the host address in `base`
     and CpuState; the register offsets are at [_stream, #8*k]."""
@@ -814,7 +805,9 @@ def block_prologue(label: str) -> list[str]:
 
 
 def block_epilogue(count: int) -> list[str]:
-    words = (count + 7) // 8
+    # The register words, then the library operand the crossing path runs
+    # the whole instruction with.
+    words = (count + 7) // 8 + 1
     return [f"add _stream, _stream, #{8 * words}",
             "tbz x19, #24, 1f", "and x9, x19, #0xff",
             "str w22, [_cpu, x9]", "1:", "next_gadget"]
@@ -835,25 +828,15 @@ def block_gadget(count: int, access_load: bool) -> str:
     lines.append(f"transfer_translate_cold {direction}, {page}, {size}, x7,"
                  f" Lcold_{name}, Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
-    lines.append(f"Lcross_{name}:")
-    lines.append("sub sp, sp, #96")
-    if access_load:
-        lines += ["stp x1, x2, [sp, #80]", "mov x0, x2", "mov x1, x7",
-                  "mov x2, sp", f"mov x3, #{size}", "mov w4, #0",
-                  "helper_call uml_arm64_memory_transfer",
-                  "ldp x1, x2, [sp, #80]", f"cbz w0, Lfail_{name}"]
-        lines += block_registers(count, True, "sp")
-        lines.append("add sp, sp, #96")
-    else:
-        lines += block_registers(count, False, "sp")
-        lines += ["stp x1, x2, [sp, #80]", "mov x0, x2", "mov x1, x7",
-                  "mov x2, sp", f"mov x3, #{size}",
-                  "helper_call uml_arm64_a32_store_block",
-                  "ldp x1, x2, [sp, #80]", f"cbz w0, Lfail_{name}",
-                  "add sp, sp, #96"]
-    lines += block_epilogue(count)
-    lines += [f"Lfail_{name}:", "add sp, sp, #96", "b La32_memory_fault",
-              f"Lalign_{name}:",
+    # A transfer that crosses a page is the semantic library's: it
+    # translates every page before it changes a register or, for a load,
+    # any state, and an STM stores the words ahead of the one that faults.
+    # Nothing has changed by here, so the library runs the whole
+    # instruction.
+    lines += [f"Lcross_{name}:",
+              f"add _stream, _stream, #{8 * ((count + 7) // 8)}",
+              "ldr x8, [_stream], #8", "a32_library_call", "next_gadget"]
+    lines += [f"Lalign_{name}:",
               "b La32_alignment_fault_" + ("read" if access_load else "write")]
     return "\n".join(lines)
 
@@ -1110,17 +1093,6 @@ def emit_integer(asm: Assembly) -> None:
                        sat_gadget(unsigned, shift))
     asm.gadget("pkhbt", pkh_gadget(False))
     asm.gadget("pkhtb", pkh_gadget(True))
-    # The rare forms: one gadget that calls the tail helper with the
-    # operand word (op[0:8] and the register offsets the form names).
-    asm.gadget("tail", """
-        ldr x8, [_stream], #8
-        stp x1, x2, [sp, #-16]!
-        mov x0, x1
-        mov x1, x8
-        helper_call uml_arm64_a32_tail
-        ldp x1, x2, [sp], #16
-        next_gadget
-    """)
     asm.gadget("movt", """
         ldr x8, [_stream], #8
         and x9, x8, #0xff
@@ -1272,12 +1244,6 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             f"G::ldm_{c}" for c in range(1, 17)) + "};",
         "inline constexpr G kStm[17] = {G::count, " + ", ".join(
             f"G::stm_{c}" for c in range(1, 17)) + "};", ""]
-    out.append("/* The tail helper's operations (generate_a32.py tail_ops), "
-               "by the number")
-    out.append(" * kFormPlans gives. */")
-    out.append("inline constexpr std::size_t kTailOperations = "
-               f"{len(tail_ops())};")
-    out.append("")
     out += a32_simd.header_tables(set(names))
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))

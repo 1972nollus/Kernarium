@@ -846,15 +846,17 @@ a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
 advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
 ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
 entry with ITSTATE set, and a single step, run one uncached instruction at a
-time until ITSTATE is zero. LDM and LDRD that cross a page read through the
-A64 memory-transfer helper and change no register unless every page was
-readable; STM and PUSH store word by word, so the words ahead of a fault are
-in memory, the fault is at the first word of the page that cannot be
-written and the base register is as before. LDREX and STREX, and LDAEX and
-STLEX, are the A64 exclusive gadgets and share their forward-progress
-mechanism; LDA and STL are the A64 ordered ones. The rare integer forms
-(parallel arithmetic, SEL, USAD8, the dual multiplies, the 16-bit saturates
-and extends, QADD and its relatives) are one tail helper.
+time until ITSTATE is zero. LDM, STM, PUSH and POP that cross a page, and
+the rare integer forms (parallel arithmetic, SEL, USAD8, the dual multiplies,
+the 16-bit saturates and extends, QADD and its relatives), run through the
+shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
+`a32_library` gadget and the crossing paths spill NZCV, decode the word again
+and call `execute_a32`, which translates every page before a load changes a
+register, stores the words ahead of a faulting STM and leaves the base
+register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
+exclusive gadgets and share their forward-progress mechanism; LDA and STL are
+the A64 ordered ones. The library-exit counters name any lowered form that
+reaches the library, and the unit tests require none does.
 The level the engine translates at is `a32_support`; a test or a bring-up
 names another one in `BuildOptions::a32_level`, and the runtime never does.
 `arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`

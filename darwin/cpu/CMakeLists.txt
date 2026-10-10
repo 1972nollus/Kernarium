@@ -251,7 +251,7 @@ set(_uml_arm64_gadget_a32_sources
     arm64/gadgets/a32/program_builder_a32.cpp
     arm64/gadgets/a32/program_builder_a32_vfp.cpp
     arm64/gadgets/a32/memory_helpers.cpp
-    arm64/gadgets/a32/tail_helpers.cpp
+    arm64/gadgets/a32/library_helpers.cpp
     ${_uml_arm64_a32_dir}/a32_forms.hpp)
 
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
@@ -282,7 +282,8 @@ add_library(uml_arm64_gadgets OBJECT
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers
-    uml_arm64_sve_semantics uml_arm64_aarch32_decoder)
+    uml_arm64_sve_semantics uml_arm64_aarch32_decoder
+    uml_arm64_aarch32_semantics)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml_arm64_gadgets PUBLIC
@@ -557,6 +558,7 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)

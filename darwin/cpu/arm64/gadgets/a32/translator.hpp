@@ -135,7 +135,9 @@ private:
 	Result emit_ordered(const Instruction &in, const FormPlan &plan);
 	Result emit_branch(const Instruction &in, const FormPlan &plan);
 	Result emit_system(const Instruction &in, const FormPlan &plan);
-	Result emit_tail(const Instruction &in, const FormPlan &plan);
+	Result emit_library(const Instruction &in);
+	[[nodiscard]] std::uint64_t library_operand(const Instruction &in,
+						    bool pc_value = false) const noexcept;
 	/* VFP: program_builder_a32_vfp.cpp. */
 	Result emit_vfp(const Instruction &in, const FormPlan &plan);
 	Result emit_vfp_convert(const Instruction &in, const FormPlan &plan);

@@ -4,6 +4,7 @@
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/decode_support.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
+#include "cpu/arm64/gadgets/a32_layout.h"
 
 #include <algorithm>
 #include <array>
@@ -574,23 +575,26 @@ Translator::Result Translator::emit_integer(const Instruction &in,
 	}
 }
 
-Translator::Result Translator::emit_tail(const Instruction &in,
-					 const FormPlan &plan)
+/* The operand word the library gadget and the library slow paths carry
+ * (a32_layout.h). */
+std::uint64_t Translator::library_operand(const Instruction &in,
+					  bool pc_value) const noexcept
 {
-	const auto &o = in.operands;
-	std::uint64_t word = plan.sub;
-	word |= static_cast<std::uint64_t>(o.d) * 8U << tail::d_shift;
-	word |= static_cast<std::uint64_t>(o.n) * 8U << tail::n_shift;
-	word |= static_cast<std::uint64_t>(o.m) * 8U << tail::m_shift;
-	word |= static_cast<std::uint64_t>(o.a) * 8U << tail::a_shift;
-	word |= static_cast<std::uint64_t>(o.dHi) * 8U << tail::hi_shift;
-	word |= static_cast<std::uint64_t>(o.dLo) * 8U << tail::lo_shift;
-	const unsigned immediate = o.saturate_to != 0 ?
-		static_cast<unsigned>(o.saturate_to) :
-		static_cast<unsigned>(o.rotation);
-	word |= std::uint64_t{immediate} << tail::imm_shift;
-	push(G::tail);
-	push(word);
+	return std::uint64_t{in.word} |
+	       std::uint64_t{it_.bits()} << UML_GADGET_A32_LIBRARY_IT_SHIFT |
+	       std::uint64_t{static_cast<std::uint8_t>(profile_.level)}
+		       << UML_GADGET_A32_LIBRARY_LEVEL_SHIFT |
+	       std::uint64_t{pc_value} << UML_GADGET_A32_LIBRARY_PC_VALUE_SHIFT |
+	       std::uint64_t{static_cast<std::uint16_t>(in.form)}
+		       << UML_GADGET_A32_LIBRARY_FORM_SHIFT;
+}
+
+/* An instruction the engine leaves to the semantic library. */
+Translator::Result Translator::emit_library(const Instruction &in)
+{
+	push(G::library);
+	push(key_);
+	push(library_operand(in));
 	return {};
 }
 
@@ -742,6 +746,9 @@ Translator::Result Translator::emit_block_transfer(const Instruction &in,
 	}
 	if (index % 8U != 0)
 		push(packed);
+	/* A transfer that crosses a page is the library's; a load that writes
+	 * PC leaves the value in the scratch slot, as the gadget does. */
+	push(library_operand(in, load && has_pc));
 	if (load && has_pc) {
 		emit_indirect(scratch0, true, base_register == 13);
 		return {true, false};
@@ -1056,8 +1063,8 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::sat:
 	case Family::pkh:
 		return emit_integer(in, plan);
-	case Family::tail:
-		return emit_tail(in, plan);
+	case Family::library:
+		return emit_library(in);
 	case Family::load:
 	case Family::store:
 		return emit_single(in, plan);
@@ -1272,6 +1279,20 @@ std::optional<std::size_t> thumb_position(
 		++position;
 	}
 	return at == unit ? std::optional{position} : std::nullopt;
+}
+
+bool routes_to_library(aarch32::Form form) noexcept
+{
+	return kFormPlans[static_cast<std::size_t>(form)].family ==
+	       Family::library;
+}
+
+bool may_reach_library(aarch32::Form form) noexcept
+{
+	const auto family =
+		kFormPlans[static_cast<std::size_t>(form)].family;
+	return family == Family::library ||
+	       family == Family::ldm || family == Family::stm;
 }
 
 std::uint8_t thumb_itstate(std::span<const std::byte> halfwords,

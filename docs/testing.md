@@ -811,7 +811,11 @@ the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
 LDRD across a page, mapped and not. `arm64-gadget-a32-forms` runs every
 stored sample word of the decoder's data and the whole 16-bit Thumb space and
 requires the engine to raise the illegal-instruction exit exactly where the
-decoder, at the engine's level, rejects the word. `arm64-gadget-a32-corpus`
+decoder, at the engine's level, rejects the word. Both also hold the
+library-exit count gate: with the semantic library's exit counters on from a
+clean state, only a form the engine leaves to the library, or a block transfer
+that crossed a page, may reach it, and the forms the engine leaves to it do.
+`arm64-gadget-a32-corpus`
 runs the cases of the AArch32 corpus whose instructions the engine's level
 implements in the oracle's memory map and compares the signal or system call,
 the instruction and address it was raised at, the registers, flags, Q, GE,

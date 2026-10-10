@@ -590,6 +590,8 @@ int main(int argc, char **argv)
 	const auto pack = corpus::read_pack(corpus::read_file(path));
 	Machine machine{static_cast<::uml::cpu::arm64::A32Support>(options.level)};
 	Totals totals;
+	decode::reset_a32_library_exits();
+	decode::count_a32_library_exits(true);
 	for (const auto &record : pack.records) {
 		if ((record.profiles & corpus::kProfileBit) == 0 ||
 		    (!options.record.empty() && record.name != options.record))
@@ -614,7 +616,9 @@ int main(int argc, char **argv)
 		std::fclose(out);
 	}
 	std::printf("arm64-gadget-a32-corpus: %zu cases run, %zu skipped above the "
-		    "level, %zu failed\n",
-		    totals.run, totals.skipped, totals.failed);
+		    "level, %zu failed, %llu in the library\n",
+		    totals.run, totals.skipped, totals.failed,
+		    static_cast<unsigned long long>(
+			    ::uml::emulator::tests::a32::check_library_exits()));
 	return totals.failed == 0 ? 0 : 1;
 }

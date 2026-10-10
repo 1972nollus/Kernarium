@@ -94,6 +94,7 @@ add_executable(uml-gadget-ceiling-bench EXCLUDE_FROM_ALL
     $<TARGET_OBJECTS:uml_static_mmu>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 target_include_directories(uml-gadget-ceiling-bench PRIVATE
