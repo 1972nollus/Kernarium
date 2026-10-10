@@ -193,20 +193,20 @@ BASE-0191	Base	HVC	HVC_T1	T32	HVC	base	baseline	undefined	absent
 BASE-0192	Base	ISB	ISB_A1	A32	ISB	base	baseline	executed	pending
 BASE-0193	Base	ISB	ISB_T1	T32	ISB	base	baseline	executed	pending
 BASE-0194	Base	IT	IT_T1	T16	IT	base	baseline	executed	pending
-BASE-0195	Base	LDA	LDA_A1	A32	LDA	complete	baseline	executed	pending
-BASE-0196	Base	LDA	LDA_T1	T32	LDA	complete	baseline	executed	pending
-BASE-0197	Base	LDAB	LDAB_A1	A32	LDAB	complete	baseline	executed	pending
-BASE-0198	Base	LDAB	LDAB_T1	T32	LDAB	complete	baseline	executed	pending
-BASE-0199	Base	LDAEX	LDAEX_A1	A32	LDAEX	complete	baseline	executed	pending
-BASE-0200	Base	LDAEX	LDAEX_T1	T32	LDAEX	complete	baseline	executed	pending
-BASE-0201	Base	LDAEXB	LDAEXB_A1	A32	LDAEXB	complete	baseline	executed	pending
-BASE-0202	Base	LDAEXB	LDAEXB_T1	T32	LDAEXB	complete	baseline	executed	pending
-BASE-0203	Base	LDAEXD	LDAEXD_A1	A32	LDAEXD	complete	baseline	executed	pending
-BASE-0204	Base	LDAEXD	LDAEXD_T1	T32	LDAEXD	complete	baseline	executed	pending
-BASE-0205	Base	LDAEXH	LDAEXH_A1	A32	LDAEXH	complete	baseline	executed	pending
-BASE-0206	Base	LDAEXH	LDAEXH_T1	T32	LDAEXH	complete	baseline	executed	pending
-BASE-0207	Base	LDAH	LDAH_A1	A32	LDAH	complete	baseline	executed	pending
-BASE-0208	Base	LDAH	LDAH_T1	T32	LDAH	complete	baseline	executed	pending
+BASE-0195	Base	LDA	LDA_A1	A32	LDA	base	baseline	executed	pending
+BASE-0196	Base	LDA	LDA_T1	T32	LDA	base	baseline	executed	pending
+BASE-0197	Base	LDAB	LDAB_A1	A32	LDAB	base	baseline	executed	pending
+BASE-0198	Base	LDAB	LDAB_T1	T32	LDAB	base	baseline	executed	pending
+BASE-0199	Base	LDAEX	LDAEX_A1	A32	LDAEX	base	baseline	executed	pending
+BASE-0200	Base	LDAEX	LDAEX_T1	T32	LDAEX	base	baseline	executed	pending
+BASE-0201	Base	LDAEXB	LDAEXB_A1	A32	LDAEXB	base	baseline	executed	pending
+BASE-0202	Base	LDAEXB	LDAEXB_T1	T32	LDAEXB	base	baseline	executed	pending
+BASE-0203	Base	LDAEXD	LDAEXD_A1	A32	LDAEXD	base	baseline	executed	pending
+BASE-0204	Base	LDAEXD	LDAEXD_T1	T32	LDAEXD	base	baseline	executed	pending
+BASE-0205	Base	LDAEXH	LDAEXH_A1	A32	LDAEXH	base	baseline	executed	pending
+BASE-0206	Base	LDAEXH	LDAEXH_T1	T32	LDAEXH	base	baseline	executed	pending
+BASE-0207	Base	LDAH	LDAH_A1	A32	LDAH	base	baseline	executed	pending
+BASE-0208	Base	LDAH	LDAH_T1	T32	LDAH	base	baseline	executed	pending
 BASE-0209	Base	LDC (immediate)	LDC_i_A1_off	A32	LDC	base	baseline	undefined	absent
 BASE-0210	Base	LDC (immediate)	LDC_i_A1_post	A32	LDC	base	baseline	undefined	absent
 BASE-0211	Base	LDC (immediate)	LDC_i_A1_pre	A32	LDC	base	baseline	undefined	absent
@@ -552,9 +552,9 @@ BASE-0550	Base	SETPAN	SETPAN_T1	T16	SETPAN	base	baseline	undefined	absent
 BASE-0551	Base	SEV	SEV_A1	A32	SEV	base	baseline	executed	pending
 BASE-0552	Base	SEV	SEV_T1	T16	SEV	base	baseline	executed	pending
 BASE-0553	Base	SEV	SEV_T2	T32	SEV	base	baseline	executed	pending
-BASE-0554	Base	SEVL	SEVL_A1	A32	SEVL	complete	baseline	executed	pending
-BASE-0555	Base	SEVL	SEVL_T1	T16	SEVL	complete	baseline	executed	pending
-BASE-0556	Base	SEVL	SEVL_T2	T32	SEVL	complete	baseline	executed	pending
+BASE-0554	Base	SEVL	SEVL_A1	A32	SEVL	base	baseline	executed	pending
+BASE-0555	Base	SEVL	SEVL_T1	T16	SEVL	base	baseline	executed	pending
+BASE-0556	Base	SEVL	SEVL_T2	T32	SEVL	base	baseline	executed	pending
 BASE-0557	Base	SHADD16	SHADD16_A1	A32	SHADD16	base	baseline	executed	pending
 BASE-0558	Base	SHADD16	SHADD16_T1	T32	SHADD16	base	baseline	executed	pending
 BASE-0559	Base	SHADD8	SHADD8_A1	A32	SHADD8	base	baseline	executed	pending
@@ -671,20 +671,20 @@ BASE-0669	Base	STC	STC_T1_off	T32	STC	base	baseline	undefined	absent
 BASE-0670	Base	STC	STC_T1_post	T32	STC	base	baseline	undefined	absent
 BASE-0671	Base	STC	STC_T1_pre	T32	STC	base	baseline	undefined	absent
 BASE-0672	Base	STC	STC_T1_unind	T32	STC	base	baseline	undefined	absent
-BASE-0673	Base	STL	STL_A1	A32	STL	complete	baseline	executed	pending
-BASE-0674	Base	STL	STL_T1	T32	STL	complete	baseline	executed	pending
-BASE-0675	Base	STLB	STLB_A1	A32	STLB	complete	baseline	executed	pending
-BASE-0676	Base	STLB	STLB_T1	T32	STLB	complete	baseline	executed	pending
-BASE-0677	Base	STLEX	STLEX_A1	A32	STLEX	complete	baseline	executed	pending
-BASE-0678	Base	STLEX	STLEX_T1	T32	STLEX	complete	baseline	executed	pending
-BASE-0679	Base	STLEXB	STLEXB_A1	A32	STLEXB	complete	baseline	executed	pending
-BASE-0680	Base	STLEXB	STLEXB_T1	T32	STLEXB	complete	baseline	executed	pending
-BASE-0681	Base	STLEXD	STLEXD_A1	A32	STLEXD	complete	baseline	executed	pending
-BASE-0682	Base	STLEXD	STLEXD_T1	T32	STLEXD	complete	baseline	executed	pending
-BASE-0683	Base	STLEXH	STLEXH_A1	A32	STLEXH	complete	baseline	executed	pending
-BASE-0684	Base	STLEXH	STLEXH_T1	T32	STLEXH	complete	baseline	executed	pending
-BASE-0685	Base	STLH	STLH_A1	A32	STLH	complete	baseline	executed	pending
-BASE-0686	Base	STLH	STLH_T1	T32	STLH	complete	baseline	executed	pending
+BASE-0673	Base	STL	STL_A1	A32	STL	base	baseline	executed	pending
+BASE-0674	Base	STL	STL_T1	T32	STL	base	baseline	executed	pending
+BASE-0675	Base	STLB	STLB_A1	A32	STLB	base	baseline	executed	pending
+BASE-0676	Base	STLB	STLB_T1	T32	STLB	base	baseline	executed	pending
+BASE-0677	Base	STLEX	STLEX_A1	A32	STLEX	base	baseline	executed	pending
+BASE-0678	Base	STLEX	STLEX_T1	T32	STLEX	base	baseline	executed	pending
+BASE-0679	Base	STLEXB	STLEXB_A1	A32	STLEXB	base	baseline	executed	pending
+BASE-0680	Base	STLEXB	STLEXB_T1	T32	STLEXB	base	baseline	executed	pending
+BASE-0681	Base	STLEXD	STLEXD_A1	A32	STLEXD	base	baseline	executed	pending
+BASE-0682	Base	STLEXD	STLEXD_T1	T32	STLEXD	base	baseline	executed	pending
+BASE-0683	Base	STLEXH	STLEXH_A1	A32	STLEXH	base	baseline	executed	pending
+BASE-0684	Base	STLEXH	STLEXH_T1	T32	STLEXH	base	baseline	executed	pending
+BASE-0685	Base	STLH	STLH_A1	A32	STLH	base	baseline	executed	pending
+BASE-0686	Base	STLH	STLH_T1	T32	STLH	base	baseline	executed	pending
 BASE-0687	Base	STM (User registers)	STM_u_A1_AS	A32	STM	base	baseline	undefined	absent
 BASE-0688	Base	STM, STMIA, STMEA	STM_A1	A32	STM	base	baseline	executed	pending
 BASE-0689	Base	STM, STMIA, STMEA	STM_T1	T16	STM	base	baseline	executed	pending
