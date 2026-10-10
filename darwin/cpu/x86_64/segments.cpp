@@ -1298,9 +1298,11 @@ void record_subtract(CpuState &cpu, std::uint64_t left, std::uint64_t right,
 
 /* The bytes an explicit memory operand of `instruction` covers, and
  * whether the instruction writes them; zero bytes for one it never
- * accesses. */
-[[nodiscard]] std::size_t operand_access(const Instruction &instruction,
-	const Operand &operand, bool &write) noexcept
+ * accesses. XSAVE and XRSTOR check the legacy area and the header, and the
+ * AVX component only when RFBM (EDX:EAX, in XCR0) selects it. */
+[[nodiscard]] std::size_t operand_access(const CpuState &cpu,
+	const Instruction &instruction, const Operand &operand,
+	bool &write) noexcept
 {
 	const bool destination = &operand == &instruction.destination;
 	write = destination;
@@ -1333,7 +1335,9 @@ void record_subtract(CpuState &cpu, std::uint64_t left, std::uint64_t right,
 		return 4;
 	case Operation::extended_state:
 		write = instruction.vector_group == 0 || instruction.vector_group == 4;
-		return instruction.vector_group <= 1 ? 512U : 832U;
+		if (instruction.vector_group <= 1)
+			return 512U;
+		return (cpu.registers[0] & 4U) != 0 ? 832U : 576U;
 	case Operation::bound:
 		write = false;
 		return 2U * operand_bytes(operand.width);
@@ -1711,7 +1715,7 @@ SegmentResult prepare_segment_step(CpuState &cpu, SegmentMemory &memory,
 			operand->memory.vector_index)
 			continue;
 		bool write{};
-		const auto size = operand_access(instruction, *operand, write);
+		const auto size = operand_access(cpu, instruction, *operand, write);
 		if (size == 0)
 			continue;
 		auto offset = accesses.offset(*operand);

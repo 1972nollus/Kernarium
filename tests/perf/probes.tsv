@@ -7,6 +7,7 @@ guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-a
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
 guest_fp16_fmla_neon_loop.S	simd	fp16	run_guest_link_bench.py	NEON control of the SVE FP16 multiply-accumulate probe: c[i] += a[i] x b[i] over 4,096 L1-resident elements, one Q register per iteration.
 guest_fp16_fmla_sve_loop.S	simd	sve	run_guest_link_bench.py	The SVE form of the FP16 multiply-accumulate probe (WHILELO, LD1H, predicated FMLA, ST1H, INCH, fused WHILELO and B.FIRST), against its NEON control. Needs the guest-SVE policy.
+guest_fp16_fmla_sve_ptrue_loop.S	simd	sve	run_guest_link_bench.py	The SVE FP16 multiply-accumulate probe under a PTRUE predicate with INCH, CMP and B.LO loop control, the shape of Background Blur's main loops. Against the WHILELO probe and the same NEON control it separates a WHILELO-governed loop's cost from the predicated memory and FP forms'. Needs the guest-SVE policy.
 guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
 guest_fp_environment_run_loop.S	floating-state	base	run_guest_link_bench.py	Measures a run of native floating-point operations sharing one program-level environment activation.
 guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.

@@ -56,7 +56,7 @@ void uml_x86_64_x87_fyl2x(CpuState *cpu, const X87Register *value,
 void uml_x86_64_x87_fyl2xp1(CpuState *cpu, const X87Register *value,
 	const X87Register *multiplier, X87Register *result) noexcept;
 void uml_x86_64_x87_tangent(CpuState *cpu, const X87Register *input,
-	X87Register *result) noexcept;
+	X87Register *result, X87Register *second) noexcept;
 void uml_x86_64_x87_atan(CpuState *cpu, const X87Register *y,
 	const X87Register *x, X87Register *result) noexcept;
 void uml_x86_64_x87_extract(CpuState *cpu, const X87Register *input,
