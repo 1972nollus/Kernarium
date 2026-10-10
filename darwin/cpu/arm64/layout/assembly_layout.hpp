@@ -31,6 +31,10 @@ static_assert(offsetof(CpuState, exclusive_key) == UML_GADGET_CPU_EXCLUSIVE_KEY)
 static_assert(offsetof(CpuState, exclusive_value) == UML_GADGET_CPU_EXCLUSIVE_VALUE);
 static_assert(offsetof(CpuState, exclusive_value2) == UML_GADGET_CPU_EXCLUSIVE_VALUE2);
 static_assert(offsetof(CpuState, exclusive_version) == UML_GADGET_CPU_EXCLUSIVE_VERSION);
+/* engine/exclusive.inc records a load's host address, value and second value
+ * with one paired store and one store. */
+static_assert(UML_GADGET_CPU_EXCLUSIVE_VALUE == UML_GADGET_CPU_EXCLUSIVE_KEY + 8);
+static_assert(UML_GADGET_CPU_EXCLUSIVE_VALUE2 == UML_GADGET_CPU_EXCLUSIVE_KEY + 16);
 static_assert(offsetof(CpuState, exclusive_size) == UML_GADGET_CPU_EXCLUSIVE_SIZE);
 static_assert(offsetof(CpuState, deferred_vectors) == UML_GADGET_CPU_DEFERRED_VECTORS);
 static_assert(offsetof(CpuState, deferred_fpcr) == UML_GADGET_CPU_DEFERRED_FPCR);
