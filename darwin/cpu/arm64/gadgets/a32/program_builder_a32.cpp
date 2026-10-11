@@ -483,6 +483,14 @@ Translator::Result Translator::emit_multiply(const Instruction &in,
 		push(plan.sub == 0 ? G::sdiv : G::udiv);
 		push(d | n << 8 | m << 16);
 		return {};
+	case Family::parallel:
+		push(kParallel[plan.sub / 6U][plan.sub % 6U]);
+		push(d | n << 8 | m << 16);
+		return {};
+	case Family::sel:
+		push(G::sel);
+		push(d | n << 8 | m << 16);
+		return {};
 	default:
 		return {};
 	}
@@ -1061,6 +1069,8 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::mulh:
 	case Family::mulxy:
 	case Family::div:
+	case Family::parallel:
+	case Family::sel:
 		return emit_multiply(in, plan);
 	case Family::movw:
 	case Family::movt:

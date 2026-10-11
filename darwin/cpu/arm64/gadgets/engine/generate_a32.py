@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
+import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
 
 
@@ -140,7 +141,7 @@ FAMILIES = [
     "mrs",
     "msr",
     "cp15",          # MCR MRC MRRC with the sysreg the decoder names
-] + a32_simd.FAMILIES + a32_armv8.FAMILIES
+] + a32_simd.FAMILIES + a32_armv8.FAMILIES + a32_parallel.FAMILIES
 
 DP_MNEMONICS = {
     "AND": "and", "EOR": "eor", "SUB": "sub", "RSB": "rsb", "ADD": "add",
@@ -185,20 +186,16 @@ BITS = {"REV": 0, "REV16": 1, "REVSH": 2, "RBIT": 3, "CLZ": 4}
 FIELD = {"UBFX": 0, "SBFX": 1, "BFI": 2, "BFC": 3}
 
 # The forms the engine sends to the shared AArch32 semantic library
-# (cpu/arm64/aarch32/semantics.hpp) instead of lowering: the parallel add and
-# subtract families, SEL, USAD8, the dual 16-bit multiplies, the 16-bit
-# saturates and extends, and the saturating arithmetic of QADD and its
-# relatives. The library-exit count gates name any of them that turns hot.
+# (cpu/arm64/aarch32/semantics.hpp) instead of lowering: USAD8, the dual
+# 16-bit multiplies, the 16-bit saturates and extends, and the saturating
+# arithmetic of QADD and its relatives. The library-exit count gates name any
+# of them that turns hot.
 def library_mnemonics() -> list[str]:
-    parallel = []
-    for prefix in ("S", "Q", "SH", "U", "UQ", "UH"):
-        for suffix in ("ADD16", "ASX", "SAX", "SUB16", "ADD8", "SUB8"):
-            parallel.append(prefix + suffix)
-    return parallel + ["SEL", "USAD8", "USADA8", "SSAT16", "USAT16",
-                       "SMUAD", "SMUADX", "SMUSD", "SMUSDX", "SMLAD",
-                       "SMLADX", "SMLSD", "SMLSDX", "SMLALD", "SMLALDX",
-                       "SMLSLD", "SMLSLDX", "SXTB16", "UXTB16", "SXTAB16",
-                       "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
+    return ["USAD8", "USADA8", "SSAT16", "USAT16",
+            "SMUAD", "SMUADX", "SMUSD", "SMUSDX", "SMLAD",
+            "SMLADX", "SMLSD", "SMLSDX", "SMLALD", "SMLALDX",
+            "SMLSLD", "SMLSLDX", "SXTB16", "UXTB16", "SXTAB16",
+            "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
 
 
 def plan_of(row: FormRow) -> tuple[str, int, int]:
@@ -258,6 +255,9 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
         return ("sat", 0 if mnemonic == "SSAT" else 1, 0)
     if mnemonic in ("PKHBT", "PKHTB"):
         return ("pkh", 0 if mnemonic == "PKHBT" else 1, 0)
+    parallel = a32_parallel.plan_of_parallel(mnemonic)
+    if parallel is not None:
+        return parallel
     if mnemonic in library_mnemonics():
         return ("library", 0, 0)
     if mnemonic in LOAD_STORE:
@@ -1148,6 +1148,7 @@ def build_assembly(asm: Assembly) -> None:
     emit_integer(asm)
     a32_simd.emit(asm)
     a32_armv8.emit(asm)
+    a32_parallel.emit(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1256,6 +1257,8 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
     out += a32_simd.header_tables(index)
     out.append("")
     out += a32_armv8.header_tables(index)
+    out.append("")
+    out += a32_parallel.header_tables(index)
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))
 

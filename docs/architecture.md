@@ -888,9 +888,13 @@ a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
 advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
 ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
 entry with ITSTATE set, and a single step, run one uncached instruction at a
-time until ITSTATE is zero. LDM, STM, PUSH and POP that cross a page, and
-the rare integer forms (parallel arithmetic, SEL, USAD8, the dual multiplies,
-the 16-bit saturates and extends, QADD and its relatives), run through the
+time until ITSTATE is zero. The parallel add and subtract family and SEL are
+gadgets: Advanced SIMD does the lanes on the low half of a vector register, GE
+is the byte-lane mask CpuState keeps, and the saturating forms compute their
+saturation with lane arithmetic, because the saturating instructions would set
+FPSR.QC, which the guest reads in FPSCR. LDM, STM, PUSH and POP that cross a
+page, and the rare integer forms (USAD8, the dual multiplies, the 16-bit
+saturates and extends, QADD and its relatives), run through the
 shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
 `a32_library` gadget and the crossing paths spill NZCV, decode the word again
 and call `execute_a32`, which translates every page before a load changes a

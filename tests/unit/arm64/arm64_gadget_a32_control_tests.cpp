@@ -1330,6 +1330,52 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+/* The parallel add and subtract family and SEL are gadgets: Advanced SIMD
+ * does the lanes, GE is the byte-lane mask CpuState keeps, and the library
+ * runs none of them. */
+void parallel_arithmetic_and_sel_stay_out_of_the_library()
+{
+	struct Step {
+		std::uint32_t word;
+		unsigned destination;
+		std::uint32_t expected;
+	};
+	/* r0 = 0x80ff7f01, r1 = 0x01010180. UADD8 carries out of byte 2 only,
+	 * so GE is 0x00ff0000 for the SEL after it; SASX adds the high half of
+	 * Rn to the low half of Rm and subtracts, so its GE is the low pair. */
+	const Step steps[] = {
+		{0xe650'2f91U, 2, 0x8100'8081U}, /* uadd8 r2, r0, r1 */
+		{0xe680'3fb1U, 3, 0x01ff'0180U}, /* sel r3, r0, r1 */
+		{0xe660'4ff1U, 4, 0x7ffe'7e00U}, /* uqsub8 r4, r0, r1 */
+		{0xe620'5f91U, 5, 0x8100'7f81U}, /* qadd8 r5, r0, r1 */
+		{0xe610'6f31U, 6, 0x827f'7e00U}, /* sasx r6, r0, r1 */
+		{0xe680'7fb1U, 7, 0x0101'7f01U}, /* sel r7, r0, r1 */
+	};
+	aarch32::count_a32_library_exits(true);
+	Guest guest{1400};
+	std::uint32_t offset = 0;
+	for (const auto &step : steps) {
+		guest.a32(offset, {step.word});
+		offset += 4;
+	}
+	guest.a32(offset, {a::svc});
+	auto cpu = a32_state();
+	cpu.registers[0] = 0x80ff'7f01U;
+	cpu.registers[1] = 0x0101'0180U;
+	aarch32::reset_a32_library_exits();
+	require(guest.run(cpu).reason == ExitReason::system_call);
+	for (const auto &step : steps) {
+		const auto decoded = aarch32::decode_a32(
+			step.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.legal(), "a parallel word did not decode");
+		require(aarch32::a32_library_exits(decoded.form) == 0,
+			"a parallel add or subtract or SEL used the library");
+		require(static_cast<std::uint32_t>(cpu.registers[step.destination]) ==
+			step.expected, "a parallel result was wrong");
+	}
+	aarch32::count_a32_library_exits(false);
+}
+
 /* The runtime loads a task's vectors lazily (CpuState::defer_fp_load) and a
  * program loads them, once, only when it is marked as touching them. A
  * block whose only vector instructions are structure loads or stores, or
@@ -1796,6 +1842,7 @@ int main()
 	the_fp_environment_follows_the_instruction_kind();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
+	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
 	a_vfp_word_is_illegal_at_the_base_level();
