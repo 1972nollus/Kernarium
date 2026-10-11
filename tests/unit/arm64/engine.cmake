@@ -199,6 +199,9 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(gadget_terminal_count WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    target_compile_definitions(uml_arm64_gadget_terminal_count_tests PRIVATE
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     # The SME control core and the generated streaming forms, outside
     # streaming mode through injected profiles, and in it on a host with
     # FEAT_SME.
