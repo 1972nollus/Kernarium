@@ -939,10 +939,16 @@ The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
 `arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
-registers, changed data, event, fault address and retired count; a failing
-exclusive case runs once more, because a host store-exclusive may fail without
-cause. It then requires every lowered form to stay out of the slow helper from a
-clean state: each event-free case runs twice, and past the first run one case
+registers, changed data, event, fault address and retired count. A
+store-exclusive may fail without cause, and the JIT's fails whenever a host
+interrupt lands between the load and the store; a case whose only difference
+is that failure (a status of 1 where the pack has 0, and the store not made)
+runs again, up to 16 attempts in all, and the summary counts the cases that
+needed it. `arm64-jit-a32-corpus-interrupted` runs the `exclusive-qemu` record
+with a signal storm aimed at the guest's thread until four cases have lost a
+reservation, and requires that every case then agreed. The corpus then
+requires every lowered form to stay out of the slow helper from a clean state:
+each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The forms that the semantic
 library runs (the parallel arithmetic and the Armv8 extensions the compiler does
