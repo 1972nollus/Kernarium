@@ -700,7 +700,12 @@ the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
 checked-in bytes, and requires cases for every executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
-`qemu-arm` on a build host over ssh and is opt-in.
+`qemu-arm` on a build host over ssh and is opt-in. With
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>`, the opt-in
+`arm64-a32-corpus-plan-freshness` tooling test plans every suite again without
+an oracle and requires each source table to hold exactly the planned cases in
+order, so a change to the forms or the planner that moves a case is caught
+before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 

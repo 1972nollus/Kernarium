@@ -192,6 +192,11 @@ the directory. `finish` regenerates `provenance.json`, `manifest.tsv`,
 `coverage.tsv` (cases per inventory entry) and `excluded.tsv` (entries with no
 case). Commit the source tables and these files, never the pack.
 
+`check --archive ...` plans every suite again without an oracle and requires
+each source table to hold exactly the planned cases, in order (the opt-in
+`arm64-a32-corpus-plan-freshness` test runs it). A change to the forms or the
+planner that moves a case fails it until the suite is observed again.
+
 Hardware records use the same producer without `--runner`, so the harness runs
 natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry
 Pi 4 or 5 with a 64-bit kernel). `compare` then lists where another oracle's
