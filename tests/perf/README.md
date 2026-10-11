@@ -402,7 +402,10 @@ have served.
 
 A census build pays for this on every store and pauses a vCPU for each
 snapshot, so it runs slower than a default build; its timings are not
-measurements.
+measurements. `DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1` keeps only the `E` and
+`G` records and leaves stores unmatched against other caches, which is what a
+browser guest on a loaded host can afford; read such a capture with
+`--series`.
 
 Identity is the consumed guest code, not the produced stream, because two
 executors translating the same code embed pointers to their own link records.

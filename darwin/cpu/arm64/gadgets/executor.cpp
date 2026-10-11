@@ -605,6 +605,8 @@ public:
 				state.targets ? arm64::gadgets::target_tier_entries *
 					sizeof(arm64::gadgets::IndirectLinkEntry) : 0);
 		}
+		if (census::totals_only())
+			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each

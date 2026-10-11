@@ -1099,6 +1099,8 @@ public:
 				state.links[0].size() + state.links[1].size(),
 				bytes.links, bytes.indirect, bytes.targets);
 		}
+		if (census::totals_only())
+			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each

@@ -73,6 +73,19 @@ inline constexpr std::uint64_t digest_seed = 0xcbf29ce484222325ULL;
 	return one_in;
 }
 
+/* Whether snapshots carry only their E and G records and stores go unmatched
+ * against other caches, which DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS=1 asks
+ * for. A browser guest's start-up on a loaded host could not afford the
+ * per-store registry and the per-translation records: its own connection
+ * timeouts fired and the page never loaded. Lookups, departures and
+ * footprints are still counted in full. */
+[[nodiscard]] inline bool totals_only() noexcept
+{
+	static const bool totals =
+		environment_count("DARWIN_UML_GADGET_CACHE_CENSUS_TOTALS") != 0;
+	return totals;
+}
+
 [[nodiscard]] inline std::chrono::steady_clock::time_point start() noexcept
 {
 	static const auto started = std::chrono::steady_clock::now();
@@ -307,7 +320,8 @@ public:
 		std::uint64_t digest, bool restored)
 	{
 		++stores_;
-		switch (Registry::note(cache, generation, pc, digest)) {
+		switch (totals_only() ? Repeat::none :
+				Registry::note(cache, generation, pc, digest)) {
 		case Repeat::none:
 			break;
 		case Repeat::other_executor:
