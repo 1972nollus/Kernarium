@@ -54,7 +54,9 @@ root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
-such as an iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
+such as an iPad (`KERNARIUM_ROOTFS`). `--program geekbench_aarch64`, before
+the subcommand, packages the same release's 64-bit program from an arm64 starter
+disk, the control for an armv7 comparison. The armhf image has no `ip`, so a run
 passes `--no-network`, and a measurement never needs a network anyway:
 
 ```sh

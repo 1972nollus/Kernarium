@@ -136,6 +136,25 @@ class GeekbenchImageTests(unittest.TestCase):
         # one; the superblock's blkszbits is 12.
         self.assertEqual(output.read_bytes()[1024 + 12], 12)
 
+    def test_the_aarch64_program_packages_the_same_way(self) -> None:
+        program = os.urandom(100_003)
+        (self.release / "geekbench_aarch64").write_bytes(program)
+        output = self.root / "payload64.erofs"
+        try:
+            status, text = self.run_tool(
+                "--program", "geekbench_aarch64", "payload",
+                "--release-dir", str(self.release), "--program-sha256",
+                sha256(program), "--output", str(output))
+        finally:
+            IMAGES.PROGRAM = "geekbench_armv7"
+        self.assertEqual(status, 0, text)
+        extracted = self.root / "extracted64"
+        IMAGES.run([IMAGES.find_tool("fsck.erofs"), f"--extract={extracted}",
+                    str(output)])
+        self.assertEqual(sorted(path.name for path in extracted.iterdir()),
+                         ["geekbench.plar", "geekbench_aarch64"])
+        self.assertEqual((extracted / "geekbench_aarch64").read_bytes(), program)
+
     def test_a_wrong_pin_or_an_incomplete_release_is_refused(self) -> None:
         output = self.root / "payload.erofs"
         for pin, expected in (
