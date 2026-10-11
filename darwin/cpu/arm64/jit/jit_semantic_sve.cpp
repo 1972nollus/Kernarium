@@ -319,4 +319,34 @@ uml_arm64_jit_execute_sve(CpuState *cpu, Tlb *tlb,
   return pack_jit_result(Event::fatal, 0);
 }
 
+/* The slow path of the SM = 0 vector-length family's spill words
+ * (detail/sm0_vector_length.hpp): a terminal helper like the one above, for
+ * a virtual CPU without the SVE profile, whose library entry leaves no SVE
+ * state behind. */
+extern "C" std::uint64_t
+uml_arm64_jit_execute_sm0_spill(CpuState *cpu, Tlb *tlb,
+                                std::uint32_t instruction) noexcept {
+  if (cpu == nullptr || tlb == nullptr)
+    return pack_jit_result(Event::fatal, 0);
+  restore_native_fp_environment(*cpu);
+  JitSveMemory memory{*tlb};
+  const auto result = detail::execute_sm0_spill(*cpu, instruction, memory);
+  switch (result.event) {
+  case detail::SveEvent::retired:
+    cpu->pc += sizeof(std::uint32_t);
+    return pack_jit_result(Event::continued, 1);
+  case detail::SveEvent::memory_fault:
+    tlb->fault_address = result.fault_address;
+    tlb->fault_access = ::uml::memory::translated_access(result.access);
+    tlb->fault_alignment = result.alignment ? 1U : 0U;
+    return pack_jit_result(Event::memory_fault, 0);
+  case detail::SveEvent::undefined:
+    return pack_jit_result(Event::illegal_instruction, 0);
+  case detail::SveEvent::floating_point_trap:
+  case detail::SveEvent::fatal:
+    break;
+  }
+  return pack_jit_result(Event::fatal, 0);
+}
+
 } // namespace uml::cpu::arm64
