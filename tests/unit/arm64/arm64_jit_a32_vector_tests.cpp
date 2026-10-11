@@ -14,6 +14,7 @@
 #include "cpu/arm64/jit/a32/a32_helpers.hpp"
 
 #include <array>
+#include <bit>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -603,6 +604,112 @@ void vector_memory_faults() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// VCMP followed by VMRS APSR_nzcv: the flags go from the comparison to the
+// guest's, whether or not the translation passes them through the host NZCV.
+
+constexpr std::uint32_t quiet_nan = 0x7fc0'0000U;
+constexpr std::uint32_t positive_infinity = 0x7f80'0000U;
+constexpr std::uint32_t denormal_one = 0x0000'0001U;
+constexpr std::uint32_t negative_zero = 0x8000'0000U;
+
+/* The FPSCR flags nibble of comparing a with b (VCMP). */
+std::uint32_t compare_flags(float a, float b) {
+  if (a != a || b != b)
+    return 0x3U; // unordered: C, V
+  if (a == b)
+    return 0x6U; // equal: Z, C
+  return a < b ? 0x8U : 0x2U; // less: N; greater: C
+}
+float as_float(std::uint32_t bits) {
+  float value;
+  std::memcpy(&value, &bits, 4);
+  return value;
+}
+
+void vcmp_flags_reach_the_apsr() {
+  const std::uint32_t vcmp_s = 0xeeb4'1a61U;   // vcmp.f32 s2, s3
+  const std::uint32_t vcmpe_s = 0xeeb4'1ae1U;  // vcmpe.f32 s2, s3
+  const std::uint32_t vcmp_d = 0xeeb4'2b43U;   // vcmp.f64 d2, d3
+  const std::uint32_t vcmpne_s = 0x1eb4'1a61U; // vcmpne.f32 s2, s3
+  const std::uint32_t vmrs_apsr = 0xeef1'fa10U;
+  const std::uint32_t vmrsne_apsr = 0x1ef1'fa10U;
+  const std::uint32_t vmrs_r8 = 0xeef1'8a10U;
+  const std::uint32_t movlt = 0xb3a0'2001U, movgt = 0xc3a0'3001U,
+                      moveq = 0x03a0'4001U, movvs = 0x63a0'5001U,
+                      movhs = 0x23a0'6001U, movmi = 0x43a0'7001U;
+  const std::uint32_t adds_r9 = 0xe299'9001U; // adds r9, r9, #1
+  const auto program = [&](Fixture &fixture, std::size_t offset,
+                           std::uint32_t compare, std::uint32_t read,
+                           bool between) {
+    if (between)
+      fixture.code32(offset, {compare, adds_r9, read, movlt, movgt, moveq,
+                              movvs, movhs, movmi, vmrs_r8, arm_svc});
+    else
+      fixture.code32(offset, {compare, read, movlt, movgt, moveq, movvs, movhs,
+                              movmi, vmrs_r8, arm_svc});
+  };
+  struct Pair final { std::uint32_t a, b; };
+  const std::array<Pair, 10> pairs{{{one, 0x4000'0000U},
+                                    {0x4000'0000U, one},
+                                    {one, one},
+                                    {quiet_nan, one},
+                                    {one, quiet_nan},
+                                    {positive_infinity, positive_infinity},
+                                    {negative_zero, 0U},
+                                    {denormal_one, 0U},
+                                    {0xbf80'0000U, one},
+                                    {quiet_nan, quiet_nan}}};
+  // Context 0: adjacent VCMP and VMRS; 1: VCMPE; 2: an instruction between;
+  // 3: a conditional VMRS; 4: a conditional VCMP; 5: VCMP.F64.
+  for (unsigned context = 0; context < 6; ++context) {
+    Fixture fixture{0x1a32'0d09U + context};
+    switch (context) {
+    case 0: program(fixture, 0, vcmp_s, vmrs_apsr, false); break;
+    case 1: program(fixture, 0, vcmpe_s, vmrs_apsr, false); break;
+    case 2: program(fixture, 0, vcmp_s, vmrs_apsr, true); break;
+    case 3: program(fixture, 0, vcmp_s, vmrsne_apsr, false); break;
+    case 4: program(fixture, 0, vcmpne_s, vmrs_apsr, false); break;
+    default: program(fixture, 0, vcmp_d, vmrs_apsr, false); break;
+    }
+    for (const auto &pair : pairs) {
+      for (const std::uint32_t before : {0U, flag_z, flag_n | 0x2000'0000U}) {
+        // Twice: the second run is the chained translation.
+        for (unsigned round = 0; round < 2; ++round) {
+          auto cpu = Fixture::task(false);
+          cpu.nzcv = before;
+          set_lane32(cpu, 0, 2, pair.a);
+          set_lane32(cpu, 0, 3, pair.b);
+          set_half64(cpu, 1, 0, std::bit_cast<std::uint64_t>(
+                                    static_cast<double>(as_float(pair.a))));
+          set_half64(cpu, 1, 1, std::bit_cast<std::uint64_t>(
+                                    static_cast<double>(as_float(pair.b))));
+          const auto result = fixture.run(cpu);
+          require(result.reason == ExitReason::system_call);
+          const std::uint32_t flags =
+              compare_flags(as_float(pair.a), as_float(pair.b));
+          // Whether the comparison ran, and whether its flags were read.
+          const bool zero_before = (before & flag_z) != 0U;
+          const bool compared = context != 4 || !zero_before;
+          const bool read = context != 3 || !zero_before;
+          const std::uint32_t fpscr_flags = compared ? flags : 0U;
+          const std::uint32_t guest_flags = read ? fpscr_flags : before >> 28;
+          require(cpu.registers[8] >> 28 == fpscr_flags);
+          require(cpu.nzcv >> 28 == guest_flags);
+          const bool n = (guest_flags & 8U) != 0U, z = (guest_flags & 4U) != 0U,
+                     c = (guest_flags & 2U) != 0U, v = (guest_flags & 1U) != 0U;
+          require(cpu.registers[2] == (n != v ? 1U : 0U));
+          require(cpu.registers[3] == (!z && n == v ? 1U : 0U));
+          require(cpu.registers[4] == (z ? 1U : 0U));
+          require(cpu.registers[5] == (v ? 1U : 0U));
+          require(cpu.registers[6] == (c ? 1U : 0U));
+          require(cpu.registers[7] == (n ? 1U : 0U));
+        }
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -617,6 +724,7 @@ int main() {
   vector_memory_across_a_page();
   library_memory_transfer_keeps_the_fp_environment();
   vector_memory_faults();
+  vcmp_flags_reach_the_apsr();
   std::puts("arm64-jit-a32-vector: ok");
   return 0;
 }

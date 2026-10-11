@@ -333,6 +333,9 @@ private:
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
   [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);
   [[nodiscard]] Flow emit_vfp_compare(const VInfo &v);
+  /* Whether the instruction at `index` is an unconditional VMRS that moves
+   * the FPSCR flags to the APSR. */
+  [[nodiscard]] bool is_fpscr_flags_read(std::size_t index) const;
   [[nodiscard]] Flow emit_vfp_convert(const VInfo &v);
   [[nodiscard]] Flow emit_vfp_move(const VInfo &v);
   [[nodiscard]] Flow emit_fpscr(const VInfo &v);
@@ -406,6 +409,10 @@ private:
   std::vector<TranslationColdPath> translation_cold_;
   std::vector<ResumePath> resume_cold_;
   std::vector<FloatColdPath> float_cold_;
+  /* The index of the VMRS APSR_nzcv, FPSCR whose flags the host NZCV already
+   * holds, because the VCMP before it left them there and nothing came
+   * between. */
+  std::size_t flags_held_by_vmrs_{~std::size_t{0}};
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};

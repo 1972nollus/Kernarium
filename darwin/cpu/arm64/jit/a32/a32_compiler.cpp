@@ -108,6 +108,7 @@ Result A32Compiler::compile(const Request &request) {
   single_ = request.single;
   accesses_fp_state_ = false;
   fp_mode_ = FpMode::unknown;
+  flags_held_by_vmrs_ = ~std::size_t{0};
   decode_block(request);
   Result result;
   if (block_.empty())

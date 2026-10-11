@@ -141,6 +141,13 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
 // VCMP and VCMPE. The A64 comparison sets the host NZCV, which are the bits
 // FPSCR keeps in a32_fpscr_nzcv, and the guest's own flags are in CpuState.
 
+namespace {
+/* The instruction runs whatever the flags are. */
+bool is_unconditional(const aarch32::Instruction &inst) noexcept {
+  return inst.cond >= 14U;
+}
+} // namespace
+
 A32Compiler::Flow A32Compiler::emit_vfp_compare(const VInfo &v) {
   const auto &o = cur().inst.operands;
   const bool dp = v.dp;
@@ -155,7 +162,22 @@ A32Compiler::Flow A32Compiler::emit_vfp_compare(const VInfo &v) {
                       o.with_zero));
   emit(0xd53b'4200U); // mrs x0, nzcv
   emitter_.store_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
+  /* The VMRS that moves them to the APSR next finds them in the host NZCV,
+   * where a reload through memory would only delay the branch on them. */
+  if (is_unconditional(cur().inst) && is_fpscr_flags_read(count_ + 1U))
+    flags_held_by_vmrs_ = count_ + 1U;
   return Flow::next;
+}
+
+bool A32Compiler::is_fpscr_flags_read(std::size_t index) const {
+  if (index >= block_.size())
+    return false;
+  const auto &inst = block_[index].inst;
+  if (inst.status != aarch32::Status::ok || !is_unconditional(inst) ||
+      op_info(inst.form).op != Op::vector)
+    return false;
+  const auto &v = vector_info(inst.form);
+  return v.mnemonic == VM::vmrs && inst.operands.t == 15;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,8 +501,10 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   if (v.mnemonic == VM::vmrs) {
     if (t == 15U) {
       // VMRS APSR_nzcv, FPSCR.
-      emitter_.load_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
-      emit(enc::msr_nzcv(0));
+      if (flags_held_by_vmrs_ != count_) {
+        emitter_.load_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
+        emit(enc::msr_nzcv(0));
+      }
       store_flags();
       return Flow::next;
     }

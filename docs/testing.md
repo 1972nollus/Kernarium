@@ -973,7 +973,8 @@ and the Standard FPSCR value for a Neon one across a conditional arm, a chained
 branch, an exit and alternating blocks (the host FPCR keeps its mode across
 them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
 rounding mode and flush mode in the contexts that guard them and the one that
-does not, QC across runs, and the vector memory forms staying inline and
+does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
+through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
 taking the library, with its data and faults, across a page, on a misalignment
 and into an unmapped page, where the library leaves the guest's FP environment
 installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM

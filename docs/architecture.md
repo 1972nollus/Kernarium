@@ -1027,14 +1027,17 @@ The two modes part only on a nonzero denormal operand, a NaN operand, a
 result that is tiny before rounding and a rounding mode other than to nearest,
 so a Neon VMAX, VMIN, VADD, VSUB, VMUL, VMLA or VMLS of single precision in a
 run of at most eight Neon floating-point operations that a VFP instruction
-(or the end of the block) follows runs under the guest's FPCR behind integer tests of its
-operands, and under the Standard value from a cold path when a test fails; a
-longer run switches once. A run under the guest's FPCR leaves its cumulative
+(or the end of the block) follows runs under the guest's FPCR behind integer
+tests of its operands, and under the Standard value from a cold path when a
+test fails; a longer run switches once. A run under the guest's FPCR leaves its cumulative
 exception flags behind, so what only it would raise is found before it: a
 product whose operand exponents sum to less than 129 (it may underflow,
 inexactly) is tested before the multiplication, and a sum needs no such test
 because a tiny sum of normal numbers is exact. A saturating
-instruction sets QC in the host FPSR, which is the guest's. VRECPS and VRSQRTS
+instruction sets QC in the host FPSR, which is the guest's. A VCMP
+leaves its flags in FPSCR's copy in `CpuState` and in the host NZCV, so an
+unconditional VMRS APSR_nzcv, FPSCR right after it keeps them there and
+the branch on them waits for no reload. VRECPS and VRSQRTS
 round the product before the step, as the AArch32 pseudocode does and the A64
 instructions do not, and answer 2.0 or 1.5 for an infinity times a zero
 without raising Invalid Operation. VLDR, VSTR and the register-list transfers
