@@ -12,14 +12,14 @@ PM callback tracepoint exports, its `asm/simd.h` callers, and its Rust ashmem
 driver's personality binding), a touchscreen-only input presentation for
 Android and recovery, and ACK ports of the balloon, drm-attach and BPF ring
 buffer fixes whose context differs on this base. The ring buffer variant lays
-the ring out for the vmap group that the shared series reports on a 4 KiB
-profile, so it changes nothing for this line's 16 KiB product; it exists so
-that the ACK series stays equal to the mainline one and a 4 KiB Android kernel
-needs no further kernel topic. ACK's `ringbuf.c` carries the page-size
-compatibility include and macros, which is why the shared series cannot hold
-it. A kernel CPU mapping of a udmabuf (`dma_buf_vmap()`) is not bracketed with
-the kernel-vmap hooks; no importer in the product maps one, and user space
-reaches udmabuf memory through its own mapping, which is coherent.
+the ring out for the vmap group that the shared series reports on this line's
+4 KiB profile, so a BPF ring buffer that user space maps (Android's
+connectivity and network-event consumers) stays coherent with the kernel's
+view. ACK's `ringbuf.c` carries the page-size compatibility include and
+macros, which is why the shared series cannot hold it. A kernel CPU mapping of
+a udmabuf (`dma_buf_vmap()`) is not bracketed with the kernel-vmap hooks; no
+importer in the product maps one, and user space reaches udmabuf memory
+through its own mapping, which is coherent.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the
