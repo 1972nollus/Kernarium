@@ -191,7 +191,7 @@ private:
    * plan is the bindings a probe compilation held at the back edge. */
   struct LoopPlan final {
     bool valid{};
-    std::array<unsigned, 8> gpr{};
+    std::array<unsigned, 15> gpr{};
     std::array<unsigned, 18> vector{};
   };
 

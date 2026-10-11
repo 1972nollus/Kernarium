@@ -356,6 +356,37 @@ void indirect_targets_are_per_address_space() {
   }
 }
 
+/* The host has a register for each of the guest's fifteen core registers, so
+ * a block that names thirteen of them reads each from the register file once
+ * and writes each back once, not at every use of those past the eighth. */
+void core_registers_stay_in_the_host() {
+  Fixture fixture{0x1a32'0c20, 2, 2};
+  std::vector<std::uint32_t> words;
+  for (unsigned i = 0; i < 39; ++i)
+    words.push_back(0xe080'0000U | ((i + 1U) % 13U) << 16 | (i % 13U) << 12 |
+                    ((i + 5U) % 13U)); // add rd, rn, rm
+  words.push_back(0xef00'0000U);       // svc
+  for (std::size_t i = 0; i < words.size(); ++i)
+    fixture.code32(i * 4, {words[i]});
+  std::vector<std::byte> bytes(words.size() * 4);
+  fixture.read_code(0, bytes);
+  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  require(!compiled.code.words.empty());
+  unsigned loads = 0, stores = 0;
+  for (const auto w : compiled.code.words) {
+    // ldr/str xN, [x15, #imm] of one of the first fifteen doublewords
+    if ((w & 0xffc0'03e0U) == (0xf940'0000U | 15U << 5) &&
+        ((w >> 10) & 0xfffU) < 15U)
+      ++loads;
+    if ((w & 0xffc0'03e0U) == (0xf900'0000U | 15U << 5) &&
+        ((w >> 10) & 0xfffU) < 15U)
+      ++stores;
+  }
+  require(loads <= 13U && loads >= 1U);
+  require(stores <= 13U && stores >= 1U);
+}
+
 void static_exits_chain() {
   constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
   const auto a32_bytes = [](const std::vector<std::uint32_t> &words) {
@@ -1408,6 +1439,7 @@ int main() {
   long_blocks_and_the_budget();
   static_exits_chain();
   native_environment_is_carried_into_a_chain();
+  core_registers_stay_in_the_host();
   polymorphic_returns_stay_in_the_chain();
   indirect_targets_are_per_address_space();
   rewritten_t32_halfwords();

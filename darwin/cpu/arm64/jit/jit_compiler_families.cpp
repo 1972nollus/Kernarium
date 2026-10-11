@@ -185,7 +185,7 @@ JitCompilerFamilies::allocate_gpr_slot(unsigned guest,
   if (!gpr_cache_enabled_ || (guest == 31U && !stack_pointer))
     return std::nullopt;
   stack_pointer = guest == 31U && stack_pointer;
-  for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
+  for (std::size_t index = 0; index < gpr_host_limit_; ++index) {
     auto &slot = gpr_slots_[index];
     /* A ZA slice index names W12-W15, so a streaming translation keeps
      * x12 free for the guest index (design 4.2). */

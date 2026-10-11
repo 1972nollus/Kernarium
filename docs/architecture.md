@@ -976,8 +976,10 @@ The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
 without changing it. An A32 or T32 block is decoded by the shared decoder and
 compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
-and publication: R0-R14 are resident host registers written back at every
-exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
+and publication: R0-R14 are resident host registers (each core register has
+one: x3-x7, x12, x13, x17 and the callee-saved x22-x28, which an AArch32
+translation's frame saves and the A64 translations never touch), loaded at
+first use and written back at every exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
 condition is a branch over the body (a conditional data-processing instruction
 that sets no flags and writes no PC, and MOVW, instead runs on both arms and
 a CSEL on the host flags keeps its result only where the condition holds, so
@@ -1014,7 +1016,7 @@ was made under, since the join can leave a host register to another guest
 register before the cold paths are emitted. A backward or unconditional branch ends the
 block, except one back to the translation's own first instruction: that block
 is a loop in the host. A probe compilation records the vector registers it holds at
-the back edge and the eight core registers the body names most, the
+the back edge and the core registers the body names, the
 translation loads them before the loop head and counts
 every one as dirty so that each exit writes them back, and the back edge is the
 chain budget's test for one more iteration and a branch. The iteration that

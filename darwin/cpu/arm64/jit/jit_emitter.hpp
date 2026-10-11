@@ -127,6 +127,11 @@ public:
   [[nodiscard]] std::uint8_t sme_host_mode() const noexcept {
     return sme_host_mode_;
   }
+  /* An extended frame also saves x22-x28, which an AArch32 translation uses
+   * for its core registers. Every translation of a chain must agree on it. */
+  void set_extended_frame(bool extended) noexcept {
+    extended_frame_ = extended;
+  }
   void prologue();
   void epilogue();
   void return_constant(Event event, std::size_t instructions);
@@ -177,6 +182,7 @@ private:
   void *flag_context_{};
   FlagClobber flag_clobber_{};
   std::uint8_t sme_host_mode_{};
+  bool extended_frame_{};
 };
 
 [[nodiscard]] constexpr std::size_t

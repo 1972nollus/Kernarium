@@ -47,6 +47,10 @@ A32Compiler::A32Compiler(void *link_context, LinkResolver link_resolver,
       track_direct_stores_{track_direct_stores},
       profile_{decode_profile()} {
   attach_family_emitter(&emitter_, &native_fp_, !track_direct_stores_);
+  /* The guest has fifteen core registers, and the host has the registers
+   * for all of them. */
+  gpr_host_limit_ = resident_gpr_hosts.size();
+  emitter_.set_extended_frame(true);
   attach_link_resolver(link_context, link_resolver);
   attach_indirect_link_resolver(link_context, indirect_link_resolver);
   emitter_.attach_exit_flush(this, [](void *context) {
