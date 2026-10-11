@@ -601,14 +601,17 @@ def verify_timed_sessions() -> None:
             "--workers", "2", "--repetitions", "2",
             "--core-class", "efficiency")
     sample = ("sample", "/usr/bin/sample", "4242", "1", "-file")
-    output = f"aarch64\n{TIMED_RUNS[0]}aarch64\n{TIMED_RUNS[1]}{TIMED_MEDIAN}\n"
+    output = (
+        f"aarch64\n{TIMED_RUNS[0]}aarch64\n{TIMED_RUNS[1]}{TIMED_MEDIAN} "
+        "[engine=jit cores=performance cpus=4]\n"
+    )
     cases = (
         (
             "run_guest_command_bench.py",
             (*command, "--sample-output", "{directory}/profile.txt",
              "--sample-seconds", "1"),
             "aarch64",
-            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=1",),
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=4",),
                       init_shell=False, overlay_shell=True, engine="jit",
                       core_class="performance", payloads={}),
             [("boot_and_login", 180),
@@ -621,7 +624,7 @@ def verify_timed_sessions() -> None:
             "run_guest_command_bench.py",
             (*command, "--shell-init", "--timeout", "45"),
             "aarch64",
-            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=1",),
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=4",),
                       init_shell=True, overlay_shell=False, engine="jit",
                       core_class="performance", payloads={}),
             [("boot_to_shell", 180),
@@ -640,7 +643,8 @@ def verify_timed_sessions() -> None:
                       core_class="performance"),
             [("boot_and_login",), *timed(EXEC_WORKLOAD),
              *timed(EXEC_WORKLOAD), ("shutdown", 60)],
-            f"{TIMED_RUNS[0]}{TIMED_RUNS[1]}{TIMED_MEDIAN}\n",
+            f"{TIMED_RUNS[0]}{TIMED_RUNS[1]}{TIMED_MEDIAN} "
+            "[engine=jit cores=performance cpus=2 workers=2]\n",
         ),
         (
             "run_guest_link_bench.py",
@@ -694,6 +698,37 @@ def verify_timed_sessions() -> None:
     *_, error = run_timed_session("run_guest_link_bench.py", link, "OK")
     if error != "repetition 1 returned unexpected output 'OK'":
         raise RuntimeError(f"link bench accepted one OK of two: {error}")
+
+
+def verify_default_cpu_counts() -> None:
+    """Benchmarks default to 4 vCPUs on the Mac and 2 on the iPad."""
+    for runner, extra in (
+        ("run_guest_geekbench.py", ["--console-log", "console.log"]),
+        ("run_guest_command_bench.py", ["--command", "true"]),
+        ("run_guest_exec_bench.py", []),
+        ("run_guest_link_bench.py", ["--binary", "probe"]),
+    ):
+        options = parse_runner_arguments(runner, extra)
+        if options.cpus != 4:
+            raise RuntimeError(f"{runner}: default is {options.cpus} vCPUs")
+        if hasattr(options, "workers"):
+            # The workers follow the guest's vCPUs unless named.
+            if options.workers != 4:
+                raise RuntimeError(f"{runner}: default is {options.workers}")
+            options = parse_runner_arguments(runner, [*extra, "--cpus", "2"])
+            if options.workers != 2:
+                raise RuntimeError(f"{runner}: workers must follow --cpus")
+    for runner, extra in (
+        ("run_ios_device_workload.py", ["--geekbench"]),
+        ("run_ios_device_discard_bench.py", []),
+    ):
+        module = load_runner_module(runner)
+        with mock.patch.object(
+            sys, "argv", [str(ROOT / runner), "--device", "device", *extra]
+        ):
+            options = module.parse_arguments()
+        if options.cpus != 2:
+            raise RuntimeError(f"{runner}: default is {options.cpus} vCPUs")
 
 
 def verify_no_root_device_option() -> None:
@@ -772,6 +807,7 @@ def main() -> int:
     verify_geekbench_payload_image()
     verify_geekbench_boot_options()
     verify_timed_sessions()
+    verify_default_cpu_counts()
     verify_no_root_device_option()
     verify_core_class_launcher()
     for runner in RUNNERS:

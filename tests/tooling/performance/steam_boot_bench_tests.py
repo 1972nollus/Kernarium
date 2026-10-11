@@ -215,6 +215,24 @@ def check_summarize() -> list[str]:
     return []
 
 
+def check_cpus(harness) -> list[str]:
+    """The guest defaults to 4 vCPUs, and every TSV row records them."""
+    failures: list[str] = []
+    default = harness.parse_arguments([]).cpus
+    if default != 4:
+        failures.append(f"the default guest has {default} vCPUs, not 4")
+    run = {"image": "a", "run": 1, "cpus": 4, "status": "ok", "host": {},
+           "boots": [{"boot": "first", "boot_seconds": 1.0}]}
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "results.tsv"
+        harness.write_tsv([run], path)
+        header, row = path.read_text().splitlines()
+        columns = dict(zip(header.split("\t"), row.split("\t")))
+        if columns.get("cpus") != "4":
+            failures.append(f"results.tsv lacks the vCPU count: {columns}")
+    return failures
+
+
 # Stand-ins for the emulator. The first plays the image's autologin, echoes
 # the sudo exec as the guest tty does, then serves commands with the host
 # shell; the others die the way a failing guest does.
@@ -283,13 +301,14 @@ def main() -> int:
     failures += check_order(harness)
     failures += check_dry_run()
     failures += check_summarize()
+    failures += check_cpus(harness)
     failures += check_console(harness)
     if failures:
         for failure in failures:
             print(f"steam boot bench: {failure}", file=sys.stderr)
         return 1
     print("steam boot bench contract passed "
-          "(cleanup, counterbalancing, dry run, summarize, console)")
+          "(cleanup, counterbalancing, dry run, summarize, vCPUs, console)")
     return 0
 
 
