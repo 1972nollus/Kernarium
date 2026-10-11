@@ -7,7 +7,9 @@
  * as the architecture says; Advanced SIMD floating point runs under the
  * Standard FPSCR value; VLDR, VLDM and aligned VLD1 raise SIGBUS when
  * misaligned; Len, Stride and the trap enables are RAZ/WI; VFP and NEON data
- * are visible through the S, D and Q views and VPUSH/VPOP. */
+ * are visible through the S, D and Q views and VPUSH/VPOP; and a structure
+ * load, store or permute alone in its block publishes its registers to the
+ * blocks around it (across a reschedule, in A32 and T32, cold and warm). */
 #include "engine_probe.hpp"
 
 namespace probe {
@@ -72,6 +74,15 @@ void neon_add_f32(probe::FpCall *);
 void neon_mul_f32(probe::FpCall *);
 void neon_qadd_s8(probe::FpCall *);
 void neon_add_i32(probe::FpCall *);
+#define SPLIT_FORMS(X) \
+	X(vld1_8) X(vld2_16) X(vld3_16) X(vld4_32) X(vld1_lane) X(vld2_lane) X(vld4_dup) \
+	X(vst1_64) X(vst2_16) X(vst3_8) X(vst4_32) X(vst1_lane) X(vzip_32) X(vtbl_8)
+#define SPLIT_DECLARE(form) \
+	void split_##form##_arm(void *); void split_##form##_thumb(void *); \
+	void fused_##form##_arm(void *, const probe::u64 *, probe::u64 *); \
+	void fused_##form##_thumb(void *, const probe::u64 *, probe::u64 *);
+SPLIT_FORMS(SPLIT_DECLARE)
+#undef SPLIT_DECLARE
 #define SA(name) void name##_arm(probe::word); void name##_thumb(probe::word);
 SA(sa_vldr_s) SA(sa_vldr_d) SA(sa_vstr_s) SA(sa_vstr_d) SA(sa_vldm_s) SA(sa_vldm_d)
 SA(sa_vstm_d) SA(sa_vld1_a64) SA(sa_vld1_a128) SA(sa_vld1_a256) SA(sa_vst1_a64)
@@ -418,6 +429,63 @@ long wait_stopped(long pid, int *signal)
 		return -1;
 	*signal = (status >> 8) & 0xff;
 	return 0;
+}
+
+/* ---- structure forms alone in a block ---- */
+
+/* Each form runs once as a block of its own between a block that loads D0-D31
+ * and a block that stores them, with a reschedule before and after it (an
+ * engine that hands a task its vectors lazily has them unloaded when the
+ * form's block starts, and the reschedule saves only what the task wrote),
+ * and once as one straight-line routine. The two must leave the same
+ * registers and memory, and the form must have changed one of them. The
+ * first round runs the blocks cold; the later rounds run them translated. */
+struct SplitForm {
+	const char *name;
+	void (*split[2])(void *);
+	void (*fused[2])(void *, const u64 *, u64 *);
+};
+
+const SplitForm split_forms[] = {
+#define SPLIT_ENTRY(form) \
+	{#form, {split_##form##_arm, split_##form##_thumb}, {fused_##form##_arm, fused_##form##_thumb}},
+	SPLIT_FORMS(SPLIT_ENTRY)
+#undef SPLIT_ENTRY
+};
+
+void split_block_cases()
+{
+	char name[160];
+	simd_set_fpscr(0);
+	u32 seed = 100;
+	for (const SplitForm &form : split_forms) {
+		for (u32 thumb = 0; thumb < 2; ++thumb) {
+			u32 differ = 0, unchanged = 0;
+			for (u32 round = 0; round < 3; ++round) {
+				Image init;
+				make_pattern(init, ++seed);
+				alignas(16) u8 base[96], fused_memory[96], split_memory[96];
+				for (u32 index = 0; index < sizeof(base); ++index)
+					base[index] = static_cast<u8>(index * 37 + seed * 11 + 5);
+				Image fused_out{}, split_out{};
+				memcpy(fused_memory, base, sizeof(base));
+				form.fused[thumb](fused_memory + 16, init.d, fused_out.d);
+				memcpy(split_memory, base, sizeof(base));
+				(thumb ? simd_load_thumb : simd_load)(init.d);
+				yield();
+				form.split[thumb](split_memory + 16);
+				yield();
+				(thumb ? simd_store_thumb : simd_store)(split_out.d);
+				differ += mismatches(split_out.d, fused_out.d);
+				differ += memcmp(split_memory, fused_memory, sizeof(base)) != 0;
+				unchanged += mismatches(fused_out.d, init.d) == 0 && memcmp(fused_memory, base, sizeof(base)) == 0;
+			}
+			check_eq(differ, 0, labelled(name, form.name, thumb ? "in a block of its own (T32) matches one straight-line routine"
+									  : "in a block of its own (A32) matches one straight-line routine"));
+			check_eq(unchanged, 0, labelled(name, form.name, thumb ? "changes registers or memory (T32)"
+									  : "changes registers or memory (A32)"));
+		}
+	}
 }
 
 } // namespace
@@ -792,6 +860,9 @@ void group_simd()
 		check_eq(mismatches(report->d, want.d), 0, "and sees the register the tracer wrote");
 		check_eq(*report_fpscr & 0xffc8009f, 0x03000000, "and the FPSCR the tracer wrote");
 	}
+
+	/* Structure loads and stores alone in a block publish their registers. */
+	split_block_cases();
 }
 
 /* The Armv8 floating-point additions against known answers, at the complete

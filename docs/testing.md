@@ -880,7 +880,8 @@ self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
 SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
 BKPT and `udf #16` under ptrace and a single step through an IT block,
 LDREX/STREX and the kuser cmpxchg under contention across threads and
-processes, VFP, Advanced SIMD and FPSCR semantics, and, at the complete
+processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
+and stores alone in a block, across a reschedule), and, at the complete
 level, the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
 VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
 extensions against known answers. A group
