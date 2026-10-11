@@ -58,14 +58,15 @@ unset(_uml_gadget_cache_slots_invalid)
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
-# Default-off: the census walks every cache slot when an executor is destroyed
-# and writes its measured footprint plus one record per resident translation,
-# which is how duplication between executors and between address spaces is
-# measured rather than estimated. Both engines report it, so the option is
-# declared with the shared cache geometry above rather than beside the arm64
-# translation diagnostics below.
+# Default-off: the census walks every cache slot when an executor is destroyed,
+# and at intervals when asked, and writes its measured footprint, its lookup
+# and eviction history, and one record per resident translation, which is how
+# duplication between executors and between address spaces is measured rather
+# than estimated. Both engines report it, so the option is declared with the
+# shared cache geometry above rather than beside the arm64 translation
+# diagnostics below.
 option(UML_GADGET_CACHE_CENSUS
-    "Dump resident gadget cache contents at executor teardown (diagnostic builds only)"
+    "Write gadget cache census snapshots (diagnostic builds only)"
     OFF)
 
 # x86-64 guests run on the x86_64 tree's engines. The fixed x86 Linux slice

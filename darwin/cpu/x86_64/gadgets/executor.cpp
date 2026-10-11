@@ -3,6 +3,9 @@
 
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
+#if UML_GADGET_CACHE_CENSUS
+#include "cpu/gadget_cache_census.hpp"
+#endif
 #include "cpu/x86_64/code_page_registry.hpp"
 
 #include "native_entry.hpp"
@@ -13,14 +16,10 @@
 #include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
-#include <cstdlib>
 #include <malloc/malloc.h>
 #endif
 #include <cstring>
 #include <memory>
-#if UML_GADGET_CACHE_CENSUS
-#include <mutex>
-#endif
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -29,6 +28,9 @@
 #include <vector>
 
 namespace uml::cpu::x86_64::gadgets {
+#if UML_GADGET_CACHE_CENSUS
+namespace census = ::uml::cpu::gadget_cache::census;
+#endif
 namespace {
 
 static_assert(DARWIN_UML_GUEST_PAGE_SIZE == 4096,
@@ -580,11 +582,25 @@ private:
 		/* The first link of each page's list. */
 		std::unordered_map<std::uint64_t, std::uint32_t> code_pages;
 		bool slots_complete{true};
+#if UML_GADGET_CACHE_CENSUS
+		/* When the cache last left this address space, in switches and
+		 * in seconds. */
+		std::uint64_t census_switch{};
+		double census_seconds{};
+#endif
 	};
 
 public:
 	void invalidate() noexcept
 	{
+#if UML_GADGET_CACHE_CENSUS
+		for (auto &slab : slabs_)
+			if (slab)
+				for (auto &slot : slab->slots)
+					if (resident(slot))
+						census_depart(slot,
+							census::Departure::retired);
+#endif
 		if (registries_ != nullptr)
 			for (auto &[generation, state] : generations_)
 				for (const auto &[page, link] : state.code_pages)
@@ -611,6 +627,14 @@ public:
 	{
 		if (current_generation_ != generation)
 			preceding_ = nullptr;
+#if UML_GADGET_CACHE_CENSUS
+		/* The address space being left was in use until now. */
+		if (generation != current_generation_ && current_ != nullptr) {
+			++switches_;
+			current_->census_switch = switches_;
+			current_->census_seconds = census::elapsed_seconds();
+		}
+#endif
 		current_generation_ = generation;
 		auto [entry, inserted] = generations_.try_emplace(generation);
 		current_ = &entry->second;
@@ -755,6 +779,10 @@ public:
 		ProgramCacheDiagnostics &diagnostics, bool &cache_hit)
 	{
 		cache_hit = false;
+#if UML_GADGET_CACHE_CENSUS
+		if ((history_.lookups() & 4095U) == 0)
+			snapshot_if_due();
+#endif
 		if (preceding_ != nullptr) {
 			for (const auto successor : preceding_->entries) {
 				if (successor == 0)
@@ -779,8 +807,12 @@ public:
 		const auto location = locate_program(
 			current_generation_, address, mode);
 		auto &slab = slabs_[location.slab];
-		if (!slab)
+		if (!slab) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.missed();
+#endif
 			return nullptr;
+		}
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
 			auto &slot = slab->slots[location.offset + way];
 			if (!matches(slot, address, mode))
@@ -794,6 +826,9 @@ public:
 			cache_hit = true;
 			return program;
 		}
+#if UML_GADGET_CACHE_CENSUS
+		history_.missed();
+#endif
 		return nullptr;
 	}
 
@@ -840,6 +875,15 @@ public:
 					location.slab * program_cache_slab_slots + offset);
 		}
 
+#if UML_GADGET_CACHE_CENSUS
+		/* A lookup that could not use its translation can leave it
+		 * resident, and this store makes a second copy beside it. */
+		bool restored = false;
+		for (std::size_t way = 0; way < program_cache_ways; ++way)
+			if (matches(slab->slots[location.offset + way],
+				    program.address(), program.execution_mode()))
+				restored = true;
+#endif
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
 		for (std::size_t way = 0; way < program_cache_ways; ++way) {
@@ -867,6 +911,10 @@ public:
 
 		auto &slot = slab->slots[location.offset + selected];
 		auto &successors = slab->successors[location.offset + selected];
+#if UML_GADGET_CACHE_CENSUS
+		if (resident(slot))
+			census_depart(slot, census::Departure::evicted);
+#endif
 		unindex(slot);
 		deactivate(slot);
 		slot.epoch = 0;
@@ -896,6 +944,10 @@ public:
 		}
 		activate_link(slot);
 		activate(slot, successors);
+#if UML_GADGET_CACHE_CENSUS
+		history_.arrive(census_id_, slot.generation, census_key(slot),
+			census_digest(slot), restored);
+#endif
 		return stored;
 	}
 
@@ -908,9 +960,8 @@ public:
 	/* What this cache costs, in bytes it actually holds rather than in the
 	 * capacity it was configured with. The slab array is the only part that
 	 * exists whether or not its ways are occupied; everything else is
-	 * proportional to what the workload translated. Allocations are counted
-	 * as the allocator sized them, which a sum of sizeof does not see (X79):
-	 * a 256-way slab is a 20 KiB block. */
+	 * proportional to what the workload translated. A translation's parts
+	 * are counted as the allocator sized them (X79). */
 	struct Footprint final {
 		std::size_t slabs, streams, decoded, links, indirect, targets;
 		[[nodiscard]] std::size_t total() const noexcept
@@ -919,6 +970,29 @@ public:
 				targets;
 		}
 	};
+
+	/* One address space's link state. */
+	struct GenerationBytes final {
+		std::size_t links, indirect, targets;
+	};
+
+	[[nodiscard]] static GenerationBytes generation_bytes(
+		const Generation &state) noexcept
+	{
+		GenerationBytes bytes{};
+		for (const auto &mode : state.links)
+			bytes.links += mode.bytes();
+		bytes.links += state.slots.capacity() * sizeof(std::uint32_t) +
+			map_bytes(state.code_pages);
+		for (const auto &mode : state.indirect)
+			bytes.indirect += mode.bytes();
+		for (const auto &live : state.live_indirect)
+			bytes.indirect += live.capacity() * sizeof(IndirectLink *);
+		for (const auto &table : state.target_links)
+			if (table)
+				bytes.targets += sizeof(TargetLinkTable);
+		return bytes;
+	}
 
 	[[nodiscard]] Footprint footprint() const noexcept
 	{
@@ -936,32 +1010,19 @@ public:
 				 * stream and the saved source; a block some
 				 * replay has ended inside also holds what that
 				 * replay decoded. */
-				const auto &program = slot.translation->program;
-				streams += malloc_size(slot.translation.get()) +
-					malloc_size(program.native_stream().data()) +
-					malloc_size(program.source().data());
-				if (const auto replay = program.replay_bytes();
-				    replay != 0)
-					decoded += malloc_good_size(replay);
+				const auto parts = translation_bytes(slot);
+				streams += parts.allocated - parts.decoded;
+				decoded += parts.decoded;
 			}
 		}
 		std::size_t links = 0;
 		std::size_t indirect = 0;
 		std::size_t targets = 0;
 		for (const auto &[generation, state] : generations_) {
-			for (const auto &mode : state.links)
-				links += mode.bytes();
-			links += state.slots.capacity() *
-					sizeof(std::uint32_t) +
-				map_bytes(state.code_pages);
-			for (const auto &mode : state.indirect)
-				indirect += mode.bytes();
-			for (const auto &live : state.live_indirect)
-				indirect += live.capacity() *
-					sizeof(IndirectLink *);
-			for (const auto &table : state.target_links)
-				if (table)
-					targets += sizeof(TargetLinkTable);
+			const auto bytes = generation_bytes(state);
+			links += bytes.links;
+			indirect += bytes.indirect;
+			targets += bytes.targets;
 		}
 		return {
 			.slabs = slabs,
@@ -986,17 +1047,19 @@ public:
 		return occupied;
 	}
 
-	/* Write what this cache holds, so duplication can be counted instead of
-	 * estimated. The record format is the arm64 executor's, so one analyzer
-	 * reads either engine's capture.
+	/* Write what this cache holds and how it came to hold it, so
+	 * duplication, dormancy and lost work can be counted instead of
+	 * estimated. `snapshot` numbers a periodic snapshot; zero is the one
+	 * written at teardown. The record format is the arm64 executor's, so
+	 * one analyzer reads either engine's capture.
 	 *
 	 * A translation is identified by the guest bytes it consumed, not by the
 	 * stream it produced: two executors translating the same code emit the
 	 * same gadgets but embed pointers to their own link records, so only the
-	 * source identifies the work. The stream length goes out with it because
-	 * it decides what a body costs.
+	 * source identifies the work. The parts of its allocations go out with
+	 * it because they decide what a translation costs.
 	 */
-	void census(std::FILE *out) const noexcept
+	void census(std::FILE *out, std::uint64_t snapshot) const noexcept
 	{
 		const auto parts = footprint();
 		/* sizeof(Slot) is reported because the slab total covers the
@@ -1009,12 +1072,54 @@ public:
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
 			"streams=%zu decoded=%zu links=%zu indirect=%zu "
-			"targets=%zu total=%zu\n",
+			"targets=%zu total=%zu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
 			parts.streams, parts.decoded, parts.links,
 			parts.indirect, parts.targets, parts.total());
+		census::write_when(out, snapshot);
+		history_.write(out);
+		std::fputc('\n', out);
+		const auto now = census::elapsed_seconds();
+		for (const auto &[generation, state] : generations_) {
+			const auto found = std::find(resident_.rbegin(),
+				resident_.rend(), generation);
+			const bool running = generation == current_generation_;
+			const auto bytes = generation_bytes(state);
+			std::fprintf(out,
+				"G %llu current=%d rank=%td idle_switches=%llu "
+				"idle_seconds=%.3f link_records=%zu links=%zu "
+				"indirect=%zu targets=%zu\n",
+				static_cast<unsigned long long>(generation),
+				running ? 1 : 0, found - resident_.rbegin(),
+				static_cast<unsigned long long>(running ? 0 :
+					switches_ - state.census_switch),
+				running ? 0.0 : now - state.census_seconds,
+				state.links[0].size() + state.links[1].size(),
+				bytes.links, bytes.indirect, bytes.targets);
+		}
+		const auto sample = census::word_sample();
+		/* The same link targets are sampled in every cache, so the
+		 * sample says how many of an address space's records each
+		 * cache keeps for itself. */
+		if (sample != 0)
+			for (const auto &[generation, state] : generations_)
+				for (const auto &mode : state.links)
+					mode.for_each([&](const LinkRecord &record) {
+						if (census_sampled(record.link.guest_rip,
+							    sample))
+							std::fprintf(out,
+								"L %llu 0x%llx\n",
+								static_cast<unsigned long long>(
+									generation),
+								static_cast<unsigned long long>(
+									record.link.guest_rip));
+					});
+		const auto text = census::text_of(reinterpret_cast<const void *>(
+			reinterpret_cast<std::uintptr_t>(
+				native::uml_x86_64_gadget_link_exit)));
+		CensusRecords records;
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
@@ -1022,29 +1127,25 @@ public:
 				if (!resident(slot))
 					continue;
 				const auto &program = slot.translation->program;
-				const auto source = program.source();
-				/* The same bytes decoded in the other
-				 * execution mode are a different translation,
-				 * so the mode seeds the digest. */
-				std::uint64_t digest = 0xcbf29ce484222325ULL ^
-					mode_index(slot.mode);
-				for (const auto byte : source)
-					digest = (digest ^
-							 static_cast<
-								 std::uint8_t>(
-								 byte)) *
-						0x100000001b3ULL;
+				const auto bytes = translation_bytes(slot);
 				std::fprintf(out,
-					"P %llu 0x%llx %zu %zu %zu 0x%llx\n",
+					"P %llu 0x%llx %zu %zu %zu 0x%llx %zu %zu "
+					"%zu %zu\n",
 					static_cast<unsigned long long>(
 						slot.generation),
 					static_cast<unsigned long long>(
 						slot.address),
 					program.instruction_count(),
 					program.native_stream().size(),
-					source.size(),
+					program.source().size(),
 					static_cast<unsigned long long>(
-						digest));
+						census_digest(slot)),
+					bytes.allocated, sizeof(Translation),
+					program.native_stream().size_bytes(),
+					program.source().size());
+				if (sample != 0 &&
+				    census_sampled(slot.address, sample))
+					census_words(out, slot, text, records);
 			}
 		}
 	}
@@ -1073,6 +1174,125 @@ private:
 		return map.size() *
 			(sizeof(typename Map::value_type) + node) +
 			map.bucket_count() * sizeof(void *);
+	}
+
+	/* A resident translation's allocations as the allocator sized them:
+	 * its record, stream and source, and what a replay decoded. */
+	struct TranslationBytes final {
+		std::size_t allocated, decoded;
+	};
+
+	[[nodiscard]] static TranslationBytes translation_bytes(
+		const Slot &slot) noexcept
+	{
+		const auto &program = slot.translation->program;
+		const auto replay = program.replay_bytes();
+		const auto decoded = replay != 0 ? malloc_good_size(replay) : 0;
+		return {
+			.allocated = malloc_size(slot.translation.get()) +
+				malloc_size(program.native_stream().data()) +
+				malloc_size(program.source().data()) + decoded,
+			.decoded = decoded,
+		};
+	}
+
+	/* The census keys a translation by address space and guest address;
+	 * the execution mode takes the top bit, which no canonical address
+	 * of either mode sets. */
+	[[nodiscard]] static std::uint64_t census_key(const Slot &slot) noexcept
+	{
+		return slot.address ^
+			(static_cast<std::uint64_t>(mode_index(slot.mode)) << 63);
+	}
+
+	/* The same bytes decoded in the other execution mode are a different
+	 * translation, so the mode seeds the digest. */
+	[[nodiscard]] static std::uint64_t census_digest(const Slot &slot) noexcept
+	{
+		auto digest = census::digest_seed ^ mode_index(slot.mode);
+		for (const auto byte : slot.translation->program.source())
+			digest = census::digest_add(digest,
+				static_cast<std::uint8_t>(byte));
+		return digest;
+	}
+
+	void census_depart(const Slot &slot, census::Departure why)
+	{
+		if (!slot.translation)
+			return;
+		history_.depart(slot.generation, census_key(slot),
+			census_digest(slot), translation_bytes(slot).allocated, why);
+	}
+
+	/* What each record a stream can point at names, by the record's
+	 * address, for each address space: a link record by the guest
+	 * address it links to, an indirect site by the branch that owns
+	 * it. */
+	using CensusRecords = std::unordered_map<std::uint64_t,
+		std::unordered_map<std::uintptr_t, std::pair<char, std::uint64_t>>>;
+
+	[[nodiscard]] static bool census_sampled(
+		std::uint64_t address, std::uint64_t one_in) noexcept
+	{
+		auto value = address * 0x9e3779b97f4a7c15ULL;
+		value ^= value >> 29;
+		return value % one_in == 0;
+	}
+
+	/* One sampled translation's stream, word by word: `g` a gadget by its
+	 * offset in the executable's text, `l` a link record by the guest
+	 * address it links to, `i` an indirect site by the branch that owns
+	 * it, and `o` any other word as it is. */
+	void census_words(std::FILE *out, const Slot &slot,
+		census::TextRange text, CensusRecords &records) const
+	{
+		auto [named, inserted] = records.try_emplace(slot.generation);
+		if (inserted) {
+			const auto owner = generations_.find(slot.generation);
+			if (owner != generations_.end()) {
+				auto &table = named->second;
+				for (const auto &mode : owner->second.links)
+					mode.for_each([&table](const LinkRecord &record) {
+						table[reinterpret_cast<std::uintptr_t>(
+							&record.link)] =
+							{'l', record.link.guest_rip};
+					});
+				for (const auto &mode : owner->second.indirect)
+					mode.for_each(
+						[&table](const IndirectRecord &record) {
+							table[reinterpret_cast<
+								std::uintptr_t>(&record.site)] =
+								{'i', record.source_rip};
+						});
+			}
+		}
+		std::fprintf(out, "W 0x%llx",
+			static_cast<unsigned long long>(slot.address));
+		for (const auto value :
+			slot.translation->program.native_stream()) {
+			if (text.contains(value)) {
+				std::fprintf(out, " g%llx",
+					static_cast<unsigned long long>(
+						value - text.begin));
+			} else if (const auto found = named->second.find(value);
+				   found != named->second.end()) {
+				std::fprintf(out, " %c%llx", found->second.first,
+					static_cast<unsigned long long>(
+						found->second.second));
+			} else {
+				std::fprintf(out, " o%llx",
+					static_cast<unsigned long long>(value));
+			}
+		}
+		std::fputc('\n', out);
+	}
+
+	void snapshot_if_due()
+	{
+		if (const auto number = schedule_.due(); number != 0)
+			census::append([this, number](std::FILE *out) {
+				census(out, number);
+			});
 	}
 #endif
 
@@ -1259,19 +1479,37 @@ private:
 		ProgramCacheDiagnostics &diagnostics)
 	{
 		if (!slot.translation) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.missed();
+#endif
 			discard(slot);
 			return nullptr;
 		}
 		if (!slot.terminal && kept_instruction_limit(maximum_instructions) >
 			slot.instruction_limit) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.missed();
+			census_depart(slot, census::Departure::discarded);
+#endif
 			discard(slot);
 			return nullptr;
 		}
+#if UML_GADGET_CACHE_CENSUS
+		if (slot.validated_changes == changes)
+			history_.hit();
+#endif
 		if (slot.validated_changes != changes) {
 			++diagnostics.validation_attempts;
 			if (!validate(slot, changes, mapping_changes, memory,
-				execution_context, sequence_reader, diagnostics))
+				execution_context, sequence_reader, diagnostics)) {
+#if UML_GADGET_CACHE_CENSUS
+				history_.missed();
+#endif
 				return nullptr;
+			}
+#if UML_GADGET_CACHE_CENSUS
+			history_.revalidated();
+#endif
 		}
 		/* Whatever reset this record -- a replaced slot, or a code change
 		 * that cooled the whole address space -- the program in this slot is
@@ -1512,6 +1750,9 @@ private:
 	{
 		if (slot.epoch != epoch_ || slot.generation != generation)
 			return;
+#if UML_GADGET_CACHE_CENSUS
+		census_depart(slot, census::Departure::retired);
+#endif
 		discard(slot);
 	}
 
@@ -1558,6 +1799,9 @@ private:
 			slot.translation->program.source().size() >
 				maximum_cached_source_bytes) {
 			++diagnostics.validation_mismatches;
+#if UML_GADGET_CACHE_CENSUS
+			census_depart(slot, census::Departure::discarded);
+#endif
 			discard(slot);
 			return false;
 		}
@@ -1599,10 +1843,16 @@ private:
 			translation.program.source())) {
 		case ProgramSourceComparison::fault:
 			++diagnostics.validation_faults;
+#if UML_GADGET_CACHE_CENSUS
+			census_depart(slot, census::Departure::discarded);
+#endif
 			discard(slot);
 			return false;
 		case ProgramSourceComparison::mismatch:
 			++diagnostics.validation_mismatches;
+#if UML_GADGET_CACHE_CENSUS
+			census_depart(slot, census::Departure::discarded);
+#endif
 			discard(slot);
 			return false;
 		case ProgramSourceComparison::match:
@@ -1629,22 +1879,23 @@ private:
 	CodePageRegistries *registries_{};
 	ProgramCacheCodeChangeReader code_change_reader_{};
 	void *code_change_context_{};
+#if UML_GADGET_CACHE_CENSUS
+	census::History history_;
+	census::Schedule schedule_;
+	unsigned census_id_{census::next_cache_id()};
+	/* Address-space switches, the clock dormancy is counted in. */
+	std::uint64_t switches_{};
+#endif
 };
 
 #if UML_GADGET_CACHE_CENSUS
 void dump_cache_census(const ProgramCache &programs) noexcept
 {
-	const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
-	if (path == nullptr || *path == '\0')
-		return;
 	/* Appended, because every executor of the run reports its own cache and
 	 * the union across them is the measurement. */
-	static std::mutex census_mutex;
-	const std::lock_guard guard{census_mutex};
-	if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
-		programs.census(out);
-		std::fclose(out);
-	}
+	census::append([&programs](std::FILE *out) {
+		programs.census(out, 0);
+	});
 }
 #endif
 

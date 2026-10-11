@@ -9,6 +9,9 @@
 #include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
+#if UML_GADGET_CACHE_CENSUS
+#include "cpu/gadget_cache_census.hpp"
+#endif
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -18,16 +21,12 @@
 #include <cstddef>
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
-#include <cstdlib>
 #endif
 #include <cstring>
 #include <functional>
 #include <iterator>
 #include <memory>
 #include <memory_resource>
-#if UML_GADGET_CACHE_CENSUS
-#include <mutex>
-#endif
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -36,6 +35,9 @@
 
 namespace uml::cpu::arm64::gadgets {
 using ::uml::memory::StaticGuestMemory;
+#if UML_GADGET_CACHE_CENSUS
+namespace census = ::uml::cpu::gadget_cache::census;
+#endif
 namespace {
 
 
@@ -526,37 +528,81 @@ public:
 	}
 
 #if UML_GADGET_CACHE_CENSUS
-	/* Write what this cache holds, so duplication can be counted instead of
-	 * estimated.
+	/* Write what this cache holds and how it came to hold it, so
+	 * duplication, dormancy and lost work can be counted instead of
+	 * estimated. `snapshot` numbers a periodic snapshot; zero is the one
+	 * written at teardown.
 	 *
 	 * A translation is identified by the guest words it consumed, not by the
 	 * stream it produced: two executors translating the same code emit the
 	 * same words but embed pointers to their own link records, so only the
-	 * source identifies the work. The stream length goes out with it because
-	 * it decides what a body costs.
+	 * source identifies the work. The parts of its allocation go out with
+	 * it because they decide what a body costs.
 	 */
-	void census(std::FILE *out) const noexcept
+	void census(std::FILE *out, std::uint64_t snapshot) const noexcept
 	{
 		const auto parts = footprint();
-		/* The geometry goes out with the footprint: the slot count is a
-		 * product choice, and only the slab count says how much of the
-		 * slot array was committed. */
+		/* How often the stream lookup was asked, against how often a
+		 * store would have had to maintain an index for it. */
 		const auto slab_total = static_cast<std::size_t>(
 			std::count_if(slabs_.begin(), slabs_.end(),
 				[](const auto &slab) { return slab != nullptr; }));
-		/* How often the stream lookup was asked, against how often a
-		 * store would have had to maintain an index for it. */
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
 			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
 			"streams=%zu links=%zu indirect=%zu total=%zu "
-			"stores=%llu stream_lookups=%llu\n",
+			"stream_lookups=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
 			slab_total, parts.stream_index, parts.slabs, parts.streams,
 			parts.links, parts.indirect, parts.total(),
-			static_cast<unsigned long long>(stores_),
 			static_cast<unsigned long long>(stream_lookups_));
+		census::write_when(out, snapshot);
+		history_.write(out);
+		std::fputc('\n', out);
+		const auto now = census::elapsed_seconds();
+		for (const auto &[generation, state] : generations_) {
+			const auto found = std::find(resident_.rbegin(),
+				resident_.rend(), generation);
+			const bool running = generation == current_generation_;
+			std::fprintf(out,
+				"G %lu current=%d rank=%td idle_switches=%llu "
+				"idle_seconds=%.3f link_records=%zu links=%zu "
+				"indirect=%zu targets=%zu\n",
+				generation, running ? 1 : 0,
+				found - resident_.rbegin(),
+				static_cast<unsigned long long>(running ? 0 :
+					switches_ - state.census_switch),
+				running ? 0.0 : now - state.census_seconds,
+				state.links.size(),
+				state.links.bytes() +
+					state.live_links.capacity() *
+						sizeof(LinkRecord *) +
+					state.slots.capacity() *
+						sizeof(std::uint32_t),
+				state.indirect.bytes() +
+					state.live_indirect.capacity() *
+						sizeof(void *),
+				state.targets ? arm64::gadgets::target_tier_entries *
+					sizeof(arm64::gadgets::IndirectLinkEntry) : 0);
+		}
+		const auto sample = census::word_sample();
+		/* The same link targets are sampled in every cache, so the
+		 * sample says how many of an address space's records each
+		 * cache keeps for itself. */
+		if (sample != 0)
+			for (const auto &[generation, state] : generations_)
+				state.links.for_each([&](const LinkRecord &record) {
+					if (census_sampled(record.link.guest_pc, sample))
+						std::fprintf(out, "L %lu 0x%llx\n",
+							generation,
+							static_cast<unsigned long long>(
+								record.link.guest_pc));
+				});
+		const auto text = census::text_of(reinterpret_cast<const void *>(
+			reinterpret_cast<std::uintptr_t>(
+				uml_arm64_gadget_link_exit)));
+		CensusRecords records;
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
@@ -564,22 +610,24 @@ public:
 				if (slot.body == nullptr)
 					continue;
 				const auto &body = *slot.body;
-				std::uint64_t digest = 0xcbf29ce484222325ULL;
-				const std::size_t sources = body.source_word_count;
-				const auto *bytes = body.source_bytes();
-				const auto unit = body.source_unit();
-				for (std::size_t index = 0; index < sources; ++index) {
-					std::uint32_t value = 0;
-					std::memcpy(&value, bytes + index * unit, unit);
-					digest = (digest ^ value) * 0x100000001b3ULL;
-				}
 				std::fprintf(out,
-					"P %lu 0x%llx %zu %zu %zu 0x%llx\n",
+					"P %lu 0x%llx %zu %zu %zu 0x%llx %zu %zu %zu "
+					"%zu\n",
 					slot.generation,
 					static_cast<unsigned long long>(slot.pc),
 					std::size_t{body.instruction_count},
-					std::size_t{body.word_count}, sources,
-					static_cast<unsigned long long>(digest));
+					std::size_t{body.word_count},
+					std::size_t{body.source_word_count},
+					static_cast<unsigned long long>(
+						body_digest(body)),
+					body_bytes(body), sizeof(Body),
+					(body.entry_words() + body.word_count) *
+						sizeof(std::uintptr_t),
+					std::size_t{body.source_word_count} *
+						body.source_unit());
+				if (sample != 0 &&
+				    census_sampled(slot.pc, sample))
+					census_words(out, slot, text, records);
 			}
 		}
 	}
@@ -642,6 +690,14 @@ public:
 	 * switch back to one whose code never changed costs nothing. */
 	void prepare(unsigned long generation, std::uint64_t changes)
 	{
+#if UML_GADGET_CACHE_CENSUS
+		/* The address space being left was in use until now. */
+		if (generation != current_generation_ && current_ != nullptr) {
+			++switches_;
+			current_->census_switch = switches_;
+			current_->census_seconds = census::elapsed_seconds();
+		}
+#endif
 		current_generation_ = generation;
 		auto [entry, inserted] = generations_.try_emplace(generation);
 		current_ = &entry->second;
@@ -663,9 +719,16 @@ public:
 		std::uint64_t mapping_changes, StaticGuestMemory &memory,
 		void *execution_context, GadgetCacheDiagnostics &diagnostics)
 	{
+#if UML_GADGET_CACHE_CENSUS
+		if ((history_.lookups() & 4095U) == 0)
+			snapshot_if_due();
+#endif
 		const auto location = locate(current_generation_, pc);
 		auto &slab = slabs_[location.slab];
 		if (!slab) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.missed();
+#endif
 			return std::nullopt;
 		}
 		for (std::size_t way = 0; way < ways; ++way) {
@@ -674,16 +737,28 @@ public:
 			    slot.generation != current_generation_)
 				continue;
 			if (slot.validated_changes == changes) {
+#if UML_GADGET_CACHE_CENSUS
+				history_.hit();
+#endif
 				return slot.body->result();
 			}
 			++diagnostics.validation_attempts;
 			if (!validate(slot, changes, mapping_changes, memory,
 				    execution_context, diagnostics)) {
+#if UML_GADGET_CACHE_CENSUS
+				history_.missed();
+#endif
 				return std::nullopt;
 			}
 			activate(pc, slot);
+#if UML_GADGET_CACHE_CENSUS
+			history_.revalidated();
+#endif
 			return slot.body->result();
 		}
+#if UML_GADGET_CACHE_CENSUS
+		history_.missed();
+#endif
 		return std::nullopt;
 	}
 
@@ -888,6 +963,17 @@ public:
 		auto &slab = slabs_[location.slab];
 		if (!slab)
 			slab = std::make_unique<Slab>();
+#if UML_GADGET_CACHE_CENSUS
+		/* A lookup that lost a validation race leaves its translation
+		 * resident, and this store makes a second copy beside it. */
+		bool restored = false;
+		for (std::size_t way = 0; way < ways; ++way) {
+			const auto &held = slab->slots[location.offset + way];
+			if (held.body != nullptr && held.pc == pc &&
+			    held.generation == current_generation_)
+				restored = true;
+		}
+#endif
 
 		auto &replacement = next_replacement_[location.set];
 		std::size_t selected = replacement;
@@ -920,6 +1006,11 @@ public:
 		/* Whatever occupied the slot has a link record to reset, and a
 		 * body for this cache to release. */
 		if (slot.body != nullptr) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.depart(slot.generation, slot.pc,
+				body_digest(*slot.body), body_bytes(*slot.body),
+				census::Departure::evicted);
+#endif
 			deactivate(slot.generation, slot.pc,
 				slot.body->link_entry());
 			delete_body(slot.body);
@@ -941,7 +1032,8 @@ public:
 		slot.generation = current_generation_;
 		slot.validated_changes = changes;
 #if UML_GADGET_CACHE_CENSUS
-		++stores_;
+		history_.arrive(census_id_, current_generation_, pc,
+			body_digest(*slot.body), restored);
 #endif
 		activate(pc, slot);
 		return slot.body->result();
@@ -1244,6 +1336,12 @@ private:
 		 */
 		std::vector<std::uint32_t> slots;
 		bool slots_complete{true};
+#if UML_GADGET_CACHE_CENSUS
+		/* When the cache last left this address space, in switches and
+		 * in seconds. */
+		std::uint64_t census_switch{};
+		double census_seconds{};
+#endif
 	};
 
 	[[nodiscard]] static Location locate(
@@ -1316,10 +1414,112 @@ private:
 	{
 		if (slot.body == nullptr || slot.generation != generation)
 			return;
+#if UML_GADGET_CACHE_CENSUS
+		history_.depart(slot.generation, slot.pc, body_digest(*slot.body),
+			body_bytes(*slot.body), census::Departure::retired);
+#endif
 		delete_body(slot.body);
 		slot.body = nullptr;
 		slot.link = nullptr;
 	}
+
+#if UML_GADGET_CACHE_CENSUS
+	/* The census names a translation by a digest of its validation
+	 * units. */
+	[[nodiscard]] static std::uint64_t body_digest(const Body &body) noexcept
+	{
+		auto digest = census::digest_seed;
+		const auto *bytes = body.source_bytes();
+		const auto unit = body.source_unit();
+		for (std::size_t index = 0; index < body.source_word_count;
+		     ++index) {
+			std::uint32_t value = 0;
+			std::memcpy(&value, bytes + index * unit, unit);
+			digest = census::digest_add(digest, value);
+		}
+		return digest;
+	}
+
+	/* What the arena holds for a body: its allocation, in the arena's
+	 * sixteen-byte classes. */
+	[[nodiscard]] static std::size_t body_bytes(const Body &body) noexcept
+	{
+		constexpr std::size_t granule = 16;
+		return (std::max(body.allocation_bytes(), granule) + granule - 1) &
+			~(granule - 1);
+	}
+
+	/* What each record a stream can point at names, by the record's
+	 * address, for each address space: a link record by the guest PC it
+	 * links to, an indirect site by the branch that owns it. */
+	using CensusRecords = std::unordered_map<unsigned long,
+		std::unordered_map<std::uintptr_t, std::pair<char, std::uint64_t>>>;
+
+	[[nodiscard]] static bool census_sampled(
+		std::uint64_t pc, std::uint64_t one_in) noexcept
+	{
+		auto value = pc * 0x9e3779b97f4a7c15ULL;
+		value ^= value >> 29;
+		return value % one_in == 0;
+	}
+
+	/* One sampled body's stream, entry word included, word by word:
+	 * `g` a gadget by its offset in the executable's text, `l` a link
+	 * record by the guest PC it links to, `i` an indirect site by the
+	 * branch that owns it, and `o` any other word as it is. */
+	void census_words(std::FILE *out, const Slot &slot,
+		census::TextRange text, CensusRecords &records) const
+	{
+		auto [named, inserted] = records.try_emplace(slot.generation);
+		if (inserted) {
+			const auto owner = generations_.find(slot.generation);
+			if (owner != generations_.end()) {
+				auto &table = named->second;
+				owner->second.links.for_each(
+					[&table](const LinkRecord &record) {
+						table[reinterpret_cast<std::uintptr_t>(
+							&record.link)] =
+							{'l', record.link.guest_pc};
+					});
+				owner->second.indirect.for_each(
+					[&table](const IndirectRecord &record) {
+						table[reinterpret_cast<std::uintptr_t>(
+							&record.site)] =
+							{'i', record.source_pc};
+					});
+			}
+		}
+		const auto &body = *slot.body;
+		std::fprintf(out, "W 0x%llx",
+			static_cast<unsigned long long>(slot.pc));
+		const auto *end = body.words() + body.word_count;
+		for (const auto *word = body.link_entry(); word != end; ++word) {
+			const auto value = *word;
+			if (text.contains(value)) {
+				std::fprintf(out, " g%llx",
+					static_cast<unsigned long long>(
+						value - text.begin));
+			} else if (const auto found = named->second.find(value);
+				   found != named->second.end()) {
+				std::fprintf(out, " %c%llx", found->second.first,
+					static_cast<unsigned long long>(
+						found->second.second));
+			} else {
+				std::fprintf(out, " o%llx",
+					static_cast<unsigned long long>(value));
+			}
+		}
+		std::fputc('\n', out);
+	}
+
+	void snapshot_if_due()
+	{
+		if (const auto number = schedule_.due(); number != 0)
+			census::append([this, number](std::FILE *out) {
+				census(out, number);
+			});
+	}
+#endif
 
 	/* Store a freshly built translation as one exact allocation.
 	 *
@@ -1405,6 +1605,11 @@ private:
 	void discard(Slot &slot) noexcept
 	{
 		if (slot.body != nullptr) {
+#if UML_GADGET_CACHE_CENSUS
+			history_.depart(slot.generation, slot.pc,
+				body_digest(*slot.body), body_bytes(*slot.body),
+				census::Departure::discarded);
+#endif
 			deactivate(slot.generation, slot.pc,
 				slot.body->link_entry());
 			delete_body(slot.body);
@@ -1538,8 +1743,12 @@ private:
 	std::vector<unsigned long> resident_;
 	unsigned long current_generation_{};
 #if UML_GADGET_CACHE_CENSUS
-	std::uint64_t stores_{};
 	mutable std::uint64_t stream_lookups_{};
+	census::History history_;
+	census::Schedule schedule_;
+	unsigned census_id_{census::next_cache_id()};
+	/* Address-space switches, the clock dormancy is counted in. */
+	std::uint64_t switches_{};
 #endif
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
@@ -1563,20 +1772,14 @@ GadgetExecutor::~GadgetExecutor()
 	diagnostics::execution_histogram_forget_executor(&cache_diagnostics_);
 #endif
 #if UML_GADGET_CACHE_CENSUS
-	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
-	    path != nullptr && *path != '\0') {
-		/* Appended, because every executor of the run reports its own
-		 * cache and the union across them is the measurement. */
-		static std::mutex census_mutex;
-		const std::lock_guard guard{census_mutex};
-		if (std::FILE *out = std::fopen(path, "ae"); out != nullptr) {
-			programs_->census(out);
-			for (const auto &mode : sme_caches_)
-				if (mode.programs)
-					mode.programs->census(out);
-			std::fclose(out);
-		}
-	}
+	/* Every executor of the run reports its own caches, and the union
+	 * across them is the measurement. */
+	census::append([this](std::FILE *out) {
+		programs_->census(out, 0);
+		for (const auto &mode : sme_caches_)
+			if (mode.programs)
+				mode.programs->census(out, 0);
+	});
 #endif
 	if (current_cpu_ != nullptr) {
 		current_cpu_->gadget_indirect_miss = nullptr;
