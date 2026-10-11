@@ -750,6 +750,23 @@ they run by hand with
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
 
+Two opt-in tools list what SME code executes outside streaming mode, where
+an SVE word is UNDEFINED on an SME CPU without SVE unless it belongs to the
+SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL and the scalar INC/DEC
+B/H/W/D). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
+desktop EROFS images and the Android release directories), extracts them
+with `fsck.erofs`, `debugfs` and `zstd`, and walks every SME function of
+every AArch64 ELF file, APK and APEX payloads included, from its inferred
+entry mode; any other SVE word reachable at SM = 0 is a decision to extend
+the family or withhold SME from that workload, and `--expect` pins a
+binary's words (Chromium's libyuv executes only CNTD there).
+`tools/arm64-tests/sme-idiom-corpus.py` builds `sme_idioms.cpp` with the
+given clang and GCC compilers for SVE and SME-only targets, every
+optimization level and callee-saved register pressure, and reports the
+same classification for each compiler idiom, callee-saved Z and P spills
+included. The `arm64-sme-sm0-scan` tooling test checks the classifier and
+both tools on synthetic ELF fixtures.
+
 ## Guest SVE policy
 
 `arm64-sve-foundation` checks the guest-SVE policy, the host features each
