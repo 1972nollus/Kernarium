@@ -1004,13 +1004,14 @@ direct-mapped table of the targets its misses have trained (4096 entries,
 tagged with the link epoch so that the translation of the same address in
 another address space or after a code change never matches), and returns to the
 executor only when both miss: a function with many callers, such as libm's
-`lroundf`, has a return to each of them. A conditional forward branch (B with a
-condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
-path and the block goes on with its registers and flags in the host, while the
-taken path leaves by a cold side exit that publishes what is dirty at the
-branch and links to the target. A backward or unconditional branch ends the
-block, except one back to the translation's own first instruction: that block
-is a loop in the host. A probe compilation records the vector registers it holds at
+`lroundf`, has a return to each of them. A conditional branch (B with a
+condition, CBZ, CBNZ) does not end a block: the block goes on with its
+registers and flags in the host, while the taken path leaves by a cold side
+exit that publishes what is dirty at the branch and links to the target. A
+branch back is a loop's end or a `continue`, and the side exit costs the link
+of the taken path either way. An unconditional branch ends the block, and so
+does a conditional one back to the translation's own first instruction: that
+block is a loop in the host. A probe compilation records the vector registers it holds at
 the back edge and the core registers the body names, the
 translation loads them before the loop head and counts
 every one as dirty so that each exit writes them back, and the back edge is the

@@ -1088,6 +1088,107 @@ void counted_loop_is_a_host_loop() {
   }
 }
 
+/* A block goes on past a conditional branch back as it does past one forward:
+ * a `continue` is rarely taken and leaves by a side exit. A branch back to the
+ * block's own first instruction still ends the block, which the host loop
+ * covers. */
+void backward_branches_are_side_exits() {
+  Fixture fixture{0x1a32'0c17, 2, 2};
+  const auto units = [&](const std::vector<std::uint32_t> &program) {
+    for (std::size_t i = 0; i < program.size(); ++i)
+      fixture.code32(i * 4, {program[i]});
+    std::vector<std::byte> bytes(program.size() * 4);
+    fixture.read_code(0, bytes);
+    return ::uml::cpu::arm64::jit::testing::compile_a32_block(
+               key::a32_key(code_base), bytes)
+        .guest_units;
+  };
+  // add; add; cmp; bne back to the second add; add; svc: the block goes on.
+  require(units({0xe280'0001U, 0xe281'1001U, 0xe350'0005U, 0x1aff'fffcU,
+                 0xe282'2001U, 0xef00'0000U}) == 6U);
+  // The same branch to the first instruction ends the block.
+  require(units({0xe280'0001U, 0xe281'1001U, 0xe350'0005U, 0x1aff'fffbU,
+                 0xe282'2001U, 0xef00'0000U}) == 4U);
+}
+
+void backward_side_exit_programs() {
+  constexpr unsigned programs = 160;
+  Fixture fixture{0x1a32'0c18, 24};
+  Lcg random{0xbac4'7a2d};
+  unsigned completed = 0;
+  for (const bool thumb : {false, true}) {
+    for (unsigned p = 0; p < programs; ++p) {
+      const unsigned length = 10 + random.below(40);
+      const std::size_t unit = thumb ? 2 : 4;
+      const std::size_t offset = static_cast<std::size_t>(p % 40) * 512;
+      for (unsigned i = 0; i < length; ++i) {
+        const unsigned rd = random.below(12), rn = random.below(12);
+        // A branch back lands 1 to 6 instructions earlier (not before the
+        // first); the others are data processing.
+        const bool branch = random.below(5) == 0 && i >= 2;
+        const unsigned back = std::min<unsigned>(1 + random.below(6), i);
+        if (!thumb) {
+          static constexpr unsigned ops[] = {0, 1, 2, 3, 4, 12, 13, 14};
+          const unsigned op = ops[random.below(std::size(ops))];
+          if (branch) {
+            // PC is two ahead: the target is `back` instructions earlier.
+            const std::uint32_t imm24 = (0U - (back + 2U)) & 0x00ff'ffffU;
+            const unsigned bcond = random.below(14);
+            fixture.code32(offset + i * unit,
+                           {bcond << 28 | 0x0a00'0000U | imm24});
+          } else {
+            const bool s = random.below(2) != 0;
+            const unsigned cond = random.below(10) == 0 ? random.below(15) : 14;
+            fixture.code32(offset + i * unit,
+                           {cond << 28 | 0x0200'0000U | op << 21 |
+                            (s ? 1U << 20 : 0U) | (op == 13U ? 0U : rn) << 16 |
+                            rd << 12 | random.below(256)});
+          }
+        } else {
+          const unsigned lo = random.below(8), lo2 = random.below(8),
+                         lo3 = random.below(8);
+          std::uint16_t half;
+          if (branch) {
+            // PC is two halfwords ahead.
+            const std::uint32_t imm8 = (0U - (back + 2U)) & 0xffU;
+            half = static_cast<std::uint16_t>(0xd000U | random.below(14) << 8 | imm8);
+          } else {
+            switch (random.below(8)) {
+            case 0: half = static_cast<std::uint16_t>(0x2000U | lo << 8 | random.below(256)); break;
+            case 1: half = static_cast<std::uint16_t>(0x1c00U | random.below(8) << 6 | lo2 << 3 | lo); break;
+            case 2: half = static_cast<std::uint16_t>(0x1a00U | lo3 << 6 | lo2 << 3 | lo); break;
+            case 3: half = static_cast<std::uint16_t>(0x1800U | lo3 << 6 | lo2 << 3 | lo); break;
+            case 4: half = static_cast<std::uint16_t>(0x2800U | lo << 8 | random.below(256)); break;
+            case 5: half = static_cast<std::uint16_t>(0x4000U | lo2 << 3 | lo); break;
+            case 6: half = static_cast<std::uint16_t>(0x4040U | lo2 << 3 | lo); break;
+            default: half = static_cast<std::uint16_t>(random.below(32) << 6 | lo2 << 3 | lo); break;
+            }
+          }
+          fixture.code16(offset + i * unit, {half});
+        }
+      }
+      if (thumb)
+        fixture.code16(offset + length * unit, {0xdf00U});
+      else
+        fixture.code32(offset + length * unit, {0xef00'0000U});
+      for (unsigned round = 0; round < 6; ++round) {
+        auto cpu = random_registers(random, thumb);
+        cpu.pc = thumb ? key::t32_key(code_base + static_cast<std::uint32_t>(offset))
+                       : key::a32_key(code_base + static_cast<std::uint32_t>(offset));
+        // A loop that does not end within the budget is not compared: its
+        // stop is at a block boundary, which differs from a single step's.
+        const auto whole = run_whole(fixture, cpu);
+        if (whole.reason != ExitReason::system_call)
+          continue;
+        const auto stepped = run_stepped(fixture, cpu);
+        require_same(whole, stepped, thumb ? "t32" : "a32", p);
+        ++completed;
+      }
+    }
+  }
+  require(completed >= programs);
+}
+
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 /* On 4 KiB pages the inline TLB probe is the short form: the entry index from
  * the address xor its shift by 13 (one instruction and one extract) and a tag
@@ -1611,6 +1712,8 @@ int main() {
 #endif
   aligned_accesses_skip_the_crossing_test();
   single_transfers_index_by_the_delta();
+  backward_branches_are_side_exits();
+  backward_side_exit_programs();
   conversions_keep_the_guest_registers();
   registers_survive_budget_returns_in_a_chain();
   linked_blocks_keep_the_registers_in_the_host();

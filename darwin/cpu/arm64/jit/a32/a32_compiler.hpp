@@ -204,6 +204,11 @@ private:
   void emit_block();
   Flow emit_instruction();
   Flow emit_guarded(unsigned condition);
+  /* Whether the block goes on past the instruction, which leaves by a side
+   * exit when it is taken: a conditional branch forward (continues_past), or
+   * back to anywhere but the block's own first instruction, which the host
+   * loop of a block that branches back to itself covers. */
+  [[nodiscard]] bool continues_through(const Decoded &d) const;
   /* Whether the conditional instruction can run on both arms and keep its
    * result only where the condition holds: a data-processing instruction
    * (or MOVW) that leaves the host flags alone (it sets none and shifts by

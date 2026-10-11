@@ -105,7 +105,7 @@ void A32Compiler::decode_block(const Request &request) {
     block_.push_back(d);
     offset += length;
     pc += length;
-    if (ends_block(d.inst) && !continues_past(d.inst))
+    if (ends_block(d.inst) && !continues_through(d))
       break;
   }
 }
@@ -347,11 +347,28 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
     }
   }
   const unsigned condition = inst.cond;
-  if (count_ + 1U < block_.size() && continues_past(inst))
+  if (count_ + 1U < block_.size() && continues_through(d))
     return emit_side_exit_branch();
   if (inst.status == Status::nop || condition >= 14U)
     return emit_operation();
   return emit_guarded(condition);
+}
+
+/* A conditional branch back is as likely to be a `continue` that is rarely
+ * taken (Horizon Detection's bounds tests, each its own block of two to four
+ * instructions) as the end of a loop, and the side exit costs the link of the
+ * taken path either way. A branch back to the first instruction ends the
+ * block: the host loop is better than a side exit that links to itself. */
+bool A32Compiler::continues_through(const Decoded &d) const {
+  if (continues_past(d.inst))
+    return true;
+  const auto &inst = d.inst;
+  if (inst.status != Status::ok || inst.next_it.bits() != 0U ||
+      inst.cond >= 14U || op_info(inst.form).op != Op::b)
+    return false;
+  const std::uint32_t target = d.pc + (thumb_ ? 4U : 8U) +
+                               static_cast<std::uint32_t>(inst.operands.imm32);
+  return target != aarch32::key_pc(key_);
 }
 
 /* A conditional forward branch inside a block: the taken path leaves through
