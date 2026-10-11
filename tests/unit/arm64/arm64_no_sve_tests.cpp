@@ -2,8 +2,8 @@
 /* The virtual CPU implements no SVE outside streaming mode and so presents
  * none: the prober reports no SVE token whatever the host claims, neither
  * engine presents one, ID_AA64PFR0_EL1.SVE and ID_AA64ZFR0_EL1 read zero,
- * the SVE bits of AT_HWCAP and AT_HWCAP2 are clear, and the guest kernel is
- * told no SVE vector length. The predicate state CpuState reserves is the
+ * the SVE bits of AT_HWCAP and AT_HWCAP2 are clear, and the bridge carries no
+ * SVE state or vector length. The predicate state CpuState reserves is the
  * mask form of 16 bits, and every change of PSTATE.SM zeroes it.
  * arm64-advertised-features pins the words and registers of named hosts;
  * this checks the rules. */

@@ -559,9 +559,11 @@ identical code.
 
 ## Non-streaming SVE in the JIT
 
-The JIT lowers non-streaming SVE at a 128-bit vector length to AdvSIMD. The
-first checkpoint compared the SVE and NEON guests of Background Blur, HPL,
-ChaCha20 and libyuv on an M1 and an M4.
+The JIT lowered non-streaming SVE at a 128-bit vector length to AdvSIMD, until
+the profile was removed (2026-10-11): the SVE-specific entries below describe
+code that is gone, and linking the exit of a block cut short by the fetch
+window stays. The first checkpoint compared the SVE and NEON guests of
+Background Blur, HPL, ChaCha20 and libyuv on an M1 and an M4.
 
 | Attempt | Disposition and lesson |
 | --- | --- |
