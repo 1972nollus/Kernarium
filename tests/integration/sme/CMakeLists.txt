@@ -3,7 +3,7 @@
 # The guest SME tests (run_guest_sme.py). guest-sme-<engine> runs on a host
 # with SME for an engine whose SME support is control or better and skips,
 # naming the reason, otherwise; guest-sme-off-<engine> checks on every host
-# that a run with the policy off shows no SME.
+# that a run with the policy forced off shows no SME.
 uml_add_guest_payload(UML_GUEST_SME_PROBE guest-sme-probe
     sme_probe.cpp
     COMMENT "Building the freestanding arm64 guest SME probe"

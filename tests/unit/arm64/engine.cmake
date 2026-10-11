@@ -139,6 +139,22 @@
             --assume-host-feature sme_f64f64
             --assume-host-feature sme_i16i64 --assume-sme-svl 64)
 
+    # A virtual CPU with FEAT_SME and without FEAT_SVE executes CNT, INC, DEC,
+    # RDVL, ADDVL and ADDPL outside streaming mode for a vector length of 16
+    # bytes, a deliberate departure from the architecture whose results are
+    # the project's (arm64-sm0-vl), and takes every other SVE word there as
+    # UNDEFINED (arm64-absent-sve). The records hold an SVL, so they run on
+    # any host with the SME profile assumed; the engines translate the family
+    # to plain A64.
+    uml_add_unit_test(NAME arm64-instruction-corpus-sm0-vl-profile
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${UML_ARM64_INSTRUCTION_CORPUS}
+            --record arm64-sm0-vl --record arm64-absent-sve
+            --record arm64-absent-sme
+            --assume-host-feature sme --assume-host-feature sme2
+            --assume-host-feature sme_f64f64
+            --assume-host-feature sme_i16i64 --assume-sme-svl 64)
+
     # Neither the gadget region nor a JIT translation of the corpus names
     # x18, which Darwin clears when it interrupts a thread. The scan
     # translates through the JIT's test API.

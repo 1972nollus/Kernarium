@@ -18,6 +18,10 @@
 
 namespace uml::cpu::arm64 {
 
+namespace detail {
+struct Sm0Spill;
+} // namespace detail
+
 using ::uml::memory::Access;
 
 class JitCompiler final : private jit::JitCompilerFamilies {
@@ -103,6 +107,7 @@ private:
       memory_copy_set_slow,
       sme_slow,
       sve_slow,
+      sm0_spill_slow,
     };
 
     Arm64Emitter::Label label;
@@ -501,6 +506,11 @@ private:
 
   [[nodiscard]] bool emit_other_memory(std::uint32_t instruction,
                                        std::uint64_t pc);
+
+  /* A spill word of the SM = 0 vector-length family
+   * (detail/sm0_vector_length.hpp). */
+  void emit_sm0_spill(const detail::Sm0Spill &spill, std::uint32_t instruction,
+                      std::uint64_t pc);
 
   [[nodiscard]] bool emit_literal_memory(std::uint32_t instruction,
                                          std::uint64_t pc);

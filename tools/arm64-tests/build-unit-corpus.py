@@ -1643,6 +1643,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "sve_afp" in corpus.meta else {}),
         **({"sve_trap": corpus.meta["sve_trap"]}
            if "sve_trap" in corpus.meta else {}),
+        **({"sm0_vl": corpus.meta["sm0_vl"]}
+           if "sm0_vl" in corpus.meta else {}),
         **({"invalid_encoding": corpus.meta["invalid_encoding"]}
            if "invalid_encoding" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
@@ -1776,11 +1778,11 @@ def check(options: argparse.Namespace) -> int:
                 (REPOSITORY / table["file"]).read_bytes()) != table["sha256"]:
             stale.append("SVE/SME encoding table (changed since the rewrite)")
     # The native SME and SVE records, the SVE/SME records, the SVE
-    # FEAT_AFP records, and the SVE trap records are the current scripts',
-    # from the current encoding table; each native script's --carry
+    # FEAT_AFP records, the SVE trap records, and the SM = 0 vector-length
+    # records are the current scripts', from the current encoding table; each native script's --carry
     # refreshes its hash when its request is unchanged.
     for step in ("sme_native", "sve_native", "sve_sme", "sve_afp",
-                 "sve_trap"):
+                 "sve_trap", "sm0_vl"):
         native = corpus.meta.get(step)
         if native is None:
             continue
