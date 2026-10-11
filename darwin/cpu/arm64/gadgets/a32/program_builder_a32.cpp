@@ -1287,34 +1287,9 @@ BuildOutput build(const BuildInput &input,
 
 aarch32::Profile decode_profile(const BuildOptions &options) noexcept
 {
-	/* The extensions the guest is shown are the ones the host has the A64
-	 * feature to lower onto (a32_features), and exactly those decode: a
-	 * form of any other extension is UNDEFINED, as the HWCAPs say. A
-	 * form of a shown extension that has no gadget is the semantic
-	 * library's. */
-	const auto shown = a32_features(options.host_capabilities,
-					options.a32_level);
-	aarch32::FeatureSet features;
-	const auto add = [&features](bool present,
-				     aarch32::Feature feature) noexcept {
-		if (present)
-			features = features.with(feature);
-	};
-	add(shown.fp16, aarch32::Feature::fp16);
-	add(shown.aes, aarch32::Feature::aes);
-	add(shown.pmull, aarch32::Feature::pmull);
-	add(shown.sha1, aarch32::Feature::sha1);
-	add(shown.sha2, aarch32::Feature::sha2);
-	add(shown.crc32, aarch32::Feature::crc32);
-	add(shown.dotprod, aarch32::Feature::dotprod);
-	add(shown.fhm, aarch32::Feature::fhm);
-	add(shown.bf16, aarch32::Feature::bf16);
-	add(shown.i8mm, aarch32::Feature::i8mm);
-	add(shown.sb, aarch32::Feature::sb);
-	add(shown.rdm, aarch32::Feature::rdm);
-	add(shown.fcma, aarch32::Feature::fcma);
-	add(shown.jscvt, aarch32::Feature::jscvt);
-	return aarch32::Profile{static_cast<aarch32::Level>(options.a32_level), features};
+	/* The shared profile (a32_decode_profile): a form of a shown extension
+	 * that has no gadget is the semantic library's. */
+	return a32_decode_profile(options.host_capabilities, options.a32_level);
 }
 
 std::optional<std::size_t> thumb_position(
