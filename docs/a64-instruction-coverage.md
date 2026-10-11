@@ -136,8 +136,8 @@ files.
 FEAT_SME is two-sided. An SVE or SME entry is `verified` when one of its
 encodings needs only the SME profile (FEAT_SME, FEAT_SME2, FEAT_SME_F64F64,
 FEAT_SME_I16I64, and the profile's FEAT_BF16 and FEAT_I8MM forms), and so are
-SMSTART and SMSTOP. Where the virtual CPU lacks SME, which today is every host,
-because no engine implements it and SME stays unadvertised, the corpus pins
+SMSTART and SMSTOP. Where the virtual CPU lacks SME, on a host without the
+profile or with the guest-SME policy forced off, the corpus pins
 SMSTART, SMSTOP, the SVCR accesses, and one word of every profile encoding and
 alias UNDEFINED. The `arm64-sme-native` records hold the results the M4 host
 gives for the profile's encodings at its streaming vector length, 64 bytes,
