@@ -72,12 +72,27 @@ void A32Compiler::emit_translate(unsigned address, Access access,
      * bit is the complete crossing test. */
     emitter_.test_zero(crossing.value_or(fallback), 0, page_shift, true);
   }
-  emit_tlb_index(address);
   const unsigned page_offset = access == Access::write ? 16U : 0U;
   const auto slow = emitter_.make_label();
   const auto complete = emitter_.make_label();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+  emit_tlb_index(address);
   emitter_.load_pair_x(2, 9, 0, page_offset);
   emitter_.emit(0xca01'0042U); // eor x2, x2, x1
+#else
+  /* The index is the page number xor its bits from 13 up, from the address's
+   * own bits (bit i of the xor of the address and its shift by 13 is bit
+   * 12 + i of the page number's index) and the tag compare shifts the address
+   * itself: two instructions fewer than emit_tlb_index and a compare. */
+  static_assert(::uml::memory::tlb_index_bits == 13U);
+  emitter_.emit(0xca40'0000U | (13U << 10) | ((address & 31U) << 16) |
+                ((address & 31U) << 5)); // eor x0, address, address, lsr #13
+  emitter_.ubfm(0, 0, page_shift, page_shift + ::uml::memory::tlb_index_bits - 1U);
+  emitter_.add_shifted(0, 14, 0, 5);
+  emitter_.load_pair_x(2, 9, 0, page_offset);
+  emitter_.emit(0xca40'0042U | (page_shift << 10) |
+                ((address & 31U) << 16)); // eor x2, x2, address, lsr #12
+#endif
   emitter_.compare_zero(slow, 2, true, true);
   emitter_.add_shifted(address, address, 9, 0);
   emitter_.bind(complete);

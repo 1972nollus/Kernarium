@@ -958,6 +958,29 @@ void forward_skip_over_stores_to_a_return() {
   }
 }
 
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+/* On 4 KiB pages the inline TLB probe is the short form: the entry index from
+ * the address xor its shift by 13 (one instruction and one extract) and a tag
+ * compare that shifts the address itself, not the A64 compiler's longer
+ * sequence. A probe with the wrong index would only miss, so the words are
+ * what is checked. */
+void tlb_probe_is_the_short_form() {
+  Fixture fixture{0x1a32'0c11, 2, 2};
+  fixture.code32(0, {0xe591'0004U, 0xef00'0000U}); // ldr r0,[r1,#4]; svc
+  std::vector<std::byte> bytes(2 * 4);
+  fixture.read_code(0, bytes);
+  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  const auto has = [&](std::uint32_t word) {
+    return std::find(compiled.code.words.begin(), compiled.code.words.end(),
+                     word) != compiled.code.words.end();
+  };
+  require(has(0xca48'3500U)); // eor x0, x8, x8, lsr #13
+  require(has(0xca48'3042U)); // eor x2, x2, x8, lsr #12
+  require(!has(0xd34c'fd01U)); // lsr x1, x8, #12 (the long form's page number)
+}
+#endif
+
 void native_loops() {
   constexpr unsigned programs = 90;
   constexpr std::size_t window = 256; // bytes of data the loops touch
@@ -1180,6 +1203,9 @@ int main() {
   forward_branch_skips_in_the_block();
   forward_skip_joins_with_the_fpcr_of_both_arms();
   forward_skip_over_a_flag_spill();
+#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
+  tlb_probe_is_the_short_form();
+#endif
   forward_skip_over_stores_to_a_return();
   counted_loop_is_a_host_loop();
   native_loops();
