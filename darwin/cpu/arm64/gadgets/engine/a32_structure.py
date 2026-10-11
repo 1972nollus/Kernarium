@@ -184,9 +184,11 @@ def header_tables(names: set[str]) -> list[str]:
                     cells = []
                     for variant in range(4):
                         if shape == "m" and structs == 1:
+                            # A copy: the bytes and the alignment mask do not
+                            # depend on the element size, so every size shares
+                            # the 8-bit cells.
                             cells.append(g(name_of(load, shape, structs, size,
-                                                   variant)) if log2 == 0
-                                         else "G::count")
+                                                   variant)))
                         else:
                             cells.append(g(name_of(load, shape, structs, size,
                                                    variant)) if variant < 2
