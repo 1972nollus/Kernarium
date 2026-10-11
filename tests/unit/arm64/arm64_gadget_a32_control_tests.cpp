@@ -1389,6 +1389,33 @@ void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+/* ADD and SUB of an immediate to a register in place have an entry per
+ * register with its displacement baked in; each must reach its own register
+ * and flags. */
+void in_place_add_and_sub_of_an_immediate_reach_every_register()
+{
+	unsigned long generation = 1600;
+	for (std::uint32_t reg = 0; reg < 15; ++reg) {
+		Guest guest{generation++};
+		const std::uint32_t both = reg << 16 | reg << 12;
+		guest.a32(0, {0xe280'0010U | both,   /* add rN, rN, #0x10 */
+			      0xe240'0008U | both,   /* sub rN, rN, #8 */
+			      0xe250'0004U | both,   /* subs rN, rN, #4 */
+			      a::svc});
+		auto cpu = a32_state();
+		for (unsigned other = 0; other < 15; ++other)
+			cpu.registers[other] = 0x1000U * (other + 1);
+		cpu.registers[reg] = 0xffff'fffcU; /* ends at zero */
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		for (unsigned other = 0; other < 15; ++other)
+			require(static_cast<std::uint32_t>(cpu.registers[other]) ==
+				(other == reg ? 0U : 0x1000U * (other + 1)),
+				"an in-place immediate reached another register");
+		/* subs to zero: Z and C set, N and V clear. */
+		require((cpu.nzcv >> 28) == 0x6U, "SUBS to zero set wrong flags");
+	}
+}
+
 /* The parallel add and subtract family and SEL are gadgets: Advanced SIMD
  * does the lanes, GE is the byte-lane mask CpuState keeps, and the library
  * runs none of them. */
@@ -1902,6 +1929,7 @@ int main()
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
+	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();

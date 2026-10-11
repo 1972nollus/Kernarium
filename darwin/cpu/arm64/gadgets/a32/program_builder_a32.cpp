@@ -359,6 +359,14 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* ADD or SUB of an immediate to a register in place: the entry with
+	 * the register baked. R15 and the scratch slots are not registers. */
+	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
+	    rd < 15U * 8U) {
+		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
+		push(word);
+		return {false, sets};
+	}
 	const G which = kDp[op][sets ? 1 : 0][shape];
 	if (which == G::count)
 		return {};

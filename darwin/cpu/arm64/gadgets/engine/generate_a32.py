@@ -510,6 +510,40 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
     return "\n".join(lines)
 
 
+# In-place ADD and SUB of an immediate (Rd == Rn, an ordinary register) with
+# the CpuState displacement baked into the gadget, one gadget per register.
+# The ordinary gadget reads and writes the register through a byte offset the
+# stream word carries, "ldr w9, [_cpu, x9]" and "str w11, [_cpu, x8]", and
+# the core forwards a dependent store-to-load pair at rename only when both
+# accesses name a base register and a constant displacement; the induction
+# variables and accumulators this shape is are what waits. The stream word
+# keeps the ordinary layout, so its two register fields are dead here.
+INPLACE_REGISTERS = 15
+
+
+def dp_inplace_body(subtract: bool, s: bool, register: int) -> str:
+    operation = ("sub" if subtract else "add") + ("s" if s else "")
+    lines = ["ldr x8, [_stream], #8",
+             f"ldr w9, [_cpu, #{8 * register}]", "lsr x12, x8, #32",
+             f"{operation} w11, w9, w12"]
+    if s:
+        lines.append("mrs x27, nzcv")
+    lines += [f"str w11, [_cpu, #{8 * register}]", "next_gadget"]
+    return "\n".join(lines)
+
+
+def inplace_name(subtract: bool, s: bool, register: int) -> str:
+    return f"dp_{'sub' if subtract else 'add'}{'s' if s else ''}_imm_r{register}"
+
+
+def emit_dp_inplace(asm: Assembly) -> None:
+    for subtract in (False, True):
+        for s in (False, True):
+            for register in range(INPLACE_REGISTERS):
+                asm.gadget(inplace_name(subtract, s, register),
+                           dp_inplace_body(subtract, s, register))
+
+
 def emit_dp(asm: Assembly) -> list[tuple[str, str, bool, str]]:
     """Every data-processing gadget; returns (op, shape, s) of each."""
     produced = []
@@ -1142,6 +1176,7 @@ def hand_written(engine_dir: Path) -> list[str]:
 
 def build_assembly(asm: Assembly) -> None:
     emit_dp(asm)
+    emit_dp_inplace(asm)
     emit_single(asm)
     emit_double(asm)
     emit_blocks(asm)
@@ -1234,6 +1269,17 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
                 else:
                     entries.append(g(name))
             out.append("\t\t{" + ", ".join(entries) + "},")
+        out.append("\t},")
+    out += ["};", ""]
+    out.append("/* In-place ADD and SUB of an immediate with the register "
+               "baked: [subtract][S][register]. */")
+    out.append(f"inline constexpr G kDpInplace[2][2][{INPLACE_REGISTERS}] = {{")
+    for subtract in (False, True):
+        out.append("\t{")
+        for s in (False, True):
+            out.append("\t\t{" + ", ".join(
+                g(inplace_name(subtract, s, r))
+                for r in range(INPLACE_REGISTERS)) + "},")
         out.append("\t},")
     out += ["};", ""]
     out.append("/* Single transfers: [size][mode]; modes are i ipre ipost ra "
