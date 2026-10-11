@@ -986,7 +986,12 @@ key. Every exit
 whose successor is static (a branch, the fall-through of a block the 60
 instructions of a window cut short, the arm of a conditional instruction or
 CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
-straight run chains like a loop. Memory
+straight run chains like a loop. A conditional forward branch (B with a
+condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
+path and the block goes on with its registers and flags in the host, while the
+taken path leaves by a cold side exit that publishes what is dirty at the
+branch and links to the target. A backward or unconditional branch ends the
+block. Memory
 takes the shared inline TLB sequence after a 32-bit address and the alignment
 rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A

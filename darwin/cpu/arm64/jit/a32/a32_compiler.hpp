@@ -95,6 +95,9 @@ private:
       /* The instruction is UNDEFINED at run time (a CP15 barrier while
        * SCTLR.CP15BEN is clear). */
       illegal,
+      /* A conditional branch the block went on past was taken: link to
+       * `target`. */
+      branch,
     };
     Arm64Emitter::Label label;
     Kind kind;
@@ -102,6 +105,7 @@ private:
     std::uint16_t dirty_gprs{};
     std::uint32_t dirty_vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
+    std::uint64_t target{};
   };
 
   /* A guarded floating-point operation whose operands or result were not
@@ -177,6 +181,7 @@ private:
    * (or MOVW) that leaves the host flags alone (it sets none and shifts by
    * no register) and does not write the PC. */
   [[nodiscard]] bool can_predicate() const;
+  [[nodiscard]] Flow emit_side_exit_branch();
   Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
   void emit_cold_paths();

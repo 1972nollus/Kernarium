@@ -95,7 +95,7 @@ void A32Compiler::decode_block(const Request &request) {
     block_.push_back(d);
     offset += length;
     pc += length;
-    if (ends_block(d.inst))
+    if (ends_block(d.inst) && !continues_past(d.inst))
       break;
   }
 }
@@ -197,9 +197,35 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
     }
   }
   const unsigned condition = inst.cond;
+  if (count_ + 1U < block_.size() && continues_past(inst))
+    return emit_side_exit_branch();
   if (inst.status == Status::nop || condition >= 14U)
     return emit_operation();
   return emit_guarded(condition);
+}
+
+/* A conditional forward branch inside a block: the taken path leaves through
+ * a cold side exit that publishes the registers dirty here and links to the
+ * target, and the block goes on with the fall-through, its registers and
+ * flags still in the host. */
+A32Compiler::Flow A32Compiler::emit_side_exit_branch() {
+  const auto &inst = cur().inst;
+  const auto &o = inst.operands;
+  const auto info = op_info(inst.form);
+  const std::uint32_t target = pc_read() + static_cast<std::uint32_t>(o.imm32);
+  if (info.op == Op::b) {
+    load_flags();
+    const auto side = cold_exit(ColdPath::Kind::branch);
+    cold_.back().target = thumb_ ? aarch32::t32_key(target & ~1U)
+                                 : aarch32::a32_key(target & ~3U);
+    emitter_.branch_condition(side, inst.cond);
+  } else {
+    const unsigned n = use(static_cast<unsigned>(o.n), 9);
+    const auto side = cold_exit(ColdPath::Kind::branch);
+    cold_.back().target = aarch32::t32_key(target);
+    emitter_.compare_zero(side, n, false, info.op == Op::cbnz);
+  }
+  return Flow::next;
 }
 
 bool A32Compiler::can_predicate() const {

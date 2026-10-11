@@ -298,4 +298,19 @@ bool ends_block(const aarch32::Instruction &inst) noexcept {
   }
 }
 
+bool continues_past(const aarch32::Instruction &inst) noexcept {
+  if (inst.status != aarch32::Status::ok || inst.next_it.bits() != 0U)
+    return false;
+  const auto &o = inst.operands;
+  switch (op_info(inst.form).op) {
+  case Op::b:
+    // A condition other than always, to a target after the branch.
+    return inst.cond < 14U && static_cast<std::int32_t>(o.imm32) >= 0;
+  case Op::cbz: case Op::cbnz:
+    return true;
+  default:
+    return false;
+  }
+}
+
 } // namespace uml::cpu::arm64::jit::a32

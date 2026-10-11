@@ -96,6 +96,10 @@ enum class Ext : std::uint8_t {
 /* Whether the instruction ends a block: it writes the PC, raises an event or
  * is not an instruction. */
 [[nodiscard]] bool ends_block(const aarch32::Instruction &inst) noexcept;
+/* Whether a block that reaches this instruction goes on past it: a
+ * conditional forward branch (B with a condition, CBZ, CBNZ) whose fall-through
+ * is the likelier path and whose taken path leaves by a side exit. */
+[[nodiscard]] bool continues_past(const aarch32::Instruction &inst) noexcept;
 
 /* The decoder level the compiler implements. */
 [[nodiscard]] constexpr aarch32::Level a32_level() noexcept {

@@ -43,6 +43,9 @@ void A32Compiler::emit_cold_paths() {
     case ColdPath::Kind::illegal:
       exit_event(Event::illegal_instruction, key_of(d), d.it);
       break;
+    case ColdPath::Kind::branch:
+      exit_direct(cold.target, 0U, cold.index + 1U);
+      break;
     case ColdPath::Kind::slow:
       emit_slow_helper(cold);
       break;

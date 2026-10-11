@@ -11,6 +11,7 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/host_capabilities.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <optional>
@@ -484,6 +485,169 @@ void extensions_decode_only_where_the_host_has_them() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A block goes on past a conditional forward branch (B with a condition, CBZ,
+// CBNZ) and leaves by a side exit when it is taken. Random programs of those
+// branches among data processing, run as the translator forms them and one
+// instruction at a time (which never goes on past a branch), must end in the
+// same registers, flags and count.
+
+class Lcg final {
+public:
+  explicit Lcg(std::uint64_t seed) : state_{seed | 1U} {}
+  std::uint64_t next() {
+    state_ ^= state_ << 13;
+    state_ ^= state_ >> 7;
+    state_ ^= state_ << 17;
+    return state_;
+  }
+  unsigned below(unsigned bound) { return static_cast<unsigned>(next() % bound); }
+
+private:
+  std::uint64_t state_;
+};
+
+struct Outcome final {
+  arm64::CpuState cpu;
+  std::size_t retired;
+  ::uml::cpu::ExitReason reason;
+};
+
+Outcome run_whole(Fixture &fixture, arm64::CpuState cpu) {
+  const auto result = fixture.run(cpu, 4096);
+  return {cpu, result.retired_instructions, result.reason};
+}
+
+Outcome run_stepped(Fixture &fixture, arm64::CpuState cpu) {
+  std::size_t retired = 0;
+  for (unsigned step = 0; step < 4096; ++step) {
+    const auto result = fixture.run(cpu, 1, true);
+    retired += result.retired_instructions;
+    if (result.reason != ExitReason::single_step)
+      return {cpu, retired, result.reason};
+  }
+  return {cpu, retired, ExitReason::single_step};
+}
+
+void require_same(const Outcome &whole, const Outcome &stepped,
+                  const char *what, unsigned program) {
+  bool same = whole.reason == stepped.reason &&
+              whole.retired == stepped.retired &&
+              whole.cpu.pc == stepped.cpu.pc &&
+              (whole.cpu.nzcv & 0xf000'0000U) == (stepped.cpu.nzcv & 0xf000'0000U);
+  for (unsigned i = 0; i < 15; ++i)
+    same = same && whole.cpu.registers[i] == stepped.cpu.registers[i];
+  if (!same) {
+    std::fprintf(stderr, "%s program %u: whole retired=%zu pc=%llx nzcv=%08x "
+                         "stepped retired=%zu pc=%llx nzcv=%08x\n",
+                 what, program, whole.retired,
+                 static_cast<unsigned long long>(whole.cpu.pc),
+                 static_cast<unsigned>(whole.cpu.nzcv), stepped.retired,
+                 static_cast<unsigned long long>(stepped.cpu.pc),
+                 static_cast<unsigned>(stepped.cpu.nzcv));
+    for (unsigned i = 0; i < 15; ++i)
+      std::fprintf(stderr, "  r%u whole=%08x stepped=%08x\n", i,
+                   static_cast<unsigned>(whole.cpu.registers[i]),
+                   static_cast<unsigned>(stepped.cpu.registers[i]));
+  }
+  require(same);
+}
+
+arm64::CpuState random_registers(Lcg &random, bool thumb) {
+  auto cpu = Fixture::task(thumb);
+  for (unsigned i = 0; i < 13; ++i) {
+    static constexpr std::uint32_t special[] = {0, 1, 2, 0x7fff'ffffU,
+                                                0x8000'0000U, 0xffff'ffffU};
+    cpu.registers[i] = random.below(3) == 0
+                           ? special[random.below(std::size(special))]
+                           : static_cast<std::uint32_t>(random.next());
+  }
+  cpu.nzcv = static_cast<std::uint32_t>(random.next()) & 0xf000'0000U;
+  return cpu;
+}
+
+void side_exit_branches() {
+  constexpr unsigned programs = 120;
+  Fixture fixture{0x1a32'0c0a, 24};
+  Lcg random{0x51de'e817};
+  for (const bool thumb : {false, true}) {
+    for (unsigned p = 0; p < programs; ++p) {
+      // A third of the programs are longer than a block holds.
+      const unsigned length = p % 3 == 0 ? 90 + random.below(30) : 12 + random.below(40);
+      const std::size_t unit = thumb ? 2 : 4;
+      const std::size_t offset = static_cast<std::size_t>(p % 40) * 512;
+      std::vector<std::uint32_t> words(length);
+      std::vector<std::uint16_t> halves(length);
+      for (unsigned i = 0; i < length; ++i) {
+        const unsigned rd = random.below(12), rn = random.below(12);
+        const bool branch = random.below(4) == 0 && i + 2 < length;
+        // A forward branch skips 1 to 4 instructions, or all that remain.
+        const unsigned skip = std::min<unsigned>(1 + random.below(4), length - i - 1);
+        if (!thumb) {
+          static constexpr unsigned ops[] = {0, 1, 2, 3, 4, 12, 13, 14};
+          const unsigned op = ops[random.below(std::size(ops))];
+          const unsigned cond = random.below(10) == 0 ? random.below(15)
+                                                      : 14;
+          if (branch) {
+            // The target is skip + 1 instructions on: PC is two ahead.
+            const unsigned bcond = random.below(8) == 0 ? 14 : random.below(14);
+            words[i] = bcond << 28 | 0x0a00'0000U | (skip - 1U);
+          } else {
+            const bool s = random.below(2) != 0;
+            // MOV's Rn field is zero.
+            words[i] = cond << 28 | 0x0200'0000U | op << 21 |
+                       (s ? 1U << 20 : 0U) | (op == 13U ? 0U : rn) << 16 |
+                       rd << 12 | random.below(256);
+          }
+        } else {
+          const unsigned lo = random.below(8), lo2 = random.below(8),
+                         lo3 = random.below(8);
+          if (branch && random.below(3) == 0) {
+            // CBZ/CBNZ Rn, target: PC is two halfwords ahead, imm6 = skip - 1.
+            const unsigned imm6 = skip - 1U;
+            halves[i] = static_cast<std::uint16_t>(
+                0xb100U | (random.below(2) != 0 ? 0x0800U : 0U) |
+                (imm6 >> 5 & 1U) << 9 | (imm6 & 31U) << 3 | lo);
+          } else if (branch) {
+            halves[i] = static_cast<std::uint16_t>(
+                0xd000U | random.below(14) << 8 | (skip - 1U));
+          } else {
+            switch (random.below(8)) {
+            case 0: halves[i] = static_cast<std::uint16_t>(0x2000U | lo << 8 | random.below(256)); break;
+            case 1: halves[i] = static_cast<std::uint16_t>(0x1c00U | random.below(8) << 6 | lo2 << 3 | lo); break;
+            case 2: halves[i] = static_cast<std::uint16_t>(0x1a00U | lo3 << 6 | lo2 << 3 | lo); break;
+            case 3: halves[i] = static_cast<std::uint16_t>(0x1800U | lo3 << 6 | lo2 << 3 | lo); break;
+            case 4: halves[i] = static_cast<std::uint16_t>(0x2800U | lo << 8 | random.below(256)); break;
+            case 5: halves[i] = static_cast<std::uint16_t>(0x4000U | lo2 << 3 | lo); break;
+            case 6: halves[i] = static_cast<std::uint16_t>(0x4040U | lo2 << 3 | lo); break;
+            default: halves[i] = static_cast<std::uint16_t>(random.below(32) << 6 | lo2 << 3 | lo); break;
+            }
+          }
+        }
+      }
+      for (unsigned i = 0; i < length; ++i) {
+        if (thumb)
+          fixture.code16(offset + i * unit, {halves[i]});
+        else
+          fixture.code32(offset + i * unit, {words[i]});
+      }
+      if (thumb)
+        fixture.code16(offset + length * unit, {0xdf00U});
+      else
+        fixture.code32(offset + length * unit, {0xef00'0000U});
+      for (unsigned round = 0; round < 6; ++round) {
+        auto cpu = random_registers(random, thumb);
+        cpu.pc = thumb ? key::t32_key(code_base + static_cast<std::uint32_t>(offset))
+                       : key::a32_key(code_base + static_cast<std::uint32_t>(offset));
+        const auto whole = run_whole(fixture, cpu);
+        require(whole.reason == ExitReason::system_call);
+        const auto stepped = run_stepped(fixture, cpu);
+        require_same(whole, stepped, thumb ? "t32" : "a32", p);
+      }
+    }
+  }
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
@@ -494,6 +658,7 @@ int main() {
   static_exits_chain();
   rewritten_t32_halfwords();
   rewritten_a32_words();
+  side_exit_branches();
   extensions_decode_only_where_the_host_has_them();
   std::puts("arm64-jit-a32-control: ok");
   return 0;
