@@ -991,7 +991,12 @@ condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
 path and the block goes on with its registers and flags in the host, while the
 taken path leaves by a cold side exit that publishes what is dirty at the
 branch and links to the target. A backward or unconditional branch ends the
-block. Memory
+block, except one back to the translation's own first instruction: that block
+is a loop in the host. A probe compilation records the registers it holds at
+the back edge, the translation loads them before the loop head and counts
+every one as dirty so that each exit writes them back, and the back edge is the
+chain budget's test for one more iteration and a branch. The iteration that
+cannot be afforded leaves like any linked exit. Memory
 takes the shared inline TLB sequence after a 32-bit address and the alignment
 rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A

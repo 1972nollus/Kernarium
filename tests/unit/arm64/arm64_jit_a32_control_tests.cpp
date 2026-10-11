@@ -529,6 +529,22 @@ Outcome run_stepped(Fixture &fixture, arm64::CpuState cpu) {
   return {cpu, retired, ExitReason::single_step};
 }
 
+Outcome run_whole_long(Fixture &fixture, arm64::CpuState cpu) {
+  const auto result = fixture.run(cpu, 1u << 22);
+  return {cpu, result.retired_instructions, result.reason};
+}
+
+Outcome run_stepped_long(Fixture &fixture, arm64::CpuState cpu) {
+  std::size_t retired = 0;
+  for (unsigned step = 0; step < 400000; ++step) {
+    const auto result = fixture.run(cpu, 1, true);
+    retired += result.retired_instructions;
+    if (result.reason != ExitReason::single_step)
+      return {cpu, retired, result.reason};
+  }
+  return {cpu, retired, ExitReason::single_step};
+}
+
 void require_same(const Outcome &whole, const Outcome &stepped,
                   const char *what, unsigned program) {
   bool same = whole.reason == stepped.reason &&
@@ -648,6 +664,330 @@ void side_exit_branches() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A block that ends in a backward branch to its own start loops in the host.
+// Random loops (data processing under conditions, loads and stores through a
+// fixed and a walking base, Advanced SIMD, forward branches out of the body,
+// a counted back edge that is conditional or an unconditional one left by a
+// branch), run whole and one instruction at a time, must end in the same
+// registers, vectors, flags, memory and count, whether they end at the
+// instruction that follows the loop or in a fault in an iteration the host
+// loop ran.
+
+struct Item final {
+  std::vector<std::uint16_t> halves;
+  int target = -1; // a branch: the item index it goes to
+  enum class Kind : std::uint8_t { plain, cond_branch, back_branch } kind{};
+  unsigned cond = 14;
+};
+
+std::uint16_t thumb_first(std::uint32_t word) {
+  return static_cast<std::uint16_t>(word >> 16);
+}
+std::uint16_t thumb_second(std::uint32_t word) {
+  return static_cast<std::uint16_t>(word);
+}
+/* An A32 Advanced SIMD word as a T32 word. */
+std::uint32_t to_thumb_neon(std::uint32_t word) {
+  if ((word & 0xff00'0000U) == 0xf400'0000U)
+    return 0xf900'0000U | (word & 0x00ff'ffffU);
+  return 0xef00'0000U | (word & 0x00ff'ffffU);
+}
+
+std::uint32_t neon_vadd_i32(unsigned qd, unsigned qn, unsigned qm) {
+  const unsigned d = 2 * qd, n = 2 * qn, m = 2 * qm;
+  return 0xf220'0840U | (d >> 4 & 1U) << 22 | (n & 15U) << 16 | (d & 15U) << 12 |
+         (n >> 4 & 1U) << 7 | (m >> 4 & 1U) << 5 | (m & 15U);
+}
+std::uint32_t neon_vld1_q(unsigned qd, unsigned rn) {
+  const unsigned d = 2 * qd;
+  return 0xf420'0a8fU | (d >> 4 & 1U) << 22 | rn << 16 | (d & 15U) << 12;
+}
+std::uint32_t neon_vst1_q(unsigned qd, unsigned rn) {
+  const unsigned d = 2 * qd;
+  return 0xf400'0a8fU | (d >> 4 & 1U) << 22 | rn << 16 | (d & 15U) << 12;
+}
+
+/* The translation of a counted loop is a loop in the host: a budget
+ * decrement of the block's length followed by a branch backwards, and
+ * nothing of the descriptor-linked exit the loop would otherwise take. */
+bool has_host_loop(const std::vector<std::uint32_t> &words, std::size_t length) {
+  const std::uint32_t decrement = 0xd100'0000U | static_cast<std::uint32_t>(length) << 10 |
+                                  20U << 5 | 20U;
+  for (std::size_t i = 0; i + 1 < words.size(); ++i)
+    if (words[i] == decrement && (words[i + 1] & 0xfc00'0000U) == 0x1400'0000U &&
+        (words[i + 1] & 0x0200'0000U) != 0U)
+      return true;
+  return false;
+}
+
+void counted_loop_is_a_host_loop() {
+  Fixture fixture{0x1a32'0c0c, 4};
+  // 1: add r0,r0,r1; ldr r2,[r10]; subs r12,r12,#1; bne 1b; svc
+  fixture.code32(0, {0xe080'0001U, 0xe59a'2000U, 0xe25c'c001U,
+                     0x1aff'fffbU, 0xef00'0000U});
+  std::vector<std::byte> bytes(5 * 4);
+  fixture.read_code(0, bytes);
+  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  require(compiled.code.guest_instructions == 4);
+  require(has_host_loop(compiled.code.words, 4));
+  // The same loop in T32.
+  fixture.code16(64, {0x4408, 0xf8da, 0x2000, 0xf1bc, 0x0c01, 0xd1f9, 0xdf00});
+  std::vector<std::byte> thumb(7 * 2);
+  fixture.read_code(64, thumb);
+  const auto compiled_thumb = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::t32_key(code_base + 64), thumb);
+  require(compiled_thumb.code.guest_instructions == 4);
+  require(has_host_loop(compiled_thumb.code.words, 4));
+  // It runs through budget windows: 3000 iterations of four instructions.
+  auto cpu = Fixture::task(false);
+  cpu.registers[0] = 5;
+  cpu.registers[1] = 3;
+  cpu.registers[10] = data_base;
+  cpu.registers[12] = 3000;
+  fixture.data32(0, 0x1234);
+  const auto result = fixture.run(cpu, 1u << 22);
+  require(result.reason == ExitReason::system_call);
+  require(cpu.registers[0] == 5U + 3U * 3000U);
+  require(cpu.registers[2] == 0x1234U);
+  require(cpu.registers[12] == 0);
+  require(result.retired_instructions == 4U * 3000U + 1U);
+  // A limit that falls inside the loop stops it at the end of the chain
+  // window past it, in the state of that many single steps.
+  for (const std::size_t limit : {1U, 3U, 4U, 5U, 7U, 399U, 1001U, 4095U, 4096U,
+                                  4097U, 4099U, 4100U, 8000U, 8190U}) {
+    auto start = Fixture::task(false);
+    start.registers[0] = 5;
+    start.registers[1] = 3;
+    start.registers[10] = data_base;
+    start.registers[12] = 3000;
+    auto whole = start;
+    const auto limited = fixture.run(whole, limit);
+    require(limited.reason == ExitReason::instruction_budget);
+    // A chain runs its whole allowance of 4096 instructions and stops at an
+    // iteration boundary.
+    require(limited.retired_instructions >= limit &&
+            limited.retired_instructions < limit + 4096 &&
+            limited.retired_instructions % 4096 < 4);
+    auto stepped = start;
+    for (std::size_t step = 0; step < limited.retired_instructions; ++step)
+      (void)fixture.run(stepped, 1, true);
+    require(whole.pc == stepped.pc);
+    for (unsigned i = 0; i < 15; ++i)
+      require(whole.registers[i] == stepped.registers[i]);
+    require((whole.nzcv & 0xf000'0000U) == (stepped.nzcv & 0xf000'0000U));
+  }
+}
+
+void native_loops() {
+  constexpr unsigned programs = 90;
+  constexpr std::size_t window = 256; // bytes of data the loops touch
+  Fixture fixture{0x1a32'0c0b, 24};
+  Lcg random{0x100b'a5e5};
+  std::vector<std::byte> original(window);
+  for (const bool thumb : {false, true}) {
+    for (unsigned p = 0; p < programs; ++p) {
+      const std::size_t offset = static_cast<std::size_t>(p % 20) * 1024;
+      std::vector<Item> items;
+      const unsigned body = 3 + random.below(26);
+      const bool counted = random.below(2) == 0;
+      for (unsigned i = 0; i < body; ++i) {
+        Item item;
+        const unsigned rd = random.below(10), rn = random.below(10);
+        const unsigned pick = random.below(16);
+        if (pick < 2 && i + 2 < body) {
+          item.kind = Item::Kind::cond_branch;
+          item.cond = random.below(14);
+          item.target = static_cast<int>(i + 1 + random.below(3));
+          item.halves.assign(thumb ? 1 : 2, 0); // laid out below
+        } else if (pick < 5) {
+          // A load or store through r10 at a word offset below the window.
+          const unsigned off = random.below(16) * 4;
+          const bool store = random.below(2) != 0;
+          if (!thumb) {
+            const std::uint32_t word = (store ? 0xe58a'0000U : 0xe59a'0000U) |
+                                       rd << 12 | off;
+            item.halves = {thumb_first(word), thumb_second(word)};
+          } else {
+            const std::uint32_t word = (store ? 0xf8ca'0000U : 0xf8da'0000U) |
+                                       rd << 12 | off;
+            item.halves = {thumb_first(word), thumb_second(word)};
+          }
+        } else if (pick < 6) {
+          // A post-indexed access through the walking base r11.
+          const bool store = random.below(2) != 0;
+          if (!thumb) {
+            const std::uint32_t word = (store ? 0xe48b'0004U : 0xe49b'0004U) | rd << 12;
+            item.halves = {thumb_first(word), thumb_second(word)};
+          } else {
+            const std::uint32_t word = (store ? 0xf84b'0b04U : 0xf85b'0b04U) | rd << 12;
+            item.halves = {thumb_first(word), thumb_second(word)};
+          }
+        } else if (pick < 8) {
+          const unsigned kind = random.below(3);
+          const unsigned q = 8 + random.below(4), q2 = 8 + random.below(4);
+          std::uint32_t word = kind == 0   ? neon_vadd_i32(q, q2, 8 + random.below(4))
+                               : kind == 1 ? neon_vld1_q(q, 10)
+                                           : neon_vst1_q(q, 10);
+          if (thumb)
+            word = to_thumb_neon(word);
+          item.halves = {thumb_first(word), thumb_second(word)};
+        } else if (!thumb) {
+          static constexpr unsigned ops[] = {0, 1, 2, 3, 4, 12, 13, 14};
+          const unsigned op = ops[random.below(std::size(ops))];
+          const unsigned cond = random.below(6) == 0 ? random.below(15) : 14;
+          const bool setflags = random.below(2) != 0;
+          const std::uint32_t word = cond << 28 | 0x0200'0000U | op << 21 |
+                                     (setflags ? 1U << 20 : 0U) |
+                                     (op == 13U ? 0U : rn) << 16 | rd << 12 |
+                                     random.below(256);
+          item.halves = {thumb_first(word), thumb_second(word)};
+        } else {
+          const unsigned lo = random.below(8), lo2 = random.below(8),
+                         lo3 = random.below(8);
+          switch (random.below(6)) {
+          case 0: item.halves = {static_cast<std::uint16_t>(0x2000U | lo << 8 | random.below(256))}; break;
+          case 1: item.halves = {static_cast<std::uint16_t>(0x1c00U | random.below(8) << 6 | lo2 << 3 | lo)}; break;
+          case 2: item.halves = {static_cast<std::uint16_t>(0x1a00U | lo3 << 6 | lo2 << 3 | lo)}; break;
+          case 3: item.halves = {static_cast<std::uint16_t>(0x1800U | lo3 << 6 | lo2 << 3 | lo)}; break;
+          case 4: item.halves = {static_cast<std::uint16_t>(0x2800U | lo << 8 | random.below(256))}; break;
+          default: item.halves = {static_cast<std::uint16_t>(0x4040U | lo2 << 3 | lo)}; break;
+          }
+        }
+        items.push_back(item);
+      }
+      // The counter and the back edge: SUBS r12,r12,#1 then BNE head; or
+      // SUBS, BEQ out, then an unconditional B head.
+      Item subs;
+      if (!thumb)
+        subs.halves = {thumb_first(0xe25c'c001U), thumb_second(0xe25c'c001U)};
+      else
+        subs.halves = {0xf1bc, 0x0c01};
+      items.push_back(subs);
+      const int out = static_cast<int>(items.size()) + (counted ? 1 : 2);
+      Item back;
+      back.kind = Item::Kind::back_branch;
+      back.target = 0;
+      back.cond = counted ? 1 : 14; // NE, or always
+      back.halves.assign(thumb ? 1 : 2, 0);
+      if (counted) {
+        items.push_back(back);
+      } else {
+        Item leave;
+        leave.kind = Item::Kind::cond_branch;
+        leave.cond = 0; // EQ
+        leave.target = out;
+        leave.halves.assign(thumb ? 1 : 2, 0);
+        items.push_back(leave);
+        items.push_back(back);
+      }
+      Item svc;
+      svc.halves = thumb ? std::vector<std::uint16_t>{0xdf00}
+                         : std::vector<std::uint16_t>{thumb_first(0xef00'0000U),
+                                                      thumb_second(0xef00'0000U)};
+      items.push_back(svc);
+      // Positions, in code units (words for A32, halfwords for T32).
+      std::vector<std::size_t> position(items.size() + 1);
+      std::size_t at = 0;
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        position[i] = at;
+        at += thumb ? items[i].halves.size() : 1;
+      }
+      position[items.size()] = at;
+      // Branches that skip past the loop's end go to the instruction after
+      // the back edge.
+      std::vector<std::uint16_t> code;
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        auto &item = items[i];
+        if (item.kind != Item::Kind::plain) {
+          const std::size_t target_item =
+              std::min<std::size_t>(static_cast<std::size_t>(item.target),
+                                    items.size() - 1);
+          const int delta = static_cast<int>(position[target_item]) -
+                            static_cast<int>(position[i]) - 2;
+          if (!thumb) {
+            const std::uint32_t word = item.cond << 28 | 0x0a00'0000U |
+                                       (static_cast<std::uint32_t>(delta) & 0x00ff'ffffU);
+            item.halves = {thumb_first(word), thumb_second(word)};
+          } else if (item.cond < 14) {
+            item.halves = {static_cast<std::uint16_t>(
+                0xd000U | item.cond << 8 | (static_cast<std::uint32_t>(delta) & 0xffU))};
+          } else {
+            item.halves = {static_cast<std::uint16_t>(
+                0xe000U | (static_cast<std::uint32_t>(delta) & 0x7ffU))};
+          }
+        }
+        for (const auto half : item.halves)
+          code.push_back(half);
+      }
+      for (std::size_t i = 0; i < code.size(); ++i) {
+        // An A32 program stores each word's halves in memory order, low half
+        // first; a T32 program stores its halfwords in order.
+        (void)i;
+      }
+      if (!thumb) {
+        for (std::size_t i = 0; i < items.size(); ++i) {
+          const std::uint32_t word =
+              static_cast<std::uint32_t>(items[i].halves[0]) << 16 | items[i].halves[1];
+          fixture.code32(offset + position[i] * 4, {word});
+        }
+      } else {
+        for (std::size_t i = 0; i < code.size(); ++i)
+          fixture.code16(offset + i * 2, {code[i]});
+      }
+      for (unsigned round = 0; round < 5; ++round) {
+        auto cpu = random_registers(random, thumb);
+        cpu.pc = thumb ? key::t32_key(code_base + static_cast<std::uint32_t>(offset))
+                       : key::a32_key(code_base + static_cast<std::uint32_t>(offset));
+        cpu.registers[10] = data_base;
+        // The walking base starts close to the end of the data, so a long
+        // run faults in an iteration, or well inside it.
+        const bool walks_off = random.below(3) == 0;
+        cpu.registers[11] = walks_off
+                                ? data_base + 2 * guest_page - 4 * (1 + random.below(40))
+                                : data_base + 1024;
+        const bool wraps = random.below(4) == 0;
+        cpu.registers[12] = wraps ? 400 + random.below(300) : 1 + random.below(30);
+        for (auto &q : cpu.vectors)
+          for (auto &b : q.bytes)
+            b = static_cast<std::byte>(random.next());
+        for (std::size_t i = 0; i < window; i += 4) {
+          const auto value = static_cast<std::uint32_t>(random.next());
+          fixture.data32(i, value);
+          fixture.data32(1024 + i, value ^ 0x5555'5555U);
+        }
+        const auto saved_low = fixture.read_data(0, window);
+        const auto saved_high = fixture.read_data(1024, window + 4096);
+        const auto run = [&](bool stepped) {
+          fixture.data_bytes(0, saved_low);
+          fixture.data_bytes(1024, saved_high);
+          const auto outcome = stepped ? run_stepped_long(fixture, cpu)
+                                       : run_whole_long(fixture, cpu);
+          return std::pair{outcome, std::pair{fixture.read_data(0, window),
+                                              fixture.read_data(1024, window + 4096)}};
+        };
+        const auto whole = run(false);
+        const auto stepped = run(true);
+        if (whole.first.reason != ExitReason::system_call &&
+            whole.first.reason != ExitReason::memory_fault)
+          std::fprintf(stderr, "%s loop %u round %u: exit %d retired %zu pc %llx\n",
+                       thumb ? "t32" : "a32", p, round, static_cast<int>(whole.first.reason),
+                       whole.first.retired,
+                       static_cast<unsigned long long>(whole.first.cpu.pc));
+        require(whole.first.reason == ExitReason::system_call ||
+                whole.first.reason == ExitReason::memory_fault);
+        require_same(whole.first, stepped.first, thumb ? "t32 loop" : "a32 loop", p);
+        require(whole.second.first == stepped.second.first);
+        require(whole.second.second == stepped.second.second);
+        for (unsigned v = 8; v < 12; ++v)
+          require(std::memcmp(&whole.first.cpu.vectors[v], &stepped.first.cpu.vectors[v],
+                              sizeof whole.first.cpu.vectors[v]) == 0);
+      }
+    }
+  }
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
@@ -659,6 +999,8 @@ int main() {
   rewritten_t32_halfwords();
   rewritten_a32_words();
   side_exit_branches();
+  counted_loop_is_a_host_loop();
+  native_loops();
   extensions_decode_only_where_the_host_has_them();
   std::puts("arm64-jit-a32-control: ok");
   return 0;

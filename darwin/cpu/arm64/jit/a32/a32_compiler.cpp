@@ -113,6 +113,16 @@ Result A32Compiler::compile(const Request &request) {
   Result result;
   if (block_.empty())
     return result;
+  looping_ = false;
+  if (!probing_ && loop_candidate(request)) {
+    A32Compiler probe{nullptr, nullptr, false, nullptr};
+    probe.probing_ = true;
+    (void)probe.compile(request);
+    if (probe.plan_.valid) {
+      plan_ = probe.plan_;
+      looping_ = true;
+    }
+  }
   emitter_.prologue();
   const auto internal_entry_word = emitter_.size();
   emit_block();
@@ -142,9 +152,99 @@ Result A32Compiler::compile(const Request &request) {
   return result;
 }
 
+/* The last instruction is a backward B to the translation's own first
+ * instruction, and nothing in the block needs a boundary of its own. */
+bool A32Compiler::loop_candidate(const Request &request) {
+  if (single_ || track_direct_stores_ || request.itstate.bits() != 0U ||
+      block_.size() < 2U)
+    return false;
+  for (const auto &d : block_)
+    if (d.inst.status != Status::ok || is_exclusive_op(op_info(d.inst.form).op))
+      return false;
+  const auto &last = block_.back();
+  if (last.it != 0U || last.inst.next_it.bits() != 0U ||
+      op_info(last.inst.form).op != Op::b ||
+      static_cast<std::int32_t>(last.inst.operands.imm32) >= 0)
+    return false;
+  const auto saved = count_;
+  count_ = block_.size() - 1U;
+  const std::uint32_t target =
+      pc_read() + static_cast<std::uint32_t>(last.inst.operands.imm32);
+  count_ = saved;
+  return (thumb_ ? aarch32::t32_key(target & ~1U)
+                 : aarch32::a32_key(target & ~3U)) == request.key;
+}
+
+void A32Compiler::record_loop_plan() {
+  plan_.valid = true;
+  for (std::size_t index = 0; index < gpr_slots_.size(); ++index)
+    plan_.gpr[index] = gpr_slots_[index].stack_pointer
+                           ? unbound_guest
+                           : gpr_slots_[index].guest;
+  for (std::size_t index = 0; index < vector_slots_.size(); ++index)
+    plan_.vector[index] = vector_slots_[index].guest;
+}
+
+/* The registers the loop holds are loaded and marked dirty before the head,
+ * so every exit from the loop writes them back and a back edge writes
+ * nothing. */
+void A32Compiler::apply_loop_plan() {
+  for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
+    const unsigned guest = plan_.gpr[index];
+    if (guest == unbound_guest)
+      continue;
+    gpr_slots_[index] = {.guest = guest, .stack_pointer = false,
+                         .loaded = true, .dirty = true};
+    emitter_.load_x(resident_gpr_hosts[index], 15, register_offset(guest, false));
+  }
+  for (std::size_t index = 0; index < vector_slots_.size(); ++index) {
+    const unsigned guest = plan_.vector[index];
+    if (guest == unbound_guest)
+      continue;
+    vector_slots_[index] = {.guest = guest, .loaded = true, .dirty = true};
+    emitter_.load_q(resident_vector_hosts[index], 15, vector_slot_offset(guest));
+  }
+  loop_head_ = make_label();
+  bind(loop_head_);
+}
+
+/* The back edge: while the budget lasts the loop goes round, and the other
+ * arm leaves as a branch does. */
+A32Compiler::Flow A32Compiler::emit_loop_branch() {
+  const auto &d = cur();
+  const unsigned condition = d.inst.cond;
+  const std::size_t iteration = block_.size();
+  Arm64Emitter::Label skip{};
+  if (condition < 14U) {
+    load_flags();
+    synchronize_flags();
+    skip = make_label();
+    branch_condition(skip, condition ^ 1U);
+  } else {
+    synchronize_flags();
+  }
+  /* A linked successor needs the budget of its own length after this
+   * block's; a loop is its own successor. */
+  const auto fallback = make_label();
+  emit(0xf100'001fU | static_cast<std::uint32_t>(2U * iteration) << 10 |
+       20U << 5); // cmp x20, #(2 * iteration)
+  branch_condition(fallback, 3); // LO
+  emitter_.subtract_immediate(20, 20, static_cast<unsigned>(iteration));
+  emitter_.branch(loop_head_);
+  bind(fallback);
+  exit_continue_at(key_, 0U, iteration);
+  if (condition < 14U) {
+    bind(skip);
+    exit_direct(next_key(), d.inst.next_it.bits(), iteration);
+  }
+  return Flow::end;
+}
+
 void A32Compiler::emit_block() {
   count_ = 0;
   terminated_ = false;
+  if (looping_)
+    apply_loop_plan();
   while (count_ < block_.size()) {
     const auto flow = emit_instruction();
     if (flow == Flow::split) {
@@ -176,6 +276,12 @@ void A32Compiler::emit_block() {
 A32Compiler::Flow A32Compiler::emit_instruction() {
   const auto &d = cur();
   const auto &inst = d.inst;
+  if (count_ + 1U == block_.size()) {
+    if (probing_)
+      record_loop_plan();
+    if (looping_)
+      return emit_loop_branch();
+  }
   if (inst.status == Status::undefined) {
     exit_illegal();
     return Flow::end;

@@ -967,7 +967,9 @@ and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
 step at a time and from the middle, random A32 and T32 programs of
 conditional forward branches (B, CBZ, CBNZ) among data processing whole and
-one instruction at a time, long blocks under a small budget, code
+one instruction at a time, random loops with memory, Advanced SIMD and
+side exits in their bodies that end by a count, a branch out or a fault, and
+the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
 rewritten under translations, and one form of each optional extension on hosts
 with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
 T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus

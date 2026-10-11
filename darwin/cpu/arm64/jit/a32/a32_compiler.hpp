@@ -157,6 +157,17 @@ private:
     unsigned guest;
   };
 
+  /* A block whose last instruction branches back to its own first loops in
+   * the host: the registers it holds in the host through the block are
+   * loaded once before the loop head, the back edge costs a budget check
+   * and a branch, and an exit writes back what the iteration left. The
+   * plan is the bindings a probe compilation held at the back edge. */
+  struct LoopPlan final {
+    bool valid{};
+    std::array<unsigned, 8> gpr{};
+    std::array<unsigned, 18> vector{};
+  };
+
   /* The register bindings a conditional body must leave as it found them. */
   struct ResidencyMark final {
     decltype(JitCompilerFamilies::gpr_slots_) gpr;
@@ -185,6 +196,10 @@ private:
    * no register) and does not write the PC. */
   [[nodiscard]] bool can_predicate() const;
   [[nodiscard]] Flow emit_side_exit_branch(bool monitor = false);
+  [[nodiscard]] bool loop_candidate(const Request &request);
+  void record_loop_plan();
+  void apply_loop_plan();
+  [[nodiscard]] Flow emit_loop_branch();
   Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
   void emit_cold_paths();
@@ -452,6 +467,12 @@ private:
    * which done() merges into the destination with a CSEL on the host flags. */
   bool predicated_{false};
   unsigned predicate_condition_{};
+  /* The compilation that learns a loop's bindings, the plan it recorded,
+   * and the plan the translation of a loop runs on. */
+  bool probing_{};
+  bool looping_{};
+  LoopPlan plan_{};
+  Arm64Emitter::Label loop_head_{};
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};
