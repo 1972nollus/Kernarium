@@ -1,12 +1,24 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/* One source, three runners: the gadget engine, the JIT (UML_FEX_ASM_JIT) and
+ * the tiered handover between them (UML_FEX_ASM_SWITCH, a JIT runner that
+ * also links the gadgets). */
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/segments.hpp"
+#if UML_FEX_ASM_SWITCH && !UML_FEX_ASM_JIT
+#error "UML_FEX_ASM_SWITCH extends the JIT runner"
+#endif
+#if !UML_FEX_ASM_JIT || UML_FEX_ASM_SWITCH
+#define UML_FEX_ASM_GADGETS 1
+#else
+#define UML_FEX_ASM_GADGETS 0
+#endif
 #if UML_FEX_ASM_JIT
 #include "cpu/x86_64/jit/fex_engine.hpp"
 #include "fex_emitted_registers.hpp"
 #include "platform/apple/host_features.hpp"
-#else
+#endif
+#if UML_FEX_ASM_GADGETS
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #endif
@@ -42,7 +54,7 @@ constexpr std::uint64_t code_address = 0x1'0000;
 constexpr std::uint64_t scratch_address = 0xe000'0000;
 constexpr std::uint64_t sib_address = 0xe800'0000;
 constexpr std::size_t instruction_limit = 1'000'000;
-#if !UML_FEX_ASM_JIT
+#if UML_FEX_ASM_GADGETS
 /* The address-space generation cached runs share their code-page registry
  * under; each case's executor releases it before the next case starts. */
 constexpr std::uint64_t cached_generation = 1;
@@ -281,7 +293,7 @@ struct CodeSequences final {
 	std::uint64_t code_changes{1};
 };
 
-#if !UML_FEX_ASM_JIT
+#if UML_FEX_ASM_GADGETS
 [[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
 read_code_sequences(void *opaque) noexcept
 {
@@ -501,6 +513,18 @@ template<std::unsigned_integral Value>
  * list names it. */
 std::string_view excluded_class;
 
+#if UML_FEX_ASM_SWITCH
+/* --switch-sweep runs every case again at each switch point (see
+ * GadgetTier). */
+bool switch_sweep = false;
+/* Instructions the gadgets retire before the JIT takes over; zero is the
+ * JIT alone. */
+std::size_t switch_after = 0;
+/* Whether the case reached the JIT after the gadgets: false ends the sweep,
+ * since a larger switch point cannot change the run. */
+bool switch_taken = false;
+#endif
+
 /* The last result a case reported, which --retirement checks instead of
  * printing. */
 struct ReportedResult final {
@@ -525,6 +549,10 @@ void print_result(std::string_view status, std::size_t retired,
 		std::cout << "test=" << test << '\t';
 	if (!excluded_class.empty())
 		std::cout << "class=" << excluded_class << '\t';
+#if UML_FEX_ASM_SWITCH
+	if (switch_after != 0)
+		std::cout << "switch=" << switch_after << '\t';
+#endif
 	std::cout
 		<< "retired=" << retired << '\t'
 		<< "address=0x" << std::hex << address << std::dec << '\t'
@@ -744,7 +772,8 @@ JitHarness &jit_harness()
 constexpr std::uint64_t rflags_trap = 1ULL << 8U;
 constexpr std::uint64_t rflags_resume = 1ULL << 16U;
 constexpr std::uint32_t vector_general_protection = 13;
-#else
+#endif
+#if UML_FEX_ASM_GADGETS
 [[nodiscard]] const char *event_name(uml::cpu::EngineEvent event) noexcept
 {
 	switch (event) {
@@ -767,6 +796,146 @@ constexpr std::uint32_t vector_general_protection = 13;
 	}
 	return "unknown";
 }
+#endif
+
+#if UML_FEX_ASM_SWITCH
+/* --switch-sweep: the product's tiered execution. An address space starts on
+ * the gadget engine and, once the gadgets have retired a threshold of
+ * instructions, the JIT runs the rest from the state the gadgets left. The
+ * runtime hands the state over through the guest registers it saves at the
+ * end of every dispatch, which settles the deferred flags; nothing else
+ * crosses. A case runs again for each switch point of the sweep until it
+ * ends before one, so every instruction boundary of a short case and a
+ * geometric ladder of a long one is a handover, and each must end as the
+ * gadgets alone and the JIT alone do. */
+[[nodiscard]] std::size_t next_switch_point(std::size_t point) noexcept
+{
+	return point < 8 ? point + 1 : point * 2;
+}
+
+[[nodiscard]] uml::cpu::ExitReason exit_reason(uml::cpu::EngineEvent event,
+	std::uint32_t &syndrome) noexcept
+{
+	using uml::cpu::EngineEvent;
+	using uml::cpu::ExitReason;
+	syndrome = 0;
+	switch (event) {
+	case EngineEvent::fatal: return ExitReason::fatal;
+	case EngineEvent::continued: return ExitReason::instruction_budget;
+	case EngineEvent::system_call: return ExitReason::system_call;
+	case EngineEvent::memory_fault: return ExitReason::memory_fault;
+	case EngineEvent::interrupt: return ExitReason::interrupt;
+	case EngineEvent::illegal_instruction:
+		return ExitReason::illegal_instruction;
+	case EngineEvent::breakpoint:
+		syndrome = 3;
+		return ExitReason::breakpoint;
+	case EngineEvent::floating_point_trap:
+		return ExitReason::floating_point_trap;
+	case EngineEvent::pc_alignment: return ExitReason::pc_alignment;
+	case EngineEvent::overflow:
+		syndrome = 4;
+		return ExitReason::breakpoint;
+	case EngineEvent::general_protection:
+		syndrome = vector_general_protection;
+		return ExitReason::breakpoint;
+	case EngineEvent::trap_flag:
+	case EngineEvent::debug_trap: return ExitReason::single_step;
+	case EngineEvent::bound_range:
+		syndrome = 5;
+		return ExitReason::breakpoint;
+	case EngineEvent::sme_access: return ExitReason::sme_access;
+	}
+	return ExitReason::fatal;
+}
+
+/* The gadget engine's side of a tiered case, driven as the product's
+ * dispatch loop drives it: through the program cache when the case runs on
+ * the code-page model, which it must for the JIT to follow. */
+class GadgetTier final {
+public:
+	GadgetTier(SparseMemory &memory, CodeSequences &sequences,
+		Dispatch dispatch)
+		: memory_{memory}, sequences_{sequences}, dispatch_{dispatch}
+	{
+		prepare();
+	}
+
+	/* The instructions left before the handover, zero once it is due. */
+	[[nodiscard]] std::size_t budget() const noexcept
+	{
+		return switch_after > retired_ ? switch_after - retired_ : 0;
+	}
+
+	/* A dispatch of at most `limit` instructions. It ends, as an engine's
+	 * does, at a stop or on its budget. */
+	[[nodiscard]] uml::cpu::ExecutionResult run(
+		uml::cpu::x86_64::CpuState &cpu, std::size_t limit)
+	{
+		using namespace uml::cpu::x86_64::gadgets;
+		uml::cpu::ExecutionResult out{};
+		std::size_t done = 0;
+		while (done < limit) {
+			BuildResult built{};
+			const Program *program{};
+			if (dispatch_ == Dispatch::cached) {
+				if (prepared_code_changes_ != sequences_.code_changes)
+					prepare();
+				const auto selected = executor_.select_program(memory_,
+					cpu.rip, cpu.execution_mode);
+				built.status = selected.status;
+				program = selected.program;
+			} else {
+				built = build(memory_, cpu.rip, cpu.execution_mode);
+				program = &built.program;
+			}
+			if (built.status != BuildStatus::built || program == nullptr) {
+				using uml::cpu::ExitReason;
+				out.reason = built.status == BuildStatus::fetch_fault ?
+					ExitReason::memory_fault :
+					ExitReason::illegal_instruction;
+				break;
+			}
+			const auto result = execute(*program, cpu, memory_, executor_,
+				limit - done);
+			done += result.retired_instructions;
+			if (dispatch_ == Dispatch::cached) {
+				prepared_code_changes_ =
+					executor_.prepared_code_changes();
+			}
+			if (result.event != uml::cpu::EngineEvent::continued) {
+				out.reason = exit_reason(result.event, out.syndrome);
+				break;
+			}
+			out.reason = uml::cpu::ExitReason::instruction_budget;
+			if (result.instruction_budget_exhausted)
+				break;
+		}
+		out.retired_instructions = done;
+		retired_ += done;
+		return out;
+	}
+
+private:
+	void prepare()
+	{
+		if (dispatch_ == Dispatch::fresh) {
+			executor_.prepare(memory_);
+			return;
+		}
+		executor_.prepare(memory_, cached_generation,
+			sequences_.mapping_changes, sequences_.code_changes,
+			&sequences_, read_code_sequences);
+		prepared_code_changes_ = sequences_.code_changes;
+	}
+
+	SparseMemory &memory_;
+	CodeSequences &sequences_;
+	const Dispatch dispatch_;
+	uml::cpu::x86_64::gadgets::Executor executor_;
+	std::uint64_t prepared_code_changes_{};
+	std::size_t retired_{};
+};
 #endif
 
 } // namespace
@@ -822,6 +991,11 @@ constexpr std::uint32_t vector_general_protection = 13;
 	auto &harness = jit_harness();
 	const auto generation = harness.begin(configuration.mode,
 		sequences.code_changes);
+#if UML_FEX_ASM_SWITCH
+	std::optional<GadgetTier> gadgets;
+	if (switch_after != 0)
+		gadgets.emplace(memory, sequences, dispatch);
+#endif
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);
@@ -834,8 +1008,24 @@ constexpr std::uint32_t vector_general_protection = 13;
 				print_result(status, retired, cpu.rip, opcode, detail, test);
 			return passed ? 0 : 1;
 		}
+#if UML_FEX_ASM_SWITCH
+		uml::cpu::ExecutionResult dispatched;
+		if (gadgets && gadgets->budget() != 0) {
+			dispatched = gadgets->run(cpu, std::min(gadgets->budget(),
+				instruction_limit - retired));
+		} else {
+			/* The runtime saves the guest registers at the end of every
+			 * dispatch, which settles the deferred flags. */
+			uml::cpu::x86_64::materialize_flags(cpu);
+			switch_taken = switch_taken || gadgets.has_value();
+			dispatched = harness.run(cpu, memory, generation,
+				instruction_limit - retired).execution;
+		}
+		const auto &result = dispatched;
+#else
 		const auto &result = harness.run(cpu, memory, generation,
 			instruction_limit - retired).execution;
+#endif
 		retired += result.retired_instructions;
 		if (result.reason == uml::cpu::ExitReason::instruction_budget) {
 			cpu.rflags &= ~rflags_resume;
@@ -1347,7 +1537,8 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	memory.model_code_pages(&k_code_changes);
 	auto &harness = jit_harness();
 	const auto generation = harness.begin(cpu.execution_mode, k_code_changes);
-#else
+#endif
+#if UML_FEX_ASM_GADGETS
 	uml::cpu::x86_64::gadgets::Executor executor;
 	executor.prepare(memory);
 #endif
@@ -1361,56 +1552,71 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 				error, test);
 			return 2;
 		}
-#if UML_FEX_ASM_JIT
-		/* One instruction per dispatch: the engine's single step. Under TF
-		 * a repeated string instruction traps after each iteration, with
-		 * RF set and RIP still on it; a K state follows the whole
-		 * instruction. */
-		auto result = uml::cpu::ExecutionResult{};
-		for (std::size_t iteration = 0; iteration < instruction_limit;
-			++iteration) {
-			cpu.rflags |= rflags_trap;
-			result = harness.run(cpu, memory, generation, 1).execution;
-			if (result.reason != uml::cpu::ExitReason::single_step ||
-				cpu.rip != address || (cpu.rflags & rflags_resume) == 0)
-				break;
-		}
-		cpu.rflags &= ~(rflags_trap | rflags_resume);
-		const auto expected_reason = expected.expected_event == 0 ?
-			uml::cpu::ExitReason::single_step :
-			uml::cpu::ExitReason::floating_point_trap;
-		if (result.reason != expected_reason) {
-			std::string detail = reason_name(result.reason);
-			if (result.reason == uml::cpu::ExitReason::breakpoint)
-				detail += " vector " + std::to_string(result.syndrome);
-			print_result(result.reason ==
-				uml::cpu::ExitReason::illegal_instruction ?
-				"illegal_instruction" : "unexpected_event",
-				state_index - 1U, address, opcode, detail, test);
-			return 1;
-		}
+#if UML_FEX_ASM_SWITCH
+		/* The first `switch_after` instructions run on the gadgets. */
+		const bool on_jit = switch_after == 0 || state_index > switch_after;
+		if (on_jit && switch_after != 0)
+			switch_taken = true;
+#elif UML_FEX_ASM_JIT
+		constexpr bool on_jit = true;
 #else
-		const auto built = uml::cpu::x86_64::gadgets::build(
-			memory, address, cpu.execution_mode);
-		if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built) {
-			const auto status = built.status ==
-				uml::cpu::x86_64::gadgets::BuildStatus::fetch_fault ?
-				"memory_fault" : "illegal_instruction";
-			print_result(status, state_index - 1U, address, opcode,
-				"K trace instruction did not build", test);
-			return 1;
+		constexpr bool on_jit = false;
+#endif
+#if UML_FEX_ASM_JIT
+		if (on_jit) {
+			/* One instruction per dispatch: the engine's single step. Under TF
+			 * a repeated string instruction traps after each iteration, with
+			 * RF set and RIP still on it; a K state follows the whole
+			 * instruction. */
+			auto result = uml::cpu::ExecutionResult{};
+			for (std::size_t iteration = 0; iteration < instruction_limit;
+				++iteration) {
+				cpu.rflags |= rflags_trap;
+				result = harness.run(cpu, memory, generation, 1).execution;
+				if (result.reason != uml::cpu::ExitReason::single_step ||
+					cpu.rip != address || (cpu.rflags & rflags_resume) == 0)
+					break;
+			}
+			cpu.rflags &= ~(rflags_trap | rflags_resume);
+			const auto expected_reason = expected.expected_event == 0 ?
+				uml::cpu::ExitReason::single_step :
+				uml::cpu::ExitReason::floating_point_trap;
+			if (result.reason != expected_reason) {
+				std::string detail = reason_name(result.reason);
+				if (result.reason == uml::cpu::ExitReason::breakpoint)
+					detail += " vector " + std::to_string(result.syndrome);
+				print_result(result.reason ==
+					uml::cpu::ExitReason::illegal_instruction ?
+					"illegal_instruction" : "unexpected_event",
+					state_index - 1U, address, opcode, detail, test);
+				return 1;
+			}
 		}
-		const auto result = uml::cpu::x86_64::gadgets::execute(
-			built.program, cpu, memory, executor, 1);
-		const auto expected_event = expected.expected_event == 0 ?
-			uml::cpu::EngineEvent::continued :
-			uml::cpu::EngineEvent::floating_point_trap;
-		const auto expected_retired = expected.expected_event == 0 ? 1U : 0U;
-		if (result.event != expected_event ||
-			result.retired_instructions != expected_retired) {
-			print_result("unexpected_event", state_index - 1U, address, opcode,
-				event_name(result.event), test);
-			return 1;
+#endif
+#if UML_FEX_ASM_GADGETS
+		if (!on_jit) {
+			const auto built = uml::cpu::x86_64::gadgets::build(
+				memory, address, cpu.execution_mode);
+			if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built) {
+				const auto status = built.status ==
+					uml::cpu::x86_64::gadgets::BuildStatus::fetch_fault ?
+					"memory_fault" : "illegal_instruction";
+				print_result(status, state_index - 1U, address, opcode,
+					"K trace instruction did not build", test);
+				return 1;
+			}
+			const auto result = uml::cpu::x86_64::gadgets::execute(
+				built.program, cpu, memory, executor, 1);
+			const auto expected_event = expected.expected_event == 0 ?
+				uml::cpu::EngineEvent::continued :
+				uml::cpu::EngineEvent::floating_point_trap;
+			const auto expected_retired = expected.expected_event == 0 ? 1U : 0U;
+			if (result.event != expected_event ||
+				result.retired_instructions != expected_retired) {
+				print_result("unexpected_event", state_index - 1U, address, opcode,
+					event_name(result.event), test);
+				return 1;
+			}
 		}
 #endif
 		if (expected.expected_event != 0)
@@ -1535,12 +1741,33 @@ using Exclusions = std::map<std::string, std::string, std::less<>>;
 			excluded_class = exclusion->second;
 			named.insert(exclusion->first);
 		}
-		const auto result = kind == corpus_kind_k ?
-			run_k_trace(code, payload, case_count, name,
-				(flags & 2U) != 0) :
-			run_fex_case(code, payload, name, true,
-				kind == corpus_kind_repository ?
-					Dispatch::cached : Dispatch::fresh);
+		const auto run_record = [&]() {
+			return kind == corpus_kind_k ?
+				run_k_trace(code, payload, case_count, name,
+					(flags & 2U) != 0) :
+				run_fex_case(code, payload, name, true,
+					kind == corpus_kind_repository ?
+						Dispatch::cached : Dispatch::fresh);
+		};
+#if UML_FEX_ASM_SWITCH
+		int result = 0;
+		if (switch_sweep) {
+			/* The JIT alone is the JIT corpus test's; every handover from
+			 * the gadgets must end the same way. */
+			for (switch_after = 1; switch_after <= instruction_limit;
+				switch_after = next_switch_point(switch_after)) {
+				switch_taken = false;
+				result = run_record();
+				if (result != 0 || !switch_taken)
+					break;
+			}
+			switch_after = 0;
+		} else {
+			result = run_record();
+		}
+#else
+		const auto result = run_record();
+#endif
 		excluded_class = {};
 #if UML_FEX_ASM_JIT
 		/* Before a later case's space can retire this one's buffers. */
@@ -1886,10 +2113,35 @@ struct RetirementCase final {
 		(void)run_configured_case(code, configuration, test.name, false,
 			Dispatch::cached);
 		capture_results = false;
-		const bool passed = reported.status == test.status &&
+		bool passed = reported.status == test.status &&
 			reported.retired == test.retired &&
 			reported.address == test.address &&
 			(!test.stop_rax || reported.rax == *test.stop_rax);
+#if UML_FEX_ASM_SWITCH
+		/* The same stop, after the same count, from every handover. */
+		for (switch_after = 1; switch_sweep && passed &&
+			switch_after <= instruction_limit;
+			switch_after = next_switch_point(switch_after)) {
+			switch_taken = false;
+			capture_results = true;
+			reported = {};
+			(void)run_configured_case(code, configuration, test.name, false,
+				Dispatch::cached);
+			capture_results = false;
+			passed = reported.status == test.status &&
+				reported.retired == test.retired &&
+				reported.address == test.address &&
+				(!test.stop_rax || reported.rax == *test.stop_rax);
+			if (!passed)
+				std::cout << "status=failed\ttest=" << test.name <<
+					"\tswitch=" << switch_after << "\tstop=" <<
+					reported.status << "\tretired=" << reported.retired <<
+					'\n';
+			if (!switch_taken)
+				break;
+		}
+		switch_after = 0;
+#endif
 		if (!passed)
 			++failures;
 		std::cout << "status=" << (passed ? "passed" : "failed") << '\t'
@@ -1920,6 +2172,13 @@ int main(int argc, char **argv)
 {
 	if (argc == 2 && std::string_view{argv[1]} == "--retirement")
 		return run_retirement_cases();
+#if UML_FEX_ASM_SWITCH
+	if (argc == 3 && std::string_view{argv[1]} == "--switch-sweep" &&
+		std::string_view{argv[2]} == "--retirement") {
+		switch_sweep = true;
+		return run_retirement_cases();
+	}
+#endif
 	std::vector<std::byte> first;
 	std::string error;
 	/* Corpus options come before the corpus. */
@@ -1949,6 +2208,11 @@ int main(int argc, char **argv)
 			++index;
 		} else if (option == "--emitted-registers") {
 			check_emitted_registers = true;
+			++index;
+#endif
+#if UML_FEX_ASM_SWITCH
+		} else if (option == "--switch-sweep") {
+			switch_sweep = true;
 			++index;
 #endif
 		} else {
@@ -1983,7 +2247,7 @@ int main(int argc, char **argv)
 	print_result("malformed_input", 0, 0, {},
 #if UML_FEX_ASM_JIT
 		"usage: runner [--exclusions LIST] [--code-size-per-node BYTES] "
-		"[--require-growth] [--emitted-registers] CORPUS | "
+		"[--require-growth] [--emitted-registers] [--switch-sweep] CORPUS | "
 #else
 		"usage: runner [--exclusions LIST] CORPUS | "
 #endif

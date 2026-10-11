@@ -232,6 +232,7 @@ public:
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
 			return -UML_EMULATOR_UNSUPPORTED;
 		runtime_.set_top_byte_ignore(prepared.top_byte_ignore);
+		runtime_.set_x86_jit_tier(prepared.jit_tier_instructions);
 		const bool jit_run = !prepared.informational &&
 			runtime_.execution_engine() ==
 				::uml::runtime::ExecutionEngine::jit;

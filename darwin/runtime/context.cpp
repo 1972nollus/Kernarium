@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <optional>
 #include <thread>
 #include <unordered_map>
@@ -362,6 +363,28 @@ ExecutionEngine Context::execution_engine() const noexcept
 void Context::set_top_byte_ignore(bool enabled) noexcept
 {
 	top_byte_ignore_.store(enabled, std::memory_order_release);
+}
+
+void Context::set_x86_jit_tier(std::uint64_t instructions) noexcept
+{
+	x86_jit_tier_.store(instructions, std::memory_order_release);
+}
+
+std::uint64_t Context::x86_jit_tier() const noexcept
+{
+	return x86_jit_tier_.load(std::memory_order_acquire);
+}
+
+X86TierTable *Context::x86_tier_table(X86TierTable::Live live) noexcept
+{
+	const auto threshold = x86_jit_tier();
+	if (threshold == 0)
+		return nullptr;
+	std::call_once(x86_tier_once_, [&]() noexcept {
+		x86_tier_table_ = std::unique_ptr<X86TierTable>{
+			new (std::nothrow) X86TierTable{threshold, live}};
+	});
+	return x86_tier_table_.get();
 }
 
 bool Context::top_byte_ignore() const noexcept

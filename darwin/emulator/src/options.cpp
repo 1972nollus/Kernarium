@@ -17,6 +17,7 @@ namespace uml::emulator {
 constexpr std::string_view jit_cache_budget_prefix{"--jit-cache-budget="};
 constexpr std::string_view jit_executor_cache_budget_prefix{
 	"--jit-executor-cache-budget="};
+constexpr std::string_view jit_tier_prefix{"--jit-tier="};
 namespace {
 
 [[nodiscard]] bool has_argument(
@@ -238,6 +239,20 @@ EmulatorOptions prepare_emulator_options(
 				::uml::runtime::parse_translation_cache_quantity(
 					quantity.c_str());
 			if (prepared.jit_cache_budget == 0) {
+				prepared.valid = false;
+				return prepared;
+			}
+			continue;
+		}
+		if (argument.starts_with(jit_tier_prefix)) {
+			/* A plain count of instructions; zero keeps the JIT on from
+			 * the first. */
+			const auto count = argument.substr(jit_tier_prefix.size());
+			const auto *end = count.data() + count.size();
+			const auto parsed = std::from_chars(count.data(), end,
+				prepared.jit_tier_instructions);
+			if (count.empty() || parsed.ec != std::errc{} ||
+			    parsed.ptr != end) {
 				prepared.valid = false;
 				return prepared;
 			}

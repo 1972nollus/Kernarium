@@ -250,6 +250,39 @@ void test_guest_memory_budget_matches_kernel_memparse()
 		"private JIT cache cap above 256 MiB was accepted");
 }
 
+void test_jit_tier_option()
+{
+	const char *absent[]{"uml-test"};
+	require(uml::emulator::prepare_emulator_options(
+		1, absent, "/tmp/rootfs.erofs").jit_tier_instructions == 0,
+		"the JIT tier defaulted to something other than off");
+	const char *tiered[]{"uml-test", "--jit-tier=200000000",
+		"ip=dhcp"};
+	auto options = uml::emulator::prepare_emulator_options(
+		3, tiered, "/tmp/rootfs.erofs");
+	require(options.valid && options.jit_tier_instructions == 200000000ULL &&
+		!contains(options, tiered[1]) && contains(options, "ip=dhcp"),
+		"the JIT tier was not consumed by the host");
+	const char *zero[]{"uml-test", "--jit-tier=0"};
+	options = uml::emulator::prepare_emulator_options(
+		2, zero, "/tmp/rootfs.erofs");
+	require(options.valid && options.jit_tier_instructions == 0,
+		"a zero JIT tier was rejected");
+	const char *repeated[]{"uml-test", "--jit-tier=5", "--jit-tier=7"};
+	options = uml::emulator::prepare_emulator_options(
+		3, repeated, "/tmp/rootfs.erofs");
+	require(options.valid && options.jit_tier_instructions == 7,
+		"the last repeated JIT tier did not win");
+	for (const char *invalid : {"--jit-tier=", "--jit-tier=20M",
+		"--jit-tier=-1", "--jit-tier=1 ", "--jit-tier=0x10",
+		"--jit-tier=99999999999999999999"}) {
+		const char *arguments[]{"uml-test", invalid};
+		require(!uml::emulator::prepare_emulator_options(
+			2, arguments, "/tmp/rootfs.erofs").valid,
+			"a malformed JIT tier was accepted");
+	}
+}
+
 void test_scalable_native_kernel_layout_geometry()
 {
 	constexpr std::uint64_t kib = 1024ULL;
@@ -521,6 +554,7 @@ int main()
 		test_explicit_defaults_are_preserved();
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
+		test_jit_tier_option();
 		test_scalable_native_kernel_layout_geometry();
 		test_reserved_native_window_has_no_gap();
 		test_guest_cpu_count_matches_kernel_policy();
