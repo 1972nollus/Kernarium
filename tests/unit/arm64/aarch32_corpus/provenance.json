@@ -1,6 +1,6 @@
 {
   "architecture_archive_sha256": "b389a93f41504376895b723ed6e9861ce369e2253c138e6f4c46e27e95375887",
-  "cases": 33175,
+  "cases": 33173,
   "kind": "aarch32",
   "oracles": {
     "profile": {},
@@ -11,7 +11,7 @@
       "runner": "qemu-arm -cpu max"
     }
   },
-  "pack_sha256": "a5962a3ce10ceda6264a9d140dad0f89f6044f7060daecd0ea23b6fa36e7238e",
+  "pack_sha256": "eff8528d2b91094bdcf65936b8799b451b3465594566aeca0e96417457a99b07",
   "records": {
     "absent-profile": 751,
     "alu-qemu": 7684,
@@ -27,7 +27,7 @@
     "pc-qemu": 88,
     "prefetch-qemu": 144,
     "simd-memory-qemu": 3721,
-    "simd-qemu": 10228,
+    "simd-qemu": 10226,
     "simd-steps-qemu": 164,
     "straddle-qemu": 60,
     "system-qemu": 324
