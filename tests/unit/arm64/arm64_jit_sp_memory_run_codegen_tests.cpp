@@ -103,13 +103,30 @@ void page_limits_select_only_safe_prefixes() {
                              test_branch_displacement_mask) == 1,
           "exact-page-end SP pair omitted its flag-neutral page rejection");
 
-  const std::array rejected{beyond, beyond};
+  const std::array rejected{near, beyond};
   const auto rejected_compiled =
       jit_test::compile_block(code_base + 0x5100U, rejected);
   require(count_word(hot_code(rejected_compiled, rejected.size()),
                      translation_probe) ==
               rejected.size(),
-          "out-of-page static offsets were coalesced");
+          "SP offsets spanning more than a page were coalesced");
+
+  const std::array far{beyond, unsigned_x(true, page_units + 1U, 31, 4)};
+  const auto far_hot =
+      hot_code(jit_test::compile_block(code_base + 0x5180U, far), far.size());
+  require(count_word(far_hot, translation_probe) == 1,
+          "SP fields beyond a page did not share one translation");
+  require(count_word(far_hot, sp_alignment_extract) == 1,
+          "far SP run did not check SP alignment once");
+  require(count_word(far_hot, run_base_forward(page_units * 8U)) == 1 &&
+              count_word(far_hot, run_base_back(page_units * 8U)) == 1,
+          "SP run did not translate its first accessed byte");
+  require(count_word(far_hot, page_span_eor) == 1 &&
+              count_page_span_tbnz(far_hot) == 1,
+          "far SP run omitted its accessed-span page proof");
+  require(count_memory_form(far_hot, far[0]) == 1 &&
+              count_memory_form(far_hot, far[1]) == 1,
+          "far SP fields lost their native offsets");
 
   const std::array shrunk{near, near, beyond};
   const auto shrunk_compiled =

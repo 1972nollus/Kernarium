@@ -201,7 +201,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
-      return ordered_memory(false);
+      emit_native_ordered_load(instruction, pc,
+                               ColdPath::Action::memory_slow);
+      return Action::keep_going;
     }
     if ((instruction & 0x3f20'0c00U) == 0x1900'0000U) {
       const unsigned size = instruction >> 30;

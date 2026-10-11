@@ -402,6 +402,14 @@
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_gadget_a32_corpus_tests uml_arm64_aarch32_corpus)
+    # The exclusive records with the host interrupting the guest's thread
+    # throughout. A store-exclusive may fail without cause (a host interrupt
+    # ends the monitor the gadgets use) and the corpus's single attempts must
+    # tolerate it; this lane makes that happen so the tolerance is measured
+    # and not left to the load a gate happens to run under.
+    uml_add_unit_test(NAME arm64-gadget-a32-corpus-interrupted
+        COMMAND uml_arm64_gadget_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
+            --record exclusive-qemu --passes 200 --interrupt)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
