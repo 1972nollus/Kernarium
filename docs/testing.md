@@ -953,8 +953,8 @@ decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
 subnormal input, which exercises the correction for a host whose FJCVTZS
 reports it as exact. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
-programs against an independent reference of the instruction forms (the corpus
-carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
+programs, conditions included, against an independent reference of the
+instruction forms (the corpus carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
 subtract form against a lane model and requires the lowered ones to stay out
 of the library.
 `arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap

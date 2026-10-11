@@ -202,7 +202,38 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
   return emit_guarded(condition);
 }
 
+bool A32Compiler::can_predicate() const {
+  const auto &inst = cur().inst;
+  const auto &o = inst.operands;
+  const auto info = op_info(inst.form);
+  switch (info.op) {
+  case Op::adc: case Op::add: case Op::and_: case Op::bic: case Op::eor:
+  case Op::mov: case Op::mvn: case Op::orn: case Op::orr: case Op::rsb:
+  case Op::rsc: case Op::sbc: case Op::sub:
+    // A shift by a register compares its amount and clobbers the host flags.
+    return !o.setflags && o.d != 15 && info.shape != Shape::reg_shifted;
+  case Op::movw:
+    return o.d != 15;
+  default:
+    return false;
+  }
+}
+
+A32Compiler::Flow A32Compiler::emit_predicated(unsigned condition) {
+  /* The instruction runs on both arms with the guest's flags in the host
+   * NZCV, which it leaves alone, and writes its result to a scratch
+   * register; done() selects between that and the destination's old value. */
+  load_flags();
+  predicated_ = true;
+  predicate_condition_ = condition;
+  const auto flow = emit_operation();
+  predicated_ = false;
+  return flow;
+}
+
 A32Compiler::Flow A32Compiler::emit_guarded(unsigned condition) {
+  if (can_predicate())
+    return emit_predicated(condition);
   /* The body runs on one arm only. Publish the flags both arms keep, branch
    * on the host flags, and leave both arms with the same register bindings
    * (restore_residency/close_conditional_body). */

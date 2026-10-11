@@ -978,7 +978,11 @@ compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
 and publication: R0-R14 are resident host registers written back at every
 exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
-condition is a branch over the body, and a link's target is the key. Every exit
+condition is a branch over the body (a conditional data-processing instruction
+that sets no flags and writes no PC, and MOVW, instead runs on both arms and
+a CSEL on the host flags keeps its result only where the condition holds, so
+no data-dependent branch is left to mispredict), and a link's target is the
+key. Every exit
 whose successor is static (a branch, the fall-through of a block the 60
 instructions of a window cut short, the arm of a conditional instruction or
 CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a

@@ -159,6 +159,12 @@ private:
   void emit_block();
   Flow emit_instruction();
   Flow emit_guarded(unsigned condition);
+  /* Whether the conditional instruction can run on both arms and keep its
+   * result only where the condition holds: a data-processing instruction
+   * (or MOVW) that leaves the host flags alone (it sets none and shifts by
+   * no register) and does not write the PC. */
+  [[nodiscard]] bool can_predicate() const;
+  Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
   void emit_cold_paths();
   void emit_slow_helper(const ColdPath &cold);
@@ -413,6 +419,10 @@ private:
    * holds, because the VCMP before it left them there and nothing came
    * between. */
   std::size_t flags_held_by_vmrs_{~std::size_t{0}};
+  /* A predicated instruction computes its result in a scratch register,
+   * which done() merges into the destination with a CSEL on the host flags. */
+  bool predicated_{false};
+  unsigned predicate_condition_{};
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};
