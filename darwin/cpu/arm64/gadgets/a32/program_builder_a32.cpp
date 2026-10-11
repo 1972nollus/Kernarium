@@ -46,6 +46,24 @@ UML_A32_DECLARE_CONDITIONAL(lt)
 UML_A32_DECLARE_CONDITIONAL(gt)
 UML_A32_DECLARE_CONDITIONAL(le)
 #undef UML_A32_DECLARE_CONDITIONAL
+#define UML_A32_DECLARE_COMPARE_BRANCH(cc) \
+	void uml_arm64_gadget_compare_register_branch_w_##cc##_inline(); \
+	void uml_arm64_gadget_compare_immediate_branch_w_##cc##_inline();
+UML_A32_DECLARE_COMPARE_BRANCH(eq)
+UML_A32_DECLARE_COMPARE_BRANCH(ne)
+UML_A32_DECLARE_COMPARE_BRANCH(hs)
+UML_A32_DECLARE_COMPARE_BRANCH(lo)
+UML_A32_DECLARE_COMPARE_BRANCH(mi)
+UML_A32_DECLARE_COMPARE_BRANCH(pl)
+UML_A32_DECLARE_COMPARE_BRANCH(vs)
+UML_A32_DECLARE_COMPARE_BRANCH(vc)
+UML_A32_DECLARE_COMPARE_BRANCH(hi)
+UML_A32_DECLARE_COMPARE_BRANCH(ls)
+UML_A32_DECLARE_COMPARE_BRANCH(ge)
+UML_A32_DECLARE_COMPARE_BRANCH(lt)
+UML_A32_DECLARE_COMPARE_BRANCH(gt)
+UML_A32_DECLARE_COMPARE_BRANCH(le)
+#undef UML_A32_DECLARE_COMPARE_BRANCH
 #define UML_A32_DECLARE_BARRIER(n) \
 	void uml_arm64_gadget_dmb_##n(); \
 	void uml_arm64_gadget_dsb_##n();
@@ -95,6 +113,39 @@ constexpr std::array<void (*)(), 14> conditional_inline{
 	uml_arm64_gadget_branch_hi_inline, uml_arm64_gadget_branch_ls_inline,
 	uml_arm64_gadget_branch_ge_inline, uml_arm64_gadget_branch_lt_inline,
 	uml_arm64_gadget_branch_gt_inline, uml_arm64_gadget_branch_le_inline};
+/* The AArch64 bank's fused CMP and B.cond, in the 32-bit form, which read
+ * the same CpuState slots an AArch32 register is in: a compare followed at
+ * once by a conditional branch whose fall-through is translated inline. */
+constexpr std::array<void (*)(), 14> compare_register_branch_inline{
+	uml_arm64_gadget_compare_register_branch_w_eq_inline,
+	uml_arm64_gadget_compare_register_branch_w_ne_inline,
+	uml_arm64_gadget_compare_register_branch_w_hs_inline,
+	uml_arm64_gadget_compare_register_branch_w_lo_inline,
+	uml_arm64_gadget_compare_register_branch_w_mi_inline,
+	uml_arm64_gadget_compare_register_branch_w_pl_inline,
+	uml_arm64_gadget_compare_register_branch_w_vs_inline,
+	uml_arm64_gadget_compare_register_branch_w_vc_inline,
+	uml_arm64_gadget_compare_register_branch_w_hi_inline,
+	uml_arm64_gadget_compare_register_branch_w_ls_inline,
+	uml_arm64_gadget_compare_register_branch_w_ge_inline,
+	uml_arm64_gadget_compare_register_branch_w_lt_inline,
+	uml_arm64_gadget_compare_register_branch_w_gt_inline,
+	uml_arm64_gadget_compare_register_branch_w_le_inline};
+constexpr std::array<void (*)(), 14> compare_immediate_branch_inline{
+	uml_arm64_gadget_compare_immediate_branch_w_eq_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ne_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_hs_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_lo_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_mi_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_pl_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_vs_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_vc_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_hi_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ls_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_ge_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_lt_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_gt_inline,
+	uml_arm64_gadget_compare_immediate_branch_w_le_inline};
 constexpr std::array<void (*)(), 14> conditional_plain{
 	uml_arm64_gadget_branch_eq, uml_arm64_gadget_branch_ne,
 	uml_arm64_gadget_branch_hs, uml_arm64_gadget_branch_lo,
@@ -208,7 +259,7 @@ void Translator::credit()
 	if (!run_active_)
 		return;
 	push(G::credit);
-	patches_.emplace_back(words_.size(), compiled_ + 1);
+	patches_.push_back({words_.size(), compiled_ + 1, 0});
 	push(0);
 }
 
@@ -359,11 +410,29 @@ Translator::Result Translator::emit_dp_values(const Instruction &in,
 			}
 		}
 	}
+	/* ADD or SUB of an immediate to a register in place: the entry with
+	 * the register baked. R15 and the scratch slots are not registers. */
+	if (shape == shape_imm && (op == op_add || op == op_sub) && rd == rn &&
+	    rd < 15U * 8U) {
+		push(kDpInplace[op == op_sub ? 1 : 0][sets ? 1 : 0][rd / 8U]);
+		push(word);
+		return {false, sets};
+	}
 	const G which = kDp[op][sets ? 1 : 0][shape];
 	if (which == G::count)
 		return {};
 	push(which);
 	push(word);
+	/* A plain CMP is the first half of a fused compare and branch: of a
+	 * register, or of an immediate that fits the fused entry's field. */
+	if (op == op_cmp && in.cond == 14 && !in.in_it) {
+		if (shape == shape_reg) {
+			compare_ = {words_.size(), false, rn << 16 | rm << 32};
+		} else if (shape == shape_imm && immediate < (1U << 24)) {
+			compare_ = {words_.size(), true,
+				    (rn / 8U) << 8 | std::uint64_t{immediate} << 16};
+		}
+	}
 	return {false, sets};
 }
 
@@ -481,6 +550,14 @@ Translator::Result Translator::emit_multiply(const Instruction &in,
 	}
 	case Family::div:
 		push(plan.sub == 0 ? G::sdiv : G::udiv);
+		push(d | n << 8 | m << 16);
+		return {};
+	case Family::parallel:
+		push(kParallel[plan.sub / 6U][plan.sub % 6U]);
+		push(d | n << 8 | m << 16);
+		return {};
+	case Family::sel:
+		push(G::sel);
 		push(d | n << 8 | m << 16);
 		return {};
 	default:
@@ -869,9 +946,25 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 			return {true, false};
 		}
 		if (linked() && !input_.single) {
+			if (compare_.end == words_.size() && !in.in_it) {
+				/* The compare just pushed and this branch are
+				 * one entry: the AArch64 bank's fused pair
+				 * takes the compare's operand word, with the
+				 * count of instructions behind the branch in
+				 * its top bits, and the link. */
+				words_.truncate(words_.size() - 2U);
+				push_external((compare_.immediate ?
+					compare_immediate_branch_inline :
+					compare_register_branch_inline)[in.cond]);
+				patches_.push_back({words_.size(), compiled_ + 1,
+						    compare_.immediate ? 40U : 48U});
+				push(compare_.operand);
+				push_link(target);
+				return {};
+			}
 			push_external(conditional_inline[in.cond]);
 			push_link(target);
-			patches_.emplace_back(words_.size(), compiled_ + 1);
+			patches_.push_back({words_.size(), compiled_ + 1, 0});
 			push(0);
 			return {};
 		}
@@ -926,7 +1019,7 @@ Translator::Result Translator::emit_branch(const Instruction &in,
 			push(nonzero ? G::cbnz_inline : G::cbz_inline);
 			push(rn);
 			push_link(target);
-			patches_.emplace_back(words_.size(), compiled_ + 1);
+			patches_.push_back({words_.size(), compiled_ + 1, 0});
 			push(0);
 			return {};
 		}
@@ -1061,6 +1154,8 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::mulh:
 	case Family::mulxy:
 	case Family::div:
+	case Family::parallel:
+	case Family::sel:
 		return emit_multiply(in, plan);
 	case Family::movw:
 	case Family::movt:
@@ -1261,8 +1356,10 @@ BuildOutput Translator::run()
 	} else {
 		close_run();
 	}
-	for (const auto &[index, through] : patches_)
-		words_[index] = compiled_ > through ? compiled_ - through : 0;
+	for (const auto &patch : patches_)
+		words_[patch.index] |= std::uintptr_t{
+			compiled_ > patch.through ? compiled_ - patch.through : 0}
+			<< patch.shift;
 
 	BuildOutput output{
 		BuildResult{Program{input_.key, compiled_, std::move(words_),

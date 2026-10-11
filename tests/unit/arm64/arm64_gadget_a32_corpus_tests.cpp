@@ -205,8 +205,27 @@ public:
 			.generation = generation_,
 			.instruction_budget = budget,
 		};
-		return ::uml::cpu::arm64::detail::run_translated_aarch32_blocks(
+		/* The low halves of v8 to v15 are callee-saved in the host's calling
+		 * convention, and no gadget may write them. */
+		const std::uint64_t before[8] = {
+			0x0101'0101'0101'0101ULL, 0x0202'0202'0202'0202ULL,
+			0x0303'0303'0303'0303ULL, 0x0404'0404'0404'0404ULL,
+			0x0505'0505'0505'0505ULL, 0x0606'0606'0606'0606ULL,
+			0x0707'0707'0707'0707ULL, 0x0808'0808'0808'0808ULL};
+		std::uint64_t after[8] = {};
+		asm volatile("ldp d8, d9, [%0]\n\tldp d10, d11, [%0, #16]\n\t"
+			     "ldp d12, d13, [%0, #32]\n\tldp d14, d15, [%0, #48]"
+			     :: "r"(before) : "memory", "v8", "v9", "v10", "v11",
+			     "v12", "v13", "v14", "v15");
+		auto result = ::uml::cpu::arm64::detail::run_translated_aarch32_blocks(
 			executor_, request);
+		asm volatile("stp d8, d9, [%0]\n\tstp d10, d11, [%0, #16]\n\t"
+			     "stp d12, d13, [%0, #32]\n\tstp d14, d15, [%0, #48]"
+			     :: "r"(after) : "memory");
+		for (unsigned index = 0; index < 8; ++index)
+			require(after[index] == before[index],
+				"a gadget wrote a callee-saved vector register");
+		return result;
 	}
 
 	/* The word at a code address, for the exits Linux turns into SIGTRAP. */
