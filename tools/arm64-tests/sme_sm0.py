@@ -7,9 +7,10 @@ The guest's SME profile has FEAT_SME without FEAT_SVE, so outside
 streaming mode an SVE word is UNDEFINED, as on an Apple M4. The engines
 make one deliberate exception, the SM=0 family: CNTB/H/W/D, RDVL, ADDVL,
 ADDPL and the scalar INCB/H/W/D and DECB/H/W/D execute there with a
-constant 128-bit vector length. This module finds what real SME code
-executes outside streaming mode, so that every other word is a decision
-rather than a guest SIGILL.
+constant 128-bit vector length, and so do LDR and STR of Z and P registers
+(base plus immediate, MUL VL), the callee-saved spills, which move 16 and 2
+bytes. This module finds what real SME code executes outside streaming
+mode, so that every other word is a decision rather than a guest SIGILL.
 
 A function is SME code when it contains SMSTART or SMSTOP, an MRS or MSR
 of SVCR or TPIDR2_EL0, or an SME word that uses ZA. Its bounds come from
@@ -39,7 +40,8 @@ with the generated SVE/SME encoding table (sme_encoding_table.py):
 - unadvertised: a word of a feature the profile lacks (SME2 and later).
 
 The last three are SIGILL at SM 0 in the guest. The first two are
-decisions (extend the family or withhold SME from the workload); an
+decisions (the SVE data processing, loads and stores of an SVE function
+outside streaming mode are a limit of the SM=0 family, not an oversight); an
 unadvertised word runs only past the code's own check for its feature, such
 as compiler-rt's ZT0 save behind its FEAT_SME2 test, so it is listed for
 review. A function whose only markers are ZA-like words its walk never
@@ -82,6 +84,7 @@ FAMILY = frozenset({
     "rdvl_r_i_", "addvl_r_ri_", "addpl_r_ri_",
     "incb_r_rs_", "inch_r_rs_", "incw_r_rs_", "incd_r_rs_",
     "decb_r_rs_", "dech_r_rs_", "decw_r_rs_", "decd_r_rs_",
+    "ldr_z_bi_", "str_z_bi_", "ldr_p_bi_", "str_p_bi_",
 })
 
 # The features an SME word may need and the guest still has outside
@@ -208,9 +211,9 @@ def classify(word: int, table) -> Classified:
     row = table.row_for(word)
     if row is None:
         return Classified("a64", "")
-    if row.encoding in FAMILY:
-        return Classified("family", row.encoding)
     note = _spill_note(word, row)
+    if row.encoding in FAMILY:
+        return Classified("family", row.encoding, note)
     if "sve" in row.non_streaming_requirement:
         if not row.requirement:
             note = note or "non-streaming-only form"
