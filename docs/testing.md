@@ -976,7 +976,9 @@ rounding mode and flush mode in the contexts that guard them and the one that
 does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
 through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
 taking the library, with its data and faults, across a page, on a misalignment
-and into an unmapped page, where the library leaves the guest's FP environment
+and into an unmapped page (every load form across a page at every offset, with
+the two pages adjacent in the host and not, and with no library call once the
+TLB holds both), where the library leaves the guest's FP environment
 installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
 MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
 classes.

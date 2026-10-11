@@ -12,7 +12,9 @@
 // path to uml_arm64_jit_a32_execute, which runs the instruction in the
 // semantic library and so faults, and orders its effects, as the reference
 // does; the hot path changes no architectural state before the access is
-// known to complete.
+// known to complete. A load of at most 32 bytes that crosses a page stays in
+// the translation (emit_crossing_cold) and takes the library only when
+// either page is missing from the TLB.
 //
 // A run of consecutive registers moves as whole Q registers where it is
 // aligned to one (memory order is the little-endian register order, so a Q
@@ -43,6 +45,10 @@ constexpr unsigned fallback_m = 10;
 constexpr unsigned address_register = 8;
 constexpr unsigned s_data = 0;
 constexpr unsigned s_view = 6;
+
+/* The most a load can span and still cross a page through the staging area
+ * (CpuState::a32_cross holds 32 bytes from each page). */
+constexpr std::size_t staged_load_limit = 32;
 
 /* The log2 of the element size that selects the LD1/ST1 lane forms (2 = 32
  * bits, 3 = 64 bits). */
@@ -204,7 +210,8 @@ A32Compiler::Flow A32Compiler::emit_vector_register_transfer(bool store) {
   // MemA: both widths need the alignment of their words.
   emit_alignment_check(address_register, 4, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store ? std::nullopt : std::optional{make_label()});
   const unsigned log2_size = bytes == 4U ? word_size : double_size;
   if (store) {
     track_direct_store(address_register, bytes);
@@ -245,7 +252,10 @@ A32Compiler::Flow A32Compiler::emit_vector_block_transfer(bool store) {
   }
   emit_alignment_check(address_register, 4, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store || bytes > staged_load_limit
+                     ? std::nullopt
+                     : std::optional{make_label()});
   if (store)
     track_direct_store(address_register, bytes);
   vmem_run(!store, single, first, regs);
@@ -329,7 +339,10 @@ A32Compiler::Flow A32Compiler::emit_vector_structure(const VInfo &v) {
     emit_alignment_check(address_register,
                          static_cast<unsigned>(o.alignment), slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store || bytes > staged_load_limit
+                     ? std::nullopt
+                     : std::optional{make_label()});
   if (store)
     track_direct_store(address_register, bytes);
 

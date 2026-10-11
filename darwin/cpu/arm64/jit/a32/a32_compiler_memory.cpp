@@ -18,6 +18,7 @@
 #include "a32_encoders.hpp"
 #include "a32_helpers.hpp"
 #include "a32_operations.hpp"
+#include "a32_vector_encoders.hpp"
 
 #include "cpu/arm64/memory.hpp"
 #include "memory/tlb.hpp"
@@ -43,17 +44,7 @@ constexpr unsigned temp0 = 0;
 // The shared TLB fast path (a copy of JitCompiler::emit_translate; the A64
 // compiler's is a member of a class this one is not part of).
 
-void A32Compiler::emit_translate(unsigned address, Access access,
-                                 Arm64Emitter::Label fallback,
-                                 Arm64Emitter::Label fault,
-                                 std::size_t bytes) {
-  if (bytes > 1) {
-    emitter_.ubfm(0, address, 0, page_shift - 1);
-    emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
-    /* bytes is below one page, so the sum is below two pages and its page
-     * bit is the complete crossing test. */
-    emitter_.test_zero(fallback, 0, page_shift, true);
-  }
+void A32Compiler::emit_tlb_index(unsigned address) {
   emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
   emitter_.ubfm(0, address, page_shift,
@@ -67,6 +58,21 @@ void A32Compiler::emit_translate(unsigned address, Access access,
   emitter_.ubfm(0, 0, 0, ::uml::memory::tlb_index_bits - 1U);
   emitter_.add_shifted(0, 14, 0, 5);
 #endif
+}
+
+void A32Compiler::emit_translate(unsigned address, Access access,
+                                 Arm64Emitter::Label fallback,
+                                 Arm64Emitter::Label fault,
+                                 std::size_t bytes,
+                                 std::optional<Arm64Emitter::Label> crossing) {
+  if (bytes > 1) {
+    emitter_.ubfm(0, address, 0, page_shift - 1);
+    emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
+    /* bytes is below one page, so the sum is below two pages and its page
+     * bit is the complete crossing test. */
+    emitter_.test_zero(crossing.value_or(fallback), 0, page_shift, true);
+  }
+  emit_tlb_index(address);
   const unsigned page_offset = access == Access::write ? 16U : 0U;
   const auto slow = emitter_.make_label();
   const auto complete = emitter_.make_label();
@@ -82,6 +88,61 @@ void A32Compiler::emit_translate(unsigned address, Access access,
       .address = address,
       .access = access,
   });
+  if (crossing && bytes > 1)
+    crossing_cold_.push_back({
+        .label = *crossing,
+        .continuation = complete,
+        .slow = fallback,
+        .address = address,
+        .bytes = bytes,
+    });
+}
+
+/* The load crossed into the next page. Both pages' read translations come
+ * from the TLB (a miss on either leaves the instruction to the library, which
+ * fills it). When the two mappings are adjacent in the host a single access
+ * serves, as within one page. Otherwise the last 32 bytes of the first page
+ * and the first 32 of the second are copied side by side into the staging
+ * area and the load reads from there, at the guest's offset. Only x0-x2, x9,
+ * x10, x16, V0-V3 and x8 are used, and the host flags are not. */
+void A32Compiler::emit_crossing_cold(const CrossingColdPath &path) {
+  constexpr unsigned first_delta = 16;
+  constexpr unsigned last_address = 10;
+  emitter_.bind(path.label);
+  const auto probe = [&](unsigned address) {
+    emit_tlb_index(address);
+    emitter_.load_pair_x(2, 9, 0, 0);
+    emitter_.emit(0xca01'0042U); // eor x2, x2, x1
+    emitter_.compare_zero(path.slow, 2, true, true);
+  };
+  probe(path.address);
+  emitter_.move_x(first_delta, 9);
+  emitter_.add_immediate(last_address, path.address,
+                         static_cast<unsigned>(path.bytes - 1U));
+  probe(last_address);
+  const auto staged = emitter_.make_label();
+  emitter_.emit(0xca09'0000U | first_delta << 5); // eor x0, x16, x9
+  emitter_.compare_zero(staged, 0, true, true);
+  emitter_.add_shifted(path.address, path.address, 9, 0);
+  emitter_.branch(path.continuation);
+  emitter_.bind(staged);
+  // x0: the second page's first byte; x8 - x0 is the first page's share.
+  emitter_.emit(0xb240'0000U | (page_shift - 1U) << 10 |
+                path.address << 5); // orr x0, x8, #(page - 1)
+  emitter_.add_immediate(0, 0, 1);
+  emitter_.add_shifted(1, 0, first_delta, 0);
+  emitter_.subtract_immediate(1, 1, 32);
+  emitter_.add_shifted(2, 0, 9, 0);
+  emit(enc::vec::ldp_q(0, 1, 1, 0));
+  emit(enc::vec::ldp_q(2, 3, 2, 0));
+  emitter_.add_immediate(1, 15, offsetof(CpuState, a32_cross));
+  emit(enc::vec::stp_q(0, 1, 1, 0));
+  emit(enc::vec::stp_q(2, 3, 1, 32));
+  emitter_.emit(0xcb00'0000U | path.address << 16); // sub x0, x0, x8
+  emitter_.add_immediate(path.address, 1, 32);
+  emitter_.emit(0xcb00'0000U | path.address << 5 |
+                path.address); // sub x8, x8, x0
+  emitter_.branch(path.continuation);
 }
 
 void A32Compiler::emit_translation_cold(const TranslationColdPath &path) {

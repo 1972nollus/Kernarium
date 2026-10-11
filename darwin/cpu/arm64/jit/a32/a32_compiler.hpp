@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <optional>
 #include <vector>
 
 namespace uml::cpu::arm64::jit::a32 {
@@ -130,6 +131,18 @@ private:
     ::uml::memory::Access access;
   };
 
+  /* An Advanced SIMD load whose span crosses a page: the cold path probes
+   * both pages and either reads through the first page's mapping (the two are
+   * adjacent in the host) or stages the bytes and reads those. A miss on
+   * either page runs the instruction in the library. */
+  struct CrossingColdPath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+    Arm64Emitter::Label slow;
+    unsigned address;
+    std::size_t bytes;
+  };
+
   /* A host register holding a W value and, for a destination, how it is
    * committed. */
   struct Dest final {
@@ -228,10 +241,17 @@ private:
   [[nodiscard]] Flow emit_exclusive(const Transfer &transfer);
   /* The whole instruction in the slow helper. */
   [[nodiscard]] Flow emit_through_helper();
+  /* The load of `bytes` (at most CrossingColdPath's limit) at `address`
+   * branches to `crossing` instead of `slow` when it spans two pages. */
   void emit_translate(unsigned address, ::uml::memory::Access access,
                       Arm64Emitter::Label slow, Arm64Emitter::Label fault,
-                      std::size_t bytes);
+                      std::size_t bytes,
+                      std::optional<Arm64Emitter::Label> crossing =
+                          std::nullopt);
+  /* x1 takes the page number of `address` and x0 the TLB entry's address. */
+  void emit_tlb_index(unsigned address);
   void emit_translation_cold(const TranslationColdPath &path);
+  void emit_crossing_cold(const CrossingColdPath &path);
   void emit_alignment_check(unsigned address, unsigned alignment,
                             Arm64Emitter::Label slow);
   /* The address of a single or paired transfer in x8 (the base for a
@@ -413,6 +433,7 @@ private:
   std::vector<Decoded> block_;
   std::vector<ColdPath> cold_;
   std::vector<TranslationColdPath> translation_cold_;
+  std::vector<CrossingColdPath> crossing_cold_;
   std::vector<ResumePath> resume_cold_;
   std::vector<FloatColdPath> float_cold_;
   /* The index of the VMRS APSR_nzcv, FPSCR whose flags the host NZCV already

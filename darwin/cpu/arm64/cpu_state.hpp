@@ -189,6 +189,11 @@ struct CpuState final {
 	 * environment clears this; it means nothing while gadget_fp_active is
 	 * clear. */
 	std::uint8_t a32_fp_standard{};
+	/* The JIT's staging for an Advanced SIMD load that crosses between two
+	 * pages whose host mappings are not adjacent: the last 32 bytes of the
+	 * first page, then the first 32 of the second. It holds nothing between
+	 * two instructions. */
+	alignas(16) std::array<std::uint8_t, 64> a32_cross{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{

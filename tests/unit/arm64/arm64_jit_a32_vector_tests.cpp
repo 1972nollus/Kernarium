@@ -492,15 +492,113 @@ void vector_memory_across_a_page() {
   // The 32-byte structure load starts 16 bytes before the end of the page.
   const std::size_t crossing = guest_page - 16;
   auto cpu = memory_task(crossing);
-  ExitCount exits;
   const auto result = fixture.run(cpu);
   require(result.reason == ExitReason::system_call);
   require(result.retired_instructions == 7);
-  require(ExitCount::total() != 0); // the access is the library's
   check_memory_program(fixture, cpu, crossing);
 }
 
-/* A memory transfer the library runs (an access across a page) leaves the
+// ---------------------------------------------------------------------------
+// Loads that cross a page: through the first page's mapping where the two are
+// adjacent in the host, through the staging area where they are not, and in the
+// library where either page is not in the TLB.
+
+struct CrossingLoad final {
+  std::uint32_t word;
+  unsigned bytes;
+  int offset;        // the immediate added to the base (negative: subtracted)
+  unsigned multiple; // the alignment of the address the form needs
+};
+
+constexpr std::array<CrossingLoad, 22> crossing_loads{{
+    {0xf422'070fU, 8, 0, 1},   // vld1.8 {d0}, [r2]
+    {0xf422'0a4fU, 16, 0, 1},  // vld1.16 {d0, d1}, [r2]
+    {0xf422'068fU, 24, 0, 1},  // vld1.32 {d0-d2}, [r2]
+    {0xf422'02cfU, 32, 0, 1},  // vld1.64 {d0-d3}, [r2]
+    {0xf422'020dU, 32, 0, 1},  // vld1.8 {d0-d3}, [r2]!
+    {0xf422'080fU, 16, 0, 1},  // vld2.8 {d0, d1}, [r2]
+    {0xf422'034fU, 32, 0, 1},  // vld2.16 {d0-d3}, [r2]
+    {0xf422'040fU, 24, 0, 1},  // vld3.8 {d0-d2}, [r2]
+    {0xf422'0043U, 32, 0, 1},  // vld4.16 {d0-d3}, [r2], r3
+    {0xf422'000fU, 32, 0, 1},  // vld4.8 {d0-d3}, [r2]
+    {0xf4a2'088fU, 4, 0, 1},   // vld1.32 {d0[1]}, [r2]
+    {0xf4a2'054fU, 4, 0, 1},   // vld2.16 {d0[1], d1[1]}, [r2]
+    {0xf4a2'036fU, 4, 0, 1},   // vld4.8 {d0[3]-d3[3]}, [r2]
+    {0xf4a2'0c8fU, 4, 0, 1},   // vld1.32 {d0[]}, [r2]
+    {0xf4a2'0c6fU, 4, 0, 1},   // vld1.16 {d0[], d1[]}, [r2]
+    {0xf4a2'0e0fU, 3, 0, 1},   // vld3.8 {d0[], d1[], d2[]}, [r2]
+    {0xed92'0b00U, 8, 0, 4},   // vldr d0, [r2]
+    {0xed92'1b02U, 8, 8, 4},   // vldr d1, [r2, #8]
+    {0xec92'0b08U, 32, 0, 4},  // vldmia r2, {d0-d3}
+    {0xecb2'0a08U, 32, 0, 4},  // vldmia r2!, {s0-s7}
+    {0xec92'0b0aU, 40, 0, 4},  // vldmia r2, {d0-d4}: past the staged limit
+    {0xed32'0b04U, 16, -16, 4} // vldmdb r2!, {d0, d1}
+}};
+
+void vector_load_across_a_page() {
+  Fixture fixture{0x1a32'0d0fU};
+  fill_pattern(fixture, 2 * guest_page);
+  // Adjacent in the guest and the host, and adjacent in the guest only.
+  constexpr std::uint32_t split_base = data_base + 0x40'0000U;
+  fixture.map_data_alias(split_base, 1);
+  fixture.map_data_alias(split_base + static_cast<std::uint32_t>(guest_page), 0);
+  const std::uint32_t reference_address = data_base + 0x200U;
+  for (const bool split : {false, true}) {
+    const std::uint32_t boundary =
+        split ? split_base + static_cast<std::uint32_t>(guest_page)
+              : data_base + static_cast<std::uint32_t>(guest_page);
+    // The byte the guest sees `distance` bytes from the boundary: before it
+    // (negative) and after it.
+    const auto seen = [&](int distance) -> std::uint8_t {
+      if (!split)
+        return fixture.read8(guest_page + static_cast<std::size_t>(distance));
+      return distance < 0
+                 ? fixture.read8(2 * guest_page + static_cast<std::size_t>(distance))
+                 : fixture.read8(static_cast<std::size_t>(distance));
+    };
+    for (const auto &form : crossing_loads) {
+      fixture.code32(0, {form.word, arm_svc});
+      for (unsigned k = form.multiple; k < form.bytes; k += form.multiple) {
+        // `k` bytes before the boundary, the form's bytes in all.
+        std::array<std::byte, 64> bytes{};
+        for (unsigned j = 0; j < form.bytes; ++j)
+          bytes[j] = static_cast<std::byte>(seen(static_cast<int>(j) - static_cast<int>(k)));
+        fixture.data_bytes(0x200, std::span{bytes}.first(form.bytes));
+        const auto run = [&](std::uint32_t address, unsigned repeats) {
+          arm64::CpuState cpu{};
+          for (unsigned round = 0; round < repeats; ++round) {
+            cpu = Fixture::task(false);
+            cpu.registers[2] = address - static_cast<std::uint32_t>(form.offset);
+            cpu.registers[3] = 24U;
+            for (unsigned q = 0; q < 4; ++q)
+              for (unsigned lane = 0; lane < 4; ++lane)
+                set_lane32(cpu, q, lane, 0xa5a5'0000U + 16U * q + lane);
+            const auto result = fixture.run(cpu);
+            require(result.reason == ExitReason::system_call);
+          }
+          return cpu;
+        };
+        const auto expected = run(reference_address, 1);
+        arm64::CpuState got{};
+        {
+          // Twice to fill the TLB; the third run is the one that is timed.
+          got = run(boundary - k, 2);
+          ExitCount exits;
+          got = run(boundary - k, 1);
+          if (form.bytes <= 32U)
+            require(ExitCount::total() == 0);
+        }
+        for (unsigned q = 0; q < 4; ++q)
+          require(std::memcmp(got.vectors[q].bytes.data(),
+                              expected.vectors[q].bytes.data(), 16) == 0);
+        require(got.registers[2] - (boundary - k) ==
+                expected.registers[2] - reference_address);
+      }
+    }
+  }
+}
+
+/* A memory transfer the library runs (a store across a page) leaves the
  * guest's native floating-point environment installed: VFP instructions
  * before and after it round toward zero, and the host's own rounding is
  * nearest once the run is over. */
@@ -510,7 +608,7 @@ void library_memory_transfer_keeps_the_fp_environment() {
   fixture.code32(0, {
       0xeee1'1a10U, // vmsr fpscr, r1
       0xee30'0a81U, // vadd.f32 s0, s1, s2     (round toward zero)
-      0xf462'8a8fU, // vld1.32 {d24, d25}, [r2] (across a page: the library)
+      0xf442'8a8fU, // vst1.32 {d24, d25}, [r2] (across a page: the library)
       0xee30'ca81U, // vadd.f32 s24, s1, s2    (the guest's FPCR again)
       0xf204'7d05U, // vadd.f32 d7, d4, d5     (Neon: nearest)
       0xee30'ea81U, // vadd.f32 s28, s1, s2
@@ -520,6 +618,8 @@ void library_memory_transfer_keeps_the_fp_environment() {
     for (unsigned round = 0; round < 3; ++round) {
       auto cpu = fp_task(rounding, false);
       cpu.registers[2] = data_base + static_cast<std::uint32_t>(crossing);
+      for (unsigned lane = 0; lane < 4; ++lane)
+        set_lane32(cpu, 12, lane, 0x0102'0304U * (lane + 1U));
       ExitCount exits;
       const auto result = fixture.run(cpu);
       require(result.reason == ExitReason::system_call);
@@ -531,10 +631,8 @@ void library_memory_transfer_keeps_the_fp_environment() {
       require(half64(cpu, 3, 1) ==
               (std::uint64_t{one_ulp_up} << 32 | one_ulp_up));
       require(cpu.fpcr == rounding);
-      std::uint64_t loaded = 0;
-      std::memcpy(&loaded, cpu.vectors[12].bytes.data(), 8);
-      for (std::size_t index = 0; index < 8; ++index)
-        require(((loaded >> (8 * index)) & 0xffU) == pattern(crossing + index));
+      const auto stored = fixture.read_data(crossing, 16);
+      require(std::memcmp(stored.data(), cpu.vectors[12].bytes.data(), 16) == 0);
     }
   }
   // The host's rounding after the runs.
@@ -722,6 +820,7 @@ int main() {
   saturation_flag();
   vector_memory_stays_inline();
   vector_memory_across_a_page();
+  vector_load_across_a_page();
   library_memory_transfer_keeps_the_fp_environment();
   vector_memory_faults();
   vcmp_flags_reach_the_apsr();

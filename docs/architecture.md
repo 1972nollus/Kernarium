@@ -1047,9 +1047,15 @@ instructions do not, and answer 2.0 or 1.5 for an infinity times a zero
 without raising Invalid Operation. VLDR, VSTR and the register-list transfers
 move whole Q registers where the list is aligned to one; the structure loads
 and stores use the host LDn and STn on scratch registers. They share the
-scalar transfers' TLB sequence and alignment rule, and a page crossing, a
-faulting alignment, a PC base or a list past the register file runs the
-instruction in the semantic library instead.
+scalar transfers' TLB sequence and alignment rule. A faulting alignment, a PC
+base or a list past the register file runs the instruction in the semantic
+library instead, as does a store that crosses a page. A load of at most 32
+bytes that crosses a page stays in the translation: its cold path probes the
+TLB for both pages and, when the two mappings are adjacent in the host, reads
+through the first as within one page, and otherwise copies the last 32 bytes
+of the first page and the first 32 of the second side by side into
+`CpuState::a32_cross` and reads from there at the guest's offset. A page
+missing from the TLB takes the library, which fills it.
 
 At the complete level the JIT presents the Armv8 extensions as well, each where
 the host has its A64 feature: it decodes against `a32_decode_profile`, the
