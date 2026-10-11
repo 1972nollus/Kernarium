@@ -348,9 +348,10 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Each block sample
-also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
-one busy guest thread from a pool. Guest entry and exit store one flag each;
+symbol (the guest kernel, the executor, translation, MMU). The `gadget` lines
+count the block samples again by the gadget symbol they stopped in. Each block
+sample also records the guest thread pointer (`TPIDR_EL0`) it ran under, which
+tells one busy guest thread from a pool. Guest entry and exit store one flag each;
 the translated code is unchanged. Only the gadgets engine is sampled, so a
 macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
