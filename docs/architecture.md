@@ -150,6 +150,36 @@ dropped unmap leaves the host serving a freed page with no fault to repair it.
 A failed kernel map unmaps its own address for the same reason, degrading to
 "not mapped", which the fault path does repair.
 
+Kernel aliases are shared with the other views of their frames on both page
+profiles. The 16 KiB profile maps every `init_mm` slot as a whole host page,
+shared with the backing, so a vmalloc or vmap alias reads and writes the memory
+that the linear map, the user mappings and the devices reach. Under 4 KiB pages
+a 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
+name one 16 KiB-aligned run of frames of a single backing, with one protection,
+is the same shared host page; an empty slot is unmapped in one call. Any other
+slot is a private copy of its frames that the host publishes and refreshes only
+at its synchronization points, so it is not coherent with the other aliases of
+those frames for as long as both live. vmalloc therefore aligns, rounds and
+allocates every area in groups of four pages (`arch_vmap_group_order()`) and
+`vmap()` aligns its areas to a group, which makes the memory the kernel shares
+with user space (BPF maps and ring buffers, perf and PACKET_MMAP rings that are
+vmalloc'ed, io_uring regions) and the memory a device reads (sound buffers, GPU
+command buffers) congruent. Only a kernel-private area falls back to small
+pages when groups are unavailable. An alias that cannot be made whole groups, a
+BPF ring buffer smaller than 16 KiB or a vmap of foreign pages, is kept in step
+with the kernel-vmap hooks, `flush_kernel_vmap_range()` and
+`invalidate_kernel_vmap_range()`, which publish a private slot and refresh it
+from its frames and cost a page-table check on a shared one. A ring that lives
+in the application's own memory cannot be regrouped, so on this profile io_uring
+refuses with `EINVAL` a `IORING_SETUP_NO_MMAP` ring, a registered memory region
+or a provided-buffer ring whose pages are neither one folio nor whole aligned
+groups; the application uses a huge page or lets the kernel allocate it, as
+`IOU_PBUF_RING_MMAP` does. The host replaces a slot's shadow when the kernel
+maps a whole host page over it, publishing the shadow's stores to their own
+backing first, and keeps the shadow only when the call runs on a stack inside
+that slot. `guest-kernel-user-shared-memory` checks each sharing in both
+directions and the refusal.
+
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
 begins and is rejected when any invalidation arrives before it ends, so a walk
@@ -409,7 +439,8 @@ for a pair) of the recorded values, with status zero exactly when it
 exchanged and a failure when the recorded address or a value differs. That
 completion is value-based, so it cannot see a write that restored the value,
 and it never runs when the store hits. A fault between the pair leaves the
-loop for the kernel, whose next entry clears the record, and the loop retries
+loop for the kernel, whose next entry clears the record (an exception return
+ends the monitor; `arm64-static-runtime` checks it), and the loop retries
 from its head. The JIT's fused regions check both mappings before the
 monitor, and its semantic path keeps a software reservation; its ordinary
 stores clear the monitor, as the architecture permits.

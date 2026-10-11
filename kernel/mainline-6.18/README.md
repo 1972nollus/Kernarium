@@ -373,14 +373,45 @@ under one lock hold, applies all of them, and requeues all of them when any
 part fails, so no pending range is lost. Under 4 KiB pages one 16 KiB host
 slot carries four `init_mm` PTEs: they are sampled under the PTE lock, the
 whole host slot is dropped before the present quarters are mapped and the
-absent ones unmapped, and the first failure stops the slot. The four samples
-are not one atomic snapshot; a writer publishes its range after it changes a
-PTE, so a later walk reapplies it. A kernel-mode fault publishes exactly its
+absent ones unmapped, and the first failure stops the slot. A slot whose four
+PTEs are present, name consecutive frames from a 16 KiB-aligned offset of one
+backing, and agree in protection is mapped as one shared host page, so it is
+the same memory as the frames' other views; an empty slot is unmapped in one
+call; every other slot is a host-private copy that is coherent with the frames
+only at a synchronization point. The four samples are not one atomic snapshot;
+a writer publishes its range after it changes a PTE, so a later walk reapplies
+it. A kernel-mode fault publishes exactly its
 Linux page, synchronizes `init_mm`, and resumes only when the host confirms
 the access is backed; any other outcome panics instead of faulting again. On
 both page profiles a nested mmu-gather flush keeps the range it collected
 instead of becoming a whole-`mm` flush, because a Darwin range invalidation
 already quiesces the generation's executors and advances its epoch.
+
+Memory that the kernel shares with user space through `init_mm` must be
+whole shared slots on the 4 KiB profile, so the architecture reports a vmap
+group of four pages. vmalloc then aligns, rounds and allocates every area in
+groups and `vmap()` aligns its area to a group, so BPF maps and ring buffers,
+perf and PACKET_MMAP rings and the io_uring regions that the kernel allocates
+share their memory with user space. An area that cannot be grouped falls back
+to small pages only when it is kernel-private (never a `VM_USERMAP` one), and
+`remap_vmalloc_range` warns once about memory that is not whole groups. The
+kernel-vmap hooks `flush_kernel_vmap_range()` and
+`invalidate_kernel_vmap_range()` publish and refresh the private copy of a
+slot that cannot be shared, as they do for the callers that already bracket a
+vmap alias (XFS, dm, the DMA-BUF heaps). Pages that user space owns cannot be
+regrouped, so io_uring refuses with `EINVAL` an `IORING_SETUP_NO_MMAP` ring, a
+registered memory region or a provided-buffer ring whose pages are neither one
+folio nor whole aligned groups. The BPF ring buffer is laid out so that the
+first data copy ends on a group boundary, which is a change to
+`kernel/bpf/ringbuf.c`. The topic lives in each overlay instead of the shared
+series because the ACK file's include block and page-size macros differ, so one
+patch cannot apply to both bases; the ACK line carries an adapted variant. A
+buffer under 16 KiB brackets its wrapped tail with the vmap hooks. Perf no
+longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
+console draws into a vmap of scattered shmem pages, which is a private copy on
+this profile, so the fbdev shmem dirty callback flushes the damaged lines
+before the device reads them; without it a VNC client sees a blank console.
+Both profiles run `guest-kernel-user-shared-memory`.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no

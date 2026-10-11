@@ -591,6 +591,99 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 		"aligned direct-routing fixture retained state");
 }
 
+void test_whole_slot_map_replaces_shadow_with_shared_page()
+{
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
+	ReservedSlot slot{true};
+	auto space = uml::memory::native_address_space();
+	require(space != nullptr, "shadow replacement domain unavailable");
+	const auto base = slot.address();
+	const auto initial_mappings = space->mapping_count_for_testing();
+	const auto initial_slots = space->materialized_slot_count_for_testing();
+	const auto initial_direct = space->direct_mapping_count_for_testing();
+	for (std::size_t quarter = 0; quarter < 4; ++quarter)
+		require(darwin_uml_vm_map(reinterpret_cast<void *>(
+			base + quarter * guest_page_size), backing.descriptor(),
+			quarter * guest_page_size, guest_page_size,
+			PROT_READ | PROT_WRITE, 0, 1) == 0,
+			"shadow replacement quarter map failed");
+	require(space->mapping_count_for_testing() == initial_mappings + 4 &&
+		space->materialized_slot_count_for_testing() == initial_slots + 1,
+		"shadow replacement fixture did not start as a shadow");
+	const std::byte shadow_marker{0x5a};
+	const std::byte backing_marker{0x6b};
+	*reinterpret_cast<volatile std::byte *>(base + guest_page_size + 7) =
+		shadow_marker;
+	backing.put_byte(2 * guest_page_size + 9, backing_marker);
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base),
+		backing.descriptor(), 0, slot.size(), PROT_READ | PROT_WRITE,
+		0, 1) == 0,
+		"whole-slot map did not replace its shadow");
+	require(space->mapping_count_for_testing() == initial_mappings &&
+		space->materialized_slot_count_for_testing() == initial_slots &&
+		space->direct_mapping_count_for_testing() == initial_direct + 1,
+		"whole-slot map left shadow state behind");
+	require(backing.get_byte(guest_page_size + 7) == shadow_marker,
+		"replaced shadow lost a write it had not published");
+	require(*reinterpret_cast<volatile std::byte *>(
+		base + 2 * guest_page_size + 9) == backing_marker,
+		"shared page did not show a backing write");
+	*reinterpret_cast<volatile std::byte *>(base + 3 * guest_page_size + 5) =
+		std::byte{0x7c};
+	require(backing.get_byte(3 * guest_page_size + 5) == std::byte{0x7c},
+		"shared page write did not reach the backing");
+	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(base),
+		slot.size()) == 0 &&
+		space->mapping_count_for_testing() == initial_mappings &&
+		space->materialized_slot_count_for_testing() == initial_slots &&
+		space->direct_mapping_count_for_testing() == initial_direct,
+		"shadow replacement fixture retained state");
+}
+
+void test_whole_slot_map_publishes_the_shadow_to_its_own_backing()
+{
+	ScratchBacking old_backing{backing_name, 4 * guest_page_size};
+	ScratchBacking new_backing{backing_name, 4 * guest_page_size};
+	ReservedSlot slot{true};
+	auto space = uml::memory::native_address_space();
+	require(space != nullptr, "shadow replacement domain unavailable");
+	const auto base = slot.address();
+	const auto initial_mappings = space->mapping_count_for_testing();
+	const auto initial_slots = space->materialized_slot_count_for_testing();
+	const auto initial_direct = space->direct_mapping_count_for_testing();
+	for (std::size_t quarter : {0u, 2u})
+		require(darwin_uml_vm_map(reinterpret_cast<void *>(
+			base + quarter * guest_page_size), old_backing.descriptor(),
+			quarter * guest_page_size, guest_page_size,
+			PROT_READ | PROT_WRITE, 0, 1) == 0,
+			"replacement quarter map failed");
+	const std::byte first_marker{0x31};
+	const std::byte third_marker{0x32};
+	new_backing.put_byte(5, std::byte{0x41});
+	*reinterpret_cast<volatile std::byte *>(base + 11) = first_marker;
+	*reinterpret_cast<volatile std::byte *>(base + 2 * guest_page_size + 13) =
+		third_marker;
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base),
+		new_backing.descriptor(), 0, slot.size(), PROT_READ, 0, 0) == 0,
+		"whole-slot map of other backing did not replace its shadow");
+	require(old_backing.get_byte(11) == first_marker &&
+		old_backing.get_byte(2 * guest_page_size + 13) == third_marker,
+		"replaced shadow wrote its stores to the wrong backing");
+	require(new_backing.get_byte(11) == std::byte{0} &&
+		new_backing.get_byte(2 * guest_page_size + 13) == std::byte{0},
+		"replaced shadow wrote its stores to the new backing");
+	require(*reinterpret_cast<volatile std::byte *>(base + 5) == std::byte{0x41},
+		"shared page did not show the new backing");
+	require(space->mapping_count_for_testing() == initial_mappings &&
+		space->materialized_slot_count_for_testing() == initial_slots &&
+		space->direct_mapping_count_for_testing() == initial_direct + 1,
+		"replacement left shadow state behind");
+	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(base),
+		slot.size()) == 0 &&
+		space->direct_mapping_count_for_testing() == initial_direct,
+		"replacement fixture retained state");
+}
+
 void test_direct_retry_validates_ownership_mapping_and_permissions()
 {
 	ScratchBacking backing{backing_name, 4 * guest_page_size};
@@ -1243,6 +1336,8 @@ int main()
 		test_prot_none_shadow_flush_and_release();
 		test_shadow_sync_publishes_stable_machine_words();
 		test_bridge_uses_direct_shared_mapping_for_aligned_ranges();
+		test_whole_slot_map_replaces_shadow_with_shared_page();
+		test_whole_slot_map_publishes_the_shadow_to_its_own_backing();
 		test_direct_retry_validates_ownership_mapping_and_permissions();
 		test_direct_mapping_transitions_to_isolated_quarters();
 		test_failed_direct_transition_is_atomic_and_retryable();

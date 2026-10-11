@@ -7,3 +7,4 @@ patch	rust-bind-ashmem-personality-constant-explicitly.patch
 patch	um-present-only-a-direct-touchscreen-to-Android-guests.patch
 patch	virtio_balloon-do-not-wait-for-an-answer-from-a-broken-device.patch
 patch	drm-virtio-attach-a-buffer-imported-before-the-context-exists.patch
+patch	bpf-ringbuf-map-the-ring-in-whole-vmap-groups.patch

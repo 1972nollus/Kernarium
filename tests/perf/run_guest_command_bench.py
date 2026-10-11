@@ -23,12 +23,13 @@ from guest_bench import (  # noqa: E402
     halt,
     measure,
     print_median,
+    topology,
 )
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    add_guest_arguments(parser, cpus=1, memory="1024M")
+    add_guest_arguments(parser, cpus=4, memory="1024M")
     parser.add_argument("--command", required=True)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument(
@@ -138,7 +139,7 @@ def main() -> int:
         )
         halt(guest)
 
-    print_median(elapsed, utilization)
+    print_median(elapsed, utilization, " " + topology(arguments))
     return 0
 
 
