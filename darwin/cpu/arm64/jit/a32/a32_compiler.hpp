@@ -328,6 +328,10 @@ private:
   [[nodiscard]] Flow emit_neon(const VInfo &v);
   [[nodiscard]] bool neon_half_precision(const VInfo &v) const;
   [[nodiscard]] Flow emit_neon_same(const VInfo &v);
+  /* VMAX and VMIN (single precision) under the guest's FPCR, where the
+   * translation holds it: see emit_neon_minmax_guarded. */
+  [[nodiscard]] Flow emit_neon_minmax_guarded(const VInfo &v);
+  void emit_float_special_test(unsigned a, unsigned b, bool quad);
   [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
                                     unsigned n, unsigned m);
   [[nodiscard]] Flow emit_neon_logic(const VInfo &v);

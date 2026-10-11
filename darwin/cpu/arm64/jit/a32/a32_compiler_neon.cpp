@@ -204,6 +204,98 @@ A32Compiler::Flow A32Compiler::emit_neon(const VInfo &v) {
 }
 
 // ---------------------------------------------------------------------------
+// VMAX and VMIN in the middle of VFP code.
+//
+// A clamp between VFP operations (VMAX, VMIN on D registers) would write the
+// FPCR twice, and a write waits for the floating-point operations before it.
+// The result of VMAX and VMIN is one of the operands (or a zero), so the
+// guest's FPCR and the Standard FPSCR value part only on a nonzero denormal
+// operand, which the Standard value flushes and raises Input Denormal for, and
+// on a NaN, which it replaces by the default NaN. Integer operations test the
+// operands for those values; the operation runs under the guest's FPCR when
+// there are none, and otherwise under the Standard value as the other
+// Advanced SIMD operations do.
+
+/* x9 is nonzero when a lane of `a` or `b` is a nonzero denormal or a NaN (the
+ * low D of each for a D operation). Clobbers V2, V3, V4 and V7, sets no flag
+ * and raises no exception. */
+void A32Compiler::emit_float_special_test(unsigned a, unsigned b, bool quad) {
+  constexpr unsigned absolute = 3;
+  constexpr unsigned constant = 4;
+  constexpr unsigned mask = 7;
+  const auto mask_of = [&](unsigned x, unsigned out) {
+    // out = lanes where |x| - 1 < 0x007fffff: a nonzero denormal.
+    emit(enc::vec::float_misc(true, enc::vec::fabs_, false, absolute, x));
+    emit(enc::vec::modified_immediate(true, 0, 0x0, 1, constant));
+    emit(enc::vec::same(true, enc::vec::sub, 2, out, absolute, constant));
+    emit(enc::vec::modified_immediate(true, 0, 0xd, 0x7f, constant));
+    emit(enc::vec::same(true, enc::vec::cmhi, 2, out, constant, out));
+    // constant = lanes where |x| > 0x7f800000: a NaN.
+    emit(enc::movz(9, 0x7f80, 1));
+    emit(enc::vec::dup_general(true, 2, constant, 9));
+    emit(enc::vec::same(true, enc::vec::cmhi, 2, constant, absolute, constant));
+    emit(enc::vec::bitwise_op(true, enc::vec::orr, out, out, constant));
+  };
+  if (quad) {
+    mask_of(a, mask);
+    mask_of(b, 2);
+    emit(enc::vec::bitwise_op(true, enc::vec::orr, mask, mask, 2));
+  } else {
+    emit(enc::vec::permute(true, enc::vec::zip1, 3, 2, a, b));
+    mask_of(2, mask);
+  }
+  emit(enc::vec::same(true, enc::vec::umaxp, 2, mask, mask, mask));
+  emit(enc::vec::umov(3, 9, mask, 0));
+}
+
+A32Compiler::Flow A32Compiler::emit_neon_minmax_guarded(const VInfo &v) {
+  const auto &o = cur().inst.operands;
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  const bool quad = v.quad;
+  const auto base = enc::vec::float_same(
+      quad, v.mnemonic == VM::vmax ? enc::vec::fmax : enc::vec::fmin, false,
+      0, 0, 0);
+  const unsigned a = vsrc(n, quad, s_n);
+  const unsigned b = vsrc(m, quad, s_m);
+  const auto dest = quad ? q_def(d >> 1, false, s_result)
+                         : NativeVector{s_result, false};
+  const auto done = make_label();
+  /* Where the mode is not known, the Standard value (set already) runs the
+   * operation as it is. */
+  const bool tested = fp_mode_ == FpMode::unknown;
+  Arm64Emitter::Label standard{};
+  if (tested) {
+    standard = make_label();
+    emitter_.load_b(0, 15, offsetof(CpuState, a32_fp_standard));
+    emitter_.compare_zero(standard, 0, false, true);
+    fp_mode_ = FpMode::guest;
+  }
+  emit_float_special_test(a, b, quad);
+  const auto fast = make_label();
+  emitter_.compare_zero(fast, 9, true, false);
+  set_fp_mode(true);
+  emit_vec3(base, dest.host, a, b);
+  set_fp_mode(false);
+  emitter_.branch(done);
+  bind(fast);
+  emit_vec3(base, dest.host, a, b);
+  if (tested) {
+    emitter_.branch(done);
+    bind(standard);
+    emit_vec3(base, dest.host, a, b);
+    fp_mode_ = FpMode::unknown;
+  }
+  bind(done);
+  if (quad)
+    q_done(dest, d >> 1);
+  else
+    d_write(d, s_result);
+  return Flow::next;
+}
+
+// ---------------------------------------------------------------------------
 // Three registers of the same width.
 
 A32Compiler::Flow A32Compiler::emit_neon_same(const VInfo &v) {
@@ -225,6 +317,9 @@ A32Compiler::Flow A32Compiler::emit_neon_same(const VInfo &v) {
       (v.mnemonic == VM::vcgt && o.vtype_vcgt == aarch32::VCGTtype::fp);
   if (is_float) {
     touch_fp_environment();
+    if ((v.mnemonic == VM::vmax || v.mnemonic == VM::vmin) &&
+        fp_mode_ != FpMode::standard)
+      return emit_neon_minmax_guarded(v);
     set_fp_mode(true);
     FloatSame op = enc::vec::fadd;
     bool accumulate = false;

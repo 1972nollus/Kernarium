@@ -1017,15 +1017,19 @@ has across exits and links, as the gadget engine's does:
 `CpuState::a32_fp_standard` records it, the executor clears it where it
 activates the environment, and a translation tests the byte at the first
 instruction that needs a mode and writes the FPCR only when the mode differs.
-A saturating instruction sets QC in the host FPSR, which is the
-guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
-pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
-infinity times a zero without raising Invalid Operation. VLDR, VSTR and the
-register-list transfers move whole Q registers where the list is aligned to
-one; the structure loads and stores use the host LDn and STn on scratch
-registers. They share the scalar transfers' TLB sequence and alignment rule,
-and a page crossing, a faulting alignment, a PC base or a list past the
-register file runs the instruction in the semantic library instead.
+VMAX and VMIN of single precision return an operand, so the two modes part
+only on a nonzero denormal operand or a NaN: an integer test finds those and
+the instruction runs under the guest's FPCR otherwise, which keeps a clamp
+between VFP instructions from writing the FPCR at all. A saturating
+instruction sets QC in the host FPSR, which is the guest's. VRECPS and VRSQRTS
+round the product before the step, as the AArch32 pseudocode does and the A64
+instructions do not, and answer 2.0 or 1.5 for an infinity times a zero
+without raising Invalid Operation. VLDR, VSTR and the register-list transfers
+move whole Q registers where the list is aligned to one; the structure loads
+and stores use the host LDn and STn on scratch registers. They share the
+scalar transfers' TLB sequence and alignment rule, and a page crossing, a
+faulting alignment, a PC base or a list past the register file runs the
+instruction in the semantic library instead.
 
 At the complete level the JIT presents the Armv8 extensions as well, each where
 the host has its A64 feature: it decodes against `a32_decode_profile`, the

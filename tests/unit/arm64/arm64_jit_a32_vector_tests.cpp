@@ -168,6 +168,70 @@ void floating_point_modes_across_blocks() {
   }
 }
 
+/* VMAX and VMIN (single precision, D and Q) run under the guest's FPCR when no
+ * operand is a nonzero denormal or a NaN, after a VFP instruction and as the
+ * first floating-point instruction of a block. Whatever the operands and the
+ * guest's FPCR, their results and the cumulative flags are those of the same
+ * instructions run after an Advanced SIMD one, under the Standard FPSCR
+ * value. */
+void minmax_between_modes() {
+  Fixture fixture{0x1a32'0d05};
+  const std::uint32_t vmax_d = 0xf204'3f05U; // vmax.f32 d3, d4, d5
+  const std::uint32_t vmin_d = 0xf224'6f05U; // vmin.f32 d6, d4, d5
+  const std::uint32_t vmax_q = 0xf20a'8f4cU; // vmax.f32 q4, q5, q6
+  const std::uint32_t vmin_q = 0xf22a'ef4cU; // vmin.f32 q7, q5, q6
+  const std::uint32_t vfp_add = 0xee30'0a81U; // vadd.f32 s0, s1, s2
+  const std::uint32_t neon_add = 0xf20f'ed0fU; // vadd.f32 d14, d15, d15
+  const std::array<std::size_t, 3> offsets{0, 0x100, 0x200};
+  fixture.code32(offsets[0], {vfp_add, vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
+  fixture.code32(offsets[1], {neon_add, vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
+  fixture.code32(offsets[2], {vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
+  const std::array<std::uint32_t, 16> values{
+      0x0000'0000U, 0x8000'0000U, 0x3f80'0000U, 0xbfc0'0000U, 0x7f7f'ffffU,
+      0x7f80'0000U, 0xff80'0000U, 0x0001'2345U, 0x8001'2345U, 0x7fc0'0001U,
+      0x7f80'0001U, 0xffc1'2345U, 0x0080'0000U, 0x007f'ffffU, 0x0000'0001U,
+      0x4000'0000U};
+  std::uint64_t state = 0x9e37'79b9'7f4a'7c15ULL;
+  const auto pick = [&] {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return values[state % values.size()];
+  };
+  for (const std::uint32_t fpscr :
+       {0x0000'0000U, 0x0300'0000U, round_toward_zero, 0x0080'0000U}) {
+    for (unsigned round = 0; round < 400; ++round) {
+      std::array<std::uint32_t, 12> lanes{};
+      for (auto &lane : lanes)
+        lane = round < 16 ? values[round] : pick();
+      arm64::CpuState result[3];
+      for (unsigned run = 0; run < 3; ++run) {
+        auto cpu = Fixture::task(false, offsets[run]);
+        cpu.fpcr = fpscr;
+        set_lane32(cpu, 0, 1, one);
+        set_lane32(cpu, 0, 2, one);
+        for (unsigned lane = 0; lane < 4; ++lane) {
+          set_lane32(cpu, 2, lane, lanes[lane]);      // d4, d5
+          set_lane32(cpu, 5, lane, lanes[4 + lane]);  // q5
+          set_lane32(cpu, 6, lane, lanes[8 + lane]);  // q6
+          if (round >= 16 && round % 3 == 0)
+            set_lane32(cpu, 2, lane, lanes[(lane + 5) % 12]);
+        }
+        const auto outcome = fixture.run(cpu);
+        require(outcome.reason == ExitReason::system_call);
+        result[run] = cpu;
+      }
+      for (const unsigned run : {0U, 2U}) {
+        for (const unsigned q : {1U, 3U, 4U, 7U})
+          require(std::memcmp(result[run].vectors[q].bytes.data(),
+                              result[1].vectors[q].bytes.data(), 16) == 0);
+        require(result[run].fpsr == result[1].fpsr);
+        require(result[run].fpcr == result[1].fpcr);
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The cumulative saturation flag.
 
@@ -361,6 +425,7 @@ int main() {
   require(jit_available() == 1);
   floating_point_environment();
   floating_point_modes_across_blocks();
+  minmax_between_modes();
   saturation_flag();
   vector_memory_stays_inline();
   vector_memory_across_a_page();
