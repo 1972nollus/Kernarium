@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/a32_profile.hpp"
+#include "cpu/arm64/jit/jit_a32_support.hpp"
 
 #include <cstdint>
 
@@ -38,6 +39,9 @@ enum class Op : std::uint8_t {
   svc, bkpt, udf, mrs, msr, coprocessor, nop, dmb, dsb, isb, clrex, it,
   // VFP and Advanced SIMD (a32_vector_operations.hpp names the mnemonic).
   vector,
+  // The Armv8 extensions of the complete level that the compiler does not
+  // lower: the semantic library runs them.
+  library,
 };
 
 /* The suffix of a parallel add or subtract, with its signedness and mode. */
@@ -70,9 +74,22 @@ struct OpInfo final {
   return op >= Op::ldrex && op <= Op::stlexd;
 }
 
+/* The Armv8 extensions the compiler lowers, by instruction group. The forms
+ * of the complete level outside these (and the half-precision ones inside
+ * them) run in the semantic library. */
+enum class Ext : std::uint8_t {
+  none, crc32, aes, sha, vsel, vmaxnm, vrint, vcvt_round, vjcvt, sb,
+  dot, dot_element, rdm, vcadd, vcmla, vcmla_element,
+};
+[[nodiscard]] Ext extension_of(aarch32::Form form) noexcept;
+/* Whether the compiler lowers the form. The decoder presents a form only
+ * when the host has its extension (decode_profile), so a lowered form's A64
+ * instruction is always available. */
+[[nodiscard]] bool extension_lowered(aarch32::Form form) noexcept;
+
 /* The forms the compiler sends to the AArch32 semantic library every time
  * rather than lowering: the parallel add and subtract family, SSAT16, USAT16
- * and USAD8/USADA8. */
+ * and USAD8/USADA8, and the complete-level forms it leaves to the library. */
 [[nodiscard]] bool is_library_form(aarch32::Form form) noexcept;
 
 /* Whether the instruction ends a block: it writes the PC, raises an event or
@@ -81,7 +98,13 @@ struct OpInfo final {
 
 /* The decoder level the compiler implements. */
 [[nodiscard]] constexpr aarch32::Level a32_level() noexcept {
-  return aarch32::Level::simd;
+  return static_cast<aarch32::Level>(a32_support);
 }
+
+/* The profile the compiler and the terminal helper decode against: the
+ * level above and the optional extensions the host has, which are the ones
+ * the guest is shown (a32_decode_profile). A form of an extension the host
+ * lacks is UNDEFINED, not run in the semantic library. */
+[[nodiscard]] aarch32::Profile decode_profile() noexcept;
 
 } // namespace uml::cpu::arm64::jit::a32

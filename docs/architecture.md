@@ -837,8 +837,8 @@ Each engine's `a32_support` names how far it implements it, `none`, `base`
 milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
 AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
 new entry as the illegal-instruction exit without touching the state. The
-gadget engine is at `complete`; the JIT is at `simd` on macOS. The development policy
-`DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
+gadget engine and the JIT are both at `complete` on macOS. The development
+policy `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
 registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
@@ -978,7 +978,11 @@ compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
 and publication: R0-R14 are resident host registers written back at every
 exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
-condition is a branch over the body, and a link's target is the key. Memory
+condition is a branch over the body, and a link's target is the key. Every exit
+whose successor is static (a branch, the fall-through of a block the 60
+instructions of a window cut short, the arm of a conditional instruction or
+CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
+straight run chains like a loop. Memory
 takes the shared inline TLB sequence after a 32-bit address and the alignment
 rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
@@ -1020,6 +1024,27 @@ one; the structure loads and stores use the host LDn and STn on scratch
 registers. They share the scalar transfers' TLB sequence and alignment rule,
 and a page crossing, a faulting alignment, a PC base or a list past the
 register file runs the instruction in the semantic library instead.
+
+At the complete level the JIT presents the Armv8 extensions as well, each where
+the host has its A64 feature: it decodes against `a32_decode_profile`, the
+extensions the guest is shown, so a form of an extension the host lacks is
+UNDEFINED and never reaches the semantic library. It lowers the ones that are
+the host's own instruction on the same operands: CRC32, the AES and SHA-1 and
+SHA-256 instructions, VSEL (FCSEL on the guest flags), VMAXNM and VMINNM, VRINT
+and VCVT with a named rounding (scalar under the guest's FPCR, Advanced SIMD
+under the Standard FPSCR value), the signed and unsigned dot products, VQRDMLAH
+and VQRDMLSH, VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB
+and an ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
+FJCVTZS reports a flushed subnormal as exact, the A64 JIT's correction (a
+subnormal input is never exact) applies here too. A D-register form that A64
+has no 64-bit arrangement for (single-precision VCMLA by element) runs on the
+128-bit arrangement with the doubleword in both halves, which raises the same
+flags. The rest of the level runs in the semantic library: the other
+half-precision forms, the fused widening half-precision multiply-accumulates,
+the BFloat16 and 8-bit matrix forms and the mixed-sign dot products, and a
+half-precision variant of an Advanced SIMD floating-point form that the
+compiler does not lower, which shares the form of the single-precision one and
+differs in the operands' esize.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

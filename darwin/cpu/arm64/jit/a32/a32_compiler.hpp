@@ -168,7 +168,11 @@ private:
   void store_it(std::uint8_t value);
   void exit_event(Event event, std::uint64_t pc_key, std::uint8_t it);
   void exit_illegal();
+  /* A static successor: linked when the ITSTATE that follows is zero. The
+   * one-argument form is the exit of the instruction being translated. */
   void exit_direct(std::uint64_t target_key);
+  void exit_direct(std::uint64_t target_key, std::uint8_t it,
+                   std::size_t count);
   void exit_indirect(unsigned key_register);
   void exit_continue_at(std::uint64_t pc_key, std::uint8_t it,
                         std::size_t count);
@@ -298,6 +302,20 @@ private:
   void vmem_d_from(unsigned dreg, unsigned source, unsigned half);
   void vmem_d_into(unsigned dreg, unsigned scratch, unsigned half);
 
+  // The Armv8 extensions (a32_compiler_armv8.cpp).
+  [[nodiscard]] Flow emit_extension(const OpInfo &info);
+  [[nodiscard]] Flow emit_crc32();
+  [[nodiscard]] Flow emit_crypto();
+  [[nodiscard]] Flow emit_vsel();
+  [[nodiscard]] Flow emit_vmaxnm();
+  [[nodiscard]] Flow emit_vrint();
+  [[nodiscard]] Flow emit_vcvt_round();
+  [[nodiscard]] Flow emit_vjcvt();
+  [[nodiscard]] Flow emit_dot(bool by_element);
+  [[nodiscard]] Flow emit_rdm();
+  [[nodiscard]] Flow emit_vcadd();
+  [[nodiscard]] Flow emit_vcmla(bool by_element);
+
   // VFP (a32_compiler_vfp.cpp).
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
   [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);
@@ -308,6 +326,7 @@ private:
 
   // Advanced SIMD (a32_compiler_neon*.cpp).
   [[nodiscard]] Flow emit_neon(const VInfo &v);
+  [[nodiscard]] bool neon_half_precision(const VInfo &v) const;
   [[nodiscard]] Flow emit_neon_same(const VInfo &v);
   [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
                                     unsigned n, unsigned m);

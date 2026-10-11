@@ -55,6 +55,8 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
   case Op::usada8:
     return emit_arith_through_helper();
+  case Op::library:
+    return emit_extension(info);
   case Op::b: case Op::bl: case Op::blx: case Op::bx: case Op::cbz:
   case Op::cbnz:
     return emit_branch(info);
@@ -201,7 +203,7 @@ A32Compiler::Flow A32Compiler::emit_branch(const OpInfo &info) {
     compare_zero(not_taken, n, false, info.op == Op::cbz);
     exit_direct(aarch32::t32_key(target));
     bind(not_taken);
-    exit_continue_at(next_key(), inst.next_it.bits(), count_ + 1U);
+    exit_direct(next_key(), inst.next_it.bits(), count_ + 1U);
     return Flow::end;
   }
   default:

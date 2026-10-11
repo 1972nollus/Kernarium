@@ -396,6 +396,15 @@ namespace detail {
 	return detail::three(0x1ac0'0c00U, d, n, m);
 }
 
+/* CRC32 and CRC32C of the low 8, 16 or 32 bits of `m` into `n`: `size` is
+ * 0, 1 or 2 for B, H or W. */
+[[nodiscard]] constexpr std::uint32_t crc32(unsigned size, bool castagnoli,
+	unsigned d, unsigned n, unsigned m) noexcept
+{
+	return detail::three(0x1ac0'4000U | (castagnoli ? 1U << 12 : 0U) |
+	                         (size << 10), d, n, m);
+}
+
 /* Bit manipulation, W. */
 [[nodiscard]] constexpr std::uint32_t clz(unsigned d, unsigned n) noexcept
 {

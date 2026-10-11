@@ -367,6 +367,7 @@ set(_uml_cpu_jit_a32_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_alu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_arith.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_armv8.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_cold.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_control.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_exclusive.cpp

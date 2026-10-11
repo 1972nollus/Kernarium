@@ -33,8 +33,7 @@ A32Compiler::Flow A32Compiler::emit_neon_shift(const VInfo &v) {
   const auto &o = cur().inst.operands;
   const unsigned d = static_cast<unsigned>(o.d);
   const unsigned m = static_cast<unsigned>(o.m);
-  // The register width is the instruction's Q bit: the A32 form names of
-  // VRSRA spell the two widths the other way round.
+  // The register width is the instruction's Q bit.
   const bool quad = ((neon_word() >> 6) & 1U) != 0U;
   const unsigned esize = static_cast<unsigned>(o.esize);
   const unsigned shift = static_cast<unsigned>(o.shift_amount);

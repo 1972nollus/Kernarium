@@ -401,9 +401,11 @@ bool within_level(const Case &test, const dec::Profile &profile) {
             static_cast<int>(::uml::cpu::arm64::jit::a32::a32_level()))
       return false;
     /* An encoding the oracle executes but the JIT's own profile leaves out
-     * (the half-precision variants of the simd-level forms need FP16). */
+     * (the extensions this host lacks, such as BF16 and I8MM on the M1
+     * Ultra: the guest is shown none of them and the JIT treats them as
+     * UNDEFINED). */
     if (instruction.legal()) {
-      const auto own = dec::Profile::at(::uml::cpu::arm64::jit::a32::a32_level());
+      const auto own = ::uml::cpu::arm64::jit::a32::decode_profile();
       const auto word_at = [&](unsigned at) {
         return thumb ? (dec::thumb_length(test.halves[at]) == 4
                             ? std::uint32_t{test.halves[at]} << 16 | test.halves[at + 1]

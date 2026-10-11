@@ -21,7 +21,10 @@ engine, holds no state, and is a CPU-layer `shared` target.
 - `Profile` is a `Level` (`none`, `base`, `simd`, `complete`, as
   `A32Support`) and a `FeatureSet` for the optional extensions the host has.
   An instruction above the level is undefined with reason `profile`; one of a
-  feature the profile lacks is undefined with reason `feature`.
+  feature the profile lacks is undefined with reason `feature`. An engine
+  builds its profile with `a32_decode_profile(host, support)`
+  (`a32_profile.hpp`): the extensions `a32_features` presents to the guest,
+  so an engine never executes a form the guest was not shown.
 - `Instruction::cond` is the condition the instruction executes under: its own
   field, the IT block's condition, or 14. `in_it` and `last_in_it` describe a
   Thumb instruction's place in a block, `next_it` is the IT state after it,

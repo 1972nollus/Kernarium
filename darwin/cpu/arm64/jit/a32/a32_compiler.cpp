@@ -45,8 +45,7 @@ A32Compiler::A32Compiler(void *link_context, LinkResolver link_resolver,
                          IndirectLinkResolver indirect_link_resolver) noexcept
     : emitter_{std::size_t{1} << 18U},
       track_direct_stores_{track_direct_stores},
-      profile_{aarch32::Profile::at(
-          static_cast<aarch32::Level>(a32_level()))} {
+      profile_{decode_profile()} {
   attach_family_emitter(&emitter_, &native_fp_, !track_direct_stores_);
   attach_link_resolver(link_context, link_resolver);
   attach_indirect_link_resolver(link_context, indirect_link_resolver);
@@ -165,9 +164,12 @@ void A32Compiler::emit_block() {
   for (std::size_t index = 0; index < count_; ++index)
     units_consumed_ += block_[index].inst.length / (thumb_ ? 2U : 4U);
   if (!terminated_) {
+    /* The fetch window cut the block short. Its successor is as static as a
+     * branch target, so the exit asks for a link as a branch's does; an
+     * unlinked one returns to the executor after every full window. */
     const auto &last = block_[count_ - 1U];
-    exit_continue_at(key_at(last.pc + last.inst.length),
-                     last.inst.next_it.bits(), count_);
+    exit_direct(key_at(last.pc + last.inst.length), last.inst.next_it.bits(),
+                count_);
   }
 }
 
@@ -218,9 +220,9 @@ A32Compiler::Flow A32Compiler::emit_guarded(unsigned condition) {
     standard_fp_ = standard_before;
     const auto &d = cur();
     /* The instruction's condition failed: the block continues after it with
-     * the IT state that follows it. */
-    exit_continue_at(key_at(d.pc + d.inst.length), d.inst.next_it.bits(),
-                     count_ + 1U);
+     * the IT state that follows it, to a static successor. */
+    exit_direct(key_at(d.pc + d.inst.length), d.inst.next_it.bits(),
+                count_ + 1U);
     return Flow::end;
   }
   /* Both arms continue with the FPCR the instruction found. */
@@ -293,11 +295,15 @@ void A32Compiler::exit_continue_at(std::uint64_t pc_key, std::uint8_t it,
 }
 
 void A32Compiler::exit_direct(std::uint64_t target_key) {
-  const auto it = cur().inst.next_it.bits();
+  exit_direct(target_key, cur().inst.next_it.bits(), count_ + 1U);
+}
+
+void A32Compiler::exit_direct(std::uint64_t target_key, std::uint8_t it,
+                              std::size_t count) {
   if (it != 0U || single_) {
     /* A linked successor assumes an ITSTATE of zero, and a single
      * instruction runs unlinked. */
-    exit_continue_at(target_key, it, count_ + 1U);
+    exit_continue_at(target_key, it, count);
     return;
   }
   /* The successor runs under the guest's FPCR; the other arm of a branch
@@ -305,7 +311,7 @@ void A32Compiler::exit_direct(std::uint64_t target_key) {
   const bool standard = standard_fp_;
   restore_fp_for_exit();
   standard_fp_ = false;
-  emit_linked_exit(target_key, count_ + 1U);
+  emit_linked_exit(target_key, count);
   standard_fp_ = standard;
 }
 
