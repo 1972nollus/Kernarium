@@ -12,9 +12,9 @@ set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     # Apple targets consume the ACK artifact only. Rootfs bundles are selected
     # at launch and are not inputs to the emulator build.
-    if(NOT UML_GUEST_16K_PAGES)
+    if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
-            "The Android 17 product supports only 16 KiB guest pages")
+            "The Android 17 product supports only 4 KiB guest pages")
     endif()
     add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
         "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")

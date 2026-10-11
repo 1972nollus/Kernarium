@@ -7,6 +7,7 @@
 #include "sve_semantics_internal.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 
 namespace uml::cpu::arm64::detail {
 
@@ -167,6 +168,24 @@ SveResult execute_sve(CpuState &cpu, std::uint32_t word, const SmeEncoding &row,
 	if (result.event != SveEvent::fatal &&
 		result.event != SveEvent::undefined)
 		cpu.sve_live = 1;
+	return result;
+}
+
+SveResult execute_sm0_spill(CpuState &cpu, std::uint32_t word,
+	SveMemory &memory) noexcept
+{
+	const SmeEncoding *row = find_sme_encoding(word);
+	if (!sm0_spill_word(word) || row == nullptr ||
+		!sve_semantics_covers(*row))
+		return {.event = SveEvent::fatal};
+	/* P reads as zero and a load of P is dropped; the virtual CPU's task
+	 * has no SVE state to mark live. */
+	const auto predicates = cpu.sve_p;
+	const std::uint8_t live = cpu.sve_live;
+	cpu.sve_p = {};
+	const SveResult result = execute_sve(cpu, word, *row, memory);
+	cpu.sve_p = predicates;
+	cpu.sve_live = live;
 	return result;
 }
 

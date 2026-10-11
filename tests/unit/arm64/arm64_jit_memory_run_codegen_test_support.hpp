@@ -49,6 +49,24 @@ inline constexpr std::uint32_t monitor_clear =
      << 10U) |
     (15U << 5U) | 31U;
 inline constexpr std::uint32_t nop = 0xd503'201fU;
+// A run's straddle path finds the next page: orr x11, x8, #(page_size - 1).
+inline constexpr std::uint32_t straddle_next_page =
+    0xb240'0000U | ((page_shift - 1U) << 10U) | (8U << 5U) | 11U;
+
+/* A run whose first accessed byte is `offset` past its base, a multiple of
+ * 4 KiB, translates that byte: add x8, x8, #(offset >> 12), lsl #12 before
+ * the translation and the matching sub after it. */
+[[nodiscard]] constexpr std::uint32_t
+run_base_forward(std::uint64_t offset) noexcept {
+  return 0x9140'0000U | (static_cast<std::uint32_t>(offset >> 12U) << 10U) |
+         (8U << 5U) | 8U;
+}
+
+[[nodiscard]] constexpr std::uint32_t
+run_base_back(std::uint64_t offset) noexcept {
+  return 0xd140'0000U | (static_cast<std::uint32_t>(offset >> 12U) << 10U) |
+         (8U << 5U) | 8U;
+}
 
 struct Variant final {
   unsigned size_shift;
@@ -104,6 +122,27 @@ hot_code(const uml::cpu::arm64::jit::testing::CompiledCode &compiled,
   return {compiled.words.begin(),
           compiled.words.begin() +
               static_cast<std::ptrdiff_t>(compiled.hot_words)};
+}
+
+/* The cold code after a block's hot words. */
+[[nodiscard]] inline std::vector<std::uint32_t>
+cold_code(const uml::cpu::arm64::jit::testing::CompiledCode &compiled) {
+  return {compiled.words.begin() +
+              static_cast<std::ptrdiff_t>(compiled.hot_words),
+          compiled.words.end()};
+}
+
+/* Counts the straddle path's copies of `guest`, which address through the
+ * per-access base it selects into x0. */
+[[nodiscard]] inline std::size_t
+count_straddle_form(std::span<const std::uint32_t> words,
+                    std::uint32_t guest) {
+  return static_cast<std::size_t>(
+      std::ranges::count_if(words, [&](std::uint32_t current) {
+        return (current & ~memory_register_mask) ==
+                   (guest & ~memory_register_mask) &&
+               ((current >> 5U) & 31U) == 0U;
+      }));
 }
 
 [[nodiscard]] inline std::size_t

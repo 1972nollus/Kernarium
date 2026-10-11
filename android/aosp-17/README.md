@@ -20,8 +20,8 @@ publication are offline.
 
 The producer has five independent outputs:
 
-1. a replayed and built ACK 16 KiB kernel, published as a kernel artifact;
-2. the `aosp_kernarium_darwin-user` target files;
+1. a replayed and built ACK 4 KiB kernel, published as a kernel artifact;
+2. the `aosp_kernarium_darwin` target files of the configured build variant;
 3. a kernel-less OrangeFox recovery partition;
 4. one static GPT guest disk containing both boot ramdisks; and
 5. a compact rootfs release installed by Apple consumers.
@@ -77,10 +77,22 @@ a placeholder; amend it as described in
 
 ## Android product
 
-The product is ARM64-only, 16 KiB-only, `user`, and built-in-kernel-only. It
-removes Cuttlefish virtual hardware and services that have no Darwin UML
-implementation while preserving Android framework APIs required by ordinary
-applications.
+The product is ARM64-only, 4 KiB-only, and built-in-kernel-only. The kernel
+runs 4 KiB pages, because Android's 32-bit libraries are 4 KiB aligned; the
+64-bit userspace stays page-agnostic (a 16 KiB maximum ELF alignment and no
+compile-time bionic page-size macro), so it is valid on a kernel of either
+size, and `ro.product.page_size` reports 4096.
+
+The build variant is the single `ANDROID17_BUILD_VARIANT` setting in
+`metadata/aosp.env`, `user` or `userdebug`. Lunch, the target-files verifier,
+the release manifest and the accepted-release descriptor all follow it, so a
+release is accepted only as the variant the tracked tree builds. A `user` build
+keeps the stock shell privilege boundary; a `userdebug` build is the
+development variant (see the ADB paragraph below).
+
+The product removes Cuttlefish virtual hardware and services that have no
+Darwin UML implementation while preserving Android framework APIs required by
+ordinary applications.
 
 The image provides Settings, Launcher, Files, Package Installer, WebView,
 LatinIME, ThemePicker, and the patched Jelly browser. QuickSearchBox and its
@@ -124,7 +136,12 @@ product starts adbd on TCP port 5555 and retains the stock authorization prompt
 for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
 property can disable that check for host-side diagnostics: iOS fixes it to one,
 while the standalone macOS product fixes it to zero. Bundle command lines may
-not override this host security choice. Android's wireless-debugging setting
+not override this host security choice. Under `userdebug`, `adb root` restarts
+adbd as root and the build is debuggable: on macOS, which authorizes nothing,
+any local process that reaches the loopback ADB port can become root in the
+guest, an accepted property of a development host. iOS keeps authorization.
+SELinux stays enforcing in both variants; only the host-owned kernel command
+line could change that. Android's wireless-debugging setting
 uses the active Virtio-net Ethernet interface as its trusted-network identity,
 monitors that transport for reconnect and disconnect, and publishes its mDNS
 services without requiring a Wi-Fi manager or multicast lock. Fresh
@@ -377,8 +394,9 @@ independent compatible ACK artifact and performs no rootfs, kernel commit, or
 emulator release comparison at launch. A bundle's expanded disk remains usable
 across compatible kernel updates within the `6.18` line. A kernel-only update
 therefore advances only
-[`accepted-16k.env`](../../kernel/android-6.18/artifacts/accepted-16k.env) and
-keeps the accepted release; release s35 runs a later ACK than it records.
+[`accepted-4k.env`](../../kernel/android-6.18/artifacts/accepted-4k.env) and
+keeps the accepted release, which then runs a later ACK than the one it
+records.
 
 ### Superseded releases
 
@@ -419,7 +437,7 @@ Kernarium represents one Android guest as a `.kern` directory containing:
 The kernel is supplied by the runtime framework and is not bundle payload. The
 manifest is provenance rather than a runtime compatibility token, and legacy
 bundles without it remain selectable. Missing files and malformed disk images
-fail when opened or parsed. Android fixes Kernarium's page selection at 16 KiB
+fail when opened or parsed. Android fixes Kernarium's page selection at 4 KiB
 and appends the host-owned display density, ADB authorization policy, and
 tagged-pointer option at launch. Launches write persistent guest changes
 directly into the image inside the `.kern` bundle.

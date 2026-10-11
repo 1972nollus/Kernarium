@@ -173,6 +173,8 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto hot_words = emitter_.size();
     for (const auto &translation : translation_cold_)
       emit_translation_cold(translation);
+    for (const auto &straddle : run_straddles_)
+      emit_run_straddle(straddle);
     for (const auto &cold : cold_) {
       set_exit_gpr_mask(cold.dirty_gprs);
       set_exit_vector_mask(cold.dirty_vectors);
@@ -223,6 +225,10 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       } else if (cold.action == ColdPath::Action::sve_slow) {
         emit_terminal_helper(
             reinterpret_cast<const void *>(&uml_arm64_jit_execute_sve),
+            cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::sm0_spill_slow) {
+        emit_terminal_helper(
+            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sm0_spill),
             cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
         emitter_.emit(0xd503'3f5fU); // clrex
@@ -323,6 +329,10 @@ void JitCompiler::select_consecutive_vector_lists(
         ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
          (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
     if (native_scalar_lse)
+      return false;
+    /* LDAR runs natively, and its misaligned or tagged fallback only
+     * reads: it establishes no reservation and waits for no publication. */
+    if ((instruction & 0x3fff'fc00U) == 0x08df'fc00U)
       return false;
     const bool scalar_atomic =
         (instruction & 0x3f20'0c00U) == 0x3820'0000U;
