@@ -1744,6 +1744,10 @@ u64 engine_addpl(u64 base);
 u64 engine_incd(u64 value);
 u64 engine_decb(u64 value);
 u64 engine_cntb_streaming();
+/* ... and its LDR and STR of Z and P: x0 is where to store, x1 where to load
+ * from. */
+void engine_spill_z(u8 *out, const u8 *in);
+void engine_spill_p(u8 *out);
 }
 
 __asm__(R"(
@@ -1784,6 +1788,18 @@ engine_incd:
 	.globl engine_decb
 engine_decb:
 	.inst	0x0430e7e0	// decb x0
+	ret
+	.globl engine_spill_z
+engine_spill_z:
+	.inst	0x85804030	// ldr z16, [x1]
+	.inst	0x85804431	// ldr z17, [x1, #1, mul vl]
+	.inst	0xe5804810	// str z16, [x0, #2, mul vl]
+	.inst	0xe5bd5411	// str z17, [x0, #-19, mul vl]
+	ret
+	.globl engine_spill_p
+engine_spill_p:
+	.inst	0xe5800c04	// str p4, [x0, #3, mul vl]
+	.inst	0x85bf1c05	// ldr p5, [x0, #-1, mul vl]
 	ret
 	.globl engine_cntb_streaming
 engine_cntb_streaming:
@@ -1916,6 +1932,27 @@ void run_engine()
 	check_value(engine_addpl(100), 102, "ADDPL scales by 2 at SM = 0");
 	check_value(engine_incd(10), 12, "INCD adds 2 at SM = 0");
 	check_value(engine_decb(40), 24, "DECB subtracts 16 at SM = 0");
+	/* LDR and STR of Z and P move 16 and 2 bytes: Z through V, and P as
+	 * zeros, wherever the offset reaches. */
+	u8 spill_in[32], spill_out[512];
+	for (u64 index = 0; index < sizeof spill_in; index++)
+		spill_in[index] = static_cast<u8>(index * 7 + 1);
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_z(spill_out + 320, spill_in);
+	bool spilled = memcmp(spill_out + 16, spill_in + 16, 16) == 0 &&
+		memcmp(spill_out + 352, spill_in, 16) == 0;
+	for (u64 index = 0; index < sizeof spill_out; index++)
+		if ((index < 16 || (index >= 32 && index < 352) || index >= 368) &&
+		    spill_out[index] != 0xaa)
+			spilled = false;
+	check(spilled, "STR and LDR of Z move 16 bytes at SM = 0");
+	memset(spill_out, 0xaa, sizeof spill_out);
+	engine_spill_p(spill_out + 16);
+	bool predicate = spill_out[22] == 0 && spill_out[23] == 0;
+	for (u64 index = 0; index < 64; index++)
+		if (index != 22 && index != 23 && spill_out[index] != 0xaa)
+			predicate = false;
+	check(predicate, "STR of P stores two zero bytes and LDR of P loads two");
 	check_value(engine_cntb_streaming(), svl, "CNTB reads the SVL in streaming mode");
 	check_value(engine_read_svcr(), 0, "and streaming mode ended");
 	engine_smstart_za();
