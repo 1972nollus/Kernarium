@@ -576,16 +576,16 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	require(executor.cache_diagnostics().validation_attempts == 0);
 }
 
-/* Address spaces that leave the cache give their translations' storage back,
- * and the survivors keep theirs.
+/* Address spaces that leave the cache free their translations' storage for
+ * translations of any size, and the survivors keep theirs.
  *
- * Each address space's translations are carved from storage of its own, which
- * is returned when its last translation leaves, so retiring one releases
- * storage while the others keep running from theirs. Enough blocks per address
- * space to need more than one piece of that storage, more address spaces than
- * the cache keeps, and blocks chosen so that no set ever overflows: then every
- * miss below is a retirement's, every hit has to come out of storage that
- * outlived another space's release, and each block's own value proves which
+ * Retiring an address space frees all its translations at once, and the arena
+ * merges what they leave into free blocks that other translations are cut
+ * from. Blocks of five lengths that differ between address spaces, enough of
+ * them to fill several chunks, more address spaces than the cache keeps, and
+ * blocks chosen so that no set ever overflows: then every miss below is a
+ * retirement's, the retranslations are cut from holes of other sizes around
+ * the survivors' translations, and each block's own value proves which
  * translation ran.
  */
 void retired_address_spaces_release_and_the_others_keep_running()
@@ -595,23 +595,33 @@ void retired_address_spaces_release_and_the_others_keep_running()
 		static_cast<std::size_t>(UML_GADGET_RESIDENT_GENERATIONS);
 	constexpr std::size_t spaces = resident + 2;
 	constexpr std::size_t blocks = 1024;
+	/* Instructions a block may hold: up to four moves into x1, the move
+	 * into x0 its value is read from, and the call that ends it. */
+	constexpr std::size_t longest = 6;
 	const auto value = [](std::size_t space, std::size_t block) {
 		return static_cast<unsigned>((block * 7U + space * 131U) & 0xffffU);
+	};
+	const auto moves = [](std::size_t space, std::size_t block) {
+		return (block + space) % (longest - 1);
 	};
 
 	std::vector<std::size_t> load(cache_sets);
 	std::vector<std::uint64_t> pcs;
-	for (std::uint64_t pc = code_base; pcs.size() < blocks; pc += 8) {
+	for (std::uint64_t pc = code_base; pcs.size() < blocks;) {
 		bool fits = true;
 		for (std::size_t space = 0; space < spaces; ++space)
 			fits = fits && load[cache_set(first + space, pc)] < cache_ways;
-		if (!fits)
+		if (!fits) {
+			pc += sizeof(std::uint32_t);
 			continue;
+		}
 		for (std::size_t space = 0; space < spaces; ++space)
 			++load[cache_set(first + space, pc)];
 		pcs.push_back(pc);
+		pc += longest * sizeof(std::uint32_t);
 	}
-	const auto extent = pcs.back() + 8 - code_base;
+	const auto extent =
+		pcs.back() + longest * sizeof(std::uint32_t) - code_base;
 	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
 		DARWIN_UML_GUEST_PAGE_SIZE;
 
@@ -620,9 +630,14 @@ void retired_address_spaces_release_and_the_others_keep_running()
 	for (std::size_t space = 0; space < spaces; ++space) {
 		backings.push_back(std::make_unique<JitBacking>(pages));
 		for (std::size_t block = 0; block < blocks; ++block) {
-			backings.back()->put32(pcs[block] - code_base,
+			auto at = pcs[block] - code_base;
+			for (std::size_t move = 0; move < moves(space, block);
+			     ++move, at += sizeof(std::uint32_t))
+				backings.back()->put32(at, move_immediate(1,
+					static_cast<unsigned>(move)));
+			backings.back()->put32(at,
 				move_immediate(0, value(space, block)));
-			backings.back()->put32(pcs[block] - code_base + 4,
+			backings.back()->put32(at + sizeof(std::uint32_t),
 				system_call);
 		}
 		mappings.push_back(std::make_unique<JitMapping>(

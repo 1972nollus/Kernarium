@@ -243,21 +243,21 @@ private:
  * classes and the capacity a stream reached by doubling. Sixteen-byte classes
  * over bump-allocated chunks hold the same programs in 65 MiB.
  *
- * Each address space carves its bodies from chunks of its own, so bodies that
- * leave together share chunks: retiring an address space frees every body in
- * its chunks, and the arena returns them in one pass when the last one goes.
- * With one set of chunks for all of them, a retired address space left holes
- * between the survivors' bodies and no chunk ever emptied, so a browser that
- * cycles through more address spaces than the cache keeps held its high-water
- * mark, about twice its live bodies. See G226. Within an address space a freed
- * body returns to the class it came from, so retranslating a block reuses its
- * predecessor's bytes. An address space's chunks start small and double, so
- * one that stores a few blocks does not hold a whole chunk for them.
+ * Freed space is reused by best fit: a block comes from the smallest free
+ * block that holds it, split off the front, and a freed block merges with the
+ * free blocks on either side, so the holes a retired address space leaves can
+ * be taken by bodies of any size rather than only by bodies of the sizes it
+ * freed. A chunk whose last block is freed is unmapped. With freed blocks kept
+ * only for their own sixteen-byte size and chunks never returned, a browser
+ * that cycles through more address spaces than the cache keeps held the
+ * arena's high-water mark, about twice its live bodies, and a cache too small
+ * for its working set grew while a tenth of it was free. See G226. A free
+ * touches a few map words and at most two neighbours, so retiring an address
+ * space still costs in proportion to what it owned. See G167.
  *
- * A chunk is an anonymous mapping of its own rather than a heap block. The heap
- * keeps blocks of this size resident when they are freed, in the process's
- * footprint until it hands them out again, so a chunk given back to it would
- * still cost what the arena held at its high-water mark.
+ * A chunk is an anonymous mapping of its own rather than a heap block: the
+ * heap keeps freed blocks of this size resident, in the process's footprint,
+ * until it hands them out again.
  *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
@@ -265,7 +265,10 @@ private:
  * asks this when a terminal exit lands in a linked successor, which a
  * measured guest did about once per hundred and twenty stores; the index by
  * stream address that this replaces was maintained at every one of those
- * stores, five set installs per program. See G203.
+ * stores, five set installs per program. See G203. A second map marks where
+ * each free block starts; the blocks of a chunk tile it up to where it is
+ * still being carved, and no two free blocks are adjacent, so the two maps
+ * give every block's extent.
  */
 class BodyArena final {
 public:
@@ -279,11 +282,10 @@ public:
 	~BodyArena()
 	{
 		for (const auto &chunk : chunks_)
-			unmap(chunk.base, chunk.bytes);
+			unmap(chunk.base);
 	}
 
-	/* A block for a body of the address space `space`. */
-	[[nodiscard]] void *allocate(std::size_t bytes, unsigned long space)
+	[[nodiscard]] void *allocate(std::size_t bytes)
 	{
 		const auto size = rounded(bytes);
 		if (size > largest_class) {
@@ -295,39 +297,10 @@ public:
 			direct_.push_back({block, size});
 			return block;
 		}
-		auto &pool = pool_of(space);
-		if (auto *block = pool.free[size / granule]; block != nullptr) {
-			pool.free[size / granule] = next_of(block);
-			mark(*chunk_of(block), block, true);
-			++pool.blocks;
+		const auto granules = size / granule;
+		if (auto *block = reuse(granules); block != nullptr)
 			return block;
-		}
-		if (size > pool.limit - pool.used) {
-			const auto wanted = std::max(size, pool.next_chunk);
-			auto starts = std::make_unique<std::uint64_t[]>(
-				map_words(wanted));
-			auto *base = map(wanted);
-			/* Kept in address order, which is what owner() searches. */
-			const auto inserted = chunks_.insert(
-				std::upper_bound(chunks_.begin(), chunks_.end(),
-					base, before_chunk),
-				Chunk{base, wanted, std::move(starts), &pool});
-			/* The tail of the chunk being left behind is at most one
-			 * body, and one partly used chunk per address space is
-			 * the arena's slack beyond the holes evictions leave. */
-			pool.next_chunk = std::min(pool.next_chunk * 2,
-				largest_chunk);
-			pool.current = base;
-			pool.current_starts = inserted->starts.get();
-			pool.used = 0;
-			pool.limit = wanted;
-		}
-		auto *block = pool.current + pool.used;
-		pool.current_starts[pool.used / granule / 64] |=
-			std::uint64_t{1} << (pool.used / granule % 64);
-		pool.used += size;
-		++pool.blocks;
-		return block;
+		return carve(granules);
 	}
 
 	void deallocate(void *block, std::size_t bytes) noexcept
@@ -346,14 +319,40 @@ public:
 			return;
 		}
 		const auto &chunk = *chunk_of(freed);
-		auto &pool = *chunk.pool;
-		if (--pool.blocks == 0) {
-			release(pool);
+		auto first = static_cast<std::size_t>(freed - chunk.base) /
+			granule;
+		auto count = size / granule;
+		clear(chunk.starts(), first);
+		const auto end = tiled(chunk);
+		if (first + count < end && test(chunk.free(), first + count)) {
+			const auto next = first + count;
+			const auto next_count = extent(chunk, next, end);
+			unlist(chunk.base + next * granule, next_count);
+			clear(chunk.free(), next);
+			count += next_count;
+		}
+		if (first != 0) {
+			const auto previous = previous_start(chunk, first);
+			if (test(chunk.free(), previous)) {
+				unlist(chunk.base + previous * granule,
+					first - previous);
+				clear(chunk.free(), previous);
+				count += first - previous;
+				first = previous;
+			}
+		}
+		if (chunk.base == current_ && first + count == used_) {
+			/* Back into the part of the chunk still being
+			 * carved. */
+			used_ = first;
 			return;
 		}
-		mark(chunk, freed, false);
-		next_of(freed) = pool.free[size / granule];
-		pool.free[size / granule] = freed;
+		if (count == chunk_granules) {
+			release(chunk);
+			return;
+		}
+		set(chunk.free(), first);
+		list(chunk.base + first * granule, count);
 	}
 
 	/* The live block holding an address, or nullptr. */
@@ -363,12 +362,13 @@ public:
 		if (const auto *chunk = chunk_of(at); chunk != nullptr) {
 			const auto index =
 				static_cast<std::size_t>(at - chunk->base) / granule;
-			/* Nothing in a chunk spans more than the largest class,
-			 * so a start any further below is another block's. */
+			/* No live block spans more than the largest class, so
+			 * a start any further below is another block's. */
 			const auto floor = index >= largest_class / granule ?
 				(index - largest_class / granule) / 64 : 0;
+			const auto *starts = chunk->starts();
 			auto word = index / 64;
-			auto bits = chunk->starts[word] &
+			auto bits = starts[word] &
 				(~std::uint64_t{0} >> (63 - index % 64));
 			for (;;) {
 				if (bits != 0)
@@ -379,7 +379,7 @@ public:
 						granule;
 				if (word == floor)
 					return nullptr;
-				bits = chunk->starts[--word];
+				bits = starts[--word];
 			}
 		}
 		for (const auto &direct : direct_)
@@ -391,36 +391,31 @@ public:
 	/* What the arena holds, which is what the cache costs. */
 	[[nodiscard]] std::size_t bytes() const noexcept
 	{
-		std::size_t total = 0;
+		std::size_t total = chunks_.size() * chunk_bytes;
 		for (const auto &direct : direct_)
 			total += direct.bytes;
-		for (const auto &chunk : chunks_)
-			total += chunk.bytes;
 		return total;
 	}
 
-	/* The start maps, which are what owner() costs. */
+	/* The start maps, which are what owner() and reuse cost. */
 	[[nodiscard]] std::size_t index_bytes() const noexcept
 	{
-		std::size_t total = 0;
-		for (const auto &chunk : chunks_)
-			total += map_words(chunk.bytes) * sizeof(std::uint64_t);
-		return total;
+		return chunks_.size() * 2 * map_words * sizeof(std::uint64_t);
 	}
 
 #if UML_GADGET_CACHE_CENSUS
-	/* Chunks that no longer hold a live body while their address space
-	 * still holds one elsewhere. Their blocks wait on its class lists. */
+	/* Chunks that hold no live body. A chunk is unmapped when its last
+	 * block is freed, so only the one being carved can be empty. */
 	[[nodiscard]] std::size_t empty_bytes() const noexcept
 	{
 		std::size_t total = 0;
 		for (const auto &chunk : chunks_) {
-			if (chunk.base == chunk.pool->current)
+			if (chunk.base == current_)
 				continue;
-			const auto *starts = chunk.starts.get();
-			if (std::all_of(starts, starts + map_words(chunk.bytes),
+			const auto *starts = chunk.starts();
+			if (std::all_of(starts, starts + map_words,
 				    [](std::uint64_t word) { return word == 0; }))
-				total += chunk.bytes;
+				total += chunk_bytes;
 		}
 		return total;
 	}
@@ -435,10 +430,16 @@ private:
 	 * 32 stream words per guest instruction. */
 	static constexpr std::size_t classes = 1024;
 	static constexpr std::size_t largest_class = (classes - 1) * granule;
-	static constexpr std::size_t first_chunk = std::size_t{32} << 10;
-	static constexpr std::size_t largest_chunk = std::size_t{128} << 10;
-	static_assert(first_chunk % (std::size_t{16} << 10) == 0 &&
-			largest_chunk >= largest_class,
+	/* Small enough that a chunk empties, large enough to hold the largest
+	 * class several times over; whole host pages. */
+	static constexpr std::size_t chunk_bytes = std::size_t{64} << 10;
+	static constexpr std::size_t chunk_granules = chunk_bytes / granule;
+	static constexpr std::size_t map_words = chunk_granules / 64;
+	/* Free blocks by size: one list per class, and the last for the runs
+	 * merging makes longer than the largest class. */
+	static constexpr std::size_t lists = classes + 1;
+	static_assert(chunk_bytes % (std::size_t{16} << 10) == 0 &&
+			chunk_bytes >= 2 * largest_class,
 		"chunks are whole host pages and hold the largest class");
 
 	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
@@ -446,39 +447,28 @@ private:
 		return (std::max(bytes, granule) + granule - 1) & ~(granule - 1);
 	}
 
-	[[nodiscard]] static std::byte *&next_of(std::byte *block) noexcept
-	{
-		return *reinterpret_cast<std::byte **>(block);
-	}
-
-	/* Words in the start map of a chunk of this many bytes. */
-	[[nodiscard]] static constexpr std::size_t map_words(
-		std::size_t bytes) noexcept
-	{
-		return (bytes / granule + 63) / 64;
-	}
-
-	/* One address space's chunks: the free blocks in them by class, the
-	 * chunk being carved, and how many live blocks they hold. */
-	struct Pool final {
-		explicit Pool(unsigned long owner) noexcept : space{owner} {}
-
-		unsigned long space;
-		std::byte *current{};
-		std::uint64_t *current_starts{};
-		std::size_t used{};
-		std::size_t limit{};
-		std::size_t next_chunk{first_chunk};
-		std::size_t blocks{};
-		std::array<std::byte *, classes> free{};
+	/* What a free block holds while it is free: its list links. */
+	struct FreeBlock final {
+		FreeBlock *next;
+		FreeBlock *previous;
 	};
+	static_assert(sizeof(FreeBlock) <= granule,
+		"a one-granule free block holds its links");
 
 	struct Chunk final {
 		std::byte *base;
-		std::size_t bytes;
-		/* One bit per granule, set at the first granule of a live block. */
-		std::unique_ptr<std::uint64_t[]> starts;
-		Pool *pool;
+		/* Two maps of one bit per granule: where each live block
+		 * starts, then where each free block starts. */
+		std::unique_ptr<std::uint64_t[]> maps;
+
+		[[nodiscard]] std::uint64_t *starts() const noexcept
+		{
+			return maps.get();
+		}
+		[[nodiscard]] std::uint64_t *free() const noexcept
+		{
+			return maps.get() + map_words;
+		}
 	};
 
 	/* A block above the largest class, held outside the chunks. */
@@ -486,6 +476,196 @@ private:
 		std::byte *base;
 		std::size_t bytes;
 	};
+
+	[[nodiscard]] static bool test(const std::uint64_t *map,
+		std::size_t index) noexcept
+	{
+		return (map[index / 64] >> (index % 64) & 1U) != 0;
+	}
+
+	static void set(std::uint64_t *map, std::size_t index) noexcept
+	{
+		map[index / 64] |= std::uint64_t{1} << (index % 64);
+	}
+
+	static void clear(std::uint64_t *map, std::size_t index) noexcept
+	{
+		map[index / 64] &= ~(std::uint64_t{1} << (index % 64));
+	}
+
+	[[nodiscard]] static std::size_t list_of(std::size_t granules) noexcept
+	{
+		return std::min(granules, lists - 1);
+	}
+
+	/* Where the blocks of a chunk end: the carving point of the chunk
+	 * being carved, and the chunk's end for every other. */
+	[[nodiscard]] std::size_t tiled(const Chunk &chunk) const noexcept
+	{
+		return chunk.base == current_ ? used_ : chunk_granules;
+	}
+
+	/* The granules of the free block at `first`: up to the next live
+	 * block, since free blocks are never adjacent. */
+	[[nodiscard]] static std::size_t extent(const Chunk &chunk,
+		std::size_t first, std::size_t end) noexcept
+	{
+		if (first + 1 >= end)
+			return end - first;
+		const auto *starts = chunk.starts();
+		auto word = (first + 1) / 64;
+		auto bits = starts[word] &
+			(~std::uint64_t{0} << ((first + 1) % 64));
+		for (;;) {
+			if (bits != 0) {
+				const auto next = word * 64 +
+					static_cast<std::size_t>(
+						std::countr_zero(bits));
+				return std::min(end, next) - first;
+			}
+			if (++word * 64 >= end)
+				return end - first;
+			bits = starts[word];
+		}
+	}
+
+	/* Where the block before granule `first` starts, live or free. */
+	[[nodiscard]] static std::size_t previous_start(const Chunk &chunk,
+		std::size_t first) noexcept
+	{
+		const auto *starts = chunk.starts();
+		const auto *free = chunk.free();
+		auto word = (first - 1) / 64;
+		auto bits = (starts[word] | free[word]) &
+			(~std::uint64_t{0} >> (63 - (first - 1) % 64));
+		while (bits == 0) {
+			--word;
+			bits = starts[word] | free[word];
+		}
+		return word * 64 + 63 -
+			static_cast<std::size_t>(std::countl_zero(bits));
+	}
+
+	void list(std::byte *block, std::size_t granules) noexcept
+	{
+		const auto index = list_of(granules);
+		auto *entry = reinterpret_cast<FreeBlock *>(block);
+		entry->next = free_[index];
+		entry->previous = nullptr;
+		if (entry->next != nullptr)
+			entry->next->previous = entry;
+		free_[index] = entry;
+		occupied_[index / 64] |= std::uint64_t{1} << (index % 64);
+	}
+
+	void unlist(std::byte *block, std::size_t granules) noexcept
+	{
+		const auto index = list_of(granules);
+		auto *entry = reinterpret_cast<FreeBlock *>(block);
+		if (entry->previous != nullptr)
+			entry->previous->next = entry->next;
+		else
+			free_[index] = entry->next;
+		if (entry->next != nullptr)
+			entry->next->previous = entry->previous;
+		if (free_[index] == nullptr)
+			occupied_[index / 64] &=
+				~(std::uint64_t{1} << (index % 64));
+	}
+
+	/* The smallest free block that holds `granules`, with what it does
+	 * not need left free behind it, or nullptr. */
+	[[nodiscard]] std::byte *reuse(std::size_t granules) noexcept
+	{
+		auto word = granules / 64;
+		auto bits = occupied_[word] &
+			(~std::uint64_t{0} << (granules % 64));
+		while (bits == 0) {
+			if (++word == occupied_.size())
+				return nullptr;
+			bits = occupied_[word];
+		}
+		const auto index = word * 64 +
+			static_cast<std::size_t>(std::countr_zero(bits));
+		auto *block = reinterpret_cast<std::byte *>(free_[index]);
+		const auto &chunk = *chunk_of(block);
+		const auto first =
+			static_cast<std::size_t>(block - chunk.base) / granule;
+		const auto count = index < lists - 1 ? index :
+			extent(chunk, first, tiled(chunk));
+		unlist(block, count);
+		clear(chunk.free(), first);
+		set(chunk.starts(), first);
+		if (count > granules) {
+			set(chunk.free(), first + granules);
+			list(block + granules * granule, count - granules);
+		}
+		return block;
+	}
+
+	/* A block from the part of the current chunk not yet carved, mapping
+	 * a new chunk when it is used up. The rest of the old one becomes a
+	 * free block; the block before it is live, since a block freed at the
+	 * carving point moves the point back instead. */
+	[[nodiscard]] std::byte *carve(std::size_t granules)
+	{
+		if (current_ == nullptr || granules > chunk_granules - used_) {
+			auto maps = std::make_unique<std::uint64_t[]>(
+				2 * map_words);
+			auto *starts = maps.get();
+			auto *base = map();
+			try {
+				/* Kept in address order, which is what owner()
+				 * searches. */
+				const auto at = std::upper_bound(
+					chunks_.begin(), chunks_.end(), base,
+					before_chunk);
+				chunks_.insert(at,
+					Chunk{base, std::move(maps)});
+			} catch (...) {
+				unmap(base);
+				throw;
+			}
+			if (current_ != nullptr && used_ < chunk_granules) {
+				set(current_starts_ + map_words, used_);
+				list(current_ + used_ * granule,
+					chunk_granules - used_);
+			}
+			current_ = base;
+			current_starts_ = starts;
+			used_ = 0;
+		}
+		auto *block = current_ + used_ * granule;
+		set(current_starts_, used_);
+		used_ += granules;
+		return block;
+	}
+
+	/* A chunk whose blocks are all free, other than the current one:
+	 * unmap it. */
+	void release(const Chunk &chunk) noexcept
+	{
+		auto *base = chunk.base;
+		unmap(base);
+		chunks_.erase(std::lower_bound(chunks_.begin(), chunks_.end(),
+			base, [](const Chunk &held, const std::byte *address) {
+				return held.base < address;
+			}));
+	}
+
+	[[nodiscard]] static std::byte *map()
+	{
+		void *base = mmap(nullptr, chunk_bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (base == MAP_FAILED)
+			throw std::bad_alloc{};
+		return static_cast<std::byte *>(base);
+	}
+
+	static void unmap(std::byte *base) noexcept
+	{
+		(void)munmap(base, chunk_bytes);
+	}
 
 	[[nodiscard]] static bool before_chunk(
 		const std::byte *address, const Chunk &chunk) noexcept
@@ -501,68 +681,20 @@ private:
 		if (after == chunks_.begin())
 			return nullptr;
 		const auto &chunk = *std::prev(after);
-		return address < chunk.base + chunk.bytes ? &chunk : nullptr;
-	}
-
-	static void mark(const Chunk &chunk, const std::byte *block,
-		bool live) noexcept
-	{
-		const auto index =
-			static_cast<std::size_t>(block - chunk.base) / granule;
-		const auto bit = std::uint64_t{1} << (index % 64);
-		if (live)
-			chunk.starts[index / 64] |= bit;
-		else
-			chunk.starts[index / 64] &= ~bit;
-	}
-
-	[[nodiscard]] static std::byte *map(std::size_t bytes)
-	{
-		void *base = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (base == MAP_FAILED)
-			throw std::bad_alloc{};
-		return static_cast<std::byte *>(base);
-	}
-
-	static void unmap(std::byte *base, std::size_t bytes) noexcept
-	{
-		(void)munmap(base, bytes);
-	}
-
-	/* Stores come in runs for the running address space, so the pool the
-	 * last one used is kept at hand. */
-	[[nodiscard]] Pool &pool_of(unsigned long space)
-	{
-		if (last_ == nullptr || last_->space != space)
-			last_ = &pools_.try_emplace(space, space).first->second;
-		return *last_;
-	}
-
-	/* An address space's last body has gone, so none of its chunks holds
-	 * anything: return them all, one pass over the chunks rather than a
-	 * free per body. */
-	void release(const Pool &pool) noexcept
-	{
-		if (last_ == &pool)
-			last_ = nullptr;
-		for (const auto &chunk : chunks_)
-			if (chunk.pool == &pool)
-				unmap(chunk.base, chunk.bytes);
-		std::erase_if(chunks_, [&pool](const Chunk &chunk) {
-			return chunk.pool == &pool;
-		});
-		const auto space = pool.space;
-		pools_.erase(space);
+		return address < chunk.base + chunk_bytes ? &chunk : nullptr;
 	}
 
 	std::pmr::memory_resource *upstream_;
 	/* In address order. */
 	std::vector<Chunk> chunks_;
 	std::vector<Direct> direct_;
-	/* Node-based, so a chunk's pool stays where the chunk names it. */
-	std::unordered_map<unsigned long, Pool> pools_;
-	Pool *last_{};
+	std::byte *current_{};
+	std::uint64_t *current_starts_{};
+	/* Granules of the current chunk carved so far. */
+	std::size_t used_{};
+	std::array<FreeBlock *, lists> free_{};
+	/* One bit per list that holds a block. */
+	std::array<std::uint64_t, (lists + 63) / 64> occupied_{};
 };
 
 class GadgetExecutor::ProgramCache final {
@@ -1639,8 +1771,7 @@ private:
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
 		const auto bytes = Body::allocation_bytes(
 			entry + words.size(), validation.size());
-		auto *body = new (bodies_.allocate(bytes,
-			current_generation_)) Body{
+		auto *body = new (bodies_.allocate(bytes)) Body{
 			.guest_address = program.guest_address(),
 			.stop_address = built.stop_address,
 			.stop_instruction = built.stop_instruction,
