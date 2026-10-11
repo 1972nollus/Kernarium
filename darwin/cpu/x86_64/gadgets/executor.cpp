@@ -565,8 +565,9 @@ private:
 	/* As in the arm64 cache, each address space owns the list of slots it has
 	 * populated. Retiring the least-recently-current generation therefore
 	 * scales with that generation's footprint rather than the whole cache.
-	 * Its records are named by address from translated streams and released
-	 * only with it, so they live in chunks rather than map nodes (G210).
+	 * Its records are named by address from translated streams, so they live
+	 * in chunks rather than map nodes (G210), and a link sweep releases the
+	 * ones nothing names any more (sweep()).
 	 */
 	struct Generation final {
 		std::uint64_t changes{};
@@ -575,6 +576,9 @@ private:
 		std::array<gadget_cache::StableRecordTable<IndirectRecord,
 				   IndirectKey>, 2>
 			indirect;
+		/* How many records and sites there may be before the next
+		 * sweep. */
+		std::size_t sweep_at{gadget_cache::sweep_floor};
 		LinkRecord *live_links{};
 		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
 		std::array<std::vector<IndirectLink *>, 2> live_indirect;
@@ -860,7 +864,8 @@ public:
 
 	[[nodiscard]] const Program &store(Program &&program,
 		std::uint64_t changes,
-		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
+		std::size_t instruction_limit, ProgramCodeStamps code_stamps,
+		ProgramCacheDiagnostics &diagnostics)
 	{
 		(void)link(program.address(), program.execution_mode());
 
@@ -948,6 +953,10 @@ public:
 		history_.arrive(census_id_, slot.generation, census_key(slot),
 			census_digest(slot), restored);
 #endif
+		/* The build's words are in the slot's program now, so nothing
+		 * outside what a sweep reads names a record it made. */
+		if (records(state) >= state.sweep_at)
+			sweep(state, current_generation_, diagnostics);
 		return stored;
 	}
 
@@ -1072,12 +1081,17 @@ public:
 			"E %p generations=%zu occupancy=%zu slots=%zu "
 			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
 			"streams=%zu decoded=%zu links=%zu indirect=%zu "
-			"targets=%zu total=%zu",
+			"targets=%zu total=%zu sweeps=%llu swept_links=%llu "
+			"swept_sites=%llu sweep_ns=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), program_cache_slots, sizeof(Slot),
 			program_cache_slab_slots, slab_count, parts.slabs,
 			parts.streams, parts.decoded, parts.links,
-			parts.indirect, parts.targets, parts.total());
+			parts.indirect, parts.targets, parts.total(),
+			static_cast<unsigned long long>(sweeps_),
+			static_cast<unsigned long long>(swept_links_),
+			static_cast<unsigned long long>(swept_sites_),
+			static_cast<unsigned long long>(sweep_ns_));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1707,6 +1721,174 @@ private:
 		slot.link_epoch = 0;
 	}
 
+	[[nodiscard]] static std::size_t records(const Generation &state) noexcept
+	{
+		return state.links[0].size() + state.links[1].size() +
+			state.indirect[0].size() + state.indirect[1].size();
+	}
+
+	[[nodiscard]] static const LinkRecord *record_of(
+		const BlockLink *link) noexcept
+	{
+		return reinterpret_cast<const LinkRecord *>(
+			reinterpret_cast<std::uintptr_t>(link) -
+			offsetof(LinkRecord, link));
+	}
+
+	/* Release the link records and indirect sites of one address space that
+	 * nothing it holds names any more, as the arm64 cache does (G226).
+	 *
+	 * A resident translation's stream words name its successors' records and
+	 * its indirect sites, and a resident block keeps its own record, which
+	 * activation arms; every stream word is tried, operands too, which only
+	 * ever keeps a record that nothing needed. Site cells and the target
+	 * tables may still name a record no translation names, whose block is
+	 * gone: those entries are emptied, as a code change empties them, and
+	 * learn the target again if it runs. A transient program is never alive
+	 * across a store, the only place a sweep runs.
+	 */
+	void sweep(Generation &state, std::uint64_t generation,
+		ProgramCacheDiagnostics &diagnostics) noexcept
+	{
+#if UML_GADGET_CACHE_CENSUS
+		const auto started = std::chrono::steady_clock::now();
+		const auto links = diagnostics.released_links;
+		const auto sites = diagnostics.released_sites;
+#endif
+		try {
+			sweep_records(state, generation, diagnostics);
+		} catch (const std::bad_alloc &) {
+			/* A sweep only returns memory; without the memory to run
+			 * one, the records stay. */
+		}
+		state.sweep_at = gadget_cache::next_sweep(records(state));
+		++diagnostics.link_sweeps;
+#if UML_GADGET_CACHE_CENSUS
+		++sweeps_;
+		swept_links_ += diagnostics.released_links - links;
+		swept_sites_ += diagnostics.released_sites - sites;
+		sweep_ns_ += static_cast<std::uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now() - started).count());
+#endif
+	}
+
+	/* sweep(), with everything it allocates allocated before anything is
+	 * released. */
+	void sweep_records(Generation &state, std::uint64_t generation,
+		ProgramCacheDiagnostics &diagnostics)
+	{
+		constexpr std::array modes{ExecutionMode::long64,
+			ExecutionMode::compat32};
+		std::array links{state.links[0].marks(), state.links[1].marks()};
+		std::array sites{state.indirect[0].marks(),
+			state.indirect[1].marks()};
+		std::array<const LinkRecord *, 2> empty{};
+		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
+			empty[mode] = state.links[mode].find(
+				empty_target(modes[mode]));
+			if (empty[mode] != nullptr)
+				links[mode].mark(empty[mode]);
+		}
+		std::vector<std::uint64_t> seen((program_cache_slots + 63) / 64);
+		std::vector<std::uint32_t> held;
+		const auto visit = [&](std::uint32_t index) {
+			const auto &slot = slot_at(index);
+			if (slot.epoch != epoch_ || slot.generation != generation ||
+			    !slot.translation ||
+			    (seen[index / 64] >> (index % 64) & 1U) != 0)
+				return;
+			seen[index / 64] |= std::uint64_t{1} << (index % 64);
+			held.push_back(index);
+			const auto own = mode_index(slot.mode);
+			if (slot.link != nullptr && slot.link_epoch == epoch_)
+				links[own].mark(slot.link);
+			else if (const auto *record =
+					 state.links[own].find(slot.address))
+				links[own].mark(record);
+			for (const auto word :
+			     slot.translation->program.native_stream())
+				for (std::size_t mode = 0; mode < modes.size();
+				     ++mode) {
+					links[mode].mark(
+						word - offsetof(LinkRecord, link));
+					sites[mode].mark(
+						word - offsetof(IndirectRecord, site));
+				}
+		};
+		if (state.slots_complete) {
+			for (const auto index : state.slots)
+				visit(index);
+		} else {
+			for (std::size_t slab = 0; slab < program_cache_slab_count;
+			     ++slab)
+				if (slabs_[slab])
+					for (std::size_t offset = 0;
+					     offset < program_cache_slab_slots;
+					     ++offset)
+						visit(static_cast<std::uint32_t>(
+							slab * program_cache_slab_slots +
+							offset));
+		}
+		held.shrink_to_fit();
+		std::array<std::vector<IndirectLink *>, 2> live_indirect;
+		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
+			live_indirect[mode].reserve(state.live_indirect[mode].size());
+			for (auto *site : state.live_indirect[mode])
+				if (sites[mode].marked(
+					    reinterpret_cast<const IndirectRecord *>(
+						    reinterpret_cast<std::uintptr_t>(site) -
+						    offsetof(IndirectRecord, site))))
+					live_indirect[mode].push_back(site);
+		}
+
+		/* From here each step leaves the address space consistent. */
+		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
+			diagnostics.released_sites +=
+				state.indirect[mode].sweep(sites[mode]);
+			state.live_indirect[mode] = std::move(live_indirect[mode]);
+		}
+		state.slots = std::move(held);
+		state.slots_complete = true;
+		const auto &vacant = vacant_target_links().front();
+		for (std::size_t mode = 0; mode < modes.size(); ++mode) {
+			if (empty[mode] != nullptr) {
+				const IndirectLinkEntry cleared{
+					empty_target(modes[mode]), &empty[mode]->link};
+				state.indirect[mode].for_each(
+					[&](IndirectRecord &record) {
+						for (auto &entry : record.site.entries)
+							if (!links[mode].marked(
+								    record_of(entry.link)))
+								entry = cleared;
+					});
+			}
+			if (const auto &table = state.target_links[mode])
+				for (auto &entry : *table)
+					if (entry.link != vacant.link &&
+					    !links[mode].marked(record_of(entry.link)))
+						entry = vacant;
+		}
+		/* The live list runs through the records, so the ones about to
+		 * go leave it first. */
+		LinkRecord **next = &state.live_links;
+		for (auto *record = state.live_links; record != nullptr;) {
+			auto *following = record->next_live;
+			if (links[0].marked(record) || links[1].marked(record)) {
+				*next = record;
+				next = &record->next_live;
+			} else {
+				record->listed = false;
+				record->next_live = nullptr;
+			}
+			record = following;
+		}
+		*next = nullptr;
+		for (std::size_t mode = 0; mode < modes.size(); ++mode)
+			diagnostics.released_links +=
+				state.links[mode].sweep(links[mode]);
+	}
+
 	void touch(std::uint64_t generation)
 	{
 		const auto found = std::find(
@@ -1885,6 +2067,11 @@ private:
 	unsigned census_id_{census::next_cache_id()};
 	/* Address-space switches, the clock dormancy is counted in. */
 	std::uint64_t switches_{};
+	/* Link sweeps, what they released, and the time they took. */
+	std::uint64_t sweeps_{};
+	std::uint64_t swept_links_{};
+	std::uint64_t swept_sites_{};
+	std::uint64_t sweep_ns_{};
 #endif
 };
 
@@ -2222,7 +2409,8 @@ ProgramSelection Executor::select_program(
 	try {
 		const auto &stored = storage_->programs.store(
 			std::move(built.program),
-			storage_->code_changes, maximum_instructions, *code_stamps);
+			storage_->code_changes, maximum_instructions, *code_stamps,
+			storage_->diagnostics);
 		return {
 			.status = BuildStatus::built,
 			.program = &stored,

@@ -1162,11 +1162,17 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. Cached returns consult a private
+validation. An address space's link records and indirect sites are swept once
+they number half again what its last sweep kept: one that no resident
+translation's stream names and that is no resident block's own record is
+released for reuse, and the site cells and target-table entries naming it are
+emptied, so link state follows what the cache holds rather than all the code
+the address space ever ran. Cached returns consult a private
 per-carrier return-record ring after their site cells miss: linked calls push
 the return PC with its block link, a matching record follows that link and
 trains the cell, and the executor empties the ring on every address-space
-switch, so a stale record can only fall back to the ordinary miss exit. A
+switch and after a link sweep, so a stale record can only fall back to the
+ordinary miss exit. A
 cached indirect branch whose cells (and, for a return, ring) miss then looks the
 target up in its address space's direct-mapped target table, which every miss
 exit trains with the target's block link; a hit follows that link and trains

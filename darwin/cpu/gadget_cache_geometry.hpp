@@ -25,4 +25,15 @@ static_assert(slots >= slab_slots * 4U && slots % slab_slots == 0);
 static_assert(slots % ways == 0);
 static_assert(resident_generations != 0);
 
+/* An address space sweeps its link records and indirect sites once they
+ * number half again what its last sweep kept, and not before they number
+ * `sweep_floor`: a sweep reads every stream the address space holds, and
+ * short-lived address spaces never make that many. */
+inline constexpr std::size_t sweep_floor = 4096;
+
+[[nodiscard]] constexpr std::size_t next_sweep(std::size_t kept) noexcept
+{
+	return kept + kept / 2 > sweep_floor ? kept + kept / 2 : sweep_floor;
+}
+
 } // namespace uml::cpu::gadget_cache

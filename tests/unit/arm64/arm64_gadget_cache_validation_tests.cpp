@@ -576,6 +576,118 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	require(executor.cache_diagnostics().validation_attempts == 0);
 }
 
+[[nodiscard]] constexpr std::uint32_t branch_register(unsigned source) noexcept
+{
+	return 0xd61f'0000U | ((source & 31U) << 5U);
+}
+
+/* A link sweep releases the records only evicted blocks named, and keeps
+ * every one something still reaches.
+ *
+ * Thousands of one-branch blocks are crowded into a few sets, so most are
+ * evicted soon after they are stored, and with them the only name for their
+ * own record and their target's. Those records pile up past the sweep floor
+ * and a store sweeps them. Meanwhile an indirect site that stays resident is
+ * trained on targets whose blocks are long gone, so its cells and the target
+ * table name records nothing else does: the sweep releases those too, and
+ * must empty the cells, because the site is asked for the same target again
+ * right after. Throughout, a resident pair whose link was armed before any
+ * sweep keeps following it, and a resident block nothing links to keeps its
+ * own record armed: a hit does not activate, so a block translated after the
+ * sweeps can only link to it through that record. No guest word and no
+ * code-change sequence moves, so nothing but the sweep resets a link.
+ */
+void a_link_sweep_releases_what_only_evicted_blocks_named()
+{
+	constexpr unsigned long generation = 980;
+	constexpr std::size_t crowded_sets = 256;
+	constexpr std::size_t blocks = 4000;
+	constexpr std::size_t lag = 1000;
+	constexpr auto keeper = code_base + 0x100;
+	constexpr auto predecessor = code_base + 0x200;
+	constexpr auto site = code_base + 0x300;
+	constexpr auto loner = code_base + 0x400;
+	constexpr auto late = code_base + 0x500;
+	constexpr std::uint64_t crowd_base = code_base + 0x10000;
+
+	const auto crowded = [&](std::uint64_t pc) {
+		return cache_set(generation, pc) % (cache_sets / crowded_sets) == 0;
+	};
+	for (const auto pc : {keeper, predecessor, site, loner, late})
+		require(!crowded(pc));
+	std::vector<std::uint64_t> pcs;
+	for (auto pc = crowd_base; pcs.size() < blocks; pc += 8)
+		if (crowded(pc))
+			pcs.push_back(pc);
+	const auto extent = pcs.back() + 8 - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+
+	/* Each crowded block branches to the word behind it, which no block
+	 * starts at: its target is never translated. */
+	JitBacking backing{pages};
+	backing.put32(keeper - code_base, move_immediate(0, 77));
+	backing.put32(keeper - code_base + 4, system_call);
+	backing.put32(predecessor - code_base, branch(predecessor, keeper));
+	backing.put32(site - code_base, branch_register(1));
+	backing.put32(loner - code_base, move_immediate(0, 78));
+	backing.put32(loner - code_base + 4, system_call);
+	backing.put32(late - code_base, branch(late, loner));
+	for (const auto pc : pcs)
+		backing.put32(pc - code_base, branch(pc, pc + 4));
+	JitMapping mapping{generation, code_base, backing, pages};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+
+	const auto run = [&](std::uint64_t pc, std::uint64_t x1 = 0) {
+		arm64::CpuState cpu{};
+		cpu.pc = pc;
+		cpu.registers[1] = x1;
+		const auto outcome = run_once(executor, memory, generation, cpu);
+		return std::pair{outcome, cpu};
+	};
+	const auto linked_pair = [&] {
+		const auto [outcome, cpu] = run(predecessor);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(outcome.executed == 3);
+		require(cpu.registers[0] == 77);
+	};
+	const auto indirect = [&](std::uint64_t target) {
+		const auto [outcome, cpu] = run(site, target);
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == target);
+	};
+
+	require(run(keeper).first.event == ::uml::cpu::EngineEvent::system_call);
+	require(run(loner).first.event == ::uml::cpu::EngineEvent::system_call);
+	linked_pair();
+	for (std::size_t index = 0; index < blocks; ++index) {
+		const auto [outcome, cpu] = run(pcs[index]);
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+		require(outcome.executed == 1);
+		require(cpu.pc == pcs[index] + 4);
+		if (index <= lag)
+			continue;
+		/* Asked again for the target it learned last round, which a
+		 * sweep in this round's store may have released. */
+		indirect(pcs[index - lag - 1] + 4);
+		indirect(pcs[index - lag] + 4);
+	}
+	linked_pair();
+	{
+		const auto [outcome, cpu] = run(late);
+		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
+		require(outcome.executed == 3);
+		require(cpu.registers[0] == 78);
+	}
+
+	const auto &diagnostics = executor.cache_diagnostics();
+	require(diagnostics.link_sweeps != 0);
+	require(diagnostics.released_links >= blocks / 2);
+	require(diagnostics.released_sites == 0);
+	require(diagnostics.validation_attempts == 0);
+}
+
 } // namespace
 
 int main()
@@ -588,5 +700,6 @@ int main()
 	retiring_an_address_space_keeps_the_others();
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
+	a_link_sweep_releases_what_only_evicted_blocks_named();
 	return 0;
 }

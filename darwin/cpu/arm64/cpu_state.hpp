@@ -105,8 +105,9 @@ struct CpuState final {
 	 * PC with the BlockLink of its block, and a cached return whose site
 	 * cells miss pops the newest record when it names the live link
 	 * register. Records name link state of one address space, so the
-	 * executor empties the ring on every address-space switch. A stale or
-	 * mismatched record can only fall back to the ordinary miss path. */
+	 * executor empties the ring on every address-space switch and after a
+	 * link sweep releases records. A stale or mismatched record can only
+	 * fall back to the ordinary miss path. */
 	struct ReturnRecord final {
 		/* An unaligned sentinel: no return PC can ever match an empty
 		 * record, so an empty ring never follows its null link. */

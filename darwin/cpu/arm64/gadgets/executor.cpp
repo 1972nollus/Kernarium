@@ -569,13 +569,18 @@ public:
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
 			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
 			"streams=%zu arena_empty=%zu links=%zu indirect=%zu "
-			"total=%zu stream_lookups=%llu",
+			"total=%zu stream_lookups=%llu sweeps=%llu swept_links=%llu "
+			"swept_sites=%llu sweep_ns=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
 			slab_total, parts.stream_index, parts.slabs, parts.streams,
 			bodies_.empty_bytes(), parts.links, parts.indirect,
 			parts.total(),
-			static_cast<unsigned long long>(stream_lookups_));
+			static_cast<unsigned long long>(stream_lookups_),
+			static_cast<unsigned long long>(sweeps_),
+			static_cast<unsigned long long>(swept_links_),
+			static_cast<unsigned long long>(swept_sites_),
+			static_cast<unsigned long long>(sweep_ns_));
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -953,7 +958,7 @@ public:
 	[[nodiscard]] BuildResult store(
 		std::uint64_t pc, const BuildResult &result,
 		std::span<const std::uint32_t> guest_words,
-		std::uint64_t changes)
+		std::uint64_t changes, GadgetCacheDiagnostics &diagnostics)
 	{
 		/* The words a validating find() will compare against guest
 		 * memory: the program's instructions, plus the word a stopped
@@ -967,7 +972,7 @@ public:
 		    validation_words <= guest_words.size())
 			validation = guest_words.first(validation_words);
 		return store_validated(pc, result,
-			std::as_bytes(validation), changes);
+			std::as_bytes(validation), changes, diagnostics);
 	}
 
 	/* store() for any ISA: `validation` is the guest bytes the program
@@ -975,7 +980,8 @@ public:
 	 * T32 builder supplies halfwords and everything else supplies words. */
 	[[nodiscard]] BuildResult store_validated(
 		std::uint64_t pc, const BuildResult &result,
-		std::span<const std::byte> validation, std::uint64_t changes)
+		std::span<const std::byte> validation, std::uint64_t changes,
+		GadgetCacheDiagnostics &diagnostics)
 	{
 		assert(arm64::aarch32::key_is_canonical(pc));
 		const auto location = locate(current_generation_, pc);
@@ -1055,6 +1061,10 @@ public:
 			body_digest(*slot.body), restored);
 #endif
 		activate(pc, slot);
+		/* The build's words are in the body now, so nothing outside what
+		 * a sweep reads names a record it made. */
+		if (state.links.size() + state.indirect.size() >= state.sweep_at)
+			sweep(state, current_generation_, diagnostics);
 		return slot.body->result();
 	}
 
@@ -1218,10 +1228,10 @@ private:
 		/* Reactivation resolves the same link record every time, so its
 		 * address is memoised here rather than hashed again on each pass.
 		 * The owning address space keeps its records in chunks that never
-		 * move, so the address stays valid while the slot holds this
-		 * translation: store() and release() reset the memo, and retiring
-		 * the address space releases this slot in the same pass that
-		 * destroys the map.
+		 * move, and a link sweep keeps the record of every block held, so
+		 * the address stays valid while the slot holds this translation:
+		 * store() and release() reset the memo, and retiring the address
+		 * space releases this slot in the same pass that destroys the map.
 		 *
 		 * The memo is only ever valid for the address space named by
 		 * `generation`, and nothing about the record itself says which
@@ -1332,14 +1342,18 @@ private:
 		Generation &operator=(Generation &&) = delete;
 
 		std::uint64_t changes{};
-		/* These grow for the address space's whole residency and are
-		 * released only together. The records live in chunks, so retiring
-		 * an address space is a few bulk releases rather than thousands of
-		 * allocator frees across busy vCPU carriers, and each record stays
-		 * where translated link cells name it. */
+		/* These grow with the code the address space runs, and a sweep
+		 * releases what nothing names any more (sweep()). The records
+		 * live in chunks, so retiring an address space is a few bulk
+		 * releases rather than thousands of allocator frees across busy
+		 * vCPU carriers, and each record stays where translated link
+		 * cells name it. */
 		gadget_cache::StableRecordTable<LinkRecord, LinkKey> links;
 		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>
 			indirect;
+		/* How many records and sites there may be before the next
+		 * sweep. */
+		std::size_t sweep_at{gadget_cache::sweep_floor};
 		/* The target table the translated code consults after a site's
 		 * cells miss; allocated on the address space's first miss. */
 		std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets;
@@ -1351,7 +1365,7 @@ private:
 		 * taken, and may name one twice, so retirement checks every
 		 * entry; it can only *miss* a slot by having overflowed, which
 		 * `slots_complete` records and retirement answers with the whole
-		 * sweep.
+		 * sweep. A link sweep rewrites it as the slots held, each once.
 		 */
 		std::vector<std::uint32_t> slots;
 		bool slots_complete{true};
@@ -1724,6 +1738,159 @@ private:
 			record.reset();
 	}
 
+	/* Release the link records and indirect sites of one address space that
+	 * nothing it holds names any more.
+	 *
+	 * A record is made for every PC a translation links to, and nothing
+	 * else ever released one, so they grew with all the code the address
+	 * space ever ran instead of with what the cache holds (G226). What can
+	 * name one is known: a resident translation's stream words name its
+	 * successors' records and its indirect sites, a resident block keeps its
+	 * own record because only an activation arms it and a hit does not
+	 * activate, and empty cells name the empty_pc record. Every word of every
+	 * stream is tried, operands too; one that happens to equal a record's
+	 * address only keeps that record. Site cells and the target table may
+	 * still name a record no translation names; its block is gone, so it is
+	 * unlinked, and the cell is emptied as a code change empties it, to learn
+	 * the target again if it runs. The CPU's return ring may name one too,
+	 * so an executor that sees `link_sweeps` move across a store empties the
+	 * ring.
+	 *
+	 * Only a store calls this, after the build's words are in their body. */
+	void sweep(Generation &state, unsigned long generation,
+		GadgetCacheDiagnostics &diagnostics) noexcept
+	{
+#if UML_GADGET_CACHE_CENSUS
+		const auto started = std::chrono::steady_clock::now();
+#endif
+		try {
+			sweep_records(state, generation, diagnostics);
+		} catch (const std::bad_alloc &) {
+			/* A sweep only returns memory; without the memory to run
+			 * one, the records stay. */
+		}
+		state.sweep_at = gadget_cache::next_sweep(
+			state.links.size() + state.indirect.size());
+		++diagnostics.link_sweeps;
+#if UML_GADGET_CACHE_CENSUS
+		++sweeps_;
+		sweep_ns_ += static_cast<std::uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now() - started).count());
+#endif
+	}
+
+	[[nodiscard]] static const LinkRecord *record_of(
+		const arm64::gadgets::BlockLink *link) noexcept
+	{
+		return reinterpret_cast<const LinkRecord *>(
+			reinterpret_cast<std::uintptr_t>(link) -
+			offsetof(LinkRecord, link));
+	}
+
+	/* sweep(), with everything it allocates allocated before anything is
+	 * released. */
+	void sweep_records(Generation &state, unsigned long generation,
+		GadgetCacheDiagnostics &diagnostics)
+	{
+		auto links = state.links.marks();
+		auto sites = state.indirect.marks();
+		const auto *empty = state.links.find(empty_pc);
+		if (empty != nullptr)
+			links.mark(empty);
+		std::vector<std::uint64_t> seen((slot_count + 63) / 64);
+		std::vector<std::uint32_t> held;
+		const auto visit = [&](std::uint32_t index) {
+			const auto &slot = slot_at(index);
+			if (slot.body == nullptr || slot.generation != generation ||
+			    (seen[index / 64] >> (index % 64) & 1U) != 0)
+				return;
+			seen[index / 64] |= std::uint64_t{1} << (index % 64);
+			held.push_back(index);
+			if (slot.link != nullptr)
+				links.mark(slot.link);
+			else if (const auto *own = state.links.find(slot.pc))
+				links.mark(own);
+			const auto &body = *slot.body;
+			const auto *end = body.words() + body.word_count;
+			for (const auto *word = body.link_entry(); word != end;
+			     ++word) {
+				links.mark(*word - offsetof(LinkRecord, link));
+				sites.mark(*word - offsetof(IndirectRecord, site));
+			}
+		};
+		if (state.slots_complete) {
+			for (const auto index : state.slots)
+				visit(index);
+		} else {
+			for (std::size_t slab = 0; slab < slab_count; ++slab)
+				if (slabs_[slab])
+					for (std::size_t offset = 0;
+					     offset < slab_slots; ++offset)
+						visit(static_cast<std::uint32_t>(
+							slab * slab_slots + offset));
+		}
+		held.shrink_to_fit();
+		const auto site_of = [](arm64::gadgets::IndirectLink *site) {
+			return reinterpret_cast<const IndirectRecord *>(
+				reinterpret_cast<std::uintptr_t>(site) -
+				offsetof(IndirectRecord, site));
+		};
+		std::vector<LinkRecord *> live_links;
+		live_links.reserve(static_cast<std::size_t>(std::count_if(
+			state.live_links.begin(), state.live_links.end(),
+			[&links](const LinkRecord *record) {
+				return links.marked(record);
+			})));
+		for (auto *record : state.live_links)
+			if (links.marked(record))
+				live_links.push_back(record);
+		std::vector<arm64::gadgets::IndirectLink *> live_indirect;
+		live_indirect.reserve(state.live_indirect.size());
+		for (auto *site : state.live_indirect)
+			if (sites.marked(site_of(site)))
+				live_indirect.push_back(site);
+
+		/* From here each step leaves the address space consistent. */
+		const auto released_sites = state.indirect.sweep(sites);
+		diagnostics.released_sites += released_sites;
+		state.live_indirect = std::move(live_indirect);
+		state.slots = std::move(held);
+		state.slots_complete = true;
+		if (empty != nullptr) {
+			const auto empty_entry = arm64::gadgets::IndirectLinkEntry{
+				empty_pc, &empty->link};
+			const auto clear = [&](arm64::gadgets::IndirectLinkEntry &entry) {
+				if (!links.marked(record_of(entry.link)))
+					entry = empty_entry;
+			};
+			state.indirect.for_each([&](IndirectRecord &record) {
+				for (auto &entry : record.site.entries)
+					clear(entry);
+			});
+			if (state.targets)
+				for (std::size_t index = 0;
+				     index < arm64::gadgets::target_tier_entries;
+				     ++index)
+					clear(state.targets[index]);
+			/* A site whose cells are all empty again is enrolled by its
+			 * next training, as one never trained is. */
+			std::erase_if(state.live_indirect, [](const auto *site) {
+				return std::all_of(site->entries.begin(),
+					site->entries.end(), [](const auto &entry) {
+						return entry.guest_pc == empty_pc;
+					});
+			});
+		}
+		const auto released_links = state.links.sweep(links);
+		diagnostics.released_links += released_links;
+		state.live_links = std::move(live_links);
+#if UML_GADGET_CACHE_CENSUS
+		swept_links_ += released_links;
+		swept_sites_ += released_sites;
+#endif
+	}
+
 #if UML_GADGET_EXECUTION_HISTOGRAM
 public:
 	std::unordered_map<const arm64::gadgets::IndirectLink *,
@@ -1768,6 +1935,11 @@ private:
 	unsigned census_id_{census::next_cache_id()};
 	/* Address-space switches, the clock dormancy is counted in. */
 	std::uint64_t switches_{};
+	/* Link sweeps, what they released, and the time they took. */
+	std::uint64_t sweeps_{};
+	std::uint64_t swept_links_{};
+	std::uint64_t swept_sites_{};
+	std::uint64_t sweep_ns_{};
 #endif
 	std::array<std::unique_ptr<Slab>, slab_count> slabs_;
 	std::array<std::uint8_t, set_count> next_replacement_{};
@@ -1897,6 +2069,18 @@ std::optional<BuildResult> GadgetExecutor::find(
 		cache_diagnostics_);
 }
 
+namespace {
+
+/* A store whose link sweep released records may have released one the return
+ * ring names. The ring only predicts, so it starts again empty. */
+void forget_returns(arm64::CpuState &cpu) noexcept
+{
+	cpu.gadget_return_stack = {};
+	cpu.gadget_return_top = 0;
+}
+
+} // namespace
+
 /* Produce and store a translation the cache did not hold. run_block
  * counts it: with the count in here, run_block's per-dispatch cache lookup
  * compiles differently. */
@@ -1913,7 +2097,12 @@ BuildResult GadgetExecutor::translate(
 			return programs_->indirect_link(source_pc);
 		},
 		build_options_);
-	return programs_->store(pc, decoded, window, cache_changes_);
+	const auto sweeps = cache_diagnostics_.link_sweeps;
+	auto stored = programs_->store(pc, decoded, window, cache_changes_,
+		cache_diagnostics_);
+	if (cache_diagnostics_.link_sweeps != sweeps && current_cpu_ != nullptr)
+		forget_returns(*current_cpu_);
+	return stored;
 }
 
 [[gnu::always_inline]] inline ::uml::cpu::EngineEvent
@@ -2131,8 +2320,11 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 				return programs.indirect_link(source_pc);
 			},
 			options);
+		const auto sweeps = cache_diagnostics_.link_sweeps;
 		selected.emplace(programs.store(cpu.pc, decoded, window,
-			code_changes));
+			code_changes, cache_diagnostics_));
+		if (cache_diagnostics_.link_sweeps != sweeps)
+			forget_returns(cpu);
 	}
 	const auto &built = *selected;
 	if (built.program.instruction_count() == 0) {
@@ -2282,8 +2474,12 @@ private:
 				fault.access);
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
+		const auto sweeps = cache_diagnostics_.link_sweeps;
 		selected.emplace(programs_->store_validated(key, output.result,
-			bytes.first(output.units * unit), cache_changes_));
+			bytes.first(output.units * unit), cache_changes_,
+			cache_diagnostics_));
+		if (cache_diagnostics_.link_sweeps != sweeps)
+			forget_returns(cpu);
 	}
 	const auto &built = *selected;
 	if (built.program.instruction_count() == 0) {
