@@ -1187,7 +1187,7 @@ void the_fp_environment_follows_the_instruction_kind()
  * guest's in every case. */
 void conversions_to_and_from_integers_run_in_the_active_environment()
 {
-	constexpr std::uint32_t vmax_f32_d3_d1_d1 = 0xf201'3f01U;
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U; /* zeros */
 	constexpr std::uint32_t vadd_f32_s9_s2_s3 = 0xee71'4a21U;
 	constexpr std::uint32_t vcvt_u32_f32_s8_s4 = 0xeebc'4ac2U;
 	constexpr std::uint32_t vcvt_s32_f32_s8_s4 = 0xeebd'4ac2U;
@@ -1222,7 +1222,7 @@ void conversions_to_and_from_integers_run_in_the_active_environment()
 			Guest guest{generation++};
 			/* 0: Advanced SIMD first, so the standard value is native;
 			 * 1: VFP first, so the guest's is. */
-			guest.a32(0, {first == 0 ? vmax_f32_d3_d1_d1 : vadd_f32_s9_s2_s3,
+			guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 : vadd_f32_s9_s2_s3,
 				      item.word, a::svc});
 			auto cpu = a32_state();
 			cpu.fpcr = item.fpcr;
@@ -1236,6 +1236,110 @@ void conversions_to_and_from_integers_run_in_the_active_environment()
 			require(cpu.a32_fp_standard == (first == 0 && item.stays ? 1U : 0U),
 				"a conversion switched the environment when it need not have");
 		}
+	}
+}
+
+/* Single-precision VMAX and VMIN give the same result in either native
+ * environment unless an operand is a NaN or a denormal, so they run in the
+ * active one and only those operands switch to the standard value, whose
+ * flush to zero and default NaN they need. */
+void vmax_and_vmin_switch_the_environment_only_for_nan_and_denormal_operands()
+{
+	constexpr std::uint32_t vmax_f32_d3_d1_d2 = 0xf201'3f02U;
+	constexpr std::uint32_t vmin_f32_d3_d1_d2 = 0xf221'3f02U;
+	constexpr std::uint32_t vadd_f32_s9_s10_s11 = 0xee75'4a25U;
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U;
+	struct Case {
+		std::uint32_t n, m, maximum, minimum;
+		std::uint32_t flags; /* IDC IOC of FPSR */
+		bool stays;
+	};
+	const Case cases[] = {
+		{0x3f80'0000U, 0x3f00'0000U, 0x3f80'0000U, 0x3f00'0000U, 0, true},
+		{0x0000'0000U, 0x8000'0000U, 0x0000'0000U, 0x8000'0000U, 0, true},
+		{0x7f80'0000U, 0x3f80'0000U, 0x7f80'0000U, 0x3f80'0000U, 0, true},
+		{0xff80'0000U, 0xbf80'0000U, 0xbf80'0000U, 0xff80'0000U, 0, true},
+		{0x0080'0000U, 0x8080'0000U, 0x0080'0000U, 0x8080'0000U, 0, true},
+		{0x0000'0001U, 0xbf80'0000U, 0x0000'0000U, 0xbf80'0000U, 0x80, false},
+		{0x007f'ffffU, 0x3f80'0000U, 0x3f80'0000U, 0x0000'0000U, 0x80, false},
+		{0x3f80'0000U, 0x8000'0001U, 0x3f80'0000U, 0x8000'0000U, 0x80, false},
+		{0x7fc0'0000U, 0x3f80'0000U, 0x7fc0'0000U, 0x7fc0'0000U, 0, false},
+		{0x3f80'0000U, 0x7fc0'1234U, 0x7fc0'0000U, 0x7fc0'0000U, 0, false},
+		{0x7f80'0001U, 0x3f80'0000U, 0x7fc0'0000U, 0x7fc0'0000U, 0x01, false},
+	};
+	unsigned long generation = 1950;
+	for (const auto &item : cases) {
+		for (const bool minimum : {false, true}) {
+			for (const unsigned first : {0U, 1U}) {
+				Guest guest{generation++};
+				/* 0: Advanced SIMD first, so the standard value is native;
+				 * 1: VFP first, so the guest's is. Both add zeros. */
+				guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 : vadd_f32_s9_s10_s11,
+					      minimum ? vmin_f32_d3_d1_d2 : vmax_f32_d3_d1_d2,
+					      a::svc});
+				auto cpu = a32_state();
+				set_d(cpu, 1, std::uint64_t{item.n} << 32 | item.n);
+				set_d(cpu, 2, std::uint64_t{item.m} << 32 | item.m);
+				require(guest.run(cpu).reason == ExitReason::system_call);
+				const std::uint32_t expected = minimum ? item.minimum : item.maximum;
+				require(get_d(cpu, 3) == (std::uint64_t{expected} << 32 | expected),
+					"VMAX or VMIN gave the wrong value");
+				require((cpu.fpsr & 0x81U) == item.flags,
+					"VMAX or VMIN raised the wrong flags");
+				require(cpu.a32_fp_standard ==
+					(first == 0 || !item.stays ? 1U : 0U),
+					"VMAX or VMIN switched the environment when it need not have");
+			}
+		}
+	}
+}
+
+/* The host's calling convention keeps the low halves of v8 to v15 across the
+ * execution boundary, and the translating C++ around it relies on that (a
+ * block copy of guest memory held a constant a gadget left there). No gadget
+ * may write them. Runs a program of Advanced SIMD, VFP and parallel
+ * arithmetic between a write of known values and a read. */
+__attribute__((noinline)) void gadgets_keep_the_callee_saved_vector_registers(
+	Guest &guest, arm64::CpuState &cpu)
+{
+	const std::uint64_t before[8] = {
+		0x0101'0101'0101'0101ULL, 0x0202'0202'0202'0202ULL,
+		0x0303'0303'0303'0303ULL, 0x0404'0404'0404'0404ULL,
+		0x0505'0505'0505'0505ULL, 0x0606'0606'0606'0606ULL,
+		0x0707'0707'0707'0707ULL, 0x0808'0808'0808'0808ULL};
+	std::uint64_t after[8] = {};
+	asm volatile("ldp d8, d9, [%0]\n\tldp d10, d11, [%0, #16]\n\t"
+		     "ldp d12, d13, [%0, #32]\n\tldp d14, d15, [%0, #48]"
+		     :: "r"(before) : "memory", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15");
+	const auto result = guest.run(cpu);
+	asm volatile("stp d8, d9, [%0]\n\tstp d10, d11, [%0, #16]\n\t"
+		     "stp d12, d13, [%0, #32]\n\tstp d14, d15, [%0, #48]"
+		     :: "r"(after) : "memory");
+	require(result.reason == ExitReason::system_call);
+	for (unsigned index = 0; index < 8; ++index)
+		require(after[index] == before[index],
+			"a gadget wrote a callee-saved vector register");
+}
+
+void gadgets_leave_the_callee_saved_vector_registers_alone()
+{
+	constexpr std::uint32_t vmax_f32_d3_d1_d2 = 0xf201'3f02U;
+	constexpr std::uint32_t vmin_f32_q3_q1_q2 = 0xf222'6f44U; /* q-form below */
+	constexpr std::uint32_t vcvt_u32_f32_s8_s4 = 0xeebc'4ac2U;
+	constexpr std::uint32_t vadd_f32_s9_s10_s11 = 0xee75'4a25U;
+	constexpr std::uint32_t uadd8_r0_r1_r2 = 0xe651'0f92U;
+	constexpr std::uint32_t sel_r3_r1_r2 = 0xe681'3fb2U;
+	unsigned long generation = 2100;
+	for (const std::uint32_t operand : {0x3f80'0000U, 0x0000'0001U, 0x7fc0'0000U}) {
+		Guest guest{generation++};
+		guest.a32(0, {vmax_f32_d3_d1_d2, vmin_f32_q3_q1_q2, vcvt_u32_f32_s8_s4,
+			      vadd_f32_s9_s10_s11, uadd8_r0_r1_r2, sel_r3_r1_r2, a::svc});
+		auto cpu = a32_state();
+		set_d(cpu, 1, std::uint64_t{operand} << 32 | operand);
+		set_d(cpu, 2, std::uint64_t{operand} << 32 | operand);
+		cpu.registers[1] = 0x8001'ff7fU;
+		cpu.registers[2] = 0x7f01'0180U;
+		gadgets_keep_the_callee_saved_vector_registers(guest, cpu);
 	}
 }
 
@@ -2060,6 +2164,8 @@ int main()
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
 	the_fp_environment_follows_the_instruction_kind();
 	conversions_to_and_from_integers_run_in_the_active_environment();
+	vmax_and_vmin_switch_the_environment_only_for_nan_and_denormal_operands();
+	gadgets_leave_the_callee_saved_vector_registers_alone();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();

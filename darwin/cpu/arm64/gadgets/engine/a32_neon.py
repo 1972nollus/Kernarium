@@ -136,6 +136,10 @@ class Variant:
     out2: Optional[str] = None                 # stored to m
     out2_reg: int = 0
     qc: bool = False
+    # Single-precision VMAX and VMIN: the result is the same in either native
+    # environment unless an operand is a NaN or a denormal, so the gadget runs
+    # in whichever is active when none is and switches only for those.
+    guard: bool = False
 
 
 @dataclass
@@ -200,15 +204,17 @@ def bitwise(name, stems, mnemonic, *, acc=False):
     return add(name, stems, "dnm", "none", make, size_none=True)
 
 
-def float_same(name, stems, body, *, acc=False, d_only=False):
+def float_same(name, stems, body, *, acc=False, d_only=False, guard=False):
     """A single- or half-precision Advanced SIMD operation; body lines use
-    %T."""
+    %T. `guard` lets the single-precision forms run in either native
+    environment while no operand is a NaN or a denormal (see Variant)."""
     def make(esize, q, sign, alt):
         if esize not in (16, 32) or sign or alt or (q and d_only):
             return None
         t = arrange(esize, q)
         w = width(q)
         return Variant(n=w, m=w, acc=w if acc else None, out=w,
+                       guard=guard and esize == 32,
                        body=[line.replace("%T", t) for line in body])
     return add(name, stems, "dnm", "none", make, fp=FP_ALL)
 
@@ -437,8 +443,8 @@ def define_groups() -> None:
     float_same("vfma", ["VFMA"], ["fmla v0.%T, v1.%T, v2.%T"], acc=True)
     float_same("vfms", ["VFMS"], ["fmls v0.%T, v1.%T, v2.%T"], acc=True)
     float_same("vabd_f", ["VABD_f"], ["fabd v0.%T, v1.%T, v2.%T"])
-    float_same("vmax_f", ["VMAX_f"], ["fmax v0.%T, v1.%T, v2.%T"])
-    float_same("vmin_f", ["VMIN_f"], ["fmin v0.%T, v1.%T, v2.%T"])
+    float_same("vmax_f", ["VMAX_f"], ["fmax v0.%T, v1.%T, v2.%T"], guard=True)
+    float_same("vmin_f", ["VMIN_f"], ["fmin v0.%T, v1.%T, v2.%T"], guard=True)
     float_same("vpadd_f", ["VPADD_f"], ["faddp v0.%T, v1.%T, v2.%T"],
                d_only=True)
     float_same("vpmax_f", ["VPMAX_f"], ["fmaxp v0.%T, v1.%T, v2.%T"],
@@ -871,7 +877,8 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
     elif shape == "delem":
         lines += ["ldr x8, [_stream], #8", "ubfx x10, x8, #16, #16",
                   "and x8, x8, #0xffff"]
-    if floating:
+    guarded = floating and v.guard
+    if floating and not guarded:
         lines.append("a32_fp_standard")
     elif v.qc:
         lines.append("ensure_fp_environment")
@@ -883,6 +890,21 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
         lines += ["add x10, _cpu, x10", f"ld1r {{v2.{v.elem}}}, [x10]"]
     elif v.m:
         lines.append(f"ldr {v.m}2, [_cpu, x10]")
+    if guarded:
+        # A lane shifted left once drops the sign: zero is 0, a denormal
+        # 2 to 0x00fffffe, a normal number or an infinity 0x01000000 to
+        # 0xff000000 and a NaN above that. Subtracting 0x01000000 turns
+        # the good lanes into [0, 0xfe000000] and zero into 0xff000000, so
+        # a lane is bad when it is above 0xfe000000 and not zero. A D
+        # register's upper lanes are zero, so they are good.
+        lines += ["movi v7.4s, #0x1, lsl #24", "movi v16.4s, #0xfe, lsl #24",
+                  "shl v3.4s, v1.4s, #1", "shl v4.4s, v2.4s, #1",
+                  "sub v5.4s, v3.4s, v7.4s", "sub v6.4s, v4.4s, v7.4s",
+                  "cmhi v5.4s, v5.4s, v16.4s", "cmhi v6.4s, v6.4s, v16.4s",
+                  "cmtst v3.4s, v3.4s, v3.4s", "cmtst v4.4s, v4.4s, v4.4s",
+                  "and v5.16b, v5.16b, v3.16b", "and v6.16b, v6.16b, v4.16b",
+                  "orr v5.16b, v5.16b, v6.16b", "umaxv s5, v5.4s",
+                  "fmov w11, s5", "cbnz w11, 21f"]
     if v.m1:
         lines.append(f"ldr {v.m1}1, [_cpu, x10]")
     if shape == "delem":
@@ -896,6 +918,10 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
         lines.append(f"str {v.out2}{v.out2_reg}, [_cpu, x10]")
     lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
     lines.append("next_gadget")
+    if guarded:
+        lines += ["21:", "a32_fp_standard"] + v.body
+        lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
+        lines.append("next_gadget")
     return lines
 
 
