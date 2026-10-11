@@ -4,6 +4,7 @@
 
 usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 [--report TSV] DUMP OUTPUT
+       absent-feature-corpus.py --authored-only DUMP OUTPUT
        absent-feature-corpus.py --collect-failing TSV --source DUMP
                                 [--previous TSV] [--features LIST]
                                 DUMP LOG...
@@ -57,7 +58,14 @@ every host:
   MRS and MSR SVCR, the other rows of the SME profile, and the SVE rows that
   need FEAT_SME outside streaming mode as well;
 - the arm64-absent-sve record under without_sve holds every row the SVE
-  profile executes outside streaming mode;
+  profile executes outside streaming mode, except the SM = 0 vector-length
+  family;
+- the arm64-absent-sve record under without_sme and without_sve holds that
+  family (CNT, INC, DEC, RDVL, ADDVL and ADDPL), which a virtual CPU with
+  FEAT_SME and without FEAT_SVE executes outside streaming mode for a vector
+  length of 16 bytes, a deliberate departure from the architecture
+  (darwin/cpu/arm64/detail/sm0_vector_length.hpp; sm0-vl-corpus.py appends
+  those cases), so it is UNDEFINED only where neither profile is;
 - the unconditional arm64-absent-sve record holds every other row: the SVE
   rows that never execute outside streaming mode (the withheld features, and
   the SVE2p1 forms that SME2 executes in streaming mode) and the rows outside
@@ -91,7 +99,11 @@ top byte. TBI excludes the top byte from the address and the base is the
 instruction's only general register, so the architectural result is the kept
 one, except that a written-back base keeps its tag.
 
-Run it on the output of lse2-alignment-corpus.py and --repack the result. To
+Run it on the output of lse2-alignment-corpus.py and --repack the result. A
+change of the encoding table or of the authored records alone needs no
+export: --authored-only rewrites the arm64-absent-<feature> records of a
+finished dump in place (the producers' cases, their stripped state, and the
+TBI replacements stay) and refreshes the step's hashes. To
 refresh the failing list, run the rewrite without --failing, run the corpus
 test on that pack in both page profiles with --max-failures 0, and pass both
 logs to --collect-failing with the rewritten dump, the dump it was rewritten
@@ -625,10 +637,11 @@ UNDEFINED = {
 # The records whose words come from the encoding table: one witness word per
 # table row, checked against LLVM MC by its generator, each at PSTATE.SM = 0
 # in the record whose option makes it UNDEFINED there (table_records()).
-TABLE_RECORDS = {"sme": ("sme",), "sve": ("sve", "sve_profile")}
-# The option each such record runs under; the unconditional record has none.
-TABLE_OPTIONS = {"sme": "without_sme", "sve": None,
-                 "sve_profile": "without_sve"}
+TABLE_RECORDS = {"sme": ("sme",), "sve": ("sve", "sve_profile", "sm0_family")}
+# The options each such record runs under; the unconditional record has none.
+TABLE_OPTIONS = {"sme": ("without_sme",), "sve": (),
+                 "sve_profile": ("without_sve",),
+                 "sm0_family": ("without_sme", "without_sve")}
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
     "pauth": (
@@ -838,6 +851,10 @@ def table_records(row) -> tuple[str, ...]:
     - "sve_profile", under without_sve: the rows the SVE profile executes
       outside streaming mode, so a virtual CPU without SVE takes them as
       UNDEFINED there;
+    - "sm0_family", under without_sme and without_sve: the SM = 0
+      vector-length family, which a virtual CPU with SME and without SVE
+      executes there (sm0-vl-corpus.py), so only one with neither takes it
+      as UNDEFINED;
     - "sme", under without_sme: the other rows of the SME profile and the
       SVE rows that need FEAT_SME outside streaming mode as well (the
       SCLAMP class), so a virtual CPU without SME takes them as UNDEFINED
@@ -848,6 +865,8 @@ def table_records(row) -> tuple[str, ...]:
     if row is None:
         return ("sme",)
     outside = set(row.non_streaming_requirement)
+    if sme_table.sm0_vector_length_word(row.witness):
+        return ("sm0_family",)
     if "sve" in outside:
         return ("sve_profile", "sme") if "sme" in outside else \
             ("sve_profile",)
@@ -896,8 +915,7 @@ def undefined_record(feature: str, table: str | None) -> dict | None:
     words = () if table not in (None, feature) else UNDEFINED.get(feature, ())
     if table is not None:
         words = (*words, *table_words(table))
-    option = TABLE_OPTIONS[table] if table is not None else None
-    options = [option] if option is not None else []
+    options = list(TABLE_OPTIONS[table]) if table is not None else []
     for name, word in words:
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
@@ -930,8 +948,10 @@ def undefined_record(feature: str, table: str | None) -> dict | None:
     if not cases:
         return None
     name = f"arm64-absent-{feature}"
-    if option is not None:
-        name += f"/options={1 << corpus.OPTION_NAMES.index(option):x}"
+    if options:
+        bits = sum(1 << corpus.OPTION_NAMES.index(option)
+                   for option in options)
+        name += f"/options={bits:x}"
     return {
         "record": name, "producer": f"arm64-absent-{feature}",
         "site": SITE, "profiles": ["16k", "4k"], "options": options,
@@ -1076,12 +1096,60 @@ def collect_failing(output: pathlib.Path, dump: pathlib.Path,
     return 0
 
 
+def authored_only(dump: pathlib.Path, output: pathlib.Path) -> int:
+    """Rewrites a finished dump's arm64-absent-<feature> records in place,
+    from the encoding table and this script's constants, and refreshes the
+    step's hashes. Every other record, including the TBI replacements, is
+    the dump's own, and so are the records of the steps that followed."""
+    lines = dump.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    step = header["meta"].get("absent_features")
+    if step is None:
+        corpus.fail(f"{dump}: not a dump the absent-feature step rewrote")
+    fresh = [record for feature in step["features"]
+             for record in undefined_records(feature)]
+    kept = []
+    position = None
+    replaced = 0
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        if line.startswith('{"cases"'):
+            item = json.loads(line)
+            if item["producer"].startswith("arm64-absent-") and \
+                    item["producer"] != REPLACEMENT_PRODUCER:
+                if position is None:
+                    position = len(kept)
+                replaced += len(item["cases"])
+                continue
+        kept.append(line)
+    if position is None:
+        position = len(kept)
+    kept[position:position] = [json.dumps(record, sort_keys=True)
+                               for record in fresh]
+    added = sum(len(record["cases"]) for record in fresh)
+    step["sha256"] = hashlib.sha256(
+        pathlib.Path(__file__).read_bytes()).hexdigest()
+    step["sme_table"] = {"file": sme_table.TABLE_PATH,
+                         "sha256": sme_table.load().sha256}
+    step["added_cases"] = added
+    with output.open("w", encoding="utf-8") as sink:
+        sink.write(json.dumps(header, sort_keys=True) + "\n")
+        for line in kept:
+            sink.write(line + "\n")
+    print(f"replaced {replaced} absent-feature cases with {added}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("dump", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path, nargs="+",
                         help="rewritten dump, or corpus-test logs with "
                         "--collect-failing")
+    parser.add_argument("--authored-only", action="store_true",
+                        help="rewrite only the arm64-absent-<feature> "
+                        "records of a finished dump")
     parser.add_argument("--collect-failing", type=pathlib.Path, metavar="TSV",
                         help="write the failing list from corpus-test logs")
     parser.add_argument("--source", type=pathlib.Path, metavar="DUMP",
@@ -1110,6 +1178,8 @@ def main() -> int:
     if len(options.output) != 1:
         parser.error("the rewrite takes one output dump")
     options.output = options.output[0]
+    if options.authored_only:
+        return authored_only(options.dump, options.output)
     failing = read_failing(options.failing)
     rewriter = Rewriter(features)
 

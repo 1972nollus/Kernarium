@@ -36,6 +36,21 @@ class TableError(ValueError):
     pass
 
 
+def sm0_vector_length_word(word: int) -> bool:
+    """Whether a word is in the SM = 0 vector-length family: CNT[BHWD]
+    (scalar), the scalar INC[BHWD] and DEC[BHWD], RDVL, ADDVL and ADDPL. A
+    virtual CPU with FEAT_SME and without FEAT_SVE executes them outside
+    streaming mode for a vector length of 16 bytes, a deliberate departure
+    from the architecture, in which they are UNDEFINED there and an M4 traps
+    them. This mirrors sm0_vector_length_word() in
+    darwin/cpu/arm64/detail/sm0_vector_length.hpp, which arm64-sm0-vector-length
+    checks against the table's rows."""
+    count = word & 0xFF30_FC00
+    return count in (0x0420_E000, 0x0430_E000, 0x0430_E400) or \
+        word & 0xFFFF_F800 == 0x04BF_5000 or \
+        word & 0xFFA0_F800 == 0x0420_5000
+
+
 @dataclass(frozen=True)
 class Segment:
     low: int
