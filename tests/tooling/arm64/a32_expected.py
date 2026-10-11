@@ -47,6 +47,7 @@ class Reference:
         self.parsed: dict[int, list] = {}
         self.catalog = catalog
         self.storage = {id(m): storage_type(m.cpp) for m in model.member_list}
+        self.last: evaluator.Evaluator | None = None
 
     def program_ast(self, form: tm.FormModel):
         key = form.program
@@ -89,6 +90,8 @@ class Reference:
         if row is None:
             return Expected("Undefined", "undefined", "unallocated", "none", 14, 0)
         if row.kind == "reserved_hint":
+            if reserved_hint_violation(isa, word):
+                return Expected("ReservedHint", "undefined", "unpredictable", "none", 14, 0)
             return Expected("ReservedHint", "nop", "none", "none", 14, 0)
         form = self.model.forms[row.form]
         result = Expected(form.name, "undefined", "none", "none", 14, 0)
@@ -107,6 +110,7 @@ class Reference:
             return result
         fields = {f.name: (f.low, f.width) for f in encoding.fields}
         ev = evaluator.Evaluator(fields, thumb, it_state, features)
+        self.last = ev
         ev.load(word, fields)
         try:
             ev.execute(self.program_ast(form))
@@ -131,6 +135,9 @@ class Reference:
             if ev.locals.get("read_spsr") or ev.locals.get("write_spsr"):
                 result.reason = "profile"
                 return result
+            if form.name.startswith("MSR") and msr_mask(fields, word) & 2:
+                result.reason = "profile"  # the x field would write PSTATE.E
+                return result
         elif form.check == "fpscr":
             if word >> 16 & 0xF != 1:
                 result.reason = "profile"
@@ -149,6 +156,23 @@ class Reference:
         self.conditioned(result, form, word, it_state, thumb)
         return result
 
+    def operands(self, isa: str, word: int, it_state: int, level: str,
+                 features: set[str]) -> tuple[Expected, dict[str, object]]:
+        """The decode result and the Decode pseudocode's variables as Python
+        values (integers, booleans and enumerator names)."""
+        self.last = None
+        result = self.decode(isa, word, it_state, level, features)
+        values: dict[str, object] = {}
+        if self.last is not None and result.status != "undefined":
+            for name, raw in self.last.locals.items():
+                if isinstance(raw, (bool, str)):
+                    values[name] = raw
+                elif isinstance(raw, evaluator.Bits):
+                    values[name] = raw.value
+                elif isinstance(raw, int):
+                    values[name] = raw
+        return result, values
+
     @staticmethod
     def conditioned(result: Expected, form: tm.FormModel, word: int,
                     it_state: int, thumb: bool) -> None:
@@ -158,6 +182,22 @@ class Reference:
             result.cond = word >> form.cond_low & 0xF
         elif thumb and it_state & 0xF:
             result.cond = it_state >> 4
+
+
+def reserved_hint_violation(isa: str, word: int) -> bool:
+    """The should-be bits of the hint spaces that the decode index leaves out: a
+    reserved hint whose SBO or SBZ bits differ is UNPREDICTABLE."""
+    if isa == "A32":
+        return word >> 28 != 0xF and word >> 20 & 0xFF == 0x32 and word >> 12 & 0xF != 0xF
+    if isa == "T32":
+        return word >> 20 == 0xF3A and (
+            word >> 16 & 0xF != 0xF or bool(word >> 13 & 1) or bool(word >> 8 & 0xF))
+    return False
+
+
+def msr_mask(fields: dict, word: int) -> int:
+    low, width = fields["mask"]
+    return word >> low & ((1 << width) - 1)
 
 
 def coprocessor_register(form: str, word: int) -> str:

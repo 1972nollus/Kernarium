@@ -204,19 +204,21 @@ void features_follow_level_and_host()
 	require(arm64::a32_features(full, A32Support::none) == empty,
 		"a host feature leaked into a level without AArch32");
 	auto features = arm64::a32_features(full, A32Support::base);
-	require(features.aarch32 && !features.vfp && !features.neon &&
-		!features.armv8 && !features.crc32 && !features.aes &&
-		!features.pmull && !features.sha1 && !features.sha2 &&
-		!features.fp16 && !features.dotprod && !features.fhm &&
-		!features.bf16 && !features.i8mm && !features.sb &&
-		!features.rdm && !features.fcma && !features.jscvt);
+	require(features.aarch32 && features.acquire_release && !features.vfp &&
+		!features.neon && !features.armv8 && !features.crc32 &&
+		!features.aes && !features.pmull && !features.sha1 &&
+		!features.sha2 && !features.fp16 && !features.dotprod &&
+		!features.fhm && !features.bf16 && !features.i8mm &&
+		!features.sb && !features.rdm && !features.fcma &&
+		!features.jscvt);
 	features = arm64::a32_features(full, A32Support::simd);
-	require(features.aarch32 && features.vfp && features.neon &&
-		!features.armv8 && !features.crc32 && !features.aes &&
-		!features.fp16 && !features.dotprod && !features.jscvt);
+	require(features.aarch32 && features.acquire_release && features.vfp &&
+		features.neon && !features.armv8 && !features.crc32 &&
+		!features.aes && !features.fp16 && !features.dotprod &&
+		!features.jscvt);
 	features = arm64::a32_features(full, A32Support::complete);
-	require(features.aarch32 && features.vfp && features.neon &&
-		features.armv8 && features.crc32 && features.aes &&
+	require(features.aarch32 && features.acquire_release && features.vfp &&
+		features.neon && features.armv8 && features.crc32 && features.aes &&
 		features.pmull && features.sha1 && features.sha2 &&
 		features.fp16 && features.dotprod && features.fhm &&
 		features.bf16 && features.i8mm && features.sb && features.rdm &&
@@ -267,24 +269,26 @@ void id_registers_are_pinned_per_level()
 		require(id(full, level, A32IdRegister::isar3) == 0x0111'2131U);
 		require(id(full, level, A32IdRegister::isar4) == 0x0001'1142U);
 	}
-	/* LoadStore is 1 (LDRD, STRD) until the Armv8 additions bring LDA and
-	 * STL, then 2. */
-	require(id(full, A32Support::base, A32IdRegister::isar2) == 0x2123'2041U);
-	require(id(full, A32Support::simd, A32IdRegister::isar2) == 0x2123'2041U);
-	require(id(full, A32Support::complete, A32IdRegister::isar2) ==
-		0x2123'2042U);
+	/* The acquire/release group is part of the integer core: LoadStore is 2
+	 * (LDRD, STRD, LDA and STL) and ISAR5.SEVL is 1 from base on. */
+	for (const auto level : {A32Support::base, A32Support::simd,
+		     A32Support::complete}) {
+		require(id(full, level, A32IdRegister::isar2) == 0x2123'2042U);
+		require((id(full, level, A32IdRegister::isar5) & 0xfU) == 1U,
+			"SEVL is not presented");
+	}
 
 	/* Below simd there is no floating point; VFP and Advanced SIMD arrive
 	 * with it, half precision to the conversions, and the Armv8 forms and
 	 * extensions only at complete. */
 	for (const auto which : {A32IdRegister::mvfr0, A32IdRegister::mvfr1,
-		     A32IdRegister::mvfr2, A32IdRegister::isar5,
-		     A32IdRegister::isar6})
+		     A32IdRegister::mvfr2, A32IdRegister::isar6})
 		require(id(full, A32Support::base, which) == 0);
+	require(id(full, A32Support::base, A32IdRegister::isar5) == 1U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr0) == 0x1011'0222U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr1) == 0x1111'1111U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr2) == 0U);
-	require(id(full, A32Support::simd, A32IdRegister::isar5) == 0U);
+	require(id(full, A32Support::simd, A32IdRegister::isar5) == 1U);
 	require(id(full, A32Support::simd, A32IdRegister::isar6) == 0U);
 	require(id(full, A32Support::complete, A32IdRegister::mvfr0) ==
 		0x1011'0222U);
@@ -297,8 +301,9 @@ void id_registers_are_pinned_per_level()
 		0x0110'1111U);
 
 	/* A host with nothing optional still presents the complete level's
-	 * unconditional parts: SEVL and the Armv8 floating-point forms, FP16
-	 * conversions without arithmetic. */
+	 * unconditional parts: the Armv8 floating-point forms and FP16
+	 * conversions without arithmetic, besides the acquire/release group
+	 * and SEVL. */
 	const auto bare = host_with(predicates_of(0));
 	require(id(bare, A32Support::complete, A32IdRegister::isar5) == 1U);
 	require(id(bare, A32Support::complete, A32IdRegister::isar6) == 0U);

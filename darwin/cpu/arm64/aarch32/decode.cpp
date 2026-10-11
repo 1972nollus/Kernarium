@@ -2,6 +2,7 @@
 #include "cpu/arm64/aarch32/decode.hpp"
 
 #include <bit>
+#include <string_view>
 
 namespace uml::cpu::arm64::aarch32 {
 
@@ -102,6 +103,18 @@ void undefine(Instruction &result, Reason reason) noexcept
 	result.reason = reason;
 }
 
+/* The should-be bits of the hint spaces that the decode index leaves out: a
+ * reserved hint whose SBO or SBZ bits differ is UNPREDICTABLE. */
+bool reserved_hint_violated(Isa isa, std::uint32_t word) noexcept
+{
+	if (isa == Isa::a32)
+		return (word >> 28) != 0xF && (word >> 20 & 0xFF) == 0x32 && (word >> 12 & 0xF) != 0xF;
+	if (isa == Isa::t32)
+		return (word >> 20) == 0xF3A
+			&& ((word >> 16 & 0xF) != 0xF || (word >> 13 & 1) != 0 || (word >> 8 & 0xF) != 0);
+	return false;
+}
+
 /* Everything past the row: the profile, the operand program and the checks
  * the table cannot make. */
 void decode_form(Instruction &result, const Row &row, std::uint32_t word, ItState it,
@@ -162,6 +175,13 @@ void decode_form(Instruction &result, const Row &row, std::uint32_t word, ItStat
 			undefine(result, Reason::profile);
 			return;
 		}
+		/* An MSR whose x field is set would write PSTATE.E (the endianness the
+		 * profile does not implement); the c field is ignored at EL0. */
+		if (std::string_view(info.mnemonic) == "MSR"
+			&& (field(word, result.isa == Isa::a32 ? 16 : 8, 4) & 2U) != 0) {
+			undefine(result, Reason::profile);
+			return;
+		}
 		break;
 	case Check::fpscr:
 		/* VMRS and VMSR reach FPSCR only; FPSID, MVFRn and FPEXC are
@@ -195,8 +215,12 @@ Instruction decode_row(Isa isa, std::uint32_t word, ItState it, const Profile &p
 		return result; /* undefined, unallocated */
 	if (row->kind == RowKind::reserved_hint) {
 		result.form = Form::ReservedHint;
-		result.status = Status::nop;
-		result.reason = Reason::none;
+		if (reserved_hint_violated(isa, word)) {
+			undefine(result, Reason::unpredictable);
+		} else {
+			result.status = Status::nop;
+			result.reason = Reason::none;
+		}
 	} else {
 		decode_form(result, *row, word, it, profile);
 	}
