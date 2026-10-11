@@ -401,7 +401,16 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
                   allocated - headers - streams - sources)]
         if engine == "arm64":
             arena = sum(b.get("streams") for b in blocks)
-            rows.append(("arena chunks not holding a body", arena - allocated))
+            if any("arena_empty" in b.fields for b in blocks):
+                # Whole chunks with no live body, apart from the free
+                # space between the bodies of chunks that still hold one.
+                empty = sum(b.get("arena_empty") for b in blocks)
+                rows += [("arena chunks holding no body", empty),
+                         ("free space in chunks holding a body",
+                          arena - allocated - empty)]
+            else:
+                rows.append(("arena chunks not holding a body",
+                             arena - allocated))
     else:
         rows.append(("bodies and streams", sum(b.get("streams") for b in blocks)))
     rows += [("replay decodes", sum(b.get("decoded") for b in blocks)),

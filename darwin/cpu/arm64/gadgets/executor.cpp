@@ -385,6 +385,24 @@ public:
 		return total;
 	}
 
+#if UML_GADGET_CACHE_CENSUS
+	/* Chunks that no longer hold a live body, which the arena keeps until
+	 * the cache is destroyed. Their blocks wait on the class free lists. */
+	[[nodiscard]] std::size_t empty_bytes() const noexcept
+	{
+		std::size_t total = 0;
+		for (const auto &chunk : chunks_) {
+			if (chunk.base == current_)
+				continue;
+			const auto *starts = chunk.starts.get();
+			if (std::all_of(starts, starts + map_words(chunk.bytes),
+				    [](std::uint64_t word) { return word == 0; }))
+				total += chunk.bytes;
+		}
+		return total;
+	}
+#endif
+
 private:
 	/* Eight bytes would fit the free-list link, but sixteen keeps every
 	 * body's stream tail aligned for a pair access and still rounds a mean
@@ -550,12 +568,13 @@ public:
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
 			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
-			"streams=%zu links=%zu indirect=%zu total=%zu "
-			"stream_lookups=%llu",
+			"streams=%zu arena_empty=%zu links=%zu indirect=%zu "
+			"total=%zu stream_lookups=%llu",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
 			slab_total, parts.stream_index, parts.slabs, parts.streams,
-			parts.links, parts.indirect, parts.total(),
+			bodies_.empty_bytes(), parts.links, parts.indirect,
+			parts.total(),
 			static_cast<unsigned long long>(stream_lookups_));
 		census::write_when(out, snapshot);
 		history_.write(out);

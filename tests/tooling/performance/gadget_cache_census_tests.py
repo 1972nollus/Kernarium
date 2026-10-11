@@ -31,7 +31,8 @@ SPEC.loader.exec_module(census)
 # address space 8, resident but idle in the second cache.
 CAPTURE = """\
 E 0xa generations=1 occupancy=2 slots=4096 slot_bytes=40 slab_slots=256 \
-slab_count=2 stream_index=0 slabs=20480 streams=262144 links=4000 indirect=0 \
+slab_count=2 stream_index=0 slabs=20480 streams=262144 arena_empty=131072 \
+links=4000 indirect=0 \
 total=286624 stream_lookups=0 snapshot=1 seconds=10.0 wall=1 lookups=100 \
 hits=70 revalidated=5 misses=25 stores=25 first=20 again_evicted=4 \
 again_retired=0 again_discarded=1 changed=0 restored=0 other_executor=3 \
@@ -132,6 +133,8 @@ class CensusTests(unittest.TestCase):
         self.assertIn("hit rate 77.50%", text)
         # Two slabs of 256 40-byte slots in each cache.
         self.assertRegex(text, r"slot tags\s+0\.0 MiB\s+7\.1%")
+        # Half of the first cache's arena is a chunk with no live body.
+        self.assertRegex(text, r"arena chunks holding no body\s+0\.1 MiB")
         self.assertIn("again after way eviction                         4", text)
         self.assertRegex(text, r"idle 10-60 s\s+spaces\s+1")
         self.assertIn("sampled streams: 1 bodies, 4 words", text)

@@ -377,15 +377,18 @@ capture with `analyze_gadget_cache_census.py --help`: it reports one snapshot
 
 A snapshot is an `E` record with the cache's geometry, measured footprint and
 history, a `G` record per resident address space, a `P` record per resident
-translation, and, for one body in every `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS`,
-a `W` record listing its stream word by word as a gadget, a link or indirect
-record named by guest PC, or another operand. Both gadget engines write the
-same records, so a private cache costs measured bytes rather than an estimate
-on either; a field an engine has no counterpart for is simply absent. The
-footprint is the committed slabs, every resident translation's allocations
+translation, and, for one in every `DARWIN_UML_GADGET_CACHE_CENSUS_WORDS`
+bodies and link records, a `W` record listing the body's stream word by word
+as a gadget, a link or indirect record named by guest PC, or another operand,
+and an `L` record naming the link record's guest PC. Both gadget engines write
+the same records, so a private cache costs measured bytes rather than an
+estimate on either; a field an engine has no counterpart for is simply absent.
+The footprint is the committed slabs, every resident translation's allocations
 as the allocator sized them, the link and indirect records and target tables,
-and the per-address-space indexes the cache owns. A `P` record carries its
-translation's allocation and the header, stream and validation bytes in it.
+and the per-address-space indexes the cache owns; on arm64 it also says how
+much of the body arena is chunks that hold no live body. A `P` record carries
+its translation's allocation and the header, stream and validation bytes in
+it.
 
 The history counts how each lookup ended, why each departing translation
 left (way eviction, address-space retirement, or a discard), and, for every
