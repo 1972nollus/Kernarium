@@ -75,6 +75,10 @@ pinned Arm AArch32 XML release, the profile's choices
 (`tests/tooling/arm64/a32_profile_policy.py`) and LLVM MC 22.1.8, a
 tooling-time oracle that no build uses. Never edit them.
 
+- Form names are the XML's, with one correction: Arm's 2026-06 XML names the
+  A32 VRSRA encodings against their own Q field, so the catalog swaps them
+  (`XML_NAME_ERRATA` in `a32_architecture_oracle.py`, which fails the
+  generation once the XML is corrected).
 - A `Form` is one XML encoding. A `Row` is one partition of the A32 or T32
   encoding space that the XML's encoding index allocates to a form; the index
   partitions the space exactly, so the rows that remain after the unallocated
@@ -124,16 +128,21 @@ and reaches guest memory only through the caller's `A32Memory`.
   `exclusive_value2`, `exclusive_size`) and a host compare-and-swap of the
   value the load recorded, the gadget engine's mechanism. Ordinary stores,
   LDA and STL never use it; the library reports every store to `stored()`.
-- `a32_semantics_covers(form)` holds for every form up to
-  `a32_semantics_level()`; any other word reaching `execute_a32()` is `fatal`,
-  an internal error. The library-exit counters count each call by form.
+- `a32_semantics_covers(form)` holds for every implemented form up to
+  `a32_semantics_level()`, which is `complete`; any other word reaching
+  `execute_a32()` is `fatal`, an internal error. The library-exit counters
+  count each call by form.
 
-The library covers `base` and `simd`, A32 and T32: integer, memory (single,
-multiple, exclusive, acquire/release), branch, IT and system forms, and the
-VFP and Advanced SIMD moves, bitwise, permute, integer, shift, floating-point,
-conversion and memory forms. The structure loads and stores read all their
-memory before they change a register and gather it all before they store, and
-VSTM and FSTMX store the words ahead of a fault like STM.
+The library covers the whole profile, A32 and T32: integer, memory (single,
+multiple, exclusive, acquire/release), branch, IT and system forms, the VFP
+and Advanced SIMD moves, bitwise, permute, integer, shift, floating-point,
+conversion and memory forms, half precision, and the Armv8 extensions (VSEL,
+VMAXNM, VRINT and VCVT with a rounding, VINS, VMOVX, VJCVT, VCADD and VCMLA,
+VFMAL and VFMSL, VQRDMLAH and VQRDMLSH, the 8-bit dot products and matrix
+multiplies, CRC32, AES, SHA-1, SHA-256, BFloat16 and SB). The structure
+loads and stores read all their memory before they change a register and
+gather it all before they store, and VSTM and FSTMX store the words ahead of
+a fault like STM.
 
 Floating point runs the host's own scalar instruction on bit patterns under
 the FPCR the form defines, the guest's control bits for VFP and the Standard
@@ -143,5 +152,19 @@ bits in `fpcr`, the cumulative flags and QC in `fpsr`, and N, Z, C and V in
 `a32_fpscr_nzcv`; Len, Stride and the trap enables read as zero and ignore
 writes. VRECPS and VRSQRTS are AArch32's unfused steps, not the A64 fused
 ones, and the fixed-point VCVT to floating point rounds to nearest even as
-its pseudocode says. The half-precision forms, the Armv8 floating-point
-additions and the other extensions are the `complete` level and follow.
+its pseudocode says. A half-precision result zero-extends into its S
+register, and the arithmetic ignores FPSCR.AHP, which only the conversions
+read.
+
+The profile presents BFloat16, the 8-bit matrix multiply and FHM only where
+the host has them, but the library implements all three without them, so the
+corpus model lane tests every form on any host: the BFloat16 dot product,
+matrix multiply and conversions are the architecture's round-to-odd
+arithmetic in integers, the 8-bit forms are integer, and VFMAL widens its
+half-precision operands exactly into the host's fused single-precision
+multiply-add. VJCVT is integer arithmetic too, because the architecture
+clears Z for a negative zero and for a subnormal that FPSCR.FZ flushes,
+which the host's FJCVTZS does not do on every core. AES and SHA run as the
+host's own instructions on copies of the registers, and an iOS build compiles
+the library with the inline-assembly architecture option the other CPU
+implementation targets use.

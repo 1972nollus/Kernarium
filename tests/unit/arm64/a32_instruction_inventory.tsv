@@ -1941,8 +1941,8 @@ FPSIMD-1027	FP&SIMD	VRSQRTS	VRSQRTS_A1_D	A32	VRSQRTS	simd	baseline	executed	pend
 FPSIMD-1028	FP&SIMD	VRSQRTS	VRSQRTS_A1_Q	A32	VRSQRTS	simd	baseline	executed	pending
 FPSIMD-1029	FP&SIMD	VRSQRTS	VRSQRTS_T1_D	T32	VRSQRTS	simd	baseline	executed	pending
 FPSIMD-1030	FP&SIMD	VRSQRTS	VRSQRTS_T1_Q	T32	VRSQRTS	simd	baseline	executed	pending
-FPSIMD-1031	FP&SIMD	VRSRA	VRSRA_A1_Q	A32	VRSRA	simd	baseline	executed	pending
-FPSIMD-1032	FP&SIMD	VRSRA	VRSRA_A1_D	A32	VRSRA	simd	baseline	executed	pending
+FPSIMD-1031	FP&SIMD	VRSRA	VRSRA_A1_D	A32	VRSRA	simd	baseline	executed	pending
+FPSIMD-1032	FP&SIMD	VRSRA	VRSRA_A1_Q	A32	VRSRA	simd	baseline	executed	pending
 FPSIMD-1033	FP&SIMD	VRSRA	VRSRA_T1_D	T32	VRSRA	simd	baseline	executed	pending
 FPSIMD-1034	FP&SIMD	VRSRA	VRSRA_T1_Q	T32	VRSRA	simd	baseline	executed	pending
 FPSIMD-1035	FP&SIMD	VRSUBHN	VRSUBHN_A1	A32	VRSUBHN	simd	baseline	executed	pending

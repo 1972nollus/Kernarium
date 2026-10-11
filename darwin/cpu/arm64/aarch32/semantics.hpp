@@ -133,7 +133,7 @@ struct StepResult final {
 /* The highest level the library implements in full. */
 [[nodiscard]] constexpr Level a32_semantics_level() noexcept
 {
-	return Level::simd;
+	return Level::complete;
 }
 
 /*
