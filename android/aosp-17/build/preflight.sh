@@ -116,7 +116,9 @@ absolute_path "ACK workspace" "$ACK_WORKSPACE"
 . "$ACK_METADATA"
 
 [ "$ANDROID17_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
-[ "$ANDROID17_PAGE_SIZE" -eq 16384 ] || fail "Android page size is not 16384"
+[ "$ANDROID17_KERNEL_PAGE_SIZE" -eq 4096 ] || fail "Android kernel page size is not 4096"
+[ "$ANDROID17_MAX_PAGE_SIZE_SUPPORTED" -eq 16384 ] ||
+	fail "Android maximum page size is not 16384"
 [ "$UML_KERNEL_FAMILY" = android-6.18 ] || fail "wrong ACK kernel family"
 
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"

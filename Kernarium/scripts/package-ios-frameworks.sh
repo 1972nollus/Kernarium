@@ -61,17 +61,17 @@ RUNTIME_16K="KRuntime_6_18_16K"
 # The Android runtime carries an independently accepted ACK artifact. Rootfs
 # release updates do not rename this framework and kernel-only updates do not
 # invalidate an existing guest bundle.
-RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
+RUNTIME_ANDROID_4K="KRuntime_ACK_6_18_4K"
 
 RUNTIME_TREE=kernarium-runtime-ios-device
 [ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/$RUNTIME_TREE-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
-DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
+DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/Kernarium/Runtime/$RUNTIME_ANDROID_4K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
-HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/darwin/platform/libuml_host_battery.a"
+HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-4k/darwin/platform/libuml_host_battery.a"
 HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
@@ -125,7 +125,7 @@ create_xcframework()
 
 create_xcframework "$RUNTIME_4K" "$DEVICE_RUNTIME_4K"
 create_xcframework "$RUNTIME_16K" "$DEVICE_RUNTIME_16K"
-create_xcframework "$RUNTIME_ANDROID_16K" "$DEVICE_RUNTIME_ANDROID"
+create_xcframework "$RUNTIME_ANDROID_4K" "$DEVICE_RUNTIME_ANDROID"
 for framework in $GPU_FRAMEWORKS; do
 	create_xcframework "$framework" "$DEVICE_GPU/$framework.framework"
 done
@@ -143,7 +143,7 @@ cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
 [ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
 	fail "HostBattery XCFramework was not created"
 
-RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_ANDROID_16K"
+RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_ANDROID_4K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do
 	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
 	[ -f "$binary" ] || fail "missing packaged framework binary: $binary"
