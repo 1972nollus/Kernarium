@@ -14,5 +14,6 @@ pc-qemu	qemu	88
 prefetch-qemu	qemu	144
 simd-memory-qemu	qemu	3721
 simd-qemu	qemu	10228
+simd-steps-qemu	qemu	164
 straddle-qemu	qemu	60
 system-qemu	qemu	324
