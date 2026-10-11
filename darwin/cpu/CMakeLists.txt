@@ -208,6 +208,58 @@ set(_uml_arm64_gadget_sve_sources
     arm64/gadgets/sve_helpers.cpp
     ${_uml_arm64_sve_dir}/sve_forms.hpp)
 
+# Gadget-engine AArch32 sources, owned by lane A32-G: the AArch32 part's
+# gadget bodies and form tables the generator writes at build time from the
+# decoder's encoding table (arm64/aarch32/a32_encodings.hpp), and the builder
+# that translates A32 and T32 with the shared decoder. engine.S gains their
+# OBJECT_DEPENDS and include directory by appending, so the blocks above stay
+# as they are.
+set(_uml_arm64_a32_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_a32)
+set(_uml_arm64_a32_generator
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_a32.py)
+set(_uml_arm64_a32_table
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/aarch32/a32_encodings.hpp)
+set(_uml_arm64_a32_table_rows
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/aarch32/a32_encodings.cpp)
+set(_uml_arm64_a32_hand_written
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32.inc)
+add_custom_command(
+    OUTPUT ${_uml_arm64_a32_dir}/a32_generated.inc
+        ${_uml_arm64_a32_dir}/a32_forms.hpp
+    COMMAND ${Python3_EXECUTABLE} -B ${_uml_arm64_a32_generator}
+        --table ${_uml_arm64_a32_table}
+        --assembly ${_uml_arm64_a32_dir}/a32_generated.inc
+        --header ${_uml_arm64_a32_dir}/a32_forms.hpp
+    DEPENDS ${_uml_arm64_a32_generator}
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_simd.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_neon.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_structure.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_armv8.py
+        ${_uml_arm64_a32_table}
+        ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
+    COMMENT "Generating the arm64 AArch32 gadgets"
+    VERBATIM)
+set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
+    OBJECT_DEPENDS ${_uml_arm64_a32_dir}/a32_generated.inc)
+set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
+    INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
+set_source_files_properties(arm64/gadgets/a32/program_builder_a32.cpp
+    arm64/gadgets/a32/program_builder_a32_vfp.cpp
+    arm64/gadgets/a32/program_builder_a32_neon.cpp
+    arm64/gadgets/a32/program_builder_a32_armv8.cpp
+    PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
+# The generated header for the tests that check the forms against the table.
+add_library(uml_arm64_a32_forms INTERFACE)
+uml_declare_architecture_target(uml_arm64_a32_forms cpu gadget)
+target_include_directories(uml_arm64_a32_forms INTERFACE ${_uml_arm64_a32_dir})
+set(_uml_arm64_gadget_a32_sources
+    arm64/gadgets/a32/program_builder_a32.cpp
+    arm64/gadgets/a32/program_builder_a32_vfp.cpp
+    arm64/gadgets/a32/program_builder_a32_neon.cpp
+    arm64/gadgets/a32/program_builder_a32_armv8.cpp
+    arm64/gadgets/a32/library_helpers.cpp
+    ${_uml_arm64_a32_dir}/a32_forms.hpp)
+
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -231,11 +283,13 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S
     ${_uml_arm64_gadget_sme_sources}
-    ${_uml_arm64_gadget_sve_sources})
+    ${_uml_arm64_gadget_sve_sources}
+    ${_uml_arm64_gadget_a32_sources})
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers
-    uml_arm64_sve_semantics)
+    uml_arm64_sve_semantics uml_arm64_aarch32_decoder
+    uml_arm64_aarch32_semantics)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml_arm64_gadgets PUBLIC
@@ -256,7 +310,8 @@ if(APPLE)
     set(_uml_gadget_region_options)
     foreach(_uml_gadget_region_section IN ITEMS
             __a64_bank __a64_forward __a64_vforward __a64_cold __a64_afp
-            __a64_veneer __a64_sme __a64_sve __x86_bank __x86_cold)
+            __a64_veneer __a64_sme __a64_sve __a32_bank __a32_cold __a32_veneer
+            __x86_bank __x86_cold)
         list(APPEND _uml_gadget_region_options
             "LINKER:-rename_section,__TEXT,${_uml_gadget_region_section},__TEXT,__text")
     endforeach()
@@ -538,6 +593,8 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)

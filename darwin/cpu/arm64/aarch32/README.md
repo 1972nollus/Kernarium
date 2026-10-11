@@ -41,7 +41,10 @@ engine, holds no state, and is a CPU-layer `shared` target.
 - `Instruction::info()` returns the form's table entry: the XML encoding name,
   its mnemonic, the level and feature it needs, whether it is conditional, and
   static traits (loads, stores, exclusives, the kinds of PC write, barriers,
-  hints, exceptions) scanned from the XML's Execute pseudocode.
+  hints, exceptions, and fp_state, a read or write of the S, D, Q or V
+  registers or FPSCR) scanned from the XML's Execute pseudocode. fp_state is
+  exactly the XML's FP&SIMD section; an engine that loads the task's vectors
+  lazily loads them for any block that holds such a form.
 
 The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/architecture.md`](../../../../docs/architecture.md) and

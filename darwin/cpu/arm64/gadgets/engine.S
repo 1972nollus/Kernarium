@@ -26,6 +26,13 @@
  * Its one helper, the semantic library's entry, took the veneer that filled
  * the island's last 64-byte line, so the SME part kept its offset too; a
  * further veneer would move it.
+ * The AArch32 part, A32 and T32 translated by the shared decoder, follows
+ * the SVE part for the same reason and has a bank, a cold section and an
+ * island of its own: it may not add a veneer to the first island, which
+ * would move the SME part, so a helper it calls first is reached through a
+ * veneer at the end of its own, and its code reaches the base part's veneers
+ * for the helpers the base parts already call. It holds no SVE or SME
+ * instruction, and so runs outside streaming mode only, as the SVE part does.
  * The names are the arm64 engine's own, so the x86-64 engine's sections never
  * interleave with them in an image that carries both. */
 #define GADGET_SECTION_BANK __TEXT,__a64_bank,regular,pure_instructions
@@ -36,6 +43,9 @@
 #define GADGET_SECTION_VENEER __TEXT,__a64_veneer,regular,pure_instructions
 #define GADGET_SECTION_SME __TEXT,__a64_sme,regular,pure_instructions
 #define GADGET_SECTION_SVE __TEXT,__a64_sve,regular,pure_instructions
+#define GADGET_SECTION_A32_BANK __TEXT,__a32_bank,regular,pure_instructions
+#define GADGET_SECTION_A32_COLD __TEXT,__a32_cold,regular,pure_instructions
+#define GADGET_SECTION_A32_VENEER __TEXT,__a32_veneer,regular,pure_instructions
 
 /* Unreachable bytes ahead of each part's first entry, which set the part's
  * 64-byte phase. The bank's phase is the one the iPad measured fastest with
@@ -51,6 +61,9 @@
 #define GADGET_PHASE_AFP 0
 #define GADGET_PHASE_SME 0
 #define GADGET_PHASE_SVE 0
+#define GADGET_PHASE_A32_BANK 0
+#define GADGET_PHASE_A32_COLD 0
+#define GADGET_PHASE_A32_VENEER 0
 
 /* Zero-size bounds of each part, for the guest sampler's PC test. NAME() is
  * not defined until core_integer.inc. */
@@ -116,6 +129,24 @@ _uml_arm64_gadget_region_\part:
 	.endif
 	gadget_bank_bound uml_arm64_gadget_sve_section_\edge
 	.popsection
+	.pushsection GADGET_SECTION_A32_BANK
+	.ifc \edge,begin
+	gadget_region_start a32_bank, 6, GADGET_PHASE_A32_BANK
+	.endif
+	gadget_bank_bound uml_arm64_gadget_a32_bank_section_\edge
+	.popsection
+	.pushsection GADGET_SECTION_A32_COLD
+	.ifc \edge,begin
+	gadget_region_start a32_cold, 6, GADGET_PHASE_A32_COLD
+	.endif
+	gadget_bank_bound uml_arm64_gadget_a32_cold_section_\edge
+	.popsection
+	.pushsection GADGET_SECTION_A32_VENEER
+	.ifc \edge,begin
+	gadget_region_start a32_veneer, 4, GADGET_PHASE_A32_VENEER
+	.endif
+	gadget_bank_bound uml_arm64_gadget_a32_veneer_section_\edge
+	.popsection
 .endm
 
 /* Nonzero while engine/sme.inc assembles the GPR memory families a second
@@ -165,5 +196,7 @@ Lveneer_\symbol:
 #include "engine/sme.inc"
 /* Only into the SVE part, after the SME part's code. */
 #include "engine/sve.inc"
+/* Only into the AArch32 part's sections, after every part before it. */
+#include "engine/a32.inc"
 	afp_twin_table_end
 	gadget_bank_bounds end

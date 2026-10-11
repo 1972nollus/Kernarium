@@ -3,8 +3,8 @@
  * and its assembly offsets, the guest-AArch32 policy, the engines' support
  * levels and what a run presents of them, the AArch32 identification
  * registers and compat HWCAPs derived from the profile, and the AArch32
- * entry of both engines, which is the illegal-instruction exit until a lane
- * raises the level. The keys are in arm64-a32-guest-key. */
+ * entry of an engine below base, which is the illegal-instruction exit
+ * until a lane raises the level. The keys are in arm64-a32-guest-key. */
 #include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/cpu_state.hpp"
@@ -433,6 +433,8 @@ void aarch32_entry_is_illegal_below_base()
 			continue;
 		auto engine = ::uml::cpu::make_cpu_engine(kind);
 		require(engine != nullptr && engine->kind() == kind);
+		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
+			continue;
 		for (const unsigned long generation : {1UL, 7UL}) {
 			arm64::CpuState cpu{};
 			cpu.pc = arm64::aarch32::aarch32_key_bit | 0x1000U;

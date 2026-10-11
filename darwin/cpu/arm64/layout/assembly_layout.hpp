@@ -101,11 +101,13 @@ static_assert(offsetof(CpuState, a32_q) == UML_ARM64_CPU_A32_Q);
 static_assert(offsetof(CpuState, a32_itstate) == UML_ARM64_CPU_A32_ITSTATE);
 static_assert(offsetof(CpuState, a32_cp15ben) == UML_ARM64_CPU_A32_CP15BEN);
 static_assert(offsetof(CpuState, a32) == UML_ARM64_CPU_A32);
+static_assert(offsetof(CpuState, a32_fp_standard) ==
+	      UML_ARM64_CPU_A32_FP_STANDARD);
 /* The AArch32 block follows the SVE block and every earlier offset stands, so
  * no existing gadget or emitted instruction changes; its last byte fits the
  * 16-bit operand a gadget carries. */
 static_assert(UML_ARM64_CPU_A32_GE_MASK > UML_ARM64_CPU_SVE_LIVE &&
-	UML_ARM64_CPU_A32 < 0x1'0000);
+	UML_ARM64_CPU_A32_FP_STANDARD < 0x1'0000);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

@@ -12,11 +12,11 @@ everything else. In every image given this checks that:
 - no part holds a zero word between its bounds, so the phase pads are the
   only unreachable bytes in the region; and
 - every PC-relative reference in the code parts stays inside the region, so a
-  call to a helper outside it goes through its veneer in the island, whose
-  words are all branches; and
+  call to a helper outside it goes through its veneer in an island, whose
+  words are all branches (the first island, and the AArch32 part's own); and
 - SVE and SME words appear only in the SME part, the one part that may run
   in streaming mode; the SVE part lowers the non-streaming SVE forms onto
-  AdvSIMD and holds none.
+  AdvSIMD and holds none, and the AArch32 parts hold none.
 
 usage: test_gadget_region_layout.py IMAGE...
 """
@@ -49,8 +49,14 @@ BOUNDS = {
     "veneer": "uml_arm64_gadget_veneer_section",
     "sme": "uml_arm64_gadget_sme_section",
     "sve": "uml_arm64_gadget_sve_section",
+    "a32_bank": "uml_arm64_gadget_a32_bank_section",
+    "a32_cold": "uml_arm64_gadget_a32_cold_section",
+    "a32_veneer": "uml_arm64_gadget_a32_veneer_section",
 }
+# The islands: parts whose words are all branches. The AArch32 part has its
+# own so that it never adds a veneer to the first.
 ISLAND = "veneer"
+ISLANDS = frozenset({ISLAND, "a32_veneer"})
 # The part the SME-only code goes in, after the island so that no base helper
 # call changes its distance to its veneer.
 STREAMING = "sme"
@@ -237,7 +243,7 @@ def check(image: Image, parts: list[Part]) -> list[str]:
                           f"first at 0x{zeros[0]:x}")
         for index, word in enumerate(words):
             pc = begin + 4 * index
-            if part.name == ISLAND:
+            if part.name in ISLANDS:
                 if word & 0xFC000000 != 0x14000000:
                     errors.append(f"island word 0x{word:08x} at 0x{pc:x} is "
                                   f"not a branch")

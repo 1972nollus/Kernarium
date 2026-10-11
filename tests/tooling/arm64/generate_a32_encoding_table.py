@@ -79,6 +79,16 @@ def check_model(model: tm.Model) -> None:
     for name in ("d", "setflags", "read_spsr", "write_spsr"):
         if name not in members:
             raise ValueError(f"decode.cpp reads the operand {name}, which no program sets")
+    # The engines load the vector registers lazily for a block that holds an
+    # fp_state form, so the trait must be the XML's FP&SIMD section exactly.
+    for form in model.forms:
+        if form.encoding is None:
+            continue
+        in_section = form.encoding.section == "FP&SIMD"
+        if in_section != ("fp_state" in form.traits):
+            raise ValueError(
+                f"{form.name}: the fp_state trait disagrees with the FP&SIMD section"
+            )
 
 
 def check_cover(model: tm.Model) -> None:
@@ -176,8 +186,9 @@ def t16_rows(runs) -> list[dict[str, str]]:
     ]
 
 
-def inventory_rows(model: tm.Model) -> list[dict[str, str]]:
-    """One inventory row per decoded (non-alias) XML encoding, in index order."""
+def inventory_rows(model: tm.Model, statuses: dict[str, str]) -> list[dict[str, str]]:
+    """One inventory row per decoded (non-alias) XML encoding, in index order,
+    each keeping the engine status the checked-in inventory records for it."""
     for name in policy.NEVER_EXECUTED:
         if name not in model.by_name:
             raise ValueError(f"profile policy names unknown encoding {name}")
@@ -190,7 +201,7 @@ def inventory_rows(model: tm.Model) -> list[dict[str, str]]:
         for form in model.forms
         if form.encoding is not None
     ]
-    return inventory.rows(entries)
+    return inventory.rows(entries, statuses)
 
 
 def arguments() -> argparse.Namespace:
@@ -198,6 +209,13 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--architecture-archive", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, default=REPOSITORY)
     parser.add_argument("--llvm-mc", type=Path)
+    parser.add_argument(
+        "--status-input",
+        type=Path,
+        default=REPOSITORY / "tests/unit/arm64/a32_instruction_inventory.tsv",
+        help="the inventory whose engine statuses the regeneration keeps "
+        "(the checked-in one, not the one in --output-root)",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=900)
     add_bounded_generation_arguments(parser)
     return parser.parse_args()
@@ -206,6 +224,7 @@ def arguments() -> argparse.Namespace:
 def main() -> int:
     options = arguments()
     tool = llvm.find_llvm_mc(options.llvm_mc).resolve(strict=True)
+    statuses = inventory.read_statuses(options.status_input)
     targets = [options.output_root / name for name in OUTPUTS]
     publication = OneShotPublication.prepare(targets, [options.architecture_archive, tool])
     with workspace_from_options(
@@ -241,7 +260,7 @@ def main() -> int:
     t16_table = t16_rows(runs)
     payloads.append(render_tsv(SAMPLE_COLUMNS, sample_table))
     payloads.append(render_tsv(T16_COLUMNS, t16_table))
-    payloads.append(render_tsv(inventory.COLUMNS, inventory_rows(model)))
+    payloads.append(render_tsv(inventory.COLUMNS, inventory_rows(model, statuses)))
 
     def exact(expected: bytes):
         def validate(observed: bytes) -> None:

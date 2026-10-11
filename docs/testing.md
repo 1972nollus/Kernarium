@@ -848,8 +848,8 @@ check that with the policy off the probe sees no SVE and PTRUE is undefined.
 offsets, the guest-AArch32 policy, the engines' support levels and what a
 policy presents of them, the AArch32 identification registers and compat
 HWCAP words at each level over every subset of the host features they follow,
-and that both engines take the AArch32 entry as the illegal-instruction exit
-without changing the state. `arm64-a32-guest-key` checks the tagged
+and that an engine below `base` takes the AArch32 entry as the
+illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries of both
@@ -857,6 +857,46 @@ guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
 shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
+
+`arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
+engine's production AArch32 loop and checks what its translator decides:
+retirement counts (skipped conditional instructions retire, a fault or an
+undefined word does not), the key left in the PC, the architectural fault
+address, ITSTATE at an SVC, at a fault and when an entry resumes in the middle
+of a block, interworking in both directions, the A32 target with bit 1 set,
+the instruction budget, single step, code that changes in place, the
+exclusives and the Armv8 acquire and release forms (including loops whose
+plain stores share the target's TLB set and the compare-and-swap helpers of
+the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
+LDRD across a page, mapped and not, and that Advanced SIMD floating point
+runs under the standard FPSCR value while VFP keeps the guest's (in either
+order, in a skipped conditional run and across a block that ends inside a
+run), that a VFP word is illegal when the engine translates at the base
+level, and that at the complete level a form of an extension (CRC32, AES,
+SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
+host that has it, as a gadget or in the semantic library, and is the
+illegal-instruction exit, not retired, on one that does not (the test builds
+one guest on the machine's capabilities and one on a host with none of the
+optional ones). `arm64-gadget-a32-forms` runs every
+stored sample word of the decoder's data and the whole 16-bit Thumb space and
+requires the engine to raise the illegal-instruction exit exactly where the
+decoder, at the engine's level, rejects the word. Both also hold the
+library-exit count gate: with the semantic library's exit counters on from a
+clean state, only a form the engine leaves to the library, or a block transfer
+that crossed a page, may reach it, and the forms the engine leaves to it do.
+`arm64-gadget-a32-corpus`
+runs the cases of the AArch32 corpus whose instructions the engine's level
+implements in the oracle's memory map and compares the signal or system call,
+the instruction and address it was raised at, the registers, flags, Q, GE,
+D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
+extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
+`--level` runs the
+cases of another level with the engine translating at it, which is how a
+level is brought up before the engine's own moves. The `unaligned` and
+`fpscr-reserved` suites are unrecorded until a hardware oracle exists, so
+nothing here invents expectations for them. All three run in both page
+profiles.
+Instruction semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
 the architectural positions of the status word's fields, the load and save of

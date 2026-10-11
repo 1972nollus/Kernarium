@@ -5,6 +5,7 @@
 #include "../layout/assembly_offsets.h"
 #include "../../engine.hpp"
 #include "../fp_environment.hpp"
+#include "a32_support.hpp"
 #include "tlb.hpp"
 
 #include <algorithm>
@@ -329,6 +330,11 @@ struct BuildOptions final {
 	 */
 	bool force_software_dotprod{};
 	bool force_software_i8mm{};
+	/* The AArch32 level the gadget engine translates against. Production
+	 * translates at a32_support, the level the engine implements and the
+	 * runtime presents; a test or a bring-up raises or lowers it to run
+	 * the forms of a level, or to prove those of a higher one are illegal. */
+	A32Support a32_level{a32_support};
 	/* The guest SVCR mode the program runs in (svcr_sm, svcr_za), which
 	 * decides what each SME and floating-point word may compile to. */
 	std::uint8_t svcr{};
