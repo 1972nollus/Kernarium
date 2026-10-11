@@ -2,6 +2,7 @@
 #include "cpu/arm64/engine_adapters.hpp"
 
 #include "cpu/arm64/engine_execution.hpp"
+#include "cpu/arm64/gadgets/a32_support.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 
 #include <memory>
@@ -30,6 +31,12 @@ public:
 		} catch (...) {
 			return {.reason = ExitReason::fatal};
 		}
+	}
+
+	[[nodiscard]] ExecutionResult run_aarch32(
+		ExecutionRequest &request) noexcept override
+	{
+		return run_translated_aarch32<gadgets::a32_support>(request);
 	}
 
 private:

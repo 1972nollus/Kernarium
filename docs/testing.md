@@ -642,6 +642,62 @@ static guest program, and require the same results as a gadget-engine run of
 both programs on a Mac. The device runs only the gadget engine, so a JIT path
 that needs one of these features runs only on an M4 or newer Mac.
 
+## AArch32 decoder
+
+`arm64-aarch32-decoder` (unit, both page profiles) decodes the stored sample
+words of every row of the encoding table and the whole 16-bit Thumb space. It
+compares each answer with the one `tests/tooling/arm64/a32_expected.py`
+computes from the same XML pseudocode independently of the C++ translation,
+and requires LLVM MC to have decoded whatever the decoder accepts. The
+`arm64-a32-encoding-table` tooling test checks the generated tables and the
+test data against each other offline.
+
+To change the table, the profile policy (`a32_profile_policy.py`) or the pinned
+release, run `tests/tooling/arm64/generate_a32_encoding_table.py
+--architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
+LLVM MC 22.1.8 and takes a few minutes. Configure with
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the
+outputs (the tables, the test data and the instruction inventory) and
+requires the checked-in bytes; without the archive or that LLVM MC it skips.
+The `arm64-a32-instruction-inventory` tooling test checks the inventory against
+the decoder's table and the counts in
+[`a32-instruction-coverage.md`](a32-instruction-coverage.md).
+
+## AArch32 corpus
+
+`arm64-aarch32-corpus` (unit, both page profiles) checks every case of the
+generated AArch32 corpus against the decoder: the program decodes in order,
+in the IT state its instructions leave, to legal forms except at the
+instruction that raised an event; the instruction under test is the form the
+case names; the event is one its kind can raise; and the retired count, fault
+position, state changes and memory runs agree. A case whose forms need a level
+above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
+the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
+`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
+checked-in bytes, and requires cases for every executed base inventory entry.
+Neither needs an oracle. The corpus README owns the format, the oracles and how
+to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
+`qemu-arm` on a build host over ssh and is opt-in.
+
+## AArch32 semantic library
+
+`arm64-aarch32-semantics` (unit, both page profiles) checks the library's
+contract that the corpus cannot record: fault ordering and the unchanged
+state at a fault, the exclusive monitor, the single-instruction entry's IT
+handling, the events, the library-exit counters and the coverage predicate.
+`arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
+case of the pack through `step_a32()` on a model of the oracle's address space
+(page by page, so a crossing access splits across separate host pages) and
+requires the recorded event, retired count, fault address, registers, flags,
+FPSCR, D registers, thread registers and data bytes, with 0 failures. The
+library covers the whole profile, so a case with a form it does not cover is a
+failure of the lane too; `--skipped` lists such forms. It runs the BFloat16,
+8-bit matrix multiply and FHM forms on any host, because the library does not
+need those features. Run one record with
+`uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
+with `--case`, and `--trace` for its steps and initial state.
+
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
@@ -698,9 +754,15 @@ lane out of reach, scatters while another vCPU's reservation tracks stores,
 the saturating counts at their limits, table lookups with indices that land
 in the tables, and the governing-predicate shapes (none, one, all but one, runs,
 every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
-also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
-(the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
-injected profile with SME and again with SME2.
+requires a block of SVE memory words to check the top-byte-ignore state once,
+runs the words with tagged and untagged bases, requires the loads of one base
+to share a translation exactly where a window allows (words between them, base
+changes, stores, other bases, the 256-byte span and the 17-word limit) and runs
+them against the library inside a page, across its end and across the mapped
+pages, and also runs the 29 forms
+that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (the SCLAMP class), which
+execute at SM = 0 only with SME beside SVE, on an injected profile with SME and
+again with SME2.
 `arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
 as well) and every evidence witness at SM = 0 in both ZA states and every
 link shape, and requires that no translation holds an SVE or SME word.
@@ -734,6 +796,22 @@ with zero registers accept either outcome. Where 6.12 differs from the
 guest's Linux 6.18, the guest is held to 6.18 and only a native run accepts
 6.12. `guest-sve-off-gadgets` and `guest-sve-off-jit` run on every host and
 check that with the policy off the probe sees no SVE and PTRUE is undefined.
+
+## Guest AArch32 foundation
+
+`arm64-a32-foundation` checks the state `CpuState` appends and its assembly
+offsets, the guest-AArch32 policy, the engines' support levels and what a
+policy presents of them, the AArch32 identification registers and compat
+HWCAP words at each level over every subset of the host features they follow,
+and that both engines take the AArch32 entry as the illegal-instruction exit
+without changing the state. `arm64-a32-guest-key` checks the tagged
+translation keys (round trips, interworking, that no key collides with an A64
+key, the empty cell or a fault position, and the hash-visible bit) and the
+key-aware validation of saved guest units across page boundaries of both
+guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
+shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
+policy from their environment as well; the suites must hold unchanged with
+`DARWIN_UML_GUEST_AARCH32=1`.
 
 ## x86 instruction conformance
 

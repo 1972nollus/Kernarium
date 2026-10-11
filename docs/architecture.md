@@ -712,7 +712,18 @@ since it records one store range per instruction. LDFF1 and LDNF1 stay in the
 library. A predicated form checks its governing predicate once per block and
 element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
-not do, when the predicate is partial. The breaks, COMPACT and SPLICE, which
+not do, when the predicate is partial. A memory word with a register base
+checks `CpuState::tbi_enabled` once per block, at the first such word: no
+guest instruction changes it, and with top-byte ignore enabled the block
+leaves at that word for the library, which untags. A load with such a base and
+a constant offset starts a window with the loads of the same base behind it,
+up to 17 words within 256 bytes, that follow with between them only SVE words
+that name no general register and no memory: the first word proves that the
+window lies in one guest page, translates its lowest byte once and keeps the
+host address in the chain state, and each later word reads it back in place of
+translating. Words stay in program order, so a proof that fails leaves the
+block at the first word and the library runs it, and the words behind it
+compile again as their own block. The breaks, COMPACT and SPLICE, which
 raise nothing, take any governing predicate: a prefix OR of the mask form, a
 table of the active-element masks (COMPACT) and a TBL index built from the first
 and last active byte (SPLICE).
@@ -759,6 +770,47 @@ FIZ, AH and NEP. A pass from a clean state (every predicate and FFR
 all-active, no trap enable, an aligned base inside a page) requires the
 library-exit count of every lowered word's row to stay zero, so a lowering
 that always bailed to the library cannot pass as a match.
+
+The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
+with interworking and IT, for the armhf userspace of Debian and Android's
+armeabi-v7a, which needs hardware VFPv4-D32 and Advanced SIMD, so there is no
+soft-float-only profile. The profile, derived from the host as the SVE and
+SME profiles are, is in
+[`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
+Each engine's `a32_support` names how far it implements it, `none`, `base`
+(the integer core), `simd` or `complete`, and `base` and `simd` are
+milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
+is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
+engine below `base` takes the new entry as the illegal-instruction exit
+without touching the state. The development policy
+`DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
+`a32_presented_support` gives the level a run presents, nothing with the
+policy off and the engine's level with it on, and the AArch32 identification
+registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
+and the host in `cpu/arm64/id_registers.hpp` as arm64 Linux derives them, and
+are zero below `base`. The default turns on once both engines are complete.
+
+An AArch32 task keeps R0-R14 zero-extended in the integer registers, NZCV in
+the A64 flags and D0-D31 in the low sixteen vectors; what has no A64 field is
+appended to `CpuState` after the SVE block (GE, the sticky Q flag, ITSTATE,
+FPSCR's flags, TPIDRURO, CP15BEN and an entry marker), so no earlier offset
+moves. The PC is a translation key
+([`cpu/arm64/aarch32/guest_key.hpp`](../darwin/cpu/arm64/aarch32/guest_key.hpp))
+for the whole entry, which lets one gadget program cache, one JIT arena and
+one shared tier serve A64, A32 and T32 without a second instance of any of
+them. An A64 key is the address with the SME mode in its two low bits. An A32
+key is bit 63 with the word address; a T32 key adds bit 62 and shifts the
+halfword address left one bit, so that bit 2, where every cache hash starts,
+varies between adjacent instructions. A branch target's bit 0 selects T32, so
+the key carries PSTATE.T and no stub switches the state. A valid AArch32 key
+has both low bits clear, so no key reaches the SME mode the JIT reads from an
+A64 key, is the all-ones empty cell, or is a fault position, and an A32 target
+with bit 1 set is a PC-alignment exit before it is a key. The IT state is not
+part of a key because no block ends inside an IT block. A translation records
+its ISA and counts its saved guest units in that ISA's unit, a word for A64
+and A32 and a halfword for T32, so one page-bounded validation serves the
+gadget cache's validating lookups, the JIT's stale lookups and the shared
+tier, whose entries must carry the ISA of the key they are stored under.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
@@ -891,6 +943,26 @@ installs in the task. A 16 KiB guest runs only 32-bit programs whose segments
 are 16 KiB congruent; others fail cleanly at exec or `dlopen`, so stock armhf
 userspace needs the 4 KiB profile. The
 [shared kernel README](../kernel/common/README.md) holds the kernel side.
+
+One decoder serves every AArch32 consumer: `darwin/cpu/arm64/aarch32` decodes
+A32, T16 and T32 words, in the caller's IT state, from a table generated from
+the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
+`shared` target that includes no engine, so the gadget engine, the JIT and the
+semantic library link the same one, and it implements the Armv8-A AArch32 EL0
+profile: whatever the profile lacks is undefined, never guessed. Its
+[README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+
+The AArch32 semantic library
+([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))
+is shared C++ semantics rather than another engine, in the SVE library's
+mould: it includes no engine header, works on `CpuState` alone, reaches guest
+memory only through the caller's `A32Memory`, and executes any covered word
+one instruction at a time with the architecture's fault ordering.
+`a32_semantics_covers()` holds for every implemented form, and a word
+outside it is a fatal internal error. The gadget engine and the JIT route
+their slow paths and long tails to it, and the corpus's model lane runs the
+instruction corpus through it. Until an engine calls it, no product binary
+links it.
 
 ## Kernel and Android ownership
 

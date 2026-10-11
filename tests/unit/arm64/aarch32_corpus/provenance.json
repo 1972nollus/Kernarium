@@ -1,0 +1,35 @@
+{
+  "architecture_archive_sha256": "b389a93f41504376895b723ed6e9861ce369e2253c138e6f4c46e27e95375887",
+  "cases": 33011,
+  "kind": "aarch32",
+  "oracles": {
+    "profile": {},
+    "qemu": {
+      "host": "qemu-arm version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)",
+      "hwcap": "fdfb0d7",
+      "hwcap2": "7f",
+      "runner": "qemu-arm -cpu max"
+    }
+  },
+  "pack_sha256": "898e416487b0620b640a53bfde56fc4d6389e5640698ec0c5b7bd650b2babc13",
+  "records": {
+    "absent-profile": 751,
+    "alu-qemu": 7684,
+    "armv8-memory-qemu": 69,
+    "armv8-qemu": 4324,
+    "armv8-system-qemu": 4,
+    "branch-qemu": 454,
+    "conditions-qemu": 1816,
+    "exclusive-qemu": 256,
+    "fetch-qemu": 994,
+    "fpscr-qemu": 180,
+    "memory-qemu": 1914,
+    "pc-qemu": 88,
+    "prefetch-qemu": 144,
+    "simd-memory-qemu": 3721,
+    "simd-qemu": 10228,
+    "straddle-qemu": 60,
+    "system-qemu": 324
+  },
+  "schema": 1
+}
