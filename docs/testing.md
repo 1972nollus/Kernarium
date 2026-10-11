@@ -971,10 +971,11 @@ T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
 does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
 and the Standard FPSCR value for a Neon one across a conditional arm, a chained
 branch, an exit and alternating blocks (the host FPCR keeps its mode across
-them), VMAX and VMIN on every special operand in either mode, QC across
-runs, and the vector memory forms staying inline and taking the library, with
-its data and faults, across a page, on a misalignment and into an unmapped
-page. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
+them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
+rounding mode and flush mode in the contexts that guard them and the one that
+does not, QC across runs, and the vector memory forms staying inline and
+taking the library, with its data and faults, across a page, on a misalignment
+and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
 MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
 classes.
 

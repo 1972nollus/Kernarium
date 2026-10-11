@@ -17,6 +17,13 @@ void A32Compiler::emit_cold_paths() {
     emit(0xd503'3f5fU); // clrex
     emitter_.branch(path.continuation);
   }
+  for (const auto &path : float_cold_) {
+    bind(path.label);
+    emit_fp_write(true);
+    emit_vec3(path.base, path.dest, path.a, path.b);
+    emit_fp_write(false);
+    emitter_.branch(path.continuation);
+  }
   for (const auto &cold : cold_) {
     set_exit_gpr_mask(cold.dirty_gprs);
     set_exit_vector_mask(cold.dirty_vectors);

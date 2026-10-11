@@ -102,6 +102,17 @@ void A32Compiler::touch_fp_environment() {
  * executor clears it where it activates the environment. Where the
  * translation does not know the mode it tests the byte and writes the FPCR
  * only if the mode differs; an exit leaves the FPCR as it is. */
+/* The host FPCR takes the Standard value or the guest's, without a record. */
+void A32Compiler::emit_fp_write(bool standard) {
+  emitter_.load_w(0, 15, offsetof(CpuState, fpcr));
+  if (standard) {
+    emit(enc::movz(1, fpcr_guest_kept_bits >> 16, 1));
+    emit(enc::and_(0, 0, 1));
+    emit(enc::orr_i(0, 0, *enc::logical_immediate_field(fpcr_standard_bits)));
+  }
+  emit(0xd51b'4400U); // msr fpcr, x0
+}
+
 void A32Compiler::set_fp_mode(bool standard) {
   const auto wanted = standard ? FpMode::standard : FpMode::guest;
   if (fp_mode_ == wanted)
@@ -113,13 +124,7 @@ void A32Compiler::set_fp_mode(bool standard) {
     emitter_.load_b(0, 15, offsetof(CpuState, a32_fp_standard));
     emitter_.compare_zero(done, 0, false, standard);
   }
-  emitter_.load_w(0, 15, offsetof(CpuState, fpcr));
-  if (standard) {
-    emit(enc::movz(1, fpcr_guest_kept_bits >> 16, 1));
-    emit(enc::and_(0, 0, 1));
-    emit(enc::orr_i(0, 0, *enc::logical_immediate_field(fpcr_standard_bits)));
-  }
-  emit(0xd51b'4400U); // msr fpcr, x0
+  emit_fp_write(standard);
   if (standard) {
     emitter_.load_constant(1, 1);
     emitter_.store_b(1, 15, offsetof(CpuState, a32_fp_standard));

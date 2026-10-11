@@ -181,11 +181,13 @@ void minmax_between_modes() {
   const std::uint32_t vmax_q = 0xf20a'8f4cU; // vmax.f32 q4, q5, q6
   const std::uint32_t vmin_q = 0xf22a'ef4cU; // vmin.f32 q7, q5, q6
   const std::uint32_t vfp_add = 0xee30'0a81U; // vadd.f32 s0, s1, s2
-  const std::uint32_t neon_add = 0xf20f'ed0fU; // vadd.f32 d14, d15, d15
+  const std::uint32_t neon_add = 0xf24d'cdadU; // vadd.f32 d28, d29, d29
   const std::array<std::size_t, 3> offsets{0, 0x100, 0x200};
-  fixture.code32(offsets[0], {vfp_add, vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
-  fixture.code32(offsets[1], {neon_add, vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
-  fixture.code32(offsets[2], {vmax_d, vmin_d, vmax_q, vmin_q, arm_svc});
+  fixture.code32(offsets[0], {vfp_add, vmax_d, vmin_d, vmax_q, vmin_q, vfp_add,
+                              arm_svc});
+  fixture.code32(offsets[1], {neon_add, vmax_d, vmin_d, vmax_q, vmin_q,
+                              neon_add, arm_svc});
+  fixture.code32(offsets[2], {vmax_d, vmin_d, vmax_q, vmin_q, vfp_add, arm_svc});
   const std::array<std::uint32_t, 16> values{
       0x0000'0000U, 0x8000'0000U, 0x3f80'0000U, 0xbfc0'0000U, 0x7f7f'ffffU,
       0x7f80'0000U, 0xff80'0000U, 0x0001'2345U, 0x8001'2345U, 0x7fc0'0001U,
@@ -227,6 +229,145 @@ void minmax_between_modes() {
                               result[1].vectors[q].bytes.data(), 16) == 0);
         require(result[run].fpsr == result[1].fpsr);
         require(result[run].fpcr == result[1].fpcr);
+      }
+    }
+  }
+}
+
+/* VADD, VSUB, VMUL, VMLA and VMLS (single precision, D and Q) between VFP
+ * instructions, after one, and as the first floating-point instruction of a
+ * block run under the guest's FPCR behind a test of their operands and
+ * results. Whatever the operands and the guest's FPCR (a rounding mode,
+ * flush-to-zero, default NaN), the registers and the cumulative flags are
+ * those of the same instruction among Advanced SIMD ones, which run under the
+ * Standard FPSCR value. */
+void float_arithmetic_between_modes() {
+  Fixture fixture{0x1a32'0d06, 24};
+  struct Op final {
+    std::uint32_t word;
+    unsigned destination; // the Q register of the result
+  };
+  const std::array<Op, 10> ops{{
+      {0xf204'3d05U, 1}, // vadd.f32 d3, d4, d5
+      {0xf224'3d05U, 1}, // vsub.f32 d3, d4, d5
+      {0xf304'3d15U, 1}, // vmul.f32 d3, d4, d5
+      {0xf204'3d15U, 1}, // vmla.f32 d3, d4, d5
+      {0xf224'3d15U, 1}, // vmls.f32 d3, d4, d5
+      {0xf20a'8d4cU, 4}, // vadd.f32 q4, q5, q6
+      {0xf22a'8d4cU, 4}, // vsub.f32 q4, q5, q6
+      {0xf30a'8d5cU, 4}, // vmul.f32 q4, q5, q6
+      {0xf20a'8d5cU, 4}, // vmla.f32 q4, q5, q6
+      {0xf22a'8d5cU, 4}, // vmls.f32 q4, q5, q6
+  }};
+  const std::uint32_t vfp_add = 0xee30'0a81U;  // vadd.f32 s0, s1, s2
+  const std::uint32_t neon_add = 0xf20f'ed0fU; // vadd.f32 d14, d15, d15
+  // Per op and repeat count: among VFP instructions, first in the block, last
+  // in the block, and (the reference) among Advanced SIMD ones.
+  constexpr std::array<unsigned, 4> repeats{1, 2, 8, 10};
+  constexpr std::size_t contexts = 4;
+  constexpr std::size_t stride = 0x100;
+  std::size_t slot = 0;
+  std::array<std::array<std::array<std::size_t, contexts>, repeats.size()>,
+             ops.size()>
+      offsets{};
+  for (std::size_t op = 0; op < ops.size(); ++op) {
+    for (std::size_t r = 0; r < repeats.size(); ++r) {
+      std::vector<std::uint32_t> body(repeats[r], ops[op].word);
+      const auto program = [&](bool lead, bool trail, std::uint32_t filler) {
+        std::vector<std::uint32_t> words;
+        if (lead)
+          words.push_back(filler);
+        words.insert(words.end(), body.begin(), body.end());
+        if (trail)
+          words.push_back(filler);
+        words.push_back(arm_svc);
+        return words;
+      };
+      const std::array<std::vector<std::uint32_t>, contexts> programs{{
+          program(true, true, vfp_add),
+          program(false, true, vfp_add),
+          program(true, false, vfp_add),
+          program(true, true, neon_add),
+      }};
+      for (std::size_t c = 0; c < contexts; ++c) {
+        offsets[op][r][c] = slot++ * stride;
+        for (std::size_t i = 0; i < programs[c].size(); ++i)
+          fixture.code32(offsets[op][r][c] + 4 * i, {programs[c][i]});
+      }
+    }
+  }
+  const std::array<std::uint32_t, 24> values{
+      0x0000'0000U, 0x8000'0000U, 0x3f80'0000U, 0xbfc0'0000U, 0x7f7f'ffffU,
+      0x7f80'0000U, 0xff80'0000U, 0x0001'2345U, 0x8001'2345U, 0x7fc0'0001U,
+      0x7f80'0001U, 0xffc1'2345U, 0x0080'0000U, 0x007f'ffffU, 0x0000'0001U,
+      0x4000'0000U, 0x0080'0001U, 0x0100'0000U, 0x1e00'0000U, 0x1f80'0000U,
+      0x4b00'0000U, 0x3400'0000U, 0x5f00'0000U, 0x0180'0000U};
+  std::uint64_t state = 0x2545'f491'4f6c'dd1dULL;
+  const auto pick = [&] {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return values[state % values.size()];
+  };
+  for (const std::uint32_t fpscr :
+       {0x0000'0000U, 0x0300'0000U, round_toward_zero, 0x0080'0000U,
+        0x0040'0000U, 0x0100'0000U, 0x0200'0000U, 0x03c0'0000U}) {
+    for (unsigned round = 0; round < 250; ++round) {
+      std::array<std::uint32_t, 16> lanes{};
+      for (auto &lane : lanes)
+        lane = round < values.size() ? values[round] : pick();
+      if (round >= values.size() && round % 4 == 0)
+        for (auto &lane : lanes)
+          lane = (lane & 0x8000'0000U) | (0x3f00'0000U + (lane & 0x00ff'ffffU));
+      for (std::size_t op = 0; op < ops.size(); ++op)
+      for (std::size_t r = 0; r < repeats.size(); ++r) {
+        std::array<arm64::CpuState, contexts> result{};
+        for (std::size_t c = 0; c < contexts; ++c) {
+          auto cpu = Fixture::task(false, offsets[op][r][c]);
+          cpu.fpcr = fpscr;
+          set_lane32(cpu, 0, 1, one);
+          set_lane32(cpu, 0, 2, one);
+          set_lane32(cpu, 7, 0, one);
+          set_lane32(cpu, 7, 1, one);
+          set_lane32(cpu, 7, 2, one);
+          set_lane32(cpu, 7, 3, one);
+          for (unsigned lane = 0; lane < 4; ++lane) {
+            set_lane32(cpu, 2, lane, lanes[lane]);       // d4, d5
+            set_lane32(cpu, 5, lane, lanes[4 + lane]);   // q5
+            set_lane32(cpu, 6, lane, lanes[8 + lane]);   // q6
+            set_lane32(cpu, 4, lane, lanes[12 + lane]);  // q4
+          }
+          set_lane32(cpu, 1, 2, lanes[13]); // d3
+          set_lane32(cpu, 1, 3, lanes[14]);
+          const auto outcome = fixture.run(cpu);
+          require(outcome.reason == ExitReason::system_call);
+          result[c] = cpu;
+        }
+        for (std::size_t c = 0; c + 1 < contexts; ++c) {
+          for (const unsigned q : {1U, 2U, 3U, 4U, 5U, 6U})
+            if (std::memcmp(result[c].vectors[q].bytes.data(),
+                            result[3].vectors[q].bytes.data(), 16) != 0) {
+              std::fprintf(stderr,
+                           "op %08x x%u ctx %zu fpscr %08x q%u differs: round %u\n",
+                           ops[op].word, repeats[r], c, fpscr, q, round);
+              for (unsigned lane = 0; lane < 4; ++lane)
+                std::fprintf(stderr, "  lane %u: n %08x m %08x old %08x\n", lane,
+                             lanes[lane], lanes[4 + lane], lanes[12 + lane]);
+              std::abort();
+            }
+          if (result[c].fpsr != result[3].fpsr) {
+            std::fprintf(stderr,
+                         "op %08x x%u ctx %zu fpscr %08x fpsr %08x vs %08x: round %u\n",
+                         ops[op].word, repeats[r], c, fpscr,
+                         static_cast<unsigned>(result[c].fpsr),
+                         static_cast<unsigned>(result[3].fpsr), round);
+            for (unsigned lane = 0; lane < 4; ++lane)
+              std::fprintf(stderr, "  lane %u: n %08x m %08x old %08x\n", lane,
+                           lanes[lane], lanes[4 + lane], lanes[12 + lane]);
+            std::abort();
+          }
+          require(result[c].fpcr == result[3].fpcr);
+        }
       }
     }
   }
@@ -426,6 +567,7 @@ int main() {
   floating_point_environment();
   floating_point_modes_across_blocks();
   minmax_between_modes();
+  float_arithmetic_between_modes();
   saturation_flag();
   vector_memory_stays_inline();
   vector_memory_across_a_page();

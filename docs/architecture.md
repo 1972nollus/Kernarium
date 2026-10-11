@@ -1021,10 +1021,17 @@ has across exits and links, as the gadget engine's does:
 `CpuState::a32_fp_standard` records it, the executor clears it where it
 activates the environment, and a translation tests the byte at the first
 instruction that needs a mode and writes the FPCR only when the mode differs.
-VMAX and VMIN of single precision return an operand, so the two modes part
-only on a nonzero denormal operand or a NaN: an integer test finds those and
-the instruction runs under the guest's FPCR otherwise, which keeps a clamp
-between VFP instructions from writing the FPCR at all. A saturating
+The two modes part only on a nonzero denormal operand, a NaN operand, a
+result that is tiny before rounding and a rounding mode other than to nearest,
+so a Neon VMAX, VMIN, VADD, VSUB, VMUL, VMLA or VMLS of single precision in a
+run of at most eight Neon floating-point operations that a VFP instruction
+(or the end of the block) follows runs under the guest's FPCR behind integer tests of its
+operands, and under the Standard value from a cold path when a test fails; a
+longer run switches once. A run under the guest's FPCR leaves its cumulative
+exception flags behind, so what only it would raise is found before it: a
+product whose operand exponents sum to less than 129 (it may underflow,
+inexactly) is tested before the multiplication, and a sum needs no such test
+because a tiny sum of normal numbers is exact. A saturating
 instruction sets QC in the host FPSR, which is the guest's. VRECPS and VRSQRTS
 round the product before the step, as the AArch32 pseudocode does and the A64
 instructions do not, and answer 2.0 or 1.5 for an infinity times a zero

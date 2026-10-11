@@ -103,6 +103,18 @@ private:
     GuestFlagsState flags{GuestFlagsState::memory};
   };
 
+  /* A guarded floating-point operation whose operands or result were not
+   * clean: it runs under the Standard FPSCR value and returns. */
+  struct FloatColdPath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+    std::uint32_t base;
+    bool quad;
+    unsigned dest;
+    unsigned a;
+    unsigned b;
+  };
+
   /* The skipped arm of a fused conditional store: it clears the monitor and
    * resumes after the store. */
   struct ResumePath final {
@@ -332,7 +344,19 @@ private:
   /* VMAX and VMIN (single precision) under the guest's FPCR, where the
    * translation holds it: see emit_neon_minmax_guarded. */
   [[nodiscard]] Flow emit_neon_minmax_guarded(const VInfo &v);
-  void emit_float_special_test(unsigned a, unsigned b, bool quad);
+  /* VADD, VSUB, VMUL, VMLA and VMLS (single precision) the same way: see
+   * emit_guarded_float_op. */
+  [[nodiscard]] Flow emit_neon_float_guarded(const VInfo &v);
+  [[nodiscard]] bool neon_float_isolated() const;
+  void emit_float_special_test(unsigned a, unsigned b, bool quad,
+                               unsigned live);
+  void emit_float_tiny_test(unsigned result, bool quad, unsigned live);
+  void emit_float_product_test(unsigned a, unsigned b, bool quad,
+                               unsigned live);
+  void emit_guarded_float_op(std::uint32_t base, bool quad, unsigned dest,
+                             unsigned a, unsigned b, bool product,
+                             unsigned live);
+  void emit_fp_write(bool standard);
   [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
                                     unsigned n, unsigned m);
   [[nodiscard]] Flow emit_neon_logic(const VInfo &v);
@@ -381,6 +405,7 @@ private:
   std::vector<ColdPath> cold_;
   std::vector<TranslationColdPath> translation_cold_;
   std::vector<ResumePath> resume_cold_;
+  std::vector<FloatColdPath> float_cold_;
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};
