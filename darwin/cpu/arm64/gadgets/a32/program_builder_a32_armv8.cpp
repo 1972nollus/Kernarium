@@ -26,6 +26,46 @@ Translator::Result Translator::emit_armv8(const Instruction &in,
 		push(kCrc32[plan.sub >> 2][plan.sub & 3U]);
 		push(core(o.d) | core(o.n) << 16 | core(o.m) << 32);
 		return {};
+	case Family::vfpv8: {
+		/* aux: 0 single, 1 double, 2 half (in the low half of an S
+		 * register). The first four operations are VSEL and VMAXNM and
+		 * VMINNM follow, with two source registers; VRINT has one. */
+		const unsigned precision = plan.aux;
+		const auto reg = [precision](int number) noexcept {
+			return precision == 1 ? d_register(number) :
+						s_register(number);
+		};
+		push(kVfp8[plan.sub][precision]);
+		if (plan.sub < 6)
+			push(reg(o.d) | reg(o.n) << 16 | reg(o.m) << 32);
+		else
+			push(reg(o.d) | reg(o.m) << 16);
+		return {};
+	}
+	case Family::vfpcvt8: {
+		const unsigned precision = plan.aux;
+		const std::uint64_t source = precision == 1 ?
+			d_register(o.m) : s_register(o.m);
+		push(kVfpCvt8[plan.sub][o.unsigned_ ? 1U : 0U][precision]);
+		push(s_register(o.d) | source << 16);
+		return {};
+	}
+	case Family::vfphalf:
+		switch (plan.sub) {
+		case 0: /* VINS */
+		case 1: /* VMOVX */
+			push(plan.sub == 0 ? G::vfp_ins : G::vfp_movx);
+			push(s_register(o.d) | s_register(o.m) << 16);
+			return {};
+		case 2: /* VMOV Hn, Rt */
+			push(G::vfp_mov_toh);
+			push(s_register(o.n) | core(o.t) << 16);
+			return {};
+		default: /* VMOV Rt, Hn */
+			push(G::vfp_mov_h);
+			push(core(o.t) | s_register(o.n) << 16);
+			return {};
+		}
 	default:
 		return {};
 	}

@@ -130,6 +130,18 @@ Translator::Result Translator::emit_vfp_convert(const Instruction &in,
 	}
 	default: { /* half precision, in the bottom or top half of a single */
 		const std::uint64_t top = plan.aux != 0 ? 2U : 0U;
+		if (o.uses_double) {
+			if (o.convert_from_half) {
+				push(G::vfp_cvt_dh);
+				push(d_register(o.d) |
+				     (s_register(o.m) + top) << 16);
+			} else {
+				push(G::vfp_cvt_hd);
+				push((s_register(o.d) + top) |
+				     d_register(o.m) << 16);
+			}
+			return {};
+		}
 		if (o.convert_from_half) {
 			push(G::vfp_cvt_sh);
 			push(s_register(o.d) | (s_register(o.m) + top) << 16);

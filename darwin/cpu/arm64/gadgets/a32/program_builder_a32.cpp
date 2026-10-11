@@ -1156,6 +1156,9 @@ Translator::Result Translator::emit(const Instruction &in,
 	case Family::neonmem:
 		return emit_structure(in, plan);
 	case Family::crc:
+	case Family::vfpv8:
+	case Family::vfpcvt8:
+	case Family::vfphalf:
 		return emit_armv8(in, plan);
 	case Family::udf:
 	case Family::none:
