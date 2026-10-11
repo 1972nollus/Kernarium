@@ -64,6 +64,15 @@ def check_features(ie) -> list[str]:
         problems.append("allocation-table feature tokens that "
                         "invalid_encoding.py decides neither implemented "
                         "nor omitted: " + ", ".join(unknown))
+    # The virtual CPU executes SVE only in streaming mode, so every SVE
+    # feature of the encoding table is unimplemented outside the SME rows.
+    sve = frozenset(token for token in ie.sme_table.FEATURES
+                    if token.startswith("sve"))
+    if sve - ie.UNIMPLEMENTED_PROFILE_FEATURES:
+        problems.append("SVE features of the encoding table that "
+                        "invalid_encoding.py treats as implemented: " +
+                        ", ".join(sorted(
+                            sve - ie.UNIMPLEMENTED_PROFILE_FEATURES)))
     both = sorted(ie.OMITTED_TOKENS & ie.IMPLEMENTED_TOKENS)
     if both:
         problems.append("tokens listed as implemented and omitted: " +
@@ -89,9 +98,12 @@ def check_features(ie) -> list[str]:
 
 # (word, record options, invalid): one word of each rule of the classifier.
 EXAMPLES = (
-    # ADR (vectors): SVE outside streaming mode, and where SVE is absent.
-    (0x04A0_A000, (), False),
-    (0x04A0_A000, ("without_sve",), False),
+    # ADR (vectors) is non-streaming SVE, which no configuration executes;
+    # RDVL executes in streaming mode and, as the SM = 0 family, outside it,
+    # and is a valid encoding where SME is absent.
+    (0x04A0_A000, (), True),
+    (0x04BF_5000, (), False),
+    (0x04BF_5000, ("without_sme",), False),
     # An SVE row nothing executes, and AND (immediate) with a reserved imm13.
     (0x0406_A000, (), True),
     (0x0583_FFE0, (), True),
