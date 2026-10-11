@@ -352,7 +352,7 @@ Configure requires Python 3.11 or newer and fails with CMake's version error
 on an older interpreter. macOS's own `python3` is 3.9, so install a newer one
 and put it first on `PATH`, or pass `-DPython3_EXECUTABLE=<python>`.
 
-Git needs an identity: `user.name` and a real `user.email`. The patch-series,
+Git needs a configured identity with a real email address. The patch-series,
 kernel, Android, and dependency tooling tests commit fixtures as whoever Git
 resolves, and patch export rejects a host-derived placeholder address.
 `check-tooling` also tests the dependency build scripts, so it needs the
