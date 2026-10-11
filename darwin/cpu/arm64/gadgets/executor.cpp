@@ -27,11 +27,14 @@
 #include <iterator>
 #include <memory>
 #include <memory_resource>
+#include <new>
 #include <optional>
 #include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <sys/mman.h>
 
 namespace uml::cpu::arm64::gadgets {
 using ::uml::memory::StaticGuestMemory;
@@ -251,6 +254,11 @@ private:
  * predecessor's bytes. An address space's chunks start small and double, so
  * one that stores a few blocks does not hold a whole chunk for them.
  *
+ * A chunk is an anonymous mapping of its own rather than a heap block. The heap
+ * keeps blocks of this size resident when they are freed, in the process's
+ * footprint until it hands them out again, so a chunk given back to it would
+ * still cost what the arena held at its high-water mark.
+ *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
  * block holding an address is the nearest set bit at or below it. The cache
@@ -271,8 +279,7 @@ public:
 	~BodyArena()
 	{
 		for (const auto &chunk : chunks_)
-			upstream_->deallocate(chunk.base, chunk.bytes,
-				alignof(std::max_align_t));
+			unmap(chunk.base, chunk.bytes);
 	}
 
 	/* A block for a body of the address space `space`. */
@@ -299,9 +306,7 @@ public:
 			const auto wanted = std::max(size, pool.next_chunk);
 			auto starts = std::make_unique<std::uint64_t[]>(
 				map_words(wanted));
-			auto *base = static_cast<std::byte *>(
-				upstream_->allocate(wanted,
-					alignof(std::max_align_t)));
+			auto *base = map(wanted);
 			/* Kept in address order, which is what owner() searches. */
 			const auto inserted = chunks_.insert(
 				std::upper_bound(chunks_.begin(), chunks_.end(),
@@ -432,6 +437,9 @@ private:
 	static constexpr std::size_t largest_class = (classes - 1) * granule;
 	static constexpr std::size_t first_chunk = std::size_t{32} << 10;
 	static constexpr std::size_t largest_chunk = std::size_t{128} << 10;
+	static_assert(first_chunk % (std::size_t{16} << 10) == 0 &&
+			largest_chunk >= largest_class,
+		"chunks are whole host pages and hold the largest class");
 
 	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
 	{
@@ -508,6 +516,20 @@ private:
 			chunk.starts[index / 64] &= ~bit;
 	}
 
+	[[nodiscard]] static std::byte *map(std::size_t bytes)
+	{
+		void *base = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (base == MAP_FAILED)
+			throw std::bad_alloc{};
+		return static_cast<std::byte *>(base);
+	}
+
+	static void unmap(std::byte *base, std::size_t bytes) noexcept
+	{
+		(void)munmap(base, bytes);
+	}
+
 	/* Stores come in runs for the running address space, so the pool the
 	 * last one used is kept at hand. */
 	[[nodiscard]] Pool &pool_of(unsigned long space)
@@ -526,8 +548,7 @@ private:
 			last_ = nullptr;
 		for (const auto &chunk : chunks_)
 			if (chunk.pool == &pool)
-				upstream_->deallocate(chunk.base, chunk.bytes,
-					alignof(std::max_align_t));
+				unmap(chunk.base, chunk.bytes);
 		std::erase_if(chunks_, [&pool](const Chunk &chunk) {
 			return chunk.pool == &pool;
 		});
