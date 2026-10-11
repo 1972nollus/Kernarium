@@ -128,11 +128,10 @@ void identification_has_no_sve()
 	}
 }
 
-/* The guest kernel gives tasks SVE state only from a non-zero vector
- * length, and userspace learns of SVE from the HWCAPs: both say none. */
+/* The bridge carries no SVE state and imports no SVE query, and userspace
+ * learns of SVE from the HWCAPs, which say none. */
 void guest_kernel_is_told_no_sve()
 {
-	require(darwin_uml_guest_sve_vector_length() == 0);
 	require((darwin_uml_guest_hwcap() & sve_hwcap) == 0);
 	require((darwin_uml_guest_hwcap2() & sve_hwcap2) == 0);
 }

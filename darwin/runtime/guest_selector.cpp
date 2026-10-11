@@ -64,12 +64,6 @@ extern "C" unsigned long darwin_uml_guest_sme_vector_length(void)
 #endif
 }
 
-/* The virtual CPU implements no non-streaming SVE, as the HWCAPs say. */
-extern "C" unsigned long darwin_uml_guest_sve_vector_length(void)
-{
-	return 0;
-}
-
 extern "C" int darwin_uml_enter_guest(void *registers, void *fp_registers,
 				       unsigned long fp_size,
 				       unsigned long generation,

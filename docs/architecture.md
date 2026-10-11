@@ -629,12 +629,10 @@ word that crosses a page or misses the TLB is
 which works on `CpuState` alone. No hardware observes the results, so the
 corpus holds them as project-defined (`arm64-sm0-vl`).
 
-The guest kernel learns the same answer from
-`darwin_uml_guest_sve_vector_length()`, which is 0, and gives tasks no SVE
-state. The bridge tail still carries the bytes of a task's P0-P15, FFR and a
-live flag that the kernel sends zeroed and clear; an entry whose flags are
-anything but clear or live at the vector length is fatal, and an engine never
-sets the live flag.
+The guest kernel learns the same answer from the HWCAPs and the ID registers:
+the bridge imports no SVE vector length and its register tail holds FP and SME
+state only (bridge ABI 23), so a task has no SVE state to carry across an
+entry.
 
 The arm64 engines are growing a 32-bit Arm guest: AArch32 EL0, A32 and T32
 with interworking and IT, for the armhf userspace of Debian and Android's

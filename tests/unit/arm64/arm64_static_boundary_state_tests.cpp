@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine_factory.hpp"
 #include "platform/apple/host_features.hpp"
 #include "uml_darwin_guest.h"
@@ -143,12 +142,14 @@ void arm64_tail_is_exact()
 	JitMapping mapping{generation, base, backing, 1};
 	struct {
 		uml::testing::GuestFpTail tail;
-		std::uint8_t spare[16];
+		std::uint8_t spare[48];
 	} fp{};
 	for (const unsigned long size : {
 		     DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE + 0UL,
 		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE - 8UL,
-		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE + 8UL}) {
+		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE + 8UL,
+		     /* The retired bridge ABI 21 and 22 tail. */
+		     DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE + 40UL}) {
 		darwin_uml_guest_registers registers{};
 		unsigned long tls = 0;
 		registers.pc = base;
@@ -226,64 +227,6 @@ void sme_tail_crosses_boundary()
 		DARWIN_UML_EVENT_FATAL);
 	require(run(4, address, sized, svcr, out_tpidr2) ==
 		DARWIN_UML_EVENT_FATAL);
-}
-
-void sve_tail_crosses_boundary()
-{
-	/* P0-P15 and FFR cross the boundary only while the task is live, the
-	 * image of TIF_SVE that an engine sets and only the kernel clears: a
-	 * live task gets them back as it handed them, and the tail of a task
-	 * that is not live is the kernel's alone. A live tail names the run's
-	 * vector length and no other flag. The virtual CPU has no SVE, so an
-	 * SVE instruction is undefined whatever the vCPU held earlier, and
-	 * leaves the tail as the kernel handed it. */
-	constexpr unsigned long generation = 207;
-	constexpr std::uint64_t base = 0x57'0000;
-	constexpr auto live = static_cast<std::uint16_t>(DARWIN_UML_GUEST_SVE_LIVE);
-	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put32(0, 0xd400'0001U);  // svc #0
-	backing.put32(4, 0x2519'f001U);  // rdffr p1.b
-	backing.put32(8, 0x2585'54a0U);  // mov p0.b, p5.b
-	backing.put32(12, 0xd400'0001U); // svc #0
-	JitMapping mapping{generation, base, backing, 1};
-	const auto run = [&](std::uint64_t pc, uml::testing::GuestFpTail &fp) {
-		darwin_uml_guest_registers registers{};
-		registers.pc = pc;
-		return enter(registers, fp, generation);
-	};
-	const auto tail = [](std::uint16_t flags, std::uint32_t vl,
-		std::uint16_t seed) {
-		uml::testing::GuestFpTail fp{};
-		for (unsigned n = 0; n < 16; ++n)
-			fp.sve.p[n] = static_cast<std::uint16_t>(seed * (n + 1U));
-		fp.sve.ffr = static_cast<std::uint16_t>(seed ^ 0xa5c3U);
-		fp.sve.flags = flags;
-		fp.sve.vl = vl;
-		return fp;
-	};
-	const auto same = [](const darwin_uml_guest_sve_registers &left,
-		const darwin_uml_guest_sve_registers &right) {
-		return std::memcmp(&left, &right, sizeof(left)) == 0;
-	};
-
-	for (const std::uint16_t flags : {std::uint16_t{0}, live}) {
-		auto fp = tail(flags, uml::cpu::arm64::sve_vector_length, 0x1357U);
-		const auto handed = fp.sve;
-		require(run(base, fp) == DARWIN_UML_EVENT_SYSCALL);
-		require(same(fp.sve, handed));
-	}
-	for (const auto &[flags, vl] : {std::pair<std::uint16_t, std::uint32_t>
-		     {live, 0}, {live, 32}, {2, 16}, {live | 2, 16}}) {
-		auto fp = tail(flags, vl, 0x2468U);
-		require(run(base, fp) == DARWIN_UML_EVENT_FATAL);
-	}
-
-	auto earlier = tail(live, uml::cpu::arm64::sve_vector_length, 0xffffU);
-	require(run(base, earlier) == DARWIN_UML_EVENT_SYSCALL);
-	auto fp = tail(0, uml::cpu::arm64::sve_vector_length, 0xfedcU);
-	const auto handed = fp.sve;
-	require(run(base + 4, fp) == DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
-	require(same(fp.sve, handed));
 }
 
 void exclusive_monitor_is_cleared_at_boundary()
@@ -374,7 +317,6 @@ int main()
 	pstate_survives_boundary();
 	arm64_tail_is_exact();
 	sme_tail_crosses_boundary();
-	sve_tail_crosses_boundary();
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();
 	deferred_fp_source_is_materialized_on_linked_target();
