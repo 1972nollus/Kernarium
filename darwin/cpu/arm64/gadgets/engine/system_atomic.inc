@@ -1401,8 +1401,29 @@ compare_swap_pair_sizes acquire_release, caspal, caspal
 .purgem compare_swap_pair_register_modes
 .purgem compare_swap_pair_gadget
 
-/* Scalar exclusive load/store operations. The builder chooses load vs store,
- * width, ordering, and ZR/status-discard variants. */
+/* Exclusive load/store operations: LDXR, LDAXR, STXR and STLXR at each width,
+ * and the pair forms LDXP, LDAXP, STXP and STLXP. The builder chooses load
+ * vs store, width, ordering, and ZR/status-discard variants. engine/
+ * exclusive.inc explains how they keep a load/store exclusive loop making
+ * progress; this file only instantiates it. A load probes the TLB by its
+ * write tag and records the software monitor; a store whose probe misses
+ * finishes in software in the shared routine for its width and ordering. The
+ * gadgets' miss stubs follow each gadget and the shared routines follow the
+ * last one. The group keeps the footprint it had before the mechanism, so no
+ * gadget after it moved. */
+#include "exclusive.inc"
+
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+.set Lexcl_footprint, 12960
+.set Lexcl_footprint_twin, 13472
+#else
+.set Lexcl_footprint, 11936
+.set Lexcl_footprint_twin, 12192
+#endif
+
+	.p2align 4
+EXCL(group):
+
 .macro exclusive_load_gadget name, instruction, host_register, alignment, discard_result
 gadget exclusive_load_\name
 	ldr x19, [_stream], #8
@@ -1411,14 +1432,19 @@ gadget exclusive_load_\name
 	.if \alignment
 	single_copy_alignment exclusive_load_\name, \alignment, 0
 	.endif
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	exclusive_translate EXCL(load_miss_)\name
+EXCL(load_resume_)\name:
 	\instruction \host_register\()15, [x7]
+	exclusive_record_load
 	.if !\discard_result
 	and x21, x19, #0xffff
 	str x15, [_cpu, x21]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+EXCL(load_miss_)\name:
+	adr x13, EXCL(load_resume_)\name
+	b EXCL(load_miss)
 .endm
 
 .macro exclusive_load_modes name, instruction, host_register, alignment
@@ -1440,35 +1466,40 @@ exclusive_load_sizes acquire, ldaxrb, ldaxrh, ldaxr, ldaxr
 .purgem exclusive_load_modes
 .purgem exclusive_load_gadget
 
-.macro exclusive_store_gadget name, instruction, host_register, alignment, source_zero, discard_status
+.macro exclusive_store_gadget name, instruction, host_register, alignment, source_zero, discard_status, complete
 gadget exclusive_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
-	.if \alignment
-	single_copy_alignment exclusive_store_\name, \alignment, 1
-	.endif
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
 	mov x15, xzr
 	.else
 	and x21, x19, #0xffff
 	ldr x15, [_cpu, x21]
 	.endif
+	.if \alignment
+	single_copy_alignment exclusive_store_\name, \alignment, 1
+	.endif
+	exclusive_translate EXCL(store_miss_)\name
 	\instruction w14, \host_register\()15, [x7]
+EXCL(store_done_)\name:
+	exclusive_record_clear
 	.if !\discard_status
 	ubfx x20, x19, #16, #16
 	str x14, [_cpu, x20]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+EXCL(store_miss_)\name:
+	adr x13, EXCL(store_done_)\name
+	b \complete
 .endm
 
 .macro exclusive_store_modes name, instruction, host_register, alignment
-	exclusive_store_gadget \name\()_rr, \instruction, \host_register, \alignment, 0, 0
-	exclusive_store_gadget \name\()_rz, \instruction, \host_register, \alignment, 0, 1
-	exclusive_store_gadget \name\()_zr, \instruction, \host_register, \alignment, 1, 0
-	exclusive_store_gadget \name\()_zz, \instruction, \host_register, \alignment, 1, 1
+	exclusive_store_gadget \name\()_rr, \instruction, \host_register, \alignment, 0, 0, EXCL(store_complete_)\name
+	exclusive_store_gadget \name\()_rz, \instruction, \host_register, \alignment, 0, 1, EXCL(store_complete_)\name
+	exclusive_store_gadget \name\()_zr, \instruction, \host_register, \alignment, 1, 0, EXCL(store_complete_)\name
+	exclusive_store_gadget \name\()_zz, \instruction, \host_register, \alignment, 1, 1, EXCL(store_complete_)\name
 .endm
 
 .macro exclusive_store_sizes name, byte_instruction, half_instruction, word_instruction, double_instruction
@@ -1494,8 +1525,10 @@ gadget exclusive_pair_load_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	single_copy_alignment exclusive_pair_load_\name, \alignment, 0
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
+	exclusive_translate EXCL(pair_load_miss_)\name
+EXCL(pair_load_resume_)\name:
 	\instruction \host_register\()15, \host_register\()16, [x7]
+	exclusive_record_load_pair
 	.if !\discard_first
 	and x21, x19, #0xffff
 	str x15, [_cpu, x21]
@@ -1506,6 +1539,9 @@ gadget exclusive_pair_load_\name
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+EXCL(pair_load_miss_)\name:
+	adr x13, EXCL(pair_load_resume_)\name
+	b EXCL(load_miss)
 .endm
 
 .macro exclusive_pair_load_modes name, instruction, host_register, alignment
@@ -1527,13 +1563,11 @@ exclusive_pair_load_sizes acquire, ldaxp, ldaxp
 .purgem exclusive_pair_load_modes
 .purgem exclusive_pair_load_gadget
 
-.macro exclusive_pair_store_gadget name, instruction, host_register, alignment, first_zero, second_zero, discard_status
+.macro exclusive_pair_store_gadget name, instruction, host_register, alignment, first_zero, second_zero, discard_status, complete
 gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #48, #16
 	ldr x7, [_cpu, x20]
-	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
-	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \first_zero
 	mov x15, xzr
 	.else
@@ -1546,24 +1580,31 @@ gadget exclusive_pair_store_\name
 	ubfx x22, x19, #16, #16
 	ldr x16, [_cpu, x22]
 	.endif
+	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
+	exclusive_translate EXCL(pair_store_miss_)\name
 	\instruction w14, \host_register\()15, \host_register\()16, [x7]
+EXCL(pair_store_done_)\name:
+	exclusive_record_clear
 	.if !\discard_status
 	ubfx x20, x19, #32, #16
 	str x14, [_cpu, x20]
 	.endif
 	add _stream, _stream, #8
 	next_gadget
+EXCL(pair_store_miss_)\name:
+	adr x13, EXCL(pair_store_done_)\name
+	b \complete
 .endm
 
 .macro exclusive_pair_store_modes name, instruction, host_register, alignment
-	exclusive_pair_store_gadget \name\()_rrr, \instruction, \host_register, \alignment, 0, 0, 0
-	exclusive_pair_store_gadget \name\()_rrz, \instruction, \host_register, \alignment, 0, 0, 1
-	exclusive_pair_store_gadget \name\()_rzr, \instruction, \host_register, \alignment, 0, 1, 0
-	exclusive_pair_store_gadget \name\()_rzz, \instruction, \host_register, \alignment, 0, 1, 1
-	exclusive_pair_store_gadget \name\()_zrr, \instruction, \host_register, \alignment, 1, 0, 0
-	exclusive_pair_store_gadget \name\()_zrz, \instruction, \host_register, \alignment, 1, 0, 1
-	exclusive_pair_store_gadget \name\()_zzr, \instruction, \host_register, \alignment, 1, 1, 0
-	exclusive_pair_store_gadget \name\()_zzz, \instruction, \host_register, \alignment, 1, 1, 1
+	exclusive_pair_store_gadget \name\()_rrr, \instruction, \host_register, \alignment, 0, 0, 0, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_rrz, \instruction, \host_register, \alignment, 0, 0, 1, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_rzr, \instruction, \host_register, \alignment, 0, 1, 0, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_rzz, \instruction, \host_register, \alignment, 0, 1, 1, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_zrr, \instruction, \host_register, \alignment, 1, 0, 0, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_zrz, \instruction, \host_register, \alignment, 1, 0, 1, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_zzr, \instruction, \host_register, \alignment, 1, 1, 0, EXCL(pair_store_complete_)\name
+	exclusive_pair_store_gadget \name\()_zzz, \instruction, \host_register, \alignment, 1, 1, 1, EXCL(pair_store_complete_)\name
 .endm
 
 .macro exclusive_pair_store_sizes name, word_instruction, double_instruction
@@ -1577,6 +1618,44 @@ exclusive_pair_store_sizes release, stlxp, stlxp
 .purgem exclusive_pair_store_sizes
 .purgem exclusive_pair_store_modes
 .purgem exclusive_pair_store_gadget
+
+/* The shared routines of the stubs above. */
+	.p2align 4
+	exclusive_load_miss EXCL(load_miss), uml_arm64_gadget_memory_fault
+
+.macro exclusive_store_completes order, byte_cas, half_cas, word_cas, double_cas
+	exclusive_store_complete EXCL(store_complete_)\order\()_b, \byte_cas, w, uml_arm64_gadget_memory_fault
+	exclusive_store_complete EXCL(store_complete_)\order\()_h, \half_cas, w, uml_arm64_gadget_memory_fault
+	exclusive_store_complete EXCL(store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault
+	exclusive_store_complete EXCL(store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault
+.endm
+
+exclusive_store_completes relaxed, casb, cash, cas, cas
+exclusive_store_completes release, caslb, caslh, casl, casl
+
+.purgem exclusive_store_completes
+
+.macro exclusive_pair_store_completes order, word_cas, double_cas
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_w, \word_cas, w, uml_arm64_gadget_memory_fault
+	exclusive_pair_store_complete EXCL(pair_store_complete_)\order\()_x, \double_cas, x, uml_arm64_gadget_memory_fault
+.endm
+
+exclusive_pair_store_completes relaxed, casp, casp
+exclusive_pair_store_completes release, caspl, caspl
+
+.purgem exclusive_pair_store_completes
+
+/* Fill the rest of the old footprint with BRK #0, which the region layout
+ * guard accepts where it rejects zero words; no flow reaches it. The .org
+ * after the fill fails the build if the group ever outgrows the footprint. */
+.if Lsme_twin
+	.fill (Lexcl_footprint_twin - (. - EXCL(group))) / 4, 4, 0xd4200000
+	.org EXCL(group) + Lexcl_footprint_twin
+.else
+	.fill (Lexcl_footprint - (. - EXCL(group))) / 4, 4, 0xd4200000
+	.org EXCL(group) + Lexcl_footprint
+.endif
+
 
 /* Ordered scalar loads/stores (LDAR and STLR families). */
 .macro ordered_load_gadget name, instruction, host_register, alignment, discard_result

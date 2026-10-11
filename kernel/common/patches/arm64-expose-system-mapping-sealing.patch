@@ -8,7 +8,7 @@ Subject: [PATCH] arm64: expose system mapping sealing
  1 file changed, 1 insertion(+)
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 69b162be2450e3e813d378cfe650526512ea0695..1619a8085d70bb0b4168dedfe0623c8b337ea080 100644
+index 97fe924de163da667c2711a03b23d3b710e57655..55785809fc4eb1e08a19ef647ae91f9236905cd4 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -3,6 +3,7 @@

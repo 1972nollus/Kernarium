@@ -39,6 +39,11 @@ output. Every case, profile, observation, validator and retirement expectation
 is retained. Updating native expectations still requires the independently
 observed hardware results described by each corpus README.
 
+The AArch32 corpus (`--kind aarch32`, `tests/unit/arm64/aarch32_corpus/source`)
+has no pack to import: `tools/arm64-tests/a32-corpus.py` writes its source
+tables from oracle runs, and `aarch32.py` generates the pack from them. Its
+README owns the format.
+
 To promote an accepted producer output to source tables:
 
 ```sh

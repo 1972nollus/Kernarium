@@ -16,6 +16,15 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 60)
 
+# The SME image scan and idiom corpus classify the words SME code executes
+# at PSTATE.SM = 0 against the SM=0 family, on synthetic ELF fixtures.
+uml_add_tooling_test(
+    NAME arm64-sme-sm0-scan
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sme_sm0_scan.py
+    LABELS cpu
+    TIMEOUT 120)
+
 uml_add_tooling_test(
     NAME arm64-instruction-inventory
     COMMAND ${Python3_EXECUTABLE}
@@ -141,6 +150,22 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_encoding_table.py
     LABELS cpu
     TIMEOUT 120)
+
+uml_add_tooling_test(
+    NAME arm64-a32-instruction-inventory
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/validate_a32_instruction_inventory.py
+    LABELS cpu
+    TIMEOUT 120)
+
+# The AArch32 corpus's source tables generate the pack their provenance
+# records, and its derived tables and coverage agree with them (offline).
+uml_add_tooling_test(
+    NAME arm64-a32-corpus
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_corpus.py
+    LABELS cpu
+    TIMEOUT 300)
 
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH

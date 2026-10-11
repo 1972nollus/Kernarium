@@ -615,7 +615,7 @@ def campaign_order(images: list[dict[str, object]], runs: int,
 
 
 TSV_COLUMNS = (
-    "image", "run", "boot", "status", "boot_seconds",
+    "image", "run", "cpus", "boot", "status", "boot_seconds",
     "boot_seconds_excluding_download", "steam_download_bytes",
     "steam_download_seconds", "serial_console_ready", "guest_kernel_start",
     "storage_ready", "graphical_target_active", "steam_gaming_service_active",
@@ -633,8 +633,8 @@ def write_tsv(results: list[dict[str, object]], path: pathlib.Path) -> None:
             for column in TSV_COLUMNS:
                 if column == "image":
                     value: object = run["image"]
-                elif column == "run":
-                    value = run["run"]
+                elif column in ("run", "cpus"):
+                    value = run.get(column, "")
                 elif column == "status":
                     value = run.get("status", "")
                 elif column in ("load_average_1m", "memory_pressure_level",
@@ -762,7 +762,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--init", default=IMAGE_INIT,
                         help=f"image-owned init (default: {IMAGE_INIT})")
     parser.add_argument("--memory", default="8G")
-    parser.add_argument("--cpus", type=int, default=10)
+    parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--engine", choices=("jit", "gadgets"),
                         default="gadgets")
     parser.add_argument("--size-gib", type=int, default=32)

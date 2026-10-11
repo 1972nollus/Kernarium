@@ -123,6 +123,8 @@ private:
 
 	static int identify_backing(int fd, BackingIdentity &identity) noexcept;
 	int convert_direct_slot_to_shadow_locked(std::uintptr_t slot);
+	int convert_shadow_slot_to_direct_locked(std::uintptr_t slot, int fd,
+		std::uint64_t offset, int protection);
 	int ensure_shadow_range_locked(
 		std::uintptr_t address, std::uint64_t length,
 		DirectTransitionGuard &guard);

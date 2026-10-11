@@ -40,7 +40,8 @@ DEFAULT_EMULATOR = (
     REPO_ROOT / ".build/presets/macos-android17/bin/uml-darwin-android17"
 )
 SYSTEM_TRUNCATE = Path("/usr/bin/truncate")
-HOMEBREW_SGDISK_CANDIDATES = (
+# Where Homebrew installs GPT fdisk, tried after PATH.
+SGDISK_FALLBACK_CANDIDATES = (
     Path("/opt/homebrew/bin/sgdisk"),
     Path("/usr/local/bin/sgdisk"),
 )
@@ -118,6 +119,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--adb",
         default="adb",
         help="ADB executable name or path (default: adb from PATH or Android SDK)",
+    )
+    parser.add_argument(
+        "--sgdisk",
+        help=(
+            "GPT fdisk executable name or path "
+            "(default: sgdisk from PATH, then the Homebrew locations)"
+        ),
     )
     parser.add_argument("--adb-port", type=port_number, default=DEFAULT_ADB_PORT)
     parser.add_argument(
@@ -259,15 +267,20 @@ def clone_file(source: Path, destination: Path) -> None:
         shutil.copyfile(source, destination)
 
 
-def homebrew_sgdisk(
-    candidates: Sequence[Path] = HOMEBREW_SGDISK_CANDIDATES,
+def find_sgdisk(
+    candidates: Sequence[Path] = SGDISK_FALLBACK_CANDIDATES,
+    search_path: str | None = None,
 ) -> Path:
+    """Find GPT fdisk's sgdisk on PATH, then in the Homebrew locations."""
+    discovered = shutil.which("sgdisk", path=search_path)
+    if discovered is not None:
+        return Path(discovered).resolve()
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate.resolve()
     raise LauncherError(
-        "Homebrew GPT fdisk is unavailable; install it with "
-        "`brew install gptfdisk`"
+        "GPT fdisk (sgdisk) is unavailable; install gptfdisk, for example "
+        "with `brew install gptfdisk`, or name it with --sgdisk"
     )
 
 
@@ -315,9 +328,9 @@ def resize_android_disk(
 ) -> bool:
     requested = capacity_gib * 1024**3
     current = disk.stat().st_size
-    selected_sgdisk = homebrew_sgdisk() if sgdisk is None else sgdisk
+    selected_sgdisk = find_sgdisk() if sgdisk is None else sgdisk
     if not selected_sgdisk.is_file() or not os.access(selected_sgdisk, os.X_OK):
-        raise LauncherError(f"Homebrew sgdisk is unavailable: {selected_sgdisk}")
+        raise LauncherError(f"sgdisk is unavailable: {selected_sgdisk}")
     if current == requested and gpt_layout_matches(
         selected_sgdisk, disk, requested
     ):
@@ -363,9 +376,9 @@ def resize_android_disk(
         )
         if mutation.returncode != 0:
             detail = mutation.stderr.strip() or mutation.stdout.strip()
-            raise LauncherError(f"Homebrew sgdisk could not resize GPT: {detail}")
+            raise LauncherError(f"sgdisk could not resize GPT: {detail}")
         if not gpt_layout_matches(selected_sgdisk, temporary, requested):
-            raise LauncherError("Homebrew sgdisk produced an invalid Android GPT")
+            raise LauncherError("sgdisk produced an invalid Android GPT")
         temporary.replace(disk)
     finally:
         if temporary.exists():
@@ -395,7 +408,7 @@ def prepare_persistent_disk(
                 f"cannot read Android disk release identity {identity_path}: {error}"
             ) from error
         if recorded == identity:
-            selected_sgdisk = homebrew_sgdisk() if sgdisk is None else sgdisk
+            selected_sgdisk = find_sgdisk() if sgdisk is None else sgdisk
             expected = DEFAULT_DISK_SIZE_GIB * 1024**3
             if disk.stat().st_size != expected or not gpt_layout_matches(
                 selected_sgdisk, disk, expected
@@ -608,7 +621,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         for command in commands:
             subprocess.run(command, cwd=REPO_ROOT, check=True)
         emulator = resolve_executable(options.emulator)
-        recreated = prepare_persistent_disk(release, disk)
+        sgdisk = resolve_executable(options.sgdisk) if options.sgdisk else None
+        recreated = prepare_persistent_disk(release, disk, sgdisk=sgdisk)
         guest_command = emulator_command(options, release, disk, emulator)
         ensure_loopback_port_available(options.adb_port)
         disconnect_adb(adb, serial)

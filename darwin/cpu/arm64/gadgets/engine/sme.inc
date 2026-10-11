@@ -667,6 +667,8 @@ gadget sysreg_fpcr_write_z
 #define Llse2_stub_ Lsm_lse2_stub_
 #define Llse2_resume_ Lsm_lse2_resume_
 .set Lsme_twin, 1
+#undef EXCL
+#define EXCL(name) Lsm_excl_##name
 
 #include "system_atomic.inc"
 #include "load_store.inc"
@@ -701,6 +703,8 @@ sme_inplace_twins load64_unsigned_inplace, load64_unsigned_fast
 #include "lse2_alignment.inc"
 
 .set Lsme_twin, 0
+#undef EXCL
+#define EXCL(name) Lexcl_##name
 #undef Llse2_resume_
 #undef Llse2_stub_
 #undef uml_arm64_gadget_lse2_alignment_write_

@@ -25,7 +25,9 @@ def add_guest_arguments(
 ) -> None:
     """Add the emulator, image, guest size, engine and core-class options.
 
-    A runner that fixes its guest memory passes ``memory=None``.
+    A runner that fixes its guest memory passes ``memory=None``. ``cpus`` is
+    the runner's default vCPU count: 4 on the macOS host, as
+    tests/perf/README.md states.
     """
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
@@ -105,6 +107,21 @@ def halt(guest: Guest) -> None:
         raise RuntimeError("emulator did not halt cleanly within 60 seconds")
     if emulator_status != 0:
         raise RuntimeError(f"emulator exited with status {emulator_status}")
+
+
+def topology(arguments: argparse.Namespace, **extra: object) -> str:
+    """The guest shape a result row records: engine, core class, vCPUs.
+
+    ``extra`` appends runner-specific fields, such as the worker count.
+    """
+    fields = {
+        "engine": arguments.engine,
+        "cores": arguments.core_class,
+        "cpus": arguments.cpus,
+        **extra,
+    }
+    pairs = (f"{name}={value}" for name, value in fields.items())
+    return "[" + " ".join(pairs) + "]"
 
 
 def print_median(

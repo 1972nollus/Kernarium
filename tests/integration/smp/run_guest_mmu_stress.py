@@ -12,6 +12,7 @@ import sys
 import time
 
 
+SKIP = 77
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "support"))
 from guest import Guest, GuestFile  # noqa: E402
@@ -76,8 +77,15 @@ def require_marker(name: str, output: str, accepts) -> None:
 def main() -> int:
     arguments = parse_arguments()
     host_cpus = min(os.cpu_count() or 1, 64)
-    if not 1 <= arguments.cpus <= host_cpus:
-        raise ValueError("--cpus must be between 1 and the host CPU count")
+    if arguments.cpus < 1:
+        raise ValueError("--cpus must be at least 1")
+    if arguments.cpus > host_cpus:
+        print(
+            f"guest-mmu-stress: SKIP: needs {arguments.cpus} host CPUs, "
+            f"host has {host_cpus}",
+            flush=True,
+        )
+        return SKIP
 
     shared_mmap, shared_mmap_file = guest_executable(
         arguments.shared_mmap_binary

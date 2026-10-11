@@ -58,7 +58,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--upper", choices=("ext4", "tmpfs"), default="ext4",
         help="the writable layer; tmpfs leaves the overlay disk to the script",
     )
-    parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory-mib", type=int, default=1536)
     parser.add_argument("--engine", choices=("gadgets", "jit"),
                         default="gadgets")
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(f"workload status {status}, runtime returned {runtime}, "
-          f"{elapsed:.0f} s; console: {log}", flush=True)
+          f"{elapsed:.0f} s, cpus={options.cpus}; console: {log}", flush=True)
     return 0 if status == 0 and runtime == 0 else 1
 
 

@@ -95,10 +95,10 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 arch/arm64/um/sys_compat.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index a1bc989a4b1f5e02f21dbc2b8525f19b8472c48a..31cdb1c9938d2511dee0b7c47d8fcd4a08bbbf3b 100644
+index 16e85ce9aa232df34f6a3333de46a0ddb89aee1a..bae75ad1f824f545aa85c3b8cceb24040b4dfe2b 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -27,6 +27,32 @@ config UML_ARM64
+@@ -26,6 +26,32 @@ config UML_ARM64
  config UML_ARM64_SME
  	def_bool y
  
@@ -131,7 +131,7 @@ index a1bc989a4b1f5e02f21dbc2b8525f19b8472c48a..31cdb1c9938d2511dee0b7c47d8fcd4a
  config ARCH_MMAP_RND_BITS_MIN
  	int
  	default 18
-@@ -35,6 +61,15 @@ config ARCH_MMAP_RND_BITS_MAX
+@@ -34,6 +60,15 @@ config ARCH_MMAP_RND_BITS_MAX
  	int
  	default 29
  

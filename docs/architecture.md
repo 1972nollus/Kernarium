@@ -150,6 +150,36 @@ dropped unmap leaves the host serving a freed page with no fault to repair it.
 A failed kernel map unmaps its own address for the same reason, degrading to
 "not mapped", which the fault path does repair.
 
+Kernel aliases are shared with the other views of their frames on both page
+profiles. The 16 KiB profile maps every `init_mm` slot as a whole host page,
+shared with the backing, so a vmalloc or vmap alias reads and writes the memory
+that the linear map, the user mappings and the devices reach. Under 4 KiB pages
+a 16 KiB host slot carries four `init_mm` PTEs, and only a slot whose four PTEs
+name one 16 KiB-aligned run of frames of a single backing, with one protection,
+is the same shared host page; an empty slot is unmapped in one call. Any other
+slot is a private copy of its frames that the host publishes and refreshes only
+at its synchronization points, so it is not coherent with the other aliases of
+those frames for as long as both live. vmalloc therefore aligns, rounds and
+allocates every area in groups of four pages (`arch_vmap_group_order()`) and
+`vmap()` aligns its areas to a group, which makes the memory the kernel shares
+with user space (BPF maps and ring buffers, perf and PACKET_MMAP rings that are
+vmalloc'ed, io_uring regions) and the memory a device reads (sound buffers, GPU
+command buffers) congruent. Only a kernel-private area falls back to small
+pages when groups are unavailable. An alias that cannot be made whole groups, a
+BPF ring buffer smaller than 16 KiB or a vmap of foreign pages, is kept in step
+with the kernel-vmap hooks, `flush_kernel_vmap_range()` and
+`invalidate_kernel_vmap_range()`, which publish a private slot and refresh it
+from its frames and cost a page-table check on a shared one. A ring that lives
+in the application's own memory cannot be regrouped, so on this profile io_uring
+refuses with `EINVAL` a `IORING_SETUP_NO_MMAP` ring, a registered memory region
+or a provided-buffer ring whose pages are neither one folio nor whole aligned
+groups; the application uses a huge page or lets the kernel allocate it, as
+`IOU_PBUF_RING_MMAP` does. The host replaces a slot's shadow when the kernel
+maps a whole host page over it, publishing the shadow's stores to their own
+backing first, and keeps the shadow only when the call runs on a stack inside
+that slot. `guest-kernel-user-shared-memory` checks each sharing in both
+directions and the refusal.
+
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
 begins and is rejected when any invalidation arrives before it ends, so a walk
@@ -299,7 +329,7 @@ the SVE state live. A reserved bitmask immediate gives the
 illegal-instruction exit. A memory form faults at the first byte, in the
 pseudocode's access order, that does not translate, and checks an SP base's
 16-byte alignment before any access, also with no element active. A fault
-leaves what arm64-builder's Neoverse V2 leaves: a load changes no register, a
+leaves what a Neoverse V2 Linux host leaves: a load changes no register, a
 store writes its footprint's 16-byte pieces in order up to the faulting one,
 and a scatter its elements in order up to the faulting one. A first-fault
 load's later elements, and a non-fault load's every element, clear FFR from
@@ -392,6 +422,31 @@ performs each such access as one host instruction, with LDAR and STLR for the
 ordered forms and a CASAL loop for a misaligned read-modify-write. The rule
 matches native LSE2 hardware for every form the virtual CPU implements: the
 LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms.
+
+A load/store-exclusive loop makes progress whatever the TLB holds. Gadgets run
+the host's own exclusives on the translated address, so the TLB miss of a
+store-exclusive, a helper call, loses the host monitor, and the 4 KiB TLB is
+direct-mapped: a plain store in the loop to a page that shares the target's set
+would evict the target's write entry on every pass. One mechanism in
+`engine/exclusive.inc`, which the AArch32 exclusives reuse, prevents that. An
+exclusive load probes the write tag, and a miss fills the write entry of a
+page that is writable now (`Tlb::translate_exclusive_load`, a read that faults
+like any load) so the store-exclusive that follows hits. The load also records
+the host address and the loaded values in the `CpuState` exclusive fields, and
+every store clears them. A store-exclusive that still misses has lost the
+host monitor to its own miss, so it completes in software: one host CAS (CASP
+for a pair) of the recorded values, with status zero exactly when it
+exchanged and a failure when the recorded address or a value differs. That
+completion is value-based, so it cannot see a write that restored the value,
+and it never runs when the store hits. A fault between the pair leaves the
+loop for the kernel, whose next entry clears the record (an exception return
+ends the monitor; `arm64-static-runtime` checks it), and the loop retries
+from its head. The JIT's fused regions check both mappings before the
+monitor, and its semantic path keeps a software reservation; its ordinary
+stores clear the monitor, as the architecture permits.
+`arm64-exclusive-progress` and `arm64-tlb` check the gadget contract on both
+engines in both page profiles, and `guest-exclusive-progress-gadgets` and
+`guest-exclusive-progress-jit` check it in a guest.
 
 Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
 so no wait ever depends on an event. AT_HWCAP therefore always carries
@@ -712,7 +767,18 @@ since it records one store range per instruction. LDFF1 and LDNF1 stay in the
 library. A predicated form checks its governing predicate once per block and
 element size, after a PTRUE that sets every element it checks nothing, and
 leaves the block for the library, which alone knows what an inactive lane must
-not do, when the predicate is partial. The breaks, COMPACT and SPLICE, which
+not do, when the predicate is partial. A memory word with a register base
+checks `CpuState::tbi_enabled` once per block, at the first such word: no
+guest instruction changes it, and with top-byte ignore enabled the block
+leaves at that word for the library, which untags. A load with such a base and
+a constant offset starts a window with the loads of the same base behind it,
+up to 17 words within 256 bytes, that follow with between them only SVE words
+that name no general register and no memory: the first word proves that the
+window lies in one guest page, translates its lowest byte once and keeps the
+host address in the chain state, and each later word reads it back in place of
+translating. Words stay in program order, so a proof that fails leaves the
+block at the first word and the library runs it, and the words behind it
+compile again as their own block. The breaks, COMPACT and SPLICE, which
 raise nothing, take any governing predicate: a prefix OR of the mask form, a
 table of the active-element masks (COMPACT) and a TBL index built from the first
 and last active byte (SPLICE).
@@ -962,6 +1028,18 @@ the pinned Arm AArch32 XML and its Decode pseudocode. It is a CPU-layer
 semantic library link the same one, and it implements the Armv8-A AArch32 EL0
 profile: whatever the profile lacks is undefined, never guessed. Its
 [README](../darwin/cpu/arm64/aarch32/README.md) holds the contract.
+
+The AArch32 semantic library
+([`cpu/arm64/aarch32/semantics.hpp`](../darwin/cpu/arm64/aarch32/semantics.hpp))
+is shared C++ semantics rather than another engine, in the SVE library's
+mould: it includes no engine header, works on `CpuState` alone, reaches guest
+memory only through the caller's `A32Memory`, and executes any covered word
+one instruction at a time with the architecture's fault ordering.
+`a32_semantics_covers()` holds for every implemented form, and a word
+outside it is a fatal internal error. The gadget engine and the JIT route
+their slow paths and long tails to it, and the corpus's model lane runs the
+instruction corpus through it. Until an engine calls it, no product binary
+links it.
 
 ## Kernel and Android ownership
 

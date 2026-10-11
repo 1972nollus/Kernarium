@@ -37,6 +37,20 @@ configure creates: a shell defers its traps while a child runs, so a shell
 test that times out in one cannot clean up, and what it leaves names it.
 Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
+`repository-environment-portability` is the one tooling test that scans
+tracked source, and it looks for forbidden values rather than expected ones:
+host paths and account names, private addresses, ssh endpoints and Apple
+signing identifiers outside the project's own. It also scans new unignored
+files, so a leak fails before it is committed. A site adds its private tokens
+to a local denylist, found at
+`${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
+through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
+reviewed exception goes in
+`tests/tooling/cmake/environment-portability-allow.tsv` under one of its fixed
+reasons, and an entry that matches nothing fails.
+`python3 tests/tooling/cmake/check_environment_portability.py --list-rules`
+describes the rules and the denylist format.
+
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
 for the management console's run directory. Each registration owns
@@ -72,6 +86,13 @@ ctest --test-dir .build/presets/macos-unit-16k \
 ```
 
 ## Canonical host workflows
+
+Every workflow needs the tools in
+[Host prerequisites](../dependencies/README.md#host-prerequisites), among them
+Python 3.11 or newer, which configure requires, and a Git identity. A test
+that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
+skips on a smaller host. The LTP campaigns default to half the host's physical
+cores, at most 16.
 
 The ordinary 16 KiB and 4 KiB host checks are:
 
@@ -457,7 +478,7 @@ userdata/metadata mount and format behavior, backup/restore, file manager,
 terminal, battery display, and normal/recovery reboot paths. Never run wipe or
 restore checks against an existing user bundle.
 
-`KernariumTests` runs on the iPad and, as an iPad app, on an Apple silicon
+`KernariumTests` runs on an iPad and, as an iPad app, on an Apple silicon
 Mac. The iPad is the reference, and the whole suite passes there. On the Mac
 up to four tests fail because of how the Mac hosts an iPad app:
 
@@ -470,7 +491,7 @@ up to four tests fail because of how the Mac hosts an iPad app:
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. SwiftUI's hosting view exposes them only
   while UIKit application accessibility is on in the process. A test run on
-  the iPad has it on. On the Mac it follows the host's
+  an iPad has it on. On the Mac it follows the host's
   `ApplicationAccessibilityEnabled` preference in `com.apple.Accessibility`,
   which an assistive client turns on; while it is off, both tests fail.
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
@@ -558,7 +579,7 @@ encoding the SVE profile executes outside streaming mode UNDEFINED under
 CPU, so both engines run them today with the guest-SVE policy off or on.
 
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
-16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
+16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
 and its FZ, DN, and FZ16 controls. Both engines are at `sve_support`
@@ -583,8 +604,8 @@ runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
 tooling test re-derives them. The `arm64-sve-afp` records come from the
 M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks them
-against their request.
+the Neoverse V2 host lacks. The `arm64-instruction-corpus-sve-afp` test
+checks them against their request.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
@@ -621,19 +642,20 @@ pinned LLVM MC and require the checked-in bytes; without the archive or that
 LLVM MC they skip.
 
 A gadget that runs an instruction as the host's own, such as FEAT_ECV,
-FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
+FEAT_I8MM, FEAT_BF16, or FEAT_FHM on an A15 iPad, runs that path only on a
 host with the feature, and the M1 has none of the first three. FEAT_AFP and
 FEAT_RPRES need an A17 Pro or newer, such as the iPhone 15 Pro Max or an M4
 Mac. An M4 Mac has all of these features and a 1 GHz system counter, and the
 unit suite, the corpus included, holds there in both engines. Elsewhere
 `arm64-instruction-corpus-afp-twins` runs the FEAT_AFP twins only on the cases
 whose FPCR leaves the controls clear. Check a change
-to such a path on the iPad by hand: launch Kernarium on the device with the
-`guest-hwcap-sanity` payload, which executes every family the guest
-advertises, and with the corpus cases of the touched families built into one
-static guest program, and require the same results as a gadget-engine run of
-both programs on a Mac. The device runs only the gadget engine, so a JIT path
-that needs one of these features runs only on an M4 or newer Mac.
+to such a path by hand on an iOS device that has the feature: launch
+Kernarium on the device with the `guest-hwcap-sanity` payload, which executes
+every family the guest advertises, and with the corpus cases of the touched
+families built into one static guest program, and require the same results as
+a gadget-engine run of both programs on a Mac. The device runs only the
+gadget engine, so a JIT path that needs one of these features runs only on an
+M4 or newer Mac.
 
 ## AArch32 decoder
 
@@ -650,9 +672,46 @@ release, run `tests/tooling/arm64/generate_a32_encoding_table.py
 --architecture-archive <ISA_AArch32_xml_A_profile-2026-06.tar.gz>`; it needs
 LLVM MC 22.1.8 and takes a few minutes. Configure with
 `-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>` to run the opt-in
-`arm64-a32-encoding-table-freshness` tooling test, which regenerates the six
-outputs and requires the checked-in bytes; without the archive or that LLVM MC
-it skips.
+`arm64-a32-encoding-table-freshness` tooling test, which regenerates the
+outputs (the tables, the test data and the instruction inventory) and
+requires the checked-in bytes; without the archive or that LLVM MC it skips.
+The `arm64-a32-instruction-inventory` tooling test checks the inventory against
+the decoder's table and the counts in
+[`a32-instruction-coverage.md`](a32-instruction-coverage.md).
+
+## AArch32 corpus
+
+`arm64-aarch32-corpus` (unit, both page profiles) checks every case of the
+generated AArch32 corpus against the decoder: the program decodes in order,
+in the IT state its instructions leave, to legal forms except at the
+instruction that raised an event; the instruction under test is the form the
+case names; the event is one its kind can raise; and the retired count, fault
+position, state changes and memory runs agree. A case whose forms need a level
+above `--level` is skipped. The `arm64-a32-corpus` tooling test regenerates
+the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
+`provenance.json`, `manifest.tsv`, `coverage.tsv` and `excluded.tsv` with the
+checked-in bytes, and requires cases for every executed base inventory entry.
+Neither needs an oracle. The corpus README owns the format, the oracles and how
+to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
+`qemu-arm` on a build host over ssh and is opt-in.
+
+## AArch32 semantic library
+
+`arm64-aarch32-semantics` (unit, both page profiles) checks the library's
+contract that the corpus cannot record: fault ordering and the unchanged
+state at a fault, the exclusive monitor, the single-instruction entry's IT
+handling, the events, the library-exit counters and the coverage predicate.
+`arm64-aarch32-semantics-corpus` is the corpus's model lane: it runs every
+case of the pack through `step_a32()` on a model of the oracle's address space
+(page by page, so a crossing access splits across separate host pages) and
+requires the recorded event, retired count, fault address, registers, flags,
+FPSCR, D registers, thread registers and data bytes, with 0 failures. The
+library covers the whole profile, so a case with a form it does not cover is a
+failure of the lane too; `--skipped` lists such forms. It runs the BFloat16,
+8-bit matrix multiply and FHM forms on any host, because the library does not
+need those features. Run one record with
+`uml_arm64_aarch32_semantics_corpus_tests <pack> --record <name>`, one case
+with `--case`, and `--trace` for its steps and initial state.
 
 ## Guest SME policy
 
@@ -691,6 +750,23 @@ they run by hand with
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
 
+Two opt-in tools list what SME code executes outside streaming mode, where
+an SVE word is UNDEFINED on an SME CPU without SVE unless it belongs to the
+SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL and the scalar INC/DEC
+B/H/W/D). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
+desktop EROFS images and the Android release directories), extracts them
+with `fsck.erofs`, `debugfs` and `zstd`, and walks every SME function of
+every AArch64 ELF file, APK and APEX payloads included, from its inferred
+entry mode; any other SVE word reachable at SM = 0 is a decision to extend
+the family or withhold SME from that workload, and `--expect` pins a
+binary's words (Chromium's libyuv executes only CNTD there).
+`tools/arm64-tests/sme-idiom-corpus.py` builds `sme_idioms.cpp` with the
+given clang and GCC compilers for SVE and SME-only targets, every
+optimization level and callee-saved register pressure, and reports the
+same classification for each compiler idiom, callee-saved Z and P spills
+included. The `arm64-sme-sm0-scan` tooling test checks the classifier and
+both tools on synthetic ELF fixtures.
+
 ## Guest SVE policy
 
 `arm64-sve-foundation` checks the guest-SVE policy, the host features each
@@ -710,9 +786,15 @@ lane out of reach, scatters while another vCPU's reservation tracks stores,
 the saturating counts at their limits, table lookups with indices that land
 in the tables, and the governing-predicate shapes (none, one, all but one, runs,
 every subset of the narrow sizes) of the breaks, COMPACT and SPLICE. It
-also runs the 29 forms that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1
-(the SCLAMP class), which execute at SM = 0 only with SME beside SVE, on an
-injected profile with SME and again with SME2.
+requires a block of SVE memory words to check the top-byte-ignore state once,
+runs the words with tagged and untagged bases, requires the loads of one base
+to share a translation exactly where a window allows (words between them, base
+changes, stores, other bases, the 256-byte span and the 17-word limit) and runs
+them against the library inside a page, across its end and across the mapped
+pages, and also runs the 29 forms
+that FEAT_SME and FEAT_SME2 share with FEAT_SVE2p1 (the SCLAMP class), which
+execute at SM = 0 only with SME beside SVE, on an injected profile with SME and
+again with SME2.
 `arm64-jit-sve-codegen` compiles every row of the profile (with SME and SME2
 as well) and every evidence witness at SM = 0 in both ZA states and every
 link shape, and requires that no translation holds an SVE or SME word.
