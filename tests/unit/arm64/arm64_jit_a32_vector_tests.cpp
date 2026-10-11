@@ -2,7 +2,8 @@
 /* The JIT's VFP and Advanced SIMD behaviour that the instruction corpus does
  * not see. The floating-point environment: a VFP instruction runs under the
  * guest's FPCR and an Advanced SIMD one under the Standard FPSCR value, across
- * a conditional arm, a direct branch (a chained block) and an exit. The
+ * a conditional arm, a direct branch (a chained block), an exit and the
+ * executor's own re-entry, which leave the host FPCR as it is. The
  * cumulative saturation flag. The vector memory forms: that they stay out of
  * the semantic library on an ordinary access, and take it, with its data and
  * its faults, on a page crossing, a misalignment and an unmapped page. The
@@ -130,6 +131,39 @@ void floating_point_environment() {
         require(cpu.fpcr == (toward_zero ? round_toward_zero : 0U));
         require((cpu.fpsr & fpscr_qc) == 0U);
       }
+    }
+  }
+}
+
+/* The two kinds of block alternate in a loop: each ends where the other
+ * begins, through a chained branch and, every 4096 instructions, through the
+ * executor, which leaves the host FPCR as the last block set it. The result
+ * of each kind shows the FPCR it ran under whatever the order. */
+void floating_point_modes_across_blocks() {
+  constexpr std::uint32_t vfp_add = 0xee30'0a81U;  // vadd.f32 s0, s1, s2
+  constexpr std::uint32_t neon_add = 0xf204'3d05U; // vadd.f32 d3, d4, d5
+  for (const bool neon_first : {true, false}) {
+    Fixture fixture{neon_first ? 0x1a32'0d03U : 0x1a32'0d04U};
+    fixture.code32(0, {
+        0xeee1'1a10U,                       // vmsr fpscr, r1
+        neon_first ? neon_add : vfp_add,
+        0xe252'2001U,                       // subs r2, r2, #1
+        0x1a00'0000U,                       // bne +0 (the second block)
+        0xea00'0001U,                       // b +1 (the svc)
+        neon_first ? vfp_add : neon_add,
+        0xeaff'fff9U,                       // b -7 (the first block)
+        arm_svc});
+    for (const std::uint32_t laps : {2U, 3U, 4095U, 4096U, 5000U, 5001U}) {
+      auto cpu = fp_task(round_toward_zero, false);
+      cpu.registers[2] = laps;
+      const auto result = fixture.run(cpu, 200'000);
+      require(result.reason == ExitReason::system_call);
+      require(cpu.registers[2] == 0U);
+      // VFP: the guest's round toward zero. Neon: nearest.
+      require(lane32(cpu, 0, 0) == one);
+      require(half64(cpu, 1, 1) ==
+              (std::uint64_t{one_ulp_up} << 32 | one_ulp_up));
+      require(cpu.fpcr == round_toward_zero);
     }
   }
 }
@@ -326,6 +360,7 @@ int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
   floating_point_environment();
+  floating_point_modes_across_blocks();
   saturation_flag();
   vector_memory_stays_inline();
   vector_memory_across_a_page();

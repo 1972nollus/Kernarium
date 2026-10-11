@@ -502,7 +502,6 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   }
   // VMSR FPSCR, Rt. The host FPCR takes the written control bits, so the
   // translation continues in the guest's mode.
-  set_fp_mode(false);
   const unsigned source = use(t, fallback_n);
   emit(enc::movz(1, fpscr_control_mask >> 16, 1));
   emit(enc::and_(1, 1, source));
@@ -515,7 +514,10 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   emit(0xd51b'4422U); // msr fpsr, x2
   emit(enc::and_i(0, source, *enc::logical_immediate_field(0xf000'0000U)));
   emitter_.store_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
-  standard_fp_ = false;
+  if (fp_mode_ != FpMode::guest) {
+    emitter_.store_b(31, 15, offsetof(CpuState, a32_fp_standard));
+    fp_mode_ = FpMode::guest;
+  }
   return Flow::next;
 }
 

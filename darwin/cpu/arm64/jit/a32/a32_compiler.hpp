@@ -101,8 +101,6 @@ private:
     std::uint16_t dirty_gprs{};
     std::uint32_t dirty_vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
-    /* The FPCR the host holds where the path branches off. */
-    bool standard_fp{};
   };
 
   /* The skipped arm of a fused conditional store: it clears the monitor and
@@ -285,9 +283,11 @@ private:
   /* The instruction depends on the host FPCR or FPSR, or sets FPSR. */
   void touch_fp_environment();
   /* Moves the host FPCR to the guest's value or to the Standard FPSCR
-   * value (FZ and DN set, round to nearest, AHP and FZ16 the guest's). */
+   * value (FZ and DN set, round to nearest, AHP and FZ16 the guest's), when
+   * it is not there already: the translation knows the mode only after an
+   * instruction of its own, and tests CpuState::a32_fp_standard for the
+   * first. */
   void set_fp_mode(bool standard);
-  void restore_fp_for_exit();
   [[nodiscard]] std::uint32_t neon_word() const noexcept;
 
   // Vector memory (a32_compiler_vmem.cpp).
@@ -386,9 +386,11 @@ private:
   bool terminated_{};
   bool native_fp_{};
   bool accesses_fp_state_{};
-  /* The host FPCR holds the Standard FPSCR value rather than the guest's
-   * where the instruction being translated starts. */
-  bool standard_fp_{};
+  /* The mode of the host FPCR where the instruction being translated
+   * starts, as far as the translation can tell: it is unknown where the
+   * translation begins and where two arms of a conditional body differ. */
+  enum class FpMode : std::uint8_t { unknown, guest, standard };
+  FpMode fp_mode_{FpMode::unknown};
   bool link_target_safe_{true};
   bool guest_illegal_{};
   std::uint64_t memory_write_mask_{};

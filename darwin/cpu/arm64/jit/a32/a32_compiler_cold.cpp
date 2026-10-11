@@ -26,7 +26,6 @@ void A32Compiler::emit_cold_paths() {
     publish_cold_flags(cold.flags);
     assume_flags_in_memory();
     count_ = cold.index;
-    standard_fp_ = cold.standard_fp;
     const auto &d = cur();
     switch (cold.kind) {
     case ColdPath::Kind::memory_fault:
@@ -57,7 +56,6 @@ void A32Compiler::emit_cold_paths() {
 
 void A32Compiler::emit_slow_helper(const ColdPath &cold) {
   /* The helper restores the host's own FPCR and FPSR before it runs. */
-  standard_fp_ = false;
   const auto &d = cur();
   store_pc(key_of(d));
   spill_gprs_for_terminal_call();

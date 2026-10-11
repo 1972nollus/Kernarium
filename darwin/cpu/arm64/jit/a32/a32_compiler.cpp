@@ -51,7 +51,6 @@ A32Compiler::A32Compiler(void *link_context, LinkResolver link_resolver,
   attach_indirect_link_resolver(link_context, indirect_link_resolver);
   emitter_.attach_exit_flush(this, [](void *context) {
     auto *self = static_cast<A32Compiler *>(context);
-    self->restore_fp_for_exit();
     self->flush_exit_gprs();
   });
   emitter_.attach_flag_clobber(this, [](void *context) {
@@ -108,7 +107,7 @@ Result A32Compiler::compile(const Request &request) {
   isa_ = thumb_ ? Isa::t32 : Isa::a32;
   single_ = request.single;
   accesses_fp_state_ = false;
-  standard_fp_ = false;
+  fp_mode_ = FpMode::unknown;
   decode_block(request);
   Result result;
   if (block_.empty())
@@ -209,7 +208,7 @@ A32Compiler::Flow A32Compiler::emit_guarded(unsigned condition) {
   load_flags();
   synchronize_flags();
   const auto mark = mark_residency();
-  const bool standard_before = standard_fp_;
+  const auto mode_before = fp_mode_;
   const auto skip = make_label();
   branch_condition(skip, condition ^ 1U);
   const auto flow = emit_operation();
@@ -217,7 +216,7 @@ A32Compiler::Flow A32Compiler::emit_guarded(unsigned condition) {
     restore_residency(mark);
     bind(skip);
     /* The skipped arm never ran the body: it holds the FPCR it had. */
-    standard_fp_ = standard_before;
+    fp_mode_ = mode_before;
     const auto &d = cur();
     /* The instruction's condition failed: the block continues after it with
      * the IT state that follows it, to a static successor. */
@@ -225,8 +224,10 @@ A32Compiler::Flow A32Compiler::emit_guarded(unsigned condition) {
                 count_ + 1U);
     return Flow::end;
   }
-  /* Both arms continue with the FPCR the instruction found. */
-  set_fp_mode(standard_before);
+  /* The arms join with the FPCR they have, which the translation knows
+   * only where they agree. */
+  if (fp_mode_ != mode_before)
+    fp_mode_ = FpMode::unknown;
   close_conditional_body(mark);
   bind(skip);
   return Flow::next;
@@ -306,13 +307,7 @@ void A32Compiler::exit_direct(std::uint64_t target_key, std::uint8_t it,
     exit_continue_at(target_key, it, count);
     return;
   }
-  /* The successor runs under the guest's FPCR; the other arm of a branch
-   * that leaves here keeps the mode it has. */
-  const bool standard = standard_fp_;
-  restore_fp_for_exit();
-  standard_fp_ = false;
   emit_linked_exit(target_key, count);
-  standard_fp_ = standard;
 }
 
 void A32Compiler::exit_indirect(unsigned key_register) {
@@ -325,11 +320,7 @@ void A32Compiler::exit_indirect(unsigned key_register) {
     return_constant(Event::continued, count_ + 1U);
     return;
   }
-  const bool standard = standard_fp_;
-  restore_fp_for_exit();
-  standard_fp_ = false;
   emit_indirect_linked_exit(key_register, false, key_of(cur()), count_ + 1U);
-  standard_fp_ = standard;
 }
 
 Arm64Emitter::Label A32Compiler::cold_exit(ColdPath::Kind kind) {
@@ -339,8 +330,7 @@ Arm64Emitter::Label A32Compiler::cold_exit(ColdPath::Kind kind) {
                    .index = count_,
                    .dirty_gprs = dirty_gpr_mask(),
                    .dirty_vectors = dirty_vector_mask(),
-                   .flags = snapshot_flags(),
-                   .standard_fp = standard_fp_});
+                   .flags = snapshot_flags()});
   return label;
 }
 

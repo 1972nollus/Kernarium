@@ -1012,10 +1012,12 @@ and a result is inserted into its half or lane. A VFP instruction runs under the
 guest's FPCR and FPSR, which the executor installs for a block that holds one
 (the native floating-point environment of the A64 compiler); an Advanced SIMD
 floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
-round to nearest, AHP and FZ16 the guest's), which the translation sets before
-the first one and puts back at every exit and in a conditional arm that changed
-it, so a block always begins and ends under the guest's FPCR and a link keeps
-its meaning. A saturating instruction sets QC in the host FPSR, which is the
+round to nearest, AHP and FZ16 the guest's). The host FPCR keeps the mode it
+has across exits and links, as the gadget engine's does:
+`CpuState::a32_fp_standard` records it, the executor clears it where it
+activates the environment, and a translation tests the byte at the first
+instruction that needs a mode and writes the FPCR only when the mode differs.
+A saturating instruction sets QC in the host FPSR, which is the
 guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
 pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
 infinity times a zero without raising Invalid Operation. VLDR, VSTR and the

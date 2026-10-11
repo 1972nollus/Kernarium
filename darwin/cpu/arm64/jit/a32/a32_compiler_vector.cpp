@@ -12,14 +12,14 @@
 // of its destination, which here is another register or lane.
 //
 // Floating point. A VFP instruction runs under the guest's FPCR, which the
-// executor installs in the host when the block begins (the native floating
+// executor installs in the host before the first block (the native floating
 // point environment), and an Advanced SIMD floating-point instruction under
 // the Standard FPSCR value: FZ and DN set, round to nearest, AHP and FZ16 the
-// guest's. The translation moves the host FPCR to the standard value at the
-// first such instruction and back when a VFP instruction needs the guest's, at
-// every exit and in a conditional arm that changed it, so a block always
-// begins and ends in the guest's FPCR, and every link selector keeps its
-// meaning. standard_fp_ is the host's state at the point being translated.
+// guest's. The host FPCR keeps the mode it has across exits and links, as the
+// gadget engine's does: CpuState::a32_fp_standard records it, a translation
+// switches only where the instruction needs the other mode, and tests the
+// byte at the first such instruction (set_fp_mode). fp_mode_ is what the
+// translation knows of the host at the point being translated.
 
 #include "a32_compiler.hpp"
 
@@ -96,10 +96,23 @@ void A32Compiler::touch_fp_environment() {
   mark_native_fp();
 }
 
-/* The Standard FPSCR value is the guest's AHP and FZ16 with FZ and DN set. */
+/* The Standard FPSCR value is the guest's AHP and FZ16 with FZ and DN set.
+ * CpuState::a32_fp_standard says which one the host FPCR holds while the
+ * native environment is active, as it does for the gadget engine, and the
+ * executor clears it where it activates the environment. Where the
+ * translation does not know the mode it tests the byte and writes the FPCR
+ * only if the mode differs; an exit leaves the FPCR as it is. */
 void A32Compiler::set_fp_mode(bool standard) {
-  if (standard == standard_fp_)
+  const auto wanted = standard ? FpMode::standard : FpMode::guest;
+  if (fp_mode_ == wanted)
     return;
+  Arm64Emitter::Label done{};
+  const bool tested = fp_mode_ == FpMode::unknown;
+  if (tested) {
+    done = make_label();
+    emitter_.load_b(0, 15, offsetof(CpuState, a32_fp_standard));
+    emitter_.compare_zero(done, 0, false, standard);
+  }
   emitter_.load_w(0, 15, offsetof(CpuState, fpcr));
   if (standard) {
     emit(enc::movz(1, fpcr_guest_kept_bits >> 16, 1));
@@ -107,16 +120,15 @@ void A32Compiler::set_fp_mode(bool standard) {
     emit(enc::orr_i(0, 0, *enc::logical_immediate_field(fpcr_standard_bits)));
   }
   emit(0xd51b'4400U); // msr fpcr, x0
-  standard_fp_ = standard;
-}
-
-/* An exit leaves the host under the guest's FPCR. The translation continues
- * in its mode: the exit may be one arm of a branch. */
-void A32Compiler::restore_fp_for_exit() {
-  if (!standard_fp_)
-    return;
-  emitter_.load_w(0, 15, offsetof(CpuState, fpcr));
-  emit(0xd51b'4400U); // msr fpcr, x0
+  if (standard) {
+    emitter_.load_constant(1, 1);
+    emitter_.store_b(1, 15, offsetof(CpuState, a32_fp_standard));
+  } else {
+    emitter_.store_b(31, 15, offsetof(CpuState, a32_fp_standard));
+  }
+  if (tested)
+    bind(done);
+  fp_mode_ = wanted;
 }
 
 /* The word of a Neon data-processing or structure instruction in the A32
