@@ -871,7 +871,13 @@ the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
 LDRD across a page, mapped and not, and that Advanced SIMD floating point
 runs under the standard FPSCR value while VFP keeps the guest's (in either
 order, in a skipped conditional run and across a block that ends inside a
-run), that a VFP word is illegal when the engine translates at the base
+run), that the conversions, VMAX, VMIN, VADD, VSUB and VMUL run in whichever
+environment is native exactly when their operands allow it, with the value,
+flags and environment left checked against the host's own instruction under
+the matching FPCR, that no gadget writes the callee-saved halves of V8-V15
+(the corpus runner checks them around every case), that every writeback of a
+VLD1 or VST1 copy moves the bytes and the base inside a page and across one,
+that a VFP word is illegal when the engine translates at the base
 level, and that at the complete level a form of an extension (CRC32, AES,
 SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
 host that has it, as a gadget or in the semantic library, and is the
