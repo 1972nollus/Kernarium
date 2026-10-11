@@ -487,16 +487,20 @@ private:
 	 * page stamps it was last validated against and its places in the
 	 * code-page lists. A large cache commonly runs with half its ways empty,
 	 * and every way pays for its slot, so these live in an allocation of
-	 * their own, which a replaced translation hands to its successor. */
+	 * their own, which a replaced translation hands to its successor. The
+	 * stamps' count and completeness are two small fields the slot has room
+	 * for (Slot::stamp_state), which keeps this record at the 96 bytes the
+	 * allocator hands out in whole sixteens. */
 	struct Translation final {
 		explicit Translation(Program &&built) noexcept
 			: program{std::move(built)}
 		{}
 
 		std::array<PageLink, 2> page_links{};
-		ProgramCodeStamps code_stamps{};
+		std::array<::uml::memory::CodePageStamp, 2> code_pages{};
 		Program program;
 	};
+	static_assert(sizeof(Translation) == 96);
 
 	/* One way of a set. A way exists whether or not it holds a translation,
 	 * so every byte here is paid for by the whole cache: at 262,144 slots
@@ -528,6 +532,10 @@ private:
 		/* Which of the translation's `page_links` are in a page's list;
 		 * never set without a translation. */
 		std::uint8_t linked_pages{};
+		/* How many of the translation's `code_pages` are stamps, in two
+		 * bits, and above them whether they cover the whole block; zero
+		 * while the translation has none. */
+		std::uint8_t stamp_state{};
 
 		static constexpr unsigned epoch_shift = 48;
 		static constexpr std::uint64_t link_mask =
@@ -568,7 +576,31 @@ private:
 			memo = (memo & link_mask) |
 				(std::uint64_t{value} << epoch_shift);
 		}
+
+		static constexpr std::uint8_t stamps_complete_bit = 4;
+
+		/* The translation's page stamps as a validation compares them. */
+		[[nodiscard]] bool stamped() const noexcept
+		{
+			return (stamp_state & stamps_complete_bit) != 0U;
+		}
+		[[nodiscard]] ProgramCodeStamps code_stamps() const noexcept
+		{
+			ProgramCodeStamps stamps;
+			stamps.pages = translation->code_pages;
+			stamps.count = stamp_state & (stamps_complete_bit - 1U);
+			stamps.complete = stamped();
+			return stamps;
+		}
+		void set_code_stamps(const ProgramCodeStamps &stamps) noexcept
+		{
+			translation->code_pages = stamps.pages;
+			stamp_state = static_cast<std::uint8_t>(stamps.count |
+				(stamps.complete ? stamps_complete_bit : 0U));
+		}
 	};
+	static_assert(ProgramCodeStamps{}.pages.size() < Slot::stamps_complete_bit,
+		"a stamp count fits the bits below the completeness bit");
 	static_assert(sizeof(Slot) == 32,
 		"a way costs its slot whether or not it holds a translation");
 	static_assert(program_cache_slots < (std::size_t{1} << 31),
@@ -1062,7 +1094,7 @@ public:
 		const auto &stored = slot.translation->program;
 		slot.memo = 0;
 		slot.set_epoch(current_epoch_);
-		slot.translation->code_stamps = code_stamps;
+		slot.set_code_stamps(code_stamps);
 		slot.instruction_limit = kept_instruction_limit(instruction_limit);
 		slot.terminal = stored.terminal();
 		/* The tag is the occupancy marker and is written only after the
@@ -1981,6 +2013,7 @@ private:
 		slot.translation.reset();
 		slot.memo = 0;
 		slot.terminal = false;
+		slot.stamp_state = 0;
 	}
 
 	[[nodiscard]] bool validate(Slot &slot,
@@ -2025,8 +2058,8 @@ private:
 		auto &translation = *slot.translation;
 		const auto current_stamps = capture_program_code_stamps(
 			memory, translation.program, execution_context);
-		if (translation.code_stamps.complete && current_stamps.complete &&
-		    current_stamps == translation.code_stamps) {
+		if (slot.stamped() && current_stamps.complete &&
+		    current_stamps == slot.code_stamps()) {
 			if (!memory_settled())
 				return false;
 			slot.set_epoch(current_epoch_);
@@ -2059,7 +2092,7 @@ private:
 		if (!memory_settled())
 			return false;
 		slot.set_epoch(current_epoch_);
-		translation.code_stamps = current_stamps;
+		slot.set_code_stamps(current_stamps);
 		++diagnostics.validation_hits;
 		return true;
 	}
