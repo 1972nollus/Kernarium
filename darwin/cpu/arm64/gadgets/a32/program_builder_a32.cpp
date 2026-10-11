@@ -1074,6 +1074,8 @@ bool Translator::supported(Need need) const noexcept
 		return host_.rdm;
 	case Need::fcma:
 		return host_.fcma;
+	case Need::fcma_fp16:
+		return host_.fcma && host_.fp16;
 	case Need::bf16:
 		return host_.bf16;
 	case Need::i8mm:

@@ -33,7 +33,7 @@ import re
 
 import a32_neon
 import a32_simd
-from a32_neon import Variant, add, INDEX_SINGLE, arrange, width
+from a32_neon import Variant, add, INDEX_SINGLE, INDEX_LANE, arrange, width
 
 # The families this module adds, after a32_simd's.
 FAMILIES: list[str] = ["crc", "vfpv8", "vfpcvt8", "vfphalf"]
@@ -47,7 +47,8 @@ CRC_SIZES = ["b", "h", "w"]
 def is_vfp_name(name: str) -> bool:
     """A complete-level form that is VFP (or a VFP-shaped one), not Advanced
     SIMD, though its decoder stem may be shared with an Advanced SIMD form."""
-    return re.search(r"_(A2|T2)_[HSD]$|_vfp_", name) is not None
+    return re.match(r"V(MAXNM|MINNM)_(A2|T2)_[HSD]$", name) is not None or \
+        "_vfp_" in name
 
 
 # vfpv8's operations.
@@ -218,8 +219,133 @@ def armv8_float_groups() -> None:
                 f"fcvt{letter}s", f"fcvt{letter}u")
 
 
+def lane_group(name, stems, shape, make, *, indexed=False, rot=(0, 0),
+               fp=a32_neon.FP_NONE) -> None:
+    """A group indexed by INDEX_LANE: make(lane, q, rotation, half) returns
+    the variant for one lane, Q or D form, rotation and element size, or
+    None."""
+    variants = {}
+    for lane in range(8 if indexed else 1):
+        for q in (0, 1):
+            for rotation in range(4 if rot[1] else 1):
+                for half in (0, 1):
+                    variant = make(lane, q, rotation, half)
+                    if variant is not None:
+                        variants[lane | q << 3 | rotation << 4 | half << 6] = (
+                            f"{lane}{width(q)}{rotation}"
+                            f"{'h' if half else 's'}", variant)
+    add(name, stems, shape, "none", explicit=variants, index=INDEX_LANE,
+        count=128, fp=fp, indexed=indexed, rot_shift=rot[0],
+        rot_mask=rot[1])
+
+
+def armv8_integer_groups() -> None:
+    """The dot products (FEAT_DotProd), VQRDMLAH and VQRDMLSH (FEAT_RDM)."""
+    def dot(name, stem, mnemonic, *, element):
+        def make(lane, q, rotation, half):
+            if half or (lane > 1 and element):
+                return None
+            t = "4s" if q else "2s"
+            b = "16b" if q else "8b"
+            w = width(q)
+            third = f"v2.4b[{lane}]" if element else f"v2.{b}"
+            return Variant(n=w, m=w if not element else "d", acc=w, out=w,
+                           body=[f"{mnemonic} v0.{t}, v1.{b}, {third}"],
+                           need="dotprod")
+        lane_group(name, [stem], "dnm", make, indexed=element)
+
+    dot("vsdot", "VSDOT", "sdot", element=False)
+    dot("vsdot_s", "VSDOT_s", "sdot", element=True)
+    dot("vudot", "VUDOT", "udot", element=False)
+    dot("vudot_s", "VUDOT_s", "udot", element=True)
+
+    def rdm(name, stem, mnemonic):
+        # Three registers, or by scalar (alt): the scalar is replicated.
+        def make(esize, q, sign, alt):
+            if sign or esize not in (16, 32):
+                return None
+            t = arrange(esize, q)
+            w = width(q)
+            return Variant(n=w, m="elem" if alt else w,
+                           elem=t if alt else None, acc=w, out=w, qc=True,
+                           body=[f"{mnemonic} v0.{t}, v1.{t}, v2.{t}"],
+                           need="rdm")
+        add(name, [stem], "dnm", "scalar", make)
+
+    rdm("vqrdmlah", "VQRDMLAH", "sqrdmlah")
+    rdm("vqrdmlsh", "VQRDMLSH", "sqrdmlsh")
+
+
+def armv8_complex_groups() -> None:
+    """VCADD and VCMLA (FEAT_FCMA), and VFMAL and VFMSL (FEAT_FHM), under the
+    standard FPSCR value."""
+    def cadd(lane, q, rotation, half):
+        if rotation > 1:
+            return None
+        t = arrange(16 if half else 32, q)
+        w = width(q)
+        return Variant(n=w, m=w, out=w,
+                       body=[f"fcadd v0.{t}, v1.{t}, v2.{t}, "
+                             f"#{90 if rotation == 0 else 270}"],
+                       need="fcma_fp16" if half else "fcma")
+    lane_group("vcadd", ["VCADD"], "dnm", cadd, rot=(24, 1),
+               fp=a32_neon.FP_ALL)
+
+    def cmla(lane, q, rotation, half):
+        t = arrange(16 if half else 32, q)
+        w = width(q)
+        return Variant(n=w, m=w, acc=w, out=w,
+                       body=[f"fcmla v0.{t}, v1.{t}, v2.{t}, #{90 * rotation}"],
+                       need="fcma_fp16" if half else "fcma")
+    lane_group("vcmla", ["VCMLA"], "dnm", cmla, rot=(23, 3),
+               fp=a32_neon.FP_ALL)
+
+    def cmla_s(lane, q, rotation, half):
+        if lane > (1 if half else 0):
+            return None
+        need = "fcma_fp16" if half else "fcma"
+        if not half and not q:
+            # A single complex pair of single-precision elements: the
+            # vector form on the whole D register (no element form has
+            # two lanes), so no lane computes a dead product.
+            return Variant(n="d", m="d", acc="d", out="d",
+                           body=[f"fcmla v0.2s, v1.2s, v2.2s, "
+                                 f"#{90 * rotation}"], need=need)
+        t = arrange(16 if half else 32, q)
+        w = width(q)
+        element = "h" if half else "s"
+        return Variant(n=w, m="d", acc=w, out=w,
+                       body=[f"fcmla v0.{t}, v1.{t}, "
+                             f"v2.{element}[{lane}], #{90 * rotation}"],
+                       need=need)
+    lane_group("vcmla_s", ["VCMLA_s"], "dnm", cmla_s, indexed=True,
+               rot=(20, 3), fp=a32_neon.FP_ALL)
+
+    def fmal(name, stem, mnemonic, *, element):
+        def make(lane, q, rotation, half):
+            if half or (not element and lane):
+                return None
+            t = "4s" if q else "2s"
+            h = "4h" if q else "2h"
+            w = width(q)
+            source = "d" if q else "s"
+            third = f"v2.h[{lane}]" if element else f"v2.{h}"
+            return Variant(n=source, m=source, acc=w, out=w,
+                           body=[f"{mnemonic} v0.{t}, v1.{h}, {third}"],
+                           need="fhm")
+        lane_group(name, [stem], "dnm_s", make, indexed=element,
+                   fp=a32_neon.FP_ALL)
+
+    fmal("vfmal", "VFMAL", "fmlal", element=False)
+    fmal("vfmsl", "VFMSL", "fmlsl", element=False)
+    fmal("vfmal_s", "VFMAL_s", "fmlal", element=True)
+    fmal("vfmsl_s", "VFMSL_s", "fmlsl", element=True)
+
+
 crypto_groups()
 armv8_float_groups()
+armv8_integer_groups()
+armv8_complex_groups()
 
 
 # ---------------------------------------------------------------------------

@@ -97,6 +97,15 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 	case NeonIndex::single:
 		index = 0;
 		break;
+	case NeonIndex::lane: {
+		const unsigned lane = group.indexed ?
+			static_cast<unsigned>(o.index_value) & 7U : 0U;
+		const unsigned rotation = group.rot_mask != 0 ?
+			in.word >> group.rot_shift & group.rot_mask : 0U;
+		index = lane | q << 3 | rotation << 4 |
+			(o.esize == 16 ? 1U << 6 : 0U);
+		break;
+	}
 	case NeonIndex::qshlu: {
 		static constexpr unsigned base[4] = {0, 8, 24, 56};
 		index = q * 120U + base[size & 3U] +
@@ -130,6 +139,14 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 		push(d_register(o.d) | d_register(o.n) << 16 |
 		     (by_scalar ? element() : d_register(o.m)) << 32);
 		break;
+	case NeonShape::dnm_s: {
+		/* The sources are S registers in a D-register variant. */
+		const auto source = [q](int number) noexcept {
+			return q != 0 ? d_register(number) : s_register(number);
+		};
+		push(d_register(o.d) | source(o.n) << 16 | source(o.m) << 32);
+		break;
+	}
 	case NeonShape::dm:
 		push(d_register(o.d) | d_register(o.m) << 16);
 		break;

@@ -41,7 +41,13 @@ where size_index is log2(esize / 8), q means a Q-register operation (the
 form's name ends in _Q), sign is the group's signedness operand (1 =
 unsigned) and alt is the operand that tells two operations of one stem apart
 (floating point, polynomial, by scalar). The other groups index their own
-space (INDEX_*). A variant the template does not define has no gadget; the
+space (INDEX_*); INDEX_LANE, which the Armv8 groups of a32_armv8.py use, is
+
+    lane | q << 3 | rotation << 4 | half << 6
+
+with the lane the form's index_value (when the group is indexed), the
+rotation a field of the instruction word (rot_shift, rot_mask) and half set
+for 16-bit elements. A variant the template does not define has no gadget; the
 builder turns that into the illegal-instruction exit, which the forms test
 catches.
 
@@ -49,6 +55,8 @@ Operand words (16-bit CpuState offsets from the low end of a word):
 
     dnm      d[0:16] n[16:32] m[32:48]    m is the scalar element's address
                                            in a by-scalar variant
+    dnm_s    as dnm, but n and m are S registers in a D-register variant
+             (VFMAL and VFMSL read pairs of halves)
     dm       d[0:16] m[16:32]
     dmsh     dm, then a word whose low byte is the signed shift amount
     imm      d, then the 64-bit immediate
@@ -67,7 +75,7 @@ SIZES = (8, 16, 32, 64)
 # enumeration (a32_forms.hpp). A translation on a host without the feature
 # is the semantic library's; "none" needs nothing.
 NEEDS = ["none", "fp16", "aes", "pmull", "sha1", "sha2", "crc32", "dotprod",
-         "fhm", "rdm", "fcma", "bf16", "i8mm", "sb"]
+         "fhm", "rdm", "fcma", "fcma_fp16", "bf16", "i8mm", "sb"]
 HALF = "fp16"
 
 
@@ -108,9 +116,9 @@ SELECTORS = [
 ]
 
 INDEX_GENERIC, INDEX_EXT, INDEX_TBL, INDEX_FIXED, INDEX_QSHLU, \
-    INDEX_SINGLE = range(6)
-INDEX_NAMES = ["generic", "ext", "tbl", "fixed", "qshlu", "single"]
-SHAPES = ["dnm", "dm", "dmsh", "imm", "dcore", "delem"]
+    INDEX_SINGLE, INDEX_LANE = range(7)
+INDEX_NAMES = ["generic", "ext", "tbl", "fixed", "qshlu", "single", "lane"]
+SHAPES = ["dnm", "dm", "dmsh", "imm", "dcore", "delem", "dnm_s"]
 
 # fp: which variants need the standard FPSCR value.
 FP_NONE, FP_ALL, FP_ALT = range(3)
@@ -154,6 +162,9 @@ class Group:
     explicit: Optional[dict] = None   # index -> (suffix, Variant)
     count: int = 32
     ident: int = 0
+    indexed: bool = False      # INDEX_LANE: the lane is the form's index_value
+    rot_shift: int = 0         # INDEX_LANE: the rotation field of the word
+    rot_mask: int = 0
 
 
 GROUPS: list = []
@@ -833,7 +844,8 @@ def define_groups() -> None:
 def stem_of(name: str) -> str:
     """The decoder stem of a form name: VADD_i_A1_D -> VADD_i."""
     parts = name.split("_")
-    while parts and parts[-1] in ("D", "Q", "nowb", "posti", "postr"):
+    while parts and parts[-1] in ("D", "Q", "DH", "DS", "QH", "QS", "nowb",
+                                   "posti", "postr"):
         parts.pop()
     if parts and len(parts[-1]) == 2 and parts[-1][0] in "AT" and \
             parts[-1][1].isdigit():
@@ -860,7 +872,7 @@ def plan_of(name: str):
 def render(g: Group, v: Variant, floating: bool = False) -> list:
     lines: list = []
     shape = g.shape
-    if shape == "dnm":
+    if shape in ("dnm", "dnm_s"):
         lines += ["ldr x8, [_stream], #8", "ubfx x9, x8, #16, #16",
                   "ubfx x10, x8, #32, #16", "and x8, x8, #0xffff"]
     elif shape == "dm":
@@ -959,7 +971,9 @@ def header_tables(names) -> list:
             "\tstd::uint16_t base;", "\tstd::uint16_t count;",
             "\tNeonShape shape;", "\tNeonSelector selector;",
             "\tNeonIndex index;", "\tNeonFp fp;", "\tNeonScalar scalar;",
-            "\tstd::int8_t shift;", "\tbool size_none;", "};", ""]
+            "\tstd::int8_t shift;", "\tbool size_none;",
+            "\tbool indexed;", "\tstd::uint8_t rot_shift;",
+            "\tstd::uint8_t rot_mask;", "};", ""]
     base = 0
     rows = []
     entries = []
@@ -986,7 +1000,9 @@ def header_tables(names) -> list:
             f"\t{{{base}, {g.count}, NeonShape::{g.shape}, "
             f"NeonSelector::{g.selector}, NeonIndex::{INDEX_NAMES[g.index]},"
             f" NeonFp::{FP_NAMES[g.fp]}, NeonScalar::{scalar}, {g.shift_sign},"
-            f" {'true' if g.size_none else 'false'}}},  // {g.name}")
+            f" {'true' if g.size_none else 'false'},"
+            f" {'true' if g.indexed else 'false'}, {g.rot_shift},"
+            f" {g.rot_mask}}},  // {g.name}")
         entries.append(f"\t// {g.name}")
         need_entries.append(f"\t// {g.name}")
         for i in range(0, g.count, 8):
