@@ -921,8 +921,15 @@ extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
 cases of another level with the engine translating at it, which is how a
 level is brought up before the engine's own moves. The `unaligned` and
 `fpscr-reserved` suites are unrecorded until a hardware oracle exists, so
-nothing here invents expectations for them. All three run in both page
-profiles.
+nothing here invents expectations for them. A store-exclusive may fail
+without cause, and the gadgets' fails whenever a host interrupt lands between
+the load and the store, which a loaded host makes frequent enough to see in a
+gate; the oracle's never does. A case whose only difference is that failure
+runs again, up to 16 attempts in all, and the summary counts the cases that
+needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
+record 200 times with a signal storm aimed at the guest's thread and requires
+both that store-exclusives were lost and that every case then agreed. All four
+run in both page profiles.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
