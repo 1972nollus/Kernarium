@@ -1152,6 +1152,38 @@ void single_transfers_index_by_the_delta() {
   }
 }
 
+/* A conversion to a 16-bit fixed-point value and VJCVT keep their temporaries
+ * out of the host registers that hold the guest's core registers: r0, r1 and
+ * r2 are the first bound, in x3, x4 and x5, and are written before the
+ * conversion and read after it. */
+void conversions_keep_the_guest_registers() {
+  Fixture fixture{0x1a32'0c14, 2, 2};
+  const std::vector<std::uint32_t> program{
+      0xe3a0'0005U, // mov r0, #5
+      0xe3a0'1006U, // mov r1, #6
+      0xe3a0'2007U, // mov r2, #7
+      0xeebe'0a40U, // vcvt.s16.f32 s0, s0, #16
+      0xeebf'0a40U, // vcvt.u16.f32 s0, s0, #16
+      0xeebd'1bc0U, // vcvt.s32.f64 s2, d0
+      0xeef9'0bc0U, // vjcvt.s32.f64 s1, d0
+      0xe080'3001U, // add r3, r0, r1
+      0xe083'3002U, // add r3, r3, r2
+      0xef00'0000U, // svc
+  };
+  for (std::size_t i = 0; i < program.size(); ++i)
+    fixture.code32(i * 4, {program[i]});
+  for (unsigned round = 0; round < 2; ++round) {
+    auto cpu = Fixture::task(false);
+    cpu.vectors[0].bytes.fill(std::byte{0x41});
+    const auto result = fixture.run(cpu);
+    require(result.reason == ::uml::cpu::ExitReason::system_call);
+    require(cpu.registers[0] == 5U);
+    require(cpu.registers[1] == 6U);
+    require(cpu.registers[2] == 7U);
+    require(cpu.registers[3] == 18U);
+  }
+}
+
 void native_loops() {
   constexpr unsigned programs = 90;
   constexpr std::size_t window = 256; // bytes of data the loops touch
@@ -1468,6 +1500,7 @@ int main() {
 #endif
   aligned_accesses_skip_the_crossing_test();
   single_transfers_index_by_the_delta();
+  conversions_keep_the_guest_registers();
   counted_loop_is_a_host_loop();
   neon_float_loop_is_unguarded();
   native_loops();

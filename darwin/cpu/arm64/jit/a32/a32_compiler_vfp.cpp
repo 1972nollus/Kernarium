@@ -304,27 +304,30 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
       if (narrow) {
         // The 16-bit result saturates, and a saturation raises only IOC.
         emit(0xd53b'4422U); // mrs x2, fpsr
+        /* Only scratch registers: the host registers x3-x28 may hold the
+         * guest's. */
+        constexpr unsigned limit = 9, result = 10, status = 11;
         if (o.unsigned_) {
-          emit(enc::movz(3, 0xffffU));
-          emit(enc::cmp(0, 3));
-          emit(enc::csel(4, 0, 3, enc::ls));
+          emit(enc::movz(limit, 0xffffU));
+          emit(enc::cmp(0, limit));
+          emit(enc::csel(result, 0, limit, enc::ls));
         } else {
-          emit(enc::movz(3, 0x7fffU));
-          emit(enc::cmp(0, 3));
-          emit(enc::csel(4, 0, 3, enc::le));
-          emit(enc::movn(3, 0x7fffU));
-          emit(enc::cmp(4, 3));
-          emit(enc::csel(4, 4, 3, enc::ge));
+          emit(enc::movz(limit, 0x7fffU));
+          emit(enc::cmp(0, limit));
+          emit(enc::csel(result, 0, limit, enc::le));
+          emit(enc::movn(limit, 0x7fffU));
+          emit(enc::cmp(result, limit));
+          emit(enc::csel(result, result, limit, enc::ge));
         }
-        emit(enc::cmp(4, 0));
+        emit(enc::cmp(result, 0));
         const auto done = make_label();
         branch_condition(done, enc::eq);
-        emit(enc::and_i(5, 2, *enc::logical_immediate_field(0x80U)));
-        emit(enc::orr(5, 5, 1));
-        emit(enc::orr_i(5, 5, *enc::logical_immediate_field(1U)));
-        emit(0xd51b'4425U); // msr fpsr, x5
+        emit(enc::and_i(status, 2, *enc::logical_immediate_field(0x80U)));
+        emit(enc::orr(status, status, 1));
+        emit(enc::orr_i(status, status, *enc::logical_immediate_field(1U)));
+        emit(0xd51b'4420U | status); // msr fpsr, x11
         bind(done);
-        emit(enc::mov(0, 4));
+        emit(enc::mov(0, result));
         if (dp && !o.unsigned_)
           emit(enc::x::sxtw(0, 0));
       } else if (dp && !o.unsigned_) {
