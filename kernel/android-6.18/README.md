@@ -17,7 +17,9 @@ profile, so it changes nothing for this line's 16 KiB product; it exists so
 that the ACK series stays equal to the mainline one and a 4 KiB Android kernel
 needs no further kernel topic. ACK's `ringbuf.c` carries the page-size
 compatibility include and macros, which is why the shared series cannot hold
-it.
+it. A kernel CPU mapping of a udmabuf (`dma_buf_vmap()`) is not bracketed with
+the kernel-vmap hooks; no importer in the product maps one, and user space
+reaches udmabuf memory through its own mapping, which is coherent.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the

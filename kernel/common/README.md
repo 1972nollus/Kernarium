@@ -182,16 +182,18 @@ EINTR. Without SME no carrier blocks these signals.
 
 With 4 KiB pages, a kernel alias outside the linear map is the same memory as
 the frames' other views only where one 16 KiB host slot holds a whole aligned
-group of four. Three shared topics make that so for memory the kernel shares:
+group of four. Four shared topics make that so for memory the kernel shares:
 the vmalloc group hook in `mm/vmalloc.c`, the host mapping of congruent
 `init_mm` slots with the `flush_kernel_vmap_range()` and
-`invalidate_kernel_vmap_range()` hooks in `arch/um`, and the io_uring region
-allocation. Each is inert on a 16 KiB profile and on any architecture that
-reports no vmap group. The x86_64 slice's pinned-ring accounting below sees no
-change: a ring in one page of the application's memory is one folio and stays
-valid, and a larger one that is not whole aligned groups is refused with
-`EINVAL`. [`tests/integration/kernel`](../../tests/integration/kernel) checks
-the sharing in both directions.
+`invalidate_kernel_vmap_range()` hooks in `arch/um`, the io_uring region
+allocation, and the fbdev shmem flush for the virtio-gpu console. The first
+three are inert on a 16 KiB profile and on any architecture that reports no
+vmap group, and the flush costs a page-table check there. The x86_64 slice's
+pinned-ring accounting below sees no change: a ring in one page of the
+application's memory is one folio and stays valid, and a larger one that is
+not whole aligned groups is refused with `EINVAL`.
+[`tests/integration/kernel`](../../tests/integration/kernel) checks the sharing
+in both directions.
 
 In the x86_64 slice, a guest entry is marked shared while another agent may
 observe the memory of the task's mm: while another task may run on it

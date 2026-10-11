@@ -406,9 +406,12 @@ first data copy ends on a group boundary, which is a change to
 `kernel/bpf/ringbuf.c`. The topic lives in each overlay instead of the shared
 series because the ACK file's include block and page-size macros differ, so one
 patch cannot apply to both bases; the ACK line carries an adapted variant. A
-buffer under 16 KiB brackets its wrapped tail with the vmap hooks. Perf no longer selects
-`PERF_USE_VMALLOC`, as native arm64 does not. Both profiles run
-`guest-kernel-user-shared-memory`.
+buffer under 16 KiB brackets its wrapped tail with the vmap hooks. Perf no
+longer selects `PERF_USE_VMALLOC`, as native arm64 does not. The virtio-gpu
+console draws into a vmap of scattered shmem pages, which is a private copy on
+this profile, so the fbdev shmem dirty callback flushes the damaged lines
+before the device reads them; without it a VNC client sees a blank console.
+Both profiles run `guest-kernel-user-shared-memory`.
 
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
