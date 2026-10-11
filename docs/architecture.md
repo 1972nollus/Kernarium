@@ -867,6 +867,31 @@ and A32 and a halfword for T32, so one page-bounded validation serves the
 gadget cache's validating lookups, the JIT's stale lookups and the shared
 tier, whose entries must carry the ISA of the key they are stored under.
 
+The runtime enters an AArch32 task through `run_aarch32` only while the run
+presents AArch32, which `guest_a32_support()` decides in one place: the
+selected engine's level under the development policy. The compat
+`AT_HWCAP` and `AT_HWCAP2` words the guest selector returns derive from the
+same level, so a run advertises exactly what its engine runs, a non-zero word
+is the kernel's whole evidence that a run executes AArch32, and an AArch32
+entry the run does not present is a fatal event. The conversions live in
+[`runtime/aarch32_guest.hpp`](../darwin/runtime/aarch32_guest.hpp) and the
+formats of the status word and FPSCR in
+[`cpu/arm64/aarch32/state_format.hpp`](../darwin/cpu/arm64/aarch32/state_format.hpp).
+Loading takes (PC, T) to the key; NZCV, Q, the GE flags (as the byte-lane
+mask SEL needs) and ITSTATE out of the SPSR-layout status; TPIDRURW, TPIDRURO
+and CP15BEN; and FPSCR's two halves, with FPSCR's N, Z, C and V in
+`a32_fpscr_nzcv` because the hosts' FPSR[31:28] is RAZ/WI and its control
+bits cut to AHP, DN, FZ, RMode and FZ16 (no trap enables, no short vectors).
+It clears the exclusive monitor and top-byte ignore and leaves the vector
+registers lazy, as for A64. Saving repacks only what an engine owns (flags,
+GE, IT, T, the PC) and keeps the kernel's own status bits, writes R0-R14
+zero-extended and leaves the other registers of the bridge alone. An entry
+is fatal unless the status is User mode with E clear, IT comes with T, and
+the task is neither streaming nor holds live SVE registers. An engine's exit
+becomes the bridge event for a 32-bit task: BKPT carries its immediate and
+the BKPT32 exception class, a completed single step the software-step class,
+and a PC alignment fault the 32-bit target address.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
