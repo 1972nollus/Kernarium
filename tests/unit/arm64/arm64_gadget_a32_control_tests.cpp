@@ -12,17 +12,23 @@
  *   bit 1 set;
  * - the instruction budget, single step and code that changes in place;
  * - exclusives, the Armv8 acquire and release forms, the CP15 and counter
- *   reads and the system forms; and
- * - LDM, STM and LDRD across a page boundary, mapped and not.
+ *   reads and the system forms;
+ * - LDM, STM and LDRD across a page boundary, mapped and not; and
+ * - at the complete level, that a form needing a host extension runs as a
+ *   gadget on a host that has it and in the semantic library on one that
+ *   does not, with the same result.
  *
  * Everything runs the production loop (run_translated_aarch32_blocks)
  * over the gadget executor, in whichever guest page size the build has. */
 #include "arm64_gadget_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
+#include "cpu/arm64/aarch32/decode.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -1422,6 +1428,105 @@ void a_vfp_word_is_illegal_at_the_base_level()
 	require(cpu.pc == aarch32::a32_key(code_base + 4));
 }
 
+/* ------------------------------------------------- the complete level */
+
+/* The Armv8 extensions the complete level lowers onto A64 are lowered only
+ * for a host that has them: on one without, the same word runs through the
+ * semantic library and gives the same answer. A word is run in a guest
+ * translating on the machine's own capabilities and in one on a host with
+ * none of the optional ones; the library counts its exits per form. */
+struct FeatureWord {
+	const char *what;
+	std::uint32_t word;
+	bool arm64::A32Features::*feature; /* what the lowering needs, or null */
+};
+
+[[nodiscard]] ::uml::cpu::HostCapabilities bare_host()
+{
+	auto host = ::uml::cpu::host_capabilities();
+	host.supported.reset();
+	host.crc32 = host.aes = host.pmull = host.sha1 = host.sha2 = false;
+	host.sha3 = host.sha512 = host.fp16 = false;
+	return host;
+}
+
+void host_features_decide_between_a_gadget_and_the_library()
+{
+	using F = arm64::A32Features;
+	const FeatureWord words[] = {
+		{"crc32w r0, r1, r2", 0xe141'0042U, &F::crc32},
+		{"crc32cb r0, r1, r2", 0xe101'0242U, &F::crc32},
+		{"vsdot.s8 d0, d1, d2", 0xfc21'0d02U, &F::dotprod},
+		{"vudot.u8 q0, q1, q2", 0xfc22'0d54U, &F::dotprod},
+		{"vsdot.s8 d0, d1, d2[1]", 0xfe21'0d22U, &F::dotprod},
+		{"vqrdmlah.s16 d0, d1, d2", 0xf311'0b12U, &F::rdm},
+		{"vqrdmlsh.s32 q0, q1, q2", 0xf322'0c54U, &F::rdm},
+		{"vqrdmlah.s16 d0, d1, d2[1]", 0xf291'0e4aU, &F::rdm},
+		{"vcadd.f32 d0, d1, d2, #90", 0xfc91'0802U, &F::fcma},
+		{"vcmla.f32 q0, q1, q2, #180", 0xfd32'0844U, &F::fcma},
+		{"vcmla.f32 d0, d1, d2[0], #90", 0xfe91'0802U, &F::fcma},
+		{"vfmal.f16 d0, s2, s4", 0xfc21'0812U, &F::fhm},
+		{"vfmsl.f16 q0, d2, d4", 0xfca2'0854U, &F::fhm},
+		{"vadd.f16 s0, s1, s2", 0xee30'0981U, &F::fp16},
+		{"vcvt.s32.f16 s0, s1", 0xeebd'09e0U, &F::fp16},
+				{"aese.8 q0, q1", 0xf3b0'0302U, &F::aes},
+		{"sha1c.32 q0, q1, q2", 0xf202'0c44U, &F::sha1},
+		{"vmull.p64 q0, d1, d2", 0xf2a1'0e02U, &F::pmull},
+		/* Needing no extension, on either host a gadget: the moves of
+		 * a half and the Armv8 floating-point additions. */
+		{"vmov.f16 s0, #1.0", 0xeeb7'0900U, nullptr},
+		{"vldr.16 s0, [r2]", 0xed92'0900U, nullptr},
+		{"vmaxnm.f32 d0, d1, d2", 0xf301'0f12U, nullptr},
+		{"vrinta.f32 d0, d1", 0xf3ba'0501U, nullptr},
+	};
+	const auto machine = ::uml::cpu::host_capabilities();
+	const auto bare = bare_host();
+	const auto machine_features =
+		arm64::a32_features(machine, arm64::A32Support::complete);
+	aarch32::count_a32_library_exits(true);
+	unsigned long generation = 1100;
+	for (const auto &item : words) {
+		const auto decoded = aarch32::decode_a32(
+			item.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.form != aarch32::Form::UDF_A1,
+			"the complete profile does not decode the word");
+		struct Outcome {
+			arm64::CpuState cpu;
+			std::uint64_t exits;
+		};
+		const auto run = [&](const ::uml::cpu::HostCapabilities &host) {
+			Guest guest{generation++, arm64::A32Support::complete, host};
+			guest.a32(0, {item.word, a::svc});
+			guest.data32(0, 0x3c00'4000U);
+			auto cpu = a32_state();
+			cpu.registers[1] = 0x1234'5678U;
+			cpu.registers[2] = data_base;
+			for (unsigned n = 0; n < 8; ++n)
+				set_d(cpu, n, 0x3c00'3800'4000'3c00ULL +
+					      0x0101'0101'0101'0101ULL * n);
+			aarch32::reset_a32_library_exits();
+			const auto result = guest.run(cpu);
+			require(result.reason == ExitReason::system_call, item.what);
+			return Outcome{cpu, aarch32::a32_library_exits(decoded.form)};
+		};
+		const auto native = run(machine);
+		const auto library = run(bare);
+		for (unsigned n = 0; n < 16; ++n)
+			require(reg(native.cpu, n) == reg(library.cpu, n), item.what);
+		for (unsigned n = 0; n < 8; ++n)
+			require(get_d(native.cpu, n) == get_d(library.cpu, n), item.what);
+		const bool lowered = item.feature == nullptr ||
+				     machine_features.*item.feature;
+		if (item.feature != nullptr)
+			require(library.exits != 0,
+				std::string{"a host without the feature did not use the library: "} + item.what);
+		if (lowered)
+			require(native.exits == 0,
+				std::string{"a host with the feature used the library: "} + item.what);
+	}
+	aarch32::count_a32_library_exits(false);
+}
+
 /* ------------------------------------------------------------ pages */
 
 void block_transfers_cross_a_page_boundary()
@@ -1616,6 +1721,7 @@ int main()
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
 	a_vfp_word_is_illegal_at_the_base_level();
+	host_features_decide_between_a_gadget_and_the_library();
 	std::puts("arm64-gadget-a32-control: ok");
 	return 0;
 }

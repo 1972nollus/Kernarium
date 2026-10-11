@@ -51,6 +51,16 @@ constexpr std::size_t data_pages = 2;
 	return options;
 }
 
+/* The options of an engine that translates on a host with these capabilities
+ * rather than the machine's own. */
+[[nodiscard]] inline gadgets::BuildOptions options_on(
+	arm64::A32Support level, const ::uml::cpu::HostCapabilities &host)
+{
+	auto options = options_at(level);
+	options.host_capabilities = host;
+	return options;
+}
+
 /* The guest of one test: two code pages (writable, so a test can change
  * its code) and two data pages, under a generation of their own. The page
  * after the data is unmapped. */
@@ -65,15 +75,18 @@ public:
 		, data_{data_pages}
 		, executor_{options_at(level)}
 	{
-		require(darwin_uml_static_vm_activate(generation) == 0);
-		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(std::uintptr_t{code_base}),
-			code_.descriptor(), 0, data_pages * page,
-			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
-		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(std::uintptr_t{data_base}),
-			data_.descriptor(), 0, data_pages * page,
-			PROT_READ | PROT_WRITE, 0, 1) == 0);
+		map_pages();
+	}
+
+	/* The same, translating as a host with `host` would. */
+	Guest(unsigned long generation, arm64::A32Support level,
+	      const ::uml::cpu::HostCapabilities &host)
+		: generation_{generation}
+		, code_{data_pages}
+		, data_{data_pages}
+		, executor_{options_on(level, host)}
+	{
+		map_pages();
 	}
 
 	~Guest() { require(darwin_uml_static_vm_destroy(generation_) == 0); }
@@ -166,6 +179,19 @@ public:
 	}
 
 private:
+	void map_pages()
+	{
+		require(darwin_uml_static_vm_activate(generation_) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(std::uintptr_t{code_base}),
+			code_.descriptor(), 0, data_pages * page,
+			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(std::uintptr_t{data_base}),
+			data_.descriptor(), 0, data_pages * page,
+			PROT_READ | PROT_WRITE, 0, 1) == 0);
+	}
+
 	unsigned long generation_;
 	JitBacking code_;
 	JitBacking data_;

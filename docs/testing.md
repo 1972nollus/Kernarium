@@ -820,14 +820,20 @@ the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
 LDRD across a page, mapped and not, and that Advanced SIMD floating point
 runs under the standard FPSCR value while VFP keeps the guest's (in either
 order, in a skipped conditional run and across a block that ends inside a
-run), and that a VFP word is illegal when the engine translates at the base
-level. `arm64-gadget-a32-forms` runs every
+run), that a VFP word is illegal when the engine translates at the base
+level, and that at the complete level a form needing a host extension (CRC32,
+AES, SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM) runs as a gadget on a host
+that has it and in the semantic library, with the same result, on one that
+does not (the test builds one guest on the machine's capabilities and one on
+a host with none of the optional ones). `arm64-gadget-a32-forms` runs every
 stored sample word of the decoder's data and the whole 16-bit Thumb space and
 requires the engine to raise the illegal-instruction exit exactly where the
 decoder, at the engine's level, rejects the word. Both also hold the
 library-exit count gate: with the semantic library's exit counters on from a
 clean state, only a form the engine leaves to the library, or a block transfer
 that crossed a page, may reach it, and the forms the engine leaves to it do.
+The gate assumes a host with the extensions every supported Apple host has;
+on one without, the forms that need the missing one reach the library too.
 `arm64-gadget-a32-corpus`
 runs the cases of the AArch32 corpus whose instructions the engine's level
 implements in the oracle's memory map and compares the signal or system call,
