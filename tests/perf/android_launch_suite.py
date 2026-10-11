@@ -18,7 +18,7 @@ waits for a completion line and records named values captured from it (for a
 benchmark, its own loading time and score), plus the emulator CPU time spent.
 Taps are in guest display pixels, so a scenario belongs to one display size.
 
-The caller serializes guests: wrap the command in the host's guest slot.
+The tool does not serialize guests: run one guest per measurement.
 Each record carries the guest's vCPU count (--cpus, default 4). Environment
 for one arm of an A/B goes in with --env, and --guest-samples profiles the
 whole boot with DARWIN_UML_GUEST_SAMPLES.

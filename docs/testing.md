@@ -457,7 +457,7 @@ userdata/metadata mount and format behavior, backup/restore, file manager,
 terminal, battery display, and normal/recovery reboot paths. Never run wipe or
 restore checks against an existing user bundle.
 
-`KernariumTests` runs on the iPad and, as an iPad app, on an Apple silicon
+`KernariumTests` runs on an iPad and, as an iPad app, on an Apple silicon
 Mac. The iPad is the reference, and the whole suite passes there. On the Mac
 up to four tests fail because of how the Mac hosts an iPad app:
 
@@ -470,7 +470,7 @@ up to four tests fail because of how the Mac hosts an iPad app:
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. SwiftUI's hosting view exposes them only
   while UIKit application accessibility is on in the process. A test run on
-  the iPad has it on. On the Mac it follows the host's
+  an iPad has it on. On the Mac it follows the host's
   `ApplicationAccessibilityEnabled` preference in `com.apple.Accessibility`,
   which an assistive client turns on; while it is off, both tests fail.
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
@@ -558,7 +558,7 @@ encoding the SVE profile executes outside streaming mode UNDEFINED under
 CPU, so both engines run them today with the guest-SVE policy off or on.
 
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
-16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
+16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
 and its FZ, DN, and FZ16 controls. Both engines are at `sve_support`
@@ -583,8 +583,8 @@ runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
 tooling test re-derives them. The `arm64-sve-afp` records come from the
 M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks them
-against their request.
+the Neoverse V2 host lacks. The `arm64-instruction-corpus-sve-afp` test
+checks them against their request.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
@@ -621,19 +621,20 @@ pinned LLVM MC and require the checked-in bytes; without the archive or that
 LLVM MC they skip.
 
 A gadget that runs an instruction as the host's own, such as FEAT_ECV,
-FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
+FEAT_I8MM, FEAT_BF16, or FEAT_FHM on an A15 iPad, runs that path only on a
 host with the feature, and the M1 has none of the first three. FEAT_AFP and
 FEAT_RPRES need an A17 Pro or newer, such as the iPhone 15 Pro Max or an M4
 Mac. An M4 Mac has all of these features and a 1 GHz system counter, and the
 unit suite, the corpus included, holds there in both engines. Elsewhere
 `arm64-instruction-corpus-afp-twins` runs the FEAT_AFP twins only on the cases
 whose FPCR leaves the controls clear. Check a change
-to such a path on the iPad by hand: launch Kernarium on the device with the
-`guest-hwcap-sanity` payload, which executes every family the guest
-advertises, and with the corpus cases of the touched families built into one
-static guest program, and require the same results as a gadget-engine run of
-both programs on a Mac. The device runs only the gadget engine, so a JIT path
-that needs one of these features runs only on an M4 or newer Mac.
+to such a path by hand on an iOS device that has the feature: launch
+Kernarium on the device with the `guest-hwcap-sanity` payload, which executes
+every family the guest advertises, and with the corpus cases of the touched
+families built into one static guest program, and require the same results as
+a gadget-engine run of both programs on a Mac. The device runs only the
+gadget engine, so a JIT path that needs one of these features runs only on an
+M4 or newer Mac.
 
 ## AArch32 decoder
 

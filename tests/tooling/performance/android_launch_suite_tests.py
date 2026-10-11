@@ -105,7 +105,7 @@ def test_cpu_seconds(suite) -> None:
 def test_thread_priorities(suite) -> None:
     ps_threads = "\n".join([
         "USER    PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND",
-        "dev   31478   ??    0.0 S    47T   0:00.09   0:00.35 /x/uml-darwin-android17 --a",
+        "alice 31478   ??    0.0 S    47T   0:00.09   0:00.35 /x/uml-darwin-android17 --a",
         "      31478        25.7 R    31T   0:00.17   0:01.32 ",
         "      31478         0.0 S     4    1:02.01  10:00.01 ",
         "      31478         0.0 S    31T   0:00.00   0:00.00 ",
