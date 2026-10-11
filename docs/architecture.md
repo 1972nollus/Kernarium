@@ -1002,18 +1002,7 @@ executor only when both miss: a function with many callers, such as libm's
 condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
 path and the block goes on with its registers and flags in the host, while the
 taken path leaves by a cold side exit that publishes what is dirty at the
-branch and links to the target. A forward branch whose target is an
-instruction of the same block (a skip over data processing, memory or vector
-instructions that neither end the block nor need a boundary of their own) is
-not an exit at all: the taken arm jumps to the join after crediting the chain
-budget for the instructions it skipped, the other arm runs them, and the arms
-meet with the registers they began with (those the skipped instructions
-bound are written back and forgotten), the host FPCR only where both agree,
-and the flags in whichever of the host and CpuState both arms hold. A region
-that turns out to end the block (a library instruction, an UNDEFINED form) is
-compiled again as a side exit. A cold path records the register bindings it
-was made under, since the join can leave a host register to another guest
-register before the cold paths are emitted. A backward or unconditional branch ends the
+branch and links to the target. A backward or unconditional branch ends the
 block, except one back to the translation's own first instruction: that block
 is a loop in the host. A probe compilation records the vector registers it holds at
 the back edge and the core registers the body names, the

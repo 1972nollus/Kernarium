@@ -19,11 +19,6 @@ void A32Compiler::emit_cold_paths() {
     emit(0xd503'3f5fU); // clrex
     emitter_.branch(path.continuation);
   }
-  for (const auto &path : skip_cold_) {
-    bind(path.label);
-    emitter_.add_immediate(20, 20, path.skipped);
-    emitter_.branch(path.continuation);
-  }
   for (const auto &path : float_cold_) {
     bind(path.label);
     emit_fp_write(true);
@@ -32,8 +27,6 @@ void A32Compiler::emit_cold_paths() {
     emitter_.branch(path.continuation);
   }
   for (const auto &cold : cold_) {
-    gpr_slots_ = cold.gprs;
-    vector_slots_ = cold.vectors;
     set_exit_gpr_mask(cold.dirty_gprs);
     set_exit_vector_mask(cold.dirty_vectors);
     bind(cold.label);

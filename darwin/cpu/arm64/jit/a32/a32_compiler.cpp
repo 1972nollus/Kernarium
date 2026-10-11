@@ -104,34 +104,7 @@ void A32Compiler::decode_block(const Request &request) {
   }
 }
 
-/* A conditional forward branch whose region could not be emitted inline is
- * compiled as a side exit on the next attempt, on a compiler of its own. */
 Result A32Compiler::compile(const Request &request) {
-  auto result = compile_once(request);
-  if (!skip_failed_)
-    return result;
-  std::vector<bool> failed = no_skip_;
-  for (unsigned attempt = 0; skip_failed_; ++attempt) {
-    if (failed.size() <= skip_failed_branch_)
-      failed.resize(skip_failed_branch_ + 1U);
-    failed[skip_failed_branch_] = true;
-    A32Compiler retry{link_context_, link_resolver_, track_direct_stores_,
-                      indirect_link_resolver_};
-    retry.probing_ = probing_;
-    retry.no_skip_ = failed;
-    retry.skip_disabled_ = attempt >= 8U;
-    result = retry.compile_once(request);
-    skip_failed_ = retry.skip_failed_;
-    skip_failed_branch_ = retry.skip_failed_branch_;
-    no_skip_ = retry.no_skip_;
-    plan_ = retry.plan_;
-  }
-  return result;
-}
-
-Result A32Compiler::compile_once(const Request &request) {
-  skip_failed_ = false;
-  skip_ = {};
   begin_link_observation();
   key_ = request.key;
   thumb_ = aarch32::key_is_thumb(key_);
@@ -150,19 +123,15 @@ Result A32Compiler::compile_once(const Request &request) {
   if (!probing_ && loop_candidate(request)) {
     A32Compiler probe{nullptr, nullptr, false, nullptr};
     probe.probing_ = true;
-    probe.no_skip_ = no_skip_;
     (void)probe.compile(request);
     if (probe.plan_.valid) {
       plan_ = probe.plan_;
-      no_skip_ = probe.no_skip_;
       looping_ = true;
     }
   }
   emitter_.prologue();
   const auto internal_entry_word = emitter_.size();
   emit_block();
-  if (skip_failed_)
-    return result;
   const auto instructions = count_;
   const auto hot_words = emitter_.size();
   emit_cold_paths();
@@ -298,14 +267,7 @@ void A32Compiler::emit_block() {
   if (looping_)
     apply_loop_plan();
   while (count_ < block_.size()) {
-    const bool inside_skip = skip_.active && count_ < skip_.join;
     const auto flow = emit_instruction();
-    if (inside_skip && flow != Flow::next) {
-      /* The region ended the block or split it: its branch exits instead. */
-      skip_failed_ = true;
-      skip_failed_branch_ = skip_.branch;
-      return;
-    }
     if (flow == Flow::split) {
       /* The exit before the instruction is emitted; count_ is the number of
        * instructions before it. */
@@ -335,8 +297,6 @@ void A32Compiler::emit_block() {
 A32Compiler::Flow A32Compiler::emit_instruction() {
   const auto &d = cur();
   const auto &inst = d.inst;
-  if (skip_.active && count_ == skip_.join)
-    close_skip();
   if (count_ + 1U == block_.size()) {
     if (probing_)
       record_loop_plan();
@@ -364,101 +324,11 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
     }
   }
   const unsigned condition = inst.cond;
-  if (count_ + 1U < block_.size() && continues_past(inst)) {
-    if (!skip_.active && try_emit_skip_branch())
-      return Flow::next;
+  if (count_ + 1U < block_.size() && continues_past(inst))
     return emit_side_exit_branch();
-  }
   if (inst.status == Status::nop || condition >= 14U)
     return emit_operation();
   return emit_guarded(condition);
-}
-
-/* The instructions between a forward branch and its target (in the same
- * block) are ones that neither end the block nor need a boundary of their
- * own; whatever else they turn out to be is found when they are emitted. */
-bool A32Compiler::skip_region_ok(std::size_t branch, std::size_t join) const {
-  for (std::size_t index = branch + 1U; index < join; ++index) {
-    const auto &d = block_[index];
-    if (d.it != 0U || d.inst.status == Status::undefined ||
-        d.inst.next_it.bits() != 0U)
-      return false;
-    if (d.inst.status == Status::nop)
-      continue;
-    const auto op = op_info(d.inst.form).op;
-    if (op == Op::it || is_exclusive_op(op) || ends_block(d.inst) ||
-        continues_past(d.inst))
-      return false;
-  }
-  return true;
-}
-
-/* B<cond> or CBZ/CBNZ over instructions of the block: the taken arm jumps
- * to the join (crediting the chain budget for what it skipped, so the
- * retired count stays exact), the other arm runs them. */
-bool A32Compiler::try_emit_skip_branch() {
-  if (single_ || skip_disabled_ ||
-      (no_skip_.size() > count_ && no_skip_[count_]))
-    return false;
-  const auto &inst = cur().inst;
-  const auto &o = inst.operands;
-  const auto info = op_info(inst.form);
-  const std::uint32_t target = pc_read() + static_cast<std::uint32_t>(o.imm32);
-  std::size_t join = count_ + 1U;
-  while (join < block_.size() && block_[join].pc != target)
-    ++join;
-  if (join >= block_.size() || join == count_ + 1U ||
-      !skip_region_ok(count_, join))
-    return false;
-  const auto stub = make_label();
-  if (info.op == Op::b) {
-    load_flags();
-    skip_.flags_before = snapshot_flags();
-    branch_condition(stub, inst.cond);
-  } else {
-    const unsigned n = use(static_cast<unsigned>(o.n), 9);
-    skip_.flags_before = snapshot_flags();
-    compare_zero(stub, n, false, info.op == Op::cbnz);
-  }
-  skip_.active = true;
-  skip_.branch = count_;
-  skip_.join = join;
-  skip_.gpr = gpr_slots_;
-  skip_.vector = vector_slots_;
-  skip_.mode_before = static_cast<std::uint8_t>(fp_mode_);
-  skip_.join_label = make_label();
-  skip_cold_.push_back({.label = stub,
-                        .continuation = skip_.join_label,
-                        .skipped = static_cast<unsigned>(join - count_ - 1U)});
-  return true;
-}
-
-/* The arms meet: bindings the region made are written back and forgotten, the
- * host FPCR is known only where the arms agree, and the flags are where both
- * arms have them. */
-void A32Compiler::close_skip() {
-  const ResidencyMark mark{skip_.gpr, skip_.vector};
-  close_conditional_body(mark);
-  if (static_cast<std::uint8_t>(fp_mode_) != skip_.mode_before)
-    fp_mode_ = FpMode::unknown;
-  using State = GuestFlagsState;
-  const auto before = skip_.flags_before;
-  const auto after = snapshot_flags();
-  if (before == State::memory) {
-    // The taken arm has the flags in memory only.
-    synchronize_flags();
-    assume_flags_in_memory();
-  } else {
-    // The taken arm has the host flags.
-    if (after == State::memory)
-      load_flags();
-    if (before == State::host_dirty || snapshot_flags() == State::host_dirty)
-      guest_flags_state_ = State::host_dirty;
-    else
-      guest_flags_state_ = State::synchronized;
-  }
-  bind(skip_.join_label);
-  skip_.active = false;
 }
 
 /* A conditional forward branch inside a block: the taken path leaves through
@@ -648,8 +518,6 @@ Arm64Emitter::Label A32Compiler::cold_exit(ColdPath::Kind kind) {
                    .index = count_,
                    .dirty_gprs = dirty_gpr_mask(),
                    .dirty_vectors = dirty_vector_mask(),
-                   .gprs = gpr_slots_,
-                   .vectors = vector_slots_,
                    .flags = snapshot_flags()});
   return label;
 }
