@@ -1179,6 +1179,66 @@ void the_fp_environment_follows_the_instruction_kind()
 	}
 }
 
+/* A conversion between a float and an integer is the same in either native
+ * environment unless a denormal input or a rounding mode other than nearest
+ * is involved, so it runs in whichever is active, and only the other cases
+ * switch to the guest's: the clamp-and-convert idiom (VMAX, VMIN, VCVT) then
+ * stays in the Standard FPSCR value. The result and the flags must be the
+ * guest's in every case. */
+void conversions_to_and_from_integers_run_in_the_active_environment()
+{
+	constexpr std::uint32_t vmax_f32_d3_d1_d1 = 0xf201'3f01U;
+	constexpr std::uint32_t vadd_f32_s9_s2_s3 = 0xee71'4a21U;
+	constexpr std::uint32_t vcvt_u32_f32_s8_s4 = 0xeebc'4ac2U;
+	constexpr std::uint32_t vcvt_s32_f32_s8_s4 = 0xeebd'4ac2U;
+	constexpr std::uint32_t vcvt_f32_s32_s8_s4 = 0xeeb8'4ac2U;
+	constexpr std::uint32_t fz = 1U << 24;
+	constexpr std::uint32_t rmode_down = 2U << 22;
+	struct Case {
+		std::uint32_t word;
+		std::uint32_t input;
+		std::uint32_t fpcr;
+		std::uint32_t result;
+		std::uint32_t flags; /* IDC IXC IOC of FPSR */
+		bool stays; /* Advanced SIMD's environment survives it */
+	};
+	const Case cases[] = {
+		{vcvt_u32_f32_s8_s4, 0x406c'cccdU, 0, 3, 0x10, true},
+		{vcvt_s32_f32_s8_s4, 0xc06c'cccdU, 0, 0xffff'fffdU, 0x10, true},
+		{vcvt_u32_f32_s8_s4, 0xc06c'cccdU, 0, 0, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x7f80'0000U, 0, 0xffff'ffffU, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x7fc0'0000U, 0, 0, 0x01, true},
+		{vcvt_u32_f32_s8_s4, 0x0000'0001U, 0, 0, 0x10, false},
+		{vcvt_u32_f32_s8_s4, 0x0000'0001U, fz, 0, 0x80, false},
+		{vcvt_u32_f32_s8_s4, 0x0000'0000U, 0, 0, 0, true},
+		{vcvt_f32_s32_s8_s4, 7U, 0, 0x40e0'0000U, 0, true},
+		{vcvt_f32_s32_s8_s4, 0x0100'0001U, 0, 0x4b80'0000U, 0x10, true},
+		{vcvt_f32_s32_s8_s4, 0x0100'0001U, rmode_down, 0x4b80'0000U, 0x10, false},
+		{vcvt_f32_s32_s8_s4, 0x0100'0003U, rmode_down, 0x4b80'0001U, 0x10, false},
+	};
+	unsigned long generation = 1900;
+	for (const auto &item : cases) {
+		for (const unsigned first : {0U, 1U}) {
+			Guest guest{generation++};
+			/* 0: Advanced SIMD first, so the standard value is native;
+			 * 1: VFP first, so the guest's is. */
+			guest.a32(0, {first == 0 ? vmax_f32_d3_d1_d1 : vadd_f32_s9_s2_s3,
+				      item.word, a::svc});
+			auto cpu = a32_state();
+			cpu.fpcr = item.fpcr;
+			set_d(cpu, 1, 0x3f80'0000'3f80'0000ULL);
+			set_d(cpu, 2, item.input);
+			require(guest.run(cpu).reason == ExitReason::system_call);
+			require(static_cast<std::uint32_t>(get_d(cpu, 4)) == item.result,
+				"a conversion gave the wrong value");
+			require((cpu.fpsr & 0x91U) == item.flags,
+				"a conversion raised the wrong flags");
+			require(cpu.a32_fp_standard == (first == 0 && item.stays ? 1U : 0U),
+				"a conversion switched the environment when it need not have");
+		}
+	}
+}
+
 /* The library runs an instruction whose floating point it models in
  * software, so the cumulative flags the native instructions of the block
  * raised before it must reach CpuState first and the flags it raises must
@@ -1999,6 +2059,7 @@ int main()
 	advanced_simd_floating_point_uses_the_standard_fpscr();
 	a_library_floating_point_instruction_keeps_the_flags_around_it();
 	the_fp_environment_follows_the_instruction_kind();
+	conversions_to_and_from_integers_run_in_the_active_environment();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();

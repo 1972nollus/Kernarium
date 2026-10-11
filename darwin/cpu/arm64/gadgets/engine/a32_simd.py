@@ -275,17 +275,62 @@ def emit_vfp_convert(asm) -> None:
         r = width
         for sign, signed_name in (("s", "scvtf"), ("u", "ucvtf")):
             # integer in Sm, to a float of `width`
-            asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
-                "ldr x8, [_stream], #8", *unpack("d", "n"),
-                "a32_fp_guest",
-                "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
-                f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
+            if width == "h":
+                asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
+                    "ldr x8, [_stream], #8", *unpack("d", "n"),
+                    "a32_fp_guest",
+                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
+            else:
+                # An integer to a single or double is the same in either
+                # native environment unless the guest rounds other than to
+                # nearest (the result is never a denormal, and no NaN is
+                # involved), so it runs in whichever is active, and in the
+                # guest's only for the other rounding modes.
+                asm.gadget(f"vfp_cvt_from_{sign}_{width}", "\n".join([
+                    "ldr x8, [_stream], #8", *unpack("d", "n"),
+                    "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]",
+                    "cbz w6, 21f",
+                    "ldr w10, [_cpu, #UML_GADGET_CPU_FPCR]",
+                    "tst w10, #0xc00000", "b.ne 21f",
+                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget",
+                    "21:", "a32_fp_guest",
+                    "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
+                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
             to = "fcvtzs" if sign == "s" else "fcvtzu"
-            asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
-                "ldr x8, [_stream], #8", *unpack("d", "n"),
-                "a32_fp_guest",
-                f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
-                "str w9, [_cpu, x8]", "next_gadget"]))
+            if width == "h":
+                asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
+                    "ldr x8, [_stream], #8", *unpack("d", "n"),
+                    "a32_fp_guest",
+                    f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
+                    "str w9, [_cpu, x8]", "next_gadget"]))
+            else:
+                # A conversion to an integer always rounds toward zero, so
+                # its result and flags are the same in either native
+                # environment unless the input is a denormal, which flush to
+                # zero turns into an exact zero (Input Denormal, not
+                # Inexact): that case, and an inactive environment, take
+                # the guest's. The clamp-and-convert idiom of image code
+                # puts this between Advanced SIMD VMAX and VMIN, which run
+                # in the other environment.
+                if width == "s":
+                    test = ["ldr w10, [_cpu, x9]", "and w11, w10, #0x7fffffff",
+                            "sub w11, w11, #1", "mov w12, #0x7fffff",
+                            "cmp w11, w12", "b.lo 21f", "fmov s0, w10"]
+                else:
+                    test = ["ldr x10, [_cpu, x9]",
+                            "and x11, x10, #0x7fffffffffffffff",
+                            "sub x11, x11, #1", "mov x12, #0xfffffffffffff",
+                            "cmp x11, x12", "b.lo 21f", "fmov d0, x10"]
+                asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
+                    "ldr x8, [_stream], #8", *unpack("d", "n"),
+                    "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]",
+                    "cbz w6, 21f", *test,
+                    f"{to} w9, {r}0", "str w9, [_cpu, x8]", "next_gadget",
+                    "21:", "a32_fp_guest",
+                    f"ldr {r}0, [_cpu, x9]", f"{to} w9, {r}0",
+                    "str w9, [_cpu, x8]", "next_gadget"]))
             # VCVTR: one rounding, by the FPSCR mode (N, P, M, Z), so the
             # flags are those of a single conversion: an overflow raises
             # Invalid alone and an inexact result Inexact alone.
