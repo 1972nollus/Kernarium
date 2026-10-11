@@ -89,10 +89,10 @@ ctest --test-dir .build/presets/macos-unit-16k \
 
 Every workflow needs the tools in
 [Host prerequisites](../dependencies/README.md#host-prerequisites), among them
-Python 3.11 or newer; configure rejects an older interpreter. A test that boots
-ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and skips on a
-smaller host. The LTP campaigns default to half the host's physical cores, at
-most 16.
+Python 3.11 or newer, which configure requires, and a Git identity. A test
+that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
+skips on a smaller host. The LTP campaigns default to half the host's physical
+cores, at most 16.
 
 The ordinary 16 KiB and 4 KiB host checks are:
 
