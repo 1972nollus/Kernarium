@@ -11,11 +11,11 @@ host and power state, page profile, engine, guest topology, command, repeated
 result, and exit/shutdown status. Diagnostic profiler runs are not score
 evidence.
 
-Benchmark guests run 4 vCPUs on the macOS host and 2 on the iPad. The Mac
-runners default to `--cpus 4`, `run_ios_device_workload.py` and
+The Mac runners default to `--cpus 4`, `run_ios_device_workload.py` and
 `run_ios_device_discard_bench.py` to `--cpus 2`, and a runner's `--workers`
-defaults to its `--cpus`. Each runner's report line or JSON record carries
-the vCPU count; do not compare results taken at different counts.
+defaults to its `--cpus`. These are defaults, not host requirements. Each
+runner's report line or JSON record carries the vCPU count; do not compare
+results taken at different counts, and keep one count for a whole series.
 
 Geekbench uses the payload already installed in `rootfs.erofs` and always runs
 with `--no-upload`. The workload is [`guest/geekbench.sh`](guest/geekbench.sh),
@@ -54,7 +54,7 @@ root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
-such as the iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
+such as an iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
 passes `--no-network`, and a measurement never needs a network anyway:
 
 ```sh
@@ -265,8 +265,8 @@ host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source disk's `.release-id` must name the release, because
 the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
 arm's emulator environment; `--guest-samples PATH` profiles the boot with the
-guest code sampler below. Guests are not serialized by the tool: take a guest
-slot around each run, and alternate arms (ABBA) across runs.
+guest code sampler below. Guests are not serialized by the tool: run one
+guest per measurement, and alternate arms (ABBA) across runs.
 
 `--scenario android_scenarios/NAME.json` follows each successful launch with a
 fixed sequence of sleeps and taps and waits for the scenario's completion line;
@@ -414,15 +414,15 @@ runs real programs from the Debian rootfs whose work resembles one: gzip,
 xz and bzip2 decompression, a bind-now dynamic link of a large library,
 Python imports, sort, glibc regular expressions, a C front end, Perl hash
 churn, JVM start-up and Node start-up. It runs inside the guest under any
-console runner (on the iPad as `run_ios_device_workload.py --script`),
+console runner (on an iOS device as `run_ios_device_workload.py --script`),
 prepares its inputs from rootfs files, runs every workload once to warm the
 page and translation caches, and prints
 `CORPUS:<name>:<round>:<runs>:<centiseconds>`
 per workload and round. A workload the rootfs cannot run prints
-`CORPUS_SKIP:<name>` once and is left out; the iPad image has no `cc1`, so it
-skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
-Each workload is sized to about two seconds on a gadgets guest, so compare
-arms round by round rather than across launches.
+`CORPUS_SKIP:<name>` once and is left out; an iOS device's image has no
+`cc1`, so it skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select
+the work. Each workload is sized to about two seconds on a gadgets guest, so
+compare arms round by round rather than across launches.
 
 ## Host issue ratios
 

@@ -60,6 +60,16 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME repository-environment-portability
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_environment_portability.py
+        --checker
+            ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/check_environment_portability.py
+        --source-root ${PROJECT_SOURCE_DIR}
+    LABELS audit
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME engine-kind-link-audit
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_engine_kind_link_audit.py

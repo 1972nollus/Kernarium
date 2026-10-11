@@ -16,6 +16,15 @@ uml_add_tooling_test(
     LABELS cpu
     TIMEOUT 60)
 
+# The SME image scan and idiom corpus classify the words SME code executes
+# at PSTATE.SM = 0 against the SM=0 family, on synthetic ELF fixtures.
+uml_add_tooling_test(
+    NAME arm64-sme-sm0-scan
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_sme_sm0_scan.py
+    LABELS cpu
+    TIMEOUT 120)
+
 uml_add_tooling_test(
     NAME arm64-instruction-inventory
     COMMAND ${Python3_EXECUTABLE}
