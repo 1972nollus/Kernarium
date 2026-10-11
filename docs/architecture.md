@@ -385,6 +385,18 @@ region, can therefore still change its odds when an unrelated image changes
 size, so an iPad layout comparison logs each launch's load address and counts
 modes per arm.
 
+An arm64 gadget stream carries no PC word for a memory transfer. The operand
+of every load, store, pair, atomic, exclusive, ordered and SIMD structure form
+ends in the instruction's position in its block, in its top byte, so a block
+holds at most 256 instructions. A fault reports the position shifted left by
+two with bit 0 set, which no instruction address and no translation key has,
+and the boundary turns it into the PC from the block holding the faulting
+stream, as `resolve_fault_position` does for A64; a T32 block, whose
+instructions have two lengths, finds the instruction in the block's halfwords.
+Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
+`arm64-gadget-memory-fault-position` faults one instruction of each family at
+several positions, directly and through a link.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

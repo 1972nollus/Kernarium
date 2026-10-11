@@ -777,6 +777,10 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 	const auto t2 = static_cast<std::uint64_t>(o.t2) * 8U;
 	auto n = static_cast<std::uint64_t>(o.n) * 8U;
 	const auto d = static_cast<std::uint64_t>(o.d) * 8U;
+	/* The gadgets are the A64 engine's, which carry no PC word: the
+	 * instruction's position in the block rides in the operand's top byte
+	 * and finish_a32_block turns a fault's position back into the key. */
+	const auto position = static_cast<std::uint64_t>(compiled_) << 56;
 	/* The T32 forms add a word offset to the base; the gadgets take the
 	 * address in a register. */
 	if (o.imm32 != 0) {
@@ -790,7 +794,7 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 			push_external(ordered ?
 				uml_arm64_gadget_exclusive_pair_load_acquire_w_rr :
 				uml_arm64_gadget_exclusive_pair_load_relaxed_w_rr);
-			push(t | t2 << 16 | n << 32);
+			push(t | t2 << 16 | n << 32 | position);
 		} else {
 			push_external(ordered ?
 				(size == 0 ?
@@ -803,13 +807,13 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 				 size == 1 ?
 				 uml_arm64_gadget_exclusive_load_relaxed_h_r :
 				 uml_arm64_gadget_exclusive_load_relaxed_w_r));
-			push(t | n << 16);
+			push(t | n << 16 | position);
 		}
 	} else if (size == 3) {
 		push_external(ordered ?
 			uml_arm64_gadget_exclusive_pair_store_release_w_rrr :
 			uml_arm64_gadget_exclusive_pair_store_relaxed_w_rrr);
-		push(t | t2 << 16 | d << 32 | n << 48);
+		push(t | t2 << 12 | d << 24 | n << 36 | position);
 	} else {
 		push_external(ordered ?
 			(size == 0 ?
@@ -822,9 +826,8 @@ Translator::Result Translator::emit_exclusive(const Instruction &in,
 			 size == 1 ?
 			 uml_arm64_gadget_exclusive_store_relaxed_h_rr :
 			 uml_arm64_gadget_exclusive_store_relaxed_w_rr));
-		push(t | d << 16 | n << 32);
+		push(t | d << 16 | n << 32 | position);
 	}
-	push(key_);
 	return {};
 }
 
@@ -849,8 +852,7 @@ Translator::Result Translator::emit_ordered(const Instruction &in,
 			plan.sub == 1 ?
 			uml_arm64_gadget_ordered_store_release_h_r :
 			uml_arm64_gadget_ordered_store_release_w_r);
-	push(t | n << 16);
-	push(key_);
+	push(t | n << 16 | static_cast<std::uint64_t>(compiled_) << 56);
 	return {};
 }
 
@@ -1309,6 +1311,21 @@ std::optional<std::size_t> thumb_position(
 		++position;
 	}
 	return at == unit ? std::optional{position} : std::nullopt;
+}
+
+std::optional<std::size_t> thumb_unit(
+	std::span<const std::byte> halfwords, std::size_t position) noexcept
+{
+	std::size_t at = 0;
+	const auto count = halfwords.size() / 2U;
+	for (std::size_t seen = 0; at < count; ++seen) {
+		if (seen == position)
+			return at;
+		std::uint16_t hw1;
+		std::memcpy(&hw1, halfwords.data() + at * 2U, sizeof(hw1));
+		at += thumb_length(hw1) / 2U;
+	}
+	return std::nullopt;
 }
 
 bool routes_to_library(aarch32::Form form) noexcept

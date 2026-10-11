@@ -192,11 +192,11 @@ using uml::emulator::tests::address;
 		std::array{instruction});
 }
 
-/* The unsigned-offset forms name their instruction by position in the operand
- * rather than by a PC word, so their stream is a word shorter. */
+/* Every form names its instruction by position in the operand rather than by
+ * a PC word, so the stream is the gadget, the operand and the terminal. */
 void require_stream(
 	const gadgets::BuildResult &built, Gadget expected_gadget,
-	std::uintptr_t expected_operand, std::size_t expected_words = 5U)
+	std::uintptr_t expected_operand, std::size_t expected_words = 4U)
 {
 	test::require(built.complete &&
 			built.program.words().size() == expected_words,
@@ -211,7 +211,7 @@ void require_stream(
 	unsigned rn, unsigned rt, std::uint64_t displacement)
 {
 	return transfer_offset(rt) | (base_offset(rn) << 16U) |
-		(static_cast<std::uintptr_t>(displacement) << 32U);
+		(static_cast<std::uintptr_t>(displacement & 0xffffU) << 32U);
 }
 
 void select_all_reachable_gadgets()
@@ -237,7 +237,7 @@ void select_all_reachable_gadgets()
 					imm12, rn, rt);
 				require_stream(build(instruction), entry,
 					packed_operand(rn, rt,
-						imm12 * variant.size), 4U);
+						imm12 * variant.size));
 				selected.insert(address(entry));
 				expected.insert(address(entry));
 			}

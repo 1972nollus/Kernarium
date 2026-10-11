@@ -174,7 +174,9 @@ extern const OrderedStoreGadgets ordered_store_gadgets;
 extern const RcpcLoadGadgets rcpc_load_gadgets;
 extern const RcpcStoreGadgets rcpc_store_gadgets;
 
-[[nodiscard]] Gadget literal_load_gadget(bool, unsigned int, bool) noexcept;
+/* The near entries take a target that fits 48 bits in their operand; the far
+ * ones, a signed displacement and the guest PC in the next word. */
+[[nodiscard]] Gadget literal_load_gadget(bool, unsigned int, bool, bool) noexcept;
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned int, unsigned int, bool, bool) noexcept;
 [[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(unsigned int, unsigned int, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(unsigned int, unsigned int, bool) noexcept;

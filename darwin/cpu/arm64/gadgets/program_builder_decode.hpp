@@ -45,14 +45,14 @@ struct DecodeContext final {
 	InlineSuffixes &suffixes;
 };
 
-/* The top 16 bits of the operand of a transfer that carries no PC word: the
- * instruction's position in the block, which a fault reports and the C++
+/* The top eight bits of the operand of a transfer that carries no PC word:
+ * the instruction's position in the block, which a fault reports and the C++
  * boundary turns back into the PC (see resolve_fault_position). `build`
  * bounds a block to fit. */
 [[nodiscard]] inline std::uintptr_t fault_position(
 	const DecodeContext &context) noexcept
 {
-	return static_cast<std::uintptr_t>(context.compiled) << 48;
+	return static_cast<std::uintptr_t>(context.compiled) << 56;
 }
 
 /* Emit the cell a direct control-flow gadget reads its successor through: this

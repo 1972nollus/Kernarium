@@ -2110,6 +2110,9 @@ private:
 	}
 	const auto event = arm64::gadgets::execute(
 		built.program, cpu, tlb_, executed);
+	/* A memory gadget without a key reports its position, which is 0. */
+	if ((cpu.pc & 3U) == 1U)
+		cpu.pc = key;
 	/* The one instruction is the whole program: a terminal that did not
 	 * retire gives it back. */
 	if (terminal_does_not_retire(event))
@@ -2143,6 +2146,19 @@ private:
 			    cpu.gadget_indirect_miss)) {
 			const auto &program = exit->result.program;
 			const auto guest = program.guest_address();
+			/* The exclusive and ordered gadgets carry no key: they
+			 * report the position of their instruction in the block,
+			 * which has bit 0 set where a key has none. */
+			if ((cpu.pc & 3U) == 1U) {
+				const auto at = static_cast<std::size_t>(cpu.pc >> 2);
+				std::optional<std::size_t> unit;
+				if (arm64::aarch32::key_is_thumb(guest))
+					unit = a32::thumb_unit(exit->source, at);
+				else if (at < program.instruction_count())
+					unit = at;
+				if (unit)
+					cpu.pc = guest + *unit * 4U;
+			}
 			const auto position_key = cpu.pc;
 			if (position_key >= guest &&
 			    ((position_key - guest) & 3U) == 0U) {
