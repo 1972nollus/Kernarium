@@ -800,13 +800,16 @@ int NativeAddressSpace::map_direct(
 	std::vector<DirectSnapshot> direct_snapshots;
 	#endif
 	std::size_t new_page_count = 0;
-	for (auto page = first; page < end; page += host_page_size()) {
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
-		if (materialized_slots_.contains(page)) {
-			errno = EBUSY;
+	/* A whole host page of one backing replaces the shadow that held its
+	 * quarters until now; the shadow's own writes are published first. */
+	for (auto page = first; page < end; page += host_page_size())
+		if (materialized_slots_.contains(page) &&
+		    convert_shadow_slot_to_direct_locked(page, fd,
+			offset + (page - first), protection) < 0)
 			return -1;
-		}
 #endif
+	for (auto page = first; page < end; page += host_page_size()) {
 		if (!direct_slots_.contains(page))
 			++new_page_count;
 	}
@@ -1234,6 +1237,131 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 		return -1;
 	}
 	(void)munmap(prepared, host_page_size());
+	return 0;
+}
+
+int NativeAddressSpace::convert_shadow_slot_to_direct_locked(
+	std::uintptr_t slot, int fd, std::uint64_t offset, int protection)
+{
+	const auto tracked = slot_protections_.find(slot);
+	if (direct_slots_.contains(slot) || tracked == slot_protections_.end()) {
+		errno = EBUSY;
+		return -1;
+	}
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
+		return -1;
+
+	/* Freeze the shadow while its writes are published: a store another
+	 * carrier makes meanwhile faults, and its retry waits on mutex_ for the
+	 * shared page. This call's own stack must not be in the slot, or it would
+	 * fault the same way; the caller then keeps the shadow. The stack is in
+	 * the slot when the slot holds any address from the lowest this call
+	 * and the functions it calls can reach up to this frame. */
+	constexpr std::uintptr_t callee_stack_reach = 64 * 1024;
+	const int shadow_protection = tracked->second;
+	const auto frame = reinterpret_cast<std::uintptr_t>(
+		__builtin_frame_address(0));
+	std::array<std::byte, guest_page_size> shadow{};
+	std::array<std::byte, guest_page_size> backing{};
+	const auto deepest = std::min(
+		reinterpret_cast<std::uintptr_t>(shadow.data()),
+		reinterpret_cast<std::uintptr_t>(backing.data())) -
+		callee_stack_reach;
+	if (slot <= frame && slot + host_page_size() > deepest) {
+		errno = EBUSY;
+		return -1;
+	}
+	if (shadow_protection != PROT_READ &&
+	    mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+		PROT_READ) != 0)
+		return -1;
+	const auto restore_shadow = [&]() noexcept {
+		const int saved_errno = errno;
+		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+			shadow_protection);
+		errno = saved_errno;
+	};
+
+	for (std::uintptr_t position = 0; position < host_page_size();
+	     position += guest_page_size) {
+		const auto found = mappings_.find(slot + position);
+		if (found == mappings_.end() || !found->second.loaded)
+			continue;
+		snapshot_shadow_page(slot + position, shadow);
+		if (shadow == found->second.original)
+			continue;
+		if (read_exact(found->second.fd, found->second.identity.device,
+			found->second.identity.inode, found->second.offset,
+			backing.data(), backing.size()) < 0) {
+			restore_shadow();
+			return -1;
+		}
+		/* The same byte-wise merge as flush_page_locked(): a byte the
+		 * shared backing already changed stays authoritative. */
+		std::size_t byte = 0;
+		while (byte < guest_page_size) {
+			if (shadow[byte] == found->second.original[byte] ||
+			    backing[byte] != found->second.original[byte]) {
+				++byte;
+				continue;
+			}
+			const auto run = byte;
+			do {
+				backing[byte] = shadow[byte];
+				++byte;
+			} while (byte < guest_page_size &&
+				 shadow[byte] != found->second.original[byte] &&
+				 backing[byte] == found->second.original[byte]);
+			if (write_exact(found->second.fd,
+				found->second.identity.device,
+				found->second.identity.inode,
+				found->second.offset + run, backing.data() + run,
+				byte - run) < 0) {
+				restore_shadow();
+				return -1;
+			}
+			/* A published byte is clean in the shadow, if the shadow
+			 * stays. */
+			std::copy(shadow.begin() + run, shadow.begin() + byte,
+				found->second.original.begin() + run);
+		}
+	}
+
+	/* Everything that can throw comes before the replacement, which is
+	 * the last step that can fail. */
+	try {
+		direct_slots_.insert(slot);
+		direct_mappings_.insert_or_assign(
+			slot, DirectMapping{fd, offset, protection});
+	} catch (...) {
+		direct_slots_.erase(slot);
+		direct_mappings_.erase(slot);
+		restore_shadow();
+		throw;
+	}
+	if (registry->replace_shadow_with_direct(ownership_id_, slot, fd, offset,
+		protection) < 0) {
+		const int saved_errno = errno;
+		direct_slots_.erase(slot);
+		direct_mappings_.erase(slot);
+		restore_shadow();
+		errno = saved_errno;
+		return -1;
+	}
+	for (std::uintptr_t position = 0; position < host_page_size();
+	     position += guest_page_size) {
+		const auto page = slot + position;
+		const auto found = mappings_.find(page);
+		if (found == mappings_.end())
+			continue;
+		if (backing_index_ready_)
+			erase_backing_index_entry_locked(BackingPageKey{
+				found->second.identity, found->second.offset}, page);
+		mappings_.erase(found);
+	}
+	materialized_slots_.erase(slot);
+	slot_protections_.erase(slot);
 	return 0;
 }
 
