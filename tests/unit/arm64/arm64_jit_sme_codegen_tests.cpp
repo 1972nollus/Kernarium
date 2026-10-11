@@ -13,6 +13,7 @@
  * which the registration passes as the only argument, and every row of the
  * shared encoding table, is compiled in every mode and link shape.
  */
+#include "arm64_sm0_vector_length_support.hpp"
 #include "runtime_test_route.hpp"
 #include "require.hpp"
 #include "cpu/arm64/jit/jit_emitter.hpp"
@@ -22,6 +23,7 @@
 #include "cpu/arm64/jit/jit_sme_transition.hpp"
 #include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 #include "cpu/arm64/sve_profile.hpp"
@@ -472,8 +474,11 @@ void enter_names_the_host_mode() {
 /* Every row of the shared table, by its first word, translates exactly in
  * the modes the profile implements it in: the control core's forms and,
  * in streaming mode, every register-only and memory row of the SME1
- * profile. Every other row (SME2's and those outside the profile) is the
- * illegal exit. Each translation also passes check_translation(). */
+ * profile, and outside streaming mode the SM = 0 vector-length family
+ * (detail/sm0_vector_length.hpp), the one departure from the architecture.
+ * Every other row (SME2's, the SVE rows that need FEAT_SVE outside
+ * streaming mode, and those outside the profile) is the illegal exit.
+ * Each translation also passes check_translation(). */
 void rows_translate_exactly_where_implemented() {
   constexpr std::uint64_t pc = 0x4f50'0000U;
   for (const bool sme2 : {true, false}) {
@@ -492,11 +497,14 @@ void rows_translate_exactly_where_implemented() {
       const bool implemented =
           decoded != nullptr && arm64::jit::implements_sme_row(*decoded);
       for (std::uint8_t mode = 0; mode <= arm64::svcr_mask; ++mode) {
+        const bool family = (mode & arm64::svcr_sm) == 0U &&
+                            arm64::detail::sm0_vector_length_word(word);
         const bool expected =
-            implemented &&
-            arm64::detail::sme_mode_permits(
-                *decoded, (mode & arm64::svcr_sm) != 0U,
-                (mode & arm64::svcr_za) != 0U);
+            family ||
+            (implemented &&
+             arm64::detail::sme_mode_permits(
+                 *decoded, (mode & arm64::svcr_sm) != 0U,
+                 (mode & arm64::svcr_za) != 0U));
         if (illegal_in(word, mode) == expected) {
           std::fprintf(stderr, "row %04x %08x mode %u sme2 %d: expected "
                        "%s\n", row.form, word, mode, sme2,
@@ -519,6 +527,58 @@ void rows_translate_exactly_where_implemented() {
     require(streaming_rows > 900U);
     require(memory_rows > 400U);
   }
+}
+
+/* The SM = 0 vector-length family translates as its base word: the code
+ * of a family word is the code of the ADD, SUB, MOVZ, MOVN or NOP that
+ * detail::sm0_vector_length_equivalent() names, in every mode without
+ * PSTATE.SM, at every SVL and with SME2 or without, and in streaming mode
+ * it stays the SVL-based form. Without SME, or with the SVE profile (the
+ * SVE path owns the words there), the SME-only translation does not apply:
+ * the former is the illegal exit. */
+void vector_length_family_translates_as_its_base_word() {
+  constexpr std::uint64_t pc = 0x4f58'0000U;
+  const auto words = uml::emulator::tests::sm0_vector_length::words();
+  for (const bool sme2 : {true, false})
+    for (const unsigned svl : {16U, 64U, 256U}) {
+      const auto host = sme_host(svl, sme2);
+      const uml::cpu::HostCapabilitiesScope scope{host};
+      std::size_t checked = 0;
+      for (std::size_t index = 0; index < words.size(); index += 7U) {
+        const auto word = words[index];
+        const auto base = arm64::detail::sm0_vector_length_equivalent(word);
+        require(base.has_value());
+        for (const std::uint8_t mode : {std::uint8_t{0}, arm64::svcr_za}) {
+          const std::array program{word, system_call};
+          const std::array reference{*base, system_call};
+          const auto code =
+              jit_test::compile_block_in_mode(pc, program, mode).code;
+          require(!code.guest_illegal);
+          if (code.words !=
+              jit_test::compile_block_in_mode(pc, reference, mode).code.words) {
+            std::fprintf(stderr, "%08x mode %u: not the code of %08x\n", word,
+                         mode, *base);
+            require(false);
+          }
+        }
+        for (const std::uint8_t mode :
+             {arm64::svcr_sm, static_cast<std::uint8_t>(arm64::svcr_mask)}) {
+          const std::array program{word, system_call};
+          const std::array reference{*base, system_call};
+          require(jit_test::compile_block_in_mode(pc, program, mode)
+                      .code.words !=
+                  jit_test::compile_block_in_mode(pc, reference, mode)
+                      .code.words);
+        }
+        ++checked;
+      }
+      require(checked > 600U);
+    }
+  /* Without SME the words are undefined, as is any SVE word. */
+  const auto bare = sme_host(0);
+  const uml::cpu::HostCapabilitiesScope scope{bare};
+  for (const auto word : {0x0420'e3e0U, 0x04bf'5000U, 0x0430'e3e0U})
+    require(illegal_in(word, 0));
 }
 
 /* Every FP&SIMD class, by its first word (with Rt2 = 1, since a load
@@ -715,6 +775,7 @@ int main(int argc, char **argv) {
   translations_do_not_depend_on_the_svl(argv[1]);
   control_core_follows_profile_and_mode();
   rows_translate_exactly_where_implemented();
+  vector_length_family_translates_as_its_base_word();
   fp_simd_classes_translate_where_streaming_runs_them();
   fp_capture_follows_form_names(argv[1]);
   reserved_bitmask_immediates_are_illegal();

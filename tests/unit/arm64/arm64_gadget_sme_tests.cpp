@@ -15,12 +15,14 @@
  * twins as through their base entries, and every register-only form of the
  * encoding table selects its generated gadget, which names the guest's
  * registers in the guest's instruction. */
+#include "arm64_sm0_vector_length_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/program_builder_decode.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
@@ -294,6 +296,77 @@ void sme_words_are_illegal_without_sme()
 		require(machine.cpu.pc == code_base);
 		require(machine.retired == 0);
 	}
+}
+
+/* The injected SME profile with no SVE, the virtual CPU the SM = 0
+ * vector-length family is for, whatever the guest-SVE policy says. */
+[[nodiscard]] uml::platform::HostCapabilities sme_without_sve(unsigned svl,
+	bool sme2)
+{
+	return arm64::sve_host_for_support(injected_host(svl, sme2),
+		arm64::SveSupport::none);
+}
+
+/* A virtual CPU with SME and without SVE counts and scales a vector length
+ * of 16 bytes outside streaming mode (detail/sm0_vector_length.hpp): every
+ * word of the family runs, with and without ZA, at every SVL, as the model
+ * of the pseudocode says, and touches no vector or SVE state. */
+void vector_length_family_runs_outside_streaming_mode(unsigned svl)
+{
+	namespace family = uml::emulator::tests::sm0_vector_length;
+	const auto words = family::words();
+	constexpr std::size_t chunk = 200;
+	for (std::size_t start = 0; start < words.size(); start += chunk) {
+		const auto count = std::min(chunk, words.size() - start);
+		std::vector<std::uint32_t> code(words.begin() + start,
+			words.begin() + start + count);
+		code.push_back(svc);
+		Machine machine{code, sme_without_sve(svl, start % 2 == 0)};
+		family::Registers expected;
+		for (unsigned index = 0; index < 31U; ++index) {
+			machine.cpu.registers[index] =
+				0x5a00'0000'0000'0000ULL | (std::uint64_t{index} << 32) |
+				(index * 0x1111U + start);
+			expected.x[index] = machine.cpu.registers[index];
+		}
+		machine.cpu.sp = 0x7700'1230ULL + start;
+		expected.sp = machine.cpu.sp;
+		machine.cpu.nzcv = 0x6000'0000U;
+		for (std::size_t index = 0; index < count; ++index)
+			require(family::model(words[start + index], expected));
+		require(machine.run() == EngineEvent::system_call);
+		require(machine.retired == code.size());
+		require(machine.cpu.registers == expected.x);
+		require(machine.cpu.sp == expected.sp);
+		require(machine.cpu.nzcv == 0x6000'0000U);
+		require(machine.cpu.svcr == 0U);
+		require(machine.cpu.sve_live == 0U);
+	}
+}
+
+/* ... and nothing more: every other SVE-index word of the encoding table is
+ * as undefined at SM = 0 as it is on any virtual CPU without SVE. */
+void other_sve_words_stay_undefined_outside_streaming_mode()
+{
+	std::size_t checked = 0;
+	for (std::size_t index = 0; index < arm64::detail::sme_encodings.size();
+	     ++index) {
+		const auto &row = arm64::detail::sme_encodings[index];
+		const auto word = arm64::detail::sme_encoding_witnesses[index];
+		if ((row.form & arm64::detail::sme_form_sme_section) != 0U ||
+		    arm64::detail::sm0_vector_length_word(word))
+			continue;
+		const std::array code{word, svc};
+		Machine machine{code, sme_without_sve(64, true)};
+		if (machine.run() != EngineEvent::illegal_instruction ||
+		    machine.cpu.pc != code_base || machine.retired != 0U) {
+			std::fprintf(stderr, "SVE word %08x (row %u) is not "
+				"undefined at SM = 0\n", word, row.form);
+			require(false);
+		}
+		++checked;
+	}
+	require(checked > 1500U);
 }
 
 void vector_lengths_read_at_run_time(unsigned svl)
@@ -2167,6 +2240,9 @@ int main()
 	if (std::getenv(scan_variable) != nullptr)
 		return report_entry_findings();
 	sme_words_are_illegal_without_sme();
+	other_sve_words_stay_undefined_outside_streaming_mode();
+	for (const unsigned svl : {16U, 64U, 256U})
+		vector_length_family_runs_outside_streaming_mode(svl);
 	streaming_programs_select_streaming_entries();
 	for (const unsigned svl : {16U, 64U, 256U})
 		vector_lengths_read_at_run_time(svl);

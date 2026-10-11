@@ -8,12 +8,14 @@
  * host, and only SM=1 code needs the hardware.
  */
 #include "arm64_jit_sme_test_support.hpp"
+#include "arm64_sm0_vector_length_support.hpp"
 #include "jit_test_support.hpp"
 #include "runtime_test_route.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
+#include "cpu/arm64/sve_profile.hpp"
 
 #include <mach/mach.h>
 
@@ -143,6 +145,47 @@ void vector_lengths_come_from_the_svl(bool hardware) {
     require(machine.cpu.sp == 0x8000U + svl);
     machine.require_preserved({0, 1, 2, 4, 5, stack_pointer_index});
   }
+}
+
+/* A virtual CPU with SME and without SVE counts and scales a vector length
+ * of 16 bytes outside streaming mode (detail/sm0_vector_length.hpp): every
+ * word of the family runs, with and without ZA, as the model of the
+ * pseudocode says, and touches no vector or SVE state. */
+void vector_length_family_runs_outside_streaming_mode() {
+  namespace family = uml::emulator::tests::sm0_vector_length;
+  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
+                                                arm64::SveSupport::none);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  const auto words = family::words();
+  constexpr std::size_t chunk = 200;
+  unsigned long generation = 9460;
+  for (const std::uint8_t mode : {std::uint8_t{0}, arm64::svcr_za})
+    for (std::size_t start = 0; start < words.size(); start += chunk) {
+      const auto count = std::min(chunk, words.size() - start);
+      Machine machine{generation,
+                      0x300'0000U + (generation - 9460U) * 0x10'0000U, mode};
+      ++generation;
+      std::vector<std::uint32_t> code(words.begin() + start,
+                                      words.begin() + start + count);
+      code.push_back(system_call);
+      machine.code(0, code);
+      family::Registers expected;
+      expected.x = machine.cpu.registers;
+      expected.sp = machine.cpu.sp;
+      for (std::size_t index = 0; index < count; ++index)
+        require(family::model(words[start + index], expected));
+      const auto before = machine.initial_file();
+      std::size_t retired = 0;
+      require(machine.run(retired) == Event::system_call);
+      require(retired == code.size());
+      require(machine.cpu.registers == expected.x);
+      require(machine.cpu.sp == expected.sp);
+      require(machine.cpu.nzcv == initial_nzcv);
+      require(machine.cpu.svcr == mode);
+      require(machine.cpu.sve_live == 0U);
+      require(machine.vectors_unchanged());
+      require(machine.file() == before);
+    }
 }
 
 /* LDR ZA, then STR ZA of the same vector through another index register,
@@ -405,6 +448,7 @@ void run_tests(bool hardware) {
   enabling_without_storage_asks_for_it();
   tpidr2_is_the_guest_register(hardware);
   vector_lengths_come_from_the_svl(hardware);
+  vector_length_family_runs_outside_streaming_mode();
   za_vectors_round_trip(hardware);
   za_faults_match_the_m4(hardware);
   zero_za_clears_the_named_tiles(hardware);

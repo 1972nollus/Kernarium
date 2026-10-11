@@ -7,6 +7,7 @@
 #include "program_builder_decode.hpp"
 #include "sme_layout.h"
 
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sme_profile.hpp"
 
@@ -180,6 +181,22 @@ DecodeResult decode_sme_space(DecodeContext &context)
 	    detail::sme_encoding_space(instruction)) [[unlikely]] {
 		if (const auto decoded = decode_sve_space(context))
 			return *decoded;
+	}
+	/* The SM = 0 vector-length family (detail/sm0_vector_length.hpp), which
+	 * an SME virtual CPU without SVE executes as the base word of the same
+	 * effect: an ADD, SUB, MOVZ or MOVN, which touch no vector state. */
+	if ((context.options.svcr & svcr_sm) == 0U &&
+	    detail::implements_sm0_vector_length(host)) [[unlikely]] {
+		if (const auto equivalent =
+			    detail::sm0_vector_length_equivalent(instruction)) {
+			if (*equivalent == detail::sm0_vector_length_nop) {
+				emit(context.words, selection::uml_arm64_gadget_nop);
+				return DecodeResult::decoded;
+			}
+			DecodeContext base{context};
+			base.instruction = *equivalent;
+			return decode_data_processing(base);
+		}
 	}
 	if (!detail::sme_encoding_space(instruction) || !implements_sme(host))
 		return implementation_gap(context);
