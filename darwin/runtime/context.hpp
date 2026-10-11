@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/a32_profile.hpp"
+#include "cpu/engine.hpp"
 #include "execution_engine.hpp"
 #include "memory/mmu/word_shared_mutex.hpp"
 #include "platform/host_capabilities.hpp"
 #include "platform/run_routing.hpp"
+#include "x86_tier.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -81,6 +84,15 @@ public:
 	[[nodiscard]] ExecutionEngine execution_engine() const noexcept;
 	void set_top_byte_ignore(bool enabled) noexcept;
 	[[nodiscard]] bool top_byte_ignore() const noexcept;
+	/* Instructions an x86-64 address space runs on the gadget engine
+	 * before the JIT takes it over; zero runs the JIT from the first. It
+	 * applies to a run that selected the x86-64 JIT. */
+	void set_x86_jit_tier(std::uint64_t instructions) noexcept;
+	[[nodiscard]] std::uint64_t x86_jit_tier() const noexcept;
+	/* The tier state of each address space of the run, for a nonzero
+	 * threshold. */
+	[[nodiscard]] X86TierTable *x86_tier_table(
+		X86TierTable::Live live) noexcept;
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
@@ -92,6 +104,9 @@ private:
 	std::atomic<ExecutionEngine> selected_engine_;
 	std::atomic<GuestEntry> selected_entry_;
 	std::atomic_bool top_byte_ignore_{false};
+	std::atomic_uint64_t x86_jit_tier_{0};
+	std::once_flag x86_tier_once_;
+	std::unique_ptr<X86TierTable> x86_tier_table_;
 	std::atomic_uint64_t memory_domain_;
 	std::atomic_bool stop_requested_{false};
 	int stop_notification_read_{-1};
@@ -158,6 +173,23 @@ private:
  * guest's HWCAPs; with no context, the profile both engines implement. */
 [[nodiscard]] const ::uml::platform::HostCapabilities &
 current_guest_host_capabilities() noexcept;
+
+/* How much of the AArch32 EL0 profile a run on `engine` presents to its
+ * guest: what the engine implements (cpu::engine_a32_support) while the
+ * guest-AArch32 policy (DARWIN_UML_GUEST_AARCH32=1) is on, and none
+ * otherwise. The compat HWCAPs derive from it, so a run advertises exactly
+ * what its engine runs, and the runtime enters an AArch32 task into the
+ * engine only at base or above. An unresolved (automatic) engine presents
+ * what both engines do. */
+[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
+	::uml::cpu::EngineKind kind) noexcept;
+[[nodiscard]] ::uml::cpu::arm64::A32Support guest_a32_support(
+	ExecutionEngine engine) noexcept;
+
+/* That of the current context's engine, from which the bridge derives the
+ * guest's compat HWCAPs; with no context, what both engines present. */
+[[nodiscard]] ::uml::cpu::arm64::A32Support
+current_guest_a32_support() noexcept;
 
 /* A process runs one guest. Its guest is spent once a run's kernel has claimed
  * guest RAM, which the host hands out once per process and never takes back. */

@@ -18,6 +18,7 @@
     "prefetch-qemu.jsonl",
     "simd-memory-qemu.jsonl",
     "simd-qemu.jsonl",
+    "simd-steps-qemu.jsonl",
     "straddle-qemu.jsonl",
     "system-qemu.jsonl"
   ],
@@ -37,6 +38,7 @@
     "prefetch-qemu",
     "simd-memory-qemu",
     "simd-qemu",
+    "simd-steps-qemu",
     "straddle-qemu",
     "system-qemu"
   ]

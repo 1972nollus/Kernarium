@@ -5,6 +5,7 @@
 #include "jit_publication.hpp"
 #include "jit_semantic_reservation.hpp"
 #include "jit_test_api.hpp"
+#include "a32/a32_compiler.hpp"
 
 #include <algorithm>
 #include <array>
@@ -659,6 +660,18 @@ CompiledCode compile_block(
     std::span<const std::uint32_t> instructions) {
   JitCompiler compiler{};
   return copied_code(compiler.compile(pc, instructions));
+}
+
+A32Compilation compile_a32_block(std::uint64_t key,
+                                 std::span<const std::byte> bytes,
+                                 std::uint8_t itstate, bool single) {
+  a32::A32Compiler compiler{};
+  const auto compiled = compiler.compile({.key = key,
+                                          .bytes = bytes,
+                                          .itstate = aarch32::ItState{itstate},
+                                          .single = single});
+  return {.code = copied_code(compiled.translation),
+          .guest_units = compiled.guest_units};
 }
 
 ModeCompilation compile_block_in_mode(

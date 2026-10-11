@@ -15,7 +15,9 @@ files back, without the Arm XML or LLVM, and requires:
 - the stored T16 runs to cover the whole 16-bit space once, in order;
 - every form to have a witness word that the trees map back to it and, unless
   the profile makes the form undefined at EL0, an accepted sample; and
-- the expected-operand digest header to mix every Operands member.
+- the expected-operand digest header to mix every Operands member; and
+- the inventory's engine statuses to survive a regeneration (the rules the
+  generator applies to the checked-in inventory's statuses).
 
 The freshness test (arm64-a32-encoding-table-freshness) compares the files
 with a regeneration from the pinned release.
@@ -28,7 +30,10 @@ __import__("sys").dont_write_bytecode = True
 import csv
 import re
 import sys
+import tempfile
 from pathlib import Path
+
+import a32_inventory as inventory
 
 from a32_profile_policy import NEVER_EXECUTED
 from a32_table_reader import (
@@ -128,6 +133,45 @@ def check_digest_header(tables: Tables) -> None:
     require(mixed == members, "operands_digest.hpp does not mix the members of Operands in order")
 
 
+def check_inventory_statuses() -> None:
+    """A regeneration keeps pending and verified, and absent follows the
+    profile."""
+    def entry(name: str, availability: str = "implemented", check: str = "none") -> tuple:
+        return ("Base", "heading", name, "A32", "MNEMONIC", "base", None, availability, check, False)
+
+    entries = [entry("A"), entry("B"), entry("C"), entry("D", "undefined_at_el0"), entry("E")]
+    previous = {"A": "verified", "B": "pending", "D": "verified", "E": "absent"}
+    got = {row["encoding"]: row["engine_status"] for row in inventory.rows(entries, previous)}
+    require(
+        got == {"A": "verified", "B": "pending", "C": "pending", "D": "absent", "E": "pending"},
+        f"inventory statuses {got}",
+    )
+    require(
+        {row["engine_status"] for row in inventory.rows(entries)} == {"pending", "absent"},
+        "an inventory without statuses starts pending",
+    )
+    with tempfile.TemporaryDirectory() as scratch:
+        path = Path(scratch) / "inventory.tsv"
+        require(inventory.read_statuses(path) == {}, "a missing inventory has no statuses")
+        rows = inventory.rows(entries, previous)
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=inventory.COLUMNS, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(rows)
+        require(inventory.read_statuses(path) == {row["encoding"]: row["engine_status"] for row in rows},
+                "read_statuses does not read back what rows wrote")
+        rows[0]["engine_status"] = "done"
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=inventory.COLUMNS, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(rows)
+        try:
+            inventory.read_statuses(path)
+        except ValueError:
+            return
+        raise TableError("an unknown engine status was accepted")
+
+
 def main() -> int:
     tables = Tables()
     tables.check_structure()
@@ -135,6 +179,7 @@ def main() -> int:
     check_samples(tables)
     check_t16(tables)
     check_digest_header(tables)
+    check_inventory_statuses()
     counts = tables.counts
     print(
         f"AArch32 encoding table is consistent: {counts['kFormCount']} forms, "

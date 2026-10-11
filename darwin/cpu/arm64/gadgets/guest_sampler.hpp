@@ -27,7 +27,10 @@ namespace uml::cpu::arm64::gadgets::diagnostics {
 
 inline constexpr std::size_t sampled_block_words = 16;
 
-/* The guest block a sample landed in. */
+/* The guest block a sample landed in. For an AArch32 block guest_address is
+ * the block's key (aarch32/guest_key.hpp, bit 63 set) and the words are the
+ * guest bytes it was translated from in little-endian words, so a T32
+ * block's halfwords come in pairs. */
 struct SampledBlock final {
 	std::uint64_t guest_address{};
 	std::uint32_t instruction_count{};

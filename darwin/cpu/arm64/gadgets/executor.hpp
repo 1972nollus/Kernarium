@@ -61,6 +61,18 @@ public:
 	[[nodiscard]] ::uml::cpu::EngineEvent run_block(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		unsigned long generation, std::size_t &executed);
+	/* run_block for an AArch32 task (a32/a32_builder.hpp): cpu.pc is an
+	 * A32 or T32 key (aarch32/guest_key.hpp) and every exit leaves it one.
+	 * Retirement, fault positions and ITSTATE follow the contract in
+	 * aarch32/README.md; a breakpoint exit leaves BKPT's immediate in
+	 * breakpoint_immediate(). */
+	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_block(
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		unsigned long generation, std::size_t &executed);
+	[[nodiscard]] std::uint32_t breakpoint_immediate() const noexcept
+	{
+		return breakpoint_immediate_;
+	}
 	[[nodiscard]] bool preempted() const noexcept { return preempted_; }
 	/* While set, every run_block retires at most one guest instruction. */
 	void set_single_step(bool enabled) noexcept { single_step_ = enabled; }
@@ -112,6 +124,22 @@ private:
 		::uml::cpu::EngineEvent event, CpuState &cpu,
 		std::size_t &executed);
 
+	/* What both AArch32 paths do once a program has run: the A64 correction
+	 * of a terminal exit's retirement, made in guest units a T32 block's
+	 * instructions do not fill, ITSTATE for a T32 exit, and the indirect
+	 * site's training. */
+	[[nodiscard]] ::uml::cpu::EngineEvent finish_a32_block(
+		ProgramCache &programs, ::uml::cpu::EngineEvent event,
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		std::size_t &executed);
+	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_instruction(
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		std::size_t &executed);
+	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_translation(
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		unsigned long generation, std::uint64_t code_changes,
+		std::size_t &executed);
+
 	unsigned long cache_generation_{};
 	std::uint64_t cache_changes_{};
 	unsigned long mapping_generation_{};
@@ -139,6 +167,8 @@ private:
 		std::uint64_t changes{};
 	};
 	std::array<SmeModeCache, 3> sme_caches_{};
+	/* BKPT's immediate, after the last A64 member so that none moves. */
+	std::uint32_t breakpoint_immediate_{};
 };
 
 } // namespace uml::cpu::arm64::gadgets

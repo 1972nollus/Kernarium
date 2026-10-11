@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <memory>
+#include <new>
 #include <optional>
 #include <thread>
 #include <unordered_map>
@@ -364,6 +365,28 @@ void Context::set_top_byte_ignore(bool enabled) noexcept
 	top_byte_ignore_.store(enabled, std::memory_order_release);
 }
 
+void Context::set_x86_jit_tier(std::uint64_t instructions) noexcept
+{
+	x86_jit_tier_.store(instructions, std::memory_order_release);
+}
+
+std::uint64_t Context::x86_jit_tier() const noexcept
+{
+	return x86_jit_tier_.load(std::memory_order_acquire);
+}
+
+X86TierTable *Context::x86_tier_table(X86TierTable::Live live) noexcept
+{
+	const auto threshold = x86_jit_tier();
+	if (threshold == 0)
+		return nullptr;
+	std::call_once(x86_tier_once_, [&]() noexcept {
+		x86_tier_table_ = std::unique_ptr<X86TierTable>{
+			new (std::nothrow) X86TierTable{threshold, live}};
+	});
+	return x86_tier_table_.get();
+}
+
 bool Context::top_byte_ignore() const noexcept
 {
 	return top_byte_ignore_.load(std::memory_order_acquire);
@@ -470,6 +493,44 @@ current_guest_host_capabilities() noexcept
 {
 	const auto *context = current_context();
 	return guest_host_capabilities(context != nullptr ?
+		context->execution_engine() : ExecutionEngine::automatic);
+}
+
+::uml::cpu::arm64::A32Support guest_a32_support(
+	::uml::cpu::EngineKind kind) noexcept
+{
+	using ::uml::cpu::EngineKind;
+	const auto present = [](EngineKind of) noexcept {
+		return ::uml::cpu::arm64::a32_presented_support(
+			::uml::cpu::engine_a32_support(of),
+			::uml::platform::apple::guest_aarch32_policy() ==
+				::uml::platform::apple::GuestAarch32Policy::on);
+	};
+	static const auto gadgets = present(EngineKind::gadgets);
+	static const auto jit = present(EngineKind::jit);
+	return kind == EngineKind::jit ? jit : gadgets;
+}
+
+::uml::cpu::arm64::A32Support guest_a32_support(
+	ExecutionEngine engine) noexcept
+{
+	using ::uml::cpu::EngineKind;
+	switch (engine) {
+	case ExecutionEngine::gadgets:
+		return guest_a32_support(EngineKind::gadgets);
+	case ExecutionEngine::jit:
+		return guest_a32_support(EngineKind::jit);
+	case ExecutionEngine::automatic:
+		break;
+	}
+	return std::min(guest_a32_support(EngineKind::gadgets),
+		guest_a32_support(EngineKind::jit));
+}
+
+::uml::cpu::arm64::A32Support current_guest_a32_support() noexcept
+{
+	const auto *context = current_context();
+	return guest_a32_support(context != nullptr ?
 		context->execution_engine() : ExecutionEngine::automatic);
 }
 

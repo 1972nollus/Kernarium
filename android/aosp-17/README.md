@@ -319,11 +319,12 @@ boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw
 file to the selected whole-GiB capacity from 4 through 64 GiB and uses the
 statically linked GPT fdisk core to relocate the backup GPT and extend
 userdata. The standalone macOS wrapper performs the same transactional
-host-side operation with the system `truncate` utility and Homebrew `sgdisk`.
-Runtime launch has no disk-capacity parameter and rejects a GPT that does not
-match the file. The resized image is opened directly as writable storage;
-Android launch never constructs or accepts a UBD COW pair. Normal Android asks
-the ext4 `resize2fs` tool to fill userdata before mounting `/data`; the tool is
+host-side operation with the system `truncate` utility and GPT fdisk's
+`sgdisk`, found on `PATH` or named with `--sgdisk`. Runtime launch has no
+disk-capacity parameter and rejects a GPT that does not match the file. The
+resized image is opened directly as writable storage; Android launch never
+constructs or accepts a UBD COW pair. Normal Android asks the ext4
+`resize2fs` tool to fill userdata before mounting `/data`; the tool is
 idempotent when the host has not enlarged the partition. OrangeFox compares
 the ext4 and partition extents before running `e2fsck` plus `resize2fs`. Neither
 guest rewrites or refreshes a live partition table. There is no `super`,

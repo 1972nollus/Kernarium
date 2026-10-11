@@ -91,6 +91,11 @@ public:
 	[[nodiscard]] ::uml::cpu::EngineEvent run_block(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
 		unsigned long generation, std::size_t &executed);
+	/* As run_block, for the AArch32 translation (A32 or T32) that the key in
+	 * cpu.pc names (aarch32/guest_key.hpp). */
+	[[nodiscard]] ::uml::cpu::EngineEvent run_a32_block(
+		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
+		unsigned long generation, std::size_t &executed);
 	[[nodiscard]] bool preempted() const noexcept;
 	/* While set, every run_block retires at most one guest instruction. */
 	void set_single_step(bool enabled) noexcept;
