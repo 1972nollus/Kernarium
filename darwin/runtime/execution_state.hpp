@@ -9,6 +9,7 @@
 #endif
 #if DARWIN_UML_X86_64_JIT
 #include "runtime/x86_jit_runtime.hpp"
+#include "runtime/x86_tier.hpp"
 #endif
 #include "memory/static_guest_memory.hpp"
 #include "platform/apple/host_features.hpp"
@@ -110,6 +111,11 @@ struct ThreadExecutionState final {
 	 * (DARWIN_UML_DISPATCH_MM_SHARED), for the x86 JIT's memory ordering.
 	 * After every other member, so none of their offsets moves. */
 	bool x86_mm_shared{};
+#endif
+#if DARWIN_UML_X86_64_JIT
+	/* The tier state of the address space this vCPU last ran in. */
+	std::shared_ptr<X86TierState> x86_tier;
+	unsigned long x86_tier_generation{};
 #endif
 };
 

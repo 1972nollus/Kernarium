@@ -106,6 +106,20 @@ target_compile_definitions(uml_static_mmu_batch_tests PRIVATE
 uml_add_unit_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests
     LABELS tsan)
 
+# What a mapping change publishes as a code change.
+add_executable(uml_static_mmu_code_change_tests
+    static_mmu_code_change_tests.cpp
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+target_link_libraries(uml_static_mmu_code_change_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking)
+target_include_directories(uml_static_mmu_code_change_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_definitions(uml_static_mmu_code_change_tests PRIVATE
+    UML_MEMORY_ALLOCATION_TESTING=1)
+uml_add_unit_test(NAME static-mmu-code-change
+    COMMAND uml_static_mmu_code_change_tests LABELS tsan)
+
 if(NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_mmu_tests
         native_mmu_tests.cpp

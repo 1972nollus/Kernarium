@@ -171,22 +171,22 @@ void presented_support_follows_policy_and_level()
 	}
 }
 
-/* Both engines are at none, so under any policy neither presents AArch32,
- * and the entry points agree with the constants. */
-void engines_present_no_aarch32_yet()
+/* Under the policy off an engine presents no AArch32 whatever it implements;
+ * on, it presents exactly its level; and the factory agrees with the
+ * constants. */
+void engines_present_their_level_under_the_policy()
 {
-	require(arm64::gadgets::a32_support == A32Support::none);
-	require(arm64::jit::a32_support == A32Support::none);
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::gadgets) ==
 		arm64::gadgets::a32_support);
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::jit) ==
 		arm64::jit::a32_support);
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
-		     ::uml::cpu::EngineKind::jit})
-		for (const bool policy : {false, true})
-			require(arm64::a32_presented_support(
-				::uml::cpu::engine_a32_support(kind), policy) ==
-				A32Support::none);
+		     ::uml::cpu::EngineKind::jit}) {
+		const auto level = ::uml::cpu::engine_a32_support(kind);
+		require(arm64::a32_presented_support(level, false) ==
+			A32Support::none);
+		require(arm64::a32_presented_support(level, true) == level);
+	}
 }
 
 /* A level presents its parts and nothing above it, and each host-dependent
@@ -204,19 +204,21 @@ void features_follow_level_and_host()
 	require(arm64::a32_features(full, A32Support::none) == empty,
 		"a host feature leaked into a level without AArch32");
 	auto features = arm64::a32_features(full, A32Support::base);
-	require(features.aarch32 && !features.vfp && !features.neon &&
-		!features.armv8 && !features.crc32 && !features.aes &&
-		!features.pmull && !features.sha1 && !features.sha2 &&
-		!features.fp16 && !features.dotprod && !features.fhm &&
-		!features.bf16 && !features.i8mm && !features.sb &&
-		!features.rdm && !features.fcma && !features.jscvt);
+	require(features.aarch32 && features.acquire_release && !features.vfp &&
+		!features.neon && !features.armv8 && !features.crc32 &&
+		!features.aes && !features.pmull && !features.sha1 &&
+		!features.sha2 && !features.fp16 && !features.dotprod &&
+		!features.fhm && !features.bf16 && !features.i8mm &&
+		!features.sb && !features.rdm && !features.fcma &&
+		!features.jscvt);
 	features = arm64::a32_features(full, A32Support::simd);
-	require(features.aarch32 && features.vfp && features.neon &&
-		!features.armv8 && !features.crc32 && !features.aes &&
-		!features.fp16 && !features.dotprod && !features.jscvt);
+	require(features.aarch32 && features.acquire_release && features.vfp &&
+		features.neon && !features.armv8 && !features.crc32 &&
+		!features.aes && !features.fp16 && !features.dotprod &&
+		!features.jscvt);
 	features = arm64::a32_features(full, A32Support::complete);
-	require(features.aarch32 && features.vfp && features.neon &&
-		features.armv8 && features.crc32 && features.aes &&
+	require(features.aarch32 && features.acquire_release && features.vfp &&
+		features.neon && features.armv8 && features.crc32 && features.aes &&
 		features.pmull && features.sha1 && features.sha2 &&
 		features.fp16 && features.dotprod && features.fhm &&
 		features.bf16 && features.i8mm && features.sb && features.rdm &&
@@ -267,24 +269,26 @@ void id_registers_are_pinned_per_level()
 		require(id(full, level, A32IdRegister::isar3) == 0x0111'2131U);
 		require(id(full, level, A32IdRegister::isar4) == 0x0001'1142U);
 	}
-	/* LoadStore is 1 (LDRD, STRD) until the Armv8 additions bring LDA and
-	 * STL, then 2. */
-	require(id(full, A32Support::base, A32IdRegister::isar2) == 0x2123'2041U);
-	require(id(full, A32Support::simd, A32IdRegister::isar2) == 0x2123'2041U);
-	require(id(full, A32Support::complete, A32IdRegister::isar2) ==
-		0x2123'2042U);
+	/* The acquire/release group is part of the integer core: LoadStore is 2
+	 * (LDRD, STRD, LDA and STL) and ISAR5.SEVL is 1 from base on. */
+	for (const auto level : {A32Support::base, A32Support::simd,
+		     A32Support::complete}) {
+		require(id(full, level, A32IdRegister::isar2) == 0x2123'2042U);
+		require((id(full, level, A32IdRegister::isar5) & 0xfU) == 1U,
+			"SEVL is not presented");
+	}
 
 	/* Below simd there is no floating point; VFP and Advanced SIMD arrive
 	 * with it, half precision to the conversions, and the Armv8 forms and
 	 * extensions only at complete. */
 	for (const auto which : {A32IdRegister::mvfr0, A32IdRegister::mvfr1,
-		     A32IdRegister::mvfr2, A32IdRegister::isar5,
-		     A32IdRegister::isar6})
+		     A32IdRegister::mvfr2, A32IdRegister::isar6})
 		require(id(full, A32Support::base, which) == 0);
+	require(id(full, A32Support::base, A32IdRegister::isar5) == 1U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr0) == 0x1011'0222U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr1) == 0x1111'1111U);
 	require(id(full, A32Support::simd, A32IdRegister::mvfr2) == 0U);
-	require(id(full, A32Support::simd, A32IdRegister::isar5) == 0U);
+	require(id(full, A32Support::simd, A32IdRegister::isar5) == 1U);
 	require(id(full, A32Support::simd, A32IdRegister::isar6) == 0U);
 	require(id(full, A32Support::complete, A32IdRegister::mvfr0) ==
 		0x1011'0222U);
@@ -297,8 +301,9 @@ void id_registers_are_pinned_per_level()
 		0x0110'1111U);
 
 	/* A host with nothing optional still presents the complete level's
-	 * unconditional parts: SEVL and the Armv8 floating-point forms, FP16
-	 * conversions without arithmetic. */
+	 * unconditional parts: the Armv8 floating-point forms and FP16
+	 * conversions without arithmetic, besides the acquire/release group
+	 * and SEVL. */
 	const auto bare = host_with(predicates_of(0));
 	require(id(bare, A32Support::complete, A32IdRegister::isar5) == 1U);
 	require(id(bare, A32Support::complete, A32IdRegister::isar6) == 0U);
@@ -413,7 +418,8 @@ void compat_hwcaps_are_pinned_per_level()
 }
 
 /* The AArch32 entry of an engine below base is the illegal-instruction exit
- * and leaves the state and the guest memory as it found them. */
+ * and leaves the state and the guest memory as it found them. An engine at
+ * base or above has its own execution tests. */
 void aarch32_entry_is_illegal_below_base()
 {
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
@@ -423,6 +429,8 @@ void aarch32_entry_is_illegal_below_base()
 				static_cast<int>(kind));
 			continue;
 		}
+		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
+			continue;
 		auto engine = ::uml::cpu::make_cpu_engine(kind);
 		require(engine != nullptr && engine->kind() == kind);
 		for (const unsigned long generation : {1UL, 7UL}) {
@@ -472,7 +480,7 @@ int main()
 	state_is_appended_at_the_pinned_offsets();
 	policy_parses_only_one();
 	presented_support_follows_policy_and_level();
-	engines_present_no_aarch32_yet();
+	engines_present_their_level_under_the_policy();
 	features_follow_level_and_host();
 	nothing_is_presented_below_base();
 	id_registers_are_pinned_per_level();

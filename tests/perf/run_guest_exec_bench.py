@@ -19,16 +19,24 @@ from guest_bench import (  # noqa: E402
     halt,
     measure,
     print_median,
+    topology,
 )
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    add_guest_arguments(parser, cpus=10, memory=None, engine="gadgets")
-    parser.add_argument("--workers", type=int, default=10)
+    add_guest_arguments(parser, cpus=4, memory=None, engine="gadgets")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        help="concurrent exec loops (default: --cpus)",
+    )
     parser.add_argument("--executions", type=int, default=5000)
     parser.add_argument("--repetitions", type=int, default=5)
-    return parser.parse_args()
+    arguments = parser.parse_args()
+    if arguments.workers is None:
+        arguments.workers = arguments.cpus
+    return arguments
 
 
 def workload_command(workers: int, executions: int) -> str:
@@ -87,7 +95,11 @@ def main() -> int:
     finally:
         guest.close()
 
-    print_median(elapsed, utilization)
+    print_median(
+        elapsed,
+        utilization,
+        " " + topology(arguments, workers=arguments.workers),
+    )
     return 0
 
 

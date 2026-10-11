@@ -28,7 +28,13 @@ struct GuestRange final {
 };
 
 /* What the address space reports changed since the engine last looked: the
- * ranges, or `all_*` when it cannot describe them. */
+ * ranges, or `all_*` when it cannot describe them.
+ *
+ * Mapping ranges are for the software TLB alone. A change that can leave a
+ * translation wrong -- a page that stops being executable or holds other
+ * bytes -- is also a code range, so translations answer to code ranges only;
+ * a code range of length zero names the whole address space, as a flush of
+ * its mappings does. */
 struct AddressSpaceChanges final {
 	std::uint64_t mapping_sequence{};
 	std::uint64_t code_sequence{};
@@ -76,6 +82,10 @@ struct FexEngineOptions final {
 	 * twice as much, so a small value costs only compile time; a test lowers
 	 * it to make every large unit grow. */
 	std::uint32_t code_bytes_per_node{};
+	/* Whether an address space is still there. A generation that is gone
+	 * never runs again, so its space gives way to the next one the engine
+	 * needs; without this every generation counts as live. */
+	bool (*generation_live)(unsigned long generation) noexcept{};
 };
 
 class FexEngine final {
@@ -93,9 +103,9 @@ public:
 		ExecutionMode mode, std::uint64_t &mapping_sequence,
 		std::uint64_t &code_sequence) const noexcept;
 
-	/* Retires software-TLB entries and translations the changes cover, and
-	 * makes the space's context on first use, ordering stores as the next
-	 * run will. */
+	/* Retires the software-TLB entries the mapping changes cover and the
+	 * translations the code changes cover, and makes the space's context on
+	 * first use, ordering stores as the next run will. */
 	void apply_changes(unsigned long generation, ExecutionMode mode,
 		const AddressSpaceChanges &changes,
 		bool orders_stores = true) noexcept;
@@ -110,6 +120,8 @@ public:
 
 	/* Compiles this engine restarted with a larger code buffer. */
 	[[nodiscard]] std::uint64_t code_buffer_restarts() const noexcept;
+	/* How many spaces were made over a gone generation's instead of built. */
+	[[nodiscard]] std::uint64_t recycled_spaces() const noexcept;
 
 	struct Impl;
 

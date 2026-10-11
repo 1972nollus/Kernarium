@@ -257,6 +257,17 @@ lane, and the first mismatch. The summary counts each lane's runs and the runs
 it skipped for each missing feature, the library lane's cases skipped for
 an uncovered form, and the words that lane handed to the library.
 
+## Engine entry
+
+A gadget or JIT case enters the engine as the runtime enters a task: the
+initial vectors are deferred (`defer_fp_load`, as `load_cpu` does) and
+`CpuState::vectors` holds nothing, so a program that touches the vectors
+without being marked as doing so loses its writes. The runner compares only
+what a context switch would save: the vectors if the engine marked them
+written (`fp_dirty`), FPCR and FPSR as the deferred image reports them. A
+case that expects a vector write therefore fails for an engine that did not
+load the vectors first. The library lane is not deferred.
+
 ## Regeneration and new cases
 
 Expected results come from independent derivation from the architecture or
@@ -568,7 +579,7 @@ authors the `arm64-sve-native` records from the generated SVE/SME encoding
 table and appends them after the native floating-point trap step, and
 [`tools/arm64-tests/sve_native_oracle.cpp`](../../../../tools/arm64-tests/sve_native_oracle.cpp)
 observes their outcomes on an arm64 Linux host with FEAT_SVE at a 16-byte
-vector length, arm64-builder's Neoverse V2. The script's docstring lists what each
+vector length, a Neoverse V2 host. The script's docstring lists what each
 record covers and owns the oracle's request and response formats.
 
 The oracle is a sibling of the SME oracle, not a Linux build of it. The SME
@@ -622,7 +633,7 @@ records; they may differ only in the elements the relation excludes:
 
 ```sh
 python3 -B tools/arm64-tests/sve-native-corpus.py --request sve.request
-tools/arm64-tests/sve-native-oracle.sh arm64-builder sve.request sve.response
+tools/arm64-tests/sve-native-oracle.sh SVE-HOST sve.request sve.response
 python3 -B tools/arm64-tests/sve-native-corpus.py trap.jsonl sve.jsonl \
   --response sve.response.1 --response sve.response.2
 python3 -B tools/arm64-tests/build-unit-corpus.py --repack sve.jsonl \
@@ -647,7 +658,7 @@ On a CPU with both FEAT_SVE and FEAT_SME, 29 encodings that FEAT_SME or
 FEAT_SME2 shares with FEAT_SVE2p1 execute outside streaming mode: PSEL,
 REVD, SCLAMP, UCLAMP, and 25 that need FEAT_SME2. The encoding table gives
 them the non-streaming requirement sve plus sme (plus sme2). No host
-observes them there: arm64-builder has no SME, and the M4 has no SVE.
+observes them there: the Neoverse V2 host has no SME, and the M4 has no SVE.
 [`tools/arm64-tests/sve-sme-corpus.py`](../../../../tools/arm64-tests/sve-sme-corpus.py)
 authors their `arm64-sve-sme` records at VL 16 from the native SVE
 generator's classify and operand cases of their rows, appends them after the
@@ -695,8 +706,8 @@ response.
 
 ## SVE FEAT_AFP cases
 
-FPCR.AH, FIZ, and NEP need FEAT_AFP, which arm64-builder lacks, so the native SVE
-records cannot set them. The M4 has FEAT_AFP but no SVE.
+FPCR.AH, FIZ, and NEP need FEAT_AFP, which the Neoverse V2 host lacks, so the
+native SVE records cannot set them. The M4 has FEAT_AFP but no SVE.
 [`tools/arm64-tests/sve-afp-corpus.py`](../../../../tools/arm64-tests/sve-afp-corpus.py)
 authors `arm64-sve-afp/m4` at VL 16 from M4 runs in streaming mode, with
 every 128-bit segment holding the case, as the SVE/SME `m4` record does.
@@ -749,9 +760,9 @@ writes the `arm64-sve-trap` records, at VL 16 in both page profiles:
 - `derived` reruns each completed one-instruction floating-point case of
   the `arm64-sve-native` records with every enable, with only the first
   raised one's when it raised several, and with every enable but the
-  raised ones'. Its outcome follows from the exceptions arm64-builder observed
-  with every enable clear; a case that does not trap completes exactly as
-  observed.
+  raised ones'. Its outcome follows from the exceptions the Neoverse V2
+  host observed with every enable clear; a case that does not trap
+  completes exactly as observed.
 - `authored` holds what no native case pins: divide by zero and input
   denormal alone, the one cause of every element's exceptions together,
   the flags a trap leaves, inactive elements that would raise, which

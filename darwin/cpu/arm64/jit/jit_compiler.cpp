@@ -163,8 +163,12 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       }
     }
     if (!terminated_) {
-      store_pc(guest_pc + count_ * sizeof(std::uint32_t));
-      emitter_.return_constant(Event::continued, count_);
+      /*
+       * The fetch window cut the block short. Its successor is as static
+       * as a jump target, so the exit asks for a link as a branch does; an
+       * unlinked one returns to the executor after every full window.
+       */
+      emit_direct_branch(guest_pc + count_ * sizeof(std::uint32_t), count_);
     }
     const auto hot_words = emitter_.size();
     for (const auto &translation : translation_cold_)

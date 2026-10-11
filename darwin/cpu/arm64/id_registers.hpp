@@ -338,10 +338,10 @@ inline constexpr HwcapField hwcap_fields[]{
  * (guest_compat_hwcaps), as arm64 Linux does, and to document the profile.
  * The values follow a Cortex-A72 in AArch32 state, adjusted to the profile
  * (cpu/arm64/aarch32/a32_profile.hpp): the base level presents the integer
- * ISA, the simd level adds VFP and Advanced SIMD, and the complete level the
- * Armv8 additions, each of them where its A64 host predicate holds
- * (a32_features). A level below base presents no AArch32, and every register
- * reads zero. */
+ * ISA with the Armv8 acquire/release group, the simd level adds VFP and
+ * Advanced SIMD, and the complete level the other Armv8 additions, each of
+ * them where its A64 host predicate holds (a32_features). A level below base
+ * presents no AArch32, and every register reads zero. */
 enum class A32IdRegister : std::uint8_t {
 	midr,
 	pfr0,
@@ -400,7 +400,8 @@ enum class A32IdRegister : std::uint8_t {
 		/* Reversal 2, PSR_AR, MultU 2, MultS 3, Mult 2, MemHint 4, and
 		 * LoadStore 1 (LDRD, STRD) or 2 with LDA and STL. */
 		return field(2, 28) | field(1, 24) | field(2, 20) | field(3, 16) |
-			field(2, 12) | field(4, 4) | field(features.armv8 ? 2 : 1, 0);
+			field(2, 12) | field(4, 4) |
+			field(features.acquire_release ? 2 : 1, 0);
 	case A32IdRegister::isar3:
 		/* TrueNOP, T32Copy, TabBranch, SynchPrim 2 (LDREXD), SVC, SIMD 3
 		 * (the Armv6 packed forms), Saturate; T32EE 0. */
@@ -418,7 +419,7 @@ enum class A32IdRegister : std::uint8_t {
 			field(flag(features.sha2), 12) |
 			field(flag(features.sha1), 8) |
 			field(features.aes ? (features.pmull ? 2 : 1) : 0, 4) |
-			field(flag(features.armv8), 0);
+			field(flag(features.acquire_release), 0);
 	case A32IdRegister::isar6:
 		/* I8MM, BF16, SB, FHM, DP and JSCVT; SPECRES stays 0. */
 		return field(flag(features.i8mm), 24) |

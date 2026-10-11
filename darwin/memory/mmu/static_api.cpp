@@ -115,14 +115,23 @@ extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offse
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = use_native_shadow(
 			space, address, offset, length);
-		if (shadow)
+		const bool exact = !uml::memory::NativeAddressSpace::needs_shadow(
+			reinterpret_cast<std::uintptr_t>(address), offset, length);
+		if (shadow && !exact)
 			return space.map(
 				reinterpret_cast<std::uintptr_t>(address), fd, offset,
 				length, protection);
-		protection = write_xor_execute(protection);
-		return space.map_direct(
+		/* Whole host pages of one backing map shared, replacing any
+		 * shadow; one still executing this call keeps its shadow. */
+		const int direct_protection = write_xor_execute(protection);
+		const auto result = space.map_direct(
 			reinterpret_cast<std::uintptr_t>(address), fd, offset,
-			length, protection);
+			length, direct_protection);
+		if (result < 0 && shadow && errno == EBUSY)
+			return space.map(
+				reinterpret_cast<std::uintptr_t>(address), fd, offset,
+				length, protection);
+		return result;
 	});
 #else
 	protection = write_xor_execute(protection);

@@ -21,6 +21,7 @@ from guest_bench import (  # noqa: E402
     halt,
     measure,
     print_median,
+    topology,
 )
 
 
@@ -29,9 +30,13 @@ GUEST_LINK_LOOP = "/usr/local/libexec/uml-test/guest-link-loop"
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    add_guest_arguments(parser, cpus=10, memory="1024M")
+    add_guest_arguments(parser, cpus=4, memory="1024M")
     parser.add_argument("--binary", required=True, type=pathlib.Path)
-    parser.add_argument("--workers", type=int, default=10)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        help="concurrent probe processes (default: --cpus)",
+    )
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--boot-timeout", type=int, default=180)
     parser.add_argument(
@@ -60,7 +65,10 @@ def parse_arguments() -> argparse.Namespace:
             "image's tmpfs overlay (default)"
         ),
     )
-    return parser.parse_args()
+    arguments = parser.parse_args()
+    if arguments.workers is None:
+        arguments.workers = arguments.cpus
+    return arguments
 
 
 def workload_command(workers: int) -> str:
@@ -143,8 +151,7 @@ def main() -> int:
     print_median(
         elapsed,
         utilization,
-        f" [engine={arguments.engine} cores={arguments.core_class} "
-        f"cpus={arguments.cpus} workers={arguments.workers}]",
+        " " + topology(arguments, workers=arguments.workers),
     )
     return 0
 

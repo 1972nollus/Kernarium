@@ -58,16 +58,26 @@ CHECKED_PAGES = {
     "VMSR": "fpscr",
 }
 
+# Encodings the table decodes but whose every word the profile rejects: the
+# coprocessor has no 64-bit register an EL0 program may write, and a Thumb
+# exception return is UNPREDICTABLE at EL0 for every operand. The inventory
+# marks them absent, and the corpus expects an illegal instruction.
+NEVER_EXECUTED = {
+    "MCRR_A1": "no 64-bit coprocessor register is writable at EL0",
+    "MCRR_T1": "no 64-bit coprocessor register is writable at EL0",
+    "SUBS_PC_T5_AS": "an exception return is UNPREDICTABLE at EL0",
+}
+
 # Pages that execute as a NOP at EL0 once decoded (CPS changes only mode and
 # interrupt masks, which EL0 cannot).
 NOP_AT_EL0 = {"CPS"}
 
 # Pages that are Armv8 additions to the AArch32 profile, required at level
-# complete (A32Support::complete) and not at simd.
+# complete (A32Support::complete) and not at simd. The load-acquire and
+# store-release group (LDA, STL, LDAEX, STLEX and their sizes) and SEVL are
+# not here: every Armv8 AArch32 EL0 has them, and arm64 Linux's compat kuser
+# helpers run STLEX and STLEXD, so they are level base.
 ARMV8_PAGES = {
-    "LDA", "LDAB", "LDAH", "LDAEX", "LDAEXB", "LDAEXH", "LDAEXD",
-    "STL", "STLB", "STLH", "STLEX", "STLEXB", "STLEXH", "STLEXD",
-    "SEVL_a32",
     "VSEL", "VMAXNM", "VMINNM",
     "VRINTA_asimd", "VRINTM_asimd", "VRINTN_asimd", "VRINTP_asimd",
     "VRINTX_asimd", "VRINTZ_asimd",
