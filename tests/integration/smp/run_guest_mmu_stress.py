@@ -24,6 +24,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--cpus", type=int, default=10)
+    parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     parser.add_argument(
         "--shared-mmap-binary",
         required=True,
@@ -101,6 +102,7 @@ def main() -> int:
         (f"ncpus={arguments.cpus}",),
         overlay_shell=True,
         payloads={shared_mmap: shared_mmap_file, fork_cow: fork_cow_file},
+        engine=arguments.engine,
     )
     try:
         guest.boot_and_login()
