@@ -275,10 +275,15 @@ void A32Compiler::write_back(const Transfer &transfer) {
 
 A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   /* A load whose destination is also the offset register of a writeback form
-   * would feed the loaded value to the recomputation: rare, so the helper
-   * runs it. The PC as a store's offset register is excluded by the decoder. */
-  if (transfer.wback && transfer.register_offset && transfer.load &&
-      transfer.t == transfer.m)
+   * would feed the loaded value to the recomputation of the base, so it loads
+   * into a scratch register, recomputes the base from the registers as they
+   * stand, and then writes the destination. The base as the destination or
+   * the PC anywhere is unpredictable: the helper runs those. The PC as a
+   * store's offset register is excluded by the decoder. */
+  const bool over_offset = transfer.wback && transfer.register_offset &&
+                           transfer.load && transfer.t == transfer.m;
+  if (over_offset && (transfer.n == transfer.t || transfer.n == 15U ||
+                      transfer.t == 15U))
     return emit_through_helper();
   const bool store = !transfer.load;
   if (store)
@@ -317,7 +322,7 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   const bool writes_pc = transfer.t == 15U;
   Dest dest{};
   unsigned target = fallback_n;
-  if (!writes_pc) {
+  if (!writes_pc && !over_offset) {
     dest = def(transfer.t, false, fallback_n);
     target = dest.native.host;
   }
@@ -337,6 +342,14 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
       emit(enc::ldr_w(target, address_register, 0));
       break;
     }
+  }
+  if (over_offset) {
+    write_back(transfer);
+    dest = def(transfer.t, false, fallback_n);
+    if (dest.native.host != fallback_n)
+      emit(enc::mov(dest.native.host, fallback_n));
+    done(dest);
+    return Flow::next;
   }
   if (!writes_pc)
     done(dest);

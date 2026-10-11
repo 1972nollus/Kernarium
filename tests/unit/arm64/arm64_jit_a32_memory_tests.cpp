@@ -9,6 +9,8 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
+#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +22,8 @@ using namespace uml::emulator::tests::a32;
 using ::uml::cpu::ExitReason;
 
 namespace {
+
+namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
 
 constexpr std::size_t data_pages = 2;
 constexpr std::size_t data_bytes = data_pages * guest_page;
@@ -537,6 +541,91 @@ void random_sequences(unsigned long generation, std::uint64_t seed,
   }
 }
 
+/* A load whose destination is the offset register of a writeback form
+ * recomputes the base from the offset the instruction read, not the value it
+ * loaded: for every size, shift, direction and index form, alone and in
+ * sequences, the reference agrees and no instruction takes the library. */
+void loads_over_the_offset() {
+  constexpr std::size_t stride = 64;
+  constexpr std::uint32_t all = 0xe000'0000U;
+  constexpr std::uint32_t z_flag = 0x4000'0000U;
+  constexpr std::uint32_t c_flag = 0x2000'0000U;
+  constexpr std::uint32_t pre_up = 0x07b1'2002U;   // ldr r2, [r1, r2]!
+  constexpr std::uint32_t pre_down = 0x0731'2002U; // ldr r2, [r1, -r2]!
+  constexpr std::uint32_t post_up = 0x0691'2002U;  // ldr r2, [r1], r2
+  constexpr std::uint32_t byte = 1U << 22;
+  constexpr std::uint32_t shift_lsl2 = 0x2U << 7;
+  constexpr std::uint32_t shift_lsr4 = 0x4U << 7 | 1U << 5;
+  constexpr std::uint32_t shift_asr1 = 0x1U << 7 | 2U << 5;
+  constexpr std::uint32_t shift_ror3 = 0x3U << 7 | 3U << 5;
+  constexpr std::uint32_t shift_rrx = 3U << 5;
+  struct Program final {
+    std::vector<std::uint32_t> words;
+    bool carry_matters;
+  };
+  const std::vector<Program> programs = {
+      {{all | pre_up}, false},
+      {{all | pre_up | byte}, false},
+      {{all | post_up}, false},
+      {{all | post_up | byte}, false},
+      {{all | pre_down}, false},
+      {{all | pre_down | byte}, false},
+      {{all | pre_up | shift_lsl2}, false},
+      {{all | pre_up | shift_lsr4}, false},
+      {{all | pre_up | shift_asr1}, false},
+      {{all | pre_up | shift_ror3}, false},
+      {{all | pre_up | shift_rrx}, true},
+      {{0x07b1'3003U | all}, false},            // ldr r3, [r1, r3]!
+      {{0x07b6'4004U | all}, false},            // ldr r4, [r6, r4]!
+      {{0xe1b1'20b2U}, false},                  // ldrh r2, [r1, r2]!
+      {{0xe1b1'20d2U}, false},                  // ldrsb r2, [r1, r2]!
+      {{0xe1b1'20f2U}, false},                  // ldrsh r2, [r1, r2]!
+      {{0xe091'20b2U}, false},                  // ldrh r2, [r1], r2
+      {{0x17b1'2002U}, false},                  // ldrne r2, [r1, r2]!
+      {{0x07b1'2002U}, false},                  // ldreq r2, [r1, r2]!
+      {{0x2791'2002U}, false},                  // ldrcs r2, [r1, r2]
+      {{all | pre_up, all | pre_up, 0xe7b1'3003U, 0xe691'4004U | byte,
+        0xe7b1'2082U, 0xe1b1'30b3U, 0xe7b1'5005U, 0xe791'6006U},
+       false},
+  };
+  constexpr std::size_t code_pages = 8;
+  Fixture fixture{0x1a32'0201, code_pages, data_pages};
+  code_end = code_base + static_cast<std::uint32_t>(code_pages * guest_page);
+  jit_a32::reset_helper_exits();
+  jit_a32::count_helper_exits(true);
+  std::size_t offset = 0;
+  for (const auto &program : programs) {
+    for (const std::uint32_t flags : {std::uint32_t{0}, z_flag, c_flag}) {
+      if (program.carry_matters && flags == c_flag)
+        continue;
+      for (const std::uint32_t distance : {0x10U, 0x08U, 0x24U}) {
+        Case c;
+        c.program = program.words;
+        for (unsigned i = 0; i < 15; ++i)
+          c.initial.r[i] = i < 8 ? 4U * i : data_base + 0x40U * i;
+        c.initial.r[1] = data_base + 0x100;
+        c.initial.r[6] = data_base + 0x180;
+        c.initial.r[2] = distance;
+        c.initial.r[3] = distance;
+        c.initial.r[4] = distance;
+        c.initial.r[5] = distance;
+        c.initial.set_nzcv(flags);
+        c.memory.resize(data_bytes);
+        for (std::size_t i = 0; i < data_bytes; i += 4) {
+          c.memory[i] = static_cast<std::uint8_t>((i / 4 * 4) % 0x30);
+          c.memory[i + 1] = c.memory[i + 2] = c.memory[i + 3] = 0;
+        }
+        if (const auto mismatch = run_case(fixture, offset, c))
+          fail(fixture, 0, c, *mismatch);
+        offset += stride;
+        require(offset + stride <= code_pages * guest_page);
+      }
+    }
+  }
+  require(jit_a32::helper_exit_total() == 0U);
+  jit_a32::count_helper_exits(false);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -546,6 +635,7 @@ int main(int argc, char **argv) {
   if (argc > 1)
     programs = static_cast<unsigned>(std::atoi(argv[1]));
   random_sequences(0x1a32'0200, 0x9e37'79b9'7f4aULL, programs, 10);
+  loads_over_the_offset();
   std::printf("arm64-jit-a32-memory: ok (%u programs, %u faulting, %u alignment, "
               "%u clean, %u clean faulting, %u instructions)\n",
               programs, faulting_cases, alignment_faults, clean_programs,
