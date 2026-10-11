@@ -18,9 +18,10 @@ waits for a completion line and records named values captured from it (for a
 benchmark, its own loading time and score), plus the emulator CPU time spent.
 Taps are in guest display pixels, so a scenario belongs to one display size.
 
-The caller serializes guests: wrap the command in the host's GPU lock and
-guest slot. Environment for one arm of an A/B goes in with --env, and
---guest-samples profiles the whole boot with DARWIN_UML_GUEST_SAMPLES.
+The caller serializes guests: wrap the command in the host's guest slot.
+Each record carries the guest's vCPU count (--cpus, default 4). Environment
+for one arm of an A/B goes in with --env, and --guest-samples profiles the
+whole boot with DARWIN_UML_GUEST_SAMPLES.
 """
 
 from __future__ import annotations
@@ -436,7 +437,7 @@ def run(arguments: argparse.Namespace) -> int:
         for round_index in range(arguments.launches):
             for app in selected:
                 record = {"label": arguments.label, "app": app.name,
-                          "round": round_index}
+                          "round": round_index, "cpus": arguments.cpus}
                 if f"package:{app.package}\n" not in installed + "\n":
                     record.update(seconds=None, missing=True)
                 else:
@@ -470,7 +471,7 @@ def main() -> int:
     parser.add_argument("--console", type=pathlib.Path)
     parser.add_argument("--env", action="append", default=[])
     parser.add_argument("--guest-samples")
-    parser.add_argument("--cpus", type=int, default=10)
+    parser.add_argument("--cpus", type=int, default=4)
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--settle", type=int, default=45)
     parser.add_argument("--display", choices=("native", "vnc"),

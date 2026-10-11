@@ -161,6 +161,21 @@ struct ProgramCase final {
    * accounting deliberately uses different boundary quanta.
    */
   std::optional<std::size_t> expected_instructions{};
+  /*
+   * The program holds a retry loop whose passes depend on the host: a
+   * store-exclusive may fail spuriously, so how many instructions retire
+   * is not a property of the program. No count is compared; the terminal
+   * event, which a loop that never completes cannot reach inside the
+   * budget, and the final state still are.
+   */
+  bool variable_instruction_count{};
+  /*
+   * The program is run on the gadget engine only. The JIT clears the local
+   * exclusive monitor at every ordinary store, as the architecture permits,
+   * so a load/store-exclusive loop with a store between the pair is not
+   * guaranteed to finish there; the gadget engine's software completion is.
+   */
+  bool gadgets_only{};
 };
 
 struct EngineTestCounts final {

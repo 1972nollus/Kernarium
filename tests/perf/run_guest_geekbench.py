@@ -19,7 +19,7 @@ import sys
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
 from guest import Guest, GuestFile  # noqa: E402
-from guest_bench import add_guest_arguments  # noqa: E402
+from guest_bench import add_guest_arguments, topology  # noqa: E402
 
 
 # The workload script Kernarium runs as well; it prints the run's markers.
@@ -35,7 +35,7 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    add_guest_arguments(parser, cpus=10, memory="8G")
+    add_guest_arguments(parser, cpus=4, memory="8G")
     parser.add_argument("--console-log", required=True, type=pathlib.Path)
     parser.add_argument(
         "--workloads",
@@ -158,6 +158,7 @@ def main() -> int:
         **boot_options,
     ) as guest:
         guest.boot_and_login(180)
+        print(f"geekbench guest {topology(arguments)}", flush=True)
         result = guest.run_command(GUEST_WORKLOAD, arguments.timeout)
         print(result.output, flush=True)
         shutdown_ok = guest.shutdown(60)

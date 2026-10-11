@@ -262,6 +262,7 @@ uml_add_guest_integration_test(
 
 add_subdirectory(aarch32)
 add_subdirectory(balloon)
+add_subdirectory(exclusive)
 add_subdirectory(sme)
 add_subdirectory(sve)
 
