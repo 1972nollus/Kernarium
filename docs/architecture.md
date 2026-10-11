@@ -1163,7 +1163,8 @@ The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
 validation. An address space's link records and indirect sites are swept once
-they number half again what its last sweep kept: one that no resident
+they number half again what its last sweep kept and enough of its translations
+have left the cache to have left some unnamed: one that no resident
 translation's stream names and that is no resident block's own record is
 released for reuse, and the site cells and target-table entries naming it are
 emptied, so link state follows what the cache holds rather than all the code

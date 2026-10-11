@@ -576,9 +576,10 @@ private:
 		std::array<gadget_cache::StableRecordTable<IndirectRecord,
 				   IndirectKey>, 2>
 			indirect;
-		/* How many records and sites there may be before the next
-		 * sweep. */
-		std::size_t sweep_at{gadget_cache::sweep_floor};
+		/* The records and sites the last sweep kept, and the bodies
+		 * that have left the cache since (gadget_cache::sweep_due). */
+		std::size_t kept{};
+		std::size_t departed{};
 		LinkRecord *live_links{};
 		std::array<std::unique_ptr<TargetLinkTable>, 2> target_links;
 		std::array<std::vector<IndirectLink *>, 2> live_indirect;
@@ -920,6 +921,7 @@ public:
 		if (resident(slot))
 			census_depart(slot, census::Departure::evicted);
 #endif
+		depart(slot);
 		unindex(slot);
 		deactivate(slot);
 		slot.epoch = 0;
@@ -955,7 +957,8 @@ public:
 #endif
 		/* The build's words are in the slot's program now, so nothing
 		 * outside what a sweep reads names a record it made. */
-		if (records(state) >= state.sweep_at)
+		if (gadget_cache::sweep_due(records(state), state.kept,
+			    state.departed))
 			sweep(state, current_generation_, diagnostics);
 		return stored;
 	}
@@ -1761,7 +1764,8 @@ private:
 			/* A sweep only returns memory; without the memory to run
 			 * one, the records stay. */
 		}
-		state.sweep_at = gadget_cache::next_sweep(records(state));
+		state.kept = records(state);
+		state.departed = 0;
 		++diagnostics.link_sweeps;
 #if UML_GADGET_CACHE_CENSUS
 		++sweeps_;
@@ -1958,8 +1962,20 @@ private:
 		return *current_;
 	}
 
+	/* Count a resident translation leaving against its address space, whose
+	 * next sweep waits for enough of them (gadget_cache::sweep_due). */
+	void depart(const Slot &slot) noexcept
+	{
+		if (slot.epoch != epoch_ || !slot.translation)
+			return;
+		if (const auto owner = generations_.find(slot.generation);
+		    owner != generations_.end())
+			++owner->second.departed;
+	}
+
 	void discard(Slot &slot) noexcept
 	{
+		depart(slot);
 		unindex(slot);
 		deactivate(slot);
 		slot.epoch = 0;

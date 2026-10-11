@@ -688,6 +688,46 @@ void a_link_sweep_releases_what_only_evicted_blocks_named()
 	require(diagnostics.validation_attempts == 0);
 }
 
+/* Only a block that leaves the cache can leave a record nothing names, so an
+ * address space whose blocks all stay resident never sweeps, however many
+ * records it makes. */
+void an_address_space_that_only_grows_does_not_sweep()
+{
+	constexpr unsigned long generation = 981;
+	constexpr std::size_t blocks = 6000;
+	constexpr std::uint64_t base = code_base + 0x10000;
+
+	/* One block per set, so no store evicts another. */
+	std::vector<std::uint64_t> pcs;
+	std::vector<bool> taken(cache_sets);
+	for (auto pc = base; pcs.size() < blocks; pc += 8) {
+		const auto set = cache_set(generation, pc);
+		if (taken[set])
+			continue;
+		taken[set] = true;
+		pcs.push_back(pc);
+	}
+	const auto extent = pcs.back() + 8 - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+	JitBacking backing{pages};
+	for (const auto pc : pcs)
+		backing.put32(pc - code_base, branch(pc, pc + 4));
+	JitMapping mapping{generation, code_base, backing, pages};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	for (const auto pc : pcs) {
+		arm64::CpuState cpu{};
+		cpu.pc = pc;
+		const auto outcome = run_once(executor, memory, generation, cpu);
+		require(outcome.event == ::uml::cpu::EngineEvent::continued);
+		require(cpu.pc == pc + 4);
+	}
+	/* Each block made its own record and its target's. */
+	require(executor.cache_diagnostics().translations == blocks);
+	require(executor.cache_diagnostics().link_sweeps == 0);
+}
+
 } // namespace
 
 int main()
@@ -701,5 +741,6 @@ int main()
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
 	a_link_sweep_releases_what_only_evicted_blocks_named();
+	an_address_space_that_only_grows_does_not_sweep();
 	return 0;
 }

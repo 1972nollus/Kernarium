@@ -1063,7 +1063,9 @@ public:
 		activate(pc, slot);
 		/* The build's words are in the body now, so nothing outside what
 		 * a sweep reads names a record it made. */
-		if (state.links.size() + state.indirect.size() >= state.sweep_at)
+		if (gadget_cache::sweep_due(
+			    state.links.size() + state.indirect.size(), state.kept,
+			    state.departed))
 			sweep(state, current_generation_, diagnostics);
 		return slot.body->result();
 	}
@@ -1351,9 +1353,10 @@ private:
 		gadget_cache::StableRecordTable<LinkRecord, LinkKey> links;
 		gadget_cache::StableRecordTable<IndirectRecord, IndirectKey>
 			indirect;
-		/* How many records and sites there may be before the next
-		 * sweep. */
-		std::size_t sweep_at{gadget_cache::sweep_floor};
+		/* The records and sites the last sweep kept, and the bodies
+		 * that have left the cache since (gadget_cache::sweep_due). */
+		std::size_t kept{};
+		std::size_t departed{};
 		/* The target table the translated code consults after a site's
 		 * cells miss; allocated on the address space's first miss. */
 		std::unique_ptr<arm64::gadgets::IndirectLinkEntry[]> targets;
@@ -1730,6 +1733,7 @@ private:
 		const auto owner = generations_.find(generation);
 		if (owner == generations_.end())
 			return;
+		++owner->second.departed;
 		auto *found = owner->second.links.find(pc);
 		if (found == nullptr)
 			return;
@@ -1769,8 +1773,8 @@ private:
 			/* A sweep only returns memory; without the memory to run
 			 * one, the records stay. */
 		}
-		state.sweep_at = gadget_cache::next_sweep(
-			state.links.size() + state.indirect.size());
+		state.kept = state.links.size() + state.indirect.size();
+		state.departed = 0;
 		++diagnostics.link_sweeps;
 #if UML_GADGET_CACHE_CENSUS
 		++sweeps_;
