@@ -168,22 +168,28 @@ def unpack(*fields: str) -> list[str]:
     return lines
 
 
+def stored(width: str) -> str:
+    """The register a result is stored from: a half-precision result
+    zero-extends into its S register, so it is stored whole."""
+    return "s" if width == "h" else width
+
+
 def vfp_binary(asm, width: str, name: str, operation: str) -> None:
     r = width
-    asm.gadget(f"vfp_{name}_{'d' if width == 'd' else 's'}", "\n".join([
+    asm.gadget(f"vfp_{name}_{width}", "\n".join([
         "ldr x8, [_stream], #8",
         *unpack("n", "m", "d"),
         "a32_fp_guest",
         f"ldr {r}0, [_cpu, x9]",
         f"ldr {r}1, [_cpu, x10]",
         f"{operation} {r}0, {r}0, {r}1",
-        f"str {r}0, [_cpu, x8]",
+        f"str {stored(r)}0, [_cpu, x8]",
         "next_gadget"]))
 
 
 def vfp_mac(asm, width: str, name: str, body: list[str]) -> None:
     r = width
-    asm.gadget(f"vfp_{name}_{'d' if width == 'd' else 's'}", "\n".join([
+    asm.gadget(f"vfp_{name}_{width}", "\n".join([
         "ldr x8, [_stream], #8",
         *unpack("n", "m", "d"),
         "a32_fp_guest",
@@ -191,7 +197,7 @@ def vfp_mac(asm, width: str, name: str, body: list[str]) -> None:
         f"ldr {r}1, [_cpu, x10]",
         f"ldr {r}3, [_cpu, x8]",
         *[line.replace("%", r) for line in body],
-        f"str {r}3, [_cpu, x8]",
+        f"str {stored(r)}3, [_cpu, x8]",
         "next_gadget"]))
 
 
@@ -205,8 +211,8 @@ def vfp_unary(asm, width: str, name: str, operation: str | None,
     lines.append(f"ldr {r}0, [_cpu, x9]")
     if operation is not None:
         lines.append(f"{operation} {r}0, {r}0")
-    lines += [f"str {r}0, [_cpu, x8]", "next_gadget"]
-    asm.gadget(f"vfp_{name}_{'d' if width == 'd' else 's'}", "\n".join(lines))
+    lines += [f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]
+    asm.gadget(f"vfp_{name}_{width}", "\n".join(lines))
 
 
 def vfp_compare(asm, width: str, signaling: bool, zero: bool) -> None:
@@ -223,12 +229,12 @@ def vfp_compare(asm, width: str, signaling: bool, zero: bool) -> None:
               "str w10, [_cpu, #UML_ARM64_CPU_A32_FPSCR_NZCV]",
               "next_gadget"]
     suffix = ("e" if signaling else "") + ("z" if zero else "")
-    asm.gadget(f"vfp_vcmp{suffix}_{'d' if width == 'd' else 's'}",
+    asm.gadget(f"vfp_vcmp{suffix}_{width}",
                "\n".join(lines))
 
 
 def emit_vfp_arithmetic(asm) -> None:
-    for width in ("s", "d"):
+    for width in ("s", "d", "h"):
         for name, op in (("vadd", "fadd"), ("vsub", "fsub"),
                          ("vmul", "fmul"), ("vdiv", "fdiv"),
                          ("vnmul", "fnmul")):
@@ -265,7 +271,7 @@ def emit_vfp_immediate(asm) -> None:
 
 
 def emit_vfp_convert(asm) -> None:
-    for width in ("s", "d"):
+    for width in ("s", "d", "h"):
         r = width
         for sign, signed_name in (("s", "scvtf"), ("u", "ucvtf")):
             # integer in Sm, to a float of `width`
@@ -273,7 +279,7 @@ def emit_vfp_convert(asm) -> None:
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
                 "a32_fp_guest",
                 "ldr w9, [_cpu, x9]", f"{signed_name} {r}0, w9",
-                f"str {r}0, [_cpu, x8]", "next_gadget"]))
+                f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]))
             to = "fcvtzs" if sign == "s" else "fcvtzu"
             asm.gadget(f"vfp_cvt_to_{sign}_{width}", "\n".join([
                 "ldr x8, [_stream], #8", *unpack("d", "n"),
@@ -324,7 +330,7 @@ def emit_vfp_convert(asm) -> None:
     # instructions each. To fixed point rounds toward zero and fills the
     # whole register with the sign- or zero-extended result; from fixed
     # point rounds to nearest whatever the FPSCR says.
-    for width in ("s", "d"):
+    for width in ("s", "d", "h"):
         r = width
         for sign in ("s", "u"):
             to = "fcvtzs" if sign == "s" else "fcvtzu"
@@ -380,7 +386,7 @@ def emit_vfp_convert(asm) -> None:
                     "msr fpcr, x15",
                     "adr x12, 2f", "add x12, x12, x13, lsl #3", "br x12",
                     "2:", table, "3:", "msr fpcr, x14",
-                    f"str {r}0, [_cpu, x8]", "next_gadget"]
+                    f"str {stored(r)}0, [_cpu, x8]", "next_gadget"]
                 asm.gadget(f"vfp_cvt_fromfix_{sign}{size}_{width}",
                            "\n".join(body))
 
@@ -456,7 +462,7 @@ def emit_vfp_system(asm) -> None:
         "next_gadget"]))
 
 
-def memory_prologue(label: str, mode: str) -> list[str]:
+def memory_prologue(label: str, mode: str, mask: int = 3) -> list[str]:
     """[key][word]: the vector register offset in bits 0-15 and, for a base
     register, its offset in bits 16-31 and the signed displacement in bits
     32-63, or for an absolute address the address in bits 32-63. The address
@@ -467,24 +473,26 @@ def memory_prologue(label: str, mode: str) -> list[str]:
     else:
         lines += ["ubfx x9, x19, #16, #16", "ldr w9, [_cpu, x9]",
                   "lsr x10, x19, #32", "add w7, w9, w10"]
-    lines += ["tst w7, #3", f"b.ne Lalign_{label}"]
+    lines += [f"tst w7, #{mask}", f"b.ne Lalign_{label}"]
     return lines
 
 
 def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
-    size = 8 if width == "d" else 4
+    size = {"d": 8, "s": 4, "h": 2}[width]
     name = f"vfp_{'ldr' if load else 'str'}_{width}_{mode}"
     direction = 0 if load else 1
     page = "UML_GADGET_TLB_ENTRY_READ_PAGE" if load else \
         "UML_GADGET_TLB_ENTRY_WRITE_PAGE"
-    lines = memory_prologue(name, mode)
+    # A doubleword needs only word alignment; a halfword, halfword alignment.
+    lines = memory_prologue(name, mode, 1 if size == 2 else 3)
     translate = (f"{direction}, {page}, {size}, x7, Lcold_{name},"
                  f" Lresume_{name}, Lcross_{name}, 0,"
                  f" fault=La32_memory_fault")
     lines.append("transfer_translate " + translate)
     lines.append("and x14, x19, #0xffff")
     if load:
-        lines += [f"ldr {width}0, [x7]", f"str {width}0, [_cpu, x14]"]
+        lines += [f"ldr {width}0, [x7]",
+                  f"str {stored(width)}0, [_cpu, x14]"]
     else:
         lines += [f"ldr {width}0, [_cpu, x14]", f"str {width}0, [x7]"]
     lines.append("next_gadget")
@@ -492,7 +500,8 @@ def vfp_memory(asm, load: bool, width: str, mode: str) -> None:
     lines.append(f"Lcross_{name}:")
     if load:
         lines += [f"transfer_slow 0, x7, {size}, fault=La32_memory_fault",
-                  "and x14, x19, #0xffff", f"str {width}0, [_cpu, x14]"]
+                  "and x14, x19, #0xffff",
+                  f"str {stored(width)}0, [_cpu, x14]"]
     else:
         lines += ["and x14, x19, #0xffff", f"ldr {width}0, [_cpu, x14]",
                   f"transfer_slow 1, x7, {size}, fault=La32_memory_fault"]
@@ -566,7 +575,7 @@ def vfp_block(asm, load: bool, bytes_: int) -> None:
 
 
 def emit_vfp_memory(asm) -> None:
-    for width in ("s", "d"):
+    for width in ("s", "d", "h"):
         for mode in ("i", "abs"):
             vfp_memory(asm, True, width, mode)
         vfp_memory(asm, False, width, "i")
@@ -597,24 +606,24 @@ def header_tables(names: set[str]) -> list[str]:
     out.append("")
     out += a32_structure.header_tables(names)
     out.append("")
-    out.append("/* VFP: [operation][double]. */")
-    out.append("inline constexpr G kVfp3[5][2] = {")
+    out.append("/* VFP: [operation][single, double, half]. */")
+    out.append("inline constexpr G kVfp3[5][3] = {")
     for op in VFP3_NAMES:
-        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sd") + "},")
+        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sdh") + "},")
     out.append("};")
-    out.append("inline constexpr G kVfpMac[8][2] = {")
+    out.append("inline constexpr G kVfpMac[8][3] = {")
     for op in VFPMAC_NAMES:
-        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sd") + "},")
+        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sdh") + "},")
     out.append("};")
-    out.append("inline constexpr G kVfp2[4][2] = {")
+    out.append("inline constexpr G kVfp2[4][3] = {")
     for op in VFP2_NAMES:
-        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sd") + "},")
+        out.append("\t{" + ", ".join(g(f"vfp_{op}_{w}") for w in "sdh") + "},")
     out.append("};")
-    out.append("/* VCMP: [E | zero << 1][double]. */")
-    out.append("inline constexpr G kVfpCmp[4][2] = {")
+    out.append("/* VCMP: [E | zero << 1][single, double, half]. */")
+    out.append("inline constexpr G kVfpCmp[4][3] = {")
     for suffix in ("", "e", "z", "ez"):
         out.append("\t{" + ", ".join(
-            g(f"vfp_vcmp{suffix}_{w}") for w in "sd") + "},")
+            g(f"vfp_vcmp{suffix}_{w}") for w in "sdh") + "},")
     out.append("};")
     out.append("/* VLDM and VSTM by transfer size in words. */")
     for kind in ("ldm", "stm"):

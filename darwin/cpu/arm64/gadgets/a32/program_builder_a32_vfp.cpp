@@ -19,25 +19,28 @@ Translator::Result Translator::emit_vfp(const Instruction &in,
 					const FormPlan &plan)
 {
 	const auto &o = in.operands;
+	/* aux: bit 0 double precision, bit 2 half precision (in the low half of
+	 * an S register). */
 	const bool dbl = (plan.aux & 1U) != 0;
+	const unsigned precision = (plan.aux & 4U) != 0 ? 2U : dbl ? 1U : 0U;
 	const auto reg = [dbl](int number) noexcept {
 		return dbl ? d_register(number) : s_register(number);
 	};
 	switch (plan.family) {
 	case Family::vfp3:
-		push(kVfp3[plan.sub][dbl]);
+		push(kVfp3[plan.sub][precision]);
 		push(reg(o.d) | reg(o.n) << 16 | reg(o.m) << 32);
 		return {};
 	case Family::vfpmac:
-		push(kVfpMac[plan.sub][dbl]);
+		push(kVfpMac[plan.sub][precision]);
 		push(reg(o.d) | reg(o.n) << 16 | reg(o.m) << 32);
 		return {};
 	case Family::vfp2:
-		push(kVfp2[plan.sub][dbl]);
+		push(kVfp2[plan.sub][precision]);
 		push(reg(o.d) | reg(o.m) << 16);
 		return {};
 	case Family::vfpcmp:
-		push(kVfpCmp[plan.sub][dbl]);
+		push(kVfpCmp[plan.sub][precision]);
 		push(reg(o.d) | reg(o.m) << 16);
 		return {};
 	case Family::vfpimm:
@@ -75,6 +78,7 @@ Translator::Result Translator::emit_vfp_convert(const Instruction &in,
 {
 	const auto &o = in.operands;
 	const bool dbl = (plan.aux & 1U) != 0;
+	const unsigned precision = (plan.aux & 4U) != 0 ? 2U : dbl ? 1U : 0U;
 	const auto reg = [dbl](int number) noexcept {
 		return dbl ? d_register(number) : s_register(number);
 	};
@@ -89,42 +93,56 @@ Translator::Result Translator::emit_vfp_convert(const Instruction &in,
 		push(s_register(o.d) | d_register(o.m) << 16);
 		return {};
 	case 2: { /* an integer in Sm to a float of the destination's width */
-		static constexpr G table[2][2] = {
-			{G::vfp_cvt_from_s_s, G::vfp_cvt_from_s_d},
-			{G::vfp_cvt_from_u_s, G::vfp_cvt_from_u_d}};
-		push(table[sign][dbl]);
+		static constexpr G table[2][3] = {
+			{G::vfp_cvt_from_s_s, G::vfp_cvt_from_s_d,
+			 G::vfp_cvt_from_s_h},
+			{G::vfp_cvt_from_u_s, G::vfp_cvt_from_u_d,
+			 G::vfp_cvt_from_u_h}};
+		push(table[sign][precision]);
 		push(reg(o.d) | s_register(o.m) << 16);
 		return {};
 	}
 	case 3: { /* a float to an integer in Sd, toward zero */
-		static constexpr G table[2][2] = {
-			{G::vfp_cvt_to_s_s, G::vfp_cvt_to_s_d},
-			{G::vfp_cvt_to_u_s, G::vfp_cvt_to_u_d}};
-		push(table[sign][dbl]);
+		static constexpr G table[2][3] = {
+			{G::vfp_cvt_to_s_s, G::vfp_cvt_to_s_d,
+			 G::vfp_cvt_to_s_h},
+			{G::vfp_cvt_to_u_s, G::vfp_cvt_to_u_d,
+			 G::vfp_cvt_to_u_h}};
+		push(table[sign][precision]);
 		push(s_register(o.d) | reg(o.m) << 16);
 		return {};
 	}
 	case 4: { /* VCVTR: as the FPSCR rounds */
-		static constexpr G table[2][2] = {
-			{G::vfp_cvt_tor_s_s, G::vfp_cvt_tor_s_d},
-			{G::vfp_cvt_tor_u_s, G::vfp_cvt_tor_u_d}};
-		push(table[sign][dbl]);
+		static constexpr G table[2][3] = {
+			{G::vfp_cvt_tor_s_s, G::vfp_cvt_tor_s_d,
+			 G::vfp_cvt_tor_s_h},
+			{G::vfp_cvt_tor_u_s, G::vfp_cvt_tor_u_d,
+			 G::vfp_cvt_tor_u_h}};
+		push(table[sign][precision]);
 		push(s_register(o.d) | reg(o.m) << 16);
 		return {};
 	}
 	case 5: { /* fixed point, in place */
-		static constexpr G to_fixed[2][2][2] = {
-			{{G::vfp_cvt_tofix_s32_s, G::vfp_cvt_tofix_s32_d},
-			 {G::vfp_cvt_tofix_s16_s, G::vfp_cvt_tofix_s16_d}},
-			{{G::vfp_cvt_tofix_u32_s, G::vfp_cvt_tofix_u32_d},
-			 {G::vfp_cvt_tofix_u16_s, G::vfp_cvt_tofix_u16_d}}};
-		static constexpr G from_fixed[2][2][2] = {
-			{{G::vfp_cvt_fromfix_s32_s, G::vfp_cvt_fromfix_s32_d},
-			 {G::vfp_cvt_fromfix_s16_s, G::vfp_cvt_fromfix_s16_d}},
-			{{G::vfp_cvt_fromfix_u32_s, G::vfp_cvt_fromfix_u32_d},
-			 {G::vfp_cvt_fromfix_u16_s, G::vfp_cvt_fromfix_u16_d}}};
+		static constexpr G to_fixed[2][2][3] = {
+			{{G::vfp_cvt_tofix_s32_s, G::vfp_cvt_tofix_s32_d,
+			  G::vfp_cvt_tofix_s32_h},
+			 {G::vfp_cvt_tofix_s16_s, G::vfp_cvt_tofix_s16_d,
+			  G::vfp_cvt_tofix_s16_h}},
+			{{G::vfp_cvt_tofix_u32_s, G::vfp_cvt_tofix_u32_d,
+			  G::vfp_cvt_tofix_u32_h},
+			 {G::vfp_cvt_tofix_u16_s, G::vfp_cvt_tofix_u16_d,
+			  G::vfp_cvt_tofix_u16_h}}};
+		static constexpr G from_fixed[2][2][3] = {
+			{{G::vfp_cvt_fromfix_s32_s, G::vfp_cvt_fromfix_s32_d,
+			  G::vfp_cvt_fromfix_s32_h},
+			 {G::vfp_cvt_fromfix_s16_s, G::vfp_cvt_fromfix_s16_d,
+			  G::vfp_cvt_fromfix_s16_h}},
+			{{G::vfp_cvt_fromfix_u32_s, G::vfp_cvt_fromfix_u32_d,
+			  G::vfp_cvt_fromfix_u32_h},
+			 {G::vfp_cvt_fromfix_u16_s, G::vfp_cvt_fromfix_u16_d,
+			  G::vfp_cvt_fromfix_u16_h}}};
 		const unsigned narrow = o.size == 16 ? 1U : 0U;
-		push((o.to_fixed ? to_fixed : from_fixed)[sign][narrow][dbl]);
+		push((o.to_fixed ? to_fixed : from_fixed)[sign][narrow][precision]);
 		push(reg(o.d) | static_cast<std::uint64_t>(o.frac_bits) << 16);
 		return {};
 	}
@@ -216,21 +234,25 @@ Translator::Result Translator::emit_vfp_memory(const Instruction &in,
 		const bool load = plan.sub == 0;
 		const bool dbl = (plan.aux & 1U) != 0;
 		const bool literal = (plan.aux & 2U) != 0;
+		const bool half = (plan.aux & 4U) != 0;
 		const std::uint64_t vreg =
 			dbl ? d_register(o.d) : s_register(o.d);
 		const auto offset = static_cast<std::uint32_t>(o.imm32);
 		if (literal) {
 			const std::uint32_t address = o.add ?
 				pc_aligned() + offset : pc_aligned() - offset;
-			push(dbl ? G::vfp_ldr_d_abs : G::vfp_ldr_s_abs);
+			push(dbl ? G::vfp_ldr_d_abs :
+			     half ? G::vfp_ldr_h_abs : G::vfp_ldr_s_abs);
 			push(key_);
 			push(vreg | std::uint64_t{address} << 32);
 			return {};
 		}
 		const std::uintptr_t rn = source(o.n, scratch1);
 		const std::uint32_t displacement = o.add ? offset : 0U - offset;
-		push(load ? (dbl ? G::vfp_ldr_d_i : G::vfp_ldr_s_i) :
-			    (dbl ? G::vfp_str_d_i : G::vfp_str_s_i));
+		push(load ? (dbl ? G::vfp_ldr_d_i :
+			     half ? G::vfp_ldr_h_i : G::vfp_ldr_s_i) :
+			    (dbl ? G::vfp_str_d_i :
+			     half ? G::vfp_str_h_i : G::vfp_str_s_i));
 		push(key_);
 		push(vreg | std::uint64_t{rn} << 16 |
 		     std::uint64_t{displacement} << 32);

@@ -64,6 +64,13 @@ CVT8_NAMES = ["a", "n", "p", "m"]
 HALF_OPS = ["vins", "vmovx", "mov_toh", "mov_h"]
 
 
+# The simd level's VFP families that have half-precision forms, and those of
+# them that run an FP16 instruction (the moves and VLDR/VSTR need none).
+VFP_HALF_FAMILIES = ("vfp3", "vfpmac", "vfp2", "vfpcmp", "vfpimm", "vfpcvt",
+                     "vfpmem")
+VFP_HALF_NEEDING = ("vfp3", "vfpmac", "vfp2", "vfpcmp", "vfpcvt")
+
+
 def precision(name: str) -> int:
     """The aux of a VFP form by its name's suffix: 0 single, 1 double, 2
     half."""
@@ -89,6 +96,12 @@ def plan_of_complete(name: str, mnemonic: str):
             return ("vfpv8", VFP8_RINT[mnemonic], precision(name))
         if mnemonic in CVT8_MODES:
             return ("vfpcvt8", CVT8_MODES[mnemonic], precision(name))
+    if name.endswith("_H"):
+        # The half-precision VFP forms: the simd level's plans with aux bit
+        # 2 (the half lives in the low half of an S register).
+        plan = a32_simd.plan_of_simd(name, mnemonic)
+        if plan is not None and plan[0] in VFP_HALF_FAMILIES:
+            return (plan[0], plan[1], plan[2] | 4)
     if mnemonic in ("VCVTB", "VCVTT") and name.endswith(("_DH", "_HD")):
         return ("vfpcvt", a32_simd.CVT_HALF,
                 (1 if mnemonic == "VCVTT" else 0))
@@ -117,6 +130,8 @@ def need_of_complete(name: str, mnemonic: str) -> str:
     if family == "crc":
         return "crc32"
     if family in ("vfpv8", "vfpcvt8") and aux == 2:
+        return "fp16"
+    if family in VFP_HALF_NEEDING and aux & 4:
         return "fp16"
     return "none"
 
