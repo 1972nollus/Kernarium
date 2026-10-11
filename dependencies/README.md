@@ -344,9 +344,10 @@ tooling checks in the same change.
 
 Dependency preparation and builds require the Apple command-line tools plus
 CMake 3.27 or newer, Ninja, GNU Make, Meson, Python 3.11 or newer,
-`pkg-config`, Git, rsync, Autoconf, Automake, gettext, GNU libtool, and gperf.
-Exact tool and SDK versions remain observed build metadata; source identity
-comes from the manifest and generated series.
+`pkg-config`, Git, rsync, Autoconf, Automake, gettext, GNU libtool, gperf, and
+groff (GNU libiconv builds its manual pages). Exact tool and SDK versions
+remain observed build metadata; source identity comes from the manifest and
+generated series.
 
 Configure requires Python 3.11 or newer and fails with CMake's version error
 on an older interpreter. macOS's own `python3` is 3.9, so install a newer one
