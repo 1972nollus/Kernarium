@@ -176,15 +176,39 @@ def stored(width: str) -> str:
 
 def vfp_binary(asm, width: str, name: str, operation: str) -> None:
     r = width
-    asm.gadget(f"vfp_{name}_{width}", "\n".join([
-        "ldr x8, [_stream], #8",
-        *unpack("n", "m", "d"),
-        "a32_fp_guest",
-        f"ldr {r}0, [_cpu, x9]",
-        f"ldr {r}1, [_cpu, x10]",
-        f"{operation} {r}0, {r}0, {r}1",
-        f"str {stored(r)}0, [_cpu, x8]",
-        "next_gadget"]))
+    body = [f"ldr {r}0, [_cpu, x9]",
+            f"ldr {r}1, [_cpu, x10]",
+            f"{operation} {r}0, {r}0, {r}1",
+            f"str {stored(r)}0, [_cpu, x8]",
+            "next_gadget"]
+    head = ["ldr x8, [_stream], #8", *unpack("n", "m", "d")]
+    if width == "s" and name in ("vadd", "vsub", "vmul"):
+        # The result is the same under the Standard value as under the
+        # guest's FPCR while its rounding mode is round to nearest and no
+        # nonzero operand is outside 2**-63 to 2**65, which keeps a sum, a
+        # difference and a product normal (the "range" guard of a32_neon.py,
+        # on the exponent field of each operand). A loop that alternates
+        # with Advanced SIMD floating point then switches only for the
+        # operands outside it.
+        def good(offset: str, value: str, shifted: str, label: str) -> list:
+            return [f"ldr {value}, [_cpu, {offset}]",
+                    f"lsl {shifted}, {value}, #1",
+                    f"cbz {shifted}, {label}f",
+                    f"eor {shifted}, {shifted}, {shifted}, lsl #1",
+                    f"tbz {shifted}, #31, 21f",
+                    f"{label}:"]
+        asm.gadget(f"vfp_{name}_{width}", "\n".join(
+            head + [
+                "ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
+                "ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
+                "cbz w6, 22f",
+                "ldr w11, [_cpu, #UML_GADGET_CPU_FPCR]",
+                "tst w11, #0xc00000", "b.ne 21f"]
+            + good("x9", "w11", "w12", "23") + good("x10", "w13", "w14", "24")
+            + ["22:"] + body
+            + ["21:", "a32_fp_guest"] + body))
+        return
+    asm.gadget(f"vfp_{name}_{width}", "\n".join(head + ["a32_fp_guest"] + body))
 
 
 def vfp_mac(asm, width: str, name: str, body: list[str]) -> None:

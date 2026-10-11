@@ -25,6 +25,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1343,6 +1344,144 @@ void gadgets_leave_the_callee_saved_vector_registers_alone()
 	}
 }
 
+/* A single-precision add, subtract or multiply on the host with the given
+ * FPCR: the value and the cumulative flags (IDC IXC UFC OFC DZC IOC) it
+ * leaves, the reference for what a guest instruction must give. */
+struct HostFloat {
+	std::uint32_t bits;
+	std::uint32_t flags;
+};
+
+[[nodiscard]] HostFloat host_float(unsigned operation, std::uint32_t a,
+				   std::uint32_t b, std::uint64_t fpcr)
+{
+	const float x = std::bit_cast<float>(a);
+	const float y = std::bit_cast<float>(b);
+	float z;
+	std::uint64_t saved_fpcr, saved_fpsr, fpsr;
+	asm volatile("mrs %0, fpcr\n\tmrs %1, fpsr" : "=r"(saved_fpcr), "=r"(saved_fpsr));
+	asm volatile("msr fpcr, %0\n\tmsr fpsr, xzr" :: "r"(fpcr) : "memory");
+	if (operation == 0)
+		asm volatile("fadd %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	else if (operation == 1)
+		asm volatile("fsub %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	else
+		asm volatile("fmul %s0, %s1, %s2" : "=w"(z) : "w"(x), "w"(y));
+	asm volatile("mrs %0, fpsr" : "=r"(fpsr));
+	asm volatile("msr fpcr, %0\n\tmsr fpsr, %1" :: "r"(saved_fpcr), "r"(saved_fpsr) : "memory");
+	return {std::bit_cast<std::uint32_t>(z), static_cast<std::uint32_t>(fpsr & 0x9fU)};
+}
+
+/* VADD, VSUB and VMUL of singles, in Advanced SIMD and in VFP, give the same
+ * result in either native environment while each nonzero operand's exponent
+ * field is 64 to 191 and the guest's rounding mode is round to nearest, so
+ * they run in the active one then and switch only for other operands. The
+ * value and flags must be those of the architecture whichever way they ran:
+ * Advanced SIMD's under the standard value, VFP's under the guest's FPCR. */
+void add_sub_and_mul_run_in_the_active_environment_for_ordinary_operands()
+{
+	constexpr std::uint32_t vadd_f32_d6_d7_d7 = 0xf207'6d07U; /* zeros */
+	constexpr std::uint32_t vadd_f32_s29_s30_s31 = 0xee7f'ea2fU; /* zeros */
+	constexpr std::uint32_t vfp_ops[3] = {0xee31'3a02U, 0xee31'3a42U, 0xee21'3a02U};
+	constexpr std::uint32_t neon_d_ops[3] = {0xf201'3d02U, 0xf221'3d02U, 0xf301'3d12U};
+	constexpr std::uint32_t neon_q_ops[3] = {0xf202'6d44U, 0xf222'6d44U, 0xf302'6d54U};
+	constexpr std::uint32_t standard = 0x0300'0000U; /* DN FZ, round to nearest */
+	struct Operands {
+		std::uint32_t a, b;
+	};
+	const Operands operands[] = {
+		{0x3f80'0000U, 0x4000'0000U}, /* 1, 2 */
+		{0x3dcc'cccdU, 0x3e4c'cccdU}, /* inexact */
+		{0x0000'0000U, 0x0000'0000U},
+		{0x8000'0000U, 0x0000'0000U},
+		{0x0000'0000U, 0x4060'0000U},
+		{0xc0c0'0000U, 0x3f80'0000U},
+		{0x2000'0000U, 0x2000'0000U}, /* 2**-63, the lowest in range */
+		{0x2000'0000U, 0xa000'0000U},
+		{0x1f80'0000U, 0x3f80'0000U}, /* 2**-64 */
+		{0x5f80'0000U, 0x3f80'0000U}, /* 2**64, the highest in range */
+		{0x5f80'0000U, 0x5f80'0000U}, /* overflow of a product */
+		{0x6000'0000U, 0x3f80'0000U}, /* 2**65 */
+		{0x0000'0001U, 0x3f80'0000U}, /* denormal */
+		{0x3f80'0000U, 0x807f'ffffU},
+		{0x7f80'0000U, 0x3f80'0000U}, /* infinity */
+		{0x7fc0'0000U, 0x3f80'0000U}, /* quiet NaN */
+		{0x3f80'0000U, 0x7f80'0001U}, /* signaling NaN */
+		{0x3f80'0000U, 0x3f80'0001U}, /* nearly equal */
+	};
+	const auto in_range = [](std::uint32_t value) {
+		const std::uint32_t exponent = value >> 23 & 0xffU;
+		return (value << 1) == 0 || (exponent >= 64 && exponent <= 191);
+	};
+	unsigned long generation = 2200;
+	for (const auto fpcr : {0U, standard, 1U << 22, 3U << 22}) {
+		for (const auto &item : operands) {
+			for (unsigned operation = 0; operation < 3; ++operation) {
+				for (unsigned kind = 0; kind < 3; ++kind) { /* VFP, D, Q */
+					for (const unsigned first : {0U, 1U}) {
+						Guest guest{generation++};
+						/* 0: Advanced SIMD first, so the standard value
+						 * is native; 1: VFP first, so the guest's is. */
+						const std::uint32_t tested = kind == 0 ? vfp_ops[operation] :
+							kind == 1 ? neon_d_ops[operation] : neon_q_ops[operation];
+						guest.a32(0, {first == 0 ? vadd_f32_d6_d7_d7 :
+							      vadd_f32_s29_s30_s31, tested, a::svc});
+						auto cpu = a32_state();
+						cpu.fpcr = fpcr;
+						/* A quad register has lanes: the case is in the
+						 * last one and the rest are ordinary. */
+						const std::uint32_t other_a = 0x3f80'0000U;
+						const std::uint32_t other_b = 0x4000'0000U;
+						if (kind == 2) {
+							set_d(cpu, 2, std::uint64_t{other_a} << 32 | other_a);
+							set_d(cpu, 3, std::uint64_t{item.a} << 32 | other_a);
+							set_d(cpu, 4, std::uint64_t{other_b} << 32 | other_b);
+							set_d(cpu, 5, std::uint64_t{item.b} << 32 | other_b);
+						} else {
+							set_d(cpu, 1, std::uint64_t{item.a} << 32 | item.a);
+							set_d(cpu, 2, std::uint64_t{item.b} << 32 | item.b);
+						}
+						require(guest.run(cpu).reason == ExitReason::system_call);
+						const bool neon = kind != 0;
+						const auto expected = host_float(operation, item.a, item.b,
+							neon ? standard : fpcr);
+						const auto ordinary = host_float(operation, other_a, other_b,
+							neon ? standard : fpcr);
+						if (kind == 0) {
+							require(static_cast<std::uint32_t>(get_d(cpu, 3)) == expected.bits,
+								"a VFP add, subtract or multiply gave the wrong value");
+						} else if (kind == 1) {
+							require(get_d(cpu, 3) ==
+								(std::uint64_t{expected.bits} << 32 | expected.bits),
+								"an Advanced SIMD add, subtract or multiply gave the wrong value");
+						} else {
+							require(get_d(cpu, 6) ==
+								(std::uint64_t{ordinary.bits} << 32 | ordinary.bits) &&
+								get_d(cpu, 7) ==
+								(std::uint64_t{expected.bits} << 32 | ordinary.bits),
+								"a quad add, subtract or multiply gave the wrong value");
+						}
+						require((cpu.fpsr & 0x9fU) == (expected.flags | ordinary.flags),
+							"an add, subtract or multiply raised the wrong flags");
+						/* The environment survives an instruction of the
+						 * kind it is native for, and any other with
+						 * operands the guard passes. */
+						const bool own = neon ? first == 0 : first == 1;
+						const bool passes = in_range(item.a) && in_range(item.b) &&
+							(fpcr & (3U << 22)) == 0;
+						const bool stays = own || passes;
+						const unsigned active_before = first == 0 ? 1U : 0U;
+						const unsigned after = stays ? active_before : neon ? 1U : 0U;
+						require(cpu.a32_fp_standard == after,
+							"an add, subtract or multiply switched the environment "
+							"when it need not have, or did not when it had to");
+					}
+				}
+			}
+		}
+	}
+}
+
 /* The library runs an instruction whose floating point it models in
  * software, so the cumulative flags the native instructions of the block
  * raised before it must reach CpuState first and the flags it raises must
@@ -2166,6 +2305,7 @@ int main()
 	conversions_to_and_from_integers_run_in_the_active_environment();
 	vmax_and_vmin_switch_the_environment_only_for_nan_and_denormal_operands();
 	gadgets_leave_the_callee_saved_vector_registers_alone();
+	add_sub_and_mul_run_in_the_active_environment_for_ordinary_operands();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();

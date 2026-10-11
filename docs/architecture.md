@@ -879,7 +879,12 @@ moves and the part holds no SVE or SME word. A conditional instruction is a
 skip over a run of instructions sharing its condition, a conditional
 terminal gives the skipped instruction back, and a block never ends inside an
 IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
-stored. A word the decoder rejects, a coprocessor word the profile lacks and
+stored. A plain CMP of a register or of an immediate below 2^24, outside an IT
+block and followed at once by a conditional branch, is the A64 fused
+compare-and-branch gadget of the branch's condition, which reads the CpuState
+slots a register lives in, so the pair costs one dispatch; ADD and SUB of an
+immediate to the same register have an entry per register R0 to R14 with the
+displacement baked in. A word the decoder rejects, a coprocessor word the profile lacks and
 a form above the engine's level end the block in the illegal-instruction exit
 at the word whatever its condition, except a coprocessor word that is not
 UNPREDICTABLE in the complete profile, which a failing condition skips like
@@ -913,16 +918,28 @@ each such gadget starts with `a32_fp_standard` and each VFP gadget with
 `a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
 `CpuState::a32_fp_standard` says the native environment holds the other one,
 so a loop of one kind switches once and the execution boundary restores the
-host's FPCR whichever it holds. The A32 shifts by an immediate use the A64
+host's FPCR whichever it holds. A switch costs more than the instructions
+around it, so the forms that interleave the two kinds in image and signal
+code run in the active environment when their result is the same in both and
+switch only for operands where it is not: the VFP conversions between floats
+and integers (all but a denormal float to integer, and an integer to float
+under a rounding mode other than round to nearest), VMAX and VMIN (a NaN or a
+denormal), and the single-precision VADD, VSUB and VMUL of both kinds (a
+nonzero operand whose exponent field is outside 64 to 191, which keeps a sum,
+a difference and a product normal, and a guest rounding mode other than round
+to nearest). The test is integer arithmetic on the operands' bits, made
+before the instruction so that it raises no flags of its own. The A32 shifts by an immediate use the A64
 shift-by-register instructions with a replicated signed amount, so a gadget
 serves every amount; the forms that exist in A64 only with an immediate
 (SQSHLU, the converts with a fraction width, VEXT) have a gadget per
 immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
 VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
 interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
-with the register or immediate writeback. VRECPS and VRSQRTS (AArch32's
-unfused steps, not the fused A64 ones), a structure access or VLDM and VSTM
-that crosses a page, and a misaligned access with an alignment hint run
+with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
+page stays in the gadget and moves its bytes with the A64 slow transfer helper.
+VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
+interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
+and a misaligned access with an alignment hint run
 through the semantic library, whose exit commits the live FPSR to
 CpuState before the call and reinstalls it after, as the A64 engine's
 software floating-point helpers do. A saturating instruction leaves QC in the
