@@ -943,27 +943,37 @@ public:
 		return targets_.load(std::memory_order_acquire);
 	}
 
+	/* Train `site` and the target table with `target`, the record for
+	 * `target_pc`. Every vCPU of the address space misses into here, so
+	 * only a site's first training takes a lock.
+	 *
+	 * A cell or table entry only ever names a record, and a record is
+	 * linked only to a body validated at the gate, so writing one without
+	 * the shard lock is safe even while a code change resets the site:
+	 * following it at worst exits through link_exit. Enrolment in the live
+	 * list only keeps a reset site's predictions clean. */
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
-			    std::uint64_t target_pc)
+		std::uint64_t target_pc, const arm64::gadgets::BlockLink *target)
 	{
-		const auto *target = link(target_pc);
 		train_target(target_pc, target);
-		const auto &owner = *reinterpret_cast<const IndirectRecord *>(
-			&site);
-		auto &shard = shard_of(owner.source_pc);
-		const std::lock_guard guard{shard.mutex};
 		/* Training is the only thing C++ does to move a site off its
 		 * empty cells, and empty_pc is unreachable as a guest target, so
 		 * a site still holding two empty cells is untrained since its
 		 * last reset -- which makes this the transition that enrols it.
 		 * Translated code trains cells too, without enrolling; such a
 		 * cell names a record, which a code change resets. */
-		bool untrained = true;
-		for (auto &entry : site.entries)
-			if (cell_pc(entry) != empty_pc)
-				untrained = false;
-		if (untrained)
-			shard.live_indirect.push_back(&site);
+		if (untrained(site)) {
+			const auto &owner =
+				*reinterpret_cast<const IndirectRecord *>(&site);
+			auto &shard = shard_of(owner.source_pc);
+			const std::lock_guard guard{shard.mutex};
+			if (untrained(site)) {
+				shard.live_indirect.push_back(&site);
+				store_pair(&site.entries[0], target_pc,
+					word_of(target));
+				return;
+			}
+		}
 		for (auto &entry : site.entries) {
 			if (cell_pc(entry) != target_pc)
 				continue;
@@ -1267,6 +1277,15 @@ private:
 			std::memory_order_relaxed);
 	}
 
+	[[nodiscard]] static bool untrained(
+		arm64::gadgets::IndirectLink &site) noexcept
+	{
+		for (auto &entry : site.entries)
+			if (cell_pc(entry) != empty_pc)
+				return false;
+		return true;
+	}
+
 	/* The indexed body when it stands for exactly these guest units. */
 	[[nodiscard]] static Body *equal_indexed(const LinkRecord &record,
 		std::span<const std::byte> validation,
@@ -1543,6 +1562,8 @@ public:
 		std::size_t lists = 0;
 		for (const auto &[generation, state] : generations_)
 			lists += state.slots.capacity() * sizeof(std::uint32_t);
+		if (link_memo_)
+			lists += sizeof(LinkMemo);
 		/* How often the stream lookup was asked, against how often a
 		 * store would have had to maintain an index for it. */
 		const auto slab_total = static_cast<std::size_t>(
@@ -1872,6 +1893,25 @@ public:
 		return space().indirect_link(source_pc);
 	}
 
+	/* The record for `pc` in the current address space, through this
+	 * cache's memo of the records its indirect misses named. A record never
+	 * moves or dies while its address space is resident here, and retiring
+	 * one clears its entries, so a hit is always the live record; it spares
+	 * the space's lock, which every vCPU's misses would otherwise meet. */
+	[[nodiscard]] const arm64::gadgets::BlockLink *link_record(
+		std::uint64_t pc)
+	{
+		if (!link_memo_)
+			link_memo_ = std::make_unique<LinkMemo>();
+		auto &entry = (*link_memo_)[((pc >> 2U) ^ (pc >> 14U) ^
+			current_generation_) & (link_memo_entries - 1U)];
+		if (entry.link == nullptr || entry.pc != pc ||
+		    entry.generation != current_generation_)
+			entry = {pc, current_generation_,
+				current_->space->link(pc)};
+		return entry.link;
+	}
+
 	void learn_indirect(arm64::gadgets::IndirectLink &site,
 			    std::uint64_t target_pc)
 	{
@@ -1880,7 +1920,7 @@ public:
 		 * dump can say how many cells a site would have needed. */
 		++site_misses_[&site][target_pc];
 #endif
-		space().learn_indirect(site, target_pc);
+		space().learn_indirect(site, target_pc, link_record(target_pc));
 	}
 
 	[[nodiscard]] BuildResult store(
@@ -2016,6 +2056,14 @@ private:
 	 * That matters because retirement is not rare on a desktop guest: it
 	 * happens on every first sight of a ninth address space. See G167.
 	 */
+	static constexpr std::size_t link_memo_entries = 4096;
+	struct LinkMemoEntry final {
+		std::uint64_t pc;
+		unsigned long generation;
+		const arm64::gadgets::BlockLink *link;
+	};
+	using LinkMemo = std::array<LinkMemoEntry, link_memo_entries>;
+
 	struct Generation final {
 		Generation() = default;
 		Generation(const Generation &) = delete;
@@ -2095,6 +2143,10 @@ private:
 					release(slot, generation);
 			}
 		}
+		if (link_memo_)
+			for (auto &entry : *link_memo_)
+				if (entry.generation == generation)
+					entry = {};
 		if (owner != generations_.end()) {
 			auto *space = owner->second.space;
 			if (current_ == &owner->second)
@@ -2481,6 +2533,8 @@ private:
 	const Announcement *announcement_{};
 	bool share_{};
 	std::uint64_t adoptions_{};
+	/* The records indirect misses named, made at the first one. */
+	std::unique_ptr<LinkMemo> link_memo_;
 	/* Large enough that an ordinary build never reaches the upstream: a
 	 * stream that doubles its way to 272 words consumes 510 words of
 	 * scratch on the way. */
