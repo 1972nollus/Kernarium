@@ -208,7 +208,7 @@ A32Compiler::Flow A32Compiler::emit_instruction() {
  * a cold side exit that publishes the registers dirty here and links to the
  * target, and the block goes on with the fall-through, its registers and
  * flags still in the host. */
-A32Compiler::Flow A32Compiler::emit_side_exit_branch() {
+A32Compiler::Flow A32Compiler::emit_side_exit_branch(bool monitor) {
   const auto &inst = cur().inst;
   const auto &o = inst.operands;
   const auto info = op_info(inst.form);
@@ -218,11 +218,13 @@ A32Compiler::Flow A32Compiler::emit_side_exit_branch() {
     const auto side = cold_exit(ColdPath::Kind::branch);
     cold_.back().target = thumb_ ? aarch32::t32_key(target & ~1U)
                                  : aarch32::a32_key(target & ~3U);
+    cold_.back().monitor = monitor;
     emitter_.branch_condition(side, inst.cond);
   } else {
     const unsigned n = use(static_cast<unsigned>(o.n), 9);
     const auto side = cold_exit(ColdPath::Kind::branch);
     cold_.back().target = aarch32::t32_key(target);
+    cold_.back().monitor = monitor;
     emitter_.compare_zero(side, n, false, info.op == Op::cbnz);
   }
   return Flow::next;

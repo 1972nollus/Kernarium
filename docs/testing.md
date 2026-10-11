@@ -960,7 +960,8 @@ of the library.
 `arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
 idiom, the monitor rules, fault and alignment exits, two threads counting
 exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+loop to make no helper call, also with a compare and conditional branch or a
+CBNZ between the load and the store (A32 and T32). `arm64-jit-a32-acquire-release` covers LDA and
 STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a

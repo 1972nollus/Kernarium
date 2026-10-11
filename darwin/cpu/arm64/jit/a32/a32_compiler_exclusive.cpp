@@ -12,7 +12,10 @@
 //
 // A STREX under a condition (STREXEQ after a CMP, the compare-and-swap
 // idiom) branches over the store on the host flags the run's CMP left, and
-// the skipped arm clears the monitor. Whatever the run declines (a pair, a
+// the skipped arm clears the monitor. A conditional forward branch or
+// CBZ/CBNZ between the two (the other compare-and-swap and try-lock idiom,
+// LDREX, CMP, BNE out, STREX) is a side exit whose taken arm clears the
+// monitor and links to the target. Whatever the run declines (a pair, a
 // condition on anything but the store, an instruction that is not plain
 // register arithmetic, an IT block, too many live registers) takes the slow
 // helper, one instruction at a time.
@@ -59,6 +62,9 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   // Find the store and check what lies between.
   std::size_t store_index = 0;
   Transfer store;
+  bool compare_seen = false;
+  bool flags_first = false;
+  bool leaves = false;
   for (std::size_t index = 1; index < block_.size() &&
                               index <= maximum_interval + 1U; ++index) {
     const auto &d = block_[index];
@@ -78,6 +84,14 @@ std::size_t A32Compiler::try_fuse_exclusive() {
     // register-controlled shift, no carry input, no PC, and the base is
     // never rewritten.
     const auto &o = inst.operands;
+    if (continues_past(inst)) {
+      // The taken arm leaves the run: a B reads the flags, so a compare must
+      // have set them in the run or they are loaded before it starts.
+      leaves = true;
+      if (info.op == Op::b && !compare_seen)
+        flags_first = true;
+      continue;
+    }
     if (inst.cond < 14U)
       return 0;
     switch (info.op) {
@@ -89,6 +103,7 @@ std::size_t A32Compiler::try_fuse_exclusive() {
       return 0;
     }
     const bool compare = info.op == Op::cmp || info.op == Op::cmn;
+    compare_seen = compare_seen || compare;
     if (info.shape != Shape::immediate && info.shape != Shape::reg)
       return 0;
     if (!compare && o.setflags)
@@ -123,6 +138,11 @@ std::size_t A32Compiler::try_fuse_exclusive() {
     const auto &inst = block_[index].inst;
     const auto info = op_info(inst.form);
     const auto &o = inst.operands;
+    if (continues_past(inst)) {
+      if (info.op != Op::b)
+        need(static_cast<unsigned>(o.n));
+      continue;
+    }
     const bool compare = info.op == Op::cmp || info.op == Op::cmn;
     const bool moves = info.op == Op::mov || info.op == Op::mvn;
     if (!moves)
@@ -134,11 +154,6 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   }
   if (needed_count > gpr_slot_capacity())
     return 0;
-
-  // A conditional store reads the host flags the run leaves: make them valid
-  // before the monitor is established.
-  if (conditional)
-    load_flags();
 
   const unsigned bytes = load.bytes;
   const auto slow = cold_exit(ColdPath::Kind::exclusive_slow);
@@ -165,6 +180,12 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   emit(enc::x::cmp(address_register, host_address));
   emitter_.branch_condition(slow, enc::ne);
 
+  // A conditional store or a branch reads the host flags: make them valid
+  // before the monitor is established unless the run's own compare sets them.
+  // The address check above sets the host flags, so this follows it.
+  if (flags_first || (conditional && !compare_seen))
+    load_flags();
+
   // Bind everything the interval reads before it starts.
   const auto preload = [&](unsigned guest) {
     (void)read_native_gpr(guest, false, fallback_m);
@@ -173,6 +194,11 @@ std::size_t A32Compiler::try_fuse_exclusive() {
     const auto &inst = block_[index].inst;
     const auto info = op_info(inst.form);
     const auto &o = inst.operands;
+    if (continues_past(inst)) {
+      if (info.op != Op::b)
+        preload(static_cast<unsigned>(o.n));
+      continue;
+    }
     const bool moves = info.op == Op::mov || info.op == Op::mvn;
     if (!moves)
       preload(info.sp_base ? 13U : static_cast<unsigned>(o.n));
@@ -182,16 +208,22 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   const bool loaded_is_stored = store.t == load.t;
   if (!loaded_is_stored)
     preload(store.t);
-  // A store that may be skipped keeps the status register's old value.
-  const auto status = write_native_gpr(store.d, false, conditional, fallback_n);
+  // A store that may be skipped, or a run that may be left before it,
+  // keeps the status register's old value.
+  const auto status =
+      write_native_gpr(store.d, false, conditional || leaves, fallback_n);
   const auto loaded = write_native_gpr(load.t, false, false, fallback_n);
   // The interval: the host load, the instructions, the host store.
   emit(enc::ldxr(size_field(bytes), loaded.host, host_address, load.acquire));
   commit_native_gpr(loaded, load.t, false);
   link_target_safe_ = false;
   count_ = 1;
-  for (; count_ < store_index; ++count_)
-    (void)emit_operation();
+  for (; count_ < store_index; ++count_) {
+    if (continues_past(cur().inst))
+      (void)emit_side_exit_branch(true);
+    else
+      (void)emit_operation();
+  }
   Arm64Emitter::Label resume{};
   if (conditional) {
     resume = make_label();

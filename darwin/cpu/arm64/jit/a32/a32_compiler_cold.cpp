@@ -44,6 +44,10 @@ void A32Compiler::emit_cold_paths() {
       exit_event(Event::illegal_instruction, key_of(d), d.it);
       break;
     case ColdPath::Kind::branch:
+      if (cold.monitor) {
+        emit(0xd503'3f5fU); // clrex
+        clear_exclusive_monitor();
+      }
       exit_direct(cold.target, 0U, cold.index + 1U);
       break;
     case ColdPath::Kind::slow:

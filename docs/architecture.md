@@ -999,7 +999,10 @@ load-exclusive, up to four register instructions and the store-exclusive
 (acquire and release forms included) on the same address at the start of a
 block become one host load-exclusive and store-exclusive, so the guest's
 monitor is the host's; a failed store leaves the status to the guest's retry
-loop. The parallel add and subtract forms run in the vector unit on the
+loop. A conditional forward branch or CBZ/CBNZ between the two (the
+compare-and-swap that leaves on a mismatch, the try-lock) stays in the run as
+a side exit whose taken arm clears the monitor and links to the target. The
+parallel add and subtract forms run in the vector unit on the
 packed lanes (UMAX and UMIN stand in for the unsigned saturating forms and a
 widening add for GE, so the host's QC flag is never set). What the lowering
 declines (an access across a page or one that must fault, an exclusive that

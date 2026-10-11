@@ -106,6 +106,9 @@ private:
     std::uint32_t dirty_vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
     std::uint64_t target{};
+    /* A branch taken inside a fused exclusive run: the host's monitor is
+     * open and the exit closes it. */
+    bool monitor{};
   };
 
   /* A guarded floating-point operation whose operands or result were not
@@ -181,7 +184,7 @@ private:
    * (or MOVW) that leaves the host flags alone (it sets none and shifts by
    * no register) and does not write the PC. */
   [[nodiscard]] bool can_predicate() const;
-  [[nodiscard]] Flow emit_side_exit_branch();
+  [[nodiscard]] Flow emit_side_exit_branch(bool monitor = false);
   Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
   void emit_cold_paths();
