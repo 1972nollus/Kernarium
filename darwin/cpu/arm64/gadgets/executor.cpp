@@ -538,16 +538,23 @@ public:
 	void census(std::FILE *out) const noexcept
 	{
 		const auto parts = footprint();
+		/* The geometry goes out with the footprint: the slot count is a
+		 * product choice, and only the slab count says how much of the
+		 * slot array was committed. */
+		const auto slab_total = static_cast<std::size_t>(
+			std::count_if(slabs_.begin(), slabs_.end(),
+				[](const auto &slab) { return slab != nullptr; }));
 		/* How often the stream lookup was asked, against how often a
 		 * store would have had to maintain an index for it. */
 		std::fprintf(out,
-			"E %p generations=%zu occupancy=%zu stream_index=%zu "
-			"slabs=%zu streams=%zu links=%zu indirect=%zu total=%zu "
+			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
+			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
+			"streams=%zu links=%zu indirect=%zu total=%zu "
 			"stores=%llu stream_lookups=%llu\n",
 			static_cast<const void *>(this), resident_generations(),
-			occupancy(), parts.stream_index, parts.slabs,
-			parts.streams, parts.links, parts.indirect,
-			parts.total(),
+			occupancy(), slot_count, sizeof(Slot), slab_slots,
+			slab_total, parts.stream_index, parts.slabs, parts.streams,
+			parts.links, parts.indirect, parts.total(),
 			static_cast<unsigned long long>(stores_),
 			static_cast<unsigned long long>(stream_lookups_));
 		for (const auto &slab : slabs_) {

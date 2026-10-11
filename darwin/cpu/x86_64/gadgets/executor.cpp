@@ -14,6 +14,7 @@
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #include <cstdlib>
+#include <malloc/malloc.h>
 #endif
 #include <cstring>
 #include <memory>
@@ -907,7 +908,9 @@ public:
 	/* What this cache costs, in bytes it actually holds rather than in the
 	 * capacity it was configured with. The slab array is the only part that
 	 * exists whether or not its ways are occupied; everything else is
-	 * proportional to what the workload translated. */
+	 * proportional to what the workload translated. Allocations are counted
+	 * as the allocator sized them, which a sum of sizeof does not see (X79):
+	 * a 256-way slab is a 20 KiB block. */
 	struct Footprint final {
 		std::size_t slabs, streams, decoded, links, indirect, targets;
 		[[nodiscard]] std::size_t total() const noexcept
@@ -925,7 +928,7 @@ public:
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;
-			slabs += sizeof(Slab);
+			slabs += malloc_size(slab.get());
 			for (const auto &slot : slab->slots) {
 				if (!resident(slot))
 					continue;
@@ -934,10 +937,12 @@ public:
 				 * replay has ended inside also holds what that
 				 * replay decoded. */
 				const auto &program = slot.translation->program;
-				streams += sizeof(Translation) +
-					program.native_stream().size_bytes() +
-					program.source().size();
-				decoded += program.replay_bytes();
+				streams += malloc_size(slot.translation.get()) +
+					malloc_size(program.native_stream().data()) +
+					malloc_size(program.source().data());
+				if (const auto replay = program.replay_bytes();
+				    replay != 0)
+					decoded += malloc_good_size(replay);
 			}
 		}
 		std::size_t links = 0;
@@ -997,14 +1002,19 @@ public:
 		/* sizeof(Slot) is reported because the slab total covers the
 		 * successor sets as well as the tags, and only the slot size
 		 * separates them. */
+		const auto slab_count = static_cast<std::size_t>(
+			std::count_if(slabs_.begin(), slabs_.end(),
+				[](const auto &slab) { return slab != nullptr; }));
 		std::fprintf(out,
-			"E %p generations=%zu occupancy=%zu slot_bytes=%zu "
-			"slabs=%zu streams=%zu decoded=%zu links=%zu "
-			"indirect=%zu targets=%zu total=%zu\n",
+			"E %p generations=%zu occupancy=%zu slots=%zu "
+			"slot_bytes=%zu slab_slots=%zu slab_count=%zu slabs=%zu "
+			"streams=%zu decoded=%zu links=%zu indirect=%zu "
+			"targets=%zu total=%zu\n",
 			static_cast<const void *>(this), resident_generations(),
-			occupancy(), sizeof(Slot), parts.slabs, parts.streams,
-			parts.decoded, parts.links, parts.indirect,
-			parts.targets, parts.total());
+			occupancy(), program_cache_slots, sizeof(Slot),
+			program_cache_slab_slots, slab_count, parts.slabs,
+			parts.streams, parts.decoded, parts.links,
+			parts.indirect, parts.targets, parts.total());
 		for (const auto &slab : slabs_) {
 			if (!slab)
 				continue;

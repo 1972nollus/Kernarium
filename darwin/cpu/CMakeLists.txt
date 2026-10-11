@@ -22,8 +22,8 @@ add_subdirectory(arm64/aarch32)
 # translated and lost, and address-space retirement causes none of them. The
 # slot count, not residency or validation, is what bounds Clang.
 #
-# Capacity is not free on either engine. An empty way costs 56 bytes on arm64
-# and 76 on x86, and an occupied one its translation besides. macOS can spend
+# Capacity is not free on either engine. An empty way costs 40 bytes on arm64
+# and 80 on x86, and an occupied one its translation besides. macOS can spend
 # it and iOS cannot: the iOS app runs under a jetsam limit with a 2048 MiB
 # guest default, and one executor per host core would pay for it several times
 # over. The compatibility default therefore stays where it was measured to be

@@ -17,8 +17,10 @@ how much more would collapse if a fork family's identical pages did too.
 
 Footprint fields an engine does not have are simply absent: only arm64 owns a
 stream lookup index and counts the lookups against it, and only x86-64 owns a
-per-address-space target link table, reports its compiled slot size, and holds
-the decoded instructions of the blocks a budget-limited replay has entered.
+per-address-space target link table and holds the decoded instructions of the
+blocks a budget-limited replay has entered. Each record carries its cache's
+geometry (slots, slot size, and how many slabs of slots were committed); the
+command-line geometry stands in only for a capture written before it did.
 """
 
 from __future__ import annotations
@@ -37,9 +39,11 @@ class Executor:
     tag: str
     generations: int = 0
     occupancy: int = 0
-    # The engine that compiles its slot size into the record reports it; the
-    # other is measured from the command line.
+    # The geometry the cache was compiled with, absent from older captures.
+    slots: int | None = None
     slot_bytes: int | None = None
+    slab_slots: int | None = None
+    slab_count: int | None = None
     footprint: dict[str, int] = field(default_factory=dict)
 
 
@@ -71,8 +75,9 @@ def parse(path: Path) -> tuple[list[Executor], list[list[Program]]]:
                     executor.generations = int(value)
                 elif name == "occupancy":
                     executor.occupancy = int(value)
-                elif name == "slot_bytes":
-                    executor.slot_bytes = int(value)
+                elif name in ("slots", "slot_bytes", "slab_slots",
+                              "slab_count"):
+                    setattr(executor, name, int(value))
                 else:
                     executor.footprint[name] = int(value)
             executors.append(executor)
@@ -114,10 +119,11 @@ def main() -> int:
     parser.add_argument("census", type=Path,
                         help="file written by DARWIN_UML_GADGET_CACHE_CENSUS")
     parser.add_argument("--slots", type=int, default=65536,
-                        help="cache slots per executor, for occupancy (%(default)s)")
-    parser.add_argument("--slot-bytes", type=int, default=56,
-                        help="bytes per cache slot for a record that does not "
-                             "carry its own slot size (%(default)s)")
+                        help="cache slots per executor, for a record that "
+                             "does not carry its own (%(default)s)")
+    parser.add_argument("--slot-bytes", type=int, default=40,
+                        help="bytes per cache slot, for a record that does "
+                             "not carry its own (%(default)s)")
     arguments = parser.parse_args()
 
     executors, programs = parse(arguments.census)
@@ -133,9 +139,10 @@ def main() -> int:
     print("\nper executor")
     for executor, group in zip(executors, programs):
         total = executor.footprint.get("total", 0)
+        slots = executor.slots if executor.slots is not None else arguments.slots
         print(f"  {executor.tag}  address spaces {executor.generations}  "
               f"resident {len(group):>7,}  "
-              f"occupancy {100.0 * executor.occupancy / arguments.slots:5.1f}%  "
+              f"occupancy {100.0 * executor.occupancy / slots:5.1f}%  "
               f"cache {total / 2**20:7.1f} MiB")
     measured = sum(e.footprint.get("total", 0) for e in executors)
     print(f"  measured cache total        {measured / 2**20:.1f} MiB")
@@ -180,15 +187,25 @@ def main() -> int:
     inline = sum(n for length, n in lengths.items() if length <= 16)
     print(f"  fits a 16-word inline stream: {100.0 * inline / resident:.1f}%")
 
-    # The slot array exists whether or not its ways are occupied, so it is the
-    # part of the cache that sharing bodies cannot reduce.
-    slot_bytes = [e.slot_bytes if e.slot_bytes is not None
-                  else arguments.slot_bytes for e in executors]
-    tags = arguments.slots * sum(slot_bytes)
-    sizes = "/".join(str(size) for size in sorted(set(slot_bytes)))
+    # The committed slot array exists whether or not its ways are occupied,
+    # so it is the part of the cache that sharing bodies cannot reduce. A
+    # slab also holds what else each way needs (x86-64's successor sets),
+    # and the allocator rounds it.
+    tags = 0
+    for executor in executors:
+        slot_bytes = (executor.slot_bytes if executor.slot_bytes is not None
+                      else arguments.slot_bytes)
+        if executor.slab_count is not None:
+            tags += (executor.slab_count * (executor.slab_slots or 256) *
+                     slot_bytes)
+        else:
+            tags += arguments.slots * slot_bytes
+    slabs = sum(e.footprint.get("slabs", 0) for e in executors)
     print("\nwhere sharing bodies would leave the cache")
-    print(f"  slot tags, {len(executors)} x {arguments.slots:,} x "
-          f"{sizes} B   {tags / 2**20:7.1f} MiB")
+    print(f"  slot tags                           {tags / 2**20:7.1f} MiB")
+    if slabs > tags:
+        print(f"  the rest of the committed slabs     "
+              f"{(slabs - tags) / 2**20:7.1f} MiB")
     index = sum(e.footprint.get("stream_index", 0) for e in executors)
     print(f"  stream lookup maps                  {index / 2**20:7.1f} MiB")
     targets = sum(e.footprint.get("targets", 0) for e in executors)
