@@ -499,6 +499,50 @@ void vector_memory_across_a_page() {
   check_memory_program(fixture, cpu, crossing);
 }
 
+/* A memory transfer the library runs (an access across a page) leaves the
+ * guest's native floating-point environment installed: VFP instructions
+ * before and after it round toward zero, and the host's own rounding is
+ * nearest once the run is over. */
+void library_memory_transfer_keeps_the_fp_environment() {
+  Fixture fixture{0x1a32'0d07};
+  fill_pattern(fixture, 2 * guest_page);
+  fixture.code32(0, {
+      0xeee1'1a10U, // vmsr fpscr, r1
+      0xee30'0a81U, // vadd.f32 s0, s1, s2     (round toward zero)
+      0xf462'8a8fU, // vld1.32 {d24, d25}, [r2] (across a page: the library)
+      0xee30'ca81U, // vadd.f32 s24, s1, s2    (the guest's FPCR again)
+      0xf204'7d05U, // vadd.f32 d7, d4, d5     (Neon: nearest)
+      0xee30'ea81U, // vadd.f32 s28, s1, s2
+      arm_svc});
+  const std::size_t crossing = guest_page - 8;
+  for (const std::uint32_t rounding : {round_toward_zero, 0U}) {
+    for (unsigned round = 0; round < 3; ++round) {
+      auto cpu = fp_task(rounding, false);
+      cpu.registers[2] = data_base + static_cast<std::uint32_t>(crossing);
+      ExitCount exits;
+      const auto result = fixture.run(cpu);
+      require(result.reason == ExitReason::system_call);
+      require(ExitCount::total() != 0);
+      const std::uint32_t vfp_sum = rounding != 0U ? one : one_ulp_up;
+      require(lane32(cpu, 0, 0) == vfp_sum);
+      require(lane32(cpu, 6, 0) == vfp_sum);
+      require(lane32(cpu, 7, 0) == vfp_sum);
+      require(half64(cpu, 3, 1) ==
+              (std::uint64_t{one_ulp_up} << 32 | one_ulp_up));
+      require(cpu.fpcr == rounding);
+      std::uint64_t loaded = 0;
+      std::memcpy(&loaded, cpu.vectors[12].bytes.data(), 8);
+      for (std::size_t index = 0; index < 8; ++index)
+        require(((loaded >> (8 * index)) & 0xffU) == pattern(crossing + index));
+    }
+  }
+  // The host's rounding after the runs.
+  volatile float base = 1.0F;
+  volatile float small = 0x1.8p-24F;
+  const float sum = base + small;
+  require(sum > 1.0F);
+}
+
 /* One instruction at `address`, run from fresh registers; the faulting access
  * must leave the registers it would have written alone. */
 void vector_memory_faults() {
@@ -571,6 +615,7 @@ int main() {
   saturation_flag();
   vector_memory_stays_inline();
   vector_memory_across_a_page();
+  library_memory_transfer_keeps_the_fp_environment();
   vector_memory_faults();
   std::puts("arm64-jit-a32-vector: ok");
   return 0;
