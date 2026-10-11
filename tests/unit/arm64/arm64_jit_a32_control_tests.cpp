@@ -1,22 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The JIT's AArch32 control behaviour: IT blocks entered from the start, one
  * instruction at a time and from the middle; blocks longer than the compiler
- * keeps in one translation and the instruction budget across them; and
- * rewritten code (A32 words, T32 halfwords of a 32-bit instruction, one byte)
- * seen by the translations that held the old code. */
+ * keeps in one translation and the instruction budget across them; rewritten
+ * code (A32 words, T32 halfwords of a 32-bit instruction, one byte) seen by
+ * the translations that held the old code; and the complete level's optional
+ * extensions, which decode only where the host has them. */
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/jit/jit_executor.hpp"
+#include "cpu/host_capabilities.hpp"
 
 #include <array>
 #include <cstdio>
+#include <optional>
 #include <span>
 #include <vector>
 
 using namespace uml::emulator::tests;
 using namespace uml::emulator::tests::a32;
 using ::uml::cpu::ExitReason;
+using ::uml::platform::ArmFeature;
+using ::uml::platform::HostCapabilities;
 
 namespace {
 
@@ -349,6 +354,136 @@ void single_step_over_interworking_branches() {
   require(cpu.registers[1] == 9);
 }
 
+/* The optional extensions of the complete level, by the A64 host feature
+ * each is shown for. */
+enum class Extension {
+  crc32, aes, sha1, sha2, fp16, dotprod, fhm, bf16, i8mm, sb, rdm, fcma, jscvt,
+};
+
+/* One instruction of an extension, as an A32 word and as the T32 word
+ * (halfword one in the upper half). */
+struct ExtensionForm {
+  const char *name;
+  Extension extension;
+  std::uint32_t a32;
+  std::uint32_t t32;
+};
+
+constexpr std::array extension_forms{
+    ExtensionForm{"CRC32W", Extension::crc32, 0xe1410042U, 0xfac1f0a2U},
+    ExtensionForm{"AESE", Extension::aes, 0xf3b00302U, 0xffb00302U},
+    ExtensionForm{"SHA1C", Extension::sha1, 0xf2020c44U, 0xef020c44U},
+    ExtensionForm{"SHA256H", Extension::sha2, 0xf3020c44U, 0xff020c44U},
+    ExtensionForm{"VADD.F16", Extension::fp16, 0xf2110d02U, 0xef110d02U},
+    ExtensionForm{"VSDOT", Extension::dotprod, 0xfc210d02U, 0xfc210d02U},
+    ExtensionForm{"VFMAL", Extension::fhm, 0xfc200891U, 0xfc200891U},
+    ExtensionForm{"VDOT.BF16", Extension::bf16, 0xfc010d02U, 0xfc010d02U},
+    ExtensionForm{"VUSDOT", Extension::i8mm, 0xfca10d02U, 0xfca10d02U},
+    ExtensionForm{"SB", Extension::sb, 0xf57ff070U, 0xf3bf8f70U},
+    ExtensionForm{"VQRDMLAH", Extension::rdm, 0xf3110b12U, 0xff110b12U},
+    ExtensionForm{"VCADD", Extension::fcma, 0xfc910802U, 0xfc910802U},
+    ExtensionForm{"VJCVT", Extension::jscvt, 0xeeb90bc1U, 0xeeb90bc1U},
+};
+/* VMAXNM Dd, Dn, Dm: the Armv8 floating-point additions, which every host
+ * has and the host features do not gate. */
+constexpr ExtensionForm always_present{"VMAXNM", Extension::crc32, 0xf3010f12U,
+                                       0xff010f12U}; // its extension unused
+
+/* The host as probed with every extension on, less `lacking` when it is
+ * given: the A64 features a32_features reads. */
+HostCapabilities extension_host(std::optional<Extension> lacking) {
+  HostCapabilities host = ::uml::cpu::host_capabilities();
+  host.advanced_simd = true;
+  host.floating_point = true;
+  const auto feature = [&host, lacking](Extension extension, ArmFeature which,
+                                        bool *flag = nullptr) {
+    const bool on = lacking != extension;
+    if (flag != nullptr)
+      *flag = on;
+    if (on)
+      host.supported.set(static_cast<std::size_t>(which));
+    else
+      host.supported.reset(static_cast<std::size_t>(which));
+  };
+  feature(Extension::crc32, ArmFeature::crc32, &host.crc32);
+  feature(Extension::aes, ArmFeature::aes, &host.aes);
+  feature(Extension::fp16, ArmFeature::fp16, &host.fp16);
+  host.pmull = true;
+  host.sha1 = lacking != Extension::sha1;
+  host.sha2 = lacking != Extension::sha2;
+  feature(Extension::dotprod, ArmFeature::dotprod);
+  feature(Extension::fhm, ArmFeature::fhm);
+  feature(Extension::bf16, ArmFeature::bf16);
+  feature(Extension::i8mm, ArmFeature::i8mm);
+  feature(Extension::sb, ArmFeature::sb);
+  feature(Extension::rdm, ArmFeature::rdm);
+  feature(Extension::fcma, ArmFeature::fcma);
+  feature(Extension::jscvt, ArmFeature::jscvt);
+  return host;
+}
+
+/* Runs each form, A32 and T32, at its own offset followed by an SVC, and
+ * says whether it reached the SVC (true) or the illegal-instruction exit
+ * (false). */
+bool extension_form_runs(Fixture &fixture, std::size_t slot,
+                         const ExtensionForm &form, bool thumb) {
+  const std::size_t offset = slot * 16;
+  if (thumb)
+    fixture.code16(offset, {static_cast<std::uint16_t>(form.t32 >> 16),
+                            static_cast<std::uint16_t>(form.t32), 0xdf00});
+  else
+    fixture.code32(offset, {form.a32, 0xef000000U});
+  auto cpu = Fixture::task(thumb, offset);
+  const auto result = fixture.run(cpu);
+  if (result.reason == ExitReason::system_call)
+    return true;
+  if (result.reason != ExitReason::illegal_instruction) {
+    std::fprintf(stderr, "%s %s: unexpected exit %d\n", form.name,
+                 thumb ? "T32" : "A32", static_cast<int>(result.reason));
+    require(false);
+  }
+  return false;
+}
+
+/* An extension decodes only where the host has its A64 feature, which is
+ * what the guest is shown: on a host without it the form is UNDEFINED, not a
+ * form the semantic library runs, and nothing else changes. */
+void extensions_decode_only_where_the_host_has_them() {
+  unsigned long generation = 0x1a32'0d00;
+  {
+    const auto host = extension_host(std::nullopt);
+    const ::uml::cpu::HostCapabilitiesScope scope{host};
+    Fixture fixture{generation++};
+    std::size_t slot = 0;
+    for (const auto &form : extension_forms)
+      for (const bool thumb : {false, true}) {
+        if (!extension_form_runs(fixture, slot++, form, thumb)) {
+          std::fprintf(stderr, "%s %s is UNDEFINED on a host with it\n",
+                       form.name, thumb ? "T32" : "A32");
+          require(false);
+        }
+      }
+  }
+  for (const auto &lacking : extension_forms) {
+    const auto host = extension_host(lacking.extension);
+    const ::uml::cpu::HostCapabilitiesScope scope{host};
+    Fixture fixture{generation++};
+    std::size_t slot = 0;
+    for (const auto &form : extension_forms)
+      for (const bool thumb : {false, true}) {
+        const bool runs = extension_form_runs(fixture, slot++, form, thumb);
+        if (runs != (form.extension != lacking.extension)) {
+          std::fprintf(stderr, "%s %s %s on a host without %s\n", form.name,
+                       thumb ? "T32" : "A32", runs ? "runs" : "is UNDEFINED",
+                       lacking.name);
+          require(false);
+        }
+      }
+    for (const bool thumb : {false, true})
+      require(extension_form_runs(fixture, slot++, always_present, thumb));
+  }
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
@@ -359,6 +494,7 @@ int main() {
   static_exits_chain();
   rewritten_t32_halfwords();
   rewritten_a32_words();
+  extensions_decode_only_where_the_host_has_them();
   std::puts("arm64-jit-a32-control: ok");
   return 0;
 }

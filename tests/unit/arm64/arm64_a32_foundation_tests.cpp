@@ -239,6 +239,43 @@ void features_follow_level_and_host()
 	}
 }
 
+/* The decoder's profile is exactly what the guest is shown: the level, and
+ * of the optional extensions only the ones the host has, so a form of any
+ * other extension is UNDEFINED. Below the complete level there are none. */
+void decode_profile_is_what_the_guest_is_shown()
+{
+	namespace dec = arm64::aarch32;
+	for (const auto level : all_levels) {
+		const auto profile = arm64::a32_decode_profile(full_host(), level);
+		require(profile.level == static_cast<dec::Level>(level));
+		require((profile.features == dec::FeatureSet::all()) ==
+			(level == A32Support::complete),
+			"a level below complete decoded an extension");
+		if (level != A32Support::complete)
+			require(profile.features == dec::Profile::at(profile.level).features);
+	}
+	for (unsigned bits = 0; bits < 1U << predicate_count; ++bits) {
+		const auto each = predicates_of(bits);
+		const auto got = arm64::a32_decode_profile(host_with(each),
+			A32Support::complete).features;
+		require(got.has(dec::Feature::crc32) == each.crc32 &&
+			got.has(dec::Feature::aes) == each.aes &&
+			got.has(dec::Feature::pmull) == (each.aes && each.pmull) &&
+			got.has(dec::Feature::sha1) == each.sha1 &&
+			got.has(dec::Feature::sha2) == each.sha2 &&
+			got.has(dec::Feature::fp16) == each.fp16 &&
+			got.has(dec::Feature::dotprod) == each.dotprod &&
+			got.has(dec::Feature::fhm) == each.fhm &&
+			got.has(dec::Feature::bf16) == each.bf16 &&
+			got.has(dec::Feature::i8mm) == each.i8mm &&
+			got.has(dec::Feature::sb) == each.sb &&
+			got.has(dec::Feature::rdm) == each.rdm &&
+			got.has(dec::Feature::fcma) == each.fcma &&
+			got.has(dec::Feature::jscvt) == each.jscvt,
+			"a decoded extension does not follow its host predicate");
+	}
+}
+
 /* No AArch32 below base: every register reads zero and both HWCAP words are
  * zero, so production, which presents none, changes nothing. */
 void nothing_is_presented_below_base()
@@ -482,6 +519,7 @@ int main()
 	presented_support_follows_policy_and_level();
 	engines_present_their_level_under_the_policy();
 	features_follow_level_and_host();
+	decode_profile_is_what_the_guest_is_shown();
 	nothing_is_presented_below_base();
 	id_registers_are_pinned_per_level();
 	optional_parts_follow_the_host();

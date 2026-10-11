@@ -320,7 +320,7 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     return pack_jit_result(Event::fatal, 0);
   /* A terminal helper runs outside the native register environment. */
   arm64::restore_native_fp_environment(*cpu);
-  const auto profile = aarch32::Profile::at(a32::a32_level());
+  const auto profile = a32::decode_profile();
   const auto inst =
       aarch32::key_is_thumb(key)
           ? aarch32::decode_thumb(

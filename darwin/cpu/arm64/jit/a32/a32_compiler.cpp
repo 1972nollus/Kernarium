@@ -45,8 +45,7 @@ A32Compiler::A32Compiler(void *link_context, LinkResolver link_resolver,
                          IndirectLinkResolver indirect_link_resolver) noexcept
     : emitter_{std::size_t{1} << 18U},
       track_direct_stores_{track_direct_stores},
-      profile_{aarch32::Profile::at(
-          static_cast<aarch32::Level>(a32_level()))} {
+      profile_{decode_profile()} {
   attach_family_emitter(&emitter_, &native_fp_, !track_direct_stores_);
   attach_link_resolver(link_context, link_resolver);
   attach_indirect_link_resolver(link_context, indirect_link_resolver);

@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/a32_profile.hpp"
+#include "cpu/arm64/jit/jit_a32_support.hpp"
 
 #include <cstdint>
 
@@ -81,8 +82,9 @@ enum class Ext : std::uint8_t {
   dot, dot_element, rdm, vcadd, vcmla, vcmla_element,
 };
 [[nodiscard]] Ext extension_of(aarch32::Form form) noexcept;
-/* Whether the compiler lowers the form on this host (its A64 instruction
- * needs a host feature that the host may lack). */
+/* Whether the compiler lowers the form. The decoder presents a form only
+ * when the host has its extension (decode_profile), so a lowered form's A64
+ * instruction is always available. */
 [[nodiscard]] bool extension_lowered(aarch32::Form form) noexcept;
 
 /* The forms the compiler sends to the AArch32 semantic library every time
@@ -96,7 +98,13 @@ enum class Ext : std::uint8_t {
 
 /* The decoder level the compiler implements. */
 [[nodiscard]] constexpr aarch32::Level a32_level() noexcept {
-  return aarch32::Level::complete;
+  return static_cast<aarch32::Level>(a32_support);
 }
+
+/* The profile the compiler and the terminal helper decode against: the
+ * level above and the optional extensions the host has, which are the ones
+ * the guest is shown (a32_decode_profile). A form of an extension the host
+ * lacks is UNDEFINED, not run in the semantic library. */
+[[nodiscard]] aarch32::Profile decode_profile() noexcept;
 
 } // namespace uml::cpu::arm64::jit::a32

@@ -855,7 +855,9 @@ in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The forms that the semantic
 library runs (the parallel arithmetic and the Armv8 extensions the compiler does
 not lower) must take it in all of them, and every vector form of the simd level
-must have a lowering. The corpus's VJCVT cases include a flush-to-zero
+must have a lowering. A case whose form is of an extension the host lacks
+(BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
+decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
 subnormal input, which exercises the correction for a host whose FJCVTZS
 reports it as exact. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
@@ -868,8 +870,10 @@ loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
 STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
-step at a time and from the middle, long blocks under a small budget, and code
-rewritten under translations. `arm64-jit-a32-vector` covers what the corpus
+step at a time and from the middle, long blocks under a small budget, code
+rewritten under translations, and one form of each optional extension on hosts
+with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
+T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
 does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
 and the Standard FPSCR value for a Neon one across a conditional arm, a chained
 branch and an exit, QC across runs, and the vector memory forms staying inline

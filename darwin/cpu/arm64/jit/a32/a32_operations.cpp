@@ -247,37 +247,16 @@ Ext extension_of(aarch32::Form form) noexcept {
 }
 
 bool extension_lowered(aarch32::Form form) noexcept {
-  const auto ext = extension_of(form);
-  if (ext == Ext::none)
+  if (extension_of(form) == Ext::none)
     return false;
-  const std::string_view name = aarch32::kForms[static_cast<std::size_t>(form)].name;
   /* The half-precision scalar forms are the library's. */
-  if (name.ends_with("_H"))
-    return false;
-  const auto &host = ::uml::cpu::host_capabilities();
-  switch (ext) {
-  case Ext::crc32:
-    return host.crc32;
-  case Ext::aes:
-    return host.aes;
-  case Ext::sha: {
-    const std::string_view mnemonic = aarch32::kForms[static_cast<std::size_t>(form)].mnemonic;
-    return mnemonic.starts_with("SHA1") ? host.sha1 : host.sha2;
-  }
-  case Ext::vjcvt:
-    return host.has(::uml::cpu::ArmFeature::jscvt);
-  case Ext::dot:
-  case Ext::dot_element:
-    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::dotprod);
-  case Ext::rdm:
-    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::rdm);
-  case Ext::vcadd:
-  case Ext::vcmla:
-  case Ext::vcmla_element:
-    return host.advanced_simd && host.has(::uml::cpu::ArmFeature::fcma);
-  default:
-    return host.advanced_simd;
-  }
+  const std::string_view name =
+      aarch32::kForms[static_cast<std::size_t>(form)].name;
+  return !name.ends_with("_H");
+}
+
+aarch32::Profile decode_profile() noexcept {
+  return a32_decode_profile(::uml::cpu::host_capabilities(), a32_support);
 }
 
 bool is_library_form(aarch32::Form form) noexcept {

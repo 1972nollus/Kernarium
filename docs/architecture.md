@@ -890,14 +890,16 @@ registers. They share the scalar transfers' TLB sequence and alignment rule,
 and a page crossing, a faulting alignment, a PC base or a list past the
 register file runs the instruction in the semantic library instead.
 
-At the complete level the JIT presents the Armv8 extensions as well. It
-lowers the ones that are the host's own instruction on the same operands when
-the host has them: CRC32, the AES and SHA-1 and SHA-256 instructions, VSEL
-(FCSEL on the guest flags), VMAXNM and VMINNM, VRINT and VCVT with a named
-rounding (scalar under the guest's FPCR, Advanced SIMD under the Standard
-FPSCR value), the signed and unsigned dot products, VQRDMLAH and VQRDMLSH,
-VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB and an
-ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
+At the complete level the JIT presents the Armv8 extensions as well, each where
+the host has its A64 feature: it decodes against `a32_decode_profile`, the
+extensions the guest is shown, so a form of an extension the host lacks is
+UNDEFINED and never reaches the semantic library. It lowers the ones that are
+the host's own instruction on the same operands: CRC32, the AES and SHA-1 and
+SHA-256 instructions, VSEL (FCSEL on the guest flags), VMAXNM and VMINNM, VRINT
+and VCVT with a named rounding (scalar under the guest's FPCR, Advanced SIMD
+under the Standard FPSCR value), the signed and unsigned dot products, VQRDMLAH
+and VQRDMLSH, VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB
+and an ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
 FJCVTZS reports a flushed subnormal as exact, the A64 JIT's correction (a
 subnormal input is never exact) applies here too. A D-register form that A64
 has no 64-bit arrangement for (single-precision VCMLA by element) runs on the

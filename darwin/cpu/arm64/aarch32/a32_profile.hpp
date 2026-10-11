@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/arm64/aarch32/decode_types.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstdint>
@@ -117,6 +118,39 @@ struct A32Features final {
 	features.fcma = host.has(ArmFeature::fcma);
 	features.jscvt = host.has(ArmFeature::jscvt);
 	return features;
+}
+
+/* The profile an engine decodes AArch32 against at `support` on this host:
+ * the level and exactly the optional extensions the guest is shown
+ * (a32_features). A form of an extension the host lacks is therefore
+ * UNDEFINED, as the HWCAPs and the identification registers say, and an
+ * engine never executes it, whether it lowers the extension or runs it in
+ * the semantic library. */
+[[nodiscard]] inline aarch32::Profile a32_decode_profile(
+	const HostCapabilities &host, A32Support support) noexcept
+{
+	const auto shown = a32_features(host, support);
+	aarch32::FeatureSet features;
+	const auto add = [&features](bool present,
+				     aarch32::Feature feature) noexcept {
+		if (present)
+			features = features.with(feature);
+	};
+	add(shown.fp16, aarch32::Feature::fp16);
+	add(shown.aes, aarch32::Feature::aes);
+	add(shown.pmull, aarch32::Feature::pmull);
+	add(shown.sha1, aarch32::Feature::sha1);
+	add(shown.sha2, aarch32::Feature::sha2);
+	add(shown.crc32, aarch32::Feature::crc32);
+	add(shown.dotprod, aarch32::Feature::dotprod);
+	add(shown.fhm, aarch32::Feature::fhm);
+	add(shown.bf16, aarch32::Feature::bf16);
+	add(shown.i8mm, aarch32::Feature::i8mm);
+	add(shown.sb, aarch32::Feature::sb);
+	add(shown.rdm, aarch32::Feature::rdm);
+	add(shown.fcma, aarch32::Feature::fcma);
+	add(shown.jscvt, aarch32::Feature::jscvt);
+	return aarch32::Profile{static_cast<aarch32::Level>(support), features};
 }
 
 } // namespace uml::cpu::arm64

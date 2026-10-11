@@ -4,9 +4,10 @@
 // instructions, VSEL, VMAXNM and VMINNM, VRINT, VCVT with a named rounding,
 // VJCVT and SB. Each is the host's own instruction on the operands (their A32
 // and A64 semantics are the same), under the guest's FPCR for the scalar
-// forms and the Standard FPSCR value for the Advanced SIMD ones. A form the
-// host cannot run (extension_lowered), a half-precision form and a
-// half-precision Advanced SIMD variant leave through the semantic library.
+// forms and the Standard FPSCR value for the Advanced SIMD ones. The decoder
+// presents a form only where the host has its extension (decode_profile), so
+// the host instruction exists; a half-precision form and a half-precision
+// Advanced SIMD variant leave through the semantic library.
 
 #include "a32_compiler.hpp"
 
