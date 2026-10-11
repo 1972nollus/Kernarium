@@ -877,11 +877,11 @@ SME profiles are, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
 Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. Both engines are at `none`: `CpuEngine::run_aarch32`
-is the entry for a task in AArch32 state, the A64 `run` is unchanged, and an
-engine below `base` takes the new entry as the illegal-instruction exit
-without touching the state. The development policy
-`DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
+milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
+AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
+new entry as the illegal-instruction exit without touching the state. The
+gadget engine and the JIT are both at `complete` on macOS. The development
+policy `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
 registers and the compat AT_HWCAP and AT_HWCAP2 words derive from that level
@@ -909,6 +909,185 @@ its ISA and counts its saved guest units in that ISA's unit, a word for A64
 and A32 and a halfword for T32, so one page-bounded validation serves the
 gadget cache's validating lookups, the JIT's stale lookups and the shared
 tier, whose entries must carry the ISA of the key they are stored under.
+
+The gadget engine's AArch32 part translates A32 and T32 with the shared
+decoder into the data-only streams A64 uses, so one executor, one program
+cache and one execution boundary run both
+([`gadgets/a32`](../darwin/cpu/arm64/gadgets/a32/a32_builder.hpp);
+`run_translated_aarch32_blocks` in `cpu/arm64/engine_execution.hpp` is the
+loop an engine's `run_aarch32` takes). Its gadgets come from the decoder's
+table by `engine/generate_a32.py` and `engine/a32.inc`, in a bank, a cold
+section and a veneer island of their own after the SVE part, so no A64 entry
+moves and the part holds no SVE or SME word. A conditional instruction is a
+skip over a run of instructions sharing its condition, a conditional
+terminal gives the skipped instruction back, and a block never ends inside an
+IT block: one the block limit cuts off ends in an unlinked exit with ITSTATE
+stored. A word the decoder rejects, a coprocessor word the profile lacks and
+a form above the engine's level end the block in the illegal-instruction exit
+at the word whatever its condition, except a coprocessor word that is not
+UNPREDICTABLE in the complete profile, which a failing condition skips like
+any other instruction. SVC, BKPT and a retiring exit count their instruction;
+a fault or undefined exit does not. SVC leaves PC after itself and ITSTATE
+advanced; a fault, UDF or BKPT leaves PC at the instruction with its own
+ITSTATE, which a T32 block recovers by decoding its saved halfwords again. An
+entry with ITSTATE set, and a single step, run one uncached instruction at a
+time until ITSTATE is zero. LDM, STM, PUSH and POP that cross a page, and
+the rare integer forms (parallel arithmetic, SEL, USAD8, the dual multiplies,
+the 16-bit saturates and extends, QADD and its relatives), run through the
+shared AArch32 semantic library (`cpu/arm64/aarch32/semantics.hpp`): the
+`a32_library` gadget and the crossing paths spill NZCV, decode the word again
+and call `execute_a32`, which translates every page before a load changes a
+register, stores the words ahead of a faulting STM and leaves the base
+register as it was. LDREX and STREX, and LDAEX and STLEX, are the A64
+exclusive gadgets and share their forward-progress mechanism; LDA and STL are
+the A64 ordered ones. The library-exit counters name any lowered form that
+reaches the library, and the unit tests require none does.
+
+VFP and Advanced SIMD are lowered onto the A64 instructions with the same
+lanes. D0-D31 and S0-S31 are byte offsets into `CpuState::vectors`, and a
+gadget stores only the bytes the A32 destination has. VFP runs under the
+guest's FPCR in the native FP environment. Advanced SIMD floating point runs
+under the standard FPSCR value (flush to zero, default NaN, round to nearest):
+each such gadget starts with `a32_fp_standard` and each VFP gadget with
+`a32_fp_guest` (`engine/a32.inc`), which write the host FPCR only when
+`CpuState::a32_fp_standard` says the native environment holds the other one,
+so a loop of one kind switches once and the execution boundary restores the
+host's FPCR whichever it holds. The A32 shifts by an immediate use the A64
+shift-by-register instructions with a replicated signed amount, so a gadget
+serves every amount; the forms that exist in A64 only with an immediate
+(SQSHLU, the converts with a fraction width, VEXT) have a gadget per
+immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
+VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
+interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
+with the register or immediate writeback. VRECPS and VRSQRTS (AArch32's
+unfused steps, not the fused A64 ones), a structure access or VLDM and VSTM
+that crosses a page, and a misaligned access with an alignment hint run
+through the semantic library, whose exit commits the live FPSR to
+CpuState before the call and reinstalls it after, as the A64 engine's
+software floating-point helpers do. A saturating instruction leaves QC in the
+cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
+`engine/a32_simd.py` document the groups and the operand words.
+
+The complete level adds the Armv8 floating-point additions and the optional
+extensions. The engine decodes in the profile its host gives it
+(`a32::decode_profile`): the extensions the host has the A64 feature for
+(`a32_features`), which are the ones the guest is shown, so a form of any other
+extension is UNDEFINED, as the HWCAPs say. The generator
+(`engine/a32_armv8.py`) lowers each shown extension onto the A64 instruction
+with the same lanes: CRC32, AES, SHA-1 and SHA-256, VMULL.P64, SB, VSEL,
+VMAXNM, VMINNM, VRINT and VCVT with a rounding mode, the double/half
+conversions, the half-precision VFP forms (arithmetic, compares, conversions,
+VMOVX and VINS), half-precision Advanced SIMD, the dot products, VQRDMLAH and
+VQRDMLSH, VCADD, VCMLA and VFMAL and VFMSL. A decoded form with no gadget is
+the semantic library's, run through the `a32_library` gadget: the BF16 and
+Int8 matrix forms and VJCVT, on a host that has them. The FP16 VFP forms share
+the single-precision plans (aux bit 2) and store a half whole through its S
+register, which a half result zero-extends into.
+The level the engine translates at is `a32_support`; a test or a bring-up
+names another one in `BuildOptions::a32_level`, and the runtime never does.
+`arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`
+that the engine defines exactly what the decoder defines at its level,
+`arm64-gadget-a32-corpus` that it matches the AArch32 corpus records of that
+level, and `arm64-gadget-region-layout` the part's placement.
+
+The runtime enters an AArch32 task through `run_aarch32` only while the run
+presents AArch32, which `guest_a32_support()` decides in one place: the
+selected engine's level under the development policy. The compat
+`AT_HWCAP` and `AT_HWCAP2` words the guest selector returns derive from the
+same level, so a run advertises exactly what its engine runs, a non-zero word
+is the kernel's whole evidence that a run executes AArch32, and an AArch32
+entry the run does not present is a fatal event. The conversions live in
+[`runtime/aarch32_guest.hpp`](../darwin/runtime/aarch32_guest.hpp) and the
+formats of the status word and FPSCR in
+[`cpu/arm64/aarch32/state_format.hpp`](../darwin/cpu/arm64/aarch32/state_format.hpp).
+Loading takes (PC, T) to the key; NZCV, Q, the GE flags (as the byte-lane
+mask SEL needs) and ITSTATE out of the SPSR-layout status; TPIDRURW, TPIDRURO
+and CP15BEN; and FPSCR's two halves, with FPSCR's N, Z, C and V in
+`a32_fpscr_nzcv` because the hosts' FPSR[31:28] is RAZ/WI and its control
+bits cut to AHP, DN, FZ, RMode and FZ16 (no trap enables, no short vectors).
+It clears the exclusive monitor and top-byte ignore and leaves the vector
+registers lazy, as for A64. Saving repacks only what an engine owns (flags,
+GE, IT, T, the PC) and keeps the kernel's own status bits, writes R0-R14
+zero-extended and leaves the other registers of the bridge alone. An entry
+is fatal unless the status is User mode with E clear, IT comes with T, and
+the task is neither streaming nor holds live SVE registers. An engine's exit
+becomes the bridge event for a 32-bit task: BKPT carries its immediate and
+the BKPT32 exception class, a completed single step the software-step class,
+and a PC alignment fault the 32-bit target address.
+
+The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
+without changing it. An A32 or T32 block is decoded by the shared decoder and
+compiled by its own compiler, which reuses the A64 compiler's register
+residency, flag machine, cold paths, direct and indirect links, tracked stores
+and publication: R0-R14 are resident host registers written back at every
+exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
+condition is a branch over the body, and a link's target is the key. Every exit
+whose successor is static (a branch, the fall-through of a block the 60
+instructions of a window cut short, the arm of a conditional instruction or
+CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
+straight run chains like a loop. Memory
+takes the shared inline TLB sequence after a 32-bit address and the alignment
+rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
+byte and halfword forms) are an alignment-checked LDAR and STLR. A
+load-exclusive, up to four register instructions and the store-exclusive
+(acquire and release forms included) on the same address at the start of a
+block become one host load-exclusive and store-exclusive, so the guest's
+monitor is the host's; a failed store leaves the status to the guest's retry
+loop. What the lowering declines (an access across a page or one that must
+fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
+block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
+instruction in the AArch32 semantic library over the TLB, with the library's
+fault ordering. The exclusives run there too, over the JIT's versioned software
+reservation: the helper overrides the library's monitor hooks, because the
+guest monitor is shared with the tracked stores and the fused host exclusives
+and the library's default compare-and-swap monitor is not. An entry in the middle of an IT block and a single
+step run one instruction in the single-instruction arena, with the IT state
+the exit recorded. Translations validate their saved guest bytes in
+the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
+translation is seen. Executable memory comes only from the arena the A64 JIT
+already uses; the A32 files allocate and publish none.
+
+The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
+in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
+host registers V16-V31, a D register is the low or high half of its Q and an S
+register a 32-bit lane, so a narrower operand is staged in a scratch register
+and a result is inserted into its half or lane. A VFP instruction runs under the
+guest's FPCR and FPSR, which the executor installs for a block that holds one
+(the native floating-point environment of the A64 compiler); an Advanced SIMD
+floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
+round to nearest, AHP and FZ16 the guest's), which the translation sets before
+the first one and puts back at every exit and in a conditional arm that changed
+it, so a block always begins and ends under the guest's FPCR and a link keeps
+its meaning. A saturating instruction sets QC in the host FPSR, which is the
+guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
+pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
+infinity times a zero without raising Invalid Operation. VLDR, VSTR and the
+register-list transfers move whole Q registers where the list is aligned to
+one; the structure loads and stores use the host LDn and STn on scratch
+registers. They share the scalar transfers' TLB sequence and alignment rule,
+and a page crossing, a faulting alignment, a PC base or a list past the
+register file runs the instruction in the semantic library instead.
+
+At the complete level the JIT presents the Armv8 extensions as well, each where
+the host has its A64 feature: it decodes against `a32_decode_profile`, the
+extensions the guest is shown, so a form of an extension the host lacks is
+UNDEFINED and never reaches the semantic library. It lowers the ones that are
+the host's own instruction on the same operands: CRC32, the AES and SHA-1 and
+SHA-256 instructions, VSEL (FCSEL on the guest flags), VMAXNM and VMINNM, VRINT
+and VCVT with a named rounding (scalar under the guest's FPCR, Advanced SIMD
+under the Standard FPSCR value), the signed and unsigned dot products, VQRDMLAH
+and VQRDMLSH, VCADD and VCMLA (half precision as well, with FP16) and SB (a DSB
+and an ISB). VJCVT is FJCVTZS with its Z flag taken into FPSCR; on a host whose
+FJCVTZS reports a flushed subnormal as exact, the A64 JIT's correction (a
+subnormal input is never exact) applies here too. A D-register form that A64
+has no 64-bit arrangement for (single-precision VCMLA by element) runs on the
+128-bit arrangement with the doubleword in both halves, which raises the same
+flags. The rest of the level runs in the semantic library: the other
+half-precision forms, the fused widening half-precision multiply-accumulates,
+the BFloat16 and 8-bit matrix forms and the mixed-sign dot products, and a
+half-precision variant of an Advanced SIMD floating-point form that the
+compiler does not lower, which shares the form of the single-precision one and
+differs in the operands' esize.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
@@ -1059,8 +1238,8 @@ one instruction at a time with the architecture's fault ordering.
 `a32_semantics_covers()` holds for every implemented form, and a word
 outside it is a fatal internal error. The gadget engine and the JIT route
 their slow paths and long tails to it, and the corpus's model lane runs the
-instruction corpus through it. Until an engine calls it, no product binary
-links it.
+instruction corpus through it. The JIT links it for what its lowering
+declines.
 
 ## Kernel and Android ownership
 

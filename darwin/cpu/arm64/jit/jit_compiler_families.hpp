@@ -11,6 +11,10 @@
 
 namespace uml::cpu::arm64::jit {
 
+namespace a32 {
+class A32Compiler;
+}
+
 namespace arm64 = ::uml::cpu::arm64;
 using ::uml::cpu::ArmFeature;
 using ::uml::cpu::ArmFeatureSet;
@@ -23,6 +27,10 @@ using ::uml::cpu::host_capabilities;
  * executor/cache state.
  */
 class JitCompilerFamilies {
+  /* The AArch32 compiler (jit/a32) keeps its guest registers in the same
+   * bindings and flag state, and branches over conditional bodies on them. */
+  friend class a32::A32Compiler;
+
 protected:
   using Event = ::uml::cpu::EngineEvent;
   using Label = std::size_t;

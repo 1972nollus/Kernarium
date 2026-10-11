@@ -16,18 +16,25 @@ extern "C" unsigned long darwin_uml_guest_hwcap(void)
 		::uml::runtime::current_guest_host_capabilities())[0];
 }
 
-/* The AArch32 words of a task, zero while no engine executes AArch32 EL0:
- * the kernel then refuses 32-bit ELF images, and run_common_guest() returns
- * DARWIN_UML_EVENT_FATAL for an AArch32 entry. An engine's profile supplies
- * them once the engine runs AArch32. */
+/* The AT_HWCAP and AT_HWCAP2 words of a 32-bit task, from the AArch32
+ * profile the running engine presents (guest_a32_support), as the AArch64
+ * words follow its profile. They are zero until an engine runs AArch32 and
+ * the guest-AArch32 policy is on, and the kernel then refuses 32-bit ELF
+ * images: a non-zero word is the single source of truth that this run
+ * executes AArch32 EL0, and run_common_guest() enters an AArch32 task only
+ * where it holds. */
 extern "C" unsigned long darwin_uml_guest_compat_hwcap(void)
 {
-	return 0;
+	return ::uml::cpu::arm64::detail::guest_compat_hwcaps(
+		::uml::runtime::current_guest_host_capabilities(),
+		::uml::runtime::current_guest_a32_support())[0];
 }
 
 extern "C" unsigned long darwin_uml_guest_compat_hwcap2(void)
 {
-	return 0;
+	return ::uml::cpu::arm64::detail::guest_compat_hwcaps(
+		::uml::runtime::current_guest_host_capabilities(),
+		::uml::runtime::current_guest_a32_support())[1];
 }
 
 extern "C" const char *darwin_uml_guest_cpu_model_name(void)

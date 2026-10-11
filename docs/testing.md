@@ -266,7 +266,8 @@ tracer's session (registers, system call and single-step stops, signal-frame
 VFP state), a core dump and many runs at once, and requires the 4 KiB-only
 program to run on a 4 KiB guest and to be killed by `SIGSEGV` at exec on a
 16 KiB one, leaving the guest working. The tooling test
-`aarch32-elf32-wrapper` checks the two layouts the wrapper writes.
+`aarch32-elf32-wrapper` checks the two layouts the wrapper writes, and
+`aarch32-elf32-linker` the multi-object linker of the engine probe below.
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
@@ -868,8 +869,8 @@ check that with the policy off the probe sees no SVE and PTRUE is undefined.
 offsets, the guest-AArch32 policy, the engines' support levels and what a
 policy presents of them, the AArch32 identification registers and compat
 HWCAP words at each level over every subset of the host features they follow,
-and that both engines take the AArch32 entry as the illegal-instruction exit
-without changing the state. `arm64-a32-guest-key` checks the tagged
+and that an engine below `base` takes the AArch32 entry as the
+illegal-instruction exit without changing the state. `arm64-a32-guest-key` checks the tagged
 translation keys (round trips, interworking, that no key collides with an A64
 key, the empty cell or a fault position, and the hash-visible bit) and the
 key-aware validation of saved guest units across page boundaries of both
@@ -877,6 +878,122 @@ guest page sizes. `arm64-jit-shared-translation-cache` also checks that the
 shared tier keys and sizes AArch32 translations by ISA. Unit binaries take the
 policy from their environment as well; the suites must hold unchanged with
 `DARWIN_UML_GUEST_AARCH32=1`.
+
+`arm64-gadget-a32-control` runs small A32 and T32 programs through the gadget
+engine's production AArch32 loop and checks what its translator decides:
+retirement counts (skipped conditional instructions retire, a fault or an
+undefined word does not), the key left in the PC, the architectural fault
+address, ITSTATE at an SVC, at a fault and when an entry resumes in the middle
+of a block, interworking in both directions, the A32 target with bit 1 set,
+the instruction budget, single step, code that changes in place, the
+exclusives and the Armv8 acquire and release forms (including loops whose
+plain stores share the target's TLB set and the compare-and-swap helpers of
+the kernel's user-helper page), the CP15 and counter reads, and LDM, STM and
+LDRD across a page, mapped and not, and that Advanced SIMD floating point
+runs under the standard FPSCR value while VFP keeps the guest's (in either
+order, in a skipped conditional run and across a block that ends inside a
+run), that a VFP word is illegal when the engine translates at the base
+level, and that at the complete level a form of an extension (CRC32, AES,
+SHA-1, PMULL, FP16, DotProd, RDM, FCMA, FHM, BF16, I8MM, JSCVT) executes on a
+host that has it, as a gadget or in the semantic library, and is the
+illegal-instruction exit, not retired, on one that does not (the test builds
+one guest on the machine's capabilities and one on a host with none of the
+optional ones). `arm64-gadget-a32-forms` runs every
+stored sample word of the decoder's data and the whole 16-bit Thumb space and
+requires the engine to raise the illegal-instruction exit exactly where the
+decoder, at the engine's level, rejects the word. Both also hold the
+library-exit count gate: with the semantic library's exit counters on from a
+clean state, only a form the engine leaves to the library, or a block transfer
+that crossed a page, may reach it, and the forms the engine leaves to it do.
+`arm64-gadget-a32-corpus`
+runs the cases of the AArch32 corpus whose instructions the engine's level
+implements in the oracle's memory map and compares the signal or system call,
+the instruction and address it was raised at, the registers, flags, Q, GE,
+D0-D31, FPSCR, the data region and the retired count (a case whose forms need an
+extension the host lacks, BF16 and I8MM on the M1 Ultra, is skipped);
+`--level` runs the
+cases of another level with the engine translating at it, which is how a
+level is brought up before the engine's own moves. The `unaligned` and
+`fpscr-reserved` suites are unrecorded until a hardware oracle exists, so
+nothing here invents expectations for them. All three run in both page
+profiles.
+Instruction semantics belong to the instruction corpus, not to the first two.
+
+`arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
+the architectural positions of the status word's fields, the load and save of
+every field around an engine's AArch32 entry (key, flags, GE, IT, FPSCR
+split, TPIDR registers, CP15BEN; load then save is the identity over random
+states in both Thumb and ARM state), which entries the kernel may hand over,
+the bridge event of every exit, and that the compat HWCAPs and the guest entry
+points follow the level the run presents, with the policy off and on. An
+engine that has reached `base` makes the policy-on run enter it for real: an
+entry at an unmapped PC must fault there.
+
+`guest-aarch32-engine-gadgets` and `guest-aarch32-engine-jit` run the engine
+probe, a freestanding armhf program from `tests/integration/aarch32/engine_probe/`
+that boots as the guest's `/init` under `DARWIN_UML_GUEST_AARCH32=1`. The build
+compiles it with the configured compiler's ARM backend and links it with
+`link_elf32.py`, in a layout for any page size and in one for 4 KiB pages
+only, which a 4 KiB guest also runs. Its groups cover system calls and errno,
+A32/T32 interworking, signal frames with VFP state through the sigpage and
+`SA_RESTORER`, every kuser helper, TPIDRURO and TPIDRURW, `cacheflush` with
+self-modifying code, alignment and memory faults, UNDEFINED encodings (UDF,
+SETEND, SWP, a CP15 barrier with `abi.cp15_barrier` cleared), `SIGTRAP` from
+BKPT and `udf #16` under ptrace and a single step through an IT block,
+LDREX/STREX and the kuser cmpxchg under contention across threads and
+processes, VFP, Advanced SIMD and FPSCR semantics (including structure loads
+and stores alone in a block, across a reschedule), and, at the complete
+level, the Armv8 floating-point additions (VRINT, VCVT with a rounding mode,
+VMAXNM/VMINNM) and the crypto, CRC32, dot-product and half-precision
+extensions against known answers. A group
+needing a higher level than the engine's is skipped inside the probe from the
+HWCAP words it sees, and an extension the words leave out must raise `SIGILL`.
+Every SIGILL is counted: one the probe did not expect fails the run. A test
+skips, naming its reason, while its engine implements no AArch32 (the level
+`uml-a32-engine-support` prints is `none`). `A32_PROBE_GROUPS` selects groups
+by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
+runner print every line of the guest's output, passes included.
+
+## AArch32 JIT
+
+The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
+`arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
+through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
+each of the oracle's two epilogues, and compares registers, APSR, thread
+registers, changed data, event, fault address and retired count; a failing
+exclusive case runs once more, because a host store-exclusive may fail without
+cause. It then requires every lowered form to stay out of the slow helper from a
+clean state: each event-free case runs twice, and past the first run one case
+in which the form always executes must take no helper exit (the others cross a
+page or write back over the loaded register). The forms that the semantic
+library runs (the parallel arithmetic and the Armv8 extensions the compiler does
+not lower) must take it in all of them, and every vector form of the simd level
+must have a lowering. A case whose form is of an extension the host lacks
+(BFloat16 and the 8-bit matrix forms on an M1) is skipped, because the JIT
+decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
+subnormal input, which exercises the correction for a host whose FJCVTZS
+reports it as exact. `arm64-jit-a32-runtime`,
+`arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
+programs against an independent reference of the instruction forms (the corpus
+carries T32).
+`arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
+idiom, the monitor rules, fault and alignment exits, two threads counting
+exactly and an ordinary store clearing a reservation, and requires the fused
+loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+STL with their byte and halfword forms, the always-checked alignment, the fused
+and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
+helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
+step at a time and from the middle, long blocks under a small budget, code
+rewritten under translations, and one form of each optional extension on hosts
+with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
+T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
+does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
+and the Standard FPSCR value for a Neon one across a conditional arm, a chained
+branch and an exit, QC across runs, and the vector memory forms staying inline
+and taking the library, with its data and faults, across a page, on a
+misalignment and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's
+A64 encoders with LLVM MC, and `arm64-jit-a32-vector-encoder` those of the
+vector instruction classes.
 
 ## x86 instruction conformance
 

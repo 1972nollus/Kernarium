@@ -3,8 +3,8 @@
  * and its assembly offsets, the guest-AArch32 policy, the engines' support
  * levels and what a run presents of them, the AArch32 identification
  * registers and compat HWCAPs derived from the profile, and the AArch32
- * entry of both engines, which is the illegal-instruction exit until a lane
- * raises the level. The keys are in arm64-a32-guest-key. */
+ * entry of an engine below base, which is the illegal-instruction exit
+ * until a lane raises the level. The keys are in arm64-a32-guest-key. */
 #include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/cpu_state.hpp"
@@ -171,22 +171,22 @@ void presented_support_follows_policy_and_level()
 	}
 }
 
-/* Both engines are at none, so under any policy neither presents AArch32,
- * and the entry points agree with the constants. */
-void engines_present_no_aarch32_yet()
+/* Under the policy off an engine presents no AArch32 whatever it implements;
+ * on, it presents exactly its level; and the factory agrees with the
+ * constants. */
+void engines_present_their_level_under_the_policy()
 {
-	require(arm64::gadgets::a32_support == A32Support::none);
-	require(arm64::jit::a32_support == A32Support::none);
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::gadgets) ==
 		arm64::gadgets::a32_support);
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::jit) ==
 		arm64::jit::a32_support);
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
-		     ::uml::cpu::EngineKind::jit})
-		for (const bool policy : {false, true})
-			require(arm64::a32_presented_support(
-				::uml::cpu::engine_a32_support(kind), policy) ==
-				A32Support::none);
+		     ::uml::cpu::EngineKind::jit}) {
+		const auto level = ::uml::cpu::engine_a32_support(kind);
+		require(arm64::a32_presented_support(level, false) ==
+			A32Support::none);
+		require(arm64::a32_presented_support(level, true) == level);
+	}
 }
 
 /* A level presents its parts and nothing above it, and each host-dependent
@@ -236,6 +236,43 @@ void features_follow_level_and_host()
 			got.i8mm == each.i8mm && got.sb == each.sb &&
 			got.rdm == each.rdm && got.fcma == each.fcma &&
 			got.jscvt == each.jscvt, "a feature does not follow its host predicate");
+	}
+}
+
+/* The decoder's profile is exactly what the guest is shown: the level, and
+ * of the optional extensions only the ones the host has, so a form of any
+ * other extension is UNDEFINED. Below the complete level there are none. */
+void decode_profile_is_what_the_guest_is_shown()
+{
+	namespace dec = arm64::aarch32;
+	for (const auto level : all_levels) {
+		const auto profile = arm64::a32_decode_profile(full_host(), level);
+		require(profile.level == static_cast<dec::Level>(level));
+		require((profile.features == dec::FeatureSet::all()) ==
+			(level == A32Support::complete),
+			"a level below complete decoded an extension");
+		if (level != A32Support::complete)
+			require(profile.features == dec::Profile::at(profile.level).features);
+	}
+	for (unsigned bits = 0; bits < 1U << predicate_count; ++bits) {
+		const auto each = predicates_of(bits);
+		const auto got = arm64::a32_decode_profile(host_with(each),
+			A32Support::complete).features;
+		require(got.has(dec::Feature::crc32) == each.crc32 &&
+			got.has(dec::Feature::aes) == each.aes &&
+			got.has(dec::Feature::pmull) == (each.aes && each.pmull) &&
+			got.has(dec::Feature::sha1) == each.sha1 &&
+			got.has(dec::Feature::sha2) == each.sha2 &&
+			got.has(dec::Feature::fp16) == each.fp16 &&
+			got.has(dec::Feature::dotprod) == each.dotprod &&
+			got.has(dec::Feature::fhm) == each.fhm &&
+			got.has(dec::Feature::bf16) == each.bf16 &&
+			got.has(dec::Feature::i8mm) == each.i8mm &&
+			got.has(dec::Feature::sb) == each.sb &&
+			got.has(dec::Feature::rdm) == each.rdm &&
+			got.has(dec::Feature::fcma) == each.fcma &&
+			got.has(dec::Feature::jscvt) == each.jscvt,
+			"a decoded extension does not follow its host predicate");
 	}
 }
 
@@ -418,7 +455,8 @@ void compat_hwcaps_are_pinned_per_level()
 }
 
 /* The AArch32 entry of an engine below base is the illegal-instruction exit
- * and leaves the state and the guest memory as it found them. */
+ * and leaves the state and the guest memory as it found them. An engine at
+ * base or above has its own execution tests. */
 void aarch32_entry_is_illegal_below_base()
 {
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
@@ -428,8 +466,12 @@ void aarch32_entry_is_illegal_below_base()
 				static_cast<int>(kind));
 			continue;
 		}
+		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
+			continue;
 		auto engine = ::uml::cpu::make_cpu_engine(kind);
 		require(engine != nullptr && engine->kind() == kind);
+		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
+			continue;
 		for (const unsigned long generation : {1UL, 7UL}) {
 			arm64::CpuState cpu{};
 			cpu.pc = arm64::aarch32::aarch32_key_bit | 0x1000U;
@@ -477,8 +519,9 @@ int main()
 	state_is_appended_at_the_pinned_offsets();
 	policy_parses_only_one();
 	presented_support_follows_policy_and_level();
-	engines_present_no_aarch32_yet();
+	engines_present_their_level_under_the_policy();
 	features_follow_level_and_host();
+	decode_profile_is_what_the_guest_is_shown();
 	nothing_is_presented_below_base();
 	id_registers_are_pinned_per_level();
 	optional_parts_follow_the_host();

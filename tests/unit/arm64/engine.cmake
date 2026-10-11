@@ -14,6 +14,8 @@
         $<TARGET_OBJECTS:uml_arm64_gadget_executor>
         $<TARGET_OBJECTS:uml_cpu_executable_memory>
         $<TARGET_OBJECTS:uml_arm64_jit>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_runtime_context>)
@@ -38,6 +40,8 @@
     set(UML_ARM64_RUNTIME_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -45,12 +49,16 @@
     set(UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_runtime_guest_selector>
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
     set(UML_ARM64_STATIC_TEST_OBJECTS
         $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -291,6 +299,29 @@
     uml_add_arm64_unit_test(jit_fp_link_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+    # The JIT's AArch32 support (cpu/arm64/jit/a32).
+    uml_add_arm64_unit_test(jit_a32_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_data_processing WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_memory WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_exclusive WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_acquire_release WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_encoder WITHOUT_HARNESS NO_OBJECTS)
+    uml_add_arm64_unit_test(jit_a32_vector_encoder WITHOUT_HARNESS NO_OBJECTS)
+    uml_add_arm64_unit_test(jit_a32_control WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_vector WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    # The AArch32 instruction corpus (aarch32_corpus/README.md) on the JIT.
+    uml_add_arm64_unit_test(jit_a32_corpus WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        ARGS ${UML_ARM64_AARCH32_CORPUS})
+    add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
+
     # The JIT's SME support (cpu/arm64/jit, sme_support).
     uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
@@ -370,15 +401,41 @@
 
     # The static MMU and gadget objects precede the runtime's, unlike
     # UML_ARM64_STATIC_TEST_OBJECTS.
-    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough)
+    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough
+            a32_control)
         uml_add_arm64_unit_test(gadget_${GADGET_RUNTIME_TEST} WITHOUT_HARNESS
             OBJECTS
                 $<TARGET_OBJECTS:uml_static_mmu>
                 $<TARGET_OBJECTS:uml_arm64_gadgets>
+                $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+                $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
                 $<TARGET_OBJECTS:uml_arm64_sve_semantics>
                 $<TARGET_OBJECTS:uml_arm64_execution_helpers>
                 ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     endforeach()
+    # The forms test reads the decoder's stored sample words.
+    uml_add_arm64_unit_test(gadget_a32_forms WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
+    # The engine against the AArch32 corpus, at the level it implements.
+    uml_add_arm64_unit_test(gadget_a32_corpus WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        ARGS ${UML_ARM64_AARCH32_CORPUS})
+    add_dependencies(uml_arm64_gadget_a32_corpus_tests uml_arm64_aarch32_corpus)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})

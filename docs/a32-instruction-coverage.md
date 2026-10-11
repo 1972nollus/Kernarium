@@ -15,7 +15,7 @@ instruction set, level, optional feature, profile and status.
 tooling test) checks it against the generated decoder table, and checks that
 the next two sentences state its counts.
 
-`tests/unit/arm64/a32_instruction_inventory.tsv` lists 2,220 encodings (912 Base and 1,308 FP&SIMD): 2,165 `pending`, 0 `verified` and 55 `absent`.
+`tests/unit/arm64/a32_instruction_inventory.tsv` lists 2,220 encodings (912 Base and 1,308 FP&SIMD): 38 `pending`, 2,127 `verified` and 55 `absent`.
 By level there are 898 `base`, 948 `simd` and 374 `complete` encodings.
 
 ## Levels and features
@@ -64,9 +64,16 @@ zero and ignore writes.
 ## Status
 
 An entry is `absent` when no word of it executes, `pending` until an engine
-passes the corpus for it, and `verified` after. No engine runs AArch32 yet,
-so no entry is `verified`. The decoder contract is
+passes the corpus for it, and `verified` after. The gadget engine passes the
+corpus for every executed entry at `complete`, the level it translates at, in
+both page profiles (`arm64-gadget-a32-corpus --forms` lists the encodings
+whose cases ran), except the 38 BF16 and I8MM entries: the engine decodes an
+extension only where the host has it, so on a host without them (the M1 Ultra)
+those cases are skipped, and the entries stay `pending`. The decoder contract is
 [`../darwin/cpu/arm64/aarch32/README.md`](../darwin/cpu/arm64/aarch32/README.md);
 `generate_a32_encoding_table.py` derives the inventory, the decoder's table
 and its test data from the release, and `a32_profile_policy.py` is the one
-place that holds the profile's choices.
+place that holds the profile's choices. The status is the one column the
+release cannot give: a regeneration keeps each encoding's `pending` or
+`verified` from the checked-in inventory, so a lane marks an encoding
+`verified` by editing that file and the freshness test still passes.

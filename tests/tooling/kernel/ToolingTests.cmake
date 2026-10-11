@@ -75,3 +75,12 @@ uml_add_tooling_test(
         --wrapper ${PROJECT_SOURCE_DIR}/tests/integration/aarch32/make_elf32.py
     LABELS kernel;aarch32
     TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME aarch32-elf32-linker
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_link_elf32.py
+        --compiler ${CMAKE_CXX_COMPILER}
+        --linker ${PROJECT_SOURCE_DIR}/tests/integration/aarch32/link_elf32.py
+    LABELS kernel;aarch32
+    TIMEOUT 60)

@@ -46,9 +46,9 @@ An AArch32 task of an arm64 kernel uses the same register image, which
 its last field, `tpidrro`. The arm64-only imports
 `darwin_uml_guest_compat_hwcap()` and `darwin_uml_guest_compat_hwcap2()` give
 the task's AT_HWCAP words. The first is zero exactly when the run's engine
-does not execute AArch32, so no separate query exists, and the kernel then
-refuses 32-bit ELF files. The x86_64 slice neither imports them nor builds
-AArch32.
+does not execute AArch32 or the guest-AArch32 policy is off, so no separate
+query exists, and the kernel then refuses 32-bit ELF files. The x86_64 slice
+neither imports them nor builds AArch32.
 
 For an intentional bridge declaration change:
 

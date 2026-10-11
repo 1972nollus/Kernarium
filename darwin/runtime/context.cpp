@@ -496,6 +496,44 @@ current_guest_host_capabilities() noexcept
 		context->execution_engine() : ExecutionEngine::automatic);
 }
 
+::uml::cpu::arm64::A32Support guest_a32_support(
+	::uml::cpu::EngineKind kind) noexcept
+{
+	using ::uml::cpu::EngineKind;
+	const auto present = [](EngineKind of) noexcept {
+		return ::uml::cpu::arm64::a32_presented_support(
+			::uml::cpu::engine_a32_support(of),
+			::uml::platform::apple::guest_aarch32_policy() ==
+				::uml::platform::apple::GuestAarch32Policy::on);
+	};
+	static const auto gadgets = present(EngineKind::gadgets);
+	static const auto jit = present(EngineKind::jit);
+	return kind == EngineKind::jit ? jit : gadgets;
+}
+
+::uml::cpu::arm64::A32Support guest_a32_support(
+	ExecutionEngine engine) noexcept
+{
+	using ::uml::cpu::EngineKind;
+	switch (engine) {
+	case ExecutionEngine::gadgets:
+		return guest_a32_support(EngineKind::gadgets);
+	case ExecutionEngine::jit:
+		return guest_a32_support(EngineKind::jit);
+	case ExecutionEngine::automatic:
+		break;
+	}
+	return std::min(guest_a32_support(EngineKind::gadgets),
+		guest_a32_support(EngineKind::jit));
+}
+
+::uml::cpu::arm64::A32Support current_guest_a32_support() noexcept
+{
+	const auto *context = current_context();
+	return guest_a32_support(context != nullptr ?
+		context->execution_engine() : ExecutionEngine::automatic);
+}
+
 namespace {
 
 bool provide_memory_domain(std::uint64_t &domain) noexcept

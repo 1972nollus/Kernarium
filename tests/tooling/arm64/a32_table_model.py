@@ -34,7 +34,15 @@ MAX_SEGMENTS = 3
 # Static traits of a form, scanned from its Execute pseudocode.
 TRAIT_NAMES = (
     "loads", "stores", "exclusive", "branch", "interwork", "alu_pc",
-    "load_pc", "exception", "barrier", "hint", "prefetch",
+    "load_pc", "exception", "barrier", "hint", "prefetch", "fp_state",
+)
+# A form that reads or writes the S, D, Q or V registers or FPSCR (VFP,
+# Advanced SIMD and the crypto instructions, which share the vector file), or
+# checks that those units are enabled. An engine that loads the vectors lazily
+# must load them for any block that holds one.
+FP_STATE = re.compile(
+    r"\b(?:S|D|Q|V|Sin|Din|Qin|Sout|Dout|Qout)\s*\[|\bFPSCR\b|\bFPEXC\b"
+    r"|\bCheck(?:AdvSIMD|VFP|AdvSIMDOrVFP|Crypto)\w*Enabled\w*"
 )
 PC_WRITERS = {
     "BranchWritePC": "branch",
@@ -212,6 +220,8 @@ def scan_traits(text: str) -> set[str]:
         traits.add("prefetch")
     if names & set(EXCLUSIVES):
         traits.add("exclusive")
+    if FP_STATE.search(text):
+        traits.add("fp_state")
     return traits
 
 

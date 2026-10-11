@@ -21,7 +21,10 @@ engine, holds no state, and is a CPU-layer `shared` target.
 - `Profile` is a `Level` (`none`, `base`, `simd`, `complete`, as
   `A32Support`) and a `FeatureSet` for the optional extensions the host has.
   An instruction above the level is undefined with reason `profile`; one of a
-  feature the profile lacks is undefined with reason `feature`.
+  feature the profile lacks is undefined with reason `feature`. An engine
+  builds its profile with `a32_decode_profile(host, support)`
+  (`a32_profile.hpp`): the extensions `a32_features` presents to the guest,
+  so an engine never executes a form the guest was not shown.
 - `Instruction::cond` is the condition the instruction executes under: its own
   field, the IT block's condition, or 14. `in_it` and `last_in_it` describe a
   Thumb instruction's place in a block, `next_it` is the IT state after it,
@@ -41,7 +44,10 @@ engine, holds no state, and is a CPU-layer `shared` target.
 - `Instruction::info()` returns the form's table entry: the XML encoding name,
   its mnemonic, the level and feature it needs, whether it is conditional, and
   static traits (loads, stores, exclusives, the kinds of PC write, barriers,
-  hints, exceptions) scanned from the XML's Execute pseudocode.
+  hints, exceptions, and fp_state, a read or write of the S, D, Q or V
+  registers or FPSCR) scanned from the XML's Execute pseudocode. fp_state is
+  exactly the XML's FP&SIMD section; an engine that loads the task's vectors
+  lazily loads them for any block that holds such a form.
 
 The profile is Armv8-A AArch32 at EL0 (see
 [`../../../../docs/architecture.md`](../../../../docs/architecture.md) and

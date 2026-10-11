@@ -181,6 +181,13 @@ struct CpuState final {
 	std::uint8_t a32_itstate{};
 	std::uint8_t a32_cp15ben{};
 	std::uint8_t a32{};
+	/* The gadget engine's native floating-point environment, while
+	 * gadget_fp_active is set, holds the Standard FPSCR value that Advanced
+	 * SIMD floating point runs under when a32_fp_standard is 1 and the
+	 * guest's FPCR when it is 0. The gadgets that need one switch to it
+	 * (engine/a32.inc) and the one that activates the environment clears
+	 * this; it means nothing while gadget_fp_active is clear. */
+	std::uint8_t a32_fp_standard{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{
