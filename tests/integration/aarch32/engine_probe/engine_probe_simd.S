@@ -392,3 +392,46 @@
 	fp_any	fp_vmla_f32, "vmla.f32 s2, s0, s1"
 	fp_any	fp_vcvt_f64_f32, "vcvt.f64.f32 d1, s0"
 	fp_any	fp_vcvt_f32_s32, "vcvt.f32.s32 s2, s0"
+
+@ ---- structure forms in blocks of their own ----
+@ split_<form>_{arm,thumb}(void *p): one Advanced SIMD structure or permute
+@ form on [r0] and a return, so the block that holds it holds nothing else.
+@ fused_<form>_{arm,thumb}(void *p, const u64 d[32], u64 out[32]): the same
+@ form between a full load and a full store of D0-D31 in one straight line.
+	.macro	split_form name, insn:vararg
+	func_arm split_\name\()_arm
+	\insn
+	bx	lr
+	func_thumb split_\name\()_thumb
+	\insn
+	bx	lr
+	func_arm fused_\name\()_arm
+	vldmia	r1!, {d0-d15}
+	vldmia	r1, {d16-d31}
+	\insn
+	vstmia	r2!, {d0-d15}
+	vstmia	r2, {d16-d31}
+	bx	lr
+	func_thumb fused_\name\()_thumb
+	vldmia	r1!, {d0-d15}
+	vldmia	r1, {d16-d31}
+	\insn
+	vstmia	r2!, {d0-d15}
+	vstmia	r2, {d16-d31}
+	bx	lr
+	.endm
+
+	split_form vld1_8, vld1.8 {d0}, [r0]
+	split_form vld2_16, vld2.16 {d2,d4}, [r0]
+	split_form vld3_16, vld3.16 {d0,d2,d4}, [r0]
+	split_form vld4_32, vld4.32 {d16-d19}, [r0]
+	split_form vld1_lane, vld1.32 {d7[1]}, [r0]
+	split_form vld2_lane, vld2.16 {d0[1],d1[1]}, [r0]
+	split_form vld4_dup, vld4.16 {d0[],d1[],d2[],d3[]}, [r0]
+	split_form vst1_64, vst1.64 {d8-d11}, [r0]
+	split_form vst2_16, vst2.16 {d2,d4}, [r0]
+	split_form vst3_8, vst3.8 {d0,d1,d2}, [r0]
+	split_form vst4_32, vst4.32 {d16-d19}, [r0]
+	split_form vst1_lane, vst1.8 {d3[5]}, [r0]
+	split_form vzip_32, vzip.32 q0, q1
+	split_form vtbl_8, vtbl.8 d0, {d1,d2}, d3

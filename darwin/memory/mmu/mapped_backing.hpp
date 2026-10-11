@@ -43,6 +43,10 @@ public:
 	[[nodiscard]] static bool load_code_page_stamp(const void *handle,
 		std::uint64_t &identity, std::uint64_t &version) noexcept;
 	static void invalidate_code_page(void *handle) noexcept;
+	/* Moves the stamp of the backing page at `offset` if a translator has
+	 * ever asked for it. A page nothing stamped holds no translation whose
+	 * stamp could be stale, so it is not given a record here. */
+	void retire_code_page(std::uint64_t offset) noexcept;
 
 private:
 	struct CodePage;

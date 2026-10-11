@@ -18,6 +18,11 @@ include(VerifyDependencies)
 include(VerifyAbi)
 include(UmlArchitecture)
 
+# The one interpreter for every Python tool and test. Python 3.11 or newer:
+# tomllib is in the standard library from 3.11. Later find_package(Python3)
+# calls in subdirectories reuse the interpreter cached here.
+find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+
 uml_verify_generated_abi()
 
 # Request the codemodel and the cache for this configure invocation. Unlike

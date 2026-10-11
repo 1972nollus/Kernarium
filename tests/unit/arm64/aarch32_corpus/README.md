@@ -128,6 +128,10 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   rounding mode, flush-to-zero, default-NaN and alternative half-precision
   setting; the element-size and signedness variants come from the form's free
   fields;
+- `simd-steps`: VRECPS and VRSQRTS with each infinity against zeros,
+  denormals and one in half and single precision, which the `simd` suite's
+  sampled states do not pair (FZ16 stays clear, so a half-precision denormal
+  is a nonzero number);
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
@@ -176,7 +180,7 @@ records (`compare`, below), in particular of the fault addresses of the
 
 ```sh
 python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
-  --suite alu --host arm64-builder --runner 'qemu-arm -cpu max'
+  --suite alu --host HOST --runner 'qemu-arm -cpu max'
 python3 tools/arm64-tests/a32-corpus.py finish
 ```
 
@@ -187,6 +191,11 @@ pinned clang and lld, runs it in a private directory on the host and removes
 the directory. `finish` regenerates `provenance.json`, `manifest.tsv`,
 `coverage.tsv` (cases per inventory entry) and `excluded.tsv` (entries with no
 case). Commit the source tables and these files, never the pack.
+
+`check --archive ...` plans every suite again without an oracle and requires
+each source table to hold exactly the planned cases, in order (the opt-in
+`arm64-a32-corpus-plan-freshness` test runs it). A change to the forms or the
+planner that moves a case fails it until the suite is observed again.
 
 Hardware records use the same producer without `--runner`, so the harness runs
 natively on an aarch64 Linux host whose cores run AArch32 at EL0 (a Raspberry

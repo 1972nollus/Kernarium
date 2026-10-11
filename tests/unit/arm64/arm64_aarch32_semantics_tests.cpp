@@ -1033,6 +1033,14 @@ void test_floating_point()
 	require(f.step_a32_word(0xf2010f12).event == StepEvent::retired &&
 			f.d(0) == 0x4000'0000'4000'0000 && (f.cpu.fpsr & 1U) == 0U,
 		"VRECPS of infinity and zero is two");
+	/* The single-precision denormal is always a zero here: FPUnpack flushes it
+	 * under the Standard FPSCR value, whatever the guest's FZ. */
+	f.cpu.fpsr = 0;
+	f.set_d(1, 0x7f80'0000'ff80'0000);
+	f.set_d(2, 0x0000'0001'8000'0001);
+	require(f.step_a32_word(0xf2010f12).event == StepEvent::retired &&
+			f.d(0) == 0x4000'0000'4000'0000 && (f.cpu.fpsr & 0x80U) != 0U,
+		"VRECPS of infinity and a single-precision denormal is two and sets IDC");
 
 	/* Double precision. */
 	f.cpu.fpsr = 0;
@@ -1097,6 +1105,38 @@ void test_armv8_extensions()
 	f.cpu.registers[1] = 0xabcd'1234;
 	require(f.step_a32_word(0xee001910).event == StepEvent::retired && f.s(0) == 0x1234,
 		"VMOV.F16 from a core register clears the top half");
+
+	/* VRECPS.F16 and VRSQRTS.F16: infinity times a half-precision denormal is a
+	 * zero product only where FPSCR.FZ16 flushes the denormal, and that flush
+	 * sets no IDC; otherwise the product is infinite (vrecps.f16 d0, d4, d0). */
+	constexpr std::uint64_t infinities = 0xfc00'fc00'0400'0000;
+	constexpr std::uint64_t denormals = 0x0080'0001'4040'0000;
+	f.cpu.fpsr = 0;
+	f.set_d(4, infinities);
+	f.set_d(0, denormals);
+	require(f.step_a32_word(0xf2140f10).event == StepEvent::retired &&
+			f.d(0) == 0x7c00'7c00'4000'4000 && (f.cpu.fpsr & 0x80U) == 0U,
+		"VRECPS.F16 of infinity and a denormal is infinite with FZ16 clear");
+	f.cpu.fpsr = 0;
+	f.set_d(4, infinities);
+	f.set_d(0, denormals);
+	require(f.step_a32_word(0xf2340f10).event == StepEvent::retired &&
+			f.d(0) == 0x7c00'7c00'3e00'3e00 && (f.cpu.fpsr & 0x80U) == 0U,
+		"VRSQRTS.F16 of infinity and a denormal is infinite with FZ16 clear");
+	f.cpu.fpcr = 1U << 19;
+	f.cpu.fpsr = 0;
+	f.set_d(4, infinities);
+	f.set_d(0, denormals);
+	require(f.step_a32_word(0xf2140f10).event == StepEvent::retired &&
+			f.d(0) == 0x4000'4000'4000'4000 && (f.cpu.fpsr & 0x80U) == 0U,
+		"VRECPS.F16 flushes the denormal to a zero product with FZ16 set, without IDC");
+	f.cpu.fpsr = 0;
+	f.set_d(4, infinities);
+	f.set_d(0, denormals);
+	require(f.step_a32_word(0xf2340f10).event == StepEvent::retired &&
+			f.d(0) == 0x3e00'3e00'3e00'3e00 && (f.cpu.fpsr & 0x80U) == 0U,
+		"VRSQRTS.F16 flushes the denormal to a zero product with FZ16 set, without IDC");
+	f.cpu.fpcr = 0;
 
 	/* VSEL tests the flags and changes none. */
 	f.set_s(1, 0x3f80'0000);

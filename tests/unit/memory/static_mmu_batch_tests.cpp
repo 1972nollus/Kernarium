@@ -412,9 +412,11 @@ void test_multi_page_and_history_failures_are_atomic()
 		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		pages * DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_EXEC, 1, 0) == 0);
+	/* Pages that were not mapped held no translation, so mapping them
+	 * moves the mapping sequence and publishes no code change. */
 	const auto retried = darwin_uml_static_vm_sequences(generation);
 	require(retried.mapping_changes == initial.mapping_changes + 1 &&
-		retried.code_changes == initial.code_changes + 1);
+		retried.code_changes == initial.code_changes);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 

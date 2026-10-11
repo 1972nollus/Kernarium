@@ -31,6 +31,10 @@ static_assert(offsetof(CpuState, exclusive_key) == UML_GADGET_CPU_EXCLUSIVE_KEY)
 static_assert(offsetof(CpuState, exclusive_value) == UML_GADGET_CPU_EXCLUSIVE_VALUE);
 static_assert(offsetof(CpuState, exclusive_value2) == UML_GADGET_CPU_EXCLUSIVE_VALUE2);
 static_assert(offsetof(CpuState, exclusive_version) == UML_GADGET_CPU_EXCLUSIVE_VERSION);
+/* engine/exclusive.inc records a load's host address, value and second value
+ * with one paired store and one store. */
+static_assert(UML_GADGET_CPU_EXCLUSIVE_VALUE == UML_GADGET_CPU_EXCLUSIVE_KEY + 8);
+static_assert(UML_GADGET_CPU_EXCLUSIVE_VALUE2 == UML_GADGET_CPU_EXCLUSIVE_KEY + 16);
 static_assert(offsetof(CpuState, exclusive_size) == UML_GADGET_CPU_EXCLUSIVE_SIZE);
 static_assert(offsetof(CpuState, deferred_vectors) == UML_GADGET_CPU_DEFERRED_VECTORS);
 static_assert(offsetof(CpuState, deferred_fpcr) == UML_GADGET_CPU_DEFERRED_FPCR);
@@ -97,11 +101,13 @@ static_assert(offsetof(CpuState, a32_q) == UML_ARM64_CPU_A32_Q);
 static_assert(offsetof(CpuState, a32_itstate) == UML_ARM64_CPU_A32_ITSTATE);
 static_assert(offsetof(CpuState, a32_cp15ben) == UML_ARM64_CPU_A32_CP15BEN);
 static_assert(offsetof(CpuState, a32) == UML_ARM64_CPU_A32);
+static_assert(offsetof(CpuState, a32_fp_standard) ==
+	      UML_ARM64_CPU_A32_FP_STANDARD);
 /* The AArch32 block follows the SVE block and every earlier offset stands, so
  * no existing gadget or emitted instruction changes; its last byte fits the
  * 16-bit operand a gadget carries. */
 static_assert(UML_ARM64_CPU_A32_GE_MASK > UML_ARM64_CPU_SVE_LIVE &&
-	UML_ARM64_CPU_A32 < 0x1'0000);
+	UML_ARM64_CPU_A32_FP_STANDARD < 0x1'0000);
 
 static_assert(sizeof(::uml::memory::TlbEntry) == 32);
 static_assert(alignof(::uml::memory::TlbEntry) == 32);

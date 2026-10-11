@@ -10,7 +10,7 @@
  * an element register by register for a structure. A fault reports the
  * first byte of that order's first access that does not translate; an
  * inactive element accesses nothing. What a faulting instruction leaves
- * is what arm64-builder's Neoverse V2 leaves (the corpus's arm64-sve-native
+ * is what a Neoverse V2 Linux host leaves (the corpus's arm64-sve-native
  * records): a load leaves every register as it was; a store writes its
  * footprint's 16-byte pieces, counted from its first byte, in order up to
  * the piece that faults, so a contiguous or fill store, whose footprint is

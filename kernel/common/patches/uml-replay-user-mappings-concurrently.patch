@@ -80,7 +80,7 @@ one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
  7 files changed, 285 insertions(+), 114 deletions(-)
 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 96a91a038928cc7cd6a253f42d1e51bbe4543a80..0aeef9020f26bed52be2434cbafb2ad4fcd15614 100644
+index b5f6a8bfcffbc1218514d4e584b8a6e022c78549..569087bb751aa14d8d82c16e238269032e2e7498 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -284,26 +284,28 @@ static inline void set_pte(pte_t *pteptr, pte_t pteval)

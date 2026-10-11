@@ -11,6 +11,7 @@ must convert from every `ps` spelling, thread priorities must be read from
 the medians while still being counted. Checked-in scenarios must parse, and a
 scenario's values come only from its completion line after its steps ended.
 Powering off must kill a launcher that ignores SIGTERM and its emulator too.
+The guest defaults to 4 vCPUs.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 
 SUITE = pathlib.Path(__file__).resolve().parents[2] / "perf" / "android_launch_suite.py"
 
@@ -103,7 +105,7 @@ def test_cpu_seconds(suite) -> None:
 def test_thread_priorities(suite) -> None:
     ps_threads = "\n".join([
         "USER    PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND",
-        "dev   31478   ??    0.0 S    47T   0:00.09   0:00.35 /x/uml-darwin-android17 --a",
+        "alice 31478   ??    0.0 S    47T   0:00.09   0:00.35 /x/uml-darwin-android17 --a",
         "      31478        25.7 R    31T   0:00.17   0:01.32 ",
         "      31478         0.0 S     4    1:02.01  10:00.01 ",
         "      31478         0.0 S    31T   0:00.00   0:00.00 ",
@@ -175,6 +177,21 @@ def test_scenarios(suite) -> None:
             raise AssertionError("a tap without two coordinates must be rejected")
 
 
+def test_default_cpus(suite) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        output = pathlib.Path(directory) / "launches.jsonl"
+        arguments = [str(SUITE), "--emulator", "emulator", "--release",
+                     "release", "--source-disk", "source", "--work-disk",
+                     "work", "--output", str(output)]
+        seen = []
+        with mock.patch.object(sys, "argv", arguments), \
+                mock.patch.object(suite, "run",
+                                  side_effect=lambda a: seen.append(a) or 0):
+            check(suite.main() == 0, "the suite did not run")
+    check(seen[0].cpus == 4,
+          f"the suite boots {seen[0].cpus} vCPUs by default, not 4")
+
+
 # A launcher that ignores SIGTERM, with an emulator stand-in that leads its own
 # session, as boot_android.py starts the real one.
 STUBBORN_LAUNCHER = """
@@ -235,6 +252,7 @@ def main() -> int:
     test_thread_priorities(suite)
     test_summary(suite)
     test_scenarios(suite)
+    test_default_cpus(suite)
     test_power_off_kills_a_stubborn_launcher(suite)
     print("android launch suite contract: ok")
     return 0

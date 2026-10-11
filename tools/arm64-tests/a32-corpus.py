@@ -6,6 +6,7 @@
                         [--runner 'qemu-arm -cpu max'] [--oracle qemu]
                         [--source tests/unit/arm64/aarch32_corpus/source]
   a32-corpus.py finish  --archive TAR.GZ [--directory tests/unit/arm64/aarch32_corpus]
+  a32-corpus.py check   --archive TAR.GZ [--source tests/unit/arm64/aarch32_corpus/source]
 
 observe plans the cases of each suite, runs them twice through the oracle on
 HOST (tools/arm64-tests/a32-oracle.sh), requires both runs to agree, and
@@ -13,7 +14,10 @@ writes the suite's source table beside the state recipes. finish generates
 the pack from the source tables (tools/instruction-corpus/source.py does the
 same at build time) and writes provenance, manifest and coverage. Decision
 D2: records observed under qemu-arm are labelled "qemu"; hardware records
-carry the hardware's name.
+carry the hardware's name. check plans every suite again without an oracle and
+requires each source table to hold exactly the planned cases (name, form, program,
+starting state), in order: a change to the planner or to the forms it iterates over
+that moves a case shows up here, and the suite is observed again.
 """
 
 from __future__ import annotations
@@ -93,17 +97,21 @@ def describe_host(arguments) -> str:
     return " ".join(result.stdout.split())
 
 
+def starting_changes(case: wire.Case, recipes) -> dict:
+    """The registers a case changes from its recipe, as the source rows spell them."""
+    return {key: corpus.hex_value(key, value) for key, value in case.initial.items()
+            if value != recipes[case.recipe][key]}
+
+
 def source_row(case: wire.Case, recipes, observation: wire.Observation) -> dict:
     initial = wire.initial_state(case, recipes)
     row = {"n": case.name, "f": case.form, "i": case.isa, "p": case.program_text(),
            "t": case.target, "s": case.recipe}
     if case.origin:
         row["o"] = case.origin
-    if case.initial:
-        row["si"] = {key: corpus.hex_value(key, value) for key, value in case.initial.items()
-                     if value != recipes[case.recipe][key]}
-        if not row["si"]:
-            del row["si"]
+    changes = starting_changes(case, recipes)
+    if changes:
+        row["si"] = changes
     if case.fill != corpus.FILL_HASH32:
         row["d"] = case.fill
     if case.data_patches:
@@ -258,6 +266,39 @@ def finish(arguments) -> int:
     return 0
 
 
+def check(arguments) -> int:
+    """Every suite's plan against the source table that records it; 1 on any difference."""
+    context = plan.build_context(arguments.archive)
+    source = pathlib.Path(arguments.source)
+    drifted = 0
+    for suite in sorted(SUITES):
+        oracle = "profile" if suite in system.PREDICTED else "qemu"
+        table = source / f"{suite}-{oracle}.jsonl"
+        if not table.exists():
+            print(f"{suite}: no table (hardware only)")
+            continue
+        rows = corpus.read_jsonl(table)[1:]
+        cases = SUITES[suite](context)
+        planned = [(case.name, case.form, case.isa, case.program_text(), case.recipe, case.origin,
+                    starting_changes(case, context.recipes)) for case in cases]
+        recorded = [(row["n"], row["f"], row["i"], row["p"], row["s"], row.get("o", 0), row.get("si", {}))
+                    for row in rows]
+        first = next((index for index, (left, right) in enumerate(zip(planned, recorded)) if left != right),
+                     None if len(planned) == len(recorded) else min(len(planned), len(recorded)))
+        if first is None:
+            print(f"{suite}: {len(planned)} cases reproduce")
+            continue
+        drifted += 1
+        print(f"{suite}: the plan has {len(planned)} cases, the table {len(recorded)}; "
+              f"they first differ at {first}:")
+        print(f"  plan:  {planned[first] if first < len(planned) else None}")
+        print(f"  table: {recorded[first] if first < len(recorded) else None}")
+    if drifted:
+        print(f"{drifted} suite(s) no longer reproduce from the planner: observe them again "
+              "(see the corpus README)", file=sys.stderr)
+    return 1 if drifted else 0
+
+
 def compare(arguments) -> int:
     """Differences between two source directories' observations of the same cases."""
     def load(directory: pathlib.Path) -> dict[str, dict[str, dict]]:
@@ -294,9 +335,9 @@ def compare(arguments) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("observe", "finish"):
+    for name in ("observe", "finish", "check"):
         command = commands.add_parser(name)
-        command.add_argument("--archive", required=name == "observe", type=pathlib.Path)
+        command.add_argument("--archive", required=name != "finish", type=pathlib.Path)
         if name == "observe":
             command.add_argument("--suite", required=True)
             command.add_argument("--host", required=True)
@@ -304,6 +345,8 @@ def main() -> int:
             command.add_argument("--oracle", default="qemu")
             command.add_argument("--source", default=str(DIRECTORY / "source"))
             command.add_argument("--limit", type=int, default=0)
+        elif name == "check":
+            command.add_argument("--source", default=str(DIRECTORY / "source"))
         else:
             command.add_argument("--directory", default=str(DIRECTORY))
     command = commands.add_parser("compare")
@@ -311,7 +354,8 @@ def main() -> int:
     command.add_argument("--right", required=True)
     command.add_argument("--show", type=int, default=20)
     arguments = parser.parse_args()
-    return {"observe": observe, "finish": finish, "compare": compare}[arguments.command](arguments)
+    return {"observe": observe, "finish": finish, "check": check,
+            "compare": compare}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

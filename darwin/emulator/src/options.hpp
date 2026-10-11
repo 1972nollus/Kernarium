@@ -4,6 +4,7 @@
 #include "runtime/execution_engine.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,6 +33,10 @@ struct EmulatorOptions final {
 	std::size_t jit_cache_budget{};
 	std::size_t jit_executor_cache_budget{
 		default_jit_executor_cache_budget};
+	/* --jit-tier=: the instructions an x86-64 address space runs on the
+	 * gadget engine before the x86-64 JIT takes it over. Zero is the JIT from
+	 * the first instruction. */
+	std::uint64_t jit_tier_instructions{};
 	std::size_t guest_memory_bytes{};
 	unsigned guest_cpus{1};
 	bool top_byte_ignore{};

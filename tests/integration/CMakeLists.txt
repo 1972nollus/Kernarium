@@ -135,7 +135,23 @@ if(NOT _uml_integration_modules_builtin)
     message(FATAL_ERROR "Selected kernel artifact lacks modules.builtin evidence")
 endif()
 
-set(UML_LTP_JOBS 16 CACHE STRING
+# The default is sized to the host: half its physical cores and 4 GiB of its
+# memory per worker, between 1 and 16. A larger host sets UML_LTP_JOBS.
+cmake_host_system_information(RESULT _uml_ltp_cores
+    QUERY NUMBER_OF_PHYSICAL_CORES)
+cmake_host_system_information(RESULT _uml_ltp_memory_mib
+    QUERY TOTAL_PHYSICAL_MEMORY)
+math(EXPR _uml_ltp_jobs_default "${_uml_ltp_cores} / 2")
+math(EXPR _uml_ltp_jobs_by_memory "${_uml_ltp_memory_mib} / 4096")
+if(_uml_ltp_jobs_by_memory LESS _uml_ltp_jobs_default)
+    set(_uml_ltp_jobs_default ${_uml_ltp_jobs_by_memory})
+endif()
+if(_uml_ltp_jobs_default GREATER 16)
+    set(_uml_ltp_jobs_default 16)
+elseif(_uml_ltp_jobs_default LESS 1)
+    set(_uml_ltp_jobs_default 1)
+endif()
+set(UML_LTP_JOBS ${_uml_ltp_jobs_default} CACHE STRING
     "Concurrent isolated guest workers for each LTP engine campaign")
 if(NOT UML_LTP_JOBS MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "UML_LTP_JOBS must be a positive integer")
@@ -262,6 +278,7 @@ uml_add_guest_integration_test(
 
 add_subdirectory(aarch32)
 add_subdirectory(balloon)
+add_subdirectory(exclusive)
 add_subdirectory(sme)
 add_subdirectory(sve)
 
@@ -384,6 +401,46 @@ uml_add_guest_integration_test(
     TIMEOUT 420
     CPUS 2)
 
+# Memory the kernel shares with user space, through a vmalloc or vmap alias
+# (BPF arrays and ring buffers, perf, PACKET_MMAP, io_uring), reads the same
+# from both sides. On the 4 KiB profile an alias that is not whole groups of
+# four pages is a private copy of its frames, and a ring in the application's
+# scattered pages cannot be shared and is refused.
+uml_add_guest_payload(UML_GUEST_SHARED_MEMORY_PROBE guest-shared-memory-probe
+    kernel/shared_memory_probe.cpp
+    COMMENT "Building the freestanding arm64 kernel/user shared-memory probe"
+    COMPILE_OPTIONS
+        -std=c++20
+        -O2
+        -Wall
+        -Wextra
+        -Werror
+        -march=armv8.1-a
+        -mno-outline-atomics
+        -ffreestanding
+        -fno-exceptions
+        -fno-rtti
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+    LINK_OPTIONS
+        -Wl,-z,max-page-size=16384
+        -Wl,-s)
+
+if(UML_GUEST_16K_PAGES)
+    set(_uml_shared_memory_page_size 16384)
+else()
+    set(_uml_shared_memory_page_size 4096)
+endif()
+uml_add_guest_integration_test(
+    NAME guest-kernel-user-shared-memory
+    SCRIPT kernel/run_guest_shared_memory.py
+    ARGS --probe ${UML_GUEST_SHARED_MEMORY_PROBE}
+        --page-size ${_uml_shared_memory_page_size}
+        --cpus 4
+    LABELS guest;kernel;memory
+    TIMEOUT 900
+    CPUS 4)
+
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
@@ -452,6 +509,8 @@ uml_add_guest_integration_test(
     LABELS guest;memory;mmu;full;pressure
     TIMEOUT 600
     CPUS 10)
+# The runner skips on a host with fewer than the ten CPUs it asks for.
+set_tests_properties(guest-mmu-stress PROPERTIES SKIP_RETURN_CODE 77)
 
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(
