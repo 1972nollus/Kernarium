@@ -207,6 +207,15 @@ uml_add_tooling_test(
     TIMEOUT 1800)
 set_tests_properties(arm64-a32-encoding-table-freshness PROPERTIES
     SKIP_RETURN_CODE 77)
+uml_add_tooling_test(
+    NAME arm64-a32-corpus-plan-freshness
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a32_corpus_plan_freshness.py
+        --architecture-archive=${UML_A32_ARCHITECTURE_ARCHIVE}
+    LABELS cpu
+    TIMEOUT 900)
+set_tests_properties(arm64-a32-corpus-plan-freshness PROPERTIES
+    SKIP_RETURN_CODE 77)
 
 # The pinned gadget region (darwin/cpu/arm64/gadgets/engine.S) in the linked
 # images this tree builds: the product in an integration tree, and in a unit

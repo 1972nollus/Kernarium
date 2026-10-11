@@ -90,6 +90,17 @@ def core_class_prefix(core_class: str) -> list[str]:
     return [TASKPOLICY, "-c", "background"]
 
 
+def jit_tier_arguments(engine: str) -> list[str]:
+    """``--jit-tier`` for an x86-64 JIT guest when UML_TEST_JIT_TIER names a
+    threshold, so a runner exercises the tiered engine unchanged."""
+    threshold = os.environ.get("UML_TEST_JIT_TIER", "")
+    if engine != "jit" or not threshold:
+        return []
+    if not threshold.isdecimal():
+        raise ValueError(f"UML_TEST_JIT_TIER is not a count: {threshold!r}")
+    return [f"--jit-tier={threshold}"]
+
+
 def emulator_arguments(
     emulator: pathlib.Path,
     rootfs: pathlib.Path,
@@ -118,6 +129,7 @@ def emulator_arguments(
         *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
+        *jit_tier_arguments(engine),
         *(f"--guest-file={guest}={host}" for guest, host in guest_files),
         f"ubd0c={rootfs}",
         *direct_boot,

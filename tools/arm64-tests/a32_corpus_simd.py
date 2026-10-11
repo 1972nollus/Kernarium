@@ -8,6 +8,11 @@
   under every FPSCR rounding mode, flush-to-zero, default-NaN and half-
   precision setting; the fixed-width integer and element-size variants come
   from sampling the free fields of each form's rows;
+- simd-steps: VRECPS and VRSQRTS with every infinity against zeros,
+  denormals and one, in half and single precision (FZ16 clear: a half-
+  precision denormal is a nonzero number, so its product with an infinity is
+  infinite, where a single-precision one is flushed under the Standard FPSCR
+  value);
 - simd-memory: VLDR, VSTR, VLDM, VSTM, the deprecated FLDMX/FSTMX and the
   structure loads and stores VLD1-4/VST1-4, aimed with the memory suites'
   address scenarios, including alignment-hinted accesses at misaligned
@@ -145,6 +150,66 @@ def suite_simd(context: Context, levels=("simd",), suite="simd", recipes=RECIPES
     return cases
 
 
+# VRECPS and VRSQRTS: infinity against zero ------------------------------------------------------------------------------
+
+STEP_FORMS = ("VRECPS_A1_D", "VRECPS_A1_Q", "VRECPS_T1_D", "VRECPS_T1_Q",
+              "VRSQRTS_A1_D", "VRSQRTS_A1_Q", "VRSQRTS_T1_D", "VRSQRTS_T1_Q")
+# The operands of an infinity times a zero (a zero product, not NaN) and of an infinity times a denormal
+# (flushed to a zero only in single precision, where the Standard FPSCR value sets FZ, and in half precision
+# only when FZ16 is set): +-infinity, then +-0, +-the smallest, a mid-range and the largest denormal, and one.
+STEP_INFINITIES = {16: (0x7C00, 0xFC00), 32: (0x7F800000, 0xFF800000)}
+STEP_FINITE = {
+    16: (0x0000, 0x8000, 0x0001, 0x8001, 0x0080, 0x8080, 0x03FF, 0x83FF, 0x3C00),
+    32: (0x00000000, 0x80000000, 0x00000001, 0x80000001, 0x00400000, 0x80400000, 0x007FFFFF, 0x807FFFFF,
+         0x3F800000),
+}
+# (d, n, m) D registers; the Q forms use the same numbers, all even.
+STEP_REGISTERS = ((0, 4, 0), (6, 2, 8), (10, 10, 12), (14, 2, 6))
+
+
+def step_pairs(width: int) -> list[tuple[int, int]]:
+    """Every infinity against every finite operand, in both operand orders."""
+    pairs = []
+    for infinity in STEP_INFINITIES[width]:
+        for finite in STEP_FINITE[width]:
+            pairs.append((infinity, finite))
+            pairs.append((finite, infinity))
+    return pairs
+
+
+def suite_simd_steps(context: Context) -> list[Case]:
+    cases = []
+    for form_index, name in enumerate(STEP_FORMS):
+        form = context.model.by_name[name]
+        isa = form.encoding.isa
+        suffix = "a" if isa == "A32" else "t"
+        fields = fields_of(form)
+        base = pick_words(context, form, 1)[0][0]
+        registers = 2 if name.endswith("_Q") else 1
+        for sz, width in ((1, 16), (0, 32)):
+            pairs = step_pairs(width)
+            lanes = 64 // width * registers
+            for chunk, start in enumerate(range(0, len(pairs), lanes)):
+                d, n, m = STEP_REGISTERS[chunk % len(STEP_REGISTERS)]
+                word = base
+                for field, value in (("sz", sz), ("Vd", d & 15), ("Vn", n & 15), ("Vm", m & 15),
+                                     ("D", 0), ("N", 0), ("M", 0)):
+                    word = set_field(word, *fields[field], value)
+                if usable(context, form, word) is None:
+                    raise SystemExit(f"{name}: {word:08x} is not a usable word")
+                group = [pairs[(start + lane) % len(pairs)] for lane in range(lanes)]
+                initial = {"fpscr": FPSCR_MODES[(chunk + 5 * sz + form_index) % len(FPSCR_MODES)],
+                           "apsr": FLAGS[(chunk + form_index) % len(FLAGS)]}
+                for operand, register in ((0, n), (1, m)):
+                    for part in range(registers):
+                        lane_values = group[part * (64 // width):(part + 1) * (64 // width)]
+                        initial[f"d{register + part}"] = sum(
+                            lane[operand] << width * index for index, lane in enumerate(lane_values))
+                cases.append(Case("simd-steps", f"{name}/f{width}.{chunk}", name, ISA_LETTER[isa],
+                                  word_of(isa, word), 0, f"zero-{suffix}", initial))
+    return cases
+
+
 # Memory ----------------------------------------------------------------------------------------------------------------
 
 SCENARIOS = ("a", "x4", "u1", "x16", "ro", "unmapped", "zero", "last")
@@ -255,6 +320,7 @@ def suite_fpscr_reserved(context: Context) -> list[Case]:
 
 SUITES = {
     "simd": suite_simd,
+    "simd-steps": suite_simd_steps,
     "simd-memory": suite_simd_memory,
     "fpscr": suite_fpscr,
     "fpscr-reserved": suite_fpscr_reserved,

@@ -926,8 +926,10 @@ the stream, and a register-baked bank generated at build time in which every
 register offset is an immediate. A store publishes a code change only when a
 per-address-space registry says some executor holds a translation of that
 page, which keeps publication precise where READ_IMPLIES_EXEC makes every
-readable page executable. The banks, the host-flag fusion rules and the
-registry contract are in
+readable page executable. The static MMU is as precise: a mapping change
+publishes a code change only for a page a translation can be wrong about,
+so a fork's write-protection of a process publishes none. The banks, the
+host-flag fusion rules and the registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
 CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
@@ -952,7 +954,8 @@ none of the x86_64 kernel overlay.
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the
 x86-64 JIT, FEXCore embedded behind the static MMU, which
 `--execution-engine jit` selects. The product's default is the gadget engine,
-by name. The
+by name; `--jit-tier=N` runs each address space on the gadgets for its first N
+instructions and on the JIT after that. The
 [JIT README](../darwin/cpu/x86_64/jit/README.md) records its contracts and
 known gaps. The JIT is a macOS product only, and four independent checks keep
 it out of every iOS product: only the `macos` dependency prefix carries

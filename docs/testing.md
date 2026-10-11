@@ -379,25 +379,32 @@ probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
 exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
 against native x86 Linux's values. The smoke, RFLAGS and exception runners
 take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
-instead of the default gadget engine; run them on both engines when a change
-reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
-checks that the host sees an address space as shared exactly when the
-kernel's contract in the [common kernel README](../kernel/common/README.md)
-says so, including when the sharing ends, and on the JIT that exactly the
-marked dispatches run ordered code.
+instead of the default gadget engine, and `UML_TEST_JIT_TIER=N` runs the JIT
+as the [tiered engine](../darwin/cpu/x86_64/jit/README.md#tiered-execution),
+except that the checks of which dispatches the JIT ran need it from the first
+instruction, since a tiered space may leave before it reaches the JIT; run
+them on both engines when a change reaches either.
+`run_guest_x86_64_mm_shared.py`, which takes the same options, checks that
+the host sees an address space as shared exactly when the kernel's contract in
+the [common kernel README](../kernel/common/README.md) says so, including
+when the sharing ends, and on the JIT that exactly the marked dispatches run
+ordered code.
 `run_guest_x86_64_fork_cow.py` forks from a busy multi-threaded process on
 four vCPUs, as glibc's fork() does, and checks that the workers keep their
 counts and that the parent's releases of the locks it held across the fork
-reach its copy. `run_guest_x86_64_tso_litmus.py` runs x86 memory-order
-litmus tests on four vCPUs, between threads and between processes over
-shared memory, in both modes, and in cycles that share, stop sharing and
-share again, whose log
-must show the space marked and ordered exactly while shared. Its negative
-control is the unit test `x86-64-jit-store-order`, which
-shows message passing catching a JIT space that keeps no order. Both engines
-pass every exception case, unmasked
-`#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
-transfers included, in both modes.
+reach its copy. `run_guest_x86_64_code_change.py`, which takes the same
+options, cross-builds a probe that changes the code of functions an engine has
+translated by stores, mprotect round trips, forks, remaps, another vCPU and a
+flood of changes that makes the engine drop everything, and requires every
+later call to run the new bytes. `run_guest_x86_64_tso_litmus.py` runs x86
+memory-order litmus tests on four vCPUs, between threads and between
+processes over shared memory, in both modes, and in cycles that share, stop
+sharing and share again, whose log must show the space marked and ordered
+exactly while shared. Its negative control is the unit test
+`x86-64-jit-store-order`, which shows message passing catching a JIT space
+that keeps no order. Both engines pass every exception case, unmasked `#XM`,
+`#MF` and `#AC`, selector loads, the LDT, segment limits and far transfers
+included, in both modes.
 `run_guest_x86_64_fenv.py`, which takes the same options, builds
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
@@ -712,7 +719,12 @@ the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
 checked-in bytes, and requires cases for every executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
-`qemu-arm` on a build host over ssh and is opt-in.
+`qemu-arm` on a build host over ssh and is opt-in. With
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>`, the opt-in
+`arm64-a32-corpus-plan-freshness` tooling test plans every suite again without
+an oracle and requires each source table to hold exactly the planned cases in
+order, so a change to the forms or the planner that moves a case is caught
+before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 
@@ -901,7 +913,15 @@ of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
-running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
+running it. `x86-64-jit-space-recycling` has an engine make a gone address
+space's space over for the next one and requires the new bytes to run.
+`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
+and the retirement cases on the gadget engine for the first K retired
+instructions and on the JIT for the rest, over a sweep of K, and require each
+case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
+lists the one record that differs, in a result the architecture leaves
+undefined.
+`x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
 Xeon's, except the documented inexact cases the test names. The

@@ -5,6 +5,7 @@
 #include "memory/mmu/word_shared_mutex.hpp"
 #include "platform/host_capabilities.hpp"
 #include "platform/run_routing.hpp"
+#include "x86_tier.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -81,6 +82,15 @@ public:
 	[[nodiscard]] ExecutionEngine execution_engine() const noexcept;
 	void set_top_byte_ignore(bool enabled) noexcept;
 	[[nodiscard]] bool top_byte_ignore() const noexcept;
+	/* Instructions an x86-64 address space runs on the gadget engine
+	 * before the JIT takes it over; zero runs the JIT from the first. It
+	 * applies to a run that selected the x86-64 JIT. */
+	void set_x86_jit_tier(std::uint64_t instructions) noexcept;
+	[[nodiscard]] std::uint64_t x86_jit_tier() const noexcept;
+	/* The tier state of each address space of the run, for a nonzero
+	 * threshold. */
+	[[nodiscard]] X86TierTable *x86_tier_table(
+		X86TierTable::Live live) noexcept;
 	[[nodiscard]] GuestEntry guest_entry() const noexcept;
 	[[nodiscard]] std::uint64_t memory_domain() const noexcept;
 
@@ -92,6 +102,9 @@ private:
 	std::atomic<ExecutionEngine> selected_engine_;
 	std::atomic<GuestEntry> selected_entry_;
 	std::atomic_bool top_byte_ignore_{false};
+	std::atomic_uint64_t x86_jit_tier_{0};
+	std::once_flag x86_tier_once_;
+	std::unique_ptr<X86TierTable> x86_tier_table_;
 	std::atomic_uint64_t memory_domain_;
 	std::atomic_bool stop_requested_{false};
 	int stop_notification_read_{-1};
