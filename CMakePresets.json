@@ -145,7 +145,7 @@
     {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
-      "inherits": "macos-unit-16k",
+      "inherits": "macos-unit-4k",
       "cacheVariables": {
         "UML_BUILD_ANDROID17_CLI": true,
         "UML_BUILD_KERNEL_RUNNER": true,
@@ -256,10 +256,11 @@
     },
     {
       "name": "kernarium-ios-device-android",
-      "displayName": "Kernarium iOS device Android runtime (16 KiB)",
+      "displayName": "Kernarium iOS device Android runtime (4 KiB)",
       "inherits": "kernarium-ios-device",
-      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-android-16k",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-android-4k",
       "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false,
         "UML_KERNEL_PRODUCT": "android-17"
       }
     }

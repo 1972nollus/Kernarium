@@ -51,7 +51,7 @@
       "properties": {
         "family": { "const": "android-6.18" },
         "slice": { "const": "arm64" },
-        "page_size": { "const": 16384 }
+        "page_size": { "const": 4096 }
       }
     }
   ]
