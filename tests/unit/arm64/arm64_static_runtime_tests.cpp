@@ -26,6 +26,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <string>
+#include <span>
 #include <string_view>
 #include <sys/mman.h>
 #include <thread>
@@ -1255,6 +1256,72 @@ static void uml_static_walker_binding_is_per_thread()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* An exception return ends the local exclusive monitor, and so the engines'
+ * software record of it: a store-exclusive after the guest comes back from
+ * the kernel fails. The kernel's remap of the page between the pair empties
+ * the target's TLB entry, so the store-exclusive misses and, were the record
+ * live, would complete as a compare-and-swap of the recorded value at the
+ * same address. */
+static void uml_static_exception_return_ends_the_exclusive_record()
+{
+	constexpr unsigned long generation = 140;
+	constexpr std::uint64_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr std::uint64_t base = 0x1'0000;
+	constexpr std::uint64_t target = 0x4000'0000;
+	constexpr std::uint64_t initial = 0x1122'3344'5566'7788ULL;
+	constexpr std::uint64_t replacement = 0xa1a2'a3a4'a5a6'a7a8ULL;
+
+	ScratchBacking backing{backing_name, 2 * page};
+	const std::array<std::uint32_t, 4> program{
+		0xc85f'7c41U,  // ldxr x1, [x2]
+		0xd400'0001U,  // svc #0
+		0xc807'7c49U,  // stxr w7, x9, [x2]
+		0xd400'0001U,  // svc #0
+	};
+	for (std::size_t index = 0; index < program.size(); ++index)
+		backing.put32(4 * index, program[index]);
+	backing.put(page, std::as_bytes(std::span{&initial, 1}));
+
+	require(darwin_uml_static_vm_activate(generation) == 0);
+	require(darwin_uml_static_vm_map(
+		reinterpret_cast<void *>(base), backing.descriptor(), 0, page,
+		PROT_READ | PROT_EXEC, 1, 0) == 0);
+	const auto map_target = [&]() {
+		return darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(target), backing.descriptor(),
+			page, page, PROT_READ | PROT_WRITE, 0, 1);
+	};
+	require(map_target() == 0);
+
+	darwin_uml_guest_registers registers{};
+	uml::testing::GuestFpTail fp{};
+	unsigned long tls = 0;
+	registers.pc = base;
+	registers.x[2] = target;
+	registers.x[9] = replacement;
+	require(darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls) ==
+		DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 8);
+	require(registers.x[1] == initial);
+
+	// The kernel replaces the mapping: the thread's next entry drops the
+	// target's TLB entry, the host address stays the same.
+	require(darwin_uml_static_vm_unmap(
+		reinterpret_cast<void *>(target), page) == 0);
+	require(map_target() == 0);
+
+	require(darwin_uml_static_enter_guest(
+		&registers, &fp, sizeof(fp), generation, &tls) ==
+		DARWIN_UML_EVENT_SYSCALL);
+	require(registers.pc == base + 16);
+	require(registers.x[7] == 1);
+	std::uint64_t value = 0;
+	backing.get(page, std::as_writable_bytes(std::span{&value, 1}));
+	require(value == initial);
+	require(darwin_uml_static_vm_destroy(generation) == 0);
+}
+
 } // namespace
 
 int main()
@@ -1289,5 +1356,6 @@ int main()
 	uml_static_execution_context_code_publication();
 	uml_static_batch_targets_explicit_generation();
 	uml_static_walker_binding_is_per_thread();
+	uml_static_exception_return_ends_the_exclusive_record();
 	return 0;
 }

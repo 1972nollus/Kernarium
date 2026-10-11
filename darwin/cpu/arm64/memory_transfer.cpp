@@ -85,12 +85,17 @@ extern "C" void uml_arm64_alignment_fault(
 		::uml::memory::Access::write : ::uml::memory::Access::read;
 }
 
+static_assert(uml_arm64_tlb_miss_exclusive_load >
+	static_cast<std::uint32_t>(::uml::memory::Access::execute));
+
 extern "C" void *uml_arm64_tlb_miss(
 	::uml::memory::Tlb *tlb, std::uint64_t address,
 	std::uint32_t access)
 {
 	if (tlb == nullptr)
 		return nullptr;
+	if (access == uml_arm64_tlb_miss_exclusive_load)
+		return tlb->translate_exclusive_load(address);
 	return tlb->translate_tagged(address,
 		access == static_cast<std::uint32_t>(
 			::uml::memory::Access::write) ?

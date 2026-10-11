@@ -138,6 +138,24 @@ std::byte *Tlb::translate_tagged(std::uint64_t address, Access access)
 	return host;
 }
 
+std::byte *Tlb::translate_exclusive_load(std::uint64_t address)
+{
+	/* The load itself decides: an unreadable page faults as a read. */
+	auto *host = translate_tagged(address, Access::read);
+	if (host == nullptr)
+		return nullptr;
+	/* Then the write entry, for the store-exclusive that completes the pair.
+	 * A page that is not writable now fails the lookup, which must leave no
+	 * trace of it: no fault is the load's to take. */
+	const auto saved_address = fault_address;
+	const auto saved_access = fault_access;
+	if (auto *writable = translate_tagged(address, Access::write))
+		return writable;
+	fault_address = saved_address;
+	fault_access = saved_access;
+	return host;
+}
+
 void Tlb::prepare(std::uint64_t next_generation,
 	std::uint64_t next_changes)
 {
