@@ -329,7 +329,7 @@ the SVE state live. A reserved bitmask immediate gives the
 illegal-instruction exit. A memory form faults at the first byte, in the
 pseudocode's access order, that does not translate, and checks an SP base's
 16-byte alignment before any access, also with no element active. A fault
-leaves what arm64-builder's Neoverse V2 leaves: a load changes no register, a
+leaves what a Neoverse V2 Linux host leaves: a load changes no register, a
 store writes its footprint's 16-byte pieces in order up to the faulting one,
 and a scatter its elements in order up to the faulting one. A first-fault
 load's later elements, and a non-fault load's every element, clear FFR from
@@ -834,10 +834,10 @@ SME profiles are, is in
 [`cpu/arm64/aarch32/a32_profile.hpp`](../darwin/cpu/arm64/aarch32/a32_profile.hpp).
 Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
-milestones, not products. `CpuEngine::run_aarch32` is the entry for a task
-in AArch32 state and the A64 `run` is unchanged. The gadget engine is at
-`complete` and the JIT at `none`; an engine below `base` takes the new entry as
-the illegal-instruction exit without touching the state. The development policy
+milestones, not products. `CpuEngine::run_aarch32` is the entry for a task in
+AArch32 state, the A64 `run` is unchanged, and an engine below `base` takes the
+new entry as the illegal-instruction exit without touching the state. The
+gadget engine is at `complete`; the JIT is at `simd` on macOS. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
 policy off and the engine's level with it on, and the AArch32 identification
@@ -972,6 +972,55 @@ becomes the bridge event for a 32-bit task: BKPT carries its immediate and
 the BKPT32 exception class, a completed single step the software-step class,
 and a PC alignment fault the 32-bit target address.
 
+The JIT lowers AArch32 in `cpu/arm64/jit/a32`, beside the A64 compiler and
+without changing it. An A32 or T32 block is decoded by the shared decoder and
+compiled by its own compiler, which reuses the A64 compiler's register
+residency, flag machine, cold paths, direct and indirect links, tracked stores
+and publication: R0-R14 are resident host registers written back at every
+exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
+condition is a branch over the body, and a link's target is the key. Memory
+takes the shared inline TLB sequence after a 32-bit address and the alignment
+rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
+byte and halfword forms) are an alignment-checked LDAR and STLR. A
+load-exclusive, up to four register instructions and the store-exclusive
+(acquire and release forms included) on the same address at the start of a
+block become one host load-exclusive and store-exclusive, so the guest's
+monitor is the host's; a failed store leaves the status to the guest's retry
+loop. What the lowering declines (an access across a page or one that must
+fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
+block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
+instruction in the AArch32 semantic library over the TLB, with the library's
+fault ordering. The exclusives run there too, over the JIT's versioned software
+reservation: the helper overrides the library's monitor hooks, because the
+guest monitor is shared with the tracked stores and the fused host exclusives
+and the library's default compare-and-swap monitor is not. An entry in the middle of an IT block and a single
+step run one instruction in the single-instruction arena, with the IT state
+the exit recorded. Translations validate their saved guest bytes in
+the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
+translation is seen. Executable memory comes only from the arena the A64 JIT
+already uses; the A32 files allocate and publish none.
+
+The JIT's AArch32 vector support (VFP and Advanced SIMD on D0-D31) keeps Q0-Q15
+in the A64 compiler's vector residency: CpuState vectors 0-15 are the resident
+host registers V16-V31, a D register is the low or high half of its Q and an S
+register a 32-bit lane, so a narrower operand is staged in a scratch register
+and a result is inserted into its half or lane. A VFP instruction runs under the
+guest's FPCR and FPSR, which the executor installs for a block that holds one
+(the native floating-point environment of the A64 compiler); an Advanced SIMD
+floating-point instruction runs under the Standard FPSCR value (FZ and DN set,
+round to nearest, AHP and FZ16 the guest's), which the translation sets before
+the first one and puts back at every exit and in a conditional arm that changed
+it, so a block always begins and ends under the guest's FPCR and a link keeps
+its meaning. A saturating instruction sets QC in the host FPSR, which is the
+guest's. VRECPS and VRSQRTS round the product before the step, as the AArch32
+pseudocode does and the A64 instructions do not, and answer 2.0 or 1.5 for an
+infinity times a zero without raising Invalid Operation. VLDR, VSTR and the
+register-list transfers move whole Q registers where the list is aligned to
+one; the structure loads and stores use the host LDn and STn on scratch
+registers. They share the scalar transfers' TLB sequence and alignment rule,
+and a page crossing, a faulting alignment, a PC base or a list past the
+register file runs the instruction in the semantic library instead.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
@@ -988,8 +1037,10 @@ the stream, and a register-baked bank generated at build time in which every
 register offset is an immediate. A store publishes a code change only when a
 per-address-space registry says some executor holds a translation of that
 page, which keeps publication precise where READ_IMPLIES_EXEC makes every
-readable page executable. The banks, the host-flag fusion rules and the
-registry contract are in
+readable page executable. The static MMU is as precise: a mapping change
+publishes a code change only for a page a translation can be wrong about,
+so a fork's write-protection of a process publishes none. The banks, the
+host-flag fusion rules and the registry contract are in
 [`darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md).
 What any x86 engine shares with the gadget engine is not part of it: the guest
 CPU state, the decoder, CPUID, the software TLB entry, the code-page registry,
@@ -1014,7 +1065,8 @@ none of the x86_64 kernel overlay.
 On macOS the x86_64 product can instead run long64 and compat32 tasks on the
 x86-64 JIT, FEXCore embedded behind the static MMU, which
 `--execution-engine jit` selects. The product's default is the gadget engine,
-by name. The
+by name; `--jit-tier=N` runs each address space on the gadgets for its first N
+instructions and on the JIT after that. The
 [JIT README](../darwin/cpu/x86_64/jit/README.md) records its contracts and
 known gaps. The JIT is a macOS product only, and four independent checks keep
 it out of every iOS product: only the `macos` dependency prefix carries
@@ -1118,8 +1170,8 @@ one instruction at a time with the architecture's fault ordering.
 `a32_semantics_covers()` holds for every implemented form, and a word
 outside it is a fatal internal error. The gadget engine and the JIT route
 their slow paths and long tails to it, and the corpus's model lane runs the
-instruction corpus through it. Until an engine calls it, no product binary
-links it.
+instruction corpus through it. The JIT links it for what its lowering
+declines.
 
 ## Kernel and Android ownership
 

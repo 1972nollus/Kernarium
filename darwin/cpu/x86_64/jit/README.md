@@ -22,6 +22,41 @@ FEAT_LSE2). The JIT runs both long64 and compat32 tasks. The arm64 product's
 x86 test guest builds the engine for its unit tests only and runs x86 code on
 the gadget engine.
 
+## Tiered execution
+
+`--jit-tier=N` starts each x86-64 address space on the gadget engine and gives
+it to the JIT once the gadgets have retired N instructions in it. N is a
+property of the engine, not of a workload: a process that exits first never
+pays the JIT's compile cost, and one that stays pays it once. Zero, the
+default, runs the JIT from the first instruction; the option applies only
+where `--execution-engine jit` selected the JIT on the x86-64 product.
+
+The count is per address space, so a fork or exec starts again on the gadgets,
+and the threads of one address space share it. Neither engine keeps state of
+its own across a dispatch: both read and write the vCPU's architectural state
+and the address space, and the runtime saves that state at the end of every
+dispatch, which settles the gadgets' deferred flags. The engine can therefore
+change between dispatches, provided no gadget dispatch is still running in the
+address space: a JIT store publishes a code change only for a page its own
+registry holds, which a gadget translation does not appear in. The handover
+drains. Once the address space crosses its threshold no dispatch of it starts
+on the gadgets, each one running leaves, and the last to leave opens the JIT;
+dispatches that begin meanwhile wait, which costs one gadget dispatch's length
+at most, once in the life of an address space ([`x86_tier.hpp`](../../../runtime/x86_tier.hpp)).
+The JIT never hands a space back.
+
+`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` hold the
+handover to the engines' own results: the corpus and the retirement cases run
+on the gadgets for the first K retired instructions and then on the JIT, for
+every K from 1 to 8 and then each doubling until the case ends first, and
+each must end as the engines alone do, with the same retirement counts.
+[`tier_switch_exclusions.tsv`](../../../../tests/unit/x86_64/tier_switch_exclusions.tsv)
+lists the one record a handover changes, with its class: AF after TEST, AND,
+OR or XOR is architecturally undefined, the gadget engine clears it as hardware
+does, and the JIT, like FEXCore upstream, leaves what the instruction before
+made it. The x86 guest runners take `UML_TEST_JIT_TIER=N` to run on the
+tiered JIT unchanged.
+
 ## Address spaces and memory
 
 One engine belongs to one vCPU thread. It keeps a FEXCore context and thread
@@ -81,6 +116,17 @@ registry holds publishes a code change. A publishing store into the code of
 the unit running it, which would go on to run the bytes it replaces, stops
 that unit before it stores; its instruction runs again as a unit of its own,
 and the dispatch goes on from freshly fetched code.
+
+The engine learns of the address space's changes as two histories. The mapping
+history names the pages whose cached host addresses to retire, and the engine
+retires only its TLB entries for it. The code history is what a translation
+can no longer trust: a page that stops granting execute, goes away or holds
+other bytes, which the static MMU publishes (see
+[`uml_darwin_static_mmu.h`](../../../include/uml_darwin_static_mmu.h)), and a
+store to a page the registry holds. A fork write-protecting the parent, an
+mprotect that keeps execute and a first mapping publish nothing. A reader
+further behind than the history reaches, or a range of length zero, drops every
+translation of the space.
 
 ## State at every exit
 
@@ -155,8 +201,21 @@ its window near the host image, because the generated code calls FEXCore's
 fallbacks there; a buffer beyond the window's capacity runs x87-heavy code
 about a third slower ([architecture](../../../../docs/architecture.md)). The
 window serves buffers in the order spaces map them, however little a space
-runs: with ten vCPUs, idle spaces' buffers can fill it, and a busy space's
-buffer, grown past 16 MiB, then lands beyond it.
+runs: with ten vCPUs, idle spaces' buffers can fill it.
+
+A space drops its translations without allocating: the buffer starts over at
+its beginning, and the context's lookup caches, block links, page lists and
+decoder range go with the code, so the next block overwrites the old ones. Only
+the space's own vCPU runs in its context, which is what makes overwriting safe.
+A buffer therefore grows, to twice its size up to 128 MiB, only when the
+translations of one space fill it.
+
+A process that ends leaves its spaces behind, and building a context costs
+milliseconds. The runtime tells the engine which address spaces still exist
+(`FexEngineOptions::generation_live`; a generation is never reused), and a space
+of one that is gone becomes the next address space's, with the same mode, store
+order and floating-point mode, once its code, holds and TLB are dropped. When
+the engine is full, a gone space is released before the least recently used.
 
 ## Guest-visible model
 

@@ -154,4 +154,26 @@ void MappedBacking::invalidate_code_page(void *handle) noexcept
 		page->version.fetch_add(1, std::memory_order_release);
 }
 
+void MappedBacking::retire_code_page(std::uint64_t offset) noexcept
+{
+	const auto page = offset / page_size;
+	if (code_index_ && page < code_index_pages_) {
+		/* Every record of an indexed page is in the index. */
+		const auto *leaf = code_index_[page / code_index_leaf_pages].load(
+			std::memory_order_acquire);
+		if (leaf == nullptr)
+			return;
+		invalidate_code_page((*leaf)[page % code_index_leaf_pages].load(
+			std::memory_order_acquire));
+		return;
+	}
+	try {
+		const std::lock_guard lock{code_pages_mutex_};
+		const auto found = code_pages_.find(page);
+		if (found != code_pages_.end())
+			invalidate_code_page(found->second.get());
+	} catch (...) {
+	}
+}
+
 } // namespace uml::memory

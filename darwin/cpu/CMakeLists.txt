@@ -362,6 +362,25 @@ set(_uml_cpu_jit_sve_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve_inline.cpp)
 
+# The AArch32 compiler of the JIT (design 5), owned by lane A32-J.
+set(_uml_cpu_jit_a32_sources
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_alu.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_arith.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_cold.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_control.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_exclusive.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_memory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_vector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_vfp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon_misc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_neon_shift.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_compiler_vmem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_operations.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_transfer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/a32/a32_vector_operations.cpp)
+
 set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_arena.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler.cpp
@@ -376,19 +395,25 @@ set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_emitter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_tlb_translate.S
     ${_uml_cpu_jit_sme_sources}
-    ${_uml_cpu_jit_sve_sources})
+    ${_uml_cpu_jit_sve_sources}
+    ${_uml_cpu_jit_a32_sources})
 
 add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
 uml_declare_architecture_target(uml_arm64_jit cpu native)
 target_link_libraries(uml_arm64_jit PRIVATE
     UML::BridgeAbi
     UML::CpuContract
-    uml_cpu_executable_memory)
+    uml_cpu_executable_memory
+    uml_arm64_aarch32_decoder
+    uml_arm64_aarch32_semantics)
 target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
 set(_uml_cpu_jit_executor_sources
+    arm64/jit/a32/a32_execute.cpp
+    arm64/jit/a32/a32_loop.cpp
     arm64/jit/jit_cache_geometry.cpp
+    arm64/jit/jit_executor_a32.cpp
     arm64/jit/jit_executor_cache.cpp
     arm64/jit/jit_executor_execution.cpp
     arm64/jit/jit_executor_lifecycle.cpp
@@ -541,6 +566,8 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
     $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
@@ -562,6 +589,8 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_jit_engine>
     $<TARGET_OBJECTS:uml_cpu_executable_memory>
     $<TARGET_OBJECTS:uml_arm64_jit>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>

@@ -26,8 +26,8 @@ def add_guest_arguments(
     """Add the emulator, image, guest size, engine and core-class options.
 
     A runner that fixes its guest memory passes ``memory=None``. ``cpus`` is
-    the runner's default vCPU count: 4 on the macOS host, per the benchmark
-    host contract in tests/perf/README.md.
+    the runner's default vCPU count: 4 on the macOS host, as
+    tests/perf/README.md states.
     """
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)

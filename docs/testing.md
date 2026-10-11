@@ -37,6 +37,20 @@ configure creates: a shell defers its traps while a child runs, so a shell
 test that times out in one cannot clean up, and what it leaves names it.
 Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
+`repository-environment-portability` is the one tooling test that scans
+tracked source, and it looks for forbidden values rather than expected ones:
+host paths and account names, private addresses, ssh endpoints and Apple
+signing identifiers outside the project's own. It also scans new unignored
+files, so a leak fails before it is committed. A site adds its private tokens
+to a local denylist, found at
+`${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
+through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
+reviewed exception goes in
+`tests/tooling/cmake/environment-portability-allow.tsv` under one of its fixed
+reasons, and an entry that matches nothing fails.
+`python3 tests/tooling/cmake/check_environment_portability.py --list-rules`
+describes the rules and the denylist format.
+
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
 for the management console's run directory. Each registration owns
@@ -72,6 +86,13 @@ ctest --test-dir .build/presets/macos-unit-16k \
 ```
 
 ## Canonical host workflows
+
+Every workflow needs the tools in
+[Host prerequisites](../dependencies/README.md#host-prerequisites), among them
+Python 3.11 or newer, which configure requires, and a Git identity. A test
+that boots ten vCPUs, such as `guest-mmu-stress`, needs ten host CPUs and
+skips on a smaller host. The LTP campaigns default to half the host's physical
+cores, at most 16.
 
 The ordinary 16 KiB and 4 KiB host checks are:
 
@@ -359,25 +380,32 @@ probes with `clang++` and `ld.lld` and check the slice's user-RFLAGS and
 exception contracts in the [mainline README](../kernel/mainline-6.18/README.md)
 against native x86 Linux's values. The smoke, RFLAGS and exception runners
 take `--engine jit` to run x86-64 and i386 code on the macOS-only x86-64 JIT
-instead of the default gadget engine; run them on both engines when a change
-reaches either. `run_guest_x86_64_mm_shared.py`, which takes the same options,
-checks that the host sees an address space as shared exactly when the
-kernel's contract in the [common kernel README](../kernel/common/README.md)
-says so, including when the sharing ends, and on the JIT that exactly the
-marked dispatches run ordered code.
+instead of the default gadget engine, and `UML_TEST_JIT_TIER=N` runs the JIT
+as the [tiered engine](../darwin/cpu/x86_64/jit/README.md#tiered-execution),
+except that the checks of which dispatches the JIT ran need it from the first
+instruction, since a tiered space may leave before it reaches the JIT; run
+them on both engines when a change reaches either.
+`run_guest_x86_64_mm_shared.py`, which takes the same options, checks that
+the host sees an address space as shared exactly when the kernel's contract in
+the [common kernel README](../kernel/common/README.md) says so, including
+when the sharing ends, and on the JIT that exactly the marked dispatches run
+ordered code.
 `run_guest_x86_64_fork_cow.py` forks from a busy multi-threaded process on
 four vCPUs, as glibc's fork() does, and checks that the workers keep their
 counts and that the parent's releases of the locks it held across the fork
-reach its copy. `run_guest_x86_64_tso_litmus.py` runs x86 memory-order
-litmus tests on four vCPUs, between threads and between processes over
-shared memory, in both modes, and in cycles that share, stop sharing and
-share again, whose log
-must show the space marked and ordered exactly while shared. Its negative
-control is the unit test `x86-64-jit-store-order`, which
-shows message passing catching a JIT space that keeps no order. Both engines
-pass every exception case, unmasked
-`#XM`, `#MF` and `#AC`, selector loads, the LDT, segment limits and far
-transfers included, in both modes.
+reach its copy. `run_guest_x86_64_code_change.py`, which takes the same
+options, cross-builds a probe that changes the code of functions an engine has
+translated by stores, mprotect round trips, forks, remaps, another vCPU and a
+flood of changes that makes the engine drop everything, and requires every
+later call to run the new bytes. `run_guest_x86_64_tso_litmus.py` runs x86
+memory-order litmus tests on four vCPUs, between threads and between
+processes over shared memory, in both modes, and in cycles that share, stop
+sharing and share again, whose log must show the space marked and ordered
+exactly while shared. Its negative control is the unit test
+`x86-64-jit-store-order`, which shows message passing catching a JIT space
+that keeps no order. Both engines pass every exception case, unmasked `#XM`,
+`#MF` and `#AC`, selector loads, the LDT, segment limits and far transfers
+included, in both modes.
 `run_guest_x86_64_fenv.py`, which takes the same options, builds
 `fenv_probe.cpp` with the image's g++, so it needs an image with a toolchain
 such as the x86-64 LTP rootfs, and checks what glibc's `fetestexcept`,
@@ -458,7 +486,7 @@ userdata/metadata mount and format behavior, backup/restore, file manager,
 terminal, battery display, and normal/recovery reboot paths. Never run wipe or
 restore checks against an existing user bundle.
 
-`KernariumTests` runs on the iPad and, as an iPad app, on an Apple silicon
+`KernariumTests` runs on an iPad and, as an iPad app, on an Apple silicon
 Mac. The iPad is the reference, and the whole suite passes there. On the Mac
 up to four tests fail because of how the Mac hosts an iPad app:
 
@@ -471,7 +499,7 @@ up to four tests fail because of how the Mac hosts an iPad app:
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. SwiftUI's hosting view exposes them only
   while UIKit application accessibility is on in the process. A test run on
-  the iPad has it on. On the Mac it follows the host's
+  an iPad has it on. On the Mac it follows the host's
   `ApplicationAccessibilityEnabled` preference in `com.apple.Accessibility`,
   which an assistive client turns on; while it is off, both tests fail.
 - `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
@@ -559,7 +587,7 @@ encoding the SVE profile executes outside streaming mode UNDEFINED under
 CPU, so both engines run them today with the guest-SVE policy off or on.
 
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
-16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
+16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
 pages. Their floating-point forms are sampled across FPCR's rounding modes
 and its FZ, DN, and FZ16 controls. Both engines are at `sve_support`
@@ -584,8 +612,8 @@ runs them only for an engine at `sve_support` `complete` on a virtual CPU
 with SME, and SME2 where named. The `arm64-instruction-corpus-sve-sme`
 tooling test re-derives them. The `arm64-sve-afp` records come from the
 M4 the same way. They hold those forms under FPCR.AH, FIZ, and NEP, which
-arm64-builder lacks. The `arm64-instruction-corpus-sve-afp` test checks them
-against their request.
+the Neoverse V2 host lacks. The `arm64-instruction-corpus-sve-afp` test
+checks them against their request.
 
 The `arm64-floating-trap-native` records, and the outcomes of the
 register-only `arm64-floating-trap-scalar`, `-vector` and `-control` cases,
@@ -622,19 +650,20 @@ pinned LLVM MC and require the checked-in bytes; without the archive or that
 LLVM MC they skip.
 
 A gadget that runs an instruction as the host's own, such as FEAT_ECV,
-FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
+FEAT_I8MM, FEAT_BF16, or FEAT_FHM on an A15 iPad, runs that path only on a
 host with the feature, and the M1 has none of the first three. FEAT_AFP and
 FEAT_RPRES need an A17 Pro or newer, such as the iPhone 15 Pro Max or an M4
 Mac. An M4 Mac has all of these features and a 1 GHz system counter, and the
 unit suite, the corpus included, holds there in both engines. Elsewhere
 `arm64-instruction-corpus-afp-twins` runs the FEAT_AFP twins only on the cases
 whose FPCR leaves the controls clear. Check a change
-to such a path on the iPad by hand: launch Kernarium on the device with the
-`guest-hwcap-sanity` payload, which executes every family the guest
-advertises, and with the corpus cases of the touched families built into one
-static guest program, and require the same results as a gadget-engine run of
-both programs on a Mac. The device runs only the gadget engine, so a JIT path
-that needs one of these features runs only on an M4 or newer Mac.
+to such a path by hand on an iOS device that has the feature: launch
+Kernarium on the device with the `guest-hwcap-sanity` payload, which executes
+every family the guest advertises, and with the corpus cases of the touched
+families built into one static guest program, and require the same results as
+a gadget-engine run of both programs on a Mac. The device runs only the
+gadget engine, so a JIT path that needs one of these features runs only on an
+M4 or newer Mac.
 
 ## AArch32 decoder
 
@@ -672,7 +701,12 @@ the pack from `tests/unit/arm64/aarch32_corpus/source` and compares it,
 checked-in bytes, and requires cases for every executed base inventory entry.
 Neither needs an oracle. The corpus README owns the format, the oracles and how
 to record a suite with `tools/arm64-tests/a32-corpus.py`; recording runs
-`qemu-arm` on a build host over ssh and is opt-in.
+`qemu-arm` on a build host over ssh and is opt-in. With
+`-DUML_A32_ARCHITECTURE_ARCHIVE=<archive>`, the opt-in
+`arm64-a32-corpus-plan-freshness` tooling test plans every suite again without
+an oracle and requires each source table to hold exactly the planned cases in
+order, so a change to the forms or the planner that moves a case is caught
+before the table goes stale; it skips without the archive.
 
 ## AArch32 semantic library
 
@@ -728,6 +762,23 @@ they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
 that with the policy off the probe sees no SME.
+
+Two opt-in tools list what SME code executes outside streaming mode, where
+an SVE word is UNDEFINED on an SME CPU without SVE unless it belongs to the
+SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL and the scalar INC/DEC
+B/H/W/D). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
+desktop EROFS images and the Android release directories), extracts them
+with `fsck.erofs`, `debugfs` and `zstd`, and walks every SME function of
+every AArch64 ELF file, APK and APEX payloads included, from its inferred
+entry mode; any other SVE word reachable at SM = 0 is a decision to extend
+the family or withhold SME from that workload, and `--expect` pins a
+binary's words (Chromium's libyuv executes only CNTD there).
+`tools/arm64-tests/sme-idiom-corpus.py` builds `sme_idioms.cpp` with the
+given clang and GCC compilers for SVE and SME-only targets, every
+optimization level and callee-saved register pressure, and reports the
+same classification for each compiler idiom, callee-saved Z and P spills
+included. The `arm64-sme-sm0-scan` tooling test checks the classifier and
+both tools on synthetic ELF fixtures.
 
 ## Guest SVE policy
 
@@ -881,6 +932,41 @@ skips, naming its reason, while its engine implements no AArch32 (the level
 by hand through the runner's `--groups`, and `A32_PROBE_VERBOSE=1` makes the
 runner print every line of the guest's output, passes included.
 
+## AArch32 JIT
+
+The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
+`arm64-jit-a32-corpus` runs every simd-level case of the AArch32 corpus pack
+through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
+each of the oracle's two epilogues, and compares registers, APSR, thread
+registers, changed data, event, fault address and retired count; a failing
+exclusive case runs once more, because a host store-exclusive may fail without
+cause. It then requires every lowered form to stay out of the slow helper from a
+clean state: each event-free case runs twice, and past the first run one case
+in which the form always executes must take no helper exit (the others cross a
+page or write back over the loaded register). The parallel
+arithmetic that the semantic library runs must take it in all of them, and every
+vector form of the level must have a lowering. (Cases that need the half-precision
+or Armv8 extensions are skipped until the JIT's level reaches them.) `arm64-jit-a32-runtime`,
+`arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
+programs against an independent reference of the instruction forms (the corpus
+carries T32).
+`arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
+idiom, the monitor rules, fault and alignment exits, two threads counting
+exactly and an ordinary store clearing a reservation, and requires the fused
+loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+STL with their byte and halfword forms, the always-checked alignment, the fused
+and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
+helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
+step at a time and from the middle, long blocks under a small budget, and code
+rewritten under translations. `arm64-jit-a32-vector` covers what the corpus
+does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
+and the Standard FPSCR value for a Neon one across a conditional arm, a chained
+branch and an exit, QC across runs, and the vector memory forms staying inline
+and taking the library, with its data and faults, across a page, on a
+misalignment and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's
+A64 encoders with LLVM MC, and `arm64-jit-a32-vector-encoder` those of the
+vector instruction classes.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
@@ -916,7 +1002,15 @@ of host code per IR node, requires the code buffer to grow, and requires the
 same results. `x86-64-retirement` and `x86-64-jit-retirement` hold the gadget
 engine and the JIT to the same count of retired instructions before each kind
 of stop, in long64 and compat32, including a store into the code of the block
-running it. `x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
+running it. `x86-64-jit-space-recycling` has an engine make a gone address
+space's space over for the next one and requires the new bytes to run.
+`x86-64-tier-switch-corpus` and `x86-64-tier-switch-retirement` run the corpus
+and the retirement cases on the gadget engine for the first K retired
+instructions and on the JIT for the rest, over a sweep of K, and require each
+case to end as the engines alone do; `tests/unit/x86_64/tier_switch_exclusions.tsv`
+lists the one record that differs, in a result the architecture leaves
+undefined.
+`x86-64-masked-flags` and `x86-64-jit-masked-flags` run a subset
 of XE2's request sets through each engine's ordinary path with every
 exception masked and hold the MXCSR flags each instruction leaves to an Intel
 Xeon's, except the documented inexact cases the test names. The

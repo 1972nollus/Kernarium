@@ -114,14 +114,16 @@ bool vacg(Exec &x)
 
 bool vrecps(Exec &x)
 {
-	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) {
-		return fp::recip_step(n, m);
+	const uint32_t guest_fpcr = x.cpu.fpcr;
+	return fp::lanes(x, fp::standard, [guest_fpcr](auto n, auto m, auto) {
+		return fp::recip_step(n, m, guest_fpcr);
 	});
 }
 bool vrsqrts(Exec &x)
 {
-	return fp::lanes(x, fp::standard, [](auto n, auto m, auto) {
-		return fp::rsqrt_step(n, m);
+	const uint32_t guest_fpcr = x.cpu.fpcr;
+	return fp::lanes(x, fp::standard, [guest_fpcr](auto n, auto m, auto) {
+		return fp::rsqrt_step(n, m, guest_fpcr);
 	});
 }
 

@@ -171,9 +171,10 @@ void presented_support_follows_policy_and_level()
 	}
 }
 
-/* An engine presents nothing with the policy off, and its level with it on;
- * the entry points agree with the constants. */
-void engines_present_their_level_under_policy()
+/* Under the policy off an engine presents no AArch32 whatever it implements;
+ * on, it presents exactly its level; and the factory agrees with the
+ * constants. */
+void engines_present_their_level_under_the_policy()
 {
 	require(::uml::cpu::engine_a32_support(::uml::cpu::EngineKind::gadgets) ==
 		arm64::gadgets::a32_support);
@@ -418,7 +419,7 @@ void compat_hwcaps_are_pinned_per_level()
 
 /* The AArch32 entry of an engine below base is the illegal-instruction exit
  * and leaves the state and the guest memory as it found them. An engine at
- * base or above runs AArch32 (arm64-gadget-a32-control). */
+ * base or above has its own execution tests. */
 void aarch32_entry_is_illegal_below_base()
 {
 	for (const auto kind : {::uml::cpu::EngineKind::gadgets,
@@ -428,6 +429,8 @@ void aarch32_entry_is_illegal_below_base()
 				static_cast<int>(kind));
 			continue;
 		}
+		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
+			continue;
 		auto engine = ::uml::cpu::make_cpu_engine(kind);
 		require(engine != nullptr && engine->kind() == kind);
 		if (::uml::cpu::engine_a32_support(kind) != A32Support::none)
@@ -479,7 +482,7 @@ int main()
 	state_is_appended_at_the_pinned_offsets();
 	policy_parses_only_one();
 	presented_support_follows_policy_and_level();
-	engines_present_their_level_under_policy();
+	engines_present_their_level_under_the_policy();
 	features_follow_level_and_host();
 	nothing_is_presented_below_base();
 	id_registers_are_pinned_per_level();
