@@ -84,6 +84,8 @@ public:
   void load_x(unsigned destination, unsigned base, std::size_t offset);
   void load_pair_x(unsigned first, unsigned second, unsigned base,
                    std::ptrdiff_t offset);
+  void store_pair_x(unsigned first, unsigned second, unsigned base,
+                    std::ptrdiff_t offset);
   void store_x(unsigned source, unsigned base, std::size_t offset);
   void load_w(unsigned destination, unsigned base, std::size_t offset);
   void store_w(unsigned source, unsigned base, std::size_t offset);

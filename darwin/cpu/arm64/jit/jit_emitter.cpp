@@ -75,6 +75,18 @@ void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
          ((base & 31U) << 5U) | (first & 31U));
   }
 
+void Arm64Emitter::store_pair_x(unsigned first, unsigned second,
+                                unsigned base, std::ptrdiff_t offset) {
+    if ((offset % 8) != 0 || offset < -512 || offset > 504) {
+      valid_ = false;
+      return;
+    }
+    const auto scaled =
+        static_cast<std::uint32_t>(offset / 8) & 0x7fU;
+    emit(0xa900'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
+         ((base & 31U) << 5U) | (first & 31U));
+  }
+
 void Arm64Emitter::store_x(unsigned source, unsigned base, std::size_t offset) {
     emit(0xf900'0000U | (static_cast<std::uint32_t>(offset / 8U) << 10) |
          ((base & 31U) << 5) | (source & 31U));

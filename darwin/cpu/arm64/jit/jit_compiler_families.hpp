@@ -42,6 +42,20 @@ protected:
   void attach_family_emitter(void *emitter, bool *native_fp,
                              bool enable_gpr_cache) noexcept;
   void attach_link_resolver(void *context, LinkResolver resolver) noexcept;
+  /* The translation keeps its core registers in the host across every link:
+   * a successor finds them in their hosts, a block entered from the executor
+   * loads them all before its internal entry, and every return to the
+   * executor writes all of them back. Its link sequences use x10 and x11,
+   * which no binding holds, and a pair of bindings is written back with one
+   * store. */
+  void keep_gprs_across_links() noexcept {
+    resident_across_links_ = true;
+    link_pointer_ = 10U;
+    link_scratch_ = 11U;
+  }
+  [[nodiscard]] bool gprs_kept_across_links() const noexcept {
+    return resident_across_links_;
+  }
   void begin_link_observation() noexcept;
   [[nodiscard]] std::size_t direct_link_refusals() const noexcept;
   [[nodiscard]] std::size_t indirect_link_refusals() const noexcept;
@@ -393,6 +407,9 @@ private:
   std::array<VectorSlot, resident_vector_hosts.size()> vector_slots_{};
   std::size_t gpr_host_limit_{a64_gpr_hosts};
   std::uint16_t exit_gpr_mask_{};
+  bool resident_across_links_{};
+  unsigned link_pointer_{12U};
+  unsigned link_scratch_{13U};
   std::uint32_t exit_vector_mask_{};
   GuestFlagsState guest_flags_state_{GuestFlagsState::memory};
   bool exit_gpr_mask_set_{};

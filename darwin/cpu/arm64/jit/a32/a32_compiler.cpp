@@ -51,6 +51,12 @@ A32Compiler::A32Compiler(void *link_context, LinkResolver link_resolver,
    * for all of them. */
   gpr_host_limit_ = resident_gpr_hosts.size();
   emitter_.set_extended_frame(true);
+  /* Translations that link keep the registers in the host from block to
+   * block; an unlinked one (the tracked-store variant, the single
+   * instruction) is entered from and returns to the executor. */
+  kept_gprs_ = link_resolver != nullptr && !track_direct_stores_;
+  if (kept_gprs_)
+    keep_gprs_across_links();
   attach_link_resolver(link_context, link_resolver);
   attach_indirect_link_resolver(link_context, indirect_link_resolver);
   emitter_.attach_exit_flush(this, [](void *context) {
@@ -130,6 +136,8 @@ Result A32Compiler::compile(const Request &request) {
     }
   }
   emitter_.prologue();
+  if (kept_gprs_)
+    load_kept_gprs();
   const auto internal_entry_word = emitter_.size();
   emit_block();
   const auto instructions = count_;
@@ -156,6 +164,21 @@ Result A32Compiler::compile(const Request &request) {
   translation.guest_illegal = guest_illegal_;
   result.guest_units = units_consumed_;
   return result;
+}
+
+/* The fifteen core registers, two to a load, in the host registers of their
+ * bindings. A linked predecessor leaves them there; the executor leaves them
+ * in the CpuState. */
+void A32Compiler::load_kept_gprs() {
+  gpr_slots_ = {};
+  for (unsigned guest = 0; guest < 15U; ++guest)
+    gpr_slots_[guest] = {.guest = guest, .stack_pointer = false,
+                         .loaded = true, .dirty = false};
+  for (unsigned guest = 0; guest + 1U < 15U; guest += 2U)
+    emitter_.load_pair_x(resident_gpr_hosts[guest],
+                         resident_gpr_hosts[guest + 1U], 15,
+                         register_offset(guest, false));
+  emitter_.load_x(resident_gpr_hosts[14], 15, register_offset(14U, false));
 }
 
 /* The last instruction is a backward B to the translation's own first
@@ -205,7 +228,7 @@ void A32Compiler::record_loop_plan() {
 void A32Compiler::apply_loop_plan() {
   for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
     const unsigned guest = plan_.gpr[index];
-    if (guest == unbound_guest)
+    if (guest == unbound_guest || kept_gprs_)
       continue;
     gpr_slots_[index] = {.guest = guest, .stack_pointer = false,
                          .loaded = true, .dirty = true};

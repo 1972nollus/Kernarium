@@ -213,6 +213,9 @@ private:
   [[nodiscard]] bool loop_candidate(const Request &request);
   void record_loop_plan();
   void apply_loop_plan();
+  /* The loads of the core registers that precede the internal entry, and the
+   * bindings that say they are there. */
+  void load_kept_gprs();
   [[nodiscard]] Flow emit_loop_branch();
   Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
@@ -507,6 +510,10 @@ private:
   bool thumb_{};
   bool single_{};
   bool track_direct_stores_{};
+  /* The translation keeps all fifteen core registers in the host: they are
+   * loaded before the internal entry and written back only where the block
+   * returns to the executor (JitCompilerFamilies::keep_gprs_across_links). */
+  bool kept_gprs_{};
   bool terminated_{};
   bool native_fp_{};
   bool accesses_fp_state_{};

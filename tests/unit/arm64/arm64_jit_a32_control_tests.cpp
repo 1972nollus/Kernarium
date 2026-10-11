@@ -148,6 +148,117 @@ void long_blocks_and_the_budget() {
   require(cpu.registers[0] == adds);
 }
 
+/* The core registers stay in the host from one block to the next of a chain,
+ * through the direct links of a call and the indirect link of its return, and
+ * are in the CpuState whenever the chain ends. A chain ends when its allowance
+ * of instructions is spent, at whichever link it has reached; the registers
+ * are then what the retired instructions made them, and at the end what the
+ * whole program did. */
+void registers_survive_budget_returns_in_a_chain() {
+  Fixture fixture{0x1a32'0c15, 2, 2};
+  constexpr std::uint32_t inner = 200, outer = 100;
+  const std::vector<std::uint32_t> program{
+      0xe3a0'7000U, //  0: mov r7, #0
+      0xe3a0'5000U, //  4: mov r5, #0              (outer)
+      0xe280'0001U, //  8: add r0, r0, #1          (inner)
+      0xe281'1002U, // 12: add r1, r1, #2
+      0xe282'2003U, // 16: add r2, r2, #3
+      0xeb00'0008U, // 20: bl +32 -> 60
+      0xe285'5001U, // 24: add r5, r5, #1
+      0xe355'0000U | inner, // 28: cmp r5, #200
+      0x1aff'fff8U, // 32: bne -32 -> 8
+      0xe287'7001U, // 36: add r7, r7, #1
+      0xe357'0000U | outer, // 40: cmp r7, #100
+      0x1aff'fff4U, // 44: bne -48 -> 4
+      0xe3a0'6009U, // 48: mov r6, #9
+      0xef00'0000U, // 52: svc
+      0xe320'f000U, // 56: nop
+      0xe283'3001U, // 60: add r3, r3, #1        (the callee)
+      0xe284'4005U, // 64: add r4, r4, #5
+      0xe12f'ff1eU, // 68: bx lr
+  };
+  for (std::size_t i = 0; i < program.size(); ++i)
+    fixture.code32(i * 4, {program[i]});
+  auto cpu = Fixture::task(false);
+  unsigned exits = 0;
+  for (;;) {
+    const auto result = fixture.run(cpu, 4096);
+    if (result.reason == ::uml::cpu::ExitReason::system_call)
+      break;
+    require(result.reason == ::uml::cpu::ExitReason::instruction_budget);
+    // A chain ends at a block boundary: the callee's counts follow the
+    // caller's.
+    require(cpu.registers[3] <= cpu.registers[0]);
+    require(cpu.registers[0] <= cpu.registers[3] + 1U);
+    require(cpu.registers[4] == 5U * cpu.registers[3]);
+    require(++exits < 5000);
+  }
+  require(exits >= 20);
+  require(cpu.registers[0] == inner * outer);
+  require(cpu.registers[1] == 2U * inner * outer);
+  require(cpu.registers[2] == 3U * inner * outer);
+  require(cpu.registers[3] == inner * outer);
+  require(cpu.registers[4] == 5U * inner * outer);
+  require(cpu.registers[5] == inner);
+  require(cpu.registers[6] == 9U);
+  require(cpu.registers[7] == outer);
+}
+
+/* A linked block loads the fifteen core registers once, before its internal
+ * entry (which a linked predecessor skips), and a linked exit writes none of
+ * them back: the registers are written back only where the block returns to
+ * the executor, in its cold paths, and then as pairs. */
+void linked_blocks_keep_the_registers_in_the_host() {
+  Fixture fixture{0x1a32'0c16, 2, 2};
+  fixture.code32(0, {0xe280'0001U,  // add r0, r0, #1
+                     0xe081'1000U,  // add r1, r1, r0
+                     0xe7e0'0050U,  // ubfx r0, r0, #0, #1 (a bit of data work)
+                     0xea00'0010U}); // b +72
+  std::vector<std::byte> bytes(4 * 4);
+  fixture.read_code(0, bytes);
+  const auto linked = ::uml::cpu::arm64::jit::testing::compile_a32_linked_block(
+      key::a32_key(code_base), bytes);
+  const auto unlinked = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  require(!linked.code.words.empty() && !unlinked.code.words.empty());
+  // ldr/str xN, [x15, #imm] and ldp/stp xN, xM, [x15, #imm] of the register
+  // file, in the words from `first` up to `last`.
+  const auto count = [](const auto &code, std::size_t first, std::size_t last,
+                        bool load) {
+    unsigned transfers = 0;
+    for (std::size_t i = first; i < last && i < code.words.size(); ++i) {
+      const auto w = code.words[i];
+      const bool single = (w & 0xffc0'03e0U) ==
+                          ((load ? 0xf940'0000U : 0xf900'0000U) | 15U << 5);
+      const bool pair = (w & 0xffc0'03e0U) ==
+                        ((load ? 0xa940'0000U : 0xa900'0000U) | 15U << 5);
+      if ((single && ((w >> 10) & 0xfffU) < 15U) ||
+          (pair && ((w >> 15) & 0x7fU) < 15U))
+        ++transfers;
+    }
+    return transfers;
+  };
+  const auto &code = linked.code;
+  // The branch into the successor.
+  std::size_t jump = 0;
+  while (jump < code.words.size() &&
+         (code.words[jump] & 0xffff'fc1fU) != 0xd61f'0000U)
+    ++jump;
+  require(jump < code.hot_words);
+  // Eight loads (seven pairs and a single) before the internal entry...
+  require(count(code, 0, code.internal_entry_word, true) == 8U);
+  // ...none after it, and no write-back before the branch into the successor.
+  require(count(code, code.internal_entry_word, code.hot_words, true) == 0U);
+  require(count(code, code.internal_entry_word, jump, false) == 0U);
+  // The return that follows a refused link writes all fifteen back: seven
+  // pairs and a single.
+  require(count(code, jump, code.hot_words, false) == 8U);
+  // The unlinked block loads what it uses and writes back what it changed
+  // before the exit.
+  require(count(unlinked.code, unlinked.code.internal_entry_word,
+                unlinked.code.hot_words, false) != 0U);
+}
+
 /* Whether a program's blocks are one chain once they are all translated: the
  * blocks are run last first, so each one's exit finds a translated successor,
  * and the whole program then runs from its start as a single block entry. The
@@ -1501,6 +1612,8 @@ int main() {
   aligned_accesses_skip_the_crossing_test();
   single_transfers_index_by_the_delta();
   conversions_keep_the_guest_registers();
+  registers_survive_budget_returns_in_a_chain();
+  linked_blocks_keep_the_registers_in_the_host();
   counted_loop_is_a_host_loop();
   neon_float_loop_is_unguarded();
   native_loops();

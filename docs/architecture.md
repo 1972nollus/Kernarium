@@ -978,8 +978,14 @@ compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
 and publication: R0-R14 are resident host registers (each core register has
 one: x3-x7, x12, x13, x17 and the callee-saved x22-x28, which an AArch32
-translation's frame saves and the A64 translations never touch), loaded at
-first use and written back at every exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
+translation's frame saves and the A64 translations never touch). A linked
+translation keeps them there from block to block: the registers are loaded
+before the block's internal entry, which only the executor reaches, a link
+leaves them in their hosts, and every return to the executor, a refused link
+included, writes all fifteen back; its link sequences therefore use x10 and
+x11, and no lowering may use a host register of a core register as scratch.
+An unlinked translation (the tracked-store variant, a single instruction) loads
+at first use and writes back at every exit. NZCV is the host's with the lazy-flag states of the A64 compiler, a
 condition is a branch over the body (a conditional data-processing instruction
 that sets no flags and writes no PC, and MOVW, instead runs on both arms and
 a CSEL on the host flags keeps its result only where the condition holds, so

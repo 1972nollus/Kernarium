@@ -49,7 +49,8 @@ constexpr std::size_t maximum_interval = 4;
 } // namespace
 
 std::size_t A32Compiler::try_fuse_exclusive() {
-  if (count_ != 0U || single_ || !gpr_slots_unbound() || block_.size() < 2U)
+  if (count_ != 0U || single_ || block_.size() < 2U ||
+      !(gprs_kept_across_links() || gpr_slots_unbound()))
     return 0;
   const auto &first = block_[0];
   if (first.it != 0U || first.inst.cond < 14U)
