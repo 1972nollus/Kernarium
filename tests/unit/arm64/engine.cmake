@@ -423,6 +423,20 @@
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    # Executors sharing one address space's translations, from several
+    # threads at once.
+    uml_add_arm64_unit_test(gadget_shared_bodies WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        LABELS tsan)
+    target_compile_definitions(uml_arm64_gadget_shared_bodies_tests PRIVATE
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)

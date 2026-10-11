@@ -23,6 +23,7 @@
 #if UML_GADGET_CACHE_CENSUS
 #include <cstdio>
 #endif
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iterator>
@@ -796,6 +797,15 @@ void announce_exit(Announcement &announcement) noexcept
 	if (inside(sequence))
 		announcement.sequence.store(sequence + 1U,
 			std::memory_order_release);
+}
+
+/* DARWIN_UML_GADGET_SHARED_BODIES=0 keeps every executor's translations to
+ * itself, which is how one binary measures sharing against not sharing. Read
+ * as each executor is made. */
+[[nodiscard]] bool shared_bodies_enabled() noexcept
+{
+	const char *value = std::getenv("DARWIN_UML_GADGET_SHARED_BODIES");
+	return value == nullptr || std::strcmp(value, "0") != 0;
 }
 
 void release_announcement(Announcement *announcement) noexcept
@@ -2523,7 +2533,13 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 {
 	tlb_.unaligned_atomics =
 		build_options_.host_capabilities.has(ArmFeature::lse2);
+	/* Executors running one address space share its translations when the
+	 * host retargets a link pair in one access, and when a reclaimer can
+	 * see whether this executor is running translated code. */
 	announcement_ = acquire_announcement();
+	share_translations_ = announcement_ != nullptr &&
+		build_options_.host_capabilities.has(ArmFeature::lse2) &&
+		shared_bodies_enabled();
 	programs_ = std::make_unique<ProgramCache>(build_options_, 0,
 		announcement_, share_translations_);
 }
