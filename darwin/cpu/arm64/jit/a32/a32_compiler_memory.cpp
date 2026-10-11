@@ -65,7 +65,7 @@ void A32Compiler::emit_translate(unsigned address, Access access,
                                  Arm64Emitter::Label fault,
                                  std::size_t bytes,
                                  std::optional<Arm64Emitter::Label> crossing,
-                                 unsigned aligned) {
+                                 unsigned aligned, bool fold) {
   const auto crossing_target = crossing.value_or(fallback);
   /* The register whose page the entry's tag is compared with. */
   [[maybe_unused]] unsigned tag_address = address;
@@ -112,7 +112,9 @@ void A32Compiler::emit_translate(unsigned address, Access access,
                 ((tag_address & 31U) << 16)); // eor x2, x2, tag, lsr #12
 #endif
   emitter_.compare_zero(slow, 2, true, true);
-  emitter_.add_shifted(address, address, 9, 0);
+  /* A folded access leaves the address a guest one, and the delta in x9. */
+  if (!fold)
+    emitter_.add_shifted(address, address, 9, 0);
   emitter_.bind(complete);
   translation_cold_.push_back({
       .label = slow,
@@ -122,6 +124,7 @@ void A32Compiler::emit_translate(unsigned address, Access access,
       .access = access,
       .bytes = tag_checks_crossing ? bytes : 0U,
       .crossing = crossing_target,
+      .fold = fold,
   });
   if (crossing && bytes > 1 && aligned < bytes)
     crossing_cold_.push_back({
@@ -130,6 +133,7 @@ void A32Compiler::emit_translate(unsigned address, Access access,
         .slow = fallback,
         .address = address,
         .bytes = bytes,
+        .fold = fold,
     });
 }
 
@@ -158,7 +162,8 @@ void A32Compiler::emit_crossing_cold(const CrossingColdPath &path) {
   const auto staged = emitter_.make_label();
   emitter_.emit(0xca09'0000U | first_delta << 5); // eor x0, x16, x9
   emitter_.compare_zero(staged, 0, true, true);
-  emitter_.add_shifted(path.address, path.address, 9, 0);
+  if (!path.fold)
+    emitter_.add_shifted(path.address, path.address, 9, 0);
   emitter_.branch(path.continuation);
   emitter_.bind(staged);
   // x0: the second page's first byte; x8 - x0 is the first page's share.
@@ -177,6 +182,10 @@ void A32Compiler::emit_crossing_cold(const CrossingColdPath &path) {
   emitter_.add_immediate(path.address, 1, 32);
   emitter_.emit(0xcb00'0000U | path.address << 5 |
                 path.address); // sub x8, x8, x0
+  if (path.fold) {
+    emitter_.move_x(9, path.address);
+    emitter_.move_x(path.address, 31);
+  }
   emitter_.branch(path.continuation);
 }
 
@@ -195,7 +204,8 @@ void A32Compiler::emit_translation_cold(const TranslationColdPath &path) {
   emitter_.load_pair_x(2, 9, 0, page_offset + 32U);
   emitter_.emit(0xca01'0042U); // eor x2, x2, x1
   emitter_.compare_zero(miss, 2, true, true);
-  emitter_.add_shifted(path.address, path.address, 9, 0);
+  if (!path.fold)
+    emitter_.add_shifted(path.address, path.address, 9, 0);
   emitter_.branch(path.continuation);
   emitter_.bind(miss);
 #endif
@@ -204,8 +214,15 @@ void A32Compiler::emit_translation_cold(const TranslationColdPath &path) {
   emitter_.load_constant(2, path.access == Access::write ? 1U : 0U);
   emitter_.call_preserving_flags(
       reinterpret_cast<const void *>(&uml_arm64_jit_tlb_translate_preserving));
-  emitter_.move_x(path.address, 0);
-  emitter_.compare_zero(path.fault, path.address, true, false);
+  if (path.fold) {
+    /* The host pointer is the whole of the address: x9 + (w8 = 0). */
+    emitter_.compare_zero(path.fault, 0, true, false);
+    emitter_.move_x(9, 0);
+    emitter_.move_x(path.address, 31);
+  } else {
+    emitter_.move_x(path.address, 0);
+    emitter_.compare_zero(path.fault, path.address, true, false);
+  }
   emitter_.branch(path.continuation);
 }
 
@@ -398,24 +415,40 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
    * helper reports it. */
   if (transfer.ordered)
     emit_alignment_check(address_register, transfer.bytes, slow);
+  /* The access adds the translation's delta itself, [x9, w8, uxtw], where a
+   * form exists: not for the acquire and release forms, nor for a store that
+   * records the host pointer or whose value is read into x9. */
+  const bool fold =
+      !transfer.ordered &&
+      !(store && (transfer.t == 15U ||
+                  (track_direct_stores_ &&
+                   count_ < maximum_block_instructions)));
   emit_translate(address_register, store ? Access::write : Access::read, slow,
                  fault, transfer.bytes, std::nullopt,
-                 transfer.ordered ? static_cast<unsigned>(transfer.bytes) : 0U);
+                 transfer.ordered ? static_cast<unsigned>(transfer.bytes) : 0U,
+                 fold);
   const unsigned size_field = transfer.bytes == 1U ? 0U
                               : transfer.bytes == 2U ? 1U
                                                      : 2U;
+  /* The base of the access: x8 holding the host pointer, or x9 indexed by
+   * w8. */
+  const unsigned base = fold ? 9U : address_register;
+  const auto indexed = [&](std::uint32_t transfer_word) {
+    return fold ? enc::indexed_uxtw(transfer_word, address_register)
+                : transfer_word;
+  };
   if (store) {
     track_direct_store(address_register, transfer.bytes);
     const unsigned value =
         transfer.t == 15U ? (load_u32(fallback_n, pc_read()), fallback_n)
-                          : use(transfer.t, fallback_n);
+                          : use(transfer.t, fold ? fallback_m : fallback_n);
     if (transfer.ordered) {
       emit(enc::stlr(size_field, value, address_register));
     } else {
       switch (transfer.bytes) {
-      case 1: emit(enc::strb(value, address_register, 0)); break;
-      case 2: emit(enc::strh(value, address_register, 0)); break;
-      default: emit(enc::str_w(value, address_register, 0)); break;
+      case 1: emit(indexed(enc::strb(value, base, 0))); break;
+      case 2: emit(indexed(enc::strh(value, base, 0))); break;
+      default: emit(indexed(enc::str_w(value, base, 0))); break;
       }
     }
     clear_exclusive_monitor();
@@ -435,15 +468,15 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   } else {
     switch (transfer.bytes) {
     case 1:
-      emit(transfer.sign_extend ? enc::ldrsb(target, address_register, 0)
-                                : enc::ldrb(target, address_register, 0));
+      emit(indexed(transfer.sign_extend ? enc::ldrsb(target, base, 0)
+                                        : enc::ldrb(target, base, 0)));
       break;
     case 2:
-      emit(transfer.sign_extend ? enc::ldrsh(target, address_register, 0)
-                                : enc::ldrh(target, address_register, 0));
+      emit(indexed(transfer.sign_extend ? enc::ldrsh(target, base, 0)
+                                        : enc::ldrh(target, base, 0)));
       break;
     default:
-      emit(enc::ldr_w(target, address_register, 0));
+      emit(indexed(enc::ldr_w(target, base, 0)));
       break;
     }
   }

@@ -1019,8 +1019,13 @@ bytes, an ordered or exclusive access) is not tested for crossing a page. On
 4 KiB pages any other access of more than one byte compares the entry's tag
 with the page of its last byte, so a crossing access misses (the index never
 gives neighbouring pages of a 32-bit address space one entry) and its cold path
-tells it from a miss; 16 KiB pages test the offset before the probe. The
-Armv8 load-acquire and store-release (LDA, STL and their
+tells it from a miss; 16 KiB pages test the offset before the probe. A
+single load or store of a byte, halfword or word does not add the entry's
+delta to the address in a register of its own: the access takes the delta in
+its addressing mode (`[x9, w8, uxtw]`), and the miss path leaves the host
+pointer in x9 and zero in x8; a pair, a multiple transfer, an acquire or
+release and a store that records its host range keep the host pointer in x8.
+The Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
 load-exclusive, up to four register instructions and the store-exclusive
 (acquire and release forms included) on the same address at the start of a

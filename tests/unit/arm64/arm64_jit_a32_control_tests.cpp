@@ -1044,6 +1044,114 @@ void aligned_accesses_skip_the_crossing_test() {
   require(!checks_crossing(0xf421'0aafU, 16)); // vld1.32 {d0,d1},[r1:128]
 }
 
+/* A single load or store adds the translation's delta in its own addressing
+ * mode, [x9, w8, uxtw], and leaves the add of the host pointer out of the hot
+ * path; a form with no such mode (a pair, a multiple, an acquire or release,
+ * a store of the PC, which is read into x9) keeps the add. The accesses run
+ * the same on the cold path that fills the TLB and on the hit path after it. */
+void single_transfers_index_by_the_delta() {
+  Fixture fixture{0x1a32'0c13, 2, 2};
+  constexpr std::uint32_t add_x8_x9 = 0x8b09'0108U; // add x8, x8, x9
+  const auto compile = [&](std::uint32_t word) {
+    fixture.code32(0, {word, 0xef00'0000U});
+    std::vector<std::byte> bytes(2 * 4);
+    fixture.read_code(0, bytes);
+    return ::uml::cpu::arm64::jit::testing::compile_a32_block(
+        key::a32_key(code_base), bytes);
+  };
+  const auto folded = [&](std::uint32_t word, std::uint32_t indexed) {
+    const auto compiled = compile(word);
+    require(!compiled.code.words.empty());
+    bool has_indexed = false, has_add = false;
+    for (const auto w : compiled.code.words) {
+      has_indexed |= (w & ~0x1fU) == (indexed | 8U << 16 | 9U << 5);
+      has_add |= w == add_x8_x9;
+    }
+    return has_indexed && !has_add;
+  };
+  const auto unfolded = [&](std::uint32_t word) {
+    const auto compiled = compile(word);
+    require(!compiled.code.words.empty());
+    return std::find(compiled.code.words.begin(), compiled.code.words.end(),
+                     add_x8_x9) != compiled.code.words.end();
+  };
+  require(folded(0xe591'0004U, 0xb860'4800U)); // ldr r0,[r1,#4]
+  require(folded(0xe5d1'0004U, 0x3860'4800U)); // ldrb r0,[r1,#4]
+  require(folded(0xe1d1'00b4U, 0x7860'4800U)); // ldrh r0,[r1,#4]
+  require(folded(0xe1d1'00d4U, 0x38e0'4800U)); // ldrsb r0,[r1,#4]
+  require(folded(0xe1d1'00f4U, 0x78e0'4800U)); // ldrsh r0,[r1,#4]
+  require(folded(0xe581'0004U, 0xb820'4800U)); // str r0,[r1,#4]
+  require(folded(0xe5c1'0004U, 0x3820'4800U)); // strb r0,[r1,#4]
+  require(folded(0xe1c1'00b4U, 0x7820'4800U)); // strh r0,[r1,#4]
+  const auto q_word = [](std::uint32_t indexed) {
+    return indexed | 8U << 16 | 9U << 5;
+  };
+  const auto folded_q = [&](std::uint32_t word, std::uint32_t indexed) {
+    const auto compiled = compile(word);
+    require(!compiled.code.words.empty());
+    bool has_indexed = false, has_add = false;
+    for (const auto w : compiled.code.words) {
+      has_indexed |= (w & ~0x1fU) == q_word(indexed);
+      has_add |= w == add_x8_x9;
+    }
+    return has_indexed && !has_add;
+  };
+  require(folded_q(0xf421'0a8fU, 0x3ce0'4800U)); // vld1.32 {d0,d1},[r1]
+  require(folded_q(0xf401'0a8fU, 0x3ca0'4800U)); // vst1.32 {d0,d1},[r1]
+  require(folded_q(0xec91'0b04U, 0x3ce0'4800U)); // vldmia r1,{d0,d1}
+  require(unfolded(0xf421'078fU));             // vld1.32 {d0},[r1]
+  require(unfolded(0xec91'0b08U));             // vldmia r1,{d0-d3}
+  require(unfolded(0xe1c1'00d0U));             // ldrd r0,r1,[r1]
+  require(unfolded(0xe891'0003U));             // ldm r1,{r0,r1}
+  require(unfolded(0xe191'0c9fU));             // lda r0,[r1]
+  require(unfolded(0xe581'f008U));             // str pc,[r1,#8]
+
+  const std::vector<std::uint32_t> program{
+      0xe581'2000U, // str r2, [r1]
+      0xe591'0000U, // ldr r0, [r1]
+      0xe5c1'2005U, // strb r2, [r1, #5]
+      0xe5d1'3005U, // ldrb r3, [r1, #5]
+      0xe1c1'20b6U, // strh r2, [r1, #6]
+      0xe1d1'40f6U, // ldrsh r4, [r1, #6]
+      0xe1d1'50d5U, // ldrsb r5, [r1, #5]
+      0xe581'f008U, // str pc, [r1, #8]
+      0xe591'6008U, // ldr r6, [r1, #8]
+      0xe588'2000U, // str r2, [r8]
+      0xe598'7000U, // ldr r7, [r8]
+      0xf429'2a8fU, // vld1.32 {d2, d3}, [r9]
+      0xf40a'2a8fU, // vst1.32 {d2, d3}, [r10]
+      0xef00'0000U, // svc
+  };
+  std::array<std::byte, 16> pattern{};
+  for (unsigned i = 0; i < pattern.size(); ++i)
+    pattern[i] = static_cast<std::byte>(0x30U + 7U * i);
+  fixture.data_bytes(0x40, pattern);
+  for (std::size_t i = 0; i < program.size(); ++i)
+    fixture.code32(i * 4, {program[i]});
+  for (unsigned round = 0; round < 3; ++round) {
+    auto cpu = Fixture::task(false);
+    cpu.registers[1] = data_base;
+    cpu.registers[2] = 0x8123'f0f5U;
+    cpu.registers[8] = data_base + guest_page;
+    cpu.registers[9] = data_base + 0x40U;
+    cpu.registers[10] = data_base + guest_page + 0x20U;
+    const auto result = fixture.run(cpu);
+    require(result.reason == ::uml::cpu::ExitReason::system_call);
+    require(cpu.registers[0] == 0x8123'f0f5U);
+    require(cpu.registers[3] == 0xf5U);
+    require(cpu.registers[4] == 0xffff'f0f5U);
+    require(cpu.registers[5] == 0xffff'fff5U);
+    require(cpu.registers[6] == code_base + 28U + 8U);
+    require(cpu.registers[7] == 0x8123'f0f5U);
+    require(fixture.read32(8) == code_base + 28U + 8U);
+    require(fixture.read32(guest_page) == 0x8123'f0f5U);
+    require(fixture.read8(5) == 0xf5U);
+    const auto stored = fixture.read_data(guest_page + 0x20U, 16);
+    require(std::memcmp(stored.data(), pattern.data(), 16) == 0);
+    require(std::memcmp(cpu.vectors[1].bytes.data(), pattern.data(), 16) == 0);
+  }
+}
+
 void native_loops() {
   constexpr unsigned programs = 90;
   constexpr std::size_t window = 256; // bytes of data the loops touch
@@ -1359,6 +1467,7 @@ int main() {
   tlb_probe_is_the_short_form();
 #endif
   aligned_accesses_skip_the_crossing_test();
+  single_transfers_index_by_the_delta();
   counted_loop_is_a_host_loop();
   neon_float_loop_is_unguarded();
   native_loops();

@@ -536,6 +536,14 @@ namespace detail {
 {
 	return 0x79c0'0000U | ((offset / 2U) << 10) | (n << 5) | t;
 }
+/* A load or store of the unsigned-offset forms above, at offset 0, turned
+ * into the register-offset form that adds the zero-extended W index m:
+ * [Xn, Wm, uxtw]. */
+[[nodiscard]] constexpr std::uint32_t indexed_uxtw(std::uint32_t transfer,
+	unsigned m) noexcept
+{
+	return (transfer & ~0x0100'0000U) | 0x0020'4800U | (m << 16);
+}
 /* Unscaled signed 9-bit offsets (LDUR family). */
 [[nodiscard]] constexpr std::uint32_t ldur_w(unsigned t, unsigned n, int offset) noexcept
 {

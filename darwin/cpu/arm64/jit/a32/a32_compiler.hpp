@@ -140,6 +140,10 @@ private:
      * this many: the cold path first sends a crossing access to `crossing`. */
     std::size_t bytes{};
     Arm64Emitter::Label crossing{};
+    /* The access takes the delta (x9) and the guest address (x8) and adds
+     * them itself: the cold path leaves the host pointer in x9 and zero in
+     * x8. */
+    bool fold{};
   };
 
   /* An Advanced SIMD load whose span crosses a page: the cold path probes
@@ -152,6 +156,8 @@ private:
     Arm64Emitter::Label slow;
     unsigned address;
     std::size_t bytes;
+    /* As in TranslationColdPath: the continuation takes x9 + w8. */
+    bool fold{};
   };
 
   /* A host register holding a W value and, for a destination, how it is
@@ -281,7 +287,7 @@ private:
                       std::size_t bytes,
                       std::optional<Arm64Emitter::Label> crossing =
                           std::nullopt,
-                      unsigned aligned = 0);
+                      unsigned aligned = 0, bool fold = false);
   /* x1 takes the page number of `address` and x0 the TLB entry's address. */
   void emit_tlb_index(unsigned address);
   void emit_translation_cold(const TranslationColdPath &path);
@@ -371,7 +377,10 @@ private:
   [[nodiscard]] Flow vmem_through_helper(bool store);
   void vmem_granule(bool load, unsigned log2_size, unsigned index,
                     unsigned offset);
-  void vmem_run(bool load, bool single, unsigned first, unsigned count);
+  [[nodiscard]] bool vmem_folds(bool store, unsigned bytes, unsigned first,
+                                unsigned per_q) const;
+  void vmem_run(bool load, bool single, unsigned first, unsigned count,
+                bool fold = false);
   void vmem_d_from(unsigned dreg, unsigned source, unsigned half);
   void vmem_d_into(unsigned dreg, unsigned scratch, unsigned half);
 

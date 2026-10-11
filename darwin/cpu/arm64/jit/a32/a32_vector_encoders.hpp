@@ -492,6 +492,13 @@ enum FloatInt : unsigned {
 	return 0x3c00'0000U | (size << 30) | (opc << 22) |
 	       ((static_cast<unsigned>(offset) & 0x1ffU) << 12) | (n << 5) | t;
 }
+/* An LDUR or STUR at offset 0 as the register-offset form that adds the
+ * zero-extended W index m: [Xn, Wm, uxtw]. */
+[[nodiscard]] constexpr std::uint32_t indexed_uxtw(std::uint32_t transfer,
+	unsigned m) noexcept
+{
+	return transfer | 0x0020'4800U | (m << 16);
+}
 [[nodiscard]] constexpr std::uint32_t stur_simd(unsigned log2_size,
 	unsigned t, unsigned n, int offset) noexcept
 {
