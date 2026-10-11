@@ -516,6 +516,11 @@ private:
   void emit_native_atomic_address(std::uint32_t instruction,
                                   std::uint64_t pc);
 
+  /* LDAR or LDAPR as the host's own load-acquire through the translated
+   * base. A misaligned or tagged address takes `slow`. */
+  void emit_native_ordered_load(std::uint32_t instruction, std::uint64_t pc,
+                                ColdPath::Action slow);
+
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);
 

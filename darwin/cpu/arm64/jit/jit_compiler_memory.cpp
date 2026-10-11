@@ -401,6 +401,11 @@ void JitCompiler::clear_local_exclusive_monitor() {
               (instruction & 0x0000'8000U) != 0U;
       if (!valid)
         return Action::unsupported;
+      if (load) {
+        emit_native_ordered_load(instruction, pc,
+                                 ColdPath::Action::ordered_slow);
+        return Action::keep_going;
+      }
       emitter_.branch(
           cold_exit(instruction, pc, ColdPath::Action::ordered_slow));
       return Action::terminate;
@@ -454,6 +459,38 @@ void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
     }
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
+  }
+
+void JitCompiler::emit_native_ordered_load(std::uint32_t instruction,
+                                           std::uint64_t pc,
+                                           ColdPath::Action slow_action) {
+    /*
+     * A naturally aligned access lies in one page, and the host's LDAR or
+     * LDAPR on its backing is single-copy atomic with the same ordering.
+     * A misaligned one keeps the semantic helper, which raises the
+     * alignment fault or, with FEAT_LSE2, reads it atomically.
+     */
+    const unsigned base = (instruction >> 5) & 31U;
+    const unsigned destination = instruction & 31U;
+    const std::size_t bytes = std::size_t{1} << (instruction >> 30);
+    load_gpr(8, base, true);
+
+    const auto slow = cold_exit(instruction, pc, slow_action);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
+    if (base == 31U) {
+      emit_misalignment_check(8, 16, slow);
+    } else {
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+      emitter_.compare_zero(slow, 0, false, true);
+      emit_misalignment_check(8, bytes, slow);
+    }
+    emit_translate(8, Access::read, slow, fault, 1);
+    const auto native_destination =
+        write_native_gpr(destination, false, false, 9);
+    emitter_.emit((instruction & ~((31U << 5) | 31U)) | (8U << 5) |
+                  native_destination.host);
+    commit_native_gpr(native_destination, destination, false);
   }
 
 void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,

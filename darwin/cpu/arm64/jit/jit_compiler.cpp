@@ -326,6 +326,10 @@ void JitCompiler::select_consecutive_vector_lists(
          (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
     if (native_scalar_lse)
       return false;
+    /* LDAR runs natively, and its misaligned or tagged fallback only
+     * reads: it establishes no reservation and waits for no publication. */
+    if ((instruction & 0x3fff'fc00U) == 0x08df'fc00U)
+      return false;
     const bool scalar_atomic =
         (instruction & 0x3f20'0c00U) == 0x3820'0000U;
     const bool exclusive_or_ordered =
