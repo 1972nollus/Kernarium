@@ -1175,20 +1175,33 @@ private:
 	struct Body final {
 		/* Where the block starts. */
 		std::uint64_t guest_address{};
-		std::uint64_t stop_address{};
-		std::uint32_t stop_instruction{};
 		std::uint32_t word_count{};
-		std::uint16_t instruction_count{};
+		std::uint8_t instruction_count{};
 		/* The guest units the stream is validated against: words for
 		 * A64 and A32, halfwords for T32 (at most
 		 * maximum_t32_validation_units). */
 		std::uint8_t source_word_count{};
-		bool complete{};
-		bool accesses_fp_state{};
-		bool holds_sve{};
-		/* The translation's aarch32::GuestIsa, from its key, in what
-		 * was padding: it sizes a unit and so the validation words. */
-		std::uint8_t isa{};
+		bool complete : 1 {};
+		bool accesses_fp_state : 1 {};
+		bool holds_sve : 1 {};
+		/* A tail after the validation units holds the build's stop
+		 * (see Stop). */
+		bool has_stop : 1 {};
+		/* The translation's aarch32::GuestIsa, from its key: it sizes a
+		 * unit and so the validation words. */
+		std::uint8_t isa : 2 {};
+
+		/* Where a build stopped, which a stored block keeps only when
+		 * something can ask for it: a block that stopped at a word it
+		 * could not translate, or that holds no instruction, reports its
+		 * stop address as the illegal exit's PC. A complete block's
+		 * terminal is in its stream and its validation words, and no
+		 * caller of a stored block reads the stop fields of one. */
+		struct Stop final {
+			std::uint64_t address;
+			std::uint32_t instruction;
+			std::uint32_t padding;
+		};
 
 		/* The stream follows the body, and the guest words it is
 		 * validated against follow the stream. A block that accesses
@@ -1238,19 +1251,48 @@ private:
 		{
 			return reinterpret_cast<const std::byte *>(source_words());
 		}
+		/* Whether a build's stop is kept: see Stop. */
+		[[nodiscard]] static bool keeps_stop(
+			bool complete, std::size_t instruction_count) noexcept
+		{
+			return !complete || instruction_count == 0;
+		}
+		/* The offset of the stop tail from the body, at its own
+		 * alignment after the validation units. */
+		[[nodiscard]] static std::size_t stop_offset(
+			std::size_t words, std::size_t source_bytes) noexcept
+		{
+			return (sizeof(Body) + words * sizeof(std::uintptr_t) +
+				source_bytes + alignof(Stop) - 1U) &
+				~(alignof(Stop) - 1U);
+		}
+		[[nodiscard]] Stop *stop() noexcept
+		{
+			return reinterpret_cast<Stop *>(
+				reinterpret_cast<std::byte *>(this) +
+				stop_offset(entry_words() + word_count,
+					source_word_count * source_unit()));
+		}
+		[[nodiscard]] const Stop *stop() const noexcept
+		{
+			return const_cast<Body *>(this)->stop();
+		}
 		/* What the arena must be given back follows from the counts, so
 		 * neither the body nor the slot that indexes it stores it.
 		 * `words` counts an FP block's entry word with its stream. */
 		[[nodiscard]] static std::size_t allocation_bytes(
-			std::size_t words, std::size_t source_bytes) noexcept
+			std::size_t words, std::size_t source_bytes,
+			bool with_stop) noexcept
 		{
-			return sizeof(Body) + words * sizeof(std::uintptr_t) +
-				source_bytes;
+			return with_stop ?
+				stop_offset(words, source_bytes) + sizeof(Stop) :
+				sizeof(Body) + words * sizeof(std::uintptr_t) +
+					source_bytes;
 		}
 		[[nodiscard]] std::size_t allocation_bytes() const noexcept
 		{
 			return allocation_bytes(entry_words() + word_count,
-				source_word_count * source_unit());
+				source_word_count * source_unit(), has_stop);
 		}
 		/* The stored block as the builder produced it. The program
 		 * refers to the words behind this header rather than copying
@@ -1261,18 +1303,17 @@ private:
 				arm64::gadgets::ProgramWords::Borrowed{
 					const_cast<std::uintptr_t *>(words()),
 					word_count}};
+			const auto *kept = has_stop ? stop() : nullptr;
 			return BuildResult{arm64::gadgets::Program{guest_address,
 					instruction_count, std::move(view),
 					accesses_fp_state, holds_sve},
-				complete, stop_address, stop_instruction};
+				complete, kept != nullptr ? kept->address : 0U,
+				kept != nullptr ? kept->instruction : 0U};
 		}
 	};
-	static_assert(sizeof(Body) == 32 &&
+	static_assert(sizeof(Body) == 16 &&
 		sizeof(Body) % alignof(std::uintptr_t) == 0,
 		"the stream tail follows the body at pointer alignment");
-	static_assert(offsetof(Body, holds_sve) == 29 &&
-		offsetof(Body, isa) == 30,
-		"the ISA byte sits in the body's padding, after every field");
 	static_assert(maximum_t32_validation_units < 0x100U,
 		"a T32 translation's halfword count fits the narrow field");
 	static_assert(block_instruction_count < 0xffU,
@@ -1701,22 +1742,25 @@ private:
 		const auto unit = arm64::aarch32::isa_unit_bytes(isa);
 		assert(validation.size() % unit == 0);
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
+		const bool with_stop = Body::keeps_stop(
+			built.complete, program.instruction_count());
 		const auto bytes = Body::allocation_bytes(
-			entry + words.size(), validation.size());
-		auto *body = new (bodies_.allocate(bytes)) Body{
-			.guest_address = program.guest_address(),
-			.stop_address = built.stop_address,
-			.stop_instruction = built.stop_instruction,
-			.word_count = static_cast<std::uint32_t>(words.size()),
-			.instruction_count = static_cast<std::uint16_t>(
-				program.instruction_count()),
-			.source_word_count =
-				static_cast<std::uint8_t>(validation.size() / unit),
-			.complete = built.complete,
-			.accesses_fp_state = program.accesses_fp_state(),
-			.holds_sve = program.holds_sve(),
-			.isa = static_cast<std::uint8_t>(isa),
-		};
+			entry + words.size(), validation.size(), with_stop);
+		auto *body = new (bodies_.allocate(bytes)) Body{};
+		body->guest_address = program.guest_address();
+		body->word_count = static_cast<std::uint32_t>(words.size());
+		body->instruction_count =
+			static_cast<std::uint8_t>(program.instruction_count());
+		body->source_word_count =
+			static_cast<std::uint8_t>(validation.size() / unit);
+		body->complete = built.complete;
+		body->accesses_fp_state = program.accesses_fp_state();
+		body->holds_sve = program.holds_sve();
+		body->has_stop = with_stop;
+		body->isa = static_cast<std::uint8_t>(isa) & 3U;
+		if (with_stop)
+			*body->stop() = {built.stop_address,
+				built.stop_instruction, 0U};
 		if (entry != 0)
 			body->words()[-1] = reinterpret_cast<std::uintptr_t>(
 				program.holds_sve() ?

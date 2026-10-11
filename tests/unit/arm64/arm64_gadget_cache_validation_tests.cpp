@@ -321,6 +321,41 @@ void retiring_an_address_space_keeps_the_others()
 	require(executor->cache_diagnostics().translations == after_fill + 2);
 }
 
+/* A block that stopped at a word the builder does not translate keeps where
+ * it stopped in a tail of its stored body, and an empty one reports that
+ * address as the illegal exit's PC. Both come back from the cache the same as
+ * from the build that stored them. */
+void a_stopped_block_keeps_its_stop_in_the_cache()
+{
+	constexpr unsigned long generation = 1300;
+	/* An exception-class word no allocation gives a meaning: the builder
+	 * stops before it without retiring it. */
+	constexpr std::uint32_t unimplemented = 0xd400'0000U;
+	constexpr auto stopped = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, unimplemented);
+	backing.put32(stopped - code_base, move_immediate(0, 7));
+	backing.put32(stopped - code_base + 4, unimplemented);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	for (unsigned pass = 0; pass < 3; ++pass) {
+		arm64::CpuState empty{};
+		empty.pc = code_base;
+		require(run_once(executor, memory, generation, empty).event ==
+			::uml::cpu::EngineEvent::illegal_instruction);
+		require(empty.pc == code_base);
+
+		arm64::CpuState cpu{};
+		cpu.pc = stopped;
+		require(run_once(executor, memory, generation, cpu).event ==
+			::uml::cpu::EngineEvent::illegal_instruction);
+		require(cpu.pc == stopped + 4);
+		require(cpu.registers[0] == 7);
+		require(executor.cache_diagnostics().translations == 2);
+	}
+}
+
 /* A slot names its address space by an id the cache hands out and takes back
  * when the space is retired, so the id of a retired space is the id of the
  * next to arrive. Every translation of the retired space must be gone by then
@@ -686,6 +721,7 @@ int main()
 	a_kernel_text_write_republishes_through_the_bridge();
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
+	a_stopped_block_keeps_its_stop_in_the_cache();
 	a_recycled_address_space_id_serves_no_old_translation();
 	a_validation_does_not_outlive_the_epochs_it_counts();
 	a_replaced_slot_drops_the_previous_owner_link();
