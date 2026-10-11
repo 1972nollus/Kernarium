@@ -496,16 +496,20 @@ JitExecutor::Implementation::translate_a32_single(
     JitChainState chain{
         .stores = tracked_stores ? tracked_store_ranges_.data() : nullptr,
     };
-    if (block->accesses_fp_state) {
-      cpu.access_fp_state();
+    /* The chain states what is set up, not what its first block needs: the
+     * floating-point state is loaded for the whole run (and says so at no
+     * cost), and the native environment, once a block has switched it on,
+     * stays on until a helper or the end of the run restores it. A chain
+     * that began at a block without floating-point code can then link into
+     * one with it, instead of returning here for a chain that does. */
+    cpu.access_fp_state();
+    link_capabilities |=
+        link_capability(JitLinkCapability::fp_state_materialized);
+    if (block->native_fp)
+      activate_native_fp_environment(cpu);
+    if (cpu.gadget_fp_active)
       link_capabilities |=
-          link_capability(JitLinkCapability::fp_state_materialized);
-      if (block->native_fp) {
-        activate_native_fp_environment(cpu);
-        link_capabilities |=
-            link_capability(JitLinkCapability::native_fp_environment);
-      }
-    }
+          link_capability(JitLinkCapability::native_fp_environment);
     chain.link_selector = checked_link_selector(link_capabilities);
     const auto result = function(&cpu, &tlb_, &chain);
     if (tracked_stores)

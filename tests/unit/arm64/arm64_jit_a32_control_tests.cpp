@@ -190,6 +190,51 @@ void run_as_one_chain(unsigned long generation, const ChainProgram &program) {
   executor.end_execution();
 }
 
+/* A chain is entered with what has been switched on, not only what its first
+ * block needs. Once a block of floating-point code has switched the native
+ * environment on, a chain that begins at a block without any links into one
+ * with it, and the whole program is one entry: before, the selector of the
+ * first block (no floating point) refused the link, and the loop of an
+ * integer block and a floating-point block returned to the executor at every
+ * edge. */
+void native_environment_is_carried_into_a_chain() {
+  constexpr std::uint32_t base = 0x00f0'0000U;
+  constexpr std::size_t window = 60; // the compiler's block length
+  constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
+  constexpr std::uint32_t vadd = 0xee30'0a20U;   // vadd.f32 s0, s0, s1
+  std::vector<std::uint32_t> words(window, add_r0);
+  for (unsigned i = 0; i < 5; ++i)
+    words.push_back(vadd);
+  words.push_back(0xef00'0000U); // svc
+  std::vector<std::uint8_t> bytes;
+  for (const auto word : words)
+    for (unsigned shift = 0; shift < 32; shift += 8)
+      bytes.push_back(static_cast<std::uint8_t>(word >> shift));
+  constexpr unsigned long generation = 0x1a32'0c20;
+  JitBacking backing{1};
+  backing.put(0, std::as_bytes(std::span{bytes}));
+  JitMapping mapping{generation, base, backing, 1};
+  ::uml::cpu::arm64::JitExecutor executor;
+  ::uml::memory::StaticGuestMemory memory;
+  arm64::CpuState cpu{};
+  cpu.a32 = 1;
+  require(executor.begin_execution(generation, base));
+  std::size_t executed = 0;
+  // The floating-point block alone: it switches the environment on.
+  cpu.pc = key::a32_key(base + static_cast<std::uint32_t>(window * 4));
+  require(executor.run_a32_block(cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::system_call);
+  require(executed == 6);
+  require(cpu.gadget_fp_active);
+  // The integer block first, then the translated floating-point one.
+  cpu.pc = key::a32_key(base);
+  const auto event = executor.run_a32_block(cpu, memory, generation, executed);
+  require(event == ::uml::cpu::EngineEvent::system_call);
+  require(executed == words.size());
+  require(cpu.registers[0] == window);
+  executor.end_execution();
+}
+
 void static_exits_chain() {
   constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
   const auto a32_bytes = [](const std::vector<std::uint32_t> &words) {
@@ -1241,6 +1286,7 @@ int main() {
   single_step_over_interworking_branches();
   long_blocks_and_the_budget();
   static_exits_chain();
+  native_environment_is_carried_into_a_chain();
   rewritten_t32_halfwords();
   rewritten_a32_words();
   side_exit_branches();

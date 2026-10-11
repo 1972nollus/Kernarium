@@ -986,7 +986,11 @@ key. Every exit
 whose successor is static (a branch, the fall-through of a block the 60
 instructions of a window cut short, the arm of a conditional instruction or
 CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
-straight run chains like a loop. A conditional forward branch (B with a
+straight run chains like a loop. A chain states what is set up for the whole
+run, not what its first block needs: the floating-point state is loaded, and
+the native environment is on whenever any earlier block switched it on, so a
+chain that began at an integer block links into a floating-point one and back
+instead of returning to the executor at each edge. A conditional forward branch (B with a
 condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
 path and the block goes on with its registers and flags in the host, while the
 taken path leaves by a cold side exit that publishes what is dirty at the
