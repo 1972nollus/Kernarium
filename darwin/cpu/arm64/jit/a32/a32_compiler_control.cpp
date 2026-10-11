@@ -203,7 +203,7 @@ A32Compiler::Flow A32Compiler::emit_branch(const OpInfo &info) {
     compare_zero(not_taken, n, false, info.op == Op::cbz);
     exit_direct(aarch32::t32_key(target));
     bind(not_taken);
-    exit_continue_at(next_key(), inst.next_it.bits(), count_ + 1U);
+    exit_direct(next_key(), inst.next_it.bits(), count_ + 1U);
     return Flow::end;
   }
   default:

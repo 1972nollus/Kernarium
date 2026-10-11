@@ -7,8 +7,11 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
+#include "cpu/arm64/jit/jit_executor.hpp"
+
 #include <array>
 #include <cstdio>
+#include <span>
 #include <vector>
 
 using namespace uml::emulator::tests;
@@ -100,8 +103,12 @@ void it_blocks_whole_stepped_and_entered_mid_block() {
 }
 
 void long_blocks_and_the_budget() {
-  Fixture fixture{0x1a32'0c02};
-  constexpr std::size_t adds = 300;
+  // Long enough that a chain (which carries on across the blocks of a straight
+  // run, their exits being linked, until its allowance of 4096 instructions is
+  // spent) ends before the program does. The code spans 12 pages in either
+  // profile.
+  Fixture fixture{0x1a32'0c02, 12};
+  constexpr std::size_t adds = 10000;
   {
     std::vector<std::uint32_t> words(adds, 0xe280'0001U); // add r0, r0, #1
     words.push_back(0xef00'0000U);
@@ -128,11 +135,102 @@ void long_blocks_and_the_budget() {
     require(result.retired_instructions >= 50);
     require(cpu.registers[0] == retired);
     require(cpu.pc == key::a32_key(code_base + 4 * static_cast<std::uint32_t>(retired)));
-    require(++exits < 100);
+    require(++exits < 1000);
   }
   require(exits >= 2);
   require(retired == adds + 1);
   require(cpu.registers[0] == adds);
+}
+
+/* Whether a program's blocks are one chain once they are all translated: the
+ * blocks are run last first, so each one's exit finds a translated successor,
+ * and the whole program then runs from its start as a single block entry. The
+ * exits that join them are static: the fetch window's cut, the arm of a
+ * conditional branch or CBZ that is not taken. */
+struct ChainProgram final {
+  std::vector<std::uint8_t> bytes;
+  std::vector<std::size_t> starts; // offsets of the blocks after the first
+  bool thumb;
+  std::size_t retired;
+  std::uint32_t r0;
+};
+
+void run_as_one_chain(unsigned long generation, const ChainProgram &program) {
+  constexpr std::uint32_t base = 0x00f0'0000U;
+  JitBacking backing{1};
+  backing.put(0, std::as_bytes(std::span{program.bytes}));
+  JitMapping mapping{generation, base, backing, 1};
+  ::uml::cpu::arm64::JitExecutor executor;
+  ::uml::memory::StaticGuestMemory memory;
+  const auto entry = [&](std::size_t offset) {
+    arm64::CpuState cpu{};
+    cpu.a32 = 1;
+    cpu.pc = program.thumb ? key::t32_key(base + static_cast<std::uint32_t>(offset))
+                           : key::a32_key(base + static_cast<std::uint32_t>(offset));
+    return cpu;
+  };
+  require(executor.begin_execution(generation, base));
+  std::size_t executed = 0;
+  for (auto start = program.starts.rbegin(); start != program.starts.rend();
+       ++start) {
+    auto cpu = entry(*start);
+    (void)executor.run_a32_block(cpu, memory, generation, executed);
+  }
+  auto cpu = entry(0);
+  const auto event = executor.run_a32_block(cpu, memory, generation, executed);
+  require(event == ::uml::cpu::EngineEvent::system_call);
+  require(executed == program.retired);
+  require(cpu.registers[0] == program.r0);
+  executor.end_execution();
+}
+
+void static_exits_chain() {
+  constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
+  const auto a32_bytes = [](const std::vector<std::uint32_t> &words) {
+    std::vector<std::uint8_t> bytes;
+    for (const auto word : words)
+      for (unsigned shift = 0; shift < 32; shift += 8)
+        bytes.push_back(static_cast<std::uint8_t>(word >> shift));
+    return bytes;
+  };
+
+  // A straight run of more words than a block holds: the fetch window cuts it.
+  {
+    constexpr std::size_t window = 60; // the compiler's block length (a32_compiler.cpp)
+    constexpr std::size_t words = 2 * window + 22;
+    std::vector<std::uint32_t> program(words, add_r0);
+    program.push_back(0xef00'0000U); // svc
+    run_as_one_chain(0x1a32'0c10, {a32_bytes(program), {window * 4, 2 * window * 4},
+                                   false, words + 1, static_cast<std::uint32_t>(words)});
+  }
+  // A conditional branch that is not taken: cmp r1, r1 sets Z, so bne falls
+  // through to the next block; the skipped arm is a static successor.
+  {
+    const std::uint32_t cmp = 0xe151'0001U;  // cmp r1, r1
+    const std::uint32_t bne = 0x1a00'0000U;  // bne .+8
+    run_as_one_chain(
+        0x1a32'0c11,
+        {a32_bytes({cmp, bne, add_r0, cmp, bne, add_r0, cmp, bne, add_r0, 0xef00'0000U}),
+         {8, 20, 32},
+         false, 10, 3});
+  }
+  // CBZ that is not taken (T32): the fall-through is a static successor.
+  {
+    const std::vector<std::uint16_t> halves{
+        0x2101,  // movs r1, #1
+        0xb101,  // cbz r1, .+4 (not taken)
+        0x3001,  // adds r0, #1
+        0xb101,  // cbz r1, .+4
+        0x3001,  // adds r0, #1
+        0xdf00,  // svc
+    };
+    std::vector<std::uint8_t> bytes;
+    for (const auto half : halves) {
+      bytes.push_back(static_cast<std::uint8_t>(half));
+      bytes.push_back(static_cast<std::uint8_t>(half >> 8));
+    }
+    run_as_one_chain(0x1a32'0c12, {bytes, {4, 8}, true, 6, 2});
+  }
 }
 
 /* mov r0, #1 (T32 mov.w), nop, movw r8, #0x1234, svc. */
@@ -258,6 +356,7 @@ int main() {
   it_blocks_whole_stepped_and_entered_mid_block();
   single_step_over_interworking_branches();
   long_blocks_and_the_budget();
+  static_exits_chain();
   rewritten_t32_halfwords();
   rewritten_a32_words();
   std::puts("arm64-jit-a32-control: ok");

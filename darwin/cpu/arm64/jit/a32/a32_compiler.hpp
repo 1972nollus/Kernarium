@@ -168,7 +168,11 @@ private:
   void store_it(std::uint8_t value);
   void exit_event(Event event, std::uint64_t pc_key, std::uint8_t it);
   void exit_illegal();
+  /* A static successor: linked when the ITSTATE that follows is zero. The
+   * one-argument form is the exit of the instruction being translated. */
   void exit_direct(std::uint64_t target_key);
+  void exit_direct(std::uint64_t target_key, std::uint8_t it,
+                   std::size_t count);
   void exit_indirect(unsigned key_register);
   void exit_continue_at(std::uint64_t pc_key, std::uint8_t it,
                         std::size_t count);
