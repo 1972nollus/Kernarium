@@ -558,6 +558,21 @@ encoding the SVE profile executes outside streaming mode UNDEFINED under
 `without_sve`, and every other SVE encoding UNDEFINED there on every virtual
 CPU, so both engines run them today with the guest-SVE policy off or on.
 
+A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
+ADDPL at SM = 0 for a vector length of 16 bytes, a deliberate departure from
+the architecture (see [CPU execution and
+scheduling](architecture.md#cpu-execution-and-scheduling)). No host observes
+the results, because an M4 traps those words, so the `arm64-sm0-vl` record
+holds the project's own, written from the pseudocode, and
+`arm64-instruction-corpus-sm0-vl` re-derives it. The `arm64-sme-native` records
+hold no family word at SM = 0, and `arm64-instruction-corpus-sm0-vl-profile`
+runs the `arm64-sm0-vl`, `arm64-absent-sve` and `arm64-absent-sme` records for
+a virtual CPU with the SME profile assumed on any host, which also pins every
+other SVE word UNDEFINED at SM = 0 in both engines. The unit tests
+`arm64-sm0-vector-length`, `arm64-gadget-sme`, `arm64-jit-sme-control` and
+`arm64-jit-sme-codegen` check the family against a model of the pseudocode, run
+it in each engine, and pin the same for the rest of the encoding table.
+
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (arm64-builder's Neoverse V2),
 in both page profiles, with a 4 KiB-only record for crossings of 4 KiB
@@ -709,9 +724,8 @@ native SME records on both engines, with the policy at its default and with
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
 corpus skips its native SME records. Integration runs read the policy the same
-way: on an M4 with `DARWIN_UML_GUEST_SME=1`, `guest-gadgets-smoke` and
-`guest-jit-smoke` expect the SME HWCAP2 bits and `guest-hwcap-sanity`
-executes the SME families.
+way: on an M4, `guest-gadgets-smoke` and `guest-jit-smoke` expect the SME
+HWCAP2 bits and `guest-hwcap-sanity` executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
 with the policy at its default. Each skips, naming its reason, unless the host has SME
