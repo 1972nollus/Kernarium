@@ -727,23 +727,6 @@ int main(int argc, char **argv)
 	Totals totals;
 	decode::reset_a32_library_exits();
 	decode::count_a32_library_exits(true);
-	/* The first run of a code page the host has not mapped yet takes a page
-	 * fault, and an exception between a host load-exclusive and its
-	 * store-exclusive ends the monitor, so a STREX can fail once where the
-	 * oracle's succeeds. The architecture allows that and a guest retries, but
-	 * the corpus compares one attempt. Run the exclusive suite once, unchecked,
-	 * so the pages are resident and the comparison is of the engine's answers
-	 * and not of where the linker put its gadgets. */
-	for (const auto &record : pack.records) {
-		if ((record.profiles & corpus::kProfileBit) == 0 ||
-		    record.name != "exclusive-qemu" ||
-		    (!options.record.empty() && record.name != options.record))
-			continue;
-		Totals warm;
-		warm.printed = options.limit;
-		for (const auto &test : record.cases)
-			check_case(machine, record, test, options, warm);
-	}
 	std::optional<InterruptStorm> storm;
 	if (options.interrupt)
 		storm.emplace();
