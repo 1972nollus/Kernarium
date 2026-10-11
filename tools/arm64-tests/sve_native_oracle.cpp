@@ -10,7 +10,7 @@
 // module docstring describes them.
 //
 // The records come from an arm64 Linux host with FEAT_SVE at a 16-byte
-// vector length (arm64-builder's Neoverse V2). There every register a case can
+// vector length (a Neoverse V2 Linux host). There every register a case can
 // name, Z (which is V at that length), P, and FFR included, is in the signal
 // frame, so a case runs on the calling thread with signal handlers on an
 // alternate stack:
