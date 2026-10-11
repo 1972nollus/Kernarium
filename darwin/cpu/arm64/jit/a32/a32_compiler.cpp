@@ -138,6 +138,8 @@ Result A32Compiler::compile_once(const Request &request) {
   isa_ = thumb_ ? Isa::t32 : Isa::a32;
   single_ = request.single;
   accesses_fp_state_ = false;
+  guarded_float_ops_ = 0;
+  guest_fp_mode_ops_ = 0;
   fp_mode_ = FpMode::unknown;
   flags_held_by_vmrs_ = ~std::size_t{0};
   decode_block(request);
@@ -212,6 +214,7 @@ bool A32Compiler::loop_candidate(const Request &request) {
 
 void A32Compiler::record_loop_plan() {
   plan_.valid = true;
+  plan_.standard_fp = guarded_float_ops_ != 0U && guest_fp_mode_ops_ == 0U;
   /* The registers the loop touches most hold the host registers, not the
    * first ones it names. */
   std::array<unsigned, 15> order{};
@@ -245,6 +248,13 @@ void A32Compiler::apply_loop_plan() {
       continue;
     vector_slots_[index] = {.guest = guest, .loaded = true, .dirty = true};
     emitter_.load_q(resident_vector_hosts[index], 15, vector_slot_offset(guest));
+  }
+  /* A loop of guarded Neon operations switches the host to the Standard
+   * FPCR once, here, and runs them unguarded; a VFP instruction after the
+   * loop switches it back. */
+  if (plan_.standard_fp && !probing_) {
+    touch_fp_environment();
+    set_fp_mode(true);
   }
   loop_head_ = make_label();
   bind(loop_head_);

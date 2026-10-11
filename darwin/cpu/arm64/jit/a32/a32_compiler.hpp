@@ -191,6 +191,10 @@ private:
    * plan is the bindings a probe compilation held at the back edge. */
   struct LoopPlan final {
     bool valid{};
+    /* The body guards Neon floating-point operations and has nothing that
+     * needs the guest's FPCR: the loop runs under the Standard value, set
+     * once before it. */
+    bool standard_fp{};
     std::array<unsigned, 15> gpr{};
     std::array<unsigned, 18> vector{};
   };
@@ -513,6 +517,11 @@ private:
   /* The compilation that learns a loop's bindings, the plan it recorded,
    * and the plan the translation of a loop runs on. */
   bool probing_{};
+  /* The Neon floating-point operations compiled with a guard, and the
+   * instructions that need the host FPCR to hold the guest's value, in the
+   * translation so far (the loop probe's account of the body). */
+  unsigned guarded_float_ops_{};
+  unsigned guest_fp_mode_ops_{};
   /* How often a probing compilation touched each core register. */
   std::array<unsigned, 15> uses_{};
   bool looping_{};

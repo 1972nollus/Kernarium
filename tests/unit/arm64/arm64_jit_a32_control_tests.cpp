@@ -1430,6 +1430,94 @@ void native_loops() {
   }
 }
 
+/* A loop of Neon floating-point operations with nothing in its body that
+ * needs the guest's FPCR runs them under the Standard value, which it sets
+ * once before the head, instead of guarding every operation of every lap. It
+ * must end as the same operations one at a time (each guarded, where the mode
+ * is not known) do, on operands that are denormal, NaN or infinite and under
+ * each rounding mode and flush-to-zero setting, flags included. */
+void neon_float_loop_is_unguarded() {
+  Fixture fixture{0x1a32'0c22, 4};
+  // head: vld1.32 {d16,d17},[r10]; vmul.f32 q9,q8,q8; vadd.f32 q10,q10,q9;
+  // add r10,r10,#16; subs r12,r12,#1; bne head; svc
+  fixture.code32(0, {0xf46a'0a8fU, 0xf340'2df0U, 0xf244'4de2U, 0xe28a'a010U,
+                     0xe25c'c001U, 0x1aff'fff9U, 0xef00'0000U});
+  std::vector<std::byte> bytes(7 * 4);
+  fixture.read_code(0, bytes);
+  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  require(compiled.code.guest_instructions == 6);
+  require(has_host_loop(compiled.code.words, 6));
+  // One write of the FPCR (msr fpcr, x0), in the preheader: no guard has a
+  // cold path that writes it again.
+  unsigned fpcr_writes = 0;
+  for (const auto w : compiled.code.words)
+    if (w == 0xd51b'4400U)
+      ++fpcr_writes;
+  require(fpcr_writes == 1);
+
+  // The same loop with a VFP instruction in the body keeps its guards: the
+  // body needs the guest's FPCR, so the Standard value is not set for it.
+  {
+    fixture.code32(256, {0xf46a'0a8fU, 0xf340'2df0U, 0xee30'0a81U, 0xf244'4de2U,
+                         0xe28a'a010U, 0xe25c'c001U, 0x1aff'fff8U, 0xef00'0000U});
+    std::vector<std::byte> mixed(8 * 4);
+    fixture.read_code(256, mixed);
+    const auto compiled_mixed = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+        key::a32_key(code_base + 256), mixed);
+    require(compiled_mixed.code.guest_instructions == 7);
+    unsigned writes = 0;
+    for (const auto w : compiled_mixed.code.words)
+      if (w == 0xd51b'4400U)
+        ++writes;
+    require(writes > 1);
+  }
+
+  static constexpr std::uint32_t pool[] = {
+      0x3f80'0000U, 0x4049'0fdbU, 0x0000'0001U, 0x007f'ffffU, 0x8000'0001U,
+      0x7fc0'0000U, 0x7f80'0001U, 0x7f80'0000U, 0xff80'0000U, 0x0080'0000U,
+      0x7f7f'ffffU, 0x3380'0000U, 0x1f80'0000U, 0x0000'0000U, 0x8000'0000U,
+      0x3eff'ffffU, 0x4b80'0000U, 0x1fff'ffffU};
+  Lcg random{0x4e0a'f10dU};
+  for (const std::size_t program : {std::size_t{0}, std::size_t{256}})
+    for (const std::uint32_t fpcr : {0U, 3U << 22, 1U << 24, 1U << 25}) {
+      for (unsigned round = 0; round < 24; ++round) {
+        auto cpu = Fixture::task(false, static_cast<std::uint32_t>(program));
+        cpu.registers[10] = data_base;
+        cpu.registers[12] = 1 + random.below(16);
+        cpu.registers[0] = 0;
+        cpu.fpcr = fpcr;
+        const bool special = round % 3 != 0;
+        for (unsigned i = 0; i < 64; ++i)
+          fixture.data32(i * 4, special && random.below(3) != 0
+                                    ? pool[random.below(std::size(pool))]
+                                    : 0x3f00'0000U +
+                                          (static_cast<std::uint32_t>(
+                                               random.next()) & 0x00ff'ffffU));
+        for (unsigned q = 0; q < 11; ++q)
+          if (q == 0 || q >= 8)
+            for (unsigned lane = 0; lane < 4; ++lane) {
+              const std::uint32_t v =
+                  special && random.below(4) == 0
+                      ? pool[random.below(std::size(pool))]
+                      : 0x3f00'0000U +
+                            (static_cast<std::uint32_t>(random.next()) &
+                             0x00ff'ffffU);
+              std::memcpy(&cpu.vectors[q].bytes[lane * 4], &v, 4);
+            }
+        const auto whole = run_whole_long(fixture, cpu);
+        const auto stepped = run_stepped_long(fixture, cpu);
+        require(whole.reason == ExitReason::system_call);
+        require_same(whole, stepped, "neon float loop", round);
+        for (unsigned q = 0; q < 11; ++q)
+          require(std::memcmp(&whole.cpu.vectors[q], &stepped.cpu.vectors[q],
+                              sizeof whole.cpu.vectors[q]) == 0);
+        require(whole.cpu.fpsr == stepped.cpu.fpsr);
+        require(whole.cpu.fpcr == stepped.cpu.fpcr);
+      }
+    }
+}
+
 int main() {
   const uml::testing::RuntimeTestRoute runtime_route;
   require(jit_available() == 1);
@@ -1454,6 +1542,7 @@ int main() {
   aligned_accesses_skip_the_crossing_test();
   forward_skip_over_stores_to_a_return();
   counted_loop_is_a_host_loop();
+  neon_float_loop_is_unguarded();
   native_loops();
   extensions_decode_only_where_the_host_has_them();
   std::puts("arm64-jit-a32-control: ok");

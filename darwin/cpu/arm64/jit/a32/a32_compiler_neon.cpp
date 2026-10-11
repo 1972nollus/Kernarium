@@ -399,6 +399,7 @@ bool A32Compiler::neon_float_isolated() const {
 }
 
 A32Compiler::Flow A32Compiler::emit_neon_float_guarded(const VInfo &v) {
+  ++guarded_float_ops_;
   const auto &o = cur().inst.operands;
   const unsigned d = static_cast<unsigned>(o.d);
   const unsigned n = static_cast<unsigned>(o.n);
@@ -456,6 +457,7 @@ A32Compiler::Flow A32Compiler::emit_neon_float_guarded(const VInfo &v) {
 }
 
 A32Compiler::Flow A32Compiler::emit_neon_minmax_guarded(const VInfo &v) {
+  ++guarded_float_ops_;
   const auto &o = cur().inst.operands;
   const unsigned d = static_cast<unsigned>(o.d);
   const unsigned n = static_cast<unsigned>(o.n);
@@ -484,7 +486,10 @@ A32Compiler::Flow A32Compiler::emit_neon_minmax_guarded(const VInfo &v) {
   emitter_.compare_zero(fast, 9, true, false);
   set_fp_mode(true);
   emit_vec3(base, dest.host, a, b);
+  /* The guard's own return to the guest's value, not a need for it. */
+  const auto guest_ops = guest_fp_mode_ops_;
   set_fp_mode(false);
+  guest_fp_mode_ops_ = guest_ops;
   emitter_.branch(done);
   bind(fast);
   emit_vec3(base, dest.host, a, b);

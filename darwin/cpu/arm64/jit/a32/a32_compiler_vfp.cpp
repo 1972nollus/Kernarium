@@ -538,6 +538,7 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   emit(0xd51b'4422U); // msr fpsr, x2
   emit(enc::and_i(0, source, *enc::logical_immediate_field(0xf000'0000U)));
   emitter_.store_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
+  ++guest_fp_mode_ops_;
   if (fp_mode_ != FpMode::guest) {
     emitter_.store_b(31, 15, offsetof(CpuState, a32_fp_standard));
     fp_mode_ = FpMode::guest;

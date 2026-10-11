@@ -1079,7 +1079,10 @@ so a Neon VMAX, VMIN, VADD, VSUB, VMUL, VMLA or VMLS of single precision in a
 run of at most eight Neon floating-point operations that a VFP instruction
 (or the end of the block) follows runs under the guest's FPCR behind integer
 tests of its operands, and under the Standard value from a cold path when a
-test fails; a longer run switches once. A run under the guest's FPCR leaves its cumulative
+test fails; a longer run switches once, and so does a loop that holds such
+operations and no VFP instruction or FPSCR write (the probe compilation counts
+them): it sets the Standard value before its head and runs every lap unguarded.
+A run under the guest's FPCR leaves its cumulative
 exception flags behind, so what only it would raise is found before it: a
 product whose operand exponents sum to less than 129 (it may underflow,
 inexactly) is tested before the multiplication, and a sum needs no such test

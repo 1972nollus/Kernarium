@@ -115,6 +115,8 @@ void A32Compiler::emit_fp_write(bool standard) {
 
 void A32Compiler::set_fp_mode(bool standard) {
   const auto wanted = standard ? FpMode::standard : FpMode::guest;
+  if (!standard)
+    ++guest_fp_mode_ops_;
   if (fp_mode_ == wanted)
     return;
   Arm64Emitter::Label done{};
