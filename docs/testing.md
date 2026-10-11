@@ -972,8 +972,12 @@ STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
 step at a time and from the middle, random A32 and T32 programs of
-conditional forward branches (B, CBZ, CBNZ) among data processing whole and
-one instruction at a time, random loops with memory, Advanced SIMD and
+conditional branches, forward and back (B, CBZ, CBNZ), among data processing
+whole and one instruction at a time, the shape of a block that goes on past a
+branch back and of one that ends at a branch to its own first instruction, the
+code shape of a linked block (the fifteen core registers loaded once before its
+internal entry, none written back before a link) and the registers across the
+budget returns of a chain with a call and a return, random loops with memory, Advanced SIMD and
 side exits in their bodies that end by a count, a branch out or a fault, and
 the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
 rewritten under translations, and one form of each optional extension on hosts
