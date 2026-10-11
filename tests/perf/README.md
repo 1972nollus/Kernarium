@@ -400,6 +400,10 @@ the number of evictions in between goes into a power-of-two histogram, which
 says how many of those misses an exclusive victim tier of a given size would
 have served.
 
+A census build pays for this on every store and pauses a vCPU for each
+snapshot, so it runs slower than a default build; its timings are not
+measurements.
+
 Identity is the consumed guest code, not the produced stream, because two
 executors translating the same code embed pointers to their own link records.
 That is what lets the report separate duplication between executors sharing an

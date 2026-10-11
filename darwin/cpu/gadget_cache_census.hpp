@@ -190,11 +190,20 @@ enum class Repeat : std::uint8_t { none, other_executor, other_space };
 
 class Registry final {
 public:
+	/* Every store of every vCPU asks, so one lock serialized them: under a
+	 * browser's start-up the census spent more of a vCPU's time waiting for
+	 * it than translating, and the guest's own timeouts fired. A piece of
+	 * code always lands in the same shard, so each shard answers for the
+	 * code it holds on its own. */
+	static constexpr std::size_t shards = 256;
+
 	[[nodiscard]] static Repeat note(unsigned cache, std::uint64_t generation,
 		std::uint64_t pc, std::uint64_t digest)
 	{
-		static Registry registry;
-		return registry.record(cache, generation, pc, digest);
+		static std::array<Registry, shards> registries;
+		const auto shard = Hash::mix(Hash::mix(pc) ^ digest) >>
+			(64U - std::bit_width(shards - 1U));
+		return registries[shard].record(cache, generation, pc, digest);
 	}
 
 private:
