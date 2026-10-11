@@ -1317,10 +1317,11 @@ def needs_no_sve(draft: Draft) -> bool:
 
 def project_defined(draft: Draft) -> bool:
     """Whether the virtual CPU's result for the case is the project's, not
-    the SME host's: a word of the SM = 0 vector-length family outside
-    streaming mode, which the host traps and the virtual CPU executes."""
+    the SME host's: a word of the SM = 0 family (the vector-length words
+    and the Z and P spill words) outside streaming mode, which the host
+    traps and the virtual CPU executes."""
     return not draft.svcr & SM and \
-        sme_table.sm0_vector_length_word(draft.words[0])
+        sme_table.sm0_family_word(draft.words[0])
 
 
 def record_key(draft: Draft) -> tuple[str, tuple[str, ...]]:
@@ -1535,7 +1536,7 @@ def carry(options: argparse.Namespace) -> int:
             # A pack from before the family became the project's holds the
             # host's results for it.
             if not (not int(case["initial"].get("svcr", "0x0"), 16) & SM and
-                    sme_table.sm0_vector_length_word(int(item["programs"][
+                    sme_table.sm0_family_word(int(item["programs"][
                         case["program"]]["words"][0][1], 16)))]
     carried = []
     for draft in drafts():

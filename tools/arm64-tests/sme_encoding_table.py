@@ -37,7 +37,7 @@ class TableError(ValueError):
 
 
 def sm0_vector_length_word(word: int) -> bool:
-    """Whether a word is in the SM = 0 vector-length family: CNT[BHWD]
+    """Whether a word is in the SM = 0 vector-length words: CNT[BHWD]
     (scalar), the scalar INC[BHWD] and DEC[BHWD], RDVL, ADDVL and ADDPL. A
     virtual CPU with FEAT_SME and without FEAT_SVE executes them outside
     streaming mode for a vector length of 16 bytes, a deliberate departure
@@ -49,6 +49,23 @@ def sm0_vector_length_word(word: int) -> bool:
     return count in (0x0420_E000, 0x0430_E000, 0x0430_E400) or \
         word & 0xFFFF_F800 == 0x04BF_5000 or \
         word & 0xFFA0_F800 == 0x0420_5000
+
+
+def sm0_spill_word(word: int) -> bool:
+    """Whether a word is an SM = 0 spill word: LDR or STR of a vector
+    register Z or of a predicate register P with a scalar base and an
+    immediate offset. A virtual CPU with FEAT_SME and without FEAT_SVE
+    executes them outside streaming mode, moving 16 bytes for Z and 2 for P
+    (a deliberate departure, like the vector-length family). This mirrors
+    sm0_spill_word() in darwin/cpu/arm64/detail/sm0_vector_length.hpp."""
+    return word & 0xFFC0_E000 in (0x8580_4000, 0xE580_4000) or \
+        word & 0xFFC0_E010 in (0x8580_0000, 0xE580_0000)
+
+
+def sm0_family_word(word: int) -> bool:
+    """Whether a word is in the SM = 0 family: a vector-length word or a
+    spill word."""
+    return sm0_vector_length_word(word) or sm0_spill_word(word)
 
 
 @dataclass(frozen=True)

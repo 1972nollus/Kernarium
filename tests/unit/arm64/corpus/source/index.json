@@ -202,7 +202,7 @@
       },
       "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
       "script": "tools/arm64-tests/absent-feature-corpus.py",
-      "sha256": "d87b33ae967570aa6c9ee15979b69e850b83385d5618da06b3767e86698e9914",
+      "sha256": "a410740edcb4f6aa6b07a59e9fa1f6b404a0acc4c090fe785df01df5f4707cf6",
       "sme_table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
         "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
@@ -283,8 +283,8 @@
         "file": "tools/arm64-tests/invalid_encoding.py",
         "sha256": "16add068ee0994217a90f2f716482f7fefbf00325fee0a2733381ab1af090cc0"
       },
-      "decided_cases": 24081,
-      "illegal_cases": 34265,
+      "decided_cases": 24097,
+      "illegal_cases": 34281,
       "script": "tools/arm64-tests/invalid-encoding-corpus.py",
       "sha256": "e74fef4a7e0165fb1f2491104388cab8ff1c0edca09ba18e869a2db502de3308",
       "tables": [
@@ -312,9 +312,11 @@
     "sample_limit": 8,
     "seed": "0xa64c0b055eed2026",
     "sm0_vl": {
-      "cases": 1876,
+      "cases": 2338,
+      "control_cases": 20,
       "script": "tools/arm64-tests/sm0-vl-corpus.py",
-      "sha256": "76f803ecdddb597fc854c5fe7cf3c50af630153140670834d74b9090e26cd221",
+      "sha256": "947f264f74b2c03bacee87a348872b9cd119f8d38fb33c117f7aff9351c1b315",
+      "spill_cases": 442,
       "svl": 64,
       "table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
@@ -337,7 +339,7 @@
       ],
       "request_sha256": "51b09afd774c8f9f43a9384a75c3d13027796a79e046ccc90d220adc1d8f16dc",
       "script": "tools/arm64-tests/sme-native-corpus.py",
-      "sha256": "2a4db3ae6e1fad35398490ec3cb36b5c6b55e52cf31ade2f248127854e9583ba",
+      "sha256": "ef0c3cbf3757827589988b5abc3a8f65900c328d04142b611c2cf0f7959693fb",
       "svl": 64,
       "table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",

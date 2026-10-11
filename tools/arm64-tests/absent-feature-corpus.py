@@ -851,10 +851,10 @@ def table_records(row) -> tuple[str, ...]:
     - "sve_profile", under without_sve: the rows the SVE profile executes
       outside streaming mode, so a virtual CPU without SVE takes them as
       UNDEFINED there;
-    - "sm0_family", under without_sme and without_sve: the SM = 0
-      vector-length family, which a virtual CPU with SME and without SVE
-      executes there (sm0-vl-corpus.py), so only one with neither takes it
-      as UNDEFINED;
+    - "sm0_family", under without_sme and without_sve: the SM = 0 family
+      (the vector-length words and the Z and P spill words), which a virtual
+      CPU with SME and without SVE executes there (sm0-vl-corpus.py), so
+      only one with neither takes it as UNDEFINED;
     - "sme", under without_sme: the other rows of the SME profile and the
       SVE rows that need FEAT_SME outside streaming mode as well (the
       SCLAMP class), so a virtual CPU without SME takes them as UNDEFINED
@@ -865,7 +865,7 @@ def table_records(row) -> tuple[str, ...]:
     if row is None:
         return ("sme",)
     outside = set(row.non_streaming_requirement)
-    if sme_table.sm0_vector_length_word(row.witness):
+    if sme_table.sm0_family_word(row.witness):
         return ("sm0_family",)
     if "sve" in outside:
         return ("sve_profile", "sme") if "sme" in outside else \
