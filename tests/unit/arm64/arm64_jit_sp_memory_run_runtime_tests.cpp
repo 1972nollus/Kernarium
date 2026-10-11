@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_base_immediate_memory_test_support.hpp"
 #include "arm64_jit_memory_run_runtime_test_support.hpp"
+#include "arm64_jit_memory_run_straddle_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 
@@ -245,6 +246,29 @@ void exact_page_end_and_runtime_crossing(engine::EngineHarness &harness) {
     immediate::check_program(
         harness, "jit-sp-run-runtime-page-crossing", instructions, initial,
         expected, data_base, memory, expected_memory);
+  }
+
+  /* SP in the last bytes of a page with its slots on the next page. */
+  {
+    const std::array far{
+        unsigned_x(true, 2, 3),
+        unsigned_x(true, 3, 4),
+    };
+    std::vector<std::byte> memory(2U * page_size);
+    immediate::fill_memory(memory, 163);
+    auto expected_memory = memory;
+    auto initial = immediate::seeded_state(0xb400'0000'0000'0003ULL);
+    initial.sp = data_base + page_size - 16U;
+    auto expected = initial;
+    immediate::apply_oracle(immediate::variants[12],
+                            immediate::Form::unsigned_offset, 2, 31, 3,
+                            expected, expected_memory, data_base);
+    immediate::apply_oracle(immediate::variants[12],
+                            immediate::Form::unsigned_offset, 3, 31, 4,
+                            expected, expected_memory, data_base);
+    immediate::check_program(
+        harness, "jit-sp-run-far-load-next-page", far, initial, expected,
+        data_base, memory, expected_memory);
   }
 }
 
@@ -546,6 +570,70 @@ void miss_preserves_resident_prefix(engine::EngineHarness &harness) {
   });
 }
 
+void straddling_runs_run_natively() {
+  /* Each case's run straddles the first data page's end. */
+  namespace straddle = arm64_jit_memory_run_straddle_test;
+  using engine::require;
+  using straddle::load_x;
+  using straddle::pattern_x;
+  using straddle::store_x;
+  constexpr auto end = page_size;
+  const auto guest = [](unsigned index) {
+    return std::uint64_t{0xf0'0000} + index * 4U * page_size;
+  };
+  const auto with_sp = [](const straddle::Case &test_case,
+                          std::uint64_t offset) {
+    arm64::CpuState cpu{};
+    cpu.sp = straddle::data(test_case) + offset;
+    return cpu;
+  };
+
+  {
+    const std::array code{load_x(3, 31, 0), load_x(4, 31, 2),
+                          load_x(5, 31, 1)};
+    const straddle::Case test_case{.name = "jit-sp-run-straddle-load",
+                                   .generation = 9711,
+                                   .guest = guest(0),
+                                   .run = code};
+    straddle::check(test_case, with_sp(test_case, end - 16U),
+                    [&](const arm64::CpuState &cpu, auto) {
+                      require(cpu.registers[3] == pattern_x(end - 16U) &&
+                              cpu.registers[4] == pattern_x(end) &&
+                              cpu.registers[5] == pattern_x(end - 8U));
+                    });
+  }
+  {
+    const std::array code{load_x(3, 31, 7), load_x(4, 31, 8)};
+    const straddle::Case test_case{.name = "jit-sp-run-straddle-far",
+                                   .generation = 9712,
+                                   .guest = guest(1),
+                                   .run = code};
+    straddle::check(test_case, with_sp(test_case, end - 64U),
+                    [&](const arm64::CpuState &cpu, auto) {
+                      require(cpu.registers[3] == pattern_x(end - 8U) &&
+                              cpu.registers[4] == pattern_x(end));
+                    });
+  }
+  {
+    constexpr std::uint64_t first = 0x1357'9bdf'0246'8aceULL;
+    constexpr std::uint64_t second = 0xeca8'6420'fdb9'7531ULL;
+    const std::array code{store_x(3, 31, 1), store_x(4, 31, 2)};
+    const straddle::Case test_case{.name = "jit-sp-run-straddle-store",
+                                   .generation = 9713,
+                                   .guest = guest(2),
+                                   .run = code,
+                                   .store = true};
+    auto cpu = with_sp(test_case, end - 16U);
+    cpu.registers[3] = first;
+    cpu.registers[4] = second;
+    straddle::check(test_case, cpu, [&](const arm64::CpuState &, auto read) {
+      require(read(end - 8U) == first && read(end) == second &&
+              read(end - 16U) == pattern_x(end - 16U) &&
+              read(end + 8U) == pattern_x(end + 8U));
+    });
+  }
+}
+
 } // namespace
 
 int main() {
@@ -562,6 +650,7 @@ int main() {
   alignment_and_permission_faults(harness);
   prefixed_cold_faults_preserve_state(harness);
   miss_preserves_resident_prefix(harness);
+  straddling_runs_run_natively();
   run::finish(harness, "arm64-jit-sp-memory-run-runtime", scalar_base);
   return 0;
 }

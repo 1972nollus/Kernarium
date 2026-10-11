@@ -23,25 +23,7 @@ void JitCompiler::emit_translate(unsigned address, Access access,
       emitter_.test_zero(fallback, 0, page_shift, true);
     }
 
-    /*
-     * The TLB tag is the guest page number, as the shared
-     * `uml::memory::TlbEntry` contract and the gadget engine both store it.
-     * One shift produces it, and the backing delta the hit path applies is
-     * still relative to the page-aligned address.
-     */
-    emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
-#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
-    emitter_.ubfm(0, address, page_shift,
-                  page_shift + ::uml::memory::tlb_index_bits - 1U);
-    emitter_.add_shifted(0, 14, 0, 6);
-#else
-    emitter_.ubfm(0, address, page_shift,
-                  page_shift + ::uml::memory::tlb_index_bits - 1U);
-    emitter_.emit(0xca40'0000U | ((page_shift + 13U) << 10) |
-                  ((address & 31U) << 16)); // eor x0, x0, address, lsr #25
-    emitter_.ubfm(0, 0, 0, ::uml::memory::tlb_index_bits - 1U);
-    emitter_.add_shifted(0, 14, 0, 5);
-#endif
+    emit_tlb_set(address);
     const unsigned page_offset = access == Access::write ? 16U : 0U;
     const auto slow = emitter_.make_label();
     const auto complete = emitter_.make_label();
@@ -65,6 +47,28 @@ void JitCompiler::emit_translate(unsigned address, Access access,
         .access = access,
         .bridge = bridge,
     });
+  }
+
+void JitCompiler::emit_tlb_set(unsigned address) {
+    /*
+     * The TLB tag is the guest page number, as the shared
+     * `uml::memory::TlbEntry` contract and the gadget engine both store it.
+     * One shift produces it, and the backing delta the hit path applies is
+     * still relative to the page-aligned address.
+     */
+    emitter_.ubfm(1, address, page_shift, 63U); // lsr x1, Xn, #page_shift
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+    emitter_.ubfm(0, address, page_shift,
+                  page_shift + ::uml::memory::tlb_index_bits - 1U);
+    emitter_.add_shifted(0, 14, 0, 6);
+#else
+    emitter_.ubfm(0, address, page_shift,
+                  page_shift + ::uml::memory::tlb_index_bits - 1U);
+    emitter_.emit(0xca40'0000U | ((page_shift + 13U) << 10) |
+                  ((address & 31U) << 16)); // eor x0, x0, address, lsr #25
+    emitter_.ubfm(0, 0, 0, ::uml::memory::tlb_index_bits - 1U);
+    emitter_.add_shifted(0, 14, 0, 5);
+#endif
   }
 
 void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
@@ -398,6 +402,11 @@ void JitCompiler::clear_local_exclusive_monitor() {
               (instruction & 0x0000'8000U) != 0U;
       if (!valid)
         return Action::unsupported;
+      if (load) {
+        emit_native_ordered_load(instruction, pc,
+                                 ColdPath::Action::ordered_slow);
+        return Action::keep_going;
+      }
       emitter_.branch(
           cold_exit(instruction, pc, ColdPath::Action::ordered_slow));
       return Action::terminate;
@@ -451,6 +460,38 @@ void JitCompiler::emit_native_atomic_address(std::uint32_t instruction,
     }
     emit_translate(8, Access::write, slow, fault, 1);
     track_direct_store(8, bytes);
+  }
+
+void JitCompiler::emit_native_ordered_load(std::uint32_t instruction,
+                                           std::uint64_t pc,
+                                           ColdPath::Action slow_action) {
+    /*
+     * A naturally aligned access lies in one page, and the host's LDAR or
+     * LDAPR on its backing is single-copy atomic with the same ordering.
+     * A misaligned one keeps the semantic helper, which raises the
+     * alignment fault or, with FEAT_LSE2, reads it atomically.
+     */
+    const unsigned base = (instruction >> 5) & 31U;
+    const unsigned destination = instruction & 31U;
+    const std::size_t bytes = std::size_t{1} << (instruction >> 30);
+    load_gpr(8, base, true);
+
+    const auto slow = cold_exit(instruction, pc, slow_action);
+    const auto fault =
+        cold_exit(instruction, pc, ColdPath::Action::memory_fault);
+    if (base == 31U) {
+      emit_misalignment_check(8, 16, slow);
+    } else {
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+      emitter_.compare_zero(slow, 0, false, true);
+      emit_misalignment_check(8, bytes, slow);
+    }
+    emit_translate(8, Access::read, slow, fault, 1);
+    const auto native_destination =
+        write_native_gpr(destination, false, false, 9);
+    emitter_.emit((instruction & ~((31U << 5) | 31U)) | (8U << 5) |
+                  native_destination.host);
+    commit_native_gpr(native_destination, destination, false);
   }
 
 void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
@@ -1026,10 +1067,12 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -1039,18 +1082,22 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       if (candidates == 0) {
         base = operation.base;
         load = operation.load;
+        first_offset = operation.offset;
       } else if (operation.base != base || operation.load != load) {
         break;
       }
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1084,8 +1131,16 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       emitter_.compare_zero(slow, 0, false, true);
     }
 
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    if (base == 31U) {
+    RunStraddle straddle{
+        .label = emitter_.make_label(),
+        .slow = slow,
+        .access = load ? Access::read : Access::write,
+        .first = first_offset,
+    };
+    bool proved = false;
+    if (base == 31U && first_offset == 0U) {
       const auto last_unit =
           static_cast<unsigned>((maximum_end - 1U) >> 4U);
       if (last_unit != 0U) {
@@ -1095,25 +1150,16 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
          */
         emitter_.ubfm(0, 8, 4, page_shift - 1);
         emitter_.add_immediate(0, 0, last_unit);
-        emitter_.test_zero(slow, 0, page_shift - 4U, true);
+        emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
+        proved = true;
       }
     } else {
-      const auto last_delta = maximum_end - 1U;
-      if (last_delta != 0U) {
-        if (last_delta <= 0xfffU) {
-          emitter_.add_immediate(0, 8,
-                                 static_cast<unsigned>(last_delta));
-        } else {
-          emitter_.load_constant(0, last_delta);
-          emitter_.add_shifted(0, 8, 0, 0);
-        }
-        emitter_.emit(0xca08'0000U); // eor x0, x0, x8
-        emitter_.test_zero(slow, 0, page_shift,
-                           true); // tbnz x0, #page_shift
-      }
+      proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
+    move_run_base(first_offset, false);
+    straddle.words_begin = emitter_.size();
     for (std::size_t index = 0; index < length; ++index) {
       const auto &operation = operations[index];
       const auto native_vector =
@@ -1122,9 +1168,16 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
       const auto native =
           (operation.instruction & ~((31U << 5) | 31U)) | (8U << 5) |
           native_vector.host;
+      note_run_straddle_access(straddle, operation.offset, operation.bytes);
       emitter_.emit(native);
       if (load)
         commit_native_vector(native_vector, operation.transfer);
+    }
+    straddle.words_end = emitter_.size();
+    if (proved) {
+      straddle.join = emitter_.make_label();
+      emitter_.bind(straddle.join);
+      run_straddles_.push_back(straddle);
     }
 
     if (!load) {
@@ -1162,7 +1215,9 @@ void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
   }
 
 void JitCompiler::emit_native_gpr_run(
-      std::span<const UnsignedMemoryOperation> operations, bool load) {
+      std::span<const UnsignedMemoryOperation> operations, bool load,
+      RunStraddle &straddle, bool proved) {
+    straddle.words_begin = emitter_.size();
     for (const auto &operation : operations) {
       const auto native_gpr =
           load ? write_native_gpr(operation.transfer, false, false, 9)
@@ -1170,10 +1225,185 @@ void JitCompiler::emit_native_gpr_run(
       const auto native =
           (operation.instruction & ~((31U << 5) | 31U)) | (8U << 5) |
           native_gpr.host;
+      note_run_straddle_access(straddle, operation.offset, operation.bytes);
       emitter_.emit(native);
       if (load)
         commit_native_gpr(native_gpr, operation.transfer, false);
     }
+    straddle.words_end = emitter_.size();
+    if (proved) {
+      straddle.join = emitter_.make_label();
+      emitter_.bind(straddle.join);
+      run_straddles_.push_back(straddle);
+    }
+  }
+
+void JitCompiler::note_run_straddle_access(RunStraddle &straddle,
+                                           std::uint64_t offset,
+                                           std::size_t bytes) {
+    if (straddle.count == straddle.accesses.size())
+      return;
+    const auto start = offset - straddle.first;
+    straddle.accesses[straddle.count++] = {
+        .word = emitter_.size(),
+        .start = start,
+        .end = start + bytes,
+    };
+  }
+
+void JitCompiler::move_run_base(std::uint64_t offset, bool forward,
+                                unsigned reg) {
+    /* An unsigned offset is below 0x1000 units of at most 16 bytes. */
+    const auto high = static_cast<unsigned>(offset >> 12U);
+    const auto low = static_cast<unsigned>(offset & 0xfffU);
+    if (high != 0U) {
+      if (forward)
+        emitter_.add_immediate(reg, reg, high, true);
+      else
+        emitter_.subtract_immediate(reg, reg, high, true);
+    }
+    if (low != 0U) {
+      if (forward)
+        emitter_.add_immediate(reg, reg, low);
+      else
+        emitter_.subtract_immediate(reg, reg, low);
+    }
+  }
+
+bool JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
+                                      Arm64Emitter::Label outside) {
+    /*
+     * The run translates its first accessed byte, so only the bytes it
+     * accesses must share a page: a base near a page end whose fields all
+     * lie on the next page stays on the native path. The caller moves the
+     * translated address back by `first` before the accesses, which keep
+     * their own unsigned offsets.
+     */
+    move_run_base(first, true);
+    const auto last_delta = end - first - 1U;
+    if (last_delta == 0U)
+      return false;
+    if (last_delta <= 0xfffU) {
+      emitter_.add_immediate(0, 8, static_cast<unsigned>(last_delta));
+    } else {
+      emitter_.load_constant(0, last_delta);
+      emitter_.add_shifted(0, 8, 0, 0);
+    }
+    /*
+     * last_delta is translation-time bounded below one guest page. The page
+     * bit changes iff the first and last accessed bytes are on different
+     * pages.
+     */
+    emitter_.emit(0xca08'0000U); // eor x0, x0, x8
+    emitter_.test_zero(outside, 0, page_shift, true); // tbnz x0, #page_shift
+    return true;
+  }
+
+namespace {
+
+/* Flag-free cold-path words. */
+constexpr std::uint32_t sub_x10_x11_x8 = 0xcb08'016aU;  // sub x10, x11, x8
+constexpr std::uint32_t sub_x11_x11_x10 = 0xcb0a'016bU; // sub x11, x11, x10
+constexpr std::uint32_t eor_x1_x8_x11 = 0xca0b'0101U;   // eor x1, x8, x11
+constexpr std::uint32_t asr_x0_x0_63 = 0x937f'fc00U;    // asr x0, x0, #63
+constexpr std::uint32_t and_x0_x0_x1 = 0x8a01'0000U;    // and x0, x0, x1
+constexpr std::uint32_t eor_x0_x0_x8 = 0xca08'0000U;    // eor x0, x0, x8
+
+} // namespace
+
+void JitCompiler::emit_run_straddle(const RunStraddle &straddle) {
+    emitter_.bind(straddle.label);
+    if (straddle.count == 0U ||
+        emitter_.patched(straddle.words_begin, straddle.words_end)) {
+      emitter_.branch(straddle.slow);
+      return;
+    }
+    const auto subtract = [&](unsigned destination, unsigned source,
+                              std::uint64_t value) {
+      /* value is at most one page. */
+      const auto high = static_cast<unsigned>(value >> 12U);
+      const auto low = static_cast<unsigned>(value & 0xfffU);
+      if (high != 0U) {
+        emitter_.subtract_immediate(destination, source, high, true);
+        source = destination;
+      }
+      if (low != 0U || source != destination)
+        emitter_.subtract_immediate(destination, source, low);
+    };
+    /*
+     * x8 holds the guest address of the run's first accessed byte, A. The
+     * run's bytes lie in A's page and the next one: x11 = the next page's
+     * guest address, and x10 = the bytes from A to it, at least one.
+     */
+    emitter_.emit(0xb240'0000U | ((page_shift - 1U) << 10U) | (8U << 5U) |
+                  11U); // orr x11, x8, #(page_size - 1)
+    emitter_.add_immediate(11, 11, 1);
+    emitter_.emit(sub_x10_x11_x8);
+    /*
+     * An access that itself spans the boundary, start < x10 < end, takes
+     * the semantic path before any access is made.
+     */
+    for (std::size_t index = 0; index < straddle.count; ++index) {
+      const auto &access = straddle.accesses[index];
+      if (access.end - access.start == 1U)
+        continue;
+      const auto whole = emitter_.make_label();
+      subtract(0, 10, access.end);
+      emitter_.test_zero(whole, 0, 63, false);  // x10 >= end: in A's page
+      subtract(0, 10, access.start);
+      emitter_.compare_zero(whole, 0, true, false); // x10 == start
+      emitter_.test_zero(straddle.slow, 0, 63, false); // start < x10
+      emitter_.bind(whole);
+    }
+    /*
+     * Translate both pages. A miss in the inline TLB ways takes the
+     * semantic path, which fills the TLB.
+     */
+    const unsigned page_offset =
+        straddle.access == Access::write ? 16U : 0U;
+    for (const unsigned address : {8U, 11U}) {
+      const auto hit = emitter_.make_label();
+      emit_tlb_set(address);
+      emitter_.load_pair_x(2, 9, 0, page_offset);
+      emitter_.emit(0xca01'0042U); // eor x2, x2, x1
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+      emitter_.compare_zero(hit, 2, true, false);
+      emitter_.load_pair_x(2, 9, 0, page_offset + 32U);
+      emitter_.emit(0xca01'0042U); // eor x2, x2, x1
+#endif
+      emitter_.compare_zero(straddle.slow, 2, true, true);
+      emitter_.bind(hit);
+      emitter_.add_shifted(address, address, 9, 0);
+    }
+    /*
+     * x8 becomes the host base for accesses in A's page and x11 the host
+     * base for the next page's: the next page's host address less the
+     * guest distance from the run's base to it.
+     */
+    move_run_base(straddle.first, false);
+    emitter_.emit(sub_x11_x11_x10);
+    move_run_base(straddle.first, false, 11);
+    emitter_.emit(eor_x1_x8_x11);
+    /*
+     * Replay the hot accesses with their binding loads and stores. Each
+     * access takes x8 when it ends in A's page, x10 >= end, and x11
+     * otherwise, selected without flags into x0.
+     */
+    std::size_t next = 0;
+    for (auto word = straddle.words_begin; word < straddle.words_end;
+         ++word) {
+      if (next < straddle.count && straddle.accesses[next].word == word) {
+        subtract(0, 10, straddle.accesses[next].end);
+        emitter_.emit(asr_x0_x0_63);
+        emitter_.emit(and_x0_x0_x1);
+        emitter_.emit(eor_x0_x0_x8);
+        emitter_.emit(emitter_.word(word) & ~(31U << 5U));
+        ++next;
+        continue;
+      }
+      emitter_.emit(emitter_.word(word));
+    }
+    emitter_.branch(straddle.join);
   }
 
 [[nodiscard]] std::size_t JitCompiler::try_emit_sp_unsigned_run(
@@ -1183,9 +1413,11 @@ void JitCompiler::emit_native_gpr_run(
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -1193,19 +1425,24 @@ void JitCompiler::emit_native_gpr_run(
       if (!decode_scalar_unsigned_memory(instructions[candidates], true,
                                          operation))
         break;
-      if (candidates == 0)
+      if (candidates == 0) {
         load = operation.load;
-      else if (operation.load != load)
+        first_offset = operation.offset;
+      } else if (operation.load != load) {
         break;
+      }
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1220,22 +1457,37 @@ void JitCompiler::emit_native_gpr_run(
      * alignment once before observing any memory or destination register. */
     emit_misalignment_check(8, 16, alignment);
 
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    const auto last_unit =
-        static_cast<unsigned>((maximum_end - 1U) >> 4U);
-    if (last_unit != 0U) {
-      /*
-       * SP is known to be 16-byte aligned. q+last_unit is below twice the
-       * number of units in a page, so its page bit is the complete crossing
-       * test.
-       */
-      emitter_.ubfm(0, 8, 4, page_shift - 1);
-      emitter_.add_immediate(0, 0, last_unit);
-      emitter_.test_zero(slow, 0, page_shift - 4U, true);
+    RunStraddle straddle{
+        .label = emitter_.make_label(),
+        .slow = slow,
+        .access = load ? Access::read : Access::write,
+        .first = first_offset,
+    };
+    bool proved = false;
+    if (first_offset == 0U) {
+      const auto last_unit =
+          static_cast<unsigned>((maximum_end - 1U) >> 4U);
+      if (last_unit != 0U) {
+        /*
+         * SP is known to be 16-byte aligned. q+last_unit is below twice the
+         * number of units in a page, so its page bit is the complete
+         * crossing test.
+         */
+        emitter_.ubfm(0, 8, 4, page_shift - 1);
+        emitter_.add_immediate(0, 0, last_unit);
+        emitter_.test_zero(straddle.label, 0, page_shift - 4U, true);
+        proved = true;
+      }
+    } else {
+      proved = emit_run_span_proof(first_offset, maximum_end, straddle.label);
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
-    emit_native_gpr_run(std::span{operations}.first(length), load);
+    move_run_base(first_offset, false);
+    emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
+                        proved);
 
     if (!load) {
       mark_direct_memory_writes(length);
@@ -1251,10 +1503,12 @@ void JitCompiler::emit_native_gpr_run(
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -1265,6 +1519,7 @@ void JitCompiler::emit_native_gpr_run(
       if (candidates == 0) {
         base = operation.base;
         load = operation.load;
+        first_offset = operation.offset;
       } else if (operation.base != base || operation.load != load) {
         break;
       }
@@ -1276,15 +1531,18 @@ void JitCompiler::emit_native_gpr_run(
        */
       if (load && operation.transfer == base)
         break;
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1301,26 +1559,21 @@ void JitCompiler::emit_native_gpr_run(
     load_gpr(8, base, true);
     emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
     emitter_.compare_zero(slow, 0, false, true);
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    const auto last_delta = maximum_end - 1U;
-    if (last_delta != 0U) {
-      if (last_delta <= 0xfffU) {
-        emitter_.add_immediate(0, 8,
-                               static_cast<unsigned>(last_delta));
-      } else {
-        emitter_.load_constant(0, last_delta);
-        emitter_.add_shifted(0, 8, 0, 0);
-      }
-      /*
-       * last_delta is translation-time bounded below one guest page. The page
-       * bit changes iff base..base+last_delta crosses a page boundary.
-       */
-      emitter_.emit(0xca08'0000U); // eor x0, x0, x8
-      emitter_.test_zero(slow, 0, page_shift, true); // tbnz x0, #page_shift
-    }
+    RunStraddle straddle{
+        .label = emitter_.make_label(),
+        .slow = slow,
+        .access = load ? Access::read : Access::write,
+        .first = first_offset,
+    };
+    const bool proved =
+        emit_run_span_proof(first_offset, maximum_end, straddle.label);
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
-    emit_native_gpr_run(std::span{operations}.first(length), load);
+    move_run_base(first_offset, false);
+    emit_native_gpr_run(std::span{operations}.first(length), load, straddle,
+                        proved);
 
     if (!load) {
       mark_direct_memory_writes(length);
