@@ -1330,6 +1330,65 @@ void vld1_and_vst1_copies_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+/* A VLD1 or VST1 copy that crosses a page is a gadget too: the slow transfer
+ * helper moves the bytes after translating both pages. */
+void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
+{
+	struct Copy {
+		std::uint32_t word;
+		unsigned registers;
+		bool store;
+	};
+	const Copy copies[] = {
+		{0xf420'0a8fU, 2, false}, /* vld1.32 {d0, d1}, [r0] */
+		{0xf420'068fU, 3, false}, /* vld1.32 {d0-d2}, [r0] */
+		{0xf420'028fU, 4, false}, /* vld1.32 {d0-d3}, [r0] */
+		{0xf420'074fU, 1, false}, /* vld1.16 {d0}, [r0] */
+		{0xf401'0a8fU, 2, true},  /* vst1.32 {d0, d1}, [r1] */
+		{0xf401'068fU, 3, true},  /* vst1.32 {d0-d2}, [r1] */
+		{0xf401'028fU, 4, true},  /* vst1.32 {d0-d3}, [r1] */
+		{0xf401'074fU, 1, true},  /* vst1.16 {d0}, [r1] */
+	};
+	aarch32::count_a32_library_exits(true);
+	unsigned long generation = 1500;
+	for (const auto &copy : copies) {
+		const auto decoded = aarch32::decode_a32(
+			copy.word, aarch32::Profile::at(aarch32::Level::complete));
+		require(decoded.legal(), "a VLD1 or VST1 word did not decode");
+		Guest guest{generation++};
+		guest.a32(0, {copy.word, a::svc});
+		/* Four bytes of every register in the first page, four in the
+		 * second, wherever the transfer is long enough. */
+		const std::uint32_t start = page - 4 * copy.registers;
+		for (std::uint32_t index = 0; index < 8; ++index)
+			guest.data32(start + 4 * index, 0x0101'0101U * (index + 1));
+		auto cpu = a32_state();
+		cpu.registers[0] = data_base + start;
+		cpu.registers[1] = data_base + start;
+		for (unsigned n = 0; n < 4; ++n)
+			set_d(cpu, n, 0x1111'1111'0000'0000ULL * (n + 1) + n + 1);
+		aarch32::reset_a32_library_exits();
+		require(guest.run(cpu).reason == ExitReason::system_call);
+		require(aarch32::a32_library_exits(decoded.form) == 0,
+			"a VLD1 or VST1 copy across a page used the library");
+		for (unsigned n = 0; n < copy.registers; ++n) {
+			if (copy.store) {
+				const std::uint64_t value =
+					0x1111'1111'0000'0000ULL * (n + 1) + n + 1;
+				require(guest.data32(start + 8 * n) ==
+					static_cast<std::uint32_t>(value));
+				require(guest.data32(start + 8 * n + 4) ==
+					static_cast<std::uint32_t>(value >> 32));
+			} else {
+				require(get_d(cpu, n) ==
+					(std::uint64_t{0x0101'0101U * (2 * n + 2)} << 32 |
+					 0x0101'0101U * (2 * n + 1)));
+			}
+		}
+	}
+	aarch32::count_a32_library_exits(false);
+}
+
 /* The parallel add and subtract family and SEL are gadgets: Advanced SIMD
  * does the lanes, GE is the byte-lane mask CpuState keeps, and the library
  * runs none of them. */
@@ -1842,6 +1901,7 @@ int main()
 	the_fp_environment_follows_the_instruction_kind();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
+	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
