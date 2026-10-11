@@ -188,6 +188,146 @@ void vector_length_family_runs_outside_streaming_mode() {
     }
 }
 
+/* The spill words (LDR and STR of Z and P) run outside streaming mode on a
+ * virtual CPU with SME and without SVE: Z is the V register, a predicate
+ * store writes zeros and a predicate load only reads, and nothing else
+ * changes. Placement 0 is inside a page (the fast path); 1 crosses a page
+ * and 2 goes through a tagged pointer, which take the semantic library. */
+void spill_words_run_outside_streaming_mode() {
+  namespace family = uml::emulator::tests::sm0_vector_length;
+  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
+                                                arm64::SveSupport::none);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  constexpr std::size_t window = 3U * page;
+  unsigned long generation = 20000;
+  std::size_t checked = 0;
+  for (const auto &spill : family::spills())
+    for (int placement = 0; placement < 3; ++placement) {
+      const bool selected = placement == 0 || (spill.base != 31U &&
+                                               spill.transfer == 5U &&
+                                               (spill.immediate == -19 ||
+                                                spill.immediate == 0 ||
+                                                spill.immediate == 15));
+      if (!selected)
+        continue;
+      Machine machine{generation,
+                      0x1000'0000U + (generation - 20000U) * 0x2'0000U, 0};
+      ++generation;
+      const auto memory = bytes_of(window, 9);
+      machine.put(machine.data(0), memory);
+      std::uint64_t address;
+      if (spill.base == 31U) {
+        const auto anchor =
+            spill.offset() < 0 ? machine.data(window - 64U) : machine.data(64U);
+        machine.cpu.sp = anchor;
+        address = anchor + spill.offset();
+      } else {
+        address = placement == 1 ? machine.data(page - spill.bytes() / 2U)
+                  : spill.offset() < 0 ? machine.data(window - 58U)
+                                       : machine.data(70U);
+        machine.cpu.registers[spill.base] = address - spill.offset();
+        if (placement == 2) {
+          machine.cpu.tbi_enabled = true;
+          machine.cpu.registers[spill.base] |= 0x5a00'0000'0000'0000ULL;
+        }
+      }
+      machine.code(0, {spill.word(), system_call});
+      /* V0-V31 as the FP image holds them. */
+      machine.cpu.access_fp_state();
+      family::SpillImage expected;
+      for (unsigned reg = 0; reg < 32U; ++reg)
+        for (unsigned byte = 0; byte < 16U; ++byte)
+          expected.v[reg][byte] = static_cast<std::uint8_t>(
+              machine.cpu.vectors[reg].bytes[byte]);
+      for (const auto byte : memory)
+        expected.memory.push_back(static_cast<std::uint8_t>(byte));
+      family::apply_spill(spill, address - machine.data(0), expected);
+      std::size_t retired = 0;
+      const auto event = machine.run(retired);
+      if (event != Event::system_call) {
+        std::fprintf(stderr, "%08x placement %d: event %d\n", spill.word(),
+                     placement, static_cast<int>(event));
+        require(false);
+      }
+      require(retired == 2U);
+      require(machine.cpu.svcr == 0U);
+      require(machine.cpu.sve_live == 0U);
+      const arm64::CpuState reference;
+      require(machine.cpu.sve_p == reference.sve_p &&
+              machine.cpu.sve_ffr == reference.sve_ffr);
+      machine.require_preserved();
+      arm64::restore_native_fp_environment(machine.cpu);
+      machine.cpu.access_fp_state();
+      for (unsigned reg = 0; reg < 32U; ++reg)
+        for (unsigned byte = 0; byte < 16U; ++byte)
+          if (static_cast<std::uint8_t>(machine.cpu.vectors[reg].bytes[byte]) !=
+              expected.v[reg][byte]) {
+            std::fprintf(stderr, "%08x placement %d: V%u[%u] differs\n",
+                         spill.word(), placement, reg, byte);
+            require(false);
+          }
+      const auto actual = machine.get(machine.data(0), window);
+      for (std::size_t index = 0; index < window; ++index)
+        if (static_cast<std::uint8_t>(actual[index]) != expected.memory[index]) {
+          std::fprintf(stderr, "%08x placement %d: memory +%zu differs\n",
+                       spill.word(), placement, index);
+          require(false);
+        }
+      ++checked;
+    }
+  require(checked > 500U);
+}
+
+/* ... and fault like the access each is: an unmapped page, with nothing of a
+ * store reaching the mapped one, and a misaligned SP, each leaving the PC at
+ * the word. */
+void spill_words_fault_like_their_accesses() {
+  namespace family = uml::emulator::tests::sm0_vector_length;
+  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
+                                                arm64::SveSupport::none);
+  const uml::cpu::HostCapabilitiesScope scope{host};
+  unsigned long generation = 19000;
+  for (const bool predicate : {false, true})
+    for (const bool store : {false, true}) {
+      const family::Spill spill{store, predicate, 3, 0, 0};
+      {
+        const std::uint64_t base =
+            0xf00'0000U + (generation - 19000U) * 0x2'0000U;
+        Machine machine{generation, base, 0, true, 4, 2};
+        ++generation;
+        machine.code(0, {spill.word(), system_call});
+        machine.cpu.registers[0] = machine.data(page - spill.bytes() + 1U);
+        const auto before = machine.get(machine.data(page - 16U), 16U);
+        std::size_t retired = 0;
+        require(machine.run(retired) == Event::memory_fault);
+        require(retired == 0U);
+        require(machine.cpu.pc == base);
+        require(machine.executor().fault_address() == machine.data(page));
+        require(machine.executor().fault_access() ==
+                (store ? uml::memory::Access::write : uml::memory::Access::read));
+        require(!machine.executor().fault_alignment());
+        require(machine.get(machine.data(page - 16U), 16U) == before);
+        require(machine.cpu.sve_live == 0U);
+        machine.require_preserved();
+      }
+      {
+        const std::uint64_t base =
+            0xf00'0000U + (generation - 19000U) * 0x2'0000U;
+        Machine machine{generation, base, 0};
+        ++generation;
+        machine.code(0, {family::Spill{store, predicate, 3, 31, 1}.word(),
+                         system_call});
+        machine.cpu.sp = machine.data(8);
+        std::size_t retired = 0;
+        require(machine.run(retired) == Event::memory_fault);
+        require(retired == 0U);
+        require(machine.executor().fault_alignment());
+        require(machine.executor().fault_address() == machine.data(8));
+        machine.require_preserved();
+      }
+    }
+}
+
 /* LDR ZA, then STR ZA of the same vector through another index register,
  * at each placement the fast and slow paths divide. */
 void za_vectors_round_trip(bool hardware) {
@@ -449,6 +589,8 @@ void run_tests(bool hardware) {
   tpidr2_is_the_guest_register(hardware);
   vector_lengths_come_from_the_svl(hardware);
   vector_length_family_runs_outside_streaming_mode();
+  spill_words_run_outside_streaming_mode();
+  spill_words_fault_like_their_accesses();
   za_vectors_round_trip(hardware);
   za_faults_match_the_m4(hardware);
   zero_za_clears_the_named_tiles(hardware);

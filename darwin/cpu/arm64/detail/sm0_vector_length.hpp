@@ -30,15 +30,34 @@ namespace uml::cpu::arm64::detail {
  *
  * each with every predicate pattern and multiplier. They touch no vector or
  * predicate register, so a program holding one never needs the FP state or
- * the SVE task state. Every other SVE word at SM = 0 stays UNDEFINED. In
- * streaming mode the same words keep their architectural meaning with the
- * streaming vector length.
+ * the SVE task state.
  *
- * Both engines decode a family word to an ordinary base A64 word of the same
- * effect, which sm0_vector_length_equivalent() computes, and translate that
- * word instead. The family therefore has one definition, shared by
- * construction. Where the virtual CPU has the SVE profile the engines'
- * SVE path decodes the same words first and this one is not consulted.
+ * The same CPU executes the register spill forms the compilers emit around a
+ * mode change or a call, for the same constant vector length:
+ *
+ * - LDR and STR of a vector register Z (scalar base, signed immediate, MUL
+ *   VL), which move 16 bytes, the whole of Z_n outside streaming mode (V_n);
+ *   and
+ * - LDR and STR of a predicate register P (scalar base, signed immediate,
+ *   MUL VL), which move 2 bytes.
+ *
+ * Z_n is V_n, so a Z access is a 16-byte access of the V register. The CPU
+ * has no predicate state at SM = 0 (a mode change zeroes P, and no word it
+ * executes writes one): STR P stores two zero bytes, and LDR P performs its
+ * 2-byte access, faulting as a load does, and discards the data.
+ *
+ * Every other SVE word at SM = 0 stays UNDEFINED, so a binary that computes
+ * with SVE outside streaming mode still takes SIGILL. In streaming mode the
+ * same words keep their architectural meaning with the streaming vector
+ * length.
+ *
+ * Both engines decode a vector-length word to an ordinary base A64 word of
+ * the same effect, which sm0_vector_length_equivalent() computes, and
+ * translate that word instead; they translate a spill word as the SIMD&FP or
+ * scalar halfword access sm0_spill_access() describes. The family therefore
+ * has one definition, shared by construction. Where the virtual CPU has the
+ * SVE profile the engines' SVE path decodes the same words first and this
+ * one is not consulted.
  */
 
 /* Whether the virtual CPU on `host` executes the family at PSTATE.SM = 0:
@@ -135,6 +154,67 @@ sm0_vector_length_equivalent(std::uint32_t word) noexcept
 		(count << 10) | (rdn << 5) | rdn;
 }
 
+/* The bytes an LDR or STR of a predicate register moves: one bit per byte of
+ * the vector. */
+inline constexpr std::uint32_t sm0_predicate_bytes = sve_vector_length / 8U;
+
+/* The memory access of a spill word. */
+struct Sm0Spill final {
+	bool store{};
+	/* A predicate register P (2 bytes) rather than a vector register Z
+	 * (16 bytes). */
+	bool predicate{};
+	/* Zt or Pt. */
+	std::uint32_t transfer{};
+	/* Xn, or SP for 31. */
+	std::uint32_t base{};
+	/* The byte offset from the base: the signed immediate times the
+	 * register's size. */
+	std::int32_t offset{};
+
+	[[nodiscard]] constexpr std::uint32_t bytes() const noexcept
+	{
+		return predicate ? sm0_predicate_bytes : sve_vector_length;
+	}
+};
+
+/* Whether `word` is a spill word: LDR (vector), STR (vector), LDR
+ * (predicate) or STR (predicate), each with a scalar base and an immediate
+ * offset. The predicate forms have a reserved bit 4. */
+[[nodiscard]] constexpr bool sm0_spill_word(std::uint32_t word) noexcept
+{
+	const std::uint32_t vector = word & 0xffc0'e000U;
+	const std::uint32_t predicate = word & 0xffc0'e010U;
+	return vector == 0x8580'4000U || vector == 0xe580'4000U ||
+		predicate == 0x8580'0000U || predicate == 0xe580'0000U;
+}
+
+/* Whether `word` is in the family: a vector-length word or a spill word. */
+[[nodiscard]] constexpr bool sm0_family_word(std::uint32_t word) noexcept
+{
+	return sm0_vector_length_word(word) || sm0_spill_word(word);
+}
+
+/* What a spill word accesses, or nothing for any other word. */
+[[nodiscard]] constexpr std::optional<Sm0Spill> sm0_spill_access(
+	std::uint32_t word) noexcept
+{
+	if (!sm0_spill_word(word))
+		return std::nullopt;
+	Sm0Spill spill;
+	spill.store = (word & 0x6000'0000U) != 0U;
+	spill.predicate = (word & 0x0000'4000U) == 0U;
+	spill.transfer = word & (spill.predicate ? 15U : 31U);
+	spill.base = (word >> 5) & 31U;
+	const std::uint32_t immediate9 = ((word >> 10) & 7U) |
+		(((word >> 16) & 63U) << 3);
+	const std::int32_t signed9 = immediate9 >= 256U ?
+		static_cast<std::int32_t>(immediate9) - 512 :
+		static_cast<std::int32_t>(immediate9);
+	spill.offset = signed9 * static_cast<std::int32_t>(spill.bytes());
+	return spill;
+}
+
 static_assert(sm0_vector_length_equivalent(0x0420'e3e0U) == 0xd280'0200U,
 	"CNTB X0 is MOVZ X0, #16");
 static_assert(sm0_vector_length_equivalent(0x04e0'e3e0U) == 0xd280'0040U,
@@ -157,5 +237,31 @@ static_assert(!sm0_vector_length_equivalent(0x0420'f3e0U),
 	"SQINCB is not in the family");
 static_assert(!sm0_vector_length_equivalent(0x04bf'5800U),
 	"RDSVL is not in the family");
+static_assert(sm0_spill_access(0xe580'43efU) &&
+	sm0_spill_access(0xe580'43efU)->store &&
+	!sm0_spill_access(0xe580'43efU)->predicate &&
+	sm0_spill_access(0xe580'43efU)->transfer == 15U &&
+	sm0_spill_access(0xe580'43efU)->base == 31U &&
+	sm0_spill_access(0xe580'43efU)->offset == 0,
+	"STR Z15, [SP]");
+static_assert(sm0_spill_access(0x8581'5fe8U) &&
+	!sm0_spill_access(0x8581'5fe8U)->store &&
+	sm0_spill_access(0x8581'5fe8U)->transfer == 8U &&
+	sm0_spill_access(0x8581'5fe8U)->offset == 15 * 16,
+	"LDR Z8, [SP, #15, MUL VL]");
+static_assert(sm0_spill_access(0x85bd'57a0U) &&
+	sm0_spill_access(0x85bd'57a0U)->base == 29U &&
+	sm0_spill_access(0x85bd'57a0U)->offset == -19 * 16,
+	"LDR Z0, [X29, #-19, MUL VL]");
+static_assert(sm0_spill_access(0xe581'17e6U) &&
+	sm0_spill_access(0xe581'17e6U)->predicate &&
+	sm0_spill_access(0xe581'17e6U)->store &&
+	sm0_spill_access(0xe581'17e6U)->transfer == 6U &&
+	sm0_spill_access(0xe581'17e6U)->offset == 13 * 2,
+	"STR P6, [SP, #13, MUL VL]");
+static_assert(!sm0_spill_access(0x8580'03f4U) &&
+	!sm0_spill_access(0xa580'43efU) && !sm0_spill_access(0x8540'43efU),
+	"a predicate word with bit 4 set, LD1RQB, and a contiguous load are "
+	"not spill words");
 
 } // namespace uml::cpu::arm64::detail

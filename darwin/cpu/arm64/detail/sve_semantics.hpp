@@ -156,4 +156,17 @@ struct SveResult final {
 [[nodiscard]] SveResult execute_sve(CpuState &cpu, std::uint32_t word,
 	const SmeEncoding &row, SveMemory &memory) noexcept;
 
+/*
+ * Executes a spill word of the SM = 0 vector-length family
+ * (sm0_vector_length.hpp) for a virtual CPU without the SVE profile: the
+ * engines' slow path for the words they lower inline. A Z access is
+ * execute_sve()'s, with the same alignment and tagged-address behavior and
+ * faults. The CPU has no predicate state, so STR P stores zeros and LDR P
+ * performs its access and discards the data, whatever `cpu` holds in sve_p,
+ * and the task's SVE state is not marked live. Any other word is a fatal
+ * internal error that changes nothing.
+ */
+[[nodiscard]] SveResult execute_sm0_spill(CpuState &cpu, std::uint32_t word,
+	SveMemory &memory) noexcept;
+
 } // namespace uml::cpu::arm64::detail

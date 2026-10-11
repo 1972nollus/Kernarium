@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* The SM = 0 vector-length family, the deliberate departure from the
  * architecture that lets a virtual CPU with FEAT_SME and without FEAT_SVE
- * count and scale a vector length of 16 bytes outside streaming mode
+ * count and scale a vector length of 16 bytes outside streaming mode and
+ * spill and fill Z and P registers
  * (cpu/arm64/detail/sm0_vector_length.hpp). This checks the shared
  * definition both engines translate from:
  *
- * - the family is exactly the six forms of the encoding table that the
- *   words name, over the whole 0x04 byte of the SVE space, and no other;
+ * - the family is exactly the six vector-length forms and the four spill
+ *   forms of the encoding table that the words name, over the whole 0x04,
+ *   0x85 and 0xe5 bytes of the SVE space, and no other;
  * - the model the tests state from the pseudocode matches the semantic
  *   library, which executes the same words for a virtual CPU with SVE;
- * - each family word's base A64 word is an ADD, SUB, MOVZ, MOVN or NOP of
- *   the same effect on the general registers; and
+ * - each vector-length word's base A64 word is an ADD, SUB, MOVZ, MOVN or
+ *   NOP of the same effect on the general registers;
+ * - each spill word's fields, and the library's execution of it for a CPU
+ *   without predicate state; and
  * - the family applies exactly where the virtual CPU has FEAT_SME and not
  *   the SVE profile.
  *
@@ -34,6 +38,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
+#include <vector>
 
 namespace {
 
@@ -61,7 +66,23 @@ namespace model = ::uml::emulator::tests::sm0_vector_length;
 		family_form(row->form);
 }
 
-void family_is_the_six_forms()
+/* The forms of the encoding table the spill words are: LDR and STR of a
+ * vector register and of a predicate register, with an immediate offset. */
+[[nodiscard]] bool spill_form(std::uint16_t form) noexcept
+{
+	namespace named = detail::sve_semantics::form;
+	return form == named::ldr_z_bi || form == named::str_z_bi ||
+		form == named::ldr_p_bi || form == named::str_p_bi;
+}
+
+[[nodiscard]] bool table_spill(std::uint32_t word) noexcept
+{
+	const auto *row = detail::find_sme_encoding(word);
+	return row != nullptr && (row->form & detail::sme_form_sme_section) == 0U &&
+		spill_form(row->form);
+}
+
+void family_is_the_ten_forms()
 {
 	std::size_t rows = 0;
 	for (std::size_t index = 0; index < detail::sme_encodings.size(); ++index) {
@@ -85,9 +106,34 @@ void family_is_the_six_forms()
 			require(false);
 		}
 	}
+	/* The spill forms are four more rows of the table, and the words of the
+	 * 0x85 and 0xe5 bytes that name them are the whole of each. */
+	std::size_t spill_rows = 0;
+	for (std::size_t index = 0; index < detail::sme_encodings.size(); ++index) {
+		const auto &row = detail::sme_encodings[index];
+		const bool spill = (row.form & detail::sme_form_sme_section) == 0U &&
+			spill_form(row.form);
+		require(detail::sm0_spill_word(detail::sme_encoding_witnesses[index]) ==
+			spill);
+		require(detail::sm0_family_word(detail::sme_encoding_witnesses[index]) ==
+			(spill || table_family(detail::sme_encoding_witnesses[index])));
+		spill_rows += spill;
+	}
+	require(spill_rows == 4U);
+	for (const std::uint32_t high : {0x8500'0000U, 0xe500'0000U})
+		for (std::uint32_t low = 0; low < 0x0100'0000U; ++low) {
+			const std::uint32_t word = high | low;
+			if (detail::sm0_spill_word(word) != table_spill(word) ||
+			    detail::sm0_vector_length_word(word)) {
+				std::fprintf(stderr, "%08x: spill %d, table %d\n", word,
+					detail::sm0_spill_word(word), table_spill(word));
+				require(false);
+			}
+		}
 	/* The word-level definition fits the equivalent function. */
 	for (const auto word : model::words())
 		require(detail::sm0_vector_length_word(word) &&
+			!detail::sm0_spill_word(word) &&
 			detail::sm0_vector_length_equivalent(word).has_value());
 	for (const std::uint32_t word :
 	     {0x04bf'5800U /* RDSVL */, 0x0420'5800U /* ADDSVL */,
@@ -213,6 +259,168 @@ void model_matches_the_semantic_library()
 	}
 }
 
+/* The spill word's fields, for every form, base, transfer register and
+ * immediate. */
+void spill_words_decode_to_their_fields()
+{
+	std::size_t checked = 0;
+	for (const bool predicate : {false, true})
+		for (const bool store : {false, true})
+			for (int immediate = -256; immediate < 256; ++immediate)
+				for (const unsigned base : {0U, 9U, 29U, 30U, 31U})
+					for (const unsigned transfer :
+					     {0U, 1U, 7U, 14U, 15U, predicate ? 15U : 31U}) {
+						const model::Spill expected{store, predicate,
+							transfer, base, immediate};
+						const auto access =
+							detail::sm0_spill_access(expected.word());
+						require(access.has_value());
+						require(access->store == store &&
+							access->predicate == predicate &&
+							access->transfer == transfer &&
+							access->base == base &&
+							access->offset == expected.offset() &&
+							access->bytes() == expected.bytes());
+						require(detail::sm0_family_word(expected.word()));
+						require(!detail::sm0_vector_length_equivalent(
+							expected.word()));
+						++checked;
+					}
+	require(checked > 10000U);
+	/* The reserved bit of the predicate forms, and a word of another form. */
+	for (const std::uint32_t word :
+	     {0x8580'0010U, 0xe580'0010U, 0xe580'001fU, 0xa580'43efU /* LD1RQB */,
+	      0x8540'43efU, 0xe500'43efU, 0x8580'2000U, 0x8580'6000U,
+	      0xe590'c000U})
+		require(!detail::sm0_spill_access(word).has_value() &&
+			!detail::sm0_family_word(word));
+}
+
+/* A guest memory of a flat buffer from `base`, mapped to its length. */
+class Flat final : public detail::SveMemory {
+public:
+	Flat(std::uint64_t base, std::size_t size) noexcept
+		: base_{base}, bytes_(size)
+	{
+	}
+	std::byte *translate(std::uint64_t address,
+		::uml::memory::MemoryAccess) noexcept override
+	{
+		return address >= base_ && address < base_ + bytes_.size() ?
+			bytes_.data() + (address - base_) : nullptr;
+	}
+	void stored(std::byte *, std::size_t) noexcept override { ++stores; }
+
+	std::uint64_t base_;
+	std::vector<std::byte> bytes_;
+	unsigned stores{};
+};
+
+/* The library's slow path for the spill words, with no predicate state: Z
+ * is V, a predicate store writes zeros, a predicate load reads and drops, the
+ * predicate registers and the live mark stay as they were, and the faults
+ * are the SVE profile's. */
+void library_executes_the_spill_words()
+{
+	constexpr std::uint64_t base = 0x40'0000;
+	constexpr std::size_t window = 1U << 16;
+	for (const auto &spill : model::spills()) {
+		Flat memory{base, window};
+		for (std::size_t index = 0; index < window; ++index)
+			memory.bytes_[index] = static_cast<std::byte>(index * 13U + 5U);
+		arm64::CpuState cpu;
+		for (unsigned reg = 0; reg < 32U; ++reg)
+			for (unsigned byte = 0; byte < 16U; ++byte)
+				cpu.vectors[reg].bytes[byte] =
+					static_cast<std::byte>(reg * 16U + byte + 1U);
+		/* Non-zero predicate state the word must neither read nor change. */
+		for (auto &predicate : cpu.sve_p)
+			predicate.fill(0xffU);
+		cpu.sve_live = 0;
+		const std::uint64_t target = base + 0x8000;
+		const std::uint64_t pointer = target - static_cast<std::uint64_t>(
+			spill.offset());
+		if (spill.base == 31U)
+			cpu.sp = pointer & ~15ULL;
+		else
+			cpu.registers[spill.base] = pointer;
+		/* An SP base is 16-byte aligned, so the target moves with it. */
+		const std::uint64_t address = (spill.base == 31U ? cpu.sp : pointer) +
+			static_cast<std::uint64_t>(spill.offset());
+		model::SpillImage expected;
+		for (unsigned reg = 0; reg < 32U; ++reg)
+			for (unsigned byte = 0; byte < 16U; ++byte)
+				expected.v[reg][byte] = static_cast<std::uint8_t>(
+					cpu.vectors[reg].bytes[byte]);
+		expected.memory.resize(window);
+		for (std::size_t index = 0; index < window; ++index)
+			expected.memory[index] =
+				static_cast<std::uint8_t>(memory.bytes_[index]);
+		const auto before_predicates = cpu.sve_p;
+		const auto result =
+			detail::execute_sm0_spill(cpu, spill.word(), memory);
+		require(result.event == detail::SveEvent::retired);
+		model::apply_spill(spill, address - base, expected);
+		for (unsigned reg = 0; reg < 32U; ++reg)
+			for (unsigned byte = 0; byte < 16U; ++byte)
+				require(static_cast<std::uint8_t>(
+						cpu.vectors[reg].bytes[byte]) ==
+					expected.v[reg][byte]);
+		for (std::size_t index = 0; index < window; ++index)
+			require(static_cast<std::uint8_t>(memory.bytes_[index]) ==
+				expected.memory[index]);
+		require(cpu.sve_p == before_predicates);
+		require(cpu.sve_live == 0U);
+		require(memory.stores == (spill.store ? 1U : 0U));
+	}
+}
+
+/* ... and its faults: a page that does not translate, and an SP base that is
+ * not 16-byte aligned; any other word is outside the contract. */
+void library_faults_on_the_spill_words()
+{
+	constexpr std::uint64_t base = 0x40'0000;
+	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
+	constexpr std::uint64_t end = base + 2U * page;
+	Flat memory{base, 2U * page};
+	arm64::CpuState cpu;
+	/* A vector access that starts in the last mapped page and ends in the
+	 * next, which does not translate. */
+	cpu.registers[0] = end - 8U;
+	for (const auto &spill :
+	     {model::Spill{false, false, 3, 0, 0}, model::Spill{true, false, 3, 0, 0}}) {
+		const auto result =
+			detail::execute_sm0_spill(cpu, spill.word(), memory);
+		require(result.event == detail::SveEvent::memory_fault);
+		require(!result.alignment);
+		require(result.fault_address == end);
+		require(result.access == (spill.store ? ::uml::memory::MemoryAccess::write
+			: ::uml::memory::MemoryAccess::read));
+	}
+	/* A predicate access in the last byte. */
+	cpu.registers[0] = end - 1U;
+	for (const bool store : {false, true}) {
+		const auto predicate = detail::execute_sm0_spill(cpu,
+			model::Spill{store, true, 3, 0, 0}.word(), memory);
+		require(predicate.event == detail::SveEvent::memory_fault &&
+			predicate.fault_address == end);
+	}
+	/* A misaligned SP faults as an alignment fault, whatever it points to. */
+	cpu.sp = base + 8;
+	for (const bool predicate_form : {false, true}) {
+		const auto aligned = detail::execute_sm0_spill(cpu,
+			model::Spill{false, predicate_form, 3, 31, 0}.word(), memory);
+		require(aligned.event == detail::SveEvent::memory_fault &&
+			aligned.alignment && aligned.fault_address == cpu.sp);
+	}
+	/* Neither the other SVE words nor the vector-length words. */
+	for (const std::uint32_t word :
+	     {0xa540'a000U /* LD1B */, 0x0420'e3e0U, 0x2520'8000U, 0xd503'201fU,
+	      0x8580'0010U})
+		require(detail::execute_sm0_spill(cpu, word, memory).event ==
+			detail::SveEvent::fatal);
+}
+
 [[nodiscard]] HostCapabilities host_with(
 	std::initializer_list<ArmFeature> features, unsigned svl)
 {
@@ -262,9 +470,12 @@ void family_applies_with_sme_and_without_sve()
 
 int main()
 {
-	family_is_the_six_forms();
+	family_is_the_ten_forms();
 	equivalents_have_the_effect_of_the_family();
 	model_matches_the_semantic_library();
+	spill_words_decode_to_their_fields();
+	library_executes_the_spill_words();
+	library_faults_on_the_spill_words();
 	family_applies_with_sme_and_without_sve();
 	return 0;
 }

@@ -240,6 +240,14 @@ public:
 		backing_.put(address - code_base, bytes);
 	}
 
+	/* The guest's V0-V31 (512 bytes), loaded lazily as a task's FP state
+	 * is. */
+	void set_vectors(std::span<const std::byte> image)
+	{
+		fp_image_.assign(image.begin(), image.end());
+		cpu.defer_fp_load(fp_image_.data(), 0, 0, ~0U);
+	}
+
 	[[nodiscard]] std::vector<std::byte> data(std::uint64_t address,
 		std::size_t size) const
 	{
@@ -265,6 +273,7 @@ private:
 	gadgets::GadgetExecutor executor_;
 	arm64::SmeRegisterFile file_;
 	std::vector<std::byte> task_;
+	std::vector<std::byte> fp_image_;
 };
 
 [[nodiscard]] std::vector<std::byte> pattern(std::size_t size,
@@ -345,7 +354,10 @@ void vector_length_family_runs_outside_streaming_mode(unsigned svl)
 }
 
 /* ... and nothing more: every other SVE-index word of the encoding table is
- * as undefined at SM = 0 as it is on any virtual CPU without SVE. */
+ * as undefined at SM = 0 as it is on any virtual CPU without SVE. The spill
+ * words' neighbors, the contiguous, structure, gather and replicating loads
+ * and stores and the predicate and vector data processing around them, are
+ * among them. */
 void other_sve_words_stay_undefined_outside_streaming_mode()
 {
 	std::size_t checked = 0;
@@ -354,7 +366,7 @@ void other_sve_words_stay_undefined_outside_streaming_mode()
 		const auto &row = arm64::detail::sme_encodings[index];
 		const auto word = arm64::detail::sme_encoding_witnesses[index];
 		if ((row.form & arm64::detail::sme_form_sme_section) != 0U ||
-		    arm64::detail::sm0_vector_length_word(word))
+		    arm64::detail::sm0_family_word(word))
 			continue;
 		const std::array code{word, svc};
 		Machine machine{code, sme_without_sve(64, true)};
@@ -367,6 +379,132 @@ void other_sve_words_stay_undefined_outside_streaming_mode()
 		++checked;
 	}
 	require(checked > 1500U);
+}
+
+/* The spill words (LDR and STR of Z and P) run outside streaming mode on a
+ * virtual CPU with SME and without SVE, at every placement of the vector
+ * length's range of offsets: Z is the V register, a predicate store writes
+ * zeros and a predicate load only reads, and no register, flag, vector,
+ * predicate or SVE state changes beyond that. */
+void spill_words_run_outside_streaming_mode(unsigned svl)
+{
+	namespace family = uml::emulator::tests::sm0_vector_length;
+	constexpr std::size_t window = 2U * page;
+	std::size_t checked = 0;
+	for (const auto &spill : family::spills()) {
+		const std::array code{spill.word(), svc};
+		Machine machine{code, sme_without_sve(svl, checked % 2 == 0)};
+		const auto vectors = pattern(32U * 16U, 3);
+		machine.set_vectors(vectors);
+		const auto memory = pattern(window, 7);
+		machine.put_data(data_base, memory);
+		for (unsigned index = 0; index < 31U; ++index)
+			machine.cpu.registers[index] =
+				0x5a00'0000'0000'0000ULL | (std::uint64_t{index} << 32) |
+				index;
+		const std::uint64_t anchor =
+			spill.offset() < 0 ? data_base + window - 64U : data_base + 64U;
+		std::uint64_t address = anchor;
+		if (spill.base == 31U) {
+			machine.cpu.sp = anchor;
+			address = anchor + spill.offset();
+		} else {
+			/* Misaligned, to show the base is not an alignment. */
+			address = anchor + 6U;
+			machine.cpu.registers[spill.base] = address - spill.offset();
+		}
+		const auto registers = machine.cpu.registers;
+		const auto sp = machine.cpu.sp;
+		machine.cpu.nzcv = 0x6000'0000U;
+		family::SpillImage expected;
+		for (unsigned reg = 0; reg < 32U; ++reg)
+			for (unsigned byte = 0; byte < 16U; ++byte)
+				expected.v[reg][byte] = static_cast<std::uint8_t>(
+					vectors[reg * 16U + byte]);
+		for (const auto byte : memory)
+			expected.memory.push_back(static_cast<std::uint8_t>(byte));
+		family::apply_spill(spill, address - data_base, expected);
+		const auto event = machine.run();
+		if (event != EngineEvent::system_call) {
+			std::fprintf(stderr, "%08x: event %d\n", spill.word(),
+				static_cast<int>(event));
+			require(false);
+		}
+		require(machine.retired == code.size());
+		require(machine.cpu.registers == registers);
+		require(machine.cpu.sp == sp);
+		require(machine.cpu.nzcv == 0x6000'0000U);
+		require(machine.cpu.svcr == 0U);
+		require(machine.cpu.sve_live == 0U);
+		const arm64::CpuState reference;
+		require(machine.cpu.sve_p == reference.sve_p &&
+			machine.cpu.sve_ffr == reference.sve_ffr);
+		/* A predicate word never loads the vector registers; the FP image
+		 * is then still the guest's. */
+		machine.cpu.access_fp_state();
+		for (unsigned reg = 0; reg < 32U; ++reg)
+			for (unsigned byte = 0; byte < 16U; ++byte)
+				if (static_cast<std::uint8_t>(
+					    machine.cpu.vectors[reg].bytes[byte]) !=
+				    expected.v[reg][byte]) {
+					std::fprintf(stderr, "%08x: V%u[%u] differs\n",
+						spill.word(), reg, byte);
+					require(false);
+				}
+		const auto actual = machine.data(data_base, window);
+		for (std::size_t index = 0; index < window; ++index)
+			if (static_cast<std::uint8_t>(actual[index]) !=
+			    expected.memory[index]) {
+				std::fprintf(stderr, "%08x: memory +%zu differs\n",
+					spill.word(), index);
+				require(false);
+			}
+		++checked;
+	}
+	require(checked > 500U);
+}
+
+/* A spill access takes the faults of the access it is: a page that is not
+ * mapped, with nothing of a store reaching the mapped page, and an SP base
+ * that is not 16-byte aligned. Neither moves the PC or changes a register. */
+void spill_words_fault_like_their_accesses()
+{
+	namespace family = uml::emulator::tests::sm0_vector_length;
+	const auto end = data_base + 2U * page;
+	for (const bool predicate : {false, true})
+		for (const bool store : {false, true}) {
+			const family::Spill spill{store, predicate, 3, 0, 0};
+			const std::array code{spill.word(), svc};
+			Machine machine{code, sme_without_sve(64, true)};
+			const auto vectors = pattern(32U * 16U, 5);
+			machine.set_vectors(vectors);
+			const auto before = machine.data(end - 16U, 16U);
+			machine.cpu.registers[0] = end - spill.bytes() + 1U;
+			require(machine.run() == EngineEvent::memory_fault);
+			require(machine.cpu.pc == code_base && machine.retired == 0U);
+			require(machine.executor().fault_address() == end);
+			require(machine.executor().fault_access() ==
+				(store ? uml::memory::Access::write :
+					uml::memory::Access::read));
+			require(!machine.executor().fault_alignment());
+			require(machine.data(end - 16U, 16U) == before);
+			require(machine.cpu.sve_live == 0U);
+		}
+	/* A misaligned SP faults as an alignment fault, whatever the word
+	 * accesses. */
+	for (const bool predicate : {false, true})
+		for (const bool store : {false, true}) {
+			const std::array code{
+				family::Spill{store, predicate, 3, 31, 1}.word(), svc};
+			Machine machine{code, sme_without_sve(64, true)};
+			const auto vectors = pattern(32U * 16U, 5);
+			machine.set_vectors(vectors);
+			machine.cpu.sp = data_base + 8U;
+			require(machine.run() == EngineEvent::memory_fault);
+			require(machine.executor().fault_alignment());
+			require(machine.executor().fault_address() == data_base + 8U);
+			require(machine.cpu.pc == code_base);
+		}
 }
 
 void vector_lengths_read_at_run_time(unsigned svl)
@@ -2243,6 +2381,9 @@ int main()
 	other_sve_words_stay_undefined_outside_streaming_mode();
 	for (const unsigned svl : {16U, 64U, 256U})
 		vector_length_family_runs_outside_streaming_mode(svl);
+	for (const unsigned svl : {16U, 64U, 256U})
+		spill_words_run_outside_streaming_mode(svl);
+	spill_words_fault_like_their_accesses();
 	streaming_programs_select_streaming_entries();
 	for (const unsigned svl : {16U, 64U, 256U})
 		vector_lengths_read_at_run_time(svl);

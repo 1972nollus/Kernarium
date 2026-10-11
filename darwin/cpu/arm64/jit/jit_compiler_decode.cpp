@@ -130,13 +130,19 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       /*
        * The SM = 0 vector-length family
        * (detail/sm0_vector_length.hpp): an SME virtual CPU without SVE
-       * translates each word as the base word of the same effect.
+       * translates a vector-length word as the base word of the same
+       * effect and a spill word as the memory access it is.
        */
       if (!streaming_translation() &&
-          arm64::detail::implements_sm0_vector_length(host))
+          arm64::detail::implements_sm0_vector_length(host)) {
         if (const auto equivalent =
                 arm64::detail::sm0_vector_length_equivalent(instruction))
           return emit_instruction(*equivalent, pc);
+        if (const auto spill = arm64::detail::sm0_spill_access(instruction)) {
+          emit_sm0_spill(*spill, instruction, pc);
+          return Action::keep_going;
+        }
+      }
       if (implements_sme(host))
         return emit_sme_instruction(instruction, pc);
     }

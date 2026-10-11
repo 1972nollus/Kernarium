@@ -498,7 +498,7 @@ void rows_translate_exactly_where_implemented() {
           decoded != nullptr && arm64::jit::implements_sme_row(*decoded);
       for (std::uint8_t mode = 0; mode <= arm64::svcr_mask; ++mode) {
         const bool family = (mode & arm64::svcr_sm) == 0U &&
-                            arm64::detail::sm0_vector_length_word(word);
+                            arm64::detail::sm0_family_word(word);
         const bool expected =
             family ||
             (implemented &&
@@ -579,6 +579,53 @@ void vector_length_family_translates_as_its_base_word() {
   const uml::cpu::HostCapabilitiesScope scope{bare};
   for (const auto word : {0x0420'e3e0U, 0x04bf'5000U, 0x0430'e3e0U})
     require(illegal_in(word, 0));
+}
+
+/* The spill words translate outside streaming mode, at every SVL, with SME2
+ * or without, and with ZA enabled or not: a vector register Z reads or
+ * writes V and so the block accesses the FP state, a predicate register does
+ * not. In streaming mode they keep the SVE rows' streaming translation, and
+ * the SVE profile owns them where it is implemented; without SME they are
+ * the illegal exit, as is every other SVE load and store. */
+void spill_words_translate_as_memory_accesses() {
+  constexpr std::uint64_t pc = 0x4f58'8000U;
+  const auto spills = uml::emulator::tests::sm0_vector_length::spills();
+  for (const bool sme2 : {true, false})
+    for (const unsigned svl : {16U, 64U, 256U}) {
+      const auto host = sme_host(svl, sme2);
+      const uml::cpu::HostCapabilitiesScope scope{host};
+      std::size_t checked = 0;
+      for (std::size_t index = 0; index < spills.size(); index += 5U) {
+        const auto &spill = spills[index];
+        const auto word = spill.word();
+        for (const std::uint8_t mode : {std::uint8_t{0}, arm64::svcr_za}) {
+          const std::array program{word, system_call};
+          const auto code =
+              jit_test::compile_block_in_mode(pc, program, mode).code;
+          require(!code.guest_illegal);
+          require(code.accesses_fp_state == !spill.predicate);
+          require((code.memory_write_mask != 0U ||
+                   code.direct_memory_write_mask != 0U) == spill.store);
+        }
+        ++checked;
+      }
+      require(checked > 150U);
+    }
+  const auto bare = sme_host(0);
+  const uml::cpu::HostCapabilitiesScope scope{bare};
+  for (const auto &spill : spills)
+    require(illegal_in(spill.word(), 0));
+  /* Every other SVE load and store stays the illegal exit on an SME CPU
+   * without SVE: contiguous, structure, gather and replicating forms. */
+  const auto host = sme_host(64, true);
+  const uml::cpu::HostCapabilitiesScope sme_scope{host};
+  for (const std::uint32_t word :
+       {0xa400'a000U /* LD1B */, 0xa540'a000U /* LD1H */,
+        0xe400'e000U /* ST1B */, 0xa4a0'2000U /* LD1RQW */,
+        0x8440'c000U /* LD1RB */, 0xc400'c000U /* gather */,
+        0x8500'0000U /* PRFB-adjacent */, 0xe590'4000U /* STR Z reserved */})
+    if (!arm64::detail::sm0_family_word(word))
+      require(illegal_in(word, 0));
 }
 
 /* Every FP&SIMD class, by its first word (with Rt2 = 1, since a load
@@ -776,6 +823,7 @@ int main(int argc, char **argv) {
   control_core_follows_profile_and_mode();
   rows_translate_exactly_where_implemented();
   vector_length_family_translates_as_its_base_word();
+  spill_words_translate_as_memory_accesses();
   fp_simd_classes_translate_where_streaming_runs_them();
   fp_capture_follows_form_names(argv[1]);
   reserved_bitmask_immediates_are_illegal();
