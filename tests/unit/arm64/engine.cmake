@@ -14,6 +14,8 @@
         $<TARGET_OBJECTS:uml_arm64_gadget_executor>
         $<TARGET_OBJECTS:uml_cpu_executable_memory>
         $<TARGET_OBJECTS:uml_arm64_jit>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+        $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
         $<TARGET_OBJECTS:uml_arm64_jit_test_support>
         $<TARGET_OBJECTS:uml_static_guest_memory>
         $<TARGET_OBJECTS:uml_runtime_context>)
@@ -274,6 +276,29 @@
 
     uml_add_arm64_unit_test(jit_fp_link_runtime WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
+    # The JIT's AArch32 support (cpu/arm64/jit/a32).
+    uml_add_arm64_unit_test(jit_a32_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_data_processing WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_memory WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_exclusive WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_acquire_release WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_encoder WITHOUT_HARNESS NO_OBJECTS)
+    uml_add_arm64_unit_test(jit_a32_vector_encoder WITHOUT_HARNESS NO_OBJECTS)
+    uml_add_arm64_unit_test(jit_a32_control WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_a32_vector WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    # The AArch32 instruction corpus (aarch32_corpus/README.md) on the JIT.
+    uml_add_arm64_unit_test(jit_a32_corpus WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        ARGS ${UML_ARM64_AARCH32_CORPUS})
+    add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
 
     # The JIT's SME support (cpu/arm64/jit, sme_support).
     uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS

@@ -31,6 +31,17 @@ struct CompiledCode final {
 compile_block(std::uint64_t pc,
               std::span<const std::uint32_t> instructions);
 
+/* An AArch32 block (jit/a32) compiled from the guest bytes at the key's
+ * address, unlinked, with the ITSTATE the entry holds. `single` translates
+ * exactly the first instruction. */
+struct A32Compilation final {
+  CompiledCode code;
+  std::size_t guest_units{};
+};
+[[nodiscard]] A32Compilation
+compile_a32_block(std::uint64_t key, std::span<const std::byte> bytes,
+                  std::uint8_t itstate = 0, bool single = false);
+
 /* How compile_block_in_mode() wires the compiler's link operands. */
 enum class LinkShape {
   unlinked,
