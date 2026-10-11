@@ -76,6 +76,8 @@ unsigned A32Compiler::use(unsigned r, unsigned fallback) {
     load_u32(fallback, pc_read());
     return fallback;
   }
+  if (probing_)
+    ++uses_[r];
   return read_native_gpr(r, false, fallback).host;
 }
 
@@ -83,6 +85,8 @@ A32Compiler::Dest A32Compiler::def(unsigned r, bool reads_old,
                                    unsigned fallback) {
   if (r == 15U)
     return {{fallback, false}, 15U};
+  if (probing_)
+    ++uses_[r];
   if (predicated_)
     return {{predicated_result, false}, r};
   return {write_native_gpr(r, false, reads_old, fallback), r};

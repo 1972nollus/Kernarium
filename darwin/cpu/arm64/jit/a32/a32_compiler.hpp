@@ -470,6 +470,8 @@ private:
   /* The compilation that learns a loop's bindings, the plan it recorded,
    * and the plan the translation of a loop runs on. */
   bool probing_{};
+  /* How often a probing compilation touched each core register. */
+  std::array<unsigned, 15> uses_{};
   bool looping_{};
   LoopPlan plan_{};
   Arm64Emitter::Label loop_head_{};

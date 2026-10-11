@@ -177,10 +177,17 @@ bool A32Compiler::loop_candidate(const Request &request) {
 
 void A32Compiler::record_loop_plan() {
   plan_.valid = true;
-  for (std::size_t index = 0; index < gpr_slots_.size(); ++index)
-    plan_.gpr[index] = gpr_slots_[index].stack_pointer
-                           ? unbound_guest
-                           : gpr_slots_[index].guest;
+  /* The registers the loop touches most hold the host registers, not the
+   * first ones it names. */
+  std::array<unsigned, 15> order{};
+  for (unsigned r = 0; r < 15U; ++r)
+    order[r] = r;
+  std::stable_sort(order.begin(), order.end(),
+                   [&](unsigned a, unsigned b) { return uses_[a] > uses_[b]; });
+  plan_.gpr.fill(unbound_guest);
+  for (std::size_t index = 0; index < plan_.gpr.size() && uses_[order[index]] != 0U;
+       ++index)
+    plan_.gpr[index] = order[index];
   for (std::size_t index = 0; index < vector_slots_.size(); ++index)
     plan_.vector[index] = vector_slots_[index].guest;
 }
