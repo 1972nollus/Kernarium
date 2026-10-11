@@ -82,8 +82,12 @@ A gadget cache slot indexes a translation rather than holding one. Each stored
 program is a single exact-sized allocation carrying its stream and the guest
 words it is validated against, taken from an arena with sixteen-byte size
 classes, and the program refers to those words rather than owning a second
-copy. A build assembles its stream in a scratch buffer that the next build
-rewinds, so a translation allocates only when it is stored. The arena marks
+copy. Each address space's translations come from arena chunks of their own,
+which the arena returns when that address space's last translation leaves, so
+retiring an address space gives its storage back rather than leaving holes
+between other address spaces' translations. A build assembles its stream in a
+scratch buffer that the next build rewinds, so a translation allocates only
+when it is stored. The arena marks
 where every live translation starts, one bit per granule, and that map is how a
 terminal exit inside a linked successor is attributed to the successor's
 program; the cache keeps no index keyed by stream address and maintains nothing

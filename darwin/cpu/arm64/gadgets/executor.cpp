@@ -240,10 +240,16 @@ private:
  * classes and the capacity a stream reached by doubling. Sixteen-byte classes
  * over bump-allocated chunks hold the same programs in 65 MiB.
  *
- * Freed bodies return to the class they came from, so retranslating a block
- * reuses its predecessor's bytes; chunks are returned only when the cache is
- * destroyed, which is what keeps retiring an address space proportional to
- * what it owned rather than to a serialised allocator walk. See G167.
+ * Each address space carves its bodies from chunks of its own, so bodies that
+ * leave together share chunks: retiring an address space frees every body in
+ * its chunks, and the arena returns them in one pass when the last one goes.
+ * With one set of chunks for all of them, a retired address space left holes
+ * between the survivors' bodies and no chunk ever emptied, so a browser that
+ * cycles through more address spaces than the cache keeps held its high-water
+ * mark, about twice its live bodies. See G226. Within an address space a freed
+ * body returns to the class it came from, so retranslating a block reuses its
+ * predecessor's bytes. An address space's chunks start small and double, so
+ * one that stores a few blocks does not hold a whole chunk for them.
  *
  * The arena also answers which live body holds an address. Each chunk keeps
  * one bit per granule, set at the first granule of every live block, so the
@@ -269,7 +275,8 @@ public:
 				alignof(std::max_align_t));
 	}
 
-	[[nodiscard]] void *allocate(std::size_t bytes)
+	/* A block for a body of the address space `space`. */
+	[[nodiscard]] void *allocate(std::size_t bytes, unsigned long space)
 	{
 		const auto size = rounded(bytes);
 		if (size > largest_class) {
@@ -281,13 +288,15 @@ public:
 			direct_.push_back({block, size});
 			return block;
 		}
-		if (auto *block = free_[size / granule]; block != nullptr) {
-			free_[size / granule] = next_of(block);
-			mark(block, true);
+		auto &pool = pool_of(space);
+		if (auto *block = pool.free[size / granule]; block != nullptr) {
+			pool.free[size / granule] = next_of(block);
+			mark(*chunk_of(block), block, true);
+			++pool.blocks;
 			return block;
 		}
-		if (size > limit_ - used_) {
-			const auto wanted = std::max(size, chunk_bytes);
+		if (size > pool.limit - pool.used) {
+			const auto wanted = std::max(size, pool.next_chunk);
 			auto starts = std::make_unique<std::uint64_t[]>(
 				map_words(wanted));
 			auto *base = static_cast<std::byte *>(
@@ -297,19 +306,22 @@ public:
 			const auto inserted = chunks_.insert(
 				std::upper_bound(chunks_.begin(), chunks_.end(),
 					base, before_chunk),
-				Chunk{base, wanted, std::move(starts)});
+				Chunk{base, wanted, std::move(starts), &pool});
 			/* The tail of the chunk being left behind is at most one
-			 * body, and one partly used chunk is the arena's whole
-			 * slack. */
-			current_ = base;
-			current_starts_ = inserted->starts.get();
-			used_ = 0;
-			limit_ = wanted;
+			 * body, and one partly used chunk per address space is
+			 * the arena's slack beyond the holes evictions leave. */
+			pool.next_chunk = std::min(pool.next_chunk * 2,
+				largest_chunk);
+			pool.current = base;
+			pool.current_starts = inserted->starts.get();
+			pool.used = 0;
+			pool.limit = wanted;
 		}
-		auto *block = current_ + used_;
-		current_starts_[used_ / granule / 64] |=
-			std::uint64_t{1} << (used_ / granule % 64);
-		used_ += size;
+		auto *block = pool.current + pool.used;
+		pool.current_starts[pool.used / granule / 64] |=
+			std::uint64_t{1} << (pool.used / granule % 64);
+		pool.used += size;
+		++pool.blocks;
 		return block;
 	}
 
@@ -328,9 +340,15 @@ public:
 				alignof(std::max_align_t));
 			return;
 		}
-		mark(freed, false);
-		next_of(freed) = free_[size / granule];
-		free_[size / granule] = freed;
+		const auto &chunk = *chunk_of(freed);
+		auto &pool = *chunk.pool;
+		if (--pool.blocks == 0) {
+			release(pool);
+			return;
+		}
+		mark(chunk, freed, false);
+		next_of(freed) = pool.free[size / granule];
+		pool.free[size / granule] = freed;
 	}
 
 	/* The live block holding an address, or nullptr. */
@@ -386,13 +404,13 @@ public:
 	}
 
 #if UML_GADGET_CACHE_CENSUS
-	/* Chunks that no longer hold a live body, which the arena keeps until
-	 * the cache is destroyed. Their blocks wait on the class free lists. */
+	/* Chunks that no longer hold a live body while their address space
+	 * still holds one elsewhere. Their blocks wait on its class lists. */
 	[[nodiscard]] std::size_t empty_bytes() const noexcept
 	{
 		std::size_t total = 0;
 		for (const auto &chunk : chunks_) {
-			if (chunk.base == current_)
+			if (chunk.base == chunk.pool->current)
 				continue;
 			const auto *starts = chunk.starts.get();
 			if (std::all_of(starts, starts + map_words(chunk.bytes),
@@ -412,7 +430,8 @@ private:
 	 * 32 stream words per guest instruction. */
 	static constexpr std::size_t classes = 1024;
 	static constexpr std::size_t largest_class = (classes - 1) * granule;
-	static constexpr std::size_t chunk_bytes = std::size_t{256} << 10;
+	static constexpr std::size_t first_chunk = std::size_t{32} << 10;
+	static constexpr std::size_t largest_chunk = std::size_t{128} << 10;
 
 	[[nodiscard]] static std::size_t rounded(std::size_t bytes) noexcept
 	{
@@ -431,11 +450,27 @@ private:
 		return (bytes / granule + 63) / 64;
 	}
 
+	/* One address space's chunks: the free blocks in them by class, the
+	 * chunk being carved, and how many live blocks they hold. */
+	struct Pool final {
+		explicit Pool(unsigned long owner) noexcept : space{owner} {}
+
+		unsigned long space;
+		std::byte *current{};
+		std::uint64_t *current_starts{};
+		std::size_t used{};
+		std::size_t limit{};
+		std::size_t next_chunk{first_chunk};
+		std::size_t blocks{};
+		std::array<std::byte *, classes> free{};
+	};
+
 	struct Chunk final {
 		std::byte *base;
 		std::size_t bytes;
 		/* One bit per granule, set at the first granule of a live block. */
 		std::unique_ptr<std::uint64_t[]> starts;
+		Pool *pool;
 	};
 
 	/* A block above the largest class, held outside the chunks. */
@@ -461,27 +496,52 @@ private:
 		return address < chunk.base + chunk.bytes ? &chunk : nullptr;
 	}
 
-	void mark(const std::byte *block, bool live) noexcept
+	static void mark(const Chunk &chunk, const std::byte *block,
+		bool live) noexcept
 	{
-		const auto *chunk = chunk_of(block);
 		const auto index =
-			static_cast<std::size_t>(block - chunk->base) / granule;
+			static_cast<std::size_t>(block - chunk.base) / granule;
 		const auto bit = std::uint64_t{1} << (index % 64);
 		if (live)
-			chunk->starts[index / 64] |= bit;
+			chunk.starts[index / 64] |= bit;
 		else
-			chunk->starts[index / 64] &= ~bit;
+			chunk.starts[index / 64] &= ~bit;
+	}
+
+	/* Stores come in runs for the running address space, so the pool the
+	 * last one used is kept at hand. */
+	[[nodiscard]] Pool &pool_of(unsigned long space)
+	{
+		if (last_ == nullptr || last_->space != space)
+			last_ = &pools_.try_emplace(space, space).first->second;
+		return *last_;
+	}
+
+	/* An address space's last body has gone, so none of its chunks holds
+	 * anything: return them all, one pass over the chunks rather than a
+	 * free per body. */
+	void release(const Pool &pool) noexcept
+	{
+		if (last_ == &pool)
+			last_ = nullptr;
+		for (const auto &chunk : chunks_)
+			if (chunk.pool == &pool)
+				upstream_->deallocate(chunk.base, chunk.bytes,
+					alignof(std::max_align_t));
+		std::erase_if(chunks_, [&pool](const Chunk &chunk) {
+			return chunk.pool == &pool;
+		});
+		const auto space = pool.space;
+		pools_.erase(space);
 	}
 
 	std::pmr::memory_resource *upstream_;
 	/* In address order. */
 	std::vector<Chunk> chunks_;
 	std::vector<Direct> direct_;
-	std::byte *current_{};
-	std::uint64_t *current_starts_{};
-	std::size_t used_{};
-	std::size_t limit_{};
-	std::array<std::byte *, classes> free_{};
+	/* Node-based, so a chunk's pool stays where the chunk names it. */
+	std::unordered_map<unsigned long, Pool> pools_;
+	Pool *last_{};
 };
 
 class GadgetExecutor::ProgramCache final {
@@ -1558,7 +1618,8 @@ private:
 		const std::size_t entry = program.accesses_fp_state() ? 1U : 0U;
 		const auto bytes = Body::allocation_bytes(
 			entry + words.size(), validation.size());
-		auto *body = new (bodies_.allocate(bytes)) Body{
+		auto *body = new (bodies_.allocate(bytes,
+			current_generation_)) Body{
 			.guest_address = program.guest_address(),
 			.stop_address = built.stop_address,
 			.stop_instruction = built.stop_instruction,

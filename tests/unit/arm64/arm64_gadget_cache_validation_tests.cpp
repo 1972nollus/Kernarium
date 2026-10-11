@@ -576,6 +576,99 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	require(executor.cache_diagnostics().validation_attempts == 0);
 }
 
+/* Address spaces that leave the cache give their translations' storage back,
+ * and the survivors keep theirs.
+ *
+ * Each address space's translations are carved from storage of its own, which
+ * is returned when its last translation leaves, so retiring one releases
+ * storage while the others keep running from theirs. Enough blocks per address
+ * space to need more than one piece of that storage, more address spaces than
+ * the cache keeps, and blocks chosen so that no set ever overflows: then every
+ * miss below is a retirement's, every hit has to come out of storage that
+ * outlived another space's release, and each block's own value proves which
+ * translation ran.
+ */
+void retired_address_spaces_release_and_the_others_keep_running()
+{
+	constexpr unsigned long first = 980;
+	constexpr auto resident =
+		static_cast<std::size_t>(UML_GADGET_RESIDENT_GENERATIONS);
+	constexpr std::size_t spaces = resident + 2;
+	constexpr std::size_t blocks = 1024;
+	const auto value = [](std::size_t space, std::size_t block) {
+		return static_cast<unsigned>((block * 7U + space * 131U) & 0xffffU);
+	};
+
+	std::vector<std::size_t> load(cache_sets);
+	std::vector<std::uint64_t> pcs;
+	for (std::uint64_t pc = code_base; pcs.size() < blocks; pc += 8) {
+		bool fits = true;
+		for (std::size_t space = 0; space < spaces; ++space)
+			fits = fits && load[cache_set(first + space, pc)] < cache_ways;
+		if (!fits)
+			continue;
+		for (std::size_t space = 0; space < spaces; ++space)
+			++load[cache_set(first + space, pc)];
+		pcs.push_back(pc);
+	}
+	const auto extent = pcs.back() + 8 - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
+
+	std::vector<std::unique_ptr<JitBacking>> backings;
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	for (std::size_t space = 0; space < spaces; ++space) {
+		backings.push_back(std::make_unique<JitBacking>(pages));
+		for (std::size_t block = 0; block < blocks; ++block) {
+			backings.back()->put32(pcs[block] - code_base,
+				move_immediate(0, value(space, block)));
+			backings.back()->put32(pcs[block] - code_base + 4,
+				system_call);
+		}
+		mappings.push_back(std::make_unique<JitMapping>(
+			first + space, code_base, *backings.back(), pages));
+	}
+
+	auto executor = std::make_unique<gadgets::GadgetExecutor>();
+	auto memory = std::make_unique<StaticGuestMemory>();
+	const auto visit = [&](std::size_t space) {
+		for (std::size_t block = 0; block < blocks; ++block) {
+			arm64::CpuState cpu{};
+			cpu.pc = pcs[block];
+			const auto outcome = run_once(
+				*executor, *memory, first + space, cpu);
+			require(outcome.event ==
+				::uml::cpu::EngineEvent::system_call);
+			require(cpu.registers[0] == value(space, block));
+		}
+	};
+	const auto translations = [&] {
+		return executor->cache_diagnostics().translations;
+	};
+
+	/* In order: the last two retire the first two. */
+	for (std::size_t space = 0; space < spaces; ++space)
+		visit(space);
+	require(translations() == spaces * blocks);
+
+	/* Newest first, so the newest becomes the least recently current:
+	 * every resident space still answers from the cache. */
+	for (std::size_t space = spaces; space-- > 2;)
+		visit(space);
+	require(translations() == spaces * blocks);
+
+	/* The retired two come back, retiring the two newest. */
+	visit(1);
+	visit(0);
+	require(translations() == (spaces + 2) * blocks);
+	for (std::size_t space = 0; space < resident; ++space)
+		visit(space);
+	require(translations() == (spaces + 2) * blocks);
+	visit(spaces - 1);
+	require(translations() == (spaces + 3) * blocks);
+	require(executor->cache_diagnostics().validation_attempts == 0);
+}
+
 } // namespace
 
 int main()
@@ -588,5 +681,6 @@ int main()
 	retiring_an_address_space_keeps_the_others();
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
+	retired_address_spaces_release_and_the_others_keep_running();
 	return 0;
 }
