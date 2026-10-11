@@ -321,6 +321,106 @@ void retiring_an_address_space_keeps_the_others()
 	require(executor->cache_diagnostics().translations == after_fill + 2);
 }
 
+/* A slot names its address space by an id the cache hands out and takes back
+ * when the space is retired, so the id of a retired space is the id of the
+ * next to arrive. Every translation of the retired space must be gone by then
+ * however many times the ids go round, or the newcomer would run the old
+ * space's code at the same PC.
+ *
+ * Each space maps code of its own at the same address, and the visits cycle
+ * through more spaces than are resident, so every visit retires one space and
+ * reuses its id.
+ */
+void a_recycled_address_space_id_serves_no_old_translation()
+{
+	constexpr unsigned long first = 1100;
+	constexpr auto resident = UML_GADGET_RESIDENT_GENERATIONS;
+	constexpr unsigned long spaces = 3 * resident + 1;
+	std::vector<std::unique_ptr<JitBacking>> backings;
+	std::vector<std::unique_ptr<JitMapping>> mappings;
+	for (unsigned long index = 0; index < spaces; ++index) {
+		backings.push_back(std::make_unique<JitBacking>(1));
+		backings.back()->put32(0, move_immediate(0, 100 + index));
+		backings.back()->put32(4, system_call);
+		mappings.push_back(std::make_unique<JitMapping>(
+			first + index, code_base, *backings.back(), 1));
+	}
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	std::size_t translations = 0;
+	for (unsigned pass = 0; pass < 3; ++pass) {
+		for (unsigned long index = 0; index < spaces; ++index) {
+			arm64::CpuState cpu{};
+			cpu.pc = code_base;
+			require(run_once(executor, memory, first + index, cpu)
+					.event == ::uml::cpu::EngineEvent::system_call);
+			require(cpu.registers[0] == 100 + index);
+			/* Cycling through more spaces than the cache keeps, each
+			 * visit finds its space gone. */
+			require(executor.cache_diagnostics().translations ==
+				++translations);
+			cpu = {};
+			cpu.pc = code_base;
+			require(run_once(executor, memory, first + index, cpu)
+					.event == ::uml::cpu::EngineEvent::system_call);
+			require(cpu.registers[0] == 100 + index);
+			require(executor.cache_diagnostics().translations ==
+				translations);
+		}
+	}
+}
+
+/* A slot is current when the epoch it carries is its space's, and the epoch
+ * counts code changes in sixteen bits. A slot the space has not run for a whole
+ * epoch cycle must not be taken for current when the count comes round to its
+ * own again: the cache clears the epochs a wrap would repeat.
+ *
+ * Block A is run once and its word rewritten behind the cache's back, which
+ * moves no code-change sequence. Block B then runs through every one of the
+ * changes that returns the epoch to A's, and A, never run in between, must be
+ * validated against the guest's words and rebuilt instead of served stale.
+ */
+void a_validation_does_not_outlive_the_epochs_it_counts()
+{
+	constexpr unsigned long generation = 1200;
+	constexpr auto other = code_base + 0x100;
+	JitBacking backing{1};
+	backing.put32(0, move_immediate(0, 7));
+	backing.put32(4, system_call);
+	backing.put32(other - code_base, move_immediate(1, 1));
+	backing.put32(other - code_base + 4, system_call);
+	JitMapping mapping{generation, code_base, backing, 1};
+	StaticGuestMemory memory;
+	gadgets::GadgetExecutor executor;
+	arm64::CpuState cpu{};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 7);
+
+	write_mapped32(generation, code_base, move_immediate(0, 9));
+	constexpr unsigned changes = 65'535;
+	for (unsigned change = 0; change < changes; ++change) {
+		darwin_uml_static_vm_invalidate_code(
+			code_base + DARWIN_UML_GUEST_PAGE_SIZE);
+		cpu = {};
+		cpu.pc = other;
+		require(run_once(executor, memory, generation, cpu).event ==
+			::uml::cpu::EngineEvent::system_call);
+	}
+
+	const auto before = executor.cache_diagnostics();
+	cpu = {};
+	cpu.pc = code_base;
+	require(run_once(executor, memory, generation, cpu).event ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 9);
+	const auto after = executor.cache_diagnostics();
+	require(after.validation_attempts == before.validation_attempts + 1);
+	require(after.validation_mismatches == before.validation_mismatches + 1);
+	require(after.translations == before.translations + 1);
+}
+
 /* Mirrors ProgramCache::locate(): the set a translation lands in folds the
  * address space into the index, so the only way to aim several address spaces
  * at one set of ways from outside is to choose generations that collide there.
@@ -586,6 +686,8 @@ int main()
 	a_kernel_text_write_republishes_through_the_bridge();
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
+	a_recycled_address_space_id_serves_no_old_translation();
+	a_validation_does_not_outlive_the_epochs_it_counts();
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
 	return 0;
