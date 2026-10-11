@@ -1515,34 +1515,6 @@ public:
 	ProgramCache(const ProgramCache &) = delete;
 	ProgramCache &operator=(const ProgramCache &) = delete;
 
-	struct Footprint final {
-		std::size_t stream_index, slabs, streams, links, indirect;
-		[[nodiscard]] std::size_t total() const noexcept
-		{
-			return stream_index + slabs + streams + links + indirect;
-		}
-	};
-
-	/* The cache's own slabs and every byte of the address spaces it holds,
-	 * including what other executors share. */
-	[[nodiscard]] Footprint footprint() const
-	{
-		std::size_t slabs = 0;
-		for (const auto &slab : slabs_)
-			if (slab)
-				slabs += sizeof(Slab);
-		Footprint result{.slabs = slabs};
-		for (const auto &[generation, state] : generations_) {
-			const auto parts = state.space->footprint();
-			result.stream_index += parts.stream_index;
-			result.streams += parts.streams;
-			result.links += parts.links + state.slots.capacity() *
-				sizeof(std::uint32_t);
-			result.indirect += parts.indirect;
-		}
-		return result;
-	}
-
 #if UML_GADGET_CACHE_CENSUS
 	/* Write what this cache holds and how it came to hold it, so
 	 * duplication, dormancy and lost work can be counted instead of
@@ -1560,26 +1532,33 @@ public:
 	 */
 	void census(std::FILE *out, std::uint64_t snapshot) const
 	{
-		const auto parts = footprint();
+		/* The executor record counts only what this cache owns: its slabs
+		 * and its per-space slot lists. Each address space's bodies and
+		 * records follow on an S line named by the space, which every
+		 * cache holding it writes and a reader counts once. */
+		std::size_t slabs = 0;
+		for (const auto &slab : slabs_)
+			if (slab)
+				slabs += sizeof(Slab);
+		std::size_t lists = 0;
+		for (const auto &[generation, state] : generations_)
+			lists += state.slots.capacity() * sizeof(std::uint32_t);
 		/* How often the stream lookup was asked, against how often a
 		 * store would have had to maintain an index for it. */
 		const auto slab_total = static_cast<std::size_t>(
 			std::count_if(slabs_.begin(), slabs_.end(),
 				[](const auto &slab) { return slab != nullptr; }));
-		std::size_t empty = 0;
-		for (const auto &[generation, state] : generations_)
-			empty += state.space->census_empty_bytes();
 		std::fprintf(out,
 			"E %p generations=%zu occupancy=%zu slots=%zu slot_bytes=%zu "
-			"slab_slots=%zu slab_count=%zu stream_index=%zu slabs=%zu "
-			"streams=%zu arena_empty=%zu links=%zu indirect=%zu "
-			"total=%zu stream_lookups=%llu adoptions=%llu",
+			"slab_slots=%zu slab_count=%zu stream_index=0 slabs=%zu "
+			"streams=0 arena_empty=0 links=%zu indirect=0 "
+			"total=%zu stream_lookups=%llu adoptions=%llu shared=%d",
 			static_cast<const void *>(this), resident_generations(),
 			occupancy(), slot_count, sizeof(Slot), slab_slots,
-			slab_total, parts.stream_index, parts.slabs, parts.streams,
-			empty, parts.links, parts.indirect, parts.total(),
+			slab_total, slabs, lists, slabs + lists,
 			static_cast<unsigned long long>(stream_lookups_),
-			static_cast<unsigned long long>(adoptions_));
+			static_cast<unsigned long long>(adoptions_),
+			share_ ? 1 : 0);
 		census::write_when(out, snapshot);
 		history_.write(out);
 		std::fputc('\n', out);
@@ -1589,19 +1568,20 @@ public:
 				resident_.rend(), generation);
 			const bool running = generation == current_generation_;
 			const auto space = state.space->footprint();
+			/* The G line's bytes are this cache's own list of its
+			 * slots in the space; the space's are on its S line. */
 			std::fprintf(out,
 				"G %lu current=%d rank=%td idle_switches=%llu "
 				"idle_seconds=%.3f link_records=%zu links=%zu "
-				"indirect=%zu targets=0\n",
+				"indirect=0 targets=0 space=%p\n",
 				generation, running ? 1 : 0,
 				found - resident_.rbegin(),
 				static_cast<unsigned long long>(running ? 0 :
 					switches_ - state.census_switch),
 				running ? 0.0 : now - state.census_seconds,
 				state.space->link_records(),
-				space.links + state.slots.capacity() *
-					sizeof(std::uint32_t),
-				space.indirect);
+				state.slots.capacity() * sizeof(std::uint32_t),
+				static_cast<const void *>(state.space));
 			std::fprintf(out,
 				"S %p generation=%lu mode=%u attached=%zu "
 				"stream_index=%zu streams=%zu arena_empty=%zu "
