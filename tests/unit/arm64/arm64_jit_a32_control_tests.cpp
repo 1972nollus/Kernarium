@@ -981,6 +981,34 @@ void tlb_probe_is_the_short_form() {
 }
 #endif
 
+/* An access the hot path has checked is aligned to its size cannot span two
+ * pages, so it is not tested for it: a single-precision VLDR, and a VLD1 whose
+ * alignment hint covers its bytes. A word load, which may be unaligned, and a
+ * VLD1 without a hint are. */
+void aligned_accesses_skip_the_crossing_test() {
+  Fixture fixture{0x1a32'0c12, 2, 2};
+  constexpr unsigned page_bit = DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
+  const auto tests_page_bit = [&](std::uint32_t word) {
+    fixture.code32(0, {word, 0xef00'0000U});
+    std::vector<std::byte> bytes(2 * 4);
+    fixture.read_code(0, bytes);
+    const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+        key::a32_key(code_base), bytes);
+    require(!compiled.code.words.empty());
+    // tbnz w0, #page_bit, ...
+    return std::any_of(compiled.code.words.begin(), compiled.code.words.end(),
+                       [&](std::uint32_t w) {
+                         return (w & 0xfff8'001fU) ==
+                                (0x3700'0000U | page_bit << 19);
+                       });
+  };
+  require(tests_page_bit(0xe591'0000U));  // ldr r0,[r1]
+  require(!tests_page_bit(0xed91'0a00U)); // vldr s0,[r1]
+  require(tests_page_bit(0xed91'0b00U));  // vldr d0,[r1]
+  require(tests_page_bit(0xf421'0a8fU));  // vld1.32 {d0,d1},[r1]
+  require(!tests_page_bit(0xf421'0aafU)); // vld1.32 {d0,d1},[r1:128]
+}
+
 void native_loops() {
   constexpr unsigned programs = 90;
   constexpr std::size_t window = 256; // bytes of data the loops touch
@@ -1206,6 +1234,7 @@ int main() {
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
   tlb_probe_is_the_short_form();
 #endif
+  aligned_accesses_skip_the_crossing_test();
   forward_skip_over_stores_to_a_return();
   counted_loop_is_a_host_loop();
   native_loops();

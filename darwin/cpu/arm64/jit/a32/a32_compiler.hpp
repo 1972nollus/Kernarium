@@ -293,12 +293,15 @@ private:
   /* The whole instruction in the slow helper. */
   [[nodiscard]] Flow emit_through_helper();
   /* The load of `bytes` (at most CrossingColdPath's limit) at `address`
-   * branches to `crossing` instead of `slow` when it spans two pages. */
+   * branches to `crossing` instead of `slow` when it spans two pages.
+   * `aligned` is the alignment the caller has already checked: an access no
+   * larger than that cannot span two pages, and is not tested for it. */
   void emit_translate(unsigned address, ::uml::memory::Access access,
                       Arm64Emitter::Label slow, Arm64Emitter::Label fault,
                       std::size_t bytes,
                       std::optional<Arm64Emitter::Label> crossing =
-                          std::nullopt);
+                          std::nullopt,
+                      unsigned aligned = 0);
   /* x1 takes the page number of `address` and x0 the TLB entry's address. */
   void emit_tlb_index(unsigned address);
   void emit_translation_cold(const TranslationColdPath &path);

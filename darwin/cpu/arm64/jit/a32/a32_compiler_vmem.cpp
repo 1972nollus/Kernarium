@@ -211,7 +211,7 @@ A32Compiler::Flow A32Compiler::emit_vector_register_transfer(bool store) {
   emit_alignment_check(address_register, 4, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
                  fault, bytes,
-                 store ? std::nullopt : std::optional{make_label()});
+                 store ? std::nullopt : std::optional{make_label()}, 4U);
   const unsigned log2_size = bytes == 4U ? word_size : double_size;
   if (store) {
     track_direct_store(address_register, bytes);
@@ -255,7 +255,8 @@ A32Compiler::Flow A32Compiler::emit_vector_block_transfer(bool store) {
                  fault, bytes,
                  store || bytes > staged_load_limit
                      ? std::nullopt
-                     : std::optional{make_label()});
+                     : std::optional{make_label()},
+                 4U);
   if (store)
     track_direct_store(address_register, bytes);
   vmem_run(!store, single, first, regs);
@@ -342,7 +343,8 @@ A32Compiler::Flow A32Compiler::emit_vector_structure(const VInfo &v) {
                  fault, bytes,
                  store || bytes > staged_load_limit
                      ? std::nullopt
-                     : std::optional{make_label()});
+                     : std::optional{make_label()},
+                 o.alignment > 1 ? static_cast<unsigned>(o.alignment) : 0U);
   if (store)
     track_direct_store(address_register, bytes);
 

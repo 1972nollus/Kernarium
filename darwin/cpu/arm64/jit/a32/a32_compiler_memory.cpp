@@ -64,8 +64,11 @@ void A32Compiler::emit_translate(unsigned address, Access access,
                                  Arm64Emitter::Label fallback,
                                  Arm64Emitter::Label fault,
                                  std::size_t bytes,
-                                 std::optional<Arm64Emitter::Label> crossing) {
-  if (bytes > 1) {
+                                 std::optional<Arm64Emitter::Label> crossing,
+                                 unsigned aligned) {
+  if (aligned >= bytes)
+    crossing.reset();
+  else if (bytes > 1) {
     emitter_.ubfm(0, address, 0, page_shift - 1);
     emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
     /* bytes is below one page, so the sum is below two pages and its page
@@ -103,7 +106,7 @@ void A32Compiler::emit_translate(unsigned address, Access access,
       .address = address,
       .access = access,
   });
-  if (crossing && bytes > 1)
+  if (crossing && bytes > 1 && aligned < bytes)
     crossing_cold_.push_back({
         .label = *crossing,
         .continuation = complete,
@@ -372,7 +375,8 @@ A32Compiler::Flow A32Compiler::emit_single(const Transfer &transfer) {
   if (transfer.ordered)
     emit_alignment_check(address_register, transfer.bytes, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, transfer.bytes);
+                 fault, transfer.bytes, std::nullopt,
+                 transfer.ordered ? static_cast<unsigned>(transfer.bytes) : 0U);
   const unsigned size_field = transfer.bytes == 1U ? 0U
                               : transfer.bytes == 2U ? 1U
                                                      : 2U;

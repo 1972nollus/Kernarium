@@ -168,7 +168,8 @@ std::size_t A32Compiler::try_fuse_exclusive() {
   };
   form_address();
   emit_alignment_check(address_register, bytes, slow);
-  emit_translate(address_register, Access::write, slow, slow, bytes);
+  emit_translate(address_register, Access::write, slow, slow, bytes,
+                 std::nullopt, static_cast<unsigned>(bytes));
   emit(enc::x::mov(host_address, address_register));
   // The store's range is recorded at the store's own index, before the
   // monitor is established.

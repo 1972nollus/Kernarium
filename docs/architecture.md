@@ -1012,7 +1012,10 @@ cannot be afforded leaves like any linked exit. Memory
 takes the inline TLB sequence after a 32-bit address and the alignment
 rule of the form (on 4 KiB pages the entry index comes from the address's own
 bits and the tag compare shifts the address, two instructions fewer than the
-A64 compiler's); the Armv8 load-acquire and store-release (LDA, STL and their
+A64 compiler's). An access already checked to be aligned to its size (a
+single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
+bytes, an ordered or exclusive access) is not tested for crossing a page. The
+Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
 load-exclusive, up to four register instructions and the store-exclusive
 (acquire and release forms included) on the same address at the start of a
