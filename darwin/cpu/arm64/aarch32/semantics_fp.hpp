@@ -21,6 +21,7 @@ namespace uml::cpu::arm64::aarch32::detail::fp {
 inline constexpr std::uint32_t fpcr_fz = 1U << 24;
 inline constexpr std::uint32_t fpcr_dn = 1U << 25;
 inline constexpr std::uint32_t fpcr_ahp = 1U << 26;
+inline constexpr std::uint32_t fpcr_fz16 = 1U << 19;
 inline constexpr std::uint32_t fpcr_rounding = 3U << 22;
 /* Cumulative exception flags in the FPSR. */
 inline constexpr std::uint32_t invalid_flag = 1U << 0;
@@ -31,7 +32,7 @@ inline constexpr std::uint32_t inexact_flag = 1U << 4;
  * keeping the half-precision format and flush controls. */
 [[nodiscard]] constexpr std::uint32_t standard_fpcr(std::uint32_t guest) noexcept
 {
-	return fpcr_fz | fpcr_dn | (guest & (fpcr_ahp | (1U << 19)));
+	return fpcr_fz | fpcr_dn | (guest & (fpcr_ahp | fpcr_fz16));
 }
 
 /* Runs `function` with `local` installed as the host FPCR and FPSR clear,
@@ -197,26 +198,37 @@ template<typename Float>
 {
 	return exponent_of(v) == (1U << Format<Float>::exponent_bits) - 1U && fraction_of(v) == 0U;
 }
-/* Zero, or a denormal the Standard FPSCR value's flush makes zero. */
+/* Whether FPUnpack under the Standard FPSCR value flushes a denormal of the
+ * format to zero: FZ is always set, so single precision does, and half
+ * precision follows the guest's FZ16. */
 template<typename Float>
-[[nodiscard]] constexpr bool is_flushed_zero(Float v) noexcept
+[[nodiscard]] constexpr bool unpack_flushes(std::uint32_t guest_fpcr) noexcept
 {
-	return exponent_of(v) == 0U;
+	if constexpr (sizeof(Float) == sizeof(std::uint16_t))
+		return (guest_fpcr & fpcr_fz16) != 0U;
+	else
+		return true;
+}
+/* Zero, or a denormal that FPUnpack flushes (`flush`). */
+template<typename Float>
+[[nodiscard]] constexpr bool is_flushed_zero(Float v, bool flush) noexcept
+{
+	return exponent_of(v) == 0U && (flush || fraction_of(v) == 0U);
 }
 
 /* VRECPS and VRSQRTS are not the fused A64 steps: AArch32 FPRecipStep and
  * FPRSqrtStep round the product first, treat infinity times zero (a
- * denormal is zero under the Standard FPSCR value's flush) as a zero
- * product, and halve the RSqrt result exactly. These run under the
- * Standard FPSCR value. */
+ * denormal is zero only where FPUnpack flushes it, `flush`: always for
+ * single precision, FZ16 for half) as a zero product, and halve the RSqrt
+ * result exactly. These run under the Standard FPSCR value. */
 template<typename Float>
-[[nodiscard]] inline Float step_product(Float a, Float b, bool &nan) noexcept
+[[nodiscard]] inline Float step_product(Float a, Float b, bool flush, bool &nan) noexcept
 {
 	nan = is_nan(a) || is_nan(b);
 	if (nan)
 		return mul(a, b);
-	if ((is_infinity(a) && is_flushed_zero(b)) || (is_flushed_zero(a) && is_infinity(b))) {
-		/* FPUnpack flushes a denormal operand and records it. */
+	if ((is_infinity(a) && is_flushed_zero(b, flush)) || (is_flushed_zero(a, flush) && is_infinity(b))) {
+		/* FPUnpack flushes a denormal operand and a single-precision one sets IDC. */
 		(void)add(a, Float{0});
 		(void)add(b, Float{0});
 		return Float{0};
@@ -224,17 +236,17 @@ template<typename Float>
 	return mul(a, b);
 }
 template<typename Float>
-[[nodiscard]] inline Float recip_step(Float a, Float b) noexcept
+[[nodiscard]] inline Float recip_step(Float a, Float b, std::uint32_t guest_fpcr) noexcept
 {
 	bool nan;
-	const Float product = step_product(a, b, nan);
+	const Float product = step_product(a, b, unpack_flushes<Float>(guest_fpcr), nan);
 	return nan ? product : sub(Format<Float>::two, product);
 }
 template<typename Float>
-[[nodiscard]] inline Float rsqrt_step(Float a, Float b) noexcept
+[[nodiscard]] inline Float rsqrt_step(Float a, Float b, std::uint32_t guest_fpcr) noexcept
 {
 	bool nan;
-	const Float product = step_product(a, b, nan);
+	const Float product = step_product(a, b, unpack_flushes<Float>(guest_fpcr), nan);
 	return nan ? product : mul(sub(Format<Float>::three, product), Format<Float>::one_half);
 }
 
