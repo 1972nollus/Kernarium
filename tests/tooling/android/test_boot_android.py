@@ -144,7 +144,7 @@ class BootAndroidTests(unittest.TestCase):
             disk.parent, boot_android.INSTANCES_ROOT.resolve(strict=False)
         )
 
-    def test_disk_is_resized_with_homebrew_sgdisk(self) -> None:
+    def test_disk_is_resized_with_sgdisk(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             root = Path(temporary)
             disk = root / "android.img"
@@ -222,11 +222,29 @@ class BootAndroidTests(unittest.TestCase):
                     )
                 )
 
-    def test_homebrew_sgdisk_requires_an_executable_candidate(self) -> None:
+    def test_sgdisk_requires_an_executable_candidate(self) -> None:
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             unavailable = Path(temporary) / "sgdisk"
             with self.assertRaises(boot_android.LauncherError):
-                boot_android.homebrew_sgdisk((unavailable,))
+                boot_android.find_sgdisk((unavailable,), search_path=temporary)
+
+    def test_sgdisk_is_found_on_path_before_the_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
+            root = Path(temporary).resolve()
+            on_path = root / "bin"
+            on_path.mkdir()
+            fallback = root / "fallback-sgdisk"
+            for executable in (on_path / "sgdisk", fallback):
+                executable.write_text("#!/bin/sh\n", encoding="utf-8")
+                executable.chmod(0o755)
+            self.assertEqual(
+                boot_android.find_sgdisk((fallback,), search_path=str(on_path)),
+                on_path / "sgdisk",
+            )
+            self.assertEqual(
+                boot_android.find_sgdisk((fallback,), search_path=str(root)),
+                fallback,
+            )
 
     def test_build_commands_use_the_checked_in_preset(self) -> None:
         self.assertEqual(

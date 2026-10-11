@@ -135,7 +135,23 @@ if(NOT _uml_integration_modules_builtin)
     message(FATAL_ERROR "Selected kernel artifact lacks modules.builtin evidence")
 endif()
 
-set(UML_LTP_JOBS 16 CACHE STRING
+# The default is sized to the host: half its physical cores and 4 GiB of its
+# memory per worker, between 1 and 16. A larger host sets UML_LTP_JOBS.
+cmake_host_system_information(RESULT _uml_ltp_cores
+    QUERY NUMBER_OF_PHYSICAL_CORES)
+cmake_host_system_information(RESULT _uml_ltp_memory_mib
+    QUERY TOTAL_PHYSICAL_MEMORY)
+math(EXPR _uml_ltp_jobs_default "${_uml_ltp_cores} / 2")
+math(EXPR _uml_ltp_jobs_by_memory "${_uml_ltp_memory_mib} / 4096")
+if(_uml_ltp_jobs_by_memory LESS _uml_ltp_jobs_default)
+    set(_uml_ltp_jobs_default ${_uml_ltp_jobs_by_memory})
+endif()
+if(_uml_ltp_jobs_default GREATER 16)
+    set(_uml_ltp_jobs_default 16)
+elseif(_uml_ltp_jobs_default LESS 1)
+    set(_uml_ltp_jobs_default 1)
+endif()
+set(UML_LTP_JOBS ${_uml_ltp_jobs_default} CACHE STRING
     "Concurrent isolated guest workers for each LTP engine campaign")
 if(NOT UML_LTP_JOBS MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "UML_LTP_JOBS must be a positive integer")
@@ -493,6 +509,8 @@ uml_add_guest_integration_test(
     LABELS guest;memory;mmu;full;pressure
     TIMEOUT 600
     CPUS 10)
+# The runner skips on a host with fewer than the ten CPUs it asks for.
+set_tests_properties(guest-mmu-stress PROPERTIES SKIP_RETURN_CODE 77)
 
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(

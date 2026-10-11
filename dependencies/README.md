@@ -343,11 +343,36 @@ tooling checks in the same change.
 ## Host prerequisites
 
 Dependency preparation and builds require the Apple command-line tools plus
-CMake, Ninja, GNU Make, Meson, Python 3, `pkg-config`, Git, rsync, Autoconf,
-Automake, gettext, GNU libtool, and gperf. Exact tool and SDK versions remain
-observed build metadata; source identity comes from the manifest and generated
-series.
+CMake 3.27 or newer, Ninja, GNU Make, Meson, Python 3.11 or newer,
+`pkg-config`, Git, rsync, Autoconf, Automake, gettext, GNU libtool, and gperf.
+Exact tool and SDK versions remain observed build metadata; source identity
+comes from the manifest and generated series.
+
+Configure requires Python 3.11 or newer and fails with CMake's version error
+on an older interpreter. macOS's own `python3` is 3.9, so install a newer one
+and put it first on `PATH`, or pass `-DPython3_EXECUTABLE=<python>`.
 
 Apple GPU builds also need Xcode's Metal Toolchain component
 (`xcodebuild -downloadComponent MetalToolchain`), which compiles KosmicKrisp's
 device library.
+
+Some workflows need further tools. A workflow that needs one fails naming it;
+the rest of the repository does not.
+
+| Tool | Needed by |
+| --- | --- |
+| `ld.lld` (LLVM lld) | integration guest payloads, the x86 probe corpus |
+| erofs-utils (`mkfs.erofs`, `fsck.erofs`) and e2fsprogs (`debugfs`, `e2fsck`, `resize2fs`) | `tests/perf/make_geekbench_images.py` |
+| gptfdisk (`sgdisk`) | the Android launcher, `tools/boot_android.py` |
+| GNU coreutils `timeout` | the oracle scripts under `tools/arm64-tests/` |
+| OpenSSL (`openssl`) | `tools/rootfs/provision.py` |
+| LLVM 22.1.8 `llvm-mc` | the instruction-table freshness tests, which skip without it |
+
+Homebrew installs e2fsprogs and LLVM as keg-only; the tools that need them
+also look in the Homebrew prefix when `PATH` lacks them. Homebrew's coreutils
+installs `timeout` as `gtimeout`; add its `gnubin` directory to `PATH`.
+
+Meson, Mako, PyYAML, and packaging may come from an optional virtual
+environment at `.build/gpu-tools-venv`. When `.build/gpu-tools-venv/bin/meson`
+exists, `build.sh`, `build-apple-gpu.sh`, and `build-ios-network.sh` use it in
+preference to `PATH` and to `UML_DEPENDENCY_MESON`.
