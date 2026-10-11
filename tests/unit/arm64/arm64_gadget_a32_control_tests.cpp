@@ -1416,6 +1416,79 @@ void in_place_add_and_sub_of_an_immediate_reach_every_register()
 	}
 }
 
+/* A CMP followed at once by a conditional branch is one fused gadget of the
+ * AArch64 bank. It must leave the flags and take the branch as the pair
+ * does, for every condition and for the register and immediate forms. */
+bool condition_holds(unsigned cond, std::uint32_t flags)
+{
+	const bool n = (flags >> 3 & 1U) != 0, z = (flags >> 2 & 1U) != 0,
+		   c = (flags >> 1 & 1U) != 0, v = (flags & 1U) != 0;
+	switch (cond) {
+	case 0: return z;
+	case 1: return !z;
+	case 2: return c;
+	case 3: return !c;
+	case 4: return n;
+	case 5: return !n;
+	case 6: return v;
+	case 7: return !v;
+	case 8: return c && !z;
+	case 9: return !c || z;
+	case 10: return n == v;
+	case 11: return n != v;
+	case 12: return !z && n == v;
+	default: return z || n != v;
+	}
+}
+
+std::uint32_t compare_flags(std::uint32_t a, std::uint32_t b)
+{
+	const std::uint32_t result = a - b;
+	return (result >> 31) << 3 | (result == 0 ? 4U : 0U) |
+	       (a >= b ? 2U : 0U) | (((a ^ b) & (a ^ result)) >> 31);
+}
+
+void compare_and_branch_pairs_take_the_branch_as_the_pair_does()
+{
+	const std::uint32_t values[] = {0U, 1U, 5U, 0xffU, 0x7fff'ffffU,
+					0x8000'0000U, 0xffff'ffffU};
+	const std::uint32_t immediates[] = {0U, 1U, 5U, 0xffU};
+	unsigned long generation = 1700;
+	for (std::uint32_t cond = 0; cond < 14; ++cond) {
+		/* The immediate form once per immediate, then the register form
+		 * with the second operand in r1. */
+		for (std::size_t form = 0; form <= std::size(immediates); ++form) {
+			const bool immediate = form < std::size(immediates);
+			Guest guest{generation++};
+			/* cmp r0, #imm or r1; b<cond> +8; mov r5, #1; svc;
+			 * mov r5, #2; svc. */
+			guest.a32(0, {immediate ? 0xe350'0000U | immediates[form]
+						: 0xe150'0001U,
+				      cond << 28 | 0x0a00'0001U, 0xe3a0'5001U,
+				      a::svc, 0xe3a0'5002U, a::svc});
+			for (const auto a_value : values) {
+				const auto count = immediate ? 1U : std::size(values);
+				for (std::size_t index = 0; index < count; ++index) {
+					const auto b_value = immediate ?
+						immediates[form] : values[index];
+					auto cpu = a32_state();
+					cpu.registers[0] = a_value;
+					cpu.registers[1] = b_value;
+					cpu.registers[5] = 0;
+					require(guest.run(cpu).reason ==
+						ExitReason::system_call);
+					const auto flags = compare_flags(a_value, b_value);
+					require(cpu.registers[5] ==
+						(condition_holds(cond, flags) ? 2U : 1U),
+						"a fused compare and branch took the wrong way");
+					require((cpu.nzcv >> 28) == flags,
+						"a fused compare and branch left the wrong flags");
+				}
+			}
+		}
+	}
+}
+
 /* The parallel add and subtract family and SEL are gadgets: Advanced SIMD
  * does the lanes, GE is the byte-lane mask CpuState keeps, and the library
  * runs none of them. */
@@ -1930,6 +2003,7 @@ int main()
 	vld1_and_vst1_copies_stay_out_of_the_library();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
+	compare_and_branch_pairs_take_the_branch_as_the_pair_does();
 	parallel_arithmetic_and_sel_stay_out_of_the_library();
 	structure_and_library_blocks_load_the_deferred_vectors();
 	single_stepped_floating_point_loads_the_deferred_vectors();
