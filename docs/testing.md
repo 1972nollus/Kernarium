@@ -37,6 +37,20 @@ configure creates: a shell defers its traps while a child runs, so a shell
 test that times out in one cannot clean up, and what it leaves names it.
 Python tooling tests keep the host `$TMPDIR` for `sun_path`.
 
+`repository-environment-portability` is the one tooling test that scans
+tracked source, and it looks for forbidden values rather than expected ones:
+host paths and account names, private addresses, ssh endpoints and Apple
+signing identifiers outside the project's own. It also scans new unignored
+files, so a leak fails before it is committed. A site adds its private tokens
+to a local denylist, found at
+`${XDG_CONFIG_HOME:-$HOME/.config}/linux-um-darwin/portability-denylist` or
+through `UML_PORTABILITY_DENYLIST`; the test runs with and without it. A
+reviewed exception goes in
+`tests/tooling/cmake/environment-portability-allow.tsv` under one of its fixed
+reasons, and an entry that matches nothing fails.
+`python3 tests/tooling/cmake/check_environment_portability.py --list-rules`
+describes the rules and the denylist format.
+
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
 for the management console's run directory. Each registration owns
