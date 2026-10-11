@@ -532,6 +532,15 @@ private:
   void emit_native_gpr_run(std::span<const UnsignedMemoryOperation> operations,
                            bool load);
 
+  /* Moves x8 forward or back by a run's first accessed offset. */
+  void move_run_base(std::uint64_t offset, bool forward);
+
+  /* Advances x8 from a run's guest base to the first byte the run
+   * accesses, base + first, and branches to `outside` unless the bytes up
+   * to base + end lie in that byte's page. */
+  void emit_run_span_proof(std::uint64_t first, std::uint64_t end,
+                           Arm64Emitter::Label outside);
+
   [[nodiscard]] std::size_t try_emit_sp_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
 

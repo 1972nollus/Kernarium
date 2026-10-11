@@ -341,6 +341,31 @@ void exact_page_end_and_runtime_crossing(engine::EngineHarness &harness) {
         expected, data_base, memory, expected_memory);
   }
 
+  /* A base in the last bytes of a page whose fields all lie on the next
+   * page: the run translates its first accessed byte. */
+  for (const std::size_t index : {std::size_t{11}, std::size_t{12}}) {
+    const auto &variant = immediate::variants[index];
+    const std::array far{
+        unsigned_x(variant.operation != 0U, 2, 2, 3),
+        unsigned_x(variant.operation != 0U, 3, 2, 4),
+    };
+    std::vector<std::byte> memory(2U * page_size);
+    immediate::fill_memory(memory, 167U + static_cast<unsigned>(index));
+    auto expected_memory = memory;
+    auto initial = immediate::seeded_state(0xc400'0000'0000'0003ULL + index);
+    initial.registers[2] = data_base + page_size - 16U;
+    auto expected = initial;
+    immediate::apply_oracle(variant, immediate::Form::unsigned_offset, 2, 2,
+                            3, expected, expected_memory, data_base);
+    immediate::apply_oracle(variant, immediate::Form::unsigned_offset, 3, 2,
+                            4, expected, expected_memory, data_base);
+    immediate::check_program(
+        harness,
+        index == 11U ? "jit-gpr-run-far-store-next-page"
+                     : "jit-gpr-run-far-load-next-page",
+        far, initial, expected, data_base, memory, expected_memory);
+  }
+
   {
     std::vector<std::byte> memory(page_size);
     immediate::fill_memory(memory, 173);
@@ -487,6 +512,50 @@ void precise_fault_cases(engine::EngineHarness &harness) {
   }
 }
 
+void far_run_fault_is_precise(engine::EngineHarness &harness) {
+  /* The run translates its first accessed byte, on the unmapped page after
+   * the base's: the first operation reports that address and retires
+   * nothing. */
+  const std::array code{
+      engine::ProgramWord{.offset = 0,
+                          .instruction = unsigned_x(true, 2, 2, 3)},
+      engine::ProgramWord{.offset = 4,
+                          .instruction = unsigned_x(true, 3, 2, 4)},
+      engine::ProgramWord{.offset = 8, .instruction = system_call},
+  };
+  std::vector<std::byte> memory(page_size);
+  immediate::fill_memory(memory, 181);
+  const std::array regions{
+      engine::MemoryRegion{
+          .address = data_base,
+          .initial = memory,
+          .expected = memory,
+      },
+  };
+  arm64::CpuState initial{};
+  initial.registers[2] = data_base + page_size - 16U;
+  initial.registers[3] = 0x1111'2222'3333'4444ULL;
+  initial.registers[4] = 0x5555'6666'7777'8888ULL;
+  auto expected = initial;
+  expected.pc = engine::engine_test_code_base;
+  harness.check_program({
+      .name = "jit-gpr-run-far-translation-fault",
+      .code = code,
+      .initial = initial,
+      .expected = expected,
+      .event = engine::ExpectedEvent::memory_fault,
+      .native = engine::NativeRequirements::baseline(),
+      .fault =
+          {
+              .address = data_base + page_size,
+              .access = arm64::MemoryAccess::read,
+          },
+      .compare_fault = true,
+      .memory = regions,
+      .expected_instructions = 0,
+  });
+}
+
 void prefixed_cold_faults_preserve_state(engine::EngineHarness &harness) {
   {
     const std::array code{
@@ -592,6 +661,7 @@ int main() {
   lengths_two_through_six(harness);
   exact_page_end_and_runtime_crossing(harness);
   precise_fault_cases(harness);
+  far_run_fault_is_precise(harness);
   prefixed_cold_faults_preserve_state(harness);
   run::finish(harness, "arm64-jit-gpr-memory-run-runtime", scalar_base);
   return 0;

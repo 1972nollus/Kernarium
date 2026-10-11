@@ -50,6 +50,21 @@ inline constexpr std::uint32_t monitor_clear =
     (15U << 5U) | 31U;
 inline constexpr std::uint32_t nop = 0xd503'201fU;
 
+/* A run whose first accessed byte is `offset` past its base, a multiple of
+ * 4 KiB, translates that byte: add x8, x8, #(offset >> 12), lsl #12 before
+ * the translation and the matching sub after it. */
+[[nodiscard]] constexpr std::uint32_t
+run_base_forward(std::uint64_t offset) noexcept {
+  return 0x9140'0000U | (static_cast<std::uint32_t>(offset >> 12U) << 10U) |
+         (8U << 5U) | 8U;
+}
+
+[[nodiscard]] constexpr std::uint32_t
+run_base_back(std::uint64_t offset) noexcept {
+  return 0xd140'0000U | (static_cast<std::uint32_t>(offset >> 12U) << 10U) |
+         (8U << 5U) | 8U;
+}
+
 struct Variant final {
   unsigned size_shift;
   unsigned opc;

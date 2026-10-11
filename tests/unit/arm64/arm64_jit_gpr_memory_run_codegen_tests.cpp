@@ -182,13 +182,25 @@ void page_limits_select_only_safe_prefixes() {
   require(count_page_span_tbnz(exact_hot) == 1,
           "exact-page-span GPR pair omitted its page-bit rejection");
 
-  const std::array rejected{beyond, beyond};
+  const std::array rejected{near, beyond};
   const auto rejected_compiled =
       jit_test::compile_block(code_base + 0x6100U, rejected);
   require(count_word(hot_code(rejected_compiled, rejected.size()),
                      translation_probe) ==
               rejected.size(),
-          "out-of-page static GPR offsets were coalesced");
+          "GPR offsets spanning more than a page were coalesced");
+
+  const std::array far{beyond, unsigned_x(true, page_units + 1U, 2, 6)};
+  const auto far_hot =
+      hot_code(jit_test::compile_block(code_base + 0x6180U, far), far.size());
+  require(count_word(far_hot, translation_probe) == 1,
+          "GPR fields beyond a page did not share one translation");
+  require(count_word(far_hot, run_base_forward(page_units * 8U)) == 1 &&
+              count_word(far_hot, run_base_back(page_units * 8U)) == 1,
+          "GPR run did not translate its first accessed byte");
+  require(count_memory_form(far_hot, far[0]) == 1 &&
+              count_memory_form(far_hot, far[1]) == 1,
+          "far GPR fields lost their native offsets");
 
   const std::array shrunk{near, near, beyond};
   const auto shrunk_compiled =

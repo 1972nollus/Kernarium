@@ -963,10 +963,12 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -976,18 +978,22 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       if (candidates == 0) {
         base = operation.base;
         load = operation.load;
+        first_offset = operation.offset;
       } else if (operation.base != base || operation.load != load) {
         break;
       }
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1021,8 +1027,9 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
       emitter_.compare_zero(slow, 0, false, true);
     }
 
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    if (base == 31U) {
+    if (base == 31U && first_offset == 0U) {
       const auto last_unit =
           static_cast<unsigned>((maximum_end - 1U) >> 4U);
       if (last_unit != 0U) {
@@ -1035,22 +1042,11 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
         emitter_.test_zero(slow, 0, page_shift - 4U, true);
       }
     } else {
-      const auto last_delta = maximum_end - 1U;
-      if (last_delta != 0U) {
-        if (last_delta <= 0xfffU) {
-          emitter_.add_immediate(0, 8,
-                                 static_cast<unsigned>(last_delta));
-        } else {
-          emitter_.load_constant(0, last_delta);
-          emitter_.add_shifted(0, 8, 0, 0);
-        }
-        emitter_.emit(0xca08'0000U); // eor x0, x0, x8
-        emitter_.test_zero(slow, 0, page_shift,
-                           true); // tbnz x0, #page_shift
-      }
+      emit_run_span_proof(first_offset, maximum_end, slow);
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
+    move_run_base(first_offset, false);
     for (std::size_t index = 0; index < length; ++index) {
       const auto &operation = operations[index];
       const auto native_vector =
@@ -1113,6 +1109,52 @@ void JitCompiler::emit_native_gpr_run(
     }
   }
 
+void JitCompiler::move_run_base(std::uint64_t offset, bool forward) {
+    /* An unsigned offset is below 0x1000 units of at most 16 bytes. */
+    const auto high = static_cast<unsigned>(offset >> 12U);
+    const auto low = static_cast<unsigned>(offset & 0xfffU);
+    if (high != 0U) {
+      if (forward)
+        emitter_.add_immediate(8, 8, high, true);
+      else
+        emitter_.subtract_immediate(8, 8, high, true);
+    }
+    if (low != 0U) {
+      if (forward)
+        emitter_.add_immediate(8, 8, low);
+      else
+        emitter_.subtract_immediate(8, 8, low);
+    }
+  }
+
+void JitCompiler::emit_run_span_proof(std::uint64_t first, std::uint64_t end,
+                                      Arm64Emitter::Label outside) {
+    /*
+     * The run translates its first accessed byte, so only the bytes it
+     * accesses must share a page: a base near a page end whose fields all
+     * lie on the next page stays on the native path. The caller moves the
+     * translated address back by `first` before the accesses, which keep
+     * their own unsigned offsets.
+     */
+    move_run_base(first, true);
+    const auto last_delta = end - first - 1U;
+    if (last_delta == 0U)
+      return;
+    if (last_delta <= 0xfffU) {
+      emitter_.add_immediate(0, 8, static_cast<unsigned>(last_delta));
+    } else {
+      emitter_.load_constant(0, last_delta);
+      emitter_.add_shifted(0, 8, 0, 0);
+    }
+    /*
+     * last_delta is translation-time bounded below one guest page. The page
+     * bit changes iff the first and last accessed bytes are on different
+     * pages.
+     */
+    emitter_.emit(0xca08'0000U); // eor x0, x0, x8
+    emitter_.test_zero(outside, 0, page_shift, true); // tbnz x0, #page_shift
+  }
+
 [[nodiscard]] std::size_t JitCompiler::try_emit_sp_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc) {
     constexpr std::size_t maximum_run = 4;
@@ -1120,9 +1162,11 @@ void JitCompiler::emit_native_gpr_run(
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -1130,19 +1174,24 @@ void JitCompiler::emit_native_gpr_run(
       if (!decode_scalar_unsigned_memory(instructions[candidates], true,
                                          operation))
         break;
-      if (candidates == 0)
+      if (candidates == 0) {
         load = operation.load;
-      else if (operation.load != load)
+        first_offset = operation.offset;
+      } else if (operation.load != load) {
         break;
+      }
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1157,21 +1206,27 @@ void JitCompiler::emit_native_gpr_run(
      * alignment once before observing any memory or destination register. */
     emit_misalignment_check(8, 16, alignment);
 
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    const auto last_unit =
-        static_cast<unsigned>((maximum_end - 1U) >> 4U);
-    if (last_unit != 0U) {
-      /*
-       * SP is known to be 16-byte aligned. q+last_unit is below twice the
-       * number of units in a page, so its page bit is the complete crossing
-       * test.
-       */
-      emitter_.ubfm(0, 8, 4, page_shift - 1);
-      emitter_.add_immediate(0, 0, last_unit);
-      emitter_.test_zero(slow, 0, page_shift - 4U, true);
+    if (first_offset == 0U) {
+      const auto last_unit =
+          static_cast<unsigned>((maximum_end - 1U) >> 4U);
+      if (last_unit != 0U) {
+        /*
+         * SP is known to be 16-byte aligned. q+last_unit is below twice the
+         * number of units in a page, so its page bit is the complete
+         * crossing test.
+         */
+        emitter_.ubfm(0, 8, 4, page_shift - 1);
+        emitter_.add_immediate(0, 0, last_unit);
+        emitter_.test_zero(slow, 0, page_shift - 4U, true);
+      }
+    } else {
+      emit_run_span_proof(first_offset, maximum_end, slow);
     }
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
+    move_run_base(first_offset, false);
     emit_native_gpr_run(std::span{operations}.first(length), load);
 
     if (!load) {
@@ -1188,10 +1243,12 @@ void JitCompiler::emit_native_gpr_run(
       return 0;
 
     std::array<UnsignedMemoryOperation, maximum_run> operations{};
+    std::array<std::uint64_t, maximum_run> first_offsets{};
     std::array<std::uint64_t, maximum_run> maximum_ends{};
     std::size_t candidates = 0;
     unsigned base = 0;
     bool load = false;
+    std::uint64_t first_offset = 0;
     std::uint64_t maximum_end = 0;
     while (candidates < operations.size() &&
            candidates < instructions.size()) {
@@ -1202,6 +1259,7 @@ void JitCompiler::emit_native_gpr_run(
       if (candidates == 0) {
         base = operation.base;
         load = operation.load;
+        first_offset = operation.offset;
       } else if (operation.base != base || operation.load != load) {
         break;
       }
@@ -1213,15 +1271,18 @@ void JitCompiler::emit_native_gpr_run(
        */
       if (load && operation.transfer == base)
         break;
+      first_offset = std::min(first_offset, operation.offset);
       maximum_end =
           std::max(maximum_end, operation.offset + operation.bytes);
       operations[candidates] = operation;
+      first_offsets[candidates] = first_offset;
       maximum_ends[candidates] = maximum_end;
       ++candidates;
     }
 
     std::size_t length = candidates;
-    while (length >= 2 && maximum_ends[length - 1] > page_size)
+    while (length >= 2 &&
+           maximum_ends[length - 1] - first_offsets[length - 1] > page_size)
       --length;
     if (length < 2)
       return 0;
@@ -1238,25 +1299,12 @@ void JitCompiler::emit_native_gpr_run(
     load_gpr(8, base, true);
     emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
     emitter_.compare_zero(slow, 0, false, true);
+    first_offset = first_offsets[length - 1];
     maximum_end = maximum_ends[length - 1];
-    const auto last_delta = maximum_end - 1U;
-    if (last_delta != 0U) {
-      if (last_delta <= 0xfffU) {
-        emitter_.add_immediate(0, 8,
-                               static_cast<unsigned>(last_delta));
-      } else {
-        emitter_.load_constant(0, last_delta);
-        emitter_.add_shifted(0, 8, 0, 0);
-      }
-      /*
-       * last_delta is translation-time bounded below one guest page. The page
-       * bit changes iff base..base+last_delta crosses a page boundary.
-       */
-      emitter_.emit(0xca08'0000U); // eor x0, x0, x8
-      emitter_.test_zero(slow, 0, page_shift, true); // tbnz x0, #page_shift
-    }
+    emit_run_span_proof(first_offset, maximum_end, slow);
 
     emit_translate(8, load ? Access::read : Access::write, slow, slow, 1);
+    move_run_base(first_offset, false);
     emit_native_gpr_run(std::span{operations}.first(length), load);
 
     if (!load) {

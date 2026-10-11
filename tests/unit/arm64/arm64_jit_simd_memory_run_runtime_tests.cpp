@@ -286,6 +286,37 @@ void exact_page_edges_and_runtime_crossing(
           instructions, initial, expected, data_base, initial_memory,
           expected_memory);
     }
+
+    /* A base in the last bytes of a page whose fields all lie on the next
+     * page. */
+    {
+      std::vector<std::byte> initial_memory(2U * page_size);
+      memory::fill_memory(initial_memory, base_register + 97U);
+      auto expected_memory = initial_memory;
+      auto initial = memory::seeded_state(
+          0xd400'0000'0000'0200ULL | base_register);
+      const auto base = data_base + page_size - 16U;
+      memory::write_base(initial, base_register, base);
+      auto expected = initial;
+      const std::array instructions{
+          memory::unsigned_instruction(
+              variant.size_code, variant.operation, 1, base_register, 3),
+          memory::unsigned_instruction(
+              variant.size_code, variant.operation, 2, base_register, 4),
+      };
+      apply_unsigned_oracle(
+          initial, expected, initial_memory, expected_memory, base, variant,
+          1, 3);
+      apply_unsigned_oracle(
+          initial, expected, initial_memory, expected_memory, base, variant,
+          2, 4);
+      check_success(
+          harness,
+          base_register == 31U ? "jit-simd-run-far-next-page-sp"
+                               : "jit-simd-run-far-next-page-gpr",
+          instructions, initial, expected, data_base, initial_memory,
+          expected_memory);
+    }
   }
 }
 

@@ -246,6 +246,29 @@ void exact_page_end_and_runtime_crossing(engine::EngineHarness &harness) {
         harness, "jit-sp-run-runtime-page-crossing", instructions, initial,
         expected, data_base, memory, expected_memory);
   }
+
+  /* SP in the last bytes of a page with its slots on the next page. */
+  {
+    const std::array far{
+        unsigned_x(true, 2, 3),
+        unsigned_x(true, 3, 4),
+    };
+    std::vector<std::byte> memory(2U * page_size);
+    immediate::fill_memory(memory, 163);
+    auto expected_memory = memory;
+    auto initial = immediate::seeded_state(0xb400'0000'0000'0003ULL);
+    initial.sp = data_base + page_size - 16U;
+    auto expected = initial;
+    immediate::apply_oracle(immediate::variants[12],
+                            immediate::Form::unsigned_offset, 2, 31, 3,
+                            expected, expected_memory, data_base);
+    immediate::apply_oracle(immediate::variants[12],
+                            immediate::Form::unsigned_offset, 3, 31, 4,
+                            expected, expected_memory, data_base);
+    immediate::check_program(
+        harness, "jit-sp-run-far-load-next-page", far, initial, expected,
+        data_base, memory, expected_memory);
+  }
 }
 
 void first_translation_fault_is_effective_address(
