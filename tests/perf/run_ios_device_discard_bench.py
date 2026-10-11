@@ -51,7 +51,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--device", required=True)
     parser.add_argument("--app", type=Path, default=DEFAULT_APP)
     parser.add_argument("--rootfs-filename", default="rootfs.erofs")
-    parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--memory-mib", type=int, default=1024)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)

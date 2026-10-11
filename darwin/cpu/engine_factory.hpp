@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
+#include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/engine.hpp"
 
 #include <cstddef>
@@ -19,6 +20,13 @@ namespace uml::cpu {
  * configures the engine and derives the guest's HWCAPs from it. */
 [[nodiscard]] HostCapabilities engine_host_capabilities(
 	EngineKind kind, HostCapabilities host) noexcept;
+
+/* How much of the AArch32 EL0 profile an engine of `kind` implements
+ * (arm64::A32Support). The runtime presents AArch32 only through
+ * arm64::a32_presented_support() of this level and the guest-AArch32
+ * policy, and derives the compat HWCAPs from what that returns, so a run
+ * never advertises more than its engine runs. */
+[[nodiscard]] arm64::A32Support engine_a32_support(EngineKind kind) noexcept;
 
 /* Publishes the whole-process budget for translated-code caches and the
  * private per-executor cap. The first valid configuration owns process-wide

@@ -2,6 +2,7 @@
 #include "cpu/arm64/engine_adapters.hpp"
 
 #include "cpu/arm64/engine_execution.hpp"
+#include "cpu/arm64/jit/jit_a32_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_executor_pool.hpp"
@@ -48,6 +49,12 @@ public:
 		} catch (...) {
 			return {.reason = ExitReason::fatal};
 		}
+	}
+
+	[[nodiscard]] ExecutionResult run_aarch32(
+		ExecutionRequest &request) noexcept override
+	{
+		return run_translated_aarch32<jit::a32_support>(request);
 	}
 
 private:

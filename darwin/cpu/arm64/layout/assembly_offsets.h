@@ -74,6 +74,17 @@
 #define UML_ARM64_CPU_SVE_LIVE 1504
 #define UML_ARM64_SVE_VECTOR_LENGTH 16
 
+/* AArch32 EL0 state (cpu/arm64/aarch32/a32_profile.hpp), for both engines:
+ * GE[3:0] widened to byte lanes, FPSCR.NZCV in bits 31:28, TPIDRURO, then the
+ * Q flag, ITSTATE, CP15BEN and the AArch32 entry marker, one byte each. */
+#define UML_ARM64_CPU_A32_GE_MASK 1508
+#define UML_ARM64_CPU_A32_FPSCR_NZCV 1512
+#define UML_ARM64_CPU_A32_TPIDRURO 1516
+#define UML_ARM64_CPU_A32_Q 1520
+#define UML_ARM64_CPU_A32_ITSTATE 1521
+#define UML_ARM64_CPU_A32_CP15BEN 1522
+#define UML_ARM64_CPU_A32 1523
+
 #define UML_GADGET_TLB_ENTRIES 0
 #define UML_GADGET_TLB_ENTRY_READ_PAGE 0
 #define UML_GADGET_TLB_ENTRY_READ_DATA_MINUS_ADDRESS 8

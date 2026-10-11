@@ -11,6 +11,12 @@ host and power state, page profile, engine, guest topology, command, repeated
 result, and exit/shutdown status. Diagnostic profiler runs are not score
 evidence.
 
+Benchmark guests run 4 vCPUs on the macOS host and 2 on the iPad. The Mac
+runners default to `--cpus 4`, `run_ios_device_workload.py` and
+`run_ios_device_discard_bench.py` to `--cpus 2`, and a runner's `--workers`
+defaults to its `--cpus`. Each runner's report line or JSON record carries
+the vCPU count; do not compare results taken at different counts.
+
 Geekbench uses the payload already installed in `rootfs.erofs` and always runs
 with `--no-upload`. The workload is [`guest/geekbench.sh`](guest/geekbench.sh),
 which the runner installs as a payload file and which prints the
@@ -259,8 +265,8 @@ host load. A launch that misses its limit is recorded with no time and left out
 of the medians. The source disk's `.release-id` must name the release, because
 the launcher re-creates a disk from another release. `--env KEY=VALUE` sets one
 arm's emulator environment; `--guest-samples PATH` profiles the boot with the
-guest code sampler below. Guests are not serialized by the tool: take the GPU
-lock and a guest slot around each run, and alternate arms (ABBA) across runs.
+guest code sampler below. Guests are not serialized by the tool: take a guest
+slot around each run, and alternate arms (ABBA) across runs.
 
 `--scenario android_scenarios/NAME.json` follows each successful launch with a
 fixed sequence of sleeps and taps and waits for the scenario's completion line;
@@ -477,7 +483,7 @@ python3 tests/perf/run_guest_link_bench.py \
   --emulator .build/presets/macos-integration/bin/uml-darwin \
   --rootfs rootfs.erofs \
   --binary .build/presets/macos-unit-16k/tests/perf/probes/guest_scalar_mix_loop \
-  --engine gadgets --cpus 1 --workers 1 --repetitions 7 \
+  --engine gadgets --workers 1 --repetitions 7 \
   --core-class performance --overlay-shell \
   --boot-timeout 180 --command-timeout 120
 ```

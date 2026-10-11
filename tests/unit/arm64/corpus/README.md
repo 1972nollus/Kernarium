@@ -257,6 +257,17 @@ lane, and the first mismatch. The summary counts each lane's runs and the runs
 it skipped for each missing feature, the library lane's cases skipped for
 an uncovered form, and the words that lane handed to the library.
 
+## Engine entry
+
+A gadget or JIT case enters the engine as the runtime enters a task: the
+initial vectors are deferred (`defer_fp_load`, as `load_cpu` does) and
+`CpuState::vectors` holds nothing, so a program that touches the vectors
+without being marked as doing so loses its writes. The runner compares only
+what a context switch would save: the vectors if the engine marked them
+written (`fp_dirty`), FPCR and FPSR as the deferred image reports them. A
+case that expects a vector write therefore fails for an engine that did not
+load the vectors first. The library lane is not deferred.
+
 ## Regeneration and new cases
 
 Expected results come from independent derivation from the architecture or

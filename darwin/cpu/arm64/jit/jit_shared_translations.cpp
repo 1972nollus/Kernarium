@@ -4,6 +4,7 @@
 #include "jit_linking.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <mutex>
 
@@ -28,34 +29,64 @@ saturating_add_array(std::size_t total, std::size_t count,
   return total + count * element_size;
 }
 
+/* A translation's identity in bytes, and in the 32-bit elements that hold
+ * them: guest_word_count units of its ISA. For A64 and A32 these are
+ * 4 * guest_word_count bytes and guest_word_count elements, as before. */
+[[nodiscard]] std::size_t guest_identity_bytes(
+    const SharedTranslation &translation) noexcept {
+  return translation.guest_word_count *
+         aarch32::isa_unit_bytes(
+             static_cast<aarch32::GuestIsa>(translation.isa));
+}
+
+[[nodiscard]] std::size_t guest_identity_elements(
+    const SharedTranslation &translation) noexcept {
+  return (guest_identity_bytes(translation) + sizeof(std::uint32_t) - 1U) /
+         sizeof(std::uint32_t);
+}
+
 [[nodiscard]] bool same_guest_words(
     const SharedTranslation &stored,
     std::span<const std::uint32_t> requested) noexcept {
   return stored.guest_words != nullptr &&
-         stored.guest_word_count == requested.size() &&
-         std::equal(stored.guest_words.get(),
-                    stored.guest_words.get() + stored.guest_word_count,
-                    requested.begin());
+         guest_identity_elements(stored) == requested.size() &&
+         std::memcmp(stored.guest_words.get(), requested.data(),
+                     guest_identity_bytes(stored)) == 0;
 }
 
 [[nodiscard]] bool matches_guest_prefix(
     const SharedTranslation &stored,
     std::span<const std::uint32_t> requested) noexcept {
   return stored.guest_words != nullptr && stored.guest_word_count != 0 &&
-         stored.guest_word_count <= requested.size() &&
-         std::equal(stored.guest_words.get(),
-                    stored.guest_words.get() + stored.guest_word_count,
-                    requested.begin());
+         guest_identity_elements(stored) <= requested.size() &&
+         std::memcmp(stored.guest_words.get(), requested.data(),
+                     guest_identity_bytes(stored)) == 0;
+}
+
+/* Whether a translation's unit count is one its ISA can have: one unit per
+ * instruction for A64 and A32, and for T32 one or two halfwords each. */
+[[nodiscard]] bool valid_identity_units(
+    const SharedTranslation &translation) noexcept {
+  switch (static_cast<aarch32::GuestIsa>(translation.isa)) {
+  case aarch32::GuestIsa::a64:
+  case aarch32::GuestIsa::a32:
+    return translation.guest_word_count == translation.guest_instructions &&
+           translation.guest_word_count <= maximum_block_instructions;
+  case aarch32::GuestIsa::t32:
+    return translation.guest_instructions <= translation.guest_word_count &&
+           translation.guest_word_count <= 2 * translation.guest_instructions &&
+           translation.guest_instructions <= maximum_block_instructions;
+  }
+  return false;
 }
 
 [[nodiscard]] bool valid_shared_translation_shape(
     const SharedTranslation &translation,
     std::span<const std::uint32_t> requested) noexcept {
   if (translation.guest_words == nullptr ||
-      translation.guest_word_count == 0 ||
-      translation.guest_word_count != translation.guest_instructions ||
-      translation.guest_word_count > maximum_block_instructions ||
-      translation.guest_word_count > requested.size() ||
+      translation.guest_word_count == 0 || translation.isa > 2U ||
+      !valid_identity_units(translation) ||
+      guest_identity_elements(translation) > requested.size() ||
       !matches_guest_prefix(translation, requested) ||
       translation.words.empty() || translation.hot_words == 0 ||
       translation.hot_words > translation.words.size() ||
@@ -116,7 +147,7 @@ translation_payload_bytes(const SharedTranslation &translation) noexcept {
                                     sizeof(translation.words.front()));
   total = saturating_add_array(total, translation.relocations.capacity(),
                                sizeof(translation.relocations.front()));
-  return saturating_add_array(total, translation.guest_word_count,
+  return saturating_add_array(total, guest_identity_elements(translation),
                               sizeof(std::uint32_t));
 }
 
@@ -258,7 +289,9 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
     std::shared_ptr<const SharedTranslation> translation) {
   if (translation == nullptr ||
       !valid_shared_translation_shape(*translation, guest_words) ||
-      translation->guest_word_count != guest_words.size()) {
+      guest_identity_elements(*translation) != guest_words.size() ||
+      static_cast<aarch32::GuestIsa>(translation->isa) !=
+          aarch32::key_isa(guest_pc)) {
     malformed_rejected_.fetch_add(1, std::memory_order_relaxed);
     return nullptr;
   }

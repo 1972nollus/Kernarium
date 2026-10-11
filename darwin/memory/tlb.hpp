@@ -106,6 +106,12 @@ struct alignas(32) Tlb final {
 	 * follow their page's mapping changes. */
 	[[nodiscard]] std::byte *translate_tagged(
 		std::uint64_t address, Access access);
+	/* Translate the address of an exclusive load: a read, which faults like
+	 * any load, that also fills the page's write entry when the page is
+	 * writable now, so the store-exclusive that completes the pair finds it.
+	 * A page that is not writable keeps its read entry, and the failed write
+	 * lookup records no fault. */
+	[[nodiscard]] std::byte *translate_exclusive_load(std::uint64_t address);
 
 private:
 	void flush();

@@ -71,6 +71,32 @@ uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
 uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+# The AArch32 foundation: the state CpuState appends, the guest-AArch32
+# policy, the engines' levels, the AArch32 identification registers and
+# compat HWCAPs, and the engines' AArch32 entry.
+uml_add_arm64_unit_test(a32_foundation WITHOUT_HARNESS
+    OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+
+# The tagged translation key both engines' caches share across A64, A32 and
+# T32, and the key-aware validation of a translation's saved guest units.
+uml_add_arm64_unit_test(a32_guest_key WITHOUT_HARNESS NO_OBJECTS)
+
+# The AArch32 decoder: its generated table, the IT rules, the profile's gates
+# and the operands of the Decode pseudocode, against the generator's
+# independent answers and LLVM MC on stored samples. It composes the decoder
+# alone, which no engine links yet.
+uml_add_arm64_unit_test(aarch32_decoder WITHOUT_HARNESS
+    OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
+
+# The AArch32 semantic library's own contract: fault ordering, the exclusive
+# monitor, the single-instruction entry's IT handling, the events and the
+# library-exit counters. The corpus's model lane (below) covers its answers.
+uml_add_arm64_unit_test(aarch32_semantics WITHOUT_HARNESS
+    OBJECTS $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
+target_link_libraries(uml_arm64_aarch32_semantics_tests PRIVATE UML::GuestPageConfiguration)
+
 # Instruction-family tests: base, memory, then FP and SIMD.
 uml_add_arm64_unit_test(base_arithmetic_allocation)
 uml_add_arm64_unit_test(base_bit_allocation)
@@ -105,6 +131,8 @@ uml_add_arm64_unit_test(base_immediate_memory_structure)
 uml_add_arm64_unit_test(base_load_store_register_structure)
 uml_add_arm64_unit_test(base_ordered_behavior)
 uml_add_arm64_unit_test(base_ordered_gadget)
+# Load/store-exclusive loops make progress whatever the TLB holds.
+uml_add_arm64_unit_test(exclusive_progress)
 uml_add_arm64_unit_test(simd_ordinary_memory_gadget)
 uml_add_arm64_unit_test(simd_structure_gadget)
 uml_add_arm64_unit_test(simd_baseline_inventory WITHOUT_HARNESS
@@ -136,3 +164,29 @@ uml_add_arm64_unit_test(simd_matrix_gadget)
 uml_add_arm64_unit_test(simd_fcvt_precision_gadget)
 uml_add_arm64_unit_test(simd_fixed_transform_gadget
     NAME arm64-simd-fixed_transform_gadget)
+
+# The AArch32 instruction corpus: until an engine runs AArch32 the runner
+# proves each case consistent with the decoder and with itself.
+# tests/unit/arm64/aarch32_corpus/README.md owns the pack.
+add_executable(uml_arm64_aarch32_corpus_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_corpus_runner.cpp
+    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>)
+target_link_libraries(uml_arm64_aarch32_corpus_tests PRIVATE UML::GuestPageConfiguration)
+target_include_directories(uml_arm64_aarch32_corpus_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+add_dependencies(uml_arm64_aarch32_corpus_tests uml_arm64_aarch32_corpus)
+uml_add_unit_test(NAME arm64-aarch32-corpus
+    COMMAND uml_arm64_aarch32_corpus_tests ${UML_ARM64_AARCH32_CORPUS})
+
+# The corpus's model lane: the same pack through the AArch32 semantic
+# library (cpu/arm64/aarch32/semantics.hpp), at the library's level.
+add_executable(uml_arm64_aarch32_semantics_corpus_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_semantics_corpus_runner.cpp
+    $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+    $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>)
+target_link_libraries(uml_arm64_aarch32_semantics_corpus_tests PRIVATE UML::GuestPageConfiguration)
+target_include_directories(uml_arm64_aarch32_semantics_corpus_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin)
+add_dependencies(uml_arm64_aarch32_semantics_corpus_tests uml_arm64_aarch32_corpus)
+uml_add_unit_test(NAME arm64-aarch32-semantics-corpus
+    COMMAND uml_arm64_aarch32_semantics_corpus_tests ${UML_ARM64_AARCH32_CORPUS})

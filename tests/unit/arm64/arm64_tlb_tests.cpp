@@ -25,13 +25,14 @@ using uml::testing::require;
 
 class Mapping final {
 public:
-	Mapping(unsigned long generation, std::uint64_t base, std::size_t pages)
+	Mapping(unsigned long generation, std::uint64_t base, std::size_t pages,
+		int protection = PROT_READ | PROT_WRITE)
 		: generation_{generation}
 		, backing_{"uml-tlb.XXXXXX", pages * page}
 	{
 		require(darwin_uml_static_vm_map_generation(generation,
 			reinterpret_cast<void *>(base), backing_.descriptor(),
-			0, pages * page, PROT_READ | PROT_WRITE, 0, 1) == 0);
+			0, pages * page, protection, 0, 1) == 0);
 	}
 
 	Mapping(const Mapping &) = delete;
@@ -175,6 +176,80 @@ void narrow_unmap_invalidates_its_pages()
 	require(cached(*tlb, base + 3 * page));
 }
 
+/* Whether the page's read and write entries are present. */
+[[nodiscard]] bool has_entry(const Tlb &tlb, std::uint64_t address,
+	Access access)
+{
+	const auto key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+	return std::ranges::any_of(tlb.entries, [&](const auto &entry) {
+		return (access == Access::write ? entry.write_page :
+			entry.read_page) == key;
+	});
+}
+
+/* An exclusive load's translation fills the write entry of a writable page,
+ * keeps to the read entry of one that is not, and faults only as a read. */
+void exclusive_load_fills_the_write_entry()
+{
+	constexpr unsigned long generation = 224;
+	constexpr std::uint64_t base = 0x2400'0000;
+	constexpr std::uint64_t sentinel = 0x5eed'0000;
+	Mapping mapping{generation, base, 2};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->prepare(generation, changes(generation));
+	tlb->fault_address = sentinel;
+	tlb->fault_access = Access::execute;
+
+	auto *host = tlb->translate_exclusive_load(base + 0x40);
+	require(host != nullptr);
+	require(has_entry(*tlb, base, Access::write));
+	require(has_entry(*tlb, base, Access::read));
+	/* The same bytes a later store reaches, and no fault recorded. */
+	require(host == tlb->translate(base + 0x40, Access::write));
+	require(tlb->fault_address == sentinel &&
+		tlb->fault_access == Access::execute);
+	/* A hit on the write entry returns the same translation. */
+	require(tlb->translate_exclusive_load(base + 0x40) == host);
+
+	require(darwin_uml_static_vm_unmap_generation(generation,
+		reinterpret_cast<void *>(base), page) == 0);
+	tlb->prepare(generation, changes(generation));
+	require(!has_entry(*tlb, base, Access::write));
+	/* An unmapped page faults as a read. */
+	require(tlb->translate_exclusive_load(base) == nullptr);
+	require(tlb->fault_address == base && tlb->fault_access == Access::read);
+	require(!has_entry(*tlb, base, Access::read) &&
+		!has_entry(*tlb, base, Access::write));
+	/* The other page of the mapping is unaffected. */
+	require(tlb->translate_exclusive_load(base + page) != nullptr);
+	require(has_entry(*tlb, base + page, Access::write));
+}
+
+void exclusive_load_of_a_read_only_page()
+{
+	constexpr unsigned long generation = 225;
+	constexpr std::uint64_t base = 0x2500'0000;
+	constexpr std::uint64_t sentinel = 0x5eed'0000;
+	Mapping mapping{generation, base, 1, PROT_READ};
+	auto tlb = std::make_unique<Tlb>();
+	tlb->prepare(generation, changes(generation));
+	tlb->fault_address = sentinel;
+	tlb->fault_access = Access::execute;
+
+	auto *host = tlb->translate_exclusive_load(base + 8);
+	require(host != nullptr);
+	require(host == tlb->translate(base + 8, Access::read));
+	require(has_entry(*tlb, base, Access::read));
+	require(!has_entry(*tlb, base, Access::write));
+	/* The failed write lookup left no fault behind. */
+	require(tlb->fault_address == sentinel &&
+		tlb->fault_access == Access::execute);
+	/* The store still faults as a write when it comes. */
+	require(tlb->translate(base + 8, Access::write) == nullptr);
+	require(tlb->fault_address == base + 8 &&
+		tlb->fault_access == Access::write);
+}
+
 } // namespace
 
 int main()
@@ -183,4 +258,6 @@ int main()
 	generation_switch_clears_every_filled_set();
 	wide_unmap_invalidates_only_its_range();
 	narrow_unmap_invalidates_its_pages();
+	exclusive_load_fills_the_write_entry();
+	exclusive_load_of_a_read_only_page();
 }
