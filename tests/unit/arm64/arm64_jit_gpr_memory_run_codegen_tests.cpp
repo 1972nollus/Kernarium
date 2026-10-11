@@ -181,6 +181,11 @@ void page_limits_select_only_safe_prefixes() {
           "exact-page-span GPR pair omitted its end-address comparison");
   require(count_page_span_tbnz(exact_hot) == 1,
           "exact-page-span GPR pair omitted its page-bit rejection");
+  const auto exact_cold = cold_code(exact_compiled);
+  require(count_word(exact_cold, straddle_next_page) == 1 &&
+              count_straddle_form(exact_cold, near) == 1 &&
+              count_straddle_form(exact_cold, exact) == 1,
+          "GPR run lacks a straddle path replaying each access");
 
   const std::array rejected{near, beyond};
   const auto rejected_compiled =
@@ -221,6 +226,8 @@ void page_limits_select_only_safe_prefixes() {
   require(count_word(same_hot, page_span_eor) == 0 &&
               count_page_span_tbnz(same_hot) == 0,
           "zero-width page span emitted a redundant runtime proof");
+  require(count_word(same_compiled.words, straddle_next_page) == 0,
+          "a run that cannot straddle emitted a straddle path");
 }
 
 void infrastructure_guest_registers_are_remapped() {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "arm64_jit_memory_run_straddle_test_support.hpp"
 #include "arm64_simd_ordinary_memory_test_support.hpp"
 #include "jit_test_support.hpp"
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
@@ -915,6 +916,102 @@ void tracked_store_runs_track_every_range() {
   }
 }
 
+void straddling_runs_run_natively() {
+  /* Each case's run straddles the first data page's end. */
+  namespace straddle = arm64_jit_memory_run_straddle_test;
+  using straddle::load_d;
+  using straddle::load_q;
+  using straddle::pattern;
+  using straddle::pattern_x;
+  using straddle::store_q;
+  constexpr auto end = page_size;
+  const auto guest = [](unsigned index) {
+    return std::uint64_t{0xf0'0000} + index * 4U * page_size;
+  };
+  const auto with_base = [](const straddle::Case &test_case, unsigned base,
+                            std::uint64_t offset) {
+    arm64::CpuState cpu{};
+    if (base == 31U)
+      cpu.sp = straddle::data(test_case) + offset;
+    else
+      cpu.registers[base] = straddle::data(test_case) + offset;
+    return cpu;
+  };
+  /* Whether V<reg> holds the `bytes` data bytes at `offset`, then zeros. */
+  const auto holds = [](const arm64::CpuState &cpu, unsigned reg,
+                        std::uint64_t offset, std::size_t bytes) {
+    for (std::size_t index = 0; index < 16U; ++index) {
+      const auto want = index < bytes ? pattern(offset + index) : std::byte{};
+      if (cpu.vectors[reg].bytes[index] != want)
+        return false;
+    }
+    return true;
+  };
+
+  for (const unsigned base : {31U, 22U}) {
+    const auto index = base == 31U ? 0U : 1U;
+    const std::array code{load_q(1, base, 0), load_q(2, base, 1)};
+    const straddle::Case test_case{
+        .name = base == 31U ? "jit-simd-run-straddle-sp-q-load"
+                            : "jit-simd-run-straddle-gpr-q-load",
+        .generation = 9721U + index,
+        .guest = guest(index),
+        .run = code};
+    straddle::check(test_case, with_base(test_case, base, end - 16U),
+                    [&](const arm64::CpuState &cpu, auto) {
+                      engine::require(holds(cpu, 1, end - 16U, 16) &&
+                                      holds(cpu, 2, end, 16));
+                    });
+  }
+  {
+    const std::array code{load_d(1, 22, 1), load_d(2, 22, 0)};
+    const straddle::Case test_case{.name = "jit-simd-run-straddle-d-load",
+                                   .generation = 9723,
+                                   .guest = guest(2),
+                                   .run = code};
+    straddle::check(test_case, with_base(test_case, 22, end - 8U),
+                    [&](const arm64::CpuState &cpu, auto) {
+                      engine::require(holds(cpu, 1, end, 8) &&
+                                      holds(cpu, 2, end - 8U, 8));
+                    });
+  }
+  {
+    const std::array code{store_q(1, 31, 0), store_q(2, 31, 1)};
+    const straddle::Case test_case{.name = "jit-simd-run-straddle-q-store",
+                                   .generation = 9724,
+                                   .guest = guest(3),
+                                   .run = code,
+                                   .store = true};
+    auto cpu = with_base(test_case, 31, end - 16U);
+    for (std::size_t index = 0; index < 16U; ++index) {
+      cpu.vectors[1].bytes[index] = static_cast<std::byte>(0x40U + index);
+      cpu.vectors[2].bytes[index] = static_cast<std::byte>(0xc0U + index);
+    }
+    straddle::check(test_case, cpu, [&](const arm64::CpuState &, auto read) {
+      engine::require(read(end - 16U) == 0x4746'4544'4342'4140ULL &&
+                      read(end - 8U) == 0x4f4e'4d4c'4b4a'4948ULL &&
+                      read(end) == 0xc7c6'c5c4'c3c2'c1c0ULL &&
+                      read(end + 8U) == 0xcfce'cdcc'cbca'c9c8ULL &&
+                      read(end + 16U) == pattern_x(end + 16U));
+    });
+  }
+  {
+    /* The second access crosses the boundary itself. */
+    const std::array code{load_q(1, 22, 0), load_q(2, 22, 1)};
+    const straddle::Case test_case{
+        .name = "jit-simd-run-straddle-crossing-access",
+        .generation = 9725,
+        .guest = guest(4),
+        .run = code,
+        .native = false};
+    straddle::check(test_case, with_base(test_case, 22, end - 24U),
+                    [&](const arm64::CpuState &cpu, auto) {
+                      engine::require(holds(cpu, 1, end - 24U, 16) &&
+                                      holds(cpu, 2, end - 8U, 16));
+                    });
+  }
+}
+
 } // namespace
 
 int main() {
@@ -930,6 +1027,7 @@ int main() {
   dirty_prefix_is_preserved_on_cold_fallback(harness);
   tagged_state_fallback_is_exact(harness);
   ordinary_store_run_behavior(harness);
+  straddling_runs_run_natively();
   const auto &counts = harness.counts();
   engine::require(counts.gadgets != 0);
   if (engine::host_supports(memory::single_native())) {

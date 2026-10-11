@@ -173,6 +173,8 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto hot_words = emitter_.size();
     for (const auto &translation : translation_cold_)
       emit_translation_cold(translation);
+    for (const auto &straddle : run_straddles_)
+      emit_run_straddle(straddle);
     for (const auto &cold : cold_) {
       set_exit_gpr_mask(cold.dirty_gprs);
       set_exit_vector_mask(cold.dirty_vectors);
