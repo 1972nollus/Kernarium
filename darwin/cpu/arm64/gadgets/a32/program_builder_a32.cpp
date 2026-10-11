@@ -1155,6 +1155,8 @@ Translator::Result Translator::emit(const Instruction &in,
 		return emit_neon(in, plan);
 	case Family::neonmem:
 		return emit_structure(in, plan);
+	case Family::crc:
+		return emit_armv8(in, plan);
 	case Family::udf:
 	case Family::none:
 		break;

@@ -246,6 +246,7 @@ set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
 set_source_files_properties(arm64/gadgets/a32/program_builder_a32.cpp
     arm64/gadgets/a32/program_builder_a32_vfp.cpp
     arm64/gadgets/a32/program_builder_a32_neon.cpp
+    arm64/gadgets/a32/program_builder_a32_armv8.cpp
     PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_a32_dir})
 # The generated header for the tests that check the forms against the table.
 add_library(uml_arm64_a32_forms INTERFACE)
@@ -255,6 +256,7 @@ set(_uml_arm64_gadget_a32_sources
     arm64/gadgets/a32/program_builder_a32.cpp
     arm64/gadgets/a32/program_builder_a32_vfp.cpp
     arm64/gadgets/a32/program_builder_a32_neon.cpp
+    arm64/gadgets/a32/program_builder_a32_armv8.cpp
     arm64/gadgets/a32/library_helpers.cpp
     ${_uml_arm64_a32_dir}/a32_forms.hpp)
 

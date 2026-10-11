@@ -107,8 +107,9 @@ SELECTORS = [
     "cvt_fixed",        # sign = unsigned_, alt = to_fixed
 ]
 
-INDEX_GENERIC, INDEX_EXT, INDEX_TBL, INDEX_FIXED, INDEX_QSHLU = range(5)
-INDEX_NAMES = ["generic", "ext", "tbl", "fixed", "qshlu"]
+INDEX_GENERIC, INDEX_EXT, INDEX_TBL, INDEX_FIXED, INDEX_QSHLU, \
+    INDEX_SINGLE = range(6)
+INDEX_NAMES = ["generic", "ext", "tbl", "fixed", "qshlu", "single"]
 SHAPES = ["dnm", "dm", "dmsh", "imm", "dcore", "delem"]
 
 # fp: which variants need the standard FPSCR value.

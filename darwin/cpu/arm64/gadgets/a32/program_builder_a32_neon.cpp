@@ -94,6 +94,9 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 		index = static_cast<unsigned>(o.frac_bits) - 1U | q << 5 |
 			sign << 6 | alt << 7 | (o.esize == 16 ? 1U << 8 : 0U);
 		break;
+	case NeonIndex::single:
+		index = 0;
+		break;
 	case NeonIndex::qshlu: {
 		static constexpr unsigned base[4] = {0, 8, 24, 56};
 		index = q * 120U + base[size & 3U] +

@@ -153,6 +153,9 @@ private:
 	Result emit_neon(const Instruction &in, const FormPlan &plan);
 	/* VLDn and VSTn. */
 	Result emit_structure(const Instruction &in, const FormPlan &plan);
+	/* The Armv8 additions and optional extensions that are neither VFP nor
+	 * Advanced SIMD: program_builder_a32_armv8.cpp. */
+	Result emit_armv8(const Instruction &in, const FormPlan &plan);
 	/* The illegal-instruction exit at the current instruction. */
 	void emit_illegal();
 	void emit_indirect(std::uintptr_t source, bool interwork, bool returns);

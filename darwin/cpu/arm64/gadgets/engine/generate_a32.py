@@ -1154,6 +1154,7 @@ def build_assembly(asm: Assembly) -> None:
     emit_blocks(asm)
     emit_integer(asm)
     a32_simd.emit(asm)
+    a32_armv8.emit(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1267,6 +1268,8 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
         "inline constexpr G kStm[17] = {G::count, " + ", ".join(
             f"G::stm_{c}" for c in range(1, 17)) + "};", ""]
     out += a32_simd.header_tables(index)
+    out.append("")
+    out += a32_armv8.header_tables(index)
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))
 
