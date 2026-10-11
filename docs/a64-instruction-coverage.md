@@ -127,11 +127,11 @@ or FP, as the 2026-06 pseudocode does on a CPU without FEAT_FPRCVT; the
 pseudocode makes UMOV and SMOV of element 0 and the scalar FRECPE, FRECPS,
 FRSQRTE, FRSQRTS, and FMULX FP. `sme_decode.hpp` decodes against both, with
 the streaming-mode requirement. An SVE word that the virtual CPU's profile
-lacks stays UNDEFINED outside streaming mode, except the SM = 0 vector-length
-family (CNT, INC, DEC, RDVL, ADDVL and ADDPL), which a virtual CPU with SME
-and without SVE executes for a vector length of 16 bytes, a deliberate
-departure from the architecture that [`architecture.md`](architecture.md)
-describes. `arm64-sme-encoding-table`
+lacks stays UNDEFINED outside streaming mode, except the SM = 0 family
+(CNT, INC, DEC, RDVL, ADDVL and ADDPL, and LDR and STR of Z and P registers),
+which a virtual CPU with SME and without SVE executes for a vector length of
+16 bytes, a deliberate departure from the architecture that
+[`architecture.md`](architecture.md) describes. `arm64-sme-encoding-table`
 checks the decoder against the table, every row's LLVM MC witness against its
 row, and each row's requirements against its access checks. The table is a
 header, not an `.inc` contract, because C++ sources may not include `.inc`

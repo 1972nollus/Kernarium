@@ -634,19 +634,32 @@ FEAT_SME and without the SVE profile, the default. CNTB, CNTH, CNTW and CNTD,
 RDVL, ADDVL, ADDPL and the scalar INCB, INCH, INCW, INCD, DECB, DECH, DECW and
 DECD, with every predicate pattern and multiplier, execute at PSTATE.SM = 0
 for one constant vector length of 128 bits for the whole process (CNTB = 16,
-CNTD = 2), although the architecture makes every SVE word UNDEFINED there on
-such a CPU and an M4 traps them. Compilers target armv9-a, which implies
-SVE2, so a locally-streaming function reads the non-streaming vector length
-with CNTD before it enters streaming mode, and would take SIGILL on every
-host that advertises SME. In streaming mode the same words keep their
-architectural meaning with the streaming vector length, every other SVE word
-at SM = 0 stays the illegal-instruction exit, and the ID registers and hwcaps
-still report no SVE. Where the SVE profile is present its path owns the
-words. [`cpu/arm64/detail/sm0_vector_length.hpp`](../darwin/cpu/arm64/detail/sm0_vector_length.hpp)
-defines the family once: both engines decode a family word to the A64 word of
-the same effect (MOVZ, MOVN, ADD, SUB or NOP), so no translation of one
-touches the FP or SVE state. No hardware observes the results, so the corpus
-holds them as project-defined (`arm64-sm0-vl`).
+CNTD = 2), and so do LDR and STR of a vector register Z and of a predicate
+register P with a scalar base and an immediate offset (MUL VL), the
+compilers' callee-saved spills, which move 16 and 2 bytes. The architecture
+makes every SVE word UNDEFINED there on such a CPU and an M4 traps them.
+Compilers target armv9-a, which implies SVE2, so a locally-streaming function
+reads the non-streaming vector length with CNTD before it enters streaming
+mode, and would take SIGILL on every host that advertises SME; one that must
+keep Z8-Z23 and P4-P15 across the mode change spills them first. Z_n is V_n
+outside streaming mode, so a Z access is the 16-byte access of the V
+register. The CPU has no predicate state there, so STR of P stores two zero
+bytes and LDR of P performs its access, faulting as a load does, and drops
+the data. In streaming mode the same words keep their architectural meaning
+with the streaming vector length, and the ID registers and hwcaps still
+report no SVE. Every other SVE word at SM = 0 stays the illegal-instruction
+exit, so a binary built for SVE and SME that computes with SVE outside
+streaming mode (its data processing, contiguous and gather loads and stores,
+and predicate construction) still takes SIGILL: the family keeps SME code
+running, and is no promise to run SVE code on a CPU without the SVE profile.
+Where the SVE profile is present its path owns the words.
+[`cpu/arm64/detail/sm0_vector_length.hpp`](../darwin/cpu/arm64/detail/sm0_vector_length.hpp)
+defines the family once: both engines decode a vector-length word to the A64
+word of the same effect (MOVZ, MOVN, ADD, SUB or NOP), so no translation of
+one touches the FP or SVE state, and a spill word to the SIMD&FP or halfword
+access it is, with the offset in the translation, since a Z offset reaches
+four times as far as an unscaled A64 access. No hardware observes the
+results, so the corpus holds them as project-defined (`arm64-sm0-vl`).
 
 The guest kernel learns the same answer from
 `darwin_uml_guest_sve_vector_length()`, 16 exactly when the selected engine

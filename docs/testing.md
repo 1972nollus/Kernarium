@@ -580,19 +580,22 @@ encoding the SVE profile executes outside streaming mode UNDEFINED under
 CPU, so both engines run them today with the guest-SVE policy off or on.
 
 A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
-ADDPL at SM = 0 for a vector length of 16 bytes, a deliberate departure from
-the architecture (see [CPU execution and
+ADDPL at SM = 0 for a vector length of 16 bytes, and LDR and STR of Z and P
+registers (16 and 2 bytes), a deliberate departure from the architecture (see
+[CPU execution and
 scheduling](architecture.md#cpu-execution-and-scheduling)). No host observes
 the results, because an M4 traps those words, so the `arm64-sm0-vl` record
-holds the project's own, written from the pseudocode, and
-`arm64-instruction-corpus-sm0-vl` re-derives it. The `arm64-sme-native` records
-hold no family word at SM = 0, and `arm64-instruction-corpus-sm0-vl-profile`
-runs the `arm64-sm0-vl`, `arm64-absent-sve` and `arm64-absent-sme` records for
-a virtual CPU with the SME profile assumed on any host, which also pins every
-other SVE word UNDEFINED at SM = 0 in both engines. The unit tests
-`arm64-sm0-vector-length`, `arm64-gadget-sme`, `arm64-jit-sme-control` and
-`arm64-jit-sme-codegen` check the family against a model of the pseudocode, run
-it in each engine, and pin the same for the rest of the encoding table.
+holds the project's own, written from the pseudocode, with the spills' pages,
+faults, tagged pointers and misaligned SPs and controls that stay UNDEFINED
+beside them, and `arm64-instruction-corpus-sm0-vl` re-derives it. The
+`arm64-sme-native` records hold no family word at SM = 0, and
+`arm64-instruction-corpus-sm0-vl-profile` runs the `arm64-sm0-vl`,
+`arm64-absent-sve` and `arm64-absent-sme` records for a virtual CPU with the
+SME profile assumed on any host, which also pins every other SVE word
+UNDEFINED at SM = 0 in both engines. The unit tests `arm64-sm0-vector-length`,
+`arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
+the family against a model of the pseudocode, run it in each engine, and pin
+the same for the rest of the encoding table.
 
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
@@ -769,19 +772,20 @@ that with the policy forced off the probe sees no SME.
 
 Two opt-in tools list what SME code executes outside streaming mode, where
 an SVE word is UNDEFINED on an SME CPU without SVE unless it belongs to the
-SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL and the scalar INC/DEC
-B/H/W/D). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
+SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL, the scalar INC/DEC
+B/H/W/D, and LDR and STR of Z and P). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
 desktop EROFS images and the Android release directories), extracts them
 with `fsck.erofs`, `debugfs` and `zstd`, and walks every SME function of
 every AArch64 ELF file, APK and APEX payloads included, from its inferred
-entry mode; any other SVE word reachable at SM = 0 is a decision to extend
-the family or withhold SME from that workload, and `--expect` pins a
+entry mode; any other SVE word reachable at SM = 0 is a limit of the family
+(SVE data processing in a body that is not streaming), reported so that
+SME is withheld from that workload or the family is extended, and `--expect` pins a
 binary's words (Chromium's libyuv executes only CNTD there).
 `tools/arm64-tests/sme-idiom-corpus.py` builds `sme_idioms.cpp` with the
 given clang and GCC compilers for SVE and SME-only targets, every
 optimization level and callee-saved register pressure, and reports the
 same classification for each compiler idiom, callee-saved Z and P spills
-included. The `arm64-sme-sm0-scan` tooling test checks the classifier and
+among the family words. The `arm64-sme-sm0-scan` tooling test checks the classifier and
 both tools on synthetic ELF fixtures.
 
 ## Guest SVE policy
