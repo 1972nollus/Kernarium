@@ -176,7 +176,7 @@ records (`compare`, below), in particular of the fault addresses of the
 
 ```sh
 python3 tools/arm64-tests/a32-corpus.py observe --archive ISA_AArch32_xml_A_profile-2026-06.tar.gz \
-  --suite alu --host arm64-builder --runner 'qemu-arm -cpu max'
+  --suite alu --host HOST --runner 'qemu-arm -cpu max'
 python3 tools/arm64-tests/a32-corpus.py finish
 ```
 

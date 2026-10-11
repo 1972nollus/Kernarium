@@ -200,6 +200,10 @@ Update documentation in the same change whenever its current contract changes.
 
 - Do not commit build trees, kernel replay checkouts, rootfs images, caches,
   IDE state, temporary reports, or generated runtime output.
+- Keep host-, user-, device-, and site-specific values out of tracked files.
+  They live outside the repository: a flag, an environment variable, or an
+  ignored local file with a tracked `.example`.
+  `repository-environment-portability` enforces this.
 - After validating a replacement Android release, remove the superseded
   artifacts that
   [`android/aosp-17/README.md`](android/aosp-17/README.md#superseded-releases)
