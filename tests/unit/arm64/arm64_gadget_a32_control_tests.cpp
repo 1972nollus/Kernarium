@@ -1692,6 +1692,64 @@ void vld1_and_vst1_copies_across_a_page_stay_out_of_the_library()
 	aarch32::count_a32_library_exits(false);
 }
 
+/* A VLD1 or VST1 copy without an alignment hint has a gadget for each
+ * writeback (none, the size, Rm) and register count; each must move the
+ * bytes, inside a page and across one, write back what it should and leave
+ * the other core registers alone. */
+void vld1_and_vst1_copies_write_back_in_each_mode()
+{
+	/* type field of VLD1 and VST1 for one to four registers */
+	const std::uint32_t types[] = {0x7U, 0xaU, 0x6U, 0x2U};
+	unsigned long generation = 2400;
+	for (const bool store : {false, true}) {
+		for (unsigned registers = 1; registers <= 4; ++registers) {
+			for (unsigned mode = 0; mode < 3; ++mode) { /* none, size, Rm = r2 */
+				for (const bool crossing : {false, true}) {
+					const std::uint32_t word = (store ? 0xf400'0000U : 0xf420'0000U) |
+						(store ? 1U : 0U) << 16 | types[registers - 1] << 8 |
+						0x80U | (mode == 0 ? 0xfU : mode == 1 ? 0xdU : 0x2U);
+					Guest guest{generation++};
+					guest.a32(0, {word, a::svc});
+					const std::uint32_t size = 8 * registers;
+					const std::uint32_t start = crossing ? page - size / 2 : 0x40;
+					for (std::uint32_t index = 0; index < 8; ++index)
+						guest.data32(start + 4 * index, 0x0101'0101U * (index + 1));
+					auto cpu = a32_state();
+					cpu.registers[0] = data_base + start;
+					cpu.registers[1] = data_base + start;
+					cpu.registers[2] = 0x24;
+					cpu.registers[3] = 0xfeed'f00dU;
+					for (unsigned n = 0; n < 4; ++n)
+						set_d(cpu, n, 0x1111'1111'0000'0000ULL * (n + 1) + n + 1);
+					require(guest.run(cpu).reason == ExitReason::system_call);
+					for (unsigned n = 0; n < registers; ++n) {
+						if (store) {
+							const std::uint64_t value =
+								0x1111'1111'0000'0000ULL * (n + 1) + n + 1;
+							require(guest.data32(start + 8 * n) ==
+								static_cast<std::uint32_t>(value));
+							require(guest.data32(start + 8 * n + 4) ==
+								static_cast<std::uint32_t>(value >> 32));
+						} else {
+							require(get_d(cpu, n) ==
+								(std::uint64_t{0x0101'0101U * (2 * n + 2)} << 32 |
+								 0x0101'0101U * (2 * n + 1)));
+						}
+					}
+					const unsigned base = store ? 1U : 0U;
+					const std::uint32_t expected = data_base + start +
+						(mode == 0 ? 0U : mode == 1 ? size : 0x24U);
+					require(reg(cpu, base) == expected, "a copy wrote back the wrong base");
+					require(reg(cpu, 1 - base) == data_base + start,
+						"a copy changed the other base");
+					require(reg(cpu, 2) == 0x24U && reg(cpu, 3) == 0xfeed'f00dU,
+						"a copy changed an unrelated register");
+				}
+			}
+		}
+	}
+}
+
 /* ADD and SUB of an immediate to a register in place have an entry per
  * register with its displacement baked in; each must reach its own register
  * and flags. */
@@ -2308,6 +2366,7 @@ int main()
 	add_sub_and_mul_run_in_the_active_environment_for_ordinary_operands();
 	structure_loads_and_stores_move_the_elements_and_write_back();
 	vld1_and_vst1_copies_stay_out_of_the_library();
+	vld1_and_vst1_copies_write_back_in_each_mode();
 	vld1_and_vst1_copies_across_a_page_stay_out_of_the_library();
 	in_place_add_and_sub_of_an_immediate_reach_every_register();
 	compare_and_branch_pairs_take_the_branch_as_the_pair_does();

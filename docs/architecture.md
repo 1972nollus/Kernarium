@@ -936,7 +936,9 @@ immediate. VLDn and VSTn are native (`engine/a32_structure.py`): a copy for
 VLD1 and VST1 of several registers, LD2 to LD4 and ST2 to ST4 for the
 interleaved ones, element copies for one lane and LD1R to LD4R for all lanes,
 with the register or immediate writeback; a VLD1 or VST1 copy that crosses a
-page stays in the gadget and moves its bytes with the A64 slow transfer helper.
+page stays in the gadget and moves its bytes with the A64 slow transfer helper,
+and one without an alignment hint has a gadget for each writeback that tests
+nothing the instruction does not need.
 VRECPS and VRSQRTS (AArch32's unfused steps, not the fused A64 ones), an
 interleaved or one-lane structure access or VLDM and VSTM that crosses a page,
 and a misaligned access with an alignment hint run
