@@ -843,7 +843,11 @@ compiled by its own compiler, which reuses the A64 compiler's register
 residency, flag machine, cold paths, direct and indirect links, tracked stores
 and publication: R0-R14 are resident host registers written back at every
 exit, NZCV is the host's with the lazy-flag states of the A64 compiler, a
-condition is a branch over the body, and a link's target is the key. Memory
+condition is a branch over the body, and a link's target is the key. Every exit
+whose successor is static (a branch, the fall-through of a block the 60
+instructions of a window cut short, the arm of a conditional instruction or
+CBZ that is not taken) is a link while the ITSTATE that follows is zero, so a
+straight run chains like a loop. Memory
 takes the shared inline TLB sequence after a 32-bit address and the alignment
 rule of the form; the Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
