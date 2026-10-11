@@ -963,50 +963,66 @@ void forward_skip_over_stores_to_a_return() {
  * the address xor its shift by 13 (one instruction and one extract) and a tag
  * compare that shifts the address itself, not the A64 compiler's longer
  * sequence. A probe with the wrong index would only miss, so the words are
- * what is checked. */
+ * what is checked. An access of more than one byte that may be unaligned
+ * compares the tag with its last byte's page, which tells a page crossing
+ * from a hit without a test of its own. */
 void tlb_probe_is_the_short_form() {
   Fixture fixture{0x1a32'0c11, 2, 2};
-  fixture.code32(0, {0xe591'0004U, 0xef00'0000U}); // ldr r0,[r1,#4]; svc
-  std::vector<std::byte> bytes(2 * 4);
-  fixture.read_code(0, bytes);
-  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
-      key::a32_key(code_base), bytes);
-  const auto has = [&](std::uint32_t word) {
+  const auto compile = [&](std::uint32_t word) {
+    fixture.code32(0, {word, 0xef00'0000U}); // the access; svc
+    std::vector<std::byte> bytes(2 * 4);
+    fixture.read_code(0, bytes);
+    return ::uml::cpu::arm64::jit::testing::compile_a32_block(
+        key::a32_key(code_base), bytes);
+  };
+  const auto has = [](const auto &compiled, std::uint32_t word) {
     return std::find(compiled.code.words.begin(), compiled.code.words.end(),
                      word) != compiled.code.words.end();
   };
-  require(has(0xca48'3500U)); // eor x0, x8, x8, lsr #13
-  require(has(0xca48'3042U)); // eor x2, x2, x8, lsr #12
-  require(!has(0xd34c'fd01U)); // lsr x1, x8, #12 (the long form's page number)
+  const auto byte_load = compile(0xe5d1'0004U); // ldrb r0,[r1,#4]
+  require(has(byte_load, 0xca48'3500U));  // eor x0, x8, x8, lsr #13
+  require(has(byte_load, 0xca48'3042U));  // eor x2, x2, x8, lsr #12
+  require(!has(byte_load, 0xd34c'fd01U)); // lsr x1, x8, #12 (the long form)
+  const auto word_load = compile(0xe591'0004U); // ldr r0,[r1,#4]
+  require(has(word_load, 0xca48'3500U));
+  require(has(word_load, 0x9100'0d01U));  // add x1, x8, #3
+  require(has(word_load, 0xca41'3042U));  // eor x2, x2, x1, lsr #12
+  require(!has(word_load, 0xca48'3042U));
 }
 #endif
 
 /* An access the hot path has checked is aligned to its size cannot span two
  * pages, so it is not tested for it: a single-precision VLDR, and a VLD1 whose
  * alignment hint covers its bytes. A word load, which may be unaligned, and a
- * VLD1 without a hint are. */
+ * VLD1 without a hint are (on 16 KiB pages by a bit test of the offset plus
+ * its size, on 4 KiB pages by the tag compare with the last byte's page). */
 void aligned_accesses_skip_the_crossing_test() {
   Fixture fixture{0x1a32'0c12, 2, 2};
-  constexpr unsigned page_bit = DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 14U : 12U;
-  const auto tests_page_bit = [&](std::uint32_t word) {
+  const auto checks_crossing = [&](std::uint32_t word, unsigned bytes) {
     fixture.code32(0, {word, 0xef00'0000U});
-    std::vector<std::byte> bytes(2 * 4);
-    fixture.read_code(0, bytes);
+    std::vector<std::byte> block(2 * 4);
+    fixture.read_code(0, block);
     const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
-        key::a32_key(code_base), bytes);
+        key::a32_key(code_base), block);
     require(!compiled.code.words.empty());
-    // tbnz w0, #page_bit, ...
-    return std::any_of(compiled.code.words.begin(), compiled.code.words.end(),
-                       [&](std::uint32_t w) {
-                         return (w & 0xfff8'001fU) ==
-                                (0x3700'0000U | page_bit << 19);
-                       });
+    return std::any_of(
+        compiled.code.words.begin(), compiled.code.words.end(),
+        [&](std::uint32_t w) {
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+          // tbnz w0, #14, ...
+          (void)bytes;
+          return (w & 0xfff8'001fU) == (0x3700'0000U | 14U << 19);
+#else
+          // add x1, x8, #(bytes - 1)
+          return w == (0x9100'0101U | (bytes - 1U) << 10);
+#endif
+        });
   };
-  require(tests_page_bit(0xe591'0000U));  // ldr r0,[r1]
-  require(!tests_page_bit(0xed91'0a00U)); // vldr s0,[r1]
-  require(tests_page_bit(0xed91'0b00U));  // vldr d0,[r1]
-  require(tests_page_bit(0xf421'0a8fU));  // vld1.32 {d0,d1},[r1]
-  require(!tests_page_bit(0xf421'0aafU)); // vld1.32 {d0,d1},[r1:128]
+  require(checks_crossing(0xe591'0000U, 4));  // ldr r0,[r1]
+  require(!checks_crossing(0xed91'0a00U, 4)); // vldr s0,[r1]
+  require(checks_crossing(0xed91'0b00U, 8));  // vldr d0,[r1]
+  require(checks_crossing(0xf421'0a8fU, 16)); // vld1.32 {d0,d1},[r1]
+  require(!checks_crossing(0xf421'0aafU, 16)); // vld1.32 {d0,d1},[r1:128]
 }
 
 void native_loops() {

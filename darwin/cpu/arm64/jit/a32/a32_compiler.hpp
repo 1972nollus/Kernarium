@@ -140,6 +140,10 @@ private:
     Arm64Emitter::Label fault;
     unsigned address;
     ::uml::memory::Access access;
+    /* Nonzero when the hot path's tag compare was against the last byte of
+     * this many: the cold path first sends a crossing access to `crossing`. */
+    std::size_t bytes{};
+    Arm64Emitter::Label crossing{};
   };
 
   /* An Advanced SIMD load whose span crosses a page: the cold path probes

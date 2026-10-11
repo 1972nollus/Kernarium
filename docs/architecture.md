@@ -1014,7 +1014,11 @@ rule of the form (on 4 KiB pages the entry index comes from the address's own
 bits and the tag compare shifts the address, two instructions fewer than the
 A64 compiler's). An access already checked to be aligned to its size (a
 single-precision VLDR or VSTR, a Neon transfer whose alignment hint covers its
-bytes, an ordered or exclusive access) is not tested for crossing a page. The
+bytes, an ordered or exclusive access) is not tested for crossing a page. On
+4 KiB pages any other access of more than one byte compares the entry's tag
+with the page of its last byte, so a crossing access misses (the index never
+gives neighbouring pages of a 32-bit address space one entry) and its cold path
+tells it from a miss; 16 KiB pages test the offset before the probe. The
 Armv8 load-acquire and store-release (LDA, STL and their
 byte and halfword forms) are an alignment-checked LDAR and STLR. A
 load-exclusive, up to four register instructions and the store-exclusive

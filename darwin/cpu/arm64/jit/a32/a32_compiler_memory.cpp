@@ -66,14 +66,29 @@ void A32Compiler::emit_translate(unsigned address, Access access,
                                  std::size_t bytes,
                                  std::optional<Arm64Emitter::Label> crossing,
                                  unsigned aligned) {
+  const auto crossing_target = crossing.value_or(fallback);
+  /* The register whose page the entry's tag is compared with. */
+  [[maybe_unused]] unsigned tag_address = address;
+  bool tag_checks_crossing = false;
   if (aligned >= bytes)
     crossing.reset();
   else if (bytes > 1) {
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
     emitter_.ubfm(0, address, 0, page_shift - 1);
     emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
     /* bytes is below one page, so the sum is below two pages and its page
      * bit is the complete crossing test. */
-    emitter_.test_zero(crossing.value_or(fallback), 0, page_shift, true);
+    emitter_.test_zero(crossing_target, 0, page_shift, true);
+#else
+    /* The entry is indexed by the first byte's page and compared with the
+     * last byte's: an access inside one page hits as before, and a crossing
+     * one finds an entry of another page (the index never gives two
+     * neighbouring pages of a 32-bit address space the same entry), misses,
+     * and is told from a plain miss on the cold path. */
+    emitter_.add_immediate(1, address, static_cast<unsigned>(bytes - 1));
+    tag_address = 1;
+    tag_checks_crossing = true;
+#endif
   }
   const unsigned page_offset = access == Access::write ? 16U : 0U;
   const auto slow = emitter_.make_label();
@@ -94,7 +109,7 @@ void A32Compiler::emit_translate(unsigned address, Access access,
   emitter_.add_shifted(0, 14, 0, 5);
   emitter_.load_pair_x(2, 9, 0, page_offset);
   emitter_.emit(0xca40'0042U | (page_shift << 10) |
-                ((address & 31U) << 16)); // eor x2, x2, address, lsr #12
+                ((tag_address & 31U) << 16)); // eor x2, x2, tag, lsr #12
 #endif
   emitter_.compare_zero(slow, 2, true, true);
   emitter_.add_shifted(address, address, 9, 0);
@@ -105,6 +120,8 @@ void A32Compiler::emit_translate(unsigned address, Access access,
       .fault = fault,
       .address = address,
       .access = access,
+      .bytes = tag_checks_crossing ? bytes : 0U,
+      .crossing = crossing_target,
   });
   if (crossing && bytes > 1 && aligned < bytes)
     crossing_cold_.push_back({
@@ -165,6 +182,13 @@ void A32Compiler::emit_crossing_cold(const CrossingColdPath &path) {
 
 void A32Compiler::emit_translation_cold(const TranslationColdPath &path) {
   emitter_.bind(path.label);
+  if (path.bytes != 0U) {
+    /* The tag compared with the last byte's page: a crossing access ends up
+     * here too, and leaves for the crossing or slow path without a walk. */
+    emitter_.ubfm(0, path.address, 0, page_shift - 1);
+    emitter_.add_immediate(0, 0, static_cast<unsigned>(path.bytes - 1));
+    emitter_.test_zero(path.crossing, 0, page_shift, true);
+  }
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
   const unsigned page_offset = path.access == Access::write ? 16U : 0U;
   const auto miss = emitter_.make_label();
