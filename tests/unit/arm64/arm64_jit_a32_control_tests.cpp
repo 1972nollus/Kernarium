@@ -608,6 +608,14 @@ void side_exit_branches() {
             // The target is skip + 1 instructions on: PC is two ahead.
             const unsigned bcond = random.below(8) == 0 ? 14 : random.below(14);
             words[i] = bcond << 28 | 0x0a00'0000U | (skip - 1U);
+          } else if (random.below(5) == 0) {
+            // Rm shifted by a register: the translator computes the shift
+            // with the host flags, which it spills first.
+            const bool s = random.below(2) != 0;
+            words[i] = cond << 28 | op << 21 | (s ? 1U << 20 : 0U) |
+                       (op == 13U ? 0U : rn) << 16 | rd << 12 |
+                       random.below(12) << 8 | random.below(4) << 5 | 1U << 4 |
+                       random.below(12);
           } else {
             const bool s = random.below(2) != 0;
             // MOV's Rn field is zero.
@@ -628,7 +636,8 @@ void side_exit_branches() {
             halves[i] = static_cast<std::uint16_t>(
                 0xd000U | random.below(14) << 8 | (skip - 1U));
           } else {
-            switch (random.below(8)) {
+            switch (random.below(9)) {
+            case 8: halves[i] = static_cast<std::uint16_t>(0x4080U | random.below(4) << 6 | lo2 << 3 | lo); break;
             case 0: halves[i] = static_cast<std::uint16_t>(0x2000U | lo << 8 | random.below(256)); break;
             case 1: halves[i] = static_cast<std::uint16_t>(0x1c00U | random.below(8) << 6 | lo2 << 3 | lo); break;
             case 2: halves[i] = static_cast<std::uint16_t>(0x1a00U | lo3 << 6 | lo2 << 3 | lo); break;
@@ -708,6 +717,12 @@ std::uint32_t neon_vst1_q(unsigned qd, unsigned rn) {
   return 0xf400'0a8fU | (d >> 4 & 1U) << 22 | rn << 16 | (d & 15U) << 12;
 }
 
+/* B<cond> at word `from` to word `to` (PC is two words ahead). */
+constexpr std::uint32_t arm_branch_to(unsigned cond, int from, int to) {
+  return cond << 28 | 0x0a00'0000U |
+         (static_cast<std::uint32_t>(to - from - 2) & 0x00ff'ffffU);
+}
+
 /* The translation of a counted loop is a loop in the host: a budget
  * decrement of the block's length followed by a branch backwards, and
  * nothing of the descriptor-linked exit the loop would otherwise take. */
@@ -777,6 +792,169 @@ void counted_loop_is_a_host_loop() {
     for (unsigned i = 0; i < 15; ++i)
       require(whole.registers[i] == stepped.registers[i]);
     require((whole.nzcv & 0xf000'0000U) == (stepped.nzcv & 0xf000'0000U));
+  }
+}
+
+/* A forward branch over instructions of its own block does not leave the
+ * block: the instructions run on the other arm, and the arm that skipped them
+ * is credited for them so the count stays what one instruction at a time
+ * gives. */
+void forward_branch_skips_in_the_block() {
+  Fixture fixture{0x1a32'0c0d, 4};
+  constexpr std::uint32_t credit = 0x9100'0000U | 2U << 10 | 20U << 5 | 20U;
+  const auto has_credit = [&](const std::vector<std::uint32_t> &words) {
+    return std::find(words.begin(), words.end(), credit) != words.end();
+  };
+  // cmp r0,#0; beq L; add r1,r1,#1; add r2,r2,#1; L: add r3,r3,#1; svc
+  fixture.code32(0, {0xe350'0000U, arm_branch_to(0x0, 1, 4), 0xe281'1001U,
+                     0xe282'2001U, 0xe283'3001U, 0xef00'0000U});
+  std::vector<std::byte> bytes(6 * 4);
+  fixture.read_code(0, bytes);
+  const auto compiled = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::a32_key(code_base), bytes);
+  require(compiled.code.guest_instructions == 6);
+  require(has_credit(compiled.code.words));
+  for (const bool taken : {true, false}) {
+    auto cpu = Fixture::task(false);
+    cpu.registers[0] = taken ? 0U : 1U;
+    const auto result = fixture.run(cpu, 4096);
+    require(result.reason == ExitReason::system_call);
+    require(result.retired_instructions == (taken ? 4U : 6U));
+    require(cpu.registers[1] == (taken ? 0U : 1U));
+    require(cpu.registers[2] == (taken ? 0U : 1U));
+    require(cpu.registers[3] == 1U);
+  }
+  // CBNZ over two Thumb instructions.
+  fixture.code16(64, {0xb908, 0x3101, 0x3201, 0x3301, 0xdf00});
+  std::vector<std::byte> thumb(5 * 2);
+  fixture.read_code(64, thumb);
+  const auto compiled_thumb = ::uml::cpu::arm64::jit::testing::compile_a32_block(
+      key::t32_key(code_base + 64), thumb);
+  require(compiled_thumb.code.guest_instructions == 5);
+  require(has_credit(compiled_thumb.code.words));
+  for (const bool taken : {true, false}) {
+    auto cpu = Fixture::task(true, 64);
+    cpu.registers[0] = taken ? 1U : 0U;
+    const auto result = fixture.run(cpu, 4096);
+    require(result.reason == ExitReason::system_call);
+    require(result.retired_instructions == (taken ? 3U : 5U));
+    require(cpu.registers[1] == (taken ? 0U : 1U));
+    require(cpu.registers[3] == 1U);
+  }
+  // A region the translator cannot keep in the block (USAD8 runs through the
+  // library, which ends the block) takes the branch out of the block instead.
+  fixture.code32(128, {0xe350'0000U, arm_branch_to(0x0, 1, 4), 0xe781'f312U,
+                       0xe284'4001U, 0xe285'5001U, 0xef00'0000U});
+  {
+    std::vector<std::byte> refused(6 * 4);
+    fixture.read_code(128, refused);
+    const auto compiled_refused =
+        ::uml::cpu::arm64::jit::testing::compile_a32_block(
+            key::a32_key(code_base + 128), refused);
+    require(compiled_refused.code.guest_instructions == 3);
+    require(!has_credit(compiled_refused.code.words));
+  }
+  for (const bool taken : {true, false}) {
+    auto cpu = Fixture::task(false, 128);
+    cpu.registers[0] = taken ? 0U : 1U;
+    cpu.registers[2] = 0x0102'0304U;
+    cpu.registers[3] = 0x0403'0201U;
+    const auto result = fixture.run(cpu, 4096);
+    require(result.reason == ExitReason::system_call);
+    require(result.retired_instructions == (taken ? 4U : 6U));
+    require(cpu.registers[1] == (taken ? 0U : 8U));
+    require(cpu.registers[4] == (taken ? 0U : 1U));
+    require(cpu.registers[5] == 1U);
+  }
+}
+
+/* A host FPCR the translation knows before a skipped region is not the one it
+ * knows after it: the arm that skipped a VFP instruction still holds the
+ * Standard value a Neon instruction before the branch gave it. */
+void forward_skip_joins_with_the_fpcr_of_both_arms() {
+  Fixture fixture{0x1a32'0c0e, 4};
+  // vmov s4,r2; vmov s5,r3; vcvtp.u32.f32 q0,q1 (Standard); cmp r0,#0; beq L;
+  // vadd.f32 s0,s1,s2; add r4,r4,#1; L: vmul.f32 s3,s4,s5; vmov r6,s3; svc
+  fixture.code32(0, {0xee02'2a10U, 0xee02'3a90U, 0xf3bb'02c2U, 0xe350'0000U,
+                     arm_branch_to(0x0, 4, 7), 0xee30'0a81U, 0xe284'4001U,
+                     0xee62'1a22U, 0xee11'6a90U, 0xef00'0000U});
+  for (const bool taken : {true, false}) {
+    auto cpu = Fixture::task(false);
+    cpu.registers[0] = taken ? 0U : 1U;
+    cpu.registers[2] = 0x3f80'0001U; // 1 + 2^-23
+    cpu.registers[3] = 0x3fe0'0000U; // 1.75
+    cpu.fpcr = 3U << 22; // round toward zero
+    const auto whole = run_whole(fixture, cpu);
+    require(whole.reason == ExitReason::system_call);
+    const auto stepped = run_stepped(fixture, cpu);
+    require_same(whole, stepped, "fpcr join", taken ? 1U : 0U);
+    // 1.75 + 1.75 * 2^-23 toward zero is 1.75 + 2^-23 (to nearest, 1.75 +
+    // 2^-22).
+    require(whole.cpu.registers[6] == 0x3fe0'0001U);
+  }
+}
+
+/* A region that spills the host flags (a register-controlled shift) leaves
+ * the arm that ran it with the flags in memory only; the join reloads them,
+ * because the arm that skipped it has them in the host. */
+void forward_skip_over_a_flag_spill() {
+  Fixture fixture{0x1a32'0c0f, 4};
+  Lcg random{0x7e11'5d21};
+  // eors r3,r10,r5,lsl r5; eors r8,r8,#0xad; and r6,r2,#0x60; bhi L;
+  // orr r8,r9,#0x58; rsb r4,r7,#0xb9; orr r10,r0,r5,asr r4;
+  // L: andslt r1,r5,#0x99; svc
+  fixture.code32(0, {0xe03a'3515U, 0xe238'80adU, 0xe202'6060U,
+                     arm_branch_to(0x8, 3, 7), 0xe389'8058U, 0xe267'40b9U,
+                     0xe180'a455U, 0xb215'1099U, 0xef00'0000U});
+  for (unsigned round = 0; round < 400; ++round) {
+    auto cpu = random_registers(random, false);
+    cpu.pc = key::a32_key(code_base);
+    const auto whole = run_whole(fixture, cpu);
+    require(whole.reason == ExitReason::system_call);
+    const auto stepped = run_stepped(fixture, cpu);
+    require_same(whole, stepped, "flag spill", round);
+  }
+}
+
+/* A region of stores ends at a POP that returns: the arm that ran the stores
+ * leaves with their effects, the arm that skipped them without. */
+void forward_skip_over_stores_to_a_return() {
+  Fixture fixture{0x1a32'0c10, 2, 4};
+  // cbz r0,L; mov r3,r0; mov r0,r5; str.w r4,[r3],#8; str r3,[r5];
+  // L: pop {r3,r4,r5,pc}
+  fixture.code16(0, {0xb120, 0x4603, 0x4628, 0xf843, 0x4b08, 0x602b, 0xbd38});
+  fixture.code16(64, {0xdf00});
+  const std::uint32_t stack = data_base + static_cast<std::uint32_t>(guest_page);
+  // The store the hot path declines (it crosses a page) runs in the library
+  // from a cold path, which writes back the registers the region had bound.
+  for (const unsigned variant : {0U, 1U, 2U}) {
+    const bool taken = variant == 0U;
+    auto cpu = Fixture::task(true);
+    cpu.registers[0] = taken ? 0U
+                       : variant == 2U
+                           ? data_base + 2U * static_cast<std::uint32_t>(guest_page) - 2U
+                           : data_base + 512U;
+    cpu.registers[3] = 0x3333'3333U;
+    cpu.registers[4] = 0x4444'4444U;
+    cpu.registers[5] = data_base + 256U;
+    cpu.registers[13] = stack;
+    fixture.data32(guest_page + 0, 0xa3a3'a3a3U);
+    fixture.data32(guest_page + 4, 0xa4a4'a4a4U);
+    fixture.data32(guest_page + 8, 0xa5a5'a5a5U);
+    fixture.data32(guest_page + 12, code_base + 64U + 1U);
+    fixture.data32(256, 0U);
+    fixture.data32(512, 0U);
+    const auto whole = run_whole(fixture, cpu);
+    require(whole.reason == ExitReason::system_call);
+    fixture.data32(256, 0U);
+    fixture.data32(512, 0U);
+    const auto stepped = run_stepped(fixture, cpu);
+    require_same(whole, stepped, "stores to a return", variant);
+    require(whole.cpu.registers[3] == 0xa3a3'a3a3U);
+    require(whole.cpu.registers[4] == 0xa4a4'a4a4U);
+    require(whole.cpu.registers[5] == 0xa5a5'a5a5U);
+    require(whole.cpu.registers[13] == stack + 16U);
+    require(whole.retired == (taken ? 3U : 7U));
   }
 }
 
@@ -999,6 +1177,10 @@ int main() {
   rewritten_t32_halfwords();
   rewritten_a32_words();
   side_exit_branches();
+  forward_branch_skips_in_the_block();
+  forward_skip_joins_with_the_fpcr_of_both_arms();
+  forward_skip_over_a_flag_spill();
+  forward_skip_over_stores_to_a_return();
   counted_loop_is_a_host_loop();
   native_loops();
   extensions_decode_only_where_the_host_has_them();

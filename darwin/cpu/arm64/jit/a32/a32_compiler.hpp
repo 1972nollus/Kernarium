@@ -104,6 +104,10 @@ private:
     std::size_t index;
     std::uint16_t dirty_gprs{};
     std::uint32_t dirty_vectors{};
+    /* The bindings the masks name: a region that ends may leave its host
+     * registers to other guest registers before the cold path is emitted. */
+    decltype(JitCompilerFamilies::gpr_slots_) gprs{};
+    decltype(JitCompilerFamilies::vector_slots_) vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
     std::uint64_t target{};
     /* A branch taken inside a fused exclusive run: the host's monitor is
@@ -148,6 +152,25 @@ private:
     Arm64Emitter::Label slow;
     unsigned address;
     std::size_t bytes;
+  };
+
+  /* A conditional forward branch over instructions of the same block runs
+   * them under the branch's inverse condition: the taken arm jumps to the
+   * join after crediting the budget for the instructions it skipped. */
+  struct SkipRegion final {
+    bool active{};
+    std::size_t branch{};
+    std::size_t join{};
+    decltype(JitCompilerFamilies::gpr_slots_) gpr{};
+    decltype(JitCompilerFamilies::vector_slots_) vector{};
+    GuestFlagsState flags_before{};
+    std::uint8_t mode_before{};
+    Arm64Emitter::Label join_label{};
+  };
+  struct SkipColdPath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+    unsigned skipped;
   };
 
   /* A host register holding a W value and, for a destination, how it is
@@ -196,6 +219,11 @@ private:
    * no register) and does not write the PC. */
   [[nodiscard]] bool can_predicate() const;
   [[nodiscard]] Flow emit_side_exit_branch(bool monitor = false);
+  [[nodiscard]] Result compile_once(const Request &request);
+  [[nodiscard]] bool try_emit_skip_branch();
+  [[nodiscard]] bool skip_region_ok(std::size_t branch,
+                                    std::size_t join) const;
+  void close_skip();
   [[nodiscard]] bool loop_candidate(const Request &request);
   void record_loop_plan();
   void apply_loop_plan();
@@ -459,6 +487,14 @@ private:
   std::vector<CrossingColdPath> crossing_cold_;
   std::vector<ResumePath> resume_cold_;
   std::vector<FloatColdPath> float_cold_;
+  std::vector<SkipColdPath> skip_cold_;
+  SkipRegion skip_{};
+  /* The branches whose regions an earlier attempt could not emit as one. */
+  std::vector<bool> no_skip_;
+  /* The last attempt: no region is emitted inline. */
+  bool skip_disabled_{};
+  bool skip_failed_{};
+  std::size_t skip_failed_branch_{};
   /* The index of the VMRS APSR_nzcv, FPSCR whose flags the host NZCV already
    * holds, because the VCMP before it left them there and nothing came
    * between. */
