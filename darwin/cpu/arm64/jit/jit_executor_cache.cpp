@@ -241,6 +241,9 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   link_context_ = nullptr;
   links_.clear();
   indirect_links_.clear();
+  if (a32_targets_ != nullptr)
+    std::fill_n(a32_targets_.get(), jit_indirect_target_count,
+                JitIndirectTarget{});
   pending_indirect_ = {};
   tracked_store_arena_.reset();
   link_generation_ = 0;

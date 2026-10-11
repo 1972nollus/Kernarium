@@ -880,7 +880,7 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
 
 void JitCompilerFamilies::emit_indirect_linked_exit(
     unsigned target_host, bool writes_link, std::uint64_t source_pc,
-    std::size_t count) {
+    std::size_t count, bool target_table) {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   /*
    * Preserve the architectural target before BLR can replace a resident X30
@@ -943,7 +943,24 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
   load_entry(offsetof(JitIndirectLink, entries) +
              sizeof(JitIndirectLinkEntry));
   emitter.compare_register(8, 9);
-  emitter.branch_condition(miss, 1); // NE
+  if (target_table) {
+    emitter.branch_condition(matched, 0); // EQ
+    /* Neither cell holds the target: its entry in the executor's table, if
+     * it was trained in this context, names the record x12. x13 stays the
+     * site for the miss. */
+    emitter.load_x(16, 19, offsetof(JitChainState, indirect_targets));
+    emitter.load_x(9, 19, offsetof(JitChainState, indirect_target_tag));
+    // eor x12, x8, x8, lsr #14: the index of jit_indirect_target_index().
+    emitter.emit(0xca40'0000U | (14U << 10) | (8U << 16) | (8U << 5) | 12U);
+    emitter.ubfm(12, 12, 2, 1U + jit_indirect_target_bits);
+    emitter.add_shifted(12, 16, 12, 4);
+    emitter.emit(0xaa00'0000U | (8U << 16) | (9U << 5) | 9U); // orr x9, x9, x8
+    emitter.load_pair_x(16, 12, 12, 0);
+    emitter.compare_register(9, 16);
+    emitter.branch_condition(miss, 1); // NE
+  } else {
+    emitter.branch_condition(miss, 1); // NE
+  }
   emitter.bind(matched);
 
   /*

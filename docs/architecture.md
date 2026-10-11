@@ -990,7 +990,13 @@ straight run chains like a loop. A chain states what is set up for the whole
 run, not what its first block needs: the floating-point state is loaded, and
 the native environment is on whenever any earlier block switched it on, so a
 chain that began at an integer block links into a floating-point one and back
-instead of returning to the executor at each edge. A conditional forward branch (B with a
+instead of returning to the executor at each edge. An indirect branch of
+AArch32 code looks in its site's two cells and then in the executor's
+direct-mapped table of the targets its misses have trained (4096 entries,
+tagged with the link epoch so that the translation of the same address in
+another address space or after a code change never matches), and returns to the
+executor only when both miss: a function with many callers, such as libm's
+`lroundf`, has a return to each of them. A conditional forward branch (B with a
 condition, CBZ, CBNZ) does not end a block: the fall-through is the likelier
 path and the block goes on with its registers and flags in the host, while the
 taken path leaves by a cold side exit that publishes what is dirty at the

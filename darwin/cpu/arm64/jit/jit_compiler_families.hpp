@@ -212,9 +212,12 @@ protected:
   void read_flags(unsigned destination);
   void mark_native_fp() noexcept;
   void emit_linked_exit(std::uint64_t target, std::size_t count);
+  /* `target_table`: a miss of both cells looks in the executor's table of
+   * trained targets (JitIndirectTarget) before it leaves. */
   void emit_indirect_linked_exit(unsigned target_host, bool writes_link,
                                  std::uint64_t source_pc,
-                                 std::size_t count);
+                                 std::size_t count,
+                                 bool target_table = false);
 
   void emit_native_binary(std::uint32_t instruction, bool stack_pointer,
                           bool sets_flags);

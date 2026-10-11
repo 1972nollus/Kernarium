@@ -235,6 +235,127 @@ void native_environment_is_carried_into_a_chain() {
   executor.end_execution();
 }
 
+/* A function called from five places returns to five different targets: the
+ * two cells of its return's site cannot hold them, and each return missed
+ * and went back to the executor. The executor's table of trained targets
+ * holds all five, so once they have been seen a run of the program is one
+ * entry. */
+void polymorphic_returns_stay_in_the_chain() {
+  constexpr std::uint32_t base = 0x00f0'0000U;
+  constexpr unsigned long generation = 0x1a32'0c21;
+  constexpr unsigned sites = 5;
+  for (const bool thumb : {false, true}) {
+    std::vector<std::uint8_t> bytes;
+    const auto put16 = [&](std::uint32_t half) {
+      bytes.push_back(static_cast<std::uint8_t>(half));
+      bytes.push_back(static_cast<std::uint8_t>(half >> 8));
+    };
+    const auto put32 = [&](std::uint32_t word) {
+      put16(word & 0xffffU);
+      put16(word >> 16);
+    };
+    for (unsigned i = 0; i < sites; ++i) {
+      if (thumb) {
+        // bl f, with f at byte 24: the offset from the PC four bytes on.
+        put16(0xf000U);
+        put16(0xf800U | ((24U - 4U * i - 4U) >> 1));
+      } else {
+        put32(0xeb00'0000U | (4U - i)); // bl f
+      }
+    }
+    if (thumb) {
+      put16(0xdf00U); // svc 0
+      put16(0xbf00U); // nop
+      put16(0x3001U); // adds r0, r0, #1
+      put16(0x4770U); // bx lr
+    } else {
+      put32(0xef00'0000U); // svc
+      put32(0xe280'0001U); // f: add r0, r0, #1
+      put32(0xe12f'ff1eU); // bx lr
+    }
+    JitBacking backing{1};
+    backing.put(0, std::as_bytes(std::span{bytes}));
+    JitMapping mapping{generation + (thumb ? 1U : 0U), base, backing, 1};
+    ::uml::cpu::arm64::JitExecutor executor;
+    ::uml::memory::StaticGuestMemory memory;
+    arm64::CpuState cpu{};
+    cpu.a32 = 1;
+    const auto g = generation + (thumb ? 1U : 0U);
+    require(executor.begin_execution(g, base));
+    constexpr unsigned rounds = 8;
+    unsigned calls = 0;
+    for (unsigned round = 0; round < rounds; ++round) {
+      cpu.pc = thumb ? key::t32_key(base) : key::a32_key(base);
+      calls = 0;
+      std::size_t executed = 0;
+      ::uml::cpu::EngineEvent event;
+      do {
+        event = executor.run_a32_block(cpu, memory, g, executed);
+        require(++calls < 64);
+      } while (event == ::uml::cpu::EngineEvent::continued);
+      require(event == ::uml::cpu::EngineEvent::system_call);
+      require(cpu.registers[0] == sites * (round + 1U));
+    }
+    require(calls == 1U);
+    executor.end_execution();
+  }
+}
+
+/* The table of indirect targets belongs to the executor, which serves many
+ * address spaces in turn: the same guest key in two of them is two different
+ * translations. Two address spaces with the same function at the same address
+ * that add different amounts run alternately, each call site returning to the
+ * same targets in both; every run must see its own function. */
+void indirect_targets_are_per_address_space() {
+  constexpr std::uint32_t base = 0x00f0'0000U;
+  constexpr unsigned long first = 0x1a32'0c30;
+  constexpr unsigned long second = 0x1a32'0c31;
+  constexpr unsigned sites = 5;
+  const auto program = [&](std::uint32_t amount) {
+    std::vector<std::uint8_t> bytes;
+    const auto put32 = [&](std::uint32_t word) {
+      for (unsigned shift = 0; shift < 32; shift += 8)
+        bytes.push_back(static_cast<std::uint8_t>(word >> shift));
+    };
+    for (unsigned i = 0; i < sites; ++i)
+      put32(0xeb00'0000U | (4U - i));      // bl f
+    put32(0xef00'0000U);                   // svc
+    put32(0xe280'0000U | amount);          // f: add r0, r0, #amount
+    put32(0xe12f'ff1eU);                   // bx lr
+    return bytes;
+  };
+  const auto one = program(1), hundred = program(100);
+  JitBacking backing_one{1}, backing_hundred{1};
+  backing_one.put(0, std::as_bytes(std::span{one}));
+  backing_hundred.put(0, std::as_bytes(std::span{hundred}));
+  JitMapping mapping_one{first, base, backing_one, 1};
+  JitMapping mapping_hundred{second, base, backing_hundred, 1};
+  ::uml::cpu::arm64::JitExecutor executor;
+  ::uml::memory::StaticGuestMemory memory;
+  arm64::CpuState cpu_one{}, cpu_hundred{};
+  cpu_one.a32 = 1;
+  cpu_hundred.a32 = 1;
+  for (unsigned round = 0; round < 12; ++round) {
+    for (const bool use_first : {true, false}) {
+      auto &cpu = use_first ? cpu_one : cpu_hundred;
+      const auto generation = use_first ? first : second;
+      require(executor.begin_execution(generation, base));
+      cpu.pc = key::a32_key(base);
+      const auto before = cpu.registers[0];
+      std::size_t executed = 0;
+      unsigned calls = 0;
+      ::uml::cpu::EngineEvent event;
+      do {
+        event = executor.run_a32_block(cpu, memory, generation, executed);
+        require(++calls < 64);
+      } while (event == ::uml::cpu::EngineEvent::continued);
+      require(event == ::uml::cpu::EngineEvent::system_call);
+      require(cpu.registers[0] - before == sites * (use_first ? 1U : 100U));
+      executor.end_execution();
+    }
+  }
+}
+
 void static_exits_chain() {
   constexpr std::uint32_t add_r0 = 0xe280'0001U; // add r0, r0, #1
   const auto a32_bytes = [](const std::vector<std::uint32_t> &words) {
@@ -1287,6 +1408,8 @@ int main() {
   long_blocks_and_the_budget();
   static_exits_chain();
   native_environment_is_carried_into_a_chain();
+  polymorphic_returns_stay_in_the_chain();
+  indirect_targets_are_per_address_space();
   rewritten_t32_halfwords();
   rewritten_a32_words();
   side_exit_branches();

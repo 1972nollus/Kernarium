@@ -111,6 +111,32 @@ struct JitIndirectLinkEntry final {
   const JitBlockLink *link{};
 };
 
+/* An AArch32 indirect branch whose site cells miss looks its target up here
+ * before it returns to the executor: a direct-mapped table of the targets
+ * every miss has trained, one per executor. The generated code and the
+ * executor compute the index the same way. */
+struct JitIndirectTarget final {
+  std::uint64_t guest_pc{};
+  const JitBlockLink *link{};
+};
+
+inline constexpr std::size_t jit_indirect_target_bits = 12;
+inline constexpr std::size_t jit_indirect_target_count =
+    std::size_t{1} << jit_indirect_target_bits;
+
+/* The epoch of a translation context in the bits no AArch32 key uses (a key
+ * is at most 34 bits and carries the ISA in bits 62 and 63). */
+[[nodiscard]] constexpr std::uint64_t
+jit_indirect_target_tag(std::uint64_t link_epoch) noexcept {
+  return (link_epoch & 0x0fff'ffffU) << 34;
+}
+
+[[nodiscard]] constexpr std::size_t
+jit_indirect_target_index(std::uint64_t key) noexcept {
+  return static_cast<std::size_t>(((key ^ (key >> 14)) >> 2) &
+                                  (jit_indirect_target_count - 1U));
+}
+
 struct JitIndirectLink final {
   std::array<JitIndirectLinkEntry, 2> entries{};
   std::uint64_t source_pc{};
@@ -217,6 +243,8 @@ static_assert(offsetof(JitBlockLink, allowed_selectors) == 40);
 static_assert(offsetof(JitIndirectLinkEntry, guest_pc) == 0);
 static_assert(offsetof(JitIndirectLinkEntry, link) == 8);
 static_assert(sizeof(JitIndirectLinkEntry) == 16);
+static_assert(sizeof(JitIndirectTarget) == 16);
+static_assert(offsetof(JitIndirectTarget, link) == 8);
 static_assert(offsetof(JitIndirectLink, entries) == 0);
 static_assert(offsetof(JitIndirectLink, source_pc) == 32);
 

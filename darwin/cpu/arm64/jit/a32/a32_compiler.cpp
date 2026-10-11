@@ -623,7 +623,8 @@ void A32Compiler::exit_indirect(unsigned key_register) {
     return_constant(Event::continued, count_ + 1U);
     return;
   }
-  emit_indirect_linked_exit(key_register, false, key_of(cur()), count_ + 1U);
+  emit_indirect_linked_exit(key_register, false, key_of(cur()), count_ + 1U,
+                            true);
 }
 
 Arm64Emitter::Label A32Compiler::cold_exit(ColdPath::Kind kind) {
