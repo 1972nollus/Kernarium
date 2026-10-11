@@ -128,6 +128,10 @@ The `simd` level (VFPv4-D32 and Advanced SIMD):
   rounding mode, flush-to-zero, default-NaN and alternative half-precision
   setting; the element-size and signedness variants come from the form's free
   fields;
+- `simd-steps`: VRECPS and VRSQRTS with each infinity against zeros,
+  denormals and one in half and single precision, which the `simd` suite's
+  sampled states do not pair (FZ16 stays clear, so a half-precision denormal
+  is a nonzero number);
 - `simd-memory`: VLDR, VSTR, VLDM, VSTM, FLDMX, FSTMX and the structure loads
   and stores VLD1-4 and VST1-4, aimed at the memory suite's addresses;
 - `fpscr`: VMRS and VMSR, including the exception trap enables the profile
