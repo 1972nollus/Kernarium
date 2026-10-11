@@ -88,8 +88,9 @@ enum class Ext : std::uint8_t {
 [[nodiscard]] bool extension_lowered(aarch32::Form form) noexcept;
 
 /* The forms the compiler sends to the AArch32 semantic library every time
- * rather than lowering: the parallel add and subtract family, SSAT16, USAT16
- * and USAD8/USADA8, and the complete-level forms it leaves to the library. */
+ * rather than lowering: the signed saturating parallel add and subtract
+ * forms, SSAT16, USAT16 and USAD8/USADA8, and the complete-level forms it
+ * leaves to the library. */
 [[nodiscard]] bool is_library_form(aarch32::Form form) noexcept;
 
 /* Whether the instruction ends a block: it writes the PC, raises an event or

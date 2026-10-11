@@ -238,6 +238,7 @@ private:
   [[nodiscard]] Flow emit_extend(const OpInfo &info);
   [[nodiscard]] Flow emit_saturate(const OpInfo &info);
   [[nodiscard]] Flow emit_dsp_multiply(const OpInfo &info);
+  [[nodiscard]] Flow emit_parallel(const OpInfo &info);
   /* The whole instruction in the slow helper. */
   [[nodiscard]] Flow emit_arith_through_helper();
   void emit_extract(unsigned out, unsigned source, bool is_signed,

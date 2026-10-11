@@ -990,15 +990,19 @@ load-exclusive, up to four register instructions and the store-exclusive
 (acquire and release forms included) on the same address at the start of a
 block become one host load-exclusive and store-exclusive, so the guest's
 monitor is the host's; a failed store leaves the status to the guest's retry
-loop. What the lowering declines (an access across a page or one that must
-fault, an exclusive that does not fuse, the parallel arithmetic) leaves the
-block through `uml_arm64_jit_a32_execute`, a terminal helper that runs the one
-instruction in the AArch32 semantic library over the TLB, with the library's
-fault ordering. The exclusives run there too, over the JIT's versioned software
-reservation: the helper overrides the library's monitor hooks, because the
-guest monitor is shared with the tracked stores and the fused host exclusives
-and the library's default compare-and-swap monitor is not. An entry in the middle of an IT block and a single
-step run one instruction in the single-instruction arena, with the IT state
+loop. The parallel add and subtract forms run in the vector unit on the
+packed lanes (UMAX and UMIN stand in for the unsigned saturating forms and a
+widening add for GE, so the host's QC flag is never set). What the lowering
+declines (an access across a page or one that must fault, an exclusive that
+does not fuse, the signed saturating parallel forms, SSAT16, USAT16 and USAD8)
+leaves the block through `uml_arm64_jit_a32_execute`, a terminal helper that
+runs the one instruction in the AArch32 semantic library over the TLB, with
+the library's fault ordering. The exclusives run there too, over the JIT's
+versioned software reservation: the helper overrides the library's monitor
+hooks, because the guest monitor is shared with the tracked stores and the
+fused host exclusives and the library's default compare-and-swap monitor is
+not. An entry in the middle of an IT block and a single step run one
+instruction in the single-instruction arena, with the IT state
 the exit recorded. Translations validate their saved guest bytes in
 the ISA's unit, so a halfword of a 32-bit T32 instruction rewritten under a
 translation is seen. Executable memory comes only from the arena the A64 JIT

@@ -260,9 +260,12 @@ aarch32::Profile decode_profile() noexcept {
 }
 
 bool is_library_form(aarch32::Form form) noexcept {
-  switch (op_info(form).op) {
-  case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8:
+  const auto info = op_info(form);
+  switch (info.op) {
+  case Op::parallel:
+    // The signed saturating forms; the others run in the vector unit.
+    return info.mode == ParallelMode::saturating;
+  case Op::ssat16: case Op::usat16: case Op::usad8: case Op::usada8:
     return true;
   case Op::library:
     return !extension_lowered(form);
