@@ -7,9 +7,11 @@ plan_of_complete does not name is the shared semantic library's
 (cpu/arm64/aarch32/semantics.hpp), run through the a32_library gadget as the
 whole instruction; one it names is lowered onto the host's A64 instruction,
 in the way a32_simd.py and a32_neon.py lower VFP and Advanced SIMD. A
-lowering that needs an optional A64 feature says so (a32_neon.NEEDS): a
-translation on a host without it is the library's, so the gadgets never
-execute an instruction the host lacks.
+lowering that needs an optional A64 feature runs only where the guest has the
+extension: the engine decodes in the profile the host gives it
+(gadgets/a32/program_builder_a32.cpp decode_profile), so a form of an
+extension the host lacks is UNDEFINED and the gadgets never execute an
+instruction the host lacks.
 
 Advanced SIMD forms are groups of a32_neon.py (the crypto instructions work
 on whole Q registers); this module adds the groups and the families that are
@@ -65,11 +67,9 @@ CVT8_NAMES = ["a", "n", "p", "m"]
 HALF_OPS = ["vins", "vmovx", "mov_toh", "mov_h"]
 
 
-# The simd level's VFP families that have half-precision forms, and those of
-# them that run an FP16 instruction (the moves and VLDR/VSTR need none).
+# The simd level's VFP families that have half-precision forms.
 VFP_HALF_FAMILIES = ("vfp3", "vfpmac", "vfp2", "vfpcmp", "vfpimm", "vfpcvt",
                      "vfpmem")
-VFP_HALF_NEEDING = ("vfp3", "vfpmac", "vfp2", "vfpcmp", "vfpcvt")
 
 
 def precision(name: str) -> int:
@@ -121,22 +121,6 @@ def plan_of_complete(name: str, mnemonic: str):
     return None
 
 
-def need_of_complete(name: str, mnemonic: str) -> str:
-    """The host feature (a32_neon.NEEDS) of a lowered form that is not an
-    Advanced SIMD one: Advanced SIMD variants carry theirs (kNeonNeed)."""
-    plan = plan_of_complete(name, mnemonic)
-    if plan is None:
-        return "none"
-    family, _sub, aux = plan
-    if family == "crc":
-        return "crc32"
-    if family in ("vfpv8", "vfpcvt8") and aux == 2:
-        return "fp16"
-    if family in VFP_HALF_NEEDING and aux & 4:
-        return "fp16"
-    return "none"
-
-
 # ---------------------------------------------------------------------------
 # Advanced SIMD groups
 
@@ -144,32 +128,31 @@ def crypto_groups() -> None:
     """The Q-register cryptographic instructions: AES (FEAT_AES) and SHA-1
     and SHA-256 (FEAT_SHA1, FEAT_SHA256). The A32 and A64 forms compute the
     same functions on the same 128-bit operands."""
-    def two(name, stem, body, need, acc=True):
-        v = Variant(m1="q", acc="q" if acc else None, out="q", body=body,
-                    need=need)
+    def two(name, stem, body, acc=True):
+        v = Variant(m1="q", acc="q" if acc else None, out="q", body=body)
         add(name, [stem], "dm", "none", explicit={0: ("", v)},
             index=INDEX_SINGLE, count=1)
 
-    def three(name, stem, body, need):
-        v = Variant(n="q", m="q", acc="q", out="q", body=body, need=need)
+    def three(name, stem, body):
+        v = Variant(n="q", m="q", acc="q", out="q", body=body)
         add(name, [stem], "dnm", "none", explicit={0: ("", v)},
             index=INDEX_SINGLE, count=1)
 
-    two("aese", "AESE", ["aese v0.16b, v1.16b"], "aes")
-    two("aesd", "AESD", ["aesd v0.16b, v1.16b"], "aes")
-    two("aesmc", "AESMC", ["aesmc v0.16b, v1.16b"], "aes", acc=False)
-    two("aesimc", "AESIMC", ["aesimc v0.16b, v1.16b"], "aes", acc=False)
-    two("sha1su1", "SHA1SU1", ["sha1su1 v0.4s, v1.4s"], "sha1")
-    two("sha256su0", "SHA256SU0", ["sha256su0 v0.4s, v1.4s"], "sha2")
+    two("aese", "AESE", ["aese v0.16b, v1.16b"])
+    two("aesd", "AESD", ["aesd v0.16b, v1.16b"])
+    two("aesmc", "AESMC", ["aesmc v0.16b, v1.16b"], acc=False)
+    two("aesimc", "AESIMC", ["aesimc v0.16b, v1.16b"], acc=False)
+    two("sha1su1", "SHA1SU1", ["sha1su1 v0.4s, v1.4s"])
+    two("sha256su0", "SHA256SU0", ["sha256su0 v0.4s, v1.4s"])
     # SHA1H: the rotated low word of Qm, the rest of Qd zero.
-    two("sha1h", "SHA1H", ["sha1h s0, s1"], "sha1", acc=False)
-    three("sha1c", "SHA1C", ["sha1c q0, s1, v2.4s"], "sha1")
-    three("sha1p", "SHA1P", ["sha1p q0, s1, v2.4s"], "sha1")
-    three("sha1m", "SHA1M", ["sha1m q0, s1, v2.4s"], "sha1")
-    three("sha1su0", "SHA1SU0", ["sha1su0 v0.4s, v1.4s, v2.4s"], "sha1")
-    three("sha256h", "SHA256H", ["sha256h q0, q1, v2.4s"], "sha2")
-    three("sha256h2", "SHA256H2", ["sha256h2 q0, q1, v2.4s"], "sha2")
-    three("sha256su1", "SHA256SU1", ["sha256su1 v0.4s, v1.4s, v2.4s"], "sha2")
+    two("sha1h", "SHA1H", ["sha1h s0, s1"], acc=False)
+    three("sha1c", "SHA1C", ["sha1c q0, s1, v2.4s"])
+    three("sha1p", "SHA1P", ["sha1p q0, s1, v2.4s"])
+    three("sha1m", "SHA1M", ["sha1m q0, s1, v2.4s"])
+    three("sha1su0", "SHA1SU0", ["sha1su0 v0.4s, v1.4s, v2.4s"])
+    three("sha256h", "SHA256H", ["sha256h q0, q1, v2.4s"])
+    three("sha256h2", "SHA256H2", ["sha256h2 q0, q1, v2.4s"])
+    three("sha256su1", "SHA256SU1", ["sha256su1 v0.4s, v1.4s, v2.4s"])
 
 
 def armv8_float_groups() -> None:
@@ -182,8 +165,7 @@ def armv8_float_groups() -> None:
             t = arrange(esize, q)
             w = width(q)
             return Variant(n=w, m=w, out=w,
-                           body=[f"{mnemonic} v0.{t}, v1.{t}, v2.{t}"],
-                           need="fp16" if esize == 16 else None)
+                           body=[f"{mnemonic} v0.{t}, v1.{t}, v2.{t}"])
         add(name, [stem], "dnm", "none", make, fp=a32_neon.FP_ALL)
 
     def unary(name, stem, mnemonic):
@@ -192,8 +174,7 @@ def armv8_float_groups() -> None:
                 return None
             t = arrange(esize, q)
             w = width(q)
-            return Variant(m1=w, out=w, body=[f"{mnemonic} v0.{t}, v1.{t}"],
-                           need="fp16" if esize == 16 else None)
+            return Variant(m1=w, out=w, body=[f"{mnemonic} v0.{t}, v1.{t}"])
         add(name, [stem], "dm", "none", make, fp=a32_neon.FP_ALL)
 
     def convert(name, stem, signed, unsigned):
@@ -204,8 +185,7 @@ def armv8_float_groups() -> None:
             w = width(q)
             return Variant(m1=w, out=w,
                            body=[f"{unsigned if sign else signed} "
-                                 f"v0.{t}, v1.{t}"],
-                           need="fp16" if esize == 16 else None)
+                                 f"v0.{t}, v1.{t}"])
         add(name, [stem], "dm", "usign", make, fp=a32_neon.FP_ALL)
 
     binary("vmaxnm", "VMAXNM", "fmaxnm")
@@ -250,8 +230,7 @@ def armv8_integer_groups() -> None:
             w = width(q)
             third = f"v2.4b[{lane}]" if element else f"v2.{b}"
             return Variant(n=w, m=w if not element else "d", acc=w, out=w,
-                           body=[f"{mnemonic} v0.{t}, v1.{b}, {third}"],
-                           need="dotprod")
+                           body=[f"{mnemonic} v0.{t}, v1.{b}, {third}"])
         lane_group(name, [stem], "dnm", make, indexed=element)
 
     dot("vsdot", "VSDOT", "sdot", element=False)
@@ -268,8 +247,7 @@ def armv8_integer_groups() -> None:
             w = width(q)
             return Variant(n=w, m="elem" if alt else w,
                            elem=t if alt else None, acc=w, out=w, qc=True,
-                           body=[f"{mnemonic} v0.{t}, v1.{t}, v2.{t}"],
-                           need="rdm")
+                           body=[f"{mnemonic} v0.{t}, v1.{t}, v2.{t}"])
         add(name, [stem], "dnm", "scalar", make)
 
     rdm("vqrdmlah", "VQRDMLAH", "sqrdmlah")
@@ -286,8 +264,7 @@ def armv8_complex_groups() -> None:
         w = width(q)
         return Variant(n=w, m=w, out=w,
                        body=[f"fcadd v0.{t}, v1.{t}, v2.{t}, "
-                             f"#{90 if rotation == 0 else 270}"],
-                       need="fcma_fp16" if half else "fcma")
+                             f"#{90 if rotation == 0 else 270}"])
     lane_group("vcadd", ["VCADD"], "dnm", cadd, rot=(24, 1),
                fp=a32_neon.FP_ALL)
 
@@ -295,29 +272,26 @@ def armv8_complex_groups() -> None:
         t = arrange(16 if half else 32, q)
         w = width(q)
         return Variant(n=w, m=w, acc=w, out=w,
-                       body=[f"fcmla v0.{t}, v1.{t}, v2.{t}, #{90 * rotation}"],
-                       need="fcma_fp16" if half else "fcma")
+                       body=[f"fcmla v0.{t}, v1.{t}, v2.{t}, #{90 * rotation}"])
     lane_group("vcmla", ["VCMLA"], "dnm", cmla, rot=(23, 3),
                fp=a32_neon.FP_ALL)
 
     def cmla_s(lane, q, rotation, half):
         if lane > (1 if half else 0):
             return None
-        need = "fcma_fp16" if half else "fcma"
         if not half and not q:
             # A single complex pair of single-precision elements: the
             # vector form on the whole D register (no element form has
             # two lanes), so no lane computes a dead product.
             return Variant(n="d", m="d", acc="d", out="d",
                            body=[f"fcmla v0.2s, v1.2s, v2.2s, "
-                                 f"#{90 * rotation}"], need=need)
+                                 f"#{90 * rotation}"])
         t = arrange(16 if half else 32, q)
         w = width(q)
         element = "h" if half else "s"
         return Variant(n=w, m="d", acc=w, out=w,
                        body=[f"fcmla v0.{t}, v1.{t}, "
-                             f"v2.{element}[{lane}], #{90 * rotation}"],
-                       need=need)
+                             f"v2.{element}[{lane}], #{90 * rotation}"])
     lane_group("vcmla_s", ["VCMLA_s"], "dnm", cmla_s, indexed=True,
                rot=(20, 3), fp=a32_neon.FP_ALL)
 
@@ -331,8 +305,7 @@ def armv8_complex_groups() -> None:
             source = "d" if q else "s"
             third = f"v2.h[{lane}]" if element else f"v2.{h}"
             return Variant(n=source, m=source, acc=w, out=w,
-                           body=[f"{mnemonic} v0.{t}, v1.{h}, {third}"],
-                           need="fhm")
+                           body=[f"{mnemonic} v0.{t}, v1.{h}, {third}"])
         lane_group(name, [stem], "dnm_s", make, indexed=element,
                    fp=a32_neon.FP_ALL)
 

@@ -895,18 +895,18 @@ cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
 `engine/a32_simd.py` document the groups and the operand words.
 
 The complete level adds the Armv8 floating-point additions and the optional
-extensions. The engine decodes with every extension, as the JIT does, and
-shows its guest only the ones the host has (`a32_features`). The generator
-(`engine/a32_armv8.py`) lowers each onto the A64 instruction with the same
-lanes: CRC32, AES, SHA-1 and SHA-256, VMULL.P64, SB, VSEL, VMAXNM, VMINNM,
-VRINT and VCVT with a rounding mode, the double/half conversions, the
-half-precision VFP forms (arithmetic, compares, conversions, VMOVX and VINS),
-half-precision Advanced SIMD, the dot products, VQRDMLAH and VQRDMLSH, VCADD,
-VCMLA and VFMAL and VFMSL. A lowered form carries the host feature it needs
-in its `FormPlan` (an Advanced SIMD variant in `kNeonNeed`), and a translation
-on a host without that feature runs the form through the semantic library, as
-does every complete-level form with no gadget: the BF16 and Int8 matrix forms
-and VJCVT, which no supported host runs natively yet. The FP16 VFP forms share
+extensions. The engine decodes in the profile its host gives it
+(`a32::decode_profile`): the extensions the host has the A64 feature for
+(`a32_features`), which are the ones the guest is shown, so a form of any other
+extension is UNDEFINED, as the HWCAPs say. The generator
+(`engine/a32_armv8.py`) lowers each shown extension onto the A64 instruction
+with the same lanes: CRC32, AES, SHA-1 and SHA-256, VMULL.P64, SB, VSEL,
+VMAXNM, VMINNM, VRINT and VCVT with a rounding mode, the double/half
+conversions, the half-precision VFP forms (arithmetic, compares, conversions,
+VMOVX and VINS), half-precision Advanced SIMD, the dot products, VQRDMLAH and
+VQRDMLSH, VCADD, VCMLA and VFMAL and VFMSL. A decoded form with no gadget is
+the semantic library's, run through the `a32_library` gadget: the BF16 and
+Int8 matrix forms and VJCVT, on a host that has them. The FP16 VFP forms share
 the single-precision plans (aux bit 2) and store a half whole through its S
 register, which a half result zero-extends into.
 The level the engine translates at is `a32_support`; a test or a bring-up

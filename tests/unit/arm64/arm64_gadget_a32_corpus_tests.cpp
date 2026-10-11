@@ -204,16 +204,18 @@ private:
 	::uml::cpu::arm64::gadgets::GadgetExecutor executor_;
 };
 
-/* The decoder's view of the program, to skip a case that needs a level the
- * engine does not implement: the engine decodes against its level with every
- * optional extension at the complete level (executor.cpp), so a word the
- * whole profile accepts and the engine's profile rejects is above the
- * engine. */
+/* The decoder's view of the program, to skip a case that needs a level, or an
+ * extension, the engine does not give its guest: the engine decodes against
+ * its level and the extensions its host has (a32::decode_profile), so a word
+ * the whole profile accepts and the engine's profile rejects is above the
+ * engine. On a host without BF16, I8MM or JSCVT, say, the corpus's cases of
+ * those forms (recorded on an oracle that has them) are skipped. */
 [[nodiscard]] bool needs_higher_level(const corpus::Case &test,
 				      decode::Level level)
 {
 	const auto profile = decode::Profile::at(decode::Level::complete);
-	const auto engine = decode::Profile::at(level);
+	const auto engine = ::uml::cpu::arm64::gadgets::a32::decode_profile(
+		options_at(static_cast<::uml::cpu::arm64::A32Support>(level)));
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
 	decode::ItState it;
 	for (std::size_t half = 0; half < test.halves.size();) {
@@ -634,7 +636,7 @@ int main(int argc, char **argv)
 		std::fclose(out);
 	}
 	std::printf("arm64-gadget-a32-corpus: %zu cases run, %zu skipped above the "
-		    "level, %zu failed, %llu in the library\n",
+		    "level or needing an extension the host lacks, %zu failed, %llu in the library\n",
 		    totals.run, totals.skipped, totals.failed,
 		    static_cast<unsigned long long>(
 			    ::uml::emulator::tests::a32::check_library_exits()));

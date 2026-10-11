@@ -201,13 +201,6 @@ def library_mnemonics() -> list[str]:
                        "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
 
 
-def need_of(row: FormRow) -> str:
-    """The host feature the lowering of a form needs (a32_neon.NEEDS)."""
-    if row.level == "complete":
-        return a32_armv8.need_of_complete(row.name, row.mnemonic)
-    return "none"
-
-
 def plan_of(row: FormRow) -> tuple[str, int, int]:
     """(family, sub, aux) for a form of the base or simd level, or
     ("none", 0, 0)."""
@@ -1202,23 +1195,15 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             "{",
             "\treturn uml_arm64_a32_gadgets[static_cast<std::size_t>(which)];",
             "}", ""]
-    out.append("/* The host feature a lowering needs: a translation on a host "
-               "without it")
-    out.append(" * is the semantic library's (a32_neon.py NEEDS). */")
-    out.append("enum class Need : std::uint8_t {")
-    for need in a32_neon.NEEDS:
-        out.append(f"\t{need},")
-    out += ["};", ""]
     out.append("enum class Family : std::uint8_t {")
     for family in FAMILIES:
         out.append(f"\t{family},")
     out += ["};", "",
             "/* What the builder lowers a form as: the family, an operation",
-            " * within it, a family-specific aspect and the host feature it",
-            " * needs (generate_a32.py plan_of, need_of). */",
+            " * within it and a family-specific aspect (generate_a32.py",
+            " * plan_of). */",
             "struct FormPlan final {", "\tFamily family;",
-            "\tstd::uint8_t sub;", "\tstd::uint8_t aux;", "\tNeed need;", "};",
-            ""]
+            "\tstd::uint8_t sub;", "\tstd::uint8_t aux;", "};", ""]
     out.append("inline constexpr FormPlan kFormPlans["
                "aarch32::kFormCount] = {")
     unplanned = []
@@ -1227,9 +1212,7 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
         if family == "none" and row.availability == "implemented" and \
                 row.name not in ("Undefined",):
             unplanned.append(row.name)
-        need = need_of(row) if family not in ("none", "library") else "none"
-        out.append(f"\t{{Family::{family}, {sub}, {aux}, Need::{need}}},"
-                   f"  // {row.name}")
+        out.append(f"\t{{Family::{family}, {sub}, {aux}}},  // {row.name}")
     out += ["};", ""]
     if unplanned:
         raise GenerationError(

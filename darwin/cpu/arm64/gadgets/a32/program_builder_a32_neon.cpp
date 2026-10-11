@@ -122,10 +122,6 @@ Translator::Result Translator::emit_neon(const Instruction &in,
 		emit_illegal();
 		return {true, false};
 	}
-	/* A variant whose instructions the host lacks (half precision needs
-	 * FP16) is the library's. */
-	if (!supported(kNeonNeed[group.base + index]))
-		return emit_library(in);
 
 	const bool by_scalar = group.scalar == NeonScalar::always ||
 			       (group.scalar == NeonScalar::alt && alt != 0);

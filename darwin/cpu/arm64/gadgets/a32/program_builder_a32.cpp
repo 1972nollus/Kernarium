@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "translator.hpp"
 
+#include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/decode_support.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
@@ -1049,48 +1050,9 @@ Translator::Result Translator::emit_system(const Instruction &in,
 	}
 }
 
-bool Translator::supported(Need need) const noexcept
-{
-	switch (need) {
-	case Need::none:
-		return true;
-	case Need::fp16:
-		return host_.fp16;
-	case Need::aes:
-		return host_.aes;
-	case Need::pmull:
-		return host_.pmull;
-	case Need::sha1:
-		return host_.sha1;
-	case Need::sha2:
-		return host_.sha2;
-	case Need::crc32:
-		return host_.crc32;
-	case Need::dotprod:
-		return host_.dotprod;
-	case Need::fhm:
-		return host_.fhm;
-	case Need::rdm:
-		return host_.rdm;
-	case Need::fcma:
-		return host_.fcma;
-	case Need::fcma_fp16:
-		return host_.fcma && host_.fp16;
-	case Need::bf16:
-		return host_.bf16;
-	case Need::i8mm:
-		return host_.i8mm;
-	case Need::sb:
-		return host_.sb;
-	}
-	return false;
-}
-
 Translator::Result Translator::emit(const Instruction &in,
 				    const FormPlan &plan)
 {
-	if (!supported(plan.need))
-		return emit_library(in);
 	switch (plan.family) {
 	case Family::dp:
 		return emit_dp(in, plan);
@@ -1316,15 +1278,43 @@ BuildOutput build(const BuildInput &input,
 		  const Builder::LinkResolver &resolve_link,
 		  std::pmr::memory_resource *storage,
 		  const Builder::IndirectLinkResolver &resolve_indirect_link,
-		  const BuildOptions &options, const Profile &profile,
+		  const BuildOptions &, const Profile &profile,
 		  std::size_t block_instructions)
 {
-	/* What the host has of the extensions the complete level lowers onto
-	 * A64 (a32_features); the library runs a form whose feature it lacks. */
-	const auto host = a32_features(options.host_capabilities,
-				       A32Support::complete);
 	return detail::Translator{input, resolve_link, storage, resolve_indirect_link,
-			  profile, host, block_instructions}.run();
+			  profile, block_instructions}.run();
+}
+
+aarch32::Profile decode_profile(const BuildOptions &options) noexcept
+{
+	/* The extensions the guest is shown are the ones the host has the A64
+	 * feature to lower onto (a32_features), and exactly those decode: a
+	 * form of any other extension is UNDEFINED, as the HWCAPs say. A
+	 * form of a shown extension that has no gadget is the semantic
+	 * library's. */
+	const auto shown = a32_features(options.host_capabilities,
+					options.a32_level);
+	aarch32::FeatureSet features;
+	const auto add = [&features](bool present,
+				     aarch32::Feature feature) noexcept {
+		if (present)
+			features = features.with(feature);
+	};
+	add(shown.fp16, aarch32::Feature::fp16);
+	add(shown.aes, aarch32::Feature::aes);
+	add(shown.pmull, aarch32::Feature::pmull);
+	add(shown.sha1, aarch32::Feature::sha1);
+	add(shown.sha2, aarch32::Feature::sha2);
+	add(shown.crc32, aarch32::Feature::crc32);
+	add(shown.dotprod, aarch32::Feature::dotprod);
+	add(shown.fhm, aarch32::Feature::fhm);
+	add(shown.bf16, aarch32::Feature::bf16);
+	add(shown.i8mm, aarch32::Feature::i8mm);
+	add(shown.sb, aarch32::Feature::sb);
+	add(shown.rdm, aarch32::Feature::rdm);
+	add(shown.fcma, aarch32::Feature::fcma);
+	add(shown.jscvt, aarch32::Feature::jscvt);
+	return aarch32::Profile{static_cast<aarch32::Level>(options.a32_level), features};
 }
 
 std::optional<std::size_t> thumb_position(

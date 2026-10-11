@@ -110,8 +110,8 @@ class Runner final {
 public:
 	Runner()
 		: guest_{1100}
-		, profile_{decode::Profile::at(static_cast<decode::Level>(
-			  ::uml::cpu::arm64::gadgets::a32_support))}
+		, profile_{::uml::cpu::arm64::gadgets::a32::decode_profile(
+			  options_at(::uml::cpu::arm64::gadgets::a32_support))}
 	{
 		/* The code around a word is benign in both instruction sets: as
 		 * A32 a conditional supervisor call that fails its condition,

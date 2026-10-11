@@ -1165,8 +1165,8 @@ FPSIMD-0251	FP&SIMD	VCVT (floating-point to integer, floating-point)	VCVT_uiv_T1
 FPSIMD-0252	FP&SIMD	VCVT (floating-point to integer, floating-point)	VCVT_siv_T1_S	T32	VCVT	simd	baseline	executed	verified
 FPSIMD-0253	FP&SIMD	VCVT (floating-point to integer, floating-point)	VCVT_uiv_T1_D	T32	VCVT	simd	baseline	executed	verified
 FPSIMD-0254	FP&SIMD	VCVT (floating-point to integer, floating-point)	VCVT_siv_T1_D	T32	VCVT	simd	baseline	executed	verified
-FPSIMD-0255	FP&SIMD	VCVT (from single-precision to BFloat16, Advanced SIMD)	VCVT_bfs_A1	A32	VCVT	complete	bf16	executed	verified
-FPSIMD-0256	FP&SIMD	VCVT (from single-precision to BFloat16, Advanced SIMD)	VCVT_bfs_T1	T32	VCVT	complete	bf16	executed	verified
+FPSIMD-0255	FP&SIMD	VCVT (from single-precision to BFloat16, Advanced SIMD)	VCVT_bfs_A1	A32	VCVT	complete	bf16	executed	pending
+FPSIMD-0256	FP&SIMD	VCVT (from single-precision to BFloat16, Advanced SIMD)	VCVT_bfs_T1	T32	VCVT	complete	bf16	executed	pending
 FPSIMD-0257	FP&SIMD	VCVT (integer to floating-point, floating-point)	VCVT_vi_A1_H	A32	VCVT	complete	fp16	executed	verified
 FPSIMD-0258	FP&SIMD	VCVT (integer to floating-point, floating-point)	VCVT_vi_A1_S	A32	VCVT	simd	baseline	executed	verified
 FPSIMD-0259	FP&SIMD	VCVT (integer to floating-point, floating-point)	VCVT_vi_A1_D	A32	VCVT	simd	baseline	executed	verified
@@ -1191,8 +1191,8 @@ FPSIMD-0277	FP&SIMD	VCVTB	VCVTB_T1_SH	T32	VCVTB	simd	baseline	executed	verified
 FPSIMD-0278	FP&SIMD	VCVTB	VCVTB_T1_DH	T32	VCVTB	complete	baseline	executed	verified
 FPSIMD-0279	FP&SIMD	VCVTB	VCVTB_T1_HS	T32	VCVTB	simd	baseline	executed	verified
 FPSIMD-0280	FP&SIMD	VCVTB	VCVTB_T1_HD	T32	VCVTB	complete	baseline	executed	verified
-FPSIMD-0281	FP&SIMD	VCVTB (BFloat16)	VCVTB_A1_bfs	A32	VCVTB	complete	bf16	executed	verified
-FPSIMD-0282	FP&SIMD	VCVTB (BFloat16)	VCVTB_T1_bfs	T32	VCVTB	complete	bf16	executed	verified
+FPSIMD-0281	FP&SIMD	VCVTB (BFloat16)	VCVTB_A1_bfs	A32	VCVTB	complete	bf16	executed	pending
+FPSIMD-0282	FP&SIMD	VCVTB (BFloat16)	VCVTB_T1_bfs	T32	VCVTB	complete	bf16	executed	pending
 FPSIMD-0283	FP&SIMD	VCVTM (Advanced SIMD)	VCVTM_asimd_A1_D	A32	VCVTM	complete	baseline	executed	verified
 FPSIMD-0284	FP&SIMD	VCVTM (Advanced SIMD)	VCVTM_asimd_A1_Q	A32	VCVTM	complete	baseline	executed	verified
 FPSIMD-0285	FP&SIMD	VCVTM (Advanced SIMD)	VCVTM_asimd_T1_D	T32	VCVTM	complete	baseline	executed	verified
@@ -1243,22 +1243,22 @@ FPSIMD-0329	FP&SIMD	VCVTT	VCVTT_T1_SH	T32	VCVTT	simd	baseline	executed	verified
 FPSIMD-0330	FP&SIMD	VCVTT	VCVTT_T1_DH	T32	VCVTT	complete	baseline	executed	verified
 FPSIMD-0331	FP&SIMD	VCVTT	VCVTT_T1_HS	T32	VCVTT	simd	baseline	executed	verified
 FPSIMD-0332	FP&SIMD	VCVTT	VCVTT_T1_HD	T32	VCVTT	complete	baseline	executed	verified
-FPSIMD-0333	FP&SIMD	VCVTT (BFloat16)	VCVTT_A1_bfs	A32	VCVTT	complete	bf16	executed	verified
-FPSIMD-0334	FP&SIMD	VCVTT (BFloat16)	VCVTT_T1_bfs	T32	VCVTT	complete	bf16	executed	verified
+FPSIMD-0333	FP&SIMD	VCVTT (BFloat16)	VCVTT_A1_bfs	A32	VCVTT	complete	bf16	executed	pending
+FPSIMD-0334	FP&SIMD	VCVTT (BFloat16)	VCVTT_T1_bfs	T32	VCVTT	complete	bf16	executed	pending
 FPSIMD-0335	FP&SIMD	VDIV	VDIV_A1_H	A32	VDIV	complete	fp16	executed	verified
 FPSIMD-0336	FP&SIMD	VDIV	VDIV_A1_S	A32	VDIV	simd	baseline	executed	verified
 FPSIMD-0337	FP&SIMD	VDIV	VDIV_A1_D	A32	VDIV	simd	baseline	executed	verified
 FPSIMD-0338	FP&SIMD	VDIV	VDIV_T1_H	T32	VDIV	complete	fp16	executed	verified
 FPSIMD-0339	FP&SIMD	VDIV	VDIV_T1_S	T32	VDIV	simd	baseline	executed	verified
 FPSIMD-0340	FP&SIMD	VDIV	VDIV_T1_D	T32	VDIV	simd	baseline	executed	verified
-FPSIMD-0341	FP&SIMD	VDOT (by element)	VDOT_s_A1_D	A32	VDOT	complete	bf16	executed	verified
-FPSIMD-0342	FP&SIMD	VDOT (by element)	VDOT_s_A1_Q	A32	VDOT	complete	bf16	executed	verified
-FPSIMD-0343	FP&SIMD	VDOT (by element)	VDOT_s_T1_D	T32	VDOT	complete	bf16	executed	verified
-FPSIMD-0344	FP&SIMD	VDOT (by element)	VDOT_s_T1_Q	T32	VDOT	complete	bf16	executed	verified
-FPSIMD-0345	FP&SIMD	VDOT (vector)	VDOT_A1_D	A32	VDOT	complete	bf16	executed	verified
-FPSIMD-0346	FP&SIMD	VDOT (vector)	VDOT_A1_Q	A32	VDOT	complete	bf16	executed	verified
-FPSIMD-0347	FP&SIMD	VDOT (vector)	VDOT_T1_D	T32	VDOT	complete	bf16	executed	verified
-FPSIMD-0348	FP&SIMD	VDOT (vector)	VDOT_T1_Q	T32	VDOT	complete	bf16	executed	verified
+FPSIMD-0341	FP&SIMD	VDOT (by element)	VDOT_s_A1_D	A32	VDOT	complete	bf16	executed	pending
+FPSIMD-0342	FP&SIMD	VDOT (by element)	VDOT_s_A1_Q	A32	VDOT	complete	bf16	executed	pending
+FPSIMD-0343	FP&SIMD	VDOT (by element)	VDOT_s_T1_D	T32	VDOT	complete	bf16	executed	pending
+FPSIMD-0344	FP&SIMD	VDOT (by element)	VDOT_s_T1_Q	T32	VDOT	complete	bf16	executed	pending
+FPSIMD-0345	FP&SIMD	VDOT (vector)	VDOT_A1_D	A32	VDOT	complete	bf16	executed	pending
+FPSIMD-0346	FP&SIMD	VDOT (vector)	VDOT_A1_Q	A32	VDOT	complete	bf16	executed	pending
+FPSIMD-0347	FP&SIMD	VDOT (vector)	VDOT_T1_D	T32	VDOT	complete	bf16	executed	pending
+FPSIMD-0348	FP&SIMD	VDOT (vector)	VDOT_T1_Q	T32	VDOT	complete	bf16	executed	pending
 FPSIMD-0349	FP&SIMD	VDUP (general-purpose register)	VDUP_r_A1_D	A32	VDUP	simd	baseline	executed	verified
 FPSIMD-0350	FP&SIMD	VDUP (general-purpose register)	VDUP_r_A1_Q	A32	VDUP	simd	baseline	executed	verified
 FPSIMD-0351	FP&SIMD	VDUP (general-purpose register)	VDUP_r_T1_D	T32	VDUP	simd	baseline	executed	verified
@@ -1285,10 +1285,10 @@ FPSIMD-0371	FP&SIMD	VFMA	VFMA_T1_Q	T32	VFMA	simd	baseline	executed	verified
 FPSIMD-0372	FP&SIMD	VFMA	VFMA_T2_H	T32	VFMA	complete	fp16	executed	verified
 FPSIMD-0373	FP&SIMD	VFMA	VFMA_T2_S	T32	VFMA	simd	baseline	executed	verified
 FPSIMD-0374	FP&SIMD	VFMA	VFMA_T2_D	T32	VFMA	simd	baseline	executed	verified
-FPSIMD-0375	FP&SIMD	VFMAB, VFMAT (BFloat16, by scalar)	VFMA_bfs_A1_Q	A32	VFMA	complete	bf16	executed	verified
-FPSIMD-0376	FP&SIMD	VFMAB, VFMAT (BFloat16, by scalar)	VFMA_bfs_T1_Q	T32	VFMA	complete	bf16	executed	verified
-FPSIMD-0377	FP&SIMD	VFMAB, VFMAT (BFloat16, vector)	VFMA_bf_A1_Q	A32	VFMA	complete	bf16	executed	verified
-FPSIMD-0378	FP&SIMD	VFMAB, VFMAT (BFloat16, vector)	VFMA_bf_T1_Q	T32	VFMA	complete	bf16	executed	verified
+FPSIMD-0375	FP&SIMD	VFMAB, VFMAT (BFloat16, by scalar)	VFMA_bfs_A1_Q	A32	VFMA	complete	bf16	executed	pending
+FPSIMD-0376	FP&SIMD	VFMAB, VFMAT (BFloat16, by scalar)	VFMA_bfs_T1_Q	T32	VFMA	complete	bf16	executed	pending
+FPSIMD-0377	FP&SIMD	VFMAB, VFMAT (BFloat16, vector)	VFMA_bf_A1_Q	A32	VFMA	complete	bf16	executed	pending
+FPSIMD-0378	FP&SIMD	VFMAB, VFMAT (BFloat16, vector)	VFMA_bf_T1_Q	T32	VFMA	complete	bf16	executed	pending
 FPSIMD-0379	FP&SIMD	VFMAL (by scalar)	VFMAL_s_A1_D	A32	VFMAL	complete	fhm	executed	verified
 FPSIMD-0380	FP&SIMD	VFMAL (by scalar)	VFMAL_s_A1_Q	A32	VFMAL	complete	fhm	executed	verified
 FPSIMD-0381	FP&SIMD	VFMAL (by scalar)	VFMAL_s_T1_D	T32	VFMAL	complete	fhm	executed	verified
@@ -1583,8 +1583,8 @@ FPSIMD-0669	FP&SIMD	VMLSL (by scalar)	VMLSL_s_A1	A32	VMLSL	simd	baseline	execute
 FPSIMD-0670	FP&SIMD	VMLSL (by scalar)	VMLSL_s_T1	T32	VMLSL	simd	baseline	executed	verified
 FPSIMD-0671	FP&SIMD	VMLSL (integer)	VMLSL_i_A1	A32	VMLSL	simd	baseline	executed	verified
 FPSIMD-0672	FP&SIMD	VMLSL (integer)	VMLSL_i_T1	T32	VMLSL	simd	baseline	executed	verified
-FPSIMD-0673	FP&SIMD	VMMLA	VMMLA_A1_Q	A32	VMMLA	complete	bf16	executed	verified
-FPSIMD-0674	FP&SIMD	VMMLA	VMMLA_T1_Q	T32	VMMLA	complete	bf16	executed	verified
+FPSIMD-0673	FP&SIMD	VMMLA	VMMLA_A1_Q	A32	VMMLA	complete	bf16	executed	pending
+FPSIMD-0674	FP&SIMD	VMMLA	VMMLA_T1_Q	T32	VMMLA	complete	bf16	executed	pending
 FPSIMD-0675	FP&SIMD	VMOV (between general-purpose register and half-precision)	VMOV_toh_A1	A32	VMOV	complete	fp16	executed	verified
 FPSIMD-0676	FP&SIMD	VMOV (between general-purpose register and half-precision)	VMOV_h_A1	A32	VMOV	complete	fp16	executed	verified
 FPSIMD-0677	FP&SIMD	VMOV (between general-purpose register and half-precision)	VMOV_toh_T1	T32	VMOV	complete	fp16	executed	verified
@@ -2001,8 +2001,8 @@ FPSIMD-1087	FP&SIMD	VSLI	VSLI_A1_D	A32	VSLI	simd	baseline	executed	verified
 FPSIMD-1088	FP&SIMD	VSLI	VSLI_A1_Q	A32	VSLI	simd	baseline	executed	verified
 FPSIMD-1089	FP&SIMD	VSLI	VSLI_T1_D	T32	VSLI	simd	baseline	executed	verified
 FPSIMD-1090	FP&SIMD	VSLI	VSLI_T1_Q	T32	VSLI	simd	baseline	executed	verified
-FPSIMD-1091	FP&SIMD	VSMMLA	VSMMLA_A1_Q	A32	VSMMLA	complete	i8mm	executed	verified
-FPSIMD-1092	FP&SIMD	VSMMLA	VSMMLA_T1_Q	T32	VSMMLA	complete	i8mm	executed	verified
+FPSIMD-1091	FP&SIMD	VSMMLA	VSMMLA_A1_Q	A32	VSMMLA	complete	i8mm	executed	pending
+FPSIMD-1092	FP&SIMD	VSMMLA	VSMMLA_T1_Q	T32	VSMMLA	complete	i8mm	executed	pending
 FPSIMD-1093	FP&SIMD	VSQRT	VSQRT_A1_H	A32	VSQRT	complete	fp16	executed	verified
 FPSIMD-1094	FP&SIMD	VSQRT	VSQRT_A1_S	A32	VSQRT	simd	baseline	executed	verified
 FPSIMD-1095	FP&SIMD	VSQRT	VSQRT_A1_D	A32	VSQRT	simd	baseline	executed	verified
@@ -2171,10 +2171,10 @@ FPSIMD-1257	FP&SIMD	VSUBL	VSUBL_A1	A32	VSUBL	simd	baseline	executed	verified
 FPSIMD-1258	FP&SIMD	VSUBL	VSUBL_T1	T32	VSUBL	simd	baseline	executed	verified
 FPSIMD-1259	FP&SIMD	VSUBW	VSUBW_A1	A32	VSUBW	simd	baseline	executed	verified
 FPSIMD-1260	FP&SIMD	VSUBW	VSUBW_T1	T32	VSUBW	simd	baseline	executed	verified
-FPSIMD-1261	FP&SIMD	VSUDOT (by element)	VSUDOT_s_A1_D	A32	VSUDOT	complete	i8mm	executed	verified
-FPSIMD-1262	FP&SIMD	VSUDOT (by element)	VSUDOT_s_A1_Q	A32	VSUDOT	complete	i8mm	executed	verified
-FPSIMD-1263	FP&SIMD	VSUDOT (by element)	VSUDOT_s_T1_D	T32	VSUDOT	complete	i8mm	executed	verified
-FPSIMD-1264	FP&SIMD	VSUDOT (by element)	VSUDOT_s_T1_Q	T32	VSUDOT	complete	i8mm	executed	verified
+FPSIMD-1261	FP&SIMD	VSUDOT (by element)	VSUDOT_s_A1_D	A32	VSUDOT	complete	i8mm	executed	pending
+FPSIMD-1262	FP&SIMD	VSUDOT (by element)	VSUDOT_s_A1_Q	A32	VSUDOT	complete	i8mm	executed	pending
+FPSIMD-1263	FP&SIMD	VSUDOT (by element)	VSUDOT_s_T1_D	T32	VSUDOT	complete	i8mm	executed	pending
+FPSIMD-1264	FP&SIMD	VSUDOT (by element)	VSUDOT_s_T1_Q	T32	VSUDOT	complete	i8mm	executed	pending
 FPSIMD-1265	FP&SIMD	VSWP	VSWP_A1_D	A32	VSWP	simd	baseline	executed	verified
 FPSIMD-1266	FP&SIMD	VSWP	VSWP_A1_Q	A32	VSWP	simd	baseline	executed	verified
 FPSIMD-1267	FP&SIMD	VSWP	VSWP_T1_D	T32	VSWP	simd	baseline	executed	verified
@@ -2199,18 +2199,18 @@ FPSIMD-1285	FP&SIMD	VUDOT (vector)	VUDOT_A1_D	A32	VUDOT	complete	dotprod	execute
 FPSIMD-1286	FP&SIMD	VUDOT (vector)	VUDOT_A1_Q	A32	VUDOT	complete	dotprod	executed	verified
 FPSIMD-1287	FP&SIMD	VUDOT (vector)	VUDOT_T1_D	T32	VUDOT	complete	dotprod	executed	verified
 FPSIMD-1288	FP&SIMD	VUDOT (vector)	VUDOT_T1_Q	T32	VUDOT	complete	dotprod	executed	verified
-FPSIMD-1289	FP&SIMD	VUMMLA	VUMMLA_A1_Q	A32	VUMMLA	complete	i8mm	executed	verified
-FPSIMD-1290	FP&SIMD	VUMMLA	VUMMLA_T1_Q	T32	VUMMLA	complete	i8mm	executed	verified
-FPSIMD-1291	FP&SIMD	VUSDOT (by element)	VUSDOT_s_A1_D	A32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1292	FP&SIMD	VUSDOT (by element)	VUSDOT_s_A1_Q	A32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1293	FP&SIMD	VUSDOT (by element)	VUSDOT_s_T1_D	T32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1294	FP&SIMD	VUSDOT (by element)	VUSDOT_s_T1_Q	T32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1295	FP&SIMD	VUSDOT (vector)	VUSDOT_A1_D	A32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1296	FP&SIMD	VUSDOT (vector)	VUSDOT_A1_Q	A32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1297	FP&SIMD	VUSDOT (vector)	VUSDOT_T1_D	T32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1298	FP&SIMD	VUSDOT (vector)	VUSDOT_T1_Q	T32	VUSDOT	complete	i8mm	executed	verified
-FPSIMD-1299	FP&SIMD	VUSMMLA	VUSMMLA_A1_Q	A32	VUSMMLA	complete	i8mm	executed	verified
-FPSIMD-1300	FP&SIMD	VUSMMLA	VUSMMLA_T1_Q	T32	VUSMMLA	complete	i8mm	executed	verified
+FPSIMD-1289	FP&SIMD	VUMMLA	VUMMLA_A1_Q	A32	VUMMLA	complete	i8mm	executed	pending
+FPSIMD-1290	FP&SIMD	VUMMLA	VUMMLA_T1_Q	T32	VUMMLA	complete	i8mm	executed	pending
+FPSIMD-1291	FP&SIMD	VUSDOT (by element)	VUSDOT_s_A1_D	A32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1292	FP&SIMD	VUSDOT (by element)	VUSDOT_s_A1_Q	A32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1293	FP&SIMD	VUSDOT (by element)	VUSDOT_s_T1_D	T32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1294	FP&SIMD	VUSDOT (by element)	VUSDOT_s_T1_Q	T32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1295	FP&SIMD	VUSDOT (vector)	VUSDOT_A1_D	A32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1296	FP&SIMD	VUSDOT (vector)	VUSDOT_A1_Q	A32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1297	FP&SIMD	VUSDOT (vector)	VUSDOT_T1_D	T32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1298	FP&SIMD	VUSDOT (vector)	VUSDOT_T1_Q	T32	VUSDOT	complete	i8mm	executed	pending
+FPSIMD-1299	FP&SIMD	VUSMMLA	VUSMMLA_A1_Q	A32	VUSMMLA	complete	i8mm	executed	pending
+FPSIMD-1300	FP&SIMD	VUSMMLA	VUSMMLA_T1_Q	T32	VUSMMLA	complete	i8mm	executed	pending
 FPSIMD-1301	FP&SIMD	VUZP	VUZP_A1_D	A32	VUZP	simd	baseline	executed	verified
 FPSIMD-1302	FP&SIMD	VUZP	VUZP_A1_Q	A32	VUZP	simd	baseline	executed	verified
 FPSIMD-1303	FP&SIMD	VUZP	VUZP_T1_D	T32	VUZP	simd	baseline	executed	verified
