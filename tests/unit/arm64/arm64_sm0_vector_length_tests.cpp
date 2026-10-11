@@ -9,14 +9,12 @@
  * - the family is exactly the six vector-length forms and the four spill
  *   forms of the encoding table that the words name, over the whole 0x04,
  *   0x85 and 0xe5 bytes of the SVE space, and no other;
- * - the model the tests state from the pseudocode matches the semantic
- *   library, which executes the same words for a virtual CPU with SVE;
  * - each vector-length word's base A64 word is an ADD, SUB, MOVZ, MOVN or
- *   NOP of the same effect on the general registers;
- * - each spill word's fields, and the library's execution of it for a CPU
- *   without predicate state; and
- * - the family applies exactly where the virtual CPU has FEAT_SME and not
- *   the SVE profile.
+ *   NOP of the same effect on the general registers, as the model the tests
+ *   state from the pseudocode computes it;
+ * - each spill word's fields, and the JIT slow path's execution of it for a
+ *   CPU without predicate state; and
+ * - the family applies exactly where the virtual CPU has FEAT_SME.
  *
  * The engines' own tests (arm64-gadget-sme, arm64-jit-sme-control and
  * arm64-jit-sme-codegen) and the corpus (arm64-sm0-vl) run the words. */
@@ -25,12 +23,9 @@
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
-#include "cpu/arm64/detail/sve_semantics.hpp"
-#include "cpu/arm64/detail/sve_semantics_forms.hpp"
+#include "cpu/arm64/detail/sm0_spill.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/host_capabilities.hpp"
-#include "platform/apple/host_features.hpp"
 #include "require.hpp"
 
 #include <array>
@@ -49,14 +44,25 @@ namespace arm64 = ::uml::cpu::arm64;
 namespace detail = ::uml::cpu::arm64::detail;
 namespace model = ::uml::emulator::tests::sm0_vector_length;
 
+/* The form of the encoding table that a witness word is. */
+[[nodiscard]] consteval std::uint16_t form_of(std::uint32_t word)
+{
+	const auto *row = detail::find_sme_encoding(word);
+	if (row == nullptr || (row->form & detail::sme_form_sme_section) != 0U)
+		throw "not a word of an SVE-index form";
+	return row->form;
+}
+
 /* The forms of the encoding table the family is: CNT[BHWD], DEC[BHWD],
  * INC[BHWD], RDVL, ADDVL and ADDPL. */
 [[nodiscard]] bool family_form(std::uint16_t form) noexcept
 {
-	namespace named = detail::sve_semantics::form;
-	return form == named::cntb_r_s || form == named::decb_r_rs ||
-		form == named::incb_r_rs || form == named::rdvl_r_i ||
-		form == named::addvl_r_ri || form == named::addpl_r_ri;
+	return form == form_of(0x0420'e000U) /* CNTB */ ||
+		form == form_of(0x0430'e400U) /* DECB */ ||
+		form == form_of(0x0430'e000U) /* INCB */ ||
+		form == form_of(0x04bf'5000U) /* RDVL */ ||
+		form == form_of(0x0420'5000U) /* ADDVL */ ||
+		form == form_of(0x0460'5000U) /* ADDPL */;
 }
 
 [[nodiscard]] bool table_family(std::uint32_t word) noexcept
@@ -70,9 +76,10 @@ namespace model = ::uml::emulator::tests::sm0_vector_length;
  * vector register and of a predicate register, with an immediate offset. */
 [[nodiscard]] bool spill_form(std::uint16_t form) noexcept
 {
-	namespace named = detail::sve_semantics::form;
-	return form == named::ldr_z_bi || form == named::str_z_bi ||
-		form == named::ldr_p_bi || form == named::str_p_bi;
+	return form == form_of(0x8580'4000U) /* LDR Z */ ||
+		form == form_of(0xe580'4000U) /* STR Z */ ||
+		form == form_of(0x8580'0000U) /* LDR P */ ||
+		form == form_of(0xe580'0000U) /* STR P */;
 }
 
 [[nodiscard]] bool table_spill(std::uint32_t word) noexcept
@@ -219,46 +226,6 @@ void equivalents_have_the_effect_of_the_family()
 	require(checked > 4000U);
 }
 
-class NoMemory final : public detail::SveMemory {
-public:
-	std::byte *translate(std::uint64_t,
-		::uml::memory::MemoryAccess) noexcept override
-	{
-		return nullptr;
-	}
-	void stored(std::byte *, std::size_t) noexcept override {}
-};
-
-/* The semantic library executes the family for a virtual CPU with the SVE
- * profile; the model, and so the base words, are what it computes. */
-void model_matches_the_semantic_library()
-{
-	const detail::SmeFeatureMask features = detail::sme_feature_sve |
-		detail::sme_feature_sve2;
-	NoMemory memory;
-	for (const auto word : model::words()) {
-		const auto *row = detail::decode_sve_non_streaming(word, features);
-		require(row != nullptr);
-		require(detail::sve_semantics_covers(*row));
-		const auto start = sample_registers(2);
-		arm64::CpuState cpu;
-		cpu.registers = start.x;
-		cpu.sp = start.sp;
-		const auto result = detail::execute_sve(cpu, word, *row, memory);
-		require(result.event == detail::SveEvent::retired);
-		auto expected = start;
-		require(model::model(word, expected));
-		model::Registers actual;
-		actual.x = cpu.registers;
-		actual.sp = cpu.sp;
-		if (!same(expected, actual)) {
-			std::fprintf(stderr, "%08x: the library differs from the model\n",
-				word);
-			require(false);
-		}
-	}
-}
-
 /* The spill word's fields, for every form, base, transfer register and
  * immediate. */
 void spill_words_decode_to_their_fields()
@@ -297,7 +264,7 @@ void spill_words_decode_to_their_fields()
 }
 
 /* A guest memory of a flat buffer from `base`, mapped to its length. */
-class Flat final : public detail::SveMemory {
+class Flat final : public detail::Sm0Memory {
 public:
 	Flat(std::uint64_t base, std::size_t size) noexcept
 		: base_{base}, bytes_(size)
@@ -316,11 +283,10 @@ public:
 	unsigned stores{};
 };
 
-/* The library's slow path for the spill words, with no predicate state: Z
- * is V, a predicate store writes zeros, a predicate load reads and drops, the
- * predicate registers and the live mark stay as they were, and the faults
- * are the SVE profile's. */
-void library_executes_the_spill_words()
+/* The JIT slow path for the spill words, with no predicate state: Z is V, a
+ * predicate store writes zeros, a predicate load reads and drops, and the
+ * predicate registers and the live mark stay as they were. */
+void slow_path_executes_the_spill_words()
 {
 	constexpr std::uint64_t base = 0x40'0000;
 	constexpr std::size_t window = 1U << 16;
@@ -359,7 +325,7 @@ void library_executes_the_spill_words()
 		const auto before_predicates = cpu.sve_p;
 		const auto result =
 			detail::execute_sm0_spill(cpu, spill.word(), memory);
-		require(result.event == detail::SveEvent::retired);
+		require(result.event == detail::Sm0Event::retired);
 		model::apply_spill(spill, address - base, expected);
 		for (unsigned reg = 0; reg < 32U; ++reg)
 			for (unsigned byte = 0; byte < 16U; ++byte)
@@ -377,7 +343,7 @@ void library_executes_the_spill_words()
 
 /* ... and its faults: a page that does not translate, and an SP base that is
  * not 16-byte aligned; any other word is outside the contract. */
-void library_faults_on_the_spill_words()
+void slow_path_faults_on_the_spill_words()
 {
 	constexpr std::uint64_t base = 0x40'0000;
 	constexpr std::size_t page = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -391,7 +357,7 @@ void library_faults_on_the_spill_words()
 	     {model::Spill{false, false, 3, 0, 0}, model::Spill{true, false, 3, 0, 0}}) {
 		const auto result =
 			detail::execute_sm0_spill(cpu, spill.word(), memory);
-		require(result.event == detail::SveEvent::memory_fault);
+		require(result.event == detail::Sm0Event::memory_fault);
 		require(!result.alignment);
 		require(result.fault_address == end);
 		require(result.access == (spill.store ? ::uml::memory::MemoryAccess::write
@@ -402,7 +368,7 @@ void library_faults_on_the_spill_words()
 	for (const bool store : {false, true}) {
 		const auto predicate = detail::execute_sm0_spill(cpu,
 			model::Spill{store, true, 3, 0, 0}.word(), memory);
-		require(predicate.event == detail::SveEvent::memory_fault &&
+		require(predicate.event == detail::Sm0Event::memory_fault &&
 			predicate.fault_address == end);
 	}
 	/* A misaligned SP faults as an alignment fault, whatever it points to. */
@@ -410,7 +376,7 @@ void library_faults_on_the_spill_words()
 	for (const bool predicate_form : {false, true}) {
 		const auto aligned = detail::execute_sm0_spill(cpu,
 			model::Spill{false, predicate_form, 3, 31, 0}.word(), memory);
-		require(aligned.event == detail::SveEvent::memory_fault &&
+		require(aligned.event == detail::Sm0Event::memory_fault &&
 			aligned.alignment && aligned.fault_address == cpu.sp);
 	}
 	/* Neither the other SVE words nor the vector-length words. */
@@ -418,7 +384,7 @@ void library_faults_on_the_spill_words()
 	     {0xa540'a000U /* LD1B */, 0x0420'e3e0U, 0x2520'8000U, 0xd503'201fU,
 	      0x8580'0010U})
 		require(detail::execute_sm0_spill(cpu, word, memory).event ==
-			detail::SveEvent::fatal);
+			detail::Sm0Event::fatal);
 }
 
 [[nodiscard]] HostCapabilities host_with(
@@ -431,10 +397,9 @@ void library_faults_on_the_spill_words()
 	return host;
 }
 
-/* Only a virtual CPU with FEAT_SME and without FEAT_SVE applies the family:
- * with SVE the engines' SVE path executes the words, and without SME they
- * are as undefined as any SVE word. */
-void family_applies_with_sme_and_without_sve()
+/* Only a virtual CPU with FEAT_SME applies the family: without SME the
+ * words are as undefined as any SVE word. */
+void family_applies_with_sme()
 {
 	const auto sme = {ArmFeature::sme, ArmFeature::sme_f64f64,
 		ArmFeature::sme_i16i64};
@@ -446,15 +411,11 @@ void family_applies_with_sme_and_without_sve()
 	sme2.supported.set(static_cast<std::size_t>(ArmFeature::sme2));
 	require(detail::implements_sm0_vector_length(sme2));
 
-	/* SVE or an SVE token the profile does not complete. */
+	/* An SVE token changes nothing: no virtual CPU has SVE. */
 	auto with_sve = sme_only;
-	for (const auto token : arm64::sve_features)
+	for (const auto token : {ArmFeature::sve, ArmFeature::sve2})
 		with_sve.supported.set(static_cast<std::size_t>(token));
-	require(arm64::implements_sve(with_sve));
-	require(!detail::implements_sm0_vector_length(with_sve));
-	auto partial = sme_only;
-	partial.supported.set(static_cast<std::size_t>(ArmFeature::sve));
-	require(detail::implements_sm0_vector_length(partial));
+	require(detail::implements_sm0_vector_length(with_sve));
 
 	/* No SME: a missing token, or a streaming vector length it lacks. */
 	require(!detail::implements_sm0_vector_length(HostCapabilities{}));
@@ -472,10 +433,9 @@ int main()
 {
 	family_is_the_ten_forms();
 	equivalents_have_the_effect_of_the_family();
-	model_matches_the_semantic_library();
 	spill_words_decode_to_their_fields();
-	library_executes_the_spill_words();
-	library_faults_on_the_spill_words();
-	family_applies_with_sme_and_without_sve();
+	slow_path_executes_the_spill_words();
+	slow_path_faults_on_the_spill_words();
+	family_applies_with_sme();
 	return 0;
 }

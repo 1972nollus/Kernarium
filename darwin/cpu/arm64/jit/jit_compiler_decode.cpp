@@ -20,7 +20,6 @@
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 #include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 
 namespace uml::cpu::arm64 {
 
@@ -119,19 +118,15 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     /* Every SVE and SME word goes through the profile's table first
-     * (design 4.1.4): an SM=0 translation takes the SVE rows of the
-     * non-streaming profile, the SME path the rest. Without either profile
-     * each stays on the path that makes it the illegal exit, unchanged. */
+     * (design 4.1.4); without SME it stays on the path that makes it the
+     * illegal exit, unchanged. */
     if (arm64::detail::sme_encoding_space(instruction)) {
       const auto &host = host_capabilities();
-      if (!streaming_translation() && implements_sve(host))
-        if (const auto action = emit_sve_instruction(instruction, pc))
-          return *action;
       /*
        * The SM = 0 vector-length family
-       * (detail/sm0_vector_length.hpp): an SME virtual CPU without SVE
-       * translates a vector-length word as the base word of the same
-       * effect and a spill word as the memory access it is.
+       * (detail/sm0_vector_length.hpp): an SME virtual CPU translates a
+       * vector-length word as the base word of the same effect and a spill
+       * word as the memory access it is.
        */
       if (!streaming_translation() &&
           arm64::detail::implements_sm0_vector_length(host)) {

@@ -14,8 +14,8 @@ chain, writes its answers into the pack. This test requires:
   tables settle to carry the classifier's bit (a word they leave open keeps
   its producer's bit, which `--llvm` checks);
 - the classifier's feature lists to cover every allocation-table feature
-  token, the absent-feature script's features, and the SVE profile of
-  darwin/cpu/arm64/sve_profile.hpp, so a new feature has to be decided; and
+  token and the absent-feature script's features, so a new feature has to be
+  decided; and
 - provenance.json to record the step.
 
 `--llvm` adds the cross-check that the tables cannot make: a case whose bit
@@ -32,14 +32,12 @@ import argparse
 import importlib.util
 import json
 import pathlib
-import re
 import subprocess
 import sys
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 TOOLS = REPOSITORY / "tools" / "arm64-tests"
 SKIP = 77
-SVE_PROFILE = REPOSITORY / "darwin" / "cpu" / "arm64" / "sve_profile.hpp"
 
 
 def load(name: str, path: pathlib.Path):
@@ -86,17 +84,6 @@ def check_features(ie) -> list[str]:
             problems.append("the absent-feature script removes conditions "
                             "that invalid_encoding.py does not omit: " +
                             ", ".join(missing))
-    text = SVE_PROFILE.read_text(encoding="utf-8")
-    match = re.search(r"sve_features\{([^}]*)\}", text)
-    implemented = {name.split("::")[1] for name in
-                   re.findall(r"ArmFeature::\w+", match.group(1))}
-    table_sve = {name for name in ie.sme_table.FEATURES
-                 if name.startswith("sve")}
-    if table_sve - ie.UNIMPLEMENTED_PROFILE_FEATURES != implemented:
-        problems.append(
-            "the table's SVE features less the unimplemented ones are "
-            f"{sorted(table_sve - ie.UNIMPLEMENTED_PROFILE_FEATURES)}, "
-            f"sve_features is {sorted(implemented)}")
     return problems
 
 

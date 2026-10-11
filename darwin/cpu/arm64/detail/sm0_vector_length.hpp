@@ -12,7 +12,7 @@ namespace uml::cpu::arm64::detail {
 
 /*
  * The SM = 0 vector-length family: a deliberate departure from the
- * architecture, for a virtual CPU with FEAT_SME and without FEAT_SVE.
+ * architecture, for the virtual CPU, which has FEAT_SME and no FEAT_SVE.
  *
  * Such a CPU executes no SVE word at PSTATE.SM = 0; the architecture makes
  * every one UNDEFINED, and an M4 traps them. Compilers target armv9-a, which
@@ -21,16 +21,15 @@ namespace uml::cpu::arm64::detail {
  * vector length with CNTD before it enters streaming mode, and would
  * SIGILL on every host that advertises SME. This virtual CPU therefore
  * executes the instructions that only count or scale a vector length at
- * SM = 0, for a constant non-streaming vector length of 16 bytes, the one
- * the SVE profile uses (sve_vector_length):
+ * SM = 0, for a constant non-streaming vector length of 16 bytes
+ * (sm0_vector_bytes):
  *
  * - CNTB, CNTH, CNTW and CNTD;
  * - RDVL, ADDVL and ADDPL;
  * - the scalar INCB, INCH, INCW, INCD, DECB, DECH, DECW and DECD;
  *
  * each with every predicate pattern and multiplier. They touch no vector or
- * predicate register, so a program holding one never needs the FP state or
- * the SVE task state.
+ * predicate register, so a program holding one never needs the FP state.
  *
  * The same CPU executes the register spill forms the compilers emit around a
  * mode change or a call, for the same constant vector length:
@@ -55,17 +54,18 @@ namespace uml::cpu::arm64::detail {
  * the same effect, which sm0_vector_length_equivalent() computes, and
  * translate that word instead; they translate a spill word as the SIMD&FP or
  * scalar halfword access sm0_spill_access() describes. The family therefore
- * has one definition, shared by construction. Where the virtual CPU has the
- * SVE profile the engines' SVE path decodes the same words first and this
- * one is not consulted.
+ * has one definition, shared by construction.
  */
 
+/* The constant non-streaming vector length, in bytes. */
+inline constexpr std::uint32_t sm0_vector_bytes = 16U;
+
 /* Whether the virtual CPU on `host` executes the family at PSTATE.SM = 0:
- * it implements FEAT_SME and not the SVE profile. */
+ * it implements FEAT_SME. */
 [[nodiscard]] inline bool implements_sm0_vector_length(
 	const HostCapabilities &host) noexcept
 {
-	return implements_sme(host) && !implements_sve(host);
+	return implements_sme(host);
 }
 
 /* The base A64 words the family translates to. */
@@ -85,7 +85,7 @@ inline constexpr std::uint32_t sm0_vector_length_nop = 0xd503'201fU;
 
 /*
  * The base A64 word with the effect of a family word at a vector length of
- * sve_vector_length bytes, or nothing for any other word:
+ * sm0_vector_bytes bytes, or nothing for any other word:
  *
  * - CNTx Xd, pattern, MUL #m is MOVZ Xd, #count; RDVL Xd, #n is MOVZ or MOVN
  *   Xd, #n * 16;
@@ -119,9 +119,9 @@ sm0_vector_length_equivalent(std::uint32_t word) noexcept
 		if (rd == 31U)
 			return sm0_vector_length_nop;
 		std::int32_t value = signed6 * static_cast<std::int32_t>(
-			sve_vector_length);
+			sm0_vector_bytes);
 		if ((word & 0xff30'fc00U) == 0x0420'e000U) {
-			const std::uint32_t elements = sve_vector_length >>
+			const std::uint32_t elements = sm0_vector_bytes >>
 				((word >> 22) & 3U);
 			value = static_cast<std::int32_t>(
 				predicate_pattern_count(pattern, elements) *
@@ -134,8 +134,8 @@ sm0_vector_length_equivalent(std::uint32_t word) noexcept
 	if ((word & 0xffa0'f800U) == 0x0420'5000U) {
 		const std::int32_t value = signed6 *
 			(((word & 0x0040'0000U) != 0U) ?
-				static_cast<std::int32_t>(sve_vector_length / 8U) :
-				static_cast<std::int32_t>(sve_vector_length));
+				static_cast<std::int32_t>(sm0_vector_bytes / 8U) :
+				static_cast<std::int32_t>(sm0_vector_bytes));
 		const std::uint32_t rn = (word >> 16) & 31U;
 		const std::uint32_t magnitude = static_cast<std::uint32_t>(
 			value >= 0 ? value : -value);
@@ -143,7 +143,7 @@ sm0_vector_length_equivalent(std::uint32_t word) noexcept
 			(magnitude << 10) | (rn << 5) | rd;
 	}
 	/* INC and DEC (scalar): Rdn is both operand and destination. */
-	const std::uint32_t elements = sve_vector_length >> ((word >> 22) & 3U);
+	const std::uint32_t elements = sm0_vector_bytes >> ((word >> 22) & 3U);
 	const std::uint32_t count = predicate_pattern_count(pattern, elements) *
 		(((word >> 16) & 15U) + 1U);
 	const std::uint32_t rdn = word & 31U;
@@ -156,7 +156,7 @@ sm0_vector_length_equivalent(std::uint32_t word) noexcept
 
 /* The bytes an LDR or STR of a predicate register moves: one bit per byte of
  * the vector. */
-inline constexpr std::uint32_t sm0_predicate_bytes = sve_vector_length / 8U;
+inline constexpr std::uint32_t sm0_predicate_bytes = sm0_vector_bytes / 8U;
 
 /* The memory access of a spill word. */
 struct Sm0Spill final {
@@ -174,7 +174,7 @@ struct Sm0Spill final {
 
 	[[nodiscard]] constexpr std::uint32_t bytes() const noexcept
 	{
-		return predicate ? sm0_predicate_bytes : sve_vector_length;
+		return predicate ? sm0_predicate_bytes : sm0_vector_bytes;
 	}
 };
 

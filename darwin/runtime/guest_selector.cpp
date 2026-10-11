@@ -3,7 +3,6 @@
 
 #include "cpu/arm64/id_registers.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/guest_identity.hpp"
 #include "platform/apple/host_features.hpp"
 #include "runtime/context.hpp"
@@ -65,17 +64,10 @@ extern "C" unsigned long darwin_uml_guest_sme_vector_length(void)
 #endif
 }
 
-/* From the running engine's profile, as the HWCAPs: non-zero exactly when
- * they advertise SVE, which an engine does only at sve_support complete. */
+/* The virtual CPU implements no non-streaming SVE, as the HWCAPs say. */
 extern "C" unsigned long darwin_uml_guest_sve_vector_length(void)
 {
-#if DARWIN_UML_X86_64_USERSPACE_ONLY
 	return 0;
-#else
-	return ::uml::cpu::arm64::implements_sve(
-		::uml::runtime::current_guest_host_capabilities()) ?
-		::uml::cpu::arm64::sve_vector_length : 0;
-#endif
 }
 
 extern "C" int darwin_uml_enter_guest(void *registers, void *fp_registers,

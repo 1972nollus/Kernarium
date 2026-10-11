@@ -279,8 +279,8 @@ uml_add_guest_integration_test(
 add_subdirectory(aarch32)
 add_subdirectory(balloon)
 add_subdirectory(exclusive)
+add_subdirectory(no_sve)
 add_subdirectory(sme)
-add_subdirectory(sve)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(

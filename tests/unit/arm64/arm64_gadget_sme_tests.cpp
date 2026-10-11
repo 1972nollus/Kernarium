@@ -308,12 +308,11 @@ void sme_words_are_illegal_without_sme()
 }
 
 /* The injected SME profile with no SVE, the virtual CPU the SM = 0
- * vector-length family is for, whatever the guest-SVE policy says. */
+ * vector-length family is for. */
 [[nodiscard]] uml::platform::HostCapabilities sme_without_sve(unsigned svl,
 	bool sme2)
 {
-	return arm64::sve_host_for_support(injected_host(svl, sme2),
-		arm64::SveSupport::none);
+	return ::uml::platform::without_sve(injected_host(svl, sme2));
 }
 
 /* A virtual CPU with SME and without SVE counts and scales a vector length

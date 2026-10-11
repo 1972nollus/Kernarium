@@ -1266,7 +1266,7 @@ BuildOutput Translator::run()
 
 	BuildOutput output{
 		BuildResult{Program{input_.key, compiled_, std::move(words_),
-				    uses_fp_, false},
+				    uses_fp_},
 			    complete_, stop_address_, stop_instruction_},
 		units_, it_};
 	return output;

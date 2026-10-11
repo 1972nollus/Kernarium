@@ -62,7 +62,6 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions) {
     begin_link_observation();
-    block_ = instructions;
     /* A streaming translation never binds a host vector register: AdvSIMD
      * is illegal there, and the guest's vectors stay in the host's own. */
     const bool streaming = streaming_translation();
@@ -219,10 +218,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       } else if (cold.action == ColdPath::Action::sme_slow) {
         emit_terminal_helper(
             reinterpret_cast<const void *>(&uml_arm64_jit_execute_sme),
-            cold.instruction, cold.pc, cold.count);
-      } else if (cold.action == ColdPath::Action::sve_slow) {
-        emit_terminal_helper(
-            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sve),
             cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::sm0_spill_slow) {
         emit_terminal_helper(

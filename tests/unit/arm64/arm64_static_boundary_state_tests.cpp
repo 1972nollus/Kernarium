@@ -234,10 +234,9 @@ void sve_tail_crosses_boundary()
 	 * image of TIF_SVE that an engine sets and only the kernel clears: a
 	 * live task gets them back as it handed them, and the tail of a task
 	 * that is not live is the kernel's alone. A live tail names the run's
-	 * vector length and no other flag. When the gadget engine presents
-	 * SVE, a task that is not live starts its first SVE instruction with
-	 * zeroed P and FFR, whatever an earlier task on the vCPU held, and
-	 * comes back live; otherwise that instruction is undefined. */
+	 * vector length and no other flag. The virtual CPU has no SVE, so an
+	 * SVE instruction is undefined whatever the vCPU held earlier, and
+	 * leaves the tail as the kernel handed it. */
 	constexpr unsigned long generation = 207;
 	constexpr std::uint64_t base = 0x57'0000;
 	constexpr auto live = static_cast<std::uint16_t>(DARWIN_UML_GUEST_SVE_LIVE);
@@ -279,24 +278,12 @@ void sve_tail_crosses_boundary()
 		require(run(base, fp) == DARWIN_UML_EVENT_FATAL);
 	}
 
-	const bool sve = uml::cpu::arm64::implements_sve(
-		uml::cpu::engine_host_capabilities(uml::cpu::EngineKind::gadgets,
-			uml::platform::apple::probed_host_capabilities()));
 	auto earlier = tail(live, uml::cpu::arm64::sve_vector_length, 0xffffU);
 	require(run(base, earlier) == DARWIN_UML_EVENT_SYSCALL);
 	auto fp = tail(0, uml::cpu::arm64::sve_vector_length, 0xfedcU);
 	const auto handed = fp.sve;
-	if (!sve) {
-		require(run(base + 4, fp) == DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
-		require(same(fp.sve, handed));
-		return;
-	}
-	require(run(base + 4, fp) == DARWIN_UML_EVENT_SYSCALL);
-	require(fp.sve.flags == live &&
-		fp.sve.vl == uml::cpu::arm64::sve_vector_length);
-	for (const auto predicate : fp.sve.p)
-		require(predicate == 0);
-	require(fp.sve.ffr == 0);
+	require(run(base + 4, fp) == DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+	require(same(fp.sve, handed));
 }
 
 void exclusive_monitor_is_cleared_at_boundary()
