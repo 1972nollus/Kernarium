@@ -76,7 +76,7 @@ def main() -> None:
         fail,
         family="android-6.18",
         kernel_slice="arm64",
-        page_size=16384,
+        page_size=4096,
         source=source,
         source_label="ACK source",
         build=build,

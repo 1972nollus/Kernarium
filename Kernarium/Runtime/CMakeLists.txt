@@ -17,7 +17,7 @@ get_target_property(_kernarium_artifact_family
 get_target_property(_kernarium_kernel_image
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
 # The import verified the artifact as release series 6.18 with this
-# configuration's page size, and admits Android only with 16 KiB pages.
+# configuration's page size, and admits Android only with 4 KiB pages.
 if(_kernarium_artifact_family STREQUAL "android-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 1)
     set(KERNARIUM_RUNTIME_GUEST_FLAVOR

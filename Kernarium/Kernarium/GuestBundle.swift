@@ -43,11 +43,11 @@ struct GuestBundle: Equatable {
         )
     }
 
-    /// Android guests boot the ACK kernel that only the 16 KiB runtime carries.
+    /// Android guests boot the ACK kernel that only the 4 KiB runtime carries.
     var requiredPageSize: KernelPageSize? {
         switch flavor {
         case .android:
-            .sixteenKiB
+            .fourKiB
         case .linux:
             nil
         }

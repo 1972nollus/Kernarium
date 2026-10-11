@@ -118,9 +118,9 @@ def validate_manifest(value: object) -> dict:
     if kernel_slice == "x86_64" and page_size != 4096:
         fail("the x86_64 kernel slice requires 4096-byte pages")
     if family == "android-6.18" and (
-        kernel_slice != "arm64" or page_size != 16384
+        kernel_slice != "arm64" or page_size != 4096
     ):
-        fail("the android-6.18 family requires arm64 and 16384-byte pages")
+        fail("the android-6.18 family requires arm64 and 4096-byte pages")
     directory_name = require_string(manifest["directory_name"], "directory name")
     expected_directory = (
         f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"

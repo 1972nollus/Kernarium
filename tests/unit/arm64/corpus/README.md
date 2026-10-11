@@ -336,7 +336,8 @@ records, and appends them, so the steps run in one order, followed by one
 [absent features](#absent-feature-cases), [native SME](#native-sme-cases),
 [native floating-point trap](#native-floating-point-trap-cases),
 [native SVE](#native-sve-cases), [SVE/SME](#svesme-cases),
-[SVE FEAT_AFP](#sve-feat_afp-cases), [SVE trap](#sve-trap-cases), and
+[SVE FEAT_AFP](#sve-feat_afp-cases), [SVE trap](#sve-trap-cases),
+[SM = 0 family](#sm--0-family-cases), and
 [invalid-encoding bits](#invalid-encoding-bits). A
 hardware step's `--carry PACK` copies the pack's records for a request that
 is unchanged, so a regeneration that changes no request needs no host. The
@@ -401,7 +402,11 @@ translates for on every host:
   SVCR, the other rows of the SME profile, MOVT, and the SVE rows that need
   FEAT_SME outside streaming mode as well (the SCLAMP class);
 - `arm64-absent-sve`, under `without_sve`: every row the SVE profile executes
-  outside streaming mode, the SCLAMP class included;
+  outside streaming mode, the SCLAMP class included, except the SM = 0
+  family below;
+- `arm64-absent-sve`, under `without_sme` and `without_sve`: that family, the
+  words a virtual CPU with SME and without SVE executes (see
+  [SM = 0 family cases](#sm--0-family-cases));
 - `arm64-absent-sve` without an option: every other row, undefined there on
   every virtual CPU: the SVE rows that never execute outside streaming mode
   (the withheld FEAT_SVE_BitPerm, FEAT_SVE_SM4, FEAT_F32MM, FEAT_F64MM and
@@ -450,6 +455,12 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
   --output .build/corpora/arm64
 ```
 
+A change to the encoding table or the authored records alone needs no export:
+`absent-feature-corpus.py --authored-only DUMP OUTPUT` rewrites the dump's
+`arm64-absent-<feature>` records in place and refreshes the step's hashes,
+leaving every other record, the TBI replacements included, and the later
+steps' records as they are.
+
 A regeneration that changes which stripped cases fail refreshes the failing
 list: rewrite without `--failing`, run the corpus test on that pack in both
 page profiles with `--max-failures 0`, and pass both logs to
@@ -477,7 +488,10 @@ case as skipped for the feature. Each case names the profile features it
 needs (`sme`, `sme2`, `sme_f64f64`, `sme_i16i64`, `bf16`, `i8mm`). The M4 has
 no FEAT_SVE, so a case outside streaming mode whose word the SVE profile
 executes there holds only for a virtual CPU without SVE; such cases sit in a
-sibling of their group's record under `without_sve`. A case
+sibling of their group's record under `without_sve`. The 19 cases of the
+SM = 0 family are the exception: the M4 traps those words and
+the virtual CPU does not, so no native record holds them (the generator keeps
+them in the request, so the oracle still observes the host). A case
 starts with X18 zero, because Darwin clears X18 whenever a thread returns
 to user mode, and forms only addresses with a zero top byte, because the
 host ignores the top byte and the guest's default state does not.
@@ -793,6 +807,65 @@ under `sve_trap`; `build-unit-corpus.py --check` verifies the hashes, and
 the `arm64-instruction-corpus-sve-trap` tooling test re-derives every
 record from the pack's native records and checks each case against the
 contract.
+
+## SM = 0 family cases
+
+A virtual CPU with FEAT_SME and without FEAT_SVE executes CNTB, CNTH, CNTW
+and CNTD, RDVL, ADDVL, ADDPL, and the scalar INCB, INCH, INCW, INCD, DECB,
+DECH, DECW and DECD at PSTATE.SM = 0, every predicate pattern and multiplier,
+for a constant vector length of 128 bits (CNTB = 16, CNTD = 2); and LDR and
+STR of a vector register Z (16 bytes) and of a predicate register P (2 bytes)
+with a scalar base and an immediate offset (MUL VL). This is a deliberate
+departure from the architecture, which makes them UNDEFINED there without
+FEAT_SVE: an M4 traps them, so no hardware result exists, and the
+expectations are the instructions' pseudocode with the constant length,
+written independently of the engines. The CPU has no predicate state at
+SM = 0, so STR of P stores two zero bytes and LDR of P performs its access and
+drops the data. See
+[`sm0_vector_length.hpp`](../../../../darwin/cpu/arm64/detail/sm0_vector_length.hpp)
+and [Architecture](../../../../docs/architecture.md).
+[`tools/arm64-tests/sm0-vl-corpus.py`](../../../../tools/arm64-tests/sm0-vl-corpus.py)
+writes the one `arm64-sm0-vl` record, under `without_sve` with `svl` 64:
+
+- every element size with every predicate pattern, the reserved ones that
+  count nothing included, and the multipliers 1, 3 and 16 of CNT, INC and
+  DEC, over destinations that rotate through the registers, and XZR;
+- RDVL, ADDVL and ADDPL for every immediate, over distinct, equal and SP
+  registers, and XZR where RDVL discards the result;
+- one word of each vector-length form with ZA enabled;
+- the four spill forms over immediates across the signed 9-bit range, including
+  those beyond an unscaled A64 access, transfer registers and bases (X0, the
+  frame pointer, SP), in a page, misaligned, across a page, into an unmapped
+  page and from one, into read-only memory, through a tagged pointer, at a
+  misaligned SP, and with ZA enabled; and the 166 words the compilers emit
+  for the callee-saved Z8-Z23 and P4-P15 saves and restores (clang 22, Apple
+  clang 21 and GCC 14, from `sme-idiom-corpus.py`); and
+- controls: words the compilers emit beside the spills, which stay UNDEFINED
+  (SVE data processing, contiguous loads and stores, predicate
+  construction), and the reserved encodings next to the spill forms.
+
+The record's SVL makes the runner run it only for a virtual CPU that
+implements the SME profile, with no hardware requirement: the engines
+translate each family word to the ordinary A64 access or word of the same
+effect, so `arm64-instruction-corpus-sm0-vl-profile` runs it with the profile
+assumed on any host, and on an SME host the full corpus runs it natively. The
+`arm64-absent-sve` record under `without_sme` and `without_sve` pins the same
+words UNDEFINED where neither profile is, `arm64-absent-sve` under
+`without_sve` pins every other SVE word UNDEFINED at SM = 0 when SME is, and
+the native SME records hold no family word at SM = 0.
+
+The step needs no hardware and appends after the SVE trap step. It reruns after
+any change to the script or the table, on the previous step's dump or the
+pack's own `--dump`:
+
+```sh
+python3 -B tools/arm64-tests/sm0-vl-corpus.py sve-trap.jsonl sm0-vl.jsonl
+```
+
+`provenance.json` records the script and table hashes and the case counts under
+`sm0_vl`; `build-unit-corpus.py --check` verifies the hashes, and the
+`arm64-instruction-corpus-sm0-vl` tooling test re-derives the record and checks
+the model against hand-written values.
 
 ## Invalid-encoding bits
 

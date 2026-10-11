@@ -20,4 +20,4 @@ masks. A scatter entry normally names guest-physical memory; with
 offset inside a virtio shared-memory region, which is how a guest describes a
 host-visible buffer that has no guest-physical address. Stream IDs, buffer extents, and response capacities are validated by the
 host. The wire format is shared by both guest page profiles and all maintained
-kernel slices; Android has only a 16 KiB profile.
+kernel slices; Android has only a 4 KiB profile.

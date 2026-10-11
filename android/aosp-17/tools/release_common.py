@@ -32,9 +32,26 @@ safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 3
-PRODUCT_FAMILY = "android-17-ack-6.18-16k"
-DIRECTORY_PREFIX = "android17-ack6.18-16k-"
+PRODUCT_FAMILY = "android-17-ack-6.18-4k"
+DIRECTORY_PREFIX = "android17-ack6.18-4k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+# The Android build variants a release may be built as, with the build
+# properties each one fixes. ANDROID17_BUILD_VARIANT in metadata/aosp.env
+# selects the one the tracked tree builds, and every variant-dependent check
+# follows that setting.
+BUILD_VARIANTS = {
+    "user": {"ro.build.type": "user", "ro.debuggable": "0"},
+    "userdebug": {"ro.build.type": "userdebug", "ro.debuggable": "1"},
+}
+
+
+def configured_build_variant(android_root: Path) -> str:
+    variant = parse_env(android_root / "metadata/aosp.env")["ANDROID17_BUILD_VARIANT"]
+    if variant not in BUILD_VARIANTS:
+        fail(f"tracked Android build variant is not supported: {variant}")
+    return variant
+
 
 PAYLOAD_SPECS = {
     "boot/kernel-command-line.txt": ("kernel-command-line", "utf8-text"),
@@ -174,6 +191,7 @@ ACCEPTANCE_KEYS = {
     "ANDROID17_ACCEPTED_DIRECTORY_NAME",
     "ANDROID17_ACCEPTED_PRODUCT_FAMILY",
     "ANDROID17_ACCEPTED_ANDROID_MAJOR",
+    "ANDROID17_ACCEPTED_BUILD_VARIANT",
     "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT",
     "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256",
     "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256",
@@ -217,7 +235,7 @@ def validate_manifest(value: object) -> dict:
     if directory_name != DIRECTORY_PREFIX + release_id:
         fail("release directory name does not match the release ID")
     if manifest["product_family"] != PRODUCT_FAMILY:
-        fail("release product family is not Android 17 ACK 6.18 16 KiB")
+        fail("release product family is not Android 17 ACK 6.18 4 KiB")
     if manifest["acceptance"] != "accepted":
         fail("release is not marked accepted")
     require_string(manifest["published_at_utc"], "publication timestamp")
@@ -229,6 +247,8 @@ def validate_manifest(value: object) -> dict:
         fail("Android SDK is below 37")
     for key in ("build_id", "build_variant", "fingerprint", "product", "release_config"):
         require_string(android[key], f"android.{key}")
+    if android["build_variant"] not in BUILD_VARIANTS:
+        fail("Android build variant is not user or userdebug")
     require_integer(android["vendor_api_level"], "vendor API level", minimum=202604)
 
     aosp = require_exact_keys(manifest["aosp"], AOSP_KEYS, "aosp")
@@ -308,8 +328,8 @@ def validate_manifest(value: object) -> dict:
         require_hex(kernel[key], 40, f"kernel.{key}")
     require_hex(kernel["patch_manifest_sha256"], 64, "kernel patch manifest SHA-256")
     require_integer(kernel["patch_count"], "kernel patch count", minimum=1)
-    if require_integer(kernel["page_size"], "kernel page size") != 16384:
-        fail("kernel page size is not 16384")
+    if require_integer(kernel["page_size"], "kernel page size") != 4096:
+        fail("kernel page size is not 4096")
     require_integer(kernel["abi_version"], "kernel ABI version", minimum=1)
     abi_fingerprint = require_string(kernel["abi_fingerprint"], "kernel ABI fingerprint")
     if re.fullmatch(r"0x[0-9a-f]{16}", abi_fingerprint) is None:
@@ -454,6 +474,7 @@ def read_routes(projects: Path, android_root: Path, label: str) -> list[dict]:
 
 
 TRACKED_SECTIONS = {
+    "android": "Android",
     "aosp": "AOSP",
     "jelly": "Jelly",
     "orangefox": "OrangeFox",
@@ -484,6 +505,7 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
     )
     kernel_count, kernel_digest = kernel_series_provenance(outer_root)
     return {
+        "android": {"build_variant": configured_build_variant(android_root)},
         "aosp": {
             "manifest_repository": aosp["ANDROID17_MANIFEST_REPOSITORY"],
             "manifest_tag": aosp["ANDROID17_MANIFEST_TAG"],
@@ -567,6 +589,7 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "ANDROID17_ACCEPTED_DIRECTORY_NAME": manifest["directory_name"],
         "ANDROID17_ACCEPTED_PRODUCT_FAMILY": manifest["product_family"],
         "ANDROID17_ACCEPTED_ANDROID_MAJOR": str(manifest["android"]["major"]),
+        "ANDROID17_ACCEPTED_BUILD_VARIANT": manifest["android"]["build_variant"],
         "ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT": manifest["aosp"]["manifest_commit"],
         "ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": manifest["aosp"]["base_manifest_sha256"],
         "ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256": manifest["aosp"]["projects_manifest_sha256"],
@@ -858,8 +881,8 @@ def verify_semantics(
             structural=not enforce_tracked_policy,
         )
 
-    if manifest["kernel"]["page_size"] != 16384:
-        fail("semantic verification received a non-16-KiB kernel")
+    if manifest["kernel"]["page_size"] != 4096:
+        fail("semantic verification received a non-4-KiB kernel")
     schema = android_root / "support/release/release-manifest.schema.json"
     if not schema.is_file():
         fail("tracked release-manifest schema is missing")

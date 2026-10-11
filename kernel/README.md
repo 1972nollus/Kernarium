@@ -6,7 +6,7 @@ Kernel inputs are scoped by source family and version:
   source identity, generated Darwin patch series, configuration overlay,
   standalone build, and accepted 16 KiB/4 KiB publications.
 - [`android-6.18/`](android-6.18/README.md) owns the pinned ACK identity,
-  generated Darwin series, built-in-only 16 KiB configuration overlay, and
+  generated Darwin series, built-in-only 4 KiB configuration overlay, and
   accepted Android kernel publication.
 - [`common/`](common/README.md) owns only contracts deliberately shared between
   families, including the kernel configuration policy both overlays extend.

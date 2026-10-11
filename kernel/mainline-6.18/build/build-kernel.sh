@@ -246,7 +246,7 @@ run_make()
 
 case "$PAGE_SIZE" in
 16k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment" ;;
-4k) PAGE_FRAGMENT="$CONFIG_DIR/page-4k.fragment" ;;
+4k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-4k.fragment" ;;
 esac
 set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$CONFIG_DIR/mainline.fragment" \
 	"$PAGE_FRAGMENT"
