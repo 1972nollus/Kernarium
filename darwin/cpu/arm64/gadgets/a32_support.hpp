@@ -7,12 +7,12 @@ namespace uml::cpu::arm64::gadgets {
 
 /* How much of the AArch32 EL0 profile the gadget engine implements: the
  * integer core (A32 and T32 integer, IT, branches and interworking, memory,
- * exclusives and the system instructions), VFPv4-D32 and Advanced SIMD. An
+ * exclusives and the system instructions), VFPv4-D32 and Advanced SIMD, and
+ * the Armv8 additions and optional extensions (the complete level). An
  * AArch32 entry (CpuEngine::run_aarch32) runs it through
  * run_translated_aarch32_blocks (engine_execution.hpp); with the development
  * policy off the engine still presents no AArch32 to its guest
- * (a32_presented_support). The complete level is the last gadget AArch32
- * milestone. */
-inline constexpr A32Support a32_support = A32Support::simd;
+ * (a32_presented_support). */
+inline constexpr A32Support a32_support = A32Support::complete;
 
 } // namespace uml::cpu::arm64::gadgets

@@ -103,14 +103,16 @@ constexpr std::size_t maximum_t32_validation_units =
 	return count;
 }
 
-/* The profile the gadget engine decodes AArch32 against: its level and no
- * optional feature until the levels that add them. */
+/* The profile the gadget engine decodes AArch32 against: its level, with
+ * every optional extension at the complete level. A host lacking the A64
+ * feature an extension lowers onto runs it in the semantic library, so the
+ * decode does not depend on the host; the guest is shown what the host has
+ * (a32_features). */
 [[nodiscard]] arm64::aarch32::Profile gadget_a32_profile(
 	arm64::A32Support level) noexcept
 {
-	return arm64::aarch32::Profile{
-		static_cast<arm64::aarch32::Level>(level),
-		arm64::aarch32::FeatureSet{}};
+	return arm64::aarch32::Profile::at(
+		static_cast<arm64::aarch32::Level>(level));
 }
 
 /* BKPT's immediate, from the instruction at `key`: imm12:imm4 for A32 and

@@ -9,6 +9,7 @@
 #include "a32_builder.hpp"
 #include "a32_forms.hpp"
 
+#include "cpu/arm64/aarch32/a32_profile.hpp"
 #include "cpu/arm64/aarch32/decode.hpp"
 #include "cpu/arm64/aarch32/guest_key.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
@@ -52,9 +53,10 @@ public:
 		   const Builder::LinkResolver &links,
 		   std::pmr::memory_resource *storage,
 		   const Builder::IndirectLinkResolver &indirects,
-		   const Profile &profile, std::size_t block_instructions)
+		   const Profile &profile, const A32Features &host,
+		   std::size_t block_instructions)
 		: input_{input}, links_{links}, indirects_{indirects},
-		  profile_{profile}, words_{storage}, it_{input.it},
+		  profile_{profile}, host_{host}, words_{storage}, it_{input.it},
 		  thumb_{key_isa(input.key) == GuestIsa::t32},
 		  unit_bytes_{thumb_ ? 2U : 4U},
 		  limit_{input.single ? 1U : block_instructions},
@@ -83,6 +85,10 @@ private:
 		push(reinterpret_cast<std::uintptr_t>(links_(key)));
 	}
 	[[nodiscard]] bool linked() const noexcept { return !!links_; }
+
+	/* Whether the host has the A64 feature a lowering needs; a form that
+	 * needs one the host lacks is the semantic library's. */
+	[[nodiscard]] bool supported(Need need) const noexcept;
 
 	/* ------------------------------------------------------- positions */
 	[[nodiscard]] std::uint32_t pc_value() const noexcept
@@ -158,6 +164,7 @@ private:
 	const Builder::LinkResolver &links_;
 	const Builder::IndirectLinkResolver &indirects_;
 	const Profile &profile_;
+	const A32Features host_;
 	ProgramWords words_;
 	ItState it_;
 	bool thumb_;

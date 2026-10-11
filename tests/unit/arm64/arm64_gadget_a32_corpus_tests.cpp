@@ -204,16 +204,16 @@ private:
 	::uml::cpu::arm64::gadgets::GadgetExecutor executor_;
 };
 
-/* The decoder's view of the program, to skip a case that needs a level, or an
- * optional extension (half-precision arithmetic, say), the engine does not
- * implement: the engine decodes against its level and no optional feature, so
- * a word the whole profile accepts and the engine's profile rejects is above
- * the engine. */
+/* The decoder's view of the program, to skip a case that needs a level the
+ * engine does not implement: the engine decodes against its level with every
+ * optional extension at the complete level (executor.cpp), so a word the
+ * whole profile accepts and the engine's profile rejects is above the
+ * engine. */
 [[nodiscard]] bool needs_higher_level(const corpus::Case &test,
 				      decode::Level level)
 {
 	const auto profile = decode::Profile::at(decode::Level::complete);
-	const decode::Profile engine{level, decode::FeatureSet{}};
+	const auto engine = decode::Profile::at(level);
 	const bool thumb = (test.flags & corpus::kFlagThumb) != 0;
 	decode::ItState it;
 	for (std::size_t half = 0; half < test.halves.size();) {

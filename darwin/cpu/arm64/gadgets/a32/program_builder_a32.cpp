@@ -1049,9 +1049,46 @@ Translator::Result Translator::emit_system(const Instruction &in,
 	}
 }
 
+bool Translator::supported(Need need) const noexcept
+{
+	switch (need) {
+	case Need::none:
+		return true;
+	case Need::fp16:
+		return host_.fp16;
+	case Need::aes:
+		return host_.aes;
+	case Need::pmull:
+		return host_.pmull;
+	case Need::sha1:
+		return host_.sha1;
+	case Need::sha2:
+		return host_.sha2;
+	case Need::crc32:
+		return host_.crc32;
+	case Need::dotprod:
+		return host_.dotprod;
+	case Need::fhm:
+		return host_.fhm;
+	case Need::rdm:
+		return host_.rdm;
+	case Need::fcma:
+		return host_.fcma;
+	case Need::bf16:
+		return host_.bf16;
+	case Need::i8mm:
+		return host_.i8mm;
+	case Need::sb:
+		return host_.sb;
+	}
+	return false;
+}
+
 Translator::Result Translator::emit(const Instruction &in,
 				    const FormPlan &plan)
 {
+	if (!supported(plan.need))
+		return emit_library(in);
 	switch (plan.family) {
 	case Family::dp:
 		return emit_dp(in, plan);
@@ -1272,11 +1309,15 @@ BuildOutput build(const BuildInput &input,
 		  const Builder::LinkResolver &resolve_link,
 		  std::pmr::memory_resource *storage,
 		  const Builder::IndirectLinkResolver &resolve_indirect_link,
-		  const BuildOptions &, const Profile &profile,
+		  const BuildOptions &options, const Profile &profile,
 		  std::size_t block_instructions)
 {
+	/* What the host has of the extensions the complete level lowers onto
+	 * A64 (a32_features); the library runs a form whose feature it lacks. */
+	const auto host = a32_features(options.host_capabilities,
+				       A32Support::complete);
 	return detail::Translator{input, resolve_link, storage, resolve_indirect_link,
-			  profile, block_instructions}.run();
+			  profile, host, block_instructions}.run();
 }
 
 std::optional<std::size_t> thumb_position(

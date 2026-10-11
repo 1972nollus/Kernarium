@@ -64,9 +64,8 @@ extern "C" [[gnu::noinline]] std::uint32_t uml_arm64_gadget_a32_execute(
 		operand >> UML_GADGET_A32_LIBRARY_LEVEL_SHIFT & 3U);
 	const auto form = static_cast<a32::Form>(
 		operand >> UML_GADGET_A32_LIBRARY_FORM_SHIFT);
-	/* The profile the engine decodes in (executor.cpp, gadget_a32_profile):
-	 * its level and no optional feature. */
-	const a32::Profile profile{level, a32::FeatureSet{}};
+	/* The profile the engine decodes in (executor.cpp, gadget_a32_profile). */
+	const auto profile = a32::Profile::at(level);
 	const auto instruction = a32::key_is_thumb(key) ?
 		a32::decode_thumb(word, it, profile) :
 		a32::decode_a32(word, profile);

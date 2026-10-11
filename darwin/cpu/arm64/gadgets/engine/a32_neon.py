@@ -63,6 +63,13 @@ from typing import Callable, Optional
 
 SIZES = (8, 16, 32, 64)
 
+# The host features a gadget can need, in the order of the generated Need
+# enumeration (a32_forms.hpp). A translation on a host without the feature
+# is the semantic library's; "none" needs nothing.
+NEEDS = ["none", "fp16", "aes", "pmull", "sha1", "sha2", "crc32", "dotprod",
+         "fhm", "rdm", "fcma", "bf16", "i8mm", "sb"]
+HALF = "fp16"
+
 
 def arrange(esize: int, q: int) -> str:
     """The A64 arrangement of a D (q = 0) or Q register of esize lanes."""
@@ -127,6 +134,9 @@ class Variant:
     out2: Optional[str] = None                 # stored to m
     out2_reg: int = 0
     qc: bool = False
+    # The host feature the gadget's instructions need (a32_armv8.NEEDS); a
+    # translation on a host without it is the semantic library's.
+    need: Optional[str] = None
 
 
 @dataclass
@@ -189,14 +199,16 @@ def bitwise(name, stems, mnemonic, *, acc=False):
 
 
 def float_same(name, stems, body, *, acc=False, d_only=False):
-    """A single-precision Advanced SIMD operation; body lines use %T."""
+    """A single- or half-precision Advanced SIMD operation; body lines use
+    %T."""
     def make(esize, q, sign, alt):
-        if esize != 32 or sign or alt or (q and d_only):
+        if esize not in (16, 32) or sign or alt or (q and d_only):
             return None
-        t = arrange(32, q)
+        t = arrange(esize, q)
         w = width(q)
         return Variant(n=w, m=w, acc=w if acc else None, out=w,
-                       body=[line.replace("%T", t) for line in body])
+                       body=[line.replace("%T", t) for line in body],
+                       need=HALF if esize == 16 else None)
     return add(name, stems, "dnm", "none", make, fp=FP_ALL)
 
 
@@ -220,11 +232,12 @@ def by_scalar(name, stems, int_mn, float_body, *, acc=False):
         t = arrange(esize, q)
         w = width(q)
         if alt:
-            if esize != 32:
+            if esize not in (16, 32):
                 return None
             return Variant(n=w, m="elem", elem=t, acc=w if acc else None,
                            out=w,
-                           body=[line.replace("%T", t) for line in float_body])
+                           body=[line.replace("%T", t) for line in float_body],
+                           need=HALF if esize == 16 else None)
         if esize not in (16, 32):
             return None
         return Variant(n=w, m="elem", elem=t, acc=w if acc else None, out=w,
@@ -303,9 +316,14 @@ def define_groups() -> None:
             use_elem = False
             if poly is not None:           # alt = polynomial (VMULL_i)
                 if alt:
-                    if esize != 8 or sign:
+                    if sign or esize not in (8, 64):
                         return None
+                    if esize == 64:        # VMULL.P64: FEAT_PMULL
+                        return Variant(n="d", m="d", out="q", need="pmull",
+                                       body=[f"{poly} v0.1q, v1.1d, v2.1d"])
                     mn = poly
+                elif esize == 64:
+                    return None
             elif alt:
                 return None
             if scalar:
@@ -323,7 +341,8 @@ def define_groups() -> None:
     long_op("vsubl", ["VSUBL"], "ssubl", "usubl")
     long_op("vabdl", ["VABDL_i"], "sabdl", "uabdl")
     long_op("vabal", ["VABAL"], "sabal", "uabal", acc=True)
-    long_op("vmull_i", ["VMULL_i"], "smull", "umull", poly="pmull")
+    long_op("vmull_i", ["VMULL_i"], "smull", "umull", poly="pmull",
+            sizes=(8, 16, 32, 64))
     long_op("vmull_s", ["VMULL_s"], "smull", "umull", sizes=(16, 32),
             scalar=True)
     long_op("vmlal_i", ["VMLAL_i"], "smlal", "umlal", acc=True)
@@ -392,10 +411,11 @@ def define_groups() -> None:
             t = arrange(esize, q)
             w = width(q)
             if alt:
-                if esize != 32 or sign:
+                if esize not in (16, 32) or sign:
                     return None
                 return Variant(n=w, m=w, out=w,
-                               body=[f"{fp_mn} v0.{t}, v1.{t}, v2.{t}"])
+                               body=[f"{fp_mn} v0.{t}, v1.{t}, v2.{t}"],
+                               need=HALF if esize == 16 else None)
             if esize not in (8, 16, 32):
                 return None
             mn = unsigned if sign else signed
@@ -440,9 +460,10 @@ def define_groups() -> None:
             t = arrange(esize, q)
             w = width(q)
             if alt:
-                if esize != 32:
+                if esize not in (16, 32):
                     return None
-                return Variant(m1=w, out=w, body=[f"{fp_mn} v0.{t}, v1.{t}"])
+                return Variant(m1=w, out=w, body=[f"{fp_mn} v0.{t}, v1.{t}"],
+                               need=HALF if esize == 16 else None)
             if esize not in (8, 16, 32):
                 return None
             return Variant(m1=w, out=w, body=[f"{int_mn} v0.{t}, v1.{t}"])
@@ -484,10 +505,11 @@ def define_groups() -> None:
             t = arrange(esize, q)
             w = width(q)
             if alt:
-                if esize != 32:
+                if esize not in (16, 32):
                     return None
                 return Variant(m1=w, out=w,
-                               body=[f"{fp_mn} v0.{t}, v1.{t}, #0.0"])
+                               body=[f"{fp_mn} v0.{t}, v1.{t}, #0.0"],
+                               need=HALF if esize == 16 else None)
             if esize not in (8, 16, 32):
                 return None
             return Variant(m1=w, out=w,
@@ -502,13 +524,14 @@ def define_groups() -> None:
 
     def estimate(name, stems, fp_mn, int_mn):
         def make(esize, q, sign, alt):
-            if esize != 32 or sign:
+            if esize not in (16, 32) or sign or (esize == 16 and not alt):
                 return None
-            t = arrange(32, q)
+            t = arrange(esize, q)
             w = width(q)
             return Variant(m1=w, out=w,
                            body=[f"{fp_mn if alt else int_mn} v0.{t}, "
-                                 f"v1.{t}"])
+                                 f"v1.{t}"],
+                           need=HALF if esize == 16 else None)
         return add(name, stems, "dm", "floating", make, fp=FP_ALT)
 
     estimate("vrecpe", ["VRECPE"], "frecpe", "urecpe")
@@ -516,15 +539,16 @@ def define_groups() -> None:
 
     def cvt_int(name, stems):
         def make(esize, q, sign, alt):
-            if esize != 32:
+            if esize not in (16, 32):
                 return None
-            t = arrange(32, q)
+            t = arrange(esize, q)
             w = width(q)
             if alt:   # float to integer, toward zero
                 mn = "fcvtzu" if sign else "fcvtzs"
             else:
                 mn = "ucvtf" if sign else "scvtf"
-            return Variant(m1=w, out=w, body=[f"{mn} v0.{t}, v1.{t}"])
+            return Variant(m1=w, out=w, body=[f"{mn} v0.{t}, v1.{t}"],
+                           need=HALF if esize == 16 else None)
         return add(name, stems, "dm", "cvt_int", make, fp=FP_ALL)
 
     cvt_int("vcvt_is", ["VCVT_is"])
@@ -765,24 +789,27 @@ def define_groups() -> None:
             count=4)
 
     # fraction-width converts (VCVT_xs): [fbits - 1 | q << 5 | unsigned << 6
-    # | to_fixed << 7]
+    # | to_fixed << 7 | half << 8]
     fixed = {}
-    for to_fixed in (0, 1):
-        for sign in (0, 1):
-            for q in (0, 1):
-                for fbits in range(1, 33):
-                    t = arrange(32, q)
-                    if to_fixed:
-                        mn = "fcvtzu" if sign else "fcvtzs"
-                    else:
-                        mn = "ucvtf" if sign else "scvtf"
-                    fixed[(fbits - 1) | q << 5 | sign << 6 | to_fixed << 7] = (
-                        f"{fbits}{width(q)}{'u' if sign else 's'}"
-                        f"{'f' if to_fixed else 't'}",
-                        Variant(m1=width(q), out=width(q),
-                                body=[f"{mn} v0.{t}, v1.{t}, #{fbits}"]))
+    for half in (0, 1):
+        for to_fixed in (0, 1):
+            for sign in (0, 1):
+                for q in (0, 1):
+                    for fbits in range(1, 17 if half else 33):
+                        t = arrange(16 if half else 32, q)
+                        if to_fixed:
+                            mn = "fcvtzu" if sign else "fcvtzs"
+                        else:
+                            mn = "ucvtf" if sign else "scvtf"
+                        fixed[(fbits - 1) | q << 5 | sign << 6 |
+                              to_fixed << 7 | half << 8] = (
+                            f"{fbits}{width(q)}{'u' if sign else 's'}"
+                            f"{'f' if to_fixed else 't'}{'h' if half else ''}",
+                            Variant(m1=width(q), out=width(q),
+                                    body=[f"{mn} v0.{t}, v1.{t}, #{fbits}"],
+                                    need=HALF if half else None))
     add("vcvt_xs", ["VCVT_xs"], "dm", "cvt_fixed", explicit=fixed,
-        index=INDEX_FIXED, count=256, fp=FP_ALL)
+        index=INDEX_FIXED, count=512, fp=FP_ALL)
 
     # VQSHLU by an immediate: [q * 120 + base[esize] + shift]
     qshlu = {}
@@ -935,11 +962,15 @@ def header_tables(names) -> list:
     base = 0
     rows = []
     entries = []
+    need_entries = []
     for g in GROUPS:
         slots = ["G::count"] * g.count
-        for index, suffix, _variant in variants_of(g):
+        needs = ["Need::none"] * g.count
+        for index, suffix, variant in variants_of(g):
             name = gadget_name(g, suffix)
             slots[index] = f"static_cast<G>({names[name]})"
+            if variant.need is not None:
+                needs[index] = f"Need::{variant.need}"
         elems = [(alt, variant.m == "elem")
                  for index, _suffix, variant in variants_of(g)
                  for alt in [index >> 4 & 1]]
@@ -956,8 +987,10 @@ def header_tables(names) -> list:
             f" NeonFp::{FP_NAMES[g.fp]}, NeonScalar::{scalar}, {g.shift_sign},"
             f" {'true' if g.size_none else 'false'}}},  // {g.name}")
         entries.append(f"\t// {g.name}")
+        need_entries.append(f"\t// {g.name}")
         for i in range(0, g.count, 8):
             entries.append("\t" + ", ".join(slots[i:i + 8]) + ",")
+            need_entries.append("\t" + ", ".join(needs[i:i + 8]) + ",")
         base += g.count
     out.append("/* The groups the builder names. */")
     out.append("namespace neon_group {")
@@ -970,6 +1003,10 @@ def header_tables(names) -> list:
     out += ["};", "",
             f"inline constexpr G kNeon[{base}] = {{"]
     out += entries
+    out += ["};", "",
+            "/* The host feature each gadget needs (the library otherwise). */",
+            f"inline constexpr Need kNeonNeed[{base}] = {{"]
+    out += need_entries
     out += ["};"]
     return out
 

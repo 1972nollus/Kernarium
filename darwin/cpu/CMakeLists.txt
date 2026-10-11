@@ -234,6 +234,7 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_simd.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_neon.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_structure.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_armv8.py
         ${_uml_arm64_a32_table}
         ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
     COMMENT "Generating the arm64 AArch32 gadgets"

@@ -805,7 +805,7 @@ Each engine's `a32_support` names how far it implements it, `none`, `base`
 (the integer core), `simd` or `complete`, and `base` and `simd` are
 milestones, not products. `CpuEngine::run_aarch32` is the entry for a task
 in AArch32 state and the A64 `run` is unchanged. The gadget engine is at
-`simd` and the JIT at `none`; an engine below `base` takes the new entry as
+`complete` and the JIT at `none`; an engine below `base` takes the new entry as
 the illegal-instruction exit without touching the state. The development policy
 `DARWIN_UML_GUEST_AARCH32=1` is off by default and adds no host token;
 `a32_presented_support` gives the level a run presents, nothing with the
@@ -893,6 +893,16 @@ CpuState before the call and reinstalls it after, as the A64 engine's
 software floating-point helpers do. A saturating instruction leaves QC in the
 cumulative FPSR flags the native environment keeps; `engine/a32_neon.py` and
 `engine/a32_simd.py` document the groups and the operand words.
+
+The complete level adds the Armv8 floating-point additions and the optional
+extensions. The engine decodes with every extension, as the JIT does, and
+shows its guest only the ones the host has (`a32_features`). A form the
+generator (`engine/a32_armv8.py`) lowers carries the host feature it needs in
+its `FormPlan` (an Advanced SIMD variant in `kNeonNeed`), and a translation on
+a host without that feature runs the form through the semantic library, as
+does every complete-level form with no gadget. Half-precision Advanced SIMD
+(the 16-bit lanes of the floating-point arithmetic, compares, converts and
+estimates) and VMULL.P64 are lowered onto the A64 FP16 and PMULL instructions.
 The level the engine translates at is `a32_support`; a test or a bring-up
 names another one in `BuildOptions::a32_level`, and the runtime never does.
 `arm64-gadget-a32-control` checks the contract above, `arm64-gadget-a32-forms`

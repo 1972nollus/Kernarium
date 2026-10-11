@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import a32_armv8  # noqa: E402
+import a32_neon  # noqa: E402  (the complete level; this file's sibling)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
 
 
@@ -138,7 +140,7 @@ FAMILIES = [
     "mrs",
     "msr",
     "cp15",          # MCR MRC MRRC with the sysreg the decoder names
-] + a32_simd.FAMILIES
+] + a32_simd.FAMILIES + a32_armv8.FAMILIES
 
 DP_MNEMONICS = {
     "AND": "and", "EOR": "eor", "SUB": "sub", "RSB": "rsb", "ADD": "add",
@@ -199,6 +201,13 @@ def library_mnemonics() -> list[str]:
                        "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
 
 
+def need_of(row: FormRow) -> str:
+    """The host feature the lowering of a form needs (a32_neon.NEEDS)."""
+    if row.level == "complete":
+        return a32_armv8.need_of_complete(row.name, row.mnemonic)
+    return "none"
+
+
 def plan_of(row: FormRow) -> tuple[str, int, int]:
     """(family, sub, aux) for a form of the base or simd level, or
     ("none", 0, 0)."""
@@ -207,6 +216,11 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
     if row.level == "simd":
         return a32_simd.plan_of_simd(row.name, row.mnemonic) or \
             ("none", 0, 0)
+    if row.level == "complete":
+        # The Armv8 additions and the optional extensions: lowered where
+        # a32_armv8.py has a gadget, the shared semantic library otherwise.
+        return a32_armv8.plan_of_complete(row.name, row.mnemonic) or \
+            ("library", 0, 0)
     if row.level != "base":
         return ("none", 0, 0)
     name, mnemonic = row.name, row.mnemonic
@@ -1184,30 +1198,38 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             "{",
             "\treturn uml_arm64_a32_gadgets[static_cast<std::size_t>(which)];",
             "}", ""]
+    out.append("/* The host feature a lowering needs: a translation on a host "
+               "without it")
+    out.append(" * is the semantic library's (a32_neon.py NEEDS). */")
+    out.append("enum class Need : std::uint8_t {")
+    for need in a32_neon.NEEDS:
+        out.append(f"\t{need},")
+    out += ["};", ""]
     out.append("enum class Family : std::uint8_t {")
     for family in FAMILIES:
         out.append(f"\t{family},")
     out += ["};", "",
             "/* What the builder lowers a form as: the family, an operation",
-            " * within it and a family-specific aspect (generate_a32.py "
-            "plan_of). */",
+            " * within it, a family-specific aspect and the host feature it",
+            " * needs (generate_a32.py plan_of, need_of). */",
             "struct FormPlan final {", "\tFamily family;",
-            "\tstd::uint8_t sub;", "\tstd::uint8_t aux;", "};", ""]
+            "\tstd::uint8_t sub;", "\tstd::uint8_t aux;", "\tNeed need;", "};",
+            ""]
     out.append("inline constexpr FormPlan kFormPlans["
                "aarch32::kFormCount] = {")
     unplanned = []
     for row in forms:
         family, sub, aux = plan_of(row)
-        if family == "none" and row.level == "base" and \
-                row.availability == "implemented" and row.name not in (
-                    "Undefined",):
+        if family == "none" and row.availability == "implemented" and \
+                row.name not in ("Undefined",):
             unplanned.append(row.name)
-        out.append(f"\t{{Family::{family}, {sub}, {aux}}},"
+        need = need_of(row) if family not in ("none", "library") else "none"
+        out.append(f"\t{{Family::{family}, {sub}, {aux}, Need::{need}}},"
                    f"  // {row.name}")
     out += ["};", ""]
     if unplanned:
         raise GenerationError(
-            "base forms without a lowering: " + ", ".join(unplanned))
+            "implemented forms without a lowering: " + ", ".join(unplanned))
     # Operation tables.
     out.append("/* Data processing: [operation][S][shape]; the operations "
                "and shapes are")
