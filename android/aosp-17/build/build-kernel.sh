@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build the one supported Android 17 ACK kernel: arm64 UML with 16 KiB pages.
+# Build the one supported Android 17 ACK kernel: arm64 UML with 4 KiB pages.
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -10,7 +10,7 @@ COMMON_ROOT="$ROOT_DIR/kernel/common"
 METADATA="$LINE_ROOT/patches/metadata.env"
 SHARED_FRAGMENT="$COMMON_ROOT/config/darwin-uml.fragment"
 CONFIG_FRAGMENT="$LINE_ROOT/config/android.fragment"
-PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment"
+PAGE_FRAGMENT="$COMMON_ROOT/config/page-4k.fragment"
 CONFIG_FRAGMENTS="$COMMON_ROOT/tooling/config-fragments.sh"
 REQUIRED_BUILTINS="$LINE_ROOT/config/required-builtins.txt"
 FORBIDDEN_OPTIONS="$LINE_ROOT/config/forbidden-options.txt"
@@ -38,7 +38,7 @@ Usage: android/aosp-17/build/build-kernel.sh \
 
 Run locally on the x86_64 Linux builder. The command consumes the already
 replayed ACK tree and checked-out ACK prebuilts. It always builds an AArch64
-Darwin UML ET_DYN image with 16 KiB pages, CONFIG_MODULES=n, and every selected
+Darwin UML ET_DYN image with 4 KiB pages, CONFIG_MODULES=n, and every selected
 facility linked into vmlinux. There is no page-size or module mode selector.
 EOF
 }
@@ -239,5 +239,5 @@ module_file=$(find "$BUILD_DIR" -type f -name '*.ko' -print -quit)
 [ -z "$module_file" ] || fail "loadable module output is forbidden: $module_file"
 "$ELF_VERIFIER" "$BUILD_DIR/vmlinux"
 python3 -B "$COMMON_ROOT/abi/bridge_imports.py" \
-	--kernel-binary "$BUILD_DIR/vmlinux" --page-size 16k --slice arm64
+	--kernel-binary "$BUILD_DIR/vmlinux" --page-size 4k --slice arm64
 printf '%s\n' "built Android 17 ACK 6.18 kernel: $BUILD_DIR/vmlinux"

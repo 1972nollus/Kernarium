@@ -235,7 +235,7 @@ and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture,
 imported dma-buf capture, timestamps, source-change and EOS events, and rejects
 kernel faults or failed shutdown. Run it on both Linux
-page profiles; Android uses its own 16 KiB guest and deployment workflow.
+page profiles; Android uses its own 4 KiB guest and deployment workflow.
 The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
@@ -432,7 +432,7 @@ scripts/build-xcframework.sh
 ```
 
 Kernarium is an iOS device product with runtime presets for 16 KiB and 4 KiB
-Linux and 16 KiB Android and no Simulator variant; see
+Linux and 4 KiB Android and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
@@ -566,7 +566,8 @@ inventory tables and that completeness boundary.
 The `arm64-sme-native` records hold SME results observed on the M4 at its
 streaming vector length, 64 bytes. They run for each engine whose
 `sme_support` is at least `complete` where the virtual CPU implements SME
-at that length, which needs an SME host and the guest-SME policy on, and a
+at that length, which needs an SME host and the guest-SME policy, on by
+default, and a
 case that needs SME2 runs only for an engine at `sme2`. Elsewhere they are
 skipped, and the `arm64-absent-sme` record pins every SME profile encoding
 UNDEFINED on every host. The
@@ -585,6 +586,24 @@ other one as skipped for `sve`. The `arm64-absent-sve` records pin every
 encoding the SVE profile executes outside streaming mode UNDEFINED under
 `without_sve`, and every other SVE encoding UNDEFINED there on every virtual
 CPU, so both engines run them today with the guest-SVE policy off or on.
+
+A virtual CPU with SME and without SVE executes CNT, INC, DEC, RDVL, ADDVL and
+ADDPL at SM = 0 for a vector length of 16 bytes, and LDR and STR of Z and P
+registers (16 and 2 bytes), a deliberate departure from the architecture (see
+[CPU execution and
+scheduling](architecture.md#cpu-execution-and-scheduling)). No host observes
+the results, because an M4 traps those words, so the `arm64-sm0-vl` record
+holds the project's own, written from the pseudocode, with the spills' pages,
+faults, tagged pointers and misaligned SPs and controls that stay UNDEFINED
+beside them, and `arm64-instruction-corpus-sm0-vl` re-derives it. The
+`arm64-sme-native` records hold no family word at SM = 0, and
+`arm64-instruction-corpus-sm0-vl-profile` runs the `arm64-sm0-vl`,
+`arm64-absent-sve` and `arm64-absent-sme` records for a virtual CPU with the
+SME profile assumed on any host, which also pins every other SVE word
+UNDEFINED at SM = 0 in both engines. The unit tests `arm64-sm0-vector-length`,
+`arm64-gadget-sme`, `arm64-jit-sme-control` and `arm64-jit-sme-codegen` check
+the family against a model of the pseudocode, run it in each engine, and pin
+the same for the rest of the encoding table.
 
 The `arm64-sve-native` records hold non-streaming SVE results observed at a
 16-byte vector length on an arm64 Linux SVE host (a Neoverse V2 core),
@@ -729,7 +748,8 @@ with `--case`, and `--trace` for its steps and initial state.
 ## Guest SME policy
 
 Unit binaries take the guest-SME policy from their environment, like any
-run, so the suites hold with it off, the default, on every host.
+run: on by default, off with `DARWIN_UML_GUEST_SME=0`. The suites hold
+either way on every host, and a host without SME sees no difference.
 `arm64-sme-foundation` checks the prober against the host's own sysctls under
 either policy, and the identification registers and HWCAP2 against arm64
 Linux's table with injected SME hosts at every SVL from 16 to 256 bytes and
@@ -737,16 +757,16 @@ every engine support level. On
 an SME host, an M4 Mac, also run it, `arm64-advertised-features`,
 `arm64-jit-sme-control`, `arm64-jit-sme-register`,
 `arm64-jit-sme-memory` and `arm64-instruction-corpus`, which then runs the
-native SME records on both engines, with `DARWIN_UML_GUEST_SME=1`.
+native SME records on both engines, with the policy at its default and with
+`DARWIN_UML_GUEST_SME=0`.
 Elsewhere `arm64-jit-sme-control` runs only its SM=0 cases, on an injected
 profile, `arm64-jit-sme-register` and `arm64-jit-sme-memory` skip, and the
 corpus skips its native SME records. Integration runs read the policy the same
-way: on an M4 with `DARWIN_UML_GUEST_SME=1`, `guest-gadgets-smoke` and
-`guest-jit-smoke` expect the SME HWCAP2 bits and `guest-hwcap-sanity`
-executes the SME families.
+way: on an M4, `guest-gadgets-smoke` and `guest-jit-smoke` expect the SME
+HWCAP2 bits and `guest-hwcap-sanity` executes the SME families.
 
 `guest-sme-gadgets` and `guest-sme-jit` check the guest kernel's SME contract
-under the policy on. Each skips, naming its reason, unless the host has SME
+with the policy at its default. Each skips, naming its reason, unless the host has SME
 and its engine's SME support is `control` or better. The freestanding
 `sme_probe.cpp` boots as `/init` and checks signal frames, invalid
 sigreturns, the system-call exit from streaming mode, fork, vfork, clone,
@@ -761,23 +781,24 @@ returning or leaving by siglongjmp, and libgcc's SME support routines. The
 they run by hand with
 `run_guest_sme.py --minimum-support none --modes kernel,spin,terminate`.
 `guest-sme-off-gadgets` and `guest-sme-off-jit` run on every host and check
-that with the policy off the probe sees no SME.
+that with the policy forced off the probe sees no SME.
 
 Two opt-in tools list what SME code executes outside streaming mode, where
 an SVE word is UNDEFINED on an SME CPU without SVE unless it belongs to the
-SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL and the scalar INC/DEC
-B/H/W/D). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
+SM=0 family (CNTB/H/W/D, RDVL, ADDVL, ADDPL, the scalar INC/DEC
+B/H/W/D, and LDR and STR of Z and P). `tools/arm64-tests/sme-sm0-scan.py` takes the shipped images (the
 desktop EROFS images and the Android release directories), extracts them
 with `fsck.erofs`, `debugfs` and `zstd`, and walks every SME function of
 every AArch64 ELF file, APK and APEX payloads included, from its inferred
-entry mode; any other SVE word reachable at SM = 0 is a decision to extend
-the family or withhold SME from that workload, and `--expect` pins a
+entry mode; any other SVE word reachable at SM = 0 is a limit of the family
+(SVE data processing in a body that is not streaming), reported so that
+SME is withheld from that workload or the family is extended, and `--expect` pins a
 binary's words (Chromium's libyuv executes only CNTD there).
 `tools/arm64-tests/sme-idiom-corpus.py` builds `sme_idioms.cpp` with the
 given clang and GCC compilers for SVE and SME-only targets, every
 optimization level and callee-saved register pressure, and reports the
 same classification for each compiler idiom, callee-saved Z and P spills
-included. The `arm64-sme-sm0-scan` tooling test checks the classifier and
+among the family words. The `arm64-sme-sm0-scan` tooling test checks the classifier and
 both tools on synthetic ELF fixtures.
 
 ## Guest SVE policy

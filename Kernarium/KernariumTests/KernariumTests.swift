@@ -444,6 +444,18 @@ struct KernariumTests {
     }
 
     @Test
+    func androidBundlesRequireTheFourKiBRuntime() {
+        let directory = URL(fileURLWithPath: "/tmp/page-size.kern")
+        let bundle = GuestBundle(
+            url: directory,
+            flavor: .android,
+            disk: directory.appendingPathComponent("guest/page-size.img")
+        )
+
+        #expect(bundle.requiredPageSize == .fourKiB)
+    }
+
+    @Test
     func configurationDefaultsUseMaximumCPUAndRequestedDefaults() {
         let (defaults, suiteName) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

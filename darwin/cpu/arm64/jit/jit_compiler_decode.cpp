@@ -18,6 +18,7 @@
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
@@ -126,6 +127,22 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (!streaming_translation() && implements_sve(host))
         if (const auto action = emit_sve_instruction(instruction, pc))
           return *action;
+      /*
+       * The SM = 0 vector-length family
+       * (detail/sm0_vector_length.hpp): an SME virtual CPU without SVE
+       * translates a vector-length word as the base word of the same
+       * effect and a spill word as the memory access it is.
+       */
+      if (!streaming_translation() &&
+          arm64::detail::implements_sm0_vector_length(host)) {
+        if (const auto equivalent =
+                arm64::detail::sm0_vector_length_equivalent(instruction))
+          return emit_instruction(*equivalent, pc);
+        if (const auto spill = arm64::detail::sm0_spill_access(instruction)) {
+          emit_sm0_spill(*spill, instruction, pc);
+          return Action::keep_going;
+        }
+      }
       if (implements_sme(host))
         return emit_sme_instruction(instruction, pc);
     }

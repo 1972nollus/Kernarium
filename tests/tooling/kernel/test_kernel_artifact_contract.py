@@ -22,7 +22,7 @@ SUPPORTED_IDENTITIES = {
     ("mainline-6.18", "arm64", 4096),
     ("mainline-6.18", "arm64", 16384),
     ("mainline-6.18", "x86_64", 4096),
-    ("android-6.18", "arm64", 16384),
+    ("android-6.18", "arm64", 4096),
 }
 
 
@@ -567,8 +567,8 @@ def main() -> int:
         module,
         "android-6.18",
         "arm64",
-        4096,
-        "android-6.18 family requires arm64 and 16384-byte pages",
+        16384,
+        "android-6.18 family requires arm64 and 4096-byte pages",
     )
     require_rejected(
         module,

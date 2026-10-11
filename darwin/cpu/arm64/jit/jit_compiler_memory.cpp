@@ -2,6 +2,7 @@
 
 #include "jit_compiler.hpp"
 
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 
 #include <algorithm>
 #include <array>
@@ -919,6 +920,68 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     }
     return true;
   }
+
+/*
+ * A spill word of the SM = 0 vector-length family
+ * (detail/sm0_vector_length.hpp): the 16-byte SIMD&FP access of the V
+ * register that is Z, or the halfword access of the zero register that is a
+ * predicate register's, with the signed byte offset added to the base. It
+ * is emit_other_memory's unscaled access without the encoding's 9-bit limit
+ * on the offset, so its slow paths (a tagged base, a misaligned SP) run the
+ * word through the semantic library, which has no such limit either.
+ */
+void JitCompiler::emit_sm0_spill(const detail::Sm0Spill &spill,
+                                 std::uint32_t instruction, std::uint64_t pc) {
+  const bool predicate = spill.predicate;
+  const bool load = !spill.store;
+  const std::size_t bytes = spill.bytes();
+  if (!load)
+    mark_direct_memory_write();
+  if (!predicate)
+    accesses_fp_state_ = true;
+
+  const unsigned base = spill.base;
+  const auto slow = cold_exit(instruction, pc, ColdPath::Action::sm0_spill_slow);
+  load_gpr(8, base, true);
+  if (base == 31U)
+    emit_misalignment_check(8, 16, slow);
+  if (spill.offset != 0) {
+    emitter_.load_constant(
+        9, static_cast<std::uint64_t>(static_cast<std::int64_t>(spill.offset)));
+    emitter_.add_shifted(8, 8, 9, 0);
+  }
+  const auto fault = cold_exit(instruction, pc, ColdPath::Action::memory_fault);
+  if (base != 31U) {
+    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
+    emitter_.compare_zero(slow, 0, false, true);
+  }
+  emit_translate(8, load ? Access::read : Access::write, slow, fault, bytes);
+  if (!load)
+    track_direct_store(8, bytes);
+  const auto native_vector =
+      !predicate ? (load ? write_native_vector(spill.transfer, false, 0)
+                         : read_native_vector(spill.transfer, 0))
+                 : NativeVector{};
+  const auto native_gpr =
+      predicate ? (load ? write_native_gpr(31U, false, false, 9)
+                        : read_native_gpr(31U, false, 9))
+                : NativeGpr{};
+  /* LDR or STR (immediate, unsigned offset) Qt or Wt, [x8]: the halfword
+   * access is the size-1 form with V clear. */
+  const std::uint32_t access =
+      predicate ? 0x7900'0000U | (load ? 0x0040'0000U : 0U)
+                : 0x3d00'0000U | (load ? 0x00c0'0000U : 0x0080'0000U);
+  emitter_.emit(access | (8U << 5) |
+                (predicate ? native_gpr.host : native_vector.host));
+  if (load) {
+    if (!predicate)
+      commit_native_vector(native_vector, spill.transfer);
+    else
+      commit_native_gpr(native_gpr, 31U, false);
+  } else {
+    clear_local_exclusive_monitor();
+  }
+}
 
 [[nodiscard]] bool JitCompiler::emit_literal_memory(std::uint32_t instruction,
                                          std::uint64_t pc) {

@@ -144,7 +144,7 @@ def synthetic_apex(filesystem: str = "ext4") -> bytes:
 
 
 def synthetic_kernel_elf() -> bytearray:
-    """Return a 16 KiB AArch64 ET_DYN kernel: R+X and R+W loads and a GNU stack."""
+    """Return a 4 KiB AArch64 ET_DYN kernel: R+X and R+W loads and a GNU stack."""
     payload = bytearray(64 + 56 * 3)
     payload[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HHI", payload, 16, 3, 183, 1)
@@ -152,8 +152,8 @@ def synthetic_kernel_elf() -> bytearray:
     struct.pack_into("<HHH", payload, 52, 64, 56, 3)
     for index, (kind, flags, address, size, alignment) in enumerate(
         (
-            (1, 5, 0, len(payload), 0x4000),
-            (1, 6, 0x10000, len(payload), 0x4000),
+            (1, 5, 0, len(payload), 0x1000),
+            (1, 6, 0x10000, len(payload), 0x1000),
             (0x6474E551, 6, 0, 0, 16),
         )
     ):
@@ -193,7 +193,7 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
             ("<Q", data + 8, 0x40000, "segment 1 is outside the file"),
             ("<I", stack + 4, 7, "GNU stack is executable"),
             ("<I", data + 4, 7, "load segment 1 is writable and executable"),
-            ("<Q", load + 48, 0x1000, "load segment 0 has invalid alignment 0x1000"),
+            ("<Q", load + 48, 0x800, "load segment 0 has invalid alignment 0x800"),
             ("<Q", load + 48, 0x6000, "load segment 0 has invalid alignment 0x6000"),
             ("<Q", data + 16, 0x10010, "alignment congruence"),
             ("<I", data, 0, "separated executable and writable"),
@@ -213,6 +213,11 @@ def verify_kernel_elf_fixtures(verifier: Path) -> None:
 
 
 def verify_target_files_fixtures(verifier: Path) -> None:
+    sys.path.insert(0, str(verifier.parent))
+    from release_common import BUILD_VARIANTS, configured_build_variant
+
+    tracked_variant = configured_build_variant(verifier.parents[1])
+    other_variant = next(name for name in BUILD_VARIANTS if name != tracked_variant)
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
         (root / "kernel").mkdir()
@@ -220,7 +225,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
         kernel.write_bytes(synthetic_aarch64_elf())
         kernel_config = root / "kernel/config"
         kernel_config.write_text(
-            "CONFIG_ARM64_16K_PAGES=y\n# CONFIG_MODULES is not set\n"
+            "CONFIG_PAGE_SIZE_4KB=y\n# CONFIG_MODULES is not set\n"
         )
         kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
@@ -266,6 +271,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           mesa_gles_alignment: int = 16384,
                           init_variant: str | None = None,
                           extra_entry: str | None = None,
+                          build_variant: str = tracked_variant,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -273,7 +279,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 archive.writestr("META/init_boot_filesystem_config.txt", "")
                 archive.writestr(
                     "META/kernel_configs.txt",
-                    "CONFIG_ARM64_16K_PAGES=n\n"
+                    "CONFIG_PAGE_SIZE_4KB=n\n"
                     if wrong_kernel_config
                     else kernel_config.read_bytes(),
                 )
@@ -316,9 +322,11 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "ro.product.cpu.abi=arm64-v8a\n"
                     "ro.product.cpu.abilist=arm64-v8a\n"
                     f"ro.product.cpu.abilist32={abilist32}\n"
-                    "ro.build.type=user\n"
-                    "ro.debuggable=0\n"
-                    f"{virtual_ab_property}",
+                    + "".join(
+                        f"{name}={value}\n"
+                        for name, value in BUILD_VARIANTS[build_variant].items()
+                    )
+                    + f"{virtual_ab_property}",
                 )
                 archive.writestr(
                     "PRODUCT/etc/build.prop",
@@ -588,6 +596,32 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ],
             check=True,
         )
+        # Every supported variant verifies as itself and is rejected as any
+        # other: the build-type properties follow the requested variant.
+        for variant in BUILD_VARIANTS:
+            for requested in BUILD_VARIANTS:
+                fixture = root / f"{variant}-as-{requested}.zip"
+                write_fixture(fixture, build_variant=variant)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(verifier),
+                        "--target-files",
+                        str(fixture),
+                        "--build-variant",
+                        requested,
+                        *kernel_options,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                if (result.returncode == 0) != (variant == requested):
+                    fail(
+                        f"a {variant} build verified as {requested}: "
+                        f"{result.returncode} {result.stdout}"
+                    )
 
         for label, options in (
             ("module", {"module": True}),
@@ -598,6 +632,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("virtual-ab", {"virtual_ab": True}),
             ("abi32", {"abi32": True}),
             ("alignment", {"alignment": 4096}),
+            ("untracked-variant", {"build_variant": other_variant}),
             ("wrong-fstab", {"wrong_fstab": True}),
             ("wrong-filesystem", {"wrong_filesystem": True}),
             ("wrong-apex-filesystem", {"wrong_apex_filesystem": True}),

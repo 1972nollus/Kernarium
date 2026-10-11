@@ -4,7 +4,8 @@
 
 tools/arm64-tests/sme_sm0.py walks the SME functions of an ELF file from
 the entry mode it infers and classifies every word reachable with
-PSTATE.SM = 0 against the SM=0 family. The fixtures are synthetic AArch64
+PSTATE.SM = 0 against the SM=0 family, which includes the Z and P spills.
+The fixtures are synthetic AArch64
 ELF files built here from known words: a libyuv-style locally streaming
 row function (only RDSVL and CNTD outside streaming mode), a
 streaming-compatible body with an SVE word, a streaming function that
@@ -257,13 +258,17 @@ def check_classes(table) -> None:
                 expect(got.cls == "family",
                        f"{encoding} witness classifies as {got.cls}")
     for encoding in ("sqincb_r_rs_x", "incp_r_p_r_", "incd_z_zs_",
-                     "whilelo_p_p_rr_", "str_z_bi_"):
+                     "whilelo_p_p_rr_", "ld1b_z_p_bi_u8"):
         rows = [row for row in table.rows if row.encoding == encoding]
         expect(bool(rows) and all(
             sme_sm0.classify(row.witness, table).cls == "sve"
             for row in rows), f"{encoding} is not an SVE decision")
-    note = sme_sm0.classify(0xE58043E8, table).note
-    expect(note == "callee-saved z8 save", f"str z8 note {note!r}")
+    spill = sme_sm0.classify(0xE58043E8, table)
+    expect(spill.cls == "family" and spill.note == "callee-saved z8 save",
+           f"str z8 is {spill}")
+    spill = sme_sm0.classify(0x858017E9, table)
+    expect(spill.cls == "family" and spill.note == "callee-saved p9 restore",
+           f"ldr p9 is {spill}")
 
 
 def check_analysis(table) -> None:
@@ -287,8 +292,8 @@ def check_analysis(table) -> None:
         "ls_libyuv": {"rdsvl_r_i_": "sme", "cntd_r_s_": "family"},
         "sc_vector": {"add_z_zz_": "sve"},
         "st_calls_out": {},
-        "ls_zspill": {"addsvl_r_ri_": "sme", "str_z_bi_": "sve",
-                      "ldr_z_bi_": "sve"},
+        "ls_zspill": {"addsvl_r_ri_": "sme", "str_z_bi_": "family",
+                      "ldr_z_bi_": "family"},
         "za_disable": {"str_za_ri_": "sme", "addsvl_r_ri_": "sme"},
         "st_za_mopa": {},
         "ns_jump": {"cntb_r_s_": "family"},
@@ -307,7 +312,7 @@ def check_analysis(table) -> None:
                        if item.classified.note)
         expect(notes == ["callee-saved z8 restore", "callee-saved z8 save"],
                f"ls_zspill notes {notes}")
-        expect(len(found["ls_zspill"].findings()) == 2,
+        expect(len(found["ls_zspill"].findings()) == 0,
                "ls_zspill decisions")
     if "ns_jump" in found:
         expect(found["ns_jump"].unresolved_jump,
@@ -359,7 +364,7 @@ def check_scan_tool(directory: pathlib.Path) -> None:
     out = result.stdout
     expect("x86-64: 1" in out, "the x86-64 ELF is not counted")
     expect("aarch64: 2" in out, "the APK member is not scanned")
-    expect("SM=0 words outside the family that the guest traps: 6" in out,
+    expect("SM=0 words outside the family that the guest traps: 2" in out,
            "decision count:\n" + out)
     expect("expectation lib/libfixture.so: SM=0 SVE words" in out and
            "as expected" in out, "the expectation does not hold:\n" + out)
@@ -402,10 +407,12 @@ def check_corpus_tool(directory: pathlib.Path) -> None:
     expect(result.returncode == 1, f"corpus exit {result.returncode}")
     expect("rejected: no SVE" in out, "a rejected variant is not listed")
     decisions = out.split("Decisions:")[-1]
-    for encoding in ("add_z_zz_", "str_z_bi_", "ldr_z_bi_"):
-        expect(encoding in decisions, f"{encoding} is not a decision")
-    expect("cntd_r_s_" in out.split("Decisions:")[0],
-           "cntd is not covered")
+    expect("add_z_zz_" in decisions, "add_z_zz_ is not a decision")
+    covered = out.split("Decisions:")[0]
+    for encoding in ("cntd_r_s_", "str_z_bi_", "ldr_z_bi_"):
+        expect(encoding in covered, f"{encoding} is not covered")
+    for encoding in ("str_z_bi_", "ldr_z_bi_"):
+        expect(encoding not in decisions, f"{encoding} is a decision")
     expect("entry mismatch" not in out, "declared and inferred modes "
            "disagree:\n" + out)
 

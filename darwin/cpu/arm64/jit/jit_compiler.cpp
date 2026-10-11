@@ -226,6 +226,10 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         emit_terminal_helper(
             reinterpret_cast<const void *>(&uml_arm64_jit_execute_sve),
             cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::sm0_spill_slow) {
+        emit_terminal_helper(
+            reinterpret_cast<const void *>(&uml_arm64_jit_execute_sm0_spill),
+            cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
         emitter_.emit(0xd503'3f5fU); // clrex
         clear_local_exclusive_monitor();
