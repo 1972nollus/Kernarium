@@ -783,9 +783,11 @@ page stamp describes either.
 ## Measuring what the cache costs
 
 A `UML_GADGET_CACHE_CENSUS=ON` build makes every executor append what its
-private cache still held at teardown: the committed slabs, each resident
-translation's own storage -- its native stream and saved source, and the
-decoded instructions only a replayed block holds -- the link and indirect
-records, and the target link table each address space owns. The record format is the arm64 engine's,
-so one analyzer reads a capture from either. See
+private cache holds, at teardown and optionally at intervals: the committed
+slabs, each resident translation's own allocations as the allocator sized
+them -- its record, native stream and saved source, and the decoded
+instructions only a replayed block holds -- the link and indirect records,
+and the target link table each address space owns, with the history of its
+lookups, evictions and retranslations. The record format is the arm64
+engine's, so one analyzer reads a capture from either. See
 [`tests/perf/README.md`](../../../../tests/perf/README.md).
