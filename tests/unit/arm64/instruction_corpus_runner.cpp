@@ -1223,7 +1223,23 @@ public:
       return run_library(initial, memory);
     Outcome outcome;
     outcome.cpu = initial;
+    /* Enter as the runtime does (load_cpu): the task's vectors deferred and
+     * the register file stale, so a program that touches the vectors without
+     * being marked as doing so loses its writes, and read them back as the
+     * context switch saves them. */
+    auto saved = initial.vectors;
+    outcome.cpu.defer_fp_load(saved.data(), initial.fpcr, initial.fpsr,
+                              ~std::uint32_t{0});
+    outcome.cpu.vectors = {};
     const auto result = run_engine(lane, outcome.cpu, memory, execution_limit);
+    if (outcome.cpu.fp_dirty)
+      saved = outcome.cpu.vectors;
+    outcome.cpu.fpcr = outcome.cpu.effective_fpcr();
+    outcome.cpu.fpsr =
+        (outcome.cpu.effective_fpsr() & arm64::fpsr_writable_mask) |
+        (initial.fpsr & ~arm64::fpsr_writable_mask);
+    outcome.cpu.vectors = saved;
+    outcome.cpu.fp_loaded = true;
     outcome.event = event_for(result.reason);
     outcome.instructions = result.retired_instructions;
     outcome.fault = {result.fault.address, result.fault.access};
