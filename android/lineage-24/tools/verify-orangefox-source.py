@@ -19,7 +19,7 @@ from contract_checks import parse_assignments  # noqa: E402
 HEX40 = pinned_source.HEX40
 HEX64 = re.compile(r"[0-9a-f]{64}")
 PROJECT_HEADER = (
-    "order", "route_id", "manifest_project", "checkout_path",
+    "order", "route_id", "manifest_remote", "manifest_project", "checkout_path",
     "manifest_upstream", "base_commit", "base_tree", "final_tree", "series_dir",
 )
 EXTERNALS = (

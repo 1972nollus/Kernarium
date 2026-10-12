@@ -15,6 +15,10 @@ import patch_series  # noqa: E402
 
 
 PROJECT_HEADER = pinned_source.AOSP_ROUTE_HEADER
+BASE_COMMIT, BASE_TREE, FINAL_TREE, SERIES_DIR = (
+    PROJECT_HEADER.index(column)
+    for column in ("base_commit", "base_tree", "final_tree", "series_dir")
+)
 HEX40 = pinned_source.HEX40
 SAFE_ROUTE = re.compile(r"p[0-9]{4}")
 
@@ -91,15 +95,15 @@ def main() -> None:
         if len(matching) != 1:
             raise RegenerationError("route ID is not present exactly once")
         row = matching[0]
-        base_commit, base_tree = row[5], row[6]
+        base_commit, base_tree = row[BASE_COMMIT], row[BASE_TREE]
         if HEX40.fullmatch(base_commit) is None or HEX40.fullmatch(base_tree) is None:
             raise RegenerationError("route base identity is malformed")
         verify_topic(topic, base_tree, base_commit)
-        series_dir = safe_series_path(android_root, row[8], args.route_id)
+        series_dir = safe_series_path(android_root, row[SERIES_DIR], args.route_id)
         final_tree = patch_series.export_series(
             topic, base_commit, "HEAD", series_dir, license_id="Apache-2.0"
         )
-        row[7] = final_tree
+        row[FINAL_TREE] = final_tree
         projects_path.write_text(
             "\n".join(prefix + ["\t".join(item) for item in rows]) + "\n"
         )

@@ -56,7 +56,7 @@ absolute_path "OrangeFox source" "$ORANGEFOX_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--orangefox-source "$ORANGEFOX_SOURCE" --expect base
 
-awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $4 "\t" $8 "\t" $9 }' "$PROJECTS" |
+awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $5 "\t" $9 "\t" $10 }' "$PROJECTS" |
 while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir; do
 	python3 -B "$PATCH_SERIES" apply --repo "$ORANGEFOX_SOURCE/$checkout_path" \
 		--series-dir "$ANDROID_ROOT/$series_dir" \

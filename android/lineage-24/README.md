@@ -43,7 +43,8 @@ boot image. A release ships the artifact's kernel files unchanged.
 ## Source and patch ownership
 
 `metadata/base-manifest.xml` pins every Repo project. `patches/projects.tsv`
-maps each changed project from its exact base to final tree. Generated patch
+maps each changed project, named with the manifest remote that serves it, from
+its exact base to final tree. Generated patch
 series under `patches/projects/` are the only maintained modifications to
 upstream AOSP projects.
 

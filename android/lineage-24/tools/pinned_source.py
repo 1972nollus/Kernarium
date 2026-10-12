@@ -41,10 +41,11 @@ HEX40 = re.compile(r"[0-9a-f]{40}")
 UNSAFE_PARTS = frozenset(("", ".", "..", ".git", ".repo"))
 Error = Callable[[str], Exception]
 AOSP_ROUTE_HEADER = (
-    "order", "route_id", "manifest_project", "checkout_path",
+    "order", "route_id", "manifest_remote", "manifest_project", "checkout_path",
     "manifest_revision", "base_commit", "base_tree", "final_tree", "series_dir",
 )
 ROUTE_ID = re.compile(r"p[0-9]{4}")
+REMOTE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 DIRTY_PROJECTS = 'if test -n "$(git status --porcelain)"; then printf "%s\\n" "$REPO_PATH"; fi'
 
 
@@ -131,12 +132,22 @@ def safe_relative(value: str, label: str, error: Error) -> None:
 
 
 def manifest_projects(root: ET.Element, error: Error) -> dict[str, ET.Element]:
-    """Map each project of a resolved Repo manifest by its checkout path."""
+    """Map each project of a resolved Repo manifest by its checkout path.
+
+    Every returned project names its remote: a project that does not say which
+    remote serves it takes the manifest's default remote.
+    """
+    default = root.find("default")
+    default_remote = default.get("remote") if default is not None else None
     projects: dict[str, ET.Element] = {}
     for project in root.findall("project"):
         name = project.get("name")
         if not name:
             raise error("resolved manifest has a project without a name")
+        if not project.get("remote"):
+            if not default_remote:
+                raise error(f"resolved manifest project has no remote: {name}")
+            project.set("remote", default_remote)
         path = project.get("path", name)
         safe_relative(path, "manifest checkout path", error)
         if path in projects:
@@ -151,6 +162,7 @@ def manifest_projects(root: ET.Element, error: Error) -> dict[str, ET.Element]:
 class Route:
     order: int
     route_id: str
+    remote: str
     project: str
     path: str
     upstream: str
@@ -169,21 +181,24 @@ def read_route_table(
 ) -> list[Route]:
     """Return a route table's routes, checked against the resolved base manifest.
 
-    The order column counts from 1, and no route ID, project or checkout path
-    repeats. Each route names its base-manifest project at the pinned revision
-    and upstream, and its own nonempty series at
-    `<series_root>/<route_id>/series` below the Android root.
+    The order column counts from 1, and no route ID, remote and project, or
+    checkout path repeats. Each route names its base-manifest project on the
+    remote that serves it at the pinned revision and upstream, and its own
+    nonempty series at `<series_root>/<route_id>/series` below the Android
+    root.
     """
     routes: list[Route] = []
     for index, values in enumerate(table(path, header, error), 1):
         (
-            order_text, route_id, project, checkout_path, upstream,
+            order_text, route_id, remote, project, checkout_path, upstream,
             base_commit, base_tree, final_tree, series_dir_text,
         ) = values
         if order_text != str(index):
             raise error("project route order is not contiguous")
         if not ROUTE_ID.fullmatch(route_id):
             raise error(f"invalid route ID: {route_id}")
+        if not REMOTE_NAME.fullmatch(remote):
+            raise error(f"route {route_id} has an invalid manifest remote")
         safe_relative(project, "manifest project name", error)
         safe_relative(checkout_path, "checkout path", error)
         safe_relative(series_dir_text, "series directory", error)
@@ -197,17 +212,22 @@ def read_route_table(
                 raise error(f"route {route_id} has invalid {label}")
         read_generated_series(android_root / series_dir_text, f"route {route_id}", error)
         routes.append(Route(
-            index, route_id, project, checkout_path, upstream, base_commit, base_tree, final_tree
+            index, route_id, remote, project, checkout_path, upstream,
+            base_commit, base_tree, final_tree,
         ))
     if len({route.route_id for route in routes}) != len(routes):
         raise error("project route IDs are not unique")
-    if len({route.project for route in routes}) != len(routes):
+    if len({(route.remote, route.project) for route in routes}) != len(routes):
         raise error("manifest projects are routed more than once")
     if len({route.path for route in routes}) != len(routes):
         raise error("checkout paths are routed more than once")
     for route in routes:
         locked = base_projects.get(route.path)
-        if locked is None or locked.get("name") != route.project:
+        if (
+            locked is None
+            or locked.get("name") != route.project
+            or locked.get("remote") != route.remote
+        ):
             raise error(f"route {route.route_id} is absent from the base manifest")
         if locked.get("revision") != route.base_commit:
             raise error(f"route {route.route_id} base commit differs from the manifest lock")
@@ -257,7 +277,10 @@ def verify_repo_routes(
             raise error(f"route {route.route_id} is not a Git checkout")
         head = run("git", "rev-parse", "HEAD", cwd=checkout, error=error)
         tree = run("git", "rev-parse", "HEAD^{tree}", cwd=checkout, error=error)
-        if current_projects[route.path].get("name") != route.project:
+        if (
+            current_projects[route.path].get("name") != route.project
+            or current_projects[route.path].get("remote") != route.remote
+        ):
             raise error(f"route {route.route_id} maps to the wrong manifest project")
         if current_projects[route.path].get("revision") != head:
             raise error(f"Repo did not resolve route {route.route_id} to its current HEAD")

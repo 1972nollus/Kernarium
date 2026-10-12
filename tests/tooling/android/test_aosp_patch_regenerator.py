@@ -51,7 +51,8 @@ def write_fixture(
     (root / "scripts").mkdir()
     shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     manifest = (
-        '<manifest><project name="fixture/project" path="fixture/project" '
+        '<manifest><default remote="fixture"/>'
+        '<project name="fixture/project" path="fixture/project" '
         f'revision="{base_commit}" upstream="refs/tags/fixture"/></manifest>\n'
     )
     (android_root / "metadata/base-manifest.xml").write_text(manifest)
@@ -63,9 +64,9 @@ def write_fixture(
     empty_tree = "0" * 40
     (android_root / "patches/projects.tsv").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
-        "order\troute_id\tmanifest_project\tcheckout_path\tmanifest_revision\t"
-        "base_commit\tbase_tree\tfinal_tree\tseries_dir\n"
-        f"1\tp0001\tfixture/project\tfixture/project\trefs/tags/fixture\t"
+        "order\troute_id\tmanifest_remote\tmanifest_project\tcheckout_path\t"
+        "manifest_revision\tbase_commit\tbase_tree\tfinal_tree\tseries_dir\n"
+        f"1\tp0001\tfixture\tfixture/project\tfixture/project\trefs/tags/fixture\t"
         f"{base_commit}\t{base_tree}\t{empty_tree}\t"
         "patches/projects/p0001/series\n"
     )
