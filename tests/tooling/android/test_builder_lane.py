@@ -1260,6 +1260,46 @@ def verify_ubd_disk_fixtures(tool: Path, production_layout: Path) -> None:
             fail("UBD assembler accepted a partition payload that exceeds its capacity")
 
 
+def verify_pin_manifest(tool: Path) -> None:
+    """Only a project the manifest reads at a branch needs pinning."""
+    commit = "1" * 40
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        base = root / "base-manifest.xml"
+        base.write_text(
+            '<manifest><remote name="r" fetch=".."/><default remote="r"/>'
+            f'<project name="tag" path="a/tag" revision="{commit}" '
+            'upstream="refs/tags/fixture"/>'
+            f'<project name="branch" path="a/branch" revision="{commit}" '
+            'upstream="refs/heads/fixture"/>'
+            f'<project name="branch" path="b/branch" revision="{commit}" '
+            'upstream="refs/heads/other"/></manifest>'
+        )
+        pin = root / "local_manifests/pin.xml"
+        subprocess.run(
+            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
+             "--output", str(pin)],
+            check=True,
+        )
+        expected = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n'
+            f'  <extend-project name="branch" path="a/branch" revision="{commit}" '
+            'upstream="refs/heads/fixture" />\n'
+            f'  <extend-project name="branch" path="b/branch" revision="{commit}" '
+            'upstream="refs/heads/other" />\n</manifest>\n'
+        )
+        if pin.read_text() != expected:
+            fail(f"pin manifest differs from the expected local manifest: {pin.read_text()}")
+        base.write_text(base.read_text().replace(commit, "refs/heads/moving", 1))
+        refused = subprocess.run(
+            [sys.executable, "-B", str(tool), "--base-manifest", str(base),
+             "--output", str(root / "refused.xml")],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        if refused.returncode == 0 or "not pinned to a commit" not in refused.stdout:
+            fail("pin manifest rendering accepted a project not pinned to a commit")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
@@ -1269,16 +1309,6 @@ def main() -> None:
     android_root = root / "android/lineage-24"
     kernel_root = root / "kernel/android-6.18"
 
-    subprocess.run(
-        [
-            sys.executable,
-            "-B",
-            str(android_root / "tools/verify-jelly-source.py"),
-            "--android-root",
-            str(android_root),
-        ],
-        check=True,
-    )
     subprocess.run(
         [
             sys.executable,
@@ -1312,6 +1342,7 @@ def main() -> None:
     verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
+    verify_pin_manifest(android_root / "tools/render-pin-manifest.py")
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_orangefox_recovery_fixtures(

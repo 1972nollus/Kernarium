@@ -244,13 +244,6 @@ def main() -> None:
     ])
 
     run([
-        str(android_root / "tools/verify-jelly-source.py"),
-        "--android-root",
-        str(android_root),
-        "--aosp-source",
-        str(aosp_source),
-    ])
-    run([
         str(android_root / "tools/verify-aosp-patches.py"),
         "--android-root",
         str(android_root),
@@ -388,7 +381,7 @@ def main() -> None:
             resolved_manifest = run(
                 ["repo", "manifest", "-r"], cwd=aosp_source, capture=True
             )
-            provenance = staging / "provenance/aosp-repo-manifest.xml"
+            provenance = staging / "provenance/source-repo-manifest.xml"
             provenance.parent.mkdir(parents=True, exist_ok=True)
             provenance.write_text(resolved_manifest + "\n", encoding="utf-8")
             orangefox_manifest = run(
@@ -404,16 +397,11 @@ def main() -> None:
             kernel_release = kernel_release_file.read_text(
                 encoding="utf-8", errors="strict"
             ).strip()
-            aosp, jelly, orangefox, kernel = (
-                tracked["aosp"], tracked["jelly"], tracked["orangefox"], tracked["kernel"]
+            source, orangefox, kernel = (
+                tracked["source"], tracked["orangefox"], tracked["kernel"]
             )
-            jelly_final_commit = run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=aosp_source / jelly["destination"],
-                capture=True,
-            )
-            aosp_routes = read_routes(
-                android_root / "patches/projects.tsv", android_root, "AOSP"
+            source_routes = read_routes(
+                android_root / "patches/projects.tsv", android_root, "source"
             )
             orangefox_routes = read_routes(
                 android_root / "third_party/orangefox/patches/projects.tsv",
@@ -427,11 +415,8 @@ def main() -> None:
                 ("producer", "android/lineage-24/build/publish-release.sh"),
                 ("outer_revision", outer_revision),
                 ("outer_dirty", "false"),
-                ("aosp_manifest_commit", aosp["manifest_commit"]),
-                ("aosp_projects_manifest_sha256", aosp["projects_manifest_sha256"]),
-                ("jelly_upstream_commit", jelly["base_commit"]),
-                ("jelly_final_tree", jelly["final_tree"]),
-                ("jelly_patch_manifest_sha256", jelly["patch_manifest_sha256"]),
+                ("source_manifest_commit", source["manifest_commit"]),
+                ("source_projects_manifest_sha256", source["projects_manifest_sha256"]),
                 ("orangefox_manifest_commit", orangefox["manifest_commit"]),
                 ("orangefox_base_manifest_sha256", orangefox["base_manifest_sha256"]),
                 ("orangefox_projects_manifest_sha256", orangefox["projects_manifest_sha256"]),
@@ -446,8 +431,7 @@ def main() -> None:
                 ("abi_fingerprint", kernel["abi_fingerprint"]),
                 ("android_product", aosp_metadata["LINEAGE24_PRODUCT"]),
                 ("android_build_id", build_id),
-                ("source_role_aosp", "pinned AOSP 17 Repo workspace"),
-                ("source_role_jelly", "pinned external LineageOS Jelly topic"),
+                ("source_role_android", "pinned Repo workspace"),
                 ("source_role_orangefox", "pinned OrangeFox 14.1 recovery workspace"),
                 ("source_role_ack", "replayed ACK 6.18 worktree"),
                 ("input_role_kernel", "verified standalone ACK UML build"),
@@ -456,7 +440,7 @@ def main() -> None:
             write_receipt(staging / "provenance/build-receipt.tsv", receipt_rows)
 
             manifest = {
-                "schema_version": 3,
+                "schema_version": 4,
                 "release_id": args.release_id,
                 "directory_name": directory_name,
                 "product_family": PRODUCT_FAMILY,
@@ -465,7 +449,7 @@ def main() -> None:
                     datetime.timezone.utc
                 ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                 "android": {
-                    "major": int(aosp_metadata["LINEAGE24_MAJOR"]),
+                    "major": int(aosp_metadata["LINEAGE24_ANDROID_MAJOR"]),
                     "sdk": sdk,
                     "build_id": build_id,
                     "build_variant": aosp_metadata["LINEAGE24_BUILD_VARIANT"],
@@ -474,8 +458,7 @@ def main() -> None:
                     "product": aosp_metadata["LINEAGE24_PRODUCT"],
                     "release_config": aosp_metadata["LINEAGE24_RELEASE_CONFIG"],
                 },
-                "aosp": {**aosp, "routes": aosp_routes},
-                "jelly": {**jelly, "final_commit": jelly_final_commit},
+                "source": {**source, "routes": source_routes},
                 "orangefox": {**orangefox, "routes": orangefox_routes},
                 "kernel": {
                     **kernel,
@@ -487,8 +470,7 @@ def main() -> None:
                 "producer": {
                     "entry_point": "android/lineage-24/build/publish-release.sh",
                     "functional_options": [
-                        "pinned AOSP source",
-                        "pinned external Jelly source",
+                        "pinned Android source",
                         "pinned OrangeFox 14.1 source and local topics",
                         "clean replayed ACK source",
                         "verified standalone ACK build",
@@ -510,7 +492,7 @@ def main() -> None:
                         "linker": first_version([str(linker), "--version"]),
                         "darwin_sdk": sdk_identity(darwin_sdk),
                         "android_build_tools": (
-                            f"AOSP {aosp_metadata['LINEAGE24_MANIFEST_TAG']} target-files tools"
+                            f"Android {aosp_metadata['LINEAGE24_AOSP_TAG']} target-files tools"
                         ),
                     },
                 },

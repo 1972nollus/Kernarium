@@ -7,8 +7,6 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
-JELLY_METADATA="$ROOT_DIR/android/lineage-24/third_party/jelly/metadata.env"
-JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
 MESA_VENUS_METADATA="$ROOT_DIR/android/lineage-24/third_party/mesa-venus/metadata.env"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 
@@ -28,11 +26,12 @@ Usage: android/lineage-24/build/prepare-sources.sh \
        --ack-workspace ABSOLUTE_PATH [--jobs N]
 
 Run this command locally on the x86_64 Linux builder. It is the only Android
-producer step allowed to synchronize public AOSP, ACK, Jelly, and guest Mesa
-source. Both Repo workspaces must already exist and be clean. Jelly and the
-Venus Vulkan HAL's Mesa source are materialized at their pinned external
-commits plus generated local patch series. No endpoint or transport option is
-accepted.
+producer step allowed to synchronize the public LineageOS, ACK, and guest
+Mesa source. Both Repo workspaces must already exist and be clean. The
+LineageOS workspace is synchronized to the exact commits of the checked base
+manifest, and needs Git LFS for its WebView prebuilts. The Venus Vulkan HAL's
+Mesa source is materialized at its pinned external commit plus generated local
+patch series. No endpoint or transport option is accepted.
 EOF
 }
 
@@ -141,8 +140,6 @@ esac
 
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
-[ -f "$JELLY_METADATA" ] || fail "missing Jelly metadata: $JELLY_METADATA"
-[ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
 [ -f "$MESA_VENUS_METADATA" ] ||
 	fail "missing Mesa Venus metadata: $MESA_VENUS_METADATA"
 [ -x "$MESA_VENUS_VERIFIER" ] ||
@@ -152,15 +149,13 @@ esac
 # shellcheck disable=SC1090
 . "$ACK_METADATA"
 # shellcheck disable=SC1090
-. "$JELLY_METADATA"
-# shellcheck disable=SC1090
 . "$MESA_VENUS_METADATA"
 
-"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24"
 "$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24"
 
 command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
+git lfs version >/dev/null 2>&1 || fail "git-lfs is not available on PATH"
 [ -d "$AOSP_SOURCE/.repo" ] || fail "AOSP source is not a Repo workspace"
 [ -d "$ACK_WORKSPACE/.repo" ] || fail "ACK workspace is not a Repo workspace"
 [ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
@@ -176,8 +171,12 @@ fi
 (
 	CDPATH= cd -- "$AOSP_SOURCE"
 	repo init -u "$LINEAGE24_MANIFEST_REPOSITORY" \
-		-b "$LINEAGE24_MANIFEST_TAG" --manifest-depth=1 \
+		-b "$LINEAGE24_MANIFEST_COMMIT" --manifest-depth=1 \
+		--git-lfs --partial-clone --clone-filter=blob:none \
 		--repo-rev=stable --no-repo-verify --no-clone-bundle
+	python3 -B "$ROOT_DIR/android/lineage-24/tools/render-pin-manifest.py" \
+		--base-manifest "$ROOT_DIR/android/lineage-24/metadata/base-manifest.xml" \
+		--output .repo/local_manifests/pin.xml
 	repo sync -c --detach -j "$JOBS"
 )
 
@@ -187,10 +186,6 @@ git -C "$ACK_WORKSPACE/common" fetch --no-tags \
 git -C "$ACK_WORKSPACE/common" checkout --detach \
 	"$UML_KERNEL_UPSTREAM_COMMIT"
 
-materialize_pinned Jelly "$AOSP_SOURCE/$JELLY_DESTINATION" "$JELLY_VERIFIER" \
-	"$JELLY_UPSTREAM_REPOSITORY" "$JELLY_UPSTREAM_COMMIT" \
-	"$JELLY_UPSTREAM_TREE" "" \
-	android/lineage-24/third_party/jelly/series "$JELLY_FINAL_TREE"
 materialize_pinned "Mesa Venus" "$AOSP_SOURCE/$MESA_VENUS_DESTINATION" \
 	"$MESA_VENUS_VERIFIER" "$MESA_VENUS_UPSTREAM_REPOSITORY" \
 	"$MESA_VENUS_UPSTREAM_COMMIT" "$MESA_VENUS_UPSTREAM_TREE" \

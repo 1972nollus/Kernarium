@@ -7,7 +7,6 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
-JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
 
 AOSP_SOURCE=
@@ -107,7 +106,6 @@ absolute_path "ACK workspace" "$ACK_WORKSPACE"
 
 [ -f "$AOSP_METADATA" ] || fail "missing AOSP metadata: $AOSP_METADATA"
 [ -f "$ACK_METADATA" ] || fail "missing ACK metadata: $ACK_METADATA"
-[ -x "$JELLY_VERIFIER" ] || fail "missing Jelly source verifier: $JELLY_VERIFIER"
 [ -x "$MESA_VENUS_VERIFIER" ] ||
 	fail "missing Mesa Venus source verifier: $MESA_VENUS_VERIFIER"
 # shellcheck disable=SC1090
@@ -115,7 +113,7 @@ absolute_path "ACK workspace" "$ACK_WORKSPACE"
 # shellcheck disable=SC1090
 . "$ACK_METADATA"
 
-[ "$LINEAGE24_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
+[ "$LINEAGE24_ANDROID_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
 [ "$LINEAGE24_KERNEL_PAGE_SIZE" -eq 4096 ] || fail "Android kernel page size is not 4096"
 [ "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" -eq 16384 ] ||
 	fail "Android maximum page size is not 16384"
@@ -136,8 +134,6 @@ dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
-"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24" \
-	--aosp-source "$AOSP_SOURCE"
 "$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/lineage-24" \
 	--aosp-source "$AOSP_SOURCE"
 

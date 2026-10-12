@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """What the Android producer's pinned-source tools share.
 
-Jelly and Mesa Venus each keep a metadata.env with one key prefix, a
-generated patch series and a maintained Git topic. Their verifiers and
-regenerators differ in their constants, in how a materialized checkout must
-sit on its base, and in how the regenerator finds the topic's export base;
-everything else is here. The AOSP and OrangeFox route verifiers check the
+Mesa Venus keeps a metadata.env with one key prefix, a generated patch
+series and a maintained Git topic. Its verifier and regenerator differ from
+any other pinned source in their constants, in how a materialized checkout
+must sit on its base, and in how the regenerator finds the topic's export
+base; everything else is here. The AOSP and OrangeFox route verifiers check the
 same kind of tab-separated route table against a resolved Repo manifest and
 the same kind of routed Repo workspace, so those checks are here too, as is
 the one command runner every verifier, regenerator and the release publisher

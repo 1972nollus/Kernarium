@@ -10,7 +10,6 @@ PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 DEVICE_SYNC="$ANDROID_ROOT/tools/sync-device-tree.py"
-JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 AOSP_SOURCE=
 
@@ -53,12 +52,9 @@ absolute_path "AOSP source" "$AOSP_SOURCE"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
 [ -x "$VERIFIER" ] || fail "AOSP patch verifier is missing"
 [ -x "$DEVICE_SYNC" ] || fail "device-tree sync tool is missing"
-[ -x "$JELLY_VERIFIER" ] || fail "Jelly source verifier is missing"
 [ -x "$MESA_VENUS_VERIFIER" ] || fail "Mesa Venus source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
 
-"$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--aosp-source "$AOSP_SOURCE"
 "$MESA_VENUS_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \

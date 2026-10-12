@@ -31,7 +31,7 @@ require_hex = _CHECKS.require_hex
 safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PRODUCT_FAMILY = "android-17-ack-6.18-4k"
 DIRECTORY_PREFIX = "android17-ack6.18-4k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -62,7 +62,7 @@ PAYLOAD_SPECS = {
     "kernel/modules.builtin": ("built-in-module-list", "utf8-text"),
     "kernel/modules.builtin.modinfo": ("built-in-module-metadata", "binary-records"),
     "kernel/vmlinux": ("kernel-elf", "elf64-aarch64-et-dyn"),
-    "provenance/aosp-repo-manifest.xml": ("aosp-resolved-manifest", "xml"),
+    "provenance/source-repo-manifest.xml": ("source-resolved-manifest", "xml"),
     "provenance/orangefox-repo-manifest.xml": ("orangefox-resolved-manifest", "xml"),
     "provenance/build-receipt.tsv": ("build-receipt", "tsv"),
     "support/compatibility-matrix.xml": ("vendor-compatibility-matrix", "xml"),
@@ -78,8 +78,7 @@ TOP_LEVEL_KEYS = {
     "acceptance",
     "published_at_utc",
     "android",
-    "aosp",
-    "jelly",
+    "source",
     "orangefox",
     "kernel",
     "outer",
@@ -96,17 +95,19 @@ ANDROID_KEYS = {
     "product",
     "release_config",
 }
-AOSP_KEYS = {
+SOURCE_KEYS = {
     "manifest_repository",
-    "manifest_tag",
+    "manifest_revision",
     "manifest_commit",
     "manifest_tree",
+    "aosp_tag",
     "base_manifest_sha256",
     "projects_manifest_sha256",
     "routes",
 }
 ROUTE_KEYS = {
     "route_id",
+    "manifest_remote",
     "manifest_project",
     "checkout_path",
     "base_commit",
@@ -114,18 +115,6 @@ ROUTE_KEYS = {
     "final_tree",
     "patch_count",
     "series_manifest_sha256",
-}
-JELLY_KEYS = {
-    "repository",
-    "branch",
-    "base_commit",
-    "base_tree",
-    "final_commit",
-    "final_tree",
-    "patch_count",
-    "patch_manifest_sha256",
-    "destination",
-    "license",
 }
 ORANGEFOX_KEYS = {
     "sync_repository",
@@ -192,12 +181,9 @@ ACCEPTANCE_KEYS = {
     "LINEAGE24_ACCEPTED_PRODUCT_FAMILY",
     "LINEAGE24_ACCEPTED_ANDROID_MAJOR",
     "LINEAGE24_ACCEPTED_BUILD_VARIANT",
-    "LINEAGE24_ACCEPTED_AOSP_MANIFEST_COMMIT",
-    "LINEAGE24_ACCEPTED_AOSP_BASE_MANIFEST_SHA256",
-    "LINEAGE24_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256",
-    "LINEAGE24_ACCEPTED_JELLY_UPSTREAM_COMMIT",
-    "LINEAGE24_ACCEPTED_JELLY_FINAL_TREE",
-    "LINEAGE24_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256",
+    "LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT",
+    "LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256",
+    "LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256",
     "LINEAGE24_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT",
     "LINEAGE24_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256",
     "LINEAGE24_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256",
@@ -251,32 +237,14 @@ def validate_manifest(value: object) -> dict:
         fail("Android build variant is not user or userdebug")
     require_integer(android["vendor_api_level"], "vendor API level", minimum=202604)
 
-    aosp = require_exact_keys(manifest["aosp"], AOSP_KEYS, "aosp")
-    for key in ("manifest_repository", "manifest_tag"):
-        require_string(aosp[key], f"aosp.{key}")
-    require_hex(aosp["manifest_commit"], 40, "AOSP manifest commit")
-    require_hex(aosp["manifest_tree"], 40, "AOSP manifest tree")
-    require_hex(aosp["base_manifest_sha256"], 64, "base manifest SHA-256")
-    require_hex(aosp["projects_manifest_sha256"], 64, "projects manifest SHA-256")
-    validate_routes(aosp["routes"], "AOSP")
-
-    jelly = require_exact_keys(manifest["jelly"], JELLY_KEYS, "jelly")
-    if jelly["repository"] != (
-        "https://github.com/LineageOS/android_packages_apps_Jelly"
-    ):
-        fail("Jelly repository is not the reviewed LineageOS source")
-    if jelly["branch"] != "lineage-23.2":
-        fail("Jelly branch is not lineage-23.2")
-    for key in ("base_commit", "base_tree", "final_commit", "final_tree"):
-        require_hex(jelly[key], 40, f"jelly.{key}")
-    require_integer(jelly["patch_count"], "Jelly patch count", minimum=1)
-    require_hex(
-        jelly["patch_manifest_sha256"], 64, "Jelly patch manifest SHA-256"
-    )
-    if safe_relative(jelly["destination"], "Jelly destination") != "packages/apps/Jelly":
-        fail("Jelly destination is not packages/apps/Jelly")
-    if jelly["license"] != "Apache-2.0":
-        fail("Jelly license identity changed")
+    source = require_exact_keys(manifest["source"], SOURCE_KEYS, "source")
+    for key in ("manifest_repository", "manifest_revision", "aosp_tag"):
+        require_string(source[key], f"source.{key}")
+    require_hex(source["manifest_commit"], 40, "source manifest commit")
+    require_hex(source["manifest_tree"], 40, "source manifest tree")
+    require_hex(source["base_manifest_sha256"], 64, "base manifest SHA-256")
+    require_hex(source["projects_manifest_sha256"], 64, "projects manifest SHA-256")
+    validate_routes(source["routes"], "source")
 
     orangefox = require_exact_keys(
         manifest["orangefox"], ORANGEFOX_KEYS, "orangefox"
@@ -395,6 +363,7 @@ def validate_routes(routes: object, label: str) -> None:
         if route_id in seen_routes:
             fail(f"duplicate {label} route ID: {route_id}")
         seen_routes.add(route_id)
+        require_string(route["manifest_remote"], f"{label} route {route_id} remote")
         for key in ("manifest_project", "checkout_path"):
             safe_relative(route[key], f"{label} route {route_id} {key}")
         for key in ("base_commit", "base_tree", "final_tree"):
@@ -460,6 +429,7 @@ def read_routes(projects: Path, android_root: Path, label: str) -> list[dict]:
         )
         routes.append({
             "route_id": row["route_id"],
+            "manifest_remote": row["manifest_remote"],
             "manifest_project": row["manifest_project"],
             "checkout_path": row["checkout_path"],
             "base_commit": row["base_commit"],
@@ -475,8 +445,7 @@ def read_routes(projects: Path, android_root: Path, label: str) -> list[dict]:
 
 TRACKED_SECTIONS = {
     "android": "Android",
-    "aosp": "AOSP",
-    "jelly": "Jelly",
+    "source": "source",
     "orangefox": "OrangeFox",
     "kernel": "kernel",
 }
@@ -485,20 +454,15 @@ TRACKED_SECTIONS = {
 def tracked_identity(android_root: Path) -> dict[str, dict]:
     """Return the release-manifest fields the tracked tree determines.
 
-    The publisher adds each section's per-build fields: the AOSP and
-    OrangeFox routes, Jelly's final commit, and the kernel's release, page
-    size and ELF role. The verifier compares an accepted release against
-    these fields.
+    The publisher adds each section's per-build fields: the source and
+    OrangeFox routes, and the kernel's release, page size and ELF role. The
+    verifier compares an accepted release against these fields.
     """
     outer_root = android_root.parents[1]
-    aosp = parse_env(android_root / "metadata/lineage.env")
-    jelly = parse_env(android_root / "third_party/jelly/metadata.env")
+    lineage = parse_env(android_root / "metadata/lineage.env")
     orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
     kernel = parse_env(outer_root / "kernel/android-6.18/patches/metadata.env")
     abi = parse_env(outer_root / "kernel/common/abi/identity.env")
-    jelly_count, jelly_digest = series_provenance(
-        outer_root, android_root / "third_party/jelly/series"
-    )
     orangefox_projects = android_root / "third_party/orangefox/patches/projects.tsv"
     orangefox_count, _ = series_provenance(
         outer_root, *route_series(android_root, orangefox_projects)
@@ -506,24 +470,14 @@ def tracked_identity(android_root: Path) -> dict[str, dict]:
     kernel_count, kernel_digest = kernel_series_provenance(outer_root)
     return {
         "android": {"build_variant": configured_build_variant(android_root)},
-        "aosp": {
-            "manifest_repository": aosp["LINEAGE24_MANIFEST_REPOSITORY"],
-            "manifest_tag": aosp["LINEAGE24_MANIFEST_TAG"],
-            "manifest_commit": aosp["LINEAGE24_MANIFEST_COMMIT"],
-            "manifest_tree": aosp["LINEAGE24_MANIFEST_TREE"],
-            "base_manifest_sha256": aosp["LINEAGE24_BASE_MANIFEST_SHA256"],
+        "source": {
+            "manifest_repository": lineage["LINEAGE24_MANIFEST_REPOSITORY"],
+            "manifest_revision": lineage["LINEAGE24_MANIFEST_REVISION"],
+            "manifest_commit": lineage["LINEAGE24_MANIFEST_COMMIT"],
+            "manifest_tree": lineage["LINEAGE24_MANIFEST_TREE"],
+            "aosp_tag": lineage["LINEAGE24_AOSP_TAG"],
+            "base_manifest_sha256": lineage["LINEAGE24_BASE_MANIFEST_SHA256"],
             "projects_manifest_sha256": sha256_path(android_root / "patches/projects.tsv"),
-        },
-        "jelly": {
-            "repository": jelly["JELLY_UPSTREAM_REPOSITORY"],
-            "branch": jelly["JELLY_UPSTREAM_BRANCH"],
-            "base_commit": jelly["JELLY_UPSTREAM_COMMIT"],
-            "base_tree": jelly["JELLY_UPSTREAM_TREE"],
-            "final_tree": jelly["JELLY_FINAL_TREE"],
-            "patch_count": jelly_count,
-            "patch_manifest_sha256": jelly_digest,
-            "destination": jelly["JELLY_DESTINATION"],
-            "license": jelly["JELLY_LICENSE"],
         },
         "orangefox": {
             "sync_repository": orangefox["ORANGEFOX_SYNC_REPOSITORY"],
@@ -590,12 +544,9 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": manifest["product_family"],
         "LINEAGE24_ACCEPTED_ANDROID_MAJOR": str(manifest["android"]["major"]),
         "LINEAGE24_ACCEPTED_BUILD_VARIANT": manifest["android"]["build_variant"],
-        "LINEAGE24_ACCEPTED_AOSP_MANIFEST_COMMIT": manifest["aosp"]["manifest_commit"],
-        "LINEAGE24_ACCEPTED_AOSP_BASE_MANIFEST_SHA256": manifest["aosp"]["base_manifest_sha256"],
-        "LINEAGE24_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256": manifest["aosp"]["projects_manifest_sha256"],
-        "LINEAGE24_ACCEPTED_JELLY_UPSTREAM_COMMIT": manifest["jelly"]["base_commit"],
-        "LINEAGE24_ACCEPTED_JELLY_FINAL_TREE": manifest["jelly"]["final_tree"],
-        "LINEAGE24_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256": manifest["jelly"]["patch_manifest_sha256"],
+        "LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT": manifest["source"]["manifest_commit"],
+        "LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256": manifest["source"]["base_manifest_sha256"],
+        "LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256": manifest["source"]["projects_manifest_sha256"],
         "LINEAGE24_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT": manifest["orangefox"]["manifest_commit"],
         "LINEAGE24_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256": manifest["orangefox"]["base_manifest_sha256"],
         "LINEAGE24_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256": manifest["orangefox"]["projects_manifest_sha256"],
@@ -844,7 +795,7 @@ def verify_semantics(
     for relative in (
         "support/vintf-manifest.xml",
         "support/compatibility-matrix.xml",
-        "provenance/aosp-repo-manifest.xml",
+        "provenance/source-repo-manifest.xml",
         "provenance/orangefox-repo-manifest.xml",
     ):
         try:

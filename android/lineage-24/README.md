@@ -13,8 +13,9 @@ outside this repository.
 ## Producer boundary
 
 `build/prepare-sources.sh` and `build/prepare-orangefox-source.sh` are the only
-producer commands allowed to use the network. The first pins AOSP, ACK, and
-external Jelly; the second materializes the independently pinned OrangeFox
+producer commands allowed to use the network. The first pins the Android
+source, ACK, and the guest Mesa source; the second materializes the
+independently pinned OrangeFox
 14.1/TWRP workspace. All patching, builds, verification, image assembly, and
 publication are offline.
 
@@ -42,16 +43,17 @@ boot image. A release ships the artifact's kernel files unchanged.
 
 ## Source and patch ownership
 
-`metadata/base-manifest.xml` pins every Repo project. `patches/projects.tsv`
-maps each changed project, named with the manifest remote that serves it, from
-its exact base to final tree. Generated patch
+`metadata/base-manifest.xml` pins every Repo project. A project the manifest
+reads at a branch could move, so `tools/render-pin-manifest.py` turns the
+snapshot into a Repo local manifest that source preparation syncs with.
+`patches/projects.tsv` maps each changed project, named with the manifest
+remote that serves it, from its exact base to final tree. Generated patch
 series under `patches/projects/` are the only maintained modifications to
-upstream AOSP projects.
+upstream projects.
 
 `overlay/` owns the complete `device/kernarium/darwin` product tree and is
-synchronized as one verified unit. External Jelly has its own pinned source
-and generated series under `third_party/jelly/`, and the Vulkan HAL's Mesa
-source has its own under `third_party/mesa-venus/`.
+synchronized as one verified unit. The Vulkan HAL's Mesa source has its own
+pinned source and generated series under `third_party/mesa-venus/`.
 
 `third_party/orangefox/` records the official OrangeFox sync identity, the
 fully resolved TWRP Repo manifest, the exact OrangeFox-owned project commits,

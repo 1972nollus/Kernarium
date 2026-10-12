@@ -38,6 +38,7 @@ def read_routes(projects_path: Path, android_root: Path, provenance) -> list[dic
         patch_count, series_digest = provenance(android_root / row["series_dir"])
         routes.append({
             "route_id": row["route_id"],
+            "manifest_remote": row["manifest_remote"],
             "manifest_project": row["manifest_project"],
             "checkout_path": row["checkout_path"],
             "base_commit": row["base_commit"],
@@ -82,10 +83,8 @@ def main() -> None:
         fail("release schema does not pin the Android product family")
 
     aosp = parse_env(android_root / "metadata/lineage.env")
-    jelly = parse_env(android_root / "third_party/jelly/metadata.env")
     orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
     orangefox_projects = android_root / "third_party/orangefox/patches/projects.tsv"
-    jelly_count, jelly_digest = provenance(android_root / "third_party/jelly/series")
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
     kernel_patch_count, kernel_patch_digest = kernel_series_provenance(root)
@@ -128,11 +127,12 @@ def main() -> None:
             "product": aosp["LINEAGE24_PRODUCT"],
             "release_config": aosp["LINEAGE24_RELEASE_CONFIG"],
         },
-        "aosp": {
+        "source": {
             "manifest_repository": aosp["LINEAGE24_MANIFEST_REPOSITORY"],
-            "manifest_tag": aosp["LINEAGE24_MANIFEST_TAG"],
+            "manifest_revision": aosp["LINEAGE24_MANIFEST_REVISION"],
             "manifest_commit": aosp["LINEAGE24_MANIFEST_COMMIT"],
             "manifest_tree": aosp["LINEAGE24_MANIFEST_TREE"],
+            "aosp_tag": aosp["LINEAGE24_AOSP_TAG"],
             "base_manifest_sha256": aosp["LINEAGE24_BASE_MANIFEST_SHA256"],
             "projects_manifest_sha256": sha256_path(
                 android_root / "patches/projects.tsv"
@@ -140,18 +140,6 @@ def main() -> None:
             "routes": read_routes(
                 android_root / "patches/projects.tsv", android_root, provenance
             ),
-        },
-        "jelly": {
-            "repository": jelly["JELLY_UPSTREAM_REPOSITORY"],
-            "branch": jelly["JELLY_UPSTREAM_BRANCH"],
-            "base_commit": jelly["JELLY_UPSTREAM_COMMIT"],
-            "base_tree": jelly["JELLY_UPSTREAM_TREE"],
-            "final_commit": "f" * 40,
-            "final_tree": jelly["JELLY_FINAL_TREE"],
-            "patch_count": jelly_count,
-            "patch_manifest_sha256": jelly_digest,
-            "destination": jelly["JELLY_DESTINATION"],
-            "license": jelly["JELLY_LICENSE"],
         },
         "orangefox": {
             "sync_repository": orangefox["ORANGEFOX_SYNC_REPOSITORY"],
@@ -257,12 +245,9 @@ def main() -> None:
                 f"LINEAGE24_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
                 "LINEAGE24_ACCEPTED_ANDROID_MAJOR=17",
                 f"LINEAGE24_ACCEPTED_BUILD_VARIANT='{manifest['android']['build_variant']}'",
-                f"LINEAGE24_ACCEPTED_AOSP_MANIFEST_COMMIT='{manifest['aosp']['manifest_commit']}'",
-                f"LINEAGE24_ACCEPTED_AOSP_BASE_MANIFEST_SHA256='{manifest['aosp']['base_manifest_sha256']}'",
-                f"LINEAGE24_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256='{manifest['aosp']['projects_manifest_sha256']}'",
-                f"LINEAGE24_ACCEPTED_JELLY_UPSTREAM_COMMIT='{manifest['jelly']['base_commit']}'",
-                f"LINEAGE24_ACCEPTED_JELLY_FINAL_TREE='{manifest['jelly']['final_tree']}'",
-                f"LINEAGE24_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256='{manifest['jelly']['patch_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_SOURCE_MANIFEST_COMMIT='{manifest['source']['manifest_commit']}'",
+                f"LINEAGE24_ACCEPTED_SOURCE_BASE_MANIFEST_SHA256='{manifest['source']['base_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_SOURCE_PROJECTS_MANIFEST_SHA256='{manifest['source']['projects_manifest_sha256']}'",
                 f"LINEAGE24_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT='{manifest['orangefox']['manifest_commit']}'",
                 f"LINEAGE24_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256='{manifest['orangefox']['base_manifest_sha256']}'",
                 f"LINEAGE24_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256='{manifest['orangefox']['projects_manifest_sha256']}'",
@@ -287,7 +272,7 @@ def main() -> None:
         )
 
         historical = copy.deepcopy(manifest)
-        historical["aosp"]["projects_manifest_sha256"] = "b" * 64
+        historical["source"]["projects_manifest_sha256"] = "b" * 64
         historical["kernel"]["final_tree"] = "c" * 40
         historical["kernel"]["patch_manifest_sha256"] = "d" * 64
         historical["kernel"]["abi_version"] = 7
@@ -300,7 +285,7 @@ def main() -> None:
         historical_acceptance = temporary_root / "historical-accepted-release.env"
         historical_acceptance.write_text(
             acceptance.read_text()
-            .replace(manifest["aosp"]["projects_manifest_sha256"], "b" * 64)
+            .replace(manifest["source"]["projects_manifest_sha256"], "b" * 64)
             .replace(manifest["kernel"]["final_tree"], "c" * 40)
             .replace(manifest["kernel"]["patch_manifest_sha256"], "d" * 64)
             .replace(
@@ -371,11 +356,11 @@ def main() -> None:
                 label,
             )
         manifest = copy.deepcopy(original)
-        manifest["jelly"]["patch_manifest_sha256"] = "e" * 64
+        manifest["source"]["aosp_tag"] = "android-0.0.0_r0"
         manifest_path.write_text(json.dumps(manifest))
         expect_failure(
             lambda: verify_release(release_root, android_root, semantic=False),
-            "a Jelly patch series different from tracked provenance",
+            "an Android source release different from the tracked one",
         )
         manifest = copy.deepcopy(original)
         manifest["product_family"] = "wrong-family"

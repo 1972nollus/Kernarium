@@ -25,14 +25,6 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
-    NAME lineage24-jelly-source-contract
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_jelly_source_contract.py
-        --source-root ${PROJECT_SOURCE_DIR}
-    LABELS android;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME lineage24-mesa-venus-source-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_mesa_venus_source_contract.py
