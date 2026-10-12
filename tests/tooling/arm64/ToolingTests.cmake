@@ -38,7 +38,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus.py
         ${UML_ARM64_INSTRUCTION_CORPUS}
     LABELS cpu
-    TIMEOUT 300)
+    TIMEOUT 600)
 
 uml_add_tooling_test(
     NAME arm64-instruction-corpus-absent-features

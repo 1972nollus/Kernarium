@@ -28,6 +28,11 @@ import run_vk_gl_cts as gl  # noqa: E402
 import test_run_vk_gl_cts as fixtures  # noqa: E402
 import receipt_fixtures  # noqa: E402
 
+# How long a test waits for a child process or a worker thread it started. The
+# wait is a hard bound that only a failure reaches, so it outlasts a host under
+# many times its normal load instead of being sized to the time a test needs.
+WAIT_SECONDS = 60
+
 
 def setUpModule() -> None:
     receipt_fixtures.bind_vulkan_receipt(campaign.vk)
@@ -830,8 +835,8 @@ class GraphicsCampaignTests(unittest.TestCase):
                     peak = max(peak, active)
                 try:
                     if key.index < 6:
-                        first.wait(timeout=5)
-                        if key.index != 0 and not refilled.wait(timeout=5):
+                        first.wait(timeout=WAIT_SECONDS)
+                        if key.index != 0 and not refilled.wait(timeout=WAIT_SECONDS):
                             raise AssertionError("pool did not refill the freed slot")
                     elif key.index == 6:
                         refilled.set()
@@ -878,7 +883,7 @@ class GraphicsCampaignTests(unittest.TestCase):
                     if active == 4:
                         full.set()
                 try:
-                    if key.index < 4 and not full.wait(timeout=5):
+                    if key.index < 4 and not full.wait(timeout=WAIT_SECONDS):
                         raise AssertionError("the file did not raise the pool to four")
                     if key.index == 3:
                         control.write_text("1\n")
@@ -1521,7 +1526,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             for process in (owned, unrelated):
                 if process.poll() is None:
                     process.kill()
-                process.wait(timeout=5)
+                process.wait(timeout=WAIT_SECONDS)
 
     @unittest.skipUnless(os.name == "posix", "process sessions require POSIX")
     def test_real_cleanup_reaps_descendant_after_leaf_exits(self) -> None:
@@ -1533,14 +1538,14 @@ class GraphicsCampaignTests(unittest.TestCase):
         ], start_new_session=True, stdout=subprocess.PIPE)
         try:
             self.assertTrue(process.stdout.readline().strip().isdigit())
-            process.wait(timeout=5)
+            process.wait(timeout=WAIT_SECONDS)
             campaign.stop_owned_group(process, grace=0, term_grace=1, kill_grace=2)
             self.assertFalse(campaign.group_exists(process.pid))
         finally:
             process.stdout.close()
             if campaign.group_exists(process.pid):
                 os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
+            process.wait(timeout=WAIT_SECONDS)
 
 
 if __name__ == "__main__":

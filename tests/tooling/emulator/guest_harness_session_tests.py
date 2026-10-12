@@ -52,6 +52,12 @@ HARNESS = "\n".join(
 )
 
 
+# Every wait for a stand-in process or a file it writes. A wait is a hard bound
+# that only a failure reaches, so it is set to outlast a host under many times
+# its normal load rather than to the time a test needs.
+PROCESS_WAIT_SECONDS = 60
+
+
 def process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -96,7 +102,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         cleanup these tests check.
         """
         guest.terminate()
-        guest._process.wait(timeout=30)
+        guest._process.wait(timeout=PROCESS_WAIT_SECONDS)
         guest.close()
 
     def test_the_emulator_joins_the_harness_process_group(self) -> None:
@@ -124,7 +130,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         )
         self.addCleanup(guest.close)
 
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + PROCESS_WAIT_SECONDS
         while guest.return_code is None and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(guest.return_code, 23)
@@ -172,7 +178,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             self.assertEqual(result.return_code, 0)
             self.assertEqual(result.output, message)
         guest._write("exit\n")
-        guest._process.wait(timeout=5)
+        guest._process.wait(timeout=PROCESS_WAIT_SECONDS)
 
     def test_a_console_sink_receives_every_byte_the_harness_reads(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
@@ -214,7 +220,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertEqual(raised.exception.output, "partial-output")
         self.assertIn("exceeded 3s", str(raised.exception))
         guest._write("exit\n")
-        guest._process.wait(timeout=10)
+        guest._process.wait(timeout=PROCESS_WAIT_SECONDS)
 
     def test_a_command_reads_the_input_that_follows_it(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
@@ -257,7 +263,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         return record
 
     def wait_for(self, path: pathlib.Path) -> None:
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + PROCESS_WAIT_SECONDS
         while not path.exists():
             self.assertLess(time.monotonic(), deadline, f"{path} never appeared")
             time.sleep(0.01)
@@ -462,7 +468,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             init_shell=True,
         )
         self.addCleanup(self.stop, guest)
-        guest.boot_to_shell(10)
+        guest.boot_to_shell(PROCESS_WAIT_SECONDS)
         self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
         self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
 
@@ -480,7 +486,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         )
         self.addCleanup(guest.close)
         with self.assertRaisesRegex(RuntimeError, "guest exited with status 1"):
-            guest.boot_to_shell(10)
+            guest.boot_to_shell(PROCESS_WAIT_SECONDS)
         self.assertIn("UML_SESSION_ERROR:cannot mount /run", guest.output())
 
     def start_harness(self) -> tuple[subprocess.Popen[str], int]:
@@ -507,7 +513,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
         os.killpg(harness.pid, signal.SIGKILL)
         harness.wait()
         self.assertTrue(
-            wait_until_gone(emulator_pid, 30),
+            wait_until_gone(emulator_pid, PROCESS_WAIT_SECONDS),
             "the guest outlived its harness group; an orphan boots to idle and "
             "still burns host cores, quietly oversubscribing later benchmarks",
         )
@@ -570,7 +576,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
                     init_shell=True,
                 )
                 self.addCleanup(guest.close)
-                guest._read_until(re.compile(rb"made"), 30)
+                guest._read_until(re.compile(rb"made"), PROCESS_WAIT_SECONDS)
                 pid = guest.process_id
                 made = sorted(path.name for path in self.temporary.iterdir())
                 self.assertIn(f"uml-kern{pid}", made)
