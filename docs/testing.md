@@ -927,9 +927,11 @@ the load and the store, which a loaded host makes frequent enough to see in a
 gate; the oracle's never does. A case whose only difference is that failure
 runs again, up to 16 attempts in all, and the summary counts the cases that
 needed it. `arm64-gadget-a32-corpus-interrupted` runs the `exclusive-qemu`
-record 200 times with a signal storm aimed at the guest's thread and requires
-both that store-exclusives were lost and that every case then agreed. All four
-run in both page profiles.
+record at least 200 times with a timer signal every few microseconds aimed at
+the guest's thread, and goes on past that until a store-exclusive has lost its
+reservation (at most 60 s, because whether a signal lands in the window is
+chance). It requires that one was lost and that every case then agreed. All
+four run in both page profiles.
 Instruction semantics belong to the instruction corpus, not to the first two.
 
 `arm64-a32-host` and `arm64-a32-host-policy-on` check the host runtime side:
