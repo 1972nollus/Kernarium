@@ -18,6 +18,7 @@
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
+#include "cpu/arm64/detail/sm0_vector_length.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
 #include "cpu/arm64/sve_profile.hpp"
 
@@ -126,6 +127,22 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (!streaming_translation() && implements_sve(host))
         if (const auto action = emit_sve_instruction(instruction, pc))
           return *action;
+      /*
+       * The SM = 0 vector-length family
+       * (detail/sm0_vector_length.hpp): an SME virtual CPU without SVE
+       * translates a vector-length word as the base word of the same
+       * effect and a spill word as the memory access it is.
+       */
+      if (!streaming_translation() &&
+          arm64::detail::implements_sm0_vector_length(host)) {
+        if (const auto equivalent =
+                arm64::detail::sm0_vector_length_equivalent(instruction))
+          return emit_instruction(*equivalent, pc);
+        if (const auto spill = arm64::detail::sm0_spill_access(instruction)) {
+          emit_sm0_spill(*spill, instruction, pc);
+          return Action::keep_going;
+        }
+      }
       if (implements_sme(host))
         return emit_sme_instruction(instruction, pc);
     }
@@ -189,7 +206,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
-      return ordered_memory(false);
+      emit_native_ordered_load(instruction, pc,
+                               ColdPath::Action::memory_slow);
+      return Action::keep_going;
     }
     if ((instruction & 0x3f20'0c00U) == 0x1900'0000U) {
       const unsigned size = instruction >> 30;
@@ -324,6 +343,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           instruction, host_capabilities().has(ArmFeature::sb));
       for (std::size_t index = 0; index < lowered.count; ++index)
         emitter_.emit(lowered.words[index]);
+      if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU)
+        emit_code_change_check(instruction, pc);
       return Action::keep_going;
     }
     /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which

@@ -31,6 +31,22 @@ void Arm64Emitter::attach_flag_clobber(void *context, FlagClobber clobber) noexc
 
 [[nodiscard]] std::size_t Arm64Emitter::size() const noexcept { return words_.size(); }
 
+[[nodiscard]] std::uint32_t
+Arm64Emitter::word(std::size_t index) const noexcept {
+  return index < words_.size() ? words_[index] : 0U;
+}
+
+[[nodiscard]] bool Arm64Emitter::patched(std::size_t begin,
+                                         std::size_t end) const noexcept {
+  for (const auto &entry : patches_)
+    if (entry.word >= begin && entry.word < end)
+      return true;
+  for (const auto &entry : literal_patches_)
+    if (entry.word >= begin && entry.word < end)
+      return true;
+  return false;
+}
+
 void Arm64Emitter::branch(Label label) {
     patch(label, BranchKind::unconditional, 0x1400'0000U);
   }

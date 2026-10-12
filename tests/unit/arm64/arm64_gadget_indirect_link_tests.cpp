@@ -217,9 +217,10 @@ int main()
 	}
 
 	/* A target the site's cells do not hold is followed through the address
-	 * space's target table, which also trains the site's next cell; without
+	 * space's target table, which also fills the site's empty cell; without
 	 * a matching record, or with no table published, the site exits as
-	 * before. */
+	 * before. A site whose cells are both filled is left alone, so vCPUs
+	 * sharing it do not keep rewriting it. */
 	{
 		auto first_target = build_target(0x5000, 41);
 		auto second_target = build_target(0x6000, 42);
@@ -241,7 +242,6 @@ int main()
 		gadgets::IndirectLink site{};
 		initialize(site, empty);
 		site.entries[0] = {first.link.guest_pc, &first.link};
-		site.entries[1] = {second.link.guest_pc, &second.link};
 		site.next_replacement = 1;
 		auto source = build_cached(source_pc, branch_register(5), site);
 		const auto run = [&](std::uint64_t target, const void *published,
@@ -261,7 +261,7 @@ int main()
 		require(unpublished == ::uml::cpu::EngineEvent::continued);
 		require(unpublished_cpu.pc == 0x9000);
 		require(unpublished_cpu.gadget_indirect_miss == &site);
-		require(site.entries[1].guest_pc == 0x6000);
+		require(site.entries[1].guest_pc == ~std::uint64_t{});
 
 		auto [absent, absent_cpu] = run(0xa000, table.data(), executed);
 		require(absent == ::uml::cpu::EngineEvent::continued);
@@ -277,12 +277,21 @@ int main()
 		require(site.entries[1].guest_pc == 0x9000 &&
 			site.entries[1].link == &third.link);
 		require(site.entries[0].guest_pc == 0x5000);
-		require(site.next_replacement == 2 % gadgets::indirect_link_entries);
+		require(site.next_replacement == 1);
 
 		/* The trained cell now answers without the table. */
 		auto [cell, cell_cpu] = run(0x9000, nullptr, executed);
 		require(cell == ::uml::cpu::EngineEvent::system_call);
 		require(cell_cpu.registers[0] == 43);
+
+		/* A full site follows the table without being rewritten. */
+		site.entries[1] = {second.link.guest_pc, &second.link};
+		auto [full, full_cpu] = run(0x9000, table.data(), executed);
+		require(full == ::uml::cpu::EngineEvent::system_call);
+		require(full_cpu.registers[0] == 43);
+		require(full_cpu.gadget_indirect_miss == nullptr);
+		require(site.entries[0].guest_pc == 0x5000 &&
+			site.entries[1].guest_pc == 0x6000);
 
 		/* A record whose translation was retired leaves through its
 		 * unlinked exit with the target PC and no miss to train. */

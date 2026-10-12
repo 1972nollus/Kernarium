@@ -15,6 +15,8 @@ import unittest
 SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "perf/guest/geekbench.sh"
 GEEKBENCH_6 = "opt/geekbench/release/geekbench6"
 GEEKBENCH_5 = "opt/geekbench/release/geekbench_armv7"
+GEEKBENCH_5_AARCH64 = (
+    "opt/geekbench/release/geekbench_aarch64")
 # Prints the arguments it was run with, then exits with the status it is given
 # in $STATUS, so the test sees exactly what the script asked Geekbench to do.
 # The guest's /bin/sh is dash, so a host that has it runs both and compares.
@@ -115,6 +117,15 @@ class GeekbenchScriptTests(unittest.TestCase):
             f"ran /{GEEKBENCH_5} --no-upload --single-core --section 1 "
             "--workload 101",
             self.lines(self.run_script()))
+
+    def test_geekbench_5_aarch64_is_found_by_name(self) -> None:
+        self.program(GEEKBENCH_5_AARCH64)
+        self.assertEqual(self.lines(self.run_script()), [
+            "UML_GEEKBENCH_READY",
+            f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_5_AARCH64}",
+            f"ran /{GEEKBENCH_5_AARCH64} --no-upload",
+            "UML_GEEKBENCH_END:0",
+        ])
 
     def test_geekbench_6_wins_when_an_image_carries_both(self) -> None:
         self.program(GEEKBENCH_5)

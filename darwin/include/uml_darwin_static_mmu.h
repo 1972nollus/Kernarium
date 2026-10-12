@@ -119,6 +119,13 @@ int darwin_uml_static_vm_execution_context_begin(void *context,
 int darwin_uml_static_vm_execution_context_end(void *context);
 struct darwin_uml_static_sequences darwin_uml_static_vm_execution_context_sequences(
 	void *context);
+/* Where the context's code-change sequence lives: the word that
+ * darwin_uml_static_vm_execution_context_sequences() reports as code_changes,
+ * which only grows and stays valid while the context does. Translated code
+ * reads it with one single-copy-atomic load at a context synchronization point
+ * to tell whether guest code changed since its translations were validated. */
+const uint64_t *darwin_uml_static_vm_execution_context_code_sequence(
+	void *context);
 /* Copies the guest ranges whose code changed after `sequence` and returns
  * their count.  A negative result means the caller must retire every
  * translation it holds for the address space; a range of length zero names

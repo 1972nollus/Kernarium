@@ -44,5 +44,9 @@ uml_arm64_jit_execute_sme(CpuState *, Tlb *, std::uint32_t) noexcept;
  * word the translation does not lower, through the semantic library. */
 extern "C" std::uint64_t
 uml_arm64_jit_execute_sve(CpuState *, Tlb *, std::uint32_t) noexcept;
+/* The slow path of the SM = 0 vector-length family's spill words
+ * (detail/sm0_vector_length.hpp), for a virtual CPU without SVE. */
+extern "C" std::uint64_t
+uml_arm64_jit_execute_sm0_spill(CpuState *, Tlb *, std::uint32_t) noexcept;
 
 } // namespace uml::cpu::arm64

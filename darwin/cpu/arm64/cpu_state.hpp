@@ -47,6 +47,10 @@ static_assert((fpcr_writable_mask & fpcr_afp_controls) == 0U);
  * and the gadget assembly's UML_ARM64_FPSR_WRITABLE is checked against it. */
 inline constexpr std::uint32_t fpsr_writable_mask = 0x0800'009fU;
 
+/* The code-change sequence of a CpuState no engine has bound to an address
+ * space. It never changes, so a context synchronization never leaves. */
+inline constexpr std::uint64_t no_code_changes = 0;
+
 struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };
@@ -188,6 +192,16 @@ struct CpuState final {
 	 * (engine/a32.inc) and the one that activates the environment clears
 	 * this; it means nothing while gadget_fp_active is clear. */
 	std::uint8_t a32_fp_standard{};
+	/* Context synchronization, appended so that no earlier offset moves:
+	 * the running address space's code-change sequence
+	 * (darwin_uml_static_vm_execution_context_code_sequence) and the value
+	 * of it that the translations this entry runs were validated at. Both
+	 * engines publish them before every translated run. An ISB compares the
+	 * two and leaves translated code when they differ, so code another vCPU
+	 * changed and invalidated before this one synchronized is fetched anew
+	 * rather than run from a stale translation or link. */
+	const std::uint64_t *code_sequence{&no_code_changes};
+	std::uint64_t code_sequence_seen{};
 	[[nodiscard]] std::uint64_t untag_data_address(
 		std::uint64_t address, bool base_sp) const noexcept
 	{

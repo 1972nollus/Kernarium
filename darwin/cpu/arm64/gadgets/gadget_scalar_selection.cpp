@@ -595,14 +595,13 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	return (synchronization ? dsb : dmb)[option & 15U];
 }
 
+/* DMB, DSB and SB. ISB carries operands, so the builder emits it itself. */
 [[nodiscard]] Gadget memory_barrier_gadget(std::uint32_t instruction) noexcept
 {
 	if (instruction == 0xd503'30ffU)
 		return host_capabilities().has(ArmFeature::sb) ?
 			uml_arm64_gadget_speculation_barrier :
 			uml_arm64_gadget_speculation_barrier_fallback;
-	if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU)
-		return uml_arm64_gadget_isb;
 	return data_memory_barrier_gadget(
 		(instruction & 0x60U) == 0, (instruction >> 8) & 15U);
 }

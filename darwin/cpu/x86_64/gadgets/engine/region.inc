@@ -47,9 +47,9 @@
 	gadget_slot baked_extend_register,      52, 0x019480,   0, 0x00000
 	gadget_slot baked_unary_register,       52, 0x00f100,   0, 0x00000
 	gadget_slot baked_addresses,            56, 0x008c80,   0, 0x00000
-	gadget_slot baked_loads,                52, 0x062b80,   0, 0x00000
-	gadget_slot baked_stores,               52, 0x03ce00,   0, 0x09200
-	gadget_slot baked_memory_arith,         24, 0x3c7580,  64, 0x2c900
+	gadget_slot baked_loads,                52, 0x067780,   0, 0x00000
+	gadget_slot baked_stores,               52, 0x040100,   0, 0x09200
+	gadget_slot baked_memory_arith,         24, 0x3cff00,  64, 0x2c900
 	gadget_slot baked_lea,                  96, 0x004b80,   0, 0x00000
 	gadget_slot baked_push_pop,             96, 0x001e80,   0, 0x00600
 	gadget_slot load_store,                 44, 0x006700,   0, 0x01d80

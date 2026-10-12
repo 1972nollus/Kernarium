@@ -136,6 +136,13 @@ class Variant:
     out2: Optional[str] = None                 # stored to m
     out2_reg: int = 0
     qc: bool = False
+    # Single-precision VMAX, VMIN, VADD, VSUB and VMUL: the result is the same
+    # in either native environment unless an operand is out of the range the
+    # guard names (see GUARDS), so the gadget runs in whichever is active
+    # when none is and switches only for those: "minmax" excludes NaNs and
+    # denormals, "range" every nonzero operand outside 2**-63 to 2**65, which
+    # keeps a sum, a difference and a product normal.
+    guard: str = ""
 
 
 @dataclass
@@ -200,15 +207,17 @@ def bitwise(name, stems, mnemonic, *, acc=False):
     return add(name, stems, "dnm", "none", make, size_none=True)
 
 
-def float_same(name, stems, body, *, acc=False, d_only=False):
+def float_same(name, stems, body, *, acc=False, d_only=False, guard=""):
     """A single- or half-precision Advanced SIMD operation; body lines use
-    %T."""
+    %T. `guard` lets the single-precision forms run in either native
+    environment while the operands pass it (see Variant)."""
     def make(esize, q, sign, alt):
         if esize not in (16, 32) or sign or alt or (q and d_only):
             return None
         t = arrange(esize, q)
         w = width(q)
         return Variant(n=w, m=w, acc=w if acc else None, out=w,
+                       guard=guard if esize == 32 else "",
                        body=[line.replace("%T", t) for line in body])
     return add(name, stems, "dnm", "none", make, fp=FP_ALL)
 
@@ -427,9 +436,12 @@ def define_groups() -> None:
     compare("vcgt_r", ["VCGT_r"], "cmgt", "cmhi", "fcmgt", "vcgt")
 
     # --- floating point, three registers -----------------------------------
-    float_same("vadd_f", ["VADD_f"], ["fadd v0.%T, v1.%T, v2.%T"])
-    float_same("vsub_f", ["VSUB_f"], ["fsub v0.%T, v1.%T, v2.%T"])
-    float_same("vmul_f", ["VMUL_f"], ["fmul v0.%T, v1.%T, v2.%T"])
+    float_same("vadd_f", ["VADD_f"], ["fadd v0.%T, v1.%T, v2.%T"],
+               guard="range")
+    float_same("vsub_f", ["VSUB_f"], ["fsub v0.%T, v1.%T, v2.%T"],
+               guard="range")
+    float_same("vmul_f", ["VMUL_f"], ["fmul v0.%T, v1.%T, v2.%T"],
+               guard="range")
     float_same("vmla_f", ["VMLA_f"], ["fmul v3.%T, v1.%T, v2.%T",
                                       "fadd v0.%T, v0.%T, v3.%T"], acc=True)
     float_same("vmls_f", ["VMLS_f"], ["fmul v3.%T, v1.%T, v2.%T",
@@ -437,8 +449,10 @@ def define_groups() -> None:
     float_same("vfma", ["VFMA"], ["fmla v0.%T, v1.%T, v2.%T"], acc=True)
     float_same("vfms", ["VFMS"], ["fmls v0.%T, v1.%T, v2.%T"], acc=True)
     float_same("vabd_f", ["VABD_f"], ["fabd v0.%T, v1.%T, v2.%T"])
-    float_same("vmax_f", ["VMAX_f"], ["fmax v0.%T, v1.%T, v2.%T"])
-    float_same("vmin_f", ["VMIN_f"], ["fmin v0.%T, v1.%T, v2.%T"])
+    float_same("vmax_f", ["VMAX_f"], ["fmax v0.%T, v1.%T, v2.%T"],
+               guard="minmax")
+    float_same("vmin_f", ["VMIN_f"], ["fmin v0.%T, v1.%T, v2.%T"],
+               guard="minmax")
     float_same("vpadd_f", ["VPADD_f"], ["faddp v0.%T, v1.%T, v2.%T"],
                d_only=True)
     float_same("vpmax_f", ["VPMAX_f"], ["fmaxp v0.%T, v1.%T, v2.%T"],
@@ -851,6 +865,46 @@ def plan_of(name: str):
     return g.ident, 1 if name.endswith("_Q") else 0
 
 
+# The guards of Variant.guard, run with the guest's FPCR native: they branch
+# to 21f (the slow path, which switches to the Standard value) when the
+# operands in v1 and v2 would give a different result under it. A lane
+# shifted left once drops the sign: zero is 0, a denormal 2 to 0x00fffffe, a
+# normal number or an infinity 0x01000000 to 0xff000000 and a NaN above that.
+# A D register's upper lanes are zero, so they are good.
+GUARDS = {
+    # Subtracting 0x01000000 turns the good lanes into [0, 0xfe000000] and
+    # zero into 0xff000000, so a lane is bad when it is above 0xfe000000 and
+    # not zero.
+    "minmax": [
+        "movi v7.4s, #0x1, lsl #24", "movi v16.4s, #0xfe, lsl #24",
+        "shl v3.4s, v1.4s, #1", "shl v4.4s, v2.4s, #1",
+        "sub v5.4s, v3.4s, v7.4s", "sub v6.4s, v4.4s, v7.4s",
+        "cmhi v5.4s, v5.4s, v16.4s", "cmhi v6.4s, v6.4s, v16.4s",
+        "cmtst v3.4s, v3.4s, v3.4s", "cmtst v4.4s, v4.4s, v4.4s",
+        "and v5.16b, v5.16b, v3.16b", "and v6.16b, v6.16b, v4.16b",
+        "orr v5.16b, v5.16b, v6.16b", "umaxv s5, v5.4s",
+        "fmov w11, s5", "cbnz w11, 21f"],
+    # The rounding mode must be the Standard value's. A sum or difference of
+    # numbers from 2**-63 up is a multiple of 2**-86, so it is zero or
+    # normal, and a product of two is at least 2**-126, so neither flushes a
+    # result nor reads a denormal. An exponent field of 64 to 191 is a
+    # shifted lane from 0x80000000 to 0x17fffffff, whose top two bits
+    # differ: subtracting 0x40000000 leaves [0, 0x7fffffff], and anything
+    # else, zero included, goes negative. A nonzero negative lane is bad.
+    "range": [
+        "ldr w11, [_cpu, #UML_GADGET_CPU_FPCR]", "tst w11, #0xc00000",
+        "b.ne 21f",
+        "movi v7.4s, #0x40, lsl #24",
+        "shl v3.4s, v1.4s, #1", "shl v4.4s, v2.4s, #1",
+        "sub v5.4s, v3.4s, v7.4s", "sub v6.4s, v4.4s, v7.4s",
+        "cmlt v5.4s, v5.4s, #0", "cmlt v6.4s, v6.4s, #0",
+        "cmtst v3.4s, v3.4s, v3.4s", "cmtst v4.4s, v4.4s, v4.4s",
+        "and v5.16b, v5.16b, v3.16b", "and v6.16b, v6.16b, v4.16b",
+        "orr v5.16b, v5.16b, v6.16b", "umaxv s5, v5.4s",
+        "fmov w11, s5", "cbnz w11, 21f"],
+}
+
+
 def render(g: Group, v: Variant, floating: bool = False) -> list:
     lines: list = []
     shape = g.shape
@@ -871,7 +925,8 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
     elif shape == "delem":
         lines += ["ldr x8, [_stream], #8", "ubfx x10, x8, #16, #16",
                   "and x8, x8, #0xffff"]
-    if floating:
+    guarded = floating and v.guard
+    if floating and not guarded:
         lines.append("a32_fp_standard")
     elif v.qc:
         lines.append("ensure_fp_environment")
@@ -883,6 +938,14 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
         lines += ["add x10, _cpu, x10", f"ld1r {{v2.{v.elem}}}, [x10]"]
     elif v.m:
         lines.append(f"ldr {v.m}2, [_cpu, x10]")
+    if guarded:
+        assert shape == "dnm" and not v.m1 and not v.acc and v.m != "elem"
+        # The Standard value is native: run, as every other gadget does. The
+        # environment is not active at all: switch to the Standard value.
+        # The guest's is native: run if the operands pass.
+        lines += ["ldrb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]", "cbz w6, 21f",
+                  "ldrb w6, [_cpu, #UML_ARM64_CPU_A32_FP_STANDARD]",
+                  "cbnz w6, 22f"] + GUARDS[v.guard] + ["22:"]
     if v.m1:
         lines.append(f"ldr {v.m1}1, [_cpu, x10]")
     if shape == "delem":
@@ -896,6 +959,10 @@ def render(g: Group, v: Variant, floating: bool = False) -> list:
         lines.append(f"str {v.out2}{v.out2_reg}, [_cpu, x10]")
     lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
     lines.append("next_gadget")
+    if guarded:
+        lines += ["21:", "a32_fp_standard"] + v.body
+        lines.append(f"str {v.out}{v.out_reg}, [_cpu, x8]")
+        lines.append("next_gadget")
     return lines
 
 

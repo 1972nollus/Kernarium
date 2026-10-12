@@ -73,6 +73,11 @@ uml_add_arm64_unit_test(sme_foundation WITHOUT_HARNESS
 uml_add_arm64_unit_test(sve_foundation WITHOUT_HARNESS
     OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
+# The SM = 0 vector-length family a virtual CPU with FEAT_SME and without
+# FEAT_SVE executes: its definition and the words both engines translate
+# from.
+uml_add_arm64_unit_test(sm0_vector_length WITHOUT_HARNESS)
+
 # The AArch32 foundation: the state CpuState appends, the guest-AArch32
 # policy, the engines' levels, the AArch32 identification registers and
 # compat HWCAPs, and the engines' AArch32 entry.
@@ -144,6 +149,9 @@ uml_add_arm64_unit_test(base_ordered_behavior)
 uml_add_arm64_unit_test(base_ordered_gadget)
 # Load/store-exclusive loops make progress whatever the TLB holds.
 uml_add_arm64_unit_test(exclusive_progress)
+# After an ISB, both engines run the code another vCPU changed and
+# synchronized, in A64 and A32.
+uml_add_arm64_unit_test(isb_code_change)
 uml_add_arm64_unit_test(simd_ordinary_memory_gadget)
 uml_add_arm64_unit_test(simd_structure_gadget)
 uml_add_arm64_unit_test(simd_baseline_inventory WITHOUT_HARNESS

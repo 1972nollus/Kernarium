@@ -274,7 +274,7 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 			if (append_native_stream(words, std::span<const Gadget>{stream},
 				advance_instruction_pointer(mode,
 					normalize_instruction_pointer(mode, address), bytes),
-				mode))
+				mode, normalize_instruction_pointer(mode, address)))
 				return {BuildStatus::illegal_instruction, {}, address};
 			words.clear();
 			append_leave_stream(words, stream.front().address);
@@ -291,7 +291,7 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 				std::span<const Gadget>{stream},
 				advance_instruction_pointer(mode,
 					normalize_instruction_pointer(mode, address), bytes),
-				mode, links);
+				mode, normalize_instruction_pointer(mode, address), links);
 			if (!refused)
 				break;
 			if (*refused == 0)
@@ -497,7 +497,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 				limited_stream = build_native_stream(
 					gadgets.first(instruction_budget),
 					gadgets[instruction_budget].address,
-					program.execution_mode());
+					program.execution_mode(), program.address());
 				native_stream = limited_stream;
 			}
 		} catch (...) {
@@ -621,7 +621,8 @@ constexpr std::uint64_t x87_compare_rflags = 0x8d5U;
 
 	const auto stream = step_string ?
 		build_repeat_step_stream(first, mode) :
-		build_native_stream(gadgets.subspan(index, 1), final_rip, mode);
+		build_native_stream(gadgets.subspan(index, 1), final_rip, mode,
+			program.address());
 	const bool simd = (checked & check_simd) != 0 &&
 		simd_floating(instruction);
 	const bool x87 = (checked & check_x87) != 0 &&
@@ -759,7 +760,8 @@ ExecuteResult run_raised(const Program &program, CpuState &cpu,
 		const auto gadgets = holder->replay_instructions();
 		const auto index = gadgets.size() == holder->instruction_count() ?
 			instruction_at_word(gadgets, stream,
-				static_cast<std::size_t>(word - stream.data()), mode) :
+				static_cast<std::size_t>(word - stream.data()), mode,
+				holder->address()) :
 			std::nullopt;
 		if (!index || executed >= instruction_budget) {
 			trace_fatal("raised-instruction", *holder, cpu,
@@ -850,7 +852,8 @@ ExecuteResult execute_step(const Gadget &gadget, CpuState &cpu,
 		if (!memory.fetch(gadget.address, std::span{source}.first(length)))
 			return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
 		const auto stream = build_native_stream({&gadget, 1},
-			advance_instruction_pointer(mode, gadget.address, length), mode);
+			advance_instruction_pointer(mode, gadget.address, length), mode,
+			normalize_instruction_pointer(mode, gadget.address));
 		const Program program{mode, gadget.address, {&gadget, 1},
 			std::span<const std::byte>{source}.first(length), stream};
 		if (checked != 0)

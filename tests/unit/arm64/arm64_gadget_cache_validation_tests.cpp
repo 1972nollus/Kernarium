@@ -6,6 +6,7 @@
 #include "static_mmu_test_support.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -711,11 +712,11 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	require(executor.cache_diagnostics().validation_attempts == 0);
 }
 
-} // namespace
-
-int main()
+/* The same cases with each address space's translations private to its
+ * executor and then shared among them: the cache's slots and bodies keep
+ * their own packing in both. */
+void run_all()
 {
-	const uml::testing::RuntimeTestRoute runtime_route;
 	unchanged_words_avoid_retranslation();
 	changed_words_rebuild_and_republish_links();
 	a_kernel_text_write_republishes_through_the_bridge();
@@ -726,5 +727,16 @@ int main()
 	a_validation_does_not_outlive_the_epochs_it_counts();
 	a_replaced_slot_drops_the_previous_owner_link();
 	an_evicted_block_misses_and_its_predecessor_link_is_reset();
+}
+
+} // namespace
+
+int main()
+{
+	const uml::testing::RuntimeTestRoute runtime_route;
+	require(unsetenv("DARWIN_UML_GADGET_SHARED_BODIES") == 0);
+	run_all();
+	require(setenv("DARWIN_UML_GADGET_SHARED_BODIES", "1", 1) == 0);
+	run_all();
 	return 0;
 }

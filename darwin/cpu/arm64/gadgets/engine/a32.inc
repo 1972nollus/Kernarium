@@ -167,14 +167,19 @@ La32fpdone\@:
 	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
+/* As train_indirect_cell: fill the site's first empty cell, if any. */
 .macro a32_train_cell
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	ldr x13, [x9]
+	cmn x13, #1
+	b.eq 1f
+	ldr x13, [x9, #16]
+	cmn x13, #1
+	b.ne 2f
+	stp x10, x12, [x9, #16]
+	b 2f
+1:
+	stp x10, x12, [x9]
+2:
 .endm
 
 /* x10 is the target key and x9 the site's cells: follow the cell that holds
@@ -633,6 +638,29 @@ a32_cp15_barrier dmb, "dmb sy"
 a32_cp15_barrier isb, "isb"
 
 .purgem a32_cp15_barrier
+
+gadget a32_isb
+	isb
+	next_gadget
+
+/* The fall-through of a block that ends at an ISB, the ARMv8 or the CP15
+ * one: leave when the address space's code changed since this program was
+ * validated, as the A64 isb gadget does (engine/system_atomic.inc). The
+ * block ends there, so everything it precharged has retired. Stream: [next
+ * key]. */
+gadget a32_code_sequence_check
+	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
+	ldr x8, [x8]
+	cmp x8, x9
+	b.ne 1f
+	add _stream, _stream, #8
+	next_gadget
+1:
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
 
 #include "a32_generated.inc"
 

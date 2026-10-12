@@ -54,7 +54,9 @@ root and a 4 KiB block size, which both guest page profiles mount. `rootfs`
 cuts the starter disk's ext4 filesystem into an unpartitioned `.ext4` image,
 which `--rootfs` takes with `--root-type ext4`; with `--release-dir` it also
 installs the release under `/opt/geekbench`, for a device with no second disk
-such as an iPad (`KERNARIUM_ROOTFS`). The armhf image has no `ip`, so a run
+such as an iPad (`KERNARIUM_ROOTFS`). `--program geekbench_aarch64`, before
+the subcommand, packages the same release's 64-bit program from an arm64 starter
+disk, the control for an armv7 comparison. The armhf image has no `ip`, so a run
 passes `--no-network`, and a measurement never needs a network anyway:
 
 ```sh
@@ -346,9 +348,10 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Each block sample
-also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
-one busy guest thread from a pool. Guest entry and exit store one flag each;
+symbol (the guest kernel, the executor, translation, MMU). The `gadget` lines
+count the block samples again by the gadget symbol they stopped in. Each block
+sample also records the guest thread pointer (`TPIDR_EL0`) it ran under, which
+tells one busy guest thread from a pool. Guest entry and exit store one flag each;
 the translated code is unchanged. Only the gadgets engine is sampled, so a
 macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
@@ -389,6 +392,13 @@ and the per-address-space indexes the cache owns; on arm64 it also says how
 much of the body arena is chunks that hold no live body. A `P` record carries
 its translation's allocation and the header, stream and validation bytes in
 it.
+
+When arm64 executors share an address space's translations, an `E` record
+counts only what its cache owns (slot slabs and slot lists), each `G` record
+names the space its slots point into, every cache holding a space writes the
+space's arena, link and indirect bytes on an `S` record, and a `P` record
+names its body. The report counts each space and each body once, and the
+history counts the misses that adopted another cache's body.
 
 The history counts how each lookup ended, why each departing translation
 left (way eviction, address-space retirement, or a discard), and, for every
