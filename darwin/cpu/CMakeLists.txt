@@ -23,37 +23,55 @@ add_subdirectory(arm64/aarch32)
 # slot count, not residency or validation, is what bounds Clang.
 #
 # Capacity is not free on either engine. An empty way costs 40 bytes on arm64
-# and 80 on x86, and an occupied one its translation besides. The iOS app runs
-# under a jetsam limit with a 2048 MiB guest default, and one executor per host
-# core would pay for it several times over, so iOS stays at 65,536 slots. Every
-# product and both ISAs use that one geometry, macOS included, so that the Mac
-# runs the memory behavior iOS ships; a larger cache is an explicit
-# -DUML_GADGET_CACHE_SLOTS.
+# and 80 on x86, and an occupied one its translation besides. Every product and
+# both ISAs share one default, 131,072 slots, so that macOS behaves like iOS;
+# an explicit -DUML_GADGET_CACHE_SLOTS selects another power of two.
 #
-# A tree configured while macOS defaulted to 262,144 holds that value as an
-# ordinary cache entry, which the set() below would keep. An entry that still
-# carries the help text this variable had then is such a value: it is moved to
-# the default once, unless a command-line -D replaced it in this configure, and
-# the new help text is what records that it has been moved. A value other than
-# 262,144 was chosen and stays.
+# The variable is a cache entry, so a tree configured under an earlier default
+# would keep it. The help text below names the default a tree was configured
+# with, which tells a value nobody chose from one somebody did: an entry that
+# still carries a configured default's help text and equals it is moved to the
+# current default. Trees configured before the help text named a default hold
+# the default of their day, 262,144 on macOS and 65,536 elsewhere. A
+# command-line -D replaces the help text and so is kept, as is any other value.
+set(_uml_gadget_cache_slots_default "131072")
 set(_uml_gadget_cache_slots_help
-    "Slots in each ISA's private gadget cache; power of two, at least 1024; 65536 unless set")
+    "Slots in each ISA's private gadget cache; power of two, at least 1024")
+set(_uml_gadget_cache_slots_doc
+    "${_uml_gadget_cache_slots_help}; default ${_uml_gadget_cache_slots_default}")
 if(DEFINED CACHE{UML_GADGET_CACHE_SLOTS})
-    get_property(_uml_gadget_cache_slots_old_help
+    get_property(_uml_gadget_cache_slots_old_doc
         CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING)
-    if(_uml_gadget_cache_slots_old_help STREQUAL
-       "Slots in each ISA's private gadget cache; power of two, at least 1024"
-       AND UML_GADGET_CACHE_SLOTS STREQUAL "262144")
-        message(STATUS "UML_GADGET_CACHE_SLOTS: moving 262144, the retired "
-                       "macOS default, to 65536")
-        set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
-            "${_uml_gadget_cache_slots_help}" FORCE)
+    unset(_uml_gadget_cache_slots_configured)
+    if(_uml_gadget_cache_slots_old_doc STREQUAL _uml_gadget_cache_slots_help)
+        if(UML_APPLE_PLATFORM STREQUAL "macos")
+            set(_uml_gadget_cache_slots_configured "262144")
+        else()
+            set(_uml_gadget_cache_slots_configured "65536")
+        endif()
+    elseif(_uml_gadget_cache_slots_old_doc MATCHES
+           "^${_uml_gadget_cache_slots_help}; default ([0-9]+)$")
+        set(_uml_gadget_cache_slots_configured "${CMAKE_MATCH_1}")
     endif()
-    unset(_uml_gadget_cache_slots_old_help)
+    if(DEFINED _uml_gadget_cache_slots_configured AND
+       UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_configured)
+        if(NOT UML_GADGET_CACHE_SLOTS STREQUAL _uml_gadget_cache_slots_default)
+            message(STATUS "UML_GADGET_CACHE_SLOTS: moving ${UML_GADGET_CACHE_SLOTS}, "
+                           "a former default, to ${_uml_gadget_cache_slots_default}")
+        endif()
+        set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}"
+            CACHE STRING "${_uml_gadget_cache_slots_doc}" FORCE)
+    endif()
+    unset(_uml_gadget_cache_slots_configured)
+    unset(_uml_gadget_cache_slots_old_doc)
 endif()
-set(UML_GADGET_CACHE_SLOTS "65536" CACHE STRING
-    "${_uml_gadget_cache_slots_help}")
+set(UML_GADGET_CACHE_SLOTS "${_uml_gadget_cache_slots_default}" CACHE STRING
+    "${_uml_gadget_cache_slots_doc}")
+set_property(CACHE UML_GADGET_CACHE_SLOTS PROPERTY HELPSTRING
+    "${_uml_gadget_cache_slots_doc}")
+unset(_uml_gadget_cache_slots_default)
 unset(_uml_gadget_cache_slots_help)
+unset(_uml_gadget_cache_slots_doc)
 if(NOT UML_GADGET_CACHE_SLOTS MATCHES "^[0-9]+$")
     message(FATAL_ERROR
         "UML_GADGET_CACHE_SLOTS must be a positive integer")
