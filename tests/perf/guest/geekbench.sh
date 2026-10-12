@@ -12,7 +12,9 @@
 # UML_GEEKBENCH_PROGRAM:<path>, then UML_GEEKBENCH_TARGETS:<list> when
 # targeted, and ends with UML_GEEKBENCH_END:<status>, exiting with
 # Geekbench's status. A problem before the benchmark starts prints
-# UML_GEEKBENCH_ERROR:<reason> instead.
+# UML_GEEKBENCH_ERROR:<reason> instead. Every workload runs one iteration
+# (user rule, 2026-10-12), so scores taken before that rule, at Geekbench's
+# default iteration count, are not comparable with later ones.
 
 parameters=/etc/uml-geekbench.env
 payload_root=/opt/geekbench-payload
@@ -60,9 +62,10 @@ echo "UML_GEEKBENCH_READY"
 echo "UML_GEEKBENCH_PROGRAM:$benchmark"
 if [ -n "$workloads" ]; then
 	echo "UML_GEEKBENCH_TARGETS:$workloads"
-	"$benchmark" --no-upload --single-core --section 1 --workload "$workloads"
+	"$benchmark" --no-upload --iterations 1 --single-core --section 1 \
+		--workload "$workloads"
 else
-	"$benchmark" --no-upload
+	"$benchmark" --no-upload --iterations 1
 fi
 status=$?
 printf '\nUML_GEEKBENCH_END:%s\n' "$status"

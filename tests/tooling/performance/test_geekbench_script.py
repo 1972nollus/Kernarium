@@ -86,7 +86,7 @@ class GeekbenchScriptTests(unittest.TestCase):
         self.assertEqual(self.lines(result), [
             "UML_GEEKBENCH_READY",
             f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_6}",
-            f"ran /{GEEKBENCH_6} --no-upload",
+            f"ran /{GEEKBENCH_6} --no-upload --iterations 1",
             "UML_GEEKBENCH_END:0",
         ])
 
@@ -96,7 +96,8 @@ class GeekbenchScriptTests(unittest.TestCase):
         result = self.run_script()
         self.assertEqual(self.lines(result)[2:], [
             "UML_GEEKBENCH_TARGETS:102,201",
-            f"ran /{GEEKBENCH_6} --no-upload --single-core --section 1 "
+            f"ran /{GEEKBENCH_6} --no-upload --iterations 1 --single-core "
+            "--section 1 "
             "--workload 102,201",
             "UML_GEEKBENCH_END:0",
         ])
@@ -107,12 +108,13 @@ class GeekbenchScriptTests(unittest.TestCase):
         self.assertEqual(self.lines(result), [
             "UML_GEEKBENCH_READY",
             f"UML_GEEKBENCH_PROGRAM:/{GEEKBENCH_5}",
-            f"ran /{GEEKBENCH_5} --no-upload",
+            f"ran /{GEEKBENCH_5} --no-upload --iterations 1",
             "UML_GEEKBENCH_END:0",
         ])
         self.parameters("UML_GEEKBENCH_WORKLOADS=101\n")
         self.assertIn(
-            f"ran /{GEEKBENCH_5} --no-upload --single-core --section 1 "
+            f"ran /{GEEKBENCH_5} --no-upload --iterations 1 --single-core "
+            "--section 1 "
             "--workload 101",
             self.lines(self.run_script()))
 
