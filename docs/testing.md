@@ -769,8 +769,10 @@ reserves, and the zeroing of that storage at every PSTATE.SM change.
 `guest-no-sve-gadgets` and `guest-no-sve-jit` run on every host. The
 freestanding `no_sve_probe.cpp` boots as `/init` and checks that the guest
 kernel and the engine agree: no SVE bit in AT_HWCAP or AT_HWCAP2, no SVE
-prctl, sysctl, ptrace regset or signal-frame record, and undefined SVE
-instructions.
+prctl, sysctl or ptrace regset, no sve_context in a signal frame without SME
+and only its bare header outside streaming mode with it (as Linux gives a CPU
+with SME and without SVE; `guest-sme-gadgets` and `guest-sme-jit` check the
+streaming record), and undefined SVE instructions.
 
 ## Guest AArch32 foundation
 

@@ -4,8 +4,9 @@
  * implements none outside streaming mode, whatever the host reports, and
  * advertises none. It runs as the guest's /init and checks that the guest
  * kernel and the engine agree: no SVE bit in AT_HWCAP or AT_HWCAP2, no SVE
- * prctl, sysctl, ptrace regset or signal-frame record, and SVE instructions
- * are undefined.
+ * prctl, sysctl or ptrace regset, no sve_context in a signal frame without
+ * SME and only the header of one outside streaming mode with it, as Linux
+ * gives a CPU with SME and without SVE, and SVE instructions are undefined.
  *
  * The probe powers the guest off at the end. It prints PASS or FAIL lines,
  * then "no-sve-probe: <n> failure(s) in <m> check(s)".
@@ -270,6 +271,9 @@ struct Capture {
 	u64 record_count;
 	u64 sve_records;
 	u32 first_magic;
+	u32 sve_size;
+	u16 sve_vl;
+	u16 sve_flags;
 };
 
 Capture capture;
@@ -290,8 +294,14 @@ void segv_handler(int, void *, void *context)
 		if (capture.record_count == 0)
 			capture.first_magic = magic;
 		capture.record_count++;
-		if (magic == sve_magic)
+		if (magic == sve_magic) {
+			if (capture.sve_records == 0) {
+				capture.sve_size = size;
+				capture.sve_vl = load<u16>(head + offset + 8);
+				capture.sve_flags = load<u16>(head + offset + 10);
+			}
 			capture.sve_records++;
+		}
 		offset += size;
 	}
 	store<u64>(frame + mc_pc_offset, load<u64>(frame + mc_pc_offset) + 4);
@@ -416,15 +426,23 @@ void test_no_sve()
 	check_error(sys(nr_openat, at_fdcwd, ptr(sysctl_path), 0), enoent,
 		    "abi.sve_default_vector_length does not exist");
 
-	/* Outside streaming mode a signal frame holds fpsimd_context and no
-	 * sve_context, and without SME the auxiliary vector sizes a signal
+	/* Outside streaming mode a signal frame starts with fpsimd_context.
+	 * With SME it also holds Linux's sve_context for a CPU with SME and
+	 * without SVE, which is only a header: its vector length and flags are
+	 * zero, since streaming mode is the one place SVE state exists. Without
+	 * SME there is no sve_context, and the auxiliary vector sizes a signal
 	 * stack for no SVE or SME record at all. */
 	capture = {};
 	fault();
 	check(capture.valid && capture.first_magic == fpsimd_magic,
 	      "a signal frame starts with fpsimd_context");
-	check_value(capture.sve_records, 0, "a signal frame holds no sve_context");
-	if ((auxv_hwcap2 & hwcap2_sme) == 0) {
+	if ((auxv_hwcap2 & hwcap2_sme) != 0) {
+		check_value(capture.sve_records, 1, "a signal frame holds one sve_context with SME");
+		check_value(capture.sve_size, 16, "the sve_context is a bare header");
+		check_value(capture.sve_vl, 0, "the sve_context has vector length 0");
+		check_value(capture.sve_flags, 0, "the sve_context is not streaming");
+	} else {
+		check_value(capture.sve_records, 0, "a signal frame holds no sve_context");
 		check_value(auxv_minsigstksz, 0, "the auxiliary vector has no AT_MINSIGSTKSZ");
 		check_value(capture.record_count, 1, "a signal frame holds fpsimd_context alone");
 	}
