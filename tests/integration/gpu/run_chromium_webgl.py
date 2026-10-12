@@ -514,9 +514,29 @@ fi
     printf 'UML_CHROMIUM_EXIT|STATUS=%s\\n' "$chromium_status"
 } | {
     reported=0
+    page_started=0
     while IFS= read -r line; do
         printf '%s\\n' "$line"
         case "$line" in
+        *:CONSOLE:*)
+            page_started=1
+            ;;
+        esac
+        case "$line" in
+        *'Network service crashed or was terminated'*)
+            # A guest too starved to answer Chromium's 15 s start-up
+            # connection loses its network service before the page's first
+            # console line, and the page never loads. A renderer that misses
+            # the same deadline is replaced, so only this stops Chromium.
+            if [ "$page_started" = 0 ] && [ "$reported" = 0 ]; then
+                reported=1
+                echo "UML_CHROMIUM_ERROR:" \\
+                    "network service missed Chromium's start-up" \\
+                    "connection; guest starved"
+                pkill -TERM -f 'user-data-dir=/tmp/chromium-aquarium' ||
+                    true
+            fi
+            ;;
         UML_CHROMIUM_EXIT\\|STATUS=*)
             status="${line#*STATUS=}"
             if [ "$reported" = 0 ]; then

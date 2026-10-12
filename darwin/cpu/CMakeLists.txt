@@ -90,7 +90,11 @@ unset(_uml_gadget_cache_slots_invalid)
 # spaces, measured on a browser guest at 65536 slots, reach a 76.2% lookup hit
 # rate against 29.7% for flushing on every switch and cut retranslation from
 # 1.46M to 255K a second; sixteen was worse on every axis, because more address
-# spaces dilute one pool the same way partitioning it did.
+# spaces dilute one pool the same way partitioning it did. At 262,144 slots
+# more address spaces do hit more often, but each resident one keeps its link
+# records until it retires: twelve and sixteen grew the browser's cache by two
+# fifths and two thirds, and with half the slots to pay for that they hit less
+# than eight. Eight stays the default on both products (G229).
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 

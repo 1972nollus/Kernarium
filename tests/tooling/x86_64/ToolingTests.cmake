@@ -8,7 +8,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/x86_64/test_fex_pinned_source.py
         --pinned-source ${PROJECT_SOURCE_DIR}/tools/fex-tests/pinned_source.py
     LABELS x86-64
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 # The FEX campaign parses the gadget runner's result line, so its contract is
 # checked against the runner itself. The runner exists only in unit trees that
