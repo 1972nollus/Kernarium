@@ -578,7 +578,16 @@ executor returns and by the busy samples in the host FPCR writes. Every row is
 a paired comparison of the single-core workloads (two 1-vCPU guests at once on
 an M1 Ultra, the order swapped each repetition, rounds above host load 40
 dropped), the score of the change over the score before it, unless it says
-otherwise.
+otherwise. All of them ran Geekbench 5 at its default iteration count; the
+repository now runs one iteration, and scores of the two settings do not
+compare.
+
+The result, on the M1 Ultra at 4 vCPUs, was 2.0x the armv7 single-core and
+multi-core scores of the start, with the aarch64 score unchanged. Against
+the aarch64 build the armv7 ratio went from 0.53 and 0.46 to 1.06 and 0.96
+(single-core and multi-core). The aarch64 build scored 0.3x to 0.5x of its
+M4 scores on PDF Rendering, Text Rendering and Ray Tracing and 0.5x to 0.7x
+on the other workloads, so these ratios overstate a like-for-like one.
 
 | Attempt | Disposition and lesson |
 | --- | --- |
