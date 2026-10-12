@@ -167,14 +167,19 @@ La32fpdone\@:
 	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
+/* As train_indirect_cell: fill the site's first empty cell, if any. */
 .macro a32_train_cell
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	ldr x13, [x9]
+	cmn x13, #1
+	b.eq 1f
+	ldr x13, [x9, #16]
+	cmn x13, #1
+	b.ne 2f
+	stp x10, x12, [x9, #16]
+	b 2f
+1:
+	stp x10, x12, [x9]
+2:
 .endm
 
 /* x10 is the target key and x9 the site's cells: follow the cell that holds

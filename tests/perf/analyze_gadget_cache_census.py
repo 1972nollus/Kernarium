@@ -2,15 +2,19 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Summarize a gadget cache census written by a UML_GADGET_CACHE_CENSUS build.
 
-Every executor's private cache appends one snapshot of itself at teardown,
-and one every DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS seconds when that is
-set. A snapshot is an `E` line with the cache's measured footprint and the
-history it has counted so far, a `G` line per resident address space, a `P`
-line per resident translation, and, for the bodies
-DARWIN_UML_GADGET_CACHE_CENSUS_WORDS samples, a `W` line with the stream
-word by word. Both gadget engines write the same records, so one capture
-reads the same way for either; a field an engine has no counterpart for is
-simply absent.
+Every executor's cache appends one snapshot of itself at teardown, and one
+every DARWIN_UML_GADGET_CACHE_CENSUS_SECONDS seconds when that is set. A
+snapshot is an `E` line with the cache's measured footprint and the history it
+has counted so far, a `G` line per resident address space, a `P` line per
+resident translation, and, for the bodies DARWIN_UML_GADGET_CACHE_CENSUS_WORDS
+samples, a `W` line with the stream word by word. Both gadget engines write
+the same records, so one capture reads the same way for either; a field an
+engine has no counterpart for is simply absent.
+
+When arm64 executors share an address space's translations, the `E` line
+counts only what the cache owns, every cache holding the space writes the
+space's bodies and records on an `S` line named by the space, and each `P`
+line names its body. Each space and each body is counted once.
 
 A translation is identified by the guest code it consumed rather than by the
 stream it produced, because two executors translating the same code emit
@@ -43,6 +47,7 @@ MIB = 2**20
 FINAL = "final"
 # Bucket b of the distance histogram holds distances below 2**b.
 VICTIM_SIZES = (1 << 12, 1 << 14, 1 << 16, 1 << 18, 1 << 20)
+DORMANT_BUCKETS = ((0.0, 1.0), (1.0, 10.0), (10.0, 60.0), (60.0, math.inf))
 
 
 @dataclass
@@ -72,6 +77,8 @@ class Translation:
     header: int | None = None
     stream: int | None = None
     source: int | None = None
+    # The body, which several caches hold when they share its space.
+    body: int | None = None
 
 
 @dataclass
@@ -84,17 +91,33 @@ class Space:
     links: int
     indirect: int
     targets: int
+    # The shared space this cache's slots point into, if any.
+    space: str | None = None
+
+
+@dataclass
+class SharedSpace:
+    """One address space's bodies and records, as one cache saw them."""
+    tag: str
+    generation: int
+    fields: dict[str, object]
+
+    def get(self, name: str) -> int:
+        value = self.fields.get(name, 0)
+        return value if isinstance(value, int) else 0
 
 
 @dataclass
 class Contents:
     block: Block
     spaces: list[Space] = field(default_factory=list)
+    shared: list[SharedSpace] = field(default_factory=list)
     translations: list[Translation] = field(default_factory=list)
     # (translation, tokens) for every sampled stream.
     words: list[tuple[Translation, list[str]]] = field(default_factory=list)
-    # (address space, guest PC) of every sampled link record.
-    links: list[tuple[int, int]] = field(default_factory=list)
+    # (address space, guest PC, record's space) of every sampled link
+    # record; the space is absent from captures of private caches.
+    links: list[tuple[int, int, str | None]] = field(default_factory=list)
 
 
 def parse_value(text: str) -> object:
@@ -148,11 +171,13 @@ def load(path: Path, block: Block) -> Contents:
         if not fields:
             continue
         if fields[0] == "P":
-            numbers = [int(value, 0) for value in fields[1:]]
+            numbers = [int(value, 0) for value in fields[1:12]]
             translation = Translation(*numbers[:6])
             if len(numbers) >= 10:
                 (translation.allocated, translation.header,
                  translation.stream, translation.source) = numbers[6:10]
+            if len(numbers) >= 11:
+                translation.body = numbers[10]
             contents.translations.append(translation)
             previous = translation
         elif fields[0] == "G":
@@ -166,11 +191,20 @@ def load(path: Path, block: Block) -> Contents:
                 idle_seconds=float(values.get("idle_seconds", 0.0)),
                 links=int(values.get("links", 0)),
                 indirect=int(values.get("indirect", 0)),
-                targets=int(values.get("targets", 0))))
+                targets=int(values.get("targets", 0)),
+                space=(str(values["space"]) if "space" in values
+                       else None)))
+        elif fields[0] == "S":
+            values = {name: parse_value(value) for name, _, value in
+                      (pair.partition("=") for pair in fields[2:])}
+            contents.shared.append(SharedSpace(
+                tag=fields[1], generation=int(values.get("generation", 0)),
+                fields=values))
         elif fields[0] == "W" and previous is not None:
             contents.words.append((previous, fields[2:]))
         elif fields[0] == "L":
-            contents.links.append((int(fields[1]), int(fields[2], 16)))
+            contents.links.append((int(fields[1]), int(fields[2], 16),
+                                   fields[3] if len(fields) > 3 else None))
     return contents
 
 
@@ -229,6 +263,100 @@ def histories(blocks: list[Block]) -> Counter[str]:
     return total
 
 
+def shared_spaces(contents: list[Contents]) -> dict[tuple[str, int],
+                                                  SharedSpace]:
+    """Each shared space once. Caches write their snapshots one after
+    another, so the latest record of a space stands for it."""
+    spaces: dict[tuple[str, int], SharedSpace] = {}
+    for content in contents:
+        for space in content.shared:
+            spaces[(space.tag, space.generation)] = space
+    return spaces
+
+
+SPACE_PARTS = ("stream_index", "streams", "arena_empty", "links", "indirect")
+
+
+def measured(blocks: list[Block], contents: list[Contents]) -> Counter[str]:
+    """The snapshot's bytes by part: what each cache owns, and each shared
+    space once."""
+    parts: Counter[str] = Counter()
+    for block in blocks:
+        for name in ("total", "slabs", "decoded", "targets") + SPACE_PARTS:
+            parts[name] += block.get(name)
+    for space in shared_spaces(contents).values():
+        for name in SPACE_PARTS:
+            parts[name] += space.get(name)
+        parts["total"] += sum(space.get(name) for name in SPACE_PARTS
+                              if name != "arena_empty")
+    return parts
+
+
+def distinct_bodies(contents: list[Contents]) -> list[Translation]:
+    """Every resident body once: a body several caches hold is one."""
+    seen: set[int] = set()
+    bodies: list[Translation] = []
+    for content in contents:
+        for item in content.translations:
+            if item.body is not None:
+                if item.body in seen:
+                    continue
+                seen.add(item.body)
+            bodies.append(item)
+    return bodies
+
+
+@dataclass
+class Dormancy:
+    spaces: int = 0
+    bodies: int = 0
+    state: int = 0
+
+
+def dormancy(contents: list[Contents],
+             buckets: tuple[tuple[float, float], ...]) -> list[Dormancy]:
+    """The address spaces resident but running nowhere, by how long the
+    one that ran them last has been away, with their bodies and link state
+    counted once."""
+    shared = shared_spaces(contents)
+    # A space is its shared record where the cache names one, else the
+    # cache's own state for that address space.
+    idle: dict[tuple[str, int], float] = {}
+    state: Counter[tuple[str, int]] = Counter()
+    space_of: dict[tuple[str, int], tuple[str, int]] = {}
+    for content in contents:
+        for space in content.spaces:
+            key = ((space.space, space.generation) if space.space
+                   else (content.block.tag, space.generation))
+            space_of[(content.block.tag, space.generation)] = key
+            seconds = 0.0 if space.current else space.idle_seconds
+            idle[key] = min(idle.get(key, math.inf), seconds)
+            state[key] += space.links + space.indirect + space.targets
+            if space.current:
+                idle[key] = -1.0
+    for key, space in shared.items():
+        state[key] += space.get("links") + space.get("indirect")
+    bodies: Counter[tuple[str, int]] = Counter()
+    seen: set[int] = set()
+    for content in contents:
+        for item in content.translations:
+            if item.body is not None:
+                if item.body in seen:
+                    continue
+                seen.add(item.body)
+            key = space_of.get((content.block.tag, item.generation))
+            if key is not None:
+                bodies[key] += item.allocated or 0
+    result = [Dormancy() for _ in buckets]
+    for key, seconds in idle.items():
+        for index, (low, high) in enumerate(buckets):
+            if seconds >= 0.0 and low <= seconds < high:
+                result[index].spaces += 1
+                result[index].bodies += bodies[key]
+                result[index].state += state[key]
+    return result
+
+
 def distances(blocks: list[Block]) -> list[int]:
     merged: list[int] = []
     for block in blocks:
@@ -262,13 +390,20 @@ class Duplication:
 
 
 def duplication(contents: list[Contents]) -> Duplication:
+    """Copies of one translation, counting a body several caches share as
+    one body."""
     result = Duplication()
     by_space: dict[tuple[int, int, int], list[int]] = defaultdict(list)
+    seen: set[int] = set()
     for content in contents:
         for item in content.translations:
+            result.resident += 1
+            if item.body is not None:
+                if item.body in seen:
+                    continue
+                seen.add(item.body)
             size = item.allocated if item.allocated is not None else 0
             by_space[(item.generation, item.pc, item.digest)].append(size)
-            result.resident += 1
             result.bytes += size
     by_code: dict[tuple[int, int], list[int]] = defaultdict(list)
     for (generation, pc, digest), sizes in by_space.items():
@@ -280,7 +415,17 @@ def duplication(contents: list[Contents]) -> Duplication:
         result.family_bytes += sum(sizes) - max(sizes)
     result.distinct_in_space = len(by_space)
     result.distinct_code = len(by_code)
-    sampled = [link for content in contents for link in content.links]
+    # A record a shared space holds is sampled once per cache holding the
+    # space, but is one record.
+    sampled: list[tuple[int, int]] = []
+    records: set[tuple[str, int, int]] = set()
+    for content in contents:
+        for generation, pc, space in content.links:
+            if space is not None:
+                if (space, generation, pc) in records:
+                    continue
+                records.add((space, generation, pc))
+            sampled.append((generation, pc))
     result.links_sampled = len(sampled)
     result.links_distinct = len(set(sampled))
     return result
@@ -313,7 +458,16 @@ def codec(contents: list[Contents]) -> Codec:
     by the guest PC it names relative to the block, any other word as a
     signed or PC-relative varint, and the validation units as they are;
     zlib on the raw words is the general-purpose reference."""
-    sample = [entry for content in contents for entry in content.words]
+    sample: list[tuple[Translation, list[str]]] = []
+    seen: set[int] = set()
+    for content in contents:
+        for entry in content.words:
+            body = entry[0].body
+            if body is not None:
+                if body in seen:
+                    continue
+                seen.add(body)
+            sample.append(entry)
     result = Codec()
     if not sample:
         return result
@@ -358,8 +512,13 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
     snapshot = blocks[0].snapshot
     seconds = max(float(b.fields.get("seconds", 0.0)) for b in blocks)
     resident = sum(len(c.translations) for c in contents)
+    shared = shared_spaces(contents)
     print(f"{engine} snapshot {snapshot} at {seconds:.1f} s: "
           f"{len(blocks)} caches, {resident:,} resident translations")
+    if shared:
+        attached = sum(space.get("attached") for space in shared.values())
+        print(f"  {len(shared)} address-space records, held by "
+              f"{attached / len(shared):.2f} caches each")
     if resident == 0:
         return
 
@@ -370,25 +529,28 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         lookups = block.get("lookups")
         rate = ((block.get("hits") + block.get("revalidated")) / lookups
                 if lookups else float("nan"))
+        # A cache sharing its spaces owns only its slots and slot lists.
+        label = "own" if content.shared else "cache"
         print(f"  {block.tag}  spaces {block.get('generations'):>2}  "
               f"resident {len(content.translations):>8,}  "
               f"occupancy {100.0 * block.get('occupancy') / slots:5.1f}%  "
-              f"cache {block.get('total') / MIB:7.1f} MiB  "
+              f"{label} {block.get('total') / MIB:7.1f} MiB  "
               f"hit rate {100.0 * rate:5.1f}%")
 
-    total = sum(block.get("total") for block in blocks)
+    parts = measured(blocks, contents)
+    total = parts["total"]
     tags = rest = 0
     for block in blocks:
         part_tags, part_rest = slab_parts(block, arguments.slot_bytes)
         tags += part_tags
         rest += part_rest
-    translations = [t for c in contents for t in c.translations]
+    translations = distinct_bodies(contents)
     have_parts = all(t.allocated is not None for t in translations)
     print(f"\nwhere the bytes are, of {total / MIB:.1f} MiB measured")
     rows: list[tuple[str, int]] = [("slot tags", tags)]
     if engine == "x86-64":
         rows.append(("successor sets and slab rounding", rest))
-    rows.append(("stream lookup maps", sum(b.get("stream_index") for b in blocks)))
+    rows.append(("stream lookup maps", parts["stream_index"]))
     allocated = sum(t.allocated or 0 for t in translations)
     if have_parts:
         headers = sum(t.header or 0 for t in translations)
@@ -400,11 +562,11 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
                  ("allocation rounding",
                   allocated - headers - streams - sources)]
         if engine == "arm64":
-            arena = sum(b.get("streams") for b in blocks)
+            arena = parts["streams"]
             if any("arena_empty" in b.fields for b in blocks):
                 # Whole chunks with no live body, apart from the free
                 # space between the bodies of chunks that still hold one.
-                empty = sum(b.get("arena_empty") for b in blocks)
+                empty = parts["arena_empty"]
                 rows += [("arena chunks holding no body", empty),
                          ("free space in chunks holding a body",
                           arena - allocated - empty)]
@@ -412,17 +574,21 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
                 rows.append(("arena chunks not holding a body",
                              arena - allocated))
     else:
-        rows.append(("bodies and streams", sum(b.get("streams") for b in blocks)))
-    rows += [("replay decodes", sum(b.get("decoded") for b in blocks)),
-             ("link records", sum(b.get("links") for b in blocks)),
-             ("indirect sites", sum(b.get("indirect") for b in blocks)),
-             ("target tables", sum(b.get("targets") for b in blocks))]
+        rows.append(("bodies and streams", parts["streams"]))
+    rows += [("replay decodes", parts["decoded"]),
+             ("link records" + (" and slot lists" if shared else ""),
+              parts["links"]),
+             ("indirect sites", parts["indirect"]),
+             ("target tables", parts["targets"])]
     for name, value in rows:
         if value:
             print(f"  {name:34s} {mib(value)}  {share(value, total)}")
 
     dup = duplication(contents)
     print("\nduplicate translations")
+    if shared:
+        print(f"  bodies {len(translations):>10,}, held by "
+              f"{resident / max(len(translations), 1):.3f} slots each")
     print(f"  distinct within an address space {dup.distinct_in_space:>10,}   "
           f"factor {resident / max(dup.distinct_in_space, 1):.3f}x")
     print(f"  distinct ignoring address space  {dup.distinct_code:>10,}   "
@@ -435,7 +601,7 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
               f"{dup.family_copies:>9,}  {mib(dup.family_bytes)}  "
               f"{share(dup.family_bytes, total)} of the cache")
     if dup.links_sampled:
-        links = sum(b.get("links") for b in blocks)
+        links = parts["links"]
         spare = links * (1 - dup.links_distinct / dup.links_sampled)
         print(f"  link records another cache of the same space keeps, "
               f"from {dup.links_sampled:,} sampled: "
@@ -443,26 +609,15 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
               f"  {mib(spare)}  {share(spare, total)} of the cache")
 
     print("\naddress spaces resident but not running")
-    by_cache_space: dict[tuple[str, int], int] = defaultdict(int)
-    for content in contents:
-        for item in content.translations:
-            by_cache_space[(content.block.tag, item.generation)] += \
-                item.allocated or 0
-    buckets = ((0.0, 1.0), (1.0, 10.0), (10.0, 60.0), (60.0, math.inf))
     dormant_total = 0
-    for low, high in buckets:
-        spaces = bodies = state = 0
-        for content in contents:
-            for space in content.spaces:
-                if space.current or not low <= space.idle_seconds < high:
-                    continue
-                spaces += 1
-                bodies += by_cache_space[(content.block.tag, space.generation)]
-                state += space.links + space.indirect + space.targets
-        dormant_total += bodies + state
+    for (low, high), idle in zip(DORMANT_BUCKETS,
+                                 dormancy(contents, DORMANT_BUCKETS)):
+        dormant_total += idle.bodies + idle.state
         label = f"idle {low:g}-{high:g} s" if high != math.inf else f"idle >{low:g} s"
-        print(f"  {label:16s} spaces {spaces:>4}  translations {mib(bodies)}  "
-              f"link state {mib(state)}  {share(bodies + state, total)}")
+        print(f"  {label:16s} spaces {idle.spaces:>4}  "
+              f"translations {mib(idle.bodies)}  "
+              f"link state {mib(idle.state)}  "
+              f"{share(idle.bodies + idle.state, total)}")
     print(f"  {'all':16s} {'':11s} {mib(dormant_total)} "
           f"{share(dormant_total, total)} of the cache")
 
@@ -474,6 +629,11 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
         print(f"  lookups {lookups:,}   hit rate {100.0 * hits / lookups:.2f}%"
               f"   revalidated {100.0 * history['revalidated'] / lookups:.2f}%"
               f"   misses {history['misses']:,}")
+        if history["adopted"]:
+            served = hits + history["adopted"]
+            print(f"  adopted from another cache of the space "
+                  f"{history['adopted']:,}   served without translating "
+                  f"{100.0 * served / lookups:.2f}%")
         stores = history["stores"]
         print(f"  stores {stores:,}")
         for name, label in (("first", "first in this cache"),
@@ -557,15 +717,16 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
     lengths = Counter(t.words for t in translations)
     print("\nstream length, in words")
     ordered = sorted(lengths.elements())
-    print(f"  mean {sum(ordered) / resident:.1f}   median {ordered[resident // 2]}")
+    bodies = len(ordered)
+    print(f"  mean {sum(ordered) / bodies:.1f}   median {ordered[bodies // 2]}")
     previous = 0
     for bound in (4, 8, 16, 24, 32, 48, 64, 96):
         count = sum(n for length, n in lengths.items() if previous < length <= bound)
-        print(f"    {previous + 1:>3}-{bound:<3} {count:>9,} {100.0 * count / resident:5.1f}%")
+        print(f"    {previous + 1:>3}-{bound:<3} {count:>9,} {100.0 * count / bodies:5.1f}%")
         previous = bound
     count = sum(n for length, n in lengths.items() if length > previous)
     if count:
-        print(f"    >{previous:<6} {count:>9,} {100.0 * count / resident:5.1f}%")
+        print(f"    >{previous:<6} {count:>9,} {100.0 * count / bodies:5.1f}%")
 
 
 def series(path: Path, blocks: list[Block]) -> None:
@@ -581,18 +742,14 @@ def series(path: Path, blocks: list[Block]) -> None:
         chosen = [b for b in blocks if b.snapshot == snapshot]
         contents = [load(path, block) for block in chosen]
         dup = duplication(contents)
-        total = sum(b.get("total") for b in chosen)
-        dormant = 0
-        for content in contents:
-            idle = {s.generation for s in content.spaces if not s.current}
-            dormant += sum(t.allocated or 0 for t in content.translations
-                           if t.generation in idle)
-            dormant += sum(s.links + s.indirect + s.targets
-                           for s in content.spaces if not s.current)
+        total = measured(chosen, contents)["total"]
+        dormant = sum(idle.bodies + idle.state for idle in
+                      dormancy(contents, ((0.0, math.inf),)))
         delta: Counter[str] = Counter()
         for block in chosen:
             before = previous.get(block.tag)
-            for name in ("lookups", "hits", "revalidated", "stores", "evictions"):
+            for name in ("lookups", "hits", "revalidated", "stores",
+                         "evictions"):
                 delta[name] += block.get(name) - (before.get(name) if before else 0)
             previous[block.tag] = block
         rate = ((delta["hits"] + delta["revalidated"]) / delta["lookups"]

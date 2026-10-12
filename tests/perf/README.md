@@ -393,6 +393,13 @@ much of the body arena is chunks that hold no live body. A `P` record carries
 its translation's allocation and the header, stream and validation bytes in
 it.
 
+When arm64 executors share an address space's translations, an `E` record
+counts only what its cache owns (slot slabs and slot lists), each `G` record
+names the space its slots point into, every cache holding a space writes the
+space's arena, link and indirect bytes on an `S` record, and a `P` record
+names its body. The report counts each space and each body once, and the
+history counts the misses that adopted another cache's body.
+
 The history counts how each lookup ended, why each departing translation
 left (way eviction, address-space retirement, or a discard), and, for every
 store, whether the cache had held the same code under the same key before and

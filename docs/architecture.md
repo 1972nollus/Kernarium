@@ -1185,17 +1185,22 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. Cached returns consult a private
-per-carrier return-record ring after their site cells miss: linked calls push
-the return PC with its block link, a matching record follows that link and
-trains the cell, and the executor empties the ring on every address-space
-switch, so a stale record can only fall back to the ordinary miss exit. A
-cached indirect branch whose cells (and, for a return, ring) miss then looks the
-target up in its address space's direct-mapped target table, which every miss
-exit trains with the target's block link; a hit follows that link and trains
-the site's cell. The table belongs to the address space's link state and is
-retired with it, so it never names another address space's code, and a link
-reset by a code change leaves through its ordinary unlinked exit.
+validation. On arm64, `DARWIN_UML_GADGET_SHARED_BODIES=1` shares an address
+space's bodies and link state among every executor running it, while each
+executor keeps its own slots and retirement order; sharing is off by default,
+as [`../darwin/README.md`](../darwin/README.md) records. Cached
+returns consult a private per-carrier return-record ring after their site
+cells miss: linked calls push the return PC with its block link, a matching
+record follows that link and fills an empty cell of the site, and the executor
+empties the ring on every address-space switch, so a stale record can only
+fall back to the ordinary miss exit. A cached indirect branch whose cells (and,
+for a return, ring) miss then looks the target up in its address space's
+direct-mapped target table, which every miss exit trains with the target's
+block link; a hit follows that link and likewise fills only an empty cell, so
+vCPUs sharing a polymorphic site do not keep rewriting it, while the miss exit
+retrains its cells round-robin. The table belongs to the address space's link
+state and is retired with it, so it never names another address space's code,
+and a link reset by a code change leaves through its ordinary unlinked exit.
 The software TLB keys its entries by guest page number. A same-page transfer
 compares the page of its final byte against the way its first byte indexes: the
 16 KiB direct-mapped index never places neighbouring pages in one set, so a
