@@ -423,8 +423,7 @@ struct Step final {
 
 /*
  * The same rules for a form that notes itself whether it rounded a tiny
- * value without flushing it, a result or an intermediate result: the SVE
- * semantic library's (sve_semantics_internal.hpp).
+ * value without flushing it, a result or an intermediate result.
  */
 [[nodiscard]] constexpr std::uint32_t trappable_floating_exceptions(
 	std::uint32_t guest_fpcr, std::uint32_t raised,

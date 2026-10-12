@@ -64,7 +64,6 @@ patch	uml-retire-the-Darwin-stack-quarter-bridge-entries.patch
 patch	uml-tell-the-Darwin-host-when-a-task-s-mm-is-shared.patch
 patch	arm64-um-give-every-task-NT_ARM_TLS.patch
 patch	uml-hand-x86-tasks-LDT-and-TLS-to-the-Darwin-host-bridge-ABI-20.patch
-patch	arm64-um-implement-non-streaming-SVE-task-state-for-Darwin-guests.patch
 patch	um-share-compat-task-infrastructure-between-userspace-ABIs.patch
 patch	arm64-um-run-AArch32-tasks-armhf-armeabi-v7a-on-the-Darwin-guest.patch
 patch	mm-vmalloc-allocate-and-align-areas-in-architecture-mapping-groups.patch

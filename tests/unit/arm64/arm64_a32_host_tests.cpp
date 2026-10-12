@@ -185,7 +185,6 @@ void load_converts_every_field()
 		cpu.exclusive_address = 0x1000;
 		cpu.exclusive_size = 8;
 		cpu.svcr = 3;
-		cpu.sve_live = 1;
 		const unsigned long tls = 0xcafe'f00d'1234'5678UL;
 		guest::load_a32_cpu(cpu, registers, fp, tls,
 			arm64::fpcr_writable_mask);
@@ -211,8 +210,7 @@ void load_converts_every_field()
 		require(cpu.tls == 0x1234'5678U);
 		require(cpu.exclusive_address == ~std::uint64_t{0} &&
 			cpu.exclusive_size == 0, "the monitor survived the entry");
-		require(cpu.svcr == 0 && cpu.sve_live == 0 &&
-			cpu.sme_task == nullptr);
+		require(cpu.svcr == 0 && cpu.sme_task == nullptr);
 		require(cpu.a32_fpscr_nzcv == 0xf000'0000U);
 		require(!cpu.fp_loaded, "the vectors are not loaded lazily");
 		cpu.access_fp_state();
@@ -388,47 +386,44 @@ void load_then_save_is_the_identity()
 void only_valid_entries_are_accepted()
 {
 	Random random{4};
-	darwin_uml_guest_sve_registers sve{};
 	for (unsigned round = 0; round < 64; ++round) {
 		const auto registers = sample_registers(random, (round & 1U) != 0);
-		require(guest::entry_is_valid(registers, sve),
+		require(guest::entry_is_valid(registers),
 			"a valid entry was refused");
 	}
 	auto base = sample_registers(random, true);
 	base.pstate = a32::psr_mode_user | a32::psr_t;
-	require(guest::entry_is_valid(base, sve));
+	require(guest::entry_is_valid(base));
 
 	auto refuse = [&](auto &&change) {
 		auto registers = base;
-		auto tail = sve;
-		change(registers, tail);
-		require(!guest::entry_is_valid(registers, tail),
+		change(registers);
+		require(!guest::entry_is_valid(registers),
 			"an entry the kernel may not hand over was accepted");
 	};
 	/* An AArch64 status, and every mode but User. */
-	refuse([](auto &r, auto &) { r.pstate &= ~a32::psr_mode_mask; });
+	refuse([](auto &r) { r.pstate &= ~a32::psr_mode_mask; });
 	for (const std::uint32_t mode : {0x11U, 0x12U, 0x13U, 0x17U, 0x1bU, 0x1fU,
 		     0x1aU, 0x0U})
-		refuse([mode](auto &r, auto &) {
+		refuse([mode](auto &r) {
 			r.pstate = (r.pstate & ~a32::psr_mode_mask) | mode;
 		});
 	/* Big-endian state: SETEND is undefined, so the kernel never sets E. */
-	refuse([](auto &r, auto &) { r.pstate |= a32::psr_e; });
+	refuse([](auto &r) { r.pstate |= a32::psr_e; });
 	/* IT bits belong to a Thumb state. */
-	refuse([](auto &r, auto &) {
+	refuse([](auto &r) {
 		r.pstate = (r.pstate & ~a32::psr_t) | a32::psr_it_bits(0x08);
 	});
-	refuse([](auto &r, auto &) {
+	refuse([](auto &r) {
 		r.pstate = (r.pstate & ~a32::psr_t) | a32::psr_it_bits(0x01);
 	});
-	/* Streaming mode, ZA or live SVE registers. */
-	refuse([](auto &r, auto &) { r.svcr = 1; });
-	refuse([](auto &r, auto &) { r.svcr = 2; });
-	refuse([](auto &, auto &t) { t.flags = DARWIN_UML_GUEST_SVE_LIVE; });
+	/* Streaming mode or ZA. */
+	refuse([](auto &r) { r.svcr = 1; });
+	refuse([](auto &r) { r.svcr = 2; });
 	/* A and I and F, SS and DIT are the kernel's to set. */
 	auto registers = base;
 	registers.pstate |= daif_bits | ss_bit | dit_bit;
-	require(guest::entry_is_valid(registers, sve));
+	require(guest::entry_is_valid(registers));
 }
 
 [[nodiscard]] ExecutionResult exit_of(ExitReason reason)
@@ -633,10 +628,6 @@ void entries_follow_the_level(Enter enter, EngineKind kind, unsigned long genera
 		DARWIN_UML_EVENT_FATAL);
 	registers = sample_registers(random, false);
 	registers.svcr = 1;
-	require(enter(&registers, &fp, sizeof(fp), generation, &tls) ==
-		DARWIN_UML_EVENT_FATAL);
-	registers = sample_registers(random, false);
-	fp.sve.flags = DARWIN_UML_GUEST_SVE_LIVE;
 	require(enter(&registers, &fp, sizeof(fp), generation, &tls) ==
 		DARWIN_UML_EVENT_FATAL);
 }

@@ -395,14 +395,13 @@ def arm_builder():
 
 def native_memory_recipes() -> dict:
     recipes = {}
-    for name in ("sme", "sve"):
-        module = load(f"{name}_native_corpus", ROOT / f"tools/arm64-tests/{name}-native-corpus.py")
-        regions = {(region.seed, region.size) for draft in module.drafts()
-                   for region in draft.regions if region.data is None}
-        for seed, size in sorted(regions):
-            start = seed * 0x01000193 & 0xffffffff
-            recipe = {"hash32": [start, 0x9e3779b1], "size": size}
-            recipes[hashlib.sha256(byte_value(recipe)).hexdigest()] = recipe
+    module = load("sme_native_corpus", ROOT / "tools/arm64-tests/sme-native-corpus.py")
+    regions = {(region.seed, region.size) for draft in module.drafts()
+               for region in draft.regions if region.data is None}
+    for seed, size in sorted(regions):
+        start = seed * 0x01000193 & 0xffffffff
+        recipe = {"hash32": [start, 0x9e3779b1], "size": size}
+        recipes[hashlib.sha256(byte_value(recipe)).hexdigest()] = recipe
     return recipes
 
 
@@ -410,14 +409,13 @@ def native_memory_recipes() -> dict:
 def native_templates() -> dict:
     """Reuse maintained allocation loops; observations are separate inputs."""
     records = {}
-    for name in ("sme", "sve"):
-        module = load(f"{name}_native_corpus", ROOT / f"tools/arm64-tests/{name}-native-corpus.py")
-        items = []
-        for draft in module.drafts():
-            case = draft.wire()
-            items.append((draft, case.words, module.case_skeleton(draft, case, 0)))
-        for record in module.assemble(items):
-            records[record["record"]] = record
+    module = load("sme_native_corpus", ROOT / "tools/arm64-tests/sme-native-corpus.py")
+    items = []
+    for draft in module.drafts():
+        case = draft.wire()
+        items.append((draft, case.words, module.case_skeleton(draft, case, 0)))
+    for record in module.assemble(items):
+        records[record["record"]] = record
     return records
 
 
@@ -435,9 +433,6 @@ def import_arm64(pack: pathlib.Path, root: pathlib.Path) -> dict:
     generated = native_templates()
     producers = collections.defaultdict(list)
     for record in corpus.records:
-        if record.producer == "arm64-sve-trap":
-            index["records"].append({"name": record.name, "generator": "sve-trap"})
-            continue
         producers[record.producer].append(record)
     for producer, records in producers.items():
         name = producer + ".jsonl"
@@ -561,13 +556,6 @@ def generate_arm64(root: pathlib.Path, index: dict) -> bytes:
                                       for i, region in enumerate(item["memory"])]
                 record["cases"].append(expand_bytes(case))
     corpus = builder.Corpus(meta=index["meta"], blobs=blobs, records=[])
-    if any(row.get("generator") == "sve-trap" for row in index["records"]):
-        trap = load("instruction_corpus_sve_trap", ROOT / "tools/arm64-tests/sve-trap-corpus.py")
-        native = [{k: v for k, v in row.items()
-                   if k not in ("defaults", "state_defaults", "memory_defaults")}
-                  for row in records.values() if row["producer"] == "arm64-sve-native"]
-        for row in trap.records_from(native):
-            records[row["record"]] = row
     for entry in index["records"]:
         item = records[entry["name"]]
         if "generator" in item and item.pop("golden") != len(item["cases"]):
@@ -579,7 +567,7 @@ def generate_arm64(root: pathlib.Path, index: dict) -> bytes:
             name=item["record"], producer=item["producer"], site=item["site"],
             options=sum(1 << builder.OPTION_NAMES.index(x) for x in item["options"]),
             profiles=sum({"16k": 1, "4k": 2}[x] for x in item["profiles"]),
-            svl=item.get("svl", 0), vl=item.get("vl", 0))
+            svl=item.get("svl", 0))
         record.programs = [(p["entry"], tuple((o, int(w, 16)) for o, w in p["words"]))
                            for p in item["programs"]]
         for case in item["cases"]:

@@ -12,9 +12,9 @@
  * The engine-neutral semantics of the AArch32 profile (design 3.2, lane
  * A32-S): one C++ implementation of every instruction the decoder accepts at
  * the library's level, on CpuState alone, for the engines' slow paths and
- * long tails and for the instruction corpus's model lane. It follows the SVE
- * library (detail/sve_semantics.hpp): it includes no engine header, and
- * reaches guest memory only through the caller's A32Memory.
+ * long tails and for the instruction corpus's model lane. It includes no
+ * engine header, and reaches guest memory only through the caller's
+ * A32Memory.
  *
  * One call executes one decoded instruction, with the architecture's fault
  * ordering:

@@ -11,9 +11,9 @@
  * Advanced SIMD arithmetic: each operation is one A64 scalar instruction on
  * bit patterns, run with the FPCR the AArch32 instruction defines (the
  * guest FPSCR's control bits for VFP, the Standard FPSCR value for Advanced
- * SIMD) and the cumulative flags it raises merged into the guest FPSR, as
- * the SVE library does. Overloads on std::uint16_t, std::uint32_t and
- * std::uint64_t select the half, single and double precision instruction.
+ * SIMD) and the cumulative flags it raises merged into the guest FPSR.
+ * Overloads on std::uint16_t, std::uint32_t and std::uint64_t select the
+ * half, single and double precision instruction.
  */
 
 namespace uml::cpu::arm64::aarch32::detail::fp {

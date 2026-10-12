@@ -2,7 +2,7 @@
 /* The AArch32 part of the gadget region: A32 and T32 instructions as the
  * shared decoder (cpu/arm64/aarch32/decode.hpp) reads them, lowered onto
  * general registers. It has a bank, a cold section and an island of its own
- * after the SVE part, so no earlier part moves for it, and it holds no SVE or
+ * after the SME part, so no earlier part moves for it, and it holds no SVE or
  * SME instruction: sme.inc has turned those extensions off.
  *
  * State: R0-R14 are CpuState::registers[0..14], each a 64-bit slot of which

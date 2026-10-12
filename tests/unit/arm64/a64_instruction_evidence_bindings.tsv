@@ -1050,10 +1050,10 @@ SVE-0061	SVE	BFMLALT (indexed)	arm64-absent-sve	SVE-0061 bfmlalt_z_zzzi_ 64e0440
 SVE-0062	SVE	BFMLALT (vectors)	arm64-absent-sve	SVE-0062 bfmlalt_z_zzz_ 64e08400 is undefined	64e08400	-	bf16+sme
 SVE-0063	SVE	BFMLS (indexed)	arm64-absent-sve	SVE-0063 bfmls_z_zzzi_h 64200c00 is undefined	64200c00	-	sve_b16b16
 SVE-0064	SVE	BFMLS (vectors)	arm64-absent-sve	SVE-0064 bfmls_z_p_zzz_ 65202000 is undefined	65202000	-	sve_b16b16
-SVE-0065	SVE	BFMLSLB (indexed)	arm64-absent-sme	SVE-0065 bfmlslb_z_zzzi_ 64e06000 is undefined	64e06000	-	sme2
-SVE-0066	SVE	BFMLSLB (vectors)	arm64-absent-sme	SVE-0066 bfmlslb_z_zzz_ 64e0a000 is undefined	64e0a000	-	sme2
-SVE-0067	SVE	BFMLSLT (indexed)	arm64-absent-sme	SVE-0067 bfmlslt_z_zzzi_ 64e06400 is undefined	64e06400	-	sme2
-SVE-0068	SVE	BFMLSLT (vectors)	arm64-absent-sme	SVE-0068 bfmlslt_z_zzz_ 64e0a400 is undefined	64e0a400	-	sme2
+SVE-0065	SVE	BFMLSLB (indexed)	arm64-absent-sve	SVE-0065 bfmlslb_z_zzzi_ 64e06000 is undefined	64e06000	-	sme2
+SVE-0066	SVE	BFMLSLB (vectors)	arm64-absent-sve	SVE-0066 bfmlslb_z_zzz_ 64e0a000 is undefined	64e0a000	-	sme2
+SVE-0067	SVE	BFMLSLT (indexed)	arm64-absent-sve	SVE-0067 bfmlslt_z_zzzi_ 64e06400 is undefined	64e06400	-	sme2
+SVE-0068	SVE	BFMLSLT (vectors)	arm64-absent-sve	SVE-0068 bfmlslt_z_zzz_ 64e0a400 is undefined	64e0a400	-	sme2
 SVE-0069	SVE	BFMMLA (non-widening)	arm64-absent-sve	SVE-0069 bfmmla_z_zzz_h 64e0e000 is undefined	64e0e000	-	sve_b16mm
 SVE-0070	SVE	BFMMLA (widening)	arm64-absent-sve	SVE-0070 bfmmla_z_zzz_ 6460e400 is undefined	6460e400	-	bf16+sve
 SVE-0071	SVE	BFMUL (indexed)	arm64-absent-sve	SVE-0071 bfmul_z_zzi_h 64202800 is undefined	64202800	-	sve_b16b16
@@ -1152,7 +1152,7 @@ SVE-0163	SVE	FADDV	arm64-absent-sve	SVE-0163 faddv_v_p_z_ 65402000 is undefined	
 SVE-0164	SVE	FAMAX	arm64-absent-sve	SVE-0164 famax_z_p_zz_ 65ce9fff is undefined	65ce9fff	-	faminmax+sme2
 SVE-0165	SVE	FAMIN	arm64-absent-sve	SVE-0165 famin_z_p_zz_ 65cf9fff is undefined	65cf9fff	-	faminmax+sme2
 SVE-0166	SVE	FCADD	arm64-absent-sve	SVE-0166 fcadd_z_p_zz_ 64408000 is undefined	64408000	-	sme
-SVE-0167	SVE	FCLAMP	arm64-absent-sme	SVE-0167 fclamp_z_zz_ 64602400 is undefined	64602400	-	sme2
+SVE-0167	SVE	FCLAMP	arm64-absent-sve	SVE-0167 fclamp_z_zz_ 64602400 is undefined	64602400	-	sme2
 SVE-0168	SVE	FCM<cc> (vectors)	arm64-absent-sve	SVE-0168 fcmeq_p_p_zz_ 65406000 is undefined	65406000	-	sme
 SVE-0169	SVE	FCM<cc> (zero)	arm64-absent-sve	SVE-0169 fcmeq_p_p_z0_ 65522000 is undefined	65522000	-	sme
 SVE-0170	SVE	FCMLA (indexed)	arm64-absent-sve	SVE-0170 fcmla_z_zzzi_h 64a01000 is undefined	64a01000	-	sme
@@ -1174,9 +1174,9 @@ SVE-0185	SVE	FCVTZU	arm64-absent-sve	SVE-0185 fcvtzu_z_p_z_fp162h 655ba000 is un
 SVE-0186	SVE	FCVTZUN	arm64-absent-sve	SVE-0186 fcvtzun_z_mz2_ 65cd37df is undefined	65cd37df	-	sme2p3
 SVE-0187	SVE	FDIV	arm64-absent-sve	SVE-0187 fdiv_z_p_zz_ 654d8000 is undefined	654d8000	-	sme
 SVE-0188	SVE	FDIVR	arm64-absent-sve	SVE-0188 fdivr_z_p_zz_ 654c8000 is undefined	654c8000	-	sme
-SVE-0189	SVE	FDOT (2-way, indexed, FP16 to FP32)	arm64-absent-sme	SVE-0189 fdot_z_zzzi_ 64204000 is undefined	64204000	-	sme2
+SVE-0189	SVE	FDOT (2-way, indexed, FP16 to FP32)	arm64-absent-sve	SVE-0189 fdot_z_zzzi_ 64204000 is undefined	64204000	-	sme2
 SVE-0190	SVE	FDOT (2-way, indexed, FP8 to FP16)	arm64-absent-sve	SVE-0190 fdot_z_zz8z8i_ 64204400 is undefined	64204400	-	ssve_fp8dot2
-SVE-0191	SVE	FDOT (2-way, vectors, FP16 to FP32)	arm64-absent-sme	SVE-0191 fdot_z_zzz_ 64208000 is undefined	64208000	-	sme2
+SVE-0191	SVE	FDOT (2-way, vectors, FP16 to FP32)	arm64-absent-sve	SVE-0191 fdot_z_zzz_ 64208000 is undefined	64208000	-	sme2
 SVE-0192	SVE	FDOT (2-way, vectors, FP8 to FP16)	arm64-absent-sve	SVE-0192 fdot_z_zz8z8_ 64208400 is undefined	64208400	-	ssve_fp8dot2
 SVE-0193	SVE	FDOT (4-way, indexed)	arm64-absent-sve	SVE-0193 fdot_z32_zz8z8i_ 64604400 is undefined	64604400	-	ssve_fp8dot4
 SVE-0194	SVE	FDOT (4-way, vectors)	arm64-absent-sve	SVE-0194 fdot_z32_zz8z8_ 64608400 is undefined	64608400	-	ssve_fp8dot4
@@ -1522,7 +1522,7 @@ SVE-0533	SVE	PRFW (scalar plus immediate)	arm64-absent-sve	SVE-0533 prfw_i_p_bi_
 SVE-0534	SVE	PRFW (scalar plus scalar)	arm64-absent-sve	SVE-0534 prfw_i_p_br_s 8500c000 is undefined	8500c000	-	sme
 SVE-0535	SVE	PRFW (scalar plus vector)	arm64-absent-sve	SVE-0535 prfw_i_p_bz_s_x32_scaled 84204000 is undefined	84204000	-	sve
 SVE-0536	SVE	PRFW (vector plus immediate)	arm64-absent-sve	SVE-0536 prfw_i_p_ai_s 8500e000 is undefined	8500e000	-	sve
-SVE-0537	SVE	PSEL	arm64-absent-sme	SVE-0537 psel_p_ppi_ 25244000 is undefined	25244000	-	sme
+SVE-0537	SVE	PSEL	arm64-absent-sve	SVE-0537 psel_p_ppi_ 25244000 is undefined	25244000	-	sme
 SVE-0538	SVE	PTEST	arm64-absent-sve	SVE-0538 ptest__p_p_ 2550c000 is undefined	2550c000	-	sme
 SVE-0539	SVE	PTRUE (predicate as counter)	arm64-absent-sve	SVE-0539 ptrue_pn_i_ 25207810 is undefined	25207810	-	sme2
 SVE-0540	SVE	PTRUE (predicate)	arm64-absent-sve	SVE-0540 ptrue_p_s_ 2518e000 is undefined	2518e000	-	sme
@@ -1539,7 +1539,7 @@ SVE-0550	SVE	RDVL	arm64-absent-sve	SVE-0550 rdvl_r_i_ 04bf5000 is undefined	04bf
 SVE-0551	SVE	REV (predicate)	arm64-absent-sve	SVE-0551 rev_p_p_ 05344000 is undefined	05344000	-	sme
 SVE-0552	SVE	REV (vector)	arm64-absent-sve	SVE-0552 rev_z_z_ 05383800 is undefined	05383800	-	sme
 SVE-0553	SVE	REVB, REVH, REVW	arm64-absent-sve	SVE-0553 revb_z_z_m 05648000 is undefined	05648000	-	sme
-SVE-0554	SVE	REVD	arm64-absent-sme	SVE-0554 revd_z_p_z_m 052e8000 is undefined	052e8000	-	sme
+SVE-0554	SVE	REVD	arm64-absent-sve	SVE-0554 revd_z_p_z_m 052e8000 is undefined	052e8000	-	sme
 SVE-0555	SVE	RSHRNB	arm64-absent-sve	SVE-0555 rshrnb_z_zi_ 45281800 is undefined	45281800	-	sme
 SVE-0556	SVE	RSHRNT	arm64-absent-sve	SVE-0556 rshrnt_z_zi_ 45281c00 is undefined	45281c00	-	sme
 SVE-0557	SVE	RSUBHNB	arm64-absent-sve	SVE-0557 rsubhnb_z_zz_ 45607800 is undefined	45607800	-	sme
@@ -1560,14 +1560,14 @@ SVE-0571	SVE	SADDWB	arm64-absent-sve	SVE-0571 saddwb_z_zz_ 45404000 is undefined
 SVE-0572	SVE	SADDWT	arm64-absent-sve	SVE-0572 saddwt_z_zz_ 45404400 is undefined	45404400	-	sme
 SVE-0573	SVE	SBCLB	arm64-absent-sve	SVE-0573 sbclb_z_zzz_ 4580d000 is undefined	4580d000	-	sme
 SVE-0574	SVE	SBCLT	arm64-absent-sve	SVE-0574 sbclt_z_zzz_ 4580d400 is undefined	4580d400	-	sme
-SVE-0575	SVE	SCLAMP	arm64-absent-sme	SVE-0575 sclamp_z_zz_ 4400c000 is undefined	4400c000	-	sme
+SVE-0575	SVE	SCLAMP	arm64-absent-sve	SVE-0575 sclamp_z_zz_ 4400c000 is undefined	4400c000	-	sme
 SVE-0576	SVE	SCVTF (bottom, unpredicated)	arm64-absent-sve	SVE-0576 scvtf_z_z_ 65cc33ff is undefined	65cc33ff	-	sme2p3
 SVE-0577	SVE	SCVTF (predicated)	arm64-absent-sve	SVE-0577 scvtf_z_p_z_h2fp16 6552a000 is undefined	6552a000	-	sme
 SVE-0578	SVE	SCVTFLT	arm64-absent-sve	SVE-0578 scvtflt_z_z_ 65cc3bff is undefined	65cc3bff	-	sme2p3
 SVE-0579	SVE	SDIV	arm64-absent-sve	SVE-0579 sdiv_z_p_zz_ 04940000 is undefined	04940000	-	sme
 SVE-0580	SVE	SDIVR	arm64-absent-sve	SVE-0580 sdivr_z_p_zz_ 04960000 is undefined	04960000	-	sme
-SVE-0581	SVE	SDOT (2-way, indexed)	arm64-absent-sme	SVE-0581 sdot_z32_zzzi_ 4480c800 is undefined	4480c800	-	sme2
-SVE-0582	SVE	SDOT (2-way, vectors)	arm64-absent-sme	SVE-0582 sdot_z32_zzz_ 4400c800 is undefined	4400c800	-	sme2
+SVE-0581	SVE	SDOT (2-way, indexed)	arm64-absent-sve	SVE-0581 sdot_z32_zzzi_ 4480c800 is undefined	4480c800	-	sme2
+SVE-0582	SVE	SDOT (2-way, vectors)	arm64-absent-sve	SVE-0582 sdot_z32_zzz_ 4400c800 is undefined	4400c800	-	sme2
 SVE-0583	SVE	SDOT (4-way, indexed)	arm64-absent-sve	SVE-0583 sdot_z_zzzi_s 44a00000 is undefined	44a00000	-	sme
 SVE-0584	SVE	SDOT (4-way, vectors)	arm64-absent-sve	SVE-0584 sdot_z_zzz_ 44800000 is undefined	44800000	-	sme
 SVE-0585	SVE	SEL (predicates)	arm64-absent-sve	SVE-0585 sel_p_p_pp_ 25004210 is undefined	25004210	-	sme
@@ -1612,8 +1612,8 @@ SVE-0623	SVE	SQADD (immediate)	arm64-absent-sve	SVE-0623 sqadd_z_zi_ 2524c000 is
 SVE-0624	SVE	SQADD (vectors, predicated)	arm64-absent-sve	SVE-0624 sqadd_z_p_zz_ 44188000 is undefined	44188000	-	sme
 SVE-0625	SVE	SQADD (vectors, unpredicated)	arm64-absent-sve	SVE-0625 sqadd_z_zz_ 04201000 is undefined	04201000	-	sme
 SVE-0626	SVE	SQCADD	arm64-absent-sve	SVE-0626 sqcadd_z_zz_ 4501d800 is undefined	4501d800	-	sme
-SVE-0627	SVE	SQCVTN	arm64-absent-sme	SVE-0627 sqcvtn_z_mz2_ 45314000 is undefined	45314000	-	sme2
-SVE-0628	SVE	SQCVTUN	arm64-absent-sme	SVE-0628 sqcvtun_z_mz2_ 45315000 is undefined	45315000	-	sme2
+SVE-0627	SVE	SQCVTN	arm64-absent-sve	SVE-0627 sqcvtn_z_mz2_ 45314000 is undefined	45314000	-	sme2
+SVE-0628	SVE	SQCVTUN	arm64-absent-sve	SVE-0628 sqcvtun_z_mz2_ 45315000 is undefined	45315000	-	sme2
 SVE-0629	SVE	SQDECB	arm64-absent-sve	SVE-0629 sqdecb_r_rs_sx 0420f800 is undefined	0420f800	-	sme
 SVE-0630	SVE	SQDECD (scalar)	arm64-absent-sve	SVE-0630 sqdecd_r_rs_sx 04e0f800 is undefined	04e0f800	-	sme
 SVE-0631	SVE	SQDECD (vector)	arm64-absent-sve	SVE-0631 sqdecd_z_zs_ 04e0c800 is undefined	04e0c800	-	sme
@@ -1659,10 +1659,10 @@ SVE-0670	SVE	SQRDMULH (indexed)	arm64-absent-sve	SVE-0670 sqrdmulh_z_zzi_h 4420f
 SVE-0671	SVE	SQRDMULH (vectors)	arm64-absent-sve	SVE-0671 sqrdmulh_z_zz_ 04207400 is undefined	04207400	-	sme
 SVE-0672	SVE	SQRSHL	arm64-absent-sve	SVE-0672 sqrshl_z_p_zz_ 440a8000 is undefined	440a8000	-	sme
 SVE-0673	SVE	SQRSHLR	arm64-absent-sve	SVE-0673 sqrshlr_z_p_zz_ 440e8000 is undefined	440e8000	-	sme
-SVE-0674	SVE	SQRSHRN	arm64-absent-sme	SVE-0674 sqrshrn_z_mz2_ 45b02800 is undefined	45b02800	-	sme2
+SVE-0674	SVE	SQRSHRN	arm64-absent-sve	SVE-0674 sqrshrn_z_mz2_ 45b02800 is undefined	45b02800	-	sme2
 SVE-0675	SVE	SQRSHRNB	arm64-absent-sve	SVE-0675 sqrshrnb_z_zi_ 45282800 is undefined	45282800	-	sme
 SVE-0676	SVE	SQRSHRNT	arm64-absent-sve	SVE-0676 sqrshrnt_z_zi_ 45282c00 is undefined	45282c00	-	sme
-SVE-0677	SVE	SQRSHRUN	arm64-absent-sme	SVE-0677 sqrshrun_z_mz2_ 45b00800 is undefined	45b00800	-	sme2
+SVE-0677	SVE	SQRSHRUN	arm64-absent-sve	SVE-0677 sqrshrun_z_mz2_ 45b00800 is undefined	45b00800	-	sme2
 SVE-0678	SVE	SQRSHRUNB	arm64-absent-sve	SVE-0678 sqrshrunb_z_zi_ 45280800 is undefined	45280800	-	sme
 SVE-0679	SVE	SQRSHRUNT	arm64-absent-sve	SVE-0679 sqrshrunt_z_zi_ 45280c00 is undefined	45280c00	-	sme
 SVE-0680	SVE	SQSHL (immediate)	arm64-absent-sve	SVE-0680 sqshl_z_p_zi_ 04068100 is undefined	04068100	-	sme
@@ -1808,14 +1808,14 @@ SVE-0819	SVE	UADDLT	arm64-absent-sve	SVE-0819 uaddlt_z_zz_ 45400c00 is undefined
 SVE-0820	SVE	UADDV	arm64-absent-sve	SVE-0820 uaddv_r_p_z_ 04012000 is undefined	04012000	-	sme
 SVE-0821	SVE	UADDWB	arm64-absent-sve	SVE-0821 uaddwb_z_zz_ 45404800 is undefined	45404800	-	sme
 SVE-0822	SVE	UADDWT	arm64-absent-sve	SVE-0822 uaddwt_z_zz_ 45404c00 is undefined	45404c00	-	sme
-SVE-0823	SVE	UCLAMP	arm64-absent-sme	SVE-0823 uclamp_z_zz_ 4400c400 is undefined	4400c400	-	sme
+SVE-0823	SVE	UCLAMP	arm64-absent-sve	SVE-0823 uclamp_z_zz_ 4400c400 is undefined	4400c400	-	sme
 SVE-0824	SVE	UCVTF (bottom, unpredicated)	arm64-absent-sve	SVE-0824 ucvtf_z_z_ 65cc37ff is undefined	65cc37ff	-	sme2p3
 SVE-0825	SVE	UCVTF (predicated)	arm64-absent-sve	SVE-0825 ucvtf_z_p_z_h2fp16 6553a000 is undefined	6553a000	-	sme
 SVE-0826	SVE	UCVTFLT	arm64-absent-sve	SVE-0826 ucvtflt_z_z_ 65cc3fff is undefined	65cc3fff	-	sme2p3
 SVE-0827	SVE	UDIV	arm64-absent-sve	SVE-0827 udiv_z_p_zz_ 04950000 is undefined	04950000	-	sme
 SVE-0828	SVE	UDIVR	arm64-absent-sve	SVE-0828 udivr_z_p_zz_ 04970000 is undefined	04970000	-	sme
-SVE-0829	SVE	UDOT (2-way, indexed)	arm64-absent-sme	SVE-0829 udot_z32_zzzi_ 4480cc00 is undefined	4480cc00	-	sme2
-SVE-0830	SVE	UDOT (2-way, vectors)	arm64-absent-sme	SVE-0830 udot_z32_zzz_ 4400cc00 is undefined	4400cc00	-	sme2
+SVE-0829	SVE	UDOT (2-way, indexed)	arm64-absent-sve	SVE-0829 udot_z32_zzzi_ 4480cc00 is undefined	4480cc00	-	sme2
+SVE-0830	SVE	UDOT (2-way, vectors)	arm64-absent-sve	SVE-0830 udot_z32_zzz_ 4400cc00 is undefined	4400cc00	-	sme2
 SVE-0831	SVE	UDOT (4-way, indexed)	arm64-absent-sve	SVE-0831 udot_z_zzzi_s 44a00400 is undefined	44a00400	-	sme
 SVE-0832	SVE	UDOT (4-way, vectors)	arm64-absent-sve	SVE-0832 udot_z_zzz_ 44800400 is undefined	44800400	-	sme
 SVE-0833	SVE	UHADD	arm64-absent-sve	SVE-0833 uhadd_z_p_zz_ 44118000 is undefined	44118000	-	sme
@@ -1849,7 +1849,7 @@ SVE-0860	SVE	UMULLT (vectors)	arm64-absent-sve	SVE-0860 umullt_z_zz_ 45407c00 is
 SVE-0861	SVE	UQADD (immediate)	arm64-absent-sve	SVE-0861 uqadd_z_zi_ 2525c000 is undefined	2525c000	-	sme
 SVE-0862	SVE	UQADD (vectors, predicated)	arm64-absent-sve	SVE-0862 uqadd_z_p_zz_ 44198000 is undefined	44198000	-	sme
 SVE-0863	SVE	UQADD (vectors, unpredicated)	arm64-absent-sve	SVE-0863 uqadd_z_zz_ 04201400 is undefined	04201400	-	sme
-SVE-0864	SVE	UQCVTN	arm64-absent-sme	SVE-0864 uqcvtn_z_mz2_ 45314800 is undefined	45314800	-	sme2
+SVE-0864	SVE	UQCVTN	arm64-absent-sve	SVE-0864 uqcvtn_z_mz2_ 45314800 is undefined	45314800	-	sme2
 SVE-0865	SVE	UQDECB	arm64-absent-sve	SVE-0865 uqdecb_r_rs_uw 0420fc00 is undefined	0420fc00	-	sme
 SVE-0866	SVE	UQDECD (scalar)	arm64-absent-sve	SVE-0866 uqdecd_r_rs_uw 04e0fc00 is undefined	04e0fc00	-	sme
 SVE-0867	SVE	UQDECD (vector)	arm64-absent-sve	SVE-0867 uqdecd_z_zs_ 04e0cc00 is undefined	04e0cc00	-	sme
@@ -1870,7 +1870,7 @@ SVE-0881	SVE	UQINCW (scalar)	arm64-absent-sve	SVE-0881 uqincw_r_rs_uw 04a0f400 i
 SVE-0882	SVE	UQINCW (vector)	arm64-absent-sve	SVE-0882 uqincw_z_zs_ 04a0c400 is undefined	04a0c400	-	sme
 SVE-0883	SVE	UQRSHL	arm64-absent-sve	SVE-0883 uqrshl_z_p_zz_ 440b8000 is undefined	440b8000	-	sme
 SVE-0884	SVE	UQRSHLR	arm64-absent-sve	SVE-0884 uqrshlr_z_p_zz_ 440f8000 is undefined	440f8000	-	sme
-SVE-0885	SVE	UQRSHRN	arm64-absent-sme	SVE-0885 uqrshrn_z_mz2_ 45b03800 is undefined	45b03800	-	sme2
+SVE-0885	SVE	UQRSHRN	arm64-absent-sve	SVE-0885 uqrshrn_z_mz2_ 45b03800 is undefined	45b03800	-	sme2
 SVE-0886	SVE	UQRSHRNB	arm64-absent-sve	SVE-0886 uqrshrnb_z_zi_ 45283800 is undefined	45283800	-	sme
 SVE-0887	SVE	UQRSHRNT	arm64-absent-sve	SVE-0887 uqrshrnt_z_zi_ 45283c00 is undefined	45283c00	-	sme
 SVE-0888	SVE	UQSHL (immediate)	arm64-absent-sve	SVE-0888 uqshl_z_p_zi_ 04078100 is undefined	04078100	-	sme
@@ -1910,28 +1910,28 @@ SVE-0921	SVE	UZP1, UZP2 (vectors)	arm64-absent-sve	SVE-0921 uzp1_z_zz_ 05206800 
 SVE-0922	SVE	UZPQ1	arm64-absent-sve	SVE-0922 uzpq1_z_zz_ 4400e800 is undefined	4400e800	-	sme2p1
 SVE-0923	SVE	UZPQ2	arm64-absent-sve	SVE-0923 uzpq2_z_zz_ 4400ec00 is undefined	4400ec00	-	sme2p1
 SVE-0924	SVE	WHILEGE (predicate as counter)	arm64-absent-sve	SVE-0924 whilege_pn_rr_ 25204010 is undefined	25204010	-	sme2
-SVE-0925	SVE	WHILEGE (predicate pair)	arm64-absent-sme	SVE-0925 whilege_pp_rr_ 25205010 is undefined	25205010	-	sme2
+SVE-0925	SVE	WHILEGE (predicate pair)	arm64-absent-sve	SVE-0925 whilege_pp_rr_ 25205010 is undefined	25205010	-	sme2
 SVE-0926	SVE	WHILEGE (predicate)	arm64-absent-sve	SVE-0926 whilege_p_p_rr_ 25200000 is undefined	25200000	-	sme
 SVE-0927	SVE	WHILEGT (predicate as counter)	arm64-absent-sve	SVE-0927 whilegt_pn_rr_ 25204018 is undefined	25204018	-	sme2
-SVE-0928	SVE	WHILEGT (predicate pair)	arm64-absent-sme	SVE-0928 whilegt_pp_rr_ 25205011 is undefined	25205011	-	sme2
+SVE-0928	SVE	WHILEGT (predicate pair)	arm64-absent-sve	SVE-0928 whilegt_pp_rr_ 25205011 is undefined	25205011	-	sme2
 SVE-0929	SVE	WHILEGT (predicate)	arm64-absent-sve	SVE-0929 whilegt_p_p_rr_ 25200010 is undefined	25200010	-	sme
 SVE-0930	SVE	WHILEHI (predicate as counter)	arm64-absent-sve	SVE-0930 whilehi_pn_rr_ 25204818 is undefined	25204818	-	sme2
-SVE-0931	SVE	WHILEHI (predicate pair)	arm64-absent-sme	SVE-0931 whilehi_pp_rr_ 25205811 is undefined	25205811	-	sme2
+SVE-0931	SVE	WHILEHI (predicate pair)	arm64-absent-sve	SVE-0931 whilehi_pp_rr_ 25205811 is undefined	25205811	-	sme2
 SVE-0932	SVE	WHILEHI (predicate)	arm64-absent-sve	SVE-0932 whilehi_p_p_rr_ 25200810 is undefined	25200810	-	sme
 SVE-0933	SVE	WHILEHS (predicate as counter)	arm64-absent-sve	SVE-0933 whilehs_pn_rr_ 25204810 is undefined	25204810	-	sme2
-SVE-0934	SVE	WHILEHS (predicate pair)	arm64-absent-sme	SVE-0934 whilehs_pp_rr_ 25205810 is undefined	25205810	-	sme2
+SVE-0934	SVE	WHILEHS (predicate pair)	arm64-absent-sve	SVE-0934 whilehs_pp_rr_ 25205810 is undefined	25205810	-	sme2
 SVE-0935	SVE	WHILEHS (predicate)	arm64-absent-sve	SVE-0935 whilehs_p_p_rr_ 25200800 is undefined	25200800	-	sme
 SVE-0936	SVE	WHILELE (predicate as counter)	arm64-absent-sve	SVE-0936 whilele_pn_rr_ 25204418 is undefined	25204418	-	sme2
-SVE-0937	SVE	WHILELE (predicate pair)	arm64-absent-sme	SVE-0937 whilele_pp_rr_ 25205411 is undefined	25205411	-	sme2
+SVE-0937	SVE	WHILELE (predicate pair)	arm64-absent-sve	SVE-0937 whilele_pp_rr_ 25205411 is undefined	25205411	-	sme2
 SVE-0938	SVE	WHILELE (predicate)	arm64-absent-sve	SVE-0938 whilele_p_p_rr_ 25200410 is undefined	25200410	-	sme
 SVE-0939	SVE	WHILELO (predicate as counter)	arm64-absent-sve	SVE-0939 whilelo_pn_rr_ 25204c10 is undefined	25204c10	-	sme2
-SVE-0940	SVE	WHILELO (predicate pair)	arm64-absent-sme	SVE-0940 whilelo_pp_rr_ 25205c10 is undefined	25205c10	-	sme2
+SVE-0940	SVE	WHILELO (predicate pair)	arm64-absent-sve	SVE-0940 whilelo_pp_rr_ 25205c10 is undefined	25205c10	-	sme2
 SVE-0941	SVE	WHILELO (predicate)	arm64-absent-sve	SVE-0941 whilelo_p_p_rr_ 25200c00 is undefined	25200c00	-	sme
 SVE-0942	SVE	WHILELS (predicate as counter)	arm64-absent-sve	SVE-0942 whilels_pn_rr_ 25204c18 is undefined	25204c18	-	sme2
-SVE-0943	SVE	WHILELS (predicate pair)	arm64-absent-sme	SVE-0943 whilels_pp_rr_ 25205c11 is undefined	25205c11	-	sme2
+SVE-0943	SVE	WHILELS (predicate pair)	arm64-absent-sve	SVE-0943 whilels_pp_rr_ 25205c11 is undefined	25205c11	-	sme2
 SVE-0944	SVE	WHILELS (predicate)	arm64-absent-sve	SVE-0944 whilels_p_p_rr_ 25200c10 is undefined	25200c10	-	sme
 SVE-0945	SVE	WHILELT (predicate as counter)	arm64-absent-sve	SVE-0945 whilelt_pn_rr_ 25204410 is undefined	25204410	-	sme2
-SVE-0946	SVE	WHILELT (predicate pair)	arm64-absent-sme	SVE-0946 whilelt_pp_rr_ 25205410 is undefined	25205410	-	sme2
+SVE-0946	SVE	WHILELT (predicate pair)	arm64-absent-sve	SVE-0946 whilelt_pp_rr_ 25205410 is undefined	25205410	-	sme2
 SVE-0947	SVE	WHILELT (predicate)	arm64-absent-sve	SVE-0947 whilelt_p_p_rr_ 25200400 is undefined	25200400	-	sme
 SVE-0948	SVE	WHILERW	arm64-absent-sve	SVE-0948 whilerw_p_rr_ 25203010 is undefined	25203010	-	sme
 SVE-0949	SVE	WHILEWR	arm64-absent-sve	SVE-0949 whilewr_p_rr_ 25203000 is undefined	25203000	-	sme

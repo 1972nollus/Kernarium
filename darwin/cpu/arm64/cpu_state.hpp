@@ -150,13 +150,12 @@ struct CpuState final {
 	 * bytes, or null when the run does not implement SME. While SM is set,
 	 * guest V_n is the low 16 bytes of Z_n here and `vectors` is stale. */
 	std::byte *sme_registers{};
-	/* Non-streaming SVE state (sve_profile.hpp), appended so that no
-	 * earlier offset moves: P0-P15 and FFR in the engines' mask form, apart
-	 * from the streaming P in the SME register file. Z_n outside streaming
-	 * mode is `vectors[n]`. sve_live, 0 or 1, is the image of arm64
-	 * Linux's TIF_SVE: the task has executed SVE since its last system
-	 * call or exec, so its P and FFR are part of its state. A byte rather
-	 * than a bool, since translated code stores it. */
+	/* The storage of the removed non-streaming SVE profile
+	 * (sve_profile.hpp), reserved so that no offset after it moves: P0-P15
+	 * and FFR in mask form, apart from the streaming P in the SME register
+	 * file, and a live flag. The virtual CPU implements no SVE outside
+	 * streaming mode, so nothing sets them; a change of PSTATE.SM zeroes P
+	 * and FFR. */
 	alignas(16) std::array<SvePredicate, sve_p_registers> sve_p{};
 	alignas(16) SvePredicate sve_ffr{};
 	std::uint8_t sve_live{};

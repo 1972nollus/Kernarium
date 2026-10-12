@@ -214,15 +214,10 @@ DecodeResult decode_sme_space(DecodeContext &context)
 {
 	const auto instruction = context.instruction;
 	const auto &host = context.options.host_capabilities;
-	if ((context.options.svcr & svcr_sm) == 0U && implements_sve(host) &&
-	    detail::sme_encoding_space(instruction)) [[unlikely]] {
-		if (const auto decoded = decode_sve_space(context))
-			return *decoded;
-	}
 	/* The SM = 0 vector-length family (detail/sm0_vector_length.hpp), which
-	 * an SME virtual CPU without SVE executes: a vector-length word as the
-	 * base word of the same effect, an ADD, SUB, MOVZ or MOVN, which touch
-	 * no vector state, and a spill word as the memory access it is. */
+	 * an SME virtual CPU executes: a vector-length word as the base word of
+	 * the same effect, an ADD, SUB, MOVZ or MOVN, which touch no vector
+	 * state, and a spill word as the memory access it is. */
 	if ((context.options.svcr & svcr_sm) == 0U &&
 	    detail::implements_sm0_vector_length(host)) [[unlikely]] {
 		if (const auto equivalent =
