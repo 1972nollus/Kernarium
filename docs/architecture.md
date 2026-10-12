@@ -369,8 +369,9 @@ several positions, directly and through a link.
 
 A constant stored to a register is one stream word when it fits 48 bits or is
 ones above bit 47: the destination's CpuState offset in bits 63:48 over the
-value's low 48 bits, which MOVZ and MOVN take below a shift of 48 and the
-emulated identification registers when their value fits. Any other value keeps
+value's low 48 bits, which MOVZ and MOVN take below a shift of 48, ADR and
+ADRP (with the ADD that folds into them) and the emulated identification
+registers when their value fits. Any other value keeps
 `move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
 each form against the architectural definition.
 

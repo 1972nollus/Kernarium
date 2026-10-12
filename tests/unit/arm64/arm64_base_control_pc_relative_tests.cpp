@@ -33,15 +33,18 @@ void production_specialization()
 	const auto adrp_program = build(true, 12345, 7);
 	const auto adr = adr_program.words();
 	const auto adrp = adrp_program.words();
-	require(adr.size() == 5U && adrp.size() == 5U,
+	require(adr.size() == 4U && adrp.size() == 4U,
 		"PC-relative stream retained unexpected runtime operands");
-	require(adr[1] == offsetof(arm64::CpuState, registers) + 7U * 8U &&
-			adr[2] == static_cast<std::uint64_t>(
-				static_cast<std::int64_t>(base) - 12345),
+	/* The destination's offset over the address, in one word. */
+	const auto offset = std::uint64_t{
+		offsetof(arm64::CpuState, registers) + 7U * 8U};
+	require(adr[1] == (offset << 48 |
+			static_cast<std::uint64_t>(
+				static_cast<std::int64_t>(base) - 12345)),
 		"ADR fields were not resolved during translation");
 	require(adr[0] == adrp[0],
 		"ADR and ADRP did not share the constant-store gadget");
-	require(adr[2] != adrp[2],
+	require(adr[1] != adrp[1],
 		"ADRP page calculation was not resolved during translation");
 
 	const auto discard_program = build(false, 123, 31);
@@ -57,7 +60,7 @@ void production_specialization()
 	for (unsigned bit = 0; bit < 21; ++bit) {
 		const auto program =
 			build(false, std::int64_t{1} << bit, 9);
-		basis_values.insert(program.words()[2]);
+		basis_values.insert(program.words()[1]);
 	}
 	require(basis_values.size() == 21U,
 		"PC-relative immediate basis bits were lost in translation");

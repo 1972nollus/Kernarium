@@ -254,8 +254,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			 * dispatches computing something translation already knows.
 			 * When the ADD rewrites the same register it read, the page
 			 * value it consumes is dead the moment it is produced, so the
-			 * pair collapses into this one entry carrying the final
-			 * address - no extra gadget and no bank growth.
+			 * pair collapses into one constant store of the final address -
+			 * no extra gadget and no bank growth.
 			 *
 			 * G113 found it among the most frequent adjacent pairs in
 			 * translated code.
@@ -275,9 +275,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 					consumed = 2;
 				}
 			}
-			emit(words, uml_arm64_gadget_pc_relative);
-			emit(words, static_cast<std::uintptr_t>(destination * 8U));
-			emit(words, folded);
+			emit_constant_store(words, destination * 8U, folded);
 			/* Account for the folded ADD only; Builder::build() adds the
 			 * ADRP itself when a decode returns `decoded`. */
 			if (consumed == 2)

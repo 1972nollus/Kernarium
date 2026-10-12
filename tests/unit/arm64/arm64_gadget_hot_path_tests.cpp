@@ -18,7 +18,6 @@ void uml_arm64_gadget_svc();
 void uml_arm64_gadget_branch_register();
 void uml_arm64_gadget_branch_link_register();
 void uml_arm64_gadget_return();
-void uml_arm64_gadget_pc_relative();
 void uml_arm64_gadget_move_wide_constant();
 void uml_arm64_gadget_move_wide_packed_zero();
 void uml_arm64_gadget_move_wide_packed_ones();
@@ -258,9 +257,9 @@ int main()
 	}
 	{
 		const auto program = build_one(0x1000'0002U); // adr x2, pc
-		require_gadget(program, uml_arm64_gadget_pc_relative);
-		require(program.words()[1] == 2U * 8U);
-		require(program.words()[2] == 0x4000U);
+		require_gadget(program, uml_arm64_gadget_move_wide_packed_zero);
+		require(program.words()[1] == (std::uint64_t{2} * 8U << 48 | 0x4000U));
+		require(program.words()[2] == address(uml_arm64_gadget_svc));
 	}
 	{
 		const auto program = build_one(0x1000'001fU); // adr xzr, pc
