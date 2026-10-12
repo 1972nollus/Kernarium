@@ -32,8 +32,8 @@ safe_relative = _CHECKS.safe_relative
 parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 4
-PRODUCT_FAMILY = "android-17-ack-6.18-4k"
-DIRECTORY_PREFIX = "android17-ack6.18-4k-"
+PRODUCT_FAMILY = "lineage-24-ack-6.18-4k"
+DIRECTORY_PREFIX = "lineage24-ack6.18-4k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 # The Android build variants a release may be built as, with the build

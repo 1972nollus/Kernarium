@@ -15,6 +15,10 @@ import tempfile
 from pathlib import Path
 
 
+LEGACY_FAMILY = "android-17-ack-6.18-4k"
+LEGACY_PREFIX = "android17-ack6.18-4k-"
+
+
 def fail(message: str) -> None:
     raise SystemExit(f"android release contract fixture: {message}")
 
@@ -92,9 +96,15 @@ def main() -> None:
     tracked_acceptance = parse_env(android_root / "metadata/accepted-release.env")
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
         fail("tracked acceptance descriptor keys differ from the release contract")
+    # Until the first LineageOS release is accepted, the descriptor still points
+    # at the accepted AOSP 17 release. The allowance ends with that acceptance.
+    legacy = tracked_acceptance["LINEAGE24_ACCEPTED_PRODUCT_FAMILY"] == LEGACY_FAMILY
+    tracked_family, tracked_prefix = (
+        (LEGACY_FAMILY, LEGACY_PREFIX) if legacy else (PRODUCT_FAMILY, DIRECTORY_PREFIX)
+    )
     tracked_expected = {
         "LINEAGE24_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
-        "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
+        "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": tracked_family,
         "LINEAGE24_ACCEPTED_ANDROID_MAJOR": "17",
         "LINEAGE24_ACCEPTED_PAGE_SIZE": "4096",
     }
@@ -104,7 +114,7 @@ def main() -> None:
         if tracked_acceptance.get(key) != value:
             fail(f"tracked acceptance descriptor differs at {key}")
     if tracked_acceptance["LINEAGE24_ACCEPTED_DIRECTORY_NAME"] != (
-        DIRECTORY_PREFIX + tracked_acceptance["LINEAGE24_ACCEPTED_RELEASE_ID"]
+        tracked_prefix + tracked_acceptance["LINEAGE24_ACCEPTED_RELEASE_ID"]
     ):
         fail("tracked acceptance directory does not match its release ID")
     release_id = "fixture-1"
