@@ -7,6 +7,8 @@
 #include "arm64_jit_a32_test_support.hpp"
 #include "runtime_test_route.hpp"
 
+#include "cpu/arm64/jit/a32/a32_helpers.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -15,6 +17,7 @@
 using namespace uml::emulator::tests;
 using namespace uml::emulator::tests::a32;
 using ::uml::cpu::ExitReason;
+namespace jit_a32 = ::uml::cpu::arm64::jit::a32;
 
 namespace {
 
@@ -238,6 +241,128 @@ void a32_random_sequences(unsigned long generation, std::uint64_t seed,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Parallel add and subtract: every form against a model of the lane
+// arithmetic written for this test. The forms but the signed saturating ones
+// run in the vector unit, so they must not reach the library, and none of
+// them may change the registers they do not name or (but for the ones that
+// set GE) the GE flags.
+
+struct ParallelResult final {
+  std::uint32_t value;
+  std::uint32_t ge;
+};
+
+ParallelResult parallel_model(unsigned prefix, unsigned op2, std::uint32_t a,
+                              std::uint32_t b, std::uint32_t old_ge) {
+  // prefix: 1 S, 2 Q, 3 SH, 5 U, 6 UQ, 7 UH. op2: 0 ADD16, 1 ASX, 2 SAX,
+  // 3 SUB16, 4 ADD8, 7 SUB8.
+  const bool is_signed = prefix <= 3U;
+  const unsigned width = op2 == 4U || op2 == 7U ? 8U : 16U;
+  const unsigned lanes = 32U / width;
+  const std::int64_t limit = std::int64_t{1} << width;
+  const auto element = [&](std::uint32_t value, unsigned lane) {
+    const std::int64_t raw = value >> (width * lane) & (limit - 1);
+    return is_signed && raw >= limit / 2 ? raw - limit : raw;
+  };
+  std::uint32_t value = 0;
+  std::uint32_t ge = 0;
+  for (unsigned lane = 0; lane < lanes; ++lane) {
+    bool subtract = op2 == 3U || op2 == 7U;
+    unsigned b_lane = lane;
+    if (op2 == 1U) {
+      subtract = lane == 0U;
+      b_lane = 1U - lane;
+    } else if (op2 == 2U) {
+      subtract = lane == 1U;
+      b_lane = 1U - lane;
+    }
+    const std::int64_t x = element(a, lane);
+    const std::int64_t y = element(b, b_lane);
+    const std::int64_t exact = subtract ? x - y : x + y;
+    std::int64_t out = exact;
+    bool lane_ge = false;
+    switch (prefix) {
+    case 1: lane_ge = exact >= 0; break;
+    case 5: lane_ge = subtract ? exact >= 0 : exact >= limit; break;
+    case 2:
+      out = std::max(-limit / 2, std::min(limit / 2 - 1, exact));
+      break;
+    case 6: out = std::max<std::int64_t>(0, std::min(limit - 1, exact)); break;
+    default: out = exact >> 1; break;
+    }
+    value |= static_cast<std::uint32_t>(out & (limit - 1)) << (width * lane);
+    if (lane_ge)
+      ge |= (width == 8U ? 0xffU : 0xffffU) << (width * lane);
+  }
+  const bool sets_ge = prefix == 1U || prefix == 5U;
+  return {value, sets_ge ? ge : old_ge};
+}
+
+void parallel_arithmetic() {
+  Fixture fixture{0x1a32'0301, 4};
+  Random random{0x7a11'e1};
+  constexpr std::uint32_t special[] = {
+      0x0000'0000U, 0xffff'ffffU, 0x8080'8080U, 0x7f7f'7f7fU, 0x0001'0001U,
+      0x8000'8000U, 0x7fff'7fffU, 0x00ff'00ffU, 0xff00'ff00U, 0x0100'0100U,
+      0x807f'7f80U, 0x7f80'807fU, 0xfffe'0002U, 0x0102'0304U, 0xfffd'fcfbU};
+  struct Registers final {
+    unsigned d, n, m;
+  };
+  constexpr Registers shapes[] = {{2, 3, 4}, {3, 3, 4}, {4, 3, 4},
+                                  {3, 3, 3}, {12, 5, 6}, {0, 1, 2}};
+  jit_a32::reset_helper_exits();
+  std::size_t executed_inline = 0;
+  for (const unsigned prefix : {1U, 2U, 3U, 5U, 6U, 7U}) {
+    for (const unsigned op2 : {0U, 1U, 2U, 3U, 4U, 7U}) {
+      for (const auto &shape : shapes) {
+        const std::uint32_t word = 0xe600'0f10U | prefix << 20 | shape.n << 16 |
+                                   shape.d << 12 | op2 << 5 | shape.m;
+        fixture.code32(0, {word, 0xef00'0000U});
+        for (unsigned round = 0; round < 80; ++round) {
+          std::uint32_t a = random.value();
+          std::uint32_t b = random.value();
+          if (round < std::size(special) * 2U) {
+            a = special[round % std::size(special)];
+            b = special[(round / 2U + 3U) % std::size(special)];
+          }
+          const std::uint32_t old_ge = static_cast<std::uint32_t>(random.next()) &
+                                       0x0101'0101U * 0xffU;
+          auto cpu = Fixture::task(false, 0);
+          for (unsigned i = 0; i < 15; ++i)
+            cpu.registers[i] = 0x1000'0000U + i;
+          cpu.registers[shape.n] = a;
+          cpu.registers[shape.m] = shape.m == shape.n ? a : b;
+          cpu.a32_ge_mask = old_ge;
+          const auto before = cpu;
+          const bool counted = prefix != 2U;
+          jit_a32::count_helper_exits(counted);
+          const auto outcome = fixture.run(cpu);
+          jit_a32::count_helper_exits(false);
+          require(outcome.reason == ExitReason::system_call);
+          const std::uint32_t right = shape.m == shape.n ? a : b;
+          const auto expected = parallel_model(prefix, op2, a, right, old_ge);
+          const auto got = static_cast<std::uint32_t>(cpu.registers[shape.d]);
+          if (got != expected.value || cpu.a32_ge_mask != expected.ge) {
+            std::fprintf(stderr,
+                         "parallel %08x a=%08x b=%08x: got %08x ge %08x, "
+                         "expected %08x ge %08x\n",
+                         word, a, right, got, cpu.a32_ge_mask, expected.value,
+                         expected.ge);
+            std::abort();
+          }
+          for (unsigned i = 0; i < 15; ++i)
+            if (i != shape.d)
+              require(cpu.registers[i] == before.registers[i]);
+          executed_inline += counted ? 1U : 0U;
+        }
+      }
+    }
+  }
+  require(executed_inline > 0U);
+  require(jit_a32::helper_exit_total() == 0U);
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -247,6 +372,7 @@ int main(int argc, char **argv) {
   if (argc > 1)
     programs = static_cast<unsigned>(std::atoi(argv[1]));
   a32_random_sequences(0x1a32'0100, 0x1234'5678'9abcULL, programs, 24);
+  parallel_arithmetic();
   std::puts("arm64-jit-a32-data-processing: ok");
   return 0;
 }

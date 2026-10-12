@@ -8,17 +8,13 @@
 #include "architecture_difference.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/detail/sme_decode.hpp"
-#include "cpu/arm64/detail/sve_semantics.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/arm64/gadgets/sme_support.hpp"
-#include "cpu/arm64/gadgets/sve_support.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
-#include "cpu/arm64/jit/jit_sve_support.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -77,22 +73,19 @@ constexpr std::size_t execution_limit = 64;
 constexpr unsigned long generation = 0x10000;
 constexpr std::array<char, 8> pack_magic{'U', 'M', 'L', 'A',
                                          '6', '4', 'C', '\0'};
-constexpr std::uint32_t pack_version = 3;
+constexpr std::uint32_t pack_version = 2;
 constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
-/* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS. */
-constexpr std::uint16_t retired_options = 3U;
+/* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS, and bit 12
+ * asked for a virtual CPU without FEAT_SVE, which no virtual CPU has. */
+constexpr std::uint16_t retired_options = 0x1003U;
 /* Option bit 10 runs a record on a virtual CPU without FEAT_AFP on any host:
  * its cases pin FPCR.FIZ, AH and NEP as RES0. */
 constexpr std::uint16_t without_afp_option = 0x400U;
 /* Option bit 11 does the same for FEAT_SME: its cases pin SVE and SME
  * encodings UNDEFINED. */
 constexpr std::uint16_t without_sme_option = 0x800U;
-/* Option bit 12 does the same for FEAT_SVE: its cases pin the encodings the
- * SVE profile executes outside streaming mode UNDEFINED, or hold what an SME
- * host without SVE observed. */
-constexpr std::uint16_t without_sve_option = 0x1000U;
 constexpr std::uint16_t known_options = 0x1fffU;
 /* SME state: Z0-Z31, P0-P15 and the ZA rows are sized by a record's
  * streaming vector length (SVL), ZT0 is 64 bytes. */
@@ -277,9 +270,6 @@ struct Record final {
   /* The SVL the cases' SME state is sized for and their expectations hold
    * at, or 0 for a record without SME state. */
   std::uint16_t svl{};
-  /* The vector length outside streaming mode that the cases' P and FFR are
-   * sized for, arm64::sve_vector_length, or 0 for a record without them. */
-  std::uint16_t vl{};
   std::vector<Program> programs;
   std::vector<CorpusCase> cases;
 };
@@ -288,8 +278,8 @@ struct Record final {
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
  * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, 5 the retired FEAT_FP8
  * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the producer's one-byte
- * PSTATE.SM and ZA; all stay reserved. SVCR and TPIDR2_EL0 appear only in a
- * record with an SVL, sve_live only in a record with a VL. */
+ * PSTATE.SM and ZA, and 40 the retired non-streaming SVE liveness; all stay
+ * reserved. SVCR and TPIDR2_EL0 appear only in a record with an SVL. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -309,7 +299,6 @@ enum class Field : std::uint8_t {
   fp_dirty,
   svcr = 38,
   tpidr2,
-  sve_live,
 };
 
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
@@ -334,7 +323,6 @@ enum class Field : std::uint8_t {
   case Field::exclusive_size:
   case Field::fp_dirty:
   case Field::svcr:
-  case Field::sve_live:
     return 1;
   }
   throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -357,28 +345,14 @@ void skip_sme_sections(Reader &reader, unsigned svl) {
   (void)reader.bytes(zt0 * zt0_bytes);
 }
 
-/* Skips one sparse state's SVE sections: P and FFR outside streaming
- * mode. */
-void skip_sve_sections(Reader &reader, unsigned vl) {
-  const auto p = reader.u16();
-  (void)reader.bytes(vl / 8U * static_cast<std::size_t>(std::popcount(p)));
-  const auto ffr = reader.u8();
-  if (ffr > 1U)
-    throw CorpusError{"invalid FFR flag"};
-  (void)reader.bytes(ffr * vl / 8U);
-}
-
 /* Returns the encoded span of one sparse state and validates its shape. */
 [[nodiscard]] std::span<const std::byte>
-sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl,
-             unsigned vl) {
+sparse_state(Reader &reader, std::span<const std::byte> body, unsigned svl) {
   const auto begin = reader.offset();
   const auto registers = reader.u32();
   (void)reader.bytes(8U * static_cast<std::size_t>(std::popcount(registers)));
   const auto vectors = reader.u32();
   (void)reader.bytes(16U * static_cast<std::size_t>(std::popcount(vectors)));
-  if (vl != 0U)
-    skip_sve_sections(reader, vl);
   if (svl != 0U)
     skip_sme_sections(reader, svl);
   const auto fields = reader.u8();
@@ -476,25 +450,10 @@ void apply_sme_sections(Reader &reader, std::span<std::byte> image,
     copy(arm64::sme_zt0_offset(svl), zt0_bytes);
 }
 
-/* Applies one sparse state's SVE sections, packed as the architecture
- * holds them, to the engines' mask form of P and FFR. */
-void apply_sve_sections(Reader &reader, arm64::CpuState &state) {
-  const auto packed = [&] {
-    return static_cast<std::uint16_t>(reader.little(2));
-  };
-  const auto p = reader.u16();
-  for (unsigned n = 0; n < arm64::sve_p_registers; ++n)
-    if ((p >> n) & 1U)
-      state.sve_p[n] = arm64::sve_predicate_mask(packed());
-  if (reader.u8() != 0U)
-    state.sve_ffr = arm64::sve_predicate_mask(packed());
-}
-
 /* Applies a sparse state; `image` receives its SME sections when the
- * record has an SVL, and CpuState its P and FFR when it has a VL. */
+ * record has an SVL. */
 void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
-                  unsigned svl = 0, std::span<std::byte> image = {},
-                  unsigned vl = 0) {
+                  unsigned svl = 0, std::span<std::byte> image = {}) {
   Reader reader{encoded};
   const auto registers = reader.u32();
   for (unsigned index = 0; index < 32U; ++index)
@@ -511,8 +470,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
       const auto data = reader.bytes(16);
       std::copy(data.begin(), data.end(), state.vectors[index].bytes.begin());
     }
-  if (vl != 0U)
-    apply_sve_sections(reader, state);
   if (svl != 0U)
     apply_sme_sections(reader, image, svl);
   const auto fields = reader.u8();
@@ -573,9 +530,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded,
       break;
     case Field::tpidr2:
       state.tpidr2 = reader.u64();
-      break;
-    case Field::sve_live:
-      state.sve_live = reader.u8();
       break;
     default:
       throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -646,44 +600,11 @@ std::optional<std::string> host_counter_frequency(const RelationInput &in) {
   return first_architecture_difference(expected, in.actual);
 }
 
-/* A first-fault or non-fault load leaves each element of its destination
- * from the first whose FFR element is FALSE CONSTRAINED UNPREDICTABLE: the
- * data it loaded, zero, or the old value (the ASL's SVELDNFDATA,
- * SVELDNFZERO, and merge choices). Those elements are excluded from
- * equality; FFR itself is compared. */
-std::optional<std::string>
-unpredictable_nonfault_elements(const RelationInput &in) {
-  namespace detail = arm64::detail;
-  const auto word = in.program.entry_word;
-  const auto *row = detail::find_sme_encoding(word);
-  const auto *memory =
-      row != nullptr ? detail::sme_encoding_memory_of(*row) : nullptr;
-  if (memory == nullptr ||
-      (memory->shape != detail::SmeMemoryShape::first_fault &&
-       memory->shape != detail::SmeMemoryShape::non_fault &&
-       memory->shape != detail::SmeMemoryShape::gather_first_fault))
-    return std::string{"the entry word is not a first-fault or non-fault "
-                       "load"};
-  const unsigned element = detail::sme_memory_esize(*memory, word) / 8U;
-  auto normalized = in.expected;
-  auto &destination = normalized.vectors[word & 31U].bytes;
-  bool unknown = false;
-  for (unsigned byte = 0; byte < arm64::sve_vector_length; byte += element) {
-    unknown = unknown || (in.expected.sve_ffr[byte] & 0x80U) == 0U;
-    if (unknown)
-      std::copy_n(in.actual.vectors[word & 31U].bytes.begin() + byte, element,
-                  destination.begin() + byte);
-  }
-  return first_architecture_difference(normalized, in.actual);
-}
-
 [[nodiscard]] Relation relation_for(std::string_view name) {
   static const std::map<std::string_view, Relation> relations{
       {"host-counter-frequency/v1", host_counter_frequency},
       {"ignore-host-counter-register/v1", ignore_counter_register},
       {"permitted-exclusive-store-failure/v1", exclusive_store_failure},
-      {"unpredictable-nonfault-load-elements/v1",
-       unpredictable_nonfault_elements},
   };
   if (const auto found = relations.find(name); found != relations.end())
     return found->second;
@@ -833,15 +754,12 @@ void validate_case(const Record &record, const CorpusCase &test_case,
     record.profiles = reader.u8();
     record.options = reader.u16();
     record.svl = reader.u16();
-    record.vl = reader.u16();
     if ((record.options & retired_options) != 0U)
       throw CorpusError{std::string{record.name} + ": retired harness option"};
     if ((record.options & ~known_options) != 0U)
       throw CorpusError{std::string{record.name} + ": unknown harness option"};
     if (record.svl != 0U && !valid_svl(record.svl))
       throw CorpusError{std::string{record.name} + ": invalid SVL"};
-    if (record.vl != 0U && record.vl != arm64::sve_vector_length)
-      throw CorpusError{std::string{record.name} + ": invalid VL"};
     const auto program_count = reader.u32();
     record.programs.reserve(program_count);
     for (std::uint32_t program = 0; program < program_count; ++program) {
@@ -915,8 +833,8 @@ void validate_case(const Record &record, const CorpusCase &test_case,
         test_case.syndrome = reader.u32();
       test_case.native = reader.u16();
       test_case.validator = reader.u16();
-      test_case.initial = sparse_state(reader, body, record.svl, record.vl);
-      test_case.expected = sparse_state(reader, body, record.svl, record.vl);
+      test_case.initial = sparse_state(reader, body, record.svl);
+      test_case.expected = sparse_state(reader, body, record.svl);
       const auto regions = reader.u8();
       for (unsigned region_index = 0; region_index < regions; ++region_index) {
         auto &region = test_case.memory.emplace_back();
@@ -1095,11 +1013,8 @@ private:
 /* ------------------------------------------------------------------------ */
 /* Engines                                                                    */
 
-/* The production engines, and the shared SVE semantic library
- * (cpu/arm64/detail/sve_semantics.hpp): the gadget engine runs a library
- * case and the library executes each non-streaming SVE word the engine
- * exits on as illegal. */
-enum class Lane : std::uint8_t { gadgets, jit, library };
+/* The production engines. */
+enum class Lane : std::uint8_t { gadgets, jit };
 
 [[nodiscard]] std::string_view lane_name(Lane lane) noexcept {
   switch (lane) {
@@ -1107,39 +1022,19 @@ enum class Lane : std::uint8_t { gadgets, jit, library };
     return "gadgets";
   case Lane::jit:
     return "jit";
-  case Lane::library:
-    return "library";
   }
   return "?";
 }
 
-/* How much of the SME profile a lane's engine implements. The library has
- * no streaming mode. */
+/* How much of the SME profile a lane's engine implements. */
 [[nodiscard]] constexpr arm64::SmeSupport lane_sme_support(Lane lane) noexcept {
   switch (lane) {
   case Lane::gadgets:
     return arm64::gadgets::sme_support;
   case Lane::jit:
     return arm64::jit::sme_support;
-  case Lane::library:
-    break;
   }
   return arm64::SmeSupport::none;
-}
-
-/* How much of the non-streaming SVE profile a lane implements. The
- * library is the whole profile's semantics; the runner would skip the
- * cases of a form a regenerated table adds (Runner::library_runs). */
-[[nodiscard]] constexpr arm64::SveSupport lane_sve_support(Lane lane) noexcept {
-  switch (lane) {
-  case Lane::gadgets:
-    return arm64::gadgets::sve_support;
-  case Lane::jit:
-    return arm64::jit::sve_support;
-  case Lane::library:
-    break;
-  }
-  return arm64::SveSupport::complete;
 }
 
 /* The SME profile's tokens, which without_sme removes. */
@@ -1153,13 +1048,9 @@ struct Outcome final {
   std::size_t instructions{};
   MemoryFault fault{};
   std::uint32_t syndrome{};
-  /* In the library lane, the SVE words the library executed after the
-   * gadget engine exited on them. */
-  std::size_t library_exits{};
 };
 
-/* The production engines for one harness option set: the gadget and JIT
- * lanes' engines, and the library lane's gadget engine. */
+/* The production engines for one harness option set. */
 class Engines final {
 public:
   Engines(std::uint16_t options, ::uml::platform::HostCapabilities host)
@@ -1171,24 +1062,9 @@ public:
         host_.supported.reset(static_cast<std::size_t>(feature));
       host_.sme_svl_bytes = 0;
     }
-    if ((options & without_sve_option) != 0U)
-      for (const auto feature : arm64::sve_features)
-        host_.supported.reset(static_cast<std::size_t>(feature));
-    /* The library lane's virtual CPU has the SVE profile the guest-SVE
-     * policy gives this host, except where the record withholds it. */
-    library_host_ =
-        (options & without_sve_option) != 0U
-            ? host_
-            : ::uml::platform::apple::apply_guest_sve_policy(
-                  host_, ::uml::platform::apple::GuestSvePolicy::on);
-    library_features_ = arm64::detail::implemented_sve_features(library_host_);
+    /* No virtual CPU has SVE, whatever the host reports. */
+    host_ = ::uml::platform::without_sve(std::move(host_));
     gadgets_ = Gadgets{options, host_};
-    /* The library lane's gadget engine translates for that lane's virtual
-     * CPU, so it runs the SVE forms it implements itself and exits on the
-     * rest as illegal, for the library; only where the policy adds nothing
-     * is it the gadget lane's own. */
-    if (library_host_.supported != host_.supported)
-      library_gadgets_ = Gadgets{options, library_host_};
     if (::uml::cpu::cpu_engine_available(EngineKind::jit))
       jit_ = ::uml::cpu::make_cpu_engine(
           EngineKind::jit, ::uml::cpu::EngineConfiguration{
@@ -1203,24 +1079,8 @@ public:
     return host_;
   }
 
-  /* The library lane's virtual CPU, and the non-streaming SVE rows it
-   * implements. */
-  [[nodiscard]] const ::uml::platform::HostCapabilities &
-  library_host() const noexcept {
-    return library_host_;
-  }
-
-  /* The library's row for a word the library lane's virtual CPU executes,
-   * or nullptr. */
-  [[nodiscard]] const arm64::detail::SmeEncoding *
-  library_row(std::uint32_t word) const noexcept {
-    return arm64::detail::decode_sve_non_streaming(word, library_features_);
-  }
-
   [[nodiscard]] Outcome run(Lane lane, const arm64::CpuState &initial,
                             StaticGuestMemory &memory) {
-    if (lane == Lane::library)
-      return run_library(initial, memory);
     Outcome outcome;
     outcome.cpu = initial;
     /* Enter as the runtime does (load_cpu): the task's vectors deferred and
@@ -1248,25 +1108,6 @@ public:
   }
 
 private:
-  /* Guest memory as the runner's static address space maps it. */
-  class LibraryMemory final : public arm64::detail::SveMemory {
-  public:
-    std::byte *translate(std::uint64_t address,
-                         MemoryAccess access) noexcept override {
-      void *host = nullptr;
-      const auto kind = access == MemoryAccess::write ? DARWIN_UML_STATIC_WRITE
-                                                      : DARWIN_UML_STATIC_READ;
-      if (darwin_uml_static_vm_translate(generation, address, kind, &host) !=
-          DARWIN_UML_STATIC_TRANSLATED)
-        return nullptr;
-      return static_cast<std::byte *>(host);
-    }
-
-    /* The library drops the CpuState reservation itself, and no case may
-     * write its code page, so a store needs no further notice. */
-    void stored(std::byte *, std::size_t) noexcept override {}
-  };
-
   [[nodiscard]] ::uml::cpu::ExecutionResult
   run_engine(Lane lane, arm64::CpuState &cpu, StaticGuestMemory &memory,
              std::size_t budget) {
@@ -1281,10 +1122,7 @@ private:
     };
     if (lane == Lane::jit)
       return jit_->run(request);
-    auto &gadgets = lane == Lane::library && library_gadgets_.has_value()
-                        ? *library_gadgets_
-                        : *gadgets_;
-    return gadgets.run(request);
+    return gadgets_->run(request);
   }
 
   /* A gadget engine for one virtual CPU. Options that force a portable
@@ -1327,70 +1165,8 @@ private:
     std::unique_ptr<arm64::gadgets::GadgetExecutor> forced_;
   };
 
-  /* The gadget engine with the library behind its illegal-instruction
-   * exit: each SVE word the library lane's virtual CPU executes retires
-   * through the library, and the engine resumes after it. */
-  [[nodiscard]] Outcome run_library(const arm64::CpuState &initial,
-                                    StaticGuestMemory &memory) {
-    Outcome outcome;
-    outcome.cpu = initial;
-    for (;;) {
-      if (outcome.instructions == execution_limit) {
-        outcome.event = Event::instruction_budget;
-        break;
-      }
-      const auto result = run_engine(Lane::library, outcome.cpu, memory,
-                                     execution_limit - outcome.instructions);
-      outcome.instructions += result.retired_instructions;
-      outcome.event = event_for(result.reason);
-      outcome.fault = {result.fault.address, result.fault.access};
-      outcome.syndrome = result.syndrome;
-      if (result.reason != ExitReason::illegal_instruction)
-        break;
-      void *code = nullptr;
-      if (darwin_uml_static_vm_translate(generation, outcome.cpu.pc,
-                                         DARWIN_UML_STATIC_EXECUTE,
-                                         &code) != DARWIN_UML_STATIC_TRANSLATED)
-        break;
-      std::uint32_t word;
-      std::memcpy(&word, code, sizeof word);
-      const auto *row = library_row(word);
-      if (row == nullptr || !arm64::detail::sve_semantics_covers(*row))
-        break;
-      LibraryMemory guest;
-      ++outcome.library_exits;
-      const auto executed =
-          arm64::detail::execute_sve(outcome.cpu, word, *row, guest);
-      outcome.fault = {executed.fault_address, executed.access};
-      outcome.syndrome = executed.syndrome;
-      switch (executed.event) {
-      case arm64::detail::SveEvent::retired:
-        outcome.cpu.pc += 4U;
-        ++outcome.instructions;
-        continue;
-      case arm64::detail::SveEvent::undefined:
-        outcome.event = Event::illegal_instruction;
-        break;
-      case arm64::detail::SveEvent::memory_fault:
-        outcome.event = Event::memory_fault;
-        break;
-      case arm64::detail::SveEvent::floating_point_trap:
-        outcome.event = Event::floating_point_trap;
-        break;
-      case arm64::detail::SveEvent::fatal:
-        outcome.event = Event::fatal;
-        break;
-      }
-      break;
-    }
-    return outcome;
-  }
-
   ::uml::platform::HostCapabilities host_;
-  ::uml::platform::HostCapabilities library_host_;
-  arm64::detail::SmeFeatureMask library_features_{};
   std::optional<Gadgets> gadgets_;
-  std::optional<Gadgets> library_gadgets_;
   std::unique_ptr<::uml::cpu::CpuEngine> jit_;
 };
 
@@ -1411,7 +1187,6 @@ struct Options final {
   std::vector<std::uint32_t> ordinals;
   bool run_gadgets{true};
   bool run_jit{true};
-  bool run_library{true};
   std::size_t max_failures{25};
   bool list{};
   bool emitted_registers{};
@@ -1425,70 +1200,44 @@ struct Counts final {
   std::size_t jit_skipped_host_feature{};
   std::size_t gadgets_skipped_host_feature{};
   std::size_t jit_unavailable{};
-  /* SVE cases: those the library lane ran, those whose features its
-   * virtual CPU lacks, and those with a word whose form it does not
-   * cover; and the SVE words the library executed for the lane's gadget
-   * engine, which runs those it implements itself. */
-  std::size_t library{};
-  std::size_t library_skipped_host_feature{};
-  std::size_t library_uncovered{};
-  std::size_t library_exits{};
-  std::map<std::string_view, std::size_t> library_missing_features;
   std::size_t failures{};
   std::map<std::string_view, std::size_t> missing_features;
   /* The features the gadget lane's virtual CPU lacks, by case. */
   std::map<std::string_view, std::size_t> gadgets_missing_features;
 };
 
-/* Whether a case holds non-streaming SVE state or needs an SVE token. */
-[[nodiscard]] bool sve_case(const Record &record,
-                            const ::uml::cpu::ArmFeatureSet &native) {
-  return record.vl != 0U ||
-         std::ranges::any_of(arm64::sve_features, [&](ArmFeature feature) {
-           return native.test(static_cast<std::size_t>(feature));
-         });
+/* Whether a case needs an SVE token. */
+[[nodiscard]] bool sve_case(const ::uml::cpu::ArmFeatureSet &native) {
+  using ::uml::platform::ArmFeature;
+  return std::ranges::any_of(
+      std::array{ArmFeature::sve, ArmFeature::sve2, ArmFeature::sve_aes,
+                 ArmFeature::sve_pmull128, ArmFeature::sve_sha3},
+      [&](ArmFeature feature) {
+        return native.test(static_cast<std::size_t>(feature));
+      });
 }
 
 /* The feature a case needs that a lane's virtual CPU for `host` lacks
- * although the host may have it: FEAT_SVE for a case with non-streaming SVE
- * state or an SVE requirement unless the virtual CPU implements the SVE
- * profile and the lane implements all of it; FEAT_BF16 or FEAT_I8MM for
- * such a case on a host without it, since the profile's forms of those are
- * the virtual CPU's only where the host has them
- * (detail::implemented_sve_features), unlike the AdvSIMD forms the gadget
- * engine emulates anywhere; FEAT_AFP or FEAT_RPRES outside
- * their predicates; FEAT_SME for a case with SME state or an SME
- * requirement unless the virtual CPU implements the profile, at the
+ * although the host may have it: FEAT_SVE for a case with an SVE
+ * requirement, which no virtual CPU implements; FEAT_AFP or
+ * FEAT_RPRES outside their predicates; FEAT_SME for a case with SME state or
+ * an SME requirement unless the virtual CPU implements the profile, at the
  * record's SVL when the record has one, and the lane's engine is complete;
  * and FEAT_SME2 outside the SME2 profile or for an engine without the SME2
- * forms. A record without an SVL never enters streaming mode, so its SME
- * requirement (an SVE form that SME admits at PSTATE.SM = 0) holds at any
- * SVL; the library lane implements all of those forms and runs no record
- * with an SVL. */
+ * forms. */
 [[nodiscard]] std::optional<ArmFeature>
 virtual_cpu_lacks(const Record &record,
                   const ::uml::cpu::ArmFeatureSet &native,
                   const ::uml::platform::HostCapabilities &host, Lane lane) {
-  if (sve_case(record, native)) {
-    if (!arm64::implements_sve(host) ||
-        lane_sve_support(lane) < arm64::SveSupport::complete)
-      return ArmFeature::sve;
-    for (const auto feature : {ArmFeature::bf16, ArmFeature::i8mm})
-      if (native.test(static_cast<std::size_t>(feature)) &&
-          !host.has(feature))
-        return feature;
-  }
+  if (sve_case(native))
+    return ArmFeature::sve;
   const bool sme_case =
       record.svl != 0U ||
       std::ranges::any_of(sme_features, [&](ArmFeature feature) {
         return native.test(static_cast<std::size_t>(feature));
       });
   if (sme_case) {
-    /* The library executes every form SME admits at PSTATE.SM = 0, and
-     * nothing in streaming mode. */
-    const auto support = lane != Lane::library ? lane_sme_support(lane)
-                         : record.svl == 0U    ? arm64::SmeSupport::sme2
-                                               : arm64::SmeSupport::none;
+    const auto support = lane_sme_support(lane);
     if (!arm64::implements_sme(host) ||
         (record.svl != 0U && record.svl != host.sme_svl_bytes) ||
         support < arm64::SmeSupport::complete)
@@ -1609,51 +1358,6 @@ private:
     installed_ = page_;
   }
 
-  /* Whether the library lane runs an SVE case, counting why not: its
-   * virtual CPU lacks a feature the case needs (BF16 and I8MM where the
-   * host has no AdvSIMD forms of them), the gadget engine that runs the
-   * case's other words cannot complete it on this hardware, or a word of
-   * the program has a form the library does not cover, which only a
-   * regenerated table with a new form can produce. */
-  bool library_runs(const Program &program, const ArmFeatureSet &native,
-                    const std::optional<ArmFeature> &lacking,
-                    const Engines &engines, bool profile_only) {
-    const auto skip = [this](std::string_view feature) {
-      ++counts_.library_skipped_host_feature;
-      ++counts_.library_missing_features[feature];
-      return false;
-    };
-    if (lacking.has_value())
-      return skip(::uml::platform::arm_feature_tokens[static_cast<std::size_t>(
-          *lacking)]);
-    /* What the virtual CPU lacks; then, as for the gadget lane, LSE2 on
-     * hardware without it and assumed features the hardware lacks. */
-    auto missing = native & ~engines.library_host().supported;
-    if (missing.none() &&
-        native.test(static_cast<std::size_t>(ArmFeature::lse2)) &&
-        !native_host_.has(ArmFeature::lse2))
-      missing.set(static_cast<std::size_t>(ArmFeature::lse2));
-    if (missing.none()) {
-      missing = native & engines.host().supported & ~native_host_.supported;
-      /* A record without an SVL runs no SME instruction: the SVE forms
-       * it executes at PSTATE.SM = 0 are the library's, so the hardware
-       * need not have the SME profile the virtual CPU is assumed to. */
-      if (profile_only)
-        for (const auto feature : sme_features)
-          missing.reset(static_cast<std::size_t>(feature));
-    }
-    for (std::size_t feature = 0; feature < missing.size(); ++feature)
-      if (missing.test(feature))
-        return skip(::uml::platform::arm_feature_tokens[feature]);
-    for (const auto &word : program.words)
-      if (const auto *row = engines.library_row(word.word);
-          row != nullptr && !arm64::detail::sve_semantics_covers(*row)) {
-        ++counts_.library_uncovered;
-        return false;
-      }
-    return true;
-  }
-
   bool run_case(const Record &record, std::size_t index, Engines &engines) {
     const auto &test_case = record.cases[index];
     const auto &program = record.programs[test_case.program];
@@ -1675,20 +1379,9 @@ private:
      * implement it. */
     const auto &native = corpus_.native_sets[test_case.native];
 
-    for (const auto lane : {Lane::gadgets, Lane::jit, Lane::library}) {
-      const auto lacking = virtual_cpu_lacks(
-          record, native,
-          lane == Lane::library ? engines.library_host() : engines.host(),
-          lane);
-      if (lane == Lane::library) {
-        /* The library lane runs the SVE cases only; the engine lanes own
-         * the rest. */
-        if (!options_.run_library || !sve_case(record, native))
-          continue;
-        if (!library_runs(program, native, lacking, engines,
-                          record.svl == 0U))
-          continue;
-      }
+    for (const auto lane : {Lane::gadgets, Lane::jit}) {
+      const auto lacking =
+          virtual_cpu_lacks(record, native, engines.host(), lane);
       if (lane == Lane::gadgets) {
         if (!options_.run_gadgets)
           continue;
@@ -1743,13 +1436,11 @@ private:
         initial = base_state(program.entry);
         if (record.svl != 0U)
           initial_sme = sme_base_image(record.svl);
-        apply_sparse(*initial, test_case.initial, record.svl, initial_sme,
-                     record.vl);
+        apply_sparse(*initial, test_case.initial, record.svl, initial_sme);
         streaming_view(*initial, initial_sme, record.svl);
         expected = *initial;
         expected_sme = initial_sme;
-        apply_sparse(*expected, test_case.expected, record.svl, expected_sme,
-                     record.vl);
+        apply_sparse(*expected, test_case.expected, record.svl, expected_sme);
         streaming_view(*expected, expected_sme, record.svl);
         regions.reserve(test_case.memory.size());
         for (const auto &region : test_case.memory)
@@ -1771,10 +1462,7 @@ private:
       auto outcome = engines.run(lane, start, memory_);
       if (record.svl != 0U)
         outcome.cpu.write_back_sme_state();
-      ++(lane == Lane::gadgets ? counts_.gadgets
-         : lane == Lane::jit   ? counts_.jit
-                               : counts_.library);
-      counts_.library_exits += outcome.library_exits;
+      ++(lane == Lane::gadgets ? counts_.gadgets : counts_.jit);
       if (auto failure =
               check(test_case, program, *initial, *expected, outcome, regions,
                     {record.svl, expected_sme, task})) {
@@ -2155,15 +1843,15 @@ void usage() {
       "  --case TEXT        run cases whose name contains TEXT (repeatable)\n"
       "  --ordinal N        run the case exported by producer check N of this\n"
       "                     page profile (repeatable, with --producer)\n"
-      "  --engine NAME      run only the gadgets, jit or library lane\n"
+      "  --engine NAME      run only the gadgets or jit lane\n"
       "  --assume-host-feature TOKEN\n"
       "                     translate as if the host had feature TOKEN\n"
       "                     (repeatable); cases needing it natively still\n"
       "                     need the real host to have it\n"
       "  --assume-sme-svl BYTES\n"
       "                     the streaming vector length of an assumed SME\n"
-      "                     profile; the SVE forms SME admits outside\n"
-      "                     streaming mode then run on any host\n"
+      "                     profile; the SM = 0 vector-length family then runs\n"
+      "                     on any host\n"
       "  --max-failures N   stop after N failures (default 25, 0: never)\n"
       "  --fail-fast        stop at the first failure\n"
       "  --list             list the selected records without running them\n"
@@ -2198,11 +1886,10 @@ void usage() {
       else if (argument == "--case")
         options.cases.push_back(*text);
       else if (argument == "--engine") {
-        if (*text != "gadgets" && *text != "jit" && *text != "library")
+        if (*text != "gadgets" && *text != "jit")
           return std::nullopt;
         options.run_gadgets = *text == "gadgets";
         options.run_jit = *text == "jit";
-        options.run_library = *text == "library";
       } else {
         char *end = nullptr;
         const auto number = std::strtoull(argv[index], &end, 10);
@@ -2304,16 +1991,11 @@ int main(int argc, char **argv) {
     std::printf("arm64 instruction corpus (%zu KiB pages): records=%zu "
                 "cases=%zu gadgets=%zu gadgets-skipped-by-host-feature=%zu "
                 "jit=%zu jit-skipped-by-host-feature=%zu "
-                "jit-unavailable=%zu library=%zu "
-                "library-skipped-by-host-feature=%zu "
-                "library-skipped-uncovered=%zu library-exits=%zu "
-                "failures=%zu%s %.1fs\n",
+                "jit-unavailable=%zu failures=%zu%s %.1fs\n",
                 page_size / 1024U, counts.records, counts.cases, counts.gadgets,
                 counts.gadgets_skipped_host_feature, counts.jit,
                 counts.jit_skipped_host_feature, counts.jit_unavailable,
-                counts.library, counts.library_skipped_host_feature,
-                counts.library_uncovered, counts.library_exits, counts.failures,
-                completed ? "" : " (stopped at the failure limit)", elapsed);
+                counts.failures, completed ? "" : " (stopped at the failure limit)", elapsed);
     if (!counts.gadgets_missing_features.empty()) {
       std::printf("gadgets host-feature skips:");
       for (const auto &[feature, count] : counts.gadgets_missing_features)
@@ -2324,13 +2006,6 @@ int main(int argc, char **argv) {
     if (!counts.missing_features.empty()) {
       std::printf("jit host-feature skips:");
       for (const auto &[feature, count] : counts.missing_features)
-        std::printf(" %.*s=%zu", static_cast<int>(feature.size()),
-                    feature.data(), count);
-      std::printf("\n");
-    }
-    if (!counts.library_missing_features.empty()) {
-      std::printf("library host-feature skips:");
-      for (const auto &[feature, count] : counts.library_missing_features)
         std::printf(" %.*s=%zu", static_cast<int>(feature.size()),
                     feature.data(), count);
       std::printf("\n");

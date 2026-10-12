@@ -106,8 +106,10 @@ private:
       memory_slow,
       memory_copy_set_slow,
       sme_slow,
-      sve_slow,
       sm0_spill_slow,
+      /* An ISB found the address space's code changed: leave at its
+       * fall-through, which the executor fetches anew. */
+      code_changed,
     };
 
     Arm64Emitter::Label label;
@@ -129,6 +131,29 @@ private:
     /* A miss in both TLB ways takes the preserving miss bridge, or, when
      * false, branches to fault with every scratch register intact. */
     bool bridge{true};
+  };
+
+  /* A memory run whose accessed bytes straddle two pages at run time. Its
+   * cold path translates both pages and replays the run's hot accesses,
+   * each on the base for its page, then rejoins the hot path. */
+  struct RunStraddleAccess final {
+    std::size_t word{};
+    /* The access's bytes, relative to the run's first accessed byte. */
+    std::uint64_t start{};
+    std::uint64_t end{};
+  };
+
+  struct RunStraddle final {
+    static constexpr std::size_t maximum_accesses = 8;
+    Arm64Emitter::Label label{};
+    Arm64Emitter::Label join{};
+    Arm64Emitter::Label slow{};
+    Access access{};
+    std::uint64_t first{};
+    std::size_t words_begin{};
+    std::size_t words_end{};
+    std::array<RunStraddleAccess, maximum_accesses> accesses{};
+    std::size_t count{};
   };
 
   class ColdPaths final {
@@ -199,6 +224,8 @@ private:
 
   void emit_code_synchronize(std::uint32_t instruction, std::uint64_t pc,
                              std::size_t count);
+
+  void emit_code_change_check(std::uint32_t instruction, std::uint64_t pc);
 
   void emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
                       std::size_t count);
@@ -298,153 +325,6 @@ private:
   void emit_terminal_helper(const void *helper, std::uint32_t instruction,
                             std::uint64_t pc, std::size_t count);
 
-  /* The non-streaming SVE control core (jit_compiler_sve.cpp), in an SM=0
-   * translation on a host whose profile implements SVE. Nothing for a word
-   * of no SVE row, which the SME path then takes; the illegal exit for an
-   * SVE row outside the profile or the control core. */
-  [[nodiscard]] std::optional<Action>
-  emit_sve_instruction(std::uint32_t instruction, std::uint64_t pc);
-  /* An SVE word beyond the control core, lowered onto NEON for the
-   * all-active predicate (jit_compiler_sve_inline.cpp). False, with
-   * nothing emitted, when the lowering declines the word, which then runs
-   * through the semantic library. */
-  [[nodiscard]] bool emit_sve_inline(const detail::SmeEncoding &row,
-                                     std::uint32_t instruction,
-                                     std::uint64_t pc);
-  [[nodiscard]] bool emit_sve_floating(std::uint16_t form,
-                                       std::uint32_t instruction,
-                                       std::uint64_t pc);
-  /* FSCALE: the scales added to the exponent fields when every element is
-   * normal and stays so, which raises nothing; otherwise the library. */
-  [[nodiscard]] bool emit_sve_scale(std::uint32_t instruction,
-                                    std::uint64_t pc);
-  [[nodiscard]] bool emit_sve_integer(std::uint16_t form,
-                                      std::uint32_t instruction,
-                                      std::uint64_t pc);
-  [[nodiscard]] bool emit_sve_permute(std::uint16_t form,
-                                      std::uint32_t instruction,
-                                      std::uint64_t pc);
-  [[nodiscard]] bool emit_sve_index(std::uint16_t form,
-                                    std::uint32_t instruction);
-  [[nodiscard]] bool emit_sve_compare(std::uint16_t form,
-                                      std::uint32_t instruction,
-                                      std::uint64_t pc);
-  [[nodiscard]] bool emit_sve_floating_compare(std::uint16_t form,
-                                               std::uint32_t instruction,
-                                               std::uint64_t pc);
-  /* The tail the compares share: the lane mask in scratch_a becomes Pd and,
-   * for the integer compares, the PredTest flags. */
-  void finish_sve_compare(unsigned governing, unsigned destination,
-                          unsigned esize, bool sets_flags);
-  [[nodiscard]] bool emit_sve_memory(const detail::SmeEncoding &row,
-                                     std::uint32_t instruction,
-                                     std::uint64_t pc);
-  /* The access itself, on the host address in x8 plus `displacement`. */
-  void emit_sve_access(const detail::SmeMemory &memory,
-                       std::uint32_t instruction, unsigned transfer,
-                       bool store, std::uint64_t displacement);
-  /*
-   * A window of SVE loads: a load whose base is a general register other
-   * than SP and whose offset is a constant, and the loads of the same base
-   * behind it in the block, with between them only SVE words that name no
-   * general register and no memory, so that none changes the base. The
-   * window's first word proves that its bytes lie in one page, translates
-   * the lowest of them once and keeps the host address in
-   * JitChainState::sve_window_anchor; each later word reads it back in place
-   * of translating. The words stay in program order, so a word that leaves
-   * the block, the first word's proof or a later word's predicate guard,
-   * leaves every word before it executed, and the library runs it.
-   */
-  struct SveWindowLoad final {
-    unsigned base{};
-    std::int64_t offset{};
-    std::uint64_t bytes{};
-  };
-  [[nodiscard]] bool decode_sve_window_load(std::uint32_t instruction,
-                                            SveWindowLoad &load) const;
-  [[nodiscard]] static bool sve_window_transparent(std::uint32_t instruction);
-  /* Fills sve_window_ from the words behind the one at count_, which loads
-   * `first` from `base`, and returns the window's lowest offset and the
-   * number of bytes it spans, or nothing when the word is alone. */
-  struct SveWindow final {
-    std::int64_t lowest{};
-    std::uint64_t span{};
-  };
-  [[nodiscard]] std::optional<SveWindow>
-  plan_sve_window(const SveWindowLoad &first);
-  [[nodiscard]] const std::uint64_t *sve_window_displacement(std::size_t index)
-      const noexcept;
-  /* The doubleword forms AdvSIMD lacks: MUL, MLA, MLS, MAD and MSB, and the
-   * integer maxima and minima. */
-  [[nodiscard]] bool emit_sve_doubleword(std::uint16_t form,
-                                         std::uint32_t instruction,
-                                         std::uint64_t pc);
-  /* SHRN, RSHRN, RADDHN, SUBHN and RSUBHN, bottom and top: the narrowed
-   * halves go to the even or odd elements of the destination. */
-  [[nodiscard]] bool emit_sve_narrow(std::uint16_t form,
-                                     std::uint32_t instruction);
-  /* BRKA, BRKAS, BRKB and BRKBS, by a prefix OR of the mask form. */
-  [[nodiscard]] bool emit_sve_break(std::uint16_t form,
-                                    std::uint32_t instruction);
-  /* COMPACT by a TBL through a table of the active-element masks, and
-   * SPLICE by a TBL of the two sources with indices from the first and
-   * last active byte. */
-  [[nodiscard]] bool emit_sve_compact(std::uint32_t instruction);
-  [[nodiscard]] bool emit_sve_splice(std::uint32_t instruction);
-  /* SQINC, SQDEC, UQINC and UQDEC of a general register by an element
-   * count. */
-  [[nodiscard]] bool emit_sve_saturating_count(std::uint32_t instruction);
-  /* LDR and STR of a predicate: its 16 bits, one per byte of the vector. */
-  [[nodiscard]] bool emit_sve_predicate_fill(const detail::SmeEncoding &row,
-                                             std::uint32_t instruction,
-                                             std::uint64_t pc);
-  /* The gathers and scatters, one translated access per element. */
-  [[nodiscard]] bool emit_sve_gather(const detail::SmeEncoding &row,
-                                     std::uint32_t instruction,
-                                     std::uint64_t pc);
-  /* The block's first SVE word marks the task live (sve_live), and every
-   * one makes the FP state current. */
-  void begin_sve_word();
-  /* Branches to `slow` unless the predicate is all-active for elements of
-   * esize bytes; known after an all-active PTRUE or a passed guard. */
-  void emit_sve_full_guard(unsigned predicate, unsigned esize,
-                           Arm64Emitter::Label slow);
-  /* As above with a cold exit to the library for the word, made only when
-   * the check is emitted. */
-  void emit_sve_guard(unsigned predicate, unsigned esize,
-                      std::uint32_t instruction, std::uint64_t pc);
-  /* Branches to `slow` when top-byte ignore is enabled, which the library
-   * handles by untagging. No guest instruction changes the state, so the
-   * block's first check covers its later SVE memory words. */
-  void emit_sve_tbi_check(Arm64Emitter::Label slow);
-  void emit_sve_predicate_form(std::uint16_t form, std::uint32_t instruction);
-  void emit_sve_count_form(std::uint16_t form, std::uint32_t instruction);
-  void emit_sve_move_form(std::uint16_t form, std::uint32_t instruction);
-  /* A WHILE* word, fused with a B.cond that follows it in the block: then
-   * the pair ends the block and this returns true. */
-  [[nodiscard]] bool emit_sve_while(std::uint16_t form,
-                                    std::uint32_t instruction,
-                                    std::uint64_t pc);
-  /* Guest NZCV = PredTest(mask, result, 8) of two predicates held in host
-   * vector registers. */
-  void emit_sve_predicate_test(unsigned mask, unsigned result);
-  /* Guest NZCV = the NZCV image in w11. */
-  void emit_sve_flags_from_w11();
-  /* Wdestination = the active elements of esize bytes in the predicate
-   * held in a host vector register; v4 is scratch. */
-  void emit_sve_active_count(unsigned predicate, unsigned esize,
-                             unsigned destination);
-  /* The host register holding a predicate's lane mask for elements of
-   * esize bytes: the predicate itself for bytes, else `scratch`. */
-  [[nodiscard]] unsigned emit_sve_lane_mask(unsigned predicate,
-                                            unsigned esize, unsigned scratch);
-  /* A host vector register = a 128-bit constant, or an element of esize
-   * bytes in every lane. x16 is scratch. */
-  void emit_sve_vector_constant(unsigned destination, std::uint64_t low,
-                                std::uint64_t high);
-  void emit_sve_element_constant(unsigned destination, std::uint64_t element,
-                                 unsigned esize);
-
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);
 
@@ -498,6 +378,11 @@ private:
   void emit_native_atomic_address(std::uint32_t instruction,
                                   std::uint64_t pc);
 
+  /* LDAR or LDAPR as the host's own load-acquire through the translated
+   * base. A misaligned or tagged address takes `slow`. */
+  void emit_native_ordered_load(std::uint32_t instruction, std::uint64_t pc,
+                                ColdPath::Action slow);
+
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);
 
@@ -538,9 +423,30 @@ private:
       UnsignedMemoryOperation &operation) noexcept;
 
   /* Emits each operation on the translated base in x8, naming its
-   * transfer register's native binding. */
+   * transfer register's native binding, and records the accesses for the
+   * run's straddle path, which `proved` says the run has. */
   void emit_native_gpr_run(std::span<const UnsignedMemoryOperation> operations,
-                           bool load);
+                           bool load, RunStraddle &straddle, bool proved);
+
+  /* Moves a run's base register forward or back by an offset. */
+  void move_run_base(std::uint64_t offset, bool forward, unsigned reg = 8U);
+
+  /* Advances x8 from a run's guest base to the first byte the run
+   * accesses, base + first, and branches to `outside` unless the bytes up
+   * to base + end lie in that byte's page. Returns whether it emitted
+   * that branch. */
+  bool emit_run_span_proof(std::uint64_t first, std::uint64_t end,
+                           Arm64Emitter::Label outside);
+
+  /* The TLB set for the guest address in `address` in x0 and its page
+   * tag in x1, as emit_translate() computes them. */
+  void emit_tlb_set(unsigned address);
+
+  /* Records the native access emitted next as one of the straddle's. */
+  void note_run_straddle_access(RunStraddle &straddle, std::uint64_t offset,
+                                std::size_t bytes);
+
+  void emit_run_straddle(const RunStraddle &straddle);
 
   [[nodiscard]] std::size_t try_emit_sp_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
@@ -566,6 +472,7 @@ private:
   Arm64Emitter emitter_;
   ColdPaths cold_;
   std::vector<TranslationColdPath> translation_cold_;
+  std::vector<RunStraddle> run_straddles_;
   std::size_t count_{};
   std::uint64_t memory_write_mask_{};
   std::uint64_t direct_memory_write_mask_{};
@@ -580,22 +487,6 @@ private:
   bool track_direct_stores_{};
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
-  /* The block being compiled, for a form that looks at its successor. */
-  std::span<const std::uint32_t> block_{};
-  /* An SVE word in this block has marked the task live (sve_live). */
-  bool sve_marked_{};
-  /* An SVE memory word in this block has emitted the top-byte-ignore check
-   * (emit_sve_tbi_check). */
-  bool sve_tbi_checked_{};
-  /* The words behind the first of an SVE load window, by their index in the
-   * block, and their offsets from the window's lowest byte. */
-  struct SveWindowMember final {
-    std::size_t index{};
-    std::uint64_t displacement{};
-  };
-  static constexpr std::size_t sve_window_capacity = 16;
-  std::array<SveWindowMember, sve_window_capacity> sve_window_{};
-  std::size_t sve_window_size_{};
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

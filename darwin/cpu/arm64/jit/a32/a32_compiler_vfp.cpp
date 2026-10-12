@@ -141,6 +141,13 @@ A32Compiler::Flow A32Compiler::emit_vfp_arith(const VInfo &v) {
 // VCMP and VCMPE. The A64 comparison sets the host NZCV, which are the bits
 // FPSCR keeps in a32_fpscr_nzcv, and the guest's own flags are in CpuState.
 
+namespace {
+/* The instruction runs whatever the flags are. */
+bool is_unconditional(const aarch32::Instruction &inst) noexcept {
+  return inst.cond >= 14U;
+}
+} // namespace
+
 A32Compiler::Flow A32Compiler::emit_vfp_compare(const VInfo &v) {
   const auto &o = cur().inst.operands;
   const bool dp = v.dp;
@@ -155,7 +162,22 @@ A32Compiler::Flow A32Compiler::emit_vfp_compare(const VInfo &v) {
                       o.with_zero));
   emit(0xd53b'4200U); // mrs x0, nzcv
   emitter_.store_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
+  /* The VMRS that moves them to the APSR next finds them in the host NZCV,
+   * where a reload through memory would only delay the branch on them. */
+  if (is_unconditional(cur().inst) && is_fpscr_flags_read(count_ + 1U))
+    flags_held_by_vmrs_ = count_ + 1U;
   return Flow::next;
+}
+
+bool A32Compiler::is_fpscr_flags_read(std::size_t index) const {
+  if (index >= block_.size())
+    return false;
+  const auto &inst = block_[index].inst;
+  if (inst.status != aarch32::Status::ok || !is_unconditional(inst) ||
+      op_info(inst.form).op != Op::vector)
+    return false;
+  const auto &v = vector_info(inst.form);
+  return v.mnemonic == VM::vmrs && inst.operands.t == 15;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,27 +304,30 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
       if (narrow) {
         // The 16-bit result saturates, and a saturation raises only IOC.
         emit(0xd53b'4422U); // mrs x2, fpsr
+        /* Only scratch registers: the host registers x3-x28 may hold the
+         * guest's. */
+        constexpr unsigned limit = 9, result = 10, status = 11;
         if (o.unsigned_) {
-          emit(enc::movz(3, 0xffffU));
-          emit(enc::cmp(0, 3));
-          emit(enc::csel(4, 0, 3, enc::ls));
+          emit(enc::movz(limit, 0xffffU));
+          emit(enc::cmp(0, limit));
+          emit(enc::csel(result, 0, limit, enc::ls));
         } else {
-          emit(enc::movz(3, 0x7fffU));
-          emit(enc::cmp(0, 3));
-          emit(enc::csel(4, 0, 3, enc::le));
-          emit(enc::movn(3, 0x7fffU));
-          emit(enc::cmp(4, 3));
-          emit(enc::csel(4, 4, 3, enc::ge));
+          emit(enc::movz(limit, 0x7fffU));
+          emit(enc::cmp(0, limit));
+          emit(enc::csel(result, 0, limit, enc::le));
+          emit(enc::movn(limit, 0x7fffU));
+          emit(enc::cmp(result, limit));
+          emit(enc::csel(result, result, limit, enc::ge));
         }
-        emit(enc::cmp(4, 0));
+        emit(enc::cmp(result, 0));
         const auto done = make_label();
         branch_condition(done, enc::eq);
-        emit(enc::and_i(5, 2, *enc::logical_immediate_field(0x80U)));
-        emit(enc::orr(5, 5, 1));
-        emit(enc::orr_i(5, 5, *enc::logical_immediate_field(1U)));
-        emit(0xd51b'4425U); // msr fpsr, x5
+        emit(enc::and_i(status, 2, *enc::logical_immediate_field(0x80U)));
+        emit(enc::orr(status, status, 1));
+        emit(enc::orr_i(status, status, *enc::logical_immediate_field(1U)));
+        emit(0xd51b'4420U | status); // msr fpsr, x11
         bind(done);
-        emit(enc::mov(0, 4));
+        emit(enc::mov(0, result));
         if (dp && !o.unsigned_)
           emit(enc::x::sxtw(0, 0));
       } else if (dp && !o.unsigned_) {
@@ -479,8 +504,10 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   if (v.mnemonic == VM::vmrs) {
     if (t == 15U) {
       // VMRS APSR_nzcv, FPSCR.
-      emitter_.load_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
-      emit(enc::msr_nzcv(0));
+      if (flags_held_by_vmrs_ != count_) {
+        emitter_.load_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
+        emit(enc::msr_nzcv(0));
+      }
       store_flags();
       return Flow::next;
     }
@@ -502,7 +529,6 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   }
   // VMSR FPSCR, Rt. The host FPCR takes the written control bits, so the
   // translation continues in the guest's mode.
-  set_fp_mode(false);
   const unsigned source = use(t, fallback_n);
   emit(enc::movz(1, fpscr_control_mask >> 16, 1));
   emit(enc::and_(1, 1, source));
@@ -515,7 +541,11 @@ A32Compiler::Flow A32Compiler::emit_fpscr(const VInfo &v) {
   emit(0xd51b'4422U); // msr fpsr, x2
   emit(enc::and_i(0, source, *enc::logical_immediate_field(0xf000'0000U)));
   emitter_.store_w(0, 15, offsetof(CpuState, a32_fpscr_nzcv));
-  standard_fp_ = false;
+  ++guest_fp_mode_ops_;
+  if (fp_mode_ != FpMode::guest) {
+    emitter_.store_b(31, 15, offsetof(CpuState, a32_fp_standard));
+    fp_mode_ = FpMode::guest;
+  }
   return Flow::next;
 }
 

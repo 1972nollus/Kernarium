@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import a32_armv8  # noqa: E402
 import a32_neon  # noqa: E402  (the complete level; this file's sibling)
+import a32_parallel  # noqa: E402  (parallel add and subtract, SEL)
 import a32_simd  # noqa: E402  (VFP and Advanced SIMD; this file's sibling)
 
 
@@ -140,7 +141,7 @@ FAMILIES = [
     "mrs",
     "msr",
     "cp15",          # MCR MRC MRRC with the sysreg the decoder names
-] + a32_simd.FAMILIES + a32_armv8.FAMILIES
+] + a32_simd.FAMILIES + a32_armv8.FAMILIES + a32_parallel.FAMILIES
 
 DP_MNEMONICS = {
     "AND": "and", "EOR": "eor", "SUB": "sub", "RSB": "rsb", "ADD": "add",
@@ -185,20 +186,16 @@ BITS = {"REV": 0, "REV16": 1, "REVSH": 2, "RBIT": 3, "CLZ": 4}
 FIELD = {"UBFX": 0, "SBFX": 1, "BFI": 2, "BFC": 3}
 
 # The forms the engine sends to the shared AArch32 semantic library
-# (cpu/arm64/aarch32/semantics.hpp) instead of lowering: the parallel add and
-# subtract families, SEL, USAD8, the dual 16-bit multiplies, the 16-bit
-# saturates and extends, and the saturating arithmetic of QADD and its
-# relatives. The library-exit count gates name any of them that turns hot.
+# (cpu/arm64/aarch32/semantics.hpp) instead of lowering: USAD8, the dual
+# 16-bit multiplies, the 16-bit saturates and extends, and the saturating
+# arithmetic of QADD and its relatives. The library-exit count gates name any
+# of them that turns hot.
 def library_mnemonics() -> list[str]:
-    parallel = []
-    for prefix in ("S", "Q", "SH", "U", "UQ", "UH"):
-        for suffix in ("ADD16", "ASX", "SAX", "SUB16", "ADD8", "SUB8"):
-            parallel.append(prefix + suffix)
-    return parallel + ["SEL", "USAD8", "USADA8", "SSAT16", "USAT16",
-                       "SMUAD", "SMUADX", "SMUSD", "SMUSDX", "SMLAD",
-                       "SMLADX", "SMLSD", "SMLSDX", "SMLALD", "SMLALDX",
-                       "SMLSLD", "SMLSLDX", "SXTB16", "UXTB16", "SXTAB16",
-                       "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
+    return ["USAD8", "USADA8", "SSAT16", "USAT16",
+            "SMUAD", "SMUADX", "SMUSD", "SMUSDX", "SMLAD",
+            "SMLADX", "SMLSD", "SMLSDX", "SMLALD", "SMLALDX",
+            "SMLSLD", "SMLSLDX", "SXTB16", "UXTB16", "SXTAB16",
+            "UXTAB16", "QADD", "QSUB", "QDADD", "QDSUB"]
 
 
 def plan_of(row: FormRow) -> tuple[str, int, int]:
@@ -258,6 +255,9 @@ def plan_of(row: FormRow) -> tuple[str, int, int]:
         return ("sat", 0 if mnemonic == "SSAT" else 1, 0)
     if mnemonic in ("PKHBT", "PKHTB"):
         return ("pkh", 0 if mnemonic == "PKHBT" else 1, 0)
+    parallel = a32_parallel.plan_of_parallel(mnemonic)
+    if parallel is not None:
+        return parallel
     if mnemonic in library_mnemonics():
         return ("library", 0, 0)
     if mnemonic in LOAD_STORE:
@@ -508,6 +508,40 @@ def dp_shape_body(op: str, s: bool, shape: str) -> str:
         lines += ["and x8, x8, #0xff", "str w11, [_cpu, x8]"]
     lines.append("next_gadget")
     return "\n".join(lines)
+
+
+# In-place ADD and SUB of an immediate (Rd == Rn, an ordinary register) with
+# the CpuState displacement baked into the gadget, one gadget per register.
+# The ordinary gadget reads and writes the register through a byte offset the
+# stream word carries, "ldr w9, [_cpu, x9]" and "str w11, [_cpu, x8]", and
+# the core forwards a dependent store-to-load pair at rename only when both
+# accesses name a base register and a constant displacement; the induction
+# variables and accumulators this shape is are what waits. The stream word
+# keeps the ordinary layout, so its two register fields are dead here.
+INPLACE_REGISTERS = 15
+
+
+def dp_inplace_body(subtract: bool, s: bool, register: int) -> str:
+    operation = ("sub" if subtract else "add") + ("s" if s else "")
+    lines = ["ldr x8, [_stream], #8",
+             f"ldr w9, [_cpu, #{8 * register}]", "lsr x12, x8, #32",
+             f"{operation} w11, w9, w12"]
+    if s:
+        lines.append("mrs x27, nzcv")
+    lines += [f"str w11, [_cpu, #{8 * register}]", "next_gadget"]
+    return "\n".join(lines)
+
+
+def inplace_name(subtract: bool, s: bool, register: int) -> str:
+    return f"dp_{'sub' if subtract else 'add'}{'s' if s else ''}_imm_r{register}"
+
+
+def emit_dp_inplace(asm: Assembly) -> None:
+    for subtract in (False, True):
+        for s in (False, True):
+            for register in range(INPLACE_REGISTERS):
+                asm.gadget(inplace_name(subtract, s, register),
+                           dp_inplace_body(subtract, s, register))
 
 
 def emit_dp(asm: Assembly) -> list[tuple[str, str, bool, str]]:
@@ -1142,12 +1176,14 @@ def hand_written(engine_dir: Path) -> list[str]:
 
 def build_assembly(asm: Assembly) -> None:
     emit_dp(asm)
+    emit_dp_inplace(asm)
     emit_single(asm)
     emit_double(asm)
     emit_blocks(asm)
     emit_integer(asm)
     a32_simd.emit(asm)
     a32_armv8.emit(asm)
+    a32_parallel.emit(asm)
 
 
 def write_assembly(path: Path, asm: Assembly, hand: list[str]) -> None:
@@ -1235,6 +1271,17 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
             out.append("\t\t{" + ", ".join(entries) + "},")
         out.append("\t},")
     out += ["};", ""]
+    out.append("/* In-place ADD and SUB of an immediate with the register "
+               "baked: [subtract][S][register]. */")
+    out.append(f"inline constexpr G kDpInplace[2][2][{INPLACE_REGISTERS}] = {{")
+    for subtract in (False, True):
+        out.append("\t{")
+        for s in (False, True):
+            out.append("\t\t{" + ", ".join(
+                g(inplace_name(subtract, s, r))
+                for r in range(INPLACE_REGISTERS)) + "},")
+        out.append("\t},")
+    out += ["};", ""]
     out.append("/* Single transfers: [size][mode]; modes are i ipre ipost ra "
                "rs rapre rspre rapost rspost abs. */")
     out.append("inline constexpr G kLoad[5][10] = {")
@@ -1256,6 +1303,8 @@ def write_header(path: Path, asm: Assembly, hand: list[str],
     out += a32_simd.header_tables(index)
     out.append("")
     out += a32_armv8.header_tables(index)
+    out.append("")
+    out += a32_parallel.header_tables(index)
     out += ["", "} // namespace uml::cpu::arm64::gadgets::a32", ""]
     path.write_text("\n".join(out))
 

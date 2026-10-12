@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "../aarch32/guest_key.hpp"
 #include "../cpu_state.hpp"
 #include "../layout/assembly_offsets.h"
 #include "../../engine.hpp"
@@ -177,7 +178,7 @@ class Program final {
 public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		ProgramWords words,
-		bool accesses_fp_state, bool holds_sve = false) noexcept;
+		bool accesses_fp_state) noexcept;
 
 	/* Where the block starts; its instructions are contiguous from here. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
@@ -196,20 +197,12 @@ public:
 	{
 		return accesses_fp_state_;
 	}
-	/* The program holds a word translated as a non-streaming SVE form, so
-	 * it also accesses the FP state, which carries P and FFR, and entering
-	 * it marks the task as having executed SVE (CpuState::sve_live). */
-	[[nodiscard]] bool holds_sve() const noexcept
-	{
-		return holds_sve_;
-	}
 
 private:
 	std::uint64_t guest_address_{};
 	std::size_t instruction_count_{};
 	ProgramWords words_;
 	bool accesses_fp_state_{};
-	bool holds_sve_{};
 };
 
 /* Where a guest PC sits in a program, counted in retired instructions from its
@@ -243,15 +236,21 @@ private:
 	return marker >= begin && marker < end;
 }
 
-/* The unsigned-offset scalar and integer pair transfers carry no PC word. A
- * fault in one reports its position in the program instead, shifted left by
- * two with bit 0 set, which no instruction address has; this puts the PC of
- * the instruction at that position in its place. `program` must be the one
- * the fault left from. */
+/* A memory transfer carries no PC word. Its operand holds the instruction's
+ * position in the block in bits 63:56 instead, so the block it names holds at
+ * most this many instructions. */
+inline constexpr std::size_t fault_position_instructions = 256;
+
+/* A fault in such a transfer reports its position shifted left by two with
+ * bit 0 set, which no instruction address has; this puts the PC of the
+ * instruction at that position in its place. `program` must be the one the
+ * fault left from. A T32 block's instructions have two lengths, so its
+ * positions are resolved from its halfwords by the AArch32 boundary. */
 inline void resolve_fault_position(
 	const Program &program, std::uint64_t &pc) noexcept
 {
-	if ((pc & (sizeof(std::uint32_t) - 1U)) != 1U)
+	if ((pc & (sizeof(std::uint32_t) - 1U)) != 1U ||
+	    aarch32::key_is_thumb(program.guest_address()))
 		return;
 	const auto position = pc >> 2;
 	if (position < program.instruction_count())
@@ -340,6 +339,11 @@ struct BuildOptions final {
 	std::uint8_t svcr{};
 	::uml::cpu::HostCapabilities host_capabilities{
 		::uml::cpu::host_capabilities()};
+
+	/* Two executors build the same stream for the same guest code exactly
+	 * when their options compare equal, so only then may they share it. */
+	[[nodiscard]] bool operator==(const BuildOptions &) const noexcept =
+		default;
 };
 
 /* Direct control-flow gadgets load these immutable-layout cells through the

@@ -77,6 +77,10 @@ public:
   void attach_exit_flush(void *context, ExitFlush flush) noexcept;
   void attach_flag_clobber(void *context, FlagClobber clobber) noexcept;
   [[nodiscard]] std::size_t size() const noexcept;
+  /* The word emitted at index. A branch or literal load is complete only
+   * after finish(), so copy only a range for which patched() is false. */
+  [[nodiscard]] std::uint32_t word(std::size_t index) const noexcept;
+  [[nodiscard]] bool patched(std::size_t begin, std::size_t end) const noexcept;
   void branch(Label label);
   void branch_condition(Label label, unsigned condition);
   void compare_zero(Label label, unsigned reg, bool is_64_bit, bool nonzero);
@@ -84,6 +88,8 @@ public:
   void load_x(unsigned destination, unsigned base, std::size_t offset);
   void load_pair_x(unsigned first, unsigned second, unsigned base,
                    std::ptrdiff_t offset);
+  void store_pair_x(unsigned first, unsigned second, unsigned base,
+                    std::ptrdiff_t offset);
   void store_x(unsigned source, unsigned base, std::size_t offset);
   void load_w(unsigned destination, unsigned base, std::size_t offset);
   void store_w(unsigned source, unsigned base, std::size_t offset);
@@ -126,6 +132,11 @@ public:
   }
   [[nodiscard]] std::uint8_t sme_host_mode() const noexcept {
     return sme_host_mode_;
+  }
+  /* An extended frame also saves x22-x28, which an AArch32 translation uses
+   * for its core registers. Every translation of a chain must agree on it. */
+  void set_extended_frame(bool extended) noexcept {
+    extended_frame_ = extended;
   }
   void prologue();
   void epilogue();
@@ -177,6 +188,7 @@ private:
   void *flag_context_{};
   FlagClobber flag_clobber_{};
   std::uint8_t sme_host_mode_{};
+  bool extended_frame_{};
 };
 
 [[nodiscard]] constexpr std::size_t

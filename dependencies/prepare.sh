@@ -385,16 +385,20 @@ resolve_series()
 	fi
 }
 
+# Every metadata path is absolute and joins a physical directory (pwd -P) to a
+# validated relative path, so a symbolic link can only be one of its own
+# components. Testing each prefix needs no process of its own.
 verify_metadata_path()
 {
-	python3 - "$1" <<'PY' || fail "metadata path contains a symlink: $1"
-import os
-import sys
-
-path = os.path.abspath(sys.argv[1])
-if os.path.realpath(path) != path:
-    raise SystemExit(1)
-PY
+	metadata_prefix=$1
+	while [ -n "$metadata_prefix" ]; do
+		[ ! -L "$metadata_prefix" ] ||
+			fail "metadata path contains a symlink: $1"
+		case $metadata_prefix in
+		*/*) metadata_prefix=${metadata_prefix%/*} ;;
+		*) break ;;
+		esac
+	done
 }
 
 validate_vulkan_pair()
@@ -459,6 +463,17 @@ series_tool()
 	python3 -B "$PATCH_SERIES" "$@"
 }
 
+# Adds the number of patch rows in the series file $1 to SERIES_COUNT.
+count_series_patches()
+{
+	while IFS="$tab" read -r series_row_kind series_row_rest ||
+		[ -n "$series_row_kind" ]; do
+		if [ "$series_row_kind" = patch ]; then
+			SERIES_COUNT=$((SERIES_COUNT + 1))
+		fi
+	done <"$1"
+}
+
 # A generated series records the tree it produces on the pinned commit. That
 # tree, not the patch bytes, identifies the prepared source. Reading it checks
 # every layer's files.
@@ -468,9 +483,16 @@ series_values()
 	SERIES_TREE=
 	[ "$patch_series" != '-' ] || return 0
 	resolve_series
-	SERIES_COUNT=$(printf '%s\n' "$SERIES_PATHS" | while IFS= read -r layer_path; do
-		awk -F '\t' '$1 == "patch" { count++ } END { print count + 0 }' "$layer_path"
-	done | awk '{ total += $1 } END { print total + 0 }')
+	SERIES_COUNT=0
+	old_ifs=$IFS
+	IFS='
+'
+	set -f
+	for layer_path in $SERIES_PATHS; do
+		count_series_patches "$layer_path"
+	done
+	set +f
+	IFS=$old_ifs
 	SERIES_TREE=$(series_tool_layers recorded-tree) ||
 		fail "$name patch series is invalid: $patch_series"
 }
@@ -619,6 +641,33 @@ git_value()
 	git -C "$1" config --get "$2" 2>/dev/null || true
 }
 
+# Sets the SOURCE_* variables to the uml.source.* settings of repository $1,
+# which one Git run reads; Git lists variable names in lower case.
+read_source_settings()
+{
+	SOURCE_REPOSITORY=
+	SOURCE_COMMIT=
+	SOURCE_PATHS=
+	SOURCE_PATCH_SERIES=
+	source_settings=$(git -C "$1" config --get-regexp '^uml\.source\.' \
+		2>/dev/null || true)
+	while IFS= read -r source_setting; do
+		source_key=${source_setting%% *}
+		source_value=
+		case $source_setting in
+		*' '*) source_value=${source_setting#* } ;;
+		esac
+		case $source_key in
+		uml.source.repository) SOURCE_REPOSITORY=$source_value ;;
+		uml.source.commit) SOURCE_COMMIT=$source_value ;;
+		uml.source.paths) SOURCE_PATHS=$source_value ;;
+		uml.source.patchseries) SOURCE_PATCH_SERIES=$source_value ;;
+		esac
+	done <<EOF_SOURCE_SETTINGS
+$source_settings
+EOF_SOURCE_SETTINGS
+}
+
 # Set REPOSITORY_PROBLEM and fail the check without leaving the script, so
 # preparation can decide whether --recreate may replace the repository.
 check_repository()
@@ -629,19 +678,20 @@ check_repository()
 		REPOSITORY_PROBLEM="$name is not a prepared Git repository"
 		return 1
 	}
-	[ "$(git_value "$repository_directory" uml.source.repository)" = "$repository" ] || {
+	read_source_settings "$repository_directory"
+	[ "$SOURCE_REPOSITORY" = "$repository" ] || {
 		REPOSITORY_PROBLEM="$name prepared repository URL changed"
 		return 1
 	}
-	[ "$(git_value "$repository_directory" uml.source.commit)" = "$commit" ] || {
+	[ "$SOURCE_COMMIT" = "$commit" ] || {
 		REPOSITORY_PROBLEM="$name prepared base commit changed"
 		return 1
 	}
-	[ "$(git_value "$repository_directory" uml.source.paths)" = "$source_paths" ] || {
+	[ "$SOURCE_PATHS" = "$source_paths" ] || {
 		REPOSITORY_PROBLEM="$name prepared source paths changed"
 		return 1
 	}
-	[ "$(git_value "$repository_directory" uml.source.patchSeries)" = "$patch_series" ] || {
+	[ "$SOURCE_PATCH_SERIES" = "$patch_series" ] || {
 		REPOSITORY_PROBLEM="$name prepared patch series changed"
 		return 1
 	}

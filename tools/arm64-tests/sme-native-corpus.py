@@ -46,11 +46,10 @@ The cases cover, for each record:
 
 Every expectation is observed at the oracle host's streaming vector length,
 64 bytes, and a record's svl says so: the runner runs these cases only where
-the virtual CPU's SVL is the record's. The SME host has no FEAT_SVE, so a
-case outside streaming mode whose word the SVE profile executes there holds
-only for a virtual CPU without SVE: it goes into a sibling of its group's
-record under the without_sve option, which the runner translates for on
-every host. Each case starts with X18 zero, since
+the virtual CPU's SVL is the record's. The SME host has no FEAT_SVE, as the
+virtual CPU has none, so a case outside streaming mode whose word only an SVE
+profile would execute is UNDEFINED there on both. Each case starts with X18
+zero, since
 Darwin clears X18 whenever a thread returns to user mode, and every address
 a case forms has a zero top byte, since the host ignores it and the guest's
 default state does not.
@@ -73,8 +72,8 @@ mode when no row decodes it or its row's bitmask immediate is one that
 DecodeBitMasks reserves. Such a case is an invalid encoding, and so is a case
 whose row no mode of any virtual-CPU configuration executes and a
 Debug-state form; a case that is UNDEFINED only for its mode or a missing
-feature is not, including a row that only the SVE profile executes outside
-streaming mode. invalid_encoding.py decides each case's bit from the table,
+feature is not, including a row that streaming mode executes and
+PSTATE.SM = 0 does not. invalid_encoding.py decides each case's bit from the table,
 and the case's own expectation stands where it does not.
 
 Oracle request (little-endian):
@@ -1207,8 +1206,7 @@ def invalid_flag(draft: Draft) -> bool:
     draft's."""
     if draft.expect != "illegal":
         return draft.invalid
-    decision = invalid_encoding.classifier().decide(
-        draft.words[0], record_key(draft)[1])
+    decision = invalid_encoding.classifier().decide(draft.words[0], ())
     return draft.invalid if decision is None else decision.invalid
 
 
@@ -1297,24 +1295,6 @@ def record_case(draft: Draft, case: WireCase, result: WireResult,
     return item
 
 
-WITHOUT_SVE = "without_sve"
-
-
-@functools.cache
-def _row_index() -> RowIndex:
-    return RowIndex(sme_table.load())
-
-
-def needs_no_sve(draft: Draft) -> bool:
-    """Whether the case holds only where the virtual CPU lacks SVE, as the
-    SME host does: one outside streaming mode whose word the SVE profile
-    executes there."""
-    if draft.svcr & SM:
-        return False
-    row = _row_index().row_for(draft.words[0])
-    return row is not None and "sve" in row.non_streaming_requirement
-
-
 def project_defined(draft: Draft) -> bool:
     """Whether the virtual CPU's result for the case is the project's, not
     the SME host's: a word of the SM = 0 family (the vector-length words
@@ -1324,34 +1304,21 @@ def project_defined(draft: Draft) -> bool:
         sme_table.sm0_family_word(draft.words[0])
 
 
-def record_key(draft: Draft) -> tuple[str, tuple[str, ...]]:
-    """The record a case belongs to: its group's, or, for a case that holds
-    only without SVE, the group's sibling under the without_sve option,
-    which the runner translates for on every host."""
-    return draft.group, (WITHOUT_SVE,) if needs_no_sve(draft) else ()
-
-
 def assemble(items: list[tuple[Draft, tuple[int, ...], dict]]) -> list[dict]:
     """The records holding the cases, each given with its draft and its
-    program's words, in group order and with each group's without_sve
-    sibling after it. The project-defined cases belong to no record."""
-    records: dict[tuple, dict] = {}
-    programs: dict[tuple, dict[tuple, int]] = {}
+    program's words, in group order. The project-defined cases belong to no
+    record."""
+    records: dict[str, dict] = {}
+    programs: dict[str, dict[tuple, int]] = {}
     for draft, words, item in items:
         if project_defined(draft):
             continue
-        key = record_key(draft)
-        group, options = key
-        name = f"{PRODUCER}/{group}"
-        if options:
-            bits = sum(1 << corpus.OPTION_NAMES.index(option)
-                       for option in options)
-            name += f"/options={bits:x}"
-        record = records.setdefault(key, {
-            "record": name, "producer": PRODUCER, "site": SITE,
-            "profiles": ["16k", "4k"], "options": list(options),
+        group = draft.group
+        record = records.setdefault(group, {
+            "record": f"{PRODUCER}/{group}", "producer": PRODUCER,
+            "site": SITE, "profiles": ["16k", "4k"], "options": [],
             "svl": SVL, "programs": [], "cases": []})
-        index = programs.setdefault(key, {})
+        index = programs.setdefault(group, {})
         if words not in index:
             index[words] = len(record["programs"])
             record["programs"].append({
@@ -1359,9 +1326,7 @@ def assemble(items: list[tuple[Draft, tuple[int, ...], dict]]) -> list[dict]:
                 "words": [[4 * i, f"{word:08x}"]
                           for i, word in enumerate(words)]})
         record["cases"].append(dict(item, program=index[words]))
-    return [records[key] for group in GROUPS
-            for key in ((group, ()), (group, (WITHOUT_SVE,)))
-            if key in records]
+    return [records[group] for group in GROUPS if group in records]
 
 
 def build_records(host: dict, results: list[WireResult]
@@ -1521,15 +1486,16 @@ def carry(options: argparse.Namespace) -> int:
              for item in dumped if "blob" in item}
     used = {region["blob"] for item in dumped if "cases" in item
             for case in item["cases"] for region in case.get("memory", [])}
-    # The request is unchanged, so each record holds its drafts' cases in
-    # order (names repeat where the table splits an encoding into rows);
-    # they go into the records this script now gives them.
-    queues: dict[tuple, list] = {}
+    # The request is unchanged, so each group's cases keep their drafts' order
+    # (names repeat where the table splits an encoding into rows); a pack that
+    # split a group across several records is read from each in turn. They go
+    # into the records this script now gives them.
+    queues: dict[str, list[list]] = {}
     for item in dumped:
         if "cases" not in item:
             continue
-        key = (item["record"].split("/")[1], tuple(item["options"]))
-        queues[key] = [
+        group = item["record"].split("/")[1]
+        queues.setdefault(group, []).append([
             (tuple(int(word, 16) for _offset, word in
                    item["programs"][case["program"]]["words"]), case)
             for case in reversed(item["cases"])
@@ -1537,20 +1503,23 @@ def carry(options: argparse.Namespace) -> int:
             # host's results for it.
             if not (not int(case["initial"].get("svcr", "0x0"), 16) & SM and
                     sme_table.sm0_family_word(int(item["programs"][
-                        case["program"]]["words"][0][1], 16)))]
+                        case["program"]]["words"][0][1], 16)))])
     carried = []
     for draft in drafts():
         if project_defined(draft):
             carried.append((draft, draft.wire().words, {}))
             continue
-        key = record_key(draft)
-        queue = queues.get(key, queues.get((draft.group, ())))
-        words, case = queue.pop() if queue else ((), {})
-        if case.get("name") != draft.name or words != draft.wire().words:
+        for queue in queues.get(draft.group, ()):
+            words, case = queue[-1] if queue else ((), {})
+            if case.get("name") == draft.name and \
+                    words == draft.wire().words:
+                queue.pop()
+                break
+        else:
             raise SystemExit(f"sme-native-corpus: {draft.name}: the pack's "
                              "native cases do not answer the request")
         carried.append((draft, words, case))
-    if any(queues.values()):
+    if any(queue for group in queues.values() for queue in group):
         raise SystemExit("sme-native-corpus: the pack holds native cases "
                          "the request lacks")
     records = assemble(carried)

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <optional>
 #include <vector>
 
 namespace uml::cpu::arm64::jit::a32 {
@@ -94,6 +95,11 @@ private:
       /* The instruction is UNDEFINED at run time (a CP15 barrier while
        * SCTLR.CP15BEN is clear). */
       illegal,
+      /* A conditional branch the block went on past was taken: link to
+       * `target`. */
+      branch,
+      /* An ISB found the address space's code changed: leave after it. */
+      code_changed,
     };
     Arm64Emitter::Label label;
     Kind kind;
@@ -101,8 +107,22 @@ private:
     std::uint16_t dirty_gprs{};
     std::uint32_t dirty_vectors{};
     GuestFlagsState flags{GuestFlagsState::memory};
-    /* The FPCR the host holds where the path branches off. */
-    bool standard_fp{};
+    std::uint64_t target{};
+    /* A branch taken inside a fused exclusive run: the host's monitor is
+     * open and the exit closes it. */
+    bool monitor{};
+  };
+
+  /* A guarded floating-point operation whose operands or result were not
+   * clean: it runs under the Standard FPSCR value and returns. */
+  struct FloatColdPath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+    std::uint32_t base;
+    bool quad;
+    unsigned dest;
+    unsigned a;
+    unsigned b;
   };
 
   /* The skipped arm of a fused conditional store: it clears the monitor and
@@ -118,6 +138,28 @@ private:
     Arm64Emitter::Label fault;
     unsigned address;
     ::uml::memory::Access access;
+    /* Nonzero when the hot path's tag compare was against the last byte of
+     * this many: the cold path first sends a crossing access to `crossing`. */
+    std::size_t bytes{};
+    Arm64Emitter::Label crossing{};
+    /* The access takes the delta (x9) and the guest address (x8) and adds
+     * them itself: the cold path leaves the host pointer in x9 and zero in
+     * x8. */
+    bool fold{};
+  };
+
+  /* An Advanced SIMD load whose span crosses a page: the cold path probes
+   * both pages and either reads through the first page's mapping (the two are
+   * adjacent in the host) or stages the bytes and reads those. A miss on
+   * either page runs the instruction in the library. */
+  struct CrossingColdPath final {
+    Arm64Emitter::Label label;
+    Arm64Emitter::Label continuation;
+    Arm64Emitter::Label slow;
+    unsigned address;
+    std::size_t bytes;
+    /* As in TranslationColdPath: the continuation takes x9 + w8. */
+    bool fold{};
   };
 
   /* A host register holding a W value and, for a destination, how it is
@@ -125,6 +167,21 @@ private:
   struct Dest final {
     NativeGpr native;
     unsigned guest;
+  };
+
+  /* A block whose last instruction branches back to its own first loops in
+   * the host: the registers it holds in the host through the block are
+   * loaded once before the loop head, the back edge costs a budget check
+   * and a branch, and an exit writes back what the iteration left. The
+   * plan is the bindings a probe compilation held at the back edge. */
+  struct LoopPlan final {
+    bool valid{};
+    /* The body guards Neon floating-point operations and has nothing that
+     * needs the guest's FPCR: the loop runs under the Standard value, set
+     * once before it. */
+    bool standard_fp{};
+    std::array<unsigned, 15> gpr{};
+    std::array<unsigned, 18> vector{};
   };
 
   /* The register bindings a conditional body must leave as it found them. */
@@ -149,6 +206,25 @@ private:
   void emit_block();
   Flow emit_instruction();
   Flow emit_guarded(unsigned condition);
+  /* Whether the block goes on past the instruction, which leaves by a side
+   * exit when it is taken: a conditional branch forward (continues_past), or
+   * back to anywhere but the block's own first instruction, which the host
+   * loop of a block that branches back to itself covers. */
+  [[nodiscard]] bool continues_through(const Decoded &d) const;
+  /* Whether the conditional instruction can run on both arms and keep its
+   * result only where the condition holds: a data-processing instruction
+   * (or MOVW) that leaves the host flags alone (it sets none and shifts by
+   * no register) and does not write the PC. */
+  [[nodiscard]] bool can_predicate() const;
+  [[nodiscard]] Flow emit_side_exit_branch(bool monitor = false);
+  [[nodiscard]] bool loop_candidate(const Request &request);
+  void record_loop_plan();
+  void apply_loop_plan();
+  /* The loads of the core registers that precede the internal entry, and the
+   * bindings that say they are there. */
+  void load_kept_gprs();
+  [[nodiscard]] Flow emit_loop_branch();
+  Flow emit_predicated(unsigned condition);
   [[nodiscard]] Flow emit_operation();
   void emit_cold_paths();
   void emit_slow_helper(const ColdPath &cold);
@@ -177,6 +253,10 @@ private:
   void exit_continue_at(std::uint64_t pc_key, std::uint8_t it,
                         std::size_t count);
   [[nodiscard]] Arm64Emitter::Label cold_exit(ColdPath::Kind kind);
+  /* After an ISB: leave after it when the address space's code changed
+   * since this run's translations were validated, as the A64 compiler's
+   * check does (JitCompiler::emit_code_change_check). */
+  void emit_code_change_check();
 
   // Registers and constants (a32_compiler_alu.cpp).
   [[nodiscard]] const Decoded &cur() const noexcept { return block_[count_]; }
@@ -212,10 +292,20 @@ private:
   [[nodiscard]] Flow emit_exclusive(const Transfer &transfer);
   /* The whole instruction in the slow helper. */
   [[nodiscard]] Flow emit_through_helper();
+  /* The load of `bytes` (at most CrossingColdPath's limit) at `address`
+   * branches to `crossing` instead of `slow` when it spans two pages.
+   * `aligned` is the alignment the caller has already checked: an access no
+   * larger than that cannot span two pages, and is not tested for it. */
   void emit_translate(unsigned address, ::uml::memory::Access access,
                       Arm64Emitter::Label slow, Arm64Emitter::Label fault,
-                      std::size_t bytes);
+                      std::size_t bytes,
+                      std::optional<Arm64Emitter::Label> crossing =
+                          std::nullopt,
+                      unsigned aligned = 0, bool fold = false);
+  /* x1 takes the page number of `address` and x0 the TLB entry's address. */
+  void emit_tlb_index(unsigned address);
   void emit_translation_cold(const TranslationColdPath &path);
+  void emit_crossing_cold(const CrossingColdPath &path);
   void emit_alignment_check(unsigned address, unsigned alignment,
                             Arm64Emitter::Label slow);
   /* The address of a single or paired transfer in x8 (the base for a
@@ -240,6 +330,7 @@ private:
   [[nodiscard]] Flow emit_extend(const OpInfo &info);
   [[nodiscard]] Flow emit_saturate(const OpInfo &info);
   [[nodiscard]] Flow emit_dsp_multiply(const OpInfo &info);
+  [[nodiscard]] Flow emit_parallel(const OpInfo &info);
   /* The whole instruction in the slow helper. */
   [[nodiscard]] Flow emit_arith_through_helper();
   void emit_extract(unsigned out, unsigned source, bool is_signed,
@@ -285,9 +376,11 @@ private:
   /* The instruction depends on the host FPCR or FPSR, or sets FPSR. */
   void touch_fp_environment();
   /* Moves the host FPCR to the guest's value or to the Standard FPSCR
-   * value (FZ and DN set, round to nearest, AHP and FZ16 the guest's). */
+   * value (FZ and DN set, round to nearest, AHP and FZ16 the guest's), when
+   * it is not there already: the translation knows the mode only after an
+   * instruction of its own, and tests CpuState::a32_fp_standard for the
+   * first. */
   void set_fp_mode(bool standard);
-  void restore_fp_for_exit();
   [[nodiscard]] std::uint32_t neon_word() const noexcept;
 
   // Vector memory (a32_compiler_vmem.cpp).
@@ -298,7 +391,10 @@ private:
   [[nodiscard]] Flow vmem_through_helper(bool store);
   void vmem_granule(bool load, unsigned log2_size, unsigned index,
                     unsigned offset);
-  void vmem_run(bool load, bool single, unsigned first, unsigned count);
+  [[nodiscard]] bool vmem_folds(bool store, unsigned bytes, unsigned first,
+                                unsigned per_q) const;
+  void vmem_run(bool load, bool single, unsigned first, unsigned count,
+                bool fold = false);
   void vmem_d_from(unsigned dreg, unsigned source, unsigned half);
   void vmem_d_into(unsigned dreg, unsigned scratch, unsigned half);
 
@@ -320,6 +416,9 @@ private:
   [[nodiscard]] Flow emit_vfp(const OpInfo &info, const VInfo &v);
   [[nodiscard]] Flow emit_vfp_arith(const VInfo &v);
   [[nodiscard]] Flow emit_vfp_compare(const VInfo &v);
+  /* Whether the instruction at `index` is an unconditional VMRS that moves
+   * the FPSCR flags to the APSR. */
+  [[nodiscard]] bool is_fpscr_flags_read(std::size_t index) const;
   [[nodiscard]] Flow emit_vfp_convert(const VInfo &v);
   [[nodiscard]] Flow emit_vfp_move(const VInfo &v);
   [[nodiscard]] Flow emit_fpscr(const VInfo &v);
@@ -328,6 +427,22 @@ private:
   [[nodiscard]] Flow emit_neon(const VInfo &v);
   [[nodiscard]] bool neon_half_precision(const VInfo &v) const;
   [[nodiscard]] Flow emit_neon_same(const VInfo &v);
+  /* VMAX and VMIN (single precision) under the guest's FPCR, where the
+   * translation holds it: see emit_neon_minmax_guarded. */
+  [[nodiscard]] Flow emit_neon_minmax_guarded(const VInfo &v);
+  /* VADD, VSUB, VMUL, VMLA and VMLS (single precision) the same way: see
+   * emit_guarded_float_op. */
+  [[nodiscard]] Flow emit_neon_float_guarded(const VInfo &v);
+  [[nodiscard]] bool neon_float_isolated() const;
+  void emit_float_special_test(unsigned a, unsigned b, bool quad,
+                               unsigned live);
+  void emit_float_tiny_test(unsigned result, bool quad, unsigned live);
+  void emit_float_product_test(unsigned a, unsigned b, bool quad,
+                               unsigned live);
+  void emit_guarded_float_op(std::uint32_t base, bool quad, unsigned dest,
+                             unsigned a, unsigned b, bool product,
+                             unsigned live);
+  void emit_fp_write(bool standard);
   [[nodiscard]] Flow emit_neon_step(bool rsqrt, bool quad, unsigned d,
                                     unsigned n, unsigned m);
   [[nodiscard]] Flow emit_neon_logic(const VInfo &v);
@@ -375,7 +490,30 @@ private:
   std::vector<Decoded> block_;
   std::vector<ColdPath> cold_;
   std::vector<TranslationColdPath> translation_cold_;
+  std::vector<CrossingColdPath> crossing_cold_;
   std::vector<ResumePath> resume_cold_;
+  std::vector<FloatColdPath> float_cold_;
+  /* The index of the VMRS APSR_nzcv, FPSCR whose flags the host NZCV already
+   * holds, because the VCMP before it left them there and nothing came
+   * between. */
+  std::size_t flags_held_by_vmrs_{~std::size_t{0}};
+  /* A predicated instruction computes its result in a scratch register,
+   * which done() merges into the destination with a CSEL on the host flags. */
+  bool predicated_{false};
+  unsigned predicate_condition_{};
+  /* The compilation that learns a loop's bindings, the plan it recorded,
+   * and the plan the translation of a loop runs on. */
+  bool probing_{};
+  /* The Neon floating-point operations compiled with a guard, and the
+   * instructions that need the host FPCR to hold the guest's value, in the
+   * translation so far (the loop probe's account of the body). */
+  unsigned guarded_float_ops_{};
+  unsigned guest_fp_mode_ops_{};
+  /* How often a probing compilation touched each core register. */
+  std::array<unsigned, 15> uses_{};
+  bool looping_{};
+  LoopPlan plan_{};
+  Arm64Emitter::Label loop_head_{};
   std::size_t count_{};
   std::size_t units_consumed_{};
   std::uint64_t key_{};
@@ -383,12 +521,18 @@ private:
   bool thumb_{};
   bool single_{};
   bool track_direct_stores_{};
+  /* The translation keeps all fifteen core registers in the host: they are
+   * loaded before the internal entry and written back only where the block
+   * returns to the executor (JitCompilerFamilies::keep_gprs_across_links). */
+  bool kept_gprs_{};
   bool terminated_{};
   bool native_fp_{};
   bool accesses_fp_state_{};
-  /* The host FPCR holds the Standard FPSCR value rather than the guest's
-   * where the instruction being translated starts. */
-  bool standard_fp_{};
+  /* The mode of the host FPCR where the instruction being translated
+   * starts, as far as the translation can tell: it is unknown where the
+   * translation begins and where two arms of a conditional body differ. */
+  enum class FpMode : std::uint8_t { unknown, guest, standard };
+  FpMode fp_mode_{FpMode::unknown};
   bool link_target_safe_{true};
   bool guest_illegal_{};
   std::uint64_t memory_write_mask_{};

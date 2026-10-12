@@ -16,9 +16,8 @@ namespace uml::cpu::arm64::detail {
 /*
  * The profile features a row can need, one bit each. The names are the
  * runtime's ArmFeature tokens; a consumer maps its feature set onto these
- * bits. The SVE profile's withheld extensions, FEAT_SVE_BitPerm and
- * FEAT_SVE_SM4, have bits that no row needs until the generator's profile
- * includes them.
+ * bits. The withheld extensions FEAT_SVE_BitPerm and FEAT_SVE_SM4 have
+ * bits that no row needs until the generator's profile includes them.
  */
 using SmeFeatureMask = std::uint16_t;
 inline constexpr SmeFeatureMask sme_feature_sme = 1U << 0U;

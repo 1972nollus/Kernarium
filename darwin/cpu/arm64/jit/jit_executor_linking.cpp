@@ -2,6 +2,7 @@
 
 #include "jit_executor_internal.hpp"
 
+#include "cpu/arm64/aarch32/guest_key.hpp"
 #include "uml_darwin_static_mmu.h"
 
 namespace uml::cpu::arm64 {
@@ -13,6 +14,12 @@ namespace uml::cpu::arm64 {
   execution_context_ =
       darwin_uml_static_vm_execution_context_create(generation);
   execution_generation_ = execution_context_ != nullptr ? generation : 0;
+  const auto *sequence =
+      execution_context_ != nullptr
+          ? darwin_uml_static_vm_execution_context_code_sequence(
+                execution_context_)
+          : nullptr;
+  code_sequence_ = sequence != nullptr ? sequence : &arm64::no_code_changes;
   return execution_context_;
 }
 
@@ -48,6 +55,14 @@ JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
 
 void JitExecutor::Implementation::train_indirect(std::uint64_t source_key,
                     const CompiledBlock &target) {
+  if (a32_targets_ != nullptr && aarch32::key_is_aarch32(target.key) &&
+      target.link != nullptr && target.link_epoch == link_epoch_ &&
+      target.link_target_safe) {
+    const auto target_pc = translation_key_pc(target.key);
+    a32_targets_[jit_indirect_target_index(target_pc)] = {
+        .guest_pc = target_pc | jit_indirect_target_tag(link_epoch_),
+        .link = target.link};
+  }
   /* consume_pending_indirect() matched the target with the key of the
    * site's own mode, so the site never links to code of another mode. */
   auto *site = indirect_links_.find(source_key, link_generation_);

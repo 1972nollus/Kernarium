@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Sat, 10 Oct 2026 14:51:11 +0900
+Date: Mon, 12 Oct 2026 04:21:14 +0900
 Subject: [PATCH] arm64: um: run AArch32 tasks (armhf, armeabi-v7a) on the
  Darwin guest
 
@@ -16,8 +16,8 @@ Task model
   x0-x14 zero-extended, pstate is SPSR_EL1's layout for an exception
   from AArch32, D0-D31 are V0-V15, FPSCR splits into fpsr and fpcr,
   TPIDRURW is the guest's tls and TPIDRURO the new bridge field
-  tpidrro (bridge ABI 22, with the dispatch flag
-  DARWIN_UML_DISPATCH_A32_CP15BEN). exec clears tpidrro.
+  tpidrro, with the dispatch flag DARWIN_UML_DISPATCH_A32_CP15BEN.
+  exec clears tpidrro.
 - ELF32 EM_ARM EABI executables load through the generic compat ELF
   loader, with COMPAT_ELF_HWCAP/HWCAP2 from the host's compat HWCAP
   imports. The kernel provides the kuser helpers page at 0xffff0000
@@ -44,8 +44,13 @@ Observation
   arm64 Linux's compat form (model name, Features from the compat
   HWCAPs); a 64-bit task sees the unchanged output. The CP15 barrier
   is switched by abi.cp15_barrier (default 1, as natively); SWP and
-  SETEND are UNDEFINED. The SVE and SME vector-length prctls refuse
-  AArch32 tasks.
+  SETEND are UNDEFINED. The SME vector-length prctls refuse AArch32
+  tasks.
+
+Bridge
+- The topic leaves the bridge at ABI 23: an arm64 task's register tail
+  is its FP and SME registers, 552 bytes, and the kernel imports no SVE
+  query.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
@@ -67,7 +72,6 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/arm64/um/signal32.c                    | 472 ++++++++++++++++++++
  arch/arm64/um/signal_frame.h                |   8 +
  arch/arm64/um/sme.c                         |   7 +-
- arch/arm64/um/sve.c                         |   7 +-
  arch/arm64/um/sys32.c                       | 115 +++++
  arch/arm64/um/sys_compat.c                  |  93 ++++
  arch/arm64/um/syscall_table.c               |  28 ++
@@ -83,7 +87,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  arch/um/os-Darwin/uml_darwin_abi.h          |  55 ++-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_cpu.h          |  10 +
- 34 files changed, 1993 insertions(+), 21 deletions(-)
+ 33 files changed, 1988 insertions(+), 19 deletions(-)
  create mode 100644 arch/arm64/um/aarch32.c
  create mode 100644 arch/arm64/um/aarch32_pages.S
  create mode 100644 arch/arm64/um/armv8_deprecated.c
@@ -95,7 +99,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
  create mode 100644 arch/arm64/um/sys_compat.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 16e85ce9aa232df34f6a3333de46a0ddb89aee1a..bae75ad1f824f545aa85c3b8cceb24040b4dfe2b 100644
+index 8b8b7d797c4dfc841eaa5c8f1b3ddc888fda9e1f..8ae0a8f55de94ab387b78a80cb16c0372a31eefc 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
 @@ -26,6 +26,32 @@ config UML_ARM64
@@ -148,13 +152,13 @@ index 16e85ce9aa232df34f6a3333de46a0ddb89aee1a..bae75ad1f824f545aa85c3b8cceb2404
  	def_bool y
  
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index c805aee161a3fd5e8415064fa34445b0134ca3a4..639228d7875d73a68dbad684ec0f19c86471cba1 100644
+index 8fb8cd5c5933244bf3a8889ff565b177da73d682..bc1a5cf91ff8dac93986b266eadbe3f193a8c616 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
 @@ -3,6 +3,8 @@
  obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
  	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
- obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
+ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
 +obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
 +	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
  
@@ -707,7 +711,7 @@ index 0000000000000000000000000000000000000000..2b50984d56d48945c5485c230fdf7348
 +
 +#endif
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index de061e2d957d4e3d9a875efe11504d5e91539348..2ee12a04506c5a6e6dbe44e4721a622c3505cd38 100644
+index 0a1ed25d8ee34401c84f359b868b25654df5ebc7..2dc1b1be43dca961e4ce25ff7b2407caa3ccf894 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -49,7 +49,14 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
@@ -792,12 +796,12 @@ index de061e2d957d4e3d9a875efe11504d5e91539348..2ee12a04506c5a6e6dbe44e4721a622c
 +
  #ifdef CONFIG_UML_ARM64_SME
  /*
-  * With SVE or SME, AT_MINSIGSTKSZ gives the stack the largest signal frame
+  * With SME, AT_MINSIGSTKSZ gives the stack the largest signal frame needs,
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index 2c22cebbdd40e3be84943d8c6328e7b0ea95db0c..30599f3cdbc3da7d254a6588ca539359dfb23d65 100644
+index c2b6adefd7bb47d9d13846bc2fe51664c6e0f067..fbd219461e197d4e1b66ca46b3100c8ce25fff13 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -84,6 +84,19 @@ static __always_inline void cpu_relax(void)
+@@ -76,6 +76,19 @@ static __always_inline void cpu_relax(void)
  
  #define task_pt_regs(task) (&(task)->thread.regs)
  
@@ -905,7 +909,7 @@ index 9dfdeb2cc681efb4bcb590e7737e8f9ac9fb4c44..87c04e32a52fbe1213d88a72d7a7edab
  }
  
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..7c7f94d5653dffefa33d0473c2aa6679143983be 100644
+index 5d374351c1acc2483eb6b3ff26e5f9b082ef59bd..e4c01527abe73ff1a238096db6bc3f60ba7819eb 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -1,6 +1,7 @@
@@ -916,7 +920,7 @@ index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..7c7f94d5653dffefa33d0473c2aa6679
  #include <linux/elf.h>
  #include <linux/regset.h>
  #include <linux/sched.h>
-@@ -57,8 +58,15 @@ unsigned long getreg(struct task_struct *child, int regno)
+@@ -55,8 +56,15 @@ unsigned long getreg(struct task_struct *child, int regno)
   * valid_user_regs(), reduce it to NZCV and report that, so rt_sigreturn raises
   * SIGSEGV and a tracer's register write fails with -EINVAL.
   */
@@ -933,7 +937,7 @@ index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..7c7f94d5653dffefa33d0473c2aa6679
  	*pstate &= ~(UML_ARM64_PSTATE_RES0 | UML_ARM64_PSTATE_SS);
  	if (!(*pstate & UML_ARM64_PSTATE_MODE_DAIF))
  		return true;
-@@ -72,7 +80,7 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
+@@ -70,7 +78,7 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
  
  	if (index < 0)
  		return index;
@@ -942,7 +946,7 @@ index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..7c7f94d5653dffefa33d0473c2aa6679
  		return -EINVAL;
  	child->thread.regs.regs.gp[index] = value;
  	return 0;
-@@ -123,7 +131,7 @@ static int genregs_set(struct task_struct *target,
+@@ -121,7 +129,7 @@ static int genregs_set(struct task_struct *target,
  				 sizeof(regs));
  	if (ret)
  		return ret;
@@ -951,7 +955,7 @@ index f3c84c5601b35da9972114bca5cd9e2ad06ca2d3..7c7f94d5653dffefa33d0473c2aa6679
  		return -EINVAL;
  	memcpy(target->thread.regs.regs.gp, regs, sizeof(regs));
  	return 0;
-@@ -274,6 +282,10 @@ static const struct user_regset_view uml_arm64_sme_view = {
+@@ -254,6 +262,10 @@ static const struct user_regset_view uml_arm64_sme_view = {
  const struct user_regset_view *
  task_user_regset_view(struct task_struct *task)
  {
@@ -1394,7 +1398,7 @@ index 3a493972d6b40e4f5500325140850a61069660e4..cef8b448bcf82f5e76972650365888c9
  extern int arch_init_registers(int pid);
  
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 291efec44e2f99f3b8ab7db1813fbfbdf6d93d40..d0cb12478b6b9cc9ebd10a45146e9e9594dc32ff 100644
+index 134007a2cbb6bf0b2c6c035d67d0f17681fb97d2..dd560d7da81a046f943d8a318b50737cf2f053eb 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -149,7 +149,8 @@ static int restore_mcontext(struct pt_regs *regs,
@@ -1405,7 +1409,7 @@ index 291efec44e2f99f3b8ab7db1813fbfbdf6d93d40..d0cb12478b6b9cc9ebd10a45146e9e95
 +	if (!error && !uml_arm64_valid_user_pstate(current,
 +						   &PT_REGS_PSTATE(regs)))
  		error = -EINVAL;
- 	if (!error && uml_arm64_vector_sigframes())
+ 	if (!error && uml_arm64_sme_vl)
  		error = uml_arm64_sme_restore_sigframe(regs, (void __user *)
 @@ -170,6 +171,11 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  	unsigned long restorer;
@@ -1416,7 +1420,7 @@ index 291efec44e2f99f3b8ab7db1813fbfbdf6d93d40..d0cb12478b6b9cc9ebd10a45146e9e95
 +		return uml_arm64_compat_setup_signal_stack(stack_top, ksig,
 +							   regs, mask);
 +#endif
- 	if (uml_arm64_vector_sigframes()) {
+ 	if (uml_arm64_sme_vl) {
  		long size = uml_arm64_sme_sigframe_size();
  
 diff --git a/arch/arm64/um/signal32.c b/arch/arm64/um/signal32.c
@@ -1915,7 +1919,7 @@ index 9dbf6930d4663fb0590d486adad3b2d6853d666b..69a17835e8e1f73ac4501d624a2581d1
 +
  #endif
 diff --git a/arch/arm64/um/sme.c b/arch/arm64/um/sme.c
-index 953f7811bcbe18edd84c2b222386baffc3991502..46281d0d2e4a290306b372b1d24a00b4a8bf45b3 100644
+index 504106fdc83d43ba5edfdad818f210eba6cd7969..bf0700787364acd29e655240a0fd0fa29408766c 100644
 --- a/arch/arm64/um/sme.c
 +++ b/arch/arm64/um/sme.c
 @@ -17,6 +17,7 @@
@@ -1926,7 +1930,7 @@ index 953f7811bcbe18edd84c2b222386baffc3991502..46281d0d2e4a290306b372b1d24a00b4
  #include <linux/init.h>
  #include <linux/log2.h>
  #include <linux/prctl.h>
-@@ -231,7 +232,8 @@ int uml_arm64_sme_set_current_vl(unsigned long arg)
+@@ -226,7 +227,8 @@ int uml_arm64_sme_set_current_vl(unsigned long arg)
  	unsigned long vl = arg & PR_SME_VL_LEN_MASK;
  	int error;
  
@@ -1936,44 +1940,12 @@ index 953f7811bcbe18edd84c2b222386baffc3991502..46281d0d2e4a290306b372b1d24a00b4
  		return -EINVAL;
  	error = uml_arm64_sme_set_vector_length(current, vl, arg & ~vl);
  	return error ?: sme_prctl_status();
-@@ -240,7 +242,8 @@ int uml_arm64_sme_set_current_vl(unsigned long arg)
+@@ -235,7 +237,8 @@ int uml_arm64_sme_set_current_vl(unsigned long arg)
  /* PR_SME_GET_VL */
  int uml_arm64_sme_get_current_vl(void)
  {
 -	return uml_arm64_sme_vl ? sme_prctl_status() : -EINVAL;
 +	return uml_arm64_sme_vl && !is_compat_task() ? sme_prctl_status() :
-+		-EINVAL;
- }
- 
- #ifdef CONFIG_SYSCTL
-diff --git a/arch/arm64/um/sve.c b/arch/arm64/um/sve.c
-index 9ba82f294fa62deef4ffa9dc856ca2f0aa31be3e..00cbf58867c8c4d117e9882faab8ef64477ac02b 100644
---- a/arch/arm64/um/sve.c
-+++ b/arch/arm64/um/sve.c
-@@ -20,6 +20,7 @@
-  * leaving streaming mode on the task's behalf, fork and exec.
-  */
- 
-+#include <linux/compat.h>
- #include <linux/init.h>
- #include <linux/prctl.h>
- #include <linux/regset.h>
-@@ -123,7 +124,8 @@ int uml_arm64_sve_set_current_vl(unsigned long arg)
- 	unsigned long vl = arg & PR_SVE_VL_LEN_MASK;
- 	int error;
- 
--	if (!uml_arm64_sve_vl)
-+	/* An AArch32 task has no SVE, as on arm64 Linux. */
-+	if (!uml_arm64_sve_vl || is_compat_task())
- 		return -EINVAL;
- 	error = sve_set_vector_length(current, vl, arg & ~vl);
- 	return error ?: sve_prctl_status();
-@@ -132,7 +134,8 @@ int uml_arm64_sve_set_current_vl(unsigned long arg)
- /* PR_SVE_GET_VL */
- int uml_arm64_sve_get_current_vl(void)
- {
--	return uml_arm64_sve_vl ? sve_prctl_status() : -EINVAL;
-+	return uml_arm64_sve_vl && !is_compat_task() ? sve_prctl_status() :
 +		-EINVAL;
  }
  
@@ -2459,7 +2431,7 @@ index feb6c2eb55b5db90284304c3402d4d06c7d475fb..75201de007c9a3ee075664d6d5c6463e
  
  #endif
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 52a043c536756c34606a4baf78af176b4f0983ba..a8c0475319ce2a236d8bb5ca9cf4e4f0ed6c52ac 100644
+index 8c1ab173f3850c7da37b8d048d0bdf5c05070b31..2aa3b998b27f59a2551913dd86056127e8f717ec 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -38,6 +38,9 @@ _Static_assert(offsetof(struct uml_pt_regs, fpmr) ==
@@ -2472,7 +2444,7 @@ index 52a043c536756c34606a4baf78af176b4f0983ba..a8c0475319ce2a236d8bb5ca9cf4e4f0
  _Static_assert(offsetof(struct uml_pt_regs, fp) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_SIZE,
  	       "uml_pt_regs ABI prefix size drift");
-@@ -137,6 +140,11 @@ static unsigned int begin_guest_dispatch(struct uml_pt_regs *regs,
+@@ -123,6 +126,11 @@ static unsigned int begin_guest_dispatch(struct uml_pt_regs *regs,
  #ifdef CONFIG_UML_DARWIN_MM_SHARED
  	if (mm_id != NULL && current_mm_shared())
  		set |= DARWIN_UML_DISPATCH_MM_SHARED;
@@ -2484,7 +2456,7 @@ index 52a043c536756c34606a4baf78af176b4f0983ba..a8c0475319ce2a236d8bb5ca9cf4e4f0
  #endif
  	if (set)
  		*flags |= set;
-@@ -560,6 +568,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -543,6 +551,8 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2493,7 +2465,7 @@ index 52a043c536756c34606a4baf78af176b4f0983ba..a8c0475319ce2a236d8bb5ca9cf4e4f0
  
  			/* UDF and other architecturally undefined instructions are
  			 * guest events, not failures of the host dispatcher.  Preserve
-@@ -569,13 +579,22 @@ void userspace(struct uml_pt_regs *registers)
+@@ -552,13 +562,22 @@ void userspace(struct uml_pt_regs *registers)
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
  			registers->faultinfo.trap_no = 0;
@@ -2520,10 +2492,10 @@ index 52a043c536756c34606a4baf78af176b4f0983ba..a8c0475319ce2a236d8bb5ca9cf4e4f0
  			unblock_signals_trace();
  			registers->is_user = 0;
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f0711d6ec 100644
+index 0b3d3bc8da84ed9bc8618985b05978f62a83748f..e4829f2b3f013031565d1e820e50447518dea502 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -72,6 +72,16 @@ enum {
+@@ -71,6 +71,16 @@ enum {
  	 * one that sets the flag; the arm64 kernels never set it, and the
  	 * arm64 host does not read it. */
  	DARWIN_UML_DISPATCH_MM_SHARED = 1U << 0,
@@ -2540,7 +2512,7 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
  };
  
  enum {
-@@ -107,7 +117,40 @@ struct darwin_uml_faultinfo {
+@@ -106,7 +116,40 @@ struct darwin_uml_faultinfo {
  	darwin_uml_abi_s32 trailing_padding;
  };
  
@@ -2567,9 +2539,9 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
 + *   tls     (the tls argument of darwin_uml_enter_guest()) TPIDRURW in
 + *           bits 31:0, read on entry and written on return.
 + *   tpidrro TPIDRURO, read on entry only.
-+ * An AArch32 entry whose svcr is non-zero, whose SVE registers are live, or
-+ * that the run's engine cannot execute (darwin_uml_guest_compat_hwcap() is
-+ * zero) is DARWIN_UML_EVENT_FATAL. The events mean, for such a task:
++ * An AArch32 entry whose svcr is non-zero, or that the run's engine cannot
++ * execute (darwin_uml_guest_compat_hwcap() is zero), is
++ * DARWIN_UML_EVENT_FATAL. The events mean, for such a task:
 + *   SYSCALL   pc is after the SVC (4 bytes in A32, 2 or 4 in T32) and the
 + *             IT state in pstate has advanced past it; the kernel takes
 + *             the system call number from x7 and ignores the immediate.
@@ -2582,7 +2554,7 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
  struct darwin_uml_guest_registers {
  	darwin_uml_abi_u64 x[29];
  	/* For a task of an x86-64 userspace kernel, the address of its mm's
-@@ -134,6 +177,11 @@ struct darwin_uml_guest_registers {
+@@ -133,6 +176,11 @@ struct darwin_uml_guest_registers {
  	 * whichever ABI installed them, one struct user_desc each; zero for
  	 * every other task. */
  	darwin_uml_abi_u64 compat_tls[DARWIN_UML_COMPAT_TLS_COUNT][2];
@@ -2594,7 +2566,7 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
  };
  
  struct darwin_uml_guest_fp_registers {
-@@ -196,7 +244,8 @@ enum {
+@@ -174,7 +222,8 @@ struct darwin_uml_guest_sme_registers {
  #define DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET 304U
  #define DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET 320U
  #define DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET 336U
@@ -2604,7 +2576,7 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
  #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
  #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET 528U
  #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE 24U
-@@ -229,6 +278,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
+@@ -205,6 +254,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
  		DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET);
  static_assert(offsetof(struct darwin_uml_guest_registers, compat_tls) ==
  		DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET);
@@ -2614,21 +2586,21 @@ index 01b140e3869f38e83601a93cdb78bbd9e2340698..2e7beb3c626e656f3caf70fe55fdc41f
  		DARWIN_UML_ABI_GUEST_REGISTERS_SIZE);
  static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index 6dc3905bdfdb3330fa8a9634695d7d3c42c899bb..eb8c937f120f0973bbba8c25aec3a3421059c53f 100644
+index 13776d9b286b5d4d36f642134a1eb65ba758622b..aedfc52ae81b766e3dfea15c615be2a09aa28acd 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@
  #ifndef UML_DARWIN_ABI_IDENTITY_H
  #define UML_DARWIN_ABI_IDENTITY_H
  
--#define DARWIN_UML_ABI_VERSION 21U
--#define DARWIN_UML_ABI_FINGERPRINT 0xc256af4078681256ULL
-+#define DARWIN_UML_ABI_VERSION 22U
-+#define DARWIN_UML_ABI_FINGERPRINT 0xe41de5078de4904eULL
+-#define DARWIN_UML_ABI_VERSION 20U
+-#define DARWIN_UML_ABI_FINGERPRINT 0x75b16149a5953494ULL
++#define DARWIN_UML_ABI_VERSION 23U
++#define DARWIN_UML_ABI_FINGERPRINT 0x1ce783abc069c6c2ULL
  
  #endif
 diff --git a/arch/um/os-Darwin/uml_darwin_cpu.h b/arch/um/os-Darwin/uml_darwin_cpu.h
-index 48d210beee113c94d776c9f0a0d41b80f157ecd5..930794bf75bb0df2969c92cfc3cdf879832de30b 100644
+index 307ea43de86400be7c3fc0e140a41d6a0558cb08..efd4114d4ef23eb5e6e499fc96b2c6cda2bc9271 100644
 --- a/arch/um/os-Darwin/uml_darwin_cpu.h
 +++ b/arch/um/os-Darwin/uml_darwin_cpu.h
 @@ -13,6 +13,16 @@ int darwin_uml_enter_guest(void *registers, void *fp_registers,

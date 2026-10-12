@@ -233,6 +233,11 @@ def check_cpus(harness) -> list[str]:
     return failures
 
 
+# How long the stand-in emulators get to answer. A stand-in replies at once, so
+# only a hung console reaches this deadline; it outlasts a host under many
+# times its normal load, which a short one did not.
+CONSOLE_SECONDS = 60
+
 # Stand-ins for the emulator. The first plays the image's autologin, echoes
 # the sudo exec as the guest tty does, then serves commands with the host
 # shell; the others die the way a failing guest does.
@@ -264,8 +269,9 @@ def check_console(harness) -> list[str]:
         directory = pathlib.Path(name)
         guest = steam_guest(harness, directory, AUTOLOGIN)
         try:
-            guest.login(10)
-            result = guest.run_command("printf '%s' steam-console", 10)
+            guest.login(CONSOLE_SECONDS)
+            result = guest.run_command("printf '%s' steam-console",
+                                        CONSOLE_SECONDS)
             if (result.return_code, result.output) != (0, "steam-console"):
                 failures.append(f"run_command returned {result!r}")
         finally:
@@ -280,7 +286,7 @@ def check_console(harness) -> list[str]:
         with tempfile.TemporaryDirectory() as name:
             guest = steam_guest(harness, pathlib.Path(name), script)
             try:
-                guest.login(10)
+                guest.login(CONSOLE_SECONDS)
             except expected as error:
                 if message not in str(error):
                     failures.append(f"a dying guest reported {error!r}")

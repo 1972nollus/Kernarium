@@ -20,7 +20,7 @@ namespace uml::cpu::gadget_cache {
  * Hashed blocks load sets unevenly, so a four-way set evicts code it will run
  * again while other sets still have room. Eight ways keep that code at the
  * cost of a longer probe; at 131,072 slots multi-core Geekbench stored a
- * quarter fewer translations and ran 2% faster (G229). */
+ * quarter fewer translations and ran 2% faster (G231). */
 inline constexpr std::size_t slots = UML_GADGET_CACHE_SLOTS;
 inline constexpr std::size_t ways = 8;
 inline constexpr std::size_t slab_slots = 256;

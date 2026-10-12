@@ -5,9 +5,6 @@ guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest
 guest_compare_register_branch_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP of two registers followed by B.cond. G116 ranks this pair fourth and ninth over a full Geekbench run while the immediate form does not reach the table, so the two shapes get separate probes.
 guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
-guest_fp16_fmla_neon_loop.S	simd	fp16	run_guest_link_bench.py	NEON control of the SVE FP16 multiply-accumulate probe: c[i] += a[i] x b[i] over 4,096 L1-resident elements, one Q register per iteration.
-guest_fp16_fmla_sve_loop.S	simd	sve	run_guest_link_bench.py	The SVE form of the FP16 multiply-accumulate probe (WHILELO, LD1H, predicated FMLA, ST1H, INCH, fused WHILELO and B.FIRST), against its NEON control. Needs the guest-SVE policy.
-guest_fp16_fmla_sve_ptrue_loop.S	simd	sve	run_guest_link_bench.py	The SVE FP16 multiply-accumulate probe under a PTRUE predicate with INCH, CMP and B.LO loop control, the shape of Background Blur's main loops. Against the WHILELO probe and the same NEON control it separates a WHILELO-governed loop's cost from the predicated memory and FP forms'. Needs the guest-SVE policy.
 guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
 guest_fp_environment_run_loop.S	floating-state	base	run_guest_link_bench.py	Measures a run of native floating-point operations sharing one program-level environment activation.
 guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.
@@ -24,6 +21,7 @@ guest_indirect_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures mo
 guest_inplace_chain_loop.S	integer	base	run_guest_link_bench.py	Matched control for in-place ADD-immediate lowering, interleaving three chains so no adjacent forward is selected and every word reaches its guest register through CpuState.
 guest_inplace_memory_loop.S	memory	base	run_guest_link_bench.py	Matched control for unsigned-offset transfers whose transferred register is a baked CpuState displacement. Three load/modify/store chains run interleaved through one same-page buffer, so no adjacent forward is ever selected and every value crosses CpuState between the load that produced it and the store that consumes it.
 guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.
+guest_isb_counter_loop.S	control-flow	base	run_guest_link_bench.py	ISB then MRS CNTVCT_EL0, the counter read of arm64 Linux's vDSO without FEAT_ECV. The only probe that runs an ISB, so the only one that measures the code-change sequence check both engines make at a context synchronization point.
 guest_link_loop.S	control-flow	base	run_guest_link_bench.py	Baseline for cached direct successor-link throughput.
 guest_logical_move_loop.S	integer	base	run_guest_link_bench.py	Matched control for logical-register move alias lowering.
 guest_mmap_churn_loop.S	tlb	base	run_guest_link_bench.py	Maps an anonymous region, faults in and checks every page, and unmaps it, as allocators and loaders return memory. Measures publishing and removing host mappings and the software TLB range invalidation an unmap causes.
@@ -51,8 +49,6 @@ guest_simd_tbl_loop.S	simd	base	run_guest_link_bench.py	Measures one-table vecto
 guest_simd_three_same_add_loop.S	simd	base	run_guest_link_bench.py	Measures same-width three-register vector addition lowering.
 guest_simd_unsigned_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page unsigned-offset vector memory runs.
 guest_sp_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures adjacent scalar memory runs addressed directly from SP.
-guest_sve_gather_loop.S	simd	sve	run_guest_link_bench.py	The SVE gather probe: acc[l] += table[index[4j + l]] over 1,024 L1-resident words (LD1W of four indices, a gather LD1W with a scaled unsigned 32-bit index, ADD), against its NEON control. Needs the guest-SVE policy.
-guest_sve_gather_neon_loop.S	simd	base	run_guest_link_bench.py	NEON control of the SVE gather probe: the same accumulation with four scalar loads through a vector of indices and lane inserts.
 guest_syscall_boundary_loop.S	base	base	run_guest_link_bench.py	Repeated getpid, the cheapest syscall the guest kernel offers, so the loop measures the guest entry boundary rather than the work behind it. The only probe that exercises the per-entry thread execution state resolution.
 guest_tagged_vector_memory_loop.S	memory	base	run_guest_link_bench.py	SIMD&FP transfers through a top-byte-tagged pointer with the tagged-address ABI enabled, as every Android process with heap pointer tagging makes them. The other vector memory probes use untagged addresses.
 guest_tlb_128m_alias_loop.S	tlb	base	run_guest_link_bench.py	Detects regressions in 16 KiB TLB indexing and set associativity.

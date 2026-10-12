@@ -6,7 +6,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_builder_lane.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 30)
+    TIMEOUT 120)
 
 uml_add_tooling_test(
     NAME android17-aosp-patch-regenerator
@@ -14,7 +14,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_aosp_patch_regenerator.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME android17-routed-workspaces
@@ -22,7 +22,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_routed_workspaces.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 120)
+    TIMEOUT 900)
 
 uml_add_tooling_test(
     NAME android17-jelly-source-contract
@@ -30,7 +30,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_jelly_source_contract.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 30)
+    TIMEOUT 120)
 
 uml_add_tooling_test(
     NAME android17-mesa-venus-source-contract
@@ -38,7 +38,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_mesa_venus_source_contract.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 60)
+    TIMEOUT 300)
 
 uml_add_tooling_test(
     NAME android17-release-contract

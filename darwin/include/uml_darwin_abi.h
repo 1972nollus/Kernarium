@@ -18,7 +18,6 @@
  * differ from the kernel's. These primitive spellings have the required ABI
  * widths on the supported LP64 targets without importing either namespace. */
 typedef unsigned char darwin_uml_abi_u8;
-typedef unsigned short darwin_uml_abi_u16;
 typedef unsigned int darwin_uml_abi_u32;
 typedef int darwin_uml_abi_s32;
 typedef unsigned long long darwin_uml_abi_u64;
@@ -139,9 +138,9 @@ struct darwin_uml_faultinfo {
  *   tls     (the tls argument of darwin_uml_enter_guest()) TPIDRURW in
  *           bits 31:0, read on entry and written on return.
  *   tpidrro TPIDRURO, read on entry only.
- * An AArch32 entry whose svcr is non-zero, whose SVE registers are live, or
- * that the run's engine cannot execute (darwin_uml_guest_compat_hwcap() is
- * zero) is DARWIN_UML_EVENT_FATAL. The events mean, for such a task:
+ * An AArch32 entry whose svcr is non-zero, or that the run's engine cannot
+ * execute (darwin_uml_guest_compat_hwcap() is zero), is
+ * DARWIN_UML_EVENT_FATAL. The events mean, for such a task:
  *   SYSCALL   pc is after the SVC (4 bytes in A32, 2 or 4 in T32) and the
  *             IT state in pstate has advanced past it; the kernel takes
  *             the system call number from x7 and ignores the immediate.
@@ -193,33 +192,12 @@ struct darwin_uml_guest_fp_registers {
 
 /* Every arm64 task's register tail holds this immediately after its
  * struct darwin_uml_guest_fp_registers, whether or not the run implements
- * SME, and then struct darwin_uml_guest_sve_registers; an x86_64-userspace
- * task's tail ends after the FP registers. */
+ * SME; an x86_64-userspace task's tail ends after the FP registers. */
 struct darwin_uml_guest_sme_registers {
 	darwin_uml_abi_u64 tpidr2;   /* TPIDR2_EL0; 0 without SME */
 	darwin_uml_abi_u64 state;    /* address of the task's SME storage, or 0 */
 	darwin_uml_abi_u32 svl;      /* bytes per vector the storage holds, or 0 */
 	darwin_uml_abi_u32 reserved; /* 0 */
-};
-
-/* An arm64 task's non-streaming SVE state, whether or not the run implements
- * SVE. The vector length is 16 bytes, so Z_n is V_n of the FP registers and
- * each predicate is 16 bits, bit k governing byte k, the layout of a signal
- * frame's and NT_ARM_SVE's predicates at that length. P0-P15 and FFR are
- * part of the task's state only while DARWIN_UML_GUEST_SVE_LIVE is set: the
- * image of arm64 Linux's TIF_SVE, which the host sets when the task executes
- * an SVE instruction outside streaming mode and the kernel clears where
- * native Linux discards the state. The host reads them on entry only when
- * the flag is set and writes them and the flag on exit only while it is. */
-struct darwin_uml_guest_sve_registers {
-	darwin_uml_abi_u16 p[16];  /* P0-P15 */
-	darwin_uml_abi_u16 ffr;    /* FFR */
-	darwin_uml_abi_u16 flags;  /* DARWIN_UML_GUEST_SVE_* */
-	darwin_uml_abi_u32 vl;     /* the run's vector length, 16, or 0 */
-};
-
-enum {
-	DARWIN_UML_GUEST_SVE_LIVE = 1U << 0,
 };
 
 /* A task's SME storage, DARWIN_UML_GUEST_SME_STATE_SIZE(svl) bytes for a
@@ -249,10 +227,8 @@ enum {
 #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
 #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET 528U
 #define DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE 24U
-#define DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET 552U
-#define DARWIN_UML_ABI_GUEST_SVE_REGISTERS_SIZE 40U
 /* The fp_size an arm64 task passes to darwin_uml_enter_guest(). */
-#define DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE 592U
+#define DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE 552U
 
 #if defined(__cplusplus)
 #include <stddef.h>
@@ -289,17 +265,9 @@ static_assert(sizeof(struct darwin_uml_guest_sme_registers) ==
 		DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE);
 static_assert(DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET ==
 		DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE);
-static_assert(sizeof(struct darwin_uml_guest_sve_registers) ==
-		DARWIN_UML_ABI_GUEST_SVE_REGISTERS_SIZE);
-static_assert(offsetof(struct darwin_uml_guest_sve_registers, ffr) == 32U);
-static_assert(offsetof(struct darwin_uml_guest_sve_registers, flags) == 34U);
-static_assert(offsetof(struct darwin_uml_guest_sve_registers, vl) == 36U);
-static_assert(DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET ==
+static_assert(DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE ==
 		DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET +
 		DARWIN_UML_ABI_GUEST_SME_REGISTERS_SIZE);
-static_assert(DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE ==
-		DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET +
-		DARWIN_UML_ABI_GUEST_SVE_REGISTERS_SIZE);
 static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(64) == 6336);
 #endif
 

@@ -52,8 +52,9 @@ A32Compiler::Flow A32Compiler::emit_operation() {
   case Op::smusd: case Op::smlald: case Op::smlsld: case Op::smmla:
   case Op::smmls: case Op::smmul:
     return emit_dsp_multiply(info);
-  case Op::parallel: case Op::ssat16: case Op::usat16: case Op::usad8:
-  case Op::usada8:
+  case Op::parallel:
+    return emit_parallel(info);
+  case Op::ssat16: case Op::usat16: case Op::usad8: case Op::usada8:
     return emit_arith_through_helper();
   case Op::library:
     return emit_extension(info);
@@ -77,6 +78,7 @@ A32Compiler::Flow A32Compiler::emit_operation() {
     return Flow::next;
   case Op::isb:
     emit(enc::isb());
+    emit_code_change_check();
     return Flow::next;
   case Op::clrex:
     emit(0xd503'3f5fU); // clrex
@@ -338,9 +340,10 @@ A32Compiler::Flow A32Compiler::emit_coprocessor() {
     const auto undefined = cold_exit(ColdPath::Kind::illegal);
     emitter_.load_b(0, 15, offsetof(CpuState, a32_cp15ben));
     compare_zero(undefined, 0, false, false);
-    if (inst.sysreg == SysReg::cp15_isb)
+    if (inst.sysreg == SysReg::cp15_isb) {
       emit(enc::isb());
-    else if (inst.sysreg == SysReg::cp15_dmb)
+      emit_code_change_check();
+    } else if (inst.sysreg == SysReg::cp15_dmb)
       emit(enc::dmb_ish());
     else
       emit(enc::dsb_sy());

@@ -262,6 +262,9 @@ private:
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
   JitIndirectLinkTable indirect_links_;
+  /* The AArch32 translations' second-level table of indirect targets, made
+   * by the first AArch32 block (jit_linking.hpp). */
+  std::unique_ptr<JitIndirectTarget[]> a32_targets_;
   // The inline context directory is included in the fixed executor charge.
   // Records remain bounded by the existing link-table capacities.
   std::array<LinkContext, 64> link_contexts_{};
@@ -274,6 +277,9 @@ private:
   Tlb tlb_;
   void *execution_context_{};
   unsigned long execution_generation_{};
+  /* The execution context's code-change sequence, which every run
+   * publishes in CpuState::code_sequence for the ISB to check. */
+  const std::uint64_t *code_sequence_{&arm64::no_code_changes};
   StaticGuestMemory *prepared_memory_{};
   unsigned long mapping_generation_{};
   std::uint64_t mapping_changes_{};

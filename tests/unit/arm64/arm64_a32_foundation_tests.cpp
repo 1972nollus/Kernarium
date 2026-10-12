@@ -130,7 +130,14 @@ void state_is_appended_at_the_pinned_offsets()
 		UML_ARM64_CPU_A32_CP15BEN == 1522);
 	require(offsetof(arm64::CpuState, a32) == 1523 &&
 		UML_ARM64_CPU_A32 == 1523);
-	require(sizeof(arm64::CpuState) == 1536 &&
+	/* The context-synchronization pair follows the AArch32 block. */
+	require(offsetof(arm64::CpuState, code_sequence) == 1528 &&
+		UML_ARM64_CPU_CODE_SEQUENCE == 1528);
+	require(offsetof(arm64::CpuState, code_sequence_seen) == 1536 &&
+		UML_ARM64_CPU_CODE_SEQUENCE_SEEN == 1536);
+	/* The JIT's staging for a page-crossing Advanced SIMD load follows it. */
+	require(offsetof(arm64::CpuState, a32_cross) == 1552 &&
+		sizeof(arm64::CpuState) == 1616 &&
 		alignof(arm64::CpuState) == 16);
 
 	/* A fresh state is an A64 one: every AArch32 field is zero. */

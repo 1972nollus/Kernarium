@@ -58,7 +58,7 @@ unset(_uml_gadget_cache_slots_invalid)
 # slots more address spaces do hit more often, but each resident one keeps its
 # link records until it retires: twelve and sixteen grew the browser's cache by
 # two fifths and two thirds, and with half the slots to pay for that they hit
-# less than eight. Eight stays the default on both products (G227).
+# less than eight. Eight stays the default on both products (G229).
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
@@ -81,6 +81,7 @@ endif()
 
 add_library(uml_arm64_execution_helpers OBJECT
     arm64/code_synchronization.cpp
+    arm64/detail/sm0_spill.cpp
     arm64/floating_exception.cpp
     arm64/fp_environment.cpp
     arm64/memory_transfer.cpp
@@ -91,25 +92,6 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
     UML::BridgeAbi
     UML::CpuContract)
 target_include_directories(uml_arm64_execution_helpers PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin)
-
-# The engine-neutral SVE semantic library (docs/architecture.md). The gadget
-# engine calls it (arm64/gadgets/sve_helpers.cpp), so every composition that
-# carries the gadget objects carries its objects beside them.
-add_library(uml_arm64_sve_semantics OBJECT
-    arm64/detail/sve_semantics.cpp
-    arm64/detail/sve_semantics_crypto.cpp
-    arm64/detail/sve_semantics_floating.cpp
-    arm64/detail/sve_semantics_integer.cpp
-    arm64/detail/sve_semantics_memory.cpp
-    arm64/detail/sve_semantics_permute.cpp
-    arm64/detail/sve_semantics_predicate.cpp
-    arm64/detail/sve_semantics_wide.cpp)
-uml_declare_architecture_target(uml_arm64_sve_semantics cpu shared)
-target_link_libraries(uml_arm64_sve_semantics PRIVATE
-    UML::BridgeAbi
-    UML::CpuContract)
-target_include_directories(uml_arm64_sve_semantics PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 
 # Off by default so ordinary translation has no diagnostic instrumentation. A
@@ -178,41 +160,6 @@ set(_uml_arm64_gadget_sme_sources
     arm64/gadgets/sme_helpers.cpp
     ${_uml_arm64_streaming_dir}/streaming_forms.hpp)
 
-# Gadget-engine non-streaming SVE sources, owned by SVE lane V5: the SVE
-# part's selection source and the gadget bodies and form header it generates
-# at build time from the same encoding table. engine.S gains their
-# OBJECT_DEPENDS and include directory by appending, so the SME block's
-# lines stay as they are.
-set(_uml_arm64_sve_dir ${CMAKE_CURRENT_BINARY_DIR}/arm64_sve)
-set(_uml_arm64_sve_generator
-    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/generate_sve.py)
-add_custom_command(
-    OUTPUT ${_uml_arm64_sve_dir}/sve_generated.inc
-        ${_uml_arm64_sve_dir}/sve_forms.hpp
-    COMMAND ${Python3_EXECUTABLE} -B ${_uml_arm64_sve_generator}
-        --loader ${_uml_arm64_streaming_loader}
-        --table ${_uml_arm64_streaming_table}
-        --assembly ${_uml_arm64_sve_dir}/sve_generated.inc
-        --header ${_uml_arm64_sve_dir}/sve_forms.hpp
-    DEPENDS ${_uml_arm64_sve_generator} ${_uml_arm64_streaming_loader}
-        ${_uml_arm64_streaming_table}
-    COMMENT "Generating the arm64 non-streaming SVE gadgets"
-    VERBATIM)
-set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
-    OBJECT_DEPENDS ${_uml_arm64_sve_dir}/sve_generated.inc)
-set_property(SOURCE arm64/gadgets/engine.S APPEND PROPERTY
-    INCLUDE_DIRECTORIES ${_uml_arm64_sve_dir})
-set_source_files_properties(arm64/gadgets/program_builder_sve.cpp
-    PROPERTIES INCLUDE_DIRECTORIES ${_uml_arm64_sve_dir})
-# The generated header for the tests that check the forms against the table.
-add_library(uml_arm64_sve_forms INTERFACE)
-uml_declare_architecture_target(uml_arm64_sve_forms cpu gadget)
-target_include_directories(uml_arm64_sve_forms INTERFACE ${_uml_arm64_sve_dir})
-set(_uml_arm64_gadget_sve_sources
-    arm64/gadgets/program_builder_sve.cpp
-    arm64/gadgets/sve_helpers.cpp
-    ${_uml_arm64_sve_dir}/sve_forms.hpp)
-
 # Gadget-engine AArch32 sources, owned by lane A32-G: the AArch32 part's
 # gadget bodies and form tables the generator writes at build time from the
 # decoder's encoding table (arm64/aarch32/a32_encodings.hpp), and the builder
@@ -240,6 +187,7 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_neon.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_structure.py
         ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_armv8.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/engine/a32_parallel.py
         ${_uml_arm64_a32_table}
         ${_uml_arm64_a32_table_rows} ${_uml_arm64_a32_hand_written}
     COMMENT "Generating the arm64 AArch32 gadgets"
@@ -288,13 +236,11 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S
     ${_uml_arm64_gadget_sme_sources}
-    ${_uml_arm64_gadget_sve_sources}
     ${_uml_arm64_gadget_a32_sources})
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
 target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers
-    uml_arm64_sve_semantics uml_arm64_aarch32_decoder
-    uml_arm64_aarch32_semantics)
+    uml_arm64_aarch32_decoder uml_arm64_aarch32_semantics)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml_arm64_gadgets PUBLIC
@@ -315,7 +261,7 @@ if(APPLE)
     set(_uml_gadget_region_options)
     foreach(_uml_gadget_region_section IN ITEMS
             __a64_bank __a64_forward __a64_vforward __a64_cold __a64_afp
-            __a64_veneer __a64_sme __a64_sve __a32_bank __a32_cold __a32_veneer
+            __a64_veneer __a64_sme __a32_bank __a32_cold __a32_veneer
             __x86_bank __x86_cold)
         list(APPEND _uml_gadget_region_options
             "LINKER:-rename_section,__TEXT,${_uml_gadget_region_section},__TEXT,__text")
@@ -359,13 +305,6 @@ set(_uml_cpu_jit_sme_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_sme_transition.S)
 set(_uml_cpu_jit_executor_sme_sources
     arm64/jit/jit_semantic_sme.cpp)
-set(_uml_cpu_jit_executor_sve_sources
-    arm64/jit/jit_semantic_sve.cpp)
-
-# JIT non-streaming SVE sources, owned by SVE lane V4.
-set(_uml_cpu_jit_sve_sources
-    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_compiler_sve_inline.cpp)
 
 # The AArch32 compiler of the JIT (design 5), owned by lane A32-J.
 set(_uml_cpu_jit_a32_sources
@@ -401,7 +340,6 @@ set(_uml_cpu_jit_sources
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_emitter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/arm64/jit/jit_tlb_translate.S
     ${_uml_cpu_jit_sme_sources}
-    ${_uml_cpu_jit_sve_sources}
     ${_uml_cpu_jit_a32_sources})
 
 add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
@@ -433,8 +371,7 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_semantic_reservation.cpp
     arm64/jit/jit_shared_translations.cpp
-    ${_uml_cpu_jit_executor_sme_sources}
-    ${_uml_cpu_jit_executor_sve_sources})
+    ${_uml_cpu_jit_executor_sme_sources})
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})
@@ -444,8 +381,7 @@ target_link_libraries(uml_arm64_jit_executor PRIVATE
     UML::CpuContract)
 target_link_libraries(uml_arm64_jit_executor PUBLIC
     uml_arm64_jit
-    uml_arm64_execution_helpers
-    uml_arm64_sve_semantics)
+    uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_jit_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_arm64_jit_executor PRIVATE
@@ -465,8 +401,7 @@ if(UML_BUILD_UNIT_TESTS)
         UML::CpuContract)
     target_link_libraries(uml_arm64_jit_diagnostics_executor PUBLIC
         uml_arm64_jit
-        uml_arm64_execution_helpers
-        uml_arm64_sve_semantics)
+        uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
@@ -482,8 +417,7 @@ if(UML_APPLE_CPU_INLINE_ASM_COMPILE_OPTION)
         uml_arm64_aarch32_semantics
         uml_arm64_gadgets
         uml_arm64_jit
-        uml_arm64_jit_executor
-        uml_arm64_sve_semantics)
+        uml_arm64_jit_executor)
     if(TARGET uml_arm64_jit_diagnostics_executor)
         list(APPEND _uml_inline_asm_targets
             uml_arm64_jit_diagnostics_executor)
@@ -575,7 +509,6 @@ target_sources(uml_cpu_jit_component INTERFACE
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
     $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
     $<TARGET_OBJECTS:uml_arm64_jit_executor>
-    $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
 # The CPU-owned implementation carrier deliberately excludes memory objects.
@@ -601,7 +534,6 @@ target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
     $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-    $<TARGET_OBJECTS:uml_arm64_sve_semantics>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 if(TARGET uml_x86_64_gadgets)
     target_link_libraries(uml_cpu_engine_objects INTERFACE

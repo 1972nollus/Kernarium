@@ -138,17 +138,24 @@ gadget return
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-/* Store the target in x10 and its BlockLink in x12 into the next cell of the
- * site whose cells x9 addresses, round-robin, as the cold helper trains a
- * miss. */
+/* Store the target in x10 and its BlockLink in x12 into the first empty cell
+ * of the site whose cells x9 addresses, if it has one. Every executor running
+ * the address space shares the site, and retraining a polymorphic site at
+ * each ring or table hit made their vCPUs fight over its cache line, so
+ * translated code fills a cell only once per reset; the cold helper still
+ * trains a miss round-robin. An empty cell's PC is all ones. */
 .macro train_indirect_cell
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	ldr x13, [x9]
+	cmn x13, #1
+	b.eq 1f
+	ldr x13, [x9, #16]
+	cmn x13, #1
+	b.ne 2f
+	stp x10, x12, [x9, #16]
+	b 2f
+1:
+	stp x10, x12, [x9]
+2:
 .endm
 
 /* Two-entry data-only indirect target caches. Translation fixes the source

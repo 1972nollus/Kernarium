@@ -247,6 +247,22 @@ private:
   TlbMemory memory_;
 };
 
+/* Whether the library runs the instruction with the host's own FPCR and FPSR
+ * and the guest's committed in CpuState: everything but the memory transfers
+ * and the integer instructions of the parallel family. */
+[[nodiscard]] bool needs_host_fp_environment(const Instruction &inst) noexcept {
+  const auto traits = inst.info().traits;
+  if ((traits & (aarch32::trait::loads | aarch32::trait::stores)) != 0U)
+    return false;
+  switch (a32::op_info(inst.form).op) {
+  case a32::Op::parallel: case a32::Op::ssat16: case a32::Op::usat16:
+  case a32::Op::usad8: case a32::Op::usada8:
+    return false;
+  default:
+    return true;
+  }
+}
+
 /* The library's answer, as the JIT result the generated code returns. */
 [[nodiscard]] std::uint64_t execute_in_library(CpuState &cpu, Tlb &tlb,
                                                const Instruction &inst,
@@ -318,8 +334,6 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
     std::uint32_t itstate) noexcept {
   if (cpu == nullptr || tlb == nullptr || !aarch32::key_is_aarch32(key))
     return pack_jit_result(Event::fatal, 0);
-  /* A terminal helper runs outside the native register environment. */
-  arm64::restore_native_fp_environment(*cpu);
   const auto profile = a32::decode_profile();
   const auto inst =
       aarch32::key_is_thumb(key)
@@ -327,6 +341,13 @@ extern "C" std::uint64_t uml_arm64_jit_a32_execute(
                 word, aarch32::ItState{static_cast<std::uint8_t>(itstate)},
                 profile)
           : aarch32::decode_a32(word, profile);
+  /* A terminal helper runs outside the native register environment, unless
+   * the instruction has nothing to do with floating point (a memory transfer
+   * or integer arithmetic): the guest's FPCR and FPSR then stay installed,
+   * the next block that needs them finds the environment active, and the end
+   * of the run restores the host's. */
+  if (needs_host_fp_environment(inst))
+    arm64::restore_native_fp_environment(*cpu);
   if (counting_exits.load(std::memory_order_relaxed)) {
     form_exits[static_cast<std::size_t>(inst.form)].fetch_add(
         1, std::memory_order_relaxed);

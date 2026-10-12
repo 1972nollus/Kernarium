@@ -174,6 +174,9 @@ private:
 	std::uint64_t key_{};
 	std::uint64_t next_key_{};
 	bool ended_{};
+	/* The block ends after an ISB, at a fall-through that checks whether
+	 * the address space's code changed since it was validated. */
+	bool synchronize_{};
 	bool complete_{true};
 	std::uint64_t stop_address_{};
 	std::uint32_t stop_instruction_{};
@@ -183,9 +186,24 @@ private:
 	unsigned run_cond_{14};
 	std::size_t run_operand_{};
 	bool run_dirty_{};
-	/* Operands the end of the block patches: the word, and the number of
-	 * instructions translated through the one that holds it. */
-	std::vector<std::pair<std::size_t, std::size_t>> patches_;
+	/* Operands the end of the block patches: the word, the number of
+	 * instructions translated through the one that holds it, and the bit
+	 * the count is placed at in that word. */
+	struct Patch final {
+		std::size_t index;
+		std::size_t through;
+		unsigned shift;
+	};
+	std::vector<Patch> patches_;
+	/* The compare the last gadget pushed is, with the operands a fused
+	 * compare-and-branch takes, while nothing has been pushed since:
+	 * `end` is the length of the stream just after it. */
+	struct Compare final {
+		std::size_t end{~std::size_t{}};
+		bool immediate{};
+		std::uint64_t operand{};
+	};
+	Compare compare_;
 	/* The block holds a form that reads or writes the vector registers or
 	 * FPSCR (the decoder table's fp_state trait, set in run()), and so is
 	 * entered through the FP state link: CpuState loads the task's vectors

@@ -42,7 +42,6 @@
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
         $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -51,7 +50,6 @@
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
         $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
@@ -59,7 +57,6 @@
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
         $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
         ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -126,19 +123,6 @@
             --assume-host-feature frintts --assume-host-feature fcma
             --assume-host-feature jscvt)
 
-    # The 29 SVE encodings that FEAT_SME or FEAT_SME2 admit outside streaming
-    # mode execute where the virtual CPU has the SVE profile and the SME
-    # profile, which only an SME host under the guest-SVE policy is. Their
-    # records hold no SVL, so the library lane runs them on any host with the
-    # SME profile assumed.
-    uml_add_unit_test(NAME arm64-instruction-corpus-sve-sme-profile
-        COMMAND uml_arm64_instruction_corpus_tests
-            ${UML_ARM64_INSTRUCTION_CORPUS}
-            --record arm64-sve-sme
-            --assume-host-feature sme --assume-host-feature sme2
-            --assume-host-feature sme_f64f64
-            --assume-host-feature sme_i16i64 --assume-sme-svl 64)
-
     # A virtual CPU with FEAT_SME and without FEAT_SVE executes CNT, INC, DEC,
     # RDVL, ADDVL and ADDPL outside streaming mode for a vector length of 16
     # bytes, a deliberate departure from the architecture whose results are
@@ -202,6 +186,10 @@
     target_compile_definitions(uml_arm64_gadget_terminal_count_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    # Every memory transfer's fault names its instruction by the position in
+    # its operand; the executor turns that back into the PC.
+    uml_add_arm64_unit_test(gadget_memory_fault_position WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
     # The SME control core and the generated streaming forms, outside
     # streaming mode through injected profiles, and in it on a host with
     # FEAT_SME.
@@ -209,12 +197,6 @@
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
     target_link_libraries(uml_arm64_gadget_sme_tests PRIVATE
         uml_arm64_streaming_forms)
-    # The non-streaming SVE control core through injected SVE profiles, and
-    # the selection sweep that keeps it out of streaming programs.
-    uml_add_arm64_unit_test(gadget_sve WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_gadget_sve_tests PRIVATE
-        uml_arm64_sve_forms)
 
     uml_add_arm64_unit_test(gadget_successor_hoist_structure WITHOUT_HARNESS)
     uml_add_arm64_unit_test(static_runtime WITHOUT_HARNESS
@@ -324,6 +306,14 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
+    # The exclusive records with the host interrupting the guest's thread
+    # throughout. A store-exclusive may fail without cause (a host interrupt
+    # ends the monitor the JIT uses) and the corpus's single attempts must
+    # tolerate it; this lane makes that happen so the tolerance is measured
+    # and not left to the load a gate happens to run under.
+    uml_add_unit_test(NAME arm64-jit-a32-corpus-interrupted TIMEOUT 1200
+        COMMAND uml_arm64_jit_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
+            --record exclusive-qemu --passes 3000 --interrupt)
 
     # The JIT's SME support (cpu/arm64/jit, sme_support).
     uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS
@@ -337,15 +327,6 @@
     uml_add_arm64_unit_test(jit_sme_memory WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_sme_codegen WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
-        ARGS ${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv)
-
-    # The JIT's non-streaming SVE support (cpu/arm64/jit, sve_support).
-    uml_add_arm64_unit_test(jit_sve_control WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
-    uml_add_arm64_unit_test(jit_sve_forms WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
-    uml_add_arm64_unit_test(jit_sve_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/a64_instruction_evidence_bindings.tsv)
 
@@ -412,7 +393,6 @@
                 $<TARGET_OBJECTS:uml_arm64_gadgets>
                 $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
                 $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-                $<TARGET_OBJECTS:uml_arm64_sve_semantics>
                 $<TARGET_OBJECTS:uml_arm64_execution_helpers>
                 ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     endforeach()
@@ -423,7 +403,6 @@
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
             $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
         ARGS ${CMAKE_CURRENT_SOURCE_DIR}/aarch32_decoder)
@@ -434,13 +413,33 @@
             $<TARGET_OBJECTS:uml_arm64_gadgets>
             $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
             $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-            $<TARGET_OBJECTS:uml_arm64_sve_semantics>
             $<TARGET_OBJECTS:uml_arm64_execution_helpers>
             ${UML_STATIC_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_gadget_a32_corpus_tests uml_arm64_aarch32_corpus)
+    # The exclusive records with the host interrupting the guest's thread
+    # throughout. A store-exclusive may fail without cause (a host interrupt
+    # ends the monitor the gadgets use) and the corpus's single attempts must
+    # tolerate it; this lane makes that happen so the tolerance is measured
+    # and not left to the load a gate happens to run under.
+    uml_add_unit_test(NAME arm64-gadget-a32-corpus-interrupted
+        COMMAND uml_arm64_gadget_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
+            --record exclusive-qemu --passes 200 --interrupt)
     target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
+    # Executors sharing one address space's translations, from several
+    # threads at once.
+    uml_add_arm64_unit_test(gadget_shared_bodies WITHOUT_HARNESS
+        OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
+            $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+        LABELS tsan)
+    target_compile_definitions(uml_arm64_gadget_shared_bodies_tests PRIVATE
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)

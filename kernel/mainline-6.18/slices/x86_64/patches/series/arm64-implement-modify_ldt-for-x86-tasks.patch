@@ -39,10 +39,10 @@ selector in the error code, as on x86 Linux.
  create mode 100644 arch/arm64/um/ldt.c
 
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index 6c7af7f398e9fc93c4a001b53ed7417013b2c3b3..2c851d921c30584df7337c4bb227b7cda254f976 100644
+index 43e54d19ab21df8276c0baf338183b1827dd77b3..7f19b44c5f079889af28268730e76028e0c68324 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -7,7 +7,7 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o sve.o
+@@ -7,7 +7,7 @@ obj-$(CONFIG_UML_ARM64_SME) += sme.o sme_signal.o
  obj-$(CONFIG_UML_ARM64_AARCH32) += aarch32.o aarch32_pages.o \
  	armv8_deprecated.o ptrace32.o signal32.o sys32.o sys_compat.o
  obj-$(CONFIG_COMPAT) += x86_32_syscalls.o
@@ -388,10 +388,10 @@ index 5cdb82ff3fe1baa7bd8343401e926945058a610c..941a385bd847d8df7dc4e9e84989b1c4
 +#endif
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index eba6d33ffd20706af110924c855856ee65121c4a..5f51f2fce2ae746e124fbfd384db39f79c4c6806 100644
+index c5fe20ffa1fcc3e0f4c569f6fbf2538599bde0d2..dcae659685ae209405fbd3c87241f7dbb42d8b69 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -102,6 +102,7 @@ _Static_assert(offsetof(struct uml_arm64_sve_registers, ffr) ==
+@@ -88,6 +88,7 @@ _Static_assert(UML_ARM64_SME_P_OFFSET(64, 3) ==
  /* Linux's ILL_ILLOPN, which Darwin's signal.h numbers 4, for x86 #UD. */
  #define DARWIN_GUEST_ILL_ILLOPN 2
  #define DARWIN_GUEST_X86_TRAP_UD 6
@@ -399,7 +399,7 @@ index eba6d33ffd20706af110924c855856ee65121c4a..5f51f2fce2ae746e124fbfd384db39f7
  #define DARWIN_GUEST_X86_TRAP_SS 12
  #define DARWIN_GUEST_X86_TRAP_MF 16
  #define DARWIN_GUEST_X86_TRAP_XM 19
-@@ -491,6 +492,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -477,6 +478,8 @@ void userspace(struct uml_pt_regs *registers)
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
  		upt_x86_32_set_task_mode(registers,
  					 current_is_x86_32_userspace());
@@ -408,7 +408,7 @@ index eba6d33ffd20706af110924c855856ee65121c4a..5f51f2fce2ae746e124fbfd384db39f7
  #endif
  		guest_tls = current_tls();
  		/* Snapshot before polling so an IPI racing with the poll remains
-@@ -774,17 +777,23 @@ void userspace(struct uml_pt_regs *registers)
+@@ -757,17 +760,23 @@ void userspace(struct uml_pt_regs *registers)
  			} else if (registers->faultinfo.trap_no == 4 ||
  				   registers->faultinfo.trap_no == 5 ||
  				   registers->faultinfo.trap_no ==

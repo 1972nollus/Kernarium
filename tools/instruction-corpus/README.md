@@ -27,11 +27,9 @@ State recipes generate regular register and vector fills; irregular operands
 and results remain explicit. `$runs` generates equal memory writes at a fixed
 stride. Recipes describe test data only and do not decide instruction semantics.
 
-The maintained SME/SVE native generators supply their programs, allocation
-loops, and initial states. Their source tables retain the independently
-observed results, retirement counts, events, and memory deltas. The A64 SVE
-trap records are derived by their maintained architecture generator from the
-native SVE golden records rather than stored as expanded cases.
+The maintained SME native generator supplies its programs, allocation
+loops, and initial states. Its source tables retain the independently
+observed results, retirement counts, events, and memory deltas.
 
 The versioned manifests, coverage and provenance stay beside the source tables.
 Generation must reproduce their accepted asset SHA-256 before publishing an

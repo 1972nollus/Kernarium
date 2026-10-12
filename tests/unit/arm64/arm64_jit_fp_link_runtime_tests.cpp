@@ -270,15 +270,15 @@ void semantic_helper_materializes_status_and_restores_host() {
   constexpr std::uint64_t value = 0x1122'3344'5566'7788ULL;
   JitBacking backing{2};
   backing.put32(0, native_divide);
-  backing.put32(4, 0xc8df'fc83U); // ldar x3, [x4]
+  backing.put32(4, 0xc89f'fc83U); // stlr x3, [x4]
   backing.put32(8, system_call);
-  backing.put64(page, value);
   JitMapping mapping{generation, base, backing, 2};
   JitExecutor executor;
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   set_vector_lanes(cpu.vectors[1], 0x3f80'0000U);
   set_vector_lanes(cpu.vectors[2], 0);
+  cpu.registers[3] = value;
   cpu.registers[4] = base + page;
   cpu.pc = base;
   const auto host_fpcr = native_fpcr();
@@ -294,7 +294,7 @@ void semantic_helper_materializes_status_and_restores_host() {
   run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 1);
   require(cpu.pc == base + 8);
-  require(cpu.registers[3] == value);
+  require(backing.get64(page) == value);
   require(!cpu.gadget_fp_active);
   require((cpu.fpsr & fpsr_divide_by_zero) != 0);
   require(native_fpcr() == host_fpcr);
@@ -554,6 +554,57 @@ void trap_mode_runs_a_deferred_atomic() {
   executor.end_execution();
 }
 
+void ordered_loads_stay_native() {
+  /* LDAR and LDAPR run as host load-acquires inside the block: the block
+   * retires whole in one dispatch with the native FP environment still
+   * active, and a load from an unmapped page faults precisely. */
+  constexpr unsigned long generation = 8412;
+  constexpr std::uint64_t base = 0x118'0000;
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  constexpr std::uint64_t value = 0x8877'6655'4433'2211ULL;
+  JitBacking backing{2};
+  backing.put32(0, native_divide);
+  backing.put32(4, 0x08df'fc85U); // ldarb w5, [x4]
+  backing.put32(8, 0xc8df'fc83U); // ldar x3, [x4]
+  const bool lrcpc = ::uml::platform::apple::probed_host_capabilities().has(
+      ::uml::cpu::ArmFeature::lrcpc);
+  // ldaprh w6, [x4], or a second ldar when the host lacks FEAT_LRCPC.
+  backing.put32(12, lrcpc ? 0x78bf'c086U : 0x48df'fc86U);
+  backing.put32(16, 0xc8df'fce7U); // ldar x7, [x7]
+  backing.put32(20, system_call);
+  backing.put64(page, value);
+  JitMapping mapping{generation, base, backing, 2};
+  JitExecutor executor;
+  StaticGuestMemory memory;
+  arm64::CpuState cpu{};
+  set_vector_lanes(cpu.vectors[1], 0x3f80'0000U);
+  set_vector_lanes(cpu.vectors[2], 0);
+  cpu.registers[4] = base + page;
+  cpu.registers[7] = base + page;
+  cpu.pc = base;
+  const auto host_fpcr = native_fpcr();
+  const auto host_fpsr = native_fpsr();
+
+  require(executor.begin_execution(generation, cpu.pc));
+  auto run = run_block(executor, memory, generation, cpu);
+  require(run.event == Event::system_call && run.executed == 6);
+  require(cpu.registers[5] == (value & 0xffU) && cpu.registers[3] == value &&
+          cpu.registers[6] == (value & 0xffffU) && cpu.registers[7] == value);
+  require(cpu.gadget_fp_active);
+  executor.end_execution();
+  require(!cpu.gadget_fp_active);
+  require(native_fpcr() == host_fpcr && native_fpsr() == host_fpsr);
+
+  cpu.pc = base + 4;
+  cpu.registers[4] = base + 2U * page;
+  cpu.registers[5] = 0;
+  require(executor.begin_execution(generation, cpu.pc));
+  run = run_block(executor, memory, generation, cpu);
+  executor.end_execution();
+  require(run.event == Event::memory_fault && run.executed == 0);
+  require(cpu.pc == base + 4 && cpu.registers[5] == 0);
+}
+
 } // namespace
 
 int main() {
@@ -570,5 +621,6 @@ int main() {
   linked_successor_observes_dirty_constrained_binding();
   linked_vector_fault_is_precise_for_page_size();
   trap_mode_runs_a_deferred_atomic();
+  ordered_loads_stay_native();
   return 0;
 }
