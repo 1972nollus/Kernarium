@@ -445,7 +445,7 @@ their provenance and deployment targets, required APIs, and the absence of
 unused command-line providers. Apple builds
 validate the kernel bridge ABI, page profile, product family, and `6.18` series
 before embedding an artifact; they do not bind to its patch release or source
-commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
+commit and never prepare sources or invoke a kernel or Android build. Rootfs bundles
 are launch inputs, not emulator build inputs.
 
 Kernarium's defaults, guest bundles, and scripts are described in

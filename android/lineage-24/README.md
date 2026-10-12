@@ -33,10 +33,10 @@ canonical interface for builder paths and optional inputs. Ninja and the
 preserved AOSP output directory own incremental builds; the wrapper does not
 introduce a second build system.
 
-Kernel publication is independent of AOSP/rootfs publication. An already-built
+Kernel publication is independent of rootfs publication. An already-built
 clean ACK result is published with `tools/publish-kernel-artifact.py` and
 installed below `.build/kernel/artifacts`. Updating this artifact must not
-republish the GPT or invalidate a guest bundle. The AOSP build, the disk
+republish the GPT or invalidate a guest bundle. The Android build, the disk
 assembly and the release publisher take their kernel from such an artifact
 (`--kernel-artifact`). Its `vmlinux` is the runtime image; the build's own
 `vmlinux` keeps the DWARF pahole reads and does not fit the product's 64 MiB
@@ -100,9 +100,20 @@ The product removes Cuttlefish virtual hardware and services that have no
 Darwin UML implementation while preserving Android framework APIs required by
 ordinary applications.
 
-The image provides Settings, Launcher, Files, Package Installer, WebView,
-LatinIME, ThemePicker, and the patched Jelly browser. QuickSearchBox and its
-home-screen search surface are deliberately omitted. Bluetooth and Wi-Fi
+The product is `lineage_darwin`: the Cuttlefish base with LineageOS's
+`common_full_tablet_wifionly` product chain on top, so the tablet configuration
+and the LineageOS platform services (LineageParts, LineageSettingsProvider and
+the hardware, live-display, trust and global-actions services) are present.
+`overlay/lineage_darwin.mk` sets the LineageOS switches before inheriting it
+and names what the product leaves out. The image provides Settings, Trebuchet,
+Files, Package Installer, the LineageOS WebView, LatinIME, ThemePicker, the
+patched Jelly browser and a curated application set: Glimpse (gallery), Twelve
+(music), Etar (calendar), ExactCalculator, Camelot (PDF viewer) and Seedvault
+(backup). It has no Google or microG services. The LineageOS updater and setup
+wizard, Canvas, Aperture, Recorder, QuickAccessWallet, the charger animation,
+fastbootd and AudioFX are excluded, as are DeskClock and EmergencyInfo; the
+build and verifier assert both lists. QuickSearchBox and its home-screen
+search surface are deliberately omitted. Bluetooth and Wi-Fi
 device implementations and feature declarations are also omitted. The Network
 dashboard exposes the stock Ethernet interface editor alongside Data Saver,
 VPN, and Private DNS. On this radio-free product, the editor enables AOSP's
@@ -142,10 +153,16 @@ product starts adbd on TCP port 5555 and retains the stock authorization prompt
 for a newly connected host. The immutable `ro.boot.kernarium.adb_auth` launch
 property can disable that check for host-side diagnostics: iOS fixes it to one,
 while the standalone macOS product fixes it to zero. Bundle command lines may
-not override this host security choice. Under `userdebug`, `adb root` restarts
-adbd as root and the build is debuggable: on macOS, which authorizes nothing,
-any local process that reaches the loopback ADB port can become root in the
-guest, an accepted property of a development host. iOS keeps authorization.
+not override this host security choice. LineageOS makes its debug variant
+non-debuggable and always authorized; the product undoes the first
+(`PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG` is empty) and the boot policy decides
+the second. Under `userdebug` the build is debuggable and carries `su`, and
+`adb root` goes through LineageOS's `adb_root` service, whose "Rooted
+debugging" switch is off on a fresh data partition. A boot with authorization
+off starts that service with the switch on, so on macOS, which authorizes
+nothing, any local process that reaches the loopback ADB port can become root
+in the guest, an accepted property of a development host. iOS keeps
+authorization and the default-off switch.
 SELinux stays enforcing in both variants; only the host-owned kernel command
 line could change that. Android's wireless-debugging setting
 uses the active Virtio-net Ethernet interface as its trusted-network identity,

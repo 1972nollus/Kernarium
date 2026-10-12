@@ -34,8 +34,9 @@ avoid unrelated formatting churn. There is no repository-wide formatter.
   also supported and must be tested when a change is page-size-sensitive.
 - Apple builds consume accepted prebuilt kernel bundles. They must not locate a
   kernel checkout, invoke Kbuild, or publish a kernel artifact.
-- Android 17 uses its own 4 KiB ACK kernel and rootfs release. It has no
-  16 KiB product and must not inherit Linux desktop rootfs discovery.
+- Android 17 (LineageOS 24) uses its own 4 KiB ACK kernel and rootfs release.
+  It has no 16 KiB product and must not inherit Linux desktop rootfs
+  discovery.
 
 Keep C++20 code warning-clean under `-Wall -Wextra -Werror`, preserve SPDX
 headers, and follow adjacent formatting.

@@ -1,6 +1,6 @@
 # Android Common Kernel 6.18 source policy
 
-This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream
+This line is the ACK 6.18 kernel for the LineageOS 24 (Android 17) guest. Exact upstream
 identity, the ordered series, and the final tree they produce live in
 [`patches/metadata.env`](patches/metadata.env); the bridge ABI identity is
 [`../common/abi/identity.env`](../common/abi/identity.env).
@@ -69,7 +69,7 @@ The current rootfs uses unencrypted ext4 userdata, but the fscrypt,
 inline-encryption fallback, HCTR2, and dm-default-key stack remains built in
 for ordinary Android application and framework compatibility. The native arm64
 eBPF JIT is not exposed because its execution contracts do not
-match UML; the AOSP product uses the generic BPF interpreter, which runs
+match UML; the Android product uses the generic BPF interpreter, which runs
 callbacks through the entry-point pool the
 [mainline README](../mainline-6.18/README.md) describes. The kernel
 carries BTF type information, exposed at `/sys/kernel/btf/vmlinux`, as GKI
@@ -121,7 +121,7 @@ debug-section locals, and keeps `.BTF`, every function and data symbol,
 [`artifacts/accepted-4k.env`](artifacts/accepted-4k.env) selects the reviewed
 local bundle below `.build/kernel/artifacts`.
 
-Kernel publication is independent of AOSP/rootfs publication. Advancing the
+Kernel publication is independent of rootfs publication. Advancing the
 accepted ACK artifact must not rebuild or rename the rootfs release, recreate a
 `.kern` bundle, or invalidate its persistent disk. Apple consumers validate the
 bridge ABI, 4 KiB page profile, Android family, and `6.18` series at build
