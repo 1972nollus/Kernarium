@@ -15,7 +15,6 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_sme_support.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 
 #include <mach/mach.h>
 
@@ -153,8 +152,7 @@ void vector_lengths_come_from_the_svl(bool hardware) {
  * pseudocode says, and touches no vector or SVE state. */
 void vector_length_family_runs_outside_streaming_mode() {
   namespace family = uml::emulator::tests::sm0_vector_length;
-  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
-                                                arm64::SveSupport::none);
+  const auto host = ::uml::platform::without_sve(uml::cpu::host_capabilities());
   const uml::cpu::HostCapabilitiesScope scope{host};
   const auto words = family::words();
   constexpr std::size_t chunk = 200;
@@ -195,8 +193,7 @@ void vector_length_family_runs_outside_streaming_mode() {
  * and 2 goes through a tagged pointer, which take the semantic library. */
 void spill_words_run_outside_streaming_mode() {
   namespace family = uml::emulator::tests::sm0_vector_length;
-  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
-                                                arm64::SveSupport::none);
+  const auto host = ::uml::platform::without_sve(uml::cpu::host_capabilities());
   const uml::cpu::HostCapabilitiesScope scope{host};
   constexpr std::size_t window = 3U * page;
   unsigned long generation = 20000;
@@ -283,8 +280,7 @@ void spill_words_run_outside_streaming_mode() {
  * the word. */
 void spill_words_fault_like_their_accesses() {
   namespace family = uml::emulator::tests::sm0_vector_length;
-  const auto host = arm64::sve_host_for_support(uml::cpu::host_capabilities(),
-                                                arm64::SveSupport::none);
+  const auto host = ::uml::platform::without_sve(uml::cpu::host_capabilities());
   const uml::cpu::HostCapabilitiesScope scope{host};
   unsigned long generation = 19000;
   for (const bool predicate : {false, true})

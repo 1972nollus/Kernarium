@@ -101,7 +101,9 @@ and a sweep of the space's slots when the epoch wraps keeps that exact. An
 arm64 body header is 16 bytes, its build's stop kept in a tail only for a block
 that stopped early or holds no instruction, and an x86 translation record is
 96 bytes. Hit rates and victims are unchanged by this packing: the set still
-hashes the guest's address-space number.
+hashes the guest's address-space number. The sizes hold with shared bodies
+too, where every executor keeps its own slots and a body's header is paid
+once however many slots hold it.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,

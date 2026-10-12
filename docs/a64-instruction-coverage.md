@@ -107,14 +107,17 @@ has two requirements, 0 where it never executes:
   FEAT_SVE_AES, FEAT_SVE_PMULL128, FEAT_SVE_SHA3) it needs, or the SME
   profile's for an SME form legal in either mode (1,677 rows).
 
-Both profiles include the SVE forms of FEAT_BF16 and FEAT_I8MM. 1,457 rows
-execute in both modes, 627 only in streaming mode, 220 only outside it, and
-625 in neither: FEAT_SME_FA64, FEAT_SVE2p1 and the other later extensions are
-outside both profiles, and FEAT_SVE_BitPerm and FEAT_SVE_SM4 are withheld
-until a workload needs them. The pseudocode lets a CPU with FEAT_SVE and
-FEAT_SME execute 29 SVE encodings that FEAT_SME or FEAT_SVE2p1 added (SCLAMP,
-PSEL, the predicate-pair WHILE forms and others) outside streaming mode, so
-their non-streaming requirement names FEAT_SME too. Each row also records
+The table keeps the architecture's two requirements, and the virtual CPU
+implements no SVE feature: a row whose outside-streaming requirement names
+one is UNDEFINED outside streaming mode, apart from the SM = 0 family below.
+Measured against the SVE and SME profiles, 1,457 rows execute in both modes,
+627 only in streaming mode, 220 only outside it, and 625 in neither:
+FEAT_SME_FA64, FEAT_SVE2p1 and the other later extensions are outside both
+profiles, and FEAT_SVE_BitPerm and FEAT_SVE_SM4 are withheld. The pseudocode
+lets a CPU with FEAT_SVE and FEAT_SME execute 29 SVE encodings that FEAT_SME
+or FEAT_SVE2p1 added (SCLAMP, PSEL, the predicate-pair WHILE forms and others)
+outside streaming mode, so their non-streaming requirement names FEAT_SME
+too. Each row also records
 the smallest streaming vector length at which it is allocated, the PSTATE.SM
 and PSTATE.ZA state its access checks demand on a CPU without FEAT_SVE, its
 register operands and groups, and its memory shape, including the gathers,

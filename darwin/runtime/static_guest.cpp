@@ -12,7 +12,6 @@
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/sme_profile.hpp"
-#include "cpu/arm64/sve_profile.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
 #include "runtime/aarch32_guest.hpp"
@@ -105,12 +104,6 @@ static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(64) == arm64::sme_storage_size(64)
 static_assert(DARWIN_UML_GUEST_SME_STATE_SIZE(256) ==
 	      arm64::sme_storage_size(256));
 
-/* The bridge's packed predicates are the masks' bits. */
-static_assert(sizeof(darwin_uml_guest_sve_registers::p) /
-		sizeof(darwin_uml_guest_sve_registers::p[0]) ==
-	      arm64::sve_p_registers);
-static_assert(sizeof(darwin_uml_abi_u16) * 8 == arm64::sve_vector_length);
-
 /* The FPCR fields a restored context may set: those of an MSR FPCR on this
  * host, decided once from the host the engines translate for. */
 [[nodiscard]] std::uint32_t restored_fpcr_mask() noexcept
@@ -169,65 +162,11 @@ void load_cpu(arm64::CpuState &cpu,
 	return true;
 }
 
-/* An arm64 task's SVE registers. The engines set CpuState::sve_live and
- * never clear it, so it is taken from the task on every entry. P and FFR
- * travel only while the task is live; between entries the vCPU's copies are
- * zero (save_sve), which is what a task that has not executed SVE since its
- * last system call finds when it starts to. Only the kernel sets a live
- * task's flags, for the run's vector length; anything else is fatal.
- *
- * Every entry and return runs the test, and a task that is not live is the
- * common case, so the test is inline and the live path is not: a call there
- * costs the syscall boundary probe 3% on the A15. */
-[[nodiscard, gnu::noinline]] bool load_live_sve(arm64::CpuState &cpu,
-	const darwin_uml_guest_sve_registers &sve) noexcept
-{
-	if (sve.flags != DARWIN_UML_GUEST_SVE_LIVE ||
-		sve.vl != arm64::sve_vector_length)
-		return false;
-	cpu.sve_live = 1;
-	for (unsigned n = 0; n < arm64::sve_p_registers; ++n)
-		cpu.sve_p[n] = arm64::sve_predicate_mask(sve.p[n]);
-	cpu.sve_ffr = arm64::sve_predicate_mask(sve.ffr);
-	return true;
-}
-
-[[nodiscard, gnu::always_inline]] inline bool load_sve(arm64::CpuState &cpu,
-	const darwin_uml_guest_sve_registers &sve) noexcept
-{
-	cpu.sve_live = 0;
-	if (sve.flags == 0) [[likely]]
-		return true;
-	return load_live_sve(cpu, sve);
-}
-
-/* A live task gets back its P, FFR and flag, and the vCPU's copies are
- * zeroed for the next task. A task that is not live keeps its tail. */
-[[gnu::noinline]] void save_live_sve(arm64::CpuState &cpu,
-	darwin_uml_guest_sve_registers &sve) noexcept
-{
-	for (unsigned n = 0; n < arm64::sve_p_registers; ++n)
-		sve.p[n] = arm64::sve_predicate_packed(cpu.sve_p[n]);
-	sve.ffr = arm64::sve_predicate_packed(cpu.sve_ffr);
-	sve.flags = DARWIN_UML_GUEST_SVE_LIVE;
-	cpu.sve_p = {};
-	cpu.sve_ffr = {};
-}
-
-[[gnu::always_inline]] inline void save_sve(arm64::CpuState &cpu,
-	darwin_uml_guest_sve_registers &sve) noexcept
-{
-	if (cpu.sve_live == 0) [[likely]]
-		return;
-	save_live_sve(cpu, sve);
-}
-
-/* Inline, like the tests above: outlined, it adds a call to every return. */
+/* Inline: outlined, it adds a call to every return. */
 [[gnu::always_inline]] inline void save_cpu(arm64::CpuState &cpu,
 	      darwin_uml_guest_registers &registers,
 	      darwin_uml_guest_fp_registers &fp,
-	      darwin_uml_guest_sme_registers &sme,
-	      darwin_uml_guest_sve_registers &sve, unsigned long &tls)
+	      darwin_uml_guest_sme_registers &sme, unsigned long &tls)
 {
 	::uml::cpu::materialize_architectural_state(cpu);
 	std::copy_n(cpu.registers.begin(), 29, std::begin(registers.x));
@@ -254,7 +193,6 @@ void load_cpu(arm64::CpuState &cpu,
 	} else {
 		registers.svcr = 0;
 	}
-	save_sve(cpu, sve);
 	tls = static_cast<unsigned long>(cpu.tls);
 	/* Like a context switch on hardware, report the FPCR and FPSR the task
 	 * ran with: load_cpu masked them, and an untouched FP image still holds
@@ -661,14 +599,13 @@ template<uml::cpu::EngineKind Kind>
 [[gnu::cold, gnu::noinline]] int run_aarch32_guest(
 	darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp,
-	const darwin_uml_guest_sve_registers &sve,
 	unsigned long generation, unsigned long *tls,
 	::uml::runtime::Context &context,
 	::uml::runtime::ThreadExecutionState &runtime)
 {
 	namespace a32 = ::uml::runtime::aarch32;
 	if (::uml::runtime::guest_a32_support(Kind) < arm64::A32Support::base ||
-	    !a32::entry_is_valid(registers, sve))
+	    !a32::entry_is_valid(registers))
 		return DARWIN_UML_EVENT_FATAL;
 	auto *engine = common_engine<Kind>(runtime);
 	if (engine == nullptr)
@@ -731,23 +668,17 @@ int run_common_guest(
 		if (!uml::cpu::cpu_engine_available(uml::cpu::EngineKind::jit))
 			return DARWIN_UML_EVENT_FATAL;
 	}
-	/* An arm64 task's tail is its FP registers and then its SME and SVE
-	 * registers, whether or not the run implements either. */
+	/* An arm64 task's tail is its FP registers and then its SME
+	 * registers, whether or not the run implements SME. */
 	if (fp_size != DARWIN_UML_ABI_GUEST_ARM64_TAIL_SIZE)
 		return DARWIN_UML_EVENT_FATAL;
 	/* A 32-bit task: PSTATE.nRW in the SPSR layout the kernel hands over. */
 	if (mutable_registers.pstate & pstate_mode32) [[unlikely]]
 		return run_aarch32_guest<Kind>(mutable_registers, fp,
-			*reinterpret_cast<const darwin_uml_guest_sve_registers *>(
-				static_cast<std::byte *>(fp_pointer) +
-				DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET),
 			generation, tls, *context, *runtime);
 	auto &sme = *reinterpret_cast<darwin_uml_guest_sme_registers *>(
 		static_cast<std::byte *>(fp_pointer) +
 		DARWIN_UML_ABI_GUEST_SME_REGISTERS_OFFSET);
-	auto &sve = *reinterpret_cast<darwin_uml_guest_sve_registers *>(
-		static_cast<std::byte *>(fp_pointer) +
-		DARWIN_UML_ABI_GUEST_SVE_REGISTERS_OFFSET);
 	const auto &registers = *static_cast<const darwin_uml_guest_registers *>(
 		register_pointer);
 	if (registers.pc == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
@@ -767,9 +698,6 @@ int run_common_guest(
 		cpu.access_fp_state();
 	auto *engine = common_engine<Kind>(*runtime);
 	if (engine == nullptr)
-		return DARWIN_UML_EVENT_FATAL;
-	/* Last before the run, so that every unpacked P reaches save_cpu. */
-	if (!load_sve(cpu, sve)) [[unlikely]]
 		return DARWIN_UML_EVENT_FATAL;
 
 	const auto &interrupt = runtime->interrupt;
@@ -791,7 +719,7 @@ int run_common_guest(
 	debug_check_host_streaming_state();
 	const auto result = engine->run(request);
 	debug_check_host_streaming_state();
-	save_cpu(cpu, mutable_registers, fp, sme, sve, *tls);
+	save_cpu(cpu, mutable_registers, fp, sme, *tls);
 
 	switch (result.reason) {
 	case uml::cpu::ExitReason::system_call:

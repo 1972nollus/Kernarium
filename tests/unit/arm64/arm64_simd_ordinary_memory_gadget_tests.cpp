@@ -363,9 +363,9 @@ void pair_translation(std::map<std::uintptr_t, unsigned> &references)
 						<< scale;
 					const auto operand =
 						vector_offset(rt) |
-						(vector_offset(rt2) << 16U) |
-						(base_offset(rn) << 32U) |
-						((displacement & 0xffffU) << 48U);
+						(vector_offset(rt2) << 12U) |
+						(base_offset(rn) << 24U) |
+						((displacement & 0xfffU) << 36U);
 					account(references,
 						build(pair_instruction(
 							operation, load, mode,

@@ -15,8 +15,7 @@ everything else. In every image given this checks that:
   call to a helper outside it goes through its veneer in an island, whose
   words are all branches (the first island, and the AArch32 part's own); and
 - SVE and SME words appear only in the SME part, the one part that may run
-  in streaming mode; the SVE part lowers the non-streaming SVE forms onto
-  AdvSIMD and holds none, and the AArch32 parts hold none.
+  in streaming mode; the other parts and the AArch32 parts hold none.
 
 usage: test_gadget_region_layout.py IMAGE...
 """
@@ -48,7 +47,6 @@ BOUNDS = {
     "afp": "uml_arm64_gadget_afp_section",
     "veneer": "uml_arm64_gadget_veneer_section",
     "sme": "uml_arm64_gadget_sme_section",
-    "sve": "uml_arm64_gadget_sve_section",
     "a32_bank": "uml_arm64_gadget_a32_bank_section",
     "a32_cold": "uml_arm64_gadget_a32_cold_section",
     "a32_veneer": "uml_arm64_gadget_a32_veneer_section",

@@ -7,7 +7,6 @@ if(UML_TARGET_MACOS)
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_aarch32_decoder>
         $<TARGET_OBJECTS:uml_arm64_aarch32_semantics>
-        $<TARGET_OBJECTS:uml_arm64_sve_semantics>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_link_libraries(uml_scalar_ceiling_bench PRIVATE
         UML::BridgeAbi
