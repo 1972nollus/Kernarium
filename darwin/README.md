@@ -89,6 +89,20 @@ terminal exit inside a linked successor is attributed to the successor's
 program; the cache keeps no index keyed by stream address and maintains nothing
 per store for that lookup.
 
+A slot is three words on arm64 and four on x86: a tag, the translation, and a
+memo. The tag packs the translation's key (an A64 PC below the guest address
+limit, an AArch32 address under its ISA flags, or an x86 address and execution
+mode) under the 16-bit id the cache gives each resident address space, so a
+lookup is one comparison and an empty slot, whose tag is zero, matches nothing.
+The memo packs the link record the slot publishes through with a 16-bit
+validation epoch. An address space's epoch advances when its code-change number
+moves, a slot whose epoch is the current one has matched guest memory since,
+and a sweep of the space's slots when the epoch wraps keeps that exact. An
+arm64 body header is 16 bytes, its build's stop kept in a tail only for a block
+that stopped early or holds no instruction, and an x86 translation record is
+96 bytes. Hit rates and victims are unchanged by this packing: the set still
+hashes the guest's address-space number.
+
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,
 and eight resident address spaces. The slot count is the one geometry control

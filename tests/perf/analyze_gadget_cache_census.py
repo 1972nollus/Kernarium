@@ -506,37 +506,17 @@ def report(path: Path, blocks: list[Block], arguments: argparse.Namespace) -> No
                       f"holding {mib(entries * mean_evicted)} uncompressed per cache")
 
     if have_parts:
-        print("\nwhat the header and slot diets (C5) and digest validation (C4) "
-              "would free")
-        slots_allocated = sum(
-            block.get("slab_count", -1) * block.get("slab_slots", 256)
-            if block.get("slab_count", -1) >= 0 else
-            slab_parts(block, arguments.slot_bytes)[0] //
-            block.get("slot_bytes", arguments.slot_bytes)
-            for block in blocks)
-        print(f"  16 bytes off every committed slot  {mib(16 * slots_allocated)}  "
-              f"{share(16 * slots_allocated, total)}")
-        complete = header_saving = 0
+        print("\nwhat digest validation (C4) would free")
         digest8 = digest16 = 0
         for t in translations:
             assert t.allocated is not None and t.header is not None
             assert t.stream is not None and t.source is not None
             if engine == "arm64":
-                if t.units == t.instructions:
-                    complete += 1
-                    header_saving += t.allocated - round_up(
-                        t.header - 16 + t.stream + t.source)
                 digest8 += t.allocated - round_up(t.header + t.stream + 8)
                 digest16 += t.allocated - round_up(t.header + t.stream + 16)
             else:
-                complete += 1
-                header_saving += 16
                 digest8 += round_up(t.source) - 8
                 digest16 += round_up(t.source) - 16
-        what = ("16 bytes off a complete block's header"
-                if engine == "arm64" else "16 bytes off every translation record")
-        print(f"  {what:34s} {mib(header_saving)}  "
-              f"{share(header_saving, total)}  ({complete:,} blocks)")
         print(f"  validation units for an 8-byte digest   {mib(digest8)}  "
               f"{share(digest8, total)}")
         print(f"  validation units for a 16-byte digest   {mib(digest16)}  "
