@@ -248,7 +248,10 @@ def check_route_checkout(verifier: Verifier, root: Path, workspace: Path,
 def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> None:
     android_root = root / "aosp-policy"
     workspace = root / "aosp"
-    (workspace / ".repo/manifests").mkdir(parents=True)
+    manifests = workspace / ".repo/manifests"
+    manifests.mkdir(parents=True)
+    run("git", "init", "-q", str(manifests))
+    commit(manifests, "default.xml", "<manifest/>\n", "manifest", 1700000000)
     route_base, route_base_tree = project(workspace, "build/make", 1700000000)
     pinned, _ = project(workspace, "external/zstd", 1700000010)
     route = workspace / "build/make"
@@ -319,6 +322,54 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
 
     check_route_checkout(verifier, root, workspace, projects, "aosp", "AOSP")
     verifier.accepts("the restored AOSP workspace", "final")
+    check_snapshot(source_root, android_root, root, workspace, environment)
+
+
+def check_snapshot(source_root: Path, android_root: Path, root: Path,
+                   workspace: Path, environment: dict[str, str]) -> None:
+    """Recording a workspace rewrites the snapshot and the digests that pin it."""
+    copy = root / "snapshot-policy"
+    shutil.copytree(android_root, copy)
+    metadata = copy / "metadata/lineage.env"
+    metadata.write_text(
+        metadata.read_text()
+        + "LINEAGE24_MANIFEST_COMMIT='" + "0" * 40 + "'\n"
+        + "LINEAGE24_MANIFEST_TREE='" + "0" * 40 + "'\n"
+    )
+    tool = source_root / "android/lineage-24/tools/snapshot-source.py"
+    command = (
+        sys.executable, "-B", str(tool), "--android-root", str(copy),
+        "--aosp-source", str(workspace),
+    )
+    done = subprocess.run(
+        command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if done.returncode != 0:
+        fail(f"snapshot-source.py refused a clean workspace: {done.stdout.strip()}")
+    manifests = workspace / ".repo/manifests"
+    values = parse_env(metadata)
+    snapshot = copy / "metadata/base-manifest.xml"
+    if values["LINEAGE24_BASE_MANIFEST_SHA256"] != hashlib.sha256(
+        snapshot.read_bytes()
+    ).hexdigest():
+        fail("snapshot-source.py left a stale snapshot digest")
+    for key, revision in (
+        ("LINEAGE24_MANIFEST_COMMIT", "HEAD"), ("LINEAGE24_MANIFEST_TREE", "HEAD^{tree}")
+    ):
+        if values[key] != run("git", "rev-parse", revision, cwd=manifests):
+            fail(f"snapshot-source.py recorded the wrong {key}")
+    if 'path="build/make"' not in snapshot.read_text():
+        fail("snapshot-source.py did not record the workspace projects")
+
+    (workspace / "build/make/untracked.txt").write_text("dirty\n")
+    done = subprocess.run(
+        command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True,
+    )
+    (workspace / "build/make/untracked.txt").unlink()
+    if done.returncode == 0 or "build/make" not in done.stdout:
+        fail("snapshot-source.py recorded a dirty workspace")
 
 
 def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) -> None:
