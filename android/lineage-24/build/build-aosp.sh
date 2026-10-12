@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-METADATA="$ANDROID_ROOT/metadata/aosp.env"
+METADATA="$ANDROID_ROOT/metadata/lineage.env"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
@@ -165,7 +165,7 @@ python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
 	--common-root "$KERNEL_COMMON_ROOT" \
 	--kernel-metadata "$OUTER_ROOT/kernel/android-6.18/patches/metadata.env" \
 	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
-SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${ANDROID17_PRODUCT}.ninja"
+SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${LINEAGE24_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
 if [[ -f "$SOONG_BUILD_GRAPH" ]]; then
 	printf '%s\n' "reusing incremental AOSP output: $OUT_DIR"
@@ -186,15 +186,15 @@ export SOONG_NINJA=ninja
 CDPATH= cd -- "$AOSP_SOURCE"
 # shellcheck disable=SC1091
 source build/envsetup.sh
-lunch "${ANDROID17_PRODUCT}-${ANDROID17_RELEASE_CONFIG}-${ANDROID17_BUILD_VARIANT}"
+lunch "${LINEAGE24_PRODUCT}-${LINEAGE24_RELEASE_CONFIG}-${LINEAGE24_BUILD_VARIANT}"
 
-[[ "$(get_build_var TARGET_PRODUCT)" == "$ANDROID17_PRODUCT" ]] ||
+[[ "$(get_build_var TARGET_PRODUCT)" == "$LINEAGE24_PRODUCT" ]] ||
 	fail "lunch selected the wrong product"
-[[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$ANDROID17_BUILD_VARIANT" ]] ||
+[[ "$(get_build_var TARGET_BUILD_VARIANT)" == "$LINEAGE24_BUILD_VARIANT" ]] ||
 	fail "lunch selected the wrong build variant"
 [[ "$(get_build_var TARGET_ARCH)" == arm64 ]] || fail "product is not arm64"
 [[ -z "$(get_build_var TARGET_2ND_ARCH)" ]] || fail "product has a 32-bit secondary ABI"
-[[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$ANDROID17_MAX_PAGE_SIZE_SUPPORTED" ]] ||
+[[ "$(get_build_var TARGET_MAX_PAGE_SIZE_SUPPORTED)" == "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" ]] ||
 	fail "product maximum page size differs from metadata"
 [[ "$(get_build_var TARGET_NO_BIONIC_PAGE_SIZE_MACRO)" == true ]] ||
 	fail "product exposes a compile-time bionic page-size macro"
@@ -472,9 +472,9 @@ fi
 # publish-release.py consumes the packaged VINTF checker and the AOSP zstd from
 # this output, so a fresh output builds both host tools.
 m -j"$JOBS" target-files-package check_target_files_vintf zstd
-DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${ANDROID17_PRODUCT}.config"
+DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${LINEAGE24_PRODUCT}.config"
 verify_dexpreopt_config "$DEXPREOPT_CONFIG"
-TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${ANDROID17_PRODUCT}-target_files.zip"
+TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${LINEAGE24_PRODUCT}-target_files.zip"
 [[ -f "$TARGET_FILES" ]] || fail "target-files archive is missing: $TARGET_FILES"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
 	--kernel-elf "$KERNEL_ELF" \

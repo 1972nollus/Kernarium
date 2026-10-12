@@ -30,10 +30,10 @@ def main() -> None:
     args = parser.parse_args()
     android_root = args.android_root.resolve()
 
-    metadata = parse_assignments(android_root / "metadata/aosp.env", fail)
+    metadata = parse_assignments(android_root / "metadata/lineage.env", fail)
     base_manifest = android_root / "metadata/base-manifest.xml"
     if pinned_source.digest(base_manifest, error) != metadata.get(
-        "ANDROID17_BASE_MANIFEST_SHA256"
+        "LINEAGE24_BASE_MANIFEST_SHA256"
     ):
         fail("resolved base-manifest digest differs from AOSP metadata")
     base_projects = pinned_source.manifest_projects(ET.parse(base_manifest).getroot(), error)

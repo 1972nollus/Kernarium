@@ -250,9 +250,9 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
         ("platform/build", "build/make", route_base, "refs/tags/fixture"),
         ("platform/external/zstd", "external/zstd", pinned, "refs/tags/fixture"),
     ])
-    (android_root / "metadata/aosp.env").write_text(
+    (android_root / "metadata/lineage.env").write_text(
         "AOSP_SOURCE_SCHEMA=1\n"
-        f"ANDROID17_BASE_MANIFEST_SHA256='{digest}'\n"
+        f"LINEAGE24_BASE_MANIFEST_SHA256='{digest}'\n"
     )
     export(route, route_base, android_root / "patches/projects/p0001/series", "Apache-2.0")
     (android_root / "patches/projects.tsv").write_text(

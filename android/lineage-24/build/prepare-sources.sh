@@ -5,7 +5,7 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/aosp.env"
+AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 JELLY_METADATA="$ROOT_DIR/android/lineage-24/third_party/jelly/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
@@ -175,8 +175,8 @@ fi
 
 (
 	CDPATH= cd -- "$AOSP_SOURCE"
-	repo init -u "$ANDROID17_MANIFEST_REPOSITORY" \
-		-b "$ANDROID17_MANIFEST_TAG" --manifest-depth=1 \
+	repo init -u "$LINEAGE24_MANIFEST_REPOSITORY" \
+		-b "$LINEAGE24_MANIFEST_TAG" --manifest-depth=1 \
 		--repo-rev=stable --no-repo-verify --no-clone-bundle
 	repo sync -c --detach -j "$JOBS"
 )

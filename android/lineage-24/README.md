@@ -2,7 +2,7 @@
 
 This directory owns the standalone AOSP 17 guest producer for Darwin UML. The
 exact AOSP identity and product name live in
-[`metadata/aosp.env`](metadata/aosp.env); the ACK identity and generated kernel
+[`metadata/lineage.env`](metadata/lineage.env); the ACK identity and generated kernel
 series live under
 [`../../kernel/android-6.18`](../../kernel/android-6.18/README.md).
 
@@ -83,8 +83,8 @@ runs 4 KiB pages, because Android's 32-bit libraries are 4 KiB aligned; the
 compile-time bionic page-size macro), so it is valid on a kernel of either
 size, and `ro.product.page_size` reports 4096.
 
-The build variant is the single `ANDROID17_BUILD_VARIANT` setting in
-`metadata/aosp.env`, `user` or `userdebug`. Lunch, the target-files verifier,
+The build variant is the single `LINEAGE24_BUILD_VARIANT` setting in
+`metadata/lineage.env`, `user` or `userdebug`. Lunch, the target-files verifier,
 the release manifest and the accepted-release descriptor all follow it, so a
 release is accepted only as the variant the tracked tree builds. A `user` build
 keeps the stock shell privilege boundary; a `userdebug` build is the

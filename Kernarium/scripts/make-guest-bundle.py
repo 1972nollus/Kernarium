@@ -38,7 +38,7 @@ def fail(message: str) -> None:
 def accepted_directory_name() -> str:
     return contract_checks.accepted_directory_name(
         ACCEPTANCE,
-        "ANDROID17_ACCEPTED_DIRECTORY_NAME",
+        "LINEAGE24_ACCEPTED_DIRECTORY_NAME",
         lambda message: SystemExit(
             f"Kernarium/scripts/make-guest-bundle.py: {message}"
         ),

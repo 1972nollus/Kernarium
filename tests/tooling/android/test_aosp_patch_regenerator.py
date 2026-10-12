@@ -56,9 +56,9 @@ def write_fixture(
     )
     (android_root / "metadata/base-manifest.xml").write_text(manifest)
     manifest_digest = hashlib.sha256(manifest.encode()).hexdigest()
-    (android_root / "metadata/aosp.env").write_text(
+    (android_root / "metadata/lineage.env").write_text(
         "AOSP_SOURCE_SCHEMA=1\n"
-        f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
+        f"LINEAGE24_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
     )
     empty_tree = "0" * 40
     (android_root / "patches/projects.tsv").write_text(
@@ -144,7 +144,7 @@ def verify_strict_contract(android_root: Path) -> None:
     verifier = android_root / "tools/verify-aosp-patches.py"
     projects = android_root / "patches/projects.tsv"
     manifest = android_root / "metadata/base-manifest.xml"
-    metadata = android_root / "metadata/aosp.env"
+    metadata = android_root / "metadata/lineage.env"
     saved = {path: path.read_bytes() for path in (projects, manifest, metadata)}
 
     def restore() -> None:
@@ -172,7 +172,7 @@ def verify_strict_contract(android_root: Path) -> None:
         manifest_digest = hashlib.sha256(text.encode()).hexdigest()
         metadata.write_text(
             "AOSP_SOURCE_SCHEMA=1\n"
-            f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
+            f"LINEAGE24_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
         )
 
     # A line of only white space is a malformed row, not a blank line.

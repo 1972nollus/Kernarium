@@ -223,7 +223,7 @@ def main() -> None:
     if destination.exists() or destination.is_symlink():
         fail("release destination already exists")
 
-    aosp_metadata = parse_env(android_root / "metadata/aosp.env")
+    aosp_metadata = parse_env(android_root / "metadata/lineage.env")
     tracked = tracked_identity(android_root)
     kernel_root = outer_root / "kernel/android-6.18"
     outer_revision = verify_clean_git(outer_root, "outer project")
@@ -444,7 +444,7 @@ def main() -> None:
                 ("page_size", 4096),
                 ("abi_version", kernel["abi_version"]),
                 ("abi_fingerprint", kernel["abi_fingerprint"]),
-                ("android_product", aosp_metadata["ANDROID17_PRODUCT"]),
+                ("android_product", aosp_metadata["LINEAGE24_PRODUCT"]),
                 ("android_build_id", build_id),
                 ("source_role_aosp", "pinned AOSP 17 Repo workspace"),
                 ("source_role_jelly", "pinned external LineageOS Jelly topic"),
@@ -465,14 +465,14 @@ def main() -> None:
                     datetime.timezone.utc
                 ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                 "android": {
-                    "major": int(aosp_metadata["ANDROID17_MAJOR"]),
+                    "major": int(aosp_metadata["LINEAGE24_MAJOR"]),
                     "sdk": sdk,
                     "build_id": build_id,
-                    "build_variant": aosp_metadata["ANDROID17_BUILD_VARIANT"],
+                    "build_variant": aosp_metadata["LINEAGE24_BUILD_VARIANT"],
                     "fingerprint": fingerprint,
                     "vendor_api_level": vendor_api_level,
-                    "product": aosp_metadata["ANDROID17_PRODUCT"],
-                    "release_config": aosp_metadata["ANDROID17_RELEASE_CONFIG"],
+                    "product": aosp_metadata["LINEAGE24_PRODUCT"],
+                    "release_config": aosp_metadata["LINEAGE24_RELEASE_CONFIG"],
                 },
                 "aosp": {**aosp, "routes": aosp_routes},
                 "jelly": {**jelly, "final_commit": jelly_final_commit},
@@ -510,7 +510,7 @@ def main() -> None:
                         "linker": first_version([str(linker), "--version"]),
                         "darwin_sdk": sdk_identity(darwin_sdk),
                         "android_build_tools": (
-                            f"AOSP {aosp_metadata['ANDROID17_MANIFEST_TAG']} target-files tools"
+                            f"AOSP {aosp_metadata['LINEAGE24_MANIFEST_TAG']} target-files tools"
                         ),
                     },
                 },

@@ -1343,7 +1343,7 @@ def main() -> None:
         path.read_text(errors="surrogateescape")
         for path in (
             android_root / "README.md",
-            android_root / "metadata/aosp.env",
+            android_root / "metadata/lineage.env",
             android_root / "third_party/orangefox/metadata.env",
             kernel_root / "README.md",
             root / "kernel/common/config/darwin-uml.fragment",

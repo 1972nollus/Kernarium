@@ -99,7 +99,7 @@ class BootAndroidTests(unittest.TestCase):
             release = self.installed_release(releases)
             descriptor = root / "accepted.env"
             descriptor.write_text(
-                "# fixture\nANDROID17_ACCEPTED_DIRECTORY_NAME='accepted-1'\n",
+                "# fixture\nLINEAGE24_ACCEPTED_DIRECTORY_NAME='accepted-1'\n",
                 encoding="utf-8",
             )
             selected = boot_android.release_path(
@@ -111,7 +111,7 @@ class BootAndroidTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="android-launcher-") as temporary:
             descriptor = Path(temporary) / "accepted.env"
             descriptor.write_text(
-                "ANDROID17_ACCEPTED_DIRECTORY_NAME='../escape'\n",
+                "LINEAGE24_ACCEPTED_DIRECTORY_NAME='../escape'\n",
                 encoding="utf-8",
             )
             with self.assertRaises(boot_android.LauncherError):

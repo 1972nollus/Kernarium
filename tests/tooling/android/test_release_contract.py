@@ -81,7 +81,7 @@ def main() -> None:
     if schema.get("properties", {}).get("product_family", {}).get("const") != PRODUCT_FAMILY:
         fail("release schema does not pin the Android product family")
 
-    aosp = parse_env(android_root / "metadata/aosp.env")
+    aosp = parse_env(android_root / "metadata/lineage.env")
     jelly = parse_env(android_root / "third_party/jelly/metadata.env")
     orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
     orangefox_projects = android_root / "third_party/orangefox/patches/projects.tsv"
@@ -94,18 +94,18 @@ def main() -> None:
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
         fail("tracked acceptance descriptor keys differ from the release contract")
     tracked_expected = {
-        "ANDROID17_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
-        "ANDROID17_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
-        "ANDROID17_ACCEPTED_ANDROID_MAJOR": "17",
-        "ANDROID17_ACCEPTED_PAGE_SIZE": "4096",
+        "LINEAGE24_ACCEPTED_SCHEMA": str(SCHEMA_VERSION),
+        "LINEAGE24_ACCEPTED_PRODUCT_FAMILY": PRODUCT_FAMILY,
+        "LINEAGE24_ACCEPTED_ANDROID_MAJOR": "17",
+        "LINEAGE24_ACCEPTED_PAGE_SIZE": "4096",
     }
-    if tracked_acceptance["ANDROID17_ACCEPTED_BUILD_VARIANT"] not in BUILD_VARIANTS:
+    if tracked_acceptance["LINEAGE24_ACCEPTED_BUILD_VARIANT"] not in BUILD_VARIANTS:
         fail("tracked acceptance descriptor names an unsupported build variant")
     for key, value in tracked_expected.items():
         if tracked_acceptance.get(key) != value:
             fail(f"tracked acceptance descriptor differs at {key}")
-    if tracked_acceptance["ANDROID17_ACCEPTED_DIRECTORY_NAME"] != (
-        DIRECTORY_PREFIX + tracked_acceptance["ANDROID17_ACCEPTED_RELEASE_ID"]
+    if tracked_acceptance["LINEAGE24_ACCEPTED_DIRECTORY_NAME"] != (
+        DIRECTORY_PREFIX + tracked_acceptance["LINEAGE24_ACCEPTED_RELEASE_ID"]
     ):
         fail("tracked acceptance directory does not match its release ID")
     release_id = "fixture-1"
@@ -122,18 +122,18 @@ def main() -> None:
             "major": 17,
             "sdk": 37,
             "build_id": "FIXTURE",
-            "build_variant": aosp["ANDROID17_BUILD_VARIANT"],
+            "build_variant": aosp["LINEAGE24_BUILD_VARIANT"],
             "fingerprint": "fixture/fingerprint",
             "vendor_api_level": 202704,
-            "product": aosp["ANDROID17_PRODUCT"],
-            "release_config": aosp["ANDROID17_RELEASE_CONFIG"],
+            "product": aosp["LINEAGE24_PRODUCT"],
+            "release_config": aosp["LINEAGE24_RELEASE_CONFIG"],
         },
         "aosp": {
-            "manifest_repository": aosp["ANDROID17_MANIFEST_REPOSITORY"],
-            "manifest_tag": aosp["ANDROID17_MANIFEST_TAG"],
-            "manifest_commit": aosp["ANDROID17_MANIFEST_COMMIT"],
-            "manifest_tree": aosp["ANDROID17_MANIFEST_TREE"],
-            "base_manifest_sha256": aosp["ANDROID17_BASE_MANIFEST_SHA256"],
+            "manifest_repository": aosp["LINEAGE24_MANIFEST_REPOSITORY"],
+            "manifest_tag": aosp["LINEAGE24_MANIFEST_TAG"],
+            "manifest_commit": aosp["LINEAGE24_MANIFEST_COMMIT"],
+            "manifest_tree": aosp["LINEAGE24_MANIFEST_TREE"],
+            "base_manifest_sha256": aosp["LINEAGE24_BASE_MANIFEST_SHA256"],
             "projects_manifest_sha256": sha256_path(
                 android_root / "patches/projects.tsv"
             ),
@@ -251,30 +251,30 @@ def main() -> None:
         acceptance = temporary_root / "accepted-release.env"
         acceptance.write_text(
             "\n".join((
-                f"ANDROID17_ACCEPTED_SCHEMA={SCHEMA_VERSION}",
-                f"ANDROID17_ACCEPTED_RELEASE_ID='{release_id}'",
-                f"ANDROID17_ACCEPTED_DIRECTORY_NAME='{directory_name}'",
-                f"ANDROID17_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
-                "ANDROID17_ACCEPTED_ANDROID_MAJOR=17",
-                f"ANDROID17_ACCEPTED_BUILD_VARIANT='{manifest['android']['build_variant']}'",
-                f"ANDROID17_ACCEPTED_AOSP_MANIFEST_COMMIT='{manifest['aosp']['manifest_commit']}'",
-                f"ANDROID17_ACCEPTED_AOSP_BASE_MANIFEST_SHA256='{manifest['aosp']['base_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256='{manifest['aosp']['projects_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_JELLY_UPSTREAM_COMMIT='{manifest['jelly']['base_commit']}'",
-                f"ANDROID17_ACCEPTED_JELLY_FINAL_TREE='{manifest['jelly']['final_tree']}'",
-                f"ANDROID17_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256='{manifest['jelly']['patch_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT='{manifest['orangefox']['manifest_commit']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256='{manifest['orangefox']['base_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256='{manifest['orangefox']['projects_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_BOOTABLE_RECOVERY_COMMIT='{manifest['orangefox']['bootable_recovery_commit']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_VENDOR_RECOVERY_COMMIT='{manifest['orangefox']['vendor_recovery_commit']}'",
-                f"ANDROID17_ACCEPTED_ORANGEFOX_SE_OMAPI_COMMIT='{manifest['orangefox']['se_omapi_commit']}'",
-                f"ANDROID17_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
-                f"ANDROID17_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
-                f"ANDROID17_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
-                "ANDROID17_ACCEPTED_PAGE_SIZE=4096",
-                f"ANDROID17_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
-                f"ANDROID17_ACCEPTED_ABI_FINGERPRINT='{manifest['kernel']['abi_fingerprint']}'",
+                f"LINEAGE24_ACCEPTED_SCHEMA={SCHEMA_VERSION}",
+                f"LINEAGE24_ACCEPTED_RELEASE_ID='{release_id}'",
+                f"LINEAGE24_ACCEPTED_DIRECTORY_NAME='{directory_name}'",
+                f"LINEAGE24_ACCEPTED_PRODUCT_FAMILY='{PRODUCT_FAMILY}'",
+                "LINEAGE24_ACCEPTED_ANDROID_MAJOR=17",
+                f"LINEAGE24_ACCEPTED_BUILD_VARIANT='{manifest['android']['build_variant']}'",
+                f"LINEAGE24_ACCEPTED_AOSP_MANIFEST_COMMIT='{manifest['aosp']['manifest_commit']}'",
+                f"LINEAGE24_ACCEPTED_AOSP_BASE_MANIFEST_SHA256='{manifest['aosp']['base_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_AOSP_PROJECTS_MANIFEST_SHA256='{manifest['aosp']['projects_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_JELLY_UPSTREAM_COMMIT='{manifest['jelly']['base_commit']}'",
+                f"LINEAGE24_ACCEPTED_JELLY_FINAL_TREE='{manifest['jelly']['final_tree']}'",
+                f"LINEAGE24_ACCEPTED_JELLY_PATCH_MANIFEST_SHA256='{manifest['jelly']['patch_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_MANIFEST_COMMIT='{manifest['orangefox']['manifest_commit']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_BASE_MANIFEST_SHA256='{manifest['orangefox']['base_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_PROJECTS_MANIFEST_SHA256='{manifest['orangefox']['projects_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_BOOTABLE_RECOVERY_COMMIT='{manifest['orangefox']['bootable_recovery_commit']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_VENDOR_RECOVERY_COMMIT='{manifest['orangefox']['vendor_recovery_commit']}'",
+                f"LINEAGE24_ACCEPTED_ORANGEFOX_SE_OMAPI_COMMIT='{manifest['orangefox']['se_omapi_commit']}'",
+                f"LINEAGE24_ACCEPTED_KERNEL_FINAL_TREE='{manifest['kernel']['final_tree']}'",
+                f"LINEAGE24_ACCEPTED_KERNEL_PATCH_MANIFEST_SHA256='{manifest['kernel']['patch_manifest_sha256']}'",
+                f"LINEAGE24_ACCEPTED_OUTER_REVISION='{manifest['outer']['revision']}'",
+                "LINEAGE24_ACCEPTED_PAGE_SIZE=4096",
+                f"LINEAGE24_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
+                f"LINEAGE24_ACCEPTED_ABI_FINGERPRINT='{manifest['kernel']['abi_fingerprint']}'",
                 "",
             ))
         )
@@ -304,8 +304,8 @@ def main() -> None:
             .replace(manifest["kernel"]["final_tree"], "c" * 40)
             .replace(manifest["kernel"]["patch_manifest_sha256"], "d" * 64)
             .replace(
-                f"ANDROID17_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
-                "ANDROID17_ACCEPTED_ABI_VERSION=7",
+                f"LINEAGE24_ACCEPTED_ABI_VERSION={manifest['kernel']['abi_version']}",
+                "LINEAGE24_ACCEPTED_ABI_VERSION=7",
             )
             .replace(
                 manifest["kernel"]["abi_fingerprint"],

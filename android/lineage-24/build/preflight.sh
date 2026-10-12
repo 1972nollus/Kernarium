@@ -5,7 +5,7 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
-AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/aosp.env"
+AOSP_METADATA="$ROOT_DIR/android/lineage-24/metadata/lineage.env"
 ACK_METADATA="$ROOT_DIR/kernel/android-6.18/patches/metadata.env"
 JELLY_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ROOT_DIR/android/lineage-24/tools/verify-mesa-venus-source.py"
@@ -115,9 +115,9 @@ absolute_path "ACK workspace" "$ACK_WORKSPACE"
 # shellcheck disable=SC1090
 . "$ACK_METADATA"
 
-[ "$ANDROID17_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
-[ "$ANDROID17_KERNEL_PAGE_SIZE" -eq 4096 ] || fail "Android kernel page size is not 4096"
-[ "$ANDROID17_MAX_PAGE_SIZE_SUPPORTED" -eq 16384 ] ||
+[ "$LINEAGE24_MAJOR" -eq 17 ] || fail "AOSP metadata is not Android 17"
+[ "$LINEAGE24_KERNEL_PAGE_SIZE" -eq 4096 ] || fail "Android kernel page size is not 4096"
+[ "$LINEAGE24_MAX_PAGE_SIZE_SUPPORTED" -eq 16384 ] ||
 	fail "Android maximum page size is not 16384"
 [ "$UML_KERNEL_FAMILY" = android-6.18 ] || fail "wrong ACK kernel family"
 
@@ -127,7 +127,7 @@ command -v repo >/dev/null 2>&1 || fail "repo is not available on PATH"
 [ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
 require_pinned_checkout "$AOSP_SOURCE/.repo/manifests" \
-	"$ANDROID17_MANIFEST_COMMIT" "$ANDROID17_MANIFEST_TREE" \
+	"$LINEAGE24_MANIFEST_COMMIT" "$LINEAGE24_MANIFEST_TREE" \
 	"AOSP manifest"
 require_pinned_checkout "$ACK_WORKSPACE/common" \
 	"$UML_KERNEL_UPSTREAM_COMMIT" "$UML_KERNEL_UPSTREAM_TREE" \

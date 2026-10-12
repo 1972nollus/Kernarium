@@ -197,7 +197,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 def accepted_directory(descriptor: Path = ACCEPTED_RELEASE) -> str:
     return accepted_directory_name(
-        descriptor, "ANDROID17_ACCEPTED_DIRECTORY_NAME", LauncherError
+        descriptor, "LINEAGE24_ACCEPTED_DIRECTORY_NAME", LauncherError
     )
 
 
