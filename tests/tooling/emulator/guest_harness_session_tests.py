@@ -86,6 +86,19 @@ class AttachedGuestSessionTests(unittest.TestCase):
     def private_temporary_directory(self) -> contextlib.AbstractContextManager:
         return mock.patch.object(tempfile, "tempdir", str(self.temporary))
 
+    def stop(self, guest) -> None:
+        """Stop a stand-in emulator, then close the guest.
+
+        Closing asks the guest to halt first and waits five seconds for it. A
+        stand-in never halts, so that wait is the whole cost of a test that
+        has no use for the halt, and the shell it writes to would also run a
+        real sync. Killing the stand-in lets close() go straight to the
+        cleanup these tests check.
+        """
+        guest.terminate()
+        guest._process.wait(timeout=30)
+        guest.close()
+
     def test_the_emulator_joins_the_harness_process_group(self) -> None:
         # This is the whole mechanism: sharing the group is what makes a group
         # kill reach the guest. Started in a session of its own it would be
@@ -97,7 +110,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             workspace="tmpfs",
             init_shell=True,
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         self.assertEqual(os.getpgid(guest.process_id), os.getpgid(0))
 
     def test_return_code_reports_the_attached_process_status(self) -> None:
@@ -172,7 +185,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             init_shell=True,
             console_sink=sink,
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         result = guest.run_command("printf '%s' sink-marker")
         self.assertEqual(result.output, "sink-marker")
         self.assertIn(b"sink-marker", sink.getvalue())
@@ -187,11 +200,19 @@ class AttachedGuestSessionTests(unittest.TestCase):
             workspace="tmpfs",
             init_shell=True,
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
+        # The command prints, then waits for the file the test creates once the
+        # deadline has passed, so it ends at once instead of sleeping on.
+        release = self.temporary / "release"
         with self.assertRaises(guest_support.CommandTimeout) as raised:
-            guest.run_command("printf '%s' partial-output; sleep 2", 1)
+            guest.run_command(
+                f"printf '%s' partial-output; while [ ! -e {release} ]; "
+                "do sleep 0.05; done",
+                3,
+            )
+        release.touch()
         self.assertEqual(raised.exception.output, "partial-output")
-        self.assertIn("exceeded 1s", str(raised.exception))
+        self.assertIn("exceeded 3s", str(raised.exception))
         guest._write("exit\n")
         guest._process.wait(timeout=10)
 
@@ -204,7 +225,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             workspace="tmpfs",
             init_shell=True,
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         result = guest.run_command("head -n 2", stdin="first line\nsecond line\n")
         self.assertEqual(result.return_code, 0)
         self.assertEqual(result.output, "first line\nsecond line")
@@ -258,7 +279,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
                 "/etc/uml-test.conf": guest_support.GuestFile(b"setting=1\n"),
             },
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         self.wait_for(record / "done")
         arguments = (record / "arguments").read_text().splitlines()
         guest_files = [
@@ -318,7 +339,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             .split("=", 2)[2]
         ).parent
         self.assertTrue(staging.is_dir())
-        guest.close()
+        self.stop(guest)
         self.assertFalse(staging.exists(), "the staged guest files outlived the run")
 
     def test_an_ext4_root_and_no_guest_network_reach_the_launcher(self) -> None:
@@ -332,7 +353,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             root_type="ext4",
             network="image",
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         self.wait_for(record / "done")
         self.assertEqual(
             (record / "file-0").read_text().splitlines(),
@@ -440,7 +461,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
             workspace="tmpfs",
             init_shell=True,
         )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         guest.boot_to_shell(10)
         self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
         self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
@@ -510,7 +531,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
                 workspace="tmpfs",
                 init_shell=True,
             )
-        self.addCleanup(guest.close)
+        self.addCleanup(self.stop, guest)
         self.assertFalse(
             abandoned[0].exists(),
             "a killed harness's guest files outlived the next guest's start",
@@ -553,7 +574,12 @@ class AttachedGuestSessionTests(unittest.TestCase):
                 pid = guest.process_id
                 made = sorted(path.name for path in self.temporary.iterdir())
                 self.assertIn(f"uml-kern{pid}", made)
-                guest.close()
+                # What is under test is the SIGKILL that follows an ignored
+                # SIGTERM, not the orderly halt or the grace periods before it.
+                with mock.patch.object(guest, "shutdown", return_value=False), \
+                        mock.patch.object(
+                            guest_support.Guest, "STOP_GRACE_SECONDS", 0.5):
+                    guest.close()
         self.assertEqual(guest.return_code, -signal.SIGKILL)
         left = sorted(
             path.name
