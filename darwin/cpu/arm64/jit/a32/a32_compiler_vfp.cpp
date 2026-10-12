@@ -236,13 +236,26 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
     if (o.to_integer) {
       const unsigned source = fp_use(static_cast<unsigned>(o.m), dp, scratch_m);
       using enc::vec::FloatInt;
+      using enc::vec::FloatMisc;
       const bool is_unsigned = o.unsigned_;
-      const auto convert = [&](FloatInt signed_op, FloatInt unsigned_op) {
-        emit(enc::vec::float_int(is_unsigned ? unsigned_op : signed_op, type,
-                                 false, 0, source));
+      /* A single converts in the vector unit, S to S: the A64 scalar form
+       * rounds, saturates and raises the flags as the general-register form
+       * does, without the two transfers through W0. A double's 32-bit result
+       * goes through W0. */
+      const auto convert = [&](FloatInt signed_op, FloatInt unsigned_op,
+                               FloatMisc signed_scalar,
+                               FloatMisc unsigned_scalar) {
+        if (dp)
+          emit(enc::vec::float_int(is_unsigned ? unsigned_op : signed_op,
+                                   type, false, 0, source));
+        else
+          emit(enc::vec::float_misc_scalar(
+              is_unsigned ? unsigned_scalar : signed_scalar, false,
+              scratch_result, source));
       };
       if (o.zero_rounding) {
-        convert(enc::vec::fcvtzs_w, enc::vec::fcvtzu_w);
+        convert(enc::vec::fcvtzs_w, enc::vec::fcvtzu_w, enc::vec::fcvtzs,
+                enc::vec::fcvtzu);
       } else {
         // VCVTR rounds as FPSCR says: one conversion of the matching mode,
         // which also raises exactly the flags the architecture does.
@@ -258,26 +271,37 @@ A32Compiler::Flow A32Compiler::emit_vfp_convert(const VInfo &v) {
         branch_condition(plus, enc::eq);
         emit(enc::cmp_i(2, 2));
         branch_condition(minus, enc::eq);
-        convert(enc::vec::fcvtzs_w, enc::vec::fcvtzu_w);
+        convert(enc::vec::fcvtzs_w, enc::vec::fcvtzu_w, enc::vec::fcvtzs,
+                enc::vec::fcvtzu);
         emitter_.branch(done);
         bind(nearest);
-        convert(enc::vec::fcvtns_w, enc::vec::fcvtnu_w);
+        convert(enc::vec::fcvtns_w, enc::vec::fcvtnu_w, enc::vec::fcvtns,
+                enc::vec::fcvtnu);
         emitter_.branch(done);
         bind(plus);
-        convert(enc::vec::fcvtps_w, enc::vec::fcvtpu_w);
+        convert(enc::vec::fcvtps_w, enc::vec::fcvtpu_w, enc::vec::fcvtps,
+                enc::vec::fcvtpu);
         emitter_.branch(done);
         bind(minus);
-        convert(enc::vec::fcvtms_w, enc::vec::fcvtmu_w);
+        convert(enc::vec::fcvtms_w, enc::vec::fcvtmu_w, enc::vec::fcvtms,
+                enc::vec::fcvtmu);
         bind(done);
       }
-      fmov_from_w(scratch_result);
+      if (dp)
+        fmov_from_w(scratch_result);
       s_write(static_cast<unsigned>(o.d), scratch_result);
     } else {
       const unsigned source = s_use(static_cast<unsigned>(o.m), scratch_m);
-      fmov_to_w(source);
-      emit(enc::vec::float_int(o.unsigned_ ? enc::vec::ucvtf_w
-                                           : enc::vec::scvtf_w,
-                               type, false, scratch_result, 0));
+      if (dp) {
+        fmov_to_w(source);
+        emit(enc::vec::float_int(o.unsigned_ ? enc::vec::ucvtf_w
+                                             : enc::vec::scvtf_w,
+                                 type, false, scratch_result, 0));
+      } else {
+        emit(enc::vec::float_misc_scalar(
+            o.unsigned_ ? enc::vec::ucvtf : enc::vec::scvtf, false,
+            scratch_result, source));
+      }
       fp_write(static_cast<unsigned>(o.d), dp, scratch_result);
     }
     return Flow::next;
