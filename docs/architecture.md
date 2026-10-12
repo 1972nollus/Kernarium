@@ -375,6 +375,14 @@ registers when their value fits. Any other value keeps
 `move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
 each form against the architectural definition.
 
+A TBZ or TBNZ carries no mask word: its operand word holds the bit number in
+bits 5:0, where the register shift that tests it reads it, and the register's
+CpuState offset in bits 31:16, and an inlined branch's retire suffix sits in
+bits 47:32. The `test_branch` entries of the former form stay in the bank
+unselected, because removing them would move every later entry.
+`arm64-gadget-test-bit-branch` runs every bit, both polarities, XZR and each
+shape the builder emits.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

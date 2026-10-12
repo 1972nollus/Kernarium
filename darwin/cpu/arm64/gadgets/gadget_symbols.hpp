@@ -2234,8 +2234,8 @@ void uml_arm64_gadget_compare_branch_w_z_inline();
 void uml_arm64_gadget_compare_branch_w_nz_inline();
 void uml_arm64_gadget_compare_branch_x_z_inline();
 void uml_arm64_gadget_compare_branch_x_nz_inline();
-void uml_arm64_gadget_test_branch_z_inline();
-void uml_arm64_gadget_test_branch_nz_inline();
+void uml_arm64_gadget_test_bit_branch_z_inline();
+void uml_arm64_gadget_test_bit_branch_nz_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_eq_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_ne_inline();
 void uml_arm64_gadget_compare_immediate_branch_x_hs_inline();
@@ -2300,12 +2300,12 @@ UML_DECLARE_COMPARE_BRANCH(w, nz)
 UML_DECLARE_COMPARE_BRANCH(x, z)
 UML_DECLARE_COMPARE_BRANCH(x, nz)
 #undef UML_DECLARE_COMPARE_BRANCH
-#define UML_DECLARE_TEST_BRANCH(polarity) \
-	void uml_arm64_gadget_test_branch_##polarity(); \
-	void uml_arm64_gadget_test_branch_##polarity##_linked();
-UML_DECLARE_TEST_BRANCH(z)
-UML_DECLARE_TEST_BRANCH(nz)
-#undef UML_DECLARE_TEST_BRANCH
+#define UML_DECLARE_TEST_BIT_BRANCH(polarity) \
+	void uml_arm64_gadget_test_bit_branch_##polarity(); \
+	void uml_arm64_gadget_test_bit_branch_##polarity##_linked();
+UML_DECLARE_TEST_BIT_BRANCH(z)
+UML_DECLARE_TEST_BIT_BRANCH(nz)
+#undef UML_DECLARE_TEST_BIT_BRANCH
 void uml_arm64_gadget_link_exit();
 }
 

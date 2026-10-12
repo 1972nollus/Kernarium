@@ -175,16 +175,17 @@ DecodeResult decode_branch_system(DecodeContext &context)
 				emit(words, selected);
 			}
 		} else if (resolve_link &&
-			   emit_inlined_test_branch(
-				   context, test_branch_inline_gadget(nonzero),
-				   offsetof(CpuState, registers) + source * 8U,
-				   std::uintptr_t{1} << bit, target)) {
+			   emit_inlined_packed_compare_branch(
+				   context, test_bit_branch_inline_gadget(nonzero),
+				   bit | ((offsetof(CpuState, registers) +
+					   source * 8U) << 16),
+				   target, 32)) {
 			return DecodeResult::decoded;
 		} else {
-			emit(words, test_branch_gadget(nonzero,
+			emit(words, test_bit_branch_gadget(nonzero,
 				static_cast<bool>(resolve_link)));
-			emit(words, offsetof(CpuState, registers) + source * 8U);
-			emit(words, std::uintptr_t{1} << bit);
+			emit(words, bit | ((offsetof(CpuState, registers) +
+				source * 8U) << 16));
 			if (resolve_link) {
 				emit_link(context, target);
 				emit_link(context, fallthrough);

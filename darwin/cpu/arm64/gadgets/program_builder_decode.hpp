@@ -156,23 +156,6 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 		context, gadget, operand, target, 16, retires);
 }
 
-[[nodiscard]] inline bool emit_inlined_test_branch(
-	DecodeContext &context, selection::Gadget gadget,
-	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,
-	std::size_t retires = 1)
-{
-	if (gadget == nullptr || operand > 0xffffU ||
-	    context.suffixes.full())
-		return false;
-	selection::emit(context.words, gadget);
-	context.suffixes.add(context.words.size(),
-		context.compiled + retires, 16);
-	selection::emit(context.words, operand);
-	selection::emit(context.words, mask);
-	emit_link(context, target);
-	return true;
-}
-
 
 enum class DecodeResult : std::uint8_t {
 	decoded,
