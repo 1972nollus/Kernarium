@@ -99,6 +99,15 @@ links remain ISA-specific. Cached x86 programs
 release spare decoder and native-stream capacity before publication. Gadget
 executors do not share translations; Trial 2, G161 and G166 record why.
 
+In both arm64 engines, code another vCPU changed and synchronized takes effect
+at this vCPU's next context synchronization point. Every run publishes in
+`CpuState` the address of its address space's code-change sequence and the
+value its translations and links were validated at. An ISB, the A64, A32 or
+CP15 one, compares the two after its native ISB, one load and a compare, and
+when they differ leaves translated code at its fall-through, so the next run
+revalidates and relinks first. The gadget A64 ISB leaves from inside its block
+and gives back the instructions after it; a gadget A32 block ends at its ISB.
+
 Scalar forwarding keeps one write-through scalar result in host `x0` between
 adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the

@@ -274,6 +274,9 @@ private:
   Tlb tlb_;
   void *execution_context_{};
   unsigned long execution_generation_{};
+  /* The execution context's code-change sequence, which every run
+   * publishes in CpuState::code_sequence for the ISB to check. */
+  const std::uint64_t *code_sequence_{&arm64::no_code_changes};
   StaticGuestMemory *prepared_memory_{};
   unsigned long mapping_generation_{};
   std::uint64_t mapping_changes_{};

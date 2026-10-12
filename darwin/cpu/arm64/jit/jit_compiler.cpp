@@ -230,6 +230,9 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         emit_terminal_helper(
             reinterpret_cast<const void *>(&uml_arm64_jit_execute_sm0_spill),
             cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::code_changed) {
+        store_pc(cold.pc);
+        emitter_.return_constant(Event::continued, cold.count);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
         emitter_.emit(0xd503'3f5fU); // clrex
         clear_local_exclusive_monitor();
@@ -616,6 +619,26 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
       emitter_.emit(0xa900'0000U | ((offset / 8U) << 15) | (31U << 10) |
                     (8U << 5) | 31U);
     clear_local_exclusive_monitor();
+  }
+
+/*
+ * After an ISB, a context synchronization point: when the address space's
+ * code-change sequence has moved since the executor validated the
+ * translations this run reaches (CpuState::code_sequence_seen), another vCPU
+ * changed and invalidated code, and a linked successor may be stale. Leave at
+ * the fall-through, which the executor then fetches anew. The guard is
+ * flag-neutral, so guest flags may stay live in the host's NZCV.
+ */
+void JitCompiler::emit_code_change_check(std::uint32_t instruction,
+                                         std::uint64_t pc) {
+    emitter_.load_x(8, 15, offsetof(CpuState, code_sequence));
+    emitter_.load_x(9, 15, offsetof(CpuState, code_sequence_seen));
+    emitter_.load_x(8, 8, 0);
+    emitter_.emit(0xcb09'0108U); // sub x8, x8, x9
+    emitter_.compare_zero(
+        cold_exit(instruction, pc + sizeof(std::uint32_t),
+                  ColdPath::Action::code_changed),
+        8, true, true);
   }
 
 void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t pc,
