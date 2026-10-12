@@ -178,6 +178,12 @@ fi
 		--base-manifest "$ROOT_DIR/android/lineage-24/metadata/base-manifest.xml" \
 		--output .repo/local_manifests/pin.xml
 	repo sync -c --detach -j "$JOBS"
+	# Repo fetches the Git LFS objects, but a checkout writes their pointer
+	# files unless the project has the LFS filters. Install them per project
+	# instead of in the builder's global Git configuration, and replace the
+	# pointers with the objects.
+	repo forall -j "$JOBS" -c \
+		'[ ! -f .lfsconfig ] || { git lfs install --local >/dev/null && git lfs checkout >/dev/null; }'
 )
 
 git -C "$ACK_WORKSPACE/common" fetch --no-tags \
