@@ -13,6 +13,10 @@
   precision denormal is a nonzero number, so its product with an infinity is
   infinite, where a single-precision one is flushed under the Standard FPSCR
   value);
+- simd-convert: VCVT and VCVTR between single or double precision and 32-bit
+  integers, with fractions halfway and either side of it, the integer limits
+  and the values past them, a denormal, a NaN and an infinity, under each
+  rounding mode and flush-to-zero; and integers to floating point that round;
 - simd-memory: VLDR, VSTR, VLDM, VSTM, the deprecated FLDMX/FSTMX and the
   structure loads and stores VLD1-4/VST1-4, aimed with the memory suites'
   address scenarios, including alignment-hinted accesses at misaligned
@@ -210,6 +214,95 @@ def suite_simd_steps(context: Context) -> list[Case]:
     return cases
 
 
+# VCVT between floating point and 32-bit integers ------------------------------------------------------------------------
+
+# Floating point to integer: halves and either side of them (round to nearest takes the even one), the largest values
+# below the integer limits and the first past them (saturation, IOC), a negative fraction for the unsigned forms, a
+# denormal (FZ flushes it), a NaN and an infinity.
+CONVERT_SINGLES = (0x3F000000, 0xBF000000, 0x3FC00000, 0xBFC00000, 0x40200000, 0xC0200000, 0x3F400000, 0xBF400000,
+                   0x3EFFFFFF, 0x3F000001, 0x4AFFFFFF, 0x4EFFFFFF, 0x4F000000, 0xCF000000, 0xCF000001, 0x4F7FFFFF,
+                   0x4F800000, 0x00000001, 0x80400000, 0x7FC00000, 0xFF800000)
+CONVERT_DOUBLES = (0x3FE0000000000000, 0xBFE0000000000000, 0x3FF8000000000000, 0xBFF8000000000000,
+                   0x4004000000000000, 0xC004000000000000, 0x41DFFFFFFFE00000, 0x41DFFFFFFFC00000,
+                   0xC1E0000000100000, 0xC1E0000000000000, 0x41EFFFFFFFF00000, 0x41EFFFFFFFE00000,
+                   0xBFD0000000000000, 0x0000000000000001, 0x7FF8000000000000, 0xFFF0000000000000)
+# Integer to floating point: values a single cannot hold, which round (a double holds every one).
+CONVERT_INTEGERS = (0x00000000, 0x00000001, 0xFFFFFFFF, 0x01000001, 0x01000003, 0x7FFFFFFF, 0x80000000, 0x80000001,
+                    0xFEFFFFFF, 0x7FFFFFC1)
+# FPSCR: each rounding mode, and flush-to-zero with round to nearest and toward minus infinity.
+CONVERT_ROUNDING = (0x00000000, 0x00400000, 0x00800000, 0x00C00000, 0x01000000, 0x01800000)
+# VCVT rounds toward zero whatever the mode: one directed mode and flush-to-zero.
+CONVERT_TOWARD_ZERO = (0x00400000, 0x01800000)
+# (destination, source) register numbers in the form's sizes: lanes and halves other than the first.
+CONVERT_REGISTERS = ((0, 1), (5, 2), (7, 7), (12, 30), (31, 17))
+
+
+def convert_word(context: Context, form, d: int, m: int) -> int:
+    """The form's word with S/D d and S/D m (Vd:D or D:Vd as the form's sizes say)."""
+    fields = fields_of(form)
+    word = pick_words(context, form, 1)[0][0]
+    double_destination = form.name.startswith("VCVT_vi_") and form.name.endswith("_D")
+    double_source = not form.name.startswith("VCVT_vi_") and form.name.endswith("_D")
+    for (vector, bit), number, double in ((("Vd", "D"), d, double_destination), (("Vm", "M"), m, double_source)):
+        if double:
+            word = set_field(word, *fields[vector], number & 15)
+            word = set_field(word, *fields[bit], number >> 4)
+        else:
+            word = set_field(word, *fields[vector], number >> 1)
+            word = set_field(word, *fields[bit], number & 1)
+    if usable(context, form, word) is None:
+        raise SystemExit(f"{form.name}: {word:08x} is not a usable word")
+    return word
+
+
+def suite_simd_convert(context: Context) -> list[Case]:
+    cases = []
+    to_integer = [f"{mnemonic}_{kind}_{isa}1_{size}" for mnemonic in ("VCVT", "VCVTR") for kind in ("siv", "uiv")
+                  for size in ("S", "D") for isa in ("A", "T")]
+    for name in to_integer:
+        form = context.model.by_name[name]
+        isa = form.encoding.isa
+        suffix = "a" if isa == "A32" else "t"
+        double = name.endswith("_D")
+        values = CONVERT_DOUBLES if double else CONVERT_SINGLES
+        modes = CONVERT_ROUNDING if name.startswith("VCVTR") else CONVERT_TOWARD_ZERO
+        for index, value in enumerate(values):
+            d, m = CONVERT_REGISTERS[index % len(CONVERT_REGISTERS)]
+            if double:
+                m &= 31
+            word = convert_word(context, form, d, m)
+            for mode_index, mode in enumerate(modes):
+                number = len(cases)
+                initial = {"fpscr": mode, "apsr": FLAGS[(index + mode_index) % len(FLAGS)]}
+                if double:
+                    initial[f"d{m}"] = value
+                else:
+                    initial[f"d{m >> 1}"] = (context.recipes[f"pattern-{suffix}"][f"d{m >> 1}"]
+                                             & ~(0xFFFFFFFF << 32 * (m & 1)) | value << 32 * (m & 1))
+                cases.append(Case("simd-convert", f"{name}/{index}.{mode_index}", name, ISA_LETTER[isa],
+                                  word_of(isa, word), 0, f"pattern-{suffix}", initial))
+    for name in ("VCVT_vi_A1_S", "VCVT_vi_T1_S", "VCVT_vi_A1_D", "VCVT_vi_T1_D"):
+        form = context.model.by_name[name]
+        isa = form.encoding.isa
+        suffix = "a" if isa == "A32" else "t"
+        fields = fields_of(form)
+        for signed in (0, 1):
+            for index, value in enumerate(CONVERT_INTEGERS):
+                d, m = CONVERT_REGISTERS[index % len(CONVERT_REGISTERS)]
+                if name.endswith("_D"):
+                    d &= 31
+                word = set_field(convert_word(context, form, d, m), *fields["op"], signed)
+                if usable(context, form, word) is None:
+                    raise SystemExit(f"{name}: {word:08x} is not a usable word")
+                for mode_index, mode in enumerate(CONVERT_ROUNDING[:4]):
+                    initial = {"fpscr": mode, "apsr": FLAGS[(index + mode_index) % len(FLAGS)],
+                               f"d{m >> 1}": (context.recipes[f"pattern-{suffix}"][f"d{m >> 1}"]
+                                              & ~(0xFFFFFFFF << 32 * (m & 1)) | value << 32 * (m & 1))}
+                    cases.append(Case("simd-convert", f"{name}/{signed}.{index}.{mode_index}", name,
+                                      ISA_LETTER[isa], word_of(isa, word), 0, f"pattern-{suffix}", initial))
+    return cases
+
+
 # Memory ----------------------------------------------------------------------------------------------------------------
 
 SCENARIOS = ("a", "x4", "u1", "x16", "ro", "unmapped", "zero", "last")
@@ -321,6 +414,7 @@ def suite_fpscr_reserved(context: Context) -> list[Case]:
 SUITES = {
     "simd": suite_simd,
     "simd-steps": suite_simd_steps,
+    "simd-convert": suite_simd_convert,
     "simd-memory": suite_simd_memory,
     "fpscr": suite_fpscr,
     "fpscr-reserved": suite_fpscr_reserved,
