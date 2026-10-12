@@ -639,6 +639,29 @@ a32_cp15_barrier isb, "isb"
 
 .purgem a32_cp15_barrier
 
+gadget a32_isb
+	isb
+	next_gadget
+
+/* The fall-through of a block that ends at an ISB, the ARMv8 or the CP15
+ * one: leave when the address space's code changed since this program was
+ * validated, as the A64 isb gadget does (engine/system_atomic.inc). The
+ * block ends there, so everything it precharged has retired. Stream: [next
+ * key]. */
+gadget a32_code_sequence_check
+	ldr x8, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE]
+	ldr x9, [_cpu, #UML_ARM64_CPU_CODE_SEQUENCE_SEEN]
+	ldr x8, [x8]
+	cmp x8, x9
+	b.ne 1f
+	add _stream, _stream, #8
+	next_gadget
+1:
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_GADGET_CPU_PC]
+	mov w0, wzr
+	b uml_arm64_gadget_leave
+
 #include "a32_generated.inc"
 
 .purgem a32_follow_indirect

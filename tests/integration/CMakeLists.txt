@@ -520,8 +520,8 @@ uml_add_guest_payload(UML_GUEST_CODE_CHANGE guest-code-change
         -Wl,-z,max-page-size=16384
         -Wl,-s)
 
-# Code changed by stores, protection, fork, remapping and other vCPUs that
-# share the address space's translations, on each engine.
+# Code changed by stores, protection, fork, remapping and the address space's
+# other vCPUs, on each engine.
 foreach(_code_change_engine IN ITEMS gadgets jit)
     uml_add_guest_integration_test(
         NAME guest-code-change-${_code_change_engine}

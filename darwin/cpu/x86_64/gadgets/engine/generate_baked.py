@@ -15,6 +15,21 @@ written: an assembler macro that enumerates it takes the LLVM assembler minutes.
 Indexed addresses split into an address entry, enumerated by base, index and
 scale, followed by an access entry enumerated by the value alone.
 
+A memory access carries one stream word, its access word:
+
+    bits 31:0   the displacement, sign-extended
+    bits 41:32  the instruction's position in its block, its address less
+                the block's start, which is context.program_begin
+    bits 55:42  a memory,immediate access's immediate, signed
+    bits 59:56  the instruction's length
+    bit  60     the store's publication flag, clear in the stream
+
+The address entry of an indexed access reads the word and leaves it in x23 for
+the access entry behind it. The one access without a base register, a fused
+[address] form, still needs a 64-bit address, so its entry reads the address
+first and the word after it, whose displacement field is clear. Only the fault
+and overlap exits read the position, and they rebuild the RIP from it.
+
 Every entry keeps the ordinary family's semantics: the same lazy flag record,
 page-crossing test, translation, publication and overlap checks. Only the cold
 tails -- a crossing access, a translation miss, a publication and an
@@ -225,29 +240,53 @@ def normalize(o, width, reg):
 
 
 def memory_prologue(o, base):
-    """Stream: displacement, access word. The access word is the RIP in bits
-    47:0 and the instruction length in bits 59:56; bit 60 is the store's
-    publication flag, clear in the stream. Only the fault and overlap tails
-    read the RIP, so nothing on the way through takes it out."""
-    o.emit('\tldp x14, x23, [_stream], #16')
-    base_address(o, base)
+    """Stream: the access word. A base-less access has the 64-bit address
+    before it. Only the fault and overlap tails read the word's position and
+    length, so nothing on the way through takes them out."""
+    if base == 'none':
+        o.emit('\tldp x14, x23, [_stream], #16')
+        o.emit('\tmov x7, x14')
+    else:
+        # The extension is its own instruction: folded into the add as an
+        # extended operand it lengthens the address chain by a cycle, which
+        # the base register's load hides when it stands alone.
+        o.emit('\tldr x23, [_stream], #8')
+        o.emit('\tsxtw x14, w23')
+        o.emit(f'\tldr x10, [_cpu, #{base}]')
+        o.emit('\tadd x7, x14, x10')
     o.emit('\tmov x25, x7')
 
 
 def access_prologue(o):
-    """The access half of a split address: x7 arrived from the address entry."""
-    o.emit('\tldr x23, [_stream], #8')
+    """The access half of a split address: x7 and the access word, x23,
+    arrived from the address entry."""
     o.emit('\tmov x25, x7')
+
+
+def memory_immediate(o, register, base):
+    """The immediate of a memory,immediate access: in the access word, except
+    for a base-less access, whose word is the 64-bit address's neighbour and
+    whose immediate follows it."""
+    if base == 'none':
+        o.emit(f'\tldr {register}, [_stream], #8')
+    else:
+        packed_immediate(o, register)
+
+
+def packed_immediate(o, register):
+    o.emit(f'\tsbfx {register}, x23, #42, #14')
 
 
 def shared_tails(o):
     # Every tail belongs to a guest memory access, whichever gadget reaches it.
     o.emit('\tx86_marks_guest_memory')
     # The ordinary fault exit reports the RIP from x22, which a baked access
-    # keeps in the low bits of its access word instead.
+    # rebuilds from its access word's position and the block's start.
     o.emit('\t.p2align 2')
     o.emit('Lx86_baked_memory_fault:')
-    o.emit('\tand x22, x23, #0xffffffffffff')
+    o.emit('\tubfx x9, x23, #32, #10')
+    o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
+    o.emit('\tadd x22, x10, x9')
     o.emit('\tb Lx86_memory_fault')
     for write in (0, 1):
         for size in (1, 2, 4, 8):
@@ -322,8 +361,10 @@ def shared_tails(o):
         o.emit('\thelper_call uml_x86_64_gadget_invalidate_code')
         o.emit(f'Lx86_baked_store_overlap_exit_{size}:')
         o.emit('\tubfx x8, x23, #56, #4')
-        o.emit('\tand x9, x23, #0xffffffffffff')
-        o.emit('\tadd x8, x9, x8')
+        o.emit('\tubfx x9, x23, #32, #10')
+        o.emit('\tldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]')
+        o.emit('\tadd x8, x8, x9')
+        o.emit('\tadd x8, x8, x10')
         o.emit('\tstr x8, [_cpu, #UML_X86_64_CPU_RIP]')
         o.emit('\tadd _executed, _executed, #1')
         o.emit('\tx86_memory_order_boundary')
@@ -521,21 +562,23 @@ def unary_register(o):
 # ---------------------------------------------------------------- memory forms
 def addresses(o):
     """An indexed address: displacement plus base plus scaled index, left in x7
-    for the access entry that follows in the stream."""
+    for the access entry that follows in the stream, and the access word in
+    x23."""
     entries = []
     for base in BASES:
         for index in GPR:
             for scale in SCALES:
                 name = f'ea_{base}_{index}_{scale}'
                 o.gadget(name)
-                o.emit('\tldr x14, [_stream], #8')
+                o.emit('\tldr x23, [_stream], #8')
+                o.emit('\tsxtw x14, w23')
                 o.emit(f'\tldr x13, [_cpu, #{index}]')
                 if base == 'none':
                     o.emit(f'\tadd x7, x14, x13, lsl #{scale}')
                 else:
                     o.emit(f'\tldr x10, [_cpu, #{base}]')
-                    o.emit(f'\tadd x7, x14, x13, lsl #{scale}')
-                    o.emit('\tadd x7, x7, x10')
+                    o.emit(f'\tadd x7, x10, x13, lsl #{scale}')
+                    o.emit('\tadd x7, x7, x14')
                 o.emit('\tnext_gadget')
                 entries.append(name)
     o.table('ea', entries)
@@ -597,7 +640,8 @@ def store_body(o, size, st, hr):
 
 
 def stores(o):
-    """MOV [mem], reg and MOV [mem], imm. The immediate follows the RIP word."""
+    """MOV [mem], reg and MOV [mem], imm. The immediate is in the access word,
+    or follows it for a base-less access."""
     immediates = []
     for width, (ld, st, hr, _) in WIDTHS.items():
         values = regs_for(width)
@@ -625,14 +669,14 @@ def stores(o):
             entry = f'move_{width}_mi_{base}'
             o.gadget(entry)
             memory_prologue(o, base)
-            o.emit('\tldr x24, [_stream], #8')
+            memory_immediate(o, 'x24', base)
             store_body(o, width // 8, st, hr)
             entries.append(entry)
         o.table(f'move_{width}_mi', entries)
         entry = f'move_{width}_xmi'
         o.gadget(entry)
         access_prologue(o)
-        o.emit('\tldr x24, [_stream], #8')
+        packed_immediate(o, 'x24')
         store_body(o, width // 8, st, hr)
         immediates.append(entry)
     o.table('move_xmi', immediates)
@@ -760,14 +804,14 @@ def memory_arith(o):
                 entry = f'{op}_{width}_mi_{base}'
                 o.gadget(entry)
                 memory_prologue(o, base)
-                o.emit('\tldr x26, [_stream], #8')
+                memory_immediate(o, 'x26', base)
                 arith_destination_body(o, op, width)
                 entries.append(entry)
             o.table(f'{op}_{width}_mi', entries)
             entry = f'{op}_{width}_xmi'
             o.gadget(entry)
             access_prologue(o)
-            o.emit('\tldr x26, [_stream], #8')
+            packed_immediate(o, 'x26')
             arith_destination_body(o, op, width)
             immediates.append(entry)
         o.table(f'{op}_xmi', immediates)
@@ -802,7 +846,8 @@ def lea(o):
 
 
 def push_pop(o):
-    """64-bit PUSH and POP of a register. Stream: access word."""
+    """64-bit PUSH and POP of a register. Stream: access word, whose
+    displacement field is clear."""
     entries = []
     for d in GPR:
         entry = f'push_64_r_{d}'

@@ -6,6 +6,39 @@ namespace uml::cpu::arm64::gadgets::builder_detail {
 
 using namespace selection;
 
+namespace {
+
+/* ISB: the gadget leaves at the fall-through when another vCPU has changed the
+ * address space's code since this program was validated (engine/
+ * system_atomic.inc). Leaving from inside the block gives back the
+ * instructions translated after it, a suffix `build` fills in as it does for
+ * an inlined conditional branch. With no suffix slot left the block ends at
+ * the ISB instead, so there is nothing after it to give back. */
+[[nodiscard]] DecodeResult emit_context_synchronization(DecodeContext &context)
+{
+	auto &words = context.words;
+	const auto fallthrough = context.address + sizeof(std::uint32_t);
+	emit(words, uml_arm64_gadget_isb);
+	const bool inline_suffix = !context.suffixes.full();
+	if (inline_suffix)
+		context.suffixes.add(words.size(), context.compiled + 1);
+	words.push_back(0);
+	words.push_back(fallthrough);
+	if (inline_suffix)
+		return DecodeResult::decoded;
+	++context.compiled;
+	if (context.resolve_link) {
+		emit(words, uml_arm64_gadget_branch_linked);
+		emit_link(context, fallthrough);
+	} else {
+		emit(words, uml_arm64_gadget_interrupt);
+		words.push_back(fallthrough);
+	}
+	return DecodeResult::terminal;
+}
+
+} // namespace
+
 DecodeResult decode_branch_system(DecodeContext &context)
 {
 	const auto address = context.address;
@@ -355,9 +388,10 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		}
 	} else if ((instruction & 0xffff'f0ffU) == 0xd503'305fU) {
 		emit(words, uml_arm64_gadget_clear_exclusive);
+	} else if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU) {
+		return emit_context_synchronization(context);
 	} else if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
 		   (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
-		   (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
 		   instruction == 0xd503'30ffU) {
 		emit(words, memory_barrier_gadget(instruction));
 	} else if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU ||

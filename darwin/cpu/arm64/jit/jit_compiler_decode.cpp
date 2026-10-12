@@ -206,7 +206,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
-      return ordered_memory(false);
+      emit_native_ordered_load(instruction, pc,
+                               ColdPath::Action::memory_slow);
+      return Action::keep_going;
     }
     if ((instruction & 0x3f20'0c00U) == 0x1900'0000U) {
       const unsigned size = instruction >> 30;
@@ -341,6 +343,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           instruction, host_capabilities().has(ArmFeature::sb));
       for (std::size_t index = 0; index < lowered.count; ++index)
         emitter_.emit(lowered.words[index]);
+      if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU)
+        emit_code_change_check(instruction, pc);
       return Action::keep_going;
     }
     /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which

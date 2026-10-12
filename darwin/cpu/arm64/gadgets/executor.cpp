@@ -2668,6 +2668,10 @@ void *GadgetExecutor::execution_context(unsigned long generation)
 	execution_context_ =
 		darwin_uml_static_vm_execution_context_create(generation);
 	execution_generation_ = execution_context_ != nullptr ? generation : 0;
+	const auto *sequence = execution_context_ != nullptr ?
+		darwin_uml_static_vm_execution_context_code_sequence(
+			execution_context_) : nullptr;
+	code_sequence_ = sequence != nullptr ? sequence : &arm64::no_code_changes;
 	return execution_context_;
 }
 
@@ -2809,6 +2813,10 @@ GadgetExecutor::finish_block(ProgramCache &programs, const BuildResult &built,
 	preempted_ = sequences.execution_interrupt != 0;
 	if (preempted_)
 		return ::uml::cpu::EngineEvent::interrupt;
+	/* What the translations this run reaches are validated at, below: an
+	 * ISB leaves when the address space's code has changed since. */
+	cpu.code_sequence = code_sequence_;
+	cpu.code_sequence_seen = sequences.code_changes;
 	if (mapping_generation_ != generation ||
 	    mapping_changes_ != sequences.mapping_changes) {
 		memory.prepare(generation, sequences.mapping_changes);
@@ -3013,6 +3021,10 @@ private:
 	preempted_ = sequences.execution_interrupt != 0;
 	if (preempted_)
 		return ::uml::cpu::EngineEvent::interrupt;
+	/* What the translations this run reaches are validated at, below: an
+	 * ISB leaves when the address space's code has changed since. */
+	cpu.code_sequence = code_sequence_;
+	cpu.code_sequence_seen = sequences.code_changes;
 	if (mapping_generation_ != generation ||
 	    mapping_changes_ != sequences.mapping_changes) {
 		memory.prepare(generation, sequences.mapping_changes);

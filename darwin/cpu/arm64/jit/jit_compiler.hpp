@@ -108,6 +108,9 @@ private:
       sme_slow,
       sve_slow,
       sm0_spill_slow,
+      /* An ISB found the address space's code changed: leave at its
+       * fall-through, which the executor fetches anew. */
+      code_changed,
     };
 
     Arm64Emitter::Label label;
@@ -129,6 +132,29 @@ private:
     /* A miss in both TLB ways takes the preserving miss bridge, or, when
      * false, branches to fault with every scratch register intact. */
     bool bridge{true};
+  };
+
+  /* A memory run whose accessed bytes straddle two pages at run time. Its
+   * cold path translates both pages and replays the run's hot accesses,
+   * each on the base for its page, then rejoins the hot path. */
+  struct RunStraddleAccess final {
+    std::size_t word{};
+    /* The access's bytes, relative to the run's first accessed byte. */
+    std::uint64_t start{};
+    std::uint64_t end{};
+  };
+
+  struct RunStraddle final {
+    static constexpr std::size_t maximum_accesses = 8;
+    Arm64Emitter::Label label{};
+    Arm64Emitter::Label join{};
+    Arm64Emitter::Label slow{};
+    Access access{};
+    std::uint64_t first{};
+    std::size_t words_begin{};
+    std::size_t words_end{};
+    std::array<RunStraddleAccess, maximum_accesses> accesses{};
+    std::size_t count{};
   };
 
   class ColdPaths final {
@@ -199,6 +225,8 @@ private:
 
   void emit_code_synchronize(std::uint32_t instruction, std::uint64_t pc,
                              std::size_t count);
+
+  void emit_code_change_check(std::uint32_t instruction, std::uint64_t pc);
 
   void emit_pair_slow(std::uint32_t instruction, std::uint64_t pc,
                       std::size_t count);
@@ -498,6 +526,11 @@ private:
   void emit_native_atomic_address(std::uint32_t instruction,
                                   std::uint64_t pc);
 
+  /* LDAR or LDAPR as the host's own load-acquire through the translated
+   * base. A misaligned or tagged address takes `slow`. */
+  void emit_native_ordered_load(std::uint32_t instruction, std::uint64_t pc,
+                                ColdPath::Action slow);
+
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);
 
@@ -538,9 +571,30 @@ private:
       UnsignedMemoryOperation &operation) noexcept;
 
   /* Emits each operation on the translated base in x8, naming its
-   * transfer register's native binding. */
+   * transfer register's native binding, and records the accesses for the
+   * run's straddle path, which `proved` says the run has. */
   void emit_native_gpr_run(std::span<const UnsignedMemoryOperation> operations,
-                           bool load);
+                           bool load, RunStraddle &straddle, bool proved);
+
+  /* Moves a run's base register forward or back by an offset. */
+  void move_run_base(std::uint64_t offset, bool forward, unsigned reg = 8U);
+
+  /* Advances x8 from a run's guest base to the first byte the run
+   * accesses, base + first, and branches to `outside` unless the bytes up
+   * to base + end lie in that byte's page. Returns whether it emitted
+   * that branch. */
+  bool emit_run_span_proof(std::uint64_t first, std::uint64_t end,
+                           Arm64Emitter::Label outside);
+
+  /* The TLB set for the guest address in `address` in x0 and its page
+   * tag in x1, as emit_translate() computes them. */
+  void emit_tlb_set(unsigned address);
+
+  /* Records the native access emitted next as one of the straddle's. */
+  void note_run_straddle_access(RunStraddle &straddle, std::uint64_t offset,
+                                std::size_t bytes);
+
+  void emit_run_straddle(const RunStraddle &straddle);
 
   [[nodiscard]] std::size_t try_emit_sp_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
@@ -566,6 +620,7 @@ private:
   Arm64Emitter emitter_;
   ColdPaths cold_;
   std::vector<TranslationColdPath> translation_cold_;
+  std::vector<RunStraddle> run_straddles_;
   std::size_t count_{};
   std::uint64_t memory_write_mask_{};
   std::uint64_t direct_memory_write_mask_{};
