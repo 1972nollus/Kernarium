@@ -1320,6 +1320,42 @@ def verify_pin_manifest(tool: Path) -> None:
             fail("pin manifest rendering accepted a project not pinned to a commit")
 
 
+def verify_layout_consumers(root: Path, android_root: Path) -> None:
+    """The fixed GPT geometry is compiled into the emulator and the launcher."""
+    layout = json.loads(
+        (android_root / "support/image/partition-layout.json").read_text()
+    )
+    partitions = layout["partitions"]
+    emulator = (root / "darwin/device/block/android_boot.cpp").read_text()
+    seed_mib = re.search(
+        r"seedDiskSize = ([0-9']+)ULL \* mebibyte;", emulator
+    )
+    if seed_mib is None or (
+        int(seed_mib.group(1).replace("'", "")) << 20 != layout["disk_size_bytes"]
+    ):
+        fail("the emulator's seed disk size differs from partition-layout.json")
+    compiled = re.findall(
+        r'ExpectedPartition\{"([a-z_]+)", ([0-9\']+)ULL, ([0-9\']+)ULL\}',
+        emulator,
+    )
+    expected = [
+        (p["name"], p["start_bytes"], p["size_bytes"]) for p in partitions
+    ]
+    if [
+        (name, int(offset.replace("'", "")), int(size.replace("'", "")))
+        for name, offset, size in compiled
+    ] != expected:
+        fail("the emulator's fixed partitions differ from partition-layout.json")
+    launcher = (root / "tools/boot_android.py").read_text()
+    first_lba = re.search(r"USERDATA_FIRST_LBA = ([0-9_]+)", launcher)
+    userdata = partitions[-1]
+    if userdata["name"] != "userdata" or first_lba is None or (
+        int(first_lba.group(1).replace("_", ""))
+        != userdata["start_bytes"] // layout["sector_size"]
+    ):
+        fail("the launcher's userdata start differs from partition-layout.json")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
@@ -1372,6 +1408,7 @@ def main() -> None:
         android_root / "tools/ubd-disk.py",
         android_root / "support/image/partition-layout.json",
     )
+    verify_layout_consumers(root, android_root)
 
     scripts = list((android_root / "build").rglob("*.sh"))
     scripts += list((android_root / "tools").rglob("*.py"))
