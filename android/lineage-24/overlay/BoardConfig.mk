@@ -108,9 +108,9 @@ AB_OTA_PARTITIONS := $(filter-out vendor_dlkm system_dlkm odm_dlkm \
     vbmeta_vendor_dlkm vbmeta_system_dlkm,$(AB_OTA_PARTITIONS))
 
 # Exact capacities in support/image/partition-layout.json.
-BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1073741824
-BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 268435456
-BOARD_PRODUCTIMAGE_PARTITION_SIZE := 268435456
+BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1409286144
+BOARD_SYSTEM_EXTIMAGE_PARTITION_SIZE := 536870912
+BOARD_PRODUCTIMAGE_PARTITION_SIZE := 536870912
 # The inherited ext4 default reserves one inode per 4 KiB block, consuming
 # 16 MiB in this small image. Product currently contains fewer than 300 files;
 # keep generous growth room without crowding app payloads out of the image.

@@ -1,9 +1,10 @@
-# AOSP 17 UML guest producer
+# LineageOS 24 UML guest producer
 
-This directory owns the standalone AOSP 17 guest producer for Darwin UML. The
-exact AOSP identity and product name live in
-[`metadata/lineage.env`](metadata/lineage.env); the ACK identity and generated kernel
-series live under
+This directory owns the standalone LineageOS 24 guest producer for Darwin UML.
+LineageOS 24.0 is Android 17: its tree is the AOSP `android-17.0.0_r1` release
+with LineageOS's forks of the projects it changes. The exact source identity and
+product name live in [`metadata/lineage.env`](metadata/lineage.env); the ACK
+identity and generated kernel series live under
 [`../../kernel/android-6.18`](../../kernel/android-6.18/README.md).
 
 The producer runs locally on an x86_64 Linux builder. Repository scripts accept
@@ -317,7 +318,7 @@ time compared and the release accepted.
 
 ## Static disk and boot contract
 
-`support/image/partition-layout.json` owns a compact 1,983 MiB seed GPT with
+`support/image/partition-layout.json` owns a compact 2,815 MiB seed GPT with
 separate Android payload, metadata, `init_boot`, `misc`, recovery, and a
 128 MiB userdata filesystem. Userdata is the final partition. Before its first
 boot, the Apple app's generic Swift `DiskUtil` expands the bundle-local raw

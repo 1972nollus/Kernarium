@@ -2,14 +2,14 @@
   "schema_version": 1,
   "sector_size": 512,
   "alignment_bytes": 1048576,
-  "disk_size_bytes": 2079326208,
+  "disk_size_bytes": 2951741440,
   "partition_entry_count": 128,
   "disk_guid": "0f88cc4a-aeba-55c8-a739-7a73979c280f",
   "partitions": [
     {
       "name": "system",
       "start_bytes": 1048576,
-      "size_bytes": 1073741824,
+      "size_bytes": 1409286144,
       "image": "system.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "478179da-858a-572c-8130-e31643d17cd4",
@@ -17,8 +17,8 @@
     },
     {
       "name": "system_ext",
-      "start_bytes": 1074790400,
-      "size_bytes": 268435456,
+      "start_bytes": 1410334720,
+      "size_bytes": 536870912,
       "image": "system_ext.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "b93c230a-1394-583f-8020-5bf49ba043cf",
@@ -26,8 +26,8 @@
     },
     {
       "name": "product",
-      "start_bytes": 1343225856,
-      "size_bytes": 268435456,
+      "start_bytes": 1947205632,
+      "size_bytes": 536870912,
       "image": "product.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
       "unique_guid": "416cfbab-b208-5698-9d2b-b0535744aec3",
@@ -35,7 +35,7 @@
     },
     {
       "name": "vendor",
-      "start_bytes": 1611661312,
+      "start_bytes": 2484076544,
       "size_bytes": 268435456,
       "image": "vendor.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -44,7 +44,7 @@
     },
     {
       "name": "odm",
-      "start_bytes": 1880096768,
+      "start_bytes": 2752512000,
       "size_bytes": 4194304,
       "image": "odm.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -53,7 +53,7 @@
     },
     {
       "name": "metadata",
-      "start_bytes": 1884291072,
+      "start_bytes": 2756706304,
       "size_bytes": 16777216,
       "image": "metadata.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -62,7 +62,7 @@
     },
     {
       "name": "init_boot",
-      "start_bytes": 1901068288,
+      "start_bytes": 2773483520,
       "size_bytes": 8388608,
       "image": "init_boot.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -71,7 +71,7 @@
     },
     {
       "name": "misc",
-      "start_bytes": 1909456896,
+      "start_bytes": 2781872128,
       "size_bytes": 1048576,
       "image": "misc.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -80,7 +80,7 @@
     },
     {
       "name": "recovery",
-      "start_bytes": 1910505472,
+      "start_bytes": 2782920704,
       "size_bytes": 33554432,
       "image": "recovery.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",
@@ -89,7 +89,7 @@
     },
     {
       "name": "userdata",
-      "start_bytes": 1944059904,
+      "start_bytes": 2816475136,
       "size_bytes": 134217728,
       "image": "userdata.img",
       "type_guid": "0fc63daf-8483-4772-8e79-3d69d8477de4",

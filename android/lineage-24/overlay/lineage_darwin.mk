@@ -56,8 +56,25 @@ TARGET_USES_CF_RILD := false
 TARGET_DEDICATED_RECOVERY := true
 TARGET_NO_RECOVERY := false
 
+# LineageOS switches, read while its configuration is inherited below. The
+# machine has no camera, no audio capture device, no charger or fastboot
+# transport, and no hardware to apply effects to, so the matching defaults of
+# the LineageOS product chain stay out. Debug builds carry `su` for the
+# development tooling; a user build never does.
+PRODUCT_NO_CAMERA := true
+TARGET_EXCLUDES_AUDIOFX := true
+# The ACK UML ELF is built and published independently; the board stages it
+# from the kernel artifact, so LineageOS's own kernel build stays off.
+TARGET_NO_KERNEL_OVERRIDE := true
+TARGET_DISABLE_FASTBOOTD := true
+WITH_LINEAGE_CHARGER := false
+ifneq ($(TARGET_BUILD_VARIANT),user)
+WITH_SU := true
+endif
+
 $(call inherit-product, device/google/cuttlefish/vsoc_arm64_pgagnostic/phone/aosp_cf.mk)
 $(call inherit-product, hardware/interfaces/audio/aidl/default/audio_effects.mk)
+$(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
 
 # The inherited desktop product installs the complete historical AOSP sound
 # library. Keep its compact alarm, notification, and UI defaults, but omit the
@@ -72,6 +89,29 @@ PRODUCT_DEVICE := darwin
 PRODUCT_BRAND := Android
 PRODUCT_MANUFACTURER := Kernarium
 PRODUCT_MODEL := Darwin UML
+
+# LineageOS makes its debug variant not debuggable (any non-empty value of this
+# variable counts as set) and always demands ADB authorization. This product
+# is debuggable like the AOSP debug build it replaces: userdebug has
+# ro.debuggable=1. adbd's boot policy (ro.boot.kernarium.adb_auth) decides
+# authorization per boot, and the root service starts with rooted debugging
+# enabled only when that policy turns authorization off.
+PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG :=
+
+# The LineageOS updater polls a server for a device this project does not
+# publish, the setup wizard would block automation, and the remaining apps
+# have nothing to work with: no recorder input, no NFC wallet, no fastboot
+# transport, and Canvas is the largest app for the least use. DeskClock and
+# EmergencyInfo leave with the other absent-hardware packages below.
+PRODUCT_PACKAGES_EXCLUDE += \
+    Canvas \
+    fastbootd \
+    LineageSetupWizard \
+    QuickAccessWallet \
+    Recorder \
+    Updater
+PRODUCT_COPY_FILES_EXCLUDE += \
+    vendor/lineage/prebuilt/common/etc/init/init.lineage-updater.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.lineage-updater.rc
 
 # The desktop Cuttlefish base chooses EROFS APEX payloads. Keep every APEX on
 # the uncompressed ext4 path so this guest never depends on EROFS at runtime.
@@ -223,18 +263,22 @@ KERNARIUM_REMOVED_PACKAGES := \
     wificond_compat_symlink_module
 PRODUCT_PACKAGES_EXCLUDE += $(KERNARIUM_REMOVED_PACKAGES)
 
-# Jelly supplies the browser; ThemePicker remains part of the user-facing
-# baseline, LatinIME must remain visible even when a host keyboard exists, and
-# resize2fs grows the compact userdata filesystem after the host expands its
-# partition and before the first /data mount.
+# The inherited Cuttlefish product also asks for modules this tree does not
+# define. AOSP ignores such requests; LineageOS requires every requested
+# package to exist, so name them here instead of switching the check off.
+PRODUCT_PACKAGES_EXCLUDE += \
+    libGoldfishProfiler \
+    metrics_helper \
+    sleep
+
+# The browser (Jelly), the keyboard (LatinIME) and ThemePicker come from the
+# LineageOS product chain. resize2fs grows the compact userdata filesystem
+# after the host expands its partition and before the first /data mount.
 PRODUCT_PACKAGES += \
     android.hardware.health-service.example \
     android.hardware.health-service.example_recovery \
     e2fsck \
-    Jelly \
-    LatinIME \
-    resize2fs \
-    ThemePicker
+    resize2fs
 
 # Replace the handheld feature declaration and remove optional feature files
 # for absent hardware. This keeps PackageManager truthful for sideloaded apps.
