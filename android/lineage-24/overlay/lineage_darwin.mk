@@ -67,7 +67,7 @@ PRODUCT_COPY_FILES_EXCLUDE += \
     frameworks/base/data/sounds/newwavelabs/% \
     frameworks/base/data/sounds/ringtones/%
 
-PRODUCT_NAME := aosp_kernarium_darwin
+PRODUCT_NAME := lineage_darwin
 PRODUCT_DEVICE := darwin
 PRODUCT_BRAND := Android
 PRODUCT_MANUFACTURER := Kernarium

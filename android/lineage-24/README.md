@@ -22,7 +22,7 @@ publication are offline.
 The producer has five independent outputs:
 
 1. a replayed and built ACK 4 KiB kernel, published as a kernel artifact;
-2. the `aosp_kernarium_darwin` target files of the configured build variant;
+2. the `lineage_darwin` target files of the configured build variant;
 3. a kernel-less OrangeFox recovery partition;
 4. one static GPT guest disk containing both boot ramdisks; and
 5. a compact rootfs release installed by Apple consumers.

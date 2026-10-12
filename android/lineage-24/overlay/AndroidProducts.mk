@@ -15,8 +15,8 @@
 #
 
 PRODUCT_MAKEFILES := \
-	aosp_kernarium_darwin:$(LOCAL_DIR)/aosp_kernarium_darwin.mk
+	lineage_darwin:$(LOCAL_DIR)/lineage_darwin.mk
 
 COMMON_LUNCH_CHOICES := \
-	aosp_kernarium_darwin-aosp_current-user \
-	aosp_kernarium_darwin-aosp_current-userdebug
+	lineage_darwin-cp2a-user \
+	lineage_darwin-cp2a-userdebug
