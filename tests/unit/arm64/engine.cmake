@@ -440,6 +440,7 @@
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_packed_immediate WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_afp_twin WITHOUT_HARNESS)

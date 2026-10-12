@@ -367,6 +367,13 @@ Only MOPS and a literal load whose target does not fit 48 bits keep a PC word.
 `arm64-gadget-memory-fault-position` faults one instruction of each family at
 several positions, directly and through a link.
 
+A constant stored to a register is one stream word when it fits 48 bits or is
+ones above bit 47: the destination's CpuState offset in bits 63:48 over the
+value's low 48 bits, which MOVZ and MOVN take below a shift of 48 and the
+emulated identification registers when their value fits. Any other value keeps
+`move_wide_constant` and its two words. `arm64-gadget-packed-immediate` runs
+each form against the architectural definition.
+
 The x86-64 gadget code in `darwin/cpu/x86_64/gadgets/` is a pinned region
 too, a bank and a cold part placed by the same `UML::GadgetRegionLayout` and
 order file. It follows the arm64 region in an image that carries both and

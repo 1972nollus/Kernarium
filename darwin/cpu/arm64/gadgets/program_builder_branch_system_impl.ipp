@@ -341,11 +341,10 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		if (destination == 31U) {
 			emit(words, uml_arm64_gadget_nop);
 		} else {
-			emit(words, uml_arm64_gadget_move_wide_constant);
-			emit(words, destination * sizeof(std::uint64_t));
-			emit(words, static_cast<std::uintptr_t>(
+			emit_constant_store(words,
+				destination * sizeof(std::uint64_t),
 				arm64::detail::emulated_id_register_value(
-					instruction)));
+					instruction));
 		}
 	} else if ((instruction & 0xffd0'0000U) == 0xd510'0000U ||
 		   (instruction & 0xffd0'0000U) == 0xd550'0000U ||

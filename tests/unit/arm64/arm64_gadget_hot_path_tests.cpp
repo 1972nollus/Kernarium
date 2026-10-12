@@ -20,6 +20,8 @@ void uml_arm64_gadget_branch_link_register();
 void uml_arm64_gadget_return();
 void uml_arm64_gadget_pc_relative();
 void uml_arm64_gadget_move_wide_constant();
+void uml_arm64_gadget_move_wide_packed_zero();
+void uml_arm64_gadget_move_wide_packed_ones();
 extern void (*const uml_arm64_gadget_move_wide_keep_inplace_table[])();
 extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
 void uml_arm64_gadget_add_sub_immediate_x_add_n_rr();
@@ -269,9 +271,31 @@ int main()
 	{
 		const auto program = build_one(0xd280'00a0U); // movz x0, #5
 		require(program.words()[0] ==
+			address(uml_arm64_gadget_move_wide_packed_zero));
+		/* The destination's offset over the value's low 48 bits. */
+		require(program.words()[1] == 5U);
+		require(program.words()[2] == address(uml_arm64_gadget_svc));
+	}
+	{
+		const auto program = build_one(0xd280'00a3U); // movz x3, #5
+		require(program.words()[0] ==
+			address(uml_arm64_gadget_move_wide_packed_zero));
+		require(program.words()[1] == (std::uint64_t{3} * 8U << 48 | 5U));
+	}
+	{
+		const auto program = build_one(0x9280'0004U); // movn x4, #0
+		require(program.words()[0] ==
+			address(uml_arm64_gadget_move_wide_packed_ones));
+		require(program.words()[1] == (std::uint64_t{4} * 8U << 48 |
+			0xffff'ffff'ffffU));
+	}
+	{
+		const auto program = build_one(0xd2e0'0025U); // movz x5, #1, lsl #48
+		/* Neither a 48-bit value nor one of ones above bit 47. */
+		require(program.words()[0] ==
 			address(uml_arm64_gadget_move_wide_constant));
-		require(program.words()[1] == 0U);
-		require(program.words()[2] == 5U);
+		require(program.words()[1] == 5U * 8U);
+		require(program.words()[2] == std::uint64_t{1} << 48);
 	}
 	{
 		const auto program = build_one(0xf2a2'4680U); // movk x0,#0x1234,lsl#16

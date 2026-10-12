@@ -40,9 +40,8 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				value = ~value;
 			if (!is_64_bit)
 				value &= 0xffff'ffffU;
-			emit(words, uml_arm64_gadget_move_wide_constant);
-			emit(words, destination * sizeof(std::uint64_t));
-			emit(words, static_cast<std::uintptr_t>(value));
+			emit_constant_store(words,
+				destination * sizeof(std::uint64_t), value);
 		}
 	} else if ((instruction & 0x7ff0'0000U) == 0x11c0'0000U) {
 		const unsigned destination = instruction & 31U;

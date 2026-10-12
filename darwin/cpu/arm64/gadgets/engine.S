@@ -173,6 +173,7 @@ Lveneer_\symbol:
 #include "engine/inplace_immediate.inc"
 #include "engine/inplace_extended.inc"
 #include "engine/inplace_memory.inc"
+#include "engine/constant_store.inc"
 #include "engine/scalar_forwarding.inc"
 #include "engine/vector_forwarding.inc"
 #include "engine/execution_count.inc"

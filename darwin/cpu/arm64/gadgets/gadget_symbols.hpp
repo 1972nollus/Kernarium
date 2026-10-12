@@ -7,6 +7,8 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 extern "C" {
 void uml_arm64_gadget_move_wide_constant();
+void uml_arm64_gadget_move_wide_packed_zero();
+void uml_arm64_gadget_move_wide_packed_ones();
 #define UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(prefix) \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rr(); \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rs(); \
