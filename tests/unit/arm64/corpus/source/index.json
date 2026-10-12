@@ -124,7 +124,7 @@
   ],
   "meta": {
     "absent_features": {
-      "added_cases": 3454,
+      "added_cases": 3421,
       "afp": {
         "added_requirement": 419,
         "controls": 2661,
@@ -202,7 +202,7 @@
       },
       "input_sha256": "7b74bdb27b8faf17488472186b017c45da9b09f1aa67bf260f3a358c89dc1b60",
       "script": "tools/arm64-tests/absent-feature-corpus.py",
-      "sha256": "a410740edcb4f6aa6b07a59e9fa1f6b404a0acc4c090fe785df01df5f4707cf6",
+      "sha256": "129e84eabef0bef1fc2b8df1da97415b597db72443e06c87bb7b85983bff1d86",
       "sme_table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
         "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
@@ -281,12 +281,12 @@
     "invalid_encoding": {
       "classifier": {
         "file": "tools/arm64-tests/invalid_encoding.py",
-        "sha256": "16add068ee0994217a90f2f716482f7fefbf00325fee0a2733381ab1af090cc0"
+        "sha256": "d21bdb72a5a5241e0690caed8b8698087eea6b19bd4c8872c89b29af90798332"
       },
-      "decided_cases": 24097,
-      "illegal_cases": 34281,
+      "decided_cases": 23967,
+      "illegal_cases": 34149,
       "script": "tools/arm64-tests/invalid-encoding-corpus.py",
-      "sha256": "e74fef4a7e0165fb1f2491104388cab8ff1c0edca09ba18e869a2db502de3308",
+      "sha256": "dbc8ce5def2d21e2235b7ac4b40b3269a6aafc9912f23c3d99dd9b077d44347a",
       "tables": [
         {
           "file": "tests/unit/arm64/a64_instruction_allocations.tsv",
@@ -315,7 +315,7 @@
       "cases": 2338,
       "control_cases": 20,
       "script": "tools/arm64-tests/sm0-vl-corpus.py",
-      "sha256": "947f264f74b2c03bacee87a348872b9cd119f8d38fb33c117f7aff9351c1b315",
+      "sha256": "f48a62b29d96acbd02bc0bf028ab0f1b648023226a4eff5148bbcb73516dc5b1",
       "spill_cases": 442,
       "svl": 64,
       "table": {
@@ -339,119 +339,12 @@
       ],
       "request_sha256": "51b09afd774c8f9f43a9384a75c3d13027796a79e046ccc90d220adc1d8f16dc",
       "script": "tools/arm64-tests/sme-native-corpus.py",
-      "sha256": "ef0c3cbf3757827589988b5abc3a8f65900c328d04142b611c2cf0f7959693fb",
+      "sha256": "cff7755f13aaa01df4b2db182078136c05ff43396271e99de8bfa428f1f58987",
       "svl": 64,
       "table": {
         "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
         "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
       }
-    },
-    "sve_afp": {
-      "cases": 5105,
-      "host_features": [
-        "FEAT_SME",
-        "FEAT_SME2",
-        "FEAT_SME_F64F64",
-        "FEAT_SME_I16I64"
-      ],
-      "request_sha256": "ee01910ae89d02ef65c41ad2f65c7cef87bb3e1c74b5693389d658a24d4bc8ed",
-      "script": "tools/arm64-tests/sve-afp-corpus.py",
-      "sha256": "89e9c0fe834734f362db1a78ca4ce803d760faa8e1c63e075045c8be4e0f1161",
-      "svl": 64,
-      "table": {
-        "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-        "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-      },
-      "vl": 16
-    },
-    "sve_native": {
-      "cases": 23849,
-      "events": {
-        "breakpoint": 3,
-        "illegal-instruction": 99,
-        "memory-fault": 1353,
-        "system-call": 22394
-      },
-      "host": {
-        "hwcap": "0xefffffff",
-        "hwcap2": "0x3f3ff",
-        "page": 4096,
-        "vl": 16
-      },
-      "request_sha256": "3cad9992f228e6a9a33ef2b8431f2e4b10a227fb1a7d2f04a02182a11cb2dcf0",
-      "script": "tools/arm64-tests/sve-native-corpus.py",
-      "sha256": "b9ce0b1b532acffcb3f9c71c0ad4bb8b03b53af2cfa71b0be38629823cf7b213",
-      "table": {
-        "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-        "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-      },
-      "vl": 16
-    },
-    "sve_sme": {
-      "cases": {
-        "asl": 311,
-        "m4": 73
-      },
-      "m4": {
-        "cases": 384,
-        "host_features": [
-          "FEAT_SME",
-          "FEAT_SME2",
-          "FEAT_SME_F64F64",
-          "FEAT_SME_I16I64"
-        ],
-        "request_sha256": "e9054d5a105d21fc256eae4428cb1baa6acd08bb45d0377caf2401a31c3880c1",
-        "svl": 64
-      },
-      "m4_request_sha256": "e9054d5a105d21fc256eae4428cb1baa6acd08bb45d0377caf2401a31c3880c1",
-      "models_checked": {
-        "psel_p_ppi_": 62,
-        "revd_z_p_z_m": 8,
-        "sclamp_z_zz_": 10,
-        "sdot_z32_zzz_": 7,
-        "sdot_z32_zzzi_": 9,
-        "sqcvtn_z_mz2_": 5,
-        "sqcvtun_z_mz2_": 5,
-        "sqrshrn_z_mz2_": 6,
-        "sqrshrun_z_mz2_": 6,
-        "uclamp_z_zz_": 10,
-        "udot_z32_zzz_": 7,
-        "udot_z32_zzzi_": 9,
-        "uqcvtn_z_mz2_": 5,
-        "uqrshrn_z_mz2_": 6,
-        "whilege_pp_rr_": 13,
-        "whilegt_pp_rr_": 13,
-        "whilehi_pp_rr_": 13,
-        "whilehs_pp_rr_": 13,
-        "whilele_pp_rr_": 13,
-        "whilelo_pp_rr_": 13,
-        "whilels_pp_rr_": 13,
-        "whilelt_pp_rr_": 13
-      },
-      "script": "tools/arm64-tests/sve-sme-corpus.py",
-      "sha256": "4fe4a2eddf249bede0f03210a90dfd2ad7a0e8d47d6ab58c6b755773f4bd3da1",
-      "table": {
-        "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-        "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-      },
-      "vl": 16
-    },
-    "sve_trap": {
-      "cases": {
-        "authored": 26,
-        "derived": 14166
-      },
-      "events": {
-        "floating-point-trap": 6194,
-        "system-call": 7998
-      },
-      "script": "tools/arm64-tests/sve-trap-corpus.py",
-      "sha256": "71575f941a00917c2857193f3633287048778e182772247946c666a7dd9ef634",
-      "table": {
-        "file": "darwin/cpu/arm64/detail/sme_encodings.hpp",
-        "sha256": "7f19856956b71484c327580b99547b0d5bba30c87f4b8d5097dd009e818509c8"
-      },
-      "vl": 16
     }
   },
   "files": [
@@ -872,9 +765,6 @@
     "arm64-absent-mte-tbi.jsonl",
     "arm64-sme-native.jsonl",
     "arm64-floating-trap-native.jsonl",
-    "arm64-sve-native.jsonl",
-    "arm64-sve-sme.jsonl",
-    "arm64-sve-afp.jsonl",
     "arm64-sm0-vl.jsonl"
   ],
   "records": [
@@ -5239,11 +5129,7 @@
       "file": "arm64-absent-sve.jsonl"
     },
     {
-      "name": "arm64-absent-sve/options=1000",
-      "file": "arm64-absent-sve.jsonl"
-    },
-    {
-      "name": "arm64-absent-sve/options=1800",
+      "name": "arm64-absent-sve/options=800",
       "file": "arm64-absent-sve.jsonl"
     },
     {
@@ -5260,10 +5146,6 @@
     },
     {
       "name": "arm64-sme-native/classify",
-      "file": "arm64-sme-native.jsonl"
-    },
-    {
-      "name": "arm64-sme-native/classify/options=1000",
       "file": "arm64-sme-native.jsonl"
     },
     {
@@ -5315,55 +5197,7 @@
       "file": "arm64-floating-trap-native.jsonl"
     },
     {
-      "name": "arm64-sve-native/classify",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/operands",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/memory",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/memory/4k",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/gather",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/live",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-native/fpcr",
-      "file": "arm64-sve-native.jsonl"
-    },
-    {
-      "name": "arm64-sve-sme/asl",
-      "file": "arm64-sve-sme.jsonl"
-    },
-    {
-      "name": "arm64-sve-sme/m4",
-      "file": "arm64-sve-sme.jsonl"
-    },
-    {
-      "name": "arm64-sve-afp/m4",
-      "file": "arm64-sve-afp.jsonl"
-    },
-    {
-      "name": "arm64-sve-trap/derived",
-      "generator": "sve-trap"
-    },
-    {
-      "name": "arm64-sve-trap/authored",
-      "generator": "sve-trap"
-    },
-    {
-      "name": "arm64-sm0-vl/options=1000",
+      "name": "arm64-sm0-vl",
       "file": "arm64-sm0-vl.jsonl"
     }
   ]

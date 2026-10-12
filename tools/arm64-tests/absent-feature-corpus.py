@@ -42,34 +42,29 @@ rewrites a dump after export. For each named feature it
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
 
-FEAT_SME and FEAT_SVE are two-sided, like FEAT_AFP below: the virtual CPU
-implements the SME profile only where the host does, and the SVE profile only
-where the guest-SVE policy and the host's AdvSIMD forms allow it, and
-sme-native-corpus.py and sve-native-corpus.py append the cases observed on
-hosts with them. The producer's SME model is retired, so its SME cases and
-its one-byte PSTATE.SM and ZA state are dropped and stripped as for an absent
-feature. The witness word of every row of the generated encoding table
-(darwin/cpu/arm64/detail/sme_encodings.hpp), and the evidence-binding witness
-of each SVE or SME entry without a row, is pinned UNDEFINED at PSTATE.SM = 0
-in the record whose option makes it so, which the runner translates for on
-every host:
+FEAT_SME is two-sided, like FEAT_AFP below: the virtual CPU implements the
+SME profile only where the host does, and sme-native-corpus.py appends the
+cases observed on a host with it. FEAT_SVE is absent everywhere: no host
+implements it and the virtual CPU presents none. The producer's SME model is
+retired, so its SME cases and its one-byte PSTATE.SM and ZA state are dropped
+and stripped as for an absent feature. The witness word of every row of the
+generated encoding table (darwin/cpu/arm64/detail/sme_encodings.hpp), and the
+evidence-binding witness of each SVE or SME entry without a row, is pinned
+UNDEFINED at PSTATE.SM = 0 in the record whose option makes it so, which the
+runner translates for on every host:
 
 - the arm64-absent-sme record, under without_sme, holds SMSTART, SMSTOP,
-  MRS and MSR SVCR, the other rows of the SME profile, and the SVE rows that
-  need FEAT_SME outside streaming mode as well;
-- the arm64-absent-sve record under without_sve holds every row the SVE
-  profile executes outside streaming mode, except the SM = 0 vector-length
-  family;
-- the arm64-absent-sve record under without_sme and without_sve holds that
-  family (CNT, INC, DEC, RDVL, ADDVL and ADDPL), which a virtual CPU with
-  FEAT_SME and without FEAT_SVE executes outside streaming mode for a vector
-  length of 16 bytes, a deliberate departure from the architecture
-  (darwin/cpu/arm64/detail/sm0_vector_length.hpp; sm0-vl-corpus.py appends
-  those cases), so it is UNDEFINED only where neither profile is;
+  MRS and MSR SVCR and the other rows of the SME profile;
+- the arm64-absent-sve record under without_sme holds the SM = 0
+  vector-length family (CNT, INC, DEC, RDVL, ADDVL and ADDPL, and the LDR and
+  STR of Z and P), which a virtual CPU with FEAT_SME executes outside
+  streaming mode for a vector length of 16 bytes, a deliberate departure
+  from the architecture (darwin/cpu/arm64/detail/sm0_vector_length.hpp;
+  sm0-vl-corpus.py appends those cases), so it is UNDEFINED only where SME
+  is;
 - the unconditional arm64-absent-sve record holds every other row: the SVE
-  rows that never execute outside streaming mode (the withheld features, and
-  the SVE2p1 forms that SME2 executes in streaming mode) and the rows outside
-  both profiles.
+  rows that execute only in streaming mode or nowhere, which are UNDEFINED
+  outside it on every virtual CPU, and the rows outside the SME profile.
 
 A native FEAT_EBF16 requirement without FPCR.EBF set came from the engines'
 old host gates, not from the case, so such a case stays and loses the
@@ -342,7 +337,8 @@ FEATURES = {
         conditions=("FEAT_WFxT",),
         fields=()),
     # The producer never ran an SVE instruction, and the encoding table
-    # supplies the words (table_records()).
+    # supplies the words (table_records()). The virtual CPU executes none
+    # outside streaming mode but the SM = 0 family.
     "sve": Feature(
         tokens=("sve",),
         conditions=(),
@@ -637,11 +633,10 @@ UNDEFINED = {
 # The records whose words come from the encoding table: one witness word per
 # table row, checked against LLVM MC by its generator, each at PSTATE.SM = 0
 # in the record whose option makes it UNDEFINED there (table_records()).
-TABLE_RECORDS = {"sme": ("sme",), "sve": ("sve", "sve_profile", "sm0_family")}
+TABLE_RECORDS = {"sme": ("sme",), "sve": ("sve", "sm0_family")}
 # The options each such record runs under; the unconditional record has none.
 TABLE_OPTIONS = {"sme": ("without_sme",), "sve": (),
-                 "sve_profile": ("without_sve",),
-                 "sm0_family": ("without_sme", "without_sve")}
+                 "sm0_family": ("without_sme",)}
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
     "pauth": (
@@ -848,28 +843,24 @@ def table_records(row) -> tuple[str, ...]:
     alias, UNDEFINED at PSTATE.SM = 0 (None: a form only Debug state
     executes, which needs FEAT_SME2):
 
-    - "sve_profile", under without_sve: the rows the SVE profile executes
-      outside streaming mode, so a virtual CPU without SVE takes them as
+    - "sm0_family", under without_sme: the SM = 0 family (the
+      vector-length words and the Z and P spill words), which a virtual CPU
+      with SME executes there (sm0-vl-corpus.py), so only one without it
+      takes it as UNDEFINED;
+    - "sme", under without_sme: the other rows of the SME profile that
+      execute at SM = 0, so a virtual CPU without SME takes them as
       UNDEFINED there;
-    - "sm0_family", under without_sme and without_sve: the SM = 0 family
-      (the vector-length words and the Z and P spill words), which a virtual
-      CPU with SME and without SVE executes there (sm0-vl-corpus.py), so
-      only one with neither takes it as UNDEFINED;
-    - "sme", under without_sme: the other rows of the SME profile and the
-      SVE rows that need FEAT_SME outside streaming mode as well (the
-      SCLAMP class), so a virtual CPU without SME takes them as UNDEFINED
-      there, whatever its SVE;
-    - "sve", unconditional: the SVE rows that never execute outside
-      streaming mode (the withheld features and the SVE2p1 forms SME2
-      executes in streaming mode) and every row outside both profiles."""
+    - "sve", unconditional: the SVE rows that execute only in streaming mode
+      or nowhere (the SCLAMP class, which needs both FEAT_SVE and FEAT_SME
+      outside streaming mode, included), and every row outside the SME
+      profile."""
     if row is None:
         return ("sme",)
     outside = set(row.non_streaming_requirement)
     if sme_table.sm0_family_word(row.witness):
         return ("sm0_family",)
     if "sve" in outside:
-        return ("sve_profile", "sme") if "sme" in outside else \
-            ("sve_profile",)
+        return ("sve",)
     if row.in_profile and (outside or row.form & sme_table.SME_SECTION):
         return ("sme",)
     return ("sve",)

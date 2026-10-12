@@ -11,7 +11,8 @@
  * checks only inside it, and the SME checks in both under one requirement.
  * Without an SVE feature, the non-streaming requirement must decide exactly
  * what the streaming requirement and mode decide outside streaming mode, so
- * an engine that reads it changes nothing until the SVE profile is on. A
+ * an engine that reads it changes nothing for a virtual CPU without SVE,
+ * which is every one. A
  * set of words assembled by LLVM MC must decode as the architecture
  * describes them. The generator's freshness test pins the table to the Arm
  * release; this test pins the decoder to the table.

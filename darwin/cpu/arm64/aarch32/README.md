@@ -105,9 +105,9 @@ tooling-time oracle that no build uses. Never edit them.
 
 `uml_arm64_aarch32_semantics` is the one C++ implementation of what the
 decoder accepts, for the engines' slow paths and long tails and for the
-corpus's model lane (`semantics.hpp`). It follows the SVE library: a
-CPU-layer `shared` target that includes no engine, works on `CpuState` alone
-and reaches guest memory only through the caller's `A32Memory`.
+corpus's model lane (`semantics.hpp`). It is a CPU-layer `shared` target that
+includes no engine, works on `CpuState` alone and reaches guest memory only
+through the caller's `A32Memory`.
 
 - `execute_a32(cpu, instruction, memory)` runs one decoded instruction;
   `step_a32(cpu, memory, profile)` fetches, decodes in `cpu.a32_itstate`
