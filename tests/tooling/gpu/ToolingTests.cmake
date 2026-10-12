@@ -54,14 +54,14 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_vk_cts.py
     LABELS gpu;cts;vulkan;rootfs
-    TIMEOUT 120)
+    TIMEOUT 240)
 
 uml_add_tooling_test(
     NAME cts-shard-resumption-safety
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_cts_shard_resilience.py
     LABELS gpu;cts;vulkan
-    TIMEOUT 120)
+    TIMEOUT 180)
 
 uml_add_tooling_test(
     NAME vulkan-guest-rootfs-safety
@@ -82,5 +82,5 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/test_run_chromium_webgl.py
     LABELS gpu;webgl
-    TIMEOUT 120)
+    TIMEOUT 240)
 

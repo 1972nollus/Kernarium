@@ -23,7 +23,9 @@
 #include "a32_operations.hpp"
 #include "a32_vector_encoders.hpp"
 
+#include <array>
 #include <bit>
+#include <cstdlib>
 
 namespace uml::cpu::arm64::jit::a32 {
 
@@ -204,6 +206,308 @@ A32Compiler::Flow A32Compiler::emit_neon(const VInfo &v) {
 }
 
 // ---------------------------------------------------------------------------
+// Advanced SIMD floating point in the middle of VFP code.
+//
+// A Neon operation between VFP instructions would write the FPCR twice, and a
+// write waits for the floating-point operations before it. The guest's FPCR
+// and the Standard FPSCR value part only on a nonzero denormal operand, which
+// the Standard value flushes and raises Input Denormal for, on a NaN operand,
+// which it replaces by the default NaN, on a result that is tiny before
+// rounding, which it flushes and raises Underflow for, and on a rounding mode
+// other than to nearest. A run under the guest's FPCR leaves its exception
+// flags behind, so what the Standard value would not raise must be found
+// before it: the product test looks at the exponents. Integer operations
+// test for those cases; the
+// operation runs under the guest's FPCR when none is present, and otherwise
+// under the Standard value from a cold path. VMAX and VMIN return an operand,
+// so they need the first two tests only.
+
+namespace {
+
+/* Four of V0-V7 that are not in `live` (a bit set). The callers keep at most
+ * four of them live. */
+std::array<unsigned, 4> free_vector_scratch(unsigned live) {
+  std::array<unsigned, 4> free{};
+  unsigned count = 0;
+  for (unsigned reg = 0; reg < 8U && count < free.size(); ++reg)
+    if (((live >> reg) & 1U) == 0U)
+      free[count++] = reg;
+  if (count < free.size())
+    std::abort(); // a caller keeps too many scratch registers live
+  return free;
+}
+
+constexpr unsigned scratch_bit(unsigned reg) noexcept {
+  return reg < 8U ? 1U << reg : 0U;
+}
+
+} // namespace
+
+/* x9 is nonzero when a lane of `a` or `b` is a nonzero denormal or a NaN (the
+ * low D of each for a D operation). Clobbers four of V0-V7 outside `live`
+ * (and the operands), sets no flag and raises no exception. */
+void A32Compiler::emit_float_special_test(unsigned a, unsigned b, bool quad,
+                                          unsigned live) {
+  const auto t = free_vector_scratch(live | scratch_bit(a) | scratch_bit(b));
+  const unsigned absolute = t[0];
+  const unsigned constant = t[1];
+  const unsigned mask = t[2];
+  const unsigned second = t[3];
+  const auto mask_of = [&](unsigned x, unsigned out) {
+    // out = lanes where |x| - 1 < 0x007fffff: a nonzero denormal.
+    emit(enc::vec::float_misc(true, enc::vec::fabs_, false, absolute, x));
+    emit(enc::vec::modified_immediate(true, 0, 0x0, 1, constant));
+    emit(enc::vec::same(true, enc::vec::sub, 2, out, absolute, constant));
+    emit(enc::vec::modified_immediate(true, 0, 0xd, 0x7f, constant));
+    emit(enc::vec::same(true, enc::vec::cmhi, 2, out, constant, out));
+    // constant = lanes where |x| > 0x7f800000: a NaN.
+    emit(enc::movz(9, 0x7f80, 1));
+    emit(enc::vec::dup_general(true, 2, constant, 9));
+    emit(enc::vec::same(true, enc::vec::cmhi, 2, constant, absolute, constant));
+    emit(enc::vec::bitwise_op(true, enc::vec::orr, out, out, constant));
+  };
+  if (quad) {
+    mask_of(a, mask);
+    mask_of(b, second);
+    emit(enc::vec::bitwise_op(true, enc::vec::orr, mask, mask, second));
+  } else {
+    emit(enc::vec::permute(true, enc::vec::zip1, 3, mask, a, b));
+    mask_of(mask, mask);
+  }
+  emit(enc::vec::same(true, enc::vec::umaxp, 2, mask, mask, mask));
+  emit(enc::vec::umov(3, 9, mask, 0));
+}
+
+/* x9 is nonzero when a lane of the sum `result` is a nonzero denormal. A sum
+ * of two normal numbers that small is exact, so the guest's FPCR raised no
+ * flag for it, and the rerun under the Standard value, which flushes it and
+ * raises Underflow, adds only what that run raises. */
+void A32Compiler::emit_float_tiny_test(unsigned result, bool quad,
+                                       unsigned live) {
+  const auto t = free_vector_scratch(live | scratch_bit(result));
+  const unsigned absolute = t[0];
+  const unsigned constant = t[1];
+  emit(enc::vec::float_misc(quad, enc::vec::fabs_, false, absolute, result));
+  emit(enc::vec::modified_immediate(quad, 0, 0x0, 1, constant));
+  emit(enc::vec::same(quad, enc::vec::sub, 2, absolute, absolute, constant));
+  emit(enc::vec::modified_immediate(quad, 0, 0xd, 0x7f, constant));
+  emit(enc::vec::same(quad, enc::vec::cmhi, 2, constant, constant, absolute));
+  if (quad)
+    emit(enc::vec::same(true, enc::vec::umaxp, 2, constant, constant, constant));
+  emit(enc::vec::umov(3, 9, constant, 0));
+}
+
+/* x9 is nonzero when a lane of the product of `a` and `b` (neither a denormal
+ * or a NaN) might be tiny: both operands are nonzero and their biased
+ * exponents add up to less than 129, so the product is below the smallest
+ * normal number or close enough to it to round into it. Such a product is
+ * inexact and the guest's FPCR would raise Inexact for it where the Standard
+ * value raises only Underflow, which a rerun cannot take back, so the test
+ * comes before the multiplication. */
+void A32Compiler::emit_float_product_test(unsigned a, unsigned b, bool quad,
+                                          unsigned live) {
+  const auto t = free_vector_scratch(live | scratch_bit(a) | scratch_bit(b));
+  const unsigned x = t[0];
+  const unsigned y = t[1];
+  const unsigned z = t[2];
+  emit(enc::vec::float_misc(quad, enc::vec::fabs_, false, x, a));
+  emit(enc::vec::float_misc(quad, enc::vec::fabs_, false, y, b));
+  emit(enc::vec::shift_imm(quad, enc::vec::ushr, 64U - 23U, x, x));
+  emit(enc::vec::shift_imm(quad, enc::vec::ushr, 64U - 23U, y, y));
+  emit(enc::vec::same(quad, enc::vec::umin, 2, z, x, y));
+  emit(enc::vec::same(quad, enc::vec::cmtst, 2, z, z, z));
+  emit(enc::vec::same(quad, enc::vec::add, 2, x, x, y));
+  emit(enc::vec::modified_immediate(quad, 0, 0x0, 129, y));
+  emit(enc::vec::same(quad, enc::vec::cmhi, 2, x, y, x));
+  emit(enc::vec::bitwise_op(quad, enc::vec::and_, x, x, z));
+  if (quad)
+    emit(enc::vec::same(true, enc::vec::umaxp, 2, x, x, x));
+  emit(enc::vec::umov(3, 9, x, 0));
+}
+
+/* dest = a op b (`base` is the A64 instruction with its register fields
+ * clear), run under the host FPCR as it stands, which is the guest's, when
+ * the guest rounds to nearest and neither operand nor result is one of the
+ * values above. dest is not a or b. Clobbers x0, x1 and x9. */
+void A32Compiler::emit_guarded_float_op(std::uint32_t base, bool quad,
+                                        unsigned dest, unsigned a, unsigned b,
+                                        bool product, unsigned live) {
+  const auto slow = make_label();
+  const auto done = make_label();
+  emitter_.load_w(0, 15, offsetof(CpuState, fpcr));
+  emit(enc::ubfx(0, 0, 22, 2)); // FPCR.RMode
+  emitter_.compare_zero(slow, 0, false, true);
+  emit_float_special_test(a, b, quad, live | scratch_bit(dest));
+  emitter_.compare_zero(slow, 9, true, true);
+  if (product) {
+    emit_float_product_test(a, b, quad, live | scratch_bit(dest));
+    emitter_.compare_zero(slow, 9, true, true);
+  }
+  emit_vec3(base, dest, a, b);
+  if (!product) {
+    emit_float_tiny_test(dest, quad, live | scratch_bit(a) | scratch_bit(b));
+    emitter_.compare_zero(slow, 9, true, true);
+  }
+  bind(done);
+  float_cold_.push_back({.label = slow,
+                         .continuation = done,
+                         .base = base,
+                         .quad = quad,
+                         .dest = dest,
+                         .a = a,
+                         .b = b});
+}
+
+/* Whether the Neon operation is one of at most eight Advanced SIMD floating
+ * point operations that a VFP instruction follows (or the end of the block,
+ * after which the loop may go on with one): then guarding each is better than
+ * bracketing the run by two FPCR writes (about the cost of three guards, a
+ * write waiting for every floating-point operation before it). A longer run
+ * is better off with one switch. Where the mode is not known, a guarded
+ * operation tests the byte first, so in a loop of Neon instructions, where the
+ * host FPCR stays Standard from one lap to the next, it costs a load and a
+ * branch more than the switch it replaces. */
+bool A32Compiler::neon_float_isolated() const {
+  unsigned run = 1;
+  for (std::size_t index = count_ + 1U; index < block_.size(); ++index) {
+    const auto &inst = block_[index].inst;
+    if (inst.status != aarch32::Status::ok ||
+        op_info(inst.form).op != Op::vector)
+      continue;
+    const auto &next = vector_info(inst.form);
+    switch (next.mnemonic) {
+    case VM::vldr: case VM::vstr: case VM::vldm: case VM::vldmdb:
+    case VM::vstm: case VM::vstmdb: case VM::fldmiax: case VM::fldmdbx:
+    case VM::fstmiax: case VM::fstmdbx: case VM::vmov: case VM::vmrs:
+    case VM::vmsr:
+      continue;
+    default:
+      break;
+    }
+    if (next.vfp)
+      return true;
+    if (next.variant == Variant::f || next.mnemonic == VM::vfma ||
+        next.mnemonic == VM::vfms || next.mnemonic == VM::vacge ||
+        next.mnemonic == VM::vacgt || next.mnemonic == VM::vrecps ||
+        next.mnemonic == VM::vrsqrts || next.mnemonic == VM::vrecpe ||
+        next.mnemonic == VM::vrsqrte || next.mnemonic == VM::vcvt) {
+      if (++run > 8U)
+        return false;
+    }
+  }
+  return true;
+}
+
+A32Compiler::Flow A32Compiler::emit_neon_float_guarded(const VInfo &v) {
+  ++guarded_float_ops_;
+  const auto &o = cur().inst.operands;
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  const bool quad = v.quad;
+  using enc::vec::FloatSame;
+  const bool accumulating = v.mnemonic == VM::vmla || v.mnemonic == VM::vmls;
+  const FloatSame first = v.mnemonic == VM::vadd   ? enc::vec::fadd
+                          : v.mnemonic == VM::vsub ? enc::vec::fsub
+                                                   : enc::vec::fmul;
+  const FloatSame second =
+      v.mnemonic == VM::vmla ? enc::vec::fadd : enc::vec::fsub;
+  const auto base = [&](FloatSame op) {
+    return enc::vec::float_same(quad, op, false, 0, 0, 0);
+  };
+  const bool product = first == enc::vec::fmul;
+  const unsigned a = vsrc(n, quad, s_n);
+  const unsigned b = vsrc(m, quad, s_m);
+  const unsigned old = accumulating ? vsrc(d, quad, s_acc) : 0U;
+  const unsigned live = scratch_bit(a) | scratch_bit(b) | scratch_bit(old);
+
+  /* Where the mode is not known, a Standard host runs the operations as they
+   * are. */
+  const bool tested = fp_mode_ == FpMode::unknown;
+  Arm64Emitter::Label standard{};
+  const auto done = make_label();
+  if (tested) {
+    standard = make_label();
+    emitter_.load_b(0, 15, offsetof(CpuState, a32_fp_standard));
+    emitter_.compare_zero(standard, 0, false, true);
+    fp_mode_ = FpMode::guest;
+  }
+  if (accumulating) {
+    emit_guarded_float_op(base(enc::vec::fmul), quad, s_extra, a, b, true,
+                          live);
+    emit_guarded_float_op(base(second), quad, s_result, old, s_extra, false,
+                          scratch_bit(old));
+  } else {
+    emit_guarded_float_op(base(first), quad, s_result, a, b, product, live);
+  }
+  if (tested) {
+    emitter_.branch(done);
+    bind(standard);
+    if (accumulating) {
+      emit_vec3(base(enc::vec::fmul), s_extra, a, b);
+      emit_vec3(base(second), s_result, old, s_extra);
+    } else {
+      emit_vec3(base(first), s_result, a, b);
+    }
+    fp_mode_ = FpMode::unknown;
+  }
+  bind(done);
+  neon_put(d, quad, s_result);
+  return Flow::next;
+}
+
+A32Compiler::Flow A32Compiler::emit_neon_minmax_guarded(const VInfo &v) {
+  ++guarded_float_ops_;
+  const auto &o = cur().inst.operands;
+  const unsigned d = static_cast<unsigned>(o.d);
+  const unsigned n = static_cast<unsigned>(o.n);
+  const unsigned m = static_cast<unsigned>(o.m);
+  const bool quad = v.quad;
+  const auto base = enc::vec::float_same(
+      quad, v.mnemonic == VM::vmax ? enc::vec::fmax : enc::vec::fmin, false,
+      0, 0, 0);
+  const unsigned a = vsrc(n, quad, s_n);
+  const unsigned b = vsrc(m, quad, s_m);
+  const auto dest = quad ? q_def(d >> 1, false, s_result)
+                         : NativeVector{s_result, false};
+  const auto done = make_label();
+  /* Where the mode is not known, the Standard value (set already) runs the
+   * operation as it is. */
+  const bool tested = fp_mode_ == FpMode::unknown;
+  Arm64Emitter::Label standard{};
+  if (tested) {
+    standard = make_label();
+    emitter_.load_b(0, 15, offsetof(CpuState, a32_fp_standard));
+    emitter_.compare_zero(standard, 0, false, true);
+    fp_mode_ = FpMode::guest;
+  }
+  emit_float_special_test(a, b, quad, scratch_bit(dest.host));
+  const auto fast = make_label();
+  emitter_.compare_zero(fast, 9, true, false);
+  set_fp_mode(true);
+  emit_vec3(base, dest.host, a, b);
+  /* The guard's own return to the guest's value, not a need for it. */
+  const auto guest_ops = guest_fp_mode_ops_;
+  set_fp_mode(false);
+  guest_fp_mode_ops_ = guest_ops;
+  emitter_.branch(done);
+  bind(fast);
+  emit_vec3(base, dest.host, a, b);
+  if (tested) {
+    emitter_.branch(done);
+    bind(standard);
+    emit_vec3(base, dest.host, a, b);
+    fp_mode_ = FpMode::unknown;
+  }
+  bind(done);
+  if (quad)
+    q_done(dest, d >> 1);
+  else
+    d_write(d, s_result);
+  return Flow::next;
+}
+
+// ---------------------------------------------------------------------------
 // Three registers of the same width.
 
 A32Compiler::Flow A32Compiler::emit_neon_same(const VInfo &v) {
@@ -225,6 +529,16 @@ A32Compiler::Flow A32Compiler::emit_neon_same(const VInfo &v) {
       (v.mnemonic == VM::vcgt && o.vtype_vcgt == aarch32::VCGTtype::fp);
   if (is_float) {
     touch_fp_environment();
+    const bool guardable = fp_mode_ != FpMode::standard &&
+                           (v.mnemonic == VM::vmax || v.mnemonic == VM::vmin ||
+                            v.mnemonic == VM::vadd || v.mnemonic == VM::vsub ||
+                            v.mnemonic == VM::vmul || v.mnemonic == VM::vmla ||
+                            v.mnemonic == VM::vmls) &&
+                           neon_float_isolated();
+    if (guardable && (v.mnemonic == VM::vmax || v.mnemonic == VM::vmin))
+      return emit_neon_minmax_guarded(v);
+    if (guardable)
+      return emit_neon_float_guarded(v);
     set_fp_mode(true);
     FloatSame op = enc::vec::fadd;
     bool accumulate = false;

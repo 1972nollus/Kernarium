@@ -30,6 +30,14 @@ its scratch in a `with` block or a `tempfile.TemporaryDirectory` object, whose
 finalizer runs at exit. Performance and long external campaigns are not CTest
 correctness suites.
 
+A tooling test's `TIMEOUT` is a hard bound sized from measurement, not from
+the time the test takes alone: about four times its longest duration at gate
+concurrency (`ctest -j10`) while the host load average was 40 to 80, taken up
+to the next of 30, 60, 90, 120, 180, 240, 300, 450, 600, 900, 1200 or 1800 s.
+A process-heavy test runs many times slower there than alone. A wait inside a
+test for a process, file or thread the test started outlasts the same load,
+stays below the test's bound, and is never retried or unbounded.
+
 Tooling tests run tools against fixtures; they do not grep tracked source for
 expected tokens or restate values that another file owns. A shell tooling
 test's `$TMPDIR` is its `test-scratch/<test>` in the build tree, which
@@ -886,10 +894,16 @@ The JIT's AArch32 tests run on the macOS JIT only and in both page profiles.
 `arm64-jit-a32-corpus` runs every case of the AArch32 corpus pack
 through `CpuEngine::run_aarch32` on the oracle's memory map, with an svc at
 each of the oracle's two epilogues, and compares registers, APSR, thread
-registers, changed data, event, fault address and retired count; a failing
-exclusive case runs once more, because a host store-exclusive may fail without
-cause. It then requires every lowered form to stay out of the slow helper from a
-clean state: each event-free case runs twice, and past the first run one case
+registers, changed data, event, fault address and retired count. A
+store-exclusive may fail without cause, and the JIT's fails whenever a host
+interrupt lands between the load and the store; a case whose only difference
+is that failure (a status of 1 where the pack has 0, and the store not made)
+runs again, up to 16 attempts in all, and the summary counts the cases that
+needed it. `arm64-jit-a32-corpus-interrupted` runs the `exclusive-qemu` record
+with a signal storm aimed at the guest's thread until four cases have lost a
+reservation, and requires that every case then agreed. The corpus then
+requires every lowered form to stay out of the slow helper from a clean state:
+each event-free case runs twice, and past the first run one case
 in which the form always executes must take no helper exit (the others cross a
 page or write back over the loaded register). The forms that the semantic
 library runs (the parallel arithmetic and the Armv8 extensions the compiler does
@@ -900,26 +914,44 @@ decodes it as UNDEFINED there. The corpus's VJCVT cases include a flush-to-zero
 subnormal input, which exercises the correction for a host whose FJCVTZS
 reports it as exact. `arm64-jit-a32-runtime`,
 `arm64-jit-a32-data-processing` and `arm64-jit-a32-memory` run random A32
-programs against an independent reference of the instruction forms (the corpus
-carries T32).
+programs, conditions included, against an independent reference of the
+instruction forms (the corpus carries T32); `arm64-jit-a32-data-processing` also runs every parallel add and
+subtract form against a lane model and requires the lowered ones to stay out
+of the library.
 `arm64-jit-a32-exclusive` covers the fused LL/SC runs, the compare-and-swap
 idiom, the monitor rules, fault and alignment exits, two threads counting
 exactly and an ordinary store clearing a reservation, and requires the fused
-loop to make no helper call. `arm64-jit-a32-acquire-release` covers LDA and
+loop to make no helper call, also with a compare and conditional branch or a
+CBNZ between the load and the store (A32 and T32). `arm64-jit-a32-acquire-release` covers LDA and
 STL with their byte and halfword forms, the always-checked alignment, the fused
 and helper LDAEX/STLEX paths, the doubleword pair, SEVL and the kernel's kuser
 helpers word for word. `arm64-jit-a32-control` runs IT blocks whole, a
-step at a time and from the middle, long blocks under a small budget, code
+step at a time and from the middle, random A32 and T32 programs of
+conditional branches, forward and back (B, CBZ, CBNZ), among data processing
+whole and one instruction at a time, the shape of a block that goes on past a
+branch back and of one that ends at a branch to its own first instruction, the
+code shape of a linked block (the fifteen core registers loaded once before its
+internal entry, none written back before a link) and the registers across the
+budget returns of a chain with a call and a return, random loops with memory, Advanced SIMD and
+side exits in their bodies that end by a count, a branch out or a fault, and
+the counted loop's translation as a host loop through the chain budget, long blocks under a small budget, code
 rewritten under translations, and one form of each optional extension on hosts
 with every extension and on hosts lacking one (the form is UNDEFINED, A32 and
 T32, and nothing else changes). `arm64-jit-a32-vector` covers what the corpus
 does not see of VFP and Advanced SIMD: the guest's FPCR for a VFP instruction
 and the Standard FPSCR value for a Neon one across a conditional arm, a chained
-branch and an exit, QC across runs, and the vector memory forms staying inline
-and taking the library, with its data and faults, across a page, on a
-misalignment and into an unmapped page. `arm64-jit-a32-encoder` compares the compiler's
-A64 encoders with LLVM MC, and `arm64-jit-a32-vector-encoder` those of the
-vector instruction classes.
+branch, an exit and alternating blocks (the host FPCR keeps its mode across
+them), VMAX, VMIN, VADD, VSUB, VMUL, VMLA and VMLS on every special operand,
+rounding mode and flush mode in the contexts that guard them and the one that
+does not, QC across runs, the flags of VCMP and VCMPE reaching the APSR
+through VMRS (adjacent or not, conditional or not), and the vector memory forms staying inline and
+taking the library, with its data and faults, across a page, on a misalignment
+and into an unmapped page (every load form across a page at every offset, with
+the two pages adjacent in the host and not, and with no library call once the
+TLB holds both), where the library leaves the guest's FP environment
+installed. `arm64-jit-a32-encoder` compares the compiler's A64 encoders with LLVM
+MC, and `arm64-jit-a32-vector-encoder` those of the vector instruction
+classes.
 
 ## x86 instruction conformance
 

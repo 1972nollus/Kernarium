@@ -91,6 +91,18 @@ void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
          ((base & 31U) << 5U) | (first & 31U));
   }
 
+void Arm64Emitter::store_pair_x(unsigned first, unsigned second,
+                                unsigned base, std::ptrdiff_t offset) {
+    if ((offset % 8) != 0 || offset < -512 || offset > 504) {
+      valid_ = false;
+      return;
+    }
+    const auto scaled =
+        static_cast<std::uint32_t>(offset / 8) & 0x7fU;
+    emit(0xa900'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
+         ((base & 31U) << 5U) | (first & 31U));
+  }
+
 void Arm64Emitter::store_x(unsigned source, unsigned base, std::size_t offset) {
     emit(0xf900'0000U | (static_cast<std::uint32_t>(offset / 8U) << 10) |
          ((base & 31U) << 5) | (source & 31U));
@@ -294,11 +306,18 @@ void Arm64Emitter::prologue() {
      * store lowering consumes that stable stack ABI. x19-x21 remain private
      * to the outer generated invocation and survive every host helper.
      */
-    emit(0xa9bc'7bfdU); // stp x29, x30, [sp, #-64]!
+    emit(extended_frame_ ? 0xa9b8'7bfdU  // stp x29, x30, [sp, #-128]!
+                         : 0xa9bc'7bfdU); // stp x29, x30, [sp, #-64]!
     emit(0x9100'03fdU); // mov x29, sp
     emit(0xa901'07e0U); // stp x0, x1, [sp, #16]
     emit(0xa902'57e2U); // stp x2, x21, [sp, #32]
     emit(0xa903'53f3U); // stp x19, x20, [sp, #48]
+    if (extended_frame_) {
+      emit(0xa904'5ff6U); // stp x22, x23, [sp, #64]
+      emit(0xa905'67f8U); // stp x24, x25, [sp, #80]
+      emit(0xa906'6ffaU); // stp x26, x27, [sp, #96]
+      emit(0xf900'3bfcU); // str x28, [sp, #112]
+    }
     move_x(15, 0);
     move_x(14, 1);
     move_x(19, 2);
@@ -334,7 +353,15 @@ void Arm64Emitter::epilogue() {
     store_x(20, 19, offsetof(JitChainState, remaining_instructions));
     emit(0xa943'53f3U); // ldp x19, x20, [sp, #48]
     emit(0xf940'17f5U); // ldr x21, [sp, #40]
-    emit(0xa8c4'7bfdU); // ldp x29, x30, [sp], #64
+    if (extended_frame_) {
+      emit(0xa944'5ff6U); // ldp x22, x23, [sp, #64]
+      emit(0xa945'67f8U); // ldp x24, x25, [sp, #80]
+      emit(0xa946'6ffaU); // ldp x26, x27, [sp, #96]
+      emit(0xf940'3bfcU); // ldr x28, [sp, #112]
+      emit(0xa8c8'7bfdU); // ldp x29, x30, [sp], #128
+    } else {
+      emit(0xa8c4'7bfdU); // ldp x29, x30, [sp], #64
+    }
     emit(0xd65f'03c0U);
   }
 

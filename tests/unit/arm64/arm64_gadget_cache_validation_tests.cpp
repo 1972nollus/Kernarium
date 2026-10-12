@@ -3,6 +3,7 @@
 #include "runtime_test_route.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
+#include "cpu/gadget_cache_geometry.hpp"
 #include "static_mmu_test_support.hpp"
 
 #include <cstdint>
@@ -461,7 +462,7 @@ void a_validation_does_not_outlive_the_epochs_it_counts()
  * address space into the index, so the only way to aim several address spaces
  * at one set of ways from outside is to choose generations that collide there.
  */
-constexpr std::size_t cache_ways = 4;
+constexpr std::size_t cache_ways = ::uml::cpu::gadget_cache::ways;
 constexpr std::size_t cache_sets = UML_GADGET_CACHE_SLOTS / cache_ways;
 
 [[nodiscard]] constexpr std::size_t cache_set(
@@ -487,66 +488,83 @@ constexpr std::size_t cache_sets = UML_GADGET_CACHE_SLOTS / cache_ways;
  * held is destroyed while the slot still names it, which is a live executor
  * dereferencing freed storage on its next activation.
  *
- * Five address spaces are chosen so that one guest PC lands in the same set of
- * four ways in all of them, and so that the predecessor block lands elsewhere
- * and survives the set filling up. The first four fill the set; the fifth
- * stores at the same guest PC and takes the first one's way, the set's
- * round-robin replacement having come back around to it. The first address
- * space then has to find its successor link reset rather than pointing at the
- * fifth's translation.
+ * Two address spaces are chosen so that one guest PC lands in the same set in
+ * both, and so that the predecessor block lands elsewhere and survives the set
+ * filling up. The owner stores its successor there first; the other address
+ * space fills the remaining ways with blocks of its own and then stores at the
+ * same guest PC, taking the owner's way, the set's round-robin replacement
+ * having come back around to it. The owner then has to find its successor link
+ * reset rather than pointing at the other's translation.
  */
 void a_replaced_slot_drops_the_previous_owner_link()
 {
 	constexpr auto target = code_base + 0x100;
 	constexpr unsigned owner_value = 7;
 	constexpr unsigned other_value = 9;
-	constexpr std::size_t spaces_wanted = cache_ways + 1;
 
-	/* All of them have to be resident at once: retiring one would release
-	 * its slots and destroy its records, which is the sequence this is here
-	 * to keep unreachable. */
-	if (static_cast<std::size_t>(UML_GADGET_RESIDENT_GENERATIONS) <
-	    spaces_wanted)
-		return;
+	/* Both have to stay resident: retiring the owner would release its
+	 * slots and destroy its records, which is the sequence this is here to
+	 * keep unreachable. */
+	static_assert(UML_GADGET_RESIDENT_GENERATIONS >= 2);
 
-	std::vector<unsigned long> spaces;
-	for (unsigned long generation = 1000;
-	     spaces.size() < spaces_wanted && generation < 8'000'000UL;
-	     ++generation) {
-		const auto set = cache_set(generation, target);
-		if (set == cache_set(generation, code_base))
-			continue;
-		if (!spaces.empty() && set != cache_set(spaces.front(), target))
-			continue;
-		spaces.push_back(generation);
+	unsigned long owner = 1000;
+	while (cache_set(owner, target) == cache_set(owner, code_base))
+		++owner;
+	const auto set = cache_set(owner, target);
+	unsigned long other = owner + 1;
+	while (cache_set(other, target) != set) {
+		++other;
+		require(other < 8'000'000UL);
 	}
-	require(spaces.size() == spaces_wanted);
+
+	/* The other address space's own blocks for the rest of the set, each a
+	 * move and a call two words long, apart from each other and from the
+	 * successor. */
+	std::vector<std::uint64_t> fillers;
+	for (auto pc = target + 2 * sizeof(std::uint32_t);
+	     fillers.size() + 1 < cache_ways; pc += sizeof(std::uint32_t)) {
+		require(pc - code_base < (std::uint64_t{1} << 26));
+		if (cache_set(other, pc) == set) {
+			fillers.push_back(pc);
+			pc += sizeof(std::uint32_t);
+		}
+	}
+	const auto extent = (fillers.empty() ? target : fillers.back()) +
+		2 * sizeof(std::uint32_t) - code_base;
+	const std::size_t pages = (extent + DARWIN_UML_GUEST_PAGE_SIZE - 1) /
+		DARWIN_UML_GUEST_PAGE_SIZE;
 
 	JitBacking owner_backing{1};
 	owner_backing.put32(0, branch(code_base, target));
 	owner_backing.put32(target - code_base, move_immediate(0, owner_value));
 	owner_backing.put32(target - code_base + 4, system_call);
-	JitBacking other_backing{1};
+	JitBacking other_backing{pages};
 	other_backing.put32(target - code_base, move_immediate(0, other_value));
 	other_backing.put32(target - code_base + 4, system_call);
+	for (const auto pc : fillers) {
+		other_backing.put32(pc - code_base, move_immediate(0, other_value));
+		other_backing.put32(pc - code_base + 4, system_call);
+	}
 
 	auto executor = std::make_unique<gadgets::GadgetExecutor>();
 	auto memory = std::make_unique<StaticGuestMemory>();
 	std::vector<std::unique_ptr<JitMapping>> mappings;
 	mappings.push_back(std::make_unique<JitMapping>(
-		spaces.front(), code_base, owner_backing, 1));
-	for (std::size_t index = 1; index < spaces.size(); ++index)
-		mappings.push_back(std::make_unique<JitMapping>(
-			spaces[index], code_base, other_backing, 1));
+		owner, code_base, owner_backing, 1));
+	mappings.push_back(std::make_unique<JitMapping>(
+		other, code_base, other_backing, pages));
 
-	const auto owner = spaces.front();
-	const auto run_successor = [&](unsigned long generation, unsigned value) {
+	const auto run_at = [&](unsigned long generation, std::uint64_t pc,
+				unsigned value) {
 		arm64::CpuState cpu{};
-		cpu.pc = target;
+		cpu.pc = pc;
 		const auto outcome =
 			run_once(*executor, *memory, generation, cpu);
 		require(outcome.event == ::uml::cpu::EngineEvent::system_call);
 		require(cpu.registers[0] == value);
+	};
+	const auto run_successor = [&](unsigned long generation, unsigned value) {
+		run_at(generation, target, value);
 	};
 
 	/* The owner translates its successor and the predecessor that links to
@@ -559,11 +577,12 @@ void a_replaced_slot_drops_the_previous_owner_link()
 	require(linked.executed == 3);
 	require(cpu.registers[0] == owner_value);
 
-	/* Fill the remaining three ways, then take the owner's. */
-	for (std::size_t index = 1; index < spaces.size(); ++index)
-		run_successor(spaces[index], other_value);
+	/* Fill the remaining ways, then take the owner's. */
+	for (const auto pc : fillers)
+		run_at(other, pc, other_value);
+	run_successor(other, other_value);
 	const auto before = executor->cache_diagnostics().translations;
-	require(before == spaces.size() + 1);
+	require(before == cache_ways + 2);
 
 	/* The owner's successor went with its way, so the predecessor has to
 	 * exit at the successor address. Continuing here would mean the link
@@ -601,13 +620,14 @@ void a_replaced_slot_drops_the_previous_owner_link()
 /* An evicted block is gone from its slot, and the link that named it is reset.
  *
  * The test above takes a slot across address spaces; this takes one inside a
- * single address space, by capacity. Five blocks are chosen to share a set, so
- * the fifth store finds all four ways occupied and replaces the first one's.
- * The evicted block must then be translated again rather than found in the
- * slot it left, its predecessor must stop following the link to it, and the
- * three blocks that kept their ways must still answer from the cache. The
- * block that the re-translation replaces in turn proves that the replacement
- * pointer moved on and that the slot is refilled instead of skipped.
+ * single address space, by capacity. One block more than a set has ways is
+ * chosen to share a set, so the last store finds every way occupied and
+ * replaces the first one's. The evicted block must then be translated again
+ * rather than found in the slot it left, its predecessor must stop following
+ * the link to it, and the blocks that kept their ways must still answer from
+ * the cache. The block that the re-translation replaces in turn proves that
+ * the replacement pointer moved on and that the slot is refilled instead of
+ * skipped.
  */
 void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 {
@@ -669,12 +689,12 @@ void an_evicted_block_misses_and_its_predecessor_link_is_reset()
 	}
 	require(translations() == 2);
 
-	/* The next three fill the set; each is a miss that finds a free way. */
+	/* The next ones fill the set; each is a miss that finds a free way. */
 	for (std::size_t index = 1; index < cache_ways; ++index)
 		run_block(index);
 	require(translations() == 2 + cache_ways - 1);
 
-	/* The fifth takes the target's way. */
+	/* The last takes the target's way. */
 	run_block(cache_ways);
 	const auto full = translations();
 	require(full == 2 + cache_ways);

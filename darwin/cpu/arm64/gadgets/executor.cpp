@@ -1714,6 +1714,8 @@ public:
 				space.indirect, state.space->link_records(),
 				state.space->limbo_bodies());
 		}
+		if (census::totals_only())
+			return;
 		const auto sample = census::word_sample();
 		/* The same link targets are sampled in every cache, so the
 		 * sample says how many of an address space's records each
@@ -2284,7 +2286,7 @@ private:
 	{
 		/* Fold the address space into the index so the same guest PC in
 		 * two address spaces lands in different sets rather than
-		 * competing for the four ways of one.
+		 * competing for the ways of one.
 		 */
 		const auto block = (pc >> 2) ^
 			(static_cast<std::uint64_t>(generation) *

@@ -6,13 +6,13 @@ uml_add_tooling_test(
     LABELS dependency
     # The paired Vulkan coverage prepares two further fixture repositories and
     # replays their series through several rejection cases.
-    TIMEOUT 180)
+    TIMEOUT 1200)
 
 uml_add_tooling_test(
     NAME dependency-patch-regenerator
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_rebase_patches.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 120)
 
 uml_add_tooling_test(
     NAME dependency-build-manifest
@@ -34,7 +34,7 @@ uml_add_tooling_test(
     NAME dependency-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_prefix.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 600)
 
 uml_add_tooling_test(
     NAME dependency-prefix-publisher
@@ -46,38 +46,38 @@ uml_add_tooling_test(
     NAME dependency-apple-gpu-vulkan-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh
     LABELS dependency gpu
-    TIMEOUT 45)
+    TIMEOUT 450)
 
 uml_add_tooling_test(
     NAME dependency-ios-network-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_ios_network_prefix.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 120)
 
 uml_add_tooling_test(
     NAME dependency-ios-static-xcframework-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_ios_static_xcframework.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME dependency-kernel-host-tools-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_kernel_host_tools_prefix.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME dependency-runtime-closure
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_runtime_dependencies.sh
     LABELS dependency
-    TIMEOUT 30)
+    TIMEOUT 90)
 
 uml_add_tooling_test(
     NAME dependency-verify-read-only
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_read_only.sh
     LABELS dependency
     # Six refused builds each validate the dependency manifest first.
-    TIMEOUT 120)
+    TIMEOUT 900)
 
 uml_add_tooling_test(
     NAME dependency-relative-paths

@@ -106,7 +106,7 @@ too, where every executor keeps its own slots and a body's header is paid
 once however many slots hold it.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
-and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,
+and `UML_GADGET_RESIDENT_GENERATIONS` controls: eight ways, 256-slot lazy slabs,
 and eight resident address spaces. The slot count is the one geometry control
 that differs by product: macOS defaults to 262,144 slots and iOS and the iOS
 Simulator to 65,536, because a slot is committed whether or not it is occupied

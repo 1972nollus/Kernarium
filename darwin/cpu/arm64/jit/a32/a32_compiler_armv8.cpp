@@ -327,11 +327,12 @@ A32Compiler::Flow A32Compiler::emit_vjcvt() {
   emit(enc::vec::fjcvtzs(0, source));
   if (!::uml::cpu::host_capabilities().jscvt_subnormal_flags_correct) {
     const auto indicator_done = make_label();
-    emit(0x9e66'0000U | (source << 5) | 3U);          // fmov x3, d<source>
-    emit(0xd340'0000U | (52U << 16) | (62U << 10) | (3U << 5) | 4U); // ubfx x4, x3, #52, #11
-    compare_zero(indicator_done, 4, true, true);
-    emit(0xd340'0000U | (52U << 16) | (51U << 10) | (3U << 5) | 4U); // lsl x4, x3, #12
-    compare_zero(indicator_done, 4, true, false);
+    // Scratch registers only: the host registers x3-x28 may hold the guest's.
+    emit(0x9e66'0000U | (source << 5) | 9U);          // fmov x9, d<source>
+    emit(0xd340'0000U | (52U << 16) | (62U << 10) | (9U << 5) | 10U); // ubfx x10, x9, #52, #11
+    compare_zero(indicator_done, 10, true, true);
+    emit(0xd340'0000U | (52U << 16) | (51U << 10) | (9U << 5) | 10U); // lsl x10, x9, #12
+    compare_zero(indicator_done, 10, true, false);
     emit(0xd51b'421fU); // msr nzcv, xzr
     bind(indicator_done);
   }

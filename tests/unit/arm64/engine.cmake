@@ -183,6 +183,9 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(gadget_terminal_count WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    target_compile_definitions(uml_arm64_gadget_terminal_count_tests PRIVATE
+        UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
+        UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     # Every memory transfer's fault names its instruction by the position in
     # its operand; the executor turns that back into the PC.
     uml_add_arm64_unit_test(gadget_memory_fault_position WITHOUT_HARNESS
@@ -303,6 +306,14 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
         ARGS ${UML_ARM64_AARCH32_CORPUS})
     add_dependencies(uml_arm64_jit_a32_corpus_tests uml_arm64_aarch32_corpus)
+    # The exclusive records with the host interrupting the guest's thread
+    # throughout. A store-exclusive may fail without cause (a host interrupt
+    # ends the monitor the JIT uses) and the corpus's single attempts must
+    # tolerate it; this lane makes that happen so the tolerance is measured
+    # and not left to the load a gate happens to run under.
+    uml_add_unit_test(NAME arm64-jit-a32-corpus-interrupted TIMEOUT 1200
+        COMMAND uml_arm64_jit_a32_corpus_tests ${UML_ARM64_AARCH32_CORPUS}
+            --record exclusive-qemu --passes 3000 --interrupt)
 
     # The JIT's SME support (cpu/arm64/jit, sme_support).
     uml_add_arm64_unit_test(jit_sme_mode WITHOUT_HARNESS

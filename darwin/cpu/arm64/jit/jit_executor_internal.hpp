@@ -262,6 +262,9 @@ private:
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
   JitIndirectLinkTable indirect_links_;
+  /* The AArch32 translations' second-level table of indirect targets, made
+   * by the first AArch32 block (jit_linking.hpp). */
+  std::unique_ptr<JitIndirectTarget[]> a32_targets_;
   // The inline context directory is included in the fixed executor charge.
   // Records remain bounded by the existing link-table capacities.
   std::array<LinkContext, 64> link_contexts_{};

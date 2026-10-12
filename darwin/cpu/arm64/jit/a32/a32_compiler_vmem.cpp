@@ -12,7 +12,9 @@
 // path to uml_arm64_jit_a32_execute, which runs the instruction in the
 // semantic library and so faults, and orders its effects, as the reference
 // does; the hot path changes no architectural state before the access is
-// known to complete.
+// known to complete. A load of at most 32 bytes that crosses a page stays in
+// the translation (emit_crossing_cold) and takes the library only when
+// either page is missing from the TLB.
 //
 // A run of consecutive registers moves as whole Q registers where it is
 // aligned to one (memory order is the little-endian register order, so a Q
@@ -43,6 +45,10 @@ constexpr unsigned fallback_m = 10;
 constexpr unsigned address_register = 8;
 constexpr unsigned s_data = 0;
 constexpr unsigned s_view = 6;
+
+/* The most a load can span and still cross a page through the staging area
+ * (CpuState::a32_cross holds 32 bytes from each page). */
+constexpr std::size_t staged_load_limit = 32;
 
 /* The log2 of the element size that selects the LD1/ST1 lane forms (2 = 32
  * bits, 3 = 64 bits). */
@@ -89,10 +95,21 @@ void A32Compiler::vmem_granule(bool load, unsigned log2_size, unsigned index,
                            static_cast<int>(offset)));
 }
 
+/* Whether a transfer of `bytes` starting at register `first` (of `per_q` to
+ * a Q register) is one whole Q register, which the access can address as
+ * [x9, w8, uxtw]: not a store that records its host pointer. */
+bool A32Compiler::vmem_folds(bool store, unsigned bytes, unsigned first,
+                             unsigned per_q) const {
+  return bytes == 16U && first % per_q == 0U &&
+         !(store && track_direct_stores_ &&
+           count_ < maximum_block_instructions);
+}
+
 /* `count` consecutive S or D registers from `first`, loaded from or stored to
- * the memory at x8 in register order. */
+ * the memory at x8 in register order (or at x9 indexed by w8 for one Q
+ * register, when `fold`). */
 void A32Compiler::vmem_run(bool load, bool single, unsigned first,
-                           unsigned count) {
+                           unsigned count, bool fold) {
   const unsigned log2_size = single ? word_size : double_size;
   const unsigned unit = 1U << log2_size;
   const unsigned per_q = 16U / unit;
@@ -103,14 +120,20 @@ void A32Compiler::vmem_run(bool load, bool single, unsigned first,
     const unsigned offset = moved * unit;
     if (index % per_q == 0U && remaining >= per_q) {
       const unsigned q = index / per_q;
+      /* A run of one register adds the translation's delta in the access
+       * itself, [x9, w8, uxtw]. */
+      const unsigned base = fold ? 9U : address_register;
+      const auto indexed = [&](std::uint32_t word) {
+        return fold ? enc::vec::indexed_uxtw(word, address_register) : word;
+      };
       if (load) {
         const auto dest = q_def(q, false, 2);
-        emit(enc::vec::ldur_simd(4, dest.host, address_register,
-                                 static_cast<int>(offset)));
+        emit(indexed(enc::vec::ldur_simd(4, dest.host, base,
+                                         static_cast<int>(offset))));
         q_done(dest, q);
       } else {
-        emit(enc::vec::stur_simd(4, q_use(q, s_view), address_register,
-                                 static_cast<int>(offset)));
+        emit(indexed(enc::vec::stur_simd(4, q_use(q, s_view), base,
+                                         static_cast<int>(offset))));
       }
       index += per_q;
       moved += per_q;
@@ -204,7 +227,8 @@ A32Compiler::Flow A32Compiler::emit_vector_register_transfer(bool store) {
   // MemA: both widths need the alignment of their words.
   emit_alignment_check(address_register, 4, slow);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store ? std::nullopt : std::optional{make_label()}, 4U);
   const unsigned log2_size = bytes == 4U ? word_size : double_size;
   if (store) {
     track_direct_store(address_register, bytes);
@@ -244,11 +268,16 @@ A32Compiler::Flow A32Compiler::emit_vector_block_transfer(bool store) {
     emit(enc::sub_i(address_register, base, offset));
   }
   emit_alignment_check(address_register, 4, slow);
+  const bool fold = vmem_folds(store, bytes, first, single ? 4U : 2U);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store || bytes > staged_load_limit
+                     ? std::nullopt
+                     : std::optional{make_label()},
+                 4U, fold);
   if (store)
     track_direct_store(address_register, bytes);
-  vmem_run(!store, single, first, regs);
+  vmem_run(!store, single, first, regs, fold);
   if (store)
     clear_exclusive_monitor();
   if (o.wback) {
@@ -328,14 +357,21 @@ A32Compiler::Flow A32Compiler::emit_vector_structure(const VInfo &v) {
   if (o.alignment > 1)
     emit_alignment_check(address_register,
                          static_cast<unsigned>(o.alignment), slow);
+  const bool fold = multiple && structs == 1U &&
+                    vmem_folds(store, bytes, dregs[0], 2U);
   emit_translate(address_register, store ? Access::write : Access::read, slow,
-                 fault, bytes);
+                 fault, bytes,
+                 store || bytes > staged_load_limit
+                     ? std::nullopt
+                     : std::optional{make_label()},
+                 o.alignment > 1 ? static_cast<unsigned>(o.alignment) : 0U,
+                 fold);
   if (store)
     track_direct_store(address_register, bytes);
 
   using enc::vec::Structure;
   if (multiple && structs == 1U) {
-    vmem_run(!store, false, dregs[0], run);
+    vmem_run(!store, false, dregs[0], run, fold);
   } else if (multiple) {
     const Structure op = structs == 2U   ? enc::vec::ld2
                          : structs == 3U ? enc::vec::ld3
